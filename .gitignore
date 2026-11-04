@@ -1,0 +1,32 @@
+# 密钥和本地配置
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 依赖和构建产物
+node_modules/
+dist/
+build/
+out/
+coverage/
+.cache/
+.turbo/
+__pycache__/
+.venv/
+
+# 日志和临时文件
+*.log
+tmp/
+
+# 系统和编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Claude Code 个人配置
+.claude/settings.local.json
