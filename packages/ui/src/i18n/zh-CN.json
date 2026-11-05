@@ -101,6 +101,7 @@
     "keybindingsRestoreFailed": "快捷键设置无法读取，已恢复默认。",
     "keybindingsSaveFailed": "快捷键无法保存到这个浏览器，关闭页面后会回到默认设置。",
     "projectCreateFailed": "项目无法保存到这个浏览器，可能是空间不足，或者浏览器禁止了存储。",
+    "projectNotFound": "没有找到这个项目。它可能已经被删除，或者保存在别的浏览器里。",
     "projectOpenFailed": "项目打不开，数据没有改动。",
     "projectRemoveFailed": "项目没有删除成功，可以再试一次。",
     "commandFailed": "改动没有完成：{{message}}",

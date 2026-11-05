@@ -1,10 +1,8 @@
 import { ProjectStore, mergeUpdates } from "@animaquill/core";
-import type { ProjectLibrary, ProjectLog, ProjectSummary, SettingsStore } from "@animaquill/host";
+import type { ProjectAddress, ProjectLibrary, ProjectLog, ProjectSummary } from "@animaquill/host";
 import { CURRENT_FORMAT_VERSION, createProject } from "@animaquill/schema";
 import { Emitter } from "./emitter.ts";
-import { readSetting } from "./settings.ts";
 
-const SETTINGS_KEY = "session";
 /**
  * A log this long is merged when the project opens. Not while people work: on a big project merging
  * takes the page away for a third of a second, and a long log costs next to nothing.
@@ -22,16 +20,12 @@ export interface SessionSnapshot {
 
 export interface SessionMessages {
   createFailed(): void;
+  notFound(): void;
   openFailed(): void;
   tooNew(): void;
   damaged(): void;
   saveFailed(): void;
   saveRecovered(): void;
-}
-
-function parseSaved(value: unknown): { last: string | null } | undefined {
-  const last = (value as { last?: unknown } | null)?.last;
-  return typeof last === "string" || last === null ? { last } : undefined;
 }
 
 /**
@@ -41,7 +35,7 @@ function parseSaved(value: unknown): { last: string | null } | undefined {
  */
 export class ProjectSession {
   readonly #projects: ProjectLibrary;
-  readonly #settings: SettingsStore;
+  readonly #address: ProjectAddress;
   readonly #messages: SessionMessages;
   readonly #emitter = new Emitter();
   #snapshot: SessionSnapshot = { save: "saved" };
@@ -53,9 +47,9 @@ export class ProjectSession {
   #retry: ReturnType<typeof setTimeout> | undefined;
   #catchingUp = false;
 
-  constructor(projects: ProjectLibrary, settings: SettingsStore, messages: SessionMessages) {
+  constructor(projects: ProjectLibrary, address: ProjectAddress, messages: SessionMessages) {
     this.#projects = projects;
-    this.#settings = settings;
+    this.#address = address;
     this.#messages = messages;
   }
 
@@ -82,13 +76,10 @@ export class ProjectSession {
     return this.#projects.list();
   }
 
-  /** Opens the project of the last visit, if it is still there. */
+  /** Opens the project this window shows, if any. */
   async restore(): Promise<void> {
-    const reading = await readSetting(this.#settings, SETTINGS_KEY, parseSaved);
-    if (reading.kind !== "ok" || reading.value.last === null) return;
-    const { last } = reading.value;
-    const projects = await this.list().catch(() => []);
-    if (projects.some((project) => project.id === last)) await this.open(last);
+    const id = this.#address.read();
+    if (id !== undefined) await this.open(id);
   }
 
   /** Resolves to whether the project was created and opened. */
@@ -134,9 +125,9 @@ export class ProjectSession {
     this.#log?.close();
     this.#log = undefined;
     this.#unsaved = [];
+    this.#address.write(undefined);
     this.#snapshot = { save: "saved" };
     this.#emitter.emit();
-    await this.#remember(null);
   }
 
   async remove(id: string): Promise<void> {
@@ -149,6 +140,12 @@ export class ProjectSession {
     const early: Uint8Array[] = [];
     const stopEarly = log.listen((update) => early.push(update));
     const updates = await log.load();
+    if (updates.length === 0) {
+      // Other failures keep the address, so that a reload tries again. This one never will work.
+      this.#address.write(undefined);
+      this.#messages.notFound();
+      return false;
+    }
     const { store, damaged } = ProjectStore.fromUpdates(updates);
     if (!store) throw new Error(`Nothing usable is saved for project ${id}`);
     if (store.getState().manifest.formatVersion > CURRENT_FORMAT_VERSION) {
@@ -165,19 +162,13 @@ export class ProjectSession {
       store.onLocalUpdate((update) => this.#save(update)),
       log.listen((update) => this.#receive(store, log, update)),
     ];
+    this.#address.write(id);
     this.#snapshot = { store, save: "saved" };
     this.#emitter.emit();
     if (updates.length >= COMPACT_AFTER) {
       this.#enqueue(() => log.compact((all) => store.mergeWith(all)));
     }
-    await this.#remember(id);
     return true;
-  }
-
-  async #remember(last: string | null): Promise<void> {
-    await this.#settings.save(SETTINGS_KEY, { last }).catch((error: unknown) => {
-      console.warn("Could not remember the project", error);
-    });
   }
 
   #enqueue(work: () => Promise<void>): void {

@@ -1,4 +1,15 @@
-import type { ProjectLibrary, ProjectLog, ProjectSummary } from "@animaquill/host";
+import type { ProjectAddress, ProjectLibrary, ProjectLog, ProjectSummary } from "@animaquill/host";
+
+/** For tests: the address of one window. */
+export function memoryAddress(start?: string): ProjectAddress {
+  let current = start;
+  return {
+    read: () => current,
+    write: (id) => {
+      current = id;
+    },
+  };
+}
 
 /** For tests: keeps projects in memory, and windows on the same project hear each other. */
 export class MemoryLibrary implements ProjectLibrary {

@@ -2,10 +2,21 @@
 export interface Host {
   readonly settings: SettingsStore;
   readonly projects: ProjectLibrary;
+  readonly address: ProjectAddress;
 }
 
 /**
- * Preferences of the person using the editor, such as the layout. Values must survive JSON.
+ * Which project this window shows. It belongs to the window, unlike settings, which all windows
+ * share: nothing that happens in another window may change it, and it survives a reload.
+ */
+export interface ProjectAddress {
+  read(): string | undefined;
+  write(id: string | undefined): void;
+}
+
+/**
+ * Preferences of the person using the editor, such as the layout, shared by all windows. What one
+ * window is doing right now does not belong here. Values must survive JSON.
  * Both methods reject when the store cannot do its job, and the caller decides what to tell people.
  */
 export interface SettingsStore {

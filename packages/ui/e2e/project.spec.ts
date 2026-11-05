@@ -66,6 +66,18 @@ test.describe("without a project", () => {
     await expect(page.getByRole("heading", { name: "AnimaQuill" })).toBeVisible();
   });
 
+  test("says so when the address names a project that is not there", async ({ page }) => {
+    await page.goto("/?from=mail&project=project_missing#top");
+    await expect(page.getByText("没有找到这个项目")).toBeVisible();
+    await expect(page.getByText("还没有项目")).toBeVisible();
+    expect(new URL(page.url()).search).toBe("?from=mail");
+    expect(new URL(page.url()).hash).toBe("#top");
+
+    await page.reload();
+    await expect(page.getByText("还没有项目")).toBeVisible();
+    await expect(page.getByText("没有找到这个项目")).toHaveCount(0);
+  });
+
   test("creates a project and goes straight into the editor", async ({ page }) => {
     await createProject(page, "我的第一个项目");
     await expect(statusName(page, "我的第一个项目")).toBeVisible();
@@ -255,10 +267,87 @@ test.describe("with a project", () => {
     await expect(row).toBeVisible();
   });
 
-  test("shows changes from another window of the same project", async ({ page, context }) => {
+  test("keeps its project through a reload, whatever other windows do", async ({
+    page,
+    context,
+  }) => {
+    await saved(page);
+    const other = await context.newPage();
+    await other.goto(page.url());
+    await expect(statusName(other, "测试项目")).toBeVisible();
+    await chooseFrom(other, "文件", "关闭项目");
+    await createProject(other, "新项目");
+    await expect(statusName(other, "新项目")).toBeVisible();
+
+    await page.reload();
+    await expect(statusName(page, "测试项目")).toBeVisible();
+    await other.reload();
+    await expect(statusName(other, "新项目")).toBeVisible();
+    await other.close();
+  });
+
+  test("stays on the start page through a reload, whatever other windows do", async ({
+    page,
+    context,
+  }) => {
+    await chooseFrom(page, "文件", "关闭项目");
+    const other = await context.newPage();
+    await other.goto("/");
+    await other.getByRole("button", { name: /^测试项目/ }).click();
+    await expect(statusName(other, "测试项目")).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await other.close();
+  });
+
+  test("a new window starts on the start page, with the project in the list", async ({
+    page,
+    context,
+  }) => {
     await saved(page);
     const other = await context.newPage();
     await other.goto("/");
+    await expect(other.getByRole("button", { name: /^测试项目/ })).toBeVisible();
+    await expect(tab(other, "preview")).toHaveCount(0);
+    await other.close();
+  });
+
+  test("the address says which project is open", async ({ page }) => {
+    const opened = page.url();
+    expect(new URL(opened).searchParams.get("project")).toMatch(/^project_/);
+
+    await chooseFrom(page, "文件", "关闭项目");
+    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    expect(new URL(page.url()).search).toBe("");
+
+    await page.getByRole("button", { name: /^测试项目/ }).click();
+    await expect(tab(page, "preview")).toBeVisible();
+    expect(page.url()).toBe(opened);
+  });
+
+  test("a project removed in another window is missed on the next reload", async ({
+    page,
+    context,
+  }) => {
+    await saved(page);
+    const other = await context.newPage();
+    await other.goto("/");
+    await other.getByRole("listitem").filter({ hasText: "测试项目" }).hover();
+    await other.getByRole("button", { name: "删除 测试项目" }).click();
+    await other.getByRole("button", { name: "删除", exact: true }).click();
+    await expect(other.getByText("还没有项目")).toBeVisible();
+    await other.close();
+
+    await page.reload();
+    await expect(page.getByText("没有找到这个项目")).toBeVisible();
+    await expect(page.getByText("还没有项目")).toBeVisible();
+  });
+
+  test("shows changes from another window of the same project", async ({ page, context }) => {
+    await saved(page);
+    const other = await context.newPage();
+    await other.goto(page.url());
     await expect(statusName(other, "测试项目")).toBeVisible();
 
     await renameTo(page, "第一个窗口改的");
@@ -437,7 +526,7 @@ test.describe("when the data is out of reach", () => {
         throw new DOMException("broken", "UnknownError");
       };
     });
-    await page.reload();
+    await page.goto("/");
     await expect(page.getByRole("alert")).toContainText("项目列表读不出来");
     await expect(page.getByText("还没有项目")).toHaveCount(0);
   });
@@ -464,7 +553,6 @@ test.describe("when the data is out of reach", () => {
     await saved(page);
     const other = await context.newPage();
     await other.goto("/");
-    await chooseFrom(other, "文件", "关闭项目");
     await other.getByRole("listitem").filter({ hasText: "测试项目" }).hover();
     await other.getByRole("button", { name: "删除 测试项目" }).click();
     await other.getByRole("button", { name: "删除", exact: true }).click();

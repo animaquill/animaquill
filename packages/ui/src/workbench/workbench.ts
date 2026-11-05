@@ -47,8 +47,9 @@ export class Workbench {
       saveFailed: () => this.notifications.push(t("notice.keybindingsSaveFailed")),
     });
     this.palette = new CommandPalette(host.settings, this.actions);
-    this.session = new ProjectSession(host.projects, host.settings, {
+    this.session = new ProjectSession(host.projects, host.address, {
       createFailed: () => this.notifications.push(t("notice.projectCreateFailed")),
+      notFound: () => this.notifications.push(t("notice.projectNotFound")),
       openFailed: () => this.notifications.push(t("notice.projectOpenFailed")),
       tooNew: () => this.notifications.push(t("notice.projectTooNew")),
       damaged: () => this.notifications.push(t("notice.projectDamaged")),

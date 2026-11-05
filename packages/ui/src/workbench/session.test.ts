@@ -1,24 +1,22 @@
 import { ProjectStore } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { MemoryLibrary } from "./memory-library.ts";
+import { MemoryLibrary, memoryAddress } from "./memory-library.ts";
 import { ProjectSession, type SessionMessages } from "./session.ts";
 
-function setup(library = new MemoryLibrary(), values = new Map<string, unknown>()) {
-  const settings = {
-    load: async (key: string) => values.get(key),
-    save: async (key: string, value: unknown) => void values.set(key, value),
-  };
+/** One window. Passing on the address of another makes it that window after a reload. */
+function setup(library = new MemoryLibrary(), address = memoryAddress()) {
   const messages: { [K in keyof SessionMessages]: Mock<() => void> } = {
     createFailed: vi.fn<() => void>(),
+    notFound: vi.fn<() => void>(),
     openFailed: vi.fn<() => void>(),
     tooNew: vi.fn<() => void>(),
     damaged: vi.fn<() => void>(),
     saveFailed: vi.fn<() => void>(),
     saveRecovered: vi.fn<() => void>(),
   };
-  const session = new ProjectSession(library, settings, messages);
-  return { session, library, messages, values };
+  const session = new ProjectSession(library, address, messages);
+  return { session, library, messages, address };
 }
 
 const rename = (session: ProjectSession, name: string) =>
@@ -56,32 +54,71 @@ describe("projects", () => {
     rename(first.session, "改过的名字");
     await settled(first.session);
 
-    const second = setup(first.library, first.values);
+    const second = setup(first.library, first.address);
     await second.session.restore();
     expect(nameOf(second.session)).toBe("改过的名字");
-  });
-
-  it("opens nothing when the last project is gone", async () => {
-    const first = setup();
-    await first.session.create("新项目");
-    const id = first.session.store?.getState().manifest.id as string;
-    await first.session.close();
-    await first.session.remove(id);
-    first.values.set("session", { last: id });
-    const second = setup(first.library, first.values);
-    await second.session.restore();
-    expect(second.session.store).toBeUndefined();
-    expect(second.messages.openFailed).not.toHaveBeenCalled();
   });
 
   it("does not bring back a project that was closed on purpose", async () => {
     const first = setup();
     await first.session.create("新项目");
     await first.session.close();
-    const second = setup(first.library, first.values);
+    const second = setup(first.library, first.address);
     await second.session.restore();
     expect(second.session.store).toBeUndefined();
-    expect(console.warn).not.toHaveBeenCalled();
+    expect(second.messages.notFound).not.toHaveBeenCalled();
+  });
+
+  it("starts without a project when the address names none", async () => {
+    const first = setup();
+    await first.session.create("新项目");
+    const newWindow = setup(first.library);
+    await newWindow.session.restore();
+    expect(newWindow.session.store).toBeUndefined();
+  });
+
+  it("keeps the address in step with the open project", async () => {
+    const { session, address } = setup();
+    expect(address.read()).toBeUndefined();
+    await session.create("一");
+    const first = idOf(session);
+    expect(address.read()).toBe(first);
+    await session.create("二");
+    expect(address.read()).toBe(idOf(session));
+    await session.open(first);
+    expect(address.read()).toBe(first);
+    await session.close();
+    expect(address.read()).toBeUndefined();
+  });
+
+  it("says so when the project in the address is gone, and drops the address", async () => {
+    const first = setup();
+    await first.session.create("新项目");
+    const id = idOf(first.session);
+    await first.session.close();
+    await first.session.remove(id);
+
+    const second = setup(first.library, memoryAddress(id));
+    await second.session.restore();
+    expect(second.session.store).toBeUndefined();
+    expect(second.messages.notFound).toHaveBeenCalledOnce();
+    expect(second.messages.openFailed).not.toHaveBeenCalled();
+    expect(second.address.read()).toBeUndefined();
+  });
+
+  it("keeps the address when opening fails, so that a reload tries again", async () => {
+    const first = setup();
+    await first.session.create("新项目");
+    const id = idOf(first.session);
+    const second = setup(first.library, memoryAddress(id));
+    vi.spyOn(first.library, "open").mockRejectedValueOnce(new Error("blocked"));
+    await second.session.restore();
+    expect(second.session.store).toBeUndefined();
+    expect(second.messages.openFailed).toHaveBeenCalledOnce();
+    expect(second.address.read()).toBe(id);
+
+    await second.session.restore();
+    expect(nameOf(second.session)).toBe("新项目");
   });
 
   it("keeps the name in the list up to date", async () => {
@@ -413,12 +450,43 @@ describe("opening what cannot be opened", () => {
   });
 });
 
+describe("two windows", () => {
+  it("each keep their own project through a reload, whatever the other does", async () => {
+    const a = setup();
+    await a.session.create("旧项目");
+    const b = setup(a.library, memoryAddress(idOf(a.session)));
+    await b.session.restore();
+    await b.session.close();
+    await b.session.create("新项目");
+
+    const reloadedA = setup(a.library, a.address);
+    await reloadedA.session.restore();
+    expect(nameOf(reloadedA.session)).toBe("旧项目");
+    const reloadedB = setup(a.library, b.address);
+    await reloadedB.session.restore();
+    expect(nameOf(reloadedB.session)).toBe("新项目");
+  });
+
+  it("stay on the start page through a reload, whatever the other does", async () => {
+    const a = setup();
+    await a.session.create("项目");
+    const id = idOf(a.session);
+    await a.session.close();
+    const b = setup(a.library);
+    await b.session.open(id);
+
+    const reloaded = setup(a.library, a.address);
+    await reloaded.session.restore();
+    expect(reloaded.session.store).toBeUndefined();
+  });
+});
+
 describe("two windows on one project", () => {
   it("see each other's changes", async () => {
-    const { session, library, values } = setup();
+    const { session, library } = setup();
     await session.create("新项目");
     const id = session.store?.getState().manifest.id as string;
-    const other = setup(library, values);
+    const other = setup(library);
     await other.session.open(id);
 
     rename(session, "第一个窗口改的");
@@ -428,10 +496,10 @@ describe("two windows on one project", () => {
   });
 
   it("miss nothing that another window writes while one is opening", async () => {
-    const { session, library, values } = setup();
+    const { session, library } = setup();
     await session.create("新项目");
     const id = idOf(session);
-    const other = setup(library, values);
+    const other = setup(library);
     library.duringLoad = () => {
       library.duringLoad = undefined;
       rename(session, "打开途中改的");
@@ -447,10 +515,10 @@ describe("two windows on one project", () => {
   });
 
   it("catch up when a change went missing on the way", async () => {
-    const { session, library, values } = setup();
+    const { session, library } = setup();
     await session.create("新项目");
     const id = idOf(session);
-    const other = setup(library, values);
+    const other = setup(library);
     await other.session.open(id);
 
     const listeners = new Set(library.listeners.get(id));
@@ -467,10 +535,10 @@ describe("two windows on one project", () => {
   });
 
   it("do not save each other's changes a second time", async () => {
-    const { session, library, values } = setup();
+    const { session, library } = setup();
     await session.create("新项目");
     const id = session.store?.getState().manifest.id as string;
-    const other = setup(library, values);
+    const other = setup(library);
     await other.session.open(id);
     const before = library.updates.get(id)?.length ?? 0;
     rename(session, "改了");
@@ -480,10 +548,10 @@ describe("two windows on one project", () => {
   });
 
   it("do not put each other's changes on the undo list", async () => {
-    const { session, library, values } = setup();
+    const { session, library } = setup();
     await session.create("新项目");
     const id = session.store?.getState().manifest.id as string;
-    const other = setup(library, values);
+    const other = setup(library);
     await other.session.open(id);
     rename(session, "改了");
     await vi.waitFor(() => expect(nameOf(other.session)).toBe("改了"));

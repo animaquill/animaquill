@@ -1,4 +1,11 @@
-import type { Host, ProjectLibrary, ProjectLog, ProjectSummary, SettingsStore } from "./index.ts";
+import type {
+  Host,
+  ProjectAddress,
+  ProjectLibrary,
+  ProjectLog,
+  ProjectSummary,
+  SettingsStore,
+} from "./index.ts";
 
 const PREFIX = "animaquill.";
 const DATABASE = "animaquill";
@@ -6,6 +13,7 @@ const DATABASE_VERSION = 1;
 const PROJECTS = "projects";
 const UPDATES = "updates";
 const BY_PROJECT = "project";
+const PROJECT_PARAM = "project";
 
 interface UpdateRecord {
   readonly seq?: number;
@@ -161,6 +169,17 @@ function createLibrary(factory: () => IDBFactory): ProjectLibrary {
   };
 }
 
+/** The address bar has exactly the right lifetime: one per window, kept through a reload. */
+const address: ProjectAddress = {
+  read: () => new URLSearchParams(location.search).get(PROJECT_PARAM) || undefined,
+  write(id) {
+    const url = new URL(location.href);
+    if (id === undefined) url.searchParams.delete(PROJECT_PARAM);
+    else url.searchParams.set(PROJECT_PARAM, id);
+    history.replaceState(history.state, "", url);
+  },
+};
+
 /** Keeps everything in this browser. Used until an account or a local folder can hold it. */
 export function createBrowserHost(
   storage: () => Storage = () => localStorage,
@@ -175,5 +194,5 @@ export function createBrowserHost(
       storage().setItem(PREFIX + key, JSON.stringify(value));
     },
   };
-  return { settings, projects: createLibrary(database) };
+  return { settings, projects: createLibrary(database), address };
 }
