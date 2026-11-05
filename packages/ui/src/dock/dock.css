@@ -20,11 +20,18 @@
   --dv-drag-over-border-color: var(--aq-accent);
   --dv-icon-hover-background-color: var(--aq-bg-hover);
   --dv-dropdown-border-radius: 6px;
+  --dv-tabs-container-scrollbar-color: var(--aq-scrollbar);
+  --dv-scrollbar-background-color: var(--aq-scrollbar);
 }
 
 /* The empty part of a tab strip takes dropped tabs but cannot be dragged itself. */
 :root .dv-tabs-and-actions-container .dv-void-container.dv-draggable {
   cursor: default;
+}
+
+/* Tabs that do not fit are reached with the wheel or the list at the end of the strip. */
+:root .dv-tabs-container {
+  scrollbar-width: none;
 }
 
 /* The accent line shows which group has the focus. */

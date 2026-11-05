@@ -7,6 +7,8 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     baseURL: "http://localhost:5173",
     viewport: { width: 1440, height: 900 },
+    // Headless browsers hide scrollbars, and people's browsers do not.
+    launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
     trace: "retain-on-failure",
   },
   webServer: {

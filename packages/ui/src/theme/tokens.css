@@ -16,6 +16,15 @@
   --aq-accent: #0078d4;
   --aq-on-accent: #ffffff;
   --aq-shadow: 0 2px 8px #0000008c;
+  --aq-scrollbar: #79797966;
+  --aq-scrollbar-hover: #646464b3;
+  --aq-scrollbar-active: #bfbfbf66;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 html,
@@ -39,4 +48,42 @@ button {
 :focus-visible {
   outline: 1px solid var(--aq-accent);
   outline-offset: -1px;
+}
+
+/*
+ * Thin and quiet, as in VS Code. The transparent border keeps a wider target for the mouse than
+ * what is visible. The thumb always shows: Chromium does not repaint it when the pointer enters
+ * or leaves the area, so it cannot depend on that.
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  background: var(--aq-scrollbar);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--aq-scrollbar-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--aq-scrollbar-active);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--aq-scrollbar) transparent;
+  }
 }

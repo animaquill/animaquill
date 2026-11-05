@@ -333,6 +333,93 @@ test("a panel shared by two workspaces is not rebuilt when switching", async ({ 
   await expect(content(page, "preview")).toHaveAttribute("data-marker", "kept");
 });
 
+test("panels do not scroll when their content fits", async ({ page }) => {
+  for (const name of ["剪辑", "动画", "音频", "AI"]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    await expect(page.getByRole("button", { name, exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const overflowing = await page
+      .locator("[data-panel]:visible")
+      .evaluateAll((elements) =>
+        elements
+          .filter((element) => element.scrollHeight > element.clientHeight)
+          .map((element) => (element as HTMLElement).dataset["panel"]),
+      );
+    expect(overflowing).toEqual([]);
+  }
+});
+
+test("a scrollbar that is really needed is thin and can be seen", async ({ page }) => {
+  const panel = await box(content(page, "timeline"));
+  const clip = { x: panel.x + panel.width - 10, y: panel.y, width: 10, height: panel.height };
+  const before = await page.screenshot({ clip });
+
+  const width = await content(page, "timeline").evaluate((element: HTMLElement) => {
+    const tall = document.createElement("div");
+    tall.style.height = "3000px";
+    element.append(tall);
+    return element.offsetWidth - element.clientWidth;
+  });
+  expect(width).toBe(10);
+  expect((await page.screenshot({ clip })).equals(before)).toBe(false);
+});
+
+async function expectTabInView(page: Page, type: string) {
+  await expect(content(page, type)).toBeVisible();
+  await page.waitForTimeout(150);
+  const strip = await box(group(page, type).locator(".dv-tabs-container"));
+  const active = await box(tab(page, type));
+  expect(active.x).toBeGreaterThanOrEqual(strip.x - 1);
+  expect(active.x + active.width).toBeLessThanOrEqual(strip.x + strip.width + 1);
+}
+
+test("the active tab is not hidden in a narrow group", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 620 });
+  await chooseFromView(page, "经验库");
+  await expectTabInView(page, "notes");
+  await chooseFromView(page, "历史记录");
+  await expectTabInView(page, "history");
+  await chooseFromView(page, "文件");
+  await expectTabInView(page, "files");
+  await chooseFromView(page, "历史记录");
+  await expectTabInView(page, "history");
+});
+
+test("the active tab stays in view when the strip first runs out of room", async ({ page }) => {
+  await chooseFromView(page, "经验库");
+  await expectTabInView(page, "notes");
+});
+
+test("a tab dragged into a full strip is in view", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 620 });
+  const strip = await box(group(page, "assets").locator(".dv-tabs-container"));
+  await dragTab(page, "properties", strip.x + strip.width - 10, strip.y + strip.height / 2);
+  await expect(group(page, "assets").locator('[data-tab="properties"]')).toBeVisible();
+  await expectTabInView(page, "properties");
+});
+
+test("the wheel scrolls a tab strip that is full", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 620 });
+  const list = group(page, "assets").locator(".dv-tabs-container");
+  const strip = await box(list);
+  await page.mouse.move(strip.x + 40, strip.y + strip.height / 2);
+  await page.mouse.wheel(0, 120);
+  await expect
+    .poll(() => list.evaluate((element: HTMLElement) => element.scrollLeft))
+    .toBeGreaterThan(0);
+});
+
+test("a tab strip that is full shows no scrollbar", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 620 });
+  const list = group(page, "assets").locator(".dv-tabs-container");
+  const height = await list.evaluate(
+    (element: HTMLElement) => element.offsetHeight - element.clientHeight,
+  );
+  expect(height).toBe(0);
+});
+
 test("the view menu works from the keyboard", async ({ page }) => {
   const trigger = page.getByRole("button", { name: "视图" });
   await trigger.focus();

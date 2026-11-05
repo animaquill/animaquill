@@ -46,6 +46,8 @@ export function DockArea() {
       watermarkComponent={EmptyDock}
       getTabContextMenuItems={tabMenu}
       disableFloatingGroups
+      // Dockview's own scrollbar restores an old position over the one a new tab needs.
+      scrollbars="native"
       onReady={({ api }) => workbench.layout.attach(createDock(api, workbench.panels, t))}
     />
   );

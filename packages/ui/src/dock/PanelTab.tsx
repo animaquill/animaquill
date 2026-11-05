@@ -1,14 +1,26 @@
 import type { IDockviewPanelHeaderProps } from "dockview-react";
 import { CircleHelp, X } from "lucide-react";
-import type { MouseEvent, PointerEvent } from "react";
+import { useEffect, useRef, type MouseEvent, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import styles from "./PanelTab.module.css";
 import type { PanelParams } from "./toDockview.ts";
 
-export function PanelTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
+export function PanelTab({ api, params, tabLocation }: IDockviewPanelHeaderProps<PanelParams>) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
+  const element = useRef<HTMLDivElement>(null);
+
+  // Dockview reveals a new tab before this content exists, while the tab is still too narrow to
+  // scroll to. A frame later the strip also knows whether it needs its list of hidden tabs.
+  useEffect(() => {
+    if (tabLocation !== "header" || !api.isVisible) return;
+    const frame = requestAnimationFrame(() => {
+      element.current?.closest(".dv-tab")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [api, tabLocation]);
+
   const definition = workbench.panels.get(params.type);
   const Icon = definition?.icon ?? CircleHelp;
   const title = definition ? definition.title(t) : t("panel.unknown.title");
@@ -20,7 +32,12 @@ export function PanelTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>
   };
 
   return (
-    <div className={styles.tab} data-tab={params.type} onAuxClick={closeOnMiddleClick}>
+    <div
+      ref={element}
+      className={styles.tab}
+      data-tab={params.type}
+      onAuxClick={closeOnMiddleClick}
+    >
       <Icon size={14} />
       <span className={styles.title}>{title}</span>
       <button
