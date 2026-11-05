@@ -145,6 +145,27 @@ describe("saving", () => {
     expect(library.updates.get(id)?.length).toBeGreaterThan(1);
   });
 
+  it("writes changes that arrive in the meantime together", async () => {
+    const { session, library } = setup();
+    await session.create("新项目");
+    const id = idOf(session);
+    const before = library.updates.get(id)?.length ?? 0;
+    library.duringAppend = () => {
+      library.duringAppend = undefined;
+      rename(session, "二");
+      rename(session, "三");
+      rename(session, "四");
+    };
+    rename(session, "一");
+    await settled(session);
+    expect(library.updates.get(id)?.length).toBe(before + 2);
+
+    await session.close();
+    const second = setup(library);
+    await second.session.open(id);
+    expect(nameOf(second.session)).toBe("四");
+  });
+
   it("finishes saving before closing", async () => {
     const first = setup();
     await first.session.create("新项目");

@@ -28,6 +28,14 @@ export const test = base.extend<{ problems: string[]; withProject: boolean }>({
       page.on("console", (message) => {
         if (message.type() === "error") problems.push(message.text());
       });
+      // The console does not show every violation. This only finds something where the site sends
+      // a Content-Security-Policy, which the development server does not: run these tests against
+      // the deployed site to check it.
+      await page.addInitScript(() => {
+        document.addEventListener("securitypolicyviolation", (event) => {
+          console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
+        });
+      });
       await page.goto("/");
       if (withProject) await createProject(page);
       await use(problems);

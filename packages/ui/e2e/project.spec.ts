@@ -270,12 +270,29 @@ test.describe("with a project", () => {
 
   test("merges a long log on the next visit, with nothing lost", async ({ page }) => {
     await renameTo(page, "第二个名字");
-    for (let i = 0; i < 110; i++) {
-      await page.keyboard.press("Control+KeyZ");
-      await page.keyboard.press("Control+KeyY");
-    }
-    await expect(statusName(page, "第二个名字")).toBeVisible();
     await saved(page);
+    // How many writes a burst of changes takes depends on the disk, so the log is built by hand.
+    // An update that arrives twice does no harm.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const open = indexedDB.open("animaquill");
+          open.onsuccess = () => {
+            const database = open.result;
+            const transaction = database.transaction("updates", "readwrite");
+            const updates = transaction.objectStore("updates");
+            const read = updates.getAll();
+            read.onsuccess = () => {
+              const { project, update } = read.result.at(-1);
+              for (let i = 0; i < 220; i++) updates.add({ project, update });
+            };
+            transaction.oncomplete = () => {
+              database.close();
+              resolve();
+            };
+          };
+        }),
+    );
     expect(await countUpdates(page)).toBeGreaterThan(200);
 
     await page.reload();
@@ -511,6 +528,7 @@ test("a crash of the whole editor leaves a way out of the project", async ({ pag
 test("the panels still work after a project was closed and opened", async ({ page }) => {
   await chooseFrom(page, "文件", "关闭项目");
   await page.getByRole("button", { name: /^测试项目/ }).click();
+  await expect(tab(page, "preview")).toBeVisible();
   await page.keyboard.press("Alt+Digit2");
   await expect(tab(page, "keyframes")).toBeVisible();
   await page.keyboard.press("Alt+Digit1");
