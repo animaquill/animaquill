@@ -394,8 +394,9 @@ test("the active tab stays in view when the strip first runs out of room", async
 
 test("a tab dragged into a full strip is in view", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 620 });
+  // In the middle, because near the ends the strip scrolls by itself during a drag.
   const strip = await box(group(page, "assets").locator(".dv-tabs-container"));
-  await dragTab(page, "properties", strip.x + strip.width - 10, strip.y + strip.height / 2);
+  await dragTab(page, "properties", strip.x + strip.width / 2, strip.y + strip.height / 2);
   await expect(group(page, "assets").locator('[data-tab="properties"]')).toBeVisible();
   await expectTabInView(page, "properties");
 });
