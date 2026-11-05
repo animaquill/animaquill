@@ -171,8 +171,11 @@ const Param = z.strictObject({
 const scriptManifest = {
   name: z.string().min(1),
   description: z.string().optional(),
-  /** Which file starts it, relative to its folder. */
-  entry: RelativePath,
+  /** Which file starts it, relative to its folder. Runs as it is, so it has to be JavaScript. */
+  entry: RelativePath.refine(
+    (path) => /\.(html|js|mjs)$/.test(path),
+    "入口要是 .html、.js 或 .mjs 文件：代码直接运行，不做 TypeScript 转换",
+  ),
   /**
    * The version of the runtime interface it was written for. New editors keep supporting old
    * versions, so old projects still render the same.
@@ -256,7 +259,13 @@ const Note = z.strictObject({
 });
 
 /** notes.json: annotations, which live with the project but never reach an export. */
-export const Notes = z.strictObject({ notes: z.array(Note) });
+export const Notes = z.strictObject({
+  notes: z
+    .array(Note)
+    .overwrite((notes) =>
+      notes.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+    ),
+});
 
 export type ProjectManifest = z.output<typeof ProjectManifest>;
 export type Assets = z.output<typeof Assets>;

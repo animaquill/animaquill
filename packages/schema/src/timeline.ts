@@ -1,6 +1,15 @@
 import { z } from "zod";
-import { Color, Duration, ExtensionName, Id, LanguageId, Time, sortKeys } from "./basics.ts";
-import { compare, parseTime } from "./time.ts";
+import {
+  Color,
+  Duration,
+  ExtensionName,
+  Id,
+  LanguageId,
+  Time,
+  sortById,
+  sortByTime,
+  sortKeys,
+} from "./basics.ts";
 import {
   KnownProperties,
   MediaRef,
@@ -117,16 +126,8 @@ export const Transition = z
   })
   .refine((transition) => transition.from ?? transition.to, "转场至少要有 from 或 to");
 
-/** Clips in time order, which is how people and AI tools read a track. */
-function sortClips<T extends { readonly id: string; readonly start: string }>(clips: T[]): T[] {
-  const isValid = clips.every((clip) => Time.safeParse(clip.start).success);
-  if (!isValid) return clips;
-  return clips.toSorted(
-    (a, b) => compare(parseTime(a.start), parseTime(b.start)) || a.id.localeCompare(b.id),
-  );
-}
-
-const Clips = z.array(Clip).overwrite(sortClips);
+const Clips = z.array(Clip).overwrite((clips) => sortByTime(clips, (clip) => clip.start));
+const Transitions = z.array(Transition).overwrite(sortById);
 
 const trackBase = {
   id: Id,
@@ -142,7 +143,7 @@ const VideoTrack = z.strictObject({
   kind: z.literal("video"),
   hidden: z.boolean().optional(),
   clips: Clips,
-  transitions: z.array(Transition).optional(),
+  transitions: Transitions.optional(),
 });
 
 const AudioTrack = z.strictObject({
@@ -153,7 +154,7 @@ const AudioTrack = z.strictObject({
   muted: z.boolean().optional(),
   solo: z.boolean().optional(),
   clips: Clips,
-  transitions: z.array(Transition).optional(),
+  transitions: Transitions.optional(),
   properties: KnownProperties.optional(),
   effects: z.array(Effect).optional(),
   sends: z.array(Send).optional(),
@@ -221,13 +222,20 @@ const SOURCES_BY_TRACK: Readonly<Record<string, ReadonlySet<string>>> = {
   caption: new Set(["caption"]),
 };
 
+/** Whether a track of this kind can hold a clip of this kind. Plugin kinds decide for themselves. */
+export const canHold = (track: string, source: string): boolean =>
+  source.includes(".") || SOURCES_BY_TRACK[track]?.has(source) === true;
+
 export const Timeline = z
   .strictObject({
     name: z.string().min(1),
     background: Color.optional(),
     /** At least one. Their durations add up to the length of the timeline, kept nowhere else. */
     sections: z.array(Section).min(1),
-    markers: z.array(Marker).optional(),
+    markers: z
+      .array(Marker)
+      .overwrite((markers) => sortByTime(markers, (marker) => marker.time))
+      .optional(),
     beatGrid: BeatGrid.optional(),
     /** The first track is at the back of the picture. */
     tracks: z.array(Track),
@@ -248,7 +256,7 @@ export const Timeline = z
         const path = ["tracks", trackIndex, "clips", clipIndex];
         claim(clip.id, [...path, "id"]);
         const { kind } = clip.source;
-        if (!kind.includes(".") && !SOURCES_BY_TRACK[track.kind]?.has(kind)) {
+        if (!canHold(track.kind, kind)) {
           context.addIssue({
             code: "custom",
             path: [...path, "source", "kind"],

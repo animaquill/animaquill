@@ -81,6 +81,25 @@ describe("the example project", () => {
     ]);
   });
 
+  it("puts everything that has no order of its own into a fixed order", () => {
+    const files = withChange(MAIN, (document) => {
+      document.markers = document.markers.toReversed();
+      document.tracks[0].transitions = document.tracks[0].transitions.toReversed();
+    });
+    const { project } = readProject(files);
+    const original = fixture();
+    expect(writeProject(project as never).get(MAIN)).toBe(original.get(MAIN));
+  });
+
+  it("orders markers by time, which is how they read", () => {
+    const files = withChange(MAIN, (document) => {
+      document.markers[0].time = "9";
+    });
+    const { project } = readProject(files);
+    const markers = project?.timelines.get("main")?.document?.markers;
+    expect(markers?.map((marker) => marker.id)).toEqual(["marker_turn", "marker_hook"]);
+  });
+
   it("leaves files alone that the format does not define", () => {
     const { project } = readProject(fixture());
     const written = writeProject(project as never);
@@ -217,6 +236,25 @@ describe("when something is wrong with a file", () => {
     });
     expect(codes(files)).toContain("invalid-document");
   });
+});
+
+describe("scene code", () => {
+  it.each(["index.html", "main.js", "main.mjs", "src/index.html"])("can start from %s", (entry) => {
+    const files = withChange("scenes/title/scene.json", (document) => {
+      document.entry = entry;
+    });
+    expect(codes(files)).not.toContain("invalid-document");
+  });
+
+  it.each(["main.ts", "main.tsx", "main.jsx", "style.css", "main"])(
+    "cannot start from %s, because it runs without being compiled",
+    (entry) => {
+      const files = withChange("sounds/impacts/sound.json", (document) => {
+        document.entry = entry;
+      });
+      expect(codes(files)).toContain("invalid-document");
+    },
+  );
 });
 
 describe("frame rates", () => {

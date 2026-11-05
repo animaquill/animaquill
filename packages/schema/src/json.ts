@@ -25,8 +25,10 @@ function inline(value: Json): string {
 
 function render(value: Json, indent: string, prefix: number): string {
   if (!isContainer(value)) return JSON.stringify(value);
-  const flat = inline(value);
-  if (isCompact(value) && indent.length + prefix + flat.length <= WIDTH) return flat;
+  if (isCompact(value)) {
+    const flat = inline(value);
+    if (indent.length + prefix + flat.length <= WIDTH) return flat;
+  }
   const inner = `${indent}  `;
   if (Array.isArray(value)) {
     if (value.length === 0) return "[]";

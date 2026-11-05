@@ -1,4 +1,4 @@
-export { Id, newId } from "./basics.ts";
+export { Color, Duration, Id, LanguageId, Time, newId } from "./basics.ts";
 export { checkProject } from "./check.ts";
 export { createProject, type NewProject } from "./create.ts";
 export * from "./documents.ts";
@@ -34,6 +34,7 @@ export {
   Timeline,
   Track,
   Transition,
+  canHold,
 } from "./timeline.ts";
 export { Animation, Key, MediaRef, Properties, PropertyValue, Value } from "./values.ts";
 export { CURRENT_FORMAT_VERSION } from "./version.ts";

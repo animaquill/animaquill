@@ -74,6 +74,20 @@ export function newId(prefix: string): string {
   return `${prefix}_${suffix}`;
 }
 
+/** Things in time order, which is how people and AI tools read them. */
+export function sortByTime<T extends { readonly id: string }>(
+  items: T[],
+  timeOf: (item: T) => string,
+): T[] {
+  if (!items.every((item) => TIME_PATTERN.test(timeOf(item)))) return items;
+  return items.toSorted(
+    (a, b) => compare(parseTime(timeOf(a)), parseTime(timeOf(b))) || a.id.localeCompare(b.id),
+  );
+}
+
+export const sortById = <T extends { readonly id: string }>(items: T[]): T[] =>
+  items.toSorted((a, b) => a.id.localeCompare(b.id));
+
 /** Sorts the keys of a map, so that a file does not change just because of insertion order. */
 export function sortKeys<T>(map: Record<string, T>): Record<string, T> {
   const sorted: Record<string, T> = {};

@@ -4,105 +4,106 @@
   "properties": {
     "notes": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": { "$ref": "#/$defs/__schema0" },
-          "status": {
-            "type": "string",
-            "enum": ["pending", "working", "review", "done", "rejected"]
-          },
-          "text": { "type": "string" },
-          "timeline": { "$ref": "#/$defs/__schema0" },
-          "time": { "$ref": "#/$defs/__schema1" },
-          "end": { "$ref": "#/$defs/__schema1" },
-          "language": { "type": "string" },
-          "format": { "type": "string" },
-          "targets": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "clip": { "$ref": "#/$defs/__schema0" },
-                "path": { "type": "string", "minLength": 1 },
-                "name": { "type": "string" }
-              },
-              "required": ["clip"],
-              "additionalProperties": false
-            }
-          },
-          "marks": {
-            "type": "array",
-            "items": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "type": { "type": "string", "const": "area" },
-                    "x": { "type": "number" },
-                    "y": { "type": "number" },
-                    "width": { "type": "number" },
-                    "height": { "type": "number" }
-                  },
-                  "required": ["type", "x", "y", "width", "height"],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "type": { "type": "string", "const": "arrow" },
-                    "from": { "$ref": "#/$defs/__schema2" },
-                    "to": { "$ref": "#/$defs/__schema2" }
-                  },
-                  "required": ["type", "from", "to"],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "type": { "type": "string", "const": "stroke" },
-                    "points": {
-                      "minItems": 2,
-                      "type": "array",
-                      "items": { "$ref": "#/$defs/__schema2" }
-                    }
-                  },
-                  "required": ["type", "points"],
-                  "additionalProperties": false
-                }
-              ]
-            }
-          },
-          "changes": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": { "type": "string", "minLength": 1 },
-                "from": { "$ref": "#/$defs/__schema3" },
-                "to": { "$ref": "#/$defs/__schema3" }
-              },
-              "required": ["path", "to"],
-              "additionalProperties": false
-            }
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-          }
-        },
-        "required": ["id", "status", "text", "timeline", "time", "createdAt"],
-        "additionalProperties": false
-      }
+      "items": { "$ref": "#/$defs/__schema0" }
     }
   },
   "required": ["notes"],
   "additionalProperties": false,
   "$defs": {
-    "__schema0": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
-    "__schema1": { "type": "string", "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$" },
-    "__schema2": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/__schema1" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "working", "review", "done", "rejected"]
+        },
+        "text": { "type": "string" },
+        "timeline": { "$ref": "#/$defs/__schema1" },
+        "time": { "$ref": "#/$defs/__schema2" },
+        "end": { "$ref": "#/$defs/__schema2" },
+        "language": { "type": "string" },
+        "format": { "type": "string" },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "clip": { "$ref": "#/$defs/__schema1" },
+              "path": { "type": "string", "minLength": 1 },
+              "name": { "type": "string" }
+            },
+            "required": ["clip"],
+            "additionalProperties": false
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "area" },
+                  "x": { "type": "number" },
+                  "y": { "type": "number" },
+                  "width": { "type": "number" },
+                  "height": { "type": "number" }
+                },
+                "required": ["type", "x", "y", "width", "height"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "arrow" },
+                  "from": { "$ref": "#/$defs/__schema3" },
+                  "to": { "$ref": "#/$defs/__schema3" }
+                },
+                "required": ["type", "from", "to"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "stroke" },
+                  "points": {
+                    "minItems": 2,
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/__schema3" }
+                  }
+                },
+                "required": ["type", "points"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "from": { "$ref": "#/$defs/__schema4" },
+              "to": { "$ref": "#/$defs/__schema4" }
+            },
+            "required": ["path", "to"],
+            "additionalProperties": false
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        }
+      },
+      "required": ["id", "status", "text", "timeline", "time", "createdAt"],
+      "additionalProperties": false
+    },
+    "__schema1": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "__schema2": { "type": "string", "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$" },
+    "__schema3": {
       "type": "array",
       "prefixItems": [
         { "type": "number" },
@@ -112,7 +113,7 @@
       "minItems": 2,
       "maxItems": 2
     },
-    "__schema3": {
+    "__schema4": {
       "anyOf": [
         { "type": "number" },
         { "type": "string" },
@@ -134,7 +135,7 @@
             {
               "type": "object",
               "properties": {
-                "asset": { "$ref": "#/$defs/__schema0" }
+                "asset": { "$ref": "#/$defs/__schema1" }
               },
               "required": ["asset"],
               "additionalProperties": false
@@ -142,7 +143,7 @@
             {
               "type": "object",
               "properties": {
-                "library": { "$ref": "#/$defs/__schema0" },
+                "library": { "$ref": "#/$defs/__schema1" },
                 "path": { "type": "string", "minLength": 1 }
               },
               "required": ["library", "path"],

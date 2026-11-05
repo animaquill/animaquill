@@ -24,6 +24,14 @@
 - 界面文字都放在 `packages/ui/src/i18n`，不写在组件里。
 - 改动项目的操作走命令系统。界面上的操作是动作，两者不要混用。
 
+## 命令系统
+
+- 所有对项目的改动都走 `ProjectStore`：手动操作、MCP 和外部文件改动是同一条路。不要绕过它直接改 Yjs 文档。
+- 新命令写在 `packages/core/src/commands.ts`。命令只规划改动，校验都在写入之前完成，因为 Yjs 不能回滚。
+- 文档里哪些层是独立的 Map，定义在 `packages/core/src/structure.ts`，它决定了冲突的粒度。
+- 不用 `Y.UndoManager`：两边同时改一个字段再撤销时，它可能让这个字段没有值。撤销用命令记录的逆操作。
+- 涉及并发的改动要跑随机测试 `packages/core/src/fuzz.test.ts`，手写用例发现不了这类问题。
+
 ## 项目格式
 
 项目格式是公开的，用户的作品都存在里面，说明在 [docs/project-format.md](docs/project-format.md)。
