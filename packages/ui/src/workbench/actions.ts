@@ -1,4 +1,5 @@
 import type { TFunction } from "i18next";
+import type { KeyCombo } from "./keys.ts";
 
 /**
  * Something the interface can do, such as opening a panel. Menus use these, and the command
@@ -7,12 +8,22 @@ import type { TFunction } from "i18next";
  */
 export interface Action {
   readonly id: string;
+  /** The full name, as the command palette and the list of shortcuts show it. */
   readonly title: (t: TFunction) => string;
   readonly run: () => void;
+  /** Default keys. People can change them, so ask KeybindingService for the current ones. */
+  readonly keys?: readonly KeyCombo[];
   /** Items of the same group stay together in the menu, in the order they were registered. */
-  readonly menu?: { readonly name: string; readonly group: string };
+  readonly menu?: {
+    readonly name: string;
+    readonly group: string;
+    /** A shorter name, because the menu already gives the context. */
+    readonly title?: (t: TFunction) => string;
+  };
   /** Marks one choice among several, such as the current workspace. */
   readonly selected?: () => boolean;
+  /** False for actions that make no sense from the command palette. */
+  readonly palette?: false;
 }
 
 export class ActionRegistry {
@@ -25,6 +36,10 @@ export class ActionRegistry {
 
   get(id: string): Action | undefined {
     return this.#actions.get(id);
+  }
+
+  list(): readonly Action[] {
+    return [...this.#actions.values()];
   }
 
   /** The groups of a menu, in the order they first appeared. */

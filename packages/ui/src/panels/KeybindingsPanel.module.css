@@ -1,0 +1,156 @@
+.panel {
+  padding: 0 12px 12px;
+}
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  padding: 10px 0 6px;
+  background: var(--aq-bg-panel);
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.search:focus {
+  border-color: var(--aq-accent);
+  outline: 0;
+}
+
+.hint {
+  margin: 0 0 8px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(200px, 3fr) 72px;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.row:hover {
+  background: var(--aq-bg-hover);
+}
+
+.name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.key kbd {
+  padding: 1px 2px 1px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.key button,
+.add {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.key button:hover,
+.add:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.none {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.reset {
+  flex: none;
+  padding: 2px 6px;
+  color: var(--aq-text);
+  font-size: 12px;
+  white-space: nowrap;
+  background: none;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.reset:hover:enabled {
+  background: var(--aq-bg-hover);
+}
+
+.reset:disabled {
+  color: var(--aq-text-muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.recorder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.prompt {
+  padding: 1px 6px;
+  color: var(--aq-on-accent);
+  font-size: 12px;
+  background: var(--aq-accent);
+  border-radius: 3px;
+}
+
+.warning {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--aq-warning);
+  font-size: 12px;
+}
+
+.warning button {
+  padding: 1px 6px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}

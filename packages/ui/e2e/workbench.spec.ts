@@ -1,11 +1,8 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { content, expect, group, tab, test } from "./support.ts";
 
 const LAYOUT_KEY = "animaquill.layout";
 
-const tab = (page: Page, type: string) => page.locator(`[data-tab="${type}"]`);
-const content = (page: Page, type: string) => page.locator(`[data-panel="${type}"]`);
-const group = (page: Page, type: string) =>
-  page.locator(".dv-groupview").filter({ has: tab(page, type) });
 const groups = (page: Page) => page.locator(".dv-groupview");
 
 async function chooseFromView(page: Page, name: string) {
@@ -43,22 +40,6 @@ async function dragTab(page: Page, type: string, x: number, y: number) {
   await pressAndMove(page, from.x + from.width / 2, from.y + from.height / 2, x, y);
   await page.mouse.up();
 }
-
-let problems: string[];
-
-test.beforeEach(async ({ page }) => {
-  problems = [];
-  page.on("pageerror", (error) => problems.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") problems.push(message.text());
-  });
-  await page.goto("/");
-  await expect(tab(page, "preview")).toBeVisible();
-});
-
-test.afterEach(() => {
-  expect(problems).toEqual([]);
-});
 
 test("opens with the editing workspace", async ({ page }) => {
   for (const type of ["assets", "preview", "properties", "timeline"]) {
@@ -295,16 +276,16 @@ test("a panel from another version shows a message instead of breaking", async (
   await expect(tab(page, "preview")).toBeVisible();
 });
 
-test("a crash stays inside its tab and can be retried", async ({ page }) => {
-  // React reports the error it caught, which is exactly what this test provokes.
-  const expected = (text: string) => text.includes("Crash on request");
+test("a crash stays inside its tab and can be retried", async ({ page, problems }) => {
   await chooseFromView(page, "崩溃测试");
   await content(page, "dev.crash").getByRole("button", { name: "崩溃" }).click();
   await expect(page.getByText("这个选项卡出错了，其他选项卡不受影响。")).toBeVisible();
   await expect(content(page, "timeline")).toBeVisible();
   await page.getByRole("button", { name: "重试" }).click();
   await expect(content(page, "dev.crash").getByRole("button", { name: "崩溃" })).toBeVisible();
-  problems = problems.filter((text) => !expected(text));
+  // React reports the error it caught, which is exactly what this test provokes.
+  const others = problems.filter((text) => !text.includes("Crash on request"));
+  problems.splice(0, problems.length, ...others);
 });
 
 test("a panel that must stay alive is not reloaded by dragging", async ({ page }) => {
@@ -426,6 +407,7 @@ test("the view menu works from the keyboard", async ({ page }) => {
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu")).toHaveCount(0);

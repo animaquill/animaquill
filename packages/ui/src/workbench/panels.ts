@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next";
 import type { ComponentType } from "react";
+import type { KeyCombo } from "./keys.ts";
 
 /** Where a panel opens when no layout says otherwise. */
 export type PanelArea = "left" | "center" | "right" | "bottom";
@@ -13,6 +14,8 @@ export interface PanelDefinition {
   readonly component: ComponentType;
   /** Show a shortcut in the activity bar. */
   readonly activity?: boolean;
+  /** Default keys that open this panel. */
+  readonly keys?: readonly KeyCombo[];
   /** Keep the content in place while the tab is hidden or dragged. An iframe would reload otherwise. */
   readonly keepAlive?: boolean;
 }

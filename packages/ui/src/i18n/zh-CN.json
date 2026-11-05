@@ -9,6 +9,32 @@
   "menu": {
     "view": "视图"
   },
+  "action": {
+    "openPanel": "打开选项卡：{{panel}}",
+    "switchWorkspace": "切换工作区：{{workspace}}"
+  },
+  "palette": {
+    "title": "命令面板",
+    "placeholder": "输入命令名称",
+    "recent": "最近使用",
+    "others": "其他命令",
+    "empty": "没有匹配的命令"
+  },
+  "keys": {
+    "search": "搜索命令或快捷键",
+    "add": "添加快捷键：{{action}}",
+    "remove": "删除快捷键 {{key}}",
+    "reset": "恢复默认",
+    "resetAll": "全部恢复默认",
+    "recording": "按下组合键，Esc 取消",
+    "conflict": "{{key}} 已被“{{action}}”使用。",
+    "reassign": "改用到这里",
+    "cancel": "取消",
+    "reserved": "{{key}} 要留给键盘导航，不能用作快捷键。",
+    "browserHint": "浏览器占用的组合键（比如 Ctrl+W）在这里按不出来。",
+    "none": "未设置",
+    "empty": "没有匹配的命令"
+  },
   "view": {
     "resetLayout": "恢复当前工作区的默认布局"
   },
@@ -36,7 +62,9 @@
   "notice": {
     "dismiss": "关闭",
     "layoutRestoreFailed": "上次的布局无法恢复，已换成默认布局。",
-    "layoutSaveFailed": "布局无法保存到这个浏览器，关闭页面后会回到默认布局。"
+    "layoutSaveFailed": "布局无法保存到这个浏览器，关闭页面后会回到默认布局。",
+    "keybindingsRestoreFailed": "快捷键设置无法读取，已恢复默认。",
+    "keybindingsSaveFailed": "快捷键无法保存到这个浏览器，关闭页面后会回到默认设置。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -63,6 +91,7 @@
     "problems": { "title": "问题", "hint": "项目里需要处理的问题。" },
     "terminal": { "title": "终端", "hint": "AI 工具的命令行。" },
     "cache": { "title": "缓存", "hint": "预览用的素材和占用的空间。" },
-    "performance": { "title": "性能", "hint": "哪个场景拖慢了画面。" }
+    "performance": { "title": "性能", "hint": "哪个场景拖慢了画面。" },
+    "keybindings": { "title": "快捷键" }
   }
 }

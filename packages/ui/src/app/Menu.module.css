@@ -58,6 +58,21 @@
   width: 18px;
 }
 
+.label {
+  flex: 1;
+}
+
+.shortcut {
+  margin-left: 24px;
+  color: var(--aq-text-muted);
+  font: inherit;
+}
+
+.item:hover .shortcut,
+.item:focus .shortcut {
+  color: inherit;
+}
+
 .separator {
   height: 1px;
   margin: 4px 0;

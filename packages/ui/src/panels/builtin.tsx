@@ -9,6 +9,7 @@ import {
   HardDrive,
   History,
   Images,
+  Keyboard,
   MessageSquareText,
   MessagesSquare,
   Mic,
@@ -22,17 +23,18 @@ import {
 import { useTranslation } from "react-i18next";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
+import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import styles from "./Placeholder.module.css";
 
 type Type = {
   [K in keyof typeof zhCN.panel]: (typeof zhCN.panel)[K] extends { title: string } ? K : never;
 }[keyof typeof zhCN.panel];
 
-type Extra = Pick<PanelDefinition, "activity" | "keepAlive">;
+type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 
 /** A panel whose real content comes in a later stage. */
 function planned(
-  type: Exclude<Type, "unknown">,
+  type: Exclude<Type, "unknown" | "keybindings">,
   area: PanelArea,
   icon: PanelDefinition["icon"],
   extra: Extra = {},
@@ -59,7 +61,7 @@ function planned(
 }
 
 export const builtinPanels: readonly PanelDefinition[] = [
-  planned("files", "left", Files, { activity: true }),
+  planned("files", "left", Files, { activity: true, keys: ["mod+shift+e"] }),
   planned("assets", "left", Images, { activity: true }),
   planned("notes", "left", BookOpen, { activity: true }),
   planned("history", "left", History, { activity: true }),
@@ -68,14 +70,21 @@ export const builtinPanels: readonly PanelDefinition[] = [
   planned("music", "center", Music),
   planned("recording", "center", Mic),
   planned("versions", "center", Grid3x3),
+  {
+    type: "keybindings",
+    title: (t) => t("panel.keybindings.title"),
+    icon: Keyboard,
+    area: "center",
+    component: KeybindingsPanel,
+  },
   planned("properties", "right", SlidersHorizontal),
   planned("chat", "right", MessagesSquare, { activity: true, keepAlive: true }),
   planned("annotations", "right", MessageSquareText),
   planned("timeline", "bottom", Rows3),
   planned("keyframes", "bottom", Diamond),
   planned("differences", "bottom", Diff),
-  planned("problems", "bottom", TriangleAlert),
-  planned("terminal", "bottom", SquareTerminal, { keepAlive: true }),
+  planned("problems", "bottom", TriangleAlert, { keys: ["mod+shift+m"] }),
+  planned("terminal", "bottom", SquareTerminal, { keepAlive: true, keys: ["mod+`"] }),
   planned("cache", "bottom", HardDrive),
   planned("performance", "bottom", Gauge),
 ];

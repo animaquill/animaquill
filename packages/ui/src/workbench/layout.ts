@@ -1,6 +1,7 @@
 import type { SettingsStore } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { Emitter } from "./emitter.ts";
+import { readSetting } from "./settings.ts";
 
 /** A layout in terms of the editor, not of the docking library. */
 export type LayoutNode = LayoutSplit | LayoutTabs;
@@ -109,21 +110,10 @@ export class LayoutController {
 
   /** Reads what was saved. Whatever goes wrong, the editor still opens with a default layout. */
   async load(): Promise<void> {
-    let value: unknown;
-    try {
-      value = await this.#settings.load(SETTINGS_KEY);
-    } catch (error) {
-      console.warn("Saved layout is unreadable", error);
-      this.#messages.restoreFailed();
-      return;
-    }
-    if (value === undefined) return;
-    const saved = parseSaved(value);
-    if (!saved) {
-      console.warn("Saved layout has an unknown format");
-      this.#messages.restoreFailed();
-      return;
-    }
+    const reading = await readSetting(this.#settings, SETTINGS_KEY, parseSaved);
+    if (reading.kind === "broken") this.#messages.restoreFailed();
+    if (reading.kind !== "ok") return;
+    const saved = reading.value;
     if (!this.#find(saved.workspace)) saved.workspace = this.#saved.workspace;
     this.#saved = saved;
     this.#snapshot = { ...this.#snapshot, workspace: saved.workspace };

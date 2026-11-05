@@ -24,10 +24,11 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     host: options.host,
     t: i18n.t,
     version: options.version,
+    platform: /Mac/.test(navigator.platform) ? "mac" : "other",
     panels: [...builtinPanels, ...(options.panels ?? [])],
     workspaces,
   });
-  await workbench.layout.load();
+  await workbench.load();
 
   const root = createRoot(element);
   root.render(
@@ -42,7 +43,11 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   document.addEventListener("visibilitychange", save);
 
+  const onKeyDown = (event: KeyboardEvent) => workbench.keybindings.handle(event);
+  window.addEventListener("keydown", onKeyDown);
+
   return () => {
+    window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", save);
     root.unmount();
   };

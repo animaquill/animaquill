@@ -22,6 +22,30 @@
   color: var(--aq-accent);
 }
 
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 2px 8px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.search:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}
+
+.search kbd {
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
 .workspaces {
   position: absolute;
   left: 50%;

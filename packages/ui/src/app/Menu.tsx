@@ -1,5 +1,5 @@
 import { Check } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import styles from "./Menu.module.css";
 
 export interface MenuItem {
@@ -7,6 +7,7 @@ export interface MenuItem {
   readonly label: string;
   readonly run: () => void;
   readonly selected?: boolean;
+  readonly shortcut?: string;
 }
 
 interface MenuProps {
@@ -24,14 +25,13 @@ export function Menu({ label, groups }: MenuProps) {
   const button = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (!open) return;
-    itemsIn(root.current)[0]?.focus();
-    const closeOutside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOutside, true);
-    return () => document.removeEventListener("pointerdown", closeOutside, true);
+    if (open) itemsIn(root.current)[0]?.focus();
   }, [open]);
+
+  // Losing the focus covers clicks anywhere, including in an iframe, and other windows.
+  const closeOnLeaving = (event: FocusEvent) => {
+    if (!root.current?.contains(event.relatedTarget)) setOpen(false);
+  };
 
   const close = () => {
     setOpen(false);
@@ -57,7 +57,7 @@ export function Menu({ label, groups }: MenuProps) {
   };
 
   return (
-    <div className={styles.root} ref={root}>
+    <div className={styles.root} ref={root} onBlur={closeOnLeaving}>
       <button
         ref={button}
         type="button"
@@ -69,7 +69,13 @@ export function Menu({ label, groups }: MenuProps) {
         {label}
       </button>
       {open && (
-        <div className={styles.menu} role="menu" aria-label={label} onKeyDown={onKeyDown}>
+        <div
+          className={styles.menu}
+          role="menu"
+          aria-label={label}
+          onKeyDown={onKeyDown}
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {groups.map((group, index) => (
             <Fragment key={group[0]?.id ?? index}>
               {index > 0 && <div className={styles.separator} role="separator" />}
@@ -80,6 +86,7 @@ export function Menu({ label, groups }: MenuProps) {
                   className={styles.item}
                   role={item.selected === undefined ? "menuitem" : "menuitemradio"}
                   {...(item.selected === undefined ? {} : { "aria-checked": item.selected })}
+                  {...(item.shortcut ? { "aria-keyshortcuts": item.shortcut } : {})}
                   tabIndex={-1}
                   onClick={() => {
                     item.run();
@@ -87,7 +94,12 @@ export function Menu({ label, groups }: MenuProps) {
                   }}
                 >
                   <span className={styles.mark}>{item.selected && <Check size={14} />}</span>
-                  {item.label}
+                  <span className={styles.label}>{item.label}</span>
+                  {item.shortcut && (
+                    <kbd className={styles.shortcut} aria-hidden="true">
+                      {item.shortcut}
+                    </kbd>
+                  )}
                 </button>
               ))}
             </Fragment>

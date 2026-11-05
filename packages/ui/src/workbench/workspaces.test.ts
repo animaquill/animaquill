@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { builtinPanels } from "../panels/builtin.tsx";
+import { isBindable } from "./keys.ts";
 import type { LayoutNode } from "./layout.ts";
 import { workspaces } from "./workspaces.ts";
 
@@ -27,3 +28,20 @@ describe.each(workspaces.map((workspace) => [workspace.id, workspace] as const))
     });
   },
 );
+
+describe("default keys", () => {
+  const defaults = [
+    ...builtinPanels.flatMap((panel) => panel.keys ?? []),
+    "mod+shift+p",
+    "f1",
+    ...workspaces.map((_, index) => `alt+${index + 1}`),
+  ];
+
+  it("are each used once", () => {
+    expect(new Set(defaults).size).toBe(defaults.length);
+  });
+
+  it("can all be bound", () => {
+    expect(defaults.filter((combo) => !isBindable(combo))).toEqual([]);
+  });
+});

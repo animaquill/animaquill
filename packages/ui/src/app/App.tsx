@@ -4,6 +4,7 @@ import type { i18n } from "i18next";
 import { DockArea } from "../dock/DockArea.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
 import { ActivityBar } from "./ActivityBar.tsx";
+import { CommandPaletteView } from "./CommandPaletteView.tsx";
 import styles from "./App.module.css";
 import { WorkbenchContext } from "./context.ts";
 import { NotificationList } from "./NotificationList.tsx";
@@ -61,6 +62,7 @@ export function App({ workbench, i18n }: AppProps) {
             </div>
             <StatusBar />
             <NotificationList />
+            <CommandPaletteView />
           </div>
         </WorkbenchContext>
       </I18nextProvider>
