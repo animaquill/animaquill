@@ -45,11 +45,17 @@
   cursor: pointer;
 }
 
-.item:hover,
-.item:focus {
+.item:hover:enabled,
+.item:focus:enabled {
   color: var(--aq-on-accent);
   background: var(--aq-accent);
   outline: 0;
+}
+
+.item:disabled {
+  color: var(--aq-text-muted);
+  cursor: default;
+  opacity: 0.6;
 }
 
 .mark {

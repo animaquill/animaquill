@@ -23,6 +23,8 @@
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
 - 界面文字都放在 `packages/ui/src/i18n`，不写在组件里。
 - 改动项目的操作走命令系统。界面上的操作是动作，两者不要混用。
+- 宿主只提供存储，接口在 `packages/host`，不要让它依赖 Yjs。保存的逻辑在 `packages/ui/src/workbench/session.ts`，切换项目走 `Workbench`，它会先处理没保存的改动。
+- 对话框用 `Workbench.dialogs`，不要自己写弹窗。
 
 ## 命令系统
 
@@ -40,3 +42,4 @@
 - `fixtures/` 里已有的版本永远不改，它们保证旧项目还能打开。
 - 改完运行 `pnpm --filter @animaquill/schema export-schema`，更新公开的 JSON Schema。
 - 项目内容是不可信的。ID 和路径字段都要防止指向项目之外。
+- 宿主里存的是 Yjs 文档，不是文件。第一次升级格式时，`ProjectSession` 也要迁移已保存的项目，现在只拒绝比编辑器新的格式。

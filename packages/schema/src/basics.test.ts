@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   Color,
   Duration,
@@ -129,5 +130,16 @@ describe("the rest", () => {
 
   it("sorts map keys", () => {
     expect(Object.keys(sortKeys({ b: 1, a: 2, c: 3 }))).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("schemas", () => {
+  it("do not generate code at run time, which a strict CSP forbids", () => {
+    expect(z.config().jitless).toBe(true);
+    const generate = vi.spyOn(globalThis, "Function");
+    expect(Id.safeParse("main").success).toBe(true);
+    expect(z.strictObject({ a: z.string() }).safeParse({ a: "b" }).success).toBe(true);
+    expect(generate).not.toHaveBeenCalled();
+    generate.mockRestore();
   });
 });

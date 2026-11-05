@@ -132,6 +132,16 @@ export class LayoutController {
     });
   }
 
+  /** Lets go of the dock before it goes away, keeping how it was arranged. */
+  async detach(): Promise<void> {
+    clearTimeout(this.#timer);
+    this.#timer = undefined;
+    if (this.#dock) await this.#save();
+    this.#stopListening?.();
+    this.#stopListening = undefined;
+    this.#dock = undefined;
+  }
+
   switchWorkspace(id: string): void {
     if (id === this.#saved.workspace || !this.#find(id)) return;
     this.#capture();

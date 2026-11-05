@@ -21,6 +21,7 @@ export {
   ProjectStore,
   USER,
   aiTask,
+  mergeUpdates,
   type CommandCall,
   type CommandFailure,
   type CommandResult,

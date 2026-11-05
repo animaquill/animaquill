@@ -1,3 +1,4 @@
+import "./zod-config.ts";
 import { z } from "zod";
 import { TIME_PATTERN, compare, normalizeTime, parseTime, ZERO } from "./time.ts";
 

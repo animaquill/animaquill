@@ -50,7 +50,7 @@ test("opens with the editing workspace", async ({ page }) => {
     "aria-pressed",
     "true",
   );
-  await expect(page.getByText("未打开项目")).toBeVisible();
+  await expect(page.locator("footer").getByRole("button", { name: "测试项目" })).toBeVisible();
 });
 
 test("a tab can be dragged into another group", async ({ page }) => {
@@ -153,7 +153,7 @@ test("a panel opens next to the panels of its area", async ({ page }) => {
 });
 
 test("the activity bar shows and reveals panels", async ({ page }) => {
-  const files = page.getByRole("button", { name: "文件", exact: true });
+  const files = page.getByRole("navigation").getByRole("button", { name: "文件", exact: true });
   await expect(files).toHaveAttribute("aria-pressed", "false");
   await files.click();
   await expect(content(page, "files")).toBeVisible();

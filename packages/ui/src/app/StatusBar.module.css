@@ -12,3 +12,30 @@
 .spacer {
   flex: 1;
 }
+
+.name {
+  overflow: hidden;
+  max-width: 320px;
+  padding: 0 6px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-left: -6px;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.name:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--aq-warning);
+}

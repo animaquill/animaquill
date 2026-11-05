@@ -5,9 +5,11 @@ import { DockArea } from "../dock/DockArea.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
 import { ActivityBar } from "./ActivityBar.tsx";
 import { CommandPaletteView } from "./CommandPaletteView.tsx";
+import { DialogHost } from "./DialogHost.tsx";
 import styles from "./App.module.css";
-import { WorkbenchContext } from "./context.ts";
+import { WorkbenchContext, useSession } from "./context.ts";
 import { NotificationList } from "./NotificationList.tsx";
+import { StartPage } from "./StartPage.tsx";
 import { StatusBar } from "./StatusBar.tsx";
 import { TitleBar } from "./TitleBar.tsx";
 
@@ -26,7 +28,7 @@ class AppBoundary extends Component<{ workbench: Workbench; children: ReactNode 
 
   override render() {
     if (!this.state.failed) return this.props.children;
-    const { t, layout } = this.props.workbench;
+    const { t, layout, session } = this.props.workbench;
     return (
       <div className={styles.crashed} role="alert">
         <h1>{t("app.crashed")}</h1>
@@ -41,10 +43,32 @@ class AppBoundary extends Component<{ workbench: Workbench; children: ReactNode 
           >
             {t("app.resetAndReload")}
           </button>
+          {/* The project opens again after a reload, so if it is the cause this is the way out. */}
+          {session.store && (
+            <button
+              type="button"
+              onClick={() => void session.close().finally(() => location.reload())}
+            >
+              {t("app.closeAndReload")}
+            </button>
+          )}
         </div>
       </div>
     );
   }
+}
+
+function Content() {
+  const { store } = useSession();
+  if (!store) return <StartPage />;
+  return (
+    <div className={styles.body}>
+      <ActivityBar />
+      <main className={styles.dock}>
+        <DockArea />
+      </main>
+    </div>
+  );
 }
 
 export function App({ workbench, i18n }: AppProps) {
@@ -54,15 +78,11 @@ export function App({ workbench, i18n }: AppProps) {
         <WorkbenchContext value={workbench}>
           <div className={styles.shell}>
             <TitleBar />
-            <div className={styles.body}>
-              <ActivityBar />
-              <main className={styles.dock}>
-                <DockArea />
-              </main>
-            </div>
+            <Content />
             <StatusBar />
             <NotificationList />
             <CommandPaletteView />
+            <DialogHost />
           </div>
         </WorkbenchContext>
       </I18nextProvider>

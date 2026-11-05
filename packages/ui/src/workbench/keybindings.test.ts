@@ -44,7 +44,7 @@ async function setup(stored?: unknown) {
   const messages = { restoreFailed: vi.fn(), saveFailed: vi.fn() };
   const service = new KeybindingService(settings, actions, "other", messages);
   await service.load();
-  return { service, open, save, plain, settings, values, messages };
+  return { service, actions, open, save, plain, settings, values, messages };
 }
 
 const overrides = (data: Record<string, string[]>) => ({ version: 1, overrides: data });
@@ -92,6 +92,17 @@ describe("running", () => {
     service.handle(keyDown("KeyO", { ctrlKey: true }));
     service.handle(keyDown("KeyO", { ctrlKey: true, repeat: true }));
     expect(open.run).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the key to the browser while the action cannot run", async () => {
+    const { service, actions } = await setup();
+    const run = vi.fn<() => void>();
+    actions.register({ id: "off", title: () => "off", run, keys: ["mod+u"], enabled: () => false });
+    service.reset("off");
+    const event = keyDown("KeyU", { ctrlKey: true });
+    service.handle(event);
+    expect(run).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
   it("stays out when something else already handled the key", async () => {

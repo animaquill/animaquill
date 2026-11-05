@@ -43,10 +43,20 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   document.addEventListener("visibilitychange", save);
 
-  const onKeyDown = (event: KeyboardEvent) => workbench.keybindings.handle(event);
+  // A dialog has to be answered first: nothing behind it should change in the meantime.
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!workbench.dialogs.getSnapshot()) workbench.keybindings.handle(event);
+  };
   window.addEventListener("keydown", onKeyDown);
 
+  // Leaving now would lose work, which the browser can still ask about.
+  const onBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (workbench.session.hasUnsavedChanges) event.preventDefault();
+  };
+  window.addEventListener("beforeunload", onBeforeUnload);
+
   return () => {
+    window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", save);
     root.unmount();

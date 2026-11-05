@@ -1,13 +1,48 @@
 {
   "app": {
     "noProject": "未打开项目",
+    "closeAndReload": "回到开始页",
+    "tagline": "AI 时代的视频编辑器",
     "crashed": "编辑器遇到了问题",
     "crashedHint": "可以重新加载。如果还是这样，先恢复默认布局。",
     "reload": "重新加载",
     "resetAndReload": "恢复默认布局并重新加载"
   },
   "menu": {
+    "file": "文件",
+    "edit": "编辑",
     "view": "视图"
+  },
+  "edit": {
+    "undo": "撤销",
+    "redo": "重做"
+  },
+  "project": {
+    "new": "新建项目",
+    "save": "保存",
+    "create": "创建",
+    "close": "关闭项目",
+    "rename": "重命名",
+    "renameAction": "重命名项目",
+    "remove": "删除",
+    "nameLabel": "项目名称",
+    "defaultName": "未命名项目",
+    "recent": "最近的项目",
+    "none": "还没有项目，新建一个开始吧。",
+    "localHint": "项目保存在这个浏览器里。清除浏览器数据会删除它们，云端保存之后会加上。",
+    "removeButton": "删除 {{name}}",
+    "removeTitle": "删除“{{name}}”？",
+    "removeWarning": "项目会从这个浏览器里删除，不能恢复。",
+    "saved": "已保存",
+    "saving": "正在保存",
+    "saveFailed": "没有保存",
+    "listFailed": "项目列表读不出来。数据没有改动，可以刷新页面再试。",
+    "unsavedTitle": "有改动没有保存",
+    "unsavedWarning": "现在离开，这些改动会丢失。留在这里的话，恢复后会自动保存。",
+    "leaveAnyway": "仍然离开"
+  },
+  "dialog": {
+    "cancel": "取消"
   },
   "action": {
     "openPanel": "打开选项卡：{{panel}}",
@@ -64,7 +99,16 @@
     "layoutRestoreFailed": "上次的布局无法恢复，已换成默认布局。",
     "layoutSaveFailed": "布局无法保存到这个浏览器，关闭页面后会回到默认布局。",
     "keybindingsRestoreFailed": "快捷键设置无法读取，已恢复默认。",
-    "keybindingsSaveFailed": "快捷键无法保存到这个浏览器，关闭页面后会回到默认设置。"
+    "keybindingsSaveFailed": "快捷键无法保存到这个浏览器，关闭页面后会回到默认设置。",
+    "projectCreateFailed": "项目无法保存到这个浏览器，可能是空间不足，或者浏览器禁止了存储。",
+    "projectOpenFailed": "项目打不开，数据没有改动。",
+    "projectRemoveFailed": "项目没有删除成功，可以再试一次。",
+    "commandFailed": "改动没有完成：{{message}}",
+    "undoFailed": "这一步撤销不了，可能是项目被锁定了，或者内容已经被别人改过。",
+    "projectTooNew": "这个项目用的是更新的格式，请刷新页面更新 AnimaQuill。",
+    "projectDamaged": "项目的部分保存记录损坏了，最近的一些改动可能丢失。",
+    "projectSaveFailed": "改动无法保存到这个浏览器，可能是空间不足。先不要关闭页面，恢复后会自动保存。",
+    "projectSaveRecovered": "改动已经保存好了。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",

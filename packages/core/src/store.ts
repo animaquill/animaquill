@@ -20,6 +20,7 @@ export const USER: Origin = "user";
 export const aiTask = (task: string): Origin => `ai:${task}`;
 
 const LOAD = "load";
+const REMOTE = "remote";
 const ROOT = "project";
 const MAX_HISTORY = 1000;
 const MAX_UNDO = 500;
@@ -124,6 +125,23 @@ function editText(target: Y.Text, next: string): void {
   target.insert(start, next.slice(start, next.length - end));
 }
 
+/** Applies what it can. Returns how many updates were damaged. */
+function applyAll(doc: Y.Doc, updates: readonly Uint8Array[], origin: string): number {
+  let damaged = 0;
+  for (const update of updates) {
+    try {
+      Y.applyUpdate(doc, update, origin);
+    } catch {
+      damaged += 1;
+    }
+  }
+  return damaged;
+}
+
+/** Combines updates into one, without opening the project. All of them have to be intact. */
+export const mergeUpdates = (updates: readonly Uint8Array[]): Uint8Array =>
+  Y.mergeUpdates([...updates]);
+
 const COMMANDS_BY_TYPE = new Map(COMMANDS.map((command) => [command.type, command]));
 
 /**
@@ -158,6 +176,17 @@ export class ProjectStore {
     return { store: ProjectStore.create(project, Object.fromEntries(sources)), problems };
   }
 
+  /**
+   * Opens a project from saved updates. A damaged update is skipped, because the others are still
+   * worth having. Without a manifest there is nothing to open.
+   */
+  static fromUpdates(updates: readonly Uint8Array[]): { store?: ProjectStore; damaged: number } {
+    const doc = new Y.Doc();
+    const damaged = applyAll(doc, updates, LOAD);
+    if (!doc.getMap<unknown>(ROOT).has("manifest")) return { damaged };
+    return { store: new ProjectStore(doc), damaged };
+  }
+
   static create(project: Project, files: Readonly<Record<string, string>> = {}): ProjectStore {
     const doc = new Y.Doc();
     const root = doc.getMap<unknown>(ROOT);
@@ -166,6 +195,41 @@ export class ProjectStore {
       for (const [key, value] of Object.entries(state)) root.set(key, toYjs([key], value));
     }, LOAD);
     return new ProjectStore(doc);
+  }
+
+  /** The whole project as one update, to save it. */
+  encodeState(): Uint8Array {
+    return Y.encodeStateAsUpdate(this.doc);
+  }
+
+  /** Takes in changes that were made somewhere else. */
+  applyUpdates(updates: readonly Uint8Array[]): void {
+    applyAll(this.doc, updates, REMOTE);
+  }
+
+  /** Whether a change is waiting for an earlier one that has not arrived. */
+  get isMissingUpdates(): boolean {
+    const { pendingStructs, pendingDs } = this.doc.store;
+    return pendingStructs !== null || pendingDs !== null;
+  }
+
+  /**
+   * This project and the given updates as one update, to shorten a log. It goes through the open
+   * document rather than `mergeUpdates`, which does not notice damaged updates: they would end up
+   * inside the result and take the rest of the project with them.
+   */
+  mergeWith(updates: readonly Uint8Array[]): Uint8Array {
+    this.applyUpdates(updates);
+    return this.encodeState();
+  }
+
+  /** Calls back with every change made here, for saving and for sending to others. */
+  onLocalUpdate(listener: (update: Uint8Array) => void): () => void {
+    const onUpdate = (update: Uint8Array, origin: unknown) => {
+      if (origin !== REMOTE && origin !== LOAD) listener(update);
+    };
+    this.doc.on("update", onUpdate);
+    return () => this.doc.off("update", onUpdate);
   }
 
   subscribe = (listener: () => void): (() => void) => {

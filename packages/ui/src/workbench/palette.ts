@@ -84,7 +84,9 @@ export class CommandPalette {
       const index = this.#recent.indexOf(action.id);
       return index === -1 ? this.#recent.length : index;
     };
-    const candidates = this.#actions.list().filter((action) => action.palette !== false);
+    const candidates = this.#actions
+      .list()
+      .filter((action) => action.palette !== false && action.enabled?.() !== false);
 
     if (!query.trim()) {
       return candidates

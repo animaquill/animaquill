@@ -8,7 +8,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@animaquill/core": "workspace:*",
     "@animaquill/host": "workspace:*",
+    "@animaquill/schema": "workspace:*",
     "dockview-react": "8.8.3",
     "i18next": "26.7.1",
     "lucide-react": "1.69.0",

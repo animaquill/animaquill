@@ -8,6 +8,7 @@ export interface MenuItem {
   readonly run: () => void;
   readonly selected?: boolean;
   readonly shortcut?: string;
+  readonly disabled?: boolean;
 }
 
 interface MenuProps {
@@ -16,7 +17,7 @@ interface MenuProps {
 }
 
 const itemsIn = (root: HTMLElement | null) => [
-  ...(root?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? []),
+  ...(root?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? []),
 ];
 
 export function Menu({ label, groups }: MenuProps) {
@@ -88,6 +89,7 @@ export function Menu({ label, groups }: MenuProps) {
                   {...(item.selected === undefined ? {} : { "aria-checked": item.selected })}
                   {...(item.shortcut ? { "aria-keyshortcuts": item.shortcut } : {})}
                   tabIndex={-1}
+                  disabled={item.disabled === true}
                   onClick={() => {
                     item.run();
                     close();

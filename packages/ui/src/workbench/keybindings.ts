@@ -145,8 +145,10 @@ export class KeybindingService {
     const id = this.#owners.get(combo);
     if (!id) return;
     if (isTextEntry(event.target) && !worksWhileTyping(combo)) return;
+    const action = this.#actions.get(id);
+    if (action?.enabled?.() === false) return;
     event.preventDefault();
-    this.#actions.get(id)?.run();
+    action?.run();
   }
 
   #override(actionId: string, keys: readonly KeyCombo[]): void {

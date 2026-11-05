@@ -4,7 +4,14 @@ import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { COMMANDS } from "./commands.ts";
 import { orderedSections, orderedTracks } from "./model.ts";
-import { ProjectStore, USER, aiTask, type CommandResult, type ExecuteOptions } from "./store.ts";
+import {
+  ProjectStore,
+  USER,
+  aiTask,
+  mergeUpdates,
+  type CommandResult,
+  type ExecuteOptions,
+} from "./store.ts";
 
 const MAIN = "timelines/main/timeline.json";
 const AI = aiTask("task-1");
@@ -123,6 +130,120 @@ describe("files", () => {
     const doc = new Y.Doc();
     Y.applyUpdate(doc, Y.encodeStateAsUpdate(store.doc));
     expect(new ProjectStore(doc).exportFiles().files).toEqual(store.exportFiles().files);
+  });
+});
+
+describe("saved updates", () => {
+  it("bring a project back", () => {
+    const store = open();
+    success(moveClip(store, "1"));
+    const { store: loaded, damaged } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(damaged).toBe(0);
+    expect(loaded?.exportFiles().files).toEqual(store.exportFiles().files);
+  });
+
+  it("can be saved one change at a time and merged later", () => {
+    const store = open();
+    const saved = [store.encodeState()];
+    store.onLocalUpdate((update) => saved.push(update));
+    success(moveClip(store, "1"));
+    success(setProperty(store, "param.size", 80));
+    expect(saved).toHaveLength(3);
+    const { store: fromLog } = ProjectStore.fromUpdates(saved);
+    const { store: fromMerged } = ProjectStore.fromUpdates([mergeUpdates(saved)]);
+    expect(fromLog?.getState()).toEqual(store.getState());
+    expect(fromMerged?.getState()).toEqual(store.getState());
+  });
+
+  it("can arrive in any order", () => {
+    const store = open();
+    const saved = [store.encodeState()];
+    store.onLocalUpdate((update) => saved.push(update));
+    success(moveClip(store, "1"));
+    success(moveClip(store, "2"));
+    const { store: loaded } = ProjectStore.fromUpdates(saved.toReversed());
+    expect(clip(loaded as ProjectStore)?.start).toBe("2");
+  });
+
+  it("are skipped when damaged, and the rest still opens", () => {
+    const store = open();
+    const broken = new Uint8Array([255, 255, 255, 1, 2, 3]);
+    const { store: loaded, damaged } = ProjectStore.fromUpdates([broken, store.encodeState()]);
+    expect(damaged).toBe(1);
+    expect(loaded?.getState().manifest.name).toBe("原子是什么");
+  });
+
+  it("open nothing without a project in them", () => {
+    expect(ProjectStore.fromUpdates([]).store).toBeUndefined();
+    expect(ProjectStore.fromUpdates([new Uint8Array([9, 9])]).store).toBeUndefined();
+  });
+
+  it("do not save what came from somewhere else again", () => {
+    const a = open();
+    const b = twin(a);
+    const saved: Uint8Array[] = [];
+    b.onLocalUpdate((update) => saved.push(update));
+    const updates: Uint8Array[] = [];
+    a.onLocalUpdate((update) => updates.push(update));
+    success(moveClip(a, "1"));
+    b.applyUpdates(updates);
+    expect(clip(b)?.start).toBe("1");
+    expect(saved).toEqual([]);
+  });
+
+  it("notice when one went missing, and recover when it arrives", () => {
+    const a = open();
+    const b = twin(a);
+    const updates: Uint8Array[] = [];
+    a.onLocalUpdate((update) => updates.push(update));
+    success(moveClip(a, "1"));
+    success(moveClip(a, "2"));
+    expect(b.isMissingUpdates).toBe(false);
+    b.applyUpdates([updates[1] as Uint8Array]);
+    expect(b.isMissingUpdates).toBe(true);
+    expect(clip(b)?.start).toBe("0");
+    b.applyUpdates([updates[0] as Uint8Array]);
+    expect(b.isMissingUpdates).toBe(false);
+    expect(clip(b)?.start).toBe("2");
+  });
+
+  it("can be merged with damaged ones among them, which are left out", () => {
+    const store = open();
+    const saved = [store.encodeState()];
+    store.onLocalUpdate((update) => saved.push(update));
+    success(moveClip(store, "1"));
+    const merged = store.mergeWith([new Uint8Array([255, 255, 255, 1]), ...saved]);
+    const { store: loaded, damaged } = ProjectStore.fromUpdates([merged]);
+    expect(damaged).toBe(0);
+    expect(loaded?.getState()).toEqual(store.getState());
+  });
+
+  it("merge in what another window wrote", () => {
+    const a = open();
+    const b = twin(a);
+    const fromB: Uint8Array[] = [];
+    b.onLocalUpdate((update) => fromB.push(update));
+    success(moveClip(b, "7"));
+    const { store: loaded } = ProjectStore.fromUpdates([a.mergeWith(fromB)]);
+    expect(clip(loaded as ProjectStore)?.start).toBe("7");
+  });
+
+  it("stop being reported when asked", () => {
+    const store = open();
+    const saved: Uint8Array[] = [];
+    const stop = store.onLocalUpdate((update) => saved.push(update));
+    stop();
+    success(moveClip(store, "1"));
+    expect(saved).toEqual([]);
+  });
+
+  it("include undo, so that it survives too", () => {
+    const store = open();
+    const saved = [store.encodeState()];
+    store.onLocalUpdate((update) => saved.push(update));
+    success(moveClip(store, "1"));
+    store.undo();
+    expect(clip(ProjectStore.fromUpdates(saved).store as ProjectStore)?.start).toBe("0");
   });
 });
 

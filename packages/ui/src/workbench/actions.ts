@@ -24,6 +24,8 @@ export interface Action {
   readonly selected?: () => boolean;
   /** False for actions that make no sense from the command palette. */
   readonly palette?: false;
+  /** Whether it can run right now. Menus grey it out, the palette leaves it out. */
+  readonly enabled?: () => boolean;
 }
 
 export class ActionRegistry {

@@ -187,6 +187,28 @@ describe("saving", () => {
     expect(values.get("layout")).toEqual(saved("edit", { edit: "mine" }));
   });
 
+  it("keeps the arrangement when the dock goes away and comes back", async () => {
+    const { layout, dock, values } = setup();
+    await layout.load();
+    layout.attach(dock);
+    await dock.userChanges("mine");
+    await layout.detach();
+    expect(values.get("layout")).toEqual(saved("edit", { edit: "mine" }));
+    const next = new FakeDock();
+    layout.attach(next);
+    expect(next.state).toBe("mine");
+  });
+
+  it("ignores a dock that is gone", async () => {
+    const { layout, dock, settings } = setup();
+    await layout.load();
+    layout.attach(dock);
+    await layout.detach();
+    await dock.userChanges("too late");
+    await vi.runAllTimersAsync();
+    expect(settings.save).not.toHaveBeenCalled();
+  });
+
   it("has nothing to do when the page goes away with no change", async () => {
     const { layout, dock, settings } = setup();
     await layout.load();

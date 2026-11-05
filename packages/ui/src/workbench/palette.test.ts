@@ -71,6 +71,13 @@ describe("searching", () => {
     expect(entry?.positions).toEqual([]);
   });
 
+  it("leaves out what cannot run right now", async () => {
+    const { palette, actions } = await setup();
+    actions.register(action("edit.undo", "撤销", { enabled: () => false }));
+    expect(ids(palette, "")).not.toContain("edit.undo");
+    expect(ids(palette, "撤销")).toEqual([]);
+  });
+
   it("finds nothing when nothing matches", async () => {
     const { palette } = await setup();
     expect(ids(palette, "音频")).toEqual([]);
