@@ -1,0 +1,24 @@
+{
+  "name": "标题卡",
+  "description": "带编号的章节标题",
+  "entry": "index.html",
+  "runtime": 1,
+  "params": [
+    { "id": "title", "name": "标题", "type": "text" },
+    { "id": "size", "name": "字号", "type": "number", "default": 64, "min": 12, "max": 200 },
+    { "id": "accent", "name": "强调色", "type": "color", "default": "#ffc371" },
+    {
+      "id": "style",
+      "name": "样式",
+      "type": "choice",
+      "default": "plain",
+      "options": ["plain", "outlined"]
+    }
+  ],
+  "presets": [
+    {
+      "name": "大标题",
+      "values": { "size": 96, "style": "outlined" }
+    }
+  ]
+}

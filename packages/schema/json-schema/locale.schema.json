@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "strings": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/__schema0" },
+      "additionalProperties": { "$ref": "#/$defs/__schema1" }
+    }
+  },
+  "required": ["strings"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": { "type": "string", "minLength": 1 },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "base": { "type": "string" },
+        "note": { "type": "string" }
+      },
+      "required": ["text"],
+      "additionalProperties": false
+    }
+  }
+}

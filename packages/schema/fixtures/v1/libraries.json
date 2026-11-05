@@ -1,0 +1,18 @@
+{
+  "libraries": [
+    {
+      "id": "lib_7f3a",
+      "type": "assets",
+      "source": "https://github.com/example/brand-assets.git",
+      "track": "main",
+      "priority": 1
+    },
+    {
+      "id": "lib_91c0",
+      "type": "experience",
+      "source": "https://github.com/example/notes.git",
+      "track": "main",
+      "followLatest": true
+    }
+  ]
+}

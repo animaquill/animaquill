@@ -1,0 +1,23 @@
+{
+  "scope": { "language": "en" },
+  "sections": {
+    "section_body": {
+      "duration": { "value": "26", "base": "20" }
+    }
+  },
+  "clips": {
+    "clip_voice": {
+      "duration": { "value": "26", "base": "20" },
+      "source": {
+        "value": {
+          "kind": "audio",
+          "media": { "asset": "narration-en" }
+        },
+        "base": {
+          "kind": "audio",
+          "media": { "asset": "narration-zh" }
+        }
+      }
+    }
+  }
+}

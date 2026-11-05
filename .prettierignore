@@ -1,5 +1,7 @@
 *.md
 pnpm-lock.yaml
+packages/schema/fixtures
+packages/schema/json-schema
 dist
 test-results
 playwright-report

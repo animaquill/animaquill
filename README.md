@@ -21,6 +21,10 @@ pnpm check   # 类型检查、lint、格式和单元测试
 pnpm e2e     # 浏览器测试
 ```
 
+## 项目格式
+
+项目就是一个普通文件夹，可以放进 Git，也可以直接用工具读写。见[项目格式说明](docs/project-format.md)。
+
 ## 参与贡献
 
 见 [CONTRIBUTING.md](CONTRIBUTING.md)。

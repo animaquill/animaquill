@@ -1,0 +1,24 @@
+{
+  "scope": { "format": "vertical" },
+  "clips": {
+    "clip_interview": {
+      "properties": {
+        "crop.left": {
+          "value": {
+            "keys": [
+              { "time": "0", "value": 0.2 },
+              { "time": "5", "value": 0.3 }
+            ]
+          },
+          "base": 0.1
+        },
+        "fit": { "value": "contain", "base": "cover" }
+      }
+    },
+    "clip_title": {
+      "properties": {
+        "param.size": { "value": 48, "base": 64 }
+      }
+    }
+  }
+}

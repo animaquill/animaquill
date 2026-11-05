@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "libraries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          "type": { "type": "string", "enum": ["assets", "experience"] },
+          "source": { "type": "string", "pattern": "^https:\\/\\/\\S+$" },
+          "track": { "type": "string", "minLength": 1 },
+          "priority": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "followLatest": { "type": "boolean" }
+        },
+        "required": ["id", "type", "source", "track"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["libraries"],
+  "additionalProperties": false
+}

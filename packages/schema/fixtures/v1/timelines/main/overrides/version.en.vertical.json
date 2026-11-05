@@ -1,0 +1,15 @@
+{
+  "scope": { "language": "en", "format": "vertical" },
+  "clips": {
+    "clip_logo": {
+      "start": { "value": "16" },
+      "offset": { "value": "0.5" },
+      "hidden": { "value": true }
+    },
+    "clip_title": {
+      "properties": {
+        "param.size": { "value": 40, "base": 64 }
+      }
+    }
+  }
+}

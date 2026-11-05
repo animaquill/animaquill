@@ -1,0 +1,6 @@
+{
+  "strings": {
+    "intro.title": { "text": "What is an atom", "base": "原子是什么" },
+    "subtitle.one": { "text": "All matter is made of atoms", "base": "一切物质都由原子组成" }
+  }
+}

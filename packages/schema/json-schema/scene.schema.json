@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "entry": { "$ref": "#/$defs/__schema0" },
+    "runtime": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^[^\\s.]+$" },
+          "name": { "type": "string", "minLength": 1 },
+          "type": {
+            "type": "string",
+            "enum": ["text", "number", "color", "boolean", "choice", "asset"]
+          },
+          "default": { "$ref": "#/$defs/__schema1" },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "options": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["id", "name", "type"],
+        "additionalProperties": false
+      }
+    },
+    "presets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "values": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/__schema3" },
+            "additionalProperties": { "$ref": "#/$defs/__schema1" }
+          }
+        },
+        "required": ["name", "values"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["name", "entry", "runtime"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": { "type": "string", "minLength": 1 },
+    "__schema1": {
+      "anyOf": [
+        { "type": "number" },
+        { "type": "string" },
+        { "type": "boolean" },
+        {
+          "type": "array",
+          "items": { "type": "number" }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "string": { "type": "string", "minLength": 1 }
+          },
+          "required": ["string"],
+          "additionalProperties": false
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "asset": { "$ref": "#/$defs/__schema2" }
+              },
+              "required": ["asset"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "library": { "$ref": "#/$defs/__schema2" },
+                "path": { "$ref": "#/$defs/__schema0" }
+              },
+              "required": ["library", "path"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      ]
+    },
+    "__schema2": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "__schema3": { "type": "string" }
+  }
+}

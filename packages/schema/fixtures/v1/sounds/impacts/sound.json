@@ -1,0 +1,1 @@
+{ "name": "打击音效", "entry": "main.js", "runtime": 1, "outputs": ["hit", "whoosh"] }

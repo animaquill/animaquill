@@ -1,0 +1,24 @@
+{
+  "notes": [
+    {
+      "id": "note_1",
+      "status": "pending",
+      "text": "字再大一点，放到画面上方",
+      "timeline": "main",
+      "time": "1.5",
+      "language": "en",
+      "format": "vertical",
+      "targets": [
+        { "clip": "clip_title", "path": "param.size", "name": "标题文字" }
+      ],
+      "marks": [
+        { "type": "area", "x": 0.2, "y": 0.1, "width": 0.6, "height": 0.2 },
+        { "type": "arrow", "from": [0.5, 0.5], "to": [0.5, 0.2] }
+      ],
+      "changes": [
+        { "path": "param.size", "from": 64, "to": 96 }
+      ],
+      "createdAt": "2026-11-05T10:00:00.000Z"
+    }
+  ]
+}

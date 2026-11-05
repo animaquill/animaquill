@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "formatVersion": { "$ref": "#/$defs/__schema0" },
+    "id": { "$ref": "#/$defs/__schema1" },
+    "name": { "$ref": "#/$defs/__schema2" },
+    "description": { "$ref": "#/$defs/__schema3" },
+    "languages": { "$ref": "#/$defs/__schema4" },
+    "formats": { "$ref": "#/$defs/__schema6" },
+    "timelines": { "$ref": "#/$defs/__schema8" },
+    "fonts": { "$ref": "#/$defs/__schema9" },
+    "tags": { "$ref": "#/$defs/__schema10" },
+    "cover": { "$ref": "#/$defs/__schema11" },
+    "credits": { "$ref": "#/$defs/__schema12" }
+  },
+  "required": ["formatVersion", "id", "name", "languages", "formats", "timelines"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+    "__schema1": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "__schema2": { "type": "string", "minLength": 1 },
+    "__schema3": { "type": "string" },
+    "__schema4": {
+      "minItems": 1,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema5" }
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "font": { "type": "string" }
+      },
+      "required": ["id", "name"],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "minItems": 1,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema7" }
+    },
+    "__schema7": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/__schema1" },
+        "name": { "type": "string", "minLength": 1 },
+        "width": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+        "height": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+        "fps": { "type": "string", "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$" },
+        "safeArea": {
+          "type": "object",
+          "properties": {
+            "top": { "type": "number", "minimum": 0, "maximum": 1 },
+            "right": { "type": "number", "minimum": 0, "maximum": 1 },
+            "bottom": { "type": "number", "minimum": 0, "maximum": 1 },
+            "left": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "required": ["top", "right", "bottom", "left"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["id", "name", "width", "height", "fps"],
+      "additionalProperties": false
+    },
+    "__schema8": {
+      "minItems": 1,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema1" }
+    },
+    "__schema9": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": { "type": "string", "minLength": 1 },
+          "asset": { "$ref": "#/$defs/__schema1" },
+          "weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "style": { "type": "string", "enum": ["normal", "italic"] }
+        },
+        "required": ["family", "asset"],
+        "additionalProperties": false
+      }
+    },
+    "__schema10": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "color": { "type": "string", "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$" },
+          "locked": { "type": "boolean" }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    },
+    "__schema11": {
+      "type": "object",
+      "properties": {
+        "timeline": { "$ref": "#/$defs/__schema1" },
+        "time": { "type": "string", "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$" }
+      },
+      "required": ["timeline", "time"],
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": { "type": "string" },
+          "name": { "type": "string" }
+        },
+        "required": ["role", "name"],
+        "additionalProperties": false
+      }
+    }
+  }
+}

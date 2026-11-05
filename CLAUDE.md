@@ -23,3 +23,12 @@
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
 - 界面文字都放在 `packages/ui/src/i18n`，不写在组件里。
 - 改动项目的操作走命令系统。界面上的操作是动作，两者不要混用。
+
+## 项目格式
+
+项目格式是公开的，用户的作品都存在里面，说明在 [docs/project-format.md](docs/project-format.md)。
+
+- 任何格式改动都要提高 `CURRENT_FORMAT_VERSION`，加一条迁移，再加一份 `fixtures/v<版本>`。
+- `fixtures/` 里已有的版本永远不改，它们保证旧项目还能打开。
+- 改完运行 `pnpm --filter @animaquill/schema export-schema`，更新公开的 JSON Schema。
+- 项目内容是不可信的。ID 和路径字段都要防止指向项目之外。

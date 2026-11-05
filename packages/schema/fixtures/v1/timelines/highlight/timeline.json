@@ -1,0 +1,21 @@
+{
+  "name": "60 秒精华",
+  "sections": [
+    { "id": "section_all", "duration": "8" }
+  ],
+  "tracks": [
+    {
+      "id": "track_v",
+      "kind": "video",
+      "clips": [
+        {
+          "id": "clip_nested",
+          "start": "0",
+          "duration": "8",
+          "source": { "kind": "timeline", "timeline": "main" },
+          "offset": "2"
+        }
+      ]
+    }
+  ]
+}

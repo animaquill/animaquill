@@ -1,0 +1,39 @@
+{
+  "assets": {
+    "font-sans": {
+      "kind": "font",
+      "path": "assets/fonts/sans.woff2",
+      "storage": "git",
+      "license": "OFL-1.1"
+    },
+    "interview": {
+      "name": "采访",
+      "kind": "video",
+      "path": "assets/interview.mp4",
+      "storage": "lfs",
+      "hash": "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=",
+      "size": 48211200,
+      "info": { "duration": "12.5", "width": 1920, "height": 1080, "fps": "30000/1001" }
+    },
+    "logo": { "kind": "image", "path": "assets/logo.svg", "storage": "git", "credit": "示例作者" },
+    "narration-en": {
+      "kind": "audio",
+      "path": "assets/voice/en.flac",
+      "storage": "lfs",
+      "info": { "duration": "26", "sampleRate": 48000, "channels": 1 }
+    },
+    "narration-zh": {
+      "kind": "audio",
+      "path": "assets/voice/zh.flac",
+      "storage": "lfs",
+      "info": { "duration": "20", "sampleRate": 48000, "channels": 1 }
+    },
+    "raw-footage": { "kind": "video", "path": "assets/raw.mov", "storage": "local" },
+    "studio-loop": {
+      "kind": "audio",
+      "path": "assets/loop.wav",
+      "storage": "remote",
+      "url": "https://storage.example.com/loop.wav"
+    }
+  }
+}

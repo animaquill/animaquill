@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "entry": { "$ref": "#/$defs/__schema0" },
+    "runtime": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^[^\\s.]+$" },
+          "name": { "type": "string", "minLength": 1 },
+          "type": {
+            "type": "string",
+            "enum": ["text", "number", "color", "boolean", "choice", "asset"]
+          },
+          "default": {
+            "anyOf": [
+              { "type": "number" },
+              { "type": "string" },
+              { "type": "boolean" },
+              {
+                "type": "array",
+                "items": { "type": "number" }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "string": { "type": "string", "minLength": 1 }
+                },
+                "required": ["string"],
+                "additionalProperties": false
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "asset": { "$ref": "#/$defs/__schema1" }
+                    },
+                    "required": ["asset"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "library": { "$ref": "#/$defs/__schema1" },
+                      "path": { "$ref": "#/$defs/__schema0" }
+                    },
+                    "required": ["library", "path"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            ]
+          },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "options": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["id", "name", "type"],
+        "additionalProperties": false
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "required": ["name", "entry", "runtime"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": { "type": "string", "minLength": 1 },
+    "__schema1": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" }
+  }
+}

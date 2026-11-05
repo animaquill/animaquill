@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "id": "atoms-demo",
+  "name": "原子是什么",
+  "description": "一条用到格式每种能力的示例项目。",
+  "languages": [
+    { "id": "zh-CN", "name": "中文", "font": "思源黑体" },
+    { "id": "en", "name": "English" }
+  ],
+  "formats": [
+    { "id": "landscape", "name": "YouTube 横屏", "width": 1920, "height": 1080, "fps": "30" },
+    {
+      "id": "vertical",
+      "name": "抖音竖屏",
+      "width": 1080,
+      "height": 1920,
+      "fps": "30000/1001",
+      "safeArea": { "top": 0.1, "right": 0.15, "bottom": 0.2, "left": 0 }
+    }
+  ],
+  "timelines": ["main", "highlight"],
+  "fonts": [
+    { "family": "思源黑体", "asset": "font-sans", "weight": 700 }
+  ],
+  "tags": [
+    { "name": "已发布", "color": "#2ea043", "locked": true }
+  ],
+  "cover": { "timeline": "main", "time": "2.5" },
+  "credits": [
+    { "role": "音乐", "name": "示例作者" }
+  ]
+}
