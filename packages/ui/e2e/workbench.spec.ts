@@ -29,13 +29,18 @@ async function waitForSave(page: Page, before: string) {
   await expect.poll(() => savedLayout(page)).not.toBe(before);
 }
 
-/** Drags a tab to a point of the window with real mouse events. */
+/** Presses at one point and moves to another with real mouse events, without letting go. */
+async function pressAndMove(page: Page, fromX: number, fromY: number, x: number, y: number) {
+  await page.mouse.move(fromX, fromY);
+  await page.mouse.down();
+  await page.mouse.move(fromX + 8, fromY + 8, { steps: 3 });
+  await page.mouse.move(x, y, { steps: 10 });
+}
+
+/** Drags a tab to a point of the window. */
 async function dragTab(page: Page, type: string, x: number, y: number) {
   const from = await box(tab(page, type));
-  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 8, { steps: 3 });
-  await page.mouse.move(x, y, { steps: 10 });
+  await pressAndMove(page, from.x + from.width / 2, from.y + from.height / 2, x, y);
   await page.mouse.up();
 }
 
@@ -72,6 +77,42 @@ test("a tab can be dragged into another group", async ({ page }) => {
   await dragTab(page, "properties", target.x + target.width / 2, target.y + target.height / 2);
   await expect(group(page, "timeline").locator('[data-tab="properties"]')).toBeVisible();
   await expect(group(page, "chat").locator('[data-tab="properties"]')).toHaveCount(0);
+});
+
+test("only a tab starts a drag, not the empty part of the tab strip", async ({ page }) => {
+  const timeline = group(page, "timeline");
+  const before = await box(timeline);
+  const strip = await box(timeline.locator(".dv-void-container"));
+  const target = await box(group(page, "preview"));
+  await expect(timeline.locator(".dv-void-container")).toHaveCSS("cursor", "default");
+
+  await pressAndMove(
+    page,
+    strip.x + strip.width / 2,
+    strip.y + strip.height / 2,
+    target.x + target.width - 12,
+    target.y + target.height / 2,
+  );
+  await page.waitForTimeout(150);
+  await expect(page.locator(".dv-drop-target-selection, .dv-drop-target-anchor")).toHaveCount(0);
+  await page.mouse.up();
+
+  await page.waitForTimeout(150);
+  expect(await box(timeline)).toEqual(before);
+  expect(await page.evaluate(() => getSelection()?.toString())).toBe("");
+});
+
+test("the empty part of the tab strip still focuses the group and takes tabs", async ({ page }) => {
+  const timeline = group(page, "timeline");
+  const strip = await box(timeline.locator(".dv-void-container"));
+  const x = strip.x + strip.width / 2;
+  const y = strip.y + strip.height / 2;
+
+  await page.mouse.click(x, y);
+  await expect(timeline).toHaveClass(/dv-active-group/);
+
+  await dragTab(page, "properties", x, y);
+  await expect(timeline.locator('[data-tab="properties"]')).toBeVisible();
 });
 
 test("a tab dropped on the edge of a group makes a new group", async ({ page }) => {

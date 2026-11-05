@@ -31,6 +31,9 @@ function assertUsable(state: unknown): asserts state is SerializedDockview {
 
 /** Connects the workbench to dockview. Nothing outside this folder uses dockview's model. */
 export function createDock(api: DockviewApi, panels: PanelRegistry, t: TFunction): Dock {
+  // Only tabs can be dragged. Dockview would also move a whole group by the rest of its tab strip.
+  api.onWillDragGroup((event) => event.nativeEvent.preventDefault());
+
   const facts = {
     title: (type: string) => panels.get(type)?.title(t) ?? t("panel.unknown.title"),
     keepAlive: (type: string) => panels.get(type)?.keepAlive === true,
