@@ -1,0 +1,25 @@
+.bar {
+  display: flex;
+  flex-direction: column;
+  background: var(--aq-bg-chrome);
+  border-right: 1px solid var(--aq-border);
+}
+
+.bar button {
+  display: grid;
+  place-items: center;
+  height: 48px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.bar button:hover {
+  color: var(--aq-text-strong);
+}
+
+.bar button[aria-pressed="true"] {
+  color: var(--aq-text-strong);
+  box-shadow: inset 2px 0 0 var(--aq-accent);
+}

@@ -1,0 +1,42 @@
+:root {
+  color-scheme: dark;
+
+  --aq-font:
+    "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    system-ui, sans-serif;
+
+  --aq-bg-chrome: #181818;
+  --aq-bg-panel: #1f1f1f;
+  --aq-bg-hover: #ffffff1a;
+  --aq-bg-menu: #1f1f1f;
+  --aq-border: #2b2b2b;
+  --aq-text: #cccccc;
+  --aq-text-strong: #ffffff;
+  --aq-text-muted: #9d9d9d;
+  --aq-accent: #0078d4;
+  --aq-on-accent: #ffffff;
+  --aq-shadow: 0 2px 8px #0000008c;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  color: var(--aq-text);
+  font: 13px/1.4 var(--aq-font);
+  background: var(--aq-bg-chrome);
+}
+
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 1px solid var(--aq-accent);
+  outline-offset: -1px;
+}

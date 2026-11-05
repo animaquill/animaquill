@@ -1,0 +1,35 @@
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 6px 0 10px;
+}
+
+.title {
+  white-space: nowrap;
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.close:hover {
+  background: var(--aq-bg-hover);
+}
+
+.close:focus-visible,
+.tab:hover .close,
+:global(.dv-active-tab) .close {
+  visibility: visible;
+}

@@ -1,0 +1,65 @@
+.root {
+  position: relative;
+}
+
+.trigger {
+  padding: 2px 8px;
+  color: var(--aq-text);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  background: var(--aq-bg-hover);
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max-content;
+  min-width: 220px;
+  max-height: calc(100vh - 80px);
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 12px 3px 4px;
+  color: var(--aq-text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  outline: 0;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+}
+
+.separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--aq-border);
+}

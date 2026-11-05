@@ -1,0 +1,52 @@
+.shell {
+  display: grid;
+  grid-template-rows: 35px minmax(0, 1fr) 22px;
+  height: 100%;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.dock {
+  min-width: 0;
+  min-height: 0;
+}
+
+.crashed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+}
+
+.crashed h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.crashed p {
+  margin: 0 0 8px;
+  color: var(--aq-text-muted);
+}
+
+.crashed div {
+  display: flex;
+  gap: 8px;
+}
+
+.crashed button {
+  padding: 6px 14px;
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}

@@ -11,6 +11,8 @@ dist/
 build/
 out/
 coverage/
+test-results/
+playwright-report/
 .cache/
 .turbo/
 __pycache__/

@@ -8,7 +8,18 @@ An AI-first video editor for CSS, 2D and 3D animation.
 
 ## 当前状态
 
-设计阶段，还没有可用版本。
+开发中，还没有可用版本。
+
+## 开发
+
+需要 Node.js 26 和 pnpm。
+
+```bash
+pnpm install
+pnpm dev     # 在浏览器里运行编辑器
+pnpm check   # 类型检查、lint、格式和单元测试
+pnpm e2e     # 浏览器测试
+```
 
 ## 参与贡献
 

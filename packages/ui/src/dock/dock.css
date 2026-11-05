@@ -1,0 +1,28 @@
+/* Dockview's dark theme, in the colors of the rest of the editor. */
+:root .dockview-theme-dark {
+  --dv-group-view-background-color: var(--aq-bg-panel);
+  --dv-tabs-and-actions-container-background-color: var(--aq-bg-chrome);
+  --dv-tabs-and-actions-container-font-size: 13px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--aq-bg-panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--aq-bg-chrome);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--aq-bg-panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--aq-bg-chrome);
+  --dv-activegroup-visiblepanel-tab-color: var(--aq-text-strong);
+  --dv-activegroup-hiddenpanel-tab-color: var(--aq-text-muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--aq-text);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--aq-text-muted);
+  --dv-tab-divider-color: var(--aq-border);
+  --dv-separator-border: var(--aq-border);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--aq-accent);
+  --dv-active-sash-transition-delay: 0.1s;
+  --dv-drag-over-background-color: color-mix(in srgb, var(--aq-accent) 25%, transparent);
+  --dv-drag-over-border-color: var(--aq-accent);
+  --dv-icon-hover-background-color: var(--aq-bg-hover);
+  --dv-dropdown-border-radius: 6px;
+}
+
+/* The accent line shows which group has the focus. */
+.dv-groupview.dv-active-group .dv-tab.dv-active-tab {
+  box-shadow: inset 0 1px 0 var(--aq-accent);
+}

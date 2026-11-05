@@ -1,0 +1,68 @@
+{
+  "app": {
+    "noProject": "未打开项目",
+    "crashed": "编辑器遇到了问题",
+    "crashedHint": "可以重新加载。如果还是这样，先恢复默认布局。",
+    "reload": "重新加载",
+    "resetAndReload": "恢复默认布局并重新加载"
+  },
+  "menu": {
+    "view": "视图"
+  },
+  "view": {
+    "resetLayout": "恢复当前工作区的默认布局"
+  },
+  "workspace": {
+    "label": "工作区",
+    "edit": "剪辑",
+    "animate": "动画",
+    "audio": "音频",
+    "ai": "AI"
+  },
+  "activity": {
+    "label": "常用选项卡"
+  },
+  "tab": {
+    "close": "关闭",
+    "closeOthers": "关闭其他",
+    "closeRight": "关闭右侧",
+    "closeAll": "全部关闭"
+  },
+  "dock": {
+    "empty": "所有选项卡都关闭了",
+    "emptyHint": "可以从“视图”菜单打开需要的选项卡，也可以恢复这个工作区的默认布局。",
+    "restore": "恢复默认布局"
+  },
+  "notice": {
+    "dismiss": "关闭",
+    "layoutRestoreFailed": "上次的布局无法恢复，已换成默认布局。",
+    "layoutSaveFailed": "布局无法保存到这个浏览器，关闭页面后会回到默认布局。"
+  },
+  "panel": {
+    "crashed": "这个选项卡出错了，其他选项卡不受影响。",
+    "retry": "重试",
+    "unknown": {
+      "title": "不可用",
+      "hint": "这个选项卡在当前版本里不存在，可以关闭它。"
+    },
+    "files": { "title": "文件", "hint": "项目里的场景、时间轴和素材文件。" },
+    "assets": { "title": "素材库", "hint": "项目关联的素材，可以浏览、搜索和拖到时间轴。" },
+    "notes": { "title": "经验库", "hint": "项目关联的经验，AI 工作时会参考。" },
+    "history": { "title": "历史记录", "hint": "项目的存档，可以查看和回到任何一个。" },
+    "preview": { "title": "预览", "hint": "画面在这里播放。" },
+    "code": { "title": "代码", "hint": "场景的 HTML、CSS 和 JavaScript。" },
+    "versions": { "title": "版本矩阵", "hint": "一个项目的所有语言和画幅。" },
+    "properties": { "title": "属性", "hint": "选中对象的属性和动画。" },
+    "chat": { "title": "聊天", "hint": "和 AI 工具对话。" },
+    "annotations": { "title": "批注", "hint": "在画面上标出要改的地方，发给 AI。" },
+    "timeline": { "title": "时间轴", "hint": "片段、轨道和播放头。" },
+    "keyframes": { "title": "关键帧", "hint": "关键帧和动画曲线。" },
+    "music": { "title": "音乐", "hint": "编写音乐和合成音效。" },
+    "recording": { "title": "录音", "hint": "看着画面录旁白。" },
+    "differences": { "title": "差异列表", "hint": "每个版本和主版本的不同之处。" },
+    "problems": { "title": "问题", "hint": "项目里需要处理的问题。" },
+    "terminal": { "title": "终端", "hint": "AI 工具的命令行。" },
+    "cache": { "title": "缓存", "hint": "预览用的素材和占用的空间。" },
+    "performance": { "title": "性能", "hint": "哪个场景拖慢了画面。" }
+  }
+}

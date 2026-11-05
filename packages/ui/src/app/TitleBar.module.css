@@ -1,0 +1,51 @@
+.bar {
+  position: relative;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--aq-bg-chrome);
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.brand svg {
+  color: var(--aq-accent);
+}
+
+.workspaces {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  gap: 2px;
+  transform: translateX(-50%);
+}
+
+.workspaces button {
+  padding: 2px 12px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.workspaces button:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}
+
+.workspaces button[aria-pressed="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+  box-shadow: inset 0 -1px 0 var(--aq-accent);
+}
