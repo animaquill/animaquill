@@ -63,7 +63,7 @@ function panelOf(target: EventTarget | null): string | undefined {
 
 function isInMenu(target: EventTarget | null): boolean {
   const element = target as Partial<Element> | null;
-  return element?.closest?.('[role="menu"]') != null;
+  return element?.closest?.('[role="menu"], [role="dialog"]') != null;
 }
 
 const sameKeys = (a: readonly KeyCombo[], b: readonly KeyCombo[]) =>

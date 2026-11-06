@@ -1,6 +1,13 @@
 import { formatTime } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import { formatTimecode, frameAt, frameRate, frameSeconds, frameTime } from "./frames.ts";
+import {
+  formatTimecode,
+  frameAt,
+  frameRate,
+  frameSeconds,
+  frameTime,
+  parseTimecode,
+} from "./frames.ts";
 
 describe("frames", () => {
   it("rounds to the nearest frame", () => {
@@ -36,5 +43,27 @@ describe("timecode", () => {
     [30, "30000/1001", "00:00:01:00"],
   ])("frame %i at %s is %s", (frame, fps, text) => {
     expect(formatTimecode(frame, frameRate(fps))).toBe(text);
+  });
+});
+
+describe("typing a time", () => {
+  it.each([
+    ["00:00:01:15", 45],
+    ["1:15", 45],
+    ["01:00:00:00", 108_000],
+    ["5", 150],
+    ["2.5", 75],
+    [" 3 ", 90],
+  ])("%s is frame %i", (text, frame) => {
+    expect(parseTimecode(text, frameRate("30"))).toBe(frame);
+  });
+
+  it.each(["", "abc", "1:2:3:4:5", "1:", "-1"])("%s is no time", (text) => {
+    expect(parseTimecode(text, frameRate("30"))).toBeUndefined();
+  });
+
+  it("reads back what it writes", () => {
+    const rate = frameRate("30000/1001");
+    expect(parseTimecode(formatTimecode(1234, rate), rate)).toBe(1234);
   });
 });

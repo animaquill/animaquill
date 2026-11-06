@@ -1,0 +1,101 @@
+.item {
+  padding: 0 6px;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.item:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.form {
+  display: grid;
+  gap: 6px;
+  width: 240px;
+}
+
+.form label,
+.custom label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.form input,
+.custom input {
+  width: 120px;
+  padding: 2px 6px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rates {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  width: 260px;
+}
+
+.rate {
+  padding: 3px 0;
+  color: var(--aq-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.rate:hover {
+  background: var(--aq-bg-hover);
+}
+
+.rate[aria-checked="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.apply {
+  justify-self: end;
+  padding: 2px 10px;
+  color: var(--aq-on-accent);
+  font: inherit;
+  white-space: nowrap;
+  background: var(--aq-accent);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.hint,
+.invalid {
+  max-width: 260px;
+  margin: 0;
+}
+
+.hint {
+  color: var(--aq-text-muted);
+}
+
+.invalid {
+  color: var(--aq-warning);
+}

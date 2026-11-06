@@ -1,0 +1,71 @@
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import styles from "./Bubble.module.css";
+
+const GAP = 8;
+const MARGIN = 6;
+
+interface BubbleProps {
+  /** The status bar item it belongs to. */
+  readonly anchor: DOMRect;
+  readonly title: string;
+  readonly onClose: () => void;
+  readonly children: ReactNode;
+}
+
+/**
+ * A small window that points at what opened it, as the items of the status bar in VS Code have. It
+ * goes away with Escape or a click elsewhere, and the focus goes back to where it was.
+ */
+export function Bubble({ anchor, title, onClose, children }: BubbleProps) {
+  const root = useRef<HTMLDivElement>(null);
+  const closing = useRef(onClose);
+
+  useLayoutEffect(() => {
+    closing.current = onClose;
+  });
+
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const { width } = element.getBoundingClientRect();
+    const middle = anchor.left + anchor.width / 2;
+    const left = Math.min(Math.max(middle - width / 2, MARGIN), innerWidth - width - MARGIN);
+    element.style.left = `${left}px`;
+    element.style.bottom = `${innerHeight - anchor.top + GAP}px`;
+    element.style.setProperty("--arrow", `${middle - left}px`);
+  }, [anchor]);
+
+  useEffect(() => {
+    const opener = document.activeElement;
+    const first = root.current?.querySelector<HTMLElement>(
+      "[data-autofocus], input, button:not(:disabled)",
+    );
+    first?.focus();
+    if (first instanceof HTMLInputElement) first.select();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) closing.current();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      if (opener instanceof HTMLElement) opener.focus({ preventScroll: true });
+    };
+  }, []);
+
+  return createPortal(
+    <div
+      ref={root}
+      className={styles.bubble}
+      role="dialog"
+      aria-label={title}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") closing.current();
+      }}
+    >
+      <h3 className={styles.title}>{title}</h3>
+      {children}
+    </div>,
+    document.body,
+  );
+}

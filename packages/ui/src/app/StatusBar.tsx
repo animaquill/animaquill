@@ -2,25 +2,21 @@ import { CircleAlert } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
-import { useLayout, useProject, useSession, useWorkbench } from "./context.ts";
-import { PopupMenu } from "./Menu.tsx";
+import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
+import { useProject, useSession, useWorkbench } from "./context.ts";
+import { Bubble } from "./Bubble.tsx";
 import styles from "./StatusBar.module.css";
 import { Tip } from "./Tip.tsx";
 
-const CHOICES = ["mouse", "trackpad", "touch"] as const;
+const CHOICES = ["auto", "mouse", "trackpad", "touch"] as const;
 
-/** Shows what the editor takes the input for, and lets people put it right, as VS Code does. */
+/** Shows what the editor takes the input for, and lets people put it right. */
 function InputSwitch() {
   const { input } = useWorkbench();
   const { t } = useTranslation();
   const { choice, device } = useSyncExternalStore(input.subscribe, input.getSnapshot);
-  const [place, setPlace] = useState<{ x: number; y: number }>();
-  const item = (id: InputChoice, label: string) => ({
-    id,
-    label,
-    selected: choice === id,
-    run: () => input.choose(id),
-  });
+  const [anchor, setAnchor] = useState<DOMRect>();
+  const close = () => setAnchor(undefined);
 
   return (
     <>
@@ -28,26 +24,39 @@ function InputSwitch() {
         <button
           type="button"
           className={styles.name}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           aria-label={`${t("input.label")}：${t(`input.${device}`)}`}
-          onClick={(event) => {
-            const { left, top } = event.currentTarget.getBoundingClientRect();
-            setPlace({ x: left, y: top });
-          }}
+          onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
         >
           {t(`input.${device}`)}
         </button>
       </Tip>
-      {place && (
-        <PopupMenu
-          {...place}
-          label={t("input.label")}
-          groups={[
-            [item("auto", t("input.autoNow", { device: t(`input.${device}`) }))],
-            CHOICES.map((id) => item(id, t(`input.${id}`))),
-          ]}
-          onClose={() => setPlace(undefined)}
-        />
+      {anchor && (
+        <Bubble anchor={anchor} title={t("input.label")} onClose={close}>
+          <div className={styles.choices} role="radiogroup" aria-label={t("input.label")}>
+            {CHOICES.map((id: InputChoice) => (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                className={styles.choice}
+                aria-checked={choice === id}
+                {...(choice === id ? { "data-autofocus": true } : {})}
+                onClick={() => {
+                  input.choose(id);
+                  close();
+                }}
+              >
+                <strong>
+                  {id === "auto"
+                    ? t("input.autoNow", { device: t(`input.${device}`) })
+                    : t(`input.${id}`)}
+                </strong>
+                <span>{t(`input.about.${id}`)}</span>
+              </button>
+            ))}
+          </div>
+        </Bubble>
       )}
     </>
   );
@@ -55,11 +64,9 @@ function InputSwitch() {
 
 export function StatusBar() {
   const workbench = useWorkbench();
-  const { workspace } = useLayout();
   const { store, save } = useSession();
   const project = useProject(store);
   const { t } = useTranslation();
-  const current = workbench.layout.workspaces.find((item) => item.id === workspace);
 
   const saveText = {
     saved: t("project.saved"),
@@ -86,10 +93,10 @@ export function StatusBar() {
           {saveText}
         </span>
       )}
+      {project && <TimeStatus />}
+      {project && <FrameRateStatus />}
       <span className={styles.spacer} />
-      {project && current && <span>{current.title(t)}</span>}
       <InputSwitch />
-      <span>{workbench.version}</span>
     </footer>
   );
 }

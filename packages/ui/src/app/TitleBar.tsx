@@ -6,7 +6,7 @@ import { useLayout, useProject, useSession, useWorkbench } from "./context.ts";
 import { Menu } from "./Menu.tsx";
 import styles from "./TitleBar.module.css";
 
-const MENUS = ["file", "edit", "view", "timeline"] as const;
+const MENUS = ["file", "edit", "view", "timeline", "help"] as const;
 
 export function TitleBar() {
   const workbench = useWorkbench();
@@ -48,6 +48,7 @@ export function TitleBar() {
       <div className={styles.brand}>
         <Feather size={16} />
         <span>AnimaQuill</span>
+        <small className={styles.version}>{workbench.version}</small>
       </div>
       {MENUS.map((menu) => (
         <Menu key={menu} label={t(`menu.${menu}`)} groups={menuOf(menu)} />

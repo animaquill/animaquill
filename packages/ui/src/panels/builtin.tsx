@@ -25,6 +25,7 @@ import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
+import { PreviewPanel } from "./PreviewPanel.tsx";
 import styles from "./Placeholder.module.css";
 
 type Type = {
@@ -35,7 +36,7 @@ type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 
 /** A panel whose real content comes in a later stage. */
 function planned(
-  type: Exclude<Type, "unknown" | "keybindings" | "timeline">,
+  type: Exclude<Type, "unknown" | "keybindings" | "timeline" | "preview">,
   area: PanelArea,
   icon: PanelDefinition["icon"],
   extra: Extra = {},
@@ -66,7 +67,14 @@ export const builtinPanels: readonly PanelDefinition[] = [
   planned("assets", "left", Images, { activity: true }),
   planned("notes", "left", BookOpen, { activity: true }),
   planned("history", "left", History, { activity: true }),
-  planned("preview", "center", MonitorPlay, { keepAlive: true }),
+  {
+    type: "preview",
+    title: (t) => t("panel.preview.title"),
+    icon: MonitorPlay,
+    area: "center",
+    component: PreviewPanel,
+    keepAlive: true,
+  },
   planned("code", "center", CodeXml, { keepAlive: true }),
   planned("music", "center", Music),
   planned("recording", "center", Mic),

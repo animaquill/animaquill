@@ -1,0 +1,40 @@
+.bubble {
+  --arrow: 50%;
+
+  position: fixed;
+  left: 0;
+  z-index: 100;
+  display: grid;
+  gap: 8px;
+  width: max-content;
+  max-width: 320px;
+  padding: 10px 12px;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+/* A square turned on its corner, half of it hidden behind the window. */
+.bubble::after {
+  position: absolute;
+  bottom: -5px;
+  left: var(--arrow);
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--aq-bg-menu);
+  border-right: 1px solid var(--aq-border);
+  border-bottom: 1px solid var(--aq-border);
+  transform: rotate(45deg);
+  content: "";
+}
+
+.title {
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}

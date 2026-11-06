@@ -357,10 +357,7 @@ export class TimelineEditor {
     this.#width = width;
     this.#height = height;
     // The panel went behind another tab or away. The mouse will not come back from there.
-    if (width === 0) {
-      this.#cancelGesture();
-      this.pause();
-    }
+    if (width === 0) this.#cancelGesture();
     if (this.#pixelsPerSecond === 0 && width > 0) this.#fit();
     this.#clampScroll();
     this.#viewChanged();
@@ -895,6 +892,22 @@ export class TimelineEditor {
       return [{ type: "clip.split", params: { timeline: model.id, clip: box.id, at } }];
     });
     if (calls.length > 0) this.#run(calls);
+  }
+
+  /** Sets the end of the timeline, which cannot go in front of what is on it. */
+  setEnd(frame: number): void {
+    const { model } = this;
+    const last = model && orderedSections(model.state).at(-1);
+    if (!model || !last) return;
+    const start = subtract(timelineLength(model.state), parseTime(last.duration));
+    let end = frameTime(frame, model.rate);
+    const floor = [add(start, frameTime(1, model.rate))];
+    for (const { clip } of model.boxes.values()) floor.push(clipEnd(clip));
+    for (const limit of floor) if (compare(limit, end) > 0) end = limit;
+    const duration = formatTime(subtract(end, start));
+    if (duration === last.duration) return;
+    const params = { timeline: model.id, section: last.id, duration };
+    this.#run([{ type: "section.update", params }]);
   }
 
   /** Tracks of a kind that can change places, top to bottom. */

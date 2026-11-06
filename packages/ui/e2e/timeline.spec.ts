@@ -3,7 +3,8 @@ import { content, expect, tab, test } from "./support.ts";
 
 const panel = (page: Page) => content(page, "timeline");
 const clips = (page: Page) => panel(page).getByRole("option");
-const timecode = (page: Page) => panel(page).getByRole("status");
+const timecode = (page: Page) =>
+  page.getByRole("contentinfo").getByRole("status", { name: "播放头" });
 const playhead = (page: Page) => panel(page).getByRole("slider", { name: "播放头" });
 const addColorButton = (page: Page) => panel(page).getByRole("button", { name: "纯色片段" });
 const stage = (page: Page) => panel(page).getByRole("group", { name: "时间轴" });
@@ -957,12 +958,48 @@ test.describe("explaining itself", () => {
   });
 });
 
-test.describe("the frame rate of the project", () => {
-  test("is what the ruler counts, and formats keep theirs", async ({ page }) => {
-    await panel(page).getByRole("button", { name: "项目帧率" }).click();
-    await page.getByRole("textbox").fill("24");
-    await page.keyboard.press("Enter");
-    await expect(panel(page).getByRole("button", { name: "项目帧率" })).toHaveText("24 帧");
+test.describe("the preview", () => {
+  const preview = (page: Page) => content(page, "preview");
+
+  test("plays, pauses and steps through frames", async ({ page }) => {
+    await preview(page).getByRole("button", { name: "下一帧" }).click();
+    await expect(timecode(page)).toHaveText("00:00:00:01");
+    await preview(page).getByRole("button", { name: "上一帧" }).click();
+    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await preview(page).getByRole("button", { name: "播放" }).click();
+    await expect(timecode(page)).not.toHaveText("00:00:00:00");
+    await preview(page).getByRole("button", { name: "暂停" }).click();
+    const stopped = await timecode(page).textContent();
+    await page.waitForTimeout(200);
+    await expect(timecode(page)).toHaveText(stopped ?? "");
+    await expect(preview(page).getByText("/ 00:00:10:00")).toBeVisible();
+  });
+
+  test("Space plays from the timeline, and goes on with the timeline tab hidden", async ({
+    page,
+  }) => {
+    await stage(page).focus();
+    await page.keyboard.press("Space");
+    await tab(page, "problems").click();
+    await expect(timecode(page)).not.toHaveText("00:00:00:00");
+    const running = await timecode(page).textContent();
+    await expect(timecode(page)).not.toHaveText(running ?? "");
+  });
+
+  test("the arrow keys step through frames there too", async ({ page }) => {
+    await content(page, "preview").click();
+    await page.keyboard.press("ArrowRight");
+    await expect(timecode(page)).toHaveText("00:00:00:01");
+  });
+});
+
+test.describe("the status bar", () => {
+  const bar = (page: Page) => page.getByRole("contentinfo");
+
+  test("changes the frame rate from a list, and the ruler follows", async ({ page }) => {
+    await bar(page).getByRole("button", { name: "项目帧率" }).click();
+    await page.getByRole("dialog").getByRole("radio", { name: "24", exact: true }).click();
+    await expect(bar(page).getByRole("button", { name: "项目帧率" })).toHaveText("24 帧");
     await stage(page).focus();
     await page.keyboard.press("End");
     await expect(timecode(page)).toHaveText("00:00:10:00");
@@ -970,178 +1007,56 @@ test.describe("the frame rate of the project", () => {
     await expect(timecode(page)).toHaveText("00:00:09:23");
   });
 
-  test("says so when it is no rate", async ({ page }) => {
-    await panel(page).getByRole("button", { name: "项目帧率" }).click();
-    await page.getByRole("textbox").fill("快");
+  test("takes a frame rate of one's own, and says so when it is no rate", async ({ page }) => {
+    await bar(page).getByRole("button", { name: "项目帧率" }).click();
+    const bubble = page.getByRole("dialog", { name: "项目帧率" });
+    await bubble.getByLabel("自定义").fill("快");
     await page.keyboard.press("Enter");
-    await expect(page.getByText("帧率要写成大于 0 的数字")).toBeVisible();
-  });
-});
-
-test.describe("a trackpad", () => {
-  const swipe = (page: Page, deltaX: number, deltaY: number, ctrlKey = false) =>
-    stage(page).evaluate(
-      (element, init) => {
-        for (let step = 0; step < 6; step++) {
-          const event = new WheelEvent("wheel", { ...init, bubbles: true, cancelable: true });
-          element.dispatchEvent(event);
-        }
-      },
-      { deltaX, deltaY, ctrlKey },
-    );
-
-  test.beforeEach(async ({ page }) => {
-    for (let index = 0; index < 6; index++) {
-      await panel(page).getByRole("button", { name: "添加轨道" }).click();
-      await page.getByRole("menuitem", { name: "音频轨道" }).click();
-    }
-    await addColor(page, 2);
-    await page.keyboard.press("Home");
-    await settle(page);
+    await expect(bubble.getByText("帧率要写成大于 0 的数字")).toBeVisible();
+    await bubble.getByLabel("自定义").fill("48");
+    await bubble.getByRole("button", { name: "应用" }).click();
+    await expect(bar(page).getByRole("button", { name: "项目帧率" })).toHaveText("48 帧");
+    await expect(bubble).toHaveCount(0);
   });
 
-  test("moves up and down with two fingers, where a wheel goes sideways", async ({ page }) => {
-    const header = trackHeader(page, "音频 1");
-    const before = await boxOf(header);
-    await swipe(page, 0, 9);
-    await expect.poll(async () => (await boxOf(header)).y).toBeLessThan(before.y);
+  test("changes the time and the length in a bubble", async ({ page }) => {
+    await bar(page).getByRole("button", { name: "当前时间和总时长" }).click();
+    await page.getByRole("textbox", { name: "总时长" }).fill("20");
+    await page.getByRole("textbox", { name: "当前时间" }).fill("00:00:02:00");
+    await page.keyboard.press("Enter");
+    await expect(timecode(page)).toHaveText("00:00:02:00");
+    await expect(bar(page).getByText("/ 00:00:20:00")).toBeVisible();
   });
 
-  test("zooms with a pinch", async ({ page }) => {
-    const before = await boxOf(clips(page).first());
-    await swipe(page, 0, -9, true);
-    await settle(page);
-    const after = await boxOf(clips(page).first());
-    expect(after.width).toBeGreaterThan(before.width);
-  });
-});
-
-test.describe("a touch screen", () => {
-  test.use({ hasTouch: true });
-
-  async function touch(page: Page, points: readonly (readonly [number, number])[]) {
-    const client = await page.context().newCDPSession(page);
-    const [first, ...rest] = points as [[number, number], ...[number, number][]];
-    const at = ([x, y]: readonly [number, number]) => ({ x, y });
-    await client.send("Input.dispatchTouchEvent", {
-      type: "touchStart",
-      touchPoints: [at(first)],
-    });
-    for (const point of rest) {
-      await client.send("Input.dispatchTouchEvent", {
-        type: "touchMove",
-        touchPoints: [at(point)],
-      });
-    }
-    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  }
-
-  test.beforeEach(async ({ page }) => {
-    await addColor(page);
-    await page.keyboard.press("Home");
-    await panel(page).getByRole("button", { name: "放大" }).click();
-    await settle(page);
-  });
-
-  test("selects with a tap, and a swipe moves the view and not the clip", async ({ page }) => {
-    const clip = clips(page).first();
+  test("says so when a time makes no sense, and Escape leaves it", async ({ page }) => {
+    await bar(page).getByRole("button", { name: "当前时间和总时长" }).click();
+    await page.getByRole("textbox", { name: "当前时间" }).fill("很快");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("时间要写成")).toBeVisible();
     await page.keyboard.press("Escape");
-    await stage(page).focus();
+    await expect(page.getByRole("textbox", { name: "当前时间" })).toHaveCount(0);
+    await expect(timecode(page)).toHaveText("00:00:00:00");
+  });
+
+  test("a bubble goes away with Escape and with a click elsewhere", async ({ page }) => {
+    const opener = bar(page).getByRole("button", { name: "项目帧率" });
+    await opener.click();
+    await expect(page.getByRole("dialog", { name: "项目帧率" })).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(clip).toHaveAttribute("aria-selected", "false");
-    const [x, y] = await middleOf(clip);
-    await touch(page, [[x, y]]);
-    await expect(clip).toHaveAttribute("aria-selected", "true");
-    await page.keyboard.press("Escape");
-    const label = await labelOf(clip);
-    await touch(page, [
-      [x, y],
-      [x - 100, y],
-      [x - 200, y],
-    ]);
-    await expect(
-      panel(page).getByRole("scrollbar", { name: "时间轴横向滚动条" }),
-    ).not.toHaveAttribute("aria-valuenow", "0");
-    expect(await labelOf(clip)).toBe(label);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await opener.click();
+    await page.mouse.click(700, 200);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
-  test("moves a clip that is selected", async ({ page }) => {
-    const clip = clips(page).first();
-    const [x, y] = await middleOf(clip);
-    await touch(page, [
-      [x, y],
-      [x + 100, y],
-      [x + 200, y],
-    ]);
-    await expect.poll(() => labelOf(clip)).not.toContain("00:00:00:00 到");
-  });
-});
-
-test.describe("the input mode", () => {
-  test("shows in the status bar and can be chosen, or left to the editor", async ({ page }) => {
-    await addColor(page);
-    const button = page.getByRole("button", { name: /^输入方式/ });
-    await expect(button).toHaveText("鼠标");
-    await button.click();
-    await page.getByRole("menuitemradio", { name: "触控板", exact: true }).click();
-    await expect(button).toHaveText("触控板");
-    await button.click();
-    await expect(page.getByRole("menuitemradio", { name: "触控板", exact: true })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    await page.getByRole("menuitemradio", { name: /自动识别/ }).click();
-    await expect(button).toHaveText("鼠标");
-  });
-});
-
-test.describe("the toolbar", () => {
-  test("plays with the button and with Space, and shows the length", async ({ page }) => {
-    await expect(panel(page).getByText("/ 00:00:10:00")).toBeVisible();
-    await stage(page).focus();
-    await page.keyboard.press("Space");
-    await expect(timecode(page)).not.toHaveText("00:00:00:00");
-    await panel(page).getByRole("button", { name: "暂停" }).click();
-    const stopped = await timecode(page).textContent();
-    await page.waitForTimeout(200);
-    await expect(timecode(page)).toHaveText(stopped ?? "");
-  });
-
-  test("keeps the tools in the middle", async ({ page }) => {
-    const tools = await boxOf(panel(page).getByRole("group", { name: "开关", exact: true }));
-    const bar = await boxOf(panel(page).getByRole("toolbar"));
-    const middle = tools.x + tools.width / 2;
-    expect(Math.abs(middle - (bar.x + bar.width / 2))).toBeLessThan(120);
-  });
-
-  test("the track headers can get wider", async ({ page }) => {
-    const divider = panel(page).getByRole("separator", { name: "调整轨道头宽度" });
-    const before = await boxOf(stage(page));
-    const [x, y] = await middleOf(divider);
-    await drag(page, [x, y], [x + 80, y]);
-    await expect.poll(async () => (await boxOf(stage(page))).x).toBeGreaterThan(before.x + 60);
-  });
-
-  test("keeps tools, switches and actions apart", async ({ page }) => {
-    const zone = (name: string) => panel(page).getByRole("group", { name, exact: true });
-    await expect(zone("工具").getByRole("button")).toHaveCount(2);
-    await expect(zone("开关").getByRole("button")).toHaveCount(3);
-    await expect(zone("操作").getByRole("button", { name: "在播放头切割" })).toBeVisible();
-  });
-
-  test("showing everything twice goes back to the zoom from before", async ({ page }) => {
-    await addColor(page, 2);
-    await page.keyboard.press("Home");
-    await panel(page).getByRole("slider", { name: "缩放" }).fill("0.4");
-    await settle(page);
-    const before = await boxOf(clips(page).first());
-    const fit = panel(page).getByRole("button", { name: "显示全部" });
-    await fit.click();
-    await settle(page);
-    expect((await boxOf(clips(page).first())).width).toBeLessThan(before.width);
-    await fit.click();
-    await settle(page);
-    expect((await boxOf(clips(page).first())).width).toBeCloseTo(before.width, 0);
+  test("leaves the version to the title bar and the about box", async ({ page }) => {
+    await expect(bar(page).getByText("dev")).toHaveCount(0);
+    await expect(page.getByRole("banner").getByText("dev")).toBeVisible();
+    await page.getByRole("button", { name: "帮助" }).click();
+    await page.getByRole("menuitem", { name: "关于 AnimaQuill" }).click();
+    await expect(page.getByRole("dialog")).toContainText("版本 dev");
+    await page.getByRole("dialog").getByRole("button", { name: "关闭" }).click();
   });
 });
 

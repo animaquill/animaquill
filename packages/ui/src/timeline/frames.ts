@@ -33,3 +33,18 @@ export function formatTimecode(frame: number, { nominal }: FrameRate): string {
   const minutes = Math.floor(seconds / 60) % 60;
   return [hours, minutes, seconds % 60, frame % nominal].map(twoDigits).join(":");
 }
+
+/**
+ * The frame people mean by what they typed: a timecode, filled up from the right, or seconds.
+ * Undefined when it is neither.
+ */
+export function parseTimecode(text: string, rate: FrameRate): number | undefined {
+  const value = text.trim();
+  if (/^\d+(\.\d+)?$/.test(value)) return frameAt(Number(value), rate);
+  if (!/^\d+(:\d+){1,3}$/.test(value)) return undefined;
+  const [frames = 0, seconds = 0, minutes = 0, hours = 0] = value
+    .split(":")
+    .map(Number)
+    .toReversed();
+  return frames + rate.nominal * (seconds + 60 * minutes + 3600 * hours);
+}

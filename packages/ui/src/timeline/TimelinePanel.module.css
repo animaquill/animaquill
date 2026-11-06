@@ -11,34 +11,26 @@
   container-type: inline-size;
 }
 
-/* The tools stay in the middle of the panel, whatever is on either side. */
 .toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
   align-items: center;
   height: 32px;
-  padding: 0 8px;
+  padding-right: 8px;
   overflow: hidden;
   background: var(--aq-bg-panel);
   border-bottom: 1px solid var(--aq-border);
 }
 
-.side {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
 .middle {
   display: flex;
+  flex: 1;
   align-items: center;
+  min-width: 0;
 }
 
 /* The timeline can sit in a narrow group, and then words give way before buttons do. */
 @container (max-width: 760px) {
-  .buttonLabel,
-  .total {
+  .buttonLabel {
     display: none;
   }
 }
@@ -49,19 +41,16 @@
   }
 }
 
-.timecode {
-  margin: 0 4px;
-  color: var(--aq-timeline-playhead);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
 /* What the mouse does, what is on or off, what runs at a click: each has its own place. */
 .zone {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 0 8px;
+}
+
+.zone:first-child {
+  padding-left: 0;
 }
 
 .zone + .zone {
@@ -73,13 +62,6 @@
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-}
-
-.total {
-  margin-right: 6px;
-  color: var(--aq-text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .spacer {

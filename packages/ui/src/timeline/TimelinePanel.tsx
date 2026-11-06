@@ -7,8 +7,6 @@ import {
   LockOpen,
   Magnet,
   MousePointer2,
-  Pause,
-  Play,
   Plus,
   Replace,
   Scissors,
@@ -24,7 +22,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ComponentType,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -34,13 +31,13 @@ import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
 import type zhCN from "../i18n/zh-CN.json";
-import { formatCombo } from "../workbench/keys.ts";
 import type { TimelineAction } from "./actions.ts";
 import { RULER_HEIGHT, type TimelineEditor, type VisibleClip } from "./editor.ts";
-import { formatTimecode, frameAt } from "./frames.ts";
+import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { ToolButton } from "./ToolButton.tsx";
 import { TouchController } from "./touch.ts";
 import { WheelInterpreter } from "./wheel.ts";
 import styles from "./TimelinePanel.module.css";
@@ -97,89 +94,24 @@ function pointerOf(event: MouseEvent | PointerEvent, stage: HTMLElement): Pointe
   };
 }
 
-interface ToolButtonProps {
-  readonly name: string;
-  readonly usage: string;
-  /** The action whose key to show. People can change it, so it is looked up. */
-  readonly action?: TimelineAction;
-  readonly icon: ComponentType<{ size?: number }>;
-  /** Written next to the icon, where there is room. */
-  readonly text?: string;
-  readonly pressed?: boolean;
-  /** Turns something on and off, as opposed to choosing what the mouse does. */
-  readonly isSwitch?: boolean;
-  readonly unavailable?: boolean;
-  readonly onClick: (event: MouseEvent<HTMLButtonElement>) => void;
-}
-
-function ToolButton(props: ToolButtonProps) {
-  const { name, usage, action, icon: Icon, text, pressed, isSwitch, unavailable, onClick } = props;
-  const { keybindings } = useWorkbench();
-  const combo = action && keybindings.keysFor(`timeline.${action}`)[0];
-  return (
-    <Tip
-      name={name}
-      usage={usage}
-      shortcut={combo ? formatCombo(combo, keybindings.platform) : undefined}
-    >
-      <button
-        type="button"
-        className={isSwitch ? styles.switch : styles.button}
-        aria-label={name}
-        aria-description={usage}
-        // Not `disabled`: a disabled button gets no mouse events, and it still has to explain itself.
-        {...(unavailable ? { "aria-disabled": true } : {})}
-        {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
-        onClick={(event) => {
-          if (!unavailable) onClick(event);
-        }}
-      >
-        <Icon size={15} />
-        {text && <span className={styles.buttonLabel}>{text}</span>}
-      </button>
-    </Tip>
-  );
-}
-
 function Toolbar({ editor }: { editor: TimelineEditor }) {
-  const workbench = useWorkbench();
   const { t } = useTranslation();
-  const { tool, snapping, overwriting, multiSelecting, playing, model } = useSyncExternalStore(
+  const { tool, snapping, overwriting, multiSelecting, headerWidth } = useSyncExternalStore(
     editor.subscribe,
     editor.getSnapshot,
   );
-  const frame = useEditorView(editor, () => editor.frame);
   const zoom = useEditorView(editor, () => editor.zoomLevel);
   const canSplit = useEditorView(editor, () => editor.canSplit);
 
   return (
     <div className={styles.toolbarArea}>
-      <div className={styles.toolbar} role="toolbar" aria-label={t("timeline.toolbar")}>
-        <div className={styles.side}>
-          <ToolButton
-            name={playing ? t("timeline.pause") : t("timeline.play")}
-            usage={t("timeline.help.play")}
-            action="play"
-            icon={playing ? Pause : Play}
-            onClick={() => editor.togglePlayback()}
-          />
-          <output className={styles.timecode} aria-label={t("timeline.playhead")} aria-live="off">
-            {model && formatTimecode(frame, model.rate)}
-          </output>
-          <span className={styles.total}>
-            {model && `/ ${formatTimecode(frameAt(model.duration, model.rate), model.rate)}`}
-          </span>
-          <Tip name={t("project.frameRate")} usage={t("timeline.help.frameRate")}>
-            <button
-              type="button"
-              className={styles.button}
-              aria-label={t("project.frameRate")}
-              onClick={() => void workbench.setFrameRate()}
-            >
-              {model && t("timeline.fps", { fps: Number(model.rate.fps.toFixed(3)) })}
-            </button>
-          </Tip>
-        </div>
+      <div
+        className={styles.toolbar}
+        role="toolbar"
+        aria-label={t("timeline.toolbar")}
+        // The tools start where the timeline starts.
+        style={{ paddingLeft: headerWidth }}
+      >
         <div className={styles.middle}>
           <div className={styles.zone} role="group" aria-label={t("timeline.zone.tools")}>
             <ToolButton
@@ -650,7 +582,6 @@ function Surface({
 }) {
   const { t } = useTranslation();
   const { input } = useWorkbench();
-  const { playing } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
   const labelOf = useClipLabel();
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -664,15 +595,6 @@ function Surface({
   useLayoutEffect(() => {
     labels.current = labelOf;
   });
-
-  useEffect(() => {
-    if (!playing) return;
-    let frame = requestAnimationFrame(function step(now) {
-      editor.tick(now);
-      frame = requestAnimationFrame(step);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [editor, playing]);
 
   useLayoutEffect(() => {
     touch.current = new TouchController(editor, {

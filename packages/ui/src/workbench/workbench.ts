@@ -70,6 +70,7 @@ export class Workbench {
     this.#registerProjectActions();
     this.#registerEditActions();
     this.#registerViewActions();
+    this.#registerHelpActions();
     registerTimelineActions(this.actions, this.timeline);
   }
 
@@ -119,7 +120,16 @@ export class Workbench {
     }
   }
 
-  /** The rate of editing. Formats keep the rates they are exported at. */
+  /** Sets the rate of editing. Formats keep the rates they are exported at. */
+  applyFrameRate(fps: string): boolean {
+    const result = this.session.store?.execute({
+      type: "project.setFrameRate",
+      params: { fps: fps.trim() },
+    });
+    return result?.ok === true;
+  }
+
+  /** Asks for a frame rate that is not on the list. */
   async setFrameRate(): Promise<void> {
     const { store } = this.session;
     if (!store) return;
@@ -129,9 +139,17 @@ export class Workbench {
       value: projectFrameRate(store.getState().manifest),
       confirm: t("project.frameRateConfirm"),
     });
-    if (!fps) return;
-    const result = store.execute({ type: "project.setFrameRate", params: { fps: fps.trim() } });
-    if (!result.ok) this.notifications.push(t("notice.frameRateInvalid"));
+    if (fps && !this.applyFrameRate(fps)) this.notifications.push(t("notice.frameRateInvalid"));
+  }
+
+  async showAbout(): Promise<void> {
+    const { t, version } = this;
+    await this.dialogs.confirm({
+      title: t("about.title"),
+      message: t("about.message", { version }),
+      confirm: t("about.close"),
+      noticeOnly: true,
+    });
   }
 
   /** Resolves to whether the project was removed. */
@@ -225,6 +243,15 @@ export class Workbench {
       run: () => void this.setFrameRate(),
       menu: { name: "file", group: "project" },
       enabled: isOpen,
+    });
+  }
+
+  #registerHelpActions(): void {
+    this.actions.register({
+      id: "help.about",
+      title: (t) => t("about.title"),
+      run: () => void this.showAbout(),
+      menu: { name: "help", group: "about" },
     });
   }
 

@@ -12,6 +12,8 @@ export interface ConfirmOptions {
   readonly confirm: string;
   /** The action cannot be taken back, so it should look that way. */
   readonly danger?: boolean;
+  /** Only something to read, so there is nothing to cancel. */
+  readonly noticeOnly?: boolean;
 }
 
 export type DialogRequest =

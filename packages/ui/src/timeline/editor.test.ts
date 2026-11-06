@@ -1926,11 +1926,22 @@ describe("changing the project from the keyboard and menus", () => {
       expect(editor.frame).toBe(0);
     });
 
-    it("stops when the panel goes away", async () => {
+    it("goes on when the timeline is not on screen", async () => {
       const { editor } = await setup();
       editor.togglePlayback();
       editor.setViewport(0, 0);
-      expect(editor.getSnapshot().playing).toBe(false);
+      expect(editor.getSnapshot().playing).toBe(true);
+    });
+  });
+
+  describe("typing the end of the timeline", () => {
+    it("moves it, and not in front of the last clip", async () => {
+      const { editor, addClip } = await setup();
+      addClip("a", 1, 2);
+      editor.setEnd(600);
+      expect(editor.model?.duration).toBe(20);
+      editor.setEnd(30);
+      expect(editor.model?.duration).toBe(3);
     });
   });
 

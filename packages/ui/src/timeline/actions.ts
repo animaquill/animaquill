@@ -89,7 +89,29 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
     group: "zoom",
   });
 
-  add("play", () => editor.togglePlayback(), { keys: ["space"], group: "play" });
+  // Space is for playing wherever people are.
+  actions.register({
+    id: "timeline.play",
+    title: (t) => t("timeline.action.play"),
+    run: () => editor.togglePlayback(),
+    keys: ["space"],
+    enabled: hasTimeline,
+    menu: { name: "timeline", group: "play" },
+  });
+  for (const [id, by, key] of [
+    ["previousFrame", -1, "left"],
+    ["nextFrame", 1, "right"],
+  ] as const) {
+    actions.register({
+      id: `preview.${id}`,
+      title: (t) => t("timeline.previewCommand", { action: t(`timeline.action.${id}`) }),
+      run: () => editor.stepFrames(by),
+      keys: [key],
+      scope: "preview",
+      repeats: true,
+      enabled: hasTimeline,
+    });
+  }
   add("previousFrame", () => editor.stepFrames(-1), { keys: ["left"], repeats: true });
   add("nextFrame", () => editor.stepFrames(1), { keys: ["right"], repeats: true });
   add("backFiveFrames", () => editor.stepFrames(-5), { keys: ["shift+left"], repeats: true });

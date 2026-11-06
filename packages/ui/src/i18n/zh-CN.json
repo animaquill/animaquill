@@ -12,7 +12,8 @@
     "file": "文件",
     "edit": "编辑",
     "view": "视图",
-    "timeline": "时间轴"
+    "timeline": "时间轴",
+    "help": "帮助"
   },
   "edit": {
     "undo": "撤销",
@@ -293,9 +294,12 @@
       "mute": "这条轨道不发声。",
       "zoomHandleX": "拖动两端手柄缩放时间，拖动中间滚动。",
       "zoomHandleY": "拖动两端手柄调整轨道高度，拖动中间滚动。",
-      "frameRate": "标尺按它计数，片段落在它的帧上。导出时每个画幅可以用自己的帧率。",
+      "frameRate": "点击修改。标尺按它计数，导出时每个画幅可以用自己的帧率。",
       "multiSelecting": "打开后点片段就加入选择，再点一次取消，不用按 Shift。",
-      "play": "从播放头开始播放，到结尾停下。"
+      "play": "从播放头开始播放，到结尾停下。",
+      "previousFrame": "后退一帧，按住连续后退。",
+      "nextFrame": "前进一帧，按住连续前进。",
+      "time": "点击修改当前时间和总时长。"
     },
     "scrollX": "时间轴横向滚动条",
     "scrollY": "时间轴纵向滚动条",
@@ -313,7 +317,17 @@
     "multiSelecting": "多选",
     "pause": "暂停",
     "play": "播放",
-    "resizeHeaders": "调整轨道头宽度"
+    "resizeHeaders": "调整轨道头宽度",
+    "previewCommand": "预览：{{action}}",
+    "transport": "播放控制",
+    "time": "当前时间和总时长",
+    "currentTime": "当前时间",
+    "totalTime": "总时长",
+    "timeHint": "写成 00:00:05:00，或者秒数。",
+    "timeInvalid": "时间要写成 00:00:05:00，或者秒数。",
+    "customRate": "自定义",
+    "apply": "应用",
+    "rateHint": "标尺和片段落点按它走。导出时每个画幅可以用自己的帧率。"
   },
   "input": {
     "label": "输入方式",
@@ -322,6 +336,17 @@
     "autoNow": "自动识别（现在是{{device}}）",
     "mouse": "鼠标",
     "trackpad": "触控板",
-    "touch": "触碰"
+    "touch": "触碰",
+    "about": {
+      "auto": "按你正在用的设备自动切换。",
+      "mouse": "滚轮左右滚动，Shift 加滚轮上下滚动。",
+      "trackpad": "两指按方向移动，捏合缩放。",
+      "touch": "手指滑动移动视图，长按打开菜单或框选。"
+    }
+  },
+  "about": {
+    "title": "关于 AnimaQuill",
+    "message": "版本 {{version}}。AI 时代的视频编辑器。",
+    "close": "关闭"
   }
 }

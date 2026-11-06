@@ -39,3 +39,43 @@
   gap: 4px;
   color: var(--aq-warning);
 }
+
+.choices {
+  display: grid;
+  gap: 2px;
+  width: 260px;
+}
+
+.choice {
+  display: grid;
+  gap: 1px;
+  padding: 5px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.choice strong {
+  font-weight: 600;
+}
+
+.choice span {
+  color: var(--aq-text-muted);
+}
+
+.choice:hover {
+  background: var(--aq-bg-hover);
+}
+
+.choice[aria-checked="true"] {
+  background: var(--aq-accent);
+}
+
+.choice[aria-checked="true"],
+.choice[aria-checked="true"] span {
+  color: var(--aq-on-accent);
+}

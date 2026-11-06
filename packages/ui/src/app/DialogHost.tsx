@@ -67,9 +67,11 @@ function Dialog({ request }: { request: DialogRequest }) {
           />
         )}
         <div className={styles.buttons}>
-          <button ref={cancel} type="button" onClick={dismiss}>
-            {t("dialog.cancel")}
-          </button>
+          {!(request.kind === "confirm" && request.noticeOnly) && (
+            <button ref={cancel} type="button" onClick={dismiss}>
+              {t("dialog.cancel")}
+            </button>
+          )}
           <button
             type="button"
             className={danger ? styles.danger : styles.primary}
