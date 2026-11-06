@@ -163,8 +163,8 @@ test("a project saved before files existed still opens, and takes files", async 
   await page.evaluate(async () => {
     const read = <T>(asked: IDBRequest<T>) =>
       new Promise<T>((resolve, reject) => {
-        asked.onsuccess = () => resolve(asked.result);
-        asked.onerror = () => reject(asked.error);
+        asked.addEventListener("success", () => resolve(asked.result));
+        asked.addEventListener("error", () => reject(asked.error));
       });
     const current = await read(indexedDB.open("animaquill"));
     const transaction = current.transaction(["projects", "updates"]);
