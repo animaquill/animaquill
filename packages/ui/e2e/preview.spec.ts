@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Page } from "@playwright/test";
+import type { Frame, Page } from "@playwright/test";
 import { content, expect, tab, test } from "./support.ts";
 
 const video = {
@@ -129,6 +129,201 @@ test("finds frames going forwards and backwards in a video", async ({ page }) =>
   await expect.poll(() => isBlue(page)).toBe(true);
   await goTo(page, "0:00/05");
   await expect.poll(() => isRed(page)).toBe(true);
+});
+
+const compositor = (page: Page) => {
+  const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
+  if (!frame) throw new Error("No compositor");
+  return frame;
+};
+
+/** Sends the compositor jumps from the editor's side, faster than any hand. */
+const jumpTo = (page: Page, places: readonly number[]) =>
+  content(page, "preview")
+    .locator("iframe")
+    .evaluate((element: HTMLIFrameElement, seconds) => {
+      for (const place of seconds) {
+        element.contentWindow?.postMessage({ type: "seek", seconds: place, jump: true }, "*");
+      }
+    }, places);
+
+/** Frames come late: the first after `first` milliseconds, each next `each` after the one before. */
+const slowDecoder = (frame: Frame, first: number, each: number) =>
+  frame.evaluate(
+    ([firstMs = 0, eachMs = 0]) => {
+      const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const { VideoDecoder: Real } = window;
+      window.VideoDecoder = class extends Real {
+        line: Promise<unknown> = pause(firstMs);
+
+        constructor(init: VideoDecoderInit) {
+          super({
+            ...init,
+            output: (decoded) => {
+              this.line = this.line
+                .then(() => pause(eachMs))
+                .then(() => {
+                  if (this.state === "closed") decoded.close();
+                  else init.output(decoded);
+                });
+            },
+          });
+        }
+
+        override async flush() {
+          await super.flush();
+          await this.line;
+        }
+      };
+    },
+    [first, each],
+  );
+
+test("a jump gets past a decode that is still going to the last place", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect(items(page).first().locator("canvas")).toBeVisible();
+  await goTo(page, "0:01/15");
+  await expect.poll(() => isBlue(page)).toBe(true);
+  const frame = compositor(page);
+  // From now on the decoder takes forever, like a 4K video feels. Only leaving can help.
+  await frame.evaluate(() => {
+    const { VideoDecoder: Real } = window;
+    const state = window as unknown as { realDecoder: typeof Real; stalled: number };
+    state.realDecoder = Real;
+    state.stalled = 0;
+    window.VideoDecoder = class extends Real {
+      constructor(init: VideoDecoderInit) {
+        super({ ...init, output: (decoded) => decoded.close() });
+        state.stalled += 1;
+      }
+
+      override flush() {
+        return new Promise<void>(() => {});
+      }
+    };
+  });
+  const stalled = () => frame.evaluate(() => (window as unknown as { stalled: number }).stalled);
+  await goTo(page, "0:01/10");
+  await expect.poll(stalled).toBe(1);
+  await goTo(page, "0:00/05");
+  await expect.poll(stalled).toBe(2);
+  // A frame given up leaves no trace: the old picture stays until the new one is whole.
+  expect(await isBlue(page)).toBe(true);
+  await frame.evaluate(() => {
+    const state = window as unknown as { realDecoder: typeof VideoDecoder };
+    window.VideoDecoder = state.realDecoder;
+  });
+  await goTo(page, "0:00/03");
+  await expect.poll(() => isRed(page)).toBe(true);
+});
+
+test("after many quick jumps the picture is from the last place", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect.poll(() => isRed(page)).toBe(true);
+  await jumpTo(page, [1.5, 0.1, 1.6, 0.2, 1.7]);
+  await expect.poll(() => isBlue(page)).toBe(true);
+  await jumpTo(page, [0.1, 1.5, 0.2, 1.6, 0.3]);
+  await expect.poll(() => isRed(page)).toBe(true);
+  await page.waitForTimeout(300);
+  expect(await isRed(page)).toBe(true);
+});
+
+test("the picture keeps up while dragging backwards over a slow decoder", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect(items(page).first().locator("canvas")).toBeVisible();
+  await goTo(page, "0:01/25");
+  await expect.poll(() => isBlue(page)).toBe(true);
+  const frame = compositor(page);
+  await slowDecoder(frame, 100, 0);
+  await frame.evaluate(() => {
+    const state = window as unknown as { pictures: number };
+    state.pictures = 0;
+    const { prototype } = CanvasRenderingContext2D;
+    prototype.drawImage = new Proxy(prototype.drawImage, {
+      apply(draw, context, args) {
+        state.pictures += 1;
+        Reflect.apply(draw, context, args);
+      },
+    });
+  });
+  // Each move comes sooner than a decode can finish, like a hand on the playhead.
+  await content(page, "preview")
+    .locator("iframe")
+    .evaluate(async (element: HTMLIFrameElement) => {
+      for (let seconds = 1.8; seconds > 0; seconds -= 0.03) {
+        element.contentWindow?.postMessage({ type: "seek", seconds, jump: true }, "*");
+        // oxlint-disable-next-line no-await-in-loop -- the moves take their time
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    });
+  const pictures = await frame.evaluate(() => (window as unknown as { pictures: number }).pictures);
+  expect(pictures).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => isRed(page)).toBe(true);
+});
+
+test("jumping leaves no decoded frame open", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect(items(page).first().locator("canvas")).toBeVisible();
+  await expect.poll(() => isRed(page)).toBe(true);
+  const frame = compositor(page);
+  await frame.evaluate(() => {
+    const state = window as unknown as { openFrames: number };
+    state.openFrames = 0;
+    const { VideoDecoder: Real, VideoFrame: Frame } = window;
+    const { close } = Frame.prototype;
+    Frame.prototype.close = function counted() {
+      state.openFrames -= 1;
+      close.call(this);
+    };
+    window.VideoDecoder = class extends Real {
+      constructor(init: VideoDecoderInit) {
+        super({
+          ...init,
+          output: (decoded) => {
+            state.openFrames += 1;
+            init.output(decoded);
+          },
+        });
+      }
+    };
+  });
+  await slowDecoder(frame, 0, 20);
+  for (let round = 0; round < 10; round += 1) {
+    // The first walks forwards and is still under way when the second leaves it for good.
+    // oxlint-disable-next-line no-await-in-loop -- each round has to overtake the one before
+    await jumpTo(page, [1.5, 0.1]);
+    // oxlint-disable-next-line no-await-in-loop -- see above
+    await page.waitForTimeout(400);
+  }
+  await jumpTo(page, [0.1]);
+  await expect.poll(() => isRed(page)).toBe(true);
+  // With the clip gone nothing holds a frame any more. Those from before counting make this below 0.
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => isRed(page)).toBe(false);
+  await expect
+    .poll(() => frame.evaluate(() => (window as unknown as { openFrames: number }).openFrames))
+    .toBeLessThanOrEqual(0);
+});
+
+test("time going on while playing is not a jump, and moving the playhead is", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect.poll(() => isRed(page)).toBe(true);
+  await compositor(page).evaluate(() => {
+    const state = window as unknown as { seeks: boolean[] };
+    state.seeks = [];
+    addEventListener("message", ({ data }: MessageEvent<{ type: string; jump: boolean }>) => {
+      if (data.type === "seek") state.seeks.push(data.jump);
+    });
+  });
+  const seeks = () =>
+    compositor(page).evaluate(() => (window as unknown as { seeks: boolean[] }).seeks);
+  await button(page, "播放").click();
+  await expect.poll(async () => (await seeks()).length).toBeGreaterThan(10);
+  await button(page, "暂停").click();
+  // The first step of playing has nothing to compare with. It is short either way.
+  expect((await seeks()).filter(Boolean).length).toBeLessThanOrEqual(1);
+  await goTo(page, "0:00/05");
+  await expect.poll(async () => (await seeks()).at(-1)).toBe(true);
 });
 
 test("the picture changes while playing", async ({ page }) => {

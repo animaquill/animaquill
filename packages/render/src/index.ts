@@ -13,13 +13,16 @@ export interface FrameTiming {
   readonly cold: number;
   /** How far time had moved on by the time it was done. */
   readonly behindMs: number;
+  /** Frames given up before this one because the playhead left them. They have no timing of their own. */
+  readonly abandoned: number;
 }
 
 /** From the editor to the compositor. */
 export type ToCompositor =
   | { readonly type: "plan"; readonly plan: RenderPlan }
   | { readonly type: "file"; readonly id: string; readonly file: Blob }
-  | { readonly type: "seek"; readonly seconds: number }
+  /** A jump is somebody moving the playhead, as opposed to time carrying it along while playing. */
+  | { readonly type: "seek"; readonly seconds: number; readonly jump: boolean }
   /** Timing costs little, but nothing should run that nobody asked for. */
   | { readonly type: "record"; readonly on: boolean }
   /** Asks for evenly spread frames of a video, side by side in one image. */

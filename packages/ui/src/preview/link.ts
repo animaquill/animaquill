@@ -73,7 +73,8 @@ export class PreviewLink {
       this.#sendAll();
       this.#sendRecording();
     } else if (data.type === "frames") {
-      for (const { ms, seconds, cold, behindMs, decodeMs, gettingReady } of data.frames) {
+      for (const frame of data.frames) {
+        const { ms, seconds, cold, behindMs, decodeMs, gettingReady, abandoned } = frame;
         const slow = ms > SLOW_FRAME_MS || cold > 0;
         const facts = {
           seconds,
@@ -81,6 +82,7 @@ export class PreviewLink {
           behindMs: Math.round(behindMs),
           decodeMs: Math.round(decodeMs),
           gettingReady,
+          abandoned,
         };
         this.#diagnostics.noteFrame(ms, facts, slow);
       }
@@ -113,14 +115,19 @@ export class PreviewLink {
   };
 
   #lastSeconds: number | undefined;
+  #lastPlayback: TimelineEditor["playbackStart"];
 
   #sendTime = (): void => {
-    const { model, frame } = this.#timeline;
+    const { model, frame, playbackStart } = this.#timeline;
     if (!this.#ready || !model) return;
+    // Moving the playhead while playing starts playing over from there.
+    const { playing } = this.#timeline.getSnapshot();
+    const carried = playing && playbackStart && playbackStart === this.#lastPlayback;
+    this.#lastPlayback = playbackStart;
     const seconds = frame / model.rate.fps;
     if (seconds === this.#lastSeconds) return;
     this.#lastSeconds = seconds;
-    this.#send({ type: "seek", seconds });
+    this.#send({ type: "seek", seconds, jump: !carried });
   };
 
   /** The sandbox will run code from projects one day, so it only gets what the plan uses. */

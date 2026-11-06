@@ -1,5 +1,7 @@
 import { ALL_FORMATS, BlobSource, Input, VideoSampleSink, type VideoSample } from "mediabunny";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
+import { comesUpAfter, readingAt, showsAt, VideoCursor } from "./cursor.ts";
+import { GiveUpTimer } from "./patience.ts";
 import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
 
 /**
@@ -15,86 +17,6 @@ interface Picture {
 }
 
 const TIMINGS_EVERY_MS = 500;
-/** Longer than any file takes to open, short enough to hold only the next clip or two. */
-const GET_READY_SECONDS = 1.5;
-
-/** A jump this far ahead is cheaper by starting over at a keyframe than by decoding the way there. */
-const MAX_WALK_SECONDS = 2;
-
-/**
- * Reads a video forwards, because a frame in the middle of a file costs decoding everything since
- * the last keyframe. Going on from the last frame is what makes playing possible.
- */
-class VideoCursor {
-  readonly #sink: VideoSampleSink;
-  #samples: AsyncGenerator<VideoSample, void, unknown> | undefined;
-  #current: VideoSample | undefined;
-  #next: VideoSample | undefined;
-  /** Whether decoding started over since it was last asked. */
-  #cold = false;
-  /** Getting ready and drawing can ask at once, and a generator takes one question at a time. */
-  #queue: Promise<unknown> = Promise.resolve();
-
-  constructor(sink: VideoSampleSink) {
-    this.#sink = sink;
-  }
-
-  async #pull(): Promise<VideoSample | undefined> {
-    const result = await this.#samples?.next();
-    return result?.done === false ? result.value : undefined;
-  }
-
-  takeCold(): boolean {
-    const cold = this.#cold;
-    this.#cold = false;
-    return cold;
-  }
-
-  async #restart(seconds: number): Promise<void> {
-    await this.#release();
-    this.#cold = true;
-    this.#samples = this.#sink.samples(seconds);
-    this.#current = await this.#pull();
-    this.#next = await this.#pull();
-  }
-
-  #inTurn<T>(work: () => Promise<T>): Promise<T> {
-    const turn = this.#queue.then(work);
-    this.#queue = turn.catch(() => {});
-    return turn;
-  }
-
-  /** The frame showing at a moment. It stays open until the cursor moves on. */
-  at(seconds: number): Promise<VideoSample | undefined> {
-    return this.#inTurn(() => this.#moveTo(seconds));
-  }
-
-  close(): Promise<void> {
-    return this.#inTurn(() => this.#release());
-  }
-
-  async #moveTo(seconds: number): Promise<VideoSample | undefined> {
-    const current = this.#current;
-    const behind = current === undefined || seconds < current.timestamp;
-    const farAhead = this.#next && seconds - this.#next.timestamp > MAX_WALK_SECONDS;
-    if (behind || farAhead) await this.#restart(seconds);
-    while (this.#next && this.#next.timestamp <= seconds) {
-      this.#current?.close();
-      this.#current = this.#next;
-      this.#next = await this.#pull();
-    }
-    return this.#current;
-  }
-
-  async #release(): Promise<void> {
-    this.#current?.close();
-    this.#next?.close();
-    this.#current = undefined;
-    this.#next = undefined;
-    await this.#samples?.return();
-    this.#samples = undefined;
-  }
-}
 
 interface VideoFile {
   readonly sink: VideoSampleSink;
@@ -126,7 +48,10 @@ const images = new Map<string, Promise<ImageBitmap | undefined>>();
 const videos = new Map<string, Promise<VideoFile | undefined>>();
 const asked = new Set<string>();
 /** By layer, because two clips of one file read different places. */
-const cursors = new Map<string, { readonly file: string; readonly cursor: VideoCursor }>();
+const cursors = new Map<
+  string,
+  { readonly file: string; readonly cursor: VideoCursor<VideoSample> }
+>();
 
 let wanted = 0;
 let gettingReady = false;
@@ -136,6 +61,13 @@ let decodeMsInFrame = 0;
 let timings: FrameTiming[] = [];
 let drawing = false;
 let drawAgain = false;
+/** How many times somebody moved the playhead, and how many of those the frame being drawn knows. */
+let jumps = 0;
+let jumpsInFrame = 0;
+/** The frame being drawn stays unfinished, and nothing of it reaches the screen. */
+let frameGivenUp = false;
+/** Frames given up since the last one that was drawn. */
+let abandoned = 0;
 
 function fileOf(id: string): Blob | undefined {
   const file = files.get(id);
@@ -182,7 +114,7 @@ async function cursorOf(
   layer: RenderLayer,
   id: string,
   file: Blob,
-): Promise<VideoCursor | undefined> {
+): Promise<VideoCursor<VideoSample> | undefined> {
   const video = await videoOf(id, file);
   if (!video) return undefined;
   let entry = cursors.get(layer.id);
@@ -204,6 +136,11 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
     return bitmap && { source: bitmap, width: bitmap.width, height: bitmap.height, close() {} };
   }
   const cursor = await cursorOf(layer, source.file, file);
+  // Opening the file takes a while, and the playhead does not wait for it.
+  if (jumps !== jumpsInFrame) {
+    frameGivenUp = true;
+    return undefined;
+  }
   const sample = await cursor?.at(layer.offset + seconds - layer.start);
   if (cursor?.takeCold()) coldInFrame += 1;
   if (!sample) return undefined;
@@ -217,7 +154,7 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
 
 /** Clips that start soon. */
 const upcomingAt = (seconds: number): readonly RenderLayer[] =>
-  plan?.layers.filter(({ start }) => start > seconds && start - seconds <= GET_READY_SECONDS) ?? [];
+  plan?.layers.filter((layer) => comesUpAfter(layer, seconds)) ?? [];
 
 /**
  * Opening a file and decoding up to a first frame takes longer than a frame may, so a clip does that
@@ -249,6 +186,29 @@ async function closeCursorsExcept(keep: readonly RenderLayer[]): Promise<void> {
   }
 }
 
+/** Reading to a place the playhead left is what keeps it from getting to where it is now. */
+function giveUpFor(seconds: number): boolean {
+  let gaveUp = false;
+  for (const [id, { cursor }] of cursors) {
+    const layer = plan?.layers.find((candidate) => candidate.id === id);
+    if (cursor.giveUpUnlessLeadsTo(layer && readingAt(layer, seconds))) gaveUp = true;
+  }
+  if (gaveUp) {
+    frameGivenUp = true;
+    void refresh();
+  }
+  return gaveUp;
+}
+
+/** Only somebody moving the playhead starts this. Time carries it along without any rest. */
+const patience = new GiveUpTimer(
+  (milliseconds, run) => {
+    const timer = setTimeout(run, milliseconds);
+    return () => clearTimeout(timer);
+  },
+  () => giveUpFor(wanted),
+);
+
 function place(layer: RenderLayer, picture: Picture): void {
   const scaleOf = layer.fit === "cover" ? Math.max : Math.min;
   const scale = scaleOf(canvas.width / picture.width, canvas.height / picture.height);
@@ -266,11 +226,12 @@ function place(layer: RenderLayer, picture: Picture): void {
 /** Everything is decoded first, so that a frame appears whole and never half drawn. */
 async function drawFrame(seconds: number): Promise<void> {
   if (!plan) return;
-  const showing = plan.layers.filter(({ start, end }) => seconds >= start && seconds < end);
+  const showing = plan.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
   const askedAt = performance.now();
   const pictures = await Promise.all(showing.map((layer) => pictureOf(layer, seconds)));
   decodeMsInFrame = performance.now() - askedAt;
+  if (frameGivenUp) return;
   if (canvas.width !== plan.width) canvas.width = plan.width;
   if (canvas.height !== plan.height) canvas.height = plan.height;
   draw.globalAlpha = 1;
@@ -298,6 +259,8 @@ async function refresh(): Promise<void> {
   drawing = true;
   do {
     drawAgain = false;
+    frameGivenUp = false;
+    jumpsInFrame = jumps;
     const seconds = wanted;
     const started = performance.now();
     coldInFrame = 0;
@@ -308,7 +271,14 @@ async function refresh(): Promise<void> {
     } catch (error) {
       console.warn("A frame could not be drawn", error);
     }
-    if (!gettingReady) {
+    if (frameGivenUp) {
+      // Whatever did this asked for the next round.
+      if (recording) abandoned += 1;
+      continue;
+    }
+    patience.drew();
+    // Getting ready for a place the playhead left would only be in the way.
+    if (!gettingReady && jumps === jumpsInFrame) {
       gettingReady = true;
       void getReady(seconds)
         .catch((error: unknown) => console.warn("A clip could not get ready", error))
@@ -326,7 +296,9 @@ async function refresh(): Promise<void> {
         gettingReady: wasGettingReady,
         cold: coldInFrame,
         behindMs,
+        abandoned,
       });
+      abandoned = 0;
     }
   } while (drawAgain);
   drawing = false;
@@ -375,8 +347,13 @@ addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
     return;
   }
   if (data.type === "plan") plan = data.plan;
-  else if (data.type === "seek") wanted = data.seconds;
-  else files.set(data.id, data.file);
+  else if (data.type === "seek") {
+    wanted = data.seconds;
+    if (data.jump) {
+      jumps += 1;
+      patience.jumped();
+    }
+  } else files.set(data.id, data.file);
   void refresh();
 });
 
