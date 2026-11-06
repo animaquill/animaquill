@@ -120,7 +120,7 @@ test("a clip cannot grow past the end of its file", async ({ page }) => {
   await page.mouse.move(x + width + 300, y + height / 2, { steps: 6 });
   await page.mouse.up();
   await page.waitForTimeout(200);
-  await expect(clips(page).first()).toHaveAttribute("aria-label", /到 00:00:03:00/);
+  await expect(clips(page).first()).toHaveAttribute("aria-label", /到 0:03\/00/);
 });
 
 test("a file in use cannot be removed", async ({ page }) => {

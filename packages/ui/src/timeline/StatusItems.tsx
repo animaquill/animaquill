@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Bubble } from "../app/Bubble.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
-import { formatShortTimecode, formatTimecode, frameAt, parseTimecode } from "./frames.ts";
+import { formatTimecode, frameAt, parseTimecode } from "./frames.ts";
 import styles from "./StatusItems.module.css";
 
 const COMMON_RATES = [
@@ -90,9 +90,9 @@ export function TimeStatus() {
           onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
         >
           <output aria-label={t("timeline.playhead")} aria-live="off">
-            {formatShortTimecode(frame, model.rate)}
+            {formatTimecode(frame, model.rate)}
           </output>
-          {` / ${formatShortTimecode(frameAt(model.duration, model.rate), model.rate)}`}
+          {` | ${formatTimecode(frameAt(model.duration, model.rate), model.rate)}`}
         </button>
       </Tip>
       {anchor && <TimeBubble anchor={anchor} onClose={() => setAnchor(undefined)} />}

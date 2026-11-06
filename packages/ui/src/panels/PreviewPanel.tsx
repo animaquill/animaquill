@@ -1,6 +1,7 @@
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { Tip } from "../app/Tip.tsx";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { PreviewLink } from "../preview/link.ts";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
@@ -63,10 +64,12 @@ export function PreviewPanel() {
           />
         </div>
         {model && (
-          <div className={styles.time}>
-            <output aria-live="off">{formatTimecode(frame, model.rate)}</output>
-            <span>/ {formatTimecode(frameAt(model.duration, model.rate), model.rate)}</span>
-          </div>
+          <Tip name={t("timeline.time")} usage={t("timeline.timeFormat")}>
+            <span className={styles.time}>
+              <output aria-live="off">{formatTimecode(frame, model.rate)}</output>
+              <span>| {formatTimecode(frameAt(model.duration, model.rate), model.rate)}</span>
+            </span>
+          </Tip>
         )}
       </div>
     </div>

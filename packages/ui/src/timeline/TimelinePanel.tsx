@@ -741,6 +741,7 @@ function Surface({
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const { currentTarget } = event;
     const pointer = pointerOf(event, currentTarget);
+    currentTarget.title = pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : "";
     lastPointer.current = pointer;
     if (input.isTouch(event.pointerType)) {
       touch.current?.move(event.pointerId, pointer.x, pointer.y);

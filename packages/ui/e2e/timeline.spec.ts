@@ -68,7 +68,7 @@ test.describe("an empty timeline", () => {
     await expect(trackHeader(page, "视频 1")).toBeVisible();
     await expect(trackHeader(page, "音频 1")).toBeVisible();
     await expect(panel(page).getByText("把素材拖到这里")).toBeVisible();
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
   });
 
   test("stops saying so once there is a clip", async ({ page }) => {
@@ -80,9 +80,9 @@ test.describe("an empty timeline", () => {
 test.describe("adding clips", () => {
   test("adds one after the other, and undo takes them back", async ({ page }) => {
     await addColor(page, 2);
-    await expectLabel(clips(page).nth(0), /00:00:00:00 到 00:00:05:00/);
-    await expectLabel(clips(page).nth(1), /00:00:05:00 到 00:00:10:00/);
-    await expect(timecode(page)).toHaveText("00:00:10:00");
+    await expectLabel(clips(page).nth(0), /0:00\/00 到 0:05\/00/);
+    await expectLabel(clips(page).nth(1), /0:05\/00 到 0:10\/00/);
+    await expect(timecode(page)).toHaveText("0:10/00");
 
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(1);
@@ -129,9 +129,9 @@ test.describe("moving clips", () => {
     const clip = clips(page).first();
     const [x, y] = await middleOf(clip);
     await drag(page, [x, y], [x + 200, y]);
-    await expect.poll(() => labelOf(clip)).not.toContain("00:00:00:00 到");
+    await expect.poll(() => labelOf(clip)).not.toContain("0:00/00 到");
     await page.keyboard.press("Control+z");
-    await expectLabel(clip, /00:00:00:00 到 00:00:05:00/);
+    await expectLabel(clip, /0:00\/00 到 0:05\/00/);
   });
 
   test("stays where it is on a click", async ({ page }) => {
@@ -161,9 +161,9 @@ test.describe("moving clips", () => {
     const clip = clips(page).first();
     const [x, y] = await middleOf(clip);
     await drag(page, [x, y], [x + 800, y]);
-    await expect.poll(() => labelOf(clip)).toMatch(/到 00:00:1[1-9]/);
+    await expect.poll(() => labelOf(clip)).toMatch(/到 0:1[1-9]\//);
     await page.keyboard.press("End");
-    await expect(timecode(page)).not.toHaveText("00:00:10:00");
+    await expect(timecode(page)).not.toHaveText("0:10/00");
   });
 
   test("scrolls along when the mouse reaches the edge", async ({ page }) => {
@@ -180,7 +180,7 @@ test.describe("moving clips", () => {
     await page.mouse.up();
     await settle(page);
     const label = await labelOf(clip);
-    const seconds = Number(/00:00:(\d\d):\d\d 到/.exec(label)?.[1]);
+    const seconds = Number(/0:(\d\d)\/\d\d 到/.exec(label)?.[1]);
     expect(seconds).toBeGreaterThan(3);
   });
 });
@@ -196,9 +196,9 @@ test.describe("clips next to each other", () => {
     const second = clips(page).nth(1);
     const [x, y] = await middleOf(second);
     await drag(page, [x, y], [x + 120, y]);
-    await expect.poll(() => labelOf(second)).not.toContain("00:00:05:00 到");
+    await expect.poll(() => labelOf(second)).not.toContain("0:05/00 到");
     await drag(page, [x + 120, y], [x + 4, y]);
-    await expectLabel(second, /00:00:05:00 到 00:00:10:00/);
+    await expectLabel(second, /0:05\/00 到 0:10\/00/);
   });
 
   test("stay as they are by default, and the clip goes to a free place", async ({ page }) => {
@@ -207,8 +207,8 @@ test.describe("clips next to each other", () => {
     const { width } = await boxOf(second);
     await drag(page, [x, y], [x - width * 0.8, y]);
     await settle(page);
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
-    await expectLabel(second, /00:00:05:00 到 00:00:10:00/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:05\/00/);
+    await expectLabel(second, /0:05\/00 到 0:10\/00/);
   });
 
   test("are overwritten in overwrite mode, in one step", async ({ page }) => {
@@ -217,11 +217,11 @@ test.describe("clips next to each other", () => {
     const [x, y] = await middleOf(second);
     const { width } = await boxOf(second);
     await drag(page, [x, y], [x - width / 2, y]);
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:02:/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:02\//);
     await expect(clips(page)).toHaveCount(2);
     await page.keyboard.press("Control+z");
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
-    await expectLabel(second, /00:00:05:00 到 00:00:10:00/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:05\/00/);
+    await expectLabel(second, /0:05\/00 到 0:10\/00/);
   });
 
   test("move together when selected together", async ({ page }) => {
@@ -229,7 +229,7 @@ test.describe("clips next to each other", () => {
     await page.keyboard.press("Control+a");
     const [x, y] = await middleOf(clips(page).first());
     await drag(page, [x, y], [x + 100, y]);
-    await expect.poll(() => labelOf(clips(page).first())).not.toContain("00:00:00:00 到");
+    await expect.poll(() => labelOf(clips(page).first())).not.toContain("0:00/00 到");
     const first = /到 (\S+)/.exec(await labelOf(clips(page).first()))?.[1];
     expect(await labelOf(clips(page).nth(1))).toContain(`${first} 到`);
   });
@@ -263,16 +263,16 @@ test.describe("trimming", () => {
     const clip = clips(page).first();
     const { x, y, width, height } = await boxOf(clip);
     await drag(page, [x + width - 2, y + height / 2], [x + width / 2, y + height / 2]);
-    await expect.poll(() => labelOf(clip)).toMatch(/到 00:00:02:/);
+    await expect.poll(() => labelOf(clip)).toMatch(/到 0:02\//);
     await page.keyboard.press("Control+z");
-    await expectLabel(clip, /00:00:00:00 到 00:00:05:00/);
+    await expectLabel(clip, /0:00\/00 到 0:05\/00/);
   });
 
   test("moves the start of a clip", async ({ page }) => {
     const clip = clips(page).first();
     const { x, y, width, height } = await boxOf(clip);
     await drag(page, [x + 2, y + height / 2], [x + width / 2, y + height / 2]);
-    await expect.poll(() => labelOf(clip)).toMatch(/00:00:02:\d\d 到 00:00:05:00/);
+    await expect.poll(() => labelOf(clip)).toMatch(/0:02\/\d\d 到 0:05\/00/);
   });
 
   test("shows it can grab an edge", async ({ page }) => {
@@ -295,8 +295,8 @@ test.describe("cutting", () => {
     for (let step = 0; step < 15; step++) await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Control+k");
     await expect(clips(page)).toHaveCount(2);
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:00:15/);
-    await expectLabel(clips(page).nth(1), /00:00:00:15 到 00:00:05:00/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:00\/15/);
+    await expectLabel(clips(page).nth(1), /0:00\/15 到 0:05\/00/);
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(1);
   });
@@ -317,7 +317,7 @@ test.describe("the playhead", () => {
   test("jumps to a click on the ruler and follows a drag", async ({ page }) => {
     const area = await boxOf(stage(page));
     await page.mouse.click(area.x + area.width / 2, area.y + 10);
-    await expect(timecode(page)).not.toHaveText("00:00:00:00");
+    await expect(timecode(page)).not.toHaveText("0:00/00");
     const after = await timecode(page).textContent();
     await drag(page, [area.x + area.width / 2, area.y + 10], [area.x + 100, area.y + 10]);
     await expect(timecode(page)).not.toHaveText(after ?? "");
@@ -327,37 +327,37 @@ test.describe("the playhead", () => {
     await stage(page).focus();
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
-    await expect(timecode(page)).toHaveText("00:00:00:02");
+    await expect(timecode(page)).toHaveText("0:00/02");
     await page.keyboard.press("Shift+ArrowRight");
-    await expect(timecode(page)).toHaveText("00:00:00:07");
+    await expect(timecode(page)).toHaveText("0:00/07");
     await page.keyboard.press("ArrowLeft");
-    await expect(timecode(page)).toHaveText("00:00:00:06");
+    await expect(timecode(page)).toHaveText("0:00/06");
     await page.keyboard.down("ArrowRight");
     await page.keyboard.down("ArrowRight");
     await page.keyboard.down("ArrowRight");
     await page.keyboard.up("ArrowRight");
-    await expect(timecode(page)).toHaveText("00:00:00:09");
+    await expect(timecode(page)).toHaveText("0:00/09");
   });
 
   test("jumps from edit to edit and to both ends", async ({ page }) => {
     await addColor(page);
     await stage(page).focus();
     await page.keyboard.press("Home");
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
     await page.keyboard.press("ArrowDown");
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
     await page.keyboard.press("ArrowDown");
-    await expect(timecode(page)).toHaveText("00:00:10:00");
+    await expect(timecode(page)).toHaveText("0:10/00");
     await page.keyboard.press("ArrowUp");
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
     await page.keyboard.press("End");
-    await expect(timecode(page)).toHaveText("00:00:10:00");
+    await expect(timecode(page)).toHaveText("0:10/00");
   });
 
   test("tells screen readers where it is", async ({ page }) => {
     await stage(page).focus();
     await page.keyboard.press("ArrowRight");
-    await expect(playhead(page)).toHaveAttribute("aria-valuetext", "00:00:00:01");
+    await expect(playhead(page)).toHaveAttribute("aria-valuetext", "0:00/01");
     await expect(playhead(page)).toHaveAttribute("aria-valuenow", "1");
   });
 });
@@ -440,7 +440,7 @@ test.describe("zooming and scrolling", () => {
     await settle(page);
     const after = await boxOf(clips(page).first());
     expect(after.width).toBeCloseTo(before.width, 0);
-    await expect(timecode(page)).toHaveText("00:00:00:01");
+    await expect(timecode(page)).toHaveText("0:00/01");
   });
 
   test("has a slider that does the same", async ({ page }) => {
@@ -572,7 +572,7 @@ test.describe("deleting", () => {
     await content(page, "preview").click();
     await tab(page, "timeline").click();
     await page.keyboard.press("Home");
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
   });
 
   test("stays out of other panels", async ({ page }) => {
@@ -617,7 +617,7 @@ test.describe("menus", () => {
     await page.keyboard.press("ArrowDown");
     await settle(page);
     await expect(clips(page)).toHaveCount(1);
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
     await page.keyboard.press("Escape");
   });
 
@@ -667,7 +667,7 @@ test.describe("the end of the timeline", () => {
     await drag(page, [end, area.y + 24], [x + 10, area.y + 24]);
     await stage(page).focus();
     await page.keyboard.press("End");
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
   });
 });
 
@@ -684,8 +684,8 @@ test.describe("several windows", () => {
     const other = await secondWindow(page);
     await addColor(page);
     await expect(clips(other)).toHaveCount(1);
-    await expect(timecode(page)).toHaveText("00:00:05:00");
-    await expect(timecode(other)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
+    await expect(timecode(other)).toHaveText("0:00/00");
   });
 
   test("do not lose a selection to a change elsewhere", async ({ page }) => {
@@ -850,7 +850,7 @@ test.describe("copying", () => {
     await drag(page, [x, y], [x + 400, y]);
     await page.keyboard.up("Control");
     await expect(clips(page)).toHaveCount(2);
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:05\/00/);
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(1);
   });
@@ -862,8 +862,8 @@ test.describe("copying", () => {
     await page.keyboard.press("Control+c");
     await page.keyboard.press("Control+v");
     await expect(clips(page)).toHaveCount(2);
-    await expectLabel(clips(page).nth(1), /00:00:05:00 到 00:00:10:00/);
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expectLabel(clips(page).nth(1), /0:05\/00 到 0:10\/00/);
+    await expect(timecode(page)).toHaveText("0:05/00");
   });
 
   test("Ctrl+X keeps the clip until Ctrl+V, in one step to undo", async ({ page }) => {
@@ -875,10 +875,10 @@ test.describe("copying", () => {
     await expect(clips(page)).toHaveCount(1);
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Control+v");
-    await expectLabel(clips(page).first(), /00:00:05:01 到 00:00:10:01/);
+    await expectLabel(clips(page).first(), /0:05\/01 到 0:10\/01/);
     await expect(clips(page)).toHaveCount(1);
     await page.keyboard.press("Control+z");
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:05\/00/);
   });
 
   test("Escape takes a cut back", async ({ page }) => {
@@ -890,7 +890,7 @@ test.describe("copying", () => {
     await page.keyboard.press("Control+v");
     await settle(page);
     await expect(clips(page)).toHaveCount(1);
-    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+    await expectLabel(clips(page).first(), /0:00\/00 到 0:05\/00/);
   });
 });
 
@@ -1052,7 +1052,7 @@ test.describe("a touch screen", () => {
       [x + 100, y],
       [x + 200, y],
     ]);
-    await expect.poll(() => labelOf(clip)).not.toContain("00:00:00:00 到");
+    await expect.poll(() => labelOf(clip)).not.toContain("0:00/00 到");
   });
 });
 
@@ -1127,16 +1127,16 @@ test.describe("the preview", () => {
 
   test("plays, pauses and steps through frames", async ({ page }) => {
     await preview(page).getByRole("button", { name: "下一帧" }).click();
-    await expect(timecode(page)).toHaveText("00:00:00:01");
+    await expect(timecode(page)).toHaveText("0:00/01");
     await preview(page).getByRole("button", { name: "上一帧" }).click();
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
     await preview(page).getByRole("button", { name: "播放" }).click();
-    await expect(timecode(page)).not.toHaveText("00:00:00:00");
+    await expect(timecode(page)).not.toHaveText("0:00/00");
     await preview(page).getByRole("button", { name: "暂停" }).click();
     const stopped = await timecode(page).textContent();
     await page.waitForTimeout(200);
     await expect(timecode(page)).toHaveText(stopped ?? "");
-    await expect(preview(page).getByText("/ 00:00:10:00")).toBeVisible();
+    await expect(preview(page).getByText("| 0:10/00")).toBeVisible();
   });
 
   test("Space plays from the timeline, and goes on with the timeline tab hidden", async ({
@@ -1145,7 +1145,7 @@ test.describe("the preview", () => {
     await stage(page).focus();
     await page.keyboard.press("Space");
     await tab(page, "problems").click();
-    await expect(timecode(page)).not.toHaveText("00:00:00:00");
+    await expect(timecode(page)).not.toHaveText("0:00/00");
     const running = await timecode(page).textContent();
     await expect(timecode(page)).not.toHaveText(running ?? "");
   });
@@ -1153,7 +1153,7 @@ test.describe("the preview", () => {
   test("the arrow keys step through frames there too", async ({ page }) => {
     await content(page, "preview").click();
     await page.keyboard.press("ArrowRight");
-    await expect(timecode(page)).toHaveText("00:00:00:01");
+    await expect(timecode(page)).toHaveText("0:00/01");
   });
 });
 
@@ -1166,9 +1166,9 @@ test.describe("the status bar", () => {
     await expect(bar(page).getByRole("button", { name: "项目帧率" })).toHaveText("24 帧");
     await stage(page).focus();
     await page.keyboard.press("End");
-    await expect(timecode(page)).toHaveText("00:00:10:00");
+    await expect(timecode(page)).toHaveText("0:10/00");
     await page.keyboard.press("ArrowLeft");
-    await expect(timecode(page)).toHaveText("00:00:09:23");
+    await expect(timecode(page)).toHaveText("0:09/23");
   });
 
   test("takes a frame rate of one's own, and says so when it is no rate", async ({ page }) => {
@@ -1186,11 +1186,11 @@ test.describe("the status bar", () => {
   test("changes the time and the length in a bubble", async ({ page }) => {
     await bar(page).getByRole("button", { name: "当前时间和总时长" }).click();
     await page.getByRole("textbox", { name: "总时长" }).fill("20");
-    await page.getByRole("textbox", { name: "当前时间" }).fill("00:00:02:00");
+    await page.getByRole("textbox", { name: "当前时间" }).fill("0:02/00");
     await page.keyboard.press("Enter");
-    await expect(timecode(page)).toHaveText("00:00:02:00");
+    await expect(timecode(page)).toHaveText("0:02/00");
     await expect(bar(page).getByRole("button", { name: "当前时间和总时长" })).toHaveText(
-      "2:00 / 20:00",
+      "0:02/00 | 0:20/00",
     );
   });
 
@@ -1201,7 +1201,7 @@ test.describe("the status bar", () => {
     await expect(page.getByText("时间要写成")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("textbox", { name: "当前时间" })).toHaveCount(0);
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
   });
 
   test("a bubble goes away with Escape and with a click elsewhere", async ({ page }) => {
@@ -1234,7 +1234,7 @@ test.describe("the zoom slider", () => {
     await page.mouse.click(...(await middleOf(clips(page).first())));
     await panel(page).getByRole("slider", { name: "缩放" }).click();
     await page.keyboard.press("ArrowRight");
-    await expect(timecode(page)).toHaveText("00:00:00:01");
+    await expect(timecode(page)).toHaveText("0:00/01");
     await page.keyboard.press("Delete");
     await expect(clips(page)).toHaveCount(0);
   });
@@ -1245,19 +1245,19 @@ test.describe("the zoom slider", () => {
     const before = await slider.inputValue();
     await page.keyboard.press("ArrowRight");
     await expect(slider).not.toHaveValue(before);
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
   });
 });
 
 test.describe("as part of the editor", () => {
   test("keeps its state when the tab moves to another group", async ({ page }) => {
     await addColor(page);
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
     const from = await middleOf(tab(page, "timeline"));
     const target = await middleOf(tab(page, "preview"));
     await drag(page, from, target, 12);
     await expect(clips(page)).toHaveCount(1);
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
   });
 
   test("comes back when its tab is shown again", async ({ page }) => {
@@ -1265,7 +1265,7 @@ test.describe("as part of the editor", () => {
     await tab(page, "problems").click();
     await tab(page, "timeline").click();
     await expect(clips(page)).toHaveCount(1);
-    await expect(timecode(page)).toHaveText("00:00:05:00");
+    await expect(timecode(page)).toHaveText("0:05/00");
   });
 
   test("fits when the window changes", async ({ page }) => {
@@ -1300,7 +1300,7 @@ test.describe("as part of the editor", () => {
     await expect(page.getByRole("status").filter({ hasText: "已保存" })).toBeVisible();
     await tab(page, "timeline").click();
     await expect(clips(page)).toHaveCount(0);
-    await expect(timecode(page)).toHaveText("00:00:00:00");
+    await expect(timecode(page)).toHaveText("0:00/00");
   });
 
   test("lists its shortcuts with the others", async ({ page }) => {
@@ -1321,5 +1321,12 @@ test.describe("on a high density screen", () => {
     const area = await boxOf(canvas);
     const width = await canvas.evaluate((element) => (element as HTMLCanvasElement).width);
     expect(width).toBe(Math.round(area.width * 2));
+  });
+});
+
+test.describe("the time format", () => {
+  test("is explained when the mouse rests on it", async ({ page }) => {
+    await content(page, "preview").locator("output").hover();
+    await expect(page.getByText("格式：(小时):分:秒/帧")).toBeVisible();
   });
 });

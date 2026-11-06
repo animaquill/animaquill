@@ -5,7 +5,6 @@ import {
   frameAt,
   frameRate,
   frameSeconds,
-  formatShortTimecode,
   frameTime,
   parseTimecode,
 } from "./frames.ts";
@@ -34,14 +33,17 @@ describe("frames", () => {
 
 describe("timecode", () => {
   it.each([
-    [0, "30", "00:00:00:00"],
-    [29, "30", "00:00:00:29"],
-    [30, "30", "00:00:01:00"],
-    [1800, "30", "00:01:00:00"],
-    [108_000, "30", "01:00:00:00"],
-    [59, "60", "00:00:00:59"],
-    [24, "24", "00:00:01:00"],
-    [30, "30000/1001", "00:00:01:00"],
+    [0, "30", "0:00/00"],
+    [29, "30", "0:00/29"],
+    [30, "30", "0:01/00"],
+    [3960, "30", "2:12/00"],
+    [3989, "30", "2:12/29"],
+    [108_000, "30", "1:00:00/00"],
+    [111_965, "30", "1:02:12/05"],
+    [59, "60", "0:00/59"],
+    [24, "24", "0:01/00"],
+    [30, "30000/1001", "0:01/00"],
+    [125, "120", "0:01/005"],
   ])("frame %i at %s is %s", (frame, fps, text) => {
     expect(formatTimecode(frame, frameRate(fps))).toBe(text);
   });
@@ -49,8 +51,12 @@ describe("timecode", () => {
 
 describe("typing a time", () => {
   it.each([
+    ["0:01/15", 45],
+    ["1/15", 45],
+    ["2:12/05", 3965],
+    ["2:12", 3960],
+    ["1:02:12/05", 111_965],
     ["00:00:01:15", 45],
-    ["1:15", 45],
     ["01:00:00:00", 108_000],
     ["5", 150],
     ["2.5", 75],
@@ -59,26 +65,15 @@ describe("typing a time", () => {
     expect(parseTimecode(text, frameRate("30"))).toBe(frame);
   });
 
-  it.each(["", "abc", "1:2:3:4:5", "1:", "-1"])("%s is no time", (text) => {
-    expect(parseTimecode(text, frameRate("30"))).toBeUndefined();
-  });
+  it.each(["", "abc", "1:2:3:4:5", "1:", "-1", "1/", "/5", "1:2:3:4/5"])(
+    "%s is no time",
+    (text) => {
+      expect(parseTimecode(text, frameRate("30"))).toBeUndefined();
+    },
+  );
 
   it("reads back what it writes", () => {
     const rate = frameRate("30000/1001");
     expect(parseTimecode(formatTimecode(1234, rate), rate)).toBe(1234);
-  });
-});
-
-describe("a short timecode", () => {
-  it.each([
-    [0, "0"],
-    [12, "12"],
-    [30, "1:00"],
-    [162, "5:12"],
-    [1800, "1:00:00"],
-    [108_000, "1:00:00:00"],
-    [108_012, "1:00:00:12"],
-  ])("frame %i is %s", (frame, text) => {
-    expect(formatShortTimecode(frame, frameRate("30"))).toBe(text);
   });
 });
