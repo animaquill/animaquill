@@ -77,6 +77,13 @@
   background: var(--aq-accent);
 }
 
+.button[aria-disabled="true"] {
+  color: var(--aq-text-muted);
+  background: none;
+  cursor: default;
+  opacity: 0.5;
+}
+
 .zoom {
   width: 96px;
   height: 16px;
@@ -102,8 +109,11 @@
 }
 
 .corner {
+  display: flex;
   flex: none;
+  align-items: center;
   height: 28px;
+  padding: 0 4px;
   border-bottom: 1px solid var(--aq-border);
 }
 
@@ -130,6 +140,19 @@
   white-space: nowrap;
 }
 
+.headerInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-accent);
+  border-radius: 3px;
+  outline: none;
+}
+
 .headerButton {
   display: inline-flex;
   flex: none;
@@ -154,24 +177,21 @@
   color: var(--aq-warning);
 }
 
-/* Both scrollbars always show, so that the size of the drawing area never depends on the content. */
-.scroller {
-  position: relative;
+.surface {
+  display: grid;
   flex: 1;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
-  overflow: scroll;
-  overscroll-behavior: contain;
 }
 
-.content {
-  position: relative;
+.barRight {
+  display: grid;
+  background: var(--aq-bg-panel);
 }
 
-/* Stays put while the scroller moves underneath: what is drawn follows the scroll position. */
 .stage {
-  position: sticky;
-  top: 0;
-  left: 0;
+  position: relative;
   overflow: hidden;
   outline: none;
   touch-action: none;
@@ -195,6 +215,11 @@
   background: var(--aq-timeline-playhead);
   pointer-events: none;
   will-change: transform;
+}
+
+.snapped,
+.snapped::before {
+  background: var(--aq-timeline-snap);
 }
 
 .playhead::before {

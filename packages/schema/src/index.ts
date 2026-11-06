@@ -1,4 +1,4 @@
-export { Color, Duration, Id, LanguageId, Time, newId } from "./basics.ts";
+export { Color, Duration, Id, LanguageId, Rate, Time, newId } from "./basics.ts";
 export { checkProject } from "./check.ts";
 export { createProject, type NewProject } from "./create.ts";
 export * from "./documents.ts";

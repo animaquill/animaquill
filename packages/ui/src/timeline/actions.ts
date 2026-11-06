@@ -48,6 +48,22 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
     group: "edit",
   });
   add("selectAll", () => editor.selectAll(), { keys: ["mod+a"], group: "edit" });
+  const whileSelected = () => hasTimeline() && hasSelection();
+  add("copy", () => editor.copySelection(), {
+    keys: ["mod+c"],
+    enabled: whileSelected,
+    group: "clipboard",
+  });
+  add("cut", () => editor.cutSelection(), {
+    keys: ["mod+x"],
+    enabled: whileSelected,
+    group: "clipboard",
+  });
+  add("paste", () => editor.paste(), {
+    keys: ["mod+v"],
+    enabled: () => hasTimeline() && editor.hasClipboard,
+    group: "clipboard",
+  });
 
   add("toolSelect", () => editor.setTool("select"), {
     keys: ["v"],
@@ -60,10 +76,17 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
     group: "tools",
   });
   add("toggleSnapping", () => editor.toggleSnapping(), { keys: ["s"], group: "tools" });
+  add("toggleOverwriting", () => editor.toggleOverwriting(), { keys: ["o"], group: "tools" });
 
   add("zoomIn", () => editor.zoomIn(), { keys: ["="], repeats: true, group: "zoom" });
   add("zoomOut", () => editor.zoomOut(), { keys: ["-"], repeats: true, group: "zoom" });
   add("zoomToFit", () => editor.zoomToFit(), { keys: ["\\"], group: "zoom" });
+  add("rowsTaller", () => editor.rowsTaller(), { keys: ["shift+="], repeats: true, group: "zoom" });
+  add("rowsShorter", () => editor.rowsShorter(), {
+    keys: ["shift+-"],
+    repeats: true,
+    group: "zoom",
+  });
 
   add("previousFrame", () => editor.stepFrames(-1), { keys: ["left"], repeats: true });
   add("nextFrame", () => editor.stepFrames(1), { keys: ["right"], repeats: true });

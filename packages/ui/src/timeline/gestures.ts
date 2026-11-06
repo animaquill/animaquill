@@ -1,9 +1,10 @@
-import { clipEnd, clipOffset, clipStart, type CommandCall } from "@animaquill/core";
+import { clipEnd, clipOffset, clipStart, type ClipState, type CommandCall } from "@animaquill/core";
 import {
   ZERO,
   add,
   compare,
   formatTime,
+  newId,
   parseTime,
   subtract,
   toSeconds,
@@ -60,6 +61,8 @@ export interface Preview {
   readonly marquee?: Marquee;
   /** The end of the timeline while it is being dragged. */
   readonly end?: number;
+  /** Clips stay where they are, and what `clips` shows are copies. */
+  readonly copying?: boolean;
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */
@@ -79,6 +82,8 @@ export interface GestureHost {
   readonly model: TimelineModel;
   readonly frame: number;
   readonly selection: ReadonlySet<string>;
+  /** Whether a drop covers what is in the way. Otherwise it goes to the nearest free place. */
+  readonly overwriting: boolean;
   timeAt(x: number): number;
   /** The distance from the top of the first row. */
   laneAt(y: number): number;
@@ -92,6 +97,10 @@ export interface GestureHost {
 
 /** A press is a click until the pointer has moved this far, so that a click never moves a clip. */
 const DRAG_THRESHOLD = 4;
+/** Clips that touch differ by this much as floats, and that is no overlap. */
+const TOUCHING = 1e-9;
+/** How many clips a search for a free place jumps over before it gives up. */
+const MAX_JUMPS = 500;
 
 /** Where something ends up: on a frame, or exactly on what it snapped to. */
 interface Landing {
@@ -113,6 +122,69 @@ const lineOf = ({ line }: Landing) => (line === undefined ? {} : { snap: line })
 const hasMoved = (press: Pointer, pointer: Pointer) =>
   Math.hypot(pointer.x - press.x, pointer.y - press.y) >= DRAG_THRESHOLD;
 
+/** A clip at a place it could go to. */
+export interface Placed {
+  readonly row: Row;
+  readonly start: number;
+  readonly end: number;
+  exactStart(): Rational;
+  exactEnd(): Rational;
+}
+
+/** How far clips have to go to be free of others, and where they then touch something. */
+export interface FreeShift {
+  readonly seconds: number;
+  exact(): Rational;
+  readonly contact?: number;
+}
+
+function firstClash(
+  placed: readonly Placed[],
+  ignored: ReadonlySet<string>,
+  shift: number,
+): { readonly item: Placed; readonly other: ClipBox } | undefined {
+  for (const item of placed) {
+    let other: ClipBox | undefined;
+    const from = item.start + shift + TOUCHING;
+    const to = item.end + shift - TOUCHING;
+    forEachBetween(item.row, from, to, (box) => {
+      if (!ignored.has(box.id)) other ??= box;
+    });
+    if (other) return { item, other };
+  }
+  return undefined;
+}
+
+/**
+ * The shortest way in one direction to a place where all of these fit. Jumps from clip to clip, so
+ * it only looks at what is really in the way. Undefined when it gives up.
+ */
+export function freeShift(
+  placed: readonly Placed[],
+  ignored: ReadonlySet<string>,
+  direction: 1 | -1,
+): FreeShift | undefined {
+  let found: FreeShift = { seconds: 0, exact: () => ZERO };
+  for (let jump = 0; jump < MAX_JUMPS; jump++) {
+    const clash = firstClash(placed, ignored, found.seconds);
+    if (!clash) return found;
+    const { item, other } = clash;
+    found =
+      direction > 0
+        ? {
+            seconds: other.end - item.start,
+            exact: () => subtract(clipEnd(other.clip), item.exactStart()),
+            contact: other.end,
+          }
+        : {
+            seconds: other.start - item.end,
+            exact: () => subtract(clipStart(other.clip), item.exactEnd()),
+            contact: other.start,
+          };
+  }
+  return undefined;
+}
+
 const rowsOfKind = (model: TimelineModel, kind: string) =>
   model.rows.filter((row) => row.track.kind === kind);
 
@@ -127,7 +199,10 @@ function nearestRow(rows: readonly Row[], lane: number): Row | undefined {
   return best;
 }
 
-/** Moves the selected clips together. What they land on is overwritten, as in other editors. */
+/**
+ * Moves the selected clips together, or copies them with Ctrl held. What is in the way stays: they
+ * go to the nearest free place, unless people turned on overwriting.
+ */
 export class MoveGesture implements Gesture {
   readonly reachesRows = true;
   readonly #host: GestureHost;
@@ -143,6 +218,7 @@ export class MoveGesture implements Gesture {
   readonly #earliest: number;
   readonly #onClick: () => void;
   #dragging = false;
+  #copying = false;
   #shift = 0;
   #landing: Landing | undefined;
 
@@ -168,8 +244,9 @@ export class MoveGesture implements Gesture {
   move(pointer: Pointer): void {
     if (!this.#dragging && !hasMoved(this.#press, pointer)) return;
     this.#dragging = true;
+    this.#copying = pointer.mod;
     this.#shift = this.#allowedShift(pointer);
-    this.#landing = this.#land(pointer);
+    this.#landing = this.#avoidOthers(this.#land(pointer)) ?? this.#landing;
     this.#showPreview();
   }
 
@@ -190,6 +267,15 @@ export class MoveGesture implements Gesture {
     const delta = subtract(landing.exact(), clipStart(this.#grabbed.clip));
     const unchanged = compare(delta, ZERO) === 0 && this.#shift === 0;
     if (unchanged) return;
+    if (this.#copying) this.#commitCopies(delta);
+    else this.#commitMove(delta);
+  }
+
+  #overlap() {
+    return this.#host.overwriting ? { overlap: "overwrite" } : {};
+  }
+
+  #commitMove(delta: Rational): void {
     const clips = this.#moving.map(({ box, row }) => {
       const target = this.#targetRow(row);
       return {
@@ -198,12 +284,20 @@ export class MoveGesture implements Gesture {
         ...(target === row ? {} : { track: target.id }),
       };
     });
-    this.#host.run([
-      {
-        type: "clip.move",
-        params: { timeline: this.#host.model.id, clips, overlap: "overwrite" },
-      },
-    ]);
+    const { id: timeline } = this.#host.model;
+    this.#host.run([{ type: "clip.move", params: { timeline, clips, ...this.#overlap() } }]);
+  }
+
+  #commitCopies(delta: Rational): void {
+    const copies = copiesOf(this.#moving.map(({ box }) => box.clip));
+    const calls = this.#moving.map(({ box, row }, index) => {
+      const copy = copies[index] as ClipCopy;
+      const clip = { ...copy, start: formatTime(add(clipStart(box.clip), delta)) };
+      const { id: timeline } = this.#host.model;
+      const track = this.#targetRow(row).id;
+      return { type: "clip.add", params: { timeline, track, clip, ...this.#overlap() } };
+    });
+    if (this.#host.run(calls)) this.#host.select(new Set(copies.map(({ id }) => id)));
   }
 
   cancel(): void {
@@ -238,6 +332,10 @@ export class MoveGesture implements Gesture {
     const lowest = start - this.#earliest;
     const wanted = start + this.#host.timeAt(pointer.x) - this.#grabTime;
     const within = this.#host.snapDistance(pointer);
+    // Back where it came from is the easiest way to change one's mind.
+    if (!this.#copying && Math.abs(wanted - start) < within) {
+      return { seconds: start, exact: () => clipStart(this.#grabbed.clip), line: start };
+    }
     const byStart = this.#points.nearest(wanted, within);
     const byEnd = this.#points.nearest(wanted + end - start, within);
     const startGap = byStart ? Math.abs(byStart.seconds - wanted) : Number.POSITIVE_INFINITY;
@@ -254,6 +352,33 @@ export class MoveGesture implements Gesture {
     return landing.seconds < lowest
       ? { seconds: lowest, exact: () => this.#earliestLanding() }
       : landing;
+  }
+
+  /** The nearest place from a landing where nothing gets covered. */
+  #avoidOthers(landing: Landing): Landing | undefined {
+    if (this.#host.overwriting) return landing;
+    const delta = landing.seconds - this.#grabbed.start;
+    const exactDelta = () => subtract(landing.exact(), clipStart(this.#grabbed.clip));
+    const placed = this.#moving.map(({ box, row }): Placed => ({
+      row: this.#targetRow(row),
+      start: box.start + delta,
+      end: box.end + delta,
+      exactStart: () => add(clipStart(box.clip), exactDelta()),
+      exactEnd: () => add(clipEnd(box.clip), exactDelta()),
+    }));
+    const ignored = this.#copying ? new Set<string>() : this.#ids;
+    const later = freeShift(placed, ignored, 1);
+    if (later?.seconds === 0) return landing;
+    const earlier = freeShift(placed, ignored, -1);
+    const lowest = this.#grabbed.start - this.#earliest;
+    const canGoBack = earlier && landing.seconds + earlier.seconds >= lowest - TOUCHING;
+    const shift = canGoBack && (!later || -earlier.seconds < later.seconds) ? earlier : later;
+    if (!shift) return undefined;
+    return {
+      seconds: landing.seconds + shift.seconds,
+      exact: () => add(landing.exact(), shift.exact()),
+      ...(shift.contact === undefined ? {} : { line: shift.contact }),
+    };
   }
 
   /** The start of the grabbed clip when the earliest clip of the selection is at zero. */
@@ -273,14 +398,16 @@ export class MoveGesture implements Gesture {
       const start = box.start + delta;
       const end = box.end + delta;
       clips.set(box.id, { row: target, start, end });
+      if (!this.#host.overwriting) continue;
       forEachBetween(target, start, end, (other) => {
-        if (this.#ids.has(other.id)) return;
+        if (!this.#copying && this.#ids.has(other.id)) return;
         const from = Math.max(start, other.start);
         const to = Math.min(end, other.end);
         covered.push({ row: target, from, to });
       });
     }
-    this.#host.setPreview({ clips, covered, ...lineOf(landing) });
+    const copying = this.#copying ? { copying: true } : {};
+    this.#host.setPreview({ clips, covered, ...copying, ...lineOf(landing) });
   }
 }
 
@@ -346,8 +473,14 @@ export class TrimGesture implements Gesture {
 
   move(pointer: Pointer): void {
     if (!this.#landing && !hasMoved(this.#press, pointer)) return;
-    const wanted = this.#box[this.#edge] + this.#host.timeAt(pointer.x) - this.#grabTime;
-    const point = this.#points.nearest(wanted, this.#host.snapDistance(pointer));
+    const edge = this.#box[this.#edge];
+    const wanted = edge + this.#host.timeAt(pointer.x) - this.#grabTime;
+    const within = this.#host.snapDistance(pointer);
+    // Back where it came from is the easiest way to change one's mind.
+    const point =
+      Math.abs(wanted - edge) < within
+        ? { seconds: edge, exact: () => this.#exactEdge() }
+        : this.#points.nearest(wanted, within);
     const landing = landOn(this.#host, wanted, point);
     this.#landing = this.#clamped(landing);
     const { start, end } = this.#box;
@@ -369,9 +502,8 @@ export class TrimGesture implements Gesture {
     const landing = this.#landing;
     if (!landing) return;
     const { clip } = this.#box;
-    const current = this.#edge === "start" ? clipStart(clip) : clipEnd(clip);
     const exact = landing.exact();
-    if (compare(exact, current) === 0) return;
+    if (compare(exact, this.#exactEdge()) === 0) return;
     this.#host.run([
       {
         type: "clip.trim",
@@ -390,6 +522,11 @@ export class TrimGesture implements Gesture {
 
   isStale(model: TimelineModel): boolean {
     return !model.boxes.has(this.#box.id);
+  }
+
+  #exactEdge(): Rational {
+    const { clip } = this.#box;
+    return this.#edge === "start" ? clipStart(clip) : clipEnd(clip);
   }
 
   #clamped(landing: Landing): Landing {
@@ -551,6 +688,19 @@ export class EndGesture implements Gesture {
   cancel(): void {
     this.#host.setPreview(undefined);
   }
+}
+
+export type ClipCopy = Omit<ClipState, "track">;
+
+/** Clips as new clips. Copies that were linked stay linked to each other, not to the originals. */
+export function copiesOf(clips: readonly ClipState[]): readonly ClipCopy[] {
+  const links = new Map<string, string>();
+  return clips.map(({ track: _track, ...clip }) => {
+    const { link } = clip;
+    if (link === undefined) return { ...clip, id: newId("clip") };
+    if (!links.has(link)) links.set(link, newId("link"));
+    return { ...clip, id: newId("clip"), link: links.get(link) as string };
+  });
 }
 
 /** Where a cut would go: on a frame, or on the playhead when that is close. */

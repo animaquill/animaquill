@@ -40,7 +40,10 @@
     "listFailed": "项目列表读不出来。数据没有改动，可以刷新页面再试。",
     "unsavedTitle": "有改动没有保存",
     "unsavedWarning": "现在离开，这些改动会丢失。留在这里的话，恢复后会自动保存。",
-    "leaveAnyway": "仍然离开"
+    "leaveAnyway": "仍然离开",
+    "frameRate": "项目帧率",
+    "frameRateLabel": "项目帧率，比如 24、30、60 或 30000/1001",
+    "frameRateConfirm": "确定"
   },
   "dialog": {
     "cancel": "取消"
@@ -110,7 +113,8 @@
     "projectTooNew": "这个项目用的是更新的格式，请刷新页面更新 AnimaQuill。",
     "projectDamaged": "项目的部分保存记录损坏了，最近的一些改动可能丢失。",
     "projectSaveFailed": "改动无法保存到这个浏览器，可能是空间不足。先不要关闭页面，恢复后会自动保存。",
-    "projectSaveRecovered": "改动已经保存好了。"
+    "projectSaveRecovered": "改动已经保存好了。",
+    "frameRateInvalid": "帧率要写成大于 0 的数字，比如 30 或 30000/1001。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -251,7 +255,13 @@
       "previousEdit": "上一个剪辑点",
       "nextEdit": "下一个剪辑点",
       "start": "跳到开头",
-      "end": "跳到结尾"
+      "end": "跳到结尾",
+      "copy": "复制片段",
+      "cut": "剪切片段",
+      "paste": "粘贴片段",
+      "toggleOverwriting": "切换覆盖模式",
+      "rowsTaller": "增加轨道高度",
+      "rowsShorter": "降低轨道高度"
     },
     "color": "纯色片段",
     "snapping": "吸附",
@@ -261,6 +271,32 @@
       "caption": "字幕轨道"
     },
     "command": "时间轴：{{action}}",
-    "goneTrack": "已删除的轨道"
+    "goneTrack": "已删除的轨道",
+    "overwriting": "覆盖模式",
+    "splitButton": "在播放头切割",
+    "help": {
+      "toolSelect": "点选、框选和拖动片段，拖片段边缘可以裁剪，按住 Ctrl 拖动是复制。",
+      "toolRazor": "在片段上点一下就从那里切开，按住 Shift 切开所有轨道。",
+      "split": "把播放头所在的片段切开。有选中片段时只切选中的。",
+      "snapping": "拖动时贴到片段边缘和播放头，按住 Alt 暂时不吸附。",
+      "overwriting": "打开后拖到别的片段上会盖住它们。关闭时片段落到最近的空位。",
+      "addColor": "在播放头处放一段纯色，这里没有空位时放到新轨道。",
+      "addTrack": "添加一条视频、音频或字幕轨道。",
+      "zoomOut": "缩小时间轴，看到更长的时间。",
+      "zoomIn": "放大时间轴，看清每一帧。",
+      "zoom": "拖动调整缩放，也可以按住 Ctrl 滚动滚轮。",
+      "zoomToFit": "把整条时间轴缩放到刚好放得下。",
+      "lock": "锁定后这条轨道的片段不能选中和修改。",
+      "hide": "这条轨道不显示在画面里。",
+      "mute": "这条轨道不发声。",
+      "zoomHandleX": "拖动两端手柄缩放时间，拖动中间滚动。",
+      "zoomHandleY": "拖动两端手柄调整轨道高度，拖动中间滚动。",
+      "frameRate": "标尺按它计数，片段落在它的帧上。导出时每个画幅可以用自己的帧率。"
+    },
+    "scrollX": "时间轴横向滚动条",
+    "scrollY": "时间轴纵向滚动条",
+    "handleX": "横向缩放手柄",
+    "handleY": "轨道高度手柄",
+    "fps": "{{fps}} 帧"
   }
 }

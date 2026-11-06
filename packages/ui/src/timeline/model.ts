@@ -51,6 +51,8 @@ export interface TimelineModel {
   readonly state: TimelineState;
   /** As written in the project, to notice when it changes. */
   readonly fps: string;
+  /** How tall rows are shown, 1 being the normal height. */
+  readonly rowScale: number;
   readonly rate: FrameRate;
   /** Top to bottom. */
   readonly rows: readonly Row[];
@@ -108,7 +110,12 @@ function displayOrder(state: TimelineState): readonly (readonly [TrackState, num
   return [...ofKind("caption").toReversed(), ...ofKind("video").toReversed(), ...ofKind("audio")];
 }
 
-export function buildModel(id: string, state: TimelineState, fps: string): TimelineModel {
+export function buildModel(
+  id: string,
+  state: TimelineState,
+  fps: string,
+  rowScale = 1,
+): TimelineModel {
   const clipsByTrack = new Map<string, ClipBox[]>();
   const all = new Map<string, ClipBox>();
   for (const clip of Object.values(state.clips)) {
@@ -123,7 +130,7 @@ export function buildModel(id: string, state: TimelineState, fps: string): Timel
   const rowOfClip = new Map<string, Row>();
   const rows = displayOrder(state).map(([track, number]) => {
     const clips = (clipsByTrack.get(track.id) ?? []).toSorted(inTimeOrder);
-    const height = ROW_HEIGHTS[track.kind];
+    const height = Math.round(ROW_HEIGHTS[track.kind] * rowScale);
     const gone = !state.tracks[track.id];
     const row: Row = {
       id: track.id,
@@ -144,6 +151,7 @@ export function buildModel(id: string, state: TimelineState, fps: string): Timel
     id,
     state,
     fps,
+    rowScale,
     rate: frameRate(fps),
     rows,
     duration: toSeconds(timelineLength(state)),

@@ -176,7 +176,7 @@ export class TimelinePainter {
   #paintClips(model: TimelineModel): void {
     const editor = this.#editor;
     const { selection } = editor.getSnapshot();
-    const moved = editor.preview?.clips;
+    const moved = editor.preview?.copying ? undefined : editor.preview?.clips;
     const from = editor.timeAt(0);
     const to = editor.timeAt(editor.width);
     const { hovered } = editor;

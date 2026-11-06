@@ -1,5 +1,6 @@
 import { ProjectStore, clipEnd, orderedTracks, type ClipState } from "@animaquill/core";
 import { formatTime } from "@animaquill/schema";
+import type { SettingsStore } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-library.ts";
 import { ProjectSession } from "../workbench/session.ts";
@@ -23,7 +24,18 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
   const store = session.store;
   if (!store) throw new Error("no project");
   const commandFailed = vi.fn<(message: string) => void>();
-  const editor = new TimelineEditor(session, memory, { commandFailed });
+  const saved = new Map<string, unknown>();
+  let fromOtherWindow: (value: unknown) => void = () => {};
+  const settings: SettingsStore = {
+    load: async (key) => saved.get(key),
+    save: async (key, value) => void saved.set(key, value),
+    listen: (_, listener) => {
+      fromOtherWindow = listener;
+      return () => {};
+    },
+  };
+  const editor = new TimelineEditor(session, memory, settings, { commandFailed });
+  await editor.load();
   if (sized) editor.setViewport(WIDTH, HEIGHT);
 
   const main = () => {
@@ -92,6 +104,9 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
     audio,
     commandFailed,
     memory,
+    saved,
+    settings,
+    saveInOtherWindow: (value: unknown) => fromOtherWindow(value),
     main,
     addClip,
     at,
@@ -147,7 +162,7 @@ describe("the view", () => {
 
   it("leaves room after the end to put things", async () => {
     const { editor } = await setup();
-    expect(editor.contentWidth).toBeGreaterThan(10 * editor.pixelsPerSecond + WIDTH * 0.4);
+    expect(editor.contentWidth).toBeGreaterThan(12 * editor.pixelsPerSecond);
   });
 
   it("fits again on request", async () => {
@@ -166,17 +181,6 @@ describe("the view", () => {
     expect(editor.zoomLevel).toBeCloseTo(0, 6);
     editor.setZoomLevel(0.5);
     expect(editor.zoomLevel).toBeCloseTo(0.5, 6);
-  });
-
-  it("does not zoom in further than a browser can lay out", async () => {
-    const { editor, store, main } = await setup();
-    const [section] = Object.keys(main().sections);
-    store.execute({
-      type: "section.update",
-      params: { timeline: "main", section, duration: "20000" },
-    });
-    editor.zoomAround(0, 1e9);
-    expect(editor.contentWidth).toBeLessThanOrEqual(31_000_000);
   });
 
   it("waits with zooming until it has a size, and then shows everything", async () => {
@@ -749,9 +753,10 @@ describe("moving", () => {
     });
   });
 
-  describe("onto other clips", () => {
+  describe("onto other clips, with overwriting on", () => {
     it("shows what would be overwritten", async () => {
       const { editor, addClip, at } = await setup();
+      editor.toggleOverwriting();
       addClip("a", 0, 5);
       addClip("b", 7, 2);
       editor.press(at(8));
@@ -764,7 +769,8 @@ describe("moving", () => {
     });
 
     it("overwrites when dropped, in one step", async () => {
-      const { addClip, at, clip, drag, store } = await setup();
+      const { addClip, at, clip, drag, store, editor } = await setup();
+      editor.toggleOverwriting();
       addClip("a", 0, 5);
       addClip("b", 7, 2);
       drag(at(8), at(5));
@@ -776,6 +782,7 @@ describe("moving", () => {
 
     it("does not count the clips that move along", async () => {
       const { editor, addClip, at, clip, drag } = await setup();
+      editor.toggleOverwriting();
       addClip("a", 1, 2);
       addClip("b", 3, 2);
       editor.selectAll();
@@ -786,6 +793,191 @@ describe("moving", () => {
       drag(at(3), at(3));
       expect(clip("a").duration).toBe("2");
       expect(clip("b").duration).toBe("2");
+    });
+  });
+
+  describe("onto other clips, as it is by default", () => {
+    it("leaves them alone and goes to the nearest free place, touching exactly", async () => {
+      const { addClip, at, clip, drag, editor } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 0, "1001/300");
+      addClip("b", 7, 1);
+      drag(at(7.5), at(2));
+      expect(clip("a").duration).toBe("1001/300");
+      expect(clip("b").start).toBe("1001/300");
+    });
+
+    it("goes to the other side when that is closer", async () => {
+      const { addClip, at, clip, drag, editor } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 3, 2);
+      addClip("b", 7, 1);
+      drag(at(7.5), at(3.2));
+      expect(clip("b").start).toBe("2");
+      expect(clip("a").start).toBe("3");
+    });
+
+    it("does not go in front of the start of the timeline", async () => {
+      const { addClip, at, clip, drag, editor } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 0, 5);
+      addClip("b", 7, 3);
+      drag(at(8.5), at(1.7));
+      expect(clip("b").start).toBe("5");
+    });
+
+    it("jumps over a gap that is too small", async () => {
+      const { addClip, at, clip, drag, editor } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 0, 2);
+      addClip("c", 3, 2);
+      addClip("b", 8, 2);
+      drag(at(9), at(2.5));
+      expect(clip("b").start).toBe("5");
+      expect(clip("c").start).toBe("3");
+    });
+
+    it("finds a place for a whole group", async () => {
+      const { editor, addClip, at, clip, drag, audio } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 6, 1);
+      addClip("s", 8, 1, audio);
+      addClip("blocker", 1, 2, audio);
+      editor.selectOnly("a");
+      editor.press(at(8.5, audio, { shift: true }));
+      editor.release(at(8.5, audio, { shift: true }));
+      expect([...editor.getSnapshot().selection].toSorted()).toEqual(["a", "s"]);
+      drag(at(6.5), at(1.5));
+      // The sound would land on the blocker, so the whole group stops behind it.
+      expect(clip("s").start).toBe("3");
+      expect(clip("a").start).toBe("1");
+    });
+
+    it("shows where it would land, and marks nothing as covered", async () => {
+      const { editor, addClip, at } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 0, 5);
+      addClip("b", 7, 1);
+      editor.press(at(7.5));
+      editor.drag(at(4.5));
+      expect(editor.preview?.clips?.get("b")?.start).toBe(5);
+      expect(editor.preview?.covered).toEqual([]);
+      expect(editor.preview?.snap).toBe(5);
+      editor.release(at(4.5));
+    });
+
+    it("works on another track too", async () => {
+      const { addClip, at, clip, drag, editor, store } = await setup();
+      editor.toggleSnapping();
+      store.execute({
+        type: "track.add",
+        params: { timeline: "main", id: "upper", kind: "video" },
+      });
+      addClip("a", 0, 5, "upper");
+      addClip("b", 7, 1);
+      drag(at(7.5), at(4.5, "upper"));
+      expect(clip("b").track).toBe("upper");
+      expect(clip("b").start).toBe("5");
+    });
+  });
+
+  describe("back to where it came from", () => {
+    it("sticks there, and that takes the move back", async () => {
+      const { editor, addClip, at, store, clip } = await setup();
+      addClip("a", 2, 2);
+      const revision = store.revision;
+      const from = at(3);
+      editor.press(from);
+      editor.drag(at(6));
+      const back = { ...from, x: from.x + 6 };
+      editor.drag(back);
+      expect(editor.preview?.snap).toBe(2);
+      editor.release(back);
+      expect(store.revision).toBe(revision);
+      expect(clip("a").start).toBe("2");
+      expect(store.canUndo).toBe(true);
+    });
+
+    it("works for an edge as well", async () => {
+      const { editor, addClip, at, store } = await setup();
+      addClip("a", 2.01, 2);
+      const revision = store.revision;
+      const press = { ...at(4.01), x: at(4.01).x - 1 };
+      editor.press(press);
+      editor.drag({ ...press, x: press.x - 60 });
+      editor.drag({ ...press, x: press.x + 5 });
+      editor.release({ ...press, x: press.x + 5 });
+      expect(store.revision).toBe(revision);
+    });
+
+    it("needs snapping", async () => {
+      const { editor, addClip, at, clip, drag } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 2, 2);
+      const from = at(3);
+      drag(from, { ...from, x: from.x + 6 });
+      expect(clip("a").start).not.toBe("2");
+    });
+  });
+
+  describe("with Ctrl held", () => {
+    const ctrl = { mod: true };
+
+    it("leaves the clip where it is and makes a copy, which gets selected", async () => {
+      const { addClip, at, clip, drag, main, selection, store } = await setup();
+      addClip("a", 1, 2, undefined, { name: "原来的" });
+      drag(at(2, undefined, ctrl), at(6, undefined, ctrl));
+      expect(clip("a").start).toBe("1");
+      const copy = Object.values(main().clips).find(({ id }) => id !== "a");
+      expect(copy?.start).toBe("5");
+      expect(copy?.name).toBe("原来的");
+      expect(selection()).toEqual([copy?.id]);
+      store.undo();
+      expect(Object.keys(main().clips)).toEqual(["a"]);
+    });
+
+    it("shows the copy, and the clip stays bright", async () => {
+      const { editor, addClip, at } = await setup();
+      addClip("a", 1, 2);
+      editor.press(at(2, undefined, ctrl));
+      editor.drag(at(6, undefined, ctrl));
+      expect(editor.preview?.copying).toBe(true);
+      editor.cancelDrag();
+    });
+
+    it("does not land on the clip it came from", async () => {
+      const { addClip, at, drag, main } = await setup();
+      addClip("a", 1, 2);
+      drag(at(2, undefined, ctrl), at(2.3, undefined, ctrl));
+      const copy = Object.values(main().clips).find(({ id }) => id !== "a");
+      expect(copy?.start).toBe("3");
+    });
+
+    it("copies a group, and copies that were linked stay linked to each other", async () => {
+      const { editor, addClip, at, drag, main, audio } = await setup();
+      addClip("a", 1, 1, undefined, { link: "pair" });
+      addClip("b", 1, 1, audio, { link: "pair" });
+      editor.selectAll();
+      drag(at(1.5, undefined, ctrl), at(5.5, undefined, ctrl));
+      const copies = Object.values(main().clips).filter(({ id }) => !["a", "b"].includes(id));
+      expect(copies).toHaveLength(2);
+      expect(copies[0]?.link).toBe(copies[1]?.link);
+      expect(copies[0]?.link).not.toBe("pair");
+    });
+
+    it("still adds to the selection on a click, and takes away from it", async () => {
+      const { editor, addClip, at, selection } = await setup();
+      addClip("a", 1, 1);
+      addClip("b", 3, 1);
+      const click = (pointer: Pointer) => {
+        editor.press(pointer);
+        editor.release(pointer);
+      };
+      click(at(1.5));
+      click(at(3.5, undefined, ctrl));
+      expect(selection()).toEqual(["a", "b"]);
+      click(at(1.5, undefined, ctrl));
+      expect(selection()).toEqual(["b"]);
     });
   });
 
@@ -866,7 +1058,7 @@ describe("moving", () => {
     editor.updateTrack(video, { locked: true });
     drag(at(3), at(6));
     expect(clip("a").start).toBe("2");
-    expect(selection()).toEqual(["a"]);
+    expect(selection()).toEqual([]);
   });
 
   it("says so when another window changed something it cannot work with", async () => {
@@ -1398,13 +1590,7 @@ describe("changing the project from the keyboard and menus", () => {
   describe("at a rate like 29.97", () => {
     const ntsc = async () => {
       const context = await setup();
-      const manifest = context.store.getState().manifest;
-      const formats = manifest.formats.map((format) => ({ ...format, fps: "30000/1001" }));
-      const result = context.store.importFile(
-        "animaquill.json",
-        JSON.stringify({ ...manifest, formats }),
-      );
-      if (!result.ok) throw new Error(result.error.message);
+      context.store.execute({ type: "project.setFrameRate", params: { fps: "30000/1001" } });
       return context;
     };
 
@@ -1490,6 +1676,215 @@ describe("changing the project from the keyboard and menus", () => {
       const added = Object.values(main().clips).find(({ id }) => !["a", "late"].includes(id));
       expect(added?.track).not.toBe("doomed");
       expect(commandFailed).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("copy and paste", () => {
+    it("puts copies at the playhead, as far apart as they were", async () => {
+      const { editor, addClip, main, selection } = await setup();
+      addClip("a", 1, 1);
+      addClip("b", 3, 1);
+      editor.selectAll();
+      editor.copySelection();
+      editor.seek(150);
+      editor.paste();
+      const copies = Object.values(main().clips).filter(({ id }) => !["a", "b"].includes(id));
+      expect(copies.map(({ start }) => start).toSorted()).toEqual(["5", "7"]);
+      expect(selection().toSorted()).toEqual(copies.map(({ id }) => id).toSorted());
+      expect(editor.frame).toBe(240);
+    });
+
+    it("goes after what is there, unless overwriting is on", async () => {
+      const { editor, addClip, main, at } = await setup();
+      addClip("a", 0, 2);
+      addClip("b", 4, 2);
+      editor.press(at(1));
+      editor.release(at(1));
+      editor.copySelection();
+      editor.seek(150);
+      editor.paste();
+      let copy = Object.values(main().clips).find(({ id }) => !["a", "b"].includes(id));
+      expect(copy?.start).toBe("6");
+      editor.toggleOverwriting();
+      editor.seek(150);
+      editor.paste();
+      expect(main().clips["b"]?.duration).toBe("1");
+      copy = Object.values(main().clips).find(({ start }) => start === "5");
+      expect(copy).toBeDefined();
+    });
+
+    it("cuts, and undo takes each step back", async () => {
+      const { editor, addClip, main, store } = await setup();
+      addClip("a", 1, 1);
+      editor.selectAll();
+      editor.cutSelection();
+      expect(Object.keys(main().clips)).toEqual([]);
+      expect(editor.hasClipboard).toBe(true);
+      editor.paste();
+      expect(Object.keys(main().clips)).toHaveLength(1);
+      store.undo();
+      expect(Object.keys(main().clips)).toEqual([]);
+    });
+
+    it("goes to another track when its own is locked, and to a new one when none is left", async () => {
+      const { editor, addClip, main, video, commandFailed } = await setup();
+      addClip("a", 1, 1);
+      editor.selectAll();
+      editor.copySelection();
+      editor.updateTrack(video, { locked: true });
+      editor.paste();
+      const copy = Object.values(main().clips).find(({ id }) => id !== "a");
+      expect(copy?.track).not.toBe(video);
+      expect(commandFailed).not.toHaveBeenCalled();
+    });
+
+    it("has nothing to paste at first", async () => {
+      const { editor, store } = await setup();
+      const revision = store.revision;
+      expect(editor.hasClipboard).toBe(false);
+      editor.paste();
+      expect(store.revision).toBe(revision);
+    });
+  });
+
+  describe("locked tracks", () => {
+    it("cannot be selected in any way", async () => {
+      const { editor, addClip, at, drag, selection, video, audio } = await setup();
+      addClip("a", 1, 2);
+      addClip("b", 1, 2, audio);
+      editor.updateTrack(video, { locked: true });
+      drag(at(0.5), at(5, audio));
+      expect(selection()).toEqual(["b"]);
+      editor.selectAll();
+      expect(selection()).toEqual(["b"]);
+      editor.clearSelection();
+      editor.press(at(2));
+      editor.release(at(2));
+      expect(selection()).toEqual([]);
+    });
+
+    it("drop out of the selection when they get locked", async () => {
+      const { editor, addClip, selection, video } = await setup();
+      addClip("a", 1, 2);
+      editor.selectAll();
+      editor.updateTrack(video, { locked: true });
+      expect(selection()).toEqual([]);
+    });
+
+    it("start a box when pressed on", async () => {
+      const { editor, addClip, at, drag, selection, video, audio } = await setup();
+      addClip("a", 1, 2);
+      addClip("b", 1, 2, audio);
+      editor.updateTrack(video, { locked: true });
+      drag(at(2), at(2.5, audio));
+      expect(selection()).toEqual(["b"]);
+    });
+  });
+
+  describe("how people like to work", () => {
+    it("does not overwrite until told to, and remembers", async () => {
+      const { editor, saved } = await setup();
+      expect(editor.getSnapshot().overwriting).toBe(false);
+      editor.toggleOverwriting();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(saved.get("timeline")).toMatchObject({ overwriting: true, snapping: true });
+    });
+
+    it("comes back with what was saved, and ignores what it cannot read", async () => {
+      const { editor, settings, saveInOtherWindow } = await setup();
+      await settings.save("timeline", { version: 1, snapping: false, overwriting: true });
+      await editor.load();
+      expect(editor.getSnapshot()).toMatchObject({ snapping: false, overwriting: true });
+      saveInOtherWindow({ version: 9 });
+      expect(editor.getSnapshot().overwriting).toBe(true);
+      saveInOtherWindow({ version: 1, snapping: true, overwriting: false });
+      expect(editor.getSnapshot().overwriting).toBe(false);
+    });
+  });
+
+  describe("the frame rate", () => {
+    it("is the one of the project, not of a format", async () => {
+      const { editor, store } = await setup();
+      store.execute({ type: "project.setFrameRate", params: { fps: "24" } });
+      expect(editor.model?.rate.fps).toBe(24);
+      expect(store.getState().manifest.formats[0]?.fps).toBe("30");
+    });
+
+    it("keeps the playhead at the same moment when it changes", async () => {
+      const { editor, store } = await setup();
+      editor.seek(60);
+      store.execute({ type: "project.setFrameRate", params: { fps: "24" } });
+      expect(editor.frame).toBe(48);
+    });
+
+    it("leaves clips where they are, and new ones land on its frames", async () => {
+      const { editor, addClip, at, clip, drag, store } = await setup();
+      editor.toggleSnapping();
+      addClip("a", 1, 2);
+      store.execute({ type: "project.setFrameRate", params: { fps: "24" } });
+      expect(clip("a").start).toBe("1");
+      drag(at(2), at(3.02));
+      expect(clip("a").start).toBe("2");
+    });
+  });
+
+  describe("the height of rows", () => {
+    it("grows and shrinks within limits", async () => {
+      const { editor } = await setup();
+      const before = editor.model?.rows[0]?.height as number;
+      editor.rowsTaller();
+      expect(editor.model?.rows[0]?.height).toBeGreaterThan(before);
+      editor.zoomRowsAround(100, 100);
+      expect(editor.rowScale).toBe(3);
+      editor.zoomRowsAround(100, 0.001);
+      expect(editor.rowScale).toBe(0.6);
+    });
+
+    it("keeps the row under the mouse in place", async () => {
+      const { editor, store, audio } = await setup();
+      for (let index = 0; index < 12; index++) {
+        store.execute({ type: "track.add", params: { timeline: "main", kind: "video" } });
+      }
+      editor.setScroll(0, 200);
+      const row = () => editor.model?.rows.find(({ id }) => id === audio);
+      const y = 300;
+      const share = () => editor.laneAt(y) / (editor.model?.height as number);
+      const before = share();
+      editor.zoomRowsAround(y, 1.5);
+      expect(share()).toBeCloseTo(before, 1);
+      expect(row()).toBeDefined();
+    });
+
+    it("waits while a clip is being dragged", async () => {
+      const { editor, addClip, at } = await setup();
+      addClip("a", 1, 1);
+      editor.press(at(1.5));
+      editor.zoomRowsAround(100, 2);
+      expect(editor.rowScale).toBe(1);
+      editor.cancelDrag();
+    });
+
+    it("comes back after a reload", async () => {
+      const memory = memoryWindow();
+      const { editor, session, store } = await setup(memory);
+      const id = store.getState().manifest.id;
+      editor.rowsTaller();
+      const scale = editor.rowScale;
+      await session.close();
+      await session.open(id);
+      expect(editor.rowScale).toBe(scale);
+    });
+
+    it("tells when something snapped to the playhead", async () => {
+      const { editor, addClip, at } = await setup();
+      addClip("a", 1, 1);
+      editor.seek(150);
+      expect(editor.isSnappedToPlayhead).toBe(false);
+      editor.press(at(1.5));
+      editor.drag(at(5.53));
+      expect(editor.preview?.snap).toBe(5);
+      expect(editor.isSnappedToPlayhead).toBe(true);
+      editor.cancelDrag();
     });
   });
 

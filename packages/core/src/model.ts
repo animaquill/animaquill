@@ -142,6 +142,10 @@ const inOrder = <T extends { readonly id: string; readonly order: number }>(
 export const orderedTracks = (timeline: TimelineState) => inOrder(timeline.tracks);
 export const orderedSections = (timeline: TimelineState) => inOrder(timeline.sections);
 
+/** What the ruler of a project counts. Formats can be exported at a rate of their own. */
+export const projectFrameRate = ({ fps, formats }: ProjectManifest): string =>
+  fps ?? formats[0]?.fps ?? "30";
+
 /** Exact times of a clip, for calculations. */
 export const clipStart = (clip: ClipState): Rational => parseTime(clip.start);
 export const clipEnd = (clip: ClipState): Rational =>

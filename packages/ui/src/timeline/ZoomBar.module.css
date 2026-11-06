@@ -1,0 +1,61 @@
+.barX,
+.barY {
+  position: relative;
+  overflow: hidden;
+  background: var(--aq-bg-panel);
+  touch-action: none;
+  user-select: none;
+}
+
+.barX {
+  height: 14px;
+}
+
+.barY {
+  width: 14px;
+}
+
+.thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  display: flex;
+  justify-content: space-between;
+  background: var(--aq-scrollbar);
+  border-radius: 5px;
+}
+
+.barX .thumb {
+  left: 0;
+  height: 10px;
+}
+
+.barY .thumb {
+  top: 0;
+  flex-direction: column;
+  width: 10px;
+}
+
+.thumb:hover {
+  background: var(--aq-scrollbar-hover);
+}
+
+.handle {
+  flex: none;
+  background: var(--aq-text-muted);
+  border-radius: 5px;
+}
+
+.handle:hover {
+  background: var(--aq-text-strong);
+}
+
+.barX .handle {
+  width: 9px;
+  cursor: ew-resize;
+}
+
+.barY .handle {
+  height: 9px;
+  cursor: ns-resize;
+}

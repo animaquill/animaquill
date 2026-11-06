@@ -1,0 +1,32 @@
+.host {
+  display: contents;
+}
+
+.tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 110;
+  max-width: 280px;
+  padding: 6px 8px;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  box-shadow: var(--aq-shadow);
+  pointer-events: none;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 2px;
+  color: var(--aq-text-strong);
+}
+
+.head kbd {
+  color: var(--aq-text-muted);
+  font: inherit;
+}

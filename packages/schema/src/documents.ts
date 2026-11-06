@@ -60,6 +60,12 @@ export const ProjectManifest = z
     /** The first one is the master language. */
     languages: z.array(Language).min(1),
     /** The first one is the master format. */
+    /**
+     * The frame rate of editing: what the ruler counts and what things land on. Times in a project
+     * do not depend on it, so every format can have its own frame rate when it is exported.
+     * Without it, the first format decides.
+     */
+    fps: Rate.optional(),
     formats: z.array(Format).min(1),
     /** The first one opens by default. */
     timelines: z.array(Id).min(1),

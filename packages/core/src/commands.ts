@@ -6,6 +6,7 @@ import {
   Marker,
   ProjectManifest,
   PropertyValue,
+  Rate,
   Time,
   Track,
   canHold,
@@ -156,6 +157,10 @@ const MarkerChanges = Marker.omit({ id: true }).partial();
 export const COMMANDS: readonly CommandDefinition[] = [
   define("project.rename", z.strictObject({ name: z.string().min(1) }), (draft, { name }) => {
     draft.set(["manifest", "name"], name);
+  }),
+
+  define("project.setFrameRate", z.strictObject({ fps: Rate }), (draft, { fps }) => {
+    draft.set(["manifest", "fps"], fps);
   }),
 
   define(

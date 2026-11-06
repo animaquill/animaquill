@@ -201,7 +201,18 @@ test.describe("clips next to each other", () => {
     await expectLabel(second, /00:00:05:00 到 00:00:10:00/);
   });
 
-  test("are overwritten when a clip lands on them, in one step", async ({ page }) => {
+  test("stay as they are by default, and the clip goes to a free place", async ({ page }) => {
+    const second = clips(page).nth(1);
+    const [x, y] = await middleOf(second);
+    const { width } = await boxOf(second);
+    await drag(page, [x, y], [x - width * 0.8, y]);
+    await settle(page);
+    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+    await expectLabel(second, /00:00:05:00 到 00:00:10:00/);
+  });
+
+  test("are overwritten in overwrite mode, in one step", async ({ page }) => {
+    await panel(page).getByRole("button", { name: "覆盖模式" }).click();
     const second = clips(page).nth(1);
     const [x, y] = await middleOf(second);
     const { width } = await boxOf(second);
@@ -410,7 +421,9 @@ test.describe("zooming and scrolling", () => {
     await expect(trackHeader(page, "视频 9")).toBeVisible();
     const before = await boxOf(header);
     await page.mouse.move(...(await middleOf(stage(page))));
+    await page.keyboard.down("Shift");
     await page.mouse.wheel(0, 300);
+    await page.keyboard.up("Shift");
     await settle(page);
     const after = await boxOf(header);
     expect(after.y).toBeLessThan(before.y);
@@ -449,7 +462,14 @@ test.describe("tracks", () => {
     await expect(trackHeader(page, "字幕 1")).toBeVisible();
 
     await trackHeader(page, "字幕 1").dblclick();
-    await page.getByRole("textbox", { name: "轨道名称" }).fill("中文字幕");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await panel(page).getByRole("textbox", { name: "轨道名称" }).fill("不要这个");
+    await page.keyboard.press("Escape");
+    await expect(trackHeader(page, "字幕 1")).toBeVisible();
+
+    await trackHeader(page, "字幕 1").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "重命名轨道" }).click();
+    await panel(page).getByRole("textbox", { name: "轨道名称" }).fill("中文字幕");
     await page.keyboard.press("Enter");
     await expect(trackHeader(page, "中文字幕")).toBeVisible();
 
@@ -770,6 +790,145 @@ test.describe("behind another tab", () => {
     const after = await boxOf(clips(page).first());
     expect(after.x).toBeCloseTo(before.x, 0);
     expect(after.width).toBeCloseTo(before.width, 0);
+  });
+});
+
+test.describe("the bars with handles", () => {
+  const handle = (page: Page, axis: string, edge: string) =>
+    panel(page).locator(`[data-bar="${axis}"] [data-handle="${edge}"]`);
+
+  test("the bottom one scrolls, and zooms from either end", async ({ page }) => {
+    await addColor(page, 2);
+    await page.keyboard.press("Home");
+    await settle(page);
+    const before = await boxOf(clips(page).first());
+    const [x, y] = await middleOf(handle(page, "x", "end"));
+    await drag(page, [x, y], [x - 500, y]);
+    await settle(page);
+    const closer = await boxOf(clips(page).first());
+    expect(closer.width).toBeGreaterThan(before.width);
+    expect(closer.x).toBeCloseTo(before.x, 0);
+
+    const [left, top] = await middleOf(handle(page, "x", "start"));
+    await drag(page, [left, top], [left + 100, top]);
+    await settle(page);
+    await expect(
+      panel(page).getByRole("scrollbar", { name: "时间轴横向滚动条" }),
+    ).not.toHaveAttribute("aria-valuenow", "0");
+  });
+
+  test("the right one changes the height of tracks", async ({ page }) => {
+    const before = await boxOf(trackHeader(page, "视频 1").locator(".."));
+    const [x, y] = await middleOf(handle(page, "y", "end"));
+    await drag(page, [x, y], [x, y - 120]);
+    await settle(page);
+    const after = await boxOf(trackHeader(page, "视频 1").locator(".."));
+    expect(after.height).toBeGreaterThan(before.height);
+  });
+
+  test("Ctrl, Shift and the wheel change the height of tracks too", async ({ page }) => {
+    const before = await boxOf(trackHeader(page, "视频 1").locator(".."));
+    await page.mouse.move(...(await middleOf(stage(page))));
+    await page.keyboard.down("Control");
+    await page.keyboard.down("Shift");
+    await page.mouse.wheel(0, -200);
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Control");
+    await expect
+      .poll(async () => (await boxOf(trackHeader(page, "视频 1").locator(".."))).height)
+      .toBeGreaterThan(before.height);
+  });
+});
+
+test.describe("copying", () => {
+  test("Ctrl and a drag leaves the clip and makes a copy", async ({ page }) => {
+    await addColor(page);
+    await page.keyboard.press("Home");
+    await settle(page);
+    const [x, y] = await middleOf(clips(page).first());
+    await page.keyboard.down("Control");
+    await drag(page, [x, y], [x + 400, y]);
+    await page.keyboard.up("Control");
+    await expect(clips(page)).toHaveCount(2);
+    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(1);
+  });
+
+  test("Ctrl+C and Ctrl+V put a copy at the playhead", async ({ page }) => {
+    await addColor(page);
+    await stage(page).focus();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await expect(clips(page)).toHaveCount(2);
+    await expectLabel(clips(page).nth(1), /00:00:05:00 到 00:00:10:00/);
+    await expect(timecode(page)).toHaveText("00:00:10:00");
+  });
+});
+
+test.describe("explaining itself", () => {
+  test("every button says what it is and how to use it", async ({ page }) => {
+    for (const name of ["切割工具", "在播放头切割", "吸附", "覆盖模式", "显示全部", "添加轨道"]) {
+      await panel(page).getByRole("button", { name, exact: true }).hover();
+      const tip = page.getByRole("tooltip");
+      await expect(tip).toContainText(name);
+      await expect(tip).toContainText("。");
+      await page.mouse.move(0, 0);
+      await expect(tip).toHaveCount(0);
+    }
+  });
+
+  test("the button for cutting at the playhead cuts", async ({ page }) => {
+    await addColor(page);
+    await stage(page).focus();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await panel(page).getByRole("button", { name: "在播放头切割" }).click();
+    await expect(clips(page)).toHaveCount(2);
+  });
+
+  test("the playhead turns into the snap line when a clip sticks to it", async ({ page }) => {
+    await addColor(page);
+    await stage(page).focus();
+    await page.keyboard.press("Home");
+    for (let step = 0; step < 3; step++) await page.keyboard.press("Shift+ArrowRight");
+    await addColor(page);
+    await page.keyboard.press("Home");
+    await settle(page);
+    const area = await boxOf(stage(page));
+    await page.mouse.click(area.x + 600, area.y + 10);
+    const line = await boxOf(playhead(page));
+    const clip = clips(page).nth(1);
+    const box = await boxOf(clip);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 40, y);
+    await page.mouse.down();
+    await page.mouse.move(line.x + 40 + 3, y, { steps: 8 });
+    await expect(playhead(page)).toHaveCSS("background-color", "rgb(255, 210, 63)");
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+  });
+});
+
+test.describe("the frame rate of the project", () => {
+  test("is what the ruler counts, and formats keep theirs", async ({ page }) => {
+    await panel(page).getByRole("button", { name: "项目帧率" }).click();
+    await page.getByRole("textbox").fill("24");
+    await page.keyboard.press("Enter");
+    await expect(panel(page).getByRole("button", { name: "项目帧率" })).toHaveText("24 帧");
+    await stage(page).focus();
+    await page.keyboard.press("End");
+    await expect(timecode(page)).toHaveText("00:00:10:00");
+    await page.keyboard.press("ArrowLeft");
+    await expect(timecode(page)).toHaveText("00:00:09:23");
+  });
+
+  test("says so when it is no rate", async ({ page }) => {
+    await panel(page).getByRole("button", { name: "项目帧率" }).click();
+    await page.getByRole("textbox").fill("快");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("帧率要写成大于 0 的数字")).toBeVisible();
   });
 });
 

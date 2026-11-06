@@ -7,6 +7,7 @@ export {
   clipStart,
   orderedSections,
   orderedTracks,
+  projectFrameRate,
   projectToState,
   stateToProject,
   stateToTimeline,

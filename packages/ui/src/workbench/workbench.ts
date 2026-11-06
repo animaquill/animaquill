@@ -1,6 +1,6 @@
 import type { Host } from "@animaquill/host";
 import type { TFunction } from "i18next";
-import type { ProjectStore } from "@animaquill/core";
+import { projectFrameRate, type ProjectStore } from "@animaquill/core";
 import type { ProjectSummary } from "@animaquill/host";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
@@ -60,7 +60,7 @@ export class Workbench {
       saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
-    this.timeline = new TimelineEditor(this.session, host.windowMemory, {
+    this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
     for (const panel of panels) this.panels.register(panel);
@@ -71,7 +71,12 @@ export class Workbench {
   }
 
   async load(): Promise<void> {
-    await Promise.all([this.layout.load(), this.keybindings.load(), this.palette.load()]);
+    await Promise.all([
+      this.layout.load(),
+      this.keybindings.load(),
+      this.palette.load(),
+      this.timeline.load(),
+    ]);
     await this.session.restore();
   }
 
@@ -108,6 +113,21 @@ export class Workbench {
     if (!result.ok) {
       this.notifications.push(t("notice.commandFailed", { message: result.error.message }));
     }
+  }
+
+  /** The rate of editing. Formats keep the rates they are exported at. */
+  async setFrameRate(): Promise<void> {
+    const { store } = this.session;
+    if (!store) return;
+    const { t } = this;
+    const fps = await this.dialogs.prompt({
+      title: t("project.frameRateLabel"),
+      value: projectFrameRate(store.getState().manifest),
+      confirm: t("project.frameRateConfirm"),
+    });
+    if (!fps) return;
+    const result = store.execute({ type: "project.setFrameRate", params: { fps: fps.trim() } });
+    if (!result.ok) this.notifications.push(t("notice.frameRateInvalid"));
   }
 
   /** Resolves to whether the project was removed. */
@@ -192,6 +212,13 @@ export class Workbench {
       id: "project.rename",
       title: (t) => t("project.renameAction"),
       run: () => void this.renameProject(),
+      menu: { name: "file", group: "project" },
+      enabled: isOpen,
+    });
+    this.actions.register({
+      id: "project.frameRate",
+      title: (t) => t("project.frameRate"),
+      run: () => void this.setFrameRate(),
       menu: { name: "file", group: "project" },
       enabled: isOpen,
     });

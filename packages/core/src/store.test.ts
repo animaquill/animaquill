@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { COMMANDS } from "./commands.ts";
-import { orderedSections, orderedTracks, timelineLength } from "./model.ts";
+import { orderedSections, orderedTracks, projectFrameRate, timelineLength } from "./model.ts";
 import {
   ProjectStore,
   USER,
@@ -509,6 +509,30 @@ describe("undo", () => {
     store.undo();
     expect(property(store, "param.size")).toBe(64);
     expect(property(store, "param.accent")).toBe("#ff0000");
+  });
+});
+
+describe("the frame rate of a project", () => {
+  it("is its own, apart from the rates formats are exported at", () => {
+    const store = ProjectStore.create(createProject({ name: "帧率" }));
+    success(store.execute({ type: "project.setFrameRate", params: { fps: "24" } }));
+    const { manifest } = store.getState();
+    expect(projectFrameRate(manifest)).toBe("24");
+    expect(manifest.formats[0]?.fps).toBe("30");
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("follows the first format in a project that has none", () => {
+    const store = open();
+    expect(projectFrameRate(store.getState().manifest)).toBe(
+      store.getState().manifest.formats[0]?.fps,
+    );
+  });
+
+  it("has to be a rate", () => {
+    const store = open();
+    const result = store.execute({ type: "project.setFrameRate", params: { fps: "0" } });
+    expect(failure(result).code).toBe("invalid-params");
   });
 });
 
