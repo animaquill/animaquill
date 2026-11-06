@@ -4,6 +4,7 @@ import styles from "./ZoomBar.module.css";
 
 /** Short enough for a long timeline, long enough to keep both handles and something between them. */
 const MIN_THUMB = 30;
+const TOUCH_HANDLE_REACH = 16;
 
 export interface BarState {
   /** The size of everything, of what shows of it, and where that starts. */
@@ -71,13 +72,24 @@ export function ZoomBar(props: ZoomBarProps) {
     return subscribe(show);
   });
 
+  /** A fingertip is wider than the handles. They look the same, but reach further. */
+  const nearHandle = (event: PointerEvent<HTMLDivElement>, at: number): Edge | undefined => {
+    if (event.pointerType !== "touch") return undefined;
+    const { size, start } = measure();
+    const box = event.currentTarget.getBoundingClientRect();
+    const inBar = at - (axis === "x" ? box.left : box.top);
+    if (Math.abs(inBar - start) <= TOUCH_HANDLE_REACH) return "start";
+    if (Math.abs(inBar - (start + size)) <= TOUCH_HANDLE_REACH) return "end";
+    return undefined;
+  };
+
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     const target = event.target as HTMLElement;
-    const edge = target.dataset["handle"] as Edge | undefined;
     const from = place(event);
+    const edge = (target.dataset["handle"] as Edge | undefined) ?? nearHandle(event, from);
     if (edge) {
       drag.current = { kind: "zoom", from, edge, length: measure().size, zoom: beginZoom(edge) };
       return;

@@ -38,6 +38,8 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { TouchController } from "./touch.ts";
+import { WheelInterpreter } from "./wheel.ts";
 import styles from "./TimelinePanel.module.css";
 import { ZoomBar } from "./ZoomBar.tsx";
 
@@ -47,10 +49,9 @@ const SCROLL_SPEED = 900;
 /** The list for screen readers follows the view a moment later, not with every frame of a drag. */
 const CLIP_LIST_DELAY_MS = 80;
 const CLIP_LIST_LIMIT = 200;
-/** A wheel notch is about 100, and it should zoom by about a fifth. */
-const WHEEL_ZOOM = 0.002;
-/** Some mice report lines instead of pixels. */
-const WHEEL_LINE = 16;
+/** How far a track header has to move before it counts as dragged. */
+const TRACK_DRAG_REACH = 5;
+const TRACK_LONG_PRESS_MS = 400;
 
 interface PopupState {
   readonly x: number;
@@ -102,12 +103,14 @@ interface ToolButtonProps {
   /** Written next to the icon, where there is room. */
   readonly text?: string;
   readonly pressed?: boolean;
+  /** Turns something on and off, as opposed to choosing what the mouse does. */
+  readonly isSwitch?: boolean;
   readonly unavailable?: boolean;
   readonly onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }
 
 function ToolButton(props: ToolButtonProps) {
-  const { name, usage, action, icon: Icon, text, pressed, unavailable, onClick } = props;
+  const { name, usage, action, icon: Icon, text, pressed, isSwitch, unavailable, onClick } = props;
   const { keybindings } = useWorkbench();
   const combo = action && keybindings.keysFor(`timeline.${action}`)[0];
   return (
@@ -118,7 +121,7 @@ function ToolButton(props: ToolButtonProps) {
     >
       <button
         type="button"
-        className={styles.button}
+        className={isSwitch ? styles.switch : styles.button}
         aria-label={name}
         aria-description={usage}
         // Not `disabled`: a disabled button gets no mouse events, and it still has to explain itself.
@@ -162,92 +165,99 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
             {model && t("timeline.fps", { fps: Number(model.rate.fps.toFixed(3)) })}
           </button>
         </Tip>
-        <div className={styles.divider} />
-        <ToolButton
-          name={t("timeline.action.toolSelect")}
-          usage={t("timeline.help.toolSelect")}
-          action="toolSelect"
-          icon={MousePointer2}
-          pressed={tool === "select"}
-          onClick={() => editor.setTool("select")}
-        />
-        <ToolButton
-          name={t("timeline.action.toolRazor")}
-          usage={t("timeline.help.toolRazor")}
-          action="toolRazor"
-          icon={Scissors}
-          pressed={tool === "razor"}
-          onClick={() => editor.setTool("razor")}
-        />
-        <ToolButton
-          name={t("timeline.splitButton")}
-          usage={t("timeline.help.split")}
-          action="split"
-          icon={SquareSplitHorizontal}
-          unavailable={!canSplit}
-          onClick={() => editor.splitAtPlayhead()}
-        />
-        <div className={styles.divider} />
-        <ToolButton
-          name={t("timeline.snapping")}
-          usage={t("timeline.help.snapping")}
-          action="toggleSnapping"
-          icon={Magnet}
-          pressed={snapping}
-          onClick={() => editor.toggleSnapping()}
-        />
-        <ToolButton
-          name={t("timeline.overwriting")}
-          usage={t("timeline.help.overwriting")}
-          action="toggleOverwriting"
-          icon={Replace}
-          pressed={overwriting}
-          onClick={() => editor.toggleOverwriting()}
-        />
-        <div className={styles.divider} />
-        <ToolButton
-          name={t("timeline.color")}
-          usage={t("timeline.help.addColor")}
-          icon={Plus}
-          text={t("timeline.color")}
-          onClick={() => editor.addColorClip()}
-        />
-        <div className={styles.spacer} />
-        <ToolButton
-          name={t("timeline.action.zoomOut")}
-          usage={t("timeline.help.zoomOut")}
-          action="zoomOut"
-          icon={ZoomOut}
-          onClick={() => editor.zoomOut()}
-        />
-        <Tip name={t("timeline.zoom")} usage={t("timeline.help.zoom")}>
-          <input
-            className={styles.zoom}
-            type="range"
-            min={0}
-            max={1}
-            step={0.001}
-            value={zoom}
-            aria-label={t("timeline.zoom")}
-            onChange={(event) => editor.setZoomLevel(Number(event.target.value))}
-            // After the mouse lets go, the arrow keys should go back to moving the playhead.
-            onPointerUp={(event) => event.currentTarget.blur()}
+        <div className={styles.zone} role="group" aria-label={t("timeline.zone.tools")}>
+          <ToolButton
+            name={t("timeline.action.toolSelect")}
+            usage={t("timeline.help.toolSelect")}
+            action="toolSelect"
+            icon={MousePointer2}
+            pressed={tool === "select"}
+            onClick={() => editor.setTool("select")}
           />
-        </Tip>
-        <ToolButton
-          name={t("timeline.action.zoomIn")}
-          usage={t("timeline.help.zoomIn")}
-          action="zoomIn"
-          icon={ZoomIn}
-          onClick={() => editor.zoomIn()}
-        />
-        <ToolButton
-          name={t("timeline.action.zoomToFit")}
-          usage={t("timeline.help.zoomToFit")}
-          action="zoomToFit"
-          icon={FoldHorizontal}
-          onClick={() => editor.zoomToFit()}
-        />
+          <ToolButton
+            name={t("timeline.action.toolRazor")}
+            usage={t("timeline.help.toolRazor")}
+            action="toolRazor"
+            icon={Scissors}
+            pressed={tool === "razor"}
+            onClick={() => editor.setTool("razor")}
+          />
+        </div>
+        <div className={styles.zone} role="group" aria-label={t("timeline.zone.switches")}>
+          <ToolButton
+            name={t("timeline.snapping")}
+            usage={t("timeline.help.snapping")}
+            action="toggleSnapping"
+            icon={Magnet}
+            pressed={snapping}
+            isSwitch
+            onClick={() => editor.toggleSnapping()}
+          />
+          <ToolButton
+            name={t("timeline.overwriting")}
+            usage={t("timeline.help.overwriting")}
+            action="toggleOverwriting"
+            icon={Replace}
+            pressed={overwriting}
+            isSwitch
+            onClick={() => editor.toggleOverwriting()}
+          />
+        </div>
+        <div className={styles.zone} role="group" aria-label={t("timeline.zone.actions")}>
+          <ToolButton
+            name={t("timeline.splitButton")}
+            usage={t("timeline.help.split")}
+            action="split"
+            icon={SquareSplitHorizontal}
+            unavailable={!canSplit}
+            onClick={() => editor.splitAtPlayhead()}
+          />
+          <ToolButton
+            name={t("timeline.color")}
+            usage={t("timeline.help.addColor")}
+            icon={Plus}
+            text={t("timeline.color")}
+            onClick={() => editor.addColorClip()}
+          />
+        </div>
+        <div className={styles.spacer} />
+        <div className={styles.zoneEnd} role="group" aria-label={t("timeline.zone.zoom")}>
+          <ToolButton
+            name={t("timeline.action.zoomOut")}
+            usage={t("timeline.help.zoomOut")}
+            action="zoomOut"
+            icon={ZoomOut}
+            onClick={() => editor.zoomOut()}
+          />
+          <Tip name={t("timeline.zoom")} usage={t("timeline.help.zoom")}>
+            <input
+              className={styles.zoom}
+              type="range"
+              min={0}
+              max={1}
+              step={0.001}
+              value={zoom}
+              aria-label={t("timeline.zoom")}
+              onChange={(event) => editor.setZoomLevel(Number(event.target.value))}
+              // After the mouse lets go, the arrow keys should go back to moving the playhead.
+              onPointerUp={(event) => event.currentTarget.blur()}
+            />
+          </Tip>
+          <ToolButton
+            name={t("timeline.action.zoomIn")}
+            usage={t("timeline.help.zoomIn")}
+            action="zoomIn"
+            icon={ZoomIn}
+            onClick={() => editor.zoomIn()}
+          />
+          <ToolButton
+            name={t("timeline.action.zoomToFit")}
+            usage={t("timeline.help.zoomToFit")}
+            action="zoomToFit"
+            icon={FoldHorizontal}
+            onClick={() => editor.zoomToFit()}
+          />
+        </div>
       </div>
     </div>
   );
@@ -282,17 +292,29 @@ function TrackName({ name, onDone }: { name: string; onDone: (next: string | und
   );
 }
 
+interface Reorder {
+  readonly from: number;
+  lastY: number;
+  readonly listTop: number;
+  active: boolean;
+  readonly touch: boolean;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
 function TrackHeader({
   editor,
   row,
   showMenu,
+  onReorder,
 }: {
   editor: TimelineEditor;
   row: Row;
   showMenu: ShowMenu;
+  onReorder: (line: number | undefined) => void;
 }) {
   const { t } = useTranslation();
   const nameOf = useTrackName();
+  const reorder = useRef<Reorder | undefined>(undefined);
   const [renaming, setRenaming] = useState(false);
   const name = nameOf(row);
   const { track } = row;
@@ -304,6 +326,69 @@ function TrackHeader({
   const OnIcon = sound ? Volume2 : Eye;
   const OffIcon = off ? (sound ? VolumeX : EyeOff) : OnIcon;
 
+  const laneOf = (event: PointerEvent<HTMLDivElement>) =>
+    event.clientY - reorder.current!.listTop + editor.scrollY;
+
+  /**
+   * The mouse drags a track right away. A finger scrolls through the tracks, as it does everywhere
+   * else, and picks one up with a long press.
+   */
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (event.button !== 0 || row.gone || renaming || target.closest("button")) return;
+    const element = event.currentTarget;
+    const list = element.parentElement?.parentElement?.getBoundingClientRect();
+    const touch = event.pointerType === "touch";
+    const state: Reorder = {
+      from: event.clientY,
+      lastY: event.clientY,
+      listTop: list?.top ?? 0,
+      active: false,
+      touch,
+      timer: undefined,
+    };
+    reorder.current = state;
+    if (touch) {
+      state.timer = setTimeout(() => {
+        state.active = true;
+        onReorder(editor.trackDrop(row.id, state.lastY - state.listTop + editor.scrollY).line);
+      }, TRACK_LONG_PRESS_MS);
+    }
+  };
+
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const state = reorder.current;
+    if (!state) return;
+    const moved = Math.abs(event.clientY - state.from);
+    if (!state.active && state.touch) {
+      if (moved >= TRACK_DRAG_REACH) clearTimeout(state.timer);
+      if (moved >= TRACK_DRAG_REACH || state.timer === undefined) {
+        editor.setScroll(editor.scrollX, editor.scrollY - (event.clientY - state.lastY));
+      }
+    } else if (!state.active && moved >= TRACK_DRAG_REACH) {
+      // Only now: from here on all events go to the header, also the double click on its name.
+      event.currentTarget.setPointerCapture(event.pointerId);
+      state.active = true;
+    }
+    state.lastY = event.clientY;
+    if (state.active) onReorder(editor.trackDrop(row.id, laneOf(event)).line);
+  };
+
+  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const state = reorder.current;
+    if (!state) return;
+    clearTimeout(state.timer);
+    if (state.active) editor.moveTrack(row.id, editor.trackDrop(row.id, laneOf(event)).index);
+    reorder.current = undefined;
+    onReorder(undefined);
+  };
+
+  const stopReordering = () => {
+    clearTimeout(reorder.current?.timer);
+    reorder.current = undefined;
+    onReorder(undefined);
+  };
+
   const finishRenaming = (next: string | undefined) => {
     setRenaming(false);
     if (next !== undefined && next !== name) editor.updateTrack(row.id, { name: next });
@@ -313,6 +398,10 @@ function TrackHeader({
     <div
       className={styles.header}
       style={{ height: row.height }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={stopReordering}
       onContextMenu={(event) => {
         event.preventDefault();
         if (row.gone) return;
@@ -323,6 +412,16 @@ function TrackHeader({
           groups: [
             [
               { id: "rename", label: t("timeline.renameTrack"), run: () => setRenaming(true) },
+              {
+                id: "up",
+                label: t("timeline.moveTrackUp"),
+                run: () => editor.shiftTrack(row.id, -1),
+              },
+              {
+                id: "down",
+                label: t("timeline.moveTrackDown"),
+                run: () => editor.shiftTrack(row.id, 1),
+              },
               {
                 id: "remove",
                 label: t("timeline.removeTrack"),
@@ -385,6 +484,7 @@ function TrackHeaders({
 }) {
   const { t } = useTranslation();
   const list = useRef<HTMLDivElement>(null);
+  const [dropLine, setDropLine] = useState<number>();
 
   useLayoutEffect(() => {
     const follow = () => {
@@ -422,8 +522,15 @@ function TrackHeaders({
       <div className={styles.headerList}>
         <div ref={list}>
           {model.rows.map((row) => (
-            <TrackHeader key={row.id} editor={editor} row={row} showMenu={showMenu} />
+            <TrackHeader
+              key={row.id}
+              editor={editor}
+              row={row}
+              showMenu={showMenu}
+              onReorder={setDropLine}
+            />
           ))}
+          {dropLine !== undefined && <div className={styles.dropLine} style={{ top: dropLine }} />}
         </div>
       </div>
     </div>
@@ -500,10 +607,27 @@ function Surface({
   const lastPointer = useRef<Pointer | undefined>(undefined);
   const scrolling = useRef<number | undefined>(undefined);
   const labels = useRef(labelOf);
+  const touch = useRef<TouchController | undefined>(undefined);
+  const menuAt = useRef<(pointer: Pointer) => void>(() => {});
 
   useLayoutEffect(() => {
     labels.current = labelOf;
   });
+
+  useLayoutEffect(() => {
+    touch.current = new TouchController(editor, {
+      later(run, milliseconds) {
+        const timer = setTimeout(run, milliseconds);
+        return () => clearTimeout(timer);
+      },
+      nextFrame(run) {
+        const frame = requestAnimationFrame(run);
+        return () => cancelAnimationFrame(frame);
+      },
+      now: () => performance.now(),
+      openMenu: (pointer) => menuAt.current(pointer),
+    });
+  }, [editor]);
 
   useLayoutEffect(() => {
     const stageElement = stage.current;
@@ -540,23 +664,29 @@ function Surface({
       painter.paintNow();
     };
 
-    /** A mouse wheel and a trackpad both come through here. A pinch arrives with Ctrl held. */
+    const wheel = new WheelInterpreter();
     const onWheel = (event: Event) => {
       if (!(event instanceof WheelEvent)) return;
       event.preventDefault();
-      const scale = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE : 1;
-      // With Shift held, browsers on Windows report the wheel as going sideways.
-      const amount = (event.deltaY || event.deltaX) * scale;
+      const { wheelDeltaX, wheelDeltaY } = event as WheelEvent & {
+        wheelDeltaX: number;
+        wheelDeltaY: number;
+      };
+      const action = wheel.read({
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        lines: event.deltaMode === WheelEvent.DOM_DELTA_LINE,
+        wheelDelta: wheelDeltaY || wheelDeltaX,
+        ctrl: event.ctrlKey || event.metaKey,
+        alt: event.altKey,
+        shift: event.shiftKey,
+        time: event.timeStamp,
+      });
       const box = stageElement.getBoundingClientRect();
-      if (event.ctrlKey || event.metaKey || event.altKey) {
-        const factor = Math.exp(-amount * WHEEL_ZOOM);
-        if (event.shiftKey) editor.zoomRowsAround(event.clientY - box.top, factor);
-        else editor.zoomAround(event.clientX - box.left, factor);
-      } else if (event.shiftKey) {
-        editor.setScroll(editor.scrollX, editor.scrollY + amount);
-      } else {
-        editor.setScroll(editor.scrollX + (event.deltaX + event.deltaY) * scale, editor.scrollY);
-      }
+      if (action.kind === "zoom") editor.zoomAround(event.clientX - box.left, action.factor);
+      else if (action.kind === "zoomRows") {
+        editor.zoomRowsAround(event.clientY - box.top, action.factor);
+      } else editor.setScroll(editor.scrollX + action.dx, editor.scrollY + action.dy);
     };
 
     const stopView = editor.subscribeView(show);
@@ -613,7 +743,10 @@ function Surface({
     currentTarget.focus({ preventScroll: true });
     currentTarget.setPointerCapture(event.pointerId);
     lastPointer.current = pointerOf(event, currentTarget);
-    editor.press(lastPointer.current);
+    const isTouch = event.pointerType === "touch";
+    editor.setTouchInput(isTouch);
+    if (isTouch) touch.current?.down(event.pointerId, lastPointer.current.x, lastPointer.current.y);
+    else editor.press(lastPointer.current);
     scrolling.current ??= requestAnimationFrame((now) => scrollWhileNearEdge(now));
   };
 
@@ -621,6 +754,11 @@ function Surface({
     const { currentTarget } = event;
     const pointer = pointerOf(event, currentTarget);
     lastPointer.current = pointer;
+    if (event.pointerType === "touch") {
+      touch.current?.move(event.pointerId, pointer.x, pointer.y);
+      scrolling.current ??= requestAnimationFrame((now) => scrollWhileNearEdge(now));
+      return;
+    }
     // The button came up somewhere we could not see it, for example in another window.
     if (editor.isDragging && event.buttons === 0) editor.cancelDrag();
     else if (editor.isDragging) {
@@ -630,13 +768,27 @@ function Surface({
   };
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button === 0) editor.release(pointerOf(event, event.currentTarget));
+    if (event.pointerType === "touch") touch.current?.up(event.pointerId);
+    else if (event.button === 0) editor.release(pointerOf(event, event.currentTarget));
+  };
+
+  const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") touch.current?.cancel(event.pointerId);
+    else editor.cancelDrag();
   };
 
   const onContextMenu = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const hit = editor.hitAt(pointerOf(event, event.currentTarget));
-    const { clientX: x, clientY: y } = event;
+    // A finger gets its menu from a long press, which TouchController decides on.
+    if ((event.nativeEvent as globalThis.PointerEvent).pointerType === "touch") return;
+    const box = event.currentTarget.getBoundingClientRect();
+    openMenu(pointerOf(event, event.currentTarget), box);
+  };
+
+  const openMenu = (pointer: Pointer, box: DOMRect) => {
+    const hit = editor.hitAt(pointer);
+    const x = pointer.x + box.left;
+    const y = pointer.y + box.top;
     if (hit.kind === "clip" && !hit.row.track.locked) {
       if (!editor.getSnapshot().selection.has(hit.box.id)) editor.selectOnly(hit.box.id);
       const item = (id: TimelineAction, run: () => void, disabled = false) => ({
@@ -691,6 +843,12 @@ function Surface({
     }
   };
 
+  useLayoutEffect(() => {
+    menuAt.current = (pointer) => {
+      if (stage.current) openMenu(pointer, stage.current.getBoundingClientRect());
+    };
+  });
+
   const lanes = () => editor.height - RULER_HEIGHT;
 
   return (
@@ -704,8 +862,10 @@ function Surface({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => editor.cancelDrag()}
-        onLostPointerCapture={() => editor.cancelDrag()}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={(event) => {
+          if (event.pointerType !== "touch") editor.cancelDrag();
+        }}
         onPointerLeave={() => editor.leave()}
         onContextMenu={onContextMenu}
       >
@@ -776,7 +936,7 @@ export function TimelinePanel() {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // A menu opened from here is part of this panel for React, but it has its own Escape.
     if (event.key !== "Escape" || !event.currentTarget.contains(event.target as Node)) return;
-    if (!editor.cancelDrag()) editor.clearSelection();
+    if (!editor.cancelDrag() && !editor.cancelCut()) editor.clearSelection();
   };
 
   return (

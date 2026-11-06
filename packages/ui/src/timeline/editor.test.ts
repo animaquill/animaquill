@@ -165,12 +165,38 @@ describe("the view", () => {
     expect(editor.contentWidth).toBeGreaterThan(12 * editor.pixelsPerSecond);
   });
 
-  it("fits again on request", async () => {
+  it("fits again on request, and goes back when asked again", async () => {
     const { editor } = await setup();
     editor.zoomAround(500, 8);
+    editor.setScroll(300, 0);
+    const zoom = editor.pixelsPerSecond;
     editor.zoomToFit();
     expect(editor.xAt(10)).toBeLessThanOrEqual(WIDTH);
     expect(editor.scrollX).toBe(0);
+    editor.zoomToFit();
+    expect(editor.pixelsPerSecond).toBe(zoom);
+    expect(editor.scrollX).toBe(300);
+    editor.zoomToFit();
+    expect(editor.scrollX).toBe(0);
+  });
+
+  it("does not go back to an old view after people moved on from the whole timeline", async () => {
+    const { editor } = await setup();
+    editor.zoomAround(500, 8);
+    editor.zoomToFit();
+    editor.zoomAround(500, 2);
+    const zoom = editor.pixelsPerSecond;
+    editor.zoomToFit();
+    editor.zoomToFit();
+    expect(editor.pixelsPerSecond).toBe(zoom);
+  });
+
+  it("stays put when everything already shows", async () => {
+    const { editor } = await setup();
+    const zoom = editor.pixelsPerSecond;
+    editor.zoomToFit();
+    editor.zoomToFit();
+    expect(editor.pixelsPerSecond).toBe(zoom);
   });
 
   it("gives a slider level from 0 to 1 and takes it back", async () => {
@@ -1420,16 +1446,19 @@ describe("changing the project from the keyboard and menus", () => {
     expect(store.revision).toBe(revision);
   });
 
-  it("cuts everything at the playhead when nothing there is selected", async () => {
-    const { editor, addClip, main, audio } = await setup();
+  it("does not cut anything until something is selected", async () => {
+    const { editor, addClip, main, audio, store } = await setup();
     addClip("a", 0, 4);
     addClip("b", 0, 4, audio);
     editor.seek(60);
+    const revision = store.revision;
+    expect(editor.canSplit).toBe(false);
     editor.splitAtPlayhead();
-    expect(Object.keys(main().clips)).toHaveLength(4);
+    expect(store.revision).toBe(revision);
+    expect(Object.keys(main().clips)).toHaveLength(2);
   });
 
-  it("cuts only what is selected when something at the playhead is", async () => {
+  it("cuts only what is selected", async () => {
     const { editor, addClip, main, audio, at } = await setup();
     addClip("a", 0, 4);
     addClip("b", 0, 4, audio);
@@ -1443,6 +1472,7 @@ describe("changing the project from the keyboard and menus", () => {
   it("does nothing when the playhead is on an edge or over nothing", async () => {
     const { editor, addClip, store } = await setup();
     addClip("a", 2, 2);
+    editor.selectAll();
     const revision = store.revision;
     for (const frame of [0, 60, 120, 200]) {
       editor.seek(frame);
@@ -1538,6 +1568,7 @@ describe("changing the project from the keyboard and menus", () => {
       const { editor, addClip, main, audio, commandFailed } = await setup();
       addClip("a", "1/30", "31/30");
       addClip("long", 0, 10, audio);
+      editor.selectAll();
       editor.seek(32);
       editor.splitAtPlayhead();
       expect(commandFailed).not.toHaveBeenCalled();
@@ -1691,7 +1722,7 @@ describe("changing the project from the keyboard and menus", () => {
       const copies = Object.values(main().clips).filter(({ id }) => !["a", "b"].includes(id));
       expect(copies.map(({ start }) => start).toSorted()).toEqual(["5", "7"]);
       expect(selection().toSorted()).toEqual(copies.map(({ id }) => id).toSorted());
-      expect(editor.frame).toBe(240);
+      expect(editor.frame).toBe(150);
     });
 
     it("goes after what is there, unless overwriting is on", async () => {
@@ -1713,17 +1744,68 @@ describe("changing the project from the keyboard and menus", () => {
       expect(copy).toBeDefined();
     });
 
-    it("cuts, and undo takes each step back", async () => {
+    it("keeps what was cut until it is pasted, which is one step to undo", async () => {
       const { editor, addClip, main, store } = await setup();
       addClip("a", 1, 1);
       editor.selectAll();
+      const revision = store.revision;
       editor.cutSelection();
-      expect(Object.keys(main().clips)).toEqual([]);
-      expect(editor.hasClipboard).toBe(true);
+      expect(store.revision).toBe(revision);
+      expect(main().clips["a"]).toBeDefined();
+      expect([...editor.getSnapshot().cut]).toEqual(["a"]);
+      editor.seek(150);
       editor.paste();
-      expect(Object.keys(main().clips)).toHaveLength(1);
+      expect(main().clips["a"]).toBeUndefined();
+      expect(Object.values(main().clips).map(({ start }) => start)).toEqual(["5"]);
+      expect(editor.getSnapshot().cut.size).toBe(0);
       store.undo();
-      expect(Object.keys(main().clips)).toEqual([]);
+      expect(Object.keys(main().clips)).toEqual(["a"]);
+    });
+
+    it("can paste what was cut onto its own place", async () => {
+      const { editor, addClip, main } = await setup();
+      addClip("a", 1, 2);
+      editor.selectAll();
+      editor.cutSelection();
+      editor.seek(45);
+      editor.paste();
+      expect(Object.values(main().clips).map(({ start }) => start)).toEqual(["1.5"]);
+    });
+
+    it("can take a cut back, and then there is nothing to paste", async () => {
+      const { editor, addClip, main } = await setup();
+      addClip("a", 1, 1);
+      editor.selectAll();
+      editor.cutSelection();
+      expect(editor.cancelCut()).toBe(true);
+      expect(editor.cancelCut()).toBe(false);
+      expect(editor.hasClipboard).toBe(false);
+      editor.paste();
+      expect(Object.keys(main().clips)).toEqual(["a"]);
+    });
+
+    it("forgets a cut when something else gets copied", async () => {
+      const { editor, addClip, main, at } = await setup();
+      addClip("a", 1, 1);
+      addClip("b", 3, 1);
+      editor.selectOnly("a");
+      editor.cutSelection();
+      editor.selectOnly("b");
+      editor.copySelection();
+      expect(editor.getSnapshot().cut.size).toBe(0);
+      editor.seek(150);
+      editor.paste();
+      expect(main().clips["a"]).toBeDefined();
+      expect(at(0)).toBeDefined();
+    });
+
+    it("forgets a clip that is gone from what was cut", async () => {
+      const { editor, addClip, store } = await setup();
+      addClip("a", 1, 1);
+      editor.selectAll();
+      editor.cutSelection();
+      store.undo();
+      expect(editor.getSnapshot().cut.size).toBe(0);
     });
 
     it("goes to another track when its own is locked, and to a new one when none is left", async () => {
@@ -1885,6 +1967,80 @@ describe("changing the project from the keyboard and menus", () => {
       expect(editor.preview?.snap).toBe(5);
       expect(editor.isSnappedToPlayhead).toBe(true);
       editor.cancelDrag();
+    });
+  });
+
+  describe("the order of tracks", () => {
+    const withTracks = async () => {
+      const context = await setup();
+      for (const id of ["v2", "v3"]) {
+        context.store.execute({
+          type: "track.add",
+          params: { timeline: "main", id, kind: "video" },
+        });
+      }
+      context.store.execute({
+        type: "track.add",
+        params: { timeline: "main", id: "a2", kind: "audio" },
+      });
+      const order = () => context.editor.model?.rows.map(({ id }) => id) ?? [];
+      return { ...context, order };
+    };
+
+    it("changes by dragging, top to bottom as people see it", async () => {
+      const { editor, order, video, store } = await withTracks();
+      expect(order().slice(0, 3)).toEqual(["v3", "v2", video]);
+      editor.moveTrack("v3", 2);
+      expect(order().slice(0, 3)).toEqual(["v2", video, "v3"]);
+      editor.moveTrack("v3", 0);
+      expect(order().slice(0, 3)).toEqual(["v3", "v2", video]);
+      editor.moveTrack(video, 1);
+      expect(order().slice(0, 3)).toEqual(["v3", video, "v2"]);
+      store.undo();
+      expect(order().slice(0, 3)).toEqual(["v3", "v2", video]);
+    });
+
+    it("works for tracks that count downwards too", async () => {
+      const { editor, order, audio } = await withTracks();
+      expect(order().slice(3)).toEqual([audio, "a2"]);
+      editor.moveTrack(audio, 1);
+      expect(order().slice(3)).toEqual(["a2", audio]);
+      editor.moveTrack(audio, 0);
+      expect(order().slice(3)).toEqual([audio, "a2"]);
+    });
+
+    it("says where a dragged track would land", async () => {
+      const { editor } = await withTracks();
+      expect(editor.trackDrop("v3", 0).index).toBe(0);
+      const rows = editor.model?.rows ?? [];
+      const bottom = (rows[2]?.top ?? 0) + 40;
+      expect(editor.trackDrop("v3", bottom).index).toBe(2);
+      expect(editor.trackDrop("v3", 1000).index).toBe(2);
+    });
+
+    it("stays among tracks of its kind", async () => {
+      const { editor, order, audio } = await withTracks();
+      const before = order();
+      editor.moveTrack(audio, 5);
+      expect(order().filter((id) => id === audio || id === "a2")).toEqual(["a2", audio]);
+      expect(order().slice(0, 3)).toEqual(before.slice(0, 3));
+    });
+
+    it("moves one place from the menu, and stops at the ends", async () => {
+      const { editor, order, video } = await withTracks();
+      editor.shiftTrack("v2", -1);
+      expect(order().slice(0, 3)).toEqual(["v2", "v3", video]);
+      editor.shiftTrack("v2", -1);
+      expect(order().slice(0, 3)).toEqual(["v2", "v3", video]);
+      editor.shiftTrack("v3", 1);
+      expect(order().slice(0, 3)).toEqual(["v2", video, "v3"]);
+    });
+
+    it("writes nothing when a track stays where it is", async () => {
+      const { editor, store } = await withTracks();
+      const revision = store.revision;
+      editor.moveTrack("v2", 1);
+      expect(store.revision).toBe(revision);
     });
   });
 

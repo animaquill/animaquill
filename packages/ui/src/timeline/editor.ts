@@ -56,6 +56,8 @@ import {
 export const RULER_HEIGHT = 28;
 /** How far the pointer can be from an edge and still grab it. Short clips keep some middle. */
 const EDGE_REACH = 7;
+/** A fingertip covers more than a mouse pointer. */
+const TOUCH_EDGE_REACH = 16;
 const SNAP_REACH = 8;
 /**
  * Room after the end of the timeline, as a share of its length: clips need somewhere to go. Not in
@@ -102,6 +104,8 @@ export interface TimelineSnapshot {
   readonly snapping: boolean;
   /** Whether a drop covers other clips. Off, clips go to the nearest free place. */
   readonly overwriting: boolean;
+  /** Cut, and waiting to be pasted somewhere else. They stay until then. */
+  readonly cut: ReadonlySet<string>;
 }
 
 /** A clip and where it is on screen, in pixels from the top left of the timeline area. */
@@ -116,6 +120,11 @@ export interface VisibleClip {
 
 export interface TimelineMessages {
   commandFailed(message: string): void;
+}
+
+interface ViewPlace {
+  readonly pixelsPerSecond: number;
+  readonly scrollX: number;
 }
 
 interface RememberedView {
@@ -161,6 +170,9 @@ function parsePreferences(value: unknown): SavedPreferences | undefined {
 const clamp = (value: number, low: number, high: number) =>
   Math.min(Math.max(value, low), Math.max(low, high));
 
+const sameView = (a: ViewPlace, b: ViewPlace) =>
+  a.pixelsPerSecond === b.pixelsPerSecond && a.scrollX === b.scrollX;
+
 const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
   a.size === b.size && [...a].every((item) => b.has(item));
 
@@ -181,6 +193,7 @@ export class TimelineEditor {
     tool: "select",
     snapping: true,
     overwriting: false,
+    cut: new Set(),
   };
   /** What was copied, in this window. */
   #clipboard: readonly ClipState[] = [];
@@ -191,6 +204,9 @@ export class TimelineEditor {
   #hovered: Hit = { kind: "empty" };
   #razorAt: number | undefined;
   #frame = 0;
+  #edgeReach = EDGE_REACH;
+  /** How to get back from showing everything, while the view is still the one that showed it. */
+  #beforeFit: { readonly from: ViewPlace; readonly fitted: ViewPlace } | undefined;
   #pixelsPerSecond = 0;
   #rowScale = 1;
   #scrollX = 0;
@@ -383,12 +399,33 @@ export class TimelineEditor {
     return Math.abs(preview.snap - frameSeconds(this.#frame, model.rate)) < 1e-9;
   }
 
+  /** Shows the whole timeline. Asked again, it goes back to where people were. */
   zoomToFit(): void {
     if (this.#width === 0) return;
-    this.#fit();
-    this.#scrollX = 0;
+    const here = this.#viewPlace();
+    const back = this.#beforeFit;
+    this.#beforeFit = undefined;
+    if (back && sameView(back.fitted, here)) {
+      this.#pixelsPerSecond = this.#limitZoom(back.from.pixelsPerSecond);
+      this.#scrollX = back.from.scrollX;
+    } else {
+      this.#fit();
+      this.#scrollX = 0;
+    }
     this.#clampScroll();
+    const fitted = this.#viewPlace();
+    if (!back && !sameView(here, fitted)) this.#beforeFit = { from: here, fitted };
+    else if (back && !sameView(back.fitted, here)) this.#beforeFit = { from: here, fitted };
     this.#viewChanged();
+  }
+
+  #viewPlace(): ViewPlace {
+    return { pixelsPerSecond: this.#pixelsPerSecond, scrollX: this.#scrollX };
+  }
+
+  /** Fingers need more room to find an edge, and the rest stays the same. */
+  setTouchInput(on: boolean): void {
+    this.#edgeReach = on ? TOUCH_EDGE_REACH : EDGE_REACH;
   }
 
   /** The zoom level from 0 for all of the timeline to 1 for single frames, for a slider. */
@@ -491,7 +528,9 @@ export class TimelineEditor {
     this.#scrollX = remembered?.scrollX ?? 0;
     this.#scrollY = remembered?.scrollY ?? 0;
     this.#frame = remembered?.frame ?? 0;
-    this.#snapshot = { ...this.#snapshot, selection: new Set() };
+    this.#snapshot = { ...this.#snapshot, selection: new Set(), cut: new Set() };
+    this.#clipboard = [];
+    this.#beforeFit = undefined;
     this.#refresh();
     if (this.#pixelsPerSecond === 0 && this.#width > 0) this.#fit();
     this.#clampScroll();
@@ -507,10 +546,12 @@ export class TimelineEditor {
     }
     const selection = new Set(this.#selectable(this.#snapshot.selection, model));
     const same = sameSet(selection, this.#snapshot.selection);
+    const cut = new Set(this.#selectable(this.#snapshot.cut, model));
     this.#snapshot = {
       ...this.#snapshot,
       model,
       selection: same ? this.#snapshot.selection : selection,
+      cut: sameSet(cut, this.#snapshot.cut) ? this.#snapshot.cut : cut,
     };
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
     if (model && this.#gesture?.isStale?.(model)) this.#cancelGesture();
@@ -649,22 +690,43 @@ export class TimelineEditor {
     const { model } = this;
     const { selection } = this.#snapshot;
     const boxes = [...selection].flatMap((id) => model?.boxes.get(id) ?? []);
-    if (boxes.length > 0) this.#clipboard = boxes.map(({ clip }) => clip);
+    if (boxes.length === 0) return;
+    this.#clipboard = boxes.map(({ clip }) => clip);
+    this.#setCut(new Set());
   }
 
+  /** Marks clips to go. They stay in their place until they are pasted, so this can be undone. */
   cutSelection(): void {
+    const { selection } = this.#snapshot;
+    if (selection.size === 0) return;
     this.copySelection();
-    this.deleteSelection();
+    this.#setCut(selection);
+  }
+
+  /** Changes nothing when there is no cut, and says so. */
+  cancelCut(): boolean {
+    if (this.#snapshot.cut.size === 0) return false;
+    this.#clipboard = [];
+    this.#setCut(new Set());
+    return true;
+  }
+
+  #setCut(cut: ReadonlySet<string>): void {
+    this.#snapshot = { ...this.#snapshot, cut };
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
   }
 
   /**
-   * Puts copies at the playhead, as far apart as they were. They go on their own tracks where those
-   * can be used. What is there stays and the copies go after it, unless people overwrite.
+   * Puts copies at the playhead, as far apart as they were, and takes away what was cut, in one
+   * step. They go on their own tracks where those can be used. What is there stays and the copies
+   * go after it, unless people overwrite. The playhead stays: people are watching that place.
    */
   paste(): void {
     const { model } = this;
     const [first] = this.#clipboard.toSorted((a, b) => compare(clipStart(a), clipStart(b)));
     if (!model || !first) return;
+    const { cut } = this.#snapshot;
     const copies = copiesOf(this.#clipboard);
     const moment = frameTime(this.#frame, model.rate);
     const offset = subtract(moment, clipStart(first));
@@ -683,7 +745,7 @@ export class TimelineEditor {
       return row ? [{ row, start, end, exactStart, exactEnd }] : [];
     });
     const { overwriting } = this.#snapshot;
-    const shift = overwriting ? undefined : freeShift(placed, new Set(), 1);
+    const shift = overwriting ? undefined : freeShift(placed, cut, 1);
     const moved = shift ? add(offset, shift.exact()) : offset;
 
     const trackCalls: CommandCall[] = [];
@@ -706,22 +768,24 @@ export class TimelineEditor {
         },
       };
     });
-    if (!this.#run([...trackCalls, ...calls])) return;
+    const removal: CommandCall[] =
+      cut.size > 0
+        ? [{ type: "clip.remove", params: { timeline: model.id, clips: [...cut] } }]
+        : [];
+    if (!this.#run([...removal, ...trackCalls, ...calls])) return;
+    this.#setCut(new Set());
     this.#select(new Set(copies.map(({ id }) => id)));
-    const ends = this.#clipboard.map((clip) => toSeconds(add(clipEnd(clip), moved)));
-    this.seek(frameAt(Math.max(...ends), model.rate));
   }
 
-  /** What a cut at the playhead would go through: what is selected there, or else everything. */
+  /** What a cut at the playhead would go through: only what people selected. */
   #clipsToSplit(model: TimelineModel): readonly ClipBox[] {
     const seconds = frameSeconds(this.#frame, model.rate);
     const moment = frameTime(this.#frame, model.rate);
-    const under = model.rows.flatMap((row) => {
-      const box = row.track.locked ? undefined : clipAt(row, seconds);
-      return box && isInsideClip(box.clip, moment) ? [box] : [];
+    return model.rows.flatMap((row) => {
+      const box = clipAt(row, seconds);
+      const cuts = box && this.#snapshot.selection.has(box.id) && isInsideClip(box.clip, moment);
+      return cuts ? [box] : [];
     });
-    const selected = under.filter((box) => this.#snapshot.selection.has(box.id));
-    return selected.length > 0 ? selected : under;
   }
 
   get canSplit(): boolean {
@@ -740,6 +804,51 @@ export class TimelineEditor {
       return [{ type: "clip.split", params: { timeline: model.id, clip: box.id, at } }];
     });
     if (calls.length > 0) this.#run(calls);
+  }
+
+  /** Tracks of a kind that can change places, top to bottom. */
+  #sortableRows(model: TimelineModel, kind: string): readonly Row[] {
+    return model.rows.filter(({ track, gone }) => track.kind === kind && !gone);
+  }
+
+  /** Where a track would land at a height in the rows, and where to show that. */
+  trackDrop(track: string, lane: number): { readonly index: number; readonly line: number } {
+    const { model } = this;
+    const row = model?.rows.find(({ id }) => id === track);
+    if (!model || !row) return { index: 0, line: 0 };
+    const rows = this.#sortableRows(model, row.track.kind);
+    const others = rows.filter(({ id }) => id !== track);
+    const index = others.filter(({ top, height }) => top + height / 2 < lane).length;
+    const next = others[index];
+    const before = others[index - 1];
+    const line = next ? next.top : before ? before.top + before.height : row.top;
+    return { index, line };
+  }
+
+  /** Moves a track among those of its kind. `index` counts from the top, without the track. */
+  moveTrack(track: string, index: number): void {
+    const { model } = this;
+    const row = model?.rows.find(({ id }) => id === track);
+    if (!model || !row) return;
+    const rows = this.#sortableRows(model, row.track.kind);
+    if (rows.indexOf(row) === index) return;
+    const others = rows.filter(({ id }) => id !== track);
+    // The first track is at the back of the picture, so tracks that show upwards count backwards.
+    const upwards = row.track.kind !== "audio";
+    const inProject = upwards ? others.toReversed() : others;
+    const next = inProject[upwards ? others.length - index : index];
+    const params = { timeline: model.id, track, ...(next ? { before: next.id } : {}) };
+    this.#run([{ type: "track.move", params }]);
+  }
+
+  /** Moves a track up or down one place. */
+  shiftTrack(track: string, by: 1 | -1): void {
+    const { model } = this;
+    const row = model?.rows.find(({ id }) => id === track);
+    if (!model || !row) return;
+    const rows = this.#sortableRows(model, row.track.kind);
+    const index = rows.indexOf(row) + by;
+    if (index >= 0 && index < rows.length) this.moveTrack(track, index);
   }
 
   addTrack(kind: "video" | "audio" | "caption"): void {
@@ -861,7 +970,7 @@ export class TimelineEditor {
     const seconds = this.timeAt(x);
     const box = clipAt(row, seconds);
     if (!box) return { kind: "lane", row, seconds };
-    const reach = Math.min(EDGE_REACH, ((box.end - box.start) * this.#pixelsPerSecond) / 3);
+    const reach = Math.min(this.#edgeReach, ((box.end - box.start) * this.#pixelsPerSecond) / 3);
     const fromStart = x - this.xAt(box.start);
     const fromEnd = this.xAt(box.end) - x;
     if (row.track.locked || this.#snapshot.tool !== "select") return { kind: "clip", row, box };

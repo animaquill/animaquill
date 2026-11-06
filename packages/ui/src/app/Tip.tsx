@@ -49,7 +49,8 @@ export function Tip({ name, usage, shortcut, children }: TipProps) {
       className={styles.host}
       onPointerEnter={(event) => {
         const target = event.currentTarget.firstElementChild;
-        if (target) showLater(target);
+        // A finger has no hovering: it would only cover what it is about to press.
+        if (target && event.pointerType !== "touch") showLater(target);
       }}
       onPointerLeave={hide}
       onPointerDown={hide}

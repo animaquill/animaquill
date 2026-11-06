@@ -177,6 +177,7 @@ export class TimelinePainter {
     const editor = this.#editor;
     const { selection } = editor.getSnapshot();
     const moved = editor.preview?.copying ? undefined : editor.preview?.clips;
+    const { cut } = editor.getSnapshot();
     const from = editor.timeAt(0);
     const to = editor.timeAt(editor.width);
     const { hovered } = editor;
@@ -186,7 +187,7 @@ export class TimelinePainter {
       forEachBetween(row, from, to, (box) => {
         const isMoved = moved?.has(box.id) === true;
         const edge = hovered.kind === "clip" && hovered.box === box ? hovered.edge : undefined;
-        this.#context.globalAlpha = isMoved ? 0.35 : 1;
+        this.#context.globalAlpha = isMoved || cut.has(box.id) ? 0.35 : 1;
         this.#paintClip(box, {
           row,
           start: box.start,

@@ -626,7 +626,7 @@ test.describe("menus", () => {
     await page.keyboard.press("Home");
     await settle(page);
     await page.mouse.click(...(await middleOf(clips(page).first())), { button: "right" });
-    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("End");
     await page.keyboard.press("Enter");
     await expect(clips(page)).toHaveCount(0);
   });
@@ -863,7 +863,53 @@ test.describe("copying", () => {
     await page.keyboard.press("Control+v");
     await expect(clips(page)).toHaveCount(2);
     await expectLabel(clips(page).nth(1), /00:00:05:00 到 00:00:10:00/);
-    await expect(timecode(page)).toHaveText("00:00:10:00");
+    await expect(timecode(page)).toHaveText("00:00:05:00");
+  });
+
+  test("Ctrl+X keeps the clip until Ctrl+V, in one step to undo", async ({ page }) => {
+    await addColor(page);
+    await stage(page).focus();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Control+x");
+    await settle(page);
+    await expect(clips(page)).toHaveCount(1);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Control+v");
+    await expectLabel(clips(page).first(), /00:00:05:01 到 00:00:10:01/);
+    await expect(clips(page)).toHaveCount(1);
+    await page.keyboard.press("Control+z");
+    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+  });
+
+  test("Escape takes a cut back", async ({ page }) => {
+    await addColor(page);
+    await stage(page).focus();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Control+x");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+v");
+    await settle(page);
+    await expect(clips(page)).toHaveCount(1);
+    await expectLabel(clips(page).first(), /00:00:00:00 到 00:00:05:00/);
+  });
+});
+
+test.describe("reordering tracks", () => {
+  test("a track header can be dragged to another place, and undone", async ({ page }) => {
+    await panel(page).getByRole("button", { name: "添加轨道" }).click();
+    await page.getByRole("menuitem", { name: "视频轨道" }).click();
+    await expect(trackHeader(page, "视频 2")).toBeVisible();
+    await addColor(page);
+    await settle(page);
+    await expectLabel(clips(page).first(), /视频 1/);
+    const upper = await boxOf(trackHeader(page, "视频 2"));
+    const lower = await boxOf(trackHeader(page, "视频 1"));
+    const x = lower.x + 10;
+    await drag(page, [x, upper.y + upper.height / 2], [x, lower.y + lower.height + 10]);
+    // The clip stays on its track, which is now the back one of the two and gets a new number.
+    await expectLabel(clips(page).first(), /视频 2/);
+    await page.keyboard.press("Control+z");
+    await expectLabel(clips(page).first(), /视频 1/);
   });
 });
 
@@ -929,6 +975,129 @@ test.describe("the frame rate of the project", () => {
     await page.getByRole("textbox").fill("快");
     await page.keyboard.press("Enter");
     await expect(page.getByText("帧率要写成大于 0 的数字")).toBeVisible();
+  });
+});
+
+test.describe("a trackpad", () => {
+  const swipe = (page: Page, deltaX: number, deltaY: number, ctrlKey = false) =>
+    stage(page).evaluate(
+      (element, init) => {
+        for (let step = 0; step < 6; step++) {
+          const event = new WheelEvent("wheel", { ...init, bubbles: true, cancelable: true });
+          element.dispatchEvent(event);
+        }
+      },
+      { deltaX, deltaY, ctrlKey },
+    );
+
+  test.beforeEach(async ({ page }) => {
+    for (let index = 0; index < 6; index++) {
+      await panel(page).getByRole("button", { name: "添加轨道" }).click();
+      await page.getByRole("menuitem", { name: "音频轨道" }).click();
+    }
+    await addColor(page, 2);
+    await page.keyboard.press("Home");
+    await settle(page);
+  });
+
+  test("moves up and down with two fingers, where a wheel goes sideways", async ({ page }) => {
+    const header = trackHeader(page, "音频 1");
+    const before = await boxOf(header);
+    await swipe(page, 0, 9);
+    await expect.poll(async () => (await boxOf(header)).y).toBeLessThan(before.y);
+  });
+
+  test("zooms with a pinch", async ({ page }) => {
+    const before = await boxOf(clips(page).first());
+    await swipe(page, 0, -9, true);
+    await settle(page);
+    const after = await boxOf(clips(page).first());
+    expect(after.width).toBeGreaterThan(before.width);
+  });
+});
+
+test.describe("a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  async function touch(page: Page, points: readonly (readonly [number, number])[]) {
+    const client = await page.context().newCDPSession(page);
+    const [first, ...rest] = points as [[number, number], ...[number, number][]];
+    const at = ([x, y]: readonly [number, number]) => ({ x, y });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [at(first)],
+    });
+    for (const point of rest) {
+      await client.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [at(point)],
+      });
+    }
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await addColor(page);
+    await page.keyboard.press("Home");
+    await panel(page).getByRole("button", { name: "放大" }).click();
+    await settle(page);
+  });
+
+  test("selects with a tap, and a swipe moves the view and not the clip", async ({ page }) => {
+    const clip = clips(page).first();
+    await page.keyboard.press("Escape");
+    await stage(page).focus();
+    await page.keyboard.press("Escape");
+    await expect(clip).toHaveAttribute("aria-selected", "false");
+    const [x, y] = await middleOf(clip);
+    await touch(page, [[x, y]]);
+    await expect(clip).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Escape");
+    const label = await labelOf(clip);
+    await touch(page, [
+      [x, y],
+      [x - 100, y],
+      [x - 200, y],
+    ]);
+    await expect(
+      panel(page).getByRole("scrollbar", { name: "时间轴横向滚动条" }),
+    ).not.toHaveAttribute("aria-valuenow", "0");
+    expect(await labelOf(clip)).toBe(label);
+  });
+
+  test("moves a clip that is selected", async ({ page }) => {
+    const clip = clips(page).first();
+    const [x, y] = await middleOf(clip);
+    await touch(page, [
+      [x, y],
+      [x + 100, y],
+      [x + 200, y],
+    ]);
+    await expect.poll(() => labelOf(clip)).not.toContain("00:00:00:00 到");
+  });
+});
+
+test.describe("the toolbar", () => {
+  test("keeps tools, switches and actions apart", async ({ page }) => {
+    const zone = (name: string) => panel(page).getByRole("group", { name, exact: true });
+    await expect(zone("工具").getByRole("button")).toHaveCount(2);
+    await expect(zone("开关").getByRole("button")).toHaveCount(2);
+    await expect(zone("操作").getByRole("button", { name: "在播放头切割" })).toBeVisible();
+  });
+
+  test("showing everything twice goes back to the zoom from before", async ({ page }) => {
+    await addColor(page, 2);
+    await page.keyboard.press("Home");
+    await panel(page).getByRole("slider", { name: "缩放" }).fill("0.4");
+    await settle(page);
+    const before = await boxOf(clips(page).first());
+    const fit = panel(page).getByRole("button", { name: "显示全部" });
+    await fit.click();
+    await settle(page);
+    expect((await boxOf(clips(page).first())).width).toBeLessThan(before.width);
+    await fit.click();
+    await settle(page);
+    expect((await boxOf(clips(page).first())).width).toBeCloseTo(before.width, 0);
   });
 });
 
