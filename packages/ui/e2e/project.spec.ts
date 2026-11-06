@@ -536,7 +536,7 @@ test.describe("when the data is out of reach", () => {
     const upgraded = await page.evaluate(
       () =>
         new Promise<string>((resolve) => {
-          const request = indexedDB.open("animaquill", 2);
+          const request = indexedDB.open("animaquill", 3);
           request.onsuccess = () => {
             request.result.close();
             resolve("upgraded");

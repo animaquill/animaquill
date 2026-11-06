@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
+import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
 import styles from "./Placeholder.module.css";
@@ -36,7 +37,7 @@ type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 
 /** A panel whose real content comes in a later stage. */
 function planned(
-  type: Exclude<Type, "unknown" | "keybindings" | "timeline" | "preview">,
+  type: Exclude<Type, "unknown" | "keybindings" | "timeline" | "preview" | "assets">,
   area: PanelArea,
   icon: PanelDefinition["icon"],
   extra: Extra = {},
@@ -64,7 +65,14 @@ function planned(
 
 export const builtinPanels: readonly PanelDefinition[] = [
   planned("files", "left", Files, { activity: true, keys: ["mod+shift+e"] }),
-  planned("assets", "left", Images, { activity: true }),
+  {
+    type: "assets",
+    title: (t) => t("panel.assets.title"),
+    icon: Images,
+    area: "left",
+    component: AssetsPanel,
+    activity: true,
+  },
   planned("notes", "left", BookOpen, { activity: true }),
   planned("history", "left", History, { activity: true }),
   {

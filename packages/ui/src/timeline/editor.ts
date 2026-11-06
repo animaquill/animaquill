@@ -13,6 +13,7 @@ import {
   clipStart,
   orderedSections,
   projectFrameRate,
+  sourceLength,
   timelineLength,
   trackKindFor,
   type ClipState,
@@ -667,11 +668,11 @@ export class TimelineEditor {
   }
 
   addToSelection(clip: string): void {
-    this.#select(new Set([...this.#snapshot.selection, clip]));
+    this.#select(new Set([...this.#snapshot.selection, ...this.#withLinked(new Set([clip]))]));
   }
 
   selectOnly(clip: string): void {
-    this.#select(new Set([clip]));
+    this.#select(this.#withLinked(new Set([clip])));
   }
 
   selectAll(): void {
@@ -910,6 +911,97 @@ export class TimelineEditor {
     this.#run([{ type: "section.update", params }]);
   }
 
+  /**
+   * Puts a file on the timeline, at a place or else at the playhead: a video with sound as two
+   * linked clips. What is there stays and the clips go after it, unless people overwrite. A track
+   * that can take them is found or made.
+   */
+  addAsset(assetId: string, place?: { readonly lane: number; readonly seconds: number }): void {
+    const { model } = this;
+    const asset = this.#store?.getState().assets?.[assetId];
+    if (!model || !asset) return;
+    const { rate } = model;
+    const seconds = place?.seconds ?? frameSeconds(this.#frame, rate);
+    const start = frameTime(frameAt(Math.max(seconds, 0), rate), rate);
+    const known = asset.info?.duration;
+    const frames = known ? Math.floor(toSeconds(parseTime(known)) * rate.fps) : 0;
+    const duration = frames > 0 ? frameTime(frames, rate) : this.#newClipDuration(model);
+    const media = { asset: assetId };
+    const parts = [
+      ...(asset.kind === "audio"
+        ? []
+        : [{ kind: "video" as const, source: { kind: asset.kind, media } }]),
+      ...(asset.kind === "audio" || asset.info?.hasAudio
+        ? [{ kind: "audio" as const, source: { kind: "audio", media } }]
+        : []),
+    ].map((part) => ({ ...part, row: this.#rowForNew(model, part.kind, place?.lane) }));
+
+    const placed = parts.flatMap(({ row }): Placed[] => {
+      if (!row) return [];
+      const end = add(start, duration);
+      return [
+        {
+          row,
+          start: toSeconds(start),
+          end: toSeconds(end),
+          exactStart: () => start,
+          exactEnd: () => end,
+        },
+      ];
+    });
+    const { overwriting } = this.#snapshot;
+    const shift = overwriting ? undefined : freeShift(placed, new Set(), 1);
+    const at = shift ? add(start, shift.exact()) : start;
+    const link = parts.length > 1 ? { link: newId("link") } : {};
+    const trackCalls: CommandCall[] = [];
+    const ids: string[] = [];
+    const calls = parts.map(({ kind, source, row }) => {
+      let track = row?.id;
+      if (!track) {
+        track = newId("track");
+        trackCalls.push({ type: "track.add", params: { timeline: model.id, id: track, kind } });
+      }
+      const id = newId("clip");
+      ids.push(id);
+      return {
+        type: "clip.add",
+        params: {
+          timeline: model.id,
+          track,
+          clip: {
+            id,
+            ...(asset.name === undefined ? {} : { name: asset.name }),
+            start: formatTime(at),
+            duration: formatTime(duration),
+            source,
+            ...link,
+          },
+          ...(overwriting ? { overlap: "overwrite" } : {}),
+        },
+      };
+    });
+    if (this.#run([...trackCalls, ...calls])) this.#select(new Set(ids));
+  }
+
+  /** The row at a height when it fits, or else the first one that does. */
+  #rowForNew(model: TimelineModel, kind: string, lane: number | undefined): Row | undefined {
+    const usable = (row: Row | undefined): row is Row =>
+      row !== undefined && row.track.kind === kind && !row.track.locked && !row.gone;
+    const pointed = lane === undefined ? undefined : rowAt(model, lane);
+    if (usable(pointed)) return pointed;
+    return model.rows.filter(usable).toSorted((a, b) => a.number - b.number)[0];
+  }
+
+  /** Where something dragged from elsewhere would go, or nothing when it left again. */
+  showDrop(pointer: Pointer | undefined): void {
+    const { model } = this;
+    if (!model) return;
+    const seconds =
+      pointer && frameSeconds(frameAt(this.timeAt(pointer.x), model.rate), model.rate);
+    this.#preview = seconds === undefined ? undefined : { snap: Math.max(seconds, 0) };
+    this.#viewEmitter.emit();
+  }
+
   /** Tracks of a kind that can change places, top to bottom. */
   #sortableRows(model: TimelineModel, kind: string): readonly Row[] {
     return model.rows.filter(({ track, gone }) => track.kind === kind && !gone);
@@ -1143,6 +1235,19 @@ export class TimelineEditor {
     }
   }
 
+  /** Clips that belong together get selected together. */
+  #withLinked(clips: ReadonlySet<string>): ReadonlySet<string> {
+    const { model } = this;
+    const all = new Set(clips);
+    for (const id of clips) {
+      const link = model?.boxes.get(id)?.clip.link;
+      for (const partner of link === undefined ? [] : (model?.links.get(link) ?? [])) {
+        all.add(partner);
+      }
+    }
+    return all;
+  }
+
   #pressClip(hit: Extract<Hit, { kind: "clip" }>, pointer: Pointer): void {
     const { box, row, edge } = hit;
     if (this.#snapshot.tool === "razor") {
@@ -1150,7 +1255,7 @@ export class TimelineEditor {
       return;
     }
     if (edge) {
-      this.#select(new Set([box.id]));
+      this.#select(this.#withLinked(new Set([box.id])));
       this.#gesture = new TrimGesture(this.#host, box, row, edge, pointer);
       return;
     }
@@ -1162,11 +1267,12 @@ export class TimelineEditor {
     const { selection } = this.#snapshot;
     const wasSelected = selection.has(box.id);
     const adding = pointer.shift || pointer.mod || this.#snapshot.multiSelecting;
-    if (!wasSelected) this.#select(new Set(adding ? [...selection, box.id] : [box.id]));
+    const own = this.#withLinked(new Set([box.id]));
+    if (!wasSelected) this.#select(new Set(adding ? [...selection, ...own] : own));
     // What a press on a selected clip means shows when it ends: it may be the start of a drag.
     const onClick = () => {
-      if (!adding) this.#select(new Set([box.id]));
-      else if (wasSelected) this.#select(new Set([...selection].filter((id) => id !== box.id)));
+      if (!adding) this.#select(own);
+      else if (wasSelected) this.#select(new Set([...selection].filter((id) => !own.has(id))));
     };
     this.#gesture = new MoveGesture(this.#host, box, row, pointer, onClick);
   }
@@ -1232,7 +1338,11 @@ export class TimelineEditor {
         this.#clampScroll();
         this.#viewEmitter.emit();
       },
-      select: (clips) => this.#select(clips),
+      sourceLength: (clip) => {
+        const state = this.#store?.getState();
+        return state && sourceLength(state, clip);
+      },
+      select: (clips) => this.#select(this.#withLinked(clips)),
       seek: (frame) => this.seek(frame),
       run: (calls) => this.#run(calls),
     };

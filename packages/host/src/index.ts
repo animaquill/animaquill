@@ -49,12 +49,21 @@ export interface ProjectSummary {
   readonly updatedAt: number;
 }
 
+/** The files of a project. They are kept by their content, so a file only exists once. */
+export interface MediaStore {
+  /** Rejects when there is no room. */
+  put(hash: string, file: Blob): Promise<void>;
+  /** Resolves to undefined when this host does not have the file. */
+  get(hash: string): Promise<Blob | undefined>;
+}
+
 /** The projects this host keeps. */
 export interface ProjectLibrary {
   /** Most recently changed first. */
   list(): Promise<readonly ProjectSummary[]>;
   create(project: { readonly id: string; readonly name: string }, state: Uint8Array): Promise<void>;
   open(id: string): Promise<ProjectLog>;
+  media(id: string): MediaStore;
   remove(id: string): Promise<void>;
 }
 

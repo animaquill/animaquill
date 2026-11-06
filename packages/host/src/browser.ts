@@ -1,5 +1,6 @@
 import type {
   Host,
+  MediaStore,
   ProjectAddress,
   ProjectLibrary,
   ProjectLog,
@@ -10,11 +11,18 @@ import type {
 
 const PREFIX = "animaquill.";
 const DATABASE = "animaquill";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const PROJECTS = "projects";
 const UPDATES = "updates";
+const MEDIA = "media";
 const BY_PROJECT = "project";
 const PROJECT_PARAM = "project";
+
+interface MediaRecord {
+  readonly project: string;
+  readonly hash: string;
+  readonly file: Blob;
+}
 
 interface UpdateRecord {
   readonly seq?: number;
@@ -40,9 +48,15 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   const request = factory.open(DATABASE, DATABASE_VERSION);
   request.addEventListener("upgradeneeded", () => {
     const database = request.result;
-    database.createObjectStore(PROJECTS, { keyPath: "id" });
-    const updates = database.createObjectStore(UPDATES, { keyPath: "seq", autoIncrement: true });
-    updates.createIndex(BY_PROJECT, BY_PROJECT);
+    if (!database.objectStoreNames.contains(PROJECTS)) {
+      database.createObjectStore(PROJECTS, { keyPath: "id" });
+      const updates = database.createObjectStore(UPDATES, { keyPath: "seq", autoIncrement: true });
+      updates.createIndex(BY_PROJECT, BY_PROJECT);
+    }
+    if (!database.objectStoreNames.contains(MEDIA)) {
+      const media = database.createObjectStore(MEDIA, { keyPath: [BY_PROJECT, "hash"] });
+      media.createIndex(BY_PROJECT, BY_PROJECT);
+    }
   });
   return resultOf(request);
 }
@@ -135,6 +149,22 @@ function openLog(database: () => Promise<IDBDatabase>, id: string): ProjectLog {
   };
 }
 
+function openMedia(database: () => Promise<IDBDatabase>, project: string): MediaStore {
+  return {
+    async put(hash, file) {
+      const transaction = (await database()).transaction(MEDIA, "readwrite");
+      transaction.objectStore(MEDIA).put({ project, hash, file } satisfies MediaRecord);
+      await committed(transaction);
+    },
+    async get(hash) {
+      const transaction = (await database()).transaction(MEDIA);
+      const request = transaction.objectStore(MEDIA).get([project, hash]);
+      const record = await resultOf<MediaRecord | undefined>(request);
+      return record?.file;
+    },
+  };
+}
+
 function createLibrary(factory: () => IDBFactory): ProjectLibrary {
   const database = connector(factory);
 
@@ -157,14 +187,18 @@ function createLibrary(factory: () => IDBFactory): ProjectLibrary {
       void navigator.storage?.persist?.()?.catch(() => {});
       return openLog(database, id);
     },
+    media: (id) => openMedia(database, id),
     async remove(id) {
-      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
-      const updates = transaction.objectStore(UPDATES);
+      const stores = [UPDATES, PROJECTS, MEDIA];
+      const transaction = (await database()).transaction(stores, "readwrite");
       transaction.objectStore(PROJECTS).delete(id);
-      const keys = updates.index(BY_PROJECT).getAllKeys(id);
-      keys.addEventListener("success", () => {
-        for (const key of keys.result) updates.delete(key);
-      });
+      for (const name of [UPDATES, MEDIA]) {
+        const store = transaction.objectStore(name);
+        const keys = store.index(BY_PROJECT).getAllKeys(id);
+        keys.addEventListener("success", () => {
+          for (const key of keys.result) store.delete(key);
+        });
+      }
       await committed(transaction);
     },
   };

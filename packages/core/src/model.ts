@@ -13,6 +13,7 @@ import {
   add,
   parseTime,
   type Clip,
+  type MediaRef,
   type Problem,
   type Project,
   type Rational,
@@ -152,6 +153,19 @@ export const clipEnd = (clip: ClipState): Rational =>
   add(parseTime(clip.start), parseTime(clip.duration));
 export const clipOffset = (clip: ClipState): Rational =>
   clip.offset === undefined ? ZERO : parseTime(clip.offset);
+
+/**
+ * How far the clock of a clip can run before its content ends. Undefined when nothing stops it:
+ * a loop, a changing speed, or content of no known length.
+ */
+export function sourceLength(state: ProjectState, clip: ClipState): Rational | undefined {
+  const { source } = clip;
+  if ((source.kind !== "video" && source.kind !== "audio") || clip.loop) return undefined;
+  if (clip.properties?.["time.speed"] !== undefined) return undefined;
+  const media = source.media as MediaRef;
+  const duration = "asset" in media ? state.assets?.[media.asset]?.info?.duration : undefined;
+  return duration === undefined ? undefined : parseTime(duration);
+}
 
 /** Sections end to end make up the length of a timeline, which is kept nowhere else. */
 export const timelineLength = (timeline: TimelineState): Rational =>

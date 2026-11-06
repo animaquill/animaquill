@@ -61,6 +61,8 @@ export interface TimelineModel {
   readonly height: number;
   readonly boxes: ReadonlyMap<string, ClipBox>;
   readonly rowOfClip: ReadonlyMap<string, Row>;
+  /** Clips that belong together, like the picture and the sound of a video. */
+  readonly links: ReadonlyMap<string, readonly string[]>;
 }
 
 const secondsOf = (time: string) =>
@@ -118,9 +120,11 @@ export function buildModel(
 ): TimelineModel {
   const clipsByTrack = new Map<string, ClipBox[]>();
   const all = new Map<string, ClipBox>();
+  const links = new Map<string, string[]>();
   for (const clip of Object.values(state.clips)) {
     const box = boxOf(clip);
     all.set(box.id, box);
+    if (clip.link !== undefined) links.set(clip.link, [...(links.get(clip.link) ?? []), clip.id]);
     const list = clipsByTrack.get(clip.track);
     if (list) list.push(box);
     else clipsByTrack.set(clip.track, [box]);
@@ -158,6 +162,7 @@ export function buildModel(
     height: top,
     boxes: all,
     rowOfClip,
+    links,
   };
 }
 

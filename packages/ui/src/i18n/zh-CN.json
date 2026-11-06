@@ -115,7 +115,10 @@
     "projectDamaged": "项目的部分保存记录损坏了，最近的一些改动可能丢失。",
     "projectSaveFailed": "改动无法保存到这个浏览器，可能是空间不足。先不要关闭页面，恢复后会自动保存。",
     "projectSaveRecovered": "改动已经保存好了。",
-    "frameRateInvalid": "帧率要写成大于 0 的数字，比如 30 或 30000/1001。"
+    "frameRateInvalid": "帧率要写成大于 0 的数字，比如 30 或 30000/1001。",
+    "mediaUnsupported": "这个浏览器解不了“{{name}}”，没有导入。",
+    "mediaTooLarge": "“{{name}}”超过 2 GB，现在还导入不了。",
+    "mediaSaveFailed": "“{{name}}”保存失败，可能是浏览器的存储空间不够。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -217,7 +220,7 @@
     "lock": "锁定 {{track}}",
     "hide": "隐藏 {{track}}",
     "mute": "静音 {{track}}",
-    "emptyHint": "点上方的“纯色片段”，或者右键视频轨道，添加第一个片段",
+    "emptyHint": "把素材拖到这里，或者点上方的“纯色片段”",
     "missing": "这个项目没有能打开的时间轴。",
     "track": {
       "video": "视频 {{number}}",
@@ -349,5 +352,13 @@
     "title": "关于 AnimaQuill",
     "message": "版本 {{version}}。AI 时代的视频编辑器。",
     "close": "关闭"
+  },
+  "assets": {
+    "import": "导入",
+    "importAction": "导入素材",
+    "importing": "正在导入 {{count}} 个文件",
+    "empty": "把视频、音频或图片拖到这里，或者点导入。素材保存在这个浏览器里。",
+    "addToTimeline": "添加到时间轴",
+    "remove": "删除素材"
   }
 }

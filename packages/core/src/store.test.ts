@@ -512,6 +512,77 @@ describe("undo", () => {
   });
 });
 
+describe("assets", () => {
+  const asset = {
+    kind: "video",
+    name: "采访.mp4",
+    path: "assets/a.mp4",
+    storage: "local",
+    info: { duration: "6" },
+  };
+
+  function withAsset() {
+    const store = ProjectStore.create(createProject({ name: "素材" }));
+    const main = store.getState().timelines["main"];
+    const track = main && orderedTracks(main).find(({ kind }) => kind === "video");
+    success(store.execute({ type: "asset.add", params: { id: "a", asset } }));
+    success(
+      store.execute({
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track: track?.id,
+          clip: {
+            id: "c",
+            start: "2",
+            duration: "4",
+            offset: "1",
+            source: { kind: "video", media: { asset: "a" } },
+          },
+        },
+      }),
+    );
+    return store;
+  }
+
+  const trimEnd = (store: ProjectStore, end: string) =>
+    store.execute({ type: "clip.trim", params: { timeline: "main", clip: "c", end } });
+
+  it("are part of the project, and undo takes them back", () => {
+    const store = ProjectStore.create(createProject({ name: "素材" }));
+    success(store.execute({ type: "asset.add", params: { id: "a", asset } }));
+    expect(store.getState().assets?.["a"]?.name).toBe("采访.mp4");
+    expect(store.exportFiles().problems).toEqual([]);
+    store.undo();
+    expect(store.getState().assets?.["a"]).toBeUndefined();
+  });
+
+  it("cannot go while a clip uses them", () => {
+    const store = withAsset();
+    const remove = () => store.execute({ type: "asset.remove", params: { asset: "a" } });
+    expect(failure(remove()).code).toBe("asset-in-use");
+    success(store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["c"] } }));
+    success(remove());
+  });
+
+  it("stop a clip from growing past the end of its content", () => {
+    const store = withAsset();
+    success(trimEnd(store, "7"));
+    expect(failure(trimEnd(store, "7.5")).code).toBe("source-end");
+  });
+
+  it("do not stop a clip that loops", () => {
+    const store = withAsset();
+    success(
+      store.execute({
+        type: "clip.update",
+        params: { timeline: "main", clip: "c", changes: { loop: true } },
+      }),
+    );
+    success(trimEnd(store, "9"));
+  });
+});
+
 describe("the frame rate of a project", () => {
   it("is its own, apart from the rates formats are exported at", () => {
     const store = ProjectStore.create(createProject({ name: "帧率" }));

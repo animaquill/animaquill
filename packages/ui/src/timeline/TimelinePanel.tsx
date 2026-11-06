@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -30,6 +31,7 @@ import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
+import { ASSET_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
 import type zhCN from "../i18n/zh-CN.json";
 import type { TimelineAction } from "./actions.ts";
 import { RULER_HEIGHT, type TimelineEditor, type VisibleClip } from "./editor.ts";
@@ -579,7 +581,7 @@ function Surface({
   showMenu: ShowMenu;
 }) {
   const { t } = useTranslation();
-  const { input } = useWorkbench();
+  const { input, media } = useWorkbench();
   const labelOf = useClipLabel();
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -763,6 +765,34 @@ function Surface({
     else editor.cancelDrag();
   };
 
+  const carriesMedia = (event: DragEvent) =>
+    event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
+    event.dataTransfer.types.includes("Files");
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!carriesMedia(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    editor.showDrop(pointerOf(event, event.currentTarget));
+  };
+
+  /** Files from the computer come in first. Several go one after the other. */
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!carriesMedia(event)) return;
+    event.preventDefault();
+    const pointer = pointerOf(event, event.currentTarget);
+    const place = { lane: editor.laneAt(pointer.y), seconds: editor.timeAt(pointer.x) };
+    editor.showDrop(undefined);
+    const dragged = event.dataTransfer.getData(ASSET_DRAG_TYPE);
+    if (dragged) {
+      editor.addAsset(dragged, place);
+      return;
+    }
+    void media.importFiles([...event.dataTransfer.files]).then((ids) => {
+      for (const id of ids) editor.addAsset(id, place);
+    });
+  };
+
   const onContextMenu = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     // A finger gets its menu from a long press, which TouchController decides on.
@@ -854,6 +884,9 @@ function Surface({
         }}
         onPointerLeave={() => editor.leave()}
         onContextMenu={onContextMenu}
+        onDragOver={onDragOver}
+        onDragLeave={() => editor.showDrop(undefined)}
+        onDrop={onDrop}
       >
         <canvas ref={canvas} className={styles.canvas} />
         <ClipList editor={editor} />

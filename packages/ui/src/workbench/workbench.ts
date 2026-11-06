@@ -2,6 +2,7 @@ import type { Host } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { projectFrameRate, type ProjectStore } from "@animaquill/core";
 import type { ProjectSummary } from "@animaquill/host";
+import { MediaLibrary } from "../media/library.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import { ActionRegistry } from "./actions.ts";
@@ -38,6 +39,7 @@ export class Workbench {
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
   readonly input: InputMode;
+  readonly media: MediaLibrary;
   #changingProject = false;
 
   constructor({ host, t, version, platform, panels, workspaces }: WorkbenchOptions) {
@@ -63,6 +65,11 @@ export class Workbench {
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
     this.input = new InputMode(host.settings);
+    this.media = new MediaLibrary(this.session, host.projects, {
+      unsupported: (name) => this.notifications.push(t("notice.mediaUnsupported", { name })),
+      tooLarge: (name) => this.notifications.push(t("notice.mediaTooLarge", { name })),
+      saveFailed: (name) => this.notifications.push(t("notice.mediaSaveFailed", { name })),
+    });
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
@@ -234,6 +241,13 @@ export class Workbench {
       id: "project.rename",
       title: (t) => t("project.renameAction"),
       run: () => void this.renameProject(),
+      menu: { name: "file", group: "project" },
+      enabled: isOpen,
+    });
+    this.actions.register({
+      id: "project.importMedia",
+      title: (t) => t("assets.importAction"),
+      run: () => void this.media.pickFiles(),
       menu: { name: "file", group: "project" },
       enabled: isOpen,
     });

@@ -1,4 +1,5 @@
 import {
+  Asset,
   Clip,
   ClipSource,
   Duration,
@@ -9,10 +10,12 @@ import {
   Rate,
   Time,
   Track,
+  add,
   canHold,
   compare,
   newId,
   parseTime,
+  subtract,
 } from "@animaquill/schema";
 import { z } from "zod";
 import {
@@ -31,9 +34,11 @@ import {
 import { fail, type Draft } from "./draft.ts";
 import {
   clipEnd,
+  clipOffset,
   clipStart,
   orderedSections,
   orderedTracks,
+  sourceLength,
   type ClipState,
   type TimelineState,
   type TrackState,
@@ -171,6 +176,29 @@ export const COMMANDS: readonly CommandDefinition[] = [
     },
     { whileLocked: true, userOnly: true },
   ),
+
+  define(
+    "asset.add",
+    z.strictObject({ id: Id.optional(), asset: Asset }),
+    (draft, { id, asset }) => {
+      const key = id ?? newId("asset");
+      if (draft.state.assets?.[key]) fail("id-taken", `这个 ID 已经有素材了：${key}`);
+      draft.set(["assets", key], asset);
+      return { id: key };
+    },
+  ),
+
+  define("asset.remove", z.strictObject({ asset: Id }), (draft, { asset }) => {
+    if (!draft.state.assets?.[asset]) fail("not-found", `没有这个素材：${asset}`);
+    const inUse = Object.values(draft.state.timelines).some((timeline) =>
+      Object.values(timeline.clips).some(({ source }) => {
+        const { media } = source as { media?: { asset?: string } };
+        return media?.asset === asset;
+      }),
+    );
+    if (inUse) fail("asset-in-use", "还有片段在用这个素材，要先删除那些片段");
+    draft.delete(["assets", asset]);
+  }),
 
   define(
     "timeline.rename",
@@ -404,6 +432,11 @@ export const COMMANDS: readonly CommandDefinition[] = [
         to: end === undefined ? clipEnd(current) : parseTime(end),
       };
       if (compare(span.to, span.from) <= 0) fail("invalid-value", "片段的结尾要在开头之后");
+      const length = sourceLength(draft.state, current);
+      const clockAtEnd = add(clipOffset(current), subtract(span.to, clipStart(current)));
+      if (length && compare(clockAtEnd, length) > 0) {
+        fail("source-end", `已经到内容的结尾了：${current.name ?? current.id}`);
+      }
       assertFree(target, current.track, [span], new Set([clip]));
       trimClip(draft, timeline, current, span);
       extendToFit(draft, timeline, span.to);

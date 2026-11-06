@@ -51,6 +51,13 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   window.addEventListener("keydown", onKeyDown);
 
+  // A file dropped next to where it can go would replace the whole page.
+  const keepFiles = (event: DragEvent) => {
+    if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+  };
+  window.addEventListener("dragover", keepFiles);
+  window.addEventListener("drop", keepFiles);
+
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
     if (workbench.session.hasUnsavedChanges) event.preventDefault();
@@ -58,6 +65,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   window.addEventListener("beforeunload", onBeforeUnload);
 
   return () => {
+    window.removeEventListener("drop", keepFiles);
+    window.removeEventListener("dragover", keepFiles);
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", save);

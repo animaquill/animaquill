@@ -1863,6 +1863,135 @@ describe("changing the project from the keyboard and menus", () => {
     });
   });
 
+  describe("files", () => {
+    const withAssets = async () => {
+      const context = await setup();
+      const add = (id: string, asset: object) =>
+        context.store.execute({
+          type: "asset.add",
+          params: {
+            id,
+            asset: { path: `assets/${id}`, storage: "local", name: `${id} 文件`, ...asset },
+          },
+        });
+      add("pic", { kind: "image" });
+      add("song", { kind: "audio", info: { duration: "3.01" } });
+      add("film", { kind: "video", info: { duration: "2", hasAudio: true } });
+      add("mute", { kind: "video", info: { duration: "2" } });
+      const clips = () => Object.values(context.main().clips);
+      return { ...context, clips };
+    };
+
+    it("puts a picture on a video track, for a few seconds", async () => {
+      const { editor, clips, video } = await withAssets();
+      editor.addAsset("pic");
+      expect(clips()[0]).toMatchObject({ track: video, duration: "5", name: "pic 文件" });
+    });
+
+    it("puts sound on an audio track, whole frames long", async () => {
+      const { editor, clips, audio } = await withAssets();
+      editor.addAsset("song");
+      expect(clips()[0]?.track).toBe(audio);
+      expect(clips()[0]?.duration).toBe("3");
+    });
+
+    it("makes two linked clips of a video with sound, in one step", async () => {
+      const { editor, clips, store, selection } = await withAssets();
+      editor.addAsset("film");
+      expect(clips()).toHaveLength(2);
+      expect(new Set(clips().map(({ link }) => link)).size).toBe(1);
+      expect(
+        clips()
+          .map(({ source }) => source.kind)
+          .toSorted(),
+      ).toEqual(["audio", "video"]);
+      expect(selection()).toHaveLength(2);
+      store.undo();
+      expect(clips()).toHaveLength(0);
+    });
+
+    it("makes one clip of a video without sound", async () => {
+      const { editor, clips } = await withAssets();
+      editor.addAsset("mute");
+      expect(clips()).toHaveLength(1);
+    });
+
+    it("goes after what is there, on all its tracks", async () => {
+      const { editor, clips, addClip, audio } = await withAssets();
+      addClip("x", 0, 4, audio);
+      editor.addAsset("film");
+      const added = clips().filter(({ id }) => id !== "x");
+      expect(added.map(({ start }) => start)).toEqual(["4", "4"]);
+    });
+
+    it("goes to the track it was dropped on, or else to one that can take it", async () => {
+      const { editor, clips, store, audio, video } = await withAssets();
+      store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+      const row = (id: string) => editor.model?.rows.find((item) => item.id === id);
+      editor.addAsset("mute", { lane: (row("up")?.top ?? 0) + 2, seconds: 1 });
+      expect(clips()[0]).toMatchObject({ track: "up", start: "1" });
+      editor.addAsset("pic", { lane: (row(audio)?.top ?? 0) + 2, seconds: 6 });
+      expect(clips().find(({ start }) => start === "6")?.track).toBe(video);
+    });
+
+    it("makes a track when there is none", async () => {
+      const { editor, clips, audio, main } = await withAssets();
+      editor.removeTrack(audio);
+      editor.addAsset("song");
+      expect(main().tracks[clips()[0]?.track as string]?.kind).toBe("audio");
+    });
+
+    describe("once on the timeline", () => {
+      const linked = async () => {
+        const context = await withAssets();
+        const { editor, clips, video } = context;
+        editor.seek(30);
+        editor.addAsset("film");
+        editor.clearSelection();
+        const picture = clips().find(({ track }) => track === video);
+        const sound = clips().find(({ track }) => track !== video);
+        if (!picture || !sound) throw new Error("no clips");
+        return { ...context, picture: picture.id, sound: sound.id, soundTrack: sound.track };
+      };
+
+      it("select and move together", async () => {
+        const { editor, at, drag, clip, sound, selection, picture } = await linked();
+        editor.press(at(2));
+        editor.release(at(2));
+        expect(selection()).toEqual([picture, sound].toSorted());
+        drag(at(2), at(4));
+        expect(clip(sound).start).toBe("3");
+        expect(clip(picture).start).toBe("3");
+      });
+
+      it("trim together", async () => {
+        const { at, drag, clip, sound, picture } = await linked();
+        const edge = { ...at(3), x: at(3).x - 2 };
+        drag(edge, { ...at(2), x: at(2).x - 2 });
+        expect(clip(picture).duration).toBe("1");
+        expect(clip(sound).duration).toBe("1");
+      });
+
+      it("stop at the end of their content", async () => {
+        const { at, drag, clip, picture, commandFailed } = await linked();
+        const start = at(1);
+        const inward = { ...at(3), x: at(3).x - 2 };
+        drag(inward, at(2.5));
+        drag({ ...at(2.5), x: at(2.5).x - 2 }, at(9));
+        expect(clip(picture).duration).toBe("2");
+        expect(commandFailed).not.toHaveBeenCalled();
+        expect(start).toBeDefined();
+      });
+
+      it("go when one of them is deleted", async () => {
+        const { editor, clips, picture } = await linked();
+        editor.selectOnly(picture);
+        editor.deleteSelection();
+        expect(clips()).toHaveLength(0);
+      });
+    });
+  });
+
   describe("multiple selection", () => {
     it("adds with a click, takes away with another, and an empty click changes nothing", async () => {
       const { editor, addClip, at, selection } = await setup();

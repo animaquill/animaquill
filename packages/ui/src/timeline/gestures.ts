@@ -91,6 +91,8 @@ export interface GestureHost {
   laneAt(y: number): number;
   /** How close in seconds something has to be to snap. Zero when it should not. */
   snapDistance(pointer: Pointer): number;
+  /** How far the clock of a clip can run. */
+  sourceLength(clip: ClipState): Rational | undefined;
   setPreview(preview: Preview | undefined): void;
   select(clips: ReadonlySet<string>): void;
   seek(frame: number): void;
@@ -424,6 +426,8 @@ export class TrimGesture implements Gesture {
   readonly #points: SnapPoints;
   readonly #lower: SnapPoint;
   readonly #upper: SnapPoint;
+  /** Linked clips that end at the same place go along. */
+  readonly #partners: readonly { readonly box: ClipBox; readonly row: Row }[];
   #landing: Landing | undefined;
 
   constructor(host: GestureHost, box: ClipBox, row: Row, edge: "start" | "end", press: Pointer) {
@@ -433,27 +437,57 @@ export class TrimGesture implements Gesture {
     this.#edge = edge;
     this.#press = press;
     this.#grabTime = host.timeAt(press.x);
-    this.#points = snapPointsOf(host.model, host.frame, new Set([box.id]));
-    [this.#lower, this.#upper] = this.#limits();
+    this.#partners = this.#findPartners();
+    this.#points = snapPointsOf(
+      host.model,
+      host.frame,
+      new Set([box.id, ...this.#partners.map((partner) => partner.box.id)]),
+    );
+    const limits = [{ box, row }, ...this.#partners].map((item) =>
+      this.#limits(item.box, item.row),
+    );
+    this.#lower = limits.map(([lower]) => lower).reduce((a, b) => (a.seconds >= b.seconds ? a : b));
+    this.#upper = limits
+      .map(([, upper]) => upper)
+      .reduce((a, b) => (a.seconds <= b.seconds ? a : b));
+  }
+
+  #findPartners(): readonly { readonly box: ClipBox; readonly row: Row }[] {
+    const { model } = this.#host;
+    const { clip } = this.#box;
+    const here = this.#exactEdge();
+    const edgeOf = (other: ClipState) => (this.#edge === "start" ? clipStart : clipEnd)(other);
+    const ids = clip.link === undefined ? [] : (model.links.get(clip.link) ?? []);
+    return ids.flatMap((id) => {
+      const box = model.boxes.get(id);
+      const row = model.rowOfClip.get(id);
+      const usable = box && row && id !== clip.id && !row.track.locked;
+      return usable && compare(edgeOf(box.clip), here) === 0 ? [{ box, row }] : [];
+    });
   }
 
   /** Where this edge can go. A kind of clip that has a beginning cannot go past it. */
-  #limits(): readonly [SnapPoint, SnapPoint] {
-    const { clip, start, end } = this.#box;
+  #limits(box: ClipBox, row: Row): readonly [SnapPoint, SnapPoint] {
+    const { clip, start, end } = box;
     const { rate } = this.#host.model;
-    const index = this.#row.clips.indexOf(this.#box);
-    const before = this.#row.clips[index - 1];
-    const after = this.#row.clips[index + 1];
+    const index = row.clips.indexOf(box);
+    const before = row.clips[index - 1];
+    const after = row.clips[index + 1];
     const frame = frameTime(1, rate);
     if (this.#edge === "end") {
       const lower = {
         seconds: start + 1 / rate.fps,
         exact: () => add(clipStart(clip), frame),
       };
-      const upper = after
+      const neighbour = after
         ? { seconds: after.start, exact: () => clipStart(after.clip) }
         : { seconds: Number.POSITIVE_INFINITY, exact: () => ZERO };
-      return [lower, upper];
+      const length = this.#host.sourceLength(clip);
+      if (!length) return [lower, neighbour];
+      const contentEnd = add(clipStart(clip), subtract(length, clipOffset(clip)));
+      const seconds = toSeconds(contentEnd);
+      const content = { seconds, exact: () => contentEnd };
+      return [lower, seconds < neighbour.seconds ? content : neighbour];
     }
     const upper = {
       seconds: end - 1 / rate.fps,
@@ -488,10 +522,16 @@ export class TrimGesture implements Gesture {
     const { start, end } = this.#box;
     const { seconds } = this.#landing;
     const moved = this.#edge === "start" ? { start: seconds, end } : { start, end: seconds };
-    this.#host.setPreview({
-      clips: new Map([[this.#box.id, { row: this.#row, ...moved }]]),
-      ...lineOf(this.#landing),
-    });
+    const clips = new Map([[this.#box.id, { row: this.#row, ...moved }]]);
+    for (const partner of this.#partners) {
+      const { box, row } = partner;
+      const own =
+        this.#edge === "start"
+          ? { start: seconds, end: box.end }
+          : { start: box.start, end: seconds };
+      clips.set(box.id, { row, ...own });
+    }
+    this.#host.setPreview({ clips, ...lineOf(this.#landing) });
   }
 
   end(pointer: Pointer): void {
@@ -506,16 +546,13 @@ export class TrimGesture implements Gesture {
     const { clip } = this.#box;
     const exact = landing.exact();
     if (compare(exact, this.#exactEdge()) === 0) return;
-    this.#host.run([
-      {
+    const ids = [clip.id, ...this.#partners.map(({ box }) => box.id)];
+    this.#host.run(
+      ids.map((id) => ({
         type: "clip.trim",
-        params: {
-          timeline: this.#host.model.id,
-          clip: clip.id,
-          [this.#edge]: formatTime(exact),
-        },
-      },
-    ]);
+        params: { timeline: this.#host.model.id, clip: id, [this.#edge]: formatTime(exact) },
+      })),
+    );
   }
 
   cancel(): void {

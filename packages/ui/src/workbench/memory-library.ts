@@ -1,4 +1,5 @@
 import type {
+  MediaStore,
   ProjectAddress,
   ProjectLibrary,
   ProjectLog,
@@ -31,6 +32,7 @@ export class MemoryLibrary implements ProjectLibrary {
   readonly updates = new Map<string, Uint8Array[]>();
   readonly summaries = new Map<string, ProjectSummary>();
   readonly listeners = new Map<string, Set<(update: Uint8Array) => void>>();
+  readonly files = new Map<string, Blob>();
   failing = false;
   compactions = 0;
   /** Called while `load` reads, as if another window was writing at that moment. */
@@ -81,6 +83,14 @@ export class MemoryLibrary implements ProjectLibrary {
         };
       },
       close: () => {},
+    };
+  }
+
+  media(project: string): MediaStore {
+    const key = (hash: string) => `${project}/${hash}`;
+    return {
+      put: async (hash, file) => void this.files.set(key(hash), file),
+      get: async (hash) => this.files.get(key(hash)),
     };
   }
 

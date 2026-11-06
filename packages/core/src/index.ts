@@ -9,6 +9,7 @@ export {
   orderedTracks,
   projectFrameRate,
   projectToState,
+  sourceLength,
   stateToProject,
   stateToTimeline,
   timelineLength,

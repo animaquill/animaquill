@@ -1,0 +1,19 @@
+{
+  "name": "@animaquill/media",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "mediabunny": "1.65.2"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

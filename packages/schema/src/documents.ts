@@ -101,9 +101,11 @@ const MediaInfo = z.strictObject({
   fps: Rate.optional(),
   sampleRate: z.number().int().positive().optional(),
   channels: z.number().int().positive().optional(),
+  /** Whether a video also has sound. */
+  hasAudio: z.boolean().optional(),
 });
 
-const Asset = z
+export const Asset = z
   .strictObject({
     name: z.string().optional(),
     kind: z.enum(["video", "audio", "image", "font", "model", "other"]),
@@ -274,6 +276,7 @@ export const Notes = z.strictObject({
 });
 
 export type ProjectManifest = z.output<typeof ProjectManifest>;
+export type Asset = z.output<typeof Asset>;
 export type Assets = z.output<typeof Assets>;
 export type Libraries = z.output<typeof Libraries>;
 export type LibrariesLock = z.output<typeof LibrariesLock>;
