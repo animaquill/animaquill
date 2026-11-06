@@ -958,6 +958,105 @@ test.describe("explaining itself", () => {
   });
 });
 
+test.describe("a trackpad", () => {
+  const swipe = (page: Page, deltaX: number, deltaY: number, ctrlKey = false) =>
+    stage(page).evaluate(
+      (element, init) => {
+        for (let step = 0; step < 6; step++) {
+          const event = new WheelEvent("wheel", { ...init, bubbles: true, cancelable: true });
+          element.dispatchEvent(event);
+        }
+      },
+      { deltaX, deltaY, ctrlKey },
+    );
+
+  test.beforeEach(async ({ page }) => {
+    for (let index = 0; index < 6; index++) {
+      await panel(page).getByRole("button", { name: "添加轨道" }).click();
+      await page.getByRole("menuitem", { name: "音频轨道" }).click();
+    }
+    await addColor(page, 2);
+    await page.keyboard.press("Home");
+    await settle(page);
+  });
+
+  test("moves up and down with two fingers, where a wheel goes sideways", async ({ page }) => {
+    const header = trackHeader(page, "音频 1");
+    const before = await boxOf(header);
+    await swipe(page, 0, 9);
+    await expect.poll(async () => (await boxOf(header)).y).toBeLessThan(before.y);
+  });
+
+  test("zooms with a pinch", async ({ page }) => {
+    const before = await boxOf(clips(page).first());
+    await swipe(page, 0, -9, true);
+    await settle(page);
+    const after = await boxOf(clips(page).first());
+    expect(after.width).toBeGreaterThan(before.width);
+  });
+});
+
+test.describe("a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  async function touch(page: Page, points: readonly (readonly [number, number])[]) {
+    const client = await page.context().newCDPSession(page);
+    const [first, ...rest] = points as [[number, number], ...[number, number][]];
+    const at = ([x, y]: readonly [number, number]) => ({ x, y });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [at(first)],
+    });
+    for (const point of rest) {
+      await client.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [at(point)],
+      });
+    }
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await addColor(page);
+    await page.keyboard.press("Home");
+    await panel(page).getByRole("button", { name: "放大" }).click();
+    await settle(page);
+  });
+
+  test("selects with a tap, and a swipe moves the view and not the clip", async ({ page }) => {
+    const clip = clips(page).first();
+    await page.keyboard.press("Escape");
+    await stage(page).focus();
+    await page.keyboard.press("Escape");
+    await expect(clip).toHaveAttribute("aria-selected", "false");
+    const [x, y] = await middleOf(clip);
+    await touch(page, [[x, y]]);
+    await expect(clip).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Escape");
+    const label = await labelOf(clip);
+    await touch(page, [
+      [x, y],
+      [x - 100, y],
+      [x - 200, y],
+    ]);
+    await expect(
+      panel(page).getByRole("scrollbar", { name: "时间轴横向滚动条" }),
+    ).not.toHaveAttribute("aria-valuenow", "0");
+    expect(await labelOf(clip)).toBe(label);
+  });
+
+  test("moves a clip that is selected", async ({ page }) => {
+    const clip = clips(page).first();
+    const [x, y] = await middleOf(clip);
+    await touch(page, [
+      [x, y],
+      [x + 100, y],
+      [x + 200, y],
+    ]);
+    await expect.poll(() => labelOf(clip)).not.toContain("00:00:00:00 到");
+  });
+});
+
 test.describe("the input mode", () => {
   test("shows in the status bar and can be chosen, or left to the editor", async ({ page }) => {
     await addColor(page);
