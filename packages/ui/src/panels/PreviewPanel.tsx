@@ -36,6 +36,7 @@ export function PreviewPanel() {
         title={t("panel.preview.title")}
         // No same-origin: whatever runs there one day has no way into the editor.
         sandbox="allow-scripts"
+        tabIndex={-1}
       />
       <div className={styles.transport} role="toolbar" aria-label={t("timeline.transport")}>
         <div className={styles.buttons}>

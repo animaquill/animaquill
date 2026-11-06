@@ -9,6 +9,9 @@
   min-height: 0;
   background: #000;
   border: 0;
+
+  /* Focus inside a frame takes the keyboard away from the editor, and clicks never reach it. */
+  pointer-events: none;
 }
 
 .transport {

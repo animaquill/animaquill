@@ -61,3 +61,11 @@ test("the picture runs in a sandbox without access to the editor", async ({ page
   const frame = content(page, "preview").locator("iframe");
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
 });
+
+test("clicking the picture leaves the keyboard with the editor", async ({ page }) => {
+  await putVideoOnTimeline(page);
+  await expect.poll(() => isRed(page)).toBe(true);
+  await content(page, "preview").locator("iframe").click({ force: true });
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => isRed(page)).toBe(false);
+});
