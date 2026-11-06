@@ -106,7 +106,7 @@ test.describe("adding clips", () => {
 
   test("can be done from the command palette", async ({ page }) => {
     await page.keyboard.press("F1");
-    await page.getByRole("combobox").fill("纯色");
+    await page.getByRole("combobox", { name: "命令面板" }).fill("纯色");
     await page.keyboard.press("Enter");
     await expect(clips(page)).toHaveCount(1);
   });
@@ -544,7 +544,7 @@ test.describe("deleting", () => {
     await stage(page).focus();
     await page.keyboard.press("Control+a");
     await page.keyboard.press("F1");
-    const box = page.getByRole("combobox");
+    const box = page.getByRole("combobox", { name: "命令面板" });
     await box.fill("abc");
     await page.keyboard.press("Backspace");
     await expect(box).toHaveValue("ab");
@@ -1305,7 +1305,7 @@ test.describe("as part of the editor", () => {
 
   test("lists its shortcuts with the others", async ({ page }) => {
     await page.keyboard.press("F1");
-    await page.getByRole("combobox").fill("快捷键");
+    await page.getByRole("combobox", { name: "命令面板" }).fill("快捷键");
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-action="timeline.split"]').getByText("Ctrl+K")).toBeVisible();
   });

@@ -350,8 +350,8 @@ describe("running commands", () => {
   it("refuses values the format does not allow", () => {
     const store = open();
     expect(failure(setProperty(store, "opacity", 2)).code).toBe("invalid-value");
-    expect(failure(setProperty(store, "object.秤砣.x", 1)).code).toBe("invalid-value");
-    expect(failure(setProperty(store, "object.constructor.x", 1)).code).toBe("invalid-value");
+    expect(failure(setProperty(store, "object.秤砣.x", 1)).code).toBe("invalid-params");
+    expect(failure(setProperty(store, "object.constructor.x", 1)).code).toBe("invalid-params");
     expect(failure(setProperty(store, "transfrom.x", 1)).code).toBe("invalid-value");
     expect(property(store, "transfrom.x")).toBeUndefined();
   });
@@ -2293,6 +2293,856 @@ describe("cleaning up", () => {
   });
 });
 
+/** Writes a property the way the editor did when `properties` was a map of its own. */
+function writeLikeBefore(store: ProjectStore, id: string, path: string, value: unknown): void {
+  const inside = (map: Y.Map<unknown>, key: string) => map.get(key) as Y.Map<unknown>;
+  const main = inside(inside(store.doc.getMap("project"), "timelines"), "main");
+  const owner = inside(inside(main, "clips"), id);
+  store.doc.transact(() => {
+    let properties = owner.get("properties");
+    if (!(properties instanceof Y.Map)) {
+      properties = new Y.Map<unknown>();
+      owner.set("properties", properties);
+    }
+    (properties as Y.Map<unknown>).set(path, value);
+  }, "old");
+}
+
+function freshProject(): ProjectStore {
+  const store = ProjectStore.create(createProject({ name: "并发" }));
+  const track = Object.values(timeline(store).tracks).find(({ kind }) => kind === "video");
+  const color = { kind: "color", color: "#112233" };
+  for (const [index, id] of ["c", "d"].entries()) {
+    const added = { id, start: String(index * 10), duration: "8", source: color };
+    success(
+      store.execute({
+        type: "clip.add",
+        params: { timeline: "main", track: track?.id, clip: added },
+      }),
+    );
+  }
+  return store;
+}
+
+const edit = (store: ProjectStore, clipId: string, change: object, options: ExecuteOptions = {}) =>
+  store.execute(
+    {
+      type: "property.edit",
+      params: { timeline: "main", edits: [{ owner: { clip: clipId }, ...change }] },
+    },
+    options,
+  );
+
+describe("two devices writing different properties", () => {
+  it("keeps both on a clip that had none", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+    success(edit(b, "c", { path: "transform.x", op: "setKey", time: "1", value: 100 }));
+    sync(a, b);
+    const both = { opacity: 0.5, "transform.x": { keys: [{ time: "1", value: 100 }] } };
+    expect(clip(a, "c")?.properties).toEqual(both);
+    expect(clip(b, "c")?.properties).toEqual(both);
+  });
+
+  it("does not depend on who is first, or who wins", () => {
+    for (let round = 0; round < 12; round += 1) {
+      const a = freshProject();
+      const b = twin(a);
+      success(edit(a, "c", { path: "transform.x", op: "set", value: 1 }));
+      success(edit(b, "c", { path: "transform.y", op: "set", value: 2 }));
+      success(edit(a, "c", { path: "transform.scale", op: "set", value: 3 }));
+      if (round % 2 === 0) sync(a, b);
+      else sync(b, a);
+      const properties = { "transform.x": 1, "transform.y": 2, "transform.scale": 3 };
+      expect(clip(a, "c")?.properties).toEqual(properties);
+      expect(clip(b, "c")?.properties).toEqual(properties);
+    }
+  });
+
+  it("keeps both after the clip got its first property from somebody else", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+    sync(a, b);
+    success(edit(a, "c", { path: "transform.x", op: "set", value: 1 }));
+    success(edit(b, "c", { path: "transform.y", op: "set", value: 2 }));
+    sync(a, b);
+    expect(clip(b, "c")?.properties).toEqual({
+      opacity: 0.5,
+      "transform.x": 1,
+      "transform.y": 2,
+    });
+  });
+
+  it("each can undo their own afterwards", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+    success(edit(b, "c", { path: "transform.x", op: "set", value: 1 }));
+    sync(a, b);
+    expect(a.undo()).toBe(true);
+    sync(a, b);
+    expect(clip(b, "c")?.properties).toEqual({ "transform.x": 1 });
+    expect(b.undo()).toBe(true);
+    sync(a, b);
+    expect(clip(a, "c")?.properties).toBeUndefined();
+    expect(clip(b, "c")?.properties).toBeUndefined();
+  });
+
+  it("leaves one value on both when they write the same property", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.25 }));
+    success(edit(b, "c", { path: "opacity", op: "set", value: 0.75 }));
+    sync(a, b);
+    expect(property(a, "opacity", "c")).toBe(property(b, "opacity", "c"));
+    expect([0.25, 0.75]).toContain(property(a, "opacity", "c"));
+  });
+
+  it("a property and another field of the clip do not touch each other", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+    const changes = { name: "新名字" };
+    success(b.execute({ type: "clip.update", params: { timeline: "main", clip: "c", changes } }));
+    sync(a, b);
+    expect(clip(a, "c")).toMatchObject({ name: "新名字", properties: { opacity: 0.5 } });
+  });
+
+  it("holds for what comes with a whole clip too", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const track = clip(a, "c")?.track;
+    const added = {
+      id: "e",
+      start: "30",
+      duration: "1",
+      source: { kind: "color", color: "#112233" },
+      properties: { opacity: 0.5 },
+    };
+    const params = { timeline: "main", track, clip: added };
+    success(a.execute({ type: "clip.add", params }));
+    sync(a, b);
+    success(edit(a, "e", { path: "transform.x", op: "set", value: 1 }));
+    success(edit(b, "e", { path: "transform.y", op: "set", value: 2 }));
+    sync(a, b);
+    expect(clip(b, "e")?.properties).toEqual({
+      opacity: 0.5,
+      "transform.x": 1,
+      "transform.y": 2,
+    });
+  });
+
+  it("holds for tracks", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const withProperties = (store: ProjectStore, properties: object) => {
+      const file = JSON.parse(store.exportFiles().files.get(MAIN) as string) as {
+        tracks: { kind: string; properties?: object }[];
+      };
+      for (const track of file.tracks) if (track.kind === "audio") track.properties = properties;
+      return JSON.stringify(file);
+    };
+    success(a.importFile(MAIN, withProperties(a, { "audio.volume": -6 })));
+    success(b.importFile(MAIN, withProperties(b, { "audio.pan": 0.5 })));
+    sync(a, b);
+    const audio = Object.values(timeline(a).tracks).find(({ kind }) => kind === "audio");
+    expect(audio).toMatchObject({ properties: { "audio.volume": -6, "audio.pan": 0.5 } });
+  });
+
+  it("holds for the first file of a project", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const asset = (id: string) => ({
+      id,
+      asset: { kind: "image", path: `assets/${id}.png`, storage: "local", hash: `sha256-${id}` },
+    });
+    success(a.execute({ type: "asset.add", params: asset("one") }));
+    success(b.execute({ type: "asset.add", params: asset("two") }));
+    sync(a, b);
+    expect(Object.keys(a.getState().assets ?? {}).toSorted()).toEqual(["one", "two"]);
+    expect(Object.keys(b.getState().assets ?? {}).toSorted()).toEqual(["one", "two"]);
+  });
+
+  it("holds for the first notes of a project", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const note = (id: string) => {
+      const createdAt = "2026-11-06T00:00:00Z";
+      const text = "一条批注";
+      const notes = [{ id, status: "pending", text, timeline: "main", time: "1", createdAt }];
+      return JSON.stringify({ notes });
+    };
+    success(a.importFile("notes.json", note("one")));
+    success(b.importFile("notes.json", note("two")));
+    sync(a, b);
+    expect(Object.keys(a.getState().notes ?? {}).toSorted()).toEqual(["one", "two"]);
+  });
+
+  it("makes no map for what not everything has, because that is what two devices fight over", () => {
+    const store = open();
+    const inside = (map: Y.Map<unknown>, key: string) => map.get(key) as Y.Map<unknown>;
+    const root = store.doc.getMap("project") as Y.Map<unknown>;
+    const main = inside(inside(root, "timelines"), "main");
+    const fromFile = inside(inside(main, "clips"), "clip_logo");
+    expect(fromFile.has("properties")).toBe(false);
+    expect(fromFile.get("properties/transform.x")).toBeDefined();
+    expect(root.has("assets")).toBe(false);
+    expect([...root.keys()].some((key) => key.startsWith("assets/"))).toBe(true);
+
+    const added = {
+      id: "e",
+      start: "100",
+      duration: "1",
+      source: { kind: "color", color: "#112233" },
+      properties: { opacity: 0.5 },
+    };
+    const params = { timeline: "main", track: clip(store, "clip_logo")?.track, clip: added };
+    success(store.execute({ type: "clip.add", params }));
+    const fromCommand = inside(inside(main, "clips"), "e");
+    expect(fromCommand.has("properties")).toBe(false);
+    expect(fromCommand.get("properties/opacity")).toBe(0.5);
+  });
+
+  it("lets a file take all of them away, and undo bring them back", () => {
+    const a = freshProject();
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+    success(edit(a, "c", { path: "transform.x", op: "set", value: 1 }));
+    const file = JSON.parse(a.exportFiles().files.get(MAIN) as string) as {
+      tracks: { clips: { properties?: object }[] }[];
+    };
+    for (const track of file.tracks) for (const item of track.clips) delete item.properties;
+    success(a.importFile(MAIN, JSON.stringify(file)));
+    expect(clip(a, "c")).not.toHaveProperty("properties");
+    const { store: opened } = ProjectStore.fromUpdates([a.encodeState()]);
+    expect(clip(opened as ProjectStore, "c")).not.toHaveProperty("properties");
+    expect(a.undo()).toBe(true);
+    expect(clip(a, "c")?.properties).toEqual({ opacity: 0.5, "transform.x": 1 });
+  });
+
+  it("goes through saving: what comes back is the same", () => {
+    const a = freshProject();
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+    const { store } = ProjectStore.fromUpdates([a.encodeState()]);
+    expect(store?.getState()).toEqual(a.getState());
+    expect(store?.exportFiles().files).toEqual(a.exportFiles().files);
+  });
+});
+
+describe("a document from when properties had a map of their own", () => {
+  function written() {
+    const store = freshProject();
+    writeLikeBefore(store, "c", "opacity", 0.5);
+    writeLikeBefore(store, "c", "transform.x", 10);
+    return store;
+  }
+
+  it("shows what is in there, also when it comes in from somewhere else", () => {
+    const store = written();
+    expect(clip(store, "c")?.properties).toEqual({ opacity: 0.5, "transform.x": 10 });
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(clip(opened as ProjectStore, "c")?.properties).toEqual({
+      opacity: 0.5,
+      "transform.x": 10,
+    });
+  });
+
+  it("adds to it without losing anything", () => {
+    const store = written();
+    success(edit(store, "c", { path: "transform.y", op: "set", value: 20 }));
+    expect(clip(store, "c")?.properties).toEqual({
+      opacity: 0.5,
+      "transform.x": 10,
+      "transform.y": 20,
+    });
+  });
+
+  it("changes what was in there, and the new value stays after opening again", () => {
+    const store = written();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.25 }));
+    expect(property(store, "opacity", "c")).toBe(0.25);
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(property(opened as ProjectStore, "opacity", "c")).toBe(0.25);
+  });
+
+  it("clears what was in there for good", () => {
+    const store = written();
+    success(edit(store, "c", { path: "opacity", op: "clear" }));
+    expect(property(store, "opacity", "c")).toBeUndefined();
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(property(opened as ProjectStore, "opacity", "c")).toBeUndefined();
+    expect(property(opened as ProjectStore, "transform.x", "c")).toBe(10);
+  });
+
+  it("lets a file take all of it away", () => {
+    const store = written();
+    const file = JSON.parse(store.exportFiles().files.get(MAIN) as string) as {
+      tracks: { clips: { properties?: object }[] }[];
+    };
+    for (const track of file.tracks) for (const item of track.clips) delete item.properties;
+    success(store.importFile(MAIN, JSON.stringify(file)));
+    expect(clip(store, "c")).not.toHaveProperty("properties");
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(clip(opened as ProjectStore, "c")).not.toHaveProperty("properties");
+  });
+
+  it("does not bring an old value back when a new one is cleared", () => {
+    const store = written();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.25 }));
+    success(edit(store, "c", { path: "opacity", op: "clear" }));
+    expect(property(store, "opacity", "c")).toBeUndefined();
+  });
+
+  it("undoes and redoes like anywhere else", () => {
+    const store = written();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.25 }));
+    expect(store.undo()).toBe(true);
+    expect(property(store, "opacity", "c")).toBe(0.5);
+    expect(store.redo()).toBe(true);
+    expect(property(store, "opacity", "c")).toBe(0.25);
+  });
+
+  it("merges with what two devices do to it", () => {
+    const a = written();
+    const b = twin(a);
+    expect(clip(b, "c")?.properties).toEqual({ opacity: 0.5, "transform.x": 10 });
+    success(edit(a, "c", { path: "opacity", op: "set", value: 0.25 }));
+    success(edit(b, "c", { path: "transform.y", op: "set", value: 20 }));
+    success(edit(b, "c", { path: "transform.x", op: "clear" }));
+    sync(a, b);
+    const merged = { opacity: 0.25, "transform.y": 20 };
+    expect(clip(a, "c")?.properties).toEqual(merged);
+    expect(clip(b, "c")?.properties).toEqual(merged);
+  });
+
+  it("merges with a device that still writes the old way", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(edit(a, "c", { path: "transform.x", op: "set", value: 1 }));
+    writeLikeBefore(b, "c", "transform.y", 2);
+    sync(a, b);
+    const merged = { "transform.x": 1, "transform.y": 2 };
+    expect(clip(a, "c")?.properties).toEqual(merged);
+    expect(clip(b, "c")?.properties).toEqual(merged);
+  });
+
+  it("the value that was written last in the new way wins over the old way", () => {
+    const store = freshProject();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.25 }));
+    writeLikeBefore(store, "c", "opacity", 0.75);
+    expect(property(store, "opacity", "c")).toBe(0.25);
+    // The first one made the old map. This one comes in as a change to a map that is there.
+    writeLikeBefore(store, "c", "opacity", 0.9);
+    expect(property(store, "opacity", "c")).toBe(0.25);
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(property(opened as ProjectStore, "opacity", "c")).toBe(0.25);
+  });
+
+  it("does not take a name that means something to objects for a property", () => {
+    const store = freshProject();
+    writeLikeBefore(store, "c", "__proto__", { keys: [{ time: "0", value: 1 }] });
+    writeLikeBefore(store, "c", "opacity", 0.5);
+    const properties = clip(store, "c")?.properties as object;
+    expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+    expect(Object.keys(properties)).toEqual(["opacity"]);
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(Object.keys(clip(opened as ProjectStore, "c")?.properties as object)).toEqual([
+      "opacity",
+    ]);
+  });
+});
+
+describe("what a document can hold that nothing should", () => {
+  const ownerOf = (store: ProjectStore, id: string) => {
+    const inside = (map: Y.Map<unknown>, key: string) => map.get(key) as Y.Map<unknown>;
+    const main = inside(inside(store.doc.getMap("project"), "timelines"), "main");
+    return inside(inside(main, "clips"), id);
+  };
+
+  it.each([["properties/__proto__"], ["__proto__"]])("stays out when it comes in as %s", (key) => {
+    const store = freshProject();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+    const owner = ownerOf(store, "c");
+    store.doc.transact(() => owner.set(key, { keys: [{ time: "0", value: 1 }] }), "other");
+    for (const opened of [store, ProjectStore.fromUpdates([store.encodeState()]).store]) {
+      const found = clip(opened as ProjectStore, "c") as object;
+      const properties = clip(opened as ProjectStore, "c")?.properties as object;
+      expect(Object.getPrototypeOf(found)).toBe(Object.prototype);
+      expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+      expect(Object.keys(properties)).toEqual(["opacity"]);
+      expect(Object.keys(found)).not.toContain("__proto__");
+    }
+  });
+
+  it("does not stop the rest of a change", () => {
+    const store = freshProject();
+    const owner = ownerOf(store, "c");
+    store.doc.transact(() => {
+      owner.set("properties/__proto__", 1);
+      owner.set("properties/opacity", 0.5);
+    }, "other");
+    expect(clip(store, "c")?.properties).toEqual({ opacity: 0.5 });
+  });
+});
+
+describe("taking several steps back in a row", () => {
+  const keys = (store: ProjectStore) =>
+    (property(store, "transform.x", "c") as { keys: { time: string }[] } | undefined)?.keys.map(
+      ({ time }) => time,
+    );
+  const setKey = (store: ProjectStore, time: string, options: ExecuteOptions = {}) =>
+    success(edit(store, "c", { path: "transform.x", op: "setKey", time, value: 1 }, options));
+
+  it("goes all the way back through its own changes, and forward again", () => {
+    const store = freshProject();
+    setKey(store, "0");
+    setKey(store, "1");
+    setKey(store, "2");
+    store.undo();
+    expect(keys(store)).toEqual(["0", "1"]);
+    store.undo();
+    expect(keys(store)).toEqual(["0"]);
+    store.undo();
+    expect(keys(store)).toBeUndefined();
+    store.redo();
+    store.redo();
+    store.redo();
+    expect(keys(store)).toEqual(["0", "1", "2"]);
+  });
+
+  it("stops where an AI task changed the same property", () => {
+    const store = freshProject();
+    setKey(store, "0");
+    setKey(store, "1", { origin: AI });
+    setKey(store, "2");
+    expect(store.undo()).toBe(true);
+    expect(keys(store)).toEqual(["0", "1"]);
+    store.undo();
+    expect(keys(store)).toEqual(["0", "1"]);
+  });
+
+  it("stops where somebody on another device changed it", () => {
+    const a = freshProject();
+    const b = twin(a);
+    setKey(a, "0");
+    sync(a, b);
+    setKey(b, "1");
+    sync(a, b);
+    setKey(a, "2");
+    a.undo();
+    a.undo();
+    expect(keys(a)).toEqual(["0", "1"]);
+  });
+
+  it("goes on with other properties past that place", () => {
+    const store = freshProject();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+    setKey(store, "0");
+    setKey(store, "1", { origin: AI });
+    setKey(store, "2");
+    store.undo();
+    expect(store.undo()).toBe(true);
+    expect(property(store, "opacity", "c")).toBeUndefined();
+    expect(keys(store)).toEqual(["0", "1"]);
+  });
+
+  it("the AI task can still take back what is its own", () => {
+    const store = freshProject();
+    setKey(store, "0");
+    setKey(store, "1", { origin: AI });
+    setKey(store, "2");
+    store.undo();
+    expect(store.undoTask("task-1")).toBe(true);
+    expect(keys(store)).toEqual(["0"]);
+  });
+
+  it("takes back what is left of it once the AI task took back its own", () => {
+    const store = freshProject();
+    setKey(store, "0");
+    setKey(store, "1", { origin: AI });
+    expect(store.undoTask("task-1")).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(keys(store)).toBeUndefined();
+  });
+
+  it("does not take back an AI task over what the person did afterwards", () => {
+    const store = freshProject();
+    setKey(store, "1", { origin: AI });
+    setKey(store, "2");
+    expect(store.undoTask("task-1")).toBe(false);
+    expect(keys(store)).toEqual(["1", "2"]);
+  });
+
+  it("does not redo over what somebody did after the undo", () => {
+    const store = freshProject();
+    setKey(store, "0");
+    store.undo();
+    setKey(store, "1", { origin: AI });
+    expect(store.redo()).toBe(false);
+    expect(keys(store)).toEqual(["1"]);
+  });
+
+  it("does not redo what an AI task took back in the meantime", () => {
+    const store = freshProject();
+    setKey(store, "0");
+    setKey(store, "1", { origin: AI });
+    setKey(store, "2");
+    store.undo();
+    store.undoTask("task-1");
+    expect(store.redo()).toBe(false);
+    expect(keys(store)).toEqual(["0"]);
+  });
+
+  it("redoes what it undid when the other device did something else", () => {
+    const a = freshProject();
+    const b = twin(a);
+    setKey(a, "0");
+    a.undo();
+    sync(a, b);
+    success(edit(b, "c", { path: "opacity", op: "set", value: 0.5 }));
+    sync(a, b);
+    expect(a.redo()).toBe(true);
+    expect(keys(a)).toEqual(["0"]);
+  });
+
+  it("takes a clip away with what was in it, as long as that is all its own", () => {
+    const store = freshProject();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+    store.undo();
+    store.undo();
+    store.undo();
+    expect(Object.keys(timeline(store).clips)).toEqual([]);
+  });
+
+  it("leaves a clip that somebody else put something in", () => {
+    const store = freshProject();
+    success(edit(store, "d", { path: "opacity", op: "set", value: 0.5 }, { origin: AI }));
+    store.undo();
+    expect(Object.keys(timeline(store).clips)).toContain("d");
+  });
+
+  it("undoes a change with several steps on top of each other as one", () => {
+    const store = freshProject();
+    const track = clip(store, "c")?.track;
+    const added = {
+      id: "e",
+      start: "30",
+      duration: "1",
+      source: { kind: "color", color: "#000000" },
+    };
+    const calls = [
+      { type: "clip.add", params: { timeline: "main", track, clip: added } },
+      {
+        type: "property.edit",
+        params: {
+          timeline: "main",
+          edits: [{ owner: { clip: "e" }, path: "opacity", op: "set", value: 0.5 }],
+        },
+      },
+    ];
+    success(store.executeBatch(calls));
+    expect(store.undo()).toBe(true);
+    expect(clip(store, "e")).toBeUndefined();
+    expect(store.redo()).toBe(true);
+    expect(property(store, "opacity", "e")).toBe(0.5);
+  });
+});
+
+describe("ids that every object knows", () => {
+  const NAMES = ["constructor", "toString", "valueOf", "hasOwnProperty"];
+
+  describe.each(NAMES)("%s", (name) => {
+    const params = (store: ProjectStore) => {
+      const { id: track } = Object.values(timeline(store).tracks)[0] as { id: string };
+      const { id: section } = Object.values(timeline(store).sections)[0] as { id: string };
+      return { track, section };
+    };
+
+    it.each([
+      ["clip.setProperty", { clip: name, path: "opacity", value: 1 }],
+      ["clip.clearProperty", { clip: name, path: "opacity" }],
+      [
+        "property.edit",
+        { edits: [{ owner: { clip: name }, path: "opacity", op: "set", value: 1 }] },
+      ],
+      ["property.edit", { edits: [{ owner: { clip: name }, path: "opacity", op: "clear" }] }],
+      ["clip.remove", { clips: [name] }],
+      ["clip.update", { clip: name, changes: { name: "x" } }],
+      ["clip.move", { clips: [{ clip: name, start: "1" }] }],
+      ["clip.trim", { clip: name, end: "1" }],
+      ["clip.split", { clip: name, at: "1" }],
+      ["track.update", { track: name, changes: { name: "x" } }],
+      ["track.move", { track: name }],
+      ["track.remove", { track: name }],
+      ["section.update", { section: name, duration: "1" }],
+      ["section.remove", { section: name }],
+      ["marker.update", { marker: name, changes: { name: "x" } }],
+      ["marker.remove", { marker: name }],
+    ])("is not there for %s %j", (type, extra) => {
+      const store = freshProject();
+      const result = store.execute({ type, params: { timeline: "main", ...extra } });
+      expect(failure(result).code).toBe("not-found");
+    });
+
+    it("is no timeline", () => {
+      const store = freshProject();
+      const { track } = params(store);
+      const calls = [
+        { type: "clip.remove", params: { timeline: name, clips: ["c"] } },
+        { type: "track.update", params: { timeline: name, track, changes: { name: "x" } } },
+        { type: "timeline.rename", params: { timeline: name, name: "x" } },
+      ];
+      for (const call of calls) expect(failure(store.execute(call)).code).toBe("not-found");
+    });
+
+    it("is no track to put a clip on", () => {
+      const store = freshProject();
+      const clipOf = {
+        id: "e",
+        start: "30",
+        duration: "1",
+        source: { kind: "color", color: "#000000" },
+      };
+      const result = store.execute({
+        type: "clip.add",
+        params: { timeline: "main", track: name, clip: clipOf },
+      });
+      expect(failure(result).code).toBe("not-found");
+    });
+
+    it("is no file", () => {
+      const store = freshProject();
+      expect(failure(store.execute({ type: "asset.remove", params: { asset: name } })).code).toBe(
+        "not-found",
+      );
+    });
+
+    it("can be the id of something new like any other", () => {
+      const store = freshProject();
+      const { track } = params(store);
+      const added = {
+        id: name,
+        start: "30",
+        duration: "1",
+        source: { kind: "color", color: "#000000" },
+      };
+      success(
+        store.execute({ type: "clip.add", params: { timeline: "main", track, clip: added } }),
+      );
+      success(edit(store, name, { path: "opacity", op: "set", value: 0.5 }));
+      expect(timeline(store).clips[name]?.properties).toEqual({ opacity: 0.5 });
+      const asset = { kind: "image", path: "assets/a.png", storage: "local" };
+      success(store.execute({ type: "asset.add", params: { id: name, asset } }));
+      expect(store.exportFiles().problems).toEqual([]);
+    });
+  });
+});
+
+describe("clearing a property", () => {
+  function broken() {
+    const store = freshProject();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+    // Nothing that a command lets through: another program, or a version that was less careful.
+    writeLikeBefore(store, "c", "fit", "stretch");
+    writeLikeBefore(store, "c", "transform.scale", "很大");
+    return store;
+  }
+
+  it("works next to a broken value, which is the way out of it", () => {
+    const store = broken();
+    const params = { timeline: "main", clip: "c", path: "opacity" };
+    success(store.execute({ type: "clip.clearProperty", params }));
+    expect(property(store, "opacity", "c")).toBeUndefined();
+  });
+
+  it("works on the broken value itself", () => {
+    const store = broken();
+    success(edit(store, "c", { path: "fit", op: "clear" }));
+    success(edit(store, "c", { path: "transform.scale", op: "clear" }));
+    expect(clip(store, "c")?.properties).toEqual({ opacity: 0.5 });
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("is not stopped by a clip that is broken in another way", () => {
+    const store = freshProject();
+    success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+    const inside = (map: Y.Map<unknown>, key: string) => map.get(key) as Y.Map<unknown>;
+    const main = inside(inside(store.doc.getMap("project"), "timelines"), "main");
+    store.doc.transact(() => inside(inside(main, "clips"), "c").set("fadeIn", "很久"), "old");
+    success(edit(store, "c", { path: "opacity", op: "clear" }));
+  });
+
+  it("lets other properties be written next to a broken value", () => {
+    const store = broken();
+    success(edit(store, "c", { path: "transform.x", op: "set", value: 3 }));
+    expect(property(store, "transform.x", "c")).toBe(3);
+  });
+
+  it("still checks what is written", () => {
+    const store = broken();
+    expect(failure(edit(store, "c", { path: "opacity", op: "set", value: 2 })).code).toBe(
+      "invalid-value",
+    );
+  });
+
+  describe("the last property of a clip", () => {
+    const fileOf = (store: ProjectStore) => store.exportFiles().files.get(MAIN) as string;
+
+    it("leaves no trace in the state or the file", () => {
+      const store = freshProject();
+      const before = fileOf(store);
+      success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+      success(edit(store, "c", { path: "opacity", op: "clear" }));
+      expect(clip(store, "c")).not.toHaveProperty("properties");
+      expect(fileOf(store)).toBe(before);
+    });
+
+    it("leaves no trace after undo either", () => {
+      const store = freshProject();
+      const before = fileOf(store);
+      success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
+      store.undo();
+      expect(clip(store, "c")).not.toHaveProperty("properties");
+      expect(fileOf(store)).toBe(before);
+      store.redo();
+      expect(property(store, "opacity", "c")).toBe(0.5);
+    });
+
+    it("leaves no trace after removing the last key", () => {
+      const store = freshProject();
+      success(edit(store, "c", { path: "opacity", op: "setKey", time: "0", value: 0.5 }));
+      success(edit(store, "c", { path: "opacity", op: "clear" }));
+      expect(clip(store, "c")).not.toHaveProperty("properties");
+    });
+
+    it("also not with the map of an older document", () => {
+      const store = freshProject();
+      writeLikeBefore(store, "c", "opacity", 0.5);
+      success(edit(store, "c", { path: "opacity", op: "clear" }));
+      expect(clip(store, "c")).not.toHaveProperty("properties");
+    });
+
+    it("also not on the other device", () => {
+      const a = freshProject();
+      success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
+      const b = twin(a);
+      success(edit(a, "c", { path: "opacity", op: "clear" }));
+      sync(a, b);
+      expect(clip(b, "c")).not.toHaveProperty("properties");
+    });
+
+    it("an empty one in a file is the same as none", () => {
+      const store = freshProject();
+      const file = JSON.parse(fileOf(store)) as { tracks: { clips: { properties?: object }[] }[] };
+      for (const track of file.tracks) for (const item of track.clips) item.properties = {};
+      const { revision } = store;
+      success(store.importFile(MAIN, JSON.stringify(file)));
+      expect(store.revision).toBe(revision);
+      expect(store.canUndo).toBe(true);
+      expect(clip(store, "c")).not.toHaveProperty("properties");
+    });
+  });
+});
+
+describe("keys on what cannot have any", () => {
+  const keyed = {
+    keys: [
+      { time: "0", value: "cover" },
+      { time: "1", value: "contain" },
+    ],
+  };
+  const color = { kind: "color", color: "#112233" };
+
+  /** Hand-written, as a project could be before the rule was stated. */
+  function handWritten() {
+    const files = loadFixture("v1");
+    const manifest = JSON.parse(files.get("animaquill.json") as string);
+    delete manifest.tags;
+    files.set("animaquill.json", JSON.stringify(manifest));
+    const main = JSON.parse(files.get(MAIN) as string) as {
+      tracks: { clips: { id: string; properties?: Record<string, unknown> }[] }[];
+    };
+    const logo = main.tracks.flatMap(({ clips }) => clips).find(({ id }) => id === "clip_logo");
+    if (!logo) throw new Error("no clip");
+    logo.properties = { ...logo.properties, fit: keyed };
+    files.set(MAIN, JSON.stringify(main));
+    return { files, main };
+  }
+
+  it("a project that has them still opens, and says so", () => {
+    const { files } = handWritten();
+    const { store, problems } = ProjectStore.open(files);
+    expect(store).toBeDefined();
+    expect(problems.filter(({ severity }) => severity === "error")).toEqual([]);
+    expect(problems.map(({ code }) => code)).toContain("not-animatable");
+    expect(property(store as ProjectStore, "fit", "clip_logo")).toEqual(keyed);
+  });
+
+  it("cannot come in with a new clip", () => {
+    const store = freshProject();
+    const added = {
+      id: "e",
+      start: "30",
+      duration: "1",
+      source: color,
+      properties: { fit: keyed },
+    };
+    const track = clip(store, "c")?.track;
+    const result = store.execute({
+      type: "clip.add",
+      params: { timeline: "main", track, clip: added },
+    });
+    expect(failure(result).code).toBe("not-animatable");
+  });
+
+  it("cannot come in with a file", () => {
+    const store = freshProject();
+    const file = JSON.parse(store.exportFiles().files.get(MAIN) as string) as {
+      tracks: { clips: { properties?: object }[] }[];
+    };
+    for (const track of file.tracks)
+      for (const item of track.clips) item.properties = { fit: keyed };
+    const error = failure(store.importFile(MAIN, JSON.stringify(file)));
+    expect(error.code).toBe("invalid-file");
+    expect(error.problems?.map(({ code }) => code)).toContain("not-animatable");
+    expect(property(store, "fit", "c")).toBeUndefined();
+  });
+
+  it("cannot come in with a version either", () => {
+    const store = open();
+    const path = "timelines/main/overrides/format.vertical.json";
+    const file = JSON.parse(store.exportFiles().files.get(path) as string) as {
+      clips: Record<string, { properties?: Record<string, unknown> }>;
+    };
+    const [first] = Object.values(file.clips);
+    if (!first) throw new Error("no clip");
+    first.properties = { ...first.properties, fit: { value: keyed, base: "cover" } };
+    const error = failure(store.importFile(path, JSON.stringify(file)));
+    expect(error.problems?.map(({ code }) => code)).toContain("not-animatable");
+  });
+
+  it("a file that only has the old ones can still change other things", () => {
+    const { files, main } = handWritten();
+    const { store } = ProjectStore.open(files);
+    const title = main.tracks.flatMap(({ clips }) => clips).find(({ id }) => id === "clip_logo");
+    Object.assign(title as object, { name: "新名字" });
+    success((store as ProjectStore).importFile(MAIN, JSON.stringify(main)));
+    expect(clip(store as ProjectStore, "clip_logo")?.name).toBe("新名字");
+    expect(property(store as ProjectStore, "fit", "clip_logo")).toEqual(keyed);
+  });
+
+  it("cannot be added to through an edit, and a plain value takes them away", () => {
+    const { files } = handWritten();
+    const { store } = ProjectStore.open(files);
+    const opened = store as ProjectStore;
+    const write = { path: "fit", op: "write", time: "2", value: "fixed" };
+    expect(failure(edit(opened, "clip_logo", write)).code).toBe("not-animatable");
+    success(edit(opened, "clip_logo", { path: "fit", op: "set", value: "fixed" }));
+    expect(property(opened, "fit", "clip_logo")).toBe("fixed");
+  });
+});
+
 describe("a project saved before positions became world coordinates", () => {
   const saved = () => {
     const update = Uint8Array.from(Buffer.from(SAVED_BEFORE_WORLD_COORDINATES, "base64"));
@@ -2313,8 +3163,9 @@ describe("a project saved before positions became world coordinates", () => {
         end: 2,
         offset: 0,
         source: { kind: "color", color: "#ff0000" },
-        opacity: 1,
         fit: "contain",
+        fades: { in: 0, out: 0 },
+        channels: {},
       },
       {
         id: "c_video",
@@ -2322,8 +3173,9 @@ describe("a project saved before positions became world coordinates", () => {
         end: 7,
         offset: 1,
         source: { kind: "video", file: "sha256-aa" },
-        opacity: 0.5,
         fit: "cover",
+        fades: { in: 0, out: 0 },
+        channels: { opacity: { kind: "still", value: 0.5 } },
       },
     ]);
     expect(buildAudioPlan(state, "main").sounds).toHaveLength(1);
@@ -2342,6 +3194,51 @@ describe("a project saved before positions became world coordinates", () => {
     const store = saved();
     const set = { timeline: "main", clip: "c_video", path: "opacity", value: 0.25 };
     success(store.execute({ type: "clip.setProperty", params: set }));
-    expect(buildRenderPlan(store.getState(), "main")?.layers[1]?.opacity).toBe(0.25);
+    const layer = buildRenderPlan(store.getState(), "main")?.layers[1];
+    expect(layer?.channels["opacity"]).toEqual({ kind: "still", value: 0.25 });
+  });
+
+  it("two devices can go on with it without losing anything", () => {
+    const a = saved();
+    const b = twin(a);
+    success(edit(a, "c_video", { path: "transform.x", op: "set", value: 10 }));
+    success(edit(b, "c_video", { path: "transform.y", op: "set", value: 20 }));
+    success(edit(a, "c_color", { path: "opacity", op: "set", value: 0.5 }));
+    success(edit(b, "c_color", { path: "transform.x", op: "set", value: 30 }));
+    sync(a, b);
+    for (const store of [a, b]) {
+      expect(clip(store, "c_video")?.properties).toEqual({
+        fit: "cover",
+        opacity: 0.5,
+        "transform.x": 10,
+        "transform.y": 20,
+      });
+      expect(clip(store, "c_color")?.properties).toEqual({ opacity: 0.5, "transform.x": 30 });
+    }
+    expect(a.exportFiles().files).toEqual(b.exportFiles().files);
+  });
+
+  it("clears what it held, for good", () => {
+    const store = saved();
+    success(edit(store, "c_video", { path: "opacity", op: "clear" }));
+    success(edit(store, "c_video", { path: "fit", op: "clear" }));
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(clip(opened as ProjectStore, "c_video")).not.toHaveProperty("properties");
+  });
+
+  it("can take in more files, and take away the ones it had", () => {
+    const store = saved();
+    const asset = { kind: "image", path: "assets/b.png", storage: "local", hash: "sha256-b" };
+    success(store.execute({ type: "asset.add", params: { id: "picture", asset } }));
+    expect(Object.keys(store.getState().assets ?? {}).toSorted()).toEqual(["footage", "picture"]);
+    success(
+      store.execute({
+        type: "clip.remove",
+        params: { timeline: "main", clips: ["c_video", "c_audio"] },
+      }),
+    );
+    success(store.execute({ type: "asset.remove", params: { asset: "footage" } }));
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(Object.keys((opened as ProjectStore).getState().assets ?? {})).toEqual(["picture"]);
   });
 });

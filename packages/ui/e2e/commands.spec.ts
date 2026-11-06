@@ -4,7 +4,7 @@ import { content, expect, tab, test } from "./support.ts";
 const KEYS_SETTING = "animaquill.keybindings";
 
 const palette = (page: Page) => page.getByRole("dialog", { name: "命令面板" });
-const input = (page: Page) => page.getByRole("combobox");
+const input = (page: Page) => page.getByRole("combobox", { name: "命令面板" });
 const options = (page: Page) => page.getByRole("option");
 const active = (page: Page) => page.locator('[role="option"][aria-selected="true"]');
 const workspace = (page: Page, name: string) => page.getByRole("button", { name, exact: true });

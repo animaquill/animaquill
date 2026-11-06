@@ -211,8 +211,7 @@
       "hint": "一个项目的所有语言和画幅。"
     },
     "properties": {
-      "title": "属性",
-      "hint": "选中对象的属性和动画。"
+      "title": "属性"
     },
     "chat": {
       "title": "聊天",
@@ -259,6 +258,55 @@
     },
     "keybindings": {
       "title": "快捷键"
+    }
+  },
+  "property": {
+    "nothing": "选中时间轴上的片段，这里会显示它的属性和动画。",
+    "noProperties": "这个片段还没有可以调的属性。",
+    "several": "选中了 {{count}} 个有画面的片段，一次只能调一个。",
+    "automatic": "自动",
+    "goToClip": "跳到片段",
+    "blocked": {
+      "locked": "轨道已锁定，解锁后才能修改。",
+      "outside": "播放头不在这个片段上。"
+    },
+    "previousKey": "上一个关键帧",
+    "nextKey": "下一个关键帧",
+    "addKey": "添加关键帧",
+    "removeKey": "删除关键帧",
+    "reset": "恢复默认",
+    "help": {
+      "previousKey": "把播放头移到这个片段里的上一个关键帧。",
+      "nextKey": "把播放头移到这个片段里的下一个关键帧。",
+      "firstKey": "在播放头打第一个关键帧，这个属性就开始随时间变化。",
+      "key": "在播放头添加或删除关键帧。有关键帧后，改值就在播放头写入。",
+      "reset": "清掉这个属性的值和全部关键帧。"
+    },
+    "group": {
+      "position": "位置",
+      "size": "大小",
+      "anchor": "锚点"
+    },
+    "name": {
+      "transform": {
+        "x": "X",
+        "y": "Y",
+        "width": "宽",
+        "height": "高",
+        "anchorX": "X",
+        "anchorY": "Y",
+        "scale": "缩放",
+        "rotation": "旋转"
+      },
+      "opacity": "不透明度",
+      "fit": "适应方式"
+    },
+    "choice": {
+      "fit": {
+        "contain": "完整显示",
+        "cover": "铺满",
+        "fixed": "固定大小"
+      }
     }
   },
   "timeline": {

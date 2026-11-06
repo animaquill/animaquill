@@ -10,8 +10,8 @@ import { COMMANDS, type CommandDefinition } from "./commands.ts";
 import { CommandError, Draft, type Step } from "./draft.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
-import { Mutator, type Patch } from "./patch.ts";
-import { isContainer, type Path } from "./structure.ts";
+import { Mutator, deepEqual, getIn, type Patch } from "./patch.ts";
+import { flatEntry, flatKey, isContainer, isFlat, type Path } from "./structure.ts";
 
 /** Who a change comes from. Every change in the document carries this. */
 export type Origin = string;
@@ -80,7 +80,7 @@ interface Write {
 
 /** What it takes to undo one change. */
 interface UndoEntry {
-  readonly steps: readonly (Step & { readonly previous: Origin | undefined })[];
+  readonly steps: readonly Step[];
 }
 
 /** What was done and what was taken back, for the person or for one AI task. */
@@ -91,18 +91,103 @@ interface UndoLog {
 
 const keyOf = (path: Path) => path.join("\n");
 
+/** Means something to every object, so it stays out, whatever a document holds. */
+const UNSAFE_KEY = "__proto__";
+
+/** Puts the fields of something in its map. See `flat` in structure.ts for the levels without one. */
+function fill(map: Y.Map<unknown>, path: Path, value: object): void {
+  for (const [key, item] of Object.entries(value)) {
+    if (item === undefined) continue;
+    const child = [...path, key];
+    if (isFlat(child)) {
+      for (const [entry, inner] of Object.entries(item as object)) {
+        if (inner !== undefined) map.set(flatKey(key, entry), inner);
+      }
+    } else {
+      map.set(key, toYjs(child, item));
+    }
+  }
+}
+
 function toYjs(path: Path, value: unknown): unknown {
   if (path[0] === "files" && path.length === 2) return new Y.Text(value as string);
   if (!isContainer(path) || typeof value !== "object" || value === null) return value;
   const map = new Y.Map<unknown>();
-  for (const [key, item] of Object.entries(value)) {
-    if (item !== undefined) map.set(key, toYjs([...path, key], item));
-  }
+  fill(map, path, value);
   return map;
 }
 
-const toPlain = (value: unknown): unknown =>
-  value instanceof Y.AbstractType ? (value.toJSON() as unknown) : value;
+/** The map a document from before flat levels has for this level. */
+function oldMap(map: Y.Map<unknown>, level: string): Y.Map<unknown> | undefined {
+  const old = map.get(level);
+  return old instanceof Y.Map ? (old as Y.Map<unknown>) : undefined;
+}
+
+/** An entry of a flat level. An old map only counts where nothing has been written since. */
+function readEntry(map: Y.Map<unknown>, level: string, entry: string): unknown {
+  const key = flatKey(level, entry);
+  return map.has(key) ? map.get(key) : oldMap(map, level)?.get(entry);
+}
+
+/** All entries of the flat levels of a map, by level. */
+function readEntries(map: Y.Map<unknown>, path: Path): ReadonlyMap<string, Map<string, unknown>> {
+  const levels = new Map<string, Map<string, unknown>>();
+  const entriesOf = (level: string) => {
+    const entries = levels.get(level) ?? new Map<string, unknown>();
+    levels.set(level, entries);
+    return entries;
+  };
+  map.forEach((item, key) => {
+    if (isFlat([...path, key]) && item instanceof Y.Map) {
+      const entries = entriesOf(key);
+      (item as Y.Map<unknown>).forEach((inner, entry) => {
+        if (entry !== UNSAFE_KEY && !entries.has(entry)) entries.set(entry, inner);
+      });
+    }
+  });
+  map.forEach((item, key) => {
+    const found = flatEntry(path, key);
+    if (found && found[1] !== UNSAFE_KEY) entriesOf(found[0]).set(found[1], item);
+  });
+  return levels;
+}
+
+/** Something in the document the way the rest of the code sees it. */
+function toState(path: Path, value: unknown): unknown {
+  if (value instanceof Y.Text) return value.toString();
+  if (!(value instanceof Y.Map)) return value;
+  const entries: (readonly [string, unknown])[] = [];
+  (value as Y.Map<unknown>).forEach((item, key) => {
+    const child = [...path, key];
+    if (key !== UNSAFE_KEY && !isFlat(child) && !flatEntry(path, key)) {
+      entries.push([key, toState(child, item)]);
+    }
+  });
+  for (const [level, items] of readEntries(value as Y.Map<unknown>, path)) {
+    if (items.size > 0) entries.push([level, Object.fromEntries(items)]);
+  }
+  return Object.fromEntries(entries);
+}
+
+/** What a key of a map in the document comes to in the state. */
+function readChange(map: Y.Map<unknown>, path: Path, key: string) {
+  const entry = flatEntry(path, key);
+  if (entry) {
+    const [level, name] = entry;
+    return { path: [...path, level, name], value: readEntry(map, level, name) };
+  }
+  const owner = map.parent;
+  if (isFlat(path) && owner instanceof Y.Map) {
+    const value = readEntry(owner as Y.Map<unknown>, path.at(-1) as string, key);
+    return { path: [...path, key], value };
+  }
+  const child = [...path, key];
+  if (isFlat(child)) {
+    const items = readEntries(map, path).get(key);
+    return { path: child, value: items?.size ? Object.fromEntries(items) : undefined };
+  }
+  return { path: child, value: toState(child, map.get(key)) };
+}
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
@@ -164,7 +249,7 @@ export class ProjectStore {
   constructor(doc: Y.Doc) {
     this.doc = doc;
     this.#root = doc.getMap<unknown>(ROOT);
-    this.#state = this.#root.toJSON() as ProjectState;
+    this.#state = toState([], this.#root) as ProjectState;
     this.#root.observeDeep(this.#onChange);
   }
 
@@ -190,10 +275,7 @@ export class ProjectStore {
   static create(project: Project, files: Readonly<Record<string, string>> = {}): ProjectStore {
     const doc = new Y.Doc();
     const root = doc.getMap<unknown>(ROOT);
-    const state = projectToState(project, files);
-    doc.transact(() => {
-      for (const [key, value] of Object.entries(state)) root.set(key, toYjs([key], value));
-    }, LOAD);
+    doc.transact(() => fill(root, [], projectToState(project, files)), LOAD);
     return new ProjectStore(doc);
   }
 
@@ -382,21 +464,11 @@ export class ProjectStore {
       return { ok: true, revision: this.#revision, results, patches };
     }
 
-    // A change can write a field twice. Only the first write replaced what somebody wrote before.
-    const written = new Set<string>();
-    const entry: UndoEntry = {
-      steps: draft.steps.map((step) => {
-        const key = keyOf(step.patch.path);
-        const previous = written.has(key) ? origin : this.#writes.get(key)?.origin;
-        written.add(key);
-        return { ...step, previous };
-      }),
-    };
+    const entry: UndoEntry = { steps: draft.steps };
     this.doc.transact(() => {
       for (const patch of patches) this.#apply(patch);
     }, origin);
-    // Yjs reports nothing about a field of something that went away in the same change, and undo
-    // has to know that the field was ours to bring back.
+    // Yjs reports nothing about a field of something that went away in the same change.
     const write = { revision: this.#revision, origin };
     for (const { path } of patches) this.#markWrite(path, write, false);
 
@@ -441,25 +513,18 @@ export class ProjectStore {
    * own, but it works on single fields and can leave a field with no value at all when two people
    * changed it at once. Here a field always gets a value back, or stays as it is.
    *
-   * A path is only touched while the last change to it is still ours, so whatever others did since
-   * then stays. Returns how to redo this, or undefined when there was nothing left to take back.
+   * A path is only touched while it still holds what the change left there. Who wrote it last says
+   * nothing, because taking something back is a write too: after that the path would look like ours
+   * again, also where it holds what somebody else did. Returns how to redo this, or undefined when
+   * there was nothing left to take back.
    */
   #takeBack(entries: readonly UndoEntry[], origin: Origin): UndoEntry | undefined {
     this.#lastEntry = undefined;
-    const blocked = new Set<string>();
     const result = this.#commit(["undo"], origin, { isUndo: true }, (draft) => {
       for (const entry of entries.toReversed()) {
-        for (const { patch, inverse, previous } of entry.steps.toReversed()) {
-          const key = keyOf(patch.path);
-          if (blocked.has(key)) continue;
-          const mine = this.#writes.get(key)?.origin === origin;
-          if (!mine || !draft.hasParent(patch.path)) {
-            blocked.add(key);
-            continue;
-          }
-          draft.apply(inverse);
-          // Someone else wrote here before: older changes of ours are not the ones to bring back.
-          if (previous !== origin) blocked.add(key);
+        for (const { patch, inverse, after } of entry.steps.toReversed()) {
+          const isIntact = deepEqual(getIn(draft.state, patch.path), after);
+          if (isIntact && draft.hasParent(patch.path)) draft.apply(inverse);
         }
       }
       return [];
@@ -490,24 +555,52 @@ export class ProjectStore {
     return { code: "conflict", message: "这些内容已经被别人改过，要重新读取", conflicts };
   }
 
-  #apply(patch: Patch): void {
+  /** The map at a path. Only what every document has should have to be made here. */
+  #mapAt(path: Path): Y.Map<unknown> {
     let map = this.#root;
-    const parents = patch.path.slice(0, -1);
-    parents.forEach((key) => {
+    for (const key of path) {
       let next = map.get(key);
       if (!(next instanceof Y.Map)) {
         next = new Y.Map<unknown>();
         map.set(key, next);
       }
       map = next as Y.Map<unknown>;
-    });
-    const key = patch.path.at(-1) as string;
+    }
+    return map;
+  }
+
+  /** Makes a flat level hold exactly this. */
+  #writeLevel(path: Path, entries: Readonly<Record<string, unknown>>): void {
+    const owner = path.slice(0, -1);
+    const level = path.at(-1) as string;
+    const map = this.#mapAt(owner);
+    for (const key of map.keys()) {
+      const found = flatEntry(owner, key);
+      if (found?.[0] === level && !Object.hasOwn(entries, found[1])) map.delete(key);
+    }
+    map.delete(level);
+    for (const [entry, value] of Object.entries(entries)) map.set(flatKey(level, entry), value);
+  }
+
+  #apply(patch: Patch): void {
+    const { path } = patch;
+    if (isFlat(path)) {
+      const entries = patch.op === "set" ? (patch.value as Record<string, unknown>) : {};
+      this.#writeLevel(path, entries);
+      return;
+    }
+    const parent = path.slice(0, -1);
+    const name = path.at(-1) as string;
+    const isEntry = isFlat(parent);
+    const level = parent.at(-1) as string;
+    const map = this.#mapAt(isEntry ? parent.slice(0, -1) : parent);
+    const key = isEntry ? flatKey(level, name) : name;
     switch (patch.op) {
       case "delete":
         map.delete(key);
         break;
       case "set":
-        map.set(key, toYjs(patch.path, patch.value));
+        map.set(key, toYjs(path, patch.value));
         break;
       case "text": {
         const text = map.get(key);
@@ -516,6 +609,8 @@ export class ProjectStore {
         break;
       }
     }
+    // From now on this entry lives in its own key.
+    if (isEntry) oldMap(map, level)?.delete(name);
   }
 
   #markWrite(path: Path, write: Write, removed: boolean): void {
@@ -541,11 +636,12 @@ export class ProjectStore {
         continue;
       }
       const target = event.target as Y.Map<unknown>;
-      event.changes.keys.forEach((change, key) => {
-        const path = [...base, key];
-        const removed = change.action === "delete";
+      event.changes.keys.forEach((_, key) => {
+        const { path, value } = readChange(target, base, key);
+        if (path.includes(UNSAFE_KEY)) return;
+        const removed = value === undefined;
         if (removed) mutator.delete(path);
-        else mutator.set(path, toPlain(target.get(key)));
+        else mutator.set(path, value);
         if (!isLoad) this.#markWrite(path, write, removed || isContainer(path));
       });
     }

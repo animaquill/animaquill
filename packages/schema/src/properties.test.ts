@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { BUILT_IN_PROPERTIES, isKnownProperty, propertyValueProblem } from "./properties.ts";
+import {
+  BUILT_IN_PROPERTIES,
+  CLIP_VISUAL,
+  isAnimation,
+  isKnownProperty,
+  propertyValueProblem,
+} from "./properties.ts";
 import { Key, KnownProperties, PropertyPath } from "./values.ts";
 
 describe("property paths", () => {
@@ -52,6 +58,48 @@ describe("bezier handles", () => {
   it.each([[[-0.1, 0]], [[1.1, 0]]])("refuses %j, which would run back in time", (out) => {
     expect(Key.safeParse(key(out)).success).toBe(false);
     expect(Key.safeParse({ time: "0", value: 0, in: out }).success).toBe(false);
+  });
+});
+
+describe("what a clip with a picture offers", () => {
+  const paths = CLIP_VISUAL.properties.map(({ path }) => path);
+
+  it("is a kind of object that editors can recognize", () => {
+    expect(CLIP_VISUAL.type).toBe("clip.visual");
+  });
+
+  it("is made of the built-in properties themselves", () => {
+    for (const spec of CLIP_VISUAL.properties) expect(BUILT_IN_PROPERTIES[spec.path]).toBe(spec);
+  });
+
+  it("has what a picture needs, with position first", () => {
+    expect(paths.slice(0, 2)).toEqual(["transform.x", "transform.y"]);
+    expect(paths).toContain("opacity");
+    expect(paths).toContain("transform.scale");
+    expect(paths).toContain("transform.rotation");
+  });
+
+  it("leaves out what the compositor does not do yet", () => {
+    for (const path of ["blend", "crop.left", "time.speed"]) expect(paths).not.toContain(path);
+  });
+
+  it("can cross into a sandbox and into a tool as it is", () => {
+    expect(JSON.parse(JSON.stringify(CLIP_VISUAL))).toEqual(CLIP_VISUAL);
+  });
+
+  it("the way media fits in a box does not change over time", () => {
+    expect(BUILT_IN_PROPERTIES["fit"]?.animatable).toBe(false);
+    const animated = CLIP_VISUAL.properties.filter(({ animatable }) => animatable !== false);
+    expect(animated.map(({ path }) => path)).not.toContain("fit");
+  });
+});
+
+describe("telling keys from values", () => {
+  it("does not take a list of numbers for keys", () => {
+    expect(isAnimation([1, 2, 3])).toBe(false);
+    expect(isAnimation(3)).toBe(false);
+    expect(isAnimation({ asset: "a" })).toBe(false);
+    expect(isAnimation({ keys: [{ time: "0", value: 1 }] })).toBe(true);
   });
 });
 

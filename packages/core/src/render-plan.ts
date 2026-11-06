@@ -1,18 +1,37 @@
-import { isAnimation, toSeconds, type MediaRef } from "@animaquill/schema";
+import {
+  CLIP_VISUAL,
+  isAnimation,
+  parseTime,
+  toSeconds,
+  type Animation,
+  type Asset,
+  type MediaRef,
+  type PropertyValue,
+  type Value,
+  type ValueType,
+} from "@animaquill/schema";
+import { compileChannel, type Channel, type Channels } from "./curve.ts";
 import {
   clipEnd,
   clipOffset,
   clipStart,
+  entryOf,
   orderedTracks,
   type ClipState,
   type TrackState,
 } from "./model.ts";
 import type { ProjectState } from "./model.ts";
+import { stageOf, type Size } from "./view.ts";
 
 /** What a compositor draws from. It knows nothing about projects, versions or Yjs. */
 export interface RenderPlan {
+  /** Pixels of the picture. */
   readonly width: number;
   readonly height: number;
+  /** How much of the world it shows, in world units. */
+  readonly stage: Size;
+  /** Empty, which is a camera that stands still, until cameras exist: see viewMatrix. */
+  readonly camera: Channels;
   readonly background: string;
   /** Back to front. */
   readonly layers: readonly RenderLayer[];
@@ -31,8 +50,12 @@ export interface RenderLayer {
   /** What the clock of the clip reads at its start, which for a video is the time in the file. */
   readonly offset: number;
   readonly source: LayerSource;
-  readonly opacity: number;
-  readonly fit: "contain" | "cover";
+  /** How the clip box comes about and how the media goes in it. See boxOf. */
+  readonly fit: "contain" | "cover" | "fixed";
+  /** Seconds. */
+  readonly fades: { readonly in: number; readonly out: number };
+  /** What changes over time, on the clock of the clip: `transform.*` and `opacity`. */
+  readonly channels: Channels;
 }
 
 export interface SoundLayer {
@@ -53,64 +76,171 @@ export interface AudioPlan {
   readonly sounds: readonly SoundLayer[];
 }
 
-type Properties = ClipState["properties"];
+/** Which version of a timeline to look at. */
+export interface Version {
+  readonly format?: string;
+}
+
+type Properties = NonNullable<ClipState["properties"]>;
 type AudioTrackState = Extract<TrackState, { kind: "audio" }>;
 
-/** A property as a plain number. Keys come with keyframe evaluation, until then the first value. */
-function numberOf(properties: Properties, path: string, fallback: number): number {
+const NO_PROPERTIES: Properties = {};
+const STILL_CAMERA: Channels = {};
+
+/**
+ * The properties of a clip in a version. Reading them from anywhere else would leave that place out
+ * once versions change them, so this is the one way, and the place for the differences to come in.
+ */
+export const effectiveProperties = (clip: ClipState, _version?: Version): Properties =>
+  clip.properties ?? NO_PROPERTIES;
+
+/** A property as a plain number. Keys on sound come later, until then the first value. */
+function numberOf(properties: ClipState["properties"], path: string, fallback: number): number {
   const value = properties?.[path];
   if (value === undefined) return fallback;
   const plain = isAnimation(value) ? value.keys[0]?.value : value;
   return typeof plain === "number" ? plain : fallback;
 }
 
-function sourceOf(state: ProjectState, clip: ClipState): LayerSource | undefined {
+const compiled = new WeakMap<
+  Animation,
+  { readonly type: ValueType; readonly channel: Channel | undefined }
+>();
+
+/** Prepares a value to be read. Keys are the expensive part and only change by being replaced. */
+export function channelOf(value: PropertyValue, type: ValueType): Channel | undefined {
+  if (!isAnimation(value)) return compileChannel(value, type);
+  const known = compiled.get(value);
+  if (known?.type === type) return known.channel;
+  const channel = compileChannel(value, type);
+  compiled.set(value, { type, channel });
+  return channel;
+}
+
+const VISUAL_SPECS = CLIP_VISUAL.properties.filter(({ animatable }) => animatable !== false);
+
+/** What a compositor reads from the properties of a clip. */
+export function channelsOf(properties: Properties): Channels {
+  const channels: Record<string, Channel> = {};
+  for (const { path, type } of VISUAL_SPECS) {
+    const value = properties[path];
+    const channel = value === undefined ? undefined : channelOf(value, type);
+    if (channel) channels[path] = channel;
+  }
+  return channels;
+}
+
+/** The one value of what cannot have keys: only a hand-written project can have them anyway. */
+export const firstValue = (value: PropertyValue | undefined): Value | undefined =>
+  value !== undefined && isAnimation(value) ? value.keys[0]?.value : value;
+
+export function fitOf(properties: Properties): RenderLayer["fit"] {
+  const plain = firstValue(entryOf(properties, "fit"));
+  return plain === "cover" || plain === "fixed" ? plain : "contain";
+}
+
+function assetOf(state: ProjectState, clip: ClipState): Asset | undefined {
+  const { media } = clip.source as { readonly media?: MediaRef };
+  return media && "asset" in media ? entryOf(state.assets, media.asset) : undefined;
+}
+
+function sourceOf(clip: ClipState, asset: Asset | undefined): LayerSource | undefined {
   const { source } = clip;
   if (source.kind === "color") return { kind: "color", color: source.color as string };
   if (source.kind !== "video" && source.kind !== "image") return undefined;
-  const media = source.media as MediaRef;
-  const file = "asset" in media ? state.assets?.[media.asset]?.hash : undefined;
-  return file === undefined ? undefined : { kind: source.kind, file };
+  return asset?.hash === undefined ? undefined : { kind: source.kind, file: asset.hash };
+}
+
+const secondsOf = (time: string | undefined) =>
+  time === undefined ? 0 : toSeconds(parseTime(time));
+
+interface BuiltLayer {
+  readonly asset: Asset | undefined;
+  readonly properties: Properties;
+  readonly layer: RenderLayer | undefined;
+}
+
+const built = new WeakMap<ClipState, BuiltLayer>();
+
+/**
+ * Clips that did not change keep their identity, so they keep their layer. That is what makes a
+ * change to one clip of thousands cheap, and it tells at a glance which layers are still the same.
+ */
+function layerOf(
+  state: ProjectState,
+  clip: ClipState,
+  version: Version | undefined,
+): RenderLayer | undefined {
+  const asset = assetOf(state, clip);
+  const properties = effectiveProperties(clip, version);
+  const known = built.get(clip);
+  if (known && known.asset === asset && known.properties === properties) return known.layer;
+  const source = sourceOf(clip, asset);
+  const layer: RenderLayer | undefined = source && {
+    id: clip.id,
+    start: toSeconds(clipStart(clip)),
+    end: toSeconds(clipEnd(clip)),
+    offset: toSeconds(clipOffset(clip)),
+    source,
+    fit: fitOf(properties),
+    fades: { in: secondsOf(clip.fadeIn), out: secondsOf(clip.fadeOut) },
+    channels: channelsOf(properties),
+  };
+  built.set(clip, { asset, properties, layer });
+  return layer;
+}
+
+/** The format of a version: the first one, unless the version says otherwise. */
+export function formatOf(state: ProjectState, version?: Version) {
+  const { formats } = state.manifest;
+  return version?.format === undefined
+    ? formats[0]
+    : formats.find(({ id }) => id === version.format);
 }
 
 /** What a timeline shows: a compositor needs nothing else. */
-export function buildRenderPlan(state: ProjectState, timelineId: string): RenderPlan | undefined {
-  const timeline = state.timelines[timelineId];
-  const format = state.manifest.formats[0];
+export function buildRenderPlan(
+  state: ProjectState,
+  timelineId: string,
+  version?: Version,
+): RenderPlan | undefined {
+  const timeline = entryOf(state.timelines, timelineId);
+  const format = formatOf(state, version);
   if (!timeline || !format) return undefined;
-  const layers: RenderLayer[] = [];
-  for (const track of orderedTracks(timeline)) {
-    if (track.kind !== "video" || track.hidden) continue;
-    const clips = Object.values(timeline.clips)
-      .filter((clip) => clip.track === track.id && !clip.hidden)
-      .toSorted((a, b) => toSeconds(clipStart(a)) - toSeconds(clipStart(b)));
-    for (const clip of clips) {
-      const source = sourceOf(state, clip);
-      if (!source) continue;
-      layers.push({
-        id: clip.id,
-        start: toSeconds(clipStart(clip)),
-        end: toSeconds(clipEnd(clip)),
-        offset: toSeconds(clipOffset(clip)),
-        source,
-        opacity: numberOf(clip.properties, "opacity", 1),
-        fit: clip.properties?.["fit"] === "cover" ? "cover" : "contain",
-      });
-    }
+  const tracks = orderedTracks(timeline).filter((track) => track.kind === "video" && !track.hidden);
+  const lanes = new Map(tracks.map(({ id }) => [id, [] as RenderLayer[]]));
+  for (const clip of Object.values(timeline.clips)) {
+    const lane = lanes.get(clip.track);
+    const layer = lane && !clip.hidden ? layerOf(state, clip, version) : undefined;
+    if (layer) lane?.push(layer);
   }
   return {
     width: format.width,
     height: format.height,
+    stage: stageOf(format),
+    camera: STILL_CAMERA,
     background: timeline.background ?? "#000000",
-    layers,
+    layers: [...lanes.values()].flatMap((lane) => lane.toSorted((a, b) => a.start - b.start)),
   };
+}
+
+/** Whether two plans draw the same. Layers that did not change are the same objects: see layerOf. */
+export function samePlan(a: RenderPlan, b: RenderPlan): boolean {
+  return (
+    a.width === b.width &&
+    a.height === b.height &&
+    a.background === b.background &&
+    a.camera === b.camera &&
+    a.layers.length === b.layers.length &&
+    a.layers.every((layer, index) => layer === b.layers[index])
+  );
 }
 
 const gainOf = (decibels: number) => 10 ** (decibels / 20);
 
 /** Solo wins: as soon as one track has it, only those tracks sound. */
 export function buildAudioPlan(state: ProjectState, timelineId: string): AudioPlan {
-  const timeline = state.timelines[timelineId];
+  const timeline = entryOf(state.timelines, timelineId);
   if (!timeline) return { sounds: [] };
   const tracks = orderedTracks(timeline).filter(
     (track): track is AudioTrackState => track.kind === "audio",
@@ -127,10 +257,11 @@ export function buildAudioPlan(state: ProjectState, timelineId: string): AudioPl
     const { source } = clip;
     if (!track || clip.hidden || source.kind !== "audio") continue;
     const media = source.media as MediaRef;
-    const file = "asset" in media ? state.assets?.[media.asset]?.hash : undefined;
+    const file = "asset" in media ? entryOf(state.assets, media.asset)?.hash : undefined;
     if (file === undefined) continue;
     const decibels =
-      numberOf(track.properties, "audio.volume", 0) + numberOf(clip.properties, "audio.volume", 0);
+      numberOf(track.properties, "audio.volume", 0) +
+      numberOf(effectiveProperties(clip), "audio.volume", 0);
     sounds.push({
       id: clip.id,
       file,

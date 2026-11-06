@@ -1,4 +1,4 @@
-import type { RenderPlan } from "@animaquill/core";
+import type { Channel, RenderPlan } from "@animaquill/core";
 
 export interface FrameTiming {
   /** Where on the timeline. */
@@ -17,9 +17,14 @@ export interface FrameTiming {
   readonly abandoned: number;
 }
 
+/** What changed about the curves of a layer, by property path. Null takes a property away. */
+export type ChannelChanges = Readonly<Record<string, Channel | null>>;
+
 /** From the editor to the compositor. */
 export type ToCompositor =
   | { readonly type: "plan"; readonly plan: RenderPlan }
+  /** Changes one layer on the spot, for what is not in the project yet. A new plan ends it. */
+  | { readonly type: "channels"; readonly layer: string; readonly channels: ChannelChanges }
   | { readonly type: "file"; readonly id: string; readonly file: Blob }
   /** A jump is somebody moving the playhead, as opposed to time carrying it along while playing. */
   | { readonly type: "seek"; readonly seconds: number; readonly jump: boolean }

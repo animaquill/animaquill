@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id, RelativePath, Time, sortKeys } from "./basics.ts";
-import { isKnownProperty, propertyValueProblem } from "./properties.ts";
+import { isAnimation, isKnownProperty, propertyValueProblem } from "./properties.ts";
 import { compare, parseTime } from "./time.ts";
 
 /** A file of the project, by its entry in assets.json, or a file of a linked library. */
@@ -108,10 +108,6 @@ export const PropertyPath = z
 
 /** Sorted, so that a file only changes when a value does. */
 export const Properties = z.record(PropertyPath, PropertyValue).overwrite(sortKeys);
-
-/** Whether a property changes over time. A list of numbers is a value, and it has `keys` too. */
-export const isAnimation = (value: z.output<typeof PropertyValue>): value is Animation =>
-  typeof value === "object" && value !== null && !Array.isArray(value) && "keys" in value;
 
 /** The plain values of a property, whether it has keys or not. */
 const valuesOf = (value: z.output<typeof PropertyValue>) =>

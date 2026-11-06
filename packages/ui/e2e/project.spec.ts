@@ -54,9 +54,9 @@ test.describe("without a project", () => {
     await expect(page.getByRole("menuitem", { name: "时间轴", exact: true })).toBeDisabled();
     await page.keyboard.press("Escape");
     await page.keyboard.press("Control+Shift+KeyP");
-    await page.getByRole("combobox").fill("时间轴");
+    await page.getByRole("combobox", { name: "命令面板" }).fill("时间轴");
     await expect(page.getByText("没有匹配的命令")).toBeVisible();
-    await page.getByRole("combobox").fill("新建项目");
+    await page.getByRole("combobox", { name: "命令面板" }).fill("新建项目");
     await expect(page.getByRole("option")).toHaveCount(1);
   });
 
@@ -470,7 +470,7 @@ test.describe("dialogs", () => {
     await openRename(page);
     await page.keyboard.press("Alt+Digit2");
     await page.keyboard.press("Control+Shift+KeyP");
-    await expect(page.getByRole("combobox")).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "命令面板" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "剪辑" })).toHaveAttribute(
       "aria-pressed",
@@ -507,7 +507,7 @@ test.describe("dialogs", () => {
 
   test("get the focus when they come from the command palette", async ({ page }) => {
     await page.keyboard.press("Control+Shift+KeyP");
-    await page.getByRole("combobox").fill("重命名项目");
+    await page.getByRole("combobox", { name: "命令面板" }).fill("重命名项目");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("textbox", { name: "项目名称" })).toBeFocused();
   });

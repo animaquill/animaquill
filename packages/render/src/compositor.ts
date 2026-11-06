@@ -1,7 +1,18 @@
 import { ALL_FORMATS, BlobSource, Input, VideoSampleSink, type VideoSample } from "mediabunny";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
+import {
+  boxOf,
+  clockOf,
+  fitIn,
+  layerMatrix,
+  multiply,
+  opacityAt,
+  viewMatrix,
+  type Matrix,
+} from "@animaquill/core/view";
 import { comesUpAfter, readingAt, showsAt, VideoCursor } from "./cursor.ts";
 import { GiveUpTimer } from "./patience.ts";
+import { withChannels } from "./plan.ts";
 import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
 
 /**
@@ -10,9 +21,10 @@ import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
  */
 
 interface Picture {
-  readonly source: CanvasImageSource;
   readonly width: number;
   readonly height: number;
+  /** Draws a part of it, in its pixels, on the same pixels of whatever the matrix says. */
+  draw(x: number, y: number, width: number, height: number): void;
   close(): void;
 }
 
@@ -126,6 +138,33 @@ async function cursorOf(
   return entry.cursor;
 }
 
+const imagePicture = (bitmap: ImageBitmap): Picture => ({
+  width: bitmap.width,
+  height: bitmap.height,
+  draw(x, y, width, height) {
+    draw.drawImage(bitmap, x, y, width, height, x, y, width, height);
+  },
+  close() {},
+});
+
+/**
+ * What a phone records upright is stored on its side with a note to turn it, and only the sample
+ * knows how to read parts of that. Going around it for all the other videos keeps the numbers that
+ * reach the canvas the same as for a picture.
+ */
+const videoPicture = (sample: VideoSample): Picture => ({
+  width: sample.displayWidth,
+  height: sample.displayHeight,
+  draw(x, y, width, height) {
+    if (sample.rotation !== 0 || sample.flip) {
+      sample.draw(draw, x, y, width, height, x, y, width, height);
+    } else {
+      draw.drawImage(sample.toCanvasImageSource(), x, y, width, height, x, y, width, height);
+    }
+  },
+  close() {},
+});
+
 async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture | undefined> {
   const { source } = layer;
   if (source.kind === "color") return undefined;
@@ -133,7 +172,7 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
   if (!file) return undefined;
   if (source.kind === "image") {
     const bitmap = await imageOf(source.file, file);
-    return bitmap && { source: bitmap, width: bitmap.width, height: bitmap.height, close() {} };
+    return bitmap && imagePicture(bitmap);
   }
   const cursor = await cursorOf(layer, source.file, file);
   // Opening the file takes a while, and the playhead does not wait for it.
@@ -141,15 +180,9 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
     frameGivenUp = true;
     return undefined;
   }
-  const sample = await cursor?.at(layer.offset + seconds - layer.start);
+  const sample = await cursor?.at(clockOf(layer, seconds));
   if (cursor?.takeCold()) coldInFrame += 1;
-  if (!sample) return undefined;
-  return {
-    source: sample.toCanvasImageSource(),
-    width: sample.displayWidth,
-    height: sample.displayHeight,
-    close() {},
-  };
+  return sample && videoPicture(sample);
 }
 
 /** Clips that start soon. */
@@ -209,43 +242,56 @@ const patience = new GiveUpTimer(
   () => giveUpFor(wanted),
 );
 
-function place(layer: RenderLayer, picture: Picture): void {
-  const scaleOf = layer.fit === "cover" ? Math.max : Math.min;
-  const scale = scaleOf(canvas.width / picture.width, canvas.height / picture.height);
-  const width = picture.width * scale;
-  const height = picture.height * scale;
-  draw.drawImage(
-    picture.source,
-    (canvas.width - width) / 2,
-    (canvas.height - height) / 2,
-    width,
-    height,
-  );
+/** Canvas ignores a matrix it cannot use and would draw with the one before. */
+const canUse = (matrix: Matrix) => matrix.every((number) => Number.isFinite(number));
+
+/** Colors and pictures are one kind of thing here: a box in the world, with something in it. */
+function paint(
+  layer: RenderLayer,
+  picture: Picture | undefined,
+  view: Matrix,
+  seconds: number,
+  stage: RenderPlan["stage"],
+): void {
+  const { source } = layer;
+  const opacity = opacityAt(layer, seconds);
+  if (opacity <= 0 || (source.kind !== "color" && !picture)) return;
+  const box = boxOf(layer, seconds, picture, stage);
+  if (box.width <= 0 || box.height <= 0) return;
+  const toPicture = multiply(view, layerMatrix(layer, seconds, box));
+  draw.globalAlpha = opacity;
+  if (picture) {
+    const { source: part, matrix } = fitIn(layer.fit, picture, box);
+    const fromMedia = multiply(toPicture, matrix);
+    if (!canUse(fromMedia)) return;
+    draw.setTransform(...fromMedia);
+    picture.draw(part.x, part.y, part.width, part.height);
+  } else if (source.kind === "color" && canUse(toPicture)) {
+    draw.setTransform(...toPicture);
+    draw.fillStyle = source.color;
+    draw.fillRect(0, 0, box.width, box.height);
+  }
 }
 
 /** Everything is decoded first, so that a frame appears whole and never half drawn. */
 async function drawFrame(seconds: number): Promise<void> {
-  if (!plan) return;
-  const showing = plan.layers.filter((layer) => showsAt(layer, seconds));
+  const shown = plan;
+  if (!shown) return;
+  const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
   const askedAt = performance.now();
   const pictures = await Promise.all(showing.map((layer) => pictureOf(layer, seconds)));
   decodeMsInFrame = performance.now() - askedAt;
   if (frameGivenUp) return;
-  if (canvas.width !== plan.width) canvas.width = plan.width;
-  if (canvas.height !== plan.height) canvas.height = plan.height;
+  if (canvas.width !== shown.width) canvas.width = shown.width;
+  if (canvas.height !== shown.height) canvas.height = shown.height;
+  draw.resetTransform();
   draw.globalAlpha = 1;
-  draw.fillStyle = plan.background;
+  draw.fillStyle = shown.background;
   draw.fillRect(0, 0, canvas.width, canvas.height);
+  const view = viewMatrix(shown, seconds);
   showing.forEach((layer, index) => {
-    draw.globalAlpha = layer.opacity;
-    const picture = pictures[index];
-    if (layer.source.kind === "color") {
-      draw.fillStyle = layer.source.color;
-      draw.fillRect(0, 0, canvas.width, canvas.height);
-    } else if (picture) {
-      place(layer, picture);
-    }
+    paint(layer, pictures[index], view, seconds, shown.stage);
   });
   for (const picture of pictures) picture?.close();
 }
@@ -347,7 +393,9 @@ addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
     return;
   }
   if (data.type === "plan") plan = data.plan;
-  else if (data.type === "seek") {
+  else if (data.type === "channels") {
+    if (plan) plan = withChannels(plan, data.layer, data.channels);
+  } else if (data.type === "seek") {
     wanted = data.seconds;
     if (data.jump) {
       jumps += 1;

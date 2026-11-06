@@ -1,4 +1,4 @@
-import type { Value } from "./values.ts";
+import type { Animation, PropertyValue, Value } from "./values.ts";
 
 /** What a value holds, which decides how it is checked, animated and edited. */
 export type ValueType = "number" | "angle" | "text" | "choice" | "boolean" | "asset";
@@ -72,11 +72,17 @@ const DESCRIBED: Readonly<Record<string, Described>> = {
   /** Which point of the box sits at x and y, as a share of the box. */
   "transform.anchorX": { ...anchor, group: "anchor" },
   "transform.anchorY": { ...anchor, group: "anchor" },
-  "transform.scale": { type: "number", default: 1 },
+  "transform.scale": { type: "number", unit: "ratio", default: 1 },
   /** Clockwise, and it does not wrap around: 720 is two turns. */
   "transform.rotation": { type: "angle", unit: "deg", default: 0 },
   opacity: { ...ratio, default: 1 },
-  fit: { type: "choice", default: "contain", options: ["cover", "contain", "fixed"] },
+  /** Decides how a clip box comes about, which is not something to change halfway through. */
+  fit: {
+    type: "choice",
+    default: "contain",
+    options: ["cover", "contain", "fixed"],
+    animatable: false,
+  },
   blend: {
     type: "choice",
     default: "normal",
@@ -100,6 +106,37 @@ const DESCRIBED: Readonly<Record<string, Described>> = {
 export const BUILT_IN_PROPERTIES: Readonly<Record<string, PropertySpec>> = Object.fromEntries(
   Object.entries(DESCRIBED).map(([path, spec]) => [path, { path, ...spec }]),
 );
+
+/** Whether a property changes over time. A list of numbers is a value, and it has `keys` too. */
+export const isAnimation = (value: PropertyValue): value is Animation =>
+  typeof value === "object" && value !== null && !Array.isArray(value) && "keys" in value;
+
+/** Whether a property holds keys that its kind cannot have. */
+export const cannotHaveKeys = (path: string, value: PropertyValue): boolean =>
+  isAnimation(value) &&
+  Object.hasOwn(BUILT_IN_PROPERTIES, path) &&
+  BUILT_IN_PROPERTIES[path]?.animatable === false;
+
+/** Only what the compositor really does belongs here: a control without an effect helps nobody. */
+const VISUAL_PATHS = [
+  "transform.x",
+  "transform.y",
+  "transform.width",
+  "transform.height",
+  "transform.anchorX",
+  "transform.anchorY",
+  "transform.scale",
+  "transform.rotation",
+  "opacity",
+  "fit",
+];
+
+/** Where a clip with a picture sits in the world and how it shows. */
+export const CLIP_VISUAL: ObjectDescriptor = {
+  id: "visual",
+  type: "clip.visual",
+  properties: VISUAL_PATHS.map((path) => BUILT_IN_PROPERTIES[path] as PropertySpec),
+};
 
 /** Properties that are not built in but come from the content of a clip. */
 export const OPEN_PROPERTY_PREFIXES = ["param.", "object.", "element.", "caption."] as const;

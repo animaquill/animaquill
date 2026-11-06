@@ -405,9 +405,7 @@ describe("exporting", () => {
   it("says what stayed out when part of the project is not valid", async () => {
     const window = await projectWithFiles();
     // Two people working at once can leave things behind that nobody would write on purpose.
-    const root = window.session.store?.doc.getMap("project");
-    const assets = root?.get("assets") as { set(key: string, value: unknown): void };
-    assets.set("broken", { kind: "nonsense" });
+    window.session.store?.doc.getMap("project").set("assets/broken", { kind: "nonsense" });
     const { target, notice } = await exportTo(window);
 
     expect(notice.title).toBe("导出完成，但有内容没有带上");

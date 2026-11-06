@@ -1,4 +1,4 @@
-import { isContainer, type Path } from "./structure.ts";
+import { isContainer, isFlat, type Path } from "./structure.ts";
 
 /** One change to a project. A command turns into a list of these, which also records what it did. */
 export type Patch =
@@ -43,10 +43,30 @@ export function diff(path: Path, before: unknown, after: unknown): Patch[] {
 export function getIn(root: unknown, path: Path): unknown {
   let node = root;
   for (const key of path) {
-    if (!isPlainObject(node)) return undefined;
+    if (!isPlainObject(node) || !Object.hasOwn(node, key)) return undefined;
     node = node[key];
   }
   return node;
+}
+
+/**
+ * A value the way the document will hold it, which is also how it comes back: nothing is undefined,
+ * and a level without entries that has no map of its own is not there at all.
+ */
+export function settled(path: Path, value: unknown): unknown {
+  if (!isContainer(path) || !isPlainObject(value)) return value;
+  const entries = Object.entries(value).flatMap(([key, item]) => {
+    const inner = settled([...path, key], item);
+    return inner === undefined ? [] : [[key, inner] as const];
+  });
+  return entries.length === 0 && isFlat(path) ? undefined : Object.fromEntries(entries);
+}
+
+/** A change the way the document will hold it. */
+export function settledPatch(patch: Patch): Patch {
+  if (patch.op !== "set") return patch;
+  const value = settled(patch.path, patch.value);
+  return value === undefined ? { op: "delete", path: patch.path } : { ...patch, value };
 }
 
 /**
@@ -94,7 +114,10 @@ export class Mutator<T extends object> {
   delete(path: Path): void {
     const key = path.at(-1);
     if (key === undefined || getIn(this.#root, path) === undefined) return;
-    delete this.#parent(path)[key];
+    const parent = this.#parent(path);
+    delete parent[key];
+    const level = path.slice(0, -1);
+    if (isFlat(level) && Object.keys(parent).length === 0) this.delete(level);
   }
 
   apply(patch: Patch): void {

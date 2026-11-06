@@ -10,13 +10,21 @@ import {
   SceneManifest,
   SoundManifest,
   Timeline,
+  cannotHaveKeys,
   documentSchema,
   parseDocument,
   type Problem,
+  type PropertyValue,
 } from "@animaquill/schema";
 import { z } from "zod";
 import { CommandError, type Draft } from "./draft.ts";
-import { orderedSections, orderedTracks, timelineToState, type TimelineState } from "./model.ts";
+import {
+  entryOf,
+  orderedSections,
+  orderedTracks,
+  timelineToState,
+  type TimelineState,
+} from "./model.ts";
 import { deepEqual } from "./patch.ts";
 
 const isUser = (origin: string) => !origin.startsWith("ai:");
@@ -58,6 +66,54 @@ const parsed = <T>(path: string, text: string, schema: z.ZodType<T>, problems: P
   problems.push(...result.problems);
   return result.value;
 };
+
+/**
+ * Keys that a kind of property cannot have stay out. The ones a project already has stay in: an old
+ * project has to go on working, and a file that only changes something else has to get through.
+ */
+function checkKeys(
+  file: string,
+  where: string,
+  value: PropertyValue | undefined,
+  known: PropertyValue | undefined,
+  path: string,
+  problems: Problem[],
+): void {
+  if (value === undefined || !cannotHaveKeys(path, value) || deepEqual(value, known)) return;
+  const message = `${path} 不能打关键帧`;
+  problems.push({ severity: "error", code: "not-animatable", file, path: where, message });
+}
+
+function checkTimelineKeys(
+  file: string,
+  next: TimelineState,
+  current: TimelineState | undefined,
+  problems: Problem[],
+): void {
+  for (const clip of Object.values(next.clips)) {
+    const known = entryOf(current?.clips, clip.id)?.properties;
+    for (const [path, value] of Object.entries(clip.properties ?? {})) {
+      checkKeys(file, `${clip.id}.${path}`, value, entryOf(known, path), path, problems);
+    }
+  }
+}
+
+function checkOverrideKeys(
+  file: string,
+  next: Overrides,
+  current: Overrides | undefined,
+  problems: Problem[],
+): void {
+  for (const [id, changes] of Object.entries(next.clips ?? {})) {
+    const known = entryOf(current?.clips, id)?.properties;
+    for (const [path, change] of Object.entries(changes.properties ?? {})) {
+      const before = entryOf(known, path);
+      const where = `clips.${id}.properties.${path}`;
+      checkKeys(file, where, change.value, before?.value, path, problems);
+      checkKeys(file, where, change.base, before?.base, path, problems);
+    }
+  }
+}
 
 /**
  * A file that changed outside of the editor, for example written by an AI tool. It goes through
@@ -105,13 +161,18 @@ export function planFileImport(draft: Draft, path: string, text: string): readon
   } else if (timeline) {
     const value = parsed(path, text, Timeline, problems);
     if (!value) return problems;
-    const current = draft.state.timelines[timeline];
+    const current = entryOf(draft.state.timelines, timeline);
     const next = timelineToState(value, new Map(Object.entries(current?.overrides ?? {})));
+    checkTimelineKeys(path, next, current, problems);
     draft.replace(["timelines", timeline], current ? keepOrder(current, next) : next);
   } else if (overrides) {
     const [, owner = "", name = ""] = overrides;
     const value = parsed(path, text, Overrides, problems);
-    if (value) draft.replace(["timelines", owner, "overrides", name], value);
+    if (value) {
+      const known = entryOf(entryOf(draft.state.timelines, owner)?.overrides, name);
+      checkOverrideKeys(path, value, known, problems);
+      draft.replace(["timelines", owner, "overrides", name], value);
+    }
   } else if (scene) {
     const value = parsed(path, text, SceneManifest, problems);
     if (value) draft.replace(["scenes", scene], value);

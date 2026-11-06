@@ -20,6 +20,9 @@ export {
 } from "./project.ts";
 export {
   BUILT_IN_PROPERTIES,
+  CLIP_VISUAL,
+  cannotHaveKeys,
+  isAnimation,
   isKnownProperty,
   type ObjectDescriptor,
   type PropertySpec,
@@ -45,10 +48,11 @@ export {
 export {
   Animation,
   Key,
+  KnownProperties,
   MediaRef,
   Properties,
+  PropertyPath,
   PropertyValue,
   Value,
-  isAnimation,
 } from "./values.ts";
 export { CURRENT_FORMAT_VERSION } from "./version.ts";

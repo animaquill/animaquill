@@ -4,14 +4,17 @@ import {
   ClipSource,
   Duration,
   Id,
+  KnownProperties,
   Marker,
   ProjectManifest,
+  PropertyPath,
   PropertyValue,
   Rate,
   Time,
   Track,
   add,
   canHold,
+  cannotHaveKeys,
   compare,
   newId,
   parseTime,
@@ -36,6 +39,7 @@ import {
   clipEnd,
   clipOffset,
   clipStart,
+  entryOf,
   orderedSections,
   orderedTracks,
   sourceLength,
@@ -43,6 +47,8 @@ import {
   type TimelineState,
   type TrackState,
 } from "./model.ts";
+import { deepEqual } from "./patch.ts";
+import { PropertyEdit, applyEdit } from "./property-edit.ts";
 
 export interface CommandDefinition<P = unknown> {
   readonly type: string;
@@ -66,7 +72,7 @@ function define<S extends z.ZodType>(
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
 
 function trackOf(timeline: TimelineState, id: string): TrackState {
-  return timeline.tracks[id] ?? fail("not-found", `没有这条轨道：${id}`);
+  return entryOf(timeline.tracks, id) ?? fail("not-found", `没有这条轨道：${id}`);
 }
 
 /** A locked track protects its clips from everyone, also from AI tasks. */
@@ -78,8 +84,8 @@ function editableTrack(timeline: TimelineState, id: string): TrackState {
 
 /** Two people at once can leave a clip behind on a track that is gone. People can still clean up. */
 function editableClip(timeline: TimelineState, id: string): ClipState {
-  const clip = timeline.clips[id] ?? fail("not-found", `没有这个片段：${id}`);
-  if (timeline.tracks[clip.track]) editableTrack(timeline, clip.track);
+  const clip = entryOf(timeline.clips, id) ?? fail("not-found", `没有这个片段：${id}`);
+  if (entryOf(timeline.tracks, clip.track)) editableTrack(timeline, clip.track);
   return clip;
 }
 
@@ -129,6 +135,52 @@ function makeRoom(
 ): void {
   if (overlap === "overwrite") clearSpans(draft, timeline, track, spans, moving);
   else assertFree(timelineOf(draft, timeline), track, spans, moving);
+}
+
+function checkKeys(path: string, value: PropertyValue): void {
+  if (cannotHaveKeys(path, value)) fail("not-animatable", `${path} 不能打关键帧`);
+}
+
+/** Only what gets written. Something else being wrong must not stop people from fixing it. */
+function checkWrite(path: string, before: PropertyValue | undefined, after: PropertyValue): void {
+  const result = KnownProperties.safeParse({ [path]: after });
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
+  }
+  if (!deepEqual(before, after)) checkKeys(path, after);
+}
+
+/**
+ * Plans edits of properties, each one seeing the ones before it. All writes of properties come
+ * through here. What does not change writes nothing, so that a drag that ends where it started leaves
+ * no step to undo, and taking something away always works, because that is the way out of bad data.
+ */
+function editProperties(draft: Draft, timeline: string, edits: readonly PropertyEdit[]): void {
+  const target = timelineOf(draft, timeline);
+  const changes = new Map<string, Map<string, PropertyValue | undefined>>();
+  for (const edit of edits) {
+    const { path, owner } = edit;
+    const clip = editableClip(target, owner.clip);
+    const values = changes.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
+    changes.set(clip.id, values);
+    const before = values.has(path) ? values.get(path) : entryOf(clip.properties, path);
+    values.set(path, applyEdit(before, edit));
+  }
+  for (const [id, values] of changes) {
+    const clip = entryOf(target.clips, id) as ClipState;
+    for (const [path, value] of values) {
+      const saved = entryOf(clip.properties, path);
+      if (deepEqual(saved, value)) continue;
+      const where = [...clipPath(timeline, id), "properties", path];
+      if (value === undefined) {
+        draft.delete(where);
+      } else {
+        checkWrite(path, saved, value);
+        draft.set(where, value);
+      }
+    }
+  }
 }
 
 const ClipFields = Clip.omit({ id: true });
@@ -182,14 +234,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ id: Id.optional(), asset: Asset }),
     (draft, { id, asset }) => {
       const key = id ?? newId("asset");
-      if (draft.state.assets?.[key]) fail("id-taken", `这个 ID 已经有素材了：${key}`);
+      if (entryOf(draft.state.assets, key)) fail("id-taken", `这个 ID 已经有素材了：${key}`);
       draft.set(["assets", key], asset);
       return { id: key };
     },
   ),
 
   define("asset.remove", z.strictObject({ asset: Id }), (draft, { asset }) => {
-    if (!draft.state.assets?.[asset]) fail("not-found", `没有这个素材：${asset}`);
+    if (!entryOf(draft.state.assets, asset)) fail("not-found", `没有这个素材：${asset}`);
     const inUse = Object.values(draft.state.timelines).some((timeline) =>
       Object.values(timeline.clips).some(({ source }) => {
         const { media } = source as { media?: { asset?: string } };
@@ -222,7 +274,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const { timeline, duration, name, before } = params;
       const target = timelineOf(draft, timeline);
       const id = params.id ?? newId("section");
-      if (target.sections[id]) fail("id-taken", `这个 ID 已经有段落了：${id}`);
+      if (entryOf(target.sections, id)) fail("id-taken", `这个 ID 已经有段落了：${id}`);
       const order = orderBefore(orderedSections(target), before);
       const section = { id, ...(name ? { name } : {}), duration, order };
       draft.set([...timelinePath(timeline), "sections", id], section);
@@ -239,7 +291,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       name: z.string().optional(),
     }),
     (draft, { timeline, section, duration, name }) => {
-      const target = timelineOf(draft, timeline).sections[section];
+      const target = entryOf(timelineOf(draft, timeline).sections, section);
       if (!target) fail("not-found", `没有这个段落：${section}`);
       const path = [...timelinePath(timeline), "sections", section];
       if (duration !== undefined) draft.set([...path, "duration"], duration);
@@ -252,7 +304,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ timeline: Id, section: Id }),
     (draft, { timeline, section }) => {
       const { sections } = timelineOf(draft, timeline);
-      if (!sections[section]) fail("not-found", `没有这个段落：${section}`);
+      if (!entryOf(sections, section)) fail("not-found", `没有这个段落：${section}`);
       if (Object.keys(sections).length === 1) fail("last-section", "时间轴至少要有一个段落");
       draft.delete([...timelinePath(timeline), "sections", section]);
     },
@@ -271,7 +323,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const { timeline, kind, name, before } = params;
       const target = timelineOf(draft, timeline);
       const id = params.id ?? newId("track");
-      if (target.tracks[id]) fail("id-taken", `这个 ID 已经有轨道了：${id}`);
+      if (entryOf(target.tracks, id)) fail("id-taken", `这个 ID 已经有轨道了：${id}`);
       const order = orderBefore(orderedTracks(target), before);
       const track = { id, kind, ...(name ? { name } : {}), order };
       draft.set(trackPath(timeline, id), track);
@@ -326,7 +378,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const target = timelineOf(draft, timeline);
       checkFits(editableTrack(target, track), clip);
       const id = clip.id ?? newId("clip");
-      if (target.clips[id]) fail("id-taken", `这个 ID 已经有片段了：${id}`);
+      if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
+      for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
       const added = { ...clip, id, track };
       makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
       draft.set(clipPath(timeline, id), added);
@@ -359,7 +412,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const next: Record<string, unknown> = { ...current, ...changes };
       for (const field of clear ?? []) delete next[field];
       checkClip(next as ClipState);
-      const home = target.tracks[current.track];
+      const home = entryOf(target.tracks, current.track);
       if (home) checkFits(home, next as ClipState);
       const updated = next as ClipState;
       // Clips can overlap after a merge, and that should not stop people from renaming one.
@@ -411,7 +464,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
       for (const { moved } of landed) {
         const path = clipPath(timeline, moved.id);
-        const before = target.clips[moved.id];
+        const before = entryOf(target.clips, moved.id);
         if (moved.track !== before?.track) draft.set([...path, "track"], moved.track);
         if (moved.start !== before?.start) draft.set([...path, "start"], moved.start);
       }
@@ -458,7 +511,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
         compare(moment, clipStart(candidate)) > 0 && compare(moment, clipEnd(candidate)) < 0;
       if (!isInside(current)) fail("invalid-value", "切割点要在片段中间");
       const rightId = id ?? newId("clip");
-      if (target.clips[rightId]) fail("id-taken", `这个 ID 已经有片段了：${rightId}`);
+      if (entryOf(target.clips, rightId)) fail("id-taken", `这个 ID 已经有片段了：${rightId}`);
 
       // A locked track stays as it is, so a partner there is left whole and keeps its link.
       const cut = Object.values(target.clips).filter(
@@ -467,7 +520,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
           other.id !== clip &&
           other.link === current.link &&
           isInside(other) &&
-          target.tracks[other.track]?.locked !== true,
+          entryOf(target.tracks, other.track)?.locked !== true,
       );
       const link = cut.length > 0 ? newId("link") : undefined;
       splitClip(draft, timeline, current, moment, rightId, link);
@@ -478,20 +531,27 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "clip.setProperty",
-    z.strictObject({ timeline: Id, clip: Id, path: z.string().min(1), value: PropertyValue }),
+    z.strictObject({ timeline: Id, clip: Id, path: PropertyPath, value: PropertyValue }),
     (draft, { timeline, clip, path, value }) => {
-      const current = editableClip(timelineOf(draft, timeline), clip);
-      checkClip({ ...current, properties: { ...current.properties, [path]: value } });
-      draft.set([...clipPath(timeline, clip), "properties", path], value);
+      const owner = { clip };
+      editProperties(draft, timeline, [{ owner, path, op: "set", value }]);
     },
   ),
 
   define(
     "clip.clearProperty",
-    z.strictObject({ timeline: Id, clip: Id, path: z.string().min(1) }),
+    z.strictObject({ timeline: Id, clip: Id, path: PropertyPath }),
     (draft, { timeline, clip, path }) => {
-      editableClip(timelineOf(draft, timeline), clip);
-      draft.delete([...clipPath(timeline, clip), "properties", path]);
+      editProperties(draft, timeline, [{ owner: { clip }, path, op: "clear" }]);
+    },
+  ),
+
+  /** Everything people, tools and AI do to properties, in one step however much it is. */
+  define(
+    "property.edit",
+    z.strictObject({ timeline: Id, edits: z.array(PropertyEdit).min(1) }),
+    (draft, { timeline, edits }) => {
+      editProperties(draft, timeline, edits);
     },
   ),
 
@@ -510,7 +570,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     "marker.update",
     z.strictObject({ timeline: Id, marker: Id, changes: MarkerChanges }),
     (draft, { timeline, marker, changes }) => {
-      if (!timelineOf(draft, timeline).markers[marker]) {
+      if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
         fail("not-found", `没有这个标记：${marker}`);
       }
       for (const [key, value] of Object.entries(changes)) {
@@ -521,7 +581,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define("marker.remove", z.strictObject({ timeline: Id, marker: Id }), (draft, params) => {
     const { timeline, marker } = params;
-    if (!timelineOf(draft, timeline).markers[marker]) {
+    if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
       fail("not-found", `没有这个标记：${marker}`);
     }
     draft.delete([...timelinePath(timeline), "markers", marker]);

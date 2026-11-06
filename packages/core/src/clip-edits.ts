@@ -17,6 +17,7 @@ import {
   clipEnd,
   clipOffset,
   clipStart,
+  entryOf,
   orderedSections,
   timelineLength,
   type ClipState,
@@ -38,7 +39,7 @@ export const timelinePath = (timeline: string) => ["timelines", timeline];
 export const clipPath = (timeline: string, clip: string) => ["timelines", timeline, "clips", clip];
 
 export function timelineOf(draft: Draft, id: string): TimelineState {
-  return draft.state.timelines[id] ?? fail("not-found", `没有这条时间轴：${id}`);
+  return entryOf(draft.state.timelines, id) ?? fail("not-found", `没有这条时间轴：${id}`);
 }
 
 export const spanOf = (clip: ClipState): Span => ({ from: clipStart(clip), to: clipEnd(clip) });
@@ -186,7 +187,7 @@ function forEachOverride(
   visit: (changes: ClipChanges, path: readonly string[], version: string) => void,
 ): void {
   for (const [version, override] of Object.entries(timelineOf(draft, timeline).overrides)) {
-    const changes = override.clips?.[clip];
+    const changes = entryOf(override.clips, clip);
     if (changes) {
       const path = [...timelinePath(timeline), "overrides", version, "clips", clip];
       visit(changes, path, version);
@@ -265,14 +266,14 @@ export function splitClip(
 
 /** Takes away the part of a clip under a span. What comes after a cut is not looked at again. */
 function cutOut(draft: Draft, timeline: string, id: string, span: Span): void {
-  const clip = timelineOf(draft, timeline).clips[id];
+  const clip = entryOf(timelineOf(draft, timeline).clips, id);
   if (!clip || !overlap(spanOf(clip), span)) return;
   const { from, to } = spanOf(clip);
   const before = compare(from, span.from) < 0;
   const after = compare(to, span.to) > 0;
   if (before && after) {
     splitClip(draft, timeline, clip, span.to, newId("clip"));
-    const left = timelineOf(draft, timeline).clips[id] as ClipState;
+    const left = entryOf(timelineOf(draft, timeline).clips, id) as ClipState;
     trimClip(draft, timeline, left, { from, to: span.from });
   } else if (before) {
     trimClip(draft, timeline, clip, { from, to: span.from });

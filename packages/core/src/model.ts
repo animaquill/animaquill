@@ -74,6 +74,12 @@ export interface ProjectState {
   readonly files: Readonly<Record<string, string>>;
 }
 
+/** Something by its id. An id can be anything, also a name that every object has. */
+export const entryOf = <T>(
+  map: Readonly<Record<string, T>> | undefined,
+  id: string,
+): T | undefined => (map && Object.hasOwn(map, id) ? map[id] : undefined);
+
 const byId = <T extends { readonly id: string }>(items: readonly T[] | undefined) =>
   Object.fromEntries((items ?? []).map((item) => [item.id, item]));
 
@@ -163,7 +169,8 @@ export function sourceLength(state: ProjectState, clip: ClipState): Rational | u
   if ((source.kind !== "video" && source.kind !== "audio") || clip.loop) return undefined;
   if (clip.properties?.["time.speed"] !== undefined) return undefined;
   const media = source.media as MediaRef;
-  const duration = "asset" in media ? state.assets?.[media.asset]?.info?.duration : undefined;
+  const duration =
+    "asset" in media ? entryOf(state.assets, media.asset)?.info?.duration : undefined;
   return duration === undefined ? undefined : parseTime(duration);
 }
 

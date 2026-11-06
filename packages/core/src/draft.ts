@@ -1,6 +1,6 @@
 import type { ProjectState } from "./model.ts";
-import { Mutator, diff, getIn, type Patch } from "./patch.ts";
-import type { Path } from "./structure.ts";
+import { Mutator, diff, getIn, settled, settledPatch, type Patch } from "./patch.ts";
+import { isFlat, type Path } from "./structure.ts";
 
 /** Why a command did not happen. Commands throw it, callers get it as a result. */
 export class CommandError extends Error {
@@ -21,6 +21,8 @@ export const fail = (code: string, message: string): never => {
 export interface Step {
   readonly patch: Patch;
   readonly inverse: Patch;
+  /** What it left at its path. Only while that is still there it is this step's to take back. */
+  readonly after: unknown;
 }
 
 /**
@@ -47,20 +49,23 @@ export class Draft {
     return this.#steps;
   }
 
-  /** Whether the object a path belongs to is there. */
+  /** Whether the object a path belongs to is there. A level without entries is not, but its owner. */
   hasParent(path: Path): boolean {
-    return getIn(this.state, path.slice(0, -1)) !== undefined;
+    const parent = path.slice(0, -1);
+    return getIn(this.state, isFlat(parent) ? parent.slice(0, -1) : parent) !== undefined;
   }
 
-  apply(patch: Patch): void {
+  apply(change: Patch): void {
+    const patch = settledPatch(change);
     const { path } = patch;
     const before = getIn(this.state, path);
+    if (patch.op === "delete" && before === undefined) return;
     let inverse: Patch;
     if (before === undefined) inverse = { op: "delete", path };
     else if (patch.op === "text") inverse = { op: "text", path, value: before as string };
     else inverse = { op: "set", path, value: before };
-    this.#steps.push({ patch, inverse });
     this.#mutator.apply(patch);
+    this.#steps.push({ patch, inverse, after: getIn(this.state, path) });
   }
 
   set(path: Path, value: unknown): void {
@@ -77,6 +82,7 @@ export class Draft {
 
   /** Makes a path hold this value, changing no more than what is different. */
   replace(path: Path, value: unknown): void {
-    for (const patch of diff(path, getIn(this.state, path), value)) this.apply(patch);
+    const wanted = settled(path, value);
+    for (const patch of diff(path, getIn(this.state, path), wanted)) this.apply(patch);
   }
 }

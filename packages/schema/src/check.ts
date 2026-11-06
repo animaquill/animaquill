@@ -1,4 +1,5 @@
 import type { Project, Problem } from "./project.ts";
+import { cannotHaveKeys } from "./properties.ts";
 import { add, compare, parseTime } from "./time.ts";
 import type { ClipSource, Timeline, Track } from "./timeline.ts";
 import type { MediaRef, Properties, PropertyValue } from "./values.ts";
@@ -216,6 +217,13 @@ export function checkProject(project: Project): Problem[] {
         const path = `${trackPath}.clips.${clipIndex}`;
         checkSource(clip.source, file, `${path}.source`);
         for (const key of stringRefs(clip.properties)) checkString(key, file, `${path}.properties`);
+        for (const [property, value] of Object.entries(clip.properties ?? {})) {
+          if (cannotHaveKeys(property, value)) {
+            const where = `${path}.properties.${property}`;
+            const message = `${property} 不能打关键帧，这里只用第一个关键帧的值`;
+            problems.push(warning("not-animatable", file, where, message));
+          }
+        }
 
         const sceneId =
           clip.source.kind === "scene"

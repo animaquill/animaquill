@@ -1,4 +1,11 @@
-import { divide, parseTime, rational, toSeconds, type Rational } from "@animaquill/schema";
+import {
+  divide,
+  multiply,
+  parseTime,
+  rational,
+  toSeconds,
+  type Rational,
+} from "@animaquill/schema";
 
 /** The frame rate of what is being edited. Whatever people place lands on its frames. */
 export interface FrameRate {
@@ -21,6 +28,13 @@ export const frameAt = (seconds: number, rate: FrameRate): number => Math.round(
 /** The exact moment a frame starts, for what gets saved. */
 export const frameTime = (frame: number, rate: FrameRate): Rational =>
   divide(rational(BigInt(frame)), rate.exact);
+
+/** The frame a moment falls in, exactly: a frame lasts from where it starts until the next one. */
+export function frameContaining(moment: Rational, rate: FrameRate): number {
+  const { n, d } = multiply(moment, rate.exact);
+  const whole = n / d;
+  return Number(n < 0n && n % d !== 0n ? whole - 1n : whole);
+}
 
 export const frameSeconds = (frame: number, rate: FrameRate): number => frame / rate.fps;
 

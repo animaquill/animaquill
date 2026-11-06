@@ -1,0 +1,837 @@
+import { crc32, deflateSync } from "node:zlib";
+import type { Frame, Locator, Page } from "@playwright/test";
+import {
+  ProjectStore,
+  buildRenderPlan,
+  orderedTracks,
+  type RenderLayer,
+  type RenderPlan,
+} from "@animaquill/core";
+import { createProject } from "@animaquill/schema";
+import { content, expect, tab, test } from "./support.ts";
+
+type Color = readonly [red: number, green: number, blue: number];
+
+/** A picture of known size and content, so that where it ends up can be measured. */
+function png(width: number, height: number, pixel: (x: number, y: number) => Color): Buffer {
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) rows.set(pixel(x, y), y * (width * 3 + 1) + 1 + x * 3);
+  }
+  const chunk = (type: string, data: Buffer) => {
+    const size = Buffer.alloc(4);
+    size.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const check = Buffer.alloc(4);
+    check.writeUInt32BE(crc32(body));
+    return Buffer.concat([size, body, check]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(rows)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+const red = { name: "红色.png", mimeType: "image/png", buffer: png(100, 100, () => [255, 0, 0]) };
+
+const panel = (page: Page) => content(page, "properties");
+const field = (page: Page, name: string) =>
+  panel(page).getByRole("spinbutton", { name, exact: true });
+const row = (page: Page, name: string) => panel(page).getByRole("group", { name, exact: true });
+const keyButton = (page: Page, name: string) =>
+  row(page, name)
+    .getByRole("button", { name: /关键帧$/ })
+    .nth(1);
+const clips = (page: Page) => content(page, "timeline").getByRole("option");
+
+async function goTo(page: Page, time: string) {
+  await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
+  await page.getByRole("textbox", { name: "当前时间" }).fill(time);
+  await page.keyboard.press("Enter");
+}
+
+async function placeImage(page: Page, file = red) {
+  await tab(page, "assets").click();
+  const chooser = page.waitForEvent("filechooser");
+  await content(page, "assets").getByRole("button", { name: "导入" }).click();
+  await (await chooser).setFiles(file);
+  await content(page, "assets").getByRole("listitem").first().dblclick();
+  await tab(page, "properties").click();
+  await expect(field(page, "位置 X")).toBeVisible();
+}
+
+async function addColor(page: Page) {
+  await tab(page, "timeline").click();
+  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await expect(clips(page)).toHaveCount(1);
+  await tab(page, "properties").click();
+  await goTo(page, "0:01/00");
+  await expect(field(page, "位置 X")).toBeVisible();
+}
+
+async function typeInto(locator: Locator, text: string) {
+  await locator.click();
+  await locator.fill(text);
+  await locator.press("Enter");
+}
+
+async function dragField(page: Page, locator: Locator, pixels: number, steps = 8) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("no box");
+  const y = box.y + box.height / 2;
+  const x = box.x + box.width / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + pixels, y, { steps });
+}
+
+const compositor = (page: Page): Frame => {
+  const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
+  if (!frame) throw new Error("No compositor");
+  return frame;
+};
+
+/** The color of a pixel of the picture, in pixels of the picture. */
+const colorAt = (page: Page, x: number, y: number): Promise<readonly number[]> =>
+  compositor(page).evaluate(
+    ([left = 0, top = 0]) => [
+      ...(document.querySelector("canvas")?.getContext("2d")?.getImageData(left, top, 1, 1).data ??
+        []),
+    ],
+    [x, y],
+  );
+
+/** Slack for what scaling and blending do to a color. */
+const near = (found: readonly number[], wanted: Color, within = 2) =>
+  wanted.every((value, index) => Math.abs((found[index] ?? -999) - value) <= within);
+
+const expectColor = (page: Page, x: number, y: number, wanted: Color, within = 2) =>
+  expect.poll(async () => near(await colorAt(page, x, y), wanted, within)).toBe(true);
+
+const BLACK: Color = [0, 0, 0];
+
+test("says what to do while nothing is selected", async ({ page }) => {
+  await tab(page, "properties").click();
+  await expect(panel(page)).toContainText("选中时间轴上的片段");
+  await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
+});
+
+test("lists what the description of a clip says, with the value at the playhead", async ({
+  page,
+}) => {
+  await addColor(page);
+  for (const [name, value] of [
+    ["位置 X", "0"],
+    ["位置 Y", "0"],
+    ["大小 宽", "自动"],
+    ["大小 高", "自动"],
+    ["锚点 X", "50%"],
+    ["锚点 Y", "50%"],
+    ["缩放", "100%"],
+    ["旋转", "0°"],
+    ["不透明度", "100%"],
+  ] as const) {
+    await expect(field(page, name)).toHaveValue(value);
+  }
+  await expect(panel(page).getByRole("combobox", { name: "适应方式" })).toHaveValue("contain");
+});
+
+test("moves and fades a picture with two keys, and undo takes it back", async ({ page }) => {
+  await placeImage(page);
+  await typeInto(field(page, "缩放"), "25");
+  // Contained in the stage the picture is 1080 wide, so at a quarter it is 270.
+  await expectColor(page, 960, 540, [255, 0, 0]);
+  await expectColor(page, 960 - 200, 540, BLACK);
+
+  await typeInto(field(page, "位置 X"), "-500");
+  await keyButton(page, "位置 X").click();
+  await keyButton(page, "不透明度").click();
+  await goTo(page, "0:02/00");
+  await typeInto(field(page, "位置 X"), "500");
+  await typeInto(field(page, "不透明度"), "20");
+
+  await expectColor(page, 1460, 540, [51, 0, 0]);
+  await expectColor(page, 460, 540, BLACK);
+  await expectColor(page, 960, 540, BLACK);
+
+  await goTo(page, "0:01/00");
+  await expect(field(page, "位置 X")).toHaveValue("0");
+  await expect(field(page, "不透明度")).toHaveValue("60%");
+  await expectColor(page, 960, 540, [153, 0, 0]);
+  await expectColor(page, 460, 540, BLACK);
+  await expectColor(page, 1460, 540, BLACK);
+
+  await goTo(page, "0:00/00");
+  await expect(field(page, "位置 X")).toHaveValue("-500");
+  await expect(field(page, "不透明度")).toHaveValue("100%");
+  await expectColor(page, 460, 540, [255, 0, 0]);
+  await expectColor(page, 960, 540, BLACK);
+
+  // Opacity at 2 seconds, then the position there, then the key of the opacity at the start.
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Control+z");
+  await expect(field(page, "不透明度")).toHaveValue("100%");
+  await goTo(page, "0:02/00");
+  await expect(field(page, "位置 X")).toHaveValue("-500");
+  await expectColor(page, 460, 540, [255, 0, 0]);
+
+  await page.keyboard.press("Control+Shift+z");
+  await page.keyboard.press("Control+Shift+z");
+  await expect(field(page, "位置 X")).toHaveValue("500");
+  await expectColor(page, 1460, 540, [255, 0, 0]);
+});
+
+test("survives a reload with its keys", async ({ page }) => {
+  await placeImage(page);
+  await keyButton(page, "位置 X").click();
+  await goTo(page, "0:01/00");
+  await typeInto(field(page, "位置 X"), "300");
+  await page.reload();
+  await tab(page, "timeline").click();
+  // The list of clips is for finding them. The mouse goes to what is drawn underneath.
+  await expect(clips(page)).toHaveCount(1);
+  const box = await clips(page).first().boundingBox();
+  await page.mouse.click((box?.x ?? 0) + 20, (box?.y ?? 0) + 10);
+  await tab(page, "properties").click();
+  await expect(field(page, "位置 X")).toHaveValue("300");
+  await goTo(page, "0:00/00");
+  await expect(field(page, "位置 X")).toHaveValue("0");
+});
+
+test("a drag shows on the way, and is one step to undo", async ({ page }) => {
+  await addColor(page);
+  await compositor(page).evaluate(() => {
+    const state = window as unknown as { messages: string[] };
+    state.messages = [];
+    addEventListener("message", ({ data }: MessageEvent<{ type: string }>) => {
+      state.messages.push(data.type);
+    });
+  });
+  const messages = () =>
+    compositor(page).evaluate(() => (window as unknown as { messages: string[] }).messages);
+  const x = field(page, "位置 X");
+
+  await dragField(page, x, 60);
+  await expect(x).toHaveValue(/^\d+$/);
+  await expect
+    .poll(async () => (await messages()).filter((type) => type === "channels").length)
+    .toBeGreaterThan(2);
+  expect((await messages()).filter((type) => type === "plan")).toEqual([]);
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await messages()).filter((type) => type === "plan").length)
+    .toBe(1);
+  const landed = await x.inputValue();
+  expect(Number(landed)).toBeGreaterThan(40);
+
+  await page.keyboard.press("Control+z");
+  await expect(x).toHaveValue("0");
+  await expect(clips(page)).toHaveCount(1);
+  await page.keyboard.press("Control+Shift+z");
+  await expect(x).toHaveValue(landed);
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Control+z");
+  await expect(clips(page)).toHaveCount(0);
+});
+
+test("the picture follows a drag, and Escape takes it back without a trace", async ({ page }) => {
+  await placeImage(page);
+  await typeInto(field(page, "缩放"), "25");
+  await expectColor(page, 960 - 200, 540, BLACK);
+  const x = field(page, "位置 X");
+  await dragField(page, x, -200);
+  await expect.poll(async () => Number(await x.inputValue())).toBeLessThan(-180);
+  const moved = Math.abs(Number(await x.inputValue()));
+  await expectColor(page, 960 - moved - 100, 540, [255, 0, 0]);
+  await expectColor(page, 960 + 100, 540, BLACK);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(x).toHaveValue("0");
+  await expectColor(page, 960 - 200, 540, BLACK);
+  await expectColor(page, 960, 540, [255, 0, 0]);
+  await page.keyboard.press("Control+z");
+  await expect(field(page, "缩放")).toHaveValue("100%");
+});
+
+test("a drag that ends where it started leaves nothing to undo", async ({ page }) => {
+  await addColor(page);
+  const x = field(page, "位置 X");
+  await dragField(page, x, 40);
+  const box = await x.boundingBox();
+  await page.mouse.move((box?.x ?? 0) + (box?.width ?? 0) / 2, (box?.y ?? 0) + 5, { steps: 4 });
+  await page.mouse.up();
+  await expect(x).toHaveValue("0");
+  await page.keyboard.press("Control+z");
+  await expect(clips(page)).toHaveCount(0);
+});
+
+test("typing writes on Enter and when leaving, and Escape takes it back", async ({ page }) => {
+  await addColor(page);
+  const x = field(page, "位置 X");
+  await typeInto(x, "120.5");
+  await expect(x).toHaveValue("120.5");
+
+  await x.click();
+  await x.fill("999");
+  await x.press("Escape");
+  await expect(x).toHaveValue("120.5");
+
+  await x.click();
+  await x.fill("200");
+  await field(page, "位置 Y").click();
+  await expect(x).toHaveValue("200");
+  await page.keyboard.press("Escape");
+
+  await x.click();
+  await x.fill("不是数字");
+  await expect(x).toHaveAttribute("aria-invalid", "true");
+  await x.press("Enter");
+  await expect(x).toHaveValue("200");
+
+  await typeInto(field(page, "不透明度"), "150");
+  await expect(field(page, "不透明度")).toHaveValue("100%");
+  await typeInto(field(page, "不透明度"), "37.5%");
+  await expect(field(page, "不透明度")).toHaveValue("37.5%");
+});
+
+test("clicking into a field and out again changes nothing", async ({ page }) => {
+  await addColor(page);
+  await field(page, "位置 X").click();
+  await panel(page).getByRole("spinbutton", { name: "旋转" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+z");
+  await expect(clips(page)).toHaveCount(0);
+});
+
+test("the diamond adds and removes a key, and the last one leaves a plain value", async ({
+  page,
+}) => {
+  await addColor(page);
+  const x = field(page, "位置 X");
+  const key = row(page, "位置 X").getByRole("button", { name: "添加关键帧" });
+  await typeInto(x, "100");
+  await key.click();
+  const remove = row(page, "位置 X").getByRole("button", { name: "删除关键帧" });
+  await expect(remove).toHaveAttribute("aria-pressed", "true");
+  await goTo(page, "0:02/00");
+  await expect(key).toHaveAttribute("aria-pressed", "false");
+  await typeInto(x, "300");
+  await expect(remove).toBeVisible();
+  await goTo(page, "0:01/15");
+  await expect(x).toHaveValue("200");
+
+  await goTo(page, "0:02/00");
+  await remove.click();
+  await expect(x).toHaveValue("100");
+  await goTo(page, "0:01/00");
+  await remove.click();
+  await goTo(page, "0:03/00");
+  await expect(x).toHaveValue("100");
+  await typeInto(x, "7");
+  await goTo(page, "0:01/00");
+  await expect(x).toHaveValue("7");
+});
+
+test("the arrows go from key to key inside the clip", async ({ page }) => {
+  await addColor(page);
+  const opacity = row(page, "不透明度");
+  const previous = opacity.getByRole("button", { name: "上一个关键帧" });
+  const next = opacity.getByRole("button", { name: "下一个关键帧" });
+  const time = content(page, "preview").locator("output");
+  await expect(previous).toHaveAttribute("aria-disabled", "true");
+  await expect(next).toHaveAttribute("aria-disabled", "true");
+  await keyButton(page, "不透明度").click();
+  await goTo(page, "0:03/00");
+  await keyButton(page, "不透明度").click();
+  await goTo(page, "0:02/00");
+  await previous.click();
+  await expect(time).toHaveText("0:01/00");
+  await expect(previous).toHaveAttribute("aria-disabled", "true");
+  await next.click();
+  await expect(time).toHaveText("0:03/00");
+  await expect(next).toHaveAttribute("aria-disabled", "true");
+});
+
+test("the size follows the clip until somebody sets it, and resets back to that", async ({
+  page,
+}) => {
+  await addColor(page);
+  const width = field(page, "大小 宽");
+  await dragField(page, width, -40);
+  await page.mouse.up();
+  await expect.poll(async () => Number(await width.inputValue())).toBeLessThan(1900);
+  await expect.poll(async () => Number(await width.inputValue())).toBeGreaterThan(1800);
+  await row(page, "大小 宽").getByRole("button", { name: "恢复默认" }).click();
+  await expect(width).toHaveValue("自动");
+});
+
+test("the fit is a choice, without keys", async ({ page }) => {
+  await placeImage(page);
+  const fit = panel(page).getByRole("combobox", { name: "适应方式" });
+  await fit.selectOption("cover");
+  await expect(fit).toHaveValue("cover");
+  await expect(row(page, "适应方式").getByRole("button", { name: /关键帧/ })).toHaveCount(0);
+  await expectColor(page, 10, 10, [255, 0, 0]);
+  await page.keyboard.press("Control+z");
+  await expect(fit).toHaveValue("contain");
+  await expectColor(page, 10, 10, BLACK);
+});
+
+test("does not let anything change while the playhead is outside of the clip", async ({ page }) => {
+  await placeImage(page);
+  const x = field(page, "位置 X");
+  await goTo(page, "0:07/00");
+  await expect(panel(page).getByRole("status")).toContainText("播放头不在这个片段上");
+  await expect(x).toHaveAttribute("readonly", "");
+  await dragField(page, x, 50);
+  await page.mouse.up();
+  await x.click();
+  await expect(x).toHaveAttribute("readonly", "");
+  await expect(x).toHaveValue("0");
+  await expect(keyButton(page, "位置 X")).toHaveAttribute("aria-disabled", "true");
+  await expect(panel(page).getByRole("combobox", { name: "适应方式" })).toBeDisabled();
+
+  await panel(page).getByRole("button", { name: "跳到片段" }).click();
+  await expect(panel(page).getByRole("status")).toHaveCount(0);
+  await typeInto(x, "50");
+  await expect(x).toHaveValue("50");
+});
+
+test("a locked track takes the clip out of reach", async ({ page }) => {
+  await addColor(page);
+  await tab(page, "timeline").click();
+  await content(page, "timeline").getByRole("button", { name: /^锁定/ }).first().click();
+  await tab(page, "properties").click();
+  await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
+  await expect(panel(page)).toContainText("选中时间轴上的片段");
+});
+
+test("shows one clip at a time", async ({ page }) => {
+  await addColor(page);
+  await tab(page, "timeline").click();
+  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await expect(clips(page)).toHaveCount(2);
+  await page.keyboard.press("Control+a");
+  await tab(page, "properties").click();
+  await expect(panel(page)).toContainText("选中了 2 个有画面的片段");
+  await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
+});
+
+const gradient = (x: number, y: number, width: number, height: number): Color => [
+  Math.round((x / width) * 255),
+  Math.round((y / height) * 255),
+  (x * 7 + y * 13) % 256,
+];
+
+const wide = png(300, 200, (x, y) => gradient(x, y, 300, 200));
+
+interface Square {
+  readonly side: number;
+  readonly middle: number;
+}
+
+/** Messages sent before it listens are gone. */
+const compositorListens = (page: Page) =>
+  expect
+    .poll(async () => {
+      const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
+      return frame?.evaluate(() => document.querySelector("canvas") !== null);
+    })
+    .toBe(true);
+
+/** What a plan looks like when the compositor gets it, without going through the interface. */
+async function showPlan(page: Page, plan: RenderPlan, seconds = 1) {
+  const iframe = content(page, "preview").locator("iframe");
+  await compositorListens(page);
+  await iframe.evaluate(
+    (element: HTMLIFrameElement, message) => {
+      element.contentWindow?.postMessage({ type: "plan", plan: message.plan }, "*");
+      element.contentWindow?.postMessage(
+        { type: "seek", seconds: message.seconds, jump: true },
+        "*",
+      );
+    },
+    { plan, seconds },
+  );
+  await expect
+    .poll(() => compositor(page).evaluate(() => document.querySelector("canvas")?.width))
+    .toBe(plan.width);
+}
+
+async function sendFile(page: Page, id: string, bytes: Buffer) {
+  await compositorListens(page);
+  await content(page, "preview")
+    .locator("iframe")
+    .evaluate(
+      (element: HTMLIFrameElement, message) => {
+        const file = new Blob([new Uint8Array(message.bytes)], { type: "image/png" });
+        element.contentWindow?.postMessage({ type: "file", id: message.id, file }, "*");
+      },
+      { id, bytes: [...bytes] },
+    );
+}
+
+function projectIn(width: number, height: number) {
+  const format = { id: "only", name: "画幅", width, height, fps: "30" };
+  const store = ProjectStore.create(createProject({ name: "画幅", format }));
+  const timeline = store.getState().timelines["main"];
+  const track = timeline && orderedTracks(timeline).find(({ kind }) => kind === "video");
+  const add = (clip: object) => {
+    const params = { timeline: "main", track: track?.id, clip };
+    const result = store.execute({ type: "clip.add", params });
+    if (!result.ok) throw new Error(result.error.message);
+  };
+  const plan = () => {
+    const built = buildRenderPlan(store.getState(), "main");
+    if (!built) throw new Error("no plan");
+    return built;
+  };
+  return { add, plan };
+}
+
+/** How many pixels of a color there are along the lines through the middle of the picture. */
+function redAcross(
+  frame: Frame,
+): Promise<{ wide: number; tall: number; left: number; top: number }> {
+  return frame.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) throw new Error("no picture");
+    const isRed = (data: Uint8ClampedArray, index: number) =>
+      (data[index * 4] ?? 0) > 200 && (data[index * 4 + 1] ?? 255) < 60;
+    const count = (data: Uint8ClampedArray, length: number) => {
+      let reds = 0;
+      let first = -1;
+      for (let index = 0; index < length; index += 1) {
+        if (isRed(data, index)) {
+          reds += 1;
+          if (first < 0) first = index;
+        }
+      }
+      return [reds, first] as const;
+    };
+    const { width, height } = canvas;
+    const [wideCount, left] = count(context.getImageData(0, height / 2, width, 1).data, width);
+    const [tallCount, top] = count(context.getImageData(width / 2, 0, 1, height).data, height);
+    return { wide: wideCount, tall: tallCount, left, top };
+  });
+}
+
+const SQUARE: readonly (readonly [number, number, Square])[] = [
+  [1920, 1080, { side: 200, middle: 960 }],
+  [3840, 2160, { side: 400, middle: 1920 }],
+  [1080, 1920, { side: 200, middle: 540 }],
+];
+
+for (const [width, height, { side }] of SQUARE) {
+  test(`a 200 by 200 square is square at ${width}×${height}, and ${side} pixels wide`, async ({
+    page,
+  }) => {
+    const { add, plan } = projectIn(width, height);
+    add({
+      id: "square",
+      start: "0",
+      duration: "5",
+      source: { kind: "color", color: "#ff0000" },
+      properties: { "transform.width": 200, "transform.height": 200 },
+    });
+    await showPlan(page, plan());
+    await expect
+      .poll(() => redAcross(compositor(page)))
+      .toEqual({
+        wide: side,
+        tall: side,
+        left: (width - side) / 2,
+        top: (height - side) / 2,
+      });
+  });
+}
+
+/** How far the picture is from what it was before there was a world, in the worst pixel. */
+const distanceFromBefore = (frame: Frame, image: string, scaleBy: "min" | "max") =>
+  frame.evaluate(
+    async ({ base64, scaleOf }) => {
+      const canvas = document.querySelector("canvas");
+      if (!canvas) throw new Error("no picture");
+      const { width: w, height: h } = canvas;
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const reference = new OffscreenCanvas(w, h).getContext("2d", { alpha: false });
+      if (!reference) throw new Error("no canvas");
+      reference.fillStyle = "#102030";
+      reference.fillRect(0, 0, w, h);
+      const scale = Math[scaleOf](w / bitmap.width, h / bitmap.height);
+      const dw = bitmap.width * scale;
+      const dh = bitmap.height * scale;
+      reference.drawImage(bitmap, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      const a = canvas.getContext("2d")?.getImageData(0, 0, w, h).data ?? [];
+      const b = reference.getImageData(0, 0, w, h).data;
+      let worst = 0;
+      for (let index = 0; index < b.length; index += 1) {
+        worst = Math.max(worst, Math.abs((a[index] ?? 0) - (b[index] ?? 0)));
+      }
+      return worst;
+    },
+    { base64: image, scaleOf: scaleBy },
+  );
+
+for (const fit of ["contain", "cover"] as const) {
+  for (const [width, height] of [
+    [1920, 1080],
+    [1280, 720],
+    [1080, 1920],
+  ] as const) {
+    test(`a clip without transforms looks the way it always did: ${fit} at ${width}×${height}`, async ({
+      page,
+    }) => {
+      await sendFile(page, "wide", wide);
+      const units = 1080 / Math.min(width, height);
+      const plan: RenderPlan = {
+        width,
+        height,
+        stage: { width: width * units, height: height * units },
+        camera: {},
+        background: "#102030",
+        layers: [
+          {
+            id: "a",
+            start: 0,
+            end: 5,
+            offset: 0,
+            source: { kind: "image", file: "wide" },
+            fit,
+            fades: { in: 0, out: 0 },
+            channels: {},
+          },
+        ],
+      };
+      await showPlan(page, plan);
+      const image = wide.toString("base64");
+      const scaleBy = fit === "cover" ? "max" : "min";
+      // The picture has to be decoded first, and until then it is not there at all.
+      await expect
+        .poll(() => distanceFromBefore(compositor(page), image, scaleBy))
+        .toBeLessThanOrEqual(2);
+    });
+  }
+}
+
+/**
+ * What a phone records upright: stored on its side, with a note to turn it. The left half is red, so
+ * once it is turned the top half has to be.
+ */
+const sidewaysVideo = (page: Page) =>
+  compositor(page).evaluate(async () => {
+    const isLibrary = ({ name }: PerformanceEntry) => name.includes("mediabunny");
+    const library = performance.getEntriesByType("resource").find(isLibrary)?.name as string;
+    const { BufferTarget, CanvasSource, Mp4OutputFormat, Output } = await import(
+      /* @vite-ignore */ library
+    );
+    const canvas = new OffscreenCanvas(320, 160);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("no canvas");
+    context.fillStyle = "#ff0000";
+    context.fillRect(0, 0, 160, 160);
+    context.fillStyle = "#0000ff";
+    context.fillRect(160, 0, 160, 160);
+    const target = new BufferTarget();
+    const output = new Output({ format: new Mp4OutputFormat(), target });
+    const source = new CanvasSource(canvas, { codec: "vp9", bitrate: 2_000_000 });
+    output.addVideoTrack(source, { rotation: 90, frameRate: 30 });
+    await output.start();
+    for (let frame = 0; frame < 30; frame += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- frames go in one after the other
+      await source.add(frame / 30, 1 / 30);
+    }
+    await output.finalize();
+    return [...new Uint8Array(target.buffer as ArrayBuffer)];
+  });
+
+test("a video that a phone recorded upright shows upright", async ({ page }) => {
+  await compositorListens(page);
+  const buffer = Buffer.from(await sidewaysVideo(page));
+  await placeImage(page, { name: "竖拍.mp4", mimeType: "video/mp4", buffer });
+  await expectColor(page, 960, 270, [255, 0, 0], 40);
+  await expectColor(page, 960, 810, [0, 0, 255], 40);
+  // It is 540 wide in a picture of 1920, so there is nothing to the left of that.
+  await expectColor(page, 960 - 300, 270, BLACK);
+  await expectColor(page, 960 + 300, 810, BLACK);
+  await typeInto(field(page, "缩放"), "50");
+  await expectColor(page, 960, 400, [255, 0, 0], 40);
+  await expectColor(page, 960, 680, [0, 0, 255], 40);
+  await expectColor(page, 960, 270 - 30, BLACK);
+});
+
+test("turns clockwise around its anchor, and scales from there", async ({ page }) => {
+  const { add, plan } = projectIn(1920, 1080);
+  add({
+    id: "bar",
+    start: "0",
+    duration: "5",
+    source: { kind: "color", color: "#ff0000" },
+    properties: {
+      "transform.width": 200,
+      "transform.height": 40,
+      "transform.anchorX": 0,
+      "transform.anchorY": 0.5,
+      "transform.x": 300,
+      "transform.y": -100,
+      "transform.rotation": 90,
+      "transform.scale": 2,
+    },
+  });
+  await showPlan(page, plan());
+  // From 300, -100 it now goes 400 down, and is 80 wide around that line.
+  await expectColor(page, 960 + 300, 540 - 100 + 390, [255, 0, 0]);
+  await expectColor(page, 960 + 300 + 35, 540 - 100 + 200, [255, 0, 0]);
+  await expectColor(page, 960 + 300, 540 - 100 - 10, BLACK);
+  await expectColor(page, 960 + 300, 540 - 100 + 410, BLACK);
+  await expectColor(page, 960 + 300 + 45, 540 - 100 + 200, BLACK);
+});
+
+test("what left the picture is gone, whatever is on top of it", async ({ page }) => {
+  const { add, plan } = projectIn(1920, 1080);
+  add({ id: "large", start: "0", duration: "2", source: { kind: "color", color: "#ff0000" } });
+  add({
+    id: "small",
+    start: "2",
+    duration: "2",
+    source: { kind: "color", color: "#00ff00" },
+    properties: { "transform.scale": 0.25 },
+  });
+  // One track has no room for this: the small one lies on top, and stays when the other one goes.
+  const [large, small] = plan().layers as [RenderLayer, RenderLayer];
+  const seek = (seconds: number) =>
+    content(page, "preview")
+      .locator("iframe")
+      .evaluate((element: HTMLIFrameElement, moment) => {
+        element.contentWindow?.postMessage({ type: "seek", seconds: moment, jump: true }, "*");
+      }, seconds);
+  await showPlan(page, { ...plan(), layers: [large, { ...small, start: 0 }] }, 1);
+  await expectColor(page, 20, 20, [255, 0, 0]);
+  await expectColor(page, 960, 540, [0, 255, 0]);
+  await seek(3);
+  await expectColor(page, 960, 540, [0, 255, 0]);
+  await expectColor(page, 20, 20, BLACK);
+  await expectColor(page, 1900, 1060, BLACK);
+});
+
+/** Left half red, right half blue, which shows where the middle of the media ended up. */
+const halves = png(200, 100, (x) => (x < 100 ? [255, 0, 0] : [0, 0, 255]));
+
+function imagePlan(fit: RenderLayer["fit"], properties: object): RenderPlan {
+  const { add, plan } = projectIn(1920, 1080);
+  add({
+    id: "c",
+    start: "0",
+    duration: "5",
+    source: { kind: "color", color: "#000000" },
+    properties,
+  });
+  const [layer] = plan().layers as [RenderLayer];
+  return { ...plan(), layers: [{ ...layer, fit, source: { kind: "image", file: "halves" } }] };
+}
+
+const BLUE: Color = [0, 0, 255];
+const RED: Color = [255, 0, 0];
+
+test("fixed is as large as the media, a pixel for a unit", async ({ page }) => {
+  await sendFile(page, "halves", halves);
+  await showPlan(page, imagePlan("fixed", {}));
+  await expectColor(page, 960 - 95, 540, RED);
+  await expectColor(page, 960 + 95, 540, BLUE);
+  await expectColor(page, 960 - 95, 540 - 45, RED);
+  await expectColor(page, 960 - 105, 540, BLACK);
+  await expectColor(page, 960 + 105, 540, BLACK);
+  await expectColor(page, 960 - 95, 540 - 55, BLACK);
+});
+
+test("fixed fills a box whatever its shape, and does not keep the shape of the media", async ({
+  page,
+}) => {
+  await sendFile(page, "halves", halves);
+  const size = { "transform.width": 100, "transform.height": 400 };
+  await showPlan(page, imagePlan("fixed", size));
+  await expectColor(page, 960 - 45, 540 - 195, RED);
+  await expectColor(page, 960 + 45, 540 + 195, BLUE);
+  await expectColor(page, 960 - 55, 540, BLACK);
+  await expectColor(page, 960, 540 + 205, BLACK);
+});
+
+test("cover in a small box fills it and leaves out what sticks out", async ({ page }) => {
+  await sendFile(page, "halves", halves);
+  // A tall box: the media gets as high as the box, and only its middle fits.
+  const size = { "transform.width": 100, "transform.height": 300 };
+  await showPlan(page, imagePlan("cover", size));
+  await expectColor(page, 960 - 45, 540 - 145, RED);
+  await expectColor(page, 960 + 45, 540 + 145, BLUE);
+  await expectColor(page, 960 - 55, 540, BLACK);
+  await expectColor(page, 960 + 55, 540, BLACK);
+  await expectColor(page, 960, 540 - 155, BLACK);
+  await expectColor(page, 960, 540 + 155, BLACK);
+});
+
+test("contain in a small box leaves room around the media", async ({ page }) => {
+  await sendFile(page, "halves", halves);
+  const size = { "transform.width": 100, "transform.height": 300 };
+  await showPlan(page, imagePlan("contain", size));
+  await expectColor(page, 960 - 45, 540, RED);
+  await expectColor(page, 960 + 45, 540, BLUE);
+  await expectColor(page, 960 - 45, 540 - 30, BLACK);
+  await expectColor(page, 960 + 45, 540 + 30, BLACK);
+});
+
+test("a key that is not on a frame any more can be reached and removed", async ({ page }) => {
+  await addColor(page);
+  const x = field(page, "位置 X");
+  const time = content(page, "preview").locator("output");
+  await typeInto(x, "100");
+  await goTo(page, "0:00/10");
+  await keyButton(page, "位置 X").click();
+  await goTo(page, "0:02/00");
+  await typeInto(x, "300");
+  // 10 frames at 30 is 1/3 of a second, which is between two frames at 25.
+  await page.getByRole("contentinfo").getByRole("button", { name: /帧/ }).click();
+  await page.getByRole("radio", { name: "25", exact: true }).click();
+  await goTo(page, "0:01/00");
+  await row(page, "位置 X").getByRole("button", { name: "上一个关键帧" }).click();
+  await expect(time).toHaveText("0:00/08");
+  const remove = row(page, "位置 X").getByRole("button", { name: "删除关键帧" });
+  await expect(remove).toHaveAttribute("aria-pressed", "true");
+  await typeInto(x, "150");
+  await expect(x).toHaveValue("150");
+  await row(page, "位置 X").getByRole("button", { name: "下一个关键帧" }).click();
+  await row(page, "位置 X").getByRole("button", { name: "上一个关键帧" }).click();
+  await expect(x).toHaveValue("150");
+  await remove.click();
+  await goTo(page, "0:00/00");
+  await expect(x).toHaveValue("300");
+});
+
+test("a clip fades in and out, on top of its opacity", async ({ page }) => {
+  const { add, plan } = projectIn(1920, 1080);
+  add({
+    id: "fading",
+    start: "1",
+    duration: "4",
+    fadeIn: "2",
+    fadeOut: "1",
+    source: { kind: "color", color: "#ff0000" },
+    properties: { opacity: 0.5 },
+  });
+  await showPlan(page, plan(), 2);
+  await expectColor(page, 960, 540, [64, 0, 0], 3);
+  await content(page, "preview")
+    .locator("iframe")
+    .evaluate((element: HTMLIFrameElement) => {
+      element.contentWindow?.postMessage({ type: "seek", seconds: 4.5, jump: true }, "*");
+    });
+  await expectColor(page, 960, 540, [64, 0, 0], 3);
+});

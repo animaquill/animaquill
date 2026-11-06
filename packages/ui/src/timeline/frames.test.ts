@@ -1,13 +1,40 @@
-import { formatTime } from "@animaquill/schema";
+import { formatTime, parseTime } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import {
   formatTimecode,
   frameAt,
+  frameContaining,
   frameRate,
   frameSeconds,
   frameTime,
   parseTimecode,
 } from "./frames.ts";
+
+describe("the frame a moment falls in", () => {
+  it.each([
+    ["0", "30", 0],
+    ["1/30", "30", 1],
+    ["0.342", "30", 10],
+    ["0.35", "30", 10],
+    ["0.366", "30", 10],
+    ["11/30", "30", 11],
+    ["1001/30000", "30000/1001", 1],
+    ["0.0333", "30000/1001", 0],
+    ["1001/15000", "30000/1001", 2],
+  ])("%s at %s is frame %d", (time, fps, frame) => {
+    expect(frameContaining(parseTime(time), frameRate(fps))).toBe(frame);
+  });
+
+  it("goes down also before zero", () => {
+    expect(frameContaining(parseTime("-1/60"), frameRate("30"))).toBe(-1);
+    expect(frameContaining(parseTime("-1/30"), frameRate("30"))).toBe(-1);
+  });
+
+  it("stays right far into a project", () => {
+    const rate = frameRate("30000/1001");
+    expect(frameContaining(frameTime(9_000_000, rate), rate)).toBe(9_000_000);
+  });
+});
 
 describe("frames", () => {
   it("rounds to the nearest frame", () => {

@@ -25,6 +25,7 @@ import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel.tsx";
+import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
@@ -40,7 +41,7 @@ type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 function planned(
   type: Exclude<
     Type,
-    "unknown" | "keybindings" | "timeline" | "preview" | "assets" | "performance"
+    "unknown" | "keybindings" | "timeline" | "preview" | "assets" | "performance" | "properties"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -98,7 +99,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "center",
     component: KeybindingsPanel,
   },
-  planned("properties", "right", SlidersHorizontal),
+  {
+    type: "properties",
+    title: (t) => t("panel.properties.title"),
+    icon: SlidersHorizontal,
+    area: "right",
+    component: PropertiesPanel,
+  },
   planned("chat", "right", MessagesSquare, { activity: true, keepAlive: true }),
   planned("annotations", "right", MessageSquareText),
   {

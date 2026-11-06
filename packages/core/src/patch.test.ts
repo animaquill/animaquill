@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Mutator, deepEqual, diff, getIn } from "./patch.ts";
-import { isContainer } from "./structure.ts";
+import { Mutator, deepEqual, diff, getIn, settled } from "./patch.ts";
+import { flatEntry, flatKey, isContainer, isFlat } from "./structure.ts";
 
 describe("structure", () => {
   it.each([
@@ -22,6 +22,77 @@ describe("structure", () => {
     [["libraries"]],
   ])("%j is one value", (path) => {
     expect(isContainer(path)).toBe(false);
+  });
+});
+
+describe("what not everything has", () => {
+  const clip = ["timelines", "main", "clips", "c1"];
+  const track = ["timelines", "main", "tracks", "t1"];
+
+  it.each([
+    [[...clip, "properties"]],
+    [[...track, "properties"]],
+    [["timelines", "main", "overrides", "language.en", "clips", "c1", "properties"]],
+    [["assets"]],
+    [["notes"]],
+  ])("%j has no map of its own, so that two people cannot both make one", (path) => {
+    expect(isFlat(path)).toBe(true);
+  });
+
+  it.each([
+    [clip],
+    [["manifest"]],
+    [["timelines", "main", "clips"]],
+    [[...clip, "properties", "opacity"]],
+    [["files"]],
+  ])("%j is what it always was", (path) => {
+    expect(isFlat(path)).toBe(false);
+  });
+
+  it("finds its entries next to the fields of what has them", () => {
+    expect(flatEntry(clip, flatKey("properties", "transform.x"))).toEqual([
+      "properties",
+      "transform.x",
+    ]);
+    expect(flatEntry([], flatKey("assets", "a"))).toEqual(["assets", "a"]);
+  });
+
+  it.each([
+    [clip, "start"],
+    [clip, "source/kind"],
+    [["files"], "scenes/title/index.html"],
+    [["locales", "en"], "properties/x"],
+    [[...clip, "properties"], "properties/x"],
+  ])("does not take %j %s for one", (path, key) => {
+    expect(flatEntry(path, key)).toBeUndefined();
+  });
+
+  it("does not go by what every object inherits", () => {
+    expect(isContainer(["timelines", "main", "clips", "constructor"])).toBe(true);
+    expect(isFlat(["timelines", "main", "clips", "constructor", "properties"])).toBe(true);
+    expect(isContainer(["constructor"])).toBe(false);
+    expect(isContainer(["manifest", "constructor"])).toBe(false);
+    expect(getIn({ a: {} }, ["a", "constructor"])).toBeUndefined();
+  });
+
+  it("is gone with its last entry, and only then", () => {
+    const mutator = new Mutator({ c: { properties: { a: 1, b: 2 } } });
+    const path = ["timelines", "main", "clips", "c1"];
+    const state = new Mutator({
+      timelines: { main: { clips: { c1: { properties: { a: 1, b: 2 } } } } },
+    });
+    state.delete([...path, "properties", "a"]);
+    expect(getIn(state.root, [...path, "properties"])).toEqual({ b: 2 });
+    state.delete([...path, "properties", "b"]);
+    expect(getIn(state.root, path)).toEqual({});
+    expect(mutator.root).toEqual({ c: { properties: { a: 1, b: 2 } } });
+  });
+
+  it("settles on what the document will hold", () => {
+    expect(settled(clip, { start: "1", name: undefined, properties: {} })).toEqual({ start: "1" });
+    expect(settled([...clip, "properties"], {})).toBeUndefined();
+    expect(settled([...clip, "source"], { a: undefined })).toEqual({ a: undefined });
+    expect(settled(clip, { properties: { opacity: 1 } })).toEqual({ properties: { opacity: 1 } });
   });
 });
 

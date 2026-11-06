@@ -11,6 +11,7 @@ import { toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
+import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import { ProjectTransfer } from "../transfer/transfer.ts";
@@ -59,6 +60,7 @@ export class Workbench {
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
+  readonly properties: PropertyWriter;
   readonly input: InputMode;
   readonly media: MediaLibrary;
   readonly transfer: ProjectTransfer;
@@ -116,6 +118,9 @@ export class Workbench {
       t,
     });
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
+      commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+    });
+    this.properties = new PropertyWriter(this.session, this.timeline, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
     for (const panel of panels) this.panels.register(panel);
