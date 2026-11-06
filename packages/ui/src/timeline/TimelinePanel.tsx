@@ -620,7 +620,13 @@ function Surface({
     const playheadElement = playhead.current;
     if (!bodyElement || !stageElement || !canvasElement || !playheadElement) return;
 
-    const painter = new TimelinePainter(canvasElement, editor, (box) => labels.current(box));
+    const painter = new TimelinePainter(
+      canvasElement,
+      editor,
+      (box) => labels.current(box),
+      (clip) => media.peaksOf(clip),
+    );
+    const stopMedia = media.subscribe(() => painter.invalidate());
 
     const show = () => {
       const { model: current } = editor;
@@ -704,9 +710,10 @@ function Surface({
       bodyElement.removeEventListener("wheel", onWheel);
       observer.disconnect();
       stopView();
+      stopMedia();
       painter.dispose();
     };
-  }, [editor, input]);
+  }, [editor, input, media]);
 
   /** Dragging near an edge keeps going, also when the mouse does not move. */
   const scrollWhileNearEdge = (now: number, before = now) => {

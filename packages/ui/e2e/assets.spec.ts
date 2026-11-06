@@ -12,7 +12,7 @@ const PNG = Buffer.from(
   "base64",
 );
 
-function wav(seconds: number): Buffer {
+function wav(seconds: number, loud = false): Buffer {
   const rate = 8000;
   const samples = rate * seconds;
   const data = Buffer.alloc(44 + samples);
@@ -29,6 +29,9 @@ function wav(seconds: number): Buffer {
   data.write("data", 36);
   data.writeUInt32LE(samples, 40);
   data.fill(128, 44);
+  // A square wave at half volume: its bars end between the two places the tests look at.
+  if (loud)
+    for (let index = 0; index < samples; index += 1) data[44 + index] = index % 2 ? 188 : 68;
   return data;
 }
 
@@ -193,4 +196,44 @@ test("a project saved before files existed still opens, and takes files", async 
   await tab(page, "assets").click();
   await importFiles(page, files.image);
   await expect(items(page)).toHaveCount(1);
+});
+
+/** The colours just inside the border of a clip, and between its top and its middle. */
+async function waveformProbe(page: Page) {
+  const { x, y, width, height } = await boxOf(clips(page).first());
+  const canvas = timeline(page).locator("canvas");
+  const area = await boxOf(canvas);
+  return canvas.evaluate(
+    (element: HTMLCanvasElement, { left, top, inner }) => {
+      const ratio = element.width / element.clientWidth;
+      const context = element.getContext("2d");
+      const colour = (at: number) =>
+        [...(context?.getImageData(left * ratio, at * ratio, 1, 1).data ?? [])].join();
+      return [colour(top + 5), colour(top + inner / 3)];
+    },
+    { left: x - area.x + width / 2, top: y - area.y, inner: height },
+  );
+}
+
+test("a loud sound shows a waveform, and it comes back after a reload", async ({ page }) => {
+  await importFiles(page, { name: "响.wav", mimeType: "audio/wav", buffer: wav(3, true) });
+  await items(page).first().dblclick();
+  await expect(clips(page)).toHaveCount(1);
+  const differs = async () => {
+    const [edge, inside] = await waveformProbe(page);
+    return edge !== inside;
+  };
+  await expect.poll(differs).toBe(true);
+  await page.reload();
+  await expect(clips(page)).toHaveCount(1);
+  await expect.poll(differs).toBe(true);
+});
+
+test("a silent sound shows no waveform", async ({ page }) => {
+  await importFiles(page, { name: "静.wav", mimeType: "audio/wav", buffer: wav(3) });
+  await items(page).first().dblclick();
+  await expect(clips(page)).toHaveCount(1);
+  await page.waitForTimeout(500);
+  const [edge, inside] = await waveformProbe(page);
+  expect(inside).toBe(edge);
 });

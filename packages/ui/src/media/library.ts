@@ -1,9 +1,13 @@
-import type { ProjectStore } from "@animaquill/core";
+import { computePeaks, readSound } from "@animaquill/audio";
+import type { ClipState, ProjectStore } from "@animaquill/core";
 import type { ProjectLibrary } from "@animaquill/host";
 import { probeMedia, type MediaFacts } from "@animaquill/media";
 import { fromSeconds, formatTime, newId, type Asset } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
+
+/** Peaks are worked out from a file. A new way of doing that gets a new key, and old ones stay unused. */
+const peaksKey = (hash: string) => `peaks-1:${hash}`;
 
 /** Hashing reads a whole file into memory, and browsers stop somewhere around here. */
 const MAX_FILE_BYTES = 2 * 1024 ** 3;
@@ -41,6 +45,10 @@ export class MediaLibrary {
   readonly #messages: MediaMessages;
   readonly #emitter = new Emitter();
   readonly #urls = new Map<string, Promise<string | undefined>>();
+  /** By file. Undefined means it is on its way or there is nothing to show. */
+  readonly #peaks = new Map<string, Uint8Array | undefined>();
+  /** One at a time, because decoding takes the whole file. */
+  #peaksQueue: Promise<void> = Promise.resolve();
   #store: ProjectStore | undefined;
   #importing = 0;
 
@@ -62,6 +70,44 @@ export class MediaLibrary {
       void url.then((value) => value && URL.revokeObjectURL(value));
     }
     this.#urls.clear();
+    this.#peaks.clear();
+  }
+
+  /** The waveform of a clip. It shows up later when it has to be worked out first. */
+  peaksOf(clip: ClipState): Uint8Array | undefined {
+    const { media } = clip.source as { media?: { asset?: string } };
+    const store = this.#store;
+    const asset = media?.asset === undefined ? undefined : store?.getState().assets?.[media.asset];
+    const hash = asset?.hash;
+    if (!store || hash === undefined) return undefined;
+    if (!this.#peaks.has(hash)) {
+      this.#peaks.set(hash, undefined);
+      this.#peaksQueue = this.#peaksQueue.then(() => this.#loadPeaks(store, hash));
+    }
+    return this.#peaks.get(hash);
+  }
+
+  async #loadPeaks(store: ProjectStore, hash: string): Promise<void> {
+    try {
+      const peaks = await this.#readPeaks(store, hash);
+      if (store !== this.#store || !peaks) return;
+      this.#peaks.set(hash, peaks);
+      this.#emitter.emit();
+    } catch (error) {
+      // A waveform is a help. Playing says so when the sound itself cannot be read.
+      console.warn("No waveform", error);
+    }
+  }
+
+  async #readPeaks(store: ProjectStore, hash: string): Promise<Uint8Array | undefined> {
+    const media = this.#media(store);
+    const saved = await media.get(peaksKey(hash));
+    if (saved) return new Uint8Array(await saved.arrayBuffer());
+    const file = await media.get(hash);
+    if (!file) return undefined;
+    const peaks = await computePeaks(readSound(file, 0, Number.POSITIVE_INFINITY));
+    await media.put(peaksKey(hash), new Blob([peaks as Uint8Array<ArrayBuffer>]));
+    return peaks;
   }
 
   /** Lets people choose files. Resolves to the assets they became. */

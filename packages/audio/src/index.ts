@@ -1,6 +1,8 @@
 import type { AudioPlan, SoundLayer } from "@animaquill/core";
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
 
+export { computePeaks, PEAKS_PER_SECOND } from "./peaks.ts";
+
 /** How far ahead sound gets decoded and scheduled. It bridges a busy moment, and costs memory. */
 const LEAD_SECONDS = 1;
 const POLL_MS = 100;

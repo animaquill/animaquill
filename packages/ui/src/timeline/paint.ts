@@ -1,3 +1,6 @@
+import { PEAKS_PER_SECOND } from "@animaquill/audio";
+import { clipOffset, type ClipState } from "@animaquill/core";
+import { toSeconds } from "@animaquill/schema";
 import { RULER_HEIGHT, type TimelineEditor } from "./editor.ts";
 import { formatTimecode } from "./frames.ts";
 import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "./model.ts";
@@ -9,6 +12,8 @@ const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
 const EDGE_HANDLE = 6;
 const END_HANDLE = 6;
+/** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
+const MAX_SLOTS_PER_BAR = 8;
 
 /** Canvas cannot read CSS variables, so the colours come over once. */
 interface Theme {
@@ -81,18 +86,25 @@ export class TimelinePainter {
   readonly #context: CanvasRenderingContext2D;
   readonly #editor: TimelineEditor;
   readonly #labelOf: ClipLabel;
+  readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
   /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
   #theme!: Theme;
   #ratio = 1;
   #pending: number | undefined;
 
-  constructor(canvas: HTMLCanvasElement, editor: TimelineEditor, labelOf: ClipLabel) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    editor: TimelineEditor,
+    labelOf: ClipLabel,
+    peaksOf: (clip: ClipState) => Uint8Array | undefined,
+  ) {
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("No 2D context");
     this.#canvas = canvas;
     this.#context = context;
     this.#editor = editor;
     this.#labelOf = labelOf;
+    this.#peaksOf = peaksOf;
     // The browser can drop what a canvas holds, for example after a problem with the graphics card.
     canvas.addEventListener("contextrestored", () => this.invalidate());
   }
@@ -249,6 +261,9 @@ export class TimelinePainter {
       context.fill();
     }
 
+    if (box.clip.source.kind === "audio") {
+      this.#paintWaveform(box, look, { left, right, top, height }, fill);
+    }
     if (width >= LABEL_MIN_WIDTH) this.#paintLabel(box, left, top, width, height, fill);
 
     if (look.edge) {
@@ -263,6 +278,48 @@ export class TimelinePainter {
       context.roundRect(left + 0.75, top + 0.75, width - 1.5, height - 1.5, CLIP_RADIUS);
       context.stroke();
     }
+    context.globalAlpha = alpha;
+  }
+
+  /** One bar per pixel, and only where it shows, so that a long file costs no more than a short one. */
+  #paintWaveform(
+    box: ClipBox,
+    look: { readonly start: number; readonly end: number },
+    area: {
+      readonly left: number;
+      readonly right: number;
+      readonly top: number;
+      readonly height: number;
+    },
+    fill: string,
+  ): void {
+    const peaks = this.#peaksOf(box.clip);
+    if (!peaks) return;
+    const editor = this.#editor;
+    const context = this.#context;
+    // A clip that moves takes its sound along. An edge that moves uncovers what is there.
+    const moved = look.end - look.start === box.end - box.start ? look.start - box.start : 0;
+    const offset = toSeconds(clipOffset(box.clip));
+    const slotAt = (x: number) =>
+      Math.floor((offset + editor.timeAt(x) - moved - box.start) * PEAKS_PER_SECOND);
+    const middle = area.top + area.height / 2;
+    const alpha = context.globalAlpha;
+    context.globalAlpha = alpha * 0.6;
+    context.fillStyle = readableOn(fill);
+    context.beginPath();
+    const first = Math.max(Math.floor(area.left), 0);
+    const last = Math.min(Math.ceil(area.right), editor.width);
+    for (let x = first; x < last; x += 1) {
+      const from = Math.max(slotAt(x), 0);
+      const to = Math.min(Math.max(slotAt(x + 1), from + 1), peaks.length);
+      const step = Math.max(Math.floor((to - from) / MAX_SLOTS_PER_BAR), 1);
+      let level = 0;
+      for (let slot = from; slot < to; slot += step) level = Math.max(level, peaks[slot] ?? 0);
+      if (level === 0) continue;
+      const half = Math.max((level / 255) * (area.height / 2), 0.5);
+      context.rect(x, middle - half, 1, half * 2);
+    }
+    context.fill();
     context.globalAlpha = alpha;
   }
 
