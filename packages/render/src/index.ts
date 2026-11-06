@@ -5,6 +5,10 @@ export interface FrameTiming {
   readonly seconds: number;
   /** How long this frame took. */
   readonly ms: number;
+  /** Of that, how long it waited for pictures. The rest is drawing. */
+  readonly decodeMs: number;
+  /** Whether the next clip was being prepared meanwhile, which competes for the decoder. */
+  readonly gettingReady: boolean;
   /** Videos that had to start decoding at a keyframe for it. This is what causes a stutter. */
   readonly cold: number;
   /** How far time had moved on by the time it was done. */

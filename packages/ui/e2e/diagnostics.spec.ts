@@ -2,27 +2,52 @@ import { readFile } from "node:fs/promises";
 import type { Page } from "@playwright/test";
 import { content, expect, tab, test } from "./support.ts";
 
-const help = async (page: Page, name: string) => {
+const panel = (page: Page) => content(page, "performance");
+const press = (page: Page, name: string) =>
+  panel(page).getByRole("button", { name, exact: true }).click();
+
+async function openPanel(page: Page) {
   await page.getByRole("button", { name: "帮助" }).click();
-  await page.getByRole("menuitem", { name }).click();
-};
+  await page.getByRole("menuitem", { name: "运行情况" }).click();
+  await expect(panel(page).getByRole("button", { name: "开始记录" })).toBeVisible();
+}
 
 const status = (page: Page) => page.getByRole("contentinfo").getByText("正在记录运行情况");
 
 async function finishAndRead(page: Page) {
-  await help(page, "结束记录并发送");
-  await expect(page.getByRole("dialog")).toContainText("不包含项目名、文件名和内容");
+  await press(page, "结束记录");
+  await expect(panel(page).getByText("查看报告全部内容")).toBeVisible();
   const download = page.waitForEvent("download");
-  await page.getByRole("dialog").getByRole("button", { name: "保存文件" }).click();
+  await press(page, "保存文件");
   const path = await (await download).path();
   return readFile(path, "utf8");
 }
 
 test("records nothing until asked, and shows while it does", async ({ page }) => {
+  await openPanel(page);
   await expect(status(page)).toHaveCount(0);
-  await help(page, "开始记录运行情况");
+  await expect(panel(page)).toContainText("不包含项目名、文件名和内容");
+  await press(page, "开始记录");
   await expect(status(page)).toBeVisible();
-  await help(page, "放弃这次记录");
+  await press(page, "放弃");
+  await expect(status(page)).toHaveCount(0);
+  await expect(panel(page).getByRole("button", { name: "开始记录" })).toBeVisible();
+});
+
+test("shows what it finds while recording", async ({ page }) => {
+  await openPanel(page);
+  await press(page, "开始记录");
+  await expect(panel(page).getByRole("timer")).toBeVisible();
+  await expect(panel(page).getByRole("group", { name: "运行数据" })).toContainText("慢帧");
+  await expect(panel(page)).toContainText("每帧耗时");
+});
+
+test("the whole report can be read before anything leaves", async ({ page }) => {
+  await openPanel(page);
+  await press(page, "开始记录");
+  await press(page, "结束记录");
+  await panel(page).getByText("查看报告全部内容").click();
+  await expect(panel(page).locator("pre")).toContainText('"format": 1');
   await expect(status(page)).toHaveCount(0);
 });
 
@@ -38,7 +63,8 @@ test("the report has timings and leaves out names", async ({ page }) => {
     buffer: await readFile(new URL("./fixtures/red-blue.webm", import.meta.url)),
   });
   await content(page, "assets").getByRole("listitem").first().dblclick();
-  await help(page, "开始记录运行情况");
+  await openPanel(page);
+  await press(page, "开始记录");
   await content(page, "preview").getByRole("button", { name: "播放", exact: true }).click();
   await page.waitForTimeout(1500);
   await content(page, "preview").getByRole("button", { name: "暂停", exact: true }).click();
@@ -47,19 +73,13 @@ test("the report has timings and leaves out names", async ({ page }) => {
   expect(report.format).toBe(1);
   expect(report.device.cores).toBeGreaterThan(0);
   expect(report.project.clips).toBe(1);
+  expect(report.project.layout[0]).toMatchObject({ kind: "video", start: 0, end: 2 });
   expect(report.project.assets[0].kind).toBe("video");
   expect(Object.keys(report.frameTimes).length).toBeGreaterThan(0);
   expect(report.events.some(({ kind }: { kind: string }) => kind === "play")).toBe(true);
   expect(text).not.toContain("秘密");
   expect(text).not.toContain("测试项目");
   await expect(status(page)).toHaveCount(0);
-});
-
-test("cancelling keeps it recording", async ({ page }) => {
-  await help(page, "开始记录运行情况");
-  await help(page, "结束记录并发送");
-  await page.getByRole("dialog").getByRole("button", { name: "取消" }).click();
-  await expect(status(page)).toBeVisible();
 });
 
 test("playing from one clip into the next needs no decoder to start", async ({ page }) => {
@@ -83,7 +103,8 @@ test("playing from one clip into the next needs no decoder to start", async ({ p
   await goTo("0:00/00");
   await page.waitForTimeout(500);
 
-  await help(page, "开始记录运行情况");
+  await openPanel(page);
+  await press(page, "开始记录");
   const preview = content(page, "preview");
   await preview.getByRole("button", { name: "播放", exact: true }).click();
   await expect(preview.locator("output")).toContainText("0:03/", { timeout: 8000 });

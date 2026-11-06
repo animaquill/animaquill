@@ -64,18 +64,13 @@ function InputSwitch() {
 
 /** Nothing gets recorded without this being on the screen. */
 function RecordingStatus() {
-  const workbench = useWorkbench();
-  const { diagnostics } = workbench;
+  const { diagnostics, layout } = useWorkbench();
   const { t } = useTranslation();
   const recording = useSyncExternalStore(diagnostics.subscribe, diagnostics.getRecording);
   if (!recording) return null;
   return (
     <Tip name={t("diagnostics.recording")} usage={t("diagnostics.recordingUsage")}>
-      <button
-        type="button"
-        className={styles.name}
-        onClick={() => void workbench.sendDiagnostics()}
-      >
+      <button type="button" className={styles.name} onClick={() => layout.openPanel("performance")}>
         <Circle size={9} fill="currentColor" className={styles.recording} />
         {t("diagnostics.recording")}
       </button>

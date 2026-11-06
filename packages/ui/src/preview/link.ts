@@ -19,6 +19,7 @@ export class PreviewLink {
   readonly #onProblem: (file: string) => void;
   readonly #diagnostics: DiagnosticsRecorder;
   #ready = false;
+  #recording = false;
   #plan: RenderPlan | undefined;
   #stop = () => {};
 
@@ -68,12 +69,19 @@ export class PreviewLink {
       this.#ready = true;
       this.#plan = undefined;
       this.#lastSeconds = undefined;
+      this.#recording = false;
       this.#sendAll();
       this.#sendRecording();
     } else if (data.type === "frames") {
-      for (const { ms, seconds, cold, behindMs } of data.frames) {
+      for (const { ms, seconds, cold, behindMs, decodeMs, gettingReady } of data.frames) {
         const slow = ms > SLOW_FRAME_MS || cold > 0;
-        const facts = { seconds, cold, behindMs: Math.round(behindMs) };
+        const facts = {
+          seconds,
+          cold,
+          behindMs: Math.round(behindMs),
+          decodeMs: Math.round(decodeMs),
+          gettingReady,
+        };
         this.#diagnostics.noteFrame(ms, facts, slow);
       }
     } else if (data.type === "needs") {
@@ -84,7 +92,10 @@ export class PreviewLink {
   };
 
   #sendRecording = (): void => {
-    if (this.#ready) this.#send({ type: "record", on: this.#diagnostics.getRecording() });
+    const on = this.#diagnostics.getRecording();
+    if (!this.#ready || on === this.#recording) return;
+    this.#recording = on;
+    this.#send({ type: "record", on });
   };
 
   #sendAll = (): void => {

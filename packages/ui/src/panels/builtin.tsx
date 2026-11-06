@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
+import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
@@ -37,7 +38,10 @@ type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 
 /** A panel whose real content comes in a later stage. */
 function planned(
-  type: Exclude<Type, "unknown" | "keybindings" | "timeline" | "preview" | "assets">,
+  type: Exclude<
+    Type,
+    "unknown" | "keybindings" | "timeline" | "preview" | "assets" | "performance"
+  >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
   extra: Extra = {},
@@ -109,5 +113,11 @@ export const builtinPanels: readonly PanelDefinition[] = [
   planned("problems", "bottom", TriangleAlert, { keys: ["mod+shift+m"] }),
   planned("terminal", "bottom", SquareTerminal, { keepAlive: true, keys: ["mod+`"] }),
   planned("cache", "bottom", HardDrive),
-  planned("performance", "bottom", Gauge),
+  {
+    type: "performance",
+    title: (t) => t("panel.performance.title"),
+    icon: Gauge,
+    area: "bottom",
+    component: DiagnosticsPanel,
+  },
 ];

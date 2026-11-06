@@ -9,6 +9,21 @@ const NOTICEABLE_GAP_MS = 34;
 const MEMORY_EVERY_MS = 5000;
 /** Upper ends of the groups that frame times are counted in. */
 const FRAME_BUCKETS_MS = [8, 16, 33, 50, 100, 250, 1000] as const;
+export const FRAME_TIME_GROUPS = [
+  "<=8",
+  "<=16",
+  "<=33",
+  "<=50",
+  "<=100",
+  "<=250",
+  "<=1000",
+  "more",
+] as const;
+/** Often enough to feel live, rarely enough to cost nothing. */
+const REFRESH_MS = 250;
+const RECENT_EVENTS = 60;
+/** Too many to read, and the numbers above already say it. */
+const NOT_LISTED = new Set(["memory"]);
 
 type Value = string | number | boolean | undefined;
 
@@ -31,6 +46,42 @@ export interface DiagnosticsReport {
   /** Events that did not fit. */
   readonly dropped: number;
 }
+
+export type DiagnosticsStatus = "idle" | "recording" | "finished";
+
+/** What the panel shows. It only changes as a whole, so that it can be compared. */
+export interface DiagnosticsSnapshot {
+  readonly status: DiagnosticsStatus;
+  readonly elapsedMs: number;
+  readonly limitReached: boolean;
+  readonly counts: {
+    readonly slowFrames: number;
+    readonly cold: number;
+    readonly gaps: number;
+    readonly audioLate: number;
+    readonly errors: number;
+  };
+  readonly framesPerSecond: number;
+  readonly memoryMb: number | undefined;
+  readonly frameTimes: Readonly<Record<string, number>>;
+  /** Newest first. */
+  readonly recent: readonly DiagnosticsEvent[];
+  readonly report: DiagnosticsReport | undefined;
+  readonly sentId: string | undefined;
+}
+
+const IDLE: DiagnosticsSnapshot = {
+  status: "idle",
+  elapsedMs: 0,
+  limitReached: false,
+  counts: { slowFrames: 0, cold: 0, gaps: 0, audioLate: 0, errors: 0 },
+  framesPerSecond: 0,
+  memoryMb: undefined,
+  frameTimes: {},
+  recent: [],
+  report: undefined,
+  sentId: undefined,
+};
 
 /** What the graphics card calls itself. Decoding and drawing depend on it more than on anything. */
 function graphicsCard(): string | undefined {
@@ -67,7 +118,11 @@ export class DiagnosticsRecorder {
   readonly #sample: (note: Note) => () => void;
   readonly #device: () => Readonly<Record<string, Value>>;
   #startedAt = 0;
-  #recording = false;
+  #status: DiagnosticsStatus = "idle";
+  #snapshot = IDLE;
+  #refresh: ReturnType<typeof setInterval> | undefined;
+  /** When the last frames arrived, to count how many a second. */
+  #frameMoments: number[] = [];
   #events: DiagnosticsEvent[] = [];
   #dropped = 0;
   #frameTimes = new Map<string, number>();
@@ -84,31 +139,80 @@ export class DiagnosticsRecorder {
   }
 
   subscribe = this.#emitter.subscribe;
-  getRecording = (): boolean => this.#recording;
+  getSnapshot = (): DiagnosticsSnapshot => this.#snapshot;
+  getRecording = (): boolean => this.#status === "recording";
 
   start(): void {
-    if (this.#recording) return;
-    this.#recording = true;
+    if (this.getRecording()) return;
+    this.#status = "recording";
     this.#startedAt = performance.now();
+    this.#frameMoments = [];
     this.#events = [];
     this.#dropped = 0;
     this.#frameTimes = new Map();
     this.#stopSampling = this.#sample((kind, data) => this.note(kind, data));
+    this.#refresh = setInterval(() => this.#publish(), REFRESH_MS);
+    this.#publish();
+  }
+
+  #publish(report?: DiagnosticsReport, sentId?: string): void {
+    const events = this.#events;
+    const now = performance.now();
+    const counts = { slowFrames: 0, cold: 0, gaps: 0, audioLate: 0, errors: 0 };
+    let memoryMb: number | undefined;
+    let limitReached = false;
+    for (const { kind, cold, mb } of events) {
+      if (kind === "frame") counts.slowFrames += 1;
+      if (kind === "frame" && typeof cold === "number") counts.cold += cold;
+      if (kind === "gap") counts.gaps += 1;
+      if (kind === "audio.late") counts.audioLate += 1;
+      if (kind === "error" || kind === "rejection") counts.errors += 1;
+      if (kind === "memory" && typeof mb === "number") memoryMb = mb;
+      if (kind === "limit") limitReached = true;
+    }
+    this.#frameMoments = this.#frameMoments.filter((moment) => now - moment <= 1000);
+    this.#snapshot = {
+      status: this.#status,
+      elapsedMs: report?.durationMs ?? now - this.#startedAt,
+      limitReached,
+      counts,
+      framesPerSecond: report ? this.#averageFrames(report) : this.#frameMoments.length,
+      memoryMb,
+      frameTimes: Object.fromEntries(this.#frameTimes),
+      recent: events
+        .filter(({ kind }) => !NOT_LISTED.has(kind))
+        .slice(-RECENT_EVENTS)
+        .toReversed(),
+      report,
+      sentId,
+    };
     this.#emitter.emit();
+  }
+
+  /** Afterwards the last second means nothing, so this is over the whole recording. */
+  #averageFrames({ durationMs }: DiagnosticsReport): number {
+    const frames = [...this.#frameTimes.values()].reduce((sum, count) => sum + count, 0);
+    return durationMs > 0 ? Math.round((frames * 1000) / durationMs) : 0;
+  }
+
+  #stop(): void {
+    this.#stopSampling?.();
+    this.#stopSampling = undefined;
+    clearInterval(this.#refresh);
+    this.#refresh = undefined;
   }
 
   /** Throws away what was collected. */
   discard(): void {
-    if (!this.#recording) return;
-    this.#stopSampling?.();
-    this.#stopSampling = undefined;
-    this.#recording = false;
+    this.#stop();
+    this.#status = "idle";
     this.#events = [];
+    this.#snapshot = IDLE;
     this.#emitter.emit();
   }
 
   note(kind: string, data: Readonly<Record<string, Value>> = {}): void {
-    if (!this.#recording) return;
+    if (!this.getRecording()) return;
     if (this.#events.length >= MAX_EVENTS) {
       this.#dropped += 1;
       return;
@@ -119,14 +223,15 @@ export class DiagnosticsRecorder {
 
   /** Every frame counts towards the totals, and only slow ones get a line of their own. */
   noteFrame(ms: number, data: Readonly<Record<string, Value>>, slow: boolean): void {
-    if (!this.#recording) return;
+    if (!this.getRecording()) return;
+    this.#frameMoments.push(performance.now());
     const bucket = FRAME_BUCKETS_MS.find((limit) => ms <= limit);
     const key = bucket === undefined ? "more" : `<=${bucket}`;
     this.#frameTimes.set(key, (this.#frameTimes.get(key) ?? 0) + 1);
     if (slow) this.note("frame", { ...data, ms: Math.round(ms) });
   }
 
-  /** Ends the recording. */
+  /** Ends the recording. The report stays for people to look at until they decide what to do. */
   finish(project: unknown): DiagnosticsReport {
     const report: DiagnosticsReport = {
       format: 1,
@@ -139,8 +244,15 @@ export class DiagnosticsRecorder {
       events: this.#events,
       dropped: this.#dropped,
     };
-    this.discard();
+    this.#stop();
+    this.#status = "finished";
+    this.#publish(report);
     return report;
+  }
+
+  markSent(id: string): void {
+    const { report } = this.#snapshot;
+    if (report) this.#publish(report, id);
   }
 }
 

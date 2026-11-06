@@ -28,6 +28,7 @@ describe("recording", () => {
     expect(recorder.getRecording()).toBe(true);
     recorder.finish({});
     expect(recorder.getRecording()).toBe(false);
+    expect(recorder.getSnapshot().status).toBe("finished");
   });
 
   it("counts every frame, and lists only the slow ones", () => {
@@ -47,6 +48,29 @@ describe("recording", () => {
     const report = recorder.finish({});
     expect(report.events.length).toBeLessThanOrEqual(6000);
     expect(report.dropped).toBeGreaterThanOrEqual(10);
+  });
+
+  it("keeps the report for people to look at, until they decide", () => {
+    const recorder = started();
+    recorder.noteFrame(90, { cold: 2 }, true);
+    const report = recorder.finish({});
+    expect(recorder.getSnapshot().report).toBe(report);
+    expect(recorder.getSnapshot().counts).toMatchObject({ slowFrames: 1, cold: 2 });
+    recorder.markSent("abc");
+    expect(recorder.getSnapshot().sentId).toBe("abc");
+    recorder.discard();
+    expect(recorder.getSnapshot().report).toBeUndefined();
+  });
+
+  it("shows the newest first, and leaves memory to its own number", () => {
+    const recorder = started();
+    recorder.note("gap", { ms: 50 });
+    recorder.note("memory", { mb: 300 });
+    recorder.note("longtask", { ms: 80 });
+    recorder.finish({});
+    const { recent, memoryMb } = recorder.getSnapshot();
+    expect(recent.map(({ kind }) => kind)).toEqual(["longtask", "gap"]);
+    expect(memoryMb).toBe(300);
   });
 
   it("forgets everything when discarded", () => {

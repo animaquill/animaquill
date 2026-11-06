@@ -1,6 +1,13 @@
 import type { DiagnosticsSink, Host, ProjectLibrary } from "@animaquill/host";
 import type { TFunction } from "i18next";
-import { projectFrameRate, type ProjectStore } from "@animaquill/core";
+import {
+  clipEnd,
+  clipOffset,
+  clipStart,
+  projectFrameRate,
+  type ProjectStore,
+} from "@animaquill/core";
+import { toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -28,6 +35,8 @@ export interface WorkbenchOptions {
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
+const MAX_REPORTED_CLIPS = 500;
+
 function saveReport(report: DiagnosticsReport): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(report, undefined, 2)]));
   const link = document.createElement("a");
@@ -185,6 +194,18 @@ export class Workbench {
       formats: state.manifest.formats.map(({ width, height, fps }) => ({ width, height, fps })),
       tracks: timelines.reduce((sum, { tracks }) => sum + Object.keys(tracks).length, 0),
       clips: timelines.reduce((sum, { clips }) => sum + Object.keys(clips).length, 0),
+      // Where clips start and end, because that is where most trouble is.
+      layout: timelines.flatMap(({ clips }) =>
+        Object.values(clips)
+          .slice(0, MAX_REPORTED_CLIPS)
+          .map((clip) => ({
+            kind: clip.source.kind,
+            track: clip.track,
+            start: toSeconds(clipStart(clip)),
+            end: toSeconds(clipEnd(clip)),
+            offset: toSeconds(clipOffset(clip)),
+          })),
+      ),
       assets: Object.values(state.assets ?? {}).map(({ kind, size, info }) => ({
         kind,
         size,
@@ -193,33 +214,28 @@ export class Workbench {
     };
   }
 
-  /** People decide what happens to a report after they know what is in it. */
+  get canSendDiagnostics(): boolean {
+    return this.#sink !== undefined;
+  }
+
+  finishDiagnostics(): void {
+    this.diagnostics.finish(this.#projectFacts());
+  }
+
+  saveDiagnostics(): void {
+    const { report } = this.diagnostics.getSnapshot();
+    if (report) saveReport(report);
+  }
+
+  /** Nothing leaves before people press send, with the whole report in front of them. */
   async sendDiagnostics(): Promise<void> {
-    const { t } = this;
-    const confirmed = await this.dialogs.confirm({
-      title: t("diagnostics.sendTitle"),
-      message: t(this.#sink ? "diagnostics.sendMessage" : "diagnostics.saveMessage"),
-      confirm: t(this.#sink ? "diagnostics.send" : "diagnostics.save"),
-    });
-    if (!confirmed) return;
-    const report = this.diagnostics.finish(this.#projectFacts());
-    if (!this.#sink) {
-      saveReport(report);
-      return;
-    }
+    const { report } = this.diagnostics.getSnapshot();
+    if (!report || !this.#sink) return;
     try {
-      const id = await this.#sink.send(report);
-      await this.dialogs.confirm({
-        title: t("diagnostics.sentTitle"),
-        message: t("diagnostics.sentMessage", { id }),
-        confirm: t("about.close"),
-        noticeOnly: true,
-      });
+      this.diagnostics.markSent(await this.#sink.send(report));
     } catch (error) {
       console.warn("The report did not arrive", error);
-      // What was recorded cannot be recorded again, so it must not get lost here.
-      saveReport(report);
-      this.notifications.push(t("diagnostics.sendFailed"));
+      this.notifications.push(this.t("diagnostics.sendFailed"));
     }
   }
 
@@ -341,27 +357,11 @@ export class Workbench {
       run: () => void this.showAbout(),
       menu: { name: "help", group: "about" },
     });
-    const recording = () => this.diagnostics.getRecording();
     this.actions.register({
-      id: "help.diagnostics.start",
-      title: (t) => t("diagnostics.start"),
-      run: () => this.diagnostics.start(),
+      id: "help.diagnostics",
+      title: (t) => t("panel.performance.title"),
+      run: () => this.layout.openPanel("performance"),
       menu: { name: "help", group: "diagnostics" },
-      enabled: () => !recording(),
-    });
-    this.actions.register({
-      id: "help.diagnostics.send",
-      title: (t) => t("diagnostics.finish"),
-      run: () => void this.sendDiagnostics(),
-      menu: { name: "help", group: "diagnostics" },
-      enabled: recording,
-    });
-    this.actions.register({
-      id: "help.diagnostics.discard",
-      title: (t) => t("diagnostics.discard"),
-      run: () => this.diagnostics.discard(),
-      menu: { name: "help", group: "diagnostics" },
-      enabled: recording,
     });
   }
 

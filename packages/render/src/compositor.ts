@@ -132,6 +132,7 @@ let wanted = 0;
 let gettingReady = false;
 let recording = false;
 let coldInFrame = 0;
+let decodeMsInFrame = 0;
 let timings: FrameTiming[] = [];
 let drawing = false;
 let drawAgain = false;
@@ -267,7 +268,9 @@ async function drawFrame(seconds: number): Promise<void> {
   if (!plan) return;
   const showing = plan.layers.filter(({ start, end }) => seconds >= start && seconds < end);
   await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
+  const askedAt = performance.now();
   const pictures = await Promise.all(showing.map((layer) => pictureOf(layer, seconds)));
+  decodeMsInFrame = performance.now() - askedAt;
   if (canvas.width !== plan.width) canvas.width = plan.width;
   if (canvas.height !== plan.height) canvas.height = plan.height;
   draw.globalAlpha = 1;
@@ -298,6 +301,8 @@ async function refresh(): Promise<void> {
     const seconds = wanted;
     const started = performance.now();
     coldInFrame = 0;
+    decodeMsInFrame = 0;
+    const wasGettingReady = gettingReady;
     try {
       await drawFrame(seconds);
     } catch (error) {
@@ -314,7 +319,14 @@ async function refresh(): Promise<void> {
     if (recording) {
       const ms = performance.now() - started;
       const behindMs = Math.max(wanted - seconds, 0) * 1000;
-      timings.push({ seconds, ms, cold: coldInFrame, behindMs });
+      timings.push({
+        seconds,
+        ms,
+        decodeMs: decodeMsInFrame,
+        gettingReady: wasGettingReady,
+        cold: coldInFrame,
+        behindMs,
+      });
     }
   } while (drawAgain);
   drawing = false;
