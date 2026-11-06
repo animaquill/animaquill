@@ -69,3 +69,93 @@ test("clicking the picture leaves the keyboard with the editor", async ({ page }
   await page.keyboard.press("Control+z");
   await expect.poll(() => isRed(page)).toBe(false);
 });
+
+const redBlue = {
+  name: "红蓝.webm",
+  mimeType: "video/webm",
+  buffer: readFileSync(new URL("./fixtures/red-blue.webm", import.meta.url)),
+};
+
+/** Eight bits of silence is still sound to the browser, which is all this needs. */
+function wav(seconds: number): Buffer {
+  const rate = 8000;
+  const samples = rate * seconds;
+  const data = Buffer.alloc(44 + samples);
+  data.write("RIFF", 0);
+  data.writeUInt32LE(36 + samples, 4);
+  data.write("WAVEfmt ", 8);
+  data.writeUInt32LE(16, 16);
+  data.writeUInt16LE(1, 20);
+  data.writeUInt16LE(1, 22);
+  data.writeUInt32LE(rate, 24);
+  data.writeUInt32LE(rate, 28);
+  data.writeUInt16LE(1, 32);
+  data.writeUInt16LE(8, 34);
+  data.write("data", 36);
+  data.writeUInt32LE(samples, 40);
+  data.fill(128, 44);
+  return data;
+}
+
+const isBlue = async (page: Page) => {
+  const [red = 255, green = 255, blue = 0] = await middle(page);
+  return red < 60 && green < 60 && blue > 200;
+};
+
+async function importAndPlace(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+) {
+  await tab(page, "assets").click();
+  const chooser = page.waitForEvent("filechooser");
+  await content(page, "assets").getByRole("button", { name: "导入" }).click();
+  await (await chooser).setFiles(file);
+  await items(page).first().dblclick();
+}
+
+const button = (page: Page, name: string) =>
+  content(page, "preview").getByRole("button", { name, exact: true });
+
+async function goTo(page: Page, time: string) {
+  await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
+  await page.getByRole("textbox", { name: "当前时间" }).fill(time);
+  await page.keyboard.press("Enter");
+}
+
+test("finds frames going forwards and backwards in a video", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect.poll(() => isRed(page)).toBe(true);
+  await goTo(page, "0:01/15");
+  await expect.poll(() => isBlue(page)).toBe(true);
+  await goTo(page, "0:00/05");
+  await expect.poll(() => isRed(page)).toBe(true);
+});
+
+test("the picture changes while playing", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await expect.poll(() => isRed(page)).toBe(true);
+  await button(page, "播放").click();
+  await expect.poll(() => isBlue(page)).toBe(true);
+});
+
+test("plays sound, and stops when paused", async ({ page }) => {
+  await page.addInitScript(() => {
+    const { start } = AudioBufferSourceNode.prototype;
+    const counter = window as unknown as { sounds: number };
+    counter.sounds = 0;
+    AudioBufferSourceNode.prototype.start = function count(...args) {
+      counter.sounds += 1;
+      start.apply(this, args);
+    };
+  });
+  await page.reload();
+  await importAndPlace(page, { name: "配音.wav", mimeType: "audio/wav", buffer: wav(10) });
+  const sounds = () => page.evaluate(() => (window as unknown as { sounds: number }).sounds);
+  await button(page, "播放").click();
+  await expect.poll(sounds).toBeGreaterThan(0);
+  await button(page, "暂停").click();
+  await page.waitForTimeout(300);
+  const stopped = await sounds();
+  await page.waitForTimeout(500);
+  expect(await sounds()).toBe(stopped);
+});

@@ -1,10 +1,13 @@
 export { COMMANDS, type CommandDefinition } from "./commands.ts";
 export { CommandError, Draft } from "./draft.ts";
 export {
+  buildAudioPlan,
   buildRenderPlan,
+  type AudioPlan,
   type LayerSource,
   type RenderLayer,
   type RenderPlan,
+  type SoundLayer,
 } from "./render-plan.ts";
 export { isSourceFile } from "./import-file.ts";
 export {

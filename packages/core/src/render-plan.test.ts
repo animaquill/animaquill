@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createProject } from "@animaquill/schema";
 import { orderedTracks } from "./model.ts";
-import { buildRenderPlan } from "./render-plan.ts";
+import { buildAudioPlan, buildRenderPlan } from "./render-plan.ts";
 import { ProjectStore } from "./store.ts";
 
 function setup() {
@@ -29,7 +29,7 @@ function setup() {
     if (!result) throw new Error("no plan");
     return result;
   };
-  return { run, addClip, plan, lower: lower.id };
+  return { run, addClip, plan, store, lower: lower.id };
 }
 
 const red = { source: { kind: "color", color: "#ff0000" } };
@@ -70,5 +70,43 @@ describe("the render plan", () => {
     const { addClip, plan, lower } = setup();
     addClip("c", lower, { source: { kind: "video", media: { asset: "missing" } } });
     expect(plan().layers).toEqual([]);
+  });
+});
+
+describe("the audio plan", () => {
+  function withSound() {
+    const context = setup();
+    const { run, addClip } = context;
+    run("track.add", { timeline: "main", id: "one", kind: "audio" });
+    run("track.add", { timeline: "main", id: "two", kind: "audio" });
+    const source = { kind: "audio", media: { asset: "a" } };
+    addClip("first", "one", { source, offset: "1/2" });
+    addClip("second", "two", { source, properties: { "audio.volume": -20 } });
+    const sounds = () => buildAudioPlan(context.store.getState(), "main").sounds;
+    return { ...context, sounds };
+  }
+
+  it("has every audio clip, with its place in the file and its volume", () => {
+    const { sounds } = withSound();
+    expect(sounds()).toHaveLength(2);
+    expect(sounds()[0]).toMatchObject({ file: "sha256-a", start: 1, end: 3, offset: 0.5, gain: 1 });
+    expect(sounds()[1]?.gain).toBeCloseTo(0.1);
+  });
+
+  it("leaves out muted tracks", () => {
+    const { run, sounds } = withSound();
+    run("track.update", { timeline: "main", track: "one", changes: { muted: true } });
+    expect(sounds().map(({ id }) => id)).toEqual(["second"]);
+  });
+
+  it("plays only the solo track, even over a mute", () => {
+    const { run, sounds } = withSound();
+    run("track.update", { timeline: "main", track: "two", changes: { solo: true, muted: true } });
+    expect(sounds().map(({ id }) => id)).toEqual(["second"]);
+  });
+
+  it("is empty for a timeline that is gone", () => {
+    const { store } = withSound();
+    expect(buildAudioPlan(store.getState(), "nothing").sounds).toEqual([]);
   });
 });

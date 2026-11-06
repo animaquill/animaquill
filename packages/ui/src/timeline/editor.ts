@@ -708,6 +708,11 @@ export class TimelineEditor {
   }
 
   /** The time from whoever keeps the clock. Later that is the audio, for now it is the screen. */
+  /** Where playing started from. A new one means the sound has to start over from there. */
+  get playbackStart(): { readonly frame: number; readonly since: number } | undefined {
+    return this.#playback;
+  }
+
   tick(milliseconds: number): void {
     const { model } = this;
     if (!model || !this.#snapshot.playing) return;

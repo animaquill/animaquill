@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@animaquill/audio": "workspace:*",
     "@animaquill/core": "workspace:*",
     "@animaquill/host": "workspace:*",
     "@animaquill/media": "workspace:*",
