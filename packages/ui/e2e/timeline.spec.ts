@@ -67,13 +67,13 @@ test.describe("an empty timeline", () => {
   test("shows its tracks and says what to do", async ({ page }) => {
     await expect(trackHeader(page, "视频 1")).toBeVisible();
     await expect(trackHeader(page, "音频 1")).toBeVisible();
-    await expect(panel(page).getByText("添加第一个片段")).toBeVisible();
+    await expect(panel(page).getByText("把素材拖到这里")).toBeVisible();
     await expect(timecode(page)).toHaveText("00:00:00:00");
   });
 
   test("stops saying so once there is a clip", async ({ page }) => {
     await addColor(page);
-    await expect(panel(page).getByText("添加第一个片段")).toHaveCount(0);
+    await expect(panel(page).getByText("把素材拖到这里")).toHaveCount(0);
   });
 });
 
