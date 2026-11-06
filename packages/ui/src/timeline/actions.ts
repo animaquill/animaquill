@@ -77,6 +77,7 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
   });
   add("toggleSnapping", () => editor.toggleSnapping(), { keys: ["s"], group: "tools" });
   add("toggleOverwriting", () => editor.toggleOverwriting(), { keys: ["o"], group: "tools" });
+  add("toggleMultiSelecting", () => editor.toggleMultiSelecting(), { group: "tools" });
 
   add("zoomIn", () => editor.zoomIn(), { keys: ["="], repeats: true, group: "zoom" });
   add("zoomOut", () => editor.zoomOut(), { keys: ["-"], repeats: true, group: "zoom" });
@@ -88,6 +89,7 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
     group: "zoom",
   });
 
+  add("play", () => editor.togglePlayback(), { keys: ["space"], group: "play" });
   add("previousFrame", () => editor.stepFrames(-1), { keys: ["left"], repeats: true });
   add("nextFrame", () => editor.stepFrames(1), { keys: ["right"], repeats: true });
   add("backFiveFrames", () => editor.stepFrames(-5), { keys: ["shift+left"], repeats: true });

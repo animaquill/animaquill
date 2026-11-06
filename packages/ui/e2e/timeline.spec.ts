@@ -1077,11 +1077,55 @@ test.describe("a touch screen", () => {
   });
 });
 
+test.describe("the input mode", () => {
+  test("shows in the status bar and can be chosen, or left to the editor", async ({ page }) => {
+    await addColor(page);
+    const button = page.getByRole("button", { name: /^输入方式/ });
+    await expect(button).toHaveText("鼠标");
+    await button.click();
+    await page.getByRole("menuitemradio", { name: "触控板", exact: true }).click();
+    await expect(button).toHaveText("触控板");
+    await button.click();
+    await expect(page.getByRole("menuitemradio", { name: "触控板", exact: true })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await page.getByRole("menuitemradio", { name: /自动识别/ }).click();
+    await expect(button).toHaveText("鼠标");
+  });
+});
+
 test.describe("the toolbar", () => {
+  test("plays with the button and with Space, and shows the length", async ({ page }) => {
+    await expect(panel(page).getByText("/ 00:00:10:00")).toBeVisible();
+    await stage(page).focus();
+    await page.keyboard.press("Space");
+    await expect(timecode(page)).not.toHaveText("00:00:00:00");
+    await panel(page).getByRole("button", { name: "暂停" }).click();
+    const stopped = await timecode(page).textContent();
+    await page.waitForTimeout(200);
+    await expect(timecode(page)).toHaveText(stopped ?? "");
+  });
+
+  test("keeps the tools in the middle", async ({ page }) => {
+    const tools = await boxOf(panel(page).getByRole("group", { name: "开关", exact: true }));
+    const bar = await boxOf(panel(page).getByRole("toolbar"));
+    const middle = tools.x + tools.width / 2;
+    expect(Math.abs(middle - (bar.x + bar.width / 2))).toBeLessThan(120);
+  });
+
+  test("the track headers can get wider", async ({ page }) => {
+    const divider = panel(page).getByRole("separator", { name: "调整轨道头宽度" });
+    const before = await boxOf(stage(page));
+    const [x, y] = await middleOf(divider);
+    await drag(page, [x, y], [x + 80, y]);
+    await expect.poll(async () => (await boxOf(stage(page))).x).toBeGreaterThan(before.x + 60);
+  });
+
   test("keeps tools, switches and actions apart", async ({ page }) => {
     const zone = (name: string) => panel(page).getByRole("group", { name, exact: true });
     await expect(zone("工具").getByRole("button")).toHaveCount(2);
-    await expect(zone("开关").getByRole("button")).toHaveCount(2);
+    await expect(zone("开关").getByRole("button")).toHaveCount(3);
     await expect(zone("操作").getByRole("button", { name: "在播放头切割" })).toBeVisible();
   });
 

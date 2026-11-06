@@ -41,7 +41,13 @@ export class WheelInterpreter {
   #axis: "x" | "y" | undefined;
   #last = Number.NEGATIVE_INFINITY;
 
-  read(input: WheelInput): WheelAction {
+  /** What the last event was taken for. */
+  get device(): "mouse" | "trackpad" | undefined {
+    return this.#device;
+  }
+
+  /** `forced` is for people who said what they use, because the steps can be misleading. */
+  read(input: WheelInput, forced?: "mouse" | "trackpad"): WheelAction {
     if (input.time - this.#last > PAUSE_MS) {
       this.#device = undefined;
       this.#axis = undefined;
@@ -53,7 +59,8 @@ export class WheelInterpreter {
         input.wheelDelta % NOTCH === 0 &&
         (input.deltaX === 0 || input.deltaY === 0));
     // Fingers can take a step that looks like a notch, but a wheel never takes one that does not.
-    if (!isNotch) this.#device = "trackpad";
+    if (forced) this.#device = forced;
+    else if (!isNotch) this.#device = "trackpad";
     else this.#device ??= "mouse";
     return this.#device === "mouse" ? this.#mouse(input) : this.#trackpad(input);
   }

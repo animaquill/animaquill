@@ -55,6 +55,7 @@ async function setup() {
     },
     now: () => Date.now(),
     openMenu,
+    held: () => {},
   });
   const row = editor.model?.rows.find(({ id }) => id === video);
   const y = RULER_HEIGHT + (row?.top ?? 0) + 20;
@@ -131,6 +132,28 @@ describe("one finger", () => {
     expect(editor.scrollX).toBeGreaterThan(after);
   });
 
+  it("draws a box after a long press on an empty place", async () => {
+    const { editor, touch, y } = await setup();
+    const from = editor.xAt(1);
+    touch.down(1, from, y);
+    vi.advanceTimersByTime(500);
+    touch.move(1, editor.xAt(3), y + 10);
+    touch.move(1, editor.xAt(3.5), y + 12);
+    touch.up(1);
+    expect(selection(editor)).toEqual(["a"]);
+  });
+
+  it("adds and takes away with taps when multiple selection is on", async () => {
+    const { editor, touch, onClip, y } = await setup();
+    editor.toggleMultiSelecting();
+    touch.down(1, onClip(), y);
+    touch.up(1);
+    expect(selection(editor)).toEqual(["a"]);
+    touch.down(1, onClip(), y);
+    touch.up(1);
+    expect(selection(editor)).toEqual([]);
+  });
+
   it("moves a clip that is selected, right away", async () => {
     const { editor, touch, onClip, y, clip } = await setup();
     editor.selectOnly("a");
@@ -183,6 +206,29 @@ describe("a long press", () => {
     expect(clip()?.start).not.toBe("2");
   });
 
+  it("moves a clip that is selected as well", async () => {
+    const { editor, touch, onClip, y, clip, openMenu } = await setup();
+    editor.selectOnly("a");
+    const x = onClip();
+    touch.down(1, x, y);
+    vi.advanceTimersByTime(500);
+    touch.move(1, x + 100, y);
+    touch.move(1, x + 200, y);
+    touch.up(1);
+    expect(clip()?.start).not.toBe("2");
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  it("opens the menu of a selected clip when the finger stays", async () => {
+    const { editor, touch, onClip, y, openMenu } = await setup();
+    editor.selectOnly("a");
+    touch.down(1, onClip(), y);
+    vi.advanceTimersByTime(500);
+    expect(openMenu).not.toHaveBeenCalled();
+    touch.up(1);
+    expect(openMenu).toHaveBeenCalledOnce();
+  });
+
   it("opens the menu of the clip when the finger stays", async () => {
     const { touch, onClip, y, openMenu, clip } = await setup();
     touch.down(1, onClip(), y);
@@ -194,10 +240,12 @@ describe("a long press", () => {
 
   it("opens a menu next to clips", async () => {
     const { editor, touch, y, openMenu } = await setup();
+    editor.selectOnly("a");
     touch.down(1, editor.xAt(8), y);
     vi.advanceTimersByTime(500);
-    expect(openMenu).toHaveBeenCalledOnce();
     touch.up(1);
+    expect(openMenu).toHaveBeenCalledOnce();
+    expect(selection(editor)).toEqual(["a"]);
   });
 
   it("does not happen once the finger moved", async () => {

@@ -1863,6 +1863,89 @@ describe("changing the project from the keyboard and menus", () => {
     });
   });
 
+  describe("multiple selection", () => {
+    it("adds with a click, takes away with another, and an empty click changes nothing", async () => {
+      const { editor, addClip, at, selection } = await setup();
+      addClip("a", 1, 1);
+      addClip("b", 3, 1);
+      editor.toggleMultiSelecting();
+      const click = (pointer: Pointer) => {
+        editor.press(pointer);
+        editor.release(pointer);
+      };
+      click(at(1.5));
+      click(at(3.5));
+      expect(selection()).toEqual(["a", "b"]);
+      click(at(8));
+      expect(selection()).toEqual(["a", "b"]);
+      click(at(1.5));
+      expect(selection()).toEqual(["b"]);
+    });
+
+    it("still drags what is selected", async () => {
+      const { editor, addClip, at, clip, drag } = await setup();
+      addClip("a", 1, 1);
+      addClip("b", 3, 1);
+      editor.toggleMultiSelecting();
+      editor.selectAll();
+      drag(at(1.5), at(2.5));
+      expect(clip("a").start).toBe("2");
+      expect(clip("b").start).toBe("4");
+    });
+  });
+
+  describe("playing", () => {
+    it("moves the playhead with the clock, and stops at the end", async () => {
+      const { editor } = await setup();
+      editor.togglePlayback();
+      editor.tick(1000);
+      editor.tick(2000);
+      expect(editor.frame).toBe(30);
+      editor.tick(20_000);
+      expect(editor.frame).toBe(300);
+      expect(editor.getSnapshot().playing).toBe(false);
+    });
+
+    it("carries on from where people click", async () => {
+      const { editor } = await setup();
+      editor.togglePlayback();
+      editor.tick(0);
+      editor.seek(150);
+      editor.tick(1000);
+      editor.tick(2000);
+      expect(editor.frame).toBe(180);
+    });
+
+    it("starts over from the end, and pauses", async () => {
+      const { editor } = await setup();
+      editor.seekToEnd();
+      editor.togglePlayback();
+      expect(editor.frame).toBe(0);
+      editor.togglePlayback();
+      editor.tick(5000);
+      expect(editor.frame).toBe(0);
+    });
+
+    it("stops when the panel goes away", async () => {
+      const { editor } = await setup();
+      editor.togglePlayback();
+      editor.setViewport(0, 0);
+      expect(editor.getSnapshot().playing).toBe(false);
+    });
+  });
+
+  it("keeps the width of the track headers within limits, and remembers it", async () => {
+    const { editor, saved } = await setup();
+    editor.setHeaderWidth(9999);
+    expect(editor.getSnapshot().headerWidth).toBe(360);
+    editor.setHeaderWidth(10);
+    expect(editor.getSnapshot().headerWidth).toBe(96);
+    editor.setHeaderWidth(200);
+    editor.saveHeaderWidth();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saved.get("timeline")).toMatchObject({ headerWidth: 200 });
+  });
+
   describe("how people like to work", () => {
     it("does not overwrite until told to, and remembers", async () => {
       const { editor, saved } = await setup();

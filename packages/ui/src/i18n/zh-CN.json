@@ -261,7 +261,9 @@
       "paste": "粘贴片段",
       "toggleOverwriting": "切换覆盖模式",
       "rowsTaller": "增加轨道高度",
-      "rowsShorter": "降低轨道高度"
+      "rowsShorter": "降低轨道高度",
+      "toggleMultiSelecting": "切换多选",
+      "play": "播放或暂停"
     },
     "color": "纯色片段",
     "snapping": "吸附",
@@ -291,7 +293,9 @@
       "mute": "这条轨道不发声。",
       "zoomHandleX": "拖动两端手柄缩放时间，拖动中间滚动。",
       "zoomHandleY": "拖动两端手柄调整轨道高度，拖动中间滚动。",
-      "frameRate": "标尺按它计数，片段落在它的帧上。导出时每个画幅可以用自己的帧率。"
+      "frameRate": "标尺按它计数，片段落在它的帧上。导出时每个画幅可以用自己的帧率。",
+      "multiSelecting": "打开后点片段就加入选择，再点一次取消，不用按 Shift。",
+      "play": "从播放头开始播放，到结尾停下。"
     },
     "scrollX": "时间轴横向滚动条",
     "scrollY": "时间轴纵向滚动条",
@@ -305,6 +309,19 @@
       "zoom": "缩放"
     },
     "moveTrackUp": "上移轨道",
-    "moveTrackDown": "下移轨道"
+    "moveTrackDown": "下移轨道",
+    "multiSelecting": "多选",
+    "pause": "暂停",
+    "play": "播放",
+    "resizeHeaders": "调整轨道头宽度"
+  },
+  "input": {
+    "label": "输入方式",
+    "usage": "决定滚轮、双指和手指怎样操作时间轴。点击切换。",
+    "auto": "自动识别",
+    "autoNow": "自动识别（现在是{{device}}）",
+    "mouse": "鼠标",
+    "trackpad": "触控板",
+    "touch": "触碰"
   }
 }

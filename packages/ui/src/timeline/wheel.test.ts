@@ -77,3 +77,16 @@ it("a mouse after a pause is a mouse again", () => {
   wheel.read(fingers(0, 0, 7));
   expect(wheel.read(notch(1000))).toEqual({ kind: "scroll", dx: 100, dy: 0 });
 });
+
+it("does what people said when they said what they use", () => {
+  expect(new WheelInterpreter().read(fingers(0, 0, 7), "mouse")).toEqual({
+    kind: "scroll",
+    dx: 7,
+    dy: 0,
+  });
+  expect(new WheelInterpreter().read(notch(0), "trackpad")).toEqual({
+    kind: "scroll",
+    dx: 0,
+    dy: 100,
+  });
+});

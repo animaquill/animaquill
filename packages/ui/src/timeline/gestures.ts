@@ -84,6 +84,8 @@ export interface GestureHost {
   readonly selection: ReadonlySet<string>;
   /** Whether a drop covers what is in the way. Otherwise it goes to the nearest free place. */
   readonly overwriting: boolean;
+  /** Whether clicks add to the selection. */
+  readonly multiSelecting: boolean;
   timeAt(x: number): number;
   /** The distance from the top of the first row. */
   laneAt(y: number): number;
@@ -552,10 +554,11 @@ export class MarqueeGesture implements Gesture {
     this.#host = host;
     this.#press = press;
     this.#before = host.selection;
-    this.#base = press.shift || press.mod ? host.selection : new Set();
+    const adding = press.shift || press.mod || host.multiSelecting;
+    this.#base = adding ? host.selection : new Set();
     this.#fromTime = host.timeAt(press.x);
     this.#fromLane = host.laneAt(press.y);
-    if (!press.shift && !press.mod) host.select(new Set());
+    if (!adding) host.select(new Set());
   }
 
   move(pointer: Pointer): void {

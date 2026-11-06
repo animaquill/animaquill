@@ -11,10 +11,11 @@
   container-type: inline-size;
 }
 
+/* The tools stay in the middle of the panel, whatever is on either side. */
 .toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 2px;
   height: 32px;
   padding: 0 8px;
   overflow: hidden;
@@ -22,9 +23,22 @@
   border-bottom: 1px solid var(--aq-border);
 }
 
+.side {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.middle {
+  display: flex;
+  align-items: center;
+}
+
 /* The timeline can sit in a narrow group, and then words give way before buttons do. */
-@container (max-width: 620px) {
-  .buttonLabel {
+@container (max-width: 760px) {
+  .buttonLabel,
+  .total {
     display: none;
   }
 }
@@ -36,8 +50,7 @@
 }
 
 .timecode {
-  min-width: 96px;
-  margin-right: 8px;
+  margin: 0 4px;
   color: var(--aq-timeline-playhead);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -49,13 +62,24 @@
   align-items: center;
   gap: 2px;
   padding: 0 8px;
+}
+
+.zone + .zone {
   border-left: 1px solid var(--aq-border);
 }
 
 .zoneEnd {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
+}
+
+.total {
+  margin-right: 6px;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .spacer {
@@ -134,10 +158,23 @@
   touch-action: none;
   flex: none;
   flex-direction: column;
-  width: 148px;
   overflow: hidden;
   background: var(--aq-bg-panel);
   border-right: 1px solid var(--aq-border);
+}
+
+.headerDivider {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 5px;
+  cursor: col-resize;
+}
+
+.headerDivider:hover {
+  background: var(--aq-accent);
 }
 
 .corner {

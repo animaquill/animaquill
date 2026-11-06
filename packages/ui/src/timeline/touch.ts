@@ -17,6 +17,8 @@ export interface TouchEnvironment {
   now(): number;
   /** The menu of whatever is at a place. */
   openMenu(pointer: Pointer): void;
+  /** A long press went off, which a finger cannot see under itself. */
+  held(): void;
 }
 
 interface Finger {
@@ -28,6 +30,8 @@ type Mode =
   /** One finger, and it could still become a tap, a swipe or a long press. */
   | "waiting"
   | "swiping"
+  /** A long press went off. Moving now means to drag, and letting go means the menu. */
+  | "held"
   /** The editor has it, as if it were the mouse. */
   | "editing"
   | "pinching"
@@ -37,10 +41,11 @@ type Mode =
 const pointerAt = ({ x, y }: Finger): Pointer => ({ x, y, shift: false, alt: false, mod: false });
 
 /**
- * A finger on the timeline. It has to do two jobs that a mouse does with different buttons: moving
- * the view and moving clips. So a finger moves the view, unless it starts on a selected clip, which
- * it picks up right away. A long press picks up any other clip. Two fingers zoom in the direction
- * they spread, and move the view. The buttons stay as they are: this is only about the gestures.
+ * A finger on the timeline. It has to do what a mouse does with different buttons. A tap is a
+ * click. A finger moves the view, unless it starts on a selected clip, which it drags. After a long
+ * press a finger drags whatever it is on, which on an empty place draws a box, and without moving
+ * it opens the menu. Two fingers zoom in the direction they spread, and move the view. The buttons
+ * stay as they are: this is only about the gestures.
  */
 export class TouchController {
   readonly #editor: TimelineEditor;
@@ -53,9 +58,8 @@ export class TouchController {
   #axis: "x" | "y" | undefined;
   #velocity = { x: 0, y: 0 };
   #lastMove = 0;
-  /** A clip was picked up by a long press, and if it stays put that means its menu. */
-  #pickedUp = false;
-  #moved = false;
+  /** It started on a selected clip, so moving means dragging that. */
+  #onSelected = false;
   #pinch: { spread: number; center: Finger; axis: "x" | "y" } | undefined;
 
   constructor(editor: TimelineEditor, environment: TouchEnvironment) {
@@ -81,8 +85,13 @@ export class TouchController {
       this.#pinchMoved();
       return;
     }
+    const picksUp = this.#mode === "held" || (this.#mode === "waiting" && this.#onSelected);
+    if (picksUp && this.#hasLeftStart(finger)) {
+      this.#stopTimer();
+      this.#editor.press(pointerAt(this.#start));
+      this.#mode = "editing";
+    }
     if (this.#mode === "editing") {
-      this.#moved ||= this.#hasLeftStart(finger);
       this.#editor.drag(pointerAt(finger));
       return;
     }
@@ -120,13 +129,12 @@ export class TouchController {
 
   #firstFinger(finger: Finger): void {
     this.#start = { ...finger };
-    this.#pickedUp = false;
-    this.#moved = false;
     const pointer = pointerAt(finger);
     const hit = this.#editor.hitAt(pointer);
     const { selection, tool } = this.#editor.getSnapshot();
-    const onSelected = hit.kind === "clip" && selection.has(hit.box.id) && tool === "select";
-    if (hit.kind === "ruler" || hit.kind === "end" || onSelected) {
+    this.#onSelected = hit.kind === "clip" && selection.has(hit.box.id) && tool === "select";
+    const onEdge = this.#onSelected && hit.kind === "clip" && hit.edge !== undefined;
+    if (hit.kind === "ruler" || hit.kind === "end" || onEdge) {
       this.#mode = "editing";
       this.#editor.press(pointer);
       return;
@@ -137,17 +145,14 @@ export class TouchController {
 
   #longPress(): void {
     if (this.#mode !== "waiting") return;
-    const pointer = pointerAt(this.#start);
-    const hit = this.#editor.hitAt(pointer);
-    if (hit.kind === "clip" && !hit.row.track.locked) {
-      this.#editor.selectOnly(hit.box.id);
-      this.#editor.press(pointer);
-      this.#mode = "editing";
-      this.#pickedUp = true;
-    } else {
-      this.#environment.openMenu(pointer);
-      this.#mode = "over";
+    const hit = this.#editor.hitAt(pointerAt(this.#start));
+    const { selection, multiSelecting } = this.#editor.getSnapshot();
+    if (hit.kind === "clip" && !hit.row.track.locked && !selection.has(hit.box.id)) {
+      if (multiSelecting) this.#editor.addToSelection(hit.box.id);
+      else this.#editor.selectOnly(hit.box.id);
     }
+    this.#mode = "held";
+    this.#environment.held();
   }
 
   /** A second finger while a clip is on the move is a hand resting on the screen. */
@@ -195,9 +200,10 @@ export class TouchController {
     if (this.#mode === "waiting") {
       this.#editor.press(pointer);
       this.#editor.release(pointer);
+    } else if (this.#mode === "held") {
+      this.#environment.openMenu(pointer);
     } else if (this.#mode === "editing") {
       this.#editor.release(pointer);
-      if (this.#pickedUp && !this.#moved) this.#environment.openMenu(pointer);
     } else if (this.#mode === "swiping") {
       this.#glide();
     }

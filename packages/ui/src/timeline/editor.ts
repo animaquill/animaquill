@@ -78,6 +78,9 @@ const ROW_SCALE_STEP = 1.25;
 const END_HANDLE_REACH = 7;
 const REMEMBER_DELAY_MS = 300;
 const NEW_CLIP_SECONDS = 5;
+export const DEFAULT_HEADER_WIDTH = 148;
+const MIN_HEADER_WIDTH = 96;
+const MAX_HEADER_WIDTH = 360;
 
 /** Colours that tell clips apart while they are only placeholders. */
 const NEW_CLIP_COLORS = ["#3f6fb5", "#3f9a7a", "#b57a3f", "#8f5fb5", "#b5536a", "#5f8fa8"];
@@ -104,6 +107,10 @@ export interface TimelineSnapshot {
   readonly snapping: boolean;
   /** Whether a drop covers other clips. Off, clips go to the nearest free place. */
   readonly overwriting: boolean;
+  /** Whether a click adds to the selection, or takes away from it. For fingers above all. */
+  readonly multiSelecting: boolean;
+  readonly playing: boolean;
+  readonly headerWidth: number;
   /** Cut, and waiting to be pasted somewhere else. They stay until then. */
   readonly cut: ReadonlySet<string>;
 }
@@ -157,14 +164,23 @@ interface SavedPreferences {
   readonly version: typeof SETTINGS_VERSION;
   readonly snapping: boolean;
   readonly overwriting: boolean;
+  readonly multiSelecting: boolean;
+  readonly headerWidth: number;
 }
 
 function parsePreferences(value: unknown): SavedPreferences | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { version, snapping, overwriting } = value as Partial<SavedPreferences>;
+  const { version, snapping, overwriting, multiSelecting, headerWidth } =
+    value as Partial<SavedPreferences>;
   if (version !== SETTINGS_VERSION) return undefined;
   if (typeof snapping !== "boolean" || typeof overwriting !== "boolean") return undefined;
-  return { version, snapping, overwriting };
+  return {
+    version,
+    snapping,
+    overwriting,
+    multiSelecting: multiSelecting === true,
+    headerWidth: typeof headerWidth === "number" ? headerWidth : DEFAULT_HEADER_WIDTH,
+  };
 }
 
 const clamp = (value: number, low: number, high: number) =>
@@ -193,6 +209,9 @@ export class TimelineEditor {
     tool: "select",
     snapping: true,
     overwriting: false,
+    multiSelecting: false,
+    playing: false,
+    headerWidth: DEFAULT_HEADER_WIDTH,
     cut: new Set(),
   };
   /** What was copied, in this window. */
@@ -204,6 +223,8 @@ export class TimelineEditor {
   #hovered: Hit = { kind: "empty" };
   #razorAt: number | undefined;
   #frame = 0;
+  /** Where the clock and the playhead were together last. */
+  #playback: { readonly frame: number; readonly since: number } | undefined;
   #edgeReach = EDGE_REACH;
   /** How to get back from showing everything, while the view is still the one that showed it. */
   #beforeFit: { readonly from: ViewPlace; readonly fitted: ViewPlace } | undefined;
@@ -239,15 +260,18 @@ export class TimelineEditor {
     });
   }
 
-  #adoptPreferences({ snapping, overwriting }: SavedPreferences): void {
-    this.#snapshot = { ...this.#snapshot, snapping, overwriting };
+  #adoptPreferences(saved: SavedPreferences): void {
+    const { snapping, overwriting, multiSelecting } = saved;
+    const headerWidth = clamp(saved.headerWidth, MIN_HEADER_WIDTH, MAX_HEADER_WIDTH);
+    this.#snapshot = { ...this.#snapshot, snapping, overwriting, multiSelecting, headerWidth };
     this.#emitter.emit();
   }
 
   #savePreferences(): void {
-    const { snapping, overwriting } = this.#snapshot;
+    const { snapping, overwriting, multiSelecting, headerWidth } = this.#snapshot;
+    const saved = { version: SETTINGS_VERSION, snapping, overwriting, multiSelecting, headerWidth };
     this.#settings
-      .save(SETTINGS_KEY, { version: SETTINGS_VERSION, snapping, overwriting })
+      .save(SETTINGS_KEY, saved)
       .catch((error: unknown) => console.warn("Timeline settings could not be saved", error));
   }
 
@@ -333,7 +357,10 @@ export class TimelineEditor {
     this.#width = width;
     this.#height = height;
     // The panel went behind another tab or away. The mouse will not come back from there.
-    if (width === 0) this.#cancelGesture();
+    if (width === 0) {
+      this.#cancelGesture();
+      this.pause();
+    }
     if (this.#pixelsPerSecond === 0 && width > 0) this.#fit();
     this.#clampScroll();
     this.#viewChanged();
@@ -531,6 +558,7 @@ export class TimelineEditor {
     this.#snapshot = { ...this.#snapshot, selection: new Set(), cut: new Set() };
     this.#clipboard = [];
     this.#beforeFit = undefined;
+    this.pause();
     this.#refresh();
     if (this.#pixelsPerSecond === 0 && this.#width > 0) this.#fit();
     this.#clampScroll();
@@ -606,6 +634,25 @@ export class TimelineEditor {
     this.#savePreferences();
   }
 
+  toggleMultiSelecting(): void {
+    const multiSelecting = !this.#snapshot.multiSelecting;
+    this.#snapshot = { ...this.#snapshot, multiSelecting };
+    this.#emitter.emit();
+    this.#savePreferences();
+  }
+
+  /** While the divider is dragged. Saving waits for `saveHeaderWidth`. */
+  setHeaderWidth(width: number): void {
+    const headerWidth = clamp(Math.round(width), MIN_HEADER_WIDTH, MAX_HEADER_WIDTH);
+    if (headerWidth === this.#snapshot.headerWidth) return;
+    this.#snapshot = { ...this.#snapshot, headerWidth };
+    this.#emitter.emit();
+  }
+
+  saveHeaderWidth(): void {
+    this.#savePreferences();
+  }
+
   /** Clips that are there, and not on a locked track: nothing can be done with those. */
   #selectable(ids: Iterable<string>, model: TimelineModel | undefined): readonly string[] {
     return [...ids].filter(
@@ -622,6 +669,10 @@ export class TimelineEditor {
     this.#viewEmitter.emit();
   }
 
+  addToSelection(clip: string): void {
+    this.#select(new Set([...this.#snapshot.selection, clip]));
+  }
+
   selectOnly(clip: string): void {
     this.#select(new Set([clip]));
   }
@@ -636,7 +687,47 @@ export class TimelineEditor {
 
   /* The playhead. */
 
+  /** Starts over at the end of the timeline, like every player. */
+  togglePlayback(): void {
+    const { model } = this;
+    if (!model) return;
+    if (this.#snapshot.playing) {
+      this.pause();
+      return;
+    }
+    if (this.#frame >= frameAt(model.duration, model.rate)) this.seek(0);
+    this.#playback = undefined;
+    this.#setPlaying(true);
+  }
+
+  pause(): void {
+    if (this.#snapshot.playing) this.#setPlaying(false);
+  }
+
+  #setPlaying(playing: boolean): void {
+    this.#snapshot = { ...this.#snapshot, playing };
+    this.#emitter.emit();
+  }
+
+  /** The time from whoever keeps the clock. Later that is the audio, for now it is the screen. */
+  tick(milliseconds: number): void {
+    const { model } = this;
+    if (!model || !this.#snapshot.playing) return;
+    this.#playback ??= { frame: this.#frame, since: milliseconds };
+    const { frame, since } = this.#playback;
+    const next = frame + ((milliseconds - since) / 1000) * model.rate.fps;
+    const last = frameAt(model.duration, model.rate);
+    this.#seekTo(Math.min(next, last));
+    if (next >= last) this.pause();
+  }
+
+  /** Moves the playhead, and playing carries on from there. */
   seek(frame: number): void {
+    this.#playback = undefined;
+    this.#seekTo(frame);
+  }
+
+  #seekTo(frame: number): void {
     const model = this.model;
     if (!model) return;
     const last = frameAt(this.visibleDuration, model.rate);
@@ -1057,7 +1148,7 @@ export class TimelineEditor {
     }
     const { selection } = this.#snapshot;
     const wasSelected = selection.has(box.id);
-    const adding = pointer.shift || pointer.mod;
+    const adding = pointer.shift || pointer.mod || this.#snapshot.multiSelecting;
     if (!wasSelected) this.#select(new Set(adding ? [...selection, box.id] : [box.id]));
     // What a press on a selected clip means shows when it ends: it may be the start of a drag.
     const onClick = () => {
@@ -1112,6 +1203,9 @@ export class TimelineEditor {
       },
       get overwriting() {
         return snapshot().overwriting;
+      },
+      get multiSelecting() {
+        return snapshot().multiSelecting;
       },
       get frame() {
         return playhead();

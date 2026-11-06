@@ -6,6 +6,7 @@ import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import { ActionRegistry } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
+import { InputMode } from "./input-mode.ts";
 import { KeybindingService } from "./keybindings.ts";
 import type { Platform } from "./keys.ts";
 import { LayoutController, type WorkspaceDefinition } from "./layout.ts";
@@ -36,6 +37,7 @@ export class Workbench {
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
+  readonly input: InputMode;
   #changingProject = false;
 
   constructor({ host, t, version, platform, panels, workspaces }: WorkbenchOptions) {
@@ -60,6 +62,7 @@ export class Workbench {
       saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
+    this.input = new InputMode(host.settings);
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
@@ -76,6 +79,7 @@ export class Workbench {
       this.keybindings.load(),
       this.palette.load(),
       this.timeline.load(),
+      this.input.load(),
     ]);
     await this.session.restore();
   }
