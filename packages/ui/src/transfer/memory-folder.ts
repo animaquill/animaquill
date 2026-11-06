@@ -35,6 +35,8 @@ export class MemoryTarget implements TargetFolder {
   beforeWrite: ((path: string) => Promise<void> | void) | undefined;
   /** Some of it stays when taking it back. */
   stuck = false;
+  /** Says which paths this folder cannot have. */
+  refuses: (path: string) => boolean = () => false;
 
   constructor(name = "导出") {
     this.name = name;
@@ -43,9 +45,11 @@ export class MemoryTarget implements TargetFolder {
   async write(path: string, content: Blob, { signal, onProgress }: WriteOptions = {}) {
     await this.beforeWrite?.(path);
     signal?.throwIfAborted();
+    if (this.refuses(path)) return false;
     this.files.set(path, content);
     this.written.push(path);
     onProgress?.(content.size);
+    return true;
   }
 
   async remove(path: string) {

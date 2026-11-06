@@ -82,6 +82,8 @@ export function AssetsPanel() {
   const { store } = useSession();
   const project = useProject(store);
   const importing = useSyncExternalStore(media.subscribe, media.getImporting);
+  // A thumbnail gave up on a file that was not there, and starts over when one came back.
+  const restored = useSyncExternalStore(media.subscribe, media.getRestored);
   const [popup, setPopup] = useState<PopupState>();
   const [over, setOver] = useState(false);
   const assets = Object.entries(project?.assets ?? {}).filter(
@@ -154,7 +156,7 @@ export function AssetsPanel() {
               }}
             >
               <div className={styles.thumbnail}>
-                <Thumbnail id={id} asset={asset} />
+                <Thumbnail key={restored} id={id} asset={asset} />
                 {lengthOf(asset) && <span className={styles.length}>{lengthOf(asset)}</span>}
               </div>
               <span className={styles.name}>{asset.name}</span>

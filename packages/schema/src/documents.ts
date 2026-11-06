@@ -8,6 +8,7 @@ import {
   Rate,
   RelativePath,
   Time,
+  checkUnique,
   sortKeys,
 } from "./basics.ts";
 import { Value } from "./values.ts";
@@ -272,7 +273,8 @@ export const Notes = z.strictObject({
     .array(Note)
     .overwrite((notes) =>
       notes.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
-    ),
+    )
+    .superRefine((notes, context) => checkUnique(notes, context, (index) => [index, "id"])),
 });
 
 export type ProjectManifest = z.output<typeof ProjectManifest>;

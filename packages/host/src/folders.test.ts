@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isRefusedByChrome } from "./chrome-names.ts";
 import { createFolderAccess, sourceFromFiles, type FolderAccessOptions } from "./folders.ts";
 import type { SourceFolder, TargetFolder } from "./index.ts";
-import { folderNameFor } from "./paths.ts";
+import { FALLBACK_NAME, folderNameFor } from "./paths.ts";
 
 /** A file on a disk. As in the browser, writing goes to a copy that takes over on closing. */
 class FakeFile {
@@ -38,16 +39,24 @@ class FakeFile {
 const notFound = () => new DOMException("not here", "NotFoundError");
 const wrongKind = () => new DOMException("wrong kind", "TypeMismatchError");
 
+/** A folder on a disk, with what Chrome allows there: see isRefusedByChrome. */
 class FakeFolder {
   readonly kind = "directory";
   readonly name: string;
   readonly entries = new Map<string, FakeFolder | FakeFile>();
+  /** Stands for rules of a later browser, which nobody knows yet. */
+  refuses: (name: string) => boolean = isRefusedByChrome;
 
   constructor(name: string) {
     this.name = name;
   }
 
+  #check(name: string) {
+    if (this.refuses(name)) throw new TypeError("Name is not allowed.");
+  }
+
   async getDirectoryHandle(name: string, { create = false } = {}) {
+    this.#check(name);
     const entry = this.entries.get(name);
     if (entry instanceof FakeFile) throw wrongKind();
     if (entry) return entry;
@@ -58,6 +67,7 @@ class FakeFolder {
   }
 
   async getFileHandle(name: string, { create = false } = {}) {
+    this.#check(name);
     const entry = this.entries.get(name);
     if (entry instanceof FakeFolder) throw wrongKind();
     if (entry) return entry;
@@ -68,6 +78,7 @@ class FakeFolder {
   }
 
   async removeEntry(name: string, { recursive = false } = {}) {
+    this.#check(name);
     const entry = this.entries.get(name);
     if (!entry) throw notFound();
     if (entry instanceof FakeFolder && entry.entries.size > 0 && !recursive) {
@@ -77,7 +88,7 @@ class FakeFolder {
   }
 
   async *values() {
-    yield* this.entries.values();
+    for (const entry of this.entries.values()) if (!this.refuses(entry.name)) yield entry;
   }
 
   /** Follows a path, for looking at the result. */
@@ -210,6 +221,38 @@ describe("writing a folder", () => {
     expect(textOf(file)).toBe("旧的");
   });
 
+  it("stops in the middle of a file when asked to, and the file stays out", async () => {
+    const { access, disk } = setup();
+    const folder = await target(access);
+    await folder.write("a.bin", new Blob(["旧的"]));
+
+    const cancel = vi.fn<() => void>();
+    let sent = false;
+    const content = {
+      size: 1000,
+      stream: () =>
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (!sent) controller.enqueue(new Uint8Array(10));
+            sent = true;
+            // The rest of the file never comes: only stopping ends this.
+            return new Promise<void>(() => {});
+          },
+          cancel,
+        }),
+    } as unknown as Blob;
+    const controller = new AbortController();
+    const onProgress = vi.fn<(bytes: number) => void>(() => {
+      controller.abort(new DOMException("stop", "AbortError"));
+    });
+
+    const writing = folder.write("a.bin", content, { signal: controller.signal, onProgress });
+    await expect(writing).rejects.toThrow("stop");
+    expect(onProgress).toHaveBeenCalledWith(10);
+    expect(cancel).toHaveBeenCalled();
+    expect(textOf(disk.at("我的项目/a.bin"))).toBe("旧的");
+  });
+
   it("stops writing when asked to, and the file stays out", async () => {
     const { access, disk } = setup();
     const folder = await target(access);
@@ -250,44 +293,176 @@ describe("writing a folder", () => {
   ])("does not follow %s out of the folder", async (path) => {
     const { access, disk } = setup();
     const folder = await target(access);
-    await expect(folder.write(path, new Blob(["x"]))).rejects.toThrow(TypeError);
-    await expect(folder.remove(path)).rejects.toThrow(TypeError);
+    expect(await folder.write(path, new Blob(["x"]))).toBe(false);
+    await folder.remove(path);
     expect([...disk.entries.keys()]).toEqual(["我的项目"]);
+    expect((disk.at("我的项目") as FakeFolder).entries.size).toBe(0);
+  });
+
+  it.each([
+    ["aux.js", "code/aux.js"],
+    ["a folder of a reserved name", "scenes/con/index.html"],
+    ["a leading tilde", "scenes/title/~draft.html"],
+    ["a trailing tilde", "code/backup.js~"],
+    ["a joiner", "assets/👨\u200D👩\u200D👧.png"],
+    ["a shortcut", "assets/site.url"],
+  ])("says when the browser will not have %s, and goes on", async (_, path) => {
+    const { access, disk } = setup();
+    const folder = await target(access);
+    expect(await folder.write(path, new Blob(["x"]))).toBe(false);
+    expect(await folder.write("assets/a.mp4", new Blob(["内容"]))).toBe(true);
+    expect(textOf(disk.at("我的项目/assets/a.mp4"))).toBe("内容");
+  });
+
+  it("says when a file is where a folder has to be", async () => {
+    const { access, disk } = setup();
+    const folder = await target(access);
+    await folder.write("assets/a", new Blob(["文件"]));
+    expect(await folder.write("assets/a/b.mp4", new Blob(["x"]))).toBe(false);
+    expect(textOf(disk.at("我的项目/assets/a"))).toBe("文件");
+  });
+
+  it("does not take a failure of the disk for a refusal", async () => {
+    const { access, disk } = setup();
+    const folder = await target(access);
+    const root = disk.at("我的项目") as FakeFolder;
+    vi.spyOn(root, "getFileHandle").mockRejectedValue(new DOMException("gone", "NotFoundError"));
+    await expect(folder.write("a.bin", new Blob(["x"]))).rejects.toThrow("gone");
+  });
+});
+
+describe("a project name that becomes a folder", () => {
+  it.each([
+    ["第二集~"],
+    ["~草稿"],
+    ["你好~~"],
+    ["一家人👨\u200D👩\u200D👧"],
+    ["🏳\uFE0F\u200D🌈 彩虹"],
+    ["程序员🧑\u200D💻教程"],
+    ["项目\u3000"],
+    ["\u3000项目"],
+    ["复制的\u200B标题"],
+    ["\uFEFF标题\uFEFF"],
+    ["clock$"],
+    ["CLOCK$.备份"],
+    ["CON"],
+    ["com1"],
+    ["desktop.ini"],
+    ["Thumbs.db"],
+    ["官网.url"],
+    ["快捷.lnk"],
+    ["a.{abc}"],
+    ["\uFDD0坏字符"],
+    ["\uD83D断开的表情"],
+    ["行一\n行二"],
+    ["a:b"],
+    ["..."],
+    ["~"],
+    [" ~ . "],
+  ])("works for %j", async (name) => {
+    const { access, disk } = setup();
+    const folder = await target(access, name);
+    expect(isRefusedByChrome(folder.name)).toBe(false);
+    expect(await folder.write("animaquill.json", new Blob(["{}"]))).toBe(true);
+    expect(disk.at(`${folder.name}/animaquill.json`)).toBeDefined();
+  });
+
+  it("works whatever people call a project", async () => {
+    const pool = [
+      ...'~. \u3000\u200B\u200D\uFEFF:*?|<>"/\\\n\t',
+      ..."😀字aA0_-",
+      "\uD83D",
+      "\uFDD0",
+      "con",
+      "aux",
+      ".url",
+      "clock$",
+    ];
+    for (let round = 0; round < 500; round++) {
+      let name = "";
+      for (let index = 0; index < 1 + Math.random() * 12; index++) {
+        name += pool[Math.floor(Math.random() * pool.length)];
+      }
+      const { access } = setup();
+      const folder = await target(access, name);
+      expect(isRefusedByChrome(folder.name), JSON.stringify(name)).toBe(false);
+    }
+  });
+
+  it("falls back on a plain name when the browser has rules nobody knows yet", async () => {
+    const { access, disk } = setup();
+    disk.add(`${FALLBACK_NAME}/animaquill.json`, "重要的内容");
+    disk.refuses = (name) => name === "我的项目";
+    const folder = await target(access, "我的项目");
+    expect(folder.name).toBe(`${FALLBACK_NAME} (2)`);
+    expect(textOf(disk.at(`${FALLBACK_NAME}/animaquill.json`))).toBe("重要的内容");
+  });
+
+  it("does not take a failure of the disk for rules about names", async () => {
+    const { access, disk } = setup();
+    const failure = new DOMException("denied", "NotAllowedError");
+    vi.spyOn(disk, "getDirectoryHandle").mockRejectedValue(failure);
+    await expect(access.chooseTarget("我的项目")).rejects.toThrow("denied");
   });
 });
 
 describe("reading a folder", () => {
-  it("lists every file, with paths from the top of the folder", async () => {
-    const { access, disk, picker } = setup();
-    disk.add("animaquill.json", "{}");
-    disk.add("assets/视频/a.mp4", "内容");
-    const source = await access.chooseSource();
-    expect(source?.name).toBe("备份");
-    expect(await pathsIn(source)).toEqual(["animaquill.json", "assets/视频/a.mp4"]);
-    expect(picker).toHaveBeenCalledWith(expect.objectContaining({ mode: "read" }));
+  it("says that the browser will ask about uploading, which is how this way of choosing works", () => {
+    expect(setup().access.asksToUpload).toBe(true);
   });
 
-  it("reads a file when asked", async () => {
-    const { access, disk } = setup();
-    disk.add("assets/a.txt", "内容");
+  it("does not go through a dialog that hides files", async () => {
+    const files = [fileAt("项目/animaquill.json"), fileAt("项目/code/aux.js")];
+    const { access, disk, picker } = setup({ chooseFiles: async () => files });
+    disk.add("animaquill.json");
+    disk.add("code/aux.js");
+    const listed: string[] = [];
+    for await (const entry of (disk.at("code") as FakeFolder).values()) listed.push(entry.name);
+    expect(listed).toEqual([]);
+
+    expect(await pathsIn(await access.chooseSource())).toEqual(["animaquill.json", "code/aux.js"]);
+    expect(picker).not.toHaveBeenCalled();
+  });
+
+  it("gives every file, with paths from the top of the folder", async () => {
+    const files = [
+      fileAt("我的项目/animaquill.json", "{}"),
+      fileAt("我的项目/assets/视频/a.mp4", "内容"),
+      fileAt("我的项目/scenes/con/~草稿.html"),
+    ];
+    const { access } = setup({ chooseFiles: async () => files });
     const source = await access.chooseSource();
+    expect(source?.name).toBe("我的项目");
+    expect(await pathsIn(source)).toEqual([
+      "animaquill.json",
+      "assets/视频/a.mp4",
+      "scenes/con/~草稿.html",
+    ]);
     for await (const file of source?.files() ?? []) {
-      expect(await (await file.read()).text()).toBe("内容");
+      if (file.path.endsWith("a.mp4")) expect(await (await file.read()).text()).toBe("内容");
     }
   });
 
   it("stays out of what belongs to tools", async () => {
-    const { access, disk } = setup();
-    disk.add("animaquill.json");
-    disk.add(".git/objects/aa/bb");
-    disk.add(".animaquill/cache.bin");
-    disk.add("node_modules/a/index.js");
+    const files = [
+      fileAt("我的项目/animaquill.json"),
+      fileAt("我的项目/.git/objects/aa/bb"),
+      fileAt("我的项目/.animaquill/cache.bin"),
+      fileAt("我的项目/node_modules/a/index.js"),
+      fileAt("我的项目/code/node_modules/a/index.js"),
+    ];
+    const { access } = setup({ chooseFiles: async () => files });
     expect(await pathsIn(await access.chooseSource())).toEqual(["animaquill.json"]);
   });
 
   it("does nothing when people change their minds", async () => {
-    const { access } = setup({ picker: () => cancelled });
+    const { access, chooseFiles } = setup();
     expect(await access.chooseSource()).toBeUndefined();
+    expect(chooseFiles).toHaveBeenCalled();
+  });
+
+  it("is not left with nothing for an empty folder", () => {
+    expect(sourceFromFiles([]).name).toBe("");
   });
 });
 
@@ -298,32 +473,6 @@ const fileAt = (path: string, text = "") => {
 };
 
 describe("browsers that cannot give out folders", () => {
-  it("get a folder the old way, with the same paths", async () => {
-    const files = [
-      fileAt("我的项目/animaquill.json", "{}"),
-      fileAt("我的项目/assets/a.mp4", "内容"),
-      fileAt("我的项目/.git/config"),
-      fileAt("我的项目/node_modules/a/b.js"),
-    ];
-    const { access } = setup({ picker: () => undefined, chooseFiles: async () => files });
-    const source = await access.chooseSource();
-    expect(source?.name).toBe("我的项目");
-    expect(await pathsIn(source)).toEqual(["animaquill.json", "assets/a.mp4"]);
-    for await (const file of source?.files() ?? []) {
-      if (file.path === "assets/a.mp4") expect(await (await file.read()).text()).toBe("内容");
-    }
-  });
-
-  it("do nothing when people change their minds", async () => {
-    const { access, chooseFiles } = setup({ picker: () => undefined });
-    expect(await access.chooseSource()).toBeUndefined();
-    expect(chooseFiles).toHaveBeenCalled();
-  });
-
-  it("are not left with nothing for an empty folder", () => {
-    expect(sourceFromFiles([]).name).toBe("");
-  });
-
   it("get a zip file to save", async () => {
     const { access, saveFile } = setup({ picker: () => undefined });
     const folder = await target(access, "我的/项目");
@@ -355,13 +504,28 @@ describe("the name of a folder", () => {
     ["console", "console"],
     ["官网.url", "官网_url"],
     ["快捷方式.LNK", "快捷方式_LNK"],
+    ["第1~3集", "第1~3集"],
+    ["第二集~", "第二集"],
+    ["~第二集", "第二集"],
+    ["程序员🧑\u200D💻教程", "程序员🧑💻教程"],
+    ["项目\u3000", "项目"],
+    ["复制的\u200B标题", "复制的标题"],
+    ["clock$", "_clock$"],
+    ["a.b", "a.b"],
   ])("makes something every system takes of %j", (name, folder) => {
     expect(folderNameFor(name)).toBe(folder);
   });
 
-  it("stays short enough, without cutting a character in two", () => {
+  it("stays short enough for every disk, without cutting a character in two", () => {
     const name = folderNameFor("😀".repeat(200));
-    expect([...name]).toHaveLength(80);
+    expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(200);
     expect(name.endsWith("😀")).toBe(true);
+    expect(folderNameFor("字".repeat(66))).toHaveLength(66);
+    expect(folderNameFor("字".repeat(67))).toHaveLength(66);
+  });
+
+  it("does not end in what it would have to take away, after being cut", () => {
+    expect(folderNameFor(`${"字".repeat(66)}~${"字".repeat(10)}`)).toBe("字".repeat(66));
+    expect(folderNameFor(`${"a".repeat(199)}~字`)).toBe("a".repeat(199));
   });
 });

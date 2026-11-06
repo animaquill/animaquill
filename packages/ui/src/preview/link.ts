@@ -2,6 +2,7 @@ import { buildRenderPlan, type ProjectStore, type RenderPlan } from "@animaquill
 import type { ProjectLibrary } from "@animaquill/host";
 import type { FromCompositor, ToCompositor } from "@animaquill/render";
 import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
+import type { MediaLibrary } from "../media/library.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 
 /** Over this a frame misses the next refresh of a 60 Hz screen. */
@@ -30,6 +31,7 @@ export class PreviewLink {
     projects: ProjectLibrary,
     onProblem: (file: string) => void,
     diagnostics: DiagnosticsRecorder,
+    media: MediaLibrary,
   ) {
     this.#frame = frame;
     this.#timeline = timeline;
@@ -43,11 +45,14 @@ export class PreviewLink {
     // The timeline may get its model after the compositor said hello.
     const stopTimeline = timeline.subscribe(this.#sendAll);
     const stopDiagnostics = diagnostics.subscribe(this.#sendRecording);
+    // The compositor only asks for a file once.
+    const stopMedia = media.onRestored((hash) => void this.#sendFile(hash));
     this.#stop = () => {
       stopStore();
       stopView();
       stopTimeline();
       stopDiagnostics();
+      stopMedia();
       removeEventListener("message", this.#onMessage);
     };
   }

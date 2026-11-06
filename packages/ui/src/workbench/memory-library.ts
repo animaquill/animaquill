@@ -36,6 +36,9 @@ export class MemoryLibrary implements ProjectLibrary {
   readonly files = new Map<string, Blob>();
   /** Projects on their way in. */
   readonly incoming = new Set<string>();
+  /** What tells two projects with one id apart. */
+  readonly instances = new Map<string, number>();
+  #nextInstance = 1;
   failing = false;
   compactions = 0;
   /** Called while `load` reads, as if another window was writing at that moment. */
@@ -53,6 +56,7 @@ export class MemoryLibrary implements ProjectLibrary {
     if (this.summaries.has(id)) throw new Error("taken");
     this.summaries.set(id, { id, name, updatedAt: 1 });
     this.updates.set(id, [state]);
+    this.instances.set(id, this.#nextInstance++);
   }
 
   async receive({ id, name }: { id: string; name: string }): Promise<IncomingProject | undefined> {
@@ -76,6 +80,7 @@ export class MemoryLibrary implements ProjectLibrary {
     const listeners = this.listeners.get(id) ?? new Set();
     this.listeners.set(id, listeners);
     const own = new Set<(update: Uint8Array) => void>();
+    const instance = this.instances.get(id);
     return {
       load: async () => {
         const updates = [...(this.updates.get(id) ?? [])];
@@ -85,7 +90,7 @@ export class MemoryLibrary implements ProjectLibrary {
       append: async (update, name) => {
         if (this.failing) throw new Error("quota");
         const summary = this.summaries.get(id);
-        if (!summary) throw new Error("gone");
+        if (!summary || this.instances.get(id) !== instance) throw new Error("gone");
         await this.duringAppend?.();
         this.summaries.set(id, { ...summary, name });
         this.updates.get(id)?.push(update);
@@ -132,6 +137,7 @@ export class MemoryLibrary implements ProjectLibrary {
   async remove(id: string) {
     this.summaries.delete(id);
     this.updates.delete(id);
+    this.instances.delete(id);
     this.#removeFiles(id);
   }
 }

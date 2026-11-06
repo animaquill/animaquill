@@ -3,6 +3,7 @@ import type { FolderAccess, SourceFolder, TargetFolder } from "@animaquill/host"
 import { hashFile } from "@animaquill/media";
 import { createProject, readProject, stringifyDocument, type Asset } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { zipTarget } from "../../../host/src/zip.ts";
 import { loadFixture } from "../../../schema/scripts/fixture.ts";
 import { createI18n } from "../i18n/i18n.ts";
 import { Dialogs, type ProgressRequest } from "../workbench/dialogs.ts";
@@ -245,6 +246,145 @@ describe("exporting", () => {
     const picture = await target.files.get("assets/picture.bin")?.arrayBuffer();
     expect(new Uint8Array(picture as ArrayBuffer)).toEqual(PICTURE);
     expect(target.files.has(INCOMPLETE_FILE)).toBe(false);
+  });
+
+  it("takes two ways of writing one name for one place", async () => {
+    const window = await projectWithFiles();
+    await addAsset(window, "first", new Uint8Array([1]), { path: "assets/caf\u00E9.png" });
+    await addAsset(window, "second", new Uint8Array([2]), { path: "assets/cafe\u0301.png" });
+    const { target, notice } = await exportTo(window);
+    expect(notice.details?.[0]?.items).toEqual(["second.bin"]);
+    expect(target.files.has("assets/caf\u00E9.png")).toBe(true);
+    expect(target.files.has("assets/cafe\u0301.png")).toBe(false);
+  });
+
+  it("does not call one file with two entries left out", async () => {
+    const window = await projectWithFiles();
+    const first = assetsOf(window)["picture"];
+    await addAsset(window, "again", PICTURE, { kind: "image", path: first?.path as string });
+    const { target, notice } = await exportTo(window);
+    expect(notice.title).toBe("导出完成");
+    expect(notice.details).toEqual([]);
+    expect(target.written.filter((path) => path === first?.path)).toHaveLength(1);
+  });
+
+  it("does not call a text file that is also an asset left out", async () => {
+    const svg = "<svg/>";
+    const hash = await hashFile(new Blob([svg]));
+    const scene = { name: "标题", entry: "index.html", runtime: 1 };
+    const files: Map<string, string> = projectFiles((texts) => {
+      texts.set("scenes/s/scene.json", stringifyDocument(scene));
+      texts.set("scenes/s/logo.svg", svg);
+      const asset = { kind: "image", path: "scenes/s/logo.svg", storage: "local", hash };
+      texts.set("assets.json", stringifyDocument({ assets: { logo: asset } }));
+    });
+    const window = setup();
+    const report = await importFrom(window, folderOf(files));
+    expect(report?.missing).toEqual([]);
+    expect(report?.skipped).toEqual([]);
+
+    const { target, notice } = await exportTo(window);
+    expect(notice.title).toBe("导出完成");
+    expect(notice.details).toEqual([]);
+    expect(await target.text("scenes/s/logo.svg")).toBe(svg);
+  });
+
+  it("does not call a file missing that is in the folder as text", async () => {
+    const window = setup();
+    await window.session.create("我的项目");
+    const svg = "<svg/>";
+    window.session.store?.importFile("scenes/s/logo.svg", svg);
+    const asset = {
+      kind: "image",
+      path: "scenes/s/logo.svg",
+      storage: "local",
+      hash: await hashFile(new Blob([svg])),
+    };
+    window.session.store?.execute({ type: "asset.add", params: { id: "logo", asset } });
+    const { target, notice } = await exportTo(window);
+    expect(notice.title).toBe("导出完成");
+    expect(await target.text("scenes/s/logo.svg")).toBe(svg);
+  });
+
+  it("does say so when what is at the path of an asset is something else", async () => {
+    const window = await projectWithFiles();
+    const path = "scenes/s/logo.svg";
+    window.session.store?.importFile(path, "<svg>改过</svg>");
+    await addAsset(window, "logo", new Uint8Array([1, 2, 3]), { path });
+    const { target, notice } = await exportTo(window);
+    expect(notice.title).toBe("导出完成，但有内容没有带上");
+    expect(notice.details?.[0]?.items).toEqual(["logo.bin"]);
+    expect(await target.text(path)).toBe("<svg>改过</svg>");
+  });
+
+  it("does not call an asset without a known file the same as what is at its path", async () => {
+    const window = setup();
+    await window.session.create("我的项目");
+    window.session.store?.importFile("scenes/s/logo.svg", "<svg/>");
+    const asset = { kind: "image", path: "scenes/s/logo.svg", storage: "local" };
+    window.session.store?.execute({ type: "asset.add", params: { id: "logo", asset } });
+    const { notice } = await exportTo(window);
+    expect(notice.details?.[0]?.items).toEqual(["scenes/s/logo.svg"]);
+  });
+
+  it("leaves out what a folder cannot have, says so and goes on", async () => {
+    const window = await projectWithFiles();
+    window.session.store?.importFile("code/aux.js", "export {};");
+    window.session.store?.importFile("code/ok.js", "export {};");
+    const target = new MemoryTarget();
+    target.refuses = (path) => path === "code/aux.js" || path === "assets/video.bin";
+    const { notice } = await exportTo(window, target);
+
+    expect(notice.title).toBe("导出完成，但有内容没有带上");
+    expect(notice.details?.[0]?.items).toEqual(["video.bin", "code/aux.js"]);
+    expect(notice.details?.[0]?.title).toContain("不允许这样的名字");
+    expect(target.finished).toBe(true);
+    expect(target.files.has("code/ok.js")).toBe(true);
+    expect(target.files.has("animaquill.json")).toBe(true);
+    expect(target.files.has(INCOMPLETE_FILE)).toBe(false);
+  });
+
+  it("does not let a path a zip file cannot have stop the export", async () => {
+    const window = await projectWithFiles();
+    window.session.store?.importFile("code/a\\b.js", "export {};");
+    const save = vi.fn<(file: Blob, name: string) => void>();
+    window.next.target = zipTarget("我的项目", save);
+    const exporting = window.transfer.exportProject();
+    const notice = await window.readDialog();
+    await exporting;
+    expect(notice.title).toBe("导出完成，但有内容没有带上");
+    expect(notice.details?.[0]?.items).toEqual(["code/a\\b.js"]);
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("says when what a folder cannot have keeps it from coming back in", async () => {
+    const files = projectFiles((texts) => {
+      const manifest = JSON.parse(texts.get("animaquill.json") as string);
+      manifest.timelines.push("con");
+      texts.set("animaquill.json", JSON.stringify(manifest));
+      texts.set("timelines/con/timeline.json", texts.get("timelines/main/timeline.json") as string);
+    });
+    const window = setup();
+    await importFrom(window, folderOf(files));
+    const target = new MemoryTarget();
+    target.refuses = (path) => path.startsWith("timelines/con/");
+    const { notice } = await exportTo(window, target);
+
+    expect(notice.details?.[0]?.items).toEqual(["timelines/con/timeline.json"]);
+    expect(notice.details?.[1]?.title).toContain("再导入时可能被拒绝");
+    expect(notice.details?.[1]?.items.join()).toContain("没有这条时间轴：con");
+  });
+
+  it("says when a project would not come back in, which only reading it again shows", async () => {
+    const window = await projectWithFiles();
+    const manifest = window.session.store?.doc.getMap("project").get("manifest") as {
+      set(key: string, value: unknown): void;
+    };
+    manifest.set("timelines", ["main", "ghost"]);
+    const { target, notice } = await exportTo(window);
+    expect(notice.title).toBe("导出完成，但有内容没有带上");
+    expect(notice.details?.at(-1)?.items.join()).toContain("没有这条时间轴：ghost");
+    expect(target.finished).toBe(true);
   });
 
   it("does not let one file replace another on a disk that ignores case", async () => {
@@ -588,6 +728,83 @@ describe("importing", () => {
   });
 });
 
+describe("a browser that asks whether a folder may be uploaded", () => {
+  const HINT = "浏览器接下来会问是否“上传”，这只是读取，文件不会离开这台电脑。";
+
+  /** Choosing goes on until `answer` runs. */
+  function asking(asksToUpload: boolean | undefined) {
+    const window = setup();
+    let answer: (source: SourceFolder | undefined) => void = () => {};
+    const chooseSource = vi.fn(
+      () => new Promise<SourceFolder | undefined>((resolve) => (answer = resolve)),
+    );
+    const transfer = new ProjectTransfer({
+      folders: {
+        ...(asksToUpload === undefined ? {} : { asksToUpload }),
+        chooseSource,
+        chooseTarget: async () => undefined,
+      },
+      projects: window.library,
+      session: window.session,
+      dialogs: window.dialogs,
+      notifications: window.notifications,
+      t,
+    });
+    return { ...window, transfer, chooseSource, answer: (source?: SourceFolder) => answer(source) };
+  }
+
+  it("says what that means for as long as people are choosing", async () => {
+    vi.useFakeTimers();
+    const { transfer, notices, answer } = asking(true);
+    const importing = transfer.importProject();
+    expect(notices()).toEqual([HINT]);
+    // What the browser asks comes after the dialog, and people can take their time there.
+    vi.advanceTimersByTime(60_000);
+    expect(notices()).toEqual([HINT]);
+    answer(folderOf(projectFiles()));
+    vi.useRealTimers();
+    expect((await importing)?.name).toBe("文件夹里的项目");
+    expect(notices()).toEqual([]);
+  });
+
+  it("goes away when people change their minds", async () => {
+    const { transfer, notices, answer } = asking(true);
+    const importing = transfer.importProject();
+    answer();
+    await importing;
+    expect(notices()).toEqual([]);
+  });
+
+  it("goes away when the browser gives no folder", async () => {
+    const window = setup();
+    const transfer = new ProjectTransfer({
+      folders: {
+        asksToUpload: true,
+        chooseSource: () => Promise.reject(new DOMException("denied", "NotAllowedError")),
+        chooseTarget: async () => undefined,
+      },
+      projects: window.library,
+      session: window.session,
+      dialogs: window.dialogs,
+      notifications: window.notifications,
+      t,
+    });
+    const importing = transfer.importProject();
+    expect((await window.readDialog()).title).toBe("导入没有完成");
+    await importing;
+    expect(window.notices()).toEqual([]);
+  });
+
+  it.each([false, undefined])("says nothing where the host asks no such thing", async (asks) => {
+    const { transfer, notices, chooseSource, answer } = asking(asks);
+    const importing = transfer.importProject();
+    expect(chooseSource).toHaveBeenCalledOnce();
+    expect(notices()).toEqual([]);
+    answer();
+    await importing;
+  });
+});
+
 describe("files that are missing or different", () => {
   const CONTENT = new Blob([VIDEO]);
 
@@ -603,7 +820,7 @@ describe("files that are missing or different", () => {
     const notice = await window.readDialog();
     await announcing;
     expect(notice.details?.[0]?.items).toEqual(["采访.mp4"]);
-    expect(notice.message).toContain("放回文件夹");
+    expect(notice.message).toContain("在素材库里导入同样的文件");
   });
 
   it("does not take in a file that is not the file the project knows", async () => {
@@ -733,6 +950,13 @@ describe("scene files", () => {
     expect(await target.text("code/lib/深的路径/a.js")).toBe("export const a = 1;");
   });
 
+  it("are missed when a scene has no entry, which is all a link leaves behind", async () => {
+    const report = await importFrom(setup(), scene([["scenes/title/other.html", "<html></html>"]]));
+    expect(report?.warnings).toEqual([
+      expect.objectContaining({ code: "entry-missing", file: "scenes/title/index.html" }),
+    ]);
+  });
+
   it("stay out with a word when they are no text, instead of coming in damaged", async () => {
     const window = setup();
     const report = await importFrom(
@@ -754,6 +978,51 @@ describe("scene files", () => {
       scene([["code/huge.js", new Blob([new Uint8Array(33 * 1024 ** 2)])] as never]),
     );
     expect(report?.skipped).toEqual(["code/huge.js"]);
+  });
+
+  it("say so at the export already when they are too large to come back", async () => {
+    const window = setup();
+    await window.session.create("我的项目");
+    window.session.store?.importFile("code/huge.js", "x".repeat(33 * 1024 ** 2));
+    window.session.store?.importFile("code/small.js", "x");
+    const { target, notice } = await exportTo(window);
+
+    expect(notice.title).toBe("导出完成");
+    expect(notice.details).toEqual([
+      expect.objectContaining({
+        title: expect.stringContaining("再导入时不会带进来"),
+        items: ["code/huge.js"],
+      }),
+    ]);
+    expect(target.files.get("code/huge.js")?.size).toBe(33 * 1024 ** 2);
+  });
+});
+
+describe("a project that is larger than anybody expected", () => {
+  it("comes back whole, however large its documents are", { timeout: 60_000 }, async () => {
+    const text = "字".repeat(12 * 1024 ** 2);
+    const note = {
+      id: "note_big",
+      status: "pending",
+      text,
+      timeline: "main",
+      time: "0",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const files = projectFiles((texts) => {
+      texts.set("notes.json", JSON.stringify({ notes: [note] }));
+    });
+    expect(new Blob([files.get("notes.json") as string]).size).toBeGreaterThan(32 * 1024 ** 2);
+
+    const first = setup();
+    expect((await importFrom(first, folderOf(files)))?.skipped).toEqual([]);
+    const { target, notice } = await exportTo(first);
+    expect(notice.title).toBe("导出完成");
+
+    const second = setup();
+    const report = await importFrom(second, target.asSource());
+    expect(report?.skipped).toEqual([]);
+    expect(second.session.store?.getState().notes?.["note_big"]?.text).toHaveLength(text.length);
   });
 });
 
@@ -831,6 +1100,71 @@ describe("a folder that cannot come in", () => {
     const notice = await refused(state.window, folderOf(files));
     expect(notice.message).toContain("没有导入");
     expect(notice.details?.[0]?.items.join()).toContain("timelines/main/timeline.json");
+    expectNothingChanged(state);
+  });
+
+  const note = (id: string, text: string) => ({
+    id,
+    status: "pending",
+    text,
+    timeline: "main",
+    time: "0",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  it("refuses two notes with one id, of which only one could stay", async () => {
+    const state = await withProject();
+    const files = projectFiles((texts) => {
+      const notes = [note("n1", "第一条"), note("n1", "第二条"), note("n2", "第三条")];
+      texts.set("notes.json", stringifyDocument({ notes }));
+    });
+    const notice = await refused(state.window, folderOf(files));
+    expect(notice.details?.[0]?.items.join()).toContain("notes.json");
+    expect(notice.details?.[0]?.items.join()).toContain("ID 重复：n1");
+    expectNothingChanged(state);
+  });
+
+  it("refuses two markers or transitions with one id", async () => {
+    const state = await withProject();
+    const files = projectFiles((texts) => {
+      const timeline = JSON.parse(texts.get("timelines/main/timeline.json") as string);
+      timeline.markers = [
+        { id: "m", time: "1", name: "一" },
+        { id: "m", time: "2", name: "二" },
+      ];
+      const color = { kind: "color", color: "#ff0000" };
+      timeline.tracks = [
+        {
+          id: "v",
+          kind: "video",
+          clips: [
+            { id: "a", start: "0", duration: "1", source: color },
+            { id: "b", start: "1", duration: "1", source: color },
+          ],
+          transitions: [
+            { id: "tr", type: "fade", from: "a", to: "b", duration: "1" },
+            { id: "tr", type: "wipe", from: "a", to: "b", duration: "1" },
+          ],
+        },
+      ];
+      texts.set("timelines/main/timeline.json", JSON.stringify(timeline));
+    });
+    const notice = await refused(state.window, folderOf(files));
+    const items = notice.details?.[0]?.items.join("\n");
+    expect(items).toContain("markers.1.id");
+    expect(items).toContain("tracks.0.transitions.1.id");
+    expectNothingChanged(state);
+  });
+
+  it("refuses a name that a project could not keep, instead of losing it", async () => {
+    const state = await withProject();
+    const scene = stringifyDocument({ name: "标题", entry: "index.html", runtime: 1 });
+    const files = projectFiles((texts) => {
+      texts.set("scenes/__proto__/scene.json", scene);
+      texts.set("scenes/ok/scene.json", scene);
+    });
+    const notice = await refused(state.window, folderOf(files));
+    expect(notice.details?.[0]?.items.join()).toContain("scenes/__proto__/scene.json");
     expectNothingChanged(state);
   });
 

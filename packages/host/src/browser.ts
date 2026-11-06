@@ -32,10 +32,18 @@ interface UpdateRecord {
   readonly update: Uint8Array;
 }
 
-/** A project that is still on its way in holds on to its id, and stays out of the list. */
 interface ProjectRecord extends ProjectSummary {
+  /** A project that is still on its way in holds on to its id, and stays out of the list. */
   readonly incoming?: true;
+  /**
+   * Different for every project, also for two that have the same id one after the other, so that a
+   * window of the first one does not take the second one for its own. Projects saved before this
+   * was added have none, and go on working: nothing else can be without one.
+   */
+  readonly instance?: string;
 }
+
+const newInstance = () => crypto.getRandomValues(new Uint32Array(4)).join("-");
 
 const resultOf = <T>(request: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
@@ -103,8 +111,15 @@ function channelFor(id: string): BroadcastChannel | undefined {
     : new BroadcastChannel(`${PREFIX}project.${id}`);
 }
 
-function openLog(database: () => Promise<IDBDatabase>, id: string): ProjectLog {
-  const channel = channelFor(id);
+function openLog(
+  database: () => Promise<IDBDatabase>,
+  id: string,
+  instance: string | undefined,
+): ProjectLog {
+  // Windows on another project with this id have nothing to say to this one.
+  const channel = channelFor(instance === undefined ? id : `${id}.${instance}`);
+  const isOurs = (record: ProjectRecord | undefined) =>
+    record !== undefined && !record.incoming && record.instance === instance;
 
   return {
     async load() {
@@ -123,9 +138,10 @@ function openLog(database: () => Promise<IDBDatabase>, id: string): ProjectLog {
       const projects = transaction.objectStore(PROJECTS);
       const read = projects.get(id);
       read.addEventListener("success", () => {
-        const summary = read.result as ProjectSummary | undefined;
-        // Writing on would leave data behind that nothing can ever reach.
-        if (summary) projects.put({ ...summary, name, updatedAt: Date.now() });
+        const record = read.result as ProjectRecord | undefined;
+        // Writing on would leave data behind that nothing can ever reach, and to a project that
+        // has taken over the id it would be changes to a document it does not have.
+        if (isOurs(record)) projects.put({ ...record, name, updatedAt: Date.now() });
         else transaction.abort();
       });
       await committed(transaction);
@@ -133,12 +149,13 @@ function openLog(database: () => Promise<IDBDatabase>, id: string): ProjectLog {
       channel?.postMessage(update);
     },
     async compact(merge) {
-      const transaction = (await database()).transaction(UPDATES, "readwrite");
+      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
       const updates = transaction.objectStore(UPDATES);
+      const owner = transaction.objectStore(PROJECTS).get(id);
       const read = updates.index(BY_PROJECT).getAll(id);
       read.addEventListener("success", () => {
         const records = read.result as UpdateRecord[];
-        if (records.length < 2) return;
+        if (records.length < 2 || !isOurs(owner.result as ProjectRecord | undefined)) return;
         const merged = merge(records.map((record) => record.update));
         for (const record of records) updates.delete(record.seq as number);
         updates.add({ project: id, update: merged } satisfies UpdateRecord);
@@ -238,14 +255,14 @@ function createLibrary(
   };
 
   /** Resolves to whether the id was free. */
-  const claim = async (id: string, name: string) => {
+  const claim = async (id: string, name: string, instance: string) => {
     const transaction = (await database()).transaction(PROJECTS, "readwrite");
     const projects = transaction.objectStore(PROJECTS);
     const read = projects.get(id);
     let free = false;
     read.addEventListener("success", () => {
       free = read.result === undefined;
-      const record: ProjectRecord = { id, name, updatedAt: Date.now(), incoming: true };
+      const record: ProjectRecord = { id, name, updatedAt: Date.now(), incoming: true, instance };
       if (free) projects.add(record);
     });
     await committed(transaction);
@@ -269,8 +286,9 @@ function createLibrary(
       // The lock comes first, so that a record of this project always has somebody holding it.
       const release = locks ? await hold(locks, incomingLock(id)) : () => {};
       if (!release) return undefined;
+      const instance = newInstance();
       try {
-        if (!(await claim(id, name))) {
+        if (!(await claim(id, name, instance))) {
           release();
           return undefined;
         }
@@ -284,8 +302,8 @@ function createLibrary(
           const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
             durability: "strict",
           });
-          const summary: ProjectSummary = { id, name, updatedAt: Date.now() };
-          transaction.objectStore(PROJECTS).put(summary);
+          const record: ProjectRecord = { id, name, updatedAt: Date.now(), instance };
+          transaction.objectStore(PROJECTS).put(record);
           transaction
             .objectStore(UPDATES)
             .add({ project: id, update: state } satisfies UpdateRecord);
@@ -304,8 +322,8 @@ function createLibrary(
     },
     async create({ id, name }, state) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
-      const summary: ProjectSummary = { id, name, updatedAt: Date.now() };
-      transaction.objectStore(PROJECTS).add(summary);
+      const record: ProjectRecord = { id, name, updatedAt: Date.now(), instance: newInstance() };
+      transaction.objectStore(PROJECTS).add(record);
       transaction.objectStore(UPDATES).add({ project: id, update: state } satisfies UpdateRecord);
       await committed(transaction);
     },
@@ -313,7 +331,10 @@ function createLibrary(
       // Without this the browser may clear the data when it runs short of space. The answer can
       // change as the site gets used, so it is worth asking every time.
       void navigator.storage?.persist?.()?.catch(() => {});
-      return openLog(database, id);
+      const transaction = (await database()).transaction(PROJECTS);
+      const request = transaction.objectStore(PROJECTS).get(id);
+      const record = await resultOf<ProjectRecord | undefined>(request);
+      return openLog(database, id, record?.instance);
     },
     media: (id) => openMedia(database, id),
     async remove(id) {

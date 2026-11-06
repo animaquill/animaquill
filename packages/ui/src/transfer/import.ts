@@ -11,12 +11,10 @@ import {
   type Project,
 } from "@animaquill/schema";
 import type { TFunction } from "i18next";
-import { INCOMPLETE_FILE, type TransferStep } from "./export.ts";
+import { INCOMPLETE_FILE, MAX_SOURCE_BYTES, type TransferStep } from "./export.ts";
 
 /** Nobody keeps this many files in a project: this is a whole disk chosen by mistake. */
 const MAX_FILES = 100_000;
-/** Text files are read into memory. A larger one is not what it claims to be. */
-const MAX_TEXT_BYTES = 32 * 1024 ** 2;
 /** What systems leave in folders, which is not worth a word to anybody. */
 const CLUTTER = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|[^/]*\.crswap)$/i;
 
@@ -85,17 +83,12 @@ async function list(
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
-/** Resolves to undefined and leaves a reason for what is no text, or none worth the memory. */
+/** Resolves to undefined and leaves a reason for what is no text. */
 async function readText(
-  entry: FolderFile,
+  file: File,
   t: TFunction,
   refuse: (message: string) => void,
 ): Promise<string | undefined> {
-  const file = await entry.read();
-  if (file.size > MAX_TEXT_BYTES) {
-    refuse(t("transfer.textTooLarge"));
-    return undefined;
-  }
   const bytes = await file.arrayBuffer();
   try {
     // The text of a file stays what it is. A file that is no text would come out damaged.
@@ -139,7 +132,12 @@ export async function readProjectFolder(
     }
     signal?.throwIfAborted();
     onStep?.({ file: path, done: 0, total: 0 });
-    const text = await readText(entry, t, (message) => {
+    const file = await entry.read();
+    if (!isDocument && file.size > MAX_SOURCE_BYTES) {
+      skipped.add(path);
+      continue;
+    }
+    const text = await readText(file, t, (message) => {
       if (isDocument) problems.push(unreadable(path, message));
       else skipped.add(path);
     });
@@ -159,12 +157,27 @@ export async function readProjectFolder(
     if (!kept.has(path) && !isSourceFile(path)) skipped.add(path);
   }
   for (const { path } of Object.values(project.assets?.assets ?? {})) skipped.delete(path);
+
+  // Browsers do not show links in a folder, so what a project needs can be gone without a trace.
+  const entries = [
+    ...[...project.scenes].map(([id, { entry }]) => `scenes/${id}/${entry}`),
+    ...[...project.sounds].map(([id, { entry }]) => `sounds/${id}/${entry}`),
+  ];
+  const withoutEntry = entries.filter((path) => !texts.has(path));
   return {
     project,
     sources: Object.fromEntries([...texts].filter(([path]) => isSourceFile(path))),
     files,
     skipped: [...skipped].toSorted(),
-    warnings: found.filter((problem) => problem.severity !== "error"),
+    warnings: [
+      ...found.filter((problem) => problem.severity !== "error"),
+      ...withoutEntry.map((file): Problem => ({
+        severity: "warning",
+        code: "entry-missing",
+        file,
+        message: t("transfer.entryMissing"),
+      })),
+    ],
   };
 }
 

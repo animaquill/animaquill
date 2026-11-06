@@ -89,6 +89,23 @@ export function sortByTime<T extends { readonly id: string }>(
 export const sortById = <T extends { readonly id: string }>(items: T[]): T[] =>
   items.toSorted((a, b) => a.id.localeCompare(b.id));
 
+/**
+ * Reports ids that come twice. In a project these things are kept by id, so the second one would be
+ * gone without a word.
+ */
+export function checkUnique(
+  items: readonly { readonly id: string }[],
+  context: { addIssue(issue: { code: "custom"; path: PropertyKey[]; message: string }): void },
+  path: (index: number) => PropertyKey[],
+  seen = new Set<string>(),
+): void {
+  items.forEach(({ id }, index) => {
+    if (seen.has(id))
+      context.addIssue({ code: "custom", path: path(index), message: `ID 重复：${id}` });
+    seen.add(id);
+  });
+}
+
 /** Sorts the keys of a map, so that a file does not change just because of insertion order. */
 export function sortKeys<T>(map: Record<string, T>): Record<string, T> {
   const sorted: Record<string, T> = {};

@@ -16,11 +16,13 @@ export class Notifications {
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): readonly Notification[] => this.#items;
 
-  push(message: string): void {
+  /** Goes away by itself, unless it has to stay until whoever asked for it dismisses it. */
+  push(message: string, { stays = false } = {}): number {
     const id = this.#nextId++;
     this.#items = [...this.#items, { id, message }];
     this.#emitter.emit();
-    setTimeout(() => this.dismiss(id), LIFETIME_MS);
+    if (!stays) setTimeout(() => this.dismiss(id), LIFETIME_MS);
+    return id;
   }
 
   dismiss(id: number): void {

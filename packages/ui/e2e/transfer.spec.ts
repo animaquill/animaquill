@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
+import { isRefusedByChrome } from "../../host/src/chrome-names.ts";
+import { folderNameFor } from "../../host/src/paths.ts";
 import { content, createProject, expect, tab, test } from "./support.ts";
 
 const PNG = Buffer.from(
@@ -56,9 +58,14 @@ declare global {
     release: (() => void) | undefined;
     /** Writing a file with this name fails. */
     failFile: string | undefined;
+    /** Names that are refused, as on a disk. The private folder of a site has no such rules. */
+    refusedNames: readonly string[];
     /** Folders cannot be removed. */
     stuck: boolean;
     sounds: number;
+    /** A folder on the disk. */
+    real: FileSystemDirectoryHandle;
+    realHandle: Promise<FileSystemHandle | null> | undefined;
   }
 }
 
@@ -88,10 +95,14 @@ const installFolders = (page: Page) =>
       }
       return createWritable.apply(this, args);
     };
-    const { removeEntry } = FileSystemDirectoryHandle.prototype;
+    const { removeEntry, getFileHandle } = FileSystemDirectoryHandle.prototype;
     FileSystemDirectoryHandle.prototype.removeEntry = async function remove(...args) {
       if (window.stuck) throw new DOMException("in use", "NoModificationAllowedError");
       await removeEntry.apply(this, args);
+    };
+    FileSystemDirectoryHandle.prototype.getFileHandle = async function get(name, options) {
+      if (window.refusedNames?.includes(name)) throw new TypeError("Name is not allowed.");
+      return getFileHandle.call(this, name, options);
     };
   });
 
@@ -135,19 +146,6 @@ const folderNames = (page: Page, folder: string) =>
     return names.toSorted();
   }, folder);
 
-const writeFile = (page: Page, folder: string, name: string, text: string) =>
-  page.evaluate(
-    async ([path, file, body]) => {
-      let root = await navigator.storage.getDirectory();
-      for (const part of (path as string).split("/")) root = await root.getDirectoryHandle(part);
-      const handle = await root.getFileHandle(file as string, { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(body as string);
-      await writable.close();
-    },
-    [folder, name, text],
-  );
-
 const readText = (page: Page, folder: string, name: string) =>
   page.evaluate(
     async ([path, file]) => {
@@ -158,13 +156,92 @@ const readText = (page: Page, folder: string, name: string) =>
     [folder, name],
   );
 
-const removeFile = (page: Page, path: string) =>
-  page.evaluate(async (target) => {
-    const parts = target.split("/");
-    let folder = await navigator.storage.getDirectory();
-    for (const part of parts.slice(0, -1)) folder = await folder.getDirectoryHandle(part);
-    await folder.removeEntry(parts.at(-1) as string);
-  }, path);
+/** Moves an exported folder to a real one, which is what people can choose to bring in. */
+async function toDisk(page: Page, folder: string): Promise<string> {
+  const contents = await page.evaluate(async (path) => {
+    let root = await navigator.storage.getDirectory();
+    for (const part of path.split("/")) root = await root.getDirectoryHandle(part);
+    const result: Record<string, number[]> = {};
+    const walk = async (current: FileSystemDirectoryHandle, prefix: string) => {
+      for await (const handle of current.values()) {
+        if (handle.kind === "directory") await walk(handle, `${prefix}${handle.name}/`);
+        else {
+          const bytes = await (await handle.getFile()).arrayBuffer();
+          result[`${prefix}${handle.name}`] = [...new Uint8Array(bytes)];
+        }
+      }
+    };
+    await walk(root, "");
+    return result;
+  }, folder);
+  const disk = join(mkdtempSync(join(tmpdir(), "animaquill-")), folder.split("/").at(-1) as string);
+  for (const [path, bytes] of Object.entries(contents)) {
+    mkdirSync(dirname(join(disk, path)), { recursive: true });
+    writeFileSync(join(disk, path), Buffer.from(bytes));
+  }
+  return disk;
+}
+
+/** The same dialog people get, and the same files. */
+async function chooseFolder(page: Page, folder: string, start: () => Promise<unknown>) {
+  const chooser = page.waitForEvent("filechooser");
+  await start();
+  await (await chooser).setFiles(folder);
+}
+
+const importButton = (page: Page) => page.getByRole("button", { name: "导入项目文件夹" });
+const importFrom = (page: Page, folder: string) =>
+  chooseFolder(page, folder, () => startImport(page));
+const importFromStart = (page: Page, folder: string) =>
+  chooseFolder(page, folder, () => importButton(page).click());
+
+/** Lets a test get at a folder on the disk the way a page does, which a dialog does not allow. */
+async function holdRealFolder(page: Page, folder: string) {
+  await page.evaluate(() => {
+    const stop = (event: Event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("dragover", stop, true);
+    window.addEventListener(
+      "drop",
+      (event) => {
+        stop(event);
+        const item = event.dataTransfer?.items[0] as DataTransferItem & {
+          getAsFileSystemHandle(): Promise<FileSystemHandle | null>;
+        };
+        window.realHandle = item.getAsFileSystemHandle();
+      },
+      true,
+    );
+  });
+  const client = await page.context().newCDPSession(page);
+  const data = { items: [], files: [folder], dragOperationsMask: 1 };
+  for (const type of ["dragEnter", "dragOver", "drop"] as const) {
+    await client.send("Input.dispatchDragEvent", { type, x: 300, y: 300, data });
+  }
+  await page.waitForFunction(() => window.realHandle !== undefined);
+  await page.evaluate(async () => {
+    window.real = (await window.realHandle) as FileSystemDirectoryHandle;
+  });
+}
+
+/** How the browser answers for names in that folder. */
+const answersFor = (page: Page, names: readonly string[]) =>
+  page.evaluate(
+    (list) =>
+      Promise.all(
+        list.map(async (name) => {
+          try {
+            await window.real.getDirectoryHandle(name);
+            return "there";
+          } catch (error) {
+            return (error as Error).name;
+          }
+        }),
+      ),
+    [...names],
+  );
 
 async function chooseFrom(page: Page, menu: string, item: string) {
   await page.locator("header").getByRole("button", { name: menu, exact: true }).click();
@@ -208,6 +285,12 @@ async function buildProject(page: Page) {
 }
 
 const saved = (page: Page) => expect(page.locator("footer").getByText("已保存")).toBeVisible();
+
+async function renameTo(page: Page, name: string) {
+  await chooseFrom(page, "文件", "重命名项目");
+  await page.getByRole("textbox", { name: "项目名称" }).fill(name);
+  await page.keyboard.press("Enter");
+}
 
 async function removeProject(page: Page, name: string) {
   await chooseFrom(page, "文件", "关闭项目");
@@ -263,6 +346,9 @@ const stored = (page: Page) =>
   );
 
 test.describe("a project that travels", () => {
+  test.use({ onDisk: true });
+  test.describe.configure({ timeout: 90_000 });
+
   test.beforeEach(async ({ page }) => {
     await useFolders(page);
   });
@@ -291,11 +377,11 @@ test.describe("a project that travels", () => {
     expect(Object.keys(exported)).toContain("animaquill.json");
     expect(Object.keys(exported)).toContain("assets.json");
     expect(Object.keys(exported)).not.toContain("导出未完成.txt");
+    const folder = await toDisk(page, "chosen/测试项目");
 
     await removeProject(page, "测试项目");
     expect((await stored(page)).media).toBe(0);
-    await choose(page, "chosen/测试项目");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
 
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
     await expect(dialog(page)).toHaveCount(0);
@@ -323,29 +409,36 @@ test.describe("a project that travels", () => {
     expect(await readFolder(page, "again/测试项目")).toEqual(exported);
   });
 
-  test("comes back after a reload, with its files", async ({ page }) => {
+  test("is still all there after a reload, without the folder it came from", async ({ page }) => {
     await buildProject(page);
     await exportProject(page);
+    const folder = await toDisk(page, "chosen/测试项目");
     await removeProject(page, "测试项目");
-    await choose(page, "chosen/测试项目");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
     await expect(tab(page, "preview")).toBeVisible();
+    await saved(page);
+    rmSync(folder, { recursive: true, force: true });
+
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
     await expect.poll(() => isRed(page)).toBe(true);
+    await choose(page, "again");
+    await exportProject(page);
+    const exported = await readFolder(page, "again/测试项目");
+    expect(Object.keys(exported).filter((path) => path.startsWith("assets/"))).toHaveLength(3);
   });
 
   test("does not take the place of the project it came from", async ({ page }) => {
     await buildProject(page);
     await exportProject(page);
+    const folder = await toDisk(page, "chosen/测试项目");
     await chooseFrom(page, "文件", "重命名项目");
     await page.getByRole("textbox", { name: "项目名称" }).fill("原来的项目");
     await page.keyboard.press("Enter");
     await saved(page);
     const before = await stored(page);
 
-    await choose(page, "chosen/测试项目");
-    await startImport(page);
+    await importFrom(page, folder);
     await expect(dialog(page).getByText("这次导入成了副本")).toBeVisible();
     await closeDialog(page);
 
@@ -383,25 +476,30 @@ test.describe("a project that travels", () => {
     expect(await readFolder(page, "chosen/测试项目")).toEqual(first);
   });
 
+  const assetsIn = (folder: string) =>
+    Object.values(
+      (
+        JSON.parse(readFileSync(join(folder, "assets.json"), "utf8")) as {
+          assets: Record<string, { name: string; path: string }>;
+        }
+      ).assets,
+    );
+
   test("opens without the files that are gone, and lists them", async ({ page }) => {
     await buildProject(page);
     await exportProject(page);
-    const exported = await readFolder(page, "chosen/测试项目");
-    const assets = JSON.parse(await readText(page, "chosen/测试项目", "assets.json")) as {
-      assets: Record<string, { name: string; path: string }>;
-    };
-    const video = Object.values(assets.assets).find(({ name }) => name === "红色.webm");
-    await removeFile(page, `chosen/测试项目/${video?.path}`);
-    expect(Object.keys(exported)).toContain(video?.path);
+    const folder = await toDisk(page, "chosen/测试项目");
+    const video = assetsIn(folder).find(({ name }) => name === "红色.webm");
+    rmSync(join(folder, video?.path as string));
 
     await removeProject(page, "测试项目");
-    await choose(page, "chosen/测试项目");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
 
     const report = dialog(page);
     await expect(report.getByRole("heading", { name: "项目已导入" })).toBeVisible();
     await expect(report.getByText("这些素材的文件不在文件夹里（1）")).toBeVisible();
     await expect(report.getByRole("listitem")).toHaveText(["红色.webm"]);
+    await expect(report.getByText("在素材库里导入同样的文件")).toBeVisible();
     await closeDialog(page);
 
     await tab(page, "timeline").click();
@@ -417,8 +515,37 @@ test.describe("a project that travels", () => {
     await closeDialog(page);
   });
 
+  test("gets a missing file back by bringing in that very file", async ({ page }) => {
+    await buildProject(page);
+    await exportProject(page);
+    const folder = await toDisk(page, "chosen/测试项目");
+    for (const { name, path } of assetsIn(folder)) {
+      if (name !== "配音.wav") rmSync(join(folder, path));
+    }
+    await removeProject(page, "测试项目");
+    await importFromStart(page, folder);
+    await expect(dialog(page).getByRole("heading", { name: "项目已导入" })).toBeVisible();
+    await closeDialog(page);
+
+    await expect.poll(() => isRed(page)).toBe(false);
+    await tab(page, "assets").click();
+    await expect(items(page).filter({ hasText: "封面.png" }).locator("img")).toHaveCount(0);
+
+    const chooser = page.waitForEvent("filechooser");
+    await content(page, "assets").getByRole("button", { name: "导入" }).click();
+    await (await chooser).setFiles([files.video, files.image]);
+
+    await expect.poll(() => isRed(page)).toBe(true);
+    await expect(items(page).filter({ hasText: "封面.png" }).locator("img")).toBeVisible();
+    await expect(items(page)).toHaveCount(3);
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect.poll(() => isRed(page)).toBe(true);
+  });
+
   test("cleans up what a page that went away left behind", async ({ page }) => {
     await exportProject(page);
+    const folder = await toDisk(page, "chosen/测试项目");
     await removeProject(page, "测试项目");
     await page.evaluate(
       () =>
@@ -440,8 +567,7 @@ test.describe("a project that travels", () => {
     );
     await page.reload();
     await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
-    await choose(page, "chosen/测试项目");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
     const { projects, media } = await stored(page);
     expect(projects).toEqual([expect.objectContaining({ name: "测试项目" })]);
@@ -451,31 +577,120 @@ test.describe("a project that travels", () => {
   test("does not take in a file that changed", async ({ page }) => {
     await buildProject(page);
     await exportProject(page);
-    const assets = JSON.parse(await readText(page, "chosen/测试项目", "assets.json")) as {
-      assets: Record<string, { name: string; path: string }>;
-    };
-    const { path = "" } =
-      Object.values(assets.assets).find(({ name }) => name === "封面.png") ?? {};
-    const [folder, name] = [`chosen/测试项目/${dirname(path)}`, path.split("/").at(-1) as string];
-    await writeFile(page, folder, name, "这不是图片");
+    const folder = await toDisk(page, "chosen/测试项目");
+    const picture = assetsIn(folder).find(({ name }) => name === "封面.png");
+    writeFileSync(join(folder, picture?.path as string), "这不是图片");
 
     await removeProject(page, "测试项目");
-    await choose(page, "chosen/测试项目");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
     const report = dialog(page);
     await expect(report.getByText(/和项目记录的内容不一样/)).toBeVisible();
     await expect(report.getByRole("listitem")).toHaveText(["封面.png"]);
     await closeDialog(page);
     await expect(tab(page, "preview")).toBeVisible();
   });
+
+  test("does not lose what a window changes after the project was replaced", async ({
+    page,
+    context,
+  }) => {
+    await exportProject(page);
+    const folder = await toDisk(page, "chosen/测试项目");
+    await renameTo(page, "备份之后改过");
+    await saved(page);
+
+    const other = await context.newPage();
+    await other.goto("/");
+    await other.getByRole("listitem").filter({ hasText: "备份之后改过" }).hover();
+    await other.getByRole("button", { name: "删除 备份之后改过" }).click();
+    await dialog(other).getByRole("button", { name: "删除" }).click();
+    await expect(other.getByText("还没有项目")).toBeVisible();
+
+    // The first window finds out by saving.
+    await renameTo(page, "删除之后改的");
+    await expect(page.locator("footer").getByText("没有保存")).toBeVisible();
+
+    await importFromStart(other, folder);
+    await expect(other.getByText("“测试项目”已导入。")).toBeVisible();
+    const before = await stored(other);
+    expect(before.projects).toEqual([expect.objectContaining({ name: "测试项目" })]);
+
+    // It tries again every five seconds, and has to go on saying that this did not work.
+    await page.waitForTimeout(6000);
+    await expect(page.locator("footer").getByText("没有保存")).toBeVisible();
+    await expect(page.getByText("改动已经保存好了")).toHaveCount(0);
+    await renameTo(page, "后面继续改的");
+    await page.waitForTimeout(500);
+    await expect(page.locator("footer").getByText("没有保存")).toBeVisible();
+    expect(await stored(other)).toEqual(before);
+
+    await other.reload();
+    await expect(other.locator("footer").getByRole("button", { name: "测试项目" })).toBeVisible();
+  });
+});
+
+test.describe("names on a real disk", () => {
+  const names = [
+    "我的项目",
+    "第二集~",
+    "~草稿",
+    "你好~~",
+    "第1~3集",
+    "一家人👨\u200D👩\u200D👧",
+    "🏳\uFE0F\u200D🌈 彩虹",
+    "❤\uFE0F\u200D🔥",
+    "程序员🧑\u200D💻教程",
+    "项目\u3000",
+    "\u3000项目",
+    "项目 ",
+    "复制的\u200B标题",
+    "标题\uFEFF",
+    "clock$",
+    "clock$.txt",
+    "CON",
+    "aux.js",
+    "com1",
+    "lpt9.txt",
+    "desktop.ini",
+    "Thumbs.db",
+    "site.url",
+    "link.lnk",
+    "x.scf",
+    "name.local",
+    "x.{abc}",
+    "A~",
+    "name.",
+    "a.b",
+    "😀".repeat(100),
+  ];
+
+  let folder: string;
+
+  test.beforeEach(async ({ page }) => {
+    folder = mkdtempSync(join(tmpdir(), "animaquill-"));
+    await holdRealFolder(page, folder);
+  });
+
+  test("are what the unit tests think they are", async ({ page }) => {
+    const answers = await answersFor(page, names);
+    const refused = names.filter((_, index) => answers[index] === "TypeError");
+    expect(refused).toEqual(names.filter(isRefusedByChrome));
+  });
+
+  test("work for every project", async ({ page }) => {
+    const folders = names.map(folderNameFor);
+    expect(await answersFor(page, folders)).toEqual(folders.map(() => "NotFoundError"));
+  });
 });
 
 test.describe("a folder that cannot come in", () => {
+  let folder: string;
+
   test.beforeEach(async ({ page }) => {
     await useFolders(page);
     await buildProject(page);
     await exportProject(page);
-    await choose(page, "chosen/测试项目");
+    folder = await toDisk(page, "chosen/测试项目");
   });
 
   /** The project that is open is the one from before, with all of it there. */
@@ -488,9 +703,9 @@ test.describe("a folder that cannot come in", () => {
   }
 
   test("says what is wrong with a broken file, and leaves all projects alone", async ({ page }) => {
-    await writeFile(page, "chosen/测试项目/timelines/main", "timeline.json", "{ 不是 JSON");
+    writeFileSync(join(folder, "timelines/main/timeline.json"), "{ 不是 JSON");
     const before = await stored(page);
-    await startImport(page);
+    await importFrom(page, folder);
 
     const report = dialog(page);
     await expect(report.getByRole("heading", { name: "这个文件夹不能导入" })).toBeVisible();
@@ -503,30 +718,30 @@ test.describe("a folder that cannot come in", () => {
   });
 
   test("refuses a project from a newer editor", async ({ page }) => {
-    const manifest = JSON.parse(await readText(page, "chosen/测试项目", "animaquill.json")) as {
-      formatVersion: number;
-    };
+    const path = join(folder, "animaquill.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8")) as { formatVersion: number };
     manifest.formatVersion = 2;
-    await writeFile(page, "chosen/测试项目", "animaquill.json", JSON.stringify(manifest));
+    writeFileSync(path, JSON.stringify(manifest));
     const before = await stored(page);
-    await startImport(page);
+    await importFrom(page, folder);
     await expect(dialog(page).getByText(/版本 2.*刷新页面/)).toBeVisible();
     await closeDialog(page);
     await expectNothingChanged(page, before);
   });
 
   test("says when a folder is no project", async ({ page }) => {
-    await choose(page, "chosen/别的文件夹");
+    const other = join(tmpdir(), `假期照片-${Date.now()}`);
+    mkdirSync(other);
+    writeFileSync(join(other, "a.jpg"), "x");
     const before = await stored(page);
-    await startImport(page);
-    await expect(dialog(page).getByText("“别的文件夹”不是项目文件夹")).toBeVisible();
+    await importFrom(page, other);
+    await expect(dialog(page).getByText("不是项目文件夹")).toBeVisible();
     await closeDialog(page);
     await expectNothingChanged(page, before);
   });
 
   test("finds the project when people choose the folder around it", async ({ page }) => {
-    await choose(page, "chosen");
-    await startImport(page);
+    await importFrom(page, dirname(folder));
     await expect(dialog(page).getByText("这次导入成了副本")).toBeVisible();
     await closeDialog(page);
     await expect(
@@ -601,8 +816,7 @@ test.describe("an export that does not get to the end", () => {
     expect(left).not.toContain("animaquill.json");
     expect(await readText(page, "chosen/测试项目", "导出未完成.txt")).toContain("没有完成");
 
-    await choose(page, "chosen/测试项目");
-    await startImport(page);
+    await importFrom(page, await toDisk(page, "chosen/测试项目"));
     await expect(dialog(page).getByText("这是一次没有完成的导出")).toBeVisible();
     await closeDialog(page);
   });
@@ -628,12 +842,17 @@ test.describe("an export that does not get to the end", () => {
 });
 
 test.describe("a project on its way in", () => {
+  test.use({ onDisk: true });
+  test.describe.configure({ timeout: 90_000 });
+
+  let folder: string;
+
   test.beforeEach(async ({ page }) => {
     await useFolders(page);
     await buildProject(page);
     await exportProject(page);
+    folder = await toDisk(page, "chosen/测试项目");
     await removeProject(page, "测试项目");
-    await choose(page, "chosen/测试项目");
     await page.evaluate(() => {
       // Holds up the second file on its way in, with the first one saved already.
       const { stream } = Blob.prototype;
@@ -653,7 +872,7 @@ test.describe("a project on its way in", () => {
   });
 
   test("stays out of sight, and is gone after cancelling", async ({ page, context }) => {
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
     await expect.poll(() => page.evaluate(() => window.release !== undefined)).toBe(true);
     const { projects, media } = await stored(page);
     expect(projects).toEqual([expect.objectContaining({ name: "测试项目", incoming: true })]);
@@ -672,7 +891,7 @@ test.describe("a project on its way in", () => {
   });
 
   test("leaves nothing for good when the page goes away", async ({ page, context }) => {
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
     await expect.poll(() => page.evaluate(() => window.release !== undefined)).toBe(true);
     await page.close({ runBeforeUnload: false });
 
@@ -680,8 +899,7 @@ test.describe("a project on its way in", () => {
     await installFolders(next);
     await next.goto("/");
     await expect(next.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
-    await choose(next, "chosen/测试项目");
-    await next.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(next, folder);
     await expect(next.getByText("“测试项目”已导入。")).toBeVisible();
     await expect(tab(next, "preview")).toBeVisible();
     await expect.poll(() => isRed(next)).toBe(true);
@@ -691,7 +909,7 @@ test.describe("a project on its way in", () => {
   });
 
   test("is left alone by another window that imports", async ({ page, context }) => {
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await importFromStart(page, folder);
     await expect.poll(() => page.evaluate(() => window.release !== undefined)).toBe(true);
 
     const other = await context.newPage();
@@ -699,8 +917,8 @@ test.describe("a project on its way in", () => {
     await other.goto("/");
     await createProject(other, "另一个项目");
     await exportProject(other);
-    await choose(other, "chosen/另一个项目");
-    await chooseFrom(other, "文件", "导入项目文件夹");
+    const second = await toDisk(other, "chosen/另一个项目");
+    await importFrom(other, second);
     await expect(dialog(other).getByText("这次导入成了副本")).toBeVisible();
     await other.close();
 
@@ -764,9 +982,7 @@ test.describe("a browser that cannot write to folders", () => {
     expect(names.join()).not.toContain("导出未完成");
 
     await removeProject(page, "测试项目");
-    const chooser = page.waitForEvent("filechooser");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
-    await (await chooser).setFiles(join(folder, "测试项目"));
+    await importFromStart(page, join(folder, "测试项目"));
 
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
     await tab(page, "timeline").click();
@@ -776,9 +992,7 @@ test.describe("a browser that cannot write to folders", () => {
 
   test("brings in a folder written by hand, with what the format has", async ({ page }) => {
     const folder = fileURLToPath(new URL("../../schema/fixtures/v1", import.meta.url));
-    const chooser = page.waitForEvent("filechooser");
-    await startImport(page);
-    await (await chooser).setFiles(folder);
+    await importFrom(page, folder);
 
     const report = dialog(page);
     await expect(report.getByRole("heading", { name: "项目已导入" })).toBeVisible();
@@ -817,6 +1031,101 @@ test.describe("a browser that cannot write to folders", () => {
     await expect(page.getByText("导出已取消。")).toBeVisible();
     await page.waitForTimeout(300);
     expect(downloads).toBe(0);
+  });
+});
+
+test.describe("a file with a name that a folder on a disk does not allow", () => {
+  const NAMES = ["aux.js", "~草稿.js", "尾巴.js~", "👨\u200D👩\u200D👧.js", "零\u200B宽.js"];
+
+  /** A project on the disk, with files that a folder handle does not show. */
+  function folderWithSuchNames() {
+    const disk = join(mkdtempSync(join(tmpdir(), "animaquill-")), "手写的项目");
+    const write = (path: string, text: string) => {
+      mkdirSync(dirname(join(disk, path)), { recursive: true });
+      writeFileSync(join(disk, path), text);
+    };
+    const manifest = {
+      formatVersion: 1,
+      id: "hand-written",
+      name: "手写的项目",
+      languages: [{ id: "zh-CN", name: "中文" }],
+      formats: [{ id: "landscape", name: "横屏", width: 1920, height: 1080, fps: "30" }],
+      timelines: ["main"],
+    };
+    write("animaquill.json", JSON.stringify(manifest));
+    const timeline = { name: "主线", sections: [{ id: "s", duration: "5" }], tracks: [] };
+    write("timelines/main/timeline.json", JSON.stringify(timeline));
+    const scene = { name: "结尾", entry: "index.html", runtime: 1 };
+    write("scenes/con/scene.json", JSON.stringify(scene));
+    write("scenes/con/index.html", "<html></html>");
+    for (const name of NAMES) write(`code/${name}`, `// ${name}`);
+    return disk;
+  }
+
+  test("comes in, which a folder handle would not have let it", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.assign(window, { showDirectoryPicker: undefined });
+    });
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await importFrom(page, folderWithSuchNames());
+    await expect(page.getByText("“手写的项目”已导入。")).toBeVisible();
+
+    const download = page.waitForEvent("download");
+    await startExport(page);
+    const file = await download;
+    await expect(dialog(page).getByRole("heading", { name: "导出完成" })).toBeVisible();
+    await closeDialog(page);
+    const unpacked = mkdtempSync(join(tmpdir(), "animaquill-"));
+    const names = unzip(readFileSync(await file.path()), unpacked);
+    for (const name of NAMES) expect(names).toContain(`手写的项目/code/${name}`);
+    expect(names).toContain("手写的项目/scenes/con/index.html");
+    expect(names).toContain("手写的项目/scenes/con/scene.json");
+  });
+
+  test("stays out of a folder with a word, and the rest goes on", async ({ page }) => {
+    await useFolders(page);
+    await importFrom(page, folderWithSuchNames());
+    await expect(page.getByText("“手写的项目”已导入。")).toBeVisible();
+    await page.evaluate((names) => {
+      window.refusedNames = names;
+    }, NAMES);
+
+    await startExport(page);
+    const report = dialog(page);
+    await expect(report.getByRole("heading", { name: /但有内容没有带上/ })).toBeVisible();
+    await expect(report.getByText(/不允许这样的名字/)).toBeVisible();
+    const refused = await report.getByRole("listitem").allInnerTexts();
+    expect(refused.toSorted()).toEqual(NAMES.map((name) => `code/${name}`).toSorted());
+    await closeDialog(page);
+    const exported = await folderNames(page, "chosen/手写的项目");
+    expect(exported).toContain("animaquill.json");
+    expect(exported).not.toContain("导出未完成.txt");
+  });
+});
+
+test.describe("the question the browser asks about uploading", () => {
+  test.use({ withProject: false });
+
+  test("is explained while people choose a folder", async ({ page }) => {
+    const hint = page.getByText("浏览器接下来会问是否“上传”，这只是读取，文件不会离开这台电脑。");
+    const opening = page.waitForEvent("filechooser");
+    await importButton(page).click();
+    const chooser = await opening;
+    await expect(hint).toBeVisible();
+
+    await chooser.setFiles(fileURLToPath(new URL("../../schema/fixtures/v1", import.meta.url)));
+    await expect(dialog(page).getByRole("heading", { name: "项目已导入" })).toBeVisible();
+    await expect(hint).toHaveCount(0);
+  });
+
+  test("is not explained for exporting", async ({ page }) => {
+    await createProject(page);
+    await installFolders(page);
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await exportProject(page);
+    await expect(page.getByText("浏览器接下来会问")).toHaveCount(0);
   });
 });
 

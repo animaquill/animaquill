@@ -104,7 +104,10 @@ export interface ProjectLibrary {
  */
 export interface ProjectLog {
   load(): Promise<readonly Uint8Array[]>;
-  /** Rejects when the project is gone, for example because another window removed it. */
+  /**
+   * Rejects when the project is gone, for example because another window removed it. That stays so
+   * when another project comes in with the same id: it is not the one this log belongs to.
+   */
   append(update: Uint8Array, name: string): Promise<void>;
   /**
    * Replaces all updates with what `merge` makes of them, in one step. Updates that another window
@@ -149,11 +152,12 @@ export interface TargetFolder {
   /** An archive is one file that people have to unpack to get the folder. */
   readonly kind: "folder" | "archive";
   /**
-   * Resolves when the whole file is in place. The content is read piece by piece, so its size does
-   * not matter. Rejects when it could not be written, and with the reason of the signal when asked
-   * to stop.
+   * Resolves to true when the whole file is in place, and to false when a file cannot have this
+   * path here, which is no reason to give up on the others. The content is read piece by piece, so
+   * its size does not matter. Rejects when writing failed, and with the reason of the signal when
+   * asked to stop.
    */
-  write(path: string, content: Blob, options?: WriteOptions): Promise<void>;
+  write(path: string, content: Blob, options?: WriteOptions): Promise<boolean>;
   remove(path: string): Promise<void>;
   /** Everything is in place. */
   finish(): Promise<void>;
@@ -163,6 +167,11 @@ export interface TargetFolder {
 
 /** How people get to folders. Both ask them, so both need to run right after they did something. */
 export interface FolderAccess {
+  /**
+   * The browser asks whether a folder may be uploaded, with cancel as the default, although nothing
+   * leaves the computer. People should know that before they see it.
+   */
+  readonly asksToUpload?: boolean;
   /** Resolves to undefined when they changed their minds. */
   chooseSource(): Promise<SourceFolder | undefined>;
   /**

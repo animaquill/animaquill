@@ -1,5 +1,6 @@
-import type { ProjectStore } from "@animaquill/core";
+import { isSourceFile, type ProjectStore } from "@animaquill/core";
 import type { MediaStore, TargetFolder } from "@animaquill/host";
+import { hashFile, isSameHash } from "@animaquill/media";
 import { MANIFEST_FILE, readProject, type Problem } from "@animaquill/schema";
 
 /**
@@ -7,6 +8,13 @@ import { MANIFEST_FILE, readProject, type Problem } from "@animaquill/schema";
  * the disk is full or the page went away, this is what says so to people, and to an import.
  */
 export const INCOMPLETE_FILE = "导出未完成.txt";
+
+/**
+ * Importing reads scene and sound files as a whole. A larger one is not what it claims to be, such
+ * as a video. Documents have no such limit: they are what makes a project, and all of it is in
+ * memory while it is open anyway.
+ */
+export const MAX_SOURCE_BYTES = 32 * 1024 ** 2;
 
 /** How far moving a project has got. */
 export interface TransferStep {
@@ -24,14 +32,27 @@ export interface ExportOptions {
   readonly onStep?: (step: TransferStep) => void;
 }
 
-/** What people have to know about a folder that is finished. Anything here is not in the folder. */
+/** What people have to know about a folder that is finished. */
 export interface ExportReport {
-  /** Assets whose files this host does not have. */
+  /** Assets whose files this host does not have, so they are not in the folder. */
   readonly missing: readonly string[];
-  /** Files whose path is the path of something else, at least on some disks. */
+  /** Files left out because their path is the path of something else, at least on some disks. */
   readonly clashing: readonly string[];
+  /** Files left out because a file cannot have that path here. */
+  readonly refused: readonly string[];
+  /** Files that are in the folder, but will not come back in. */
+  readonly tooLarge: readonly string[];
   /** What keeps parts of the project from being written, or from being read again. */
   readonly problems: readonly Problem[];
+}
+
+/** A file on its way out. */
+interface Copy {
+  readonly path: string;
+  readonly file: Blob;
+  readonly label: string;
+  /** The hash of an asset. It is known without reading the file. */
+  readonly hash?: string;
 }
 
 /** Whether two paths are the same file on some disk, where case does not make a difference. */
@@ -49,52 +70,85 @@ export async function exportProject(
 ): Promise<ExportReport> {
   // One moment in time: what happens to the project from here on is not part of this export.
   const { files, problems } = store.exportFiles();
-  const errors = readProject(files).problems.filter((problem) => problem.severity === "error");
   const { assets = {} } = store.getState();
 
-  const taken = new Set([MANIFEST_FILE, INCOMPLETE_FILE].map(samePathKey));
+  /** What goes where. On some disks a second file would quietly replace the first. */
+  const places = new Map<string, Copy | undefined>(
+    [MANIFEST_FILE, INCOMPLETE_FILE].map((path) => [samePathKey(path), undefined]),
+  );
   const clashing: string[] = [];
-  /** Whether a path is still free. On some disks a second file would quietly replace the first. */
-  const claim = (path: string, label: string) => {
-    const isFree = !taken.has(samePathKey(path));
-    if (isFree) taken.add(samePathKey(path));
-    else clashing.push(label);
-    return isFree;
-  };
+  const documents: Copy[] = [];
+  for (const [path, text] of files) {
+    if (path === MANIFEST_FILE) continue;
+    const place = samePathKey(path);
+    if (places.has(place)) clashing.push(path);
+    else {
+      const copy = { path, file: new Blob([text]), label: path };
+      places.set(place, copy);
+      documents.push(copy);
+    }
+  }
 
-  const documents = [...files]
-    .filter(([path]) => path !== MANIFEST_FILE && claim(path, path))
-    .map(([path, text]) => ({ path, file: new Blob([text]), label: path }));
+  const missing: string[] = [];
+  const copies: Copy[] = [];
+  for (const [id, asset] of Object.entries(assets)) {
+    const label = asset.name ?? asset.path ?? id;
+    const place = samePathKey(asset.path ?? id);
+    const other = places.get(place);
+    // Two entries for one file are nothing to worry about. A text file can also be an asset.
+    if (other && other.path === asset.path && (await isSameFile(other, asset.hash))) continue;
+    const { hash } = asset;
+    const file = hash === undefined ? undefined : await media.get(hash);
+    if (!file || hash === undefined) missing.push(label);
+    else if (places.has(place)) clashing.push(label);
+    else {
+      const copy = { path: asset.path, file, label, hash };
+      places.set(place, copy);
+      copies.push(copy);
+    }
+  }
+
   const manifest = {
     path: MANIFEST_FILE,
     file: new Blob([files.get(MANIFEST_FILE) ?? ""]),
     label: MANIFEST_FILE,
   };
-
-  const missing: string[] = [];
-  const copies: { readonly path: string; readonly file: Blob; readonly label: string }[] = [];
-  for (const [id, asset] of Object.entries(assets)) {
-    const label = asset.name ?? asset.path ?? id;
-    const file = asset.hash === undefined ? undefined : await media.get(asset.hash);
-    if (!file) missing.push(label);
-    else if (claim(asset.path, label)) copies.push({ path: asset.path, file, label });
-  }
-
   const queue = [...copies, ...documents, manifest];
   const total = queue.reduce((sum, { file }) => sum + file.size, 0);
 
   await target.write(INCOMPLETE_FILE, new Blob([notice]), signal ? { signal } : {});
+  const refused: Copy[] = [];
   let done = 0;
-  for (const { path, file, label } of queue) {
+  for (const copy of queue) {
+    const { path, file, label } = copy;
     onStep?.({ file: label, done, total });
     const written = done;
-    await target.write(path, file, {
+    const isThere = await target.write(path, file, {
       ...(signal ? { signal } : {}),
       onProgress: (bytes) => onStep?.({ file: label, done: written + bytes, total }),
     });
+    if (!isThere) refused.push(copy);
     done += file.size;
   }
   await target.remove(INCOMPLETE_FILE);
   await target.finish();
-  return { missing, clashing, problems: [...problems, ...errors] };
+
+  // Whether what is in the folder now can be read again, because that is what a backup is for.
+  const inFolder = new Set([MANIFEST_FILE, ...documents.map(({ path }) => path)]);
+  for (const { path } of refused) inFolder.delete(path);
+  const readable = new Map([...files].filter(([path]) => inFolder.has(path)));
+  const errors = readProject(readable).problems.filter(({ severity }) => severity === "error");
+  return {
+    missing,
+    clashing,
+    refused: refused.map(({ label }) => label),
+    tooLarge: documents
+      .filter(({ path, file }) => isSourceFile(path) && file.size > MAX_SOURCE_BYTES)
+      .map(({ label }) => label),
+    problems: [...problems, ...errors],
+  };
+}
+
+async function isSameFile(copy: Copy, hash: string | undefined): Promise<boolean> {
+  return hash !== undefined && isSameHash(hash, copy.hash ?? (await hashFile(copy.file)));
 }

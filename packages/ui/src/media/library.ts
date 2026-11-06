@@ -1,7 +1,7 @@
 import { computePeaks, readSound } from "@animaquill/audio";
 import type { ClipState, ProjectStore } from "@animaquill/core";
 import type { ProjectLibrary } from "@animaquill/host";
-import { formatHash, probeMedia, type MediaFacts } from "@animaquill/media";
+import { formatHash, isSameHash, probeMedia, type MediaFacts } from "@animaquill/media";
 import {
   fromSeconds,
   formatTime,
@@ -69,8 +69,10 @@ export class MediaLibrary {
   readonly #strips = new Map<string, FilmStrip | undefined>();
   #stripsQueue: Promise<void> = Promise.resolve();
   readonly #stripMaker: StripMaker;
+  readonly #restoredListeners = new Set<(hash: string) => void>();
   #store: ProjectStore | undefined;
   #importing = 0;
+  #restored = 0;
 
   constructor(
     session: ProjectSession,
@@ -88,6 +90,14 @@ export class MediaLibrary {
   subscribe = this.#emitter.subscribe;
   /** How many files are on their way in. */
   getImporting = (): number => this.#importing;
+  /** Changes when a file came back, for what has to look again. */
+  getRestored = (): number => this.#restored;
+
+  /** Calls back with the hash of a file that was missing and is here now. */
+  onRestored(listener: (hash: string) => void): () => void {
+    this.#restoredListeners.add(listener);
+    return () => this.#restoredListeners.delete(listener);
+  }
 
   #followSession(): void {
     if (this.#session.store === this.#store) return;
@@ -234,9 +244,14 @@ export class MediaLibrary {
     }
     const hash = await hashOf(file);
     const assets = Object.entries(store.getState().assets ?? {});
-    const known = assets.find(([, asset]) => asset.hash === hash)?.[0];
-    if (known !== undefined) return known;
+    const known = assets.filter(
+      ([, asset]) => asset.hash !== undefined && isSameHash(asset.hash, hash),
+    );
     try {
+      if (known.length > 0) {
+        await this.#restore(store, known, file);
+        return known[0]?.[0];
+      }
       await this.#media(store).put(hash, file);
     } catch (error) {
       console.warn("A file could not be saved", error);
@@ -256,6 +271,28 @@ export class MediaLibrary {
     };
     const result = store.execute({ type: "asset.add", params: { id, asset } });
     return result.ok ? id : undefined;
+  }
+
+  /**
+   * A project can know a file that is not here, for example after an import without it. Bringing in
+   * that very file is how it gets back, and whatever looked for it has to look again.
+   */
+  async #restore(
+    store: ProjectStore,
+    assets: readonly (readonly [string, Asset])[],
+    file: File,
+  ): Promise<void> {
+    const media = this.#media(store);
+    for (const [id, { hash }] of assets) {
+      if (hash === undefined || (await media.get(hash))) continue;
+      await media.put(hash, file);
+      this.#urls.delete(id);
+      this.#peaks.delete(hash);
+      this.#strips.delete(hash);
+      this.#restored += 1;
+      for (const listener of this.#restoredListeners) listener(hash);
+      this.#emitter.emit();
+    }
   }
 
   #media(store: ProjectStore) {

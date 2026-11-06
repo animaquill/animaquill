@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Id, LanguageId } from "./basics.ts";
 import {
   Assets,
   Libraries,
@@ -83,11 +84,20 @@ export function parseDocument<T>(
   schema: z.ZodType<T>,
 ): ParsedDocument<T> {
   let data: unknown;
+  let hasProto = false;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(text, (key, value: unknown) => {
+      hasProto ||= key === "__proto__";
+      return value;
+    });
   } catch (error) {
     const message = `不是有效的 JSON：${(error as Error).message}`;
     return { problems: [{ severity: "error", code: "invalid-json", file: path, message }] };
+  }
+  // It cannot be a key of anything in a project, and a map would lose it without a word.
+  if (hasProto) {
+    const message = "不能用 __proto__ 作为名字";
+    return { problems: [{ severity: "error", code: "invalid-document", file: path, message }] };
   }
   const result = schema.safeParse(data);
   if (result.success) return { value: result.data, problems: [] };
@@ -158,19 +168,28 @@ export function readProject(files: ProjectFiles): ReadResult {
   const manifest = read(MANIFEST_FILE, ProjectManifest);
   if (!manifest) return { problems };
 
-  /** Names from paths become paths again when writing, so they must not lead anywhere else. */
-  const isSafeName = (name: string | undefined) => name === undefined || !name.startsWith(".");
-
-  const matches = (pattern: RegExp) =>
+  const refused = new Set<string>();
+  /**
+   * Names from paths become ids and paths again, so they have to be what the format says: they must
+   * not lead anywhere else, and __proto__ would not survive as a key.
+   */
+  const matches = (pattern: RegExp, name: z.ZodType<string>) =>
     [...files.keys()].flatMap((path) => {
       const match = pattern.exec(path);
-      if (!match?.[1] || !isSafeName(match[1]) || !isSafeName(match[2])) return [];
-      return [{ path, id: match[1], rest: match[2] }];
+      if (!match?.[1]) return [];
+      const isValid = name.safeParse(match[1]).success && !match[2]?.startsWith(".");
+      if (isValid) return [{ path, id: match[1], rest: match[2] }];
+      if (!refused.has(path)) {
+        refused.add(path);
+        const message = `这个名字不能用：${match[1]}。文件夹名就是 ID，只能用英文字母、数字、下划线和连字符`;
+        problems.push({ severity: "error", code: "invalid-name", file: path, message });
+      }
+      return [];
     });
 
-  const collect = <T>(pattern: RegExp, schema: z.ZodType<T>) => {
+  const collect = <T>(pattern: RegExp, schema: z.ZodType<T>, name: z.ZodType<string> = Id) => {
     const items = new Map<string, T>();
-    for (const { path, id } of matches(pattern)) {
+    for (const { path, id } of matches(pattern, name)) {
       const value = read(path, schema);
       if (value) items.set(id, value);
     }
@@ -180,13 +199,14 @@ export function readProject(files: ProjectFiles): ReadResult {
   const timelines = new Map<string, TimelineFiles>();
   const timelineIds = new Set([
     ...manifest.timelines,
-    ...matches(/^timelines\/([^/]+)\/timeline\.json$/).map(({ id }) => id),
+    ...matches(/^timelines\/([^/]+)\/timeline\.json$/, Id).map(({ id }) => id),
   ]);
   for (const id of timelineIds) {
     const document = read(`timelines/${id}/timeline.json`, Timeline);
     const overrides = new Map<string, Overrides>();
     for (const { path, id: owner, rest } of matches(
       /^timelines\/([^/]+)\/overrides\/([^/]+)\.json$/,
+      Id,
     )) {
       if (owner !== id || !rest) continue;
       const value = read(path, Overrides);
@@ -207,7 +227,7 @@ export function readProject(files: ProjectFiles): ReadResult {
     timelines,
     scenes: collect(/^scenes\/([^/]+)\/scene\.json$/, SceneManifest),
     sounds: collect(/^sounds\/([^/]+)\/sound\.json$/, SoundManifest),
-    locales: collect(/^locales\/([^/]+)\.json$/, Locale),
+    locales: collect(/^locales\/([^/]+)\.json$/, Locale, LanguageId),
   };
 
   return { project, problems: [...problems, ...checkProject(project)] };

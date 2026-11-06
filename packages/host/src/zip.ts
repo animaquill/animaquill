@@ -90,11 +90,11 @@ export interface ZipEntry {
   readonly crc: number;
 }
 
-/**
- * A zip file without compression, because videos and pictures are compressed already. It is made of
- * references to the files, so nothing gets copied and any size fits in memory.
- */
-export function buildZip(entries: readonly ZipEntry[], modified: Date): Blob {
+/** What a zip file is made of: the records, and the files in between. */
+export function zipParts(
+  entries: readonly ZipEntry[],
+  modified: Date,
+): readonly (Uint8Array<ArrayBuffer> | Blob)[] {
   const parts: (Uint8Array<ArrayBuffer> | Blob)[] = [];
   const central: Uint8Array<ArrayBuffer>[] = [];
   const { time, date } = dosTime(modified);
@@ -176,8 +176,15 @@ export function buildZip(entries: readonly ZipEntry[], modified: Date): Blob {
       u16(0),
     ),
   );
-  return new Blob(parts, { type: "application/zip" });
+  return parts;
 }
+
+/**
+ * A zip file without compression, because videos and pictures are compressed already. It is made of
+ * references to the files, so nothing gets copied and any size fits in memory.
+ */
+export const buildZip = (entries: readonly ZipEntry[], modified: Date): Blob =>
+  new Blob(zipParts(entries, modified) as BlobPart[], { type: "application/zip" });
 
 /**
  * For browsers that cannot write to a folder. Nothing is saved before all of it is there, so an
@@ -190,9 +197,10 @@ export function zipTarget(name: string, save: (file: Blob, name: string) => void
     name: fileName,
     kind: "archive",
     async write(path, content, options = {}) {
-      partsOf(path);
+      if (!partsOf(path)) return false;
       const crc = await crcOf(content, options);
       entries.set(path, { path: `${name}/${path}`, content, crc });
+      return true;
     },
     async remove(path) {
       entries.delete(path);

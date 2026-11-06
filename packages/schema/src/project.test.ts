@@ -412,6 +412,92 @@ describe("project content is not trusted", () => {
   });
 });
 
+describe("ids that come twice", () => {
+  const note = (id: string) => ({
+    id,
+    status: "pending",
+    text: "批注",
+    timeline: "main",
+    time: "0",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  it.each<[string, string, Change]>([
+    ["notes", "notes.json", (d: any) => (d.notes = [note("a"), note("b"), note("a")])],
+    ["markers", MAIN, (d: any) => (d.markers[1].id = d.markers[0].id)],
+    [
+      "transitions on a track",
+      MAIN,
+      (d: any) => (d.tracks[0].transitions[1].id = d.tracks[0].transitions[0].id),
+    ],
+    [
+      "transitions on two tracks",
+      MAIN,
+      (d: any) => (d.tracks[1].transitions = [{ ...d.tracks[0].transitions[0] }]),
+    ],
+  ])("are refused for %s, which a project keeps by id", (_, path, change) => {
+    const { problems } = readProject(withChange(path, change));
+    const problem = problems.find(({ severity }) => severity === "error");
+    expect(problem).toMatchObject({ code: "invalid-document", file: path });
+    expect(problem?.path).toMatch(/\.id$/);
+    expect(problem?.message).toContain("ID 重复");
+  });
+
+  it("are fine between things of different kinds", () => {
+    const files = withChange(MAIN, (d: any) => {
+      d.markers[0].id = d.tracks[0].transitions[0].id;
+    });
+    expect(codes(files)).toEqual([]);
+  });
+
+  it("do not stop a project written by this editor", () => {
+    const { project } = readProject(fixture());
+    const again = writeProject(project as never);
+    expect(readProject(again).problems).toEqual([]);
+  });
+});
+
+describe("names a project could not keep", () => {
+  it.each([
+    ["scenes/__proto__/scene.json", "scenes/title/scene.json"],
+    ["sounds/__proto__/sound.json", "sounds/impacts/sound.json"],
+    ["timelines/__proto__/timeline.json", MAIN],
+    ["locales/__proto__.json", "locales/en.json"],
+    ["scenes/片头/scene.json", "scenes/title/scene.json"],
+    ["scenes/.hidden/scene.json", "scenes/title/scene.json"],
+    ["timelines/main/overrides/.hidden.json", "timelines/main/overrides/language.en.json"],
+  ])("are errors for %s, instead of files that are gone", (path, content) => {
+    const files = fixture();
+    files.set(path, files.get(content) as string);
+    const { problems } = readProject(files);
+    expect(problems).toContainEqual(
+      expect.objectContaining({ severity: "error", code: "invalid-name", file: path }),
+    );
+  });
+
+  it("names a file only once, however often it is looked at", () => {
+    const files = fixture();
+    files.set("timelines/main/overrides/.hidden.json", "{}");
+    const found = readProject(files).problems.filter(({ code }) => code === "invalid-name");
+    expect(found).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "assets.json",
+      '{ "assets": { "__proto__": { "kind": "video", "path": "a", "storage": "local" } } }',
+    ],
+    ["locales/en.json", '{ "strings": { "__proto__": { "text": "x" } } }'],
+  ])("does not lose a key called __proto__ in %s without a word", (path, text) => {
+    const files = fixture();
+    files.set(path, text);
+    const { problems } = readProject(files);
+    expect(problems).toContainEqual(
+      expect.objectContaining({ severity: "error", code: "invalid-document", file: path }),
+    );
+  });
+});
+
 describe("problems that do not stop a project from opening", () => {
   const reported: [string, string, Change][] = [
     ["asset-missing", MAIN, (d: any) => (d.tracks[0].clips[1].source.media.asset = "gone")],

@@ -191,18 +191,24 @@ export class ProjectTransfer {
 
   async #announceExport(target: TargetFolder, report: ExportReport) {
     const t = this.#t;
-    const { missing, clashing, problems } = report;
+    const { missing, clashing, refused, tooLarge, problems } = report;
     const message =
       target.kind === "archive"
         ? t("transfer.exportedArchive", { folder: target.name })
         : t("transfer.exported", { folder: target.name });
-    const details = [
+    const left = [
       this.#list(t("transfer.exportMissing"), missing),
       this.#list(t("transfer.exportClashing"), clashing),
+      this.#list(t("transfer.exportRefused"), refused),
       this.#list(t("transfer.exportProblems"), problems.map(this.#describe)),
     ].filter((detail) => detail.items.length > 0);
-    const title = details.length > 0 ? t("transfer.exportedPartly") : t("transfer.exportedTitle");
-    await this.#notice(title, message, details);
+    const title = left.length > 0 ? t("transfer.exportedPartly") : t("transfer.exportedTitle");
+    const details = [...left, this.#list(t("transfer.exportTooLarge"), tooLarge)];
+    await this.#notice(
+      title,
+      message,
+      details.filter((detail) => detail.items.length > 0),
+    );
   }
 
   #list(title: string, items: readonly string[]): DialogDetail {
@@ -221,9 +227,7 @@ export class ProjectTransfer {
   /** Resolves to what came in, for the caller to open. */
   async importProject(): Promise<ImportReport | undefined> {
     const t = this.#t;
-    const source = await this.#choose(t("transfer.importFailed"), () =>
-      this.#folders.chooseSource(),
-    );
+    const source = await this.#choose(t("transfer.importFailed"), () => this.#askForSource());
     if (!source) return undefined;
 
     const result = await this.#run(async () => {
@@ -252,6 +256,19 @@ export class ProjectTransfer {
     if (typeof result !== "function") return result;
     await result();
     return undefined;
+  }
+
+  /** People can take their time in the dialog, and what the browser asks comes after it. */
+  async #askForSource() {
+    const notifications = this.#notifications;
+    const hint = this.#folders.asksToUpload
+      ? notifications.push(this.#t("transfer.uploadHint"), { stays: true })
+      : undefined;
+    try {
+      return await this.#folders.chooseSource();
+    } finally {
+      if (hint !== undefined) notifications.dismiss(hint);
+    }
   }
 
   async #importStopped(error: unknown, folder: string, cancelled: boolean) {

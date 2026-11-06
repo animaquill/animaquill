@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildZip, updateCrc, zipTarget, type ZipEntry } from "./zip.ts";
+import { buildZip, updateCrc, zipParts, zipTarget, type ZipEntry } from "./zip.ts";
 
 const textOf = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
@@ -121,6 +121,252 @@ describe("a zip file", () => {
   });
 });
 
+interface LargeEntry {
+  readonly name: string;
+  readonly crc: number;
+  /** As the fields say, before looking at the longer ones. */
+  readonly sizeField: number;
+  readonly offsetField: number;
+  /** The longer fields, in the order they come. */
+  readonly longer: readonly number[];
+  readonly localSizeField: number;
+  readonly localLonger: readonly number[];
+  /** Where the content starts, once the longer fields are taken into account. */
+  readonly content: number;
+}
+
+const u64At = (view: DataView, at: number) => Number(view.getBigUint64(at, true));
+
+const longerFields = (view: DataView, start: number, length: number): number[] => {
+  if (length === 0) return [];
+  expect(view.getUint16(start, true)).toBe(1);
+  const size = view.getUint16(start + 2, true);
+  expect(size + 4).toBe(length);
+  return Array.from({ length: size / 8 }, (_, index) => u64At(view, start + 4 + index * 8));
+};
+
+/** Looks at a place in a file too large for memory, and for what Node can do with a Blob. */
+function reader(parts: ReturnType<typeof zipParts>) {
+  let size = 0;
+  const spans = parts.map((part) => {
+    const span = { part, start: size };
+    size += part instanceof Blob ? part.size : part.length;
+    return span;
+  });
+  const at = async (start: number, length: number) => {
+    const bytes = new Uint8Array(length);
+    for (const { part, start: partStart } of spans) {
+      const partEnd = partStart + (part instanceof Blob ? part.size : part.length);
+      const from = Math.max(start, partStart);
+      const to = Math.min(start + length, partEnd);
+      if (from >= to) continue;
+      const range = [from - partStart, to - partStart] as const;
+      const piece =
+        part instanceof Blob
+          ? new Uint8Array(await part.slice(...range).arrayBuffer())
+          : part.subarray(...range);
+      bytes.set(piece, from - start);
+    }
+    return new DataView(bytes.buffer);
+  };
+  return { size, at };
+}
+
+/** Reads only the parts it needs, as nothing of this size fits in memory. */
+async function readLargeZip(parts: ReturnType<typeof zipParts>) {
+  const { size, at } = reader(parts);
+  const end = await at(size - 22, 22);
+  expect(end.getUint32(0, true)).toBe(0x06054b50);
+  const locator = await at(size - 42, 20);
+  expect(locator.getUint32(0, true)).toBe(0x07064b50);
+  expect(locator.getUint32(4, true)).toBe(0);
+  expect(locator.getUint32(16, true)).toBe(1);
+  const recordAt = u64At(locator, 8);
+  const record = await at(recordAt, 56);
+  expect(record.getUint32(0, true)).toBe(0x06064b50);
+  expect(u64At(record, 4)).toBe(44);
+  expect(record.getUint16(12, true)).toBe(45);
+  const count = u64At(record, 32);
+  expect(u64At(record, 24)).toBe(count);
+  const directorySize = u64At(record, 40);
+  const directoryAt = u64At(record, 48);
+  expect(directoryAt + directorySize).toBe(recordAt);
+  expect(size).toBe(recordAt + 56 + 20 + 22);
+
+  const directory = await at(directoryAt, directorySize);
+  const entries: LargeEntry[] = [];
+  let position = 0;
+  for (let index = 0; index < count; index++) {
+    expect(directory.getUint32(position, true)).toBe(0x02014b50);
+    expect(directory.getUint16(position + 6, true)).toBe(45);
+    const nameLength = directory.getUint16(position + 28, true);
+    const extraLength = directory.getUint16(position + 30, true);
+    const name = textOf(
+      new Uint8Array(directory.buffer, directory.byteOffset + position + 46, nameLength),
+    );
+    const longer = longerFields(directory, position + 46 + nameLength, extraLength);
+    const sizeField = directory.getUint32(position + 24, true);
+    expect(directory.getUint32(position + 20, true)).toBe(sizeField);
+    const offsetField = directory.getUint32(position + 42, true);
+    const offset = offsetField === 0xffffffff ? (longer.at(-1) as number) : offsetField;
+
+    const head = await at(offset, 30);
+    expect(head.getUint32(0, true)).toBe(0x04034b50);
+    const localName = head.getUint16(26, true);
+    const localExtra = head.getUint16(28, true);
+    const extra = await at(offset + 30 + localName, localExtra);
+    const localSizeField = head.getUint32(22, true);
+    expect(head.getUint32(18, true)).toBe(localSizeField);
+    expect(localName).toBe(nameLength);
+    entries.push({
+      name,
+      crc: directory.getUint32(position + 16, true),
+      sizeField,
+      offsetField,
+      longer,
+      localSizeField,
+      localLonger: longerFields(extra, 0, localExtra),
+      content: offset + 30 + localName + localExtra,
+    });
+    position += 46 + nameLength + extraLength;
+  }
+  /** The content of an entry that is small enough to look at. */
+  const textIn = async ({ content, sizeField }: LargeEntry) =>
+    textOf(new Uint8Array((await at(content, sizeField)).buffer));
+  return { entries, end, directoryAt, directorySize, count, textIn };
+}
+
+describe("a zip file past what the short fields can say", () => {
+  const MIB = 1024 ** 2;
+  const LIMIT = 0xffffffff;
+  const part = new Blob([new Uint8Array(MIB)]);
+  const big = (mib: number, rest = 0) =>
+    new Blob([...Array.from({ length: mib }, () => part), new Uint8Array(rest)]);
+  const named = (path: string, content: Blob) => ({ path, content, crc: 123 });
+
+  it("says where files are that start after 4 GiB", { timeout: 30_000 }, async () => {
+    const parts = zipParts(
+      [
+        entry("项目/第一个.txt", "第一个文件"),
+        named("项目/大文件0", big(3900)),
+        named("项目/大文件1", big(500)),
+        entry("项目/素材/后面.txt", "在 4 GiB 之后"),
+      ],
+      NOW,
+    );
+    const zip = await readLargeZip(parts);
+    const { entries, end, directoryAt, directorySize, count, textIn } = zip;
+    const [first, second, third, last] = entries as [
+      LargeEntry,
+      LargeEntry,
+      LargeEntry,
+      LargeEntry,
+    ];
+
+    expect(count).toBe(4);
+    expect(entries.map(({ name }) => name)).toEqual([
+      "项目/第一个.txt",
+      "项目/大文件0",
+      "项目/大文件1",
+      "项目/素材/后面.txt",
+    ]);
+    // A short field stays short as long as it can say what it has to.
+    expect(first.longer).toEqual([]);
+    expect(second.longer).toEqual([]);
+    expect(third).toMatchObject({ sizeField: 500 * MIB, longer: [], localLonger: [] });
+    expect(third.offsetField).toBeLessThan(LIMIT);
+
+    expect(last.offsetField).toBe(LIMIT);
+    expect(last.longer).toHaveLength(1);
+    expect(last.longer[0]).toBeGreaterThan(LIMIT);
+    expect(last.localLonger).toEqual([]);
+    expect(last.sizeField).toBe(new TextEncoder().encode("在 4 GiB 之后").length);
+    expect(await textIn(last)).toBe("在 4 GiB 之后");
+
+    expect(end.getUint16(8, true)).toBe(4);
+    expect(end.getUint16(10, true)).toBe(4);
+    expect(end.getUint32(12, true)).toBe(directorySize);
+    expect(end.getUint32(16, true)).toBe(LIMIT);
+    expect(directoryAt).toBeGreaterThan(LIMIT);
+  });
+
+  it("says how large a file is that is larger than 4 GiB", { timeout: 30_000 }, async () => {
+    const size = 4200 * MIB;
+    const parts = zipParts([named("大文件", big(4200)), entry("后面.txt", "在大文件之后")], NOW);
+    const { entries, textIn } = await readLargeZip(parts);
+    const [huge, after] = entries as [LargeEntry, LargeEntry];
+
+    expect(huge.crc).toBe(123);
+    expect(huge.sizeField).toBe(LIMIT);
+    expect(huge.localSizeField).toBe(LIMIT);
+    expect(huge.longer).toEqual([size, size]);
+    expect(huge.localLonger).toEqual([size, size]);
+    expect(huge.offsetField).toBe(0);
+
+    expect(after.sizeField).toBe(new TextEncoder().encode("在大文件之后").length);
+    expect(after.longer).toHaveLength(1);
+    expect(after.longer[0]).toBeGreaterThan(size);
+    expect(await textIn(after)).toBe("在大文件之后");
+  });
+
+  it(
+    "uses the longer field for a file of exactly the largest size",
+    { timeout: 30_000 },
+    async () => {
+      const mib = Math.floor(LIMIT / MIB);
+      const content = big(mib, LIMIT - mib * MIB);
+      const parts = zipParts([named("边界", content), entry("后面.txt", "下一个")], NOW);
+      const [edge] = (await readLargeZip(parts)).entries as [LargeEntry];
+      expect(edge.sizeField).toBe(LIMIT);
+      expect(edge.longer).toEqual([LIMIT, LIMIT]);
+      expect(edge.localLonger).toEqual([LIMIT, LIMIT]);
+    },
+  );
+
+  /** A file that makes what comes after it start at exactly the largest offset. */
+  const upToTheLimit = () => {
+    const header = 30 + new TextEncoder().encode("边界").length;
+    const size = LIMIT - header;
+    const mib = Math.floor(size / MIB);
+    return named("边界", big(mib, size - mib * MIB));
+  };
+
+  it(
+    "uses the longer field for a file at exactly the largest offset",
+    { timeout: 30_000 },
+    async () => {
+      const parts = zipParts([upToTheLimit(), entry("后面.txt", "下一个")], NOW);
+      const [edge, after] = (await readLargeZip(parts)).entries as [LargeEntry, LargeEntry];
+      expect(edge.longer).toEqual([]);
+      expect(after.offsetField).toBe(LIMIT);
+      expect(after.longer).toEqual([LIMIT]);
+    },
+  );
+
+  it(
+    "uses the longer records when the list starts at the largest offset",
+    { timeout: 30_000 },
+    async () => {
+      const { directoryAt, end } = await readLargeZip(zipParts([upToTheLimit()], NOW));
+      expect(directoryAt).toBe(LIMIT);
+      expect(end.getUint32(16, true)).toBe(LIMIT);
+    },
+  );
+
+  it("uses the short field for a file of one byte less", { timeout: 30_000 }, async () => {
+    const size = LIMIT - 1;
+    const mib = Math.floor(size / MIB);
+    const content = big(mib, size - mib * MIB);
+    const parts = zipParts([named("边界", content), entry("后面.txt", "下一个")], NOW);
+    const [edge, after] = (await readLargeZip(parts)).entries as [LargeEntry, LargeEntry];
+    expect(edge.sizeField).toBe(size);
+    expect(edge.longer).toEqual([]);
+    expect(edge.localLonger).toEqual([]);
+    expect(after.offsetField).toBe(LIMIT);
+    expect(after.longer).toHaveLength(1);
+  });
+});
+
 describe("zip files for browsers without folders", () => {
   const content = (text: string) => new Blob([text]);
 
@@ -196,7 +442,20 @@ describe("zip files for browsers without folders", () => {
   it.each(["../outside.txt", "/etc/passwd", "a/../../b", "a\\b", "C:/x", "a//b", "a/./b", ""])(
     "does not put %s in a file that gets unpacked somewhere",
     async (path) => {
-      await expect(start().target.write(path, content("x"))).rejects.toThrow(TypeError);
+      const { save, target } = start();
+      expect(await target.write(path, content("x"))).toBe(false);
+      expect(await target.write("animaquill.json", content("{}"))).toBe(true);
+      await target.finish();
+      const { entries } = await readZip(save.mock.calls[0]?.[0] as Blob);
+      expect(entries.map((item) => item.name)).toEqual(["我的项目/animaquill.json"]);
     },
   );
+
+  it("has no trouble with names that browsers do not allow in a folder", async () => {
+    const { save, target } = start();
+    expect(await target.write("code/aux.js", content("代码"))).toBe(true);
+    await target.finish();
+    const { entries } = await readZip(save.mock.calls[0]?.[0] as Blob);
+    expect(entries.map((item) => item.name)).toEqual(["我的项目/code/aux.js"]);
+  });
 });

@@ -6,6 +6,7 @@ import {
   Id,
   LanguageId,
   Time,
+  checkUnique,
   sortById,
   sortByTime,
   sortKeys,
@@ -253,8 +254,14 @@ export const Timeline = z
       seen.set(id, id);
     };
     timeline.sections.forEach((section, index) => claim(section.id, ["sections", index, "id"]));
+    checkUnique(timeline.markers ?? [], context, (index) => ["markers", index, "id"]);
+    const transitions = new Set<string>();
     timeline.tracks.forEach((track, trackIndex) => {
       claim(track.id, ["tracks", trackIndex, "id"]);
+      if (track.kind !== "caption") {
+        const path = (index: number) => ["tracks", trackIndex, "transitions", index, "id"];
+        checkUnique(track.transitions ?? [], context, path, transitions);
+      }
       track.clips.forEach((clip, clipIndex) => {
         const path = ["tracks", trackIndex, "clips", clipIndex];
         claim(clip.id, [...path, "id"]);

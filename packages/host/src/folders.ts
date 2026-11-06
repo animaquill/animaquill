@@ -1,11 +1,5 @@
-import type {
-  FolderAccess,
-  FolderFile,
-  SourceFolder,
-  TargetFolder,
-  WriteOptions,
-} from "./index.ts";
-import { folderNameFor, partsOf } from "./paths.ts";
+import type { FolderAccess, SourceFolder, TargetFolder, WriteOptions } from "./index.ts";
+import { FALLBACK_NAME, folderNameFor, partsOf } from "./paths.ts";
 import { zipTarget } from "./zip.ts";
 
 /** Lets the browser come back to the place people used the last time. */
@@ -17,13 +11,13 @@ const MAX_NUMBER = 1000;
 
 type DirectoryPicker = (options: {
   readonly id: string;
-  readonly mode: "read" | "readwrite";
+  readonly mode: "readwrite";
 }) => Promise<FileSystemDirectoryHandle>;
 
 export interface FolderAccessOptions {
   /** Missing in browsers that cannot give out folders. */
   readonly picker: () => DirectoryPicker | undefined;
-  /** Lets people choose a folder the old way. Resolves to its files, or undefined if cancelled. */
+  /** Lets people choose a folder to read. Resolves to its files, or undefined if cancelled. */
   readonly chooseFiles: () => Promise<readonly File[] | undefined>;
   readonly saveFile: (file: Blob, name: string) => void;
 }
@@ -31,18 +25,11 @@ export interface FolderAccessOptions {
 const isNamed = (error: unknown, ...names: readonly string[]) =>
   error instanceof Error && names.includes(error.name);
 
-async function* walk(
-  folder: FileSystemDirectoryHandle,
-  prefix: string,
-): AsyncGenerator<FolderFile> {
-  for await (const handle of folder.values()) {
-    const path = `${prefix}${handle.name}`;
-    if (handle.kind === "file") yield { path, read: () => handle.getFile() };
-    else if (!TOOL_FOLDERS.has(handle.name)) yield* walk(handle, `${path}/`);
-  }
-}
+/** What the browser answers for a name it does not allow, or a file where a folder should be. */
+const isRefusal = (error: unknown) =>
+  error instanceof TypeError || isNamed(error, "TypeMismatchError");
 
-/** What the old way gives: paths start with the folder people chose. */
+/** What choosing a folder gives: paths start with the folder people chose. */
 export function sourceFromFiles(files: readonly File[]): SourceFolder {
   return {
     name: files[0]?.webkitRelativePath.split("/")[0] ?? "",
@@ -76,6 +63,16 @@ async function freeName(folder: FileSystemDirectoryHandle, name: string): Promis
   throw new Error(`No free folder name for ${name}`);
 }
 
+/** The rules of browsers for names can change, and a backup should not depend on them. */
+async function nameFor(folder: FileSystemDirectoryHandle, wanted: string): Promise<string> {
+  try {
+    return await freeName(folder, wanted);
+  } catch (error) {
+    if (error instanceof TypeError) return freeName(folder, FALLBACK_NAME);
+    throw error;
+  }
+}
+
 async function folderOf(
   root: FileSystemDirectoryHandle,
   parts: readonly string[],
@@ -84,6 +81,20 @@ async function folderOf(
   let folder = root;
   for (const part of parts) folder = await folder.getDirectoryHandle(part, { create });
   return folder;
+}
+
+/** Resolves to undefined for a path that cannot exist here. */
+async function fileAt(
+  root: FileSystemDirectoryHandle,
+  parts: readonly [string, ...string[]],
+): Promise<FileSystemFileHandle | undefined> {
+  try {
+    const folder = await folderOf(root, parts.slice(0, -1), true);
+    return await folder.getFileHandle(parts.at(-1) as string, { create: true });
+  } catch (error) {
+    if (isRefusal(error)) return undefined;
+    throw error;
+  }
 }
 
 /** Writes through a temporary file of the browser, so a file stopped halfway does not exist. */
@@ -121,12 +132,14 @@ function directoryTarget(
     kind: "folder",
     async write(path, content, options = {}) {
       const parts = partsOf(path);
-      const folder = await folderOf(root, parts.slice(0, -1), true);
-      const file = await folder.getFileHandle(parts.at(-1) as string, { create: true });
+      const file = parts && (await fileAt(root, parts));
+      if (!file) return false;
       await writeFile(file, content, options);
+      return true;
     },
     async remove(path) {
       const parts = partsOf(path);
+      if (!parts) return;
       const folder = await folderOf(root, parts.slice(0, -1), false);
       await folder.removeEntry(parts.at(-1) as string);
     },
@@ -137,27 +150,18 @@ function directoryTarget(
   };
 }
 
-/** Folders through the File System Access API, and what is left of that where it is missing. */
+/** How people get to folders, in the ways that do not lose anything without saying so. */
 export function createFolderAccess(options: FolderAccessOptions): FolderAccess {
   const { picker, chooseFiles, saveFile } = options;
 
-  /** Dismissing the dialog is not a failure. */
-  const pick = async (show: DirectoryPicker, mode: "read" | "readwrite") => {
-    try {
-      return await show({ id: PICKER_ID, mode });
-    } catch (error) {
-      if (isNamed(error, "AbortError")) return undefined;
-      throw error;
-    }
-  };
-
   return {
+    asksToUpload: true,
+    /**
+     * Not through the File System Access API, although it is the nicer dialog. On a real disk it
+     * does not show what it would not let a page create either, such as aux.js, con/, ~draft.html
+     * or a name with a joined emoji. Nothing says so, and those files would be gone without a word.
+     */
     async chooseSource() {
-      const show = picker();
-      if (show) {
-        const folder = await pick(show, "read");
-        return folder && { name: folder.name, files: () => walk(folder, "") };
-      }
       const files = await chooseFiles();
       return files && sourceFromFiles(files);
     },
@@ -165,15 +169,21 @@ export function createFolderAccess(options: FolderAccessOptions): FolderAccess {
       const wanted = folderNameFor(name);
       const show = picker();
       if (!show) return zipTarget(wanted, saveFile);
-      const parent = await pick(show, "readwrite");
-      if (!parent) return undefined;
-      const free = await freeName(parent, wanted);
+      let parent: FileSystemDirectoryHandle;
+      try {
+        parent = await show({ id: PICKER_ID, mode: "readwrite" });
+      } catch (error) {
+        // Dismissing the dialog is not a failure.
+        if (isNamed(error, "AbortError")) return undefined;
+        throw error;
+      }
+      const free = await nameFor(parent, wanted);
       return directoryTarget(parent, await parent.getDirectoryHandle(free, { create: true }));
     },
   };
 }
 
-/** The old way to get a folder, which all browsers on computers have. */
+/** All browsers on computers can do this. */
 function chooseFilesWithInput(): Promise<readonly File[] | undefined> {
   return new Promise((resolve) => {
     const input = document.createElement("input");

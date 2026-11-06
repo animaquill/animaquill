@@ -36,6 +36,42 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("a window on a project that was replaced", () => {
+  async function replaced() {
+    const library = new MemoryLibrary();
+    const old = setup(library);
+    await old.session.create("原来的项目");
+    const id = idOf(old.session);
+    const backup = old.session.store?.encodeState() as Uint8Array;
+    await library.remove(id);
+    const incoming = await library.receive({ id, name: "备份" });
+    await incoming?.finish(backup);
+    return { ...old, id, backup };
+  }
+
+  it("says that a change is not saved, also after trying again", async () => {
+    const { session, library, messages, id, backup } = await replaced();
+    rename(session, "第一个窗口改的名字");
+    expect(await settled(session)).toBe(false);
+    expect(await settled(session)).toBe(false);
+
+    expect(session.getSnapshot().save).toBe("failed");
+    expect(messages.saveFailed).toHaveBeenCalledOnce();
+    expect(messages.saveRecovered).not.toHaveBeenCalled();
+    expect(library.updates.get(id)).toEqual([backup]);
+    expect(library.summaries.get(id)?.name).toBe("备份");
+  });
+
+  it("leaves the new project to the windows that have it open", async () => {
+    const { library, address, id } = await replaced();
+    const other = setup(library, memoryAddress(address.read()));
+    await other.session.open(id);
+    rename(other.session, "新窗口改的名字");
+    expect(await settled(other.session)).toBe(true);
+    expect(library.summaries.get(id)?.name).toBe("新窗口改的名字");
+  });
+});
+
 describe("projects", () => {
   it("starts with nothing open", () => {
     expect(setup().session.store).toBeUndefined();

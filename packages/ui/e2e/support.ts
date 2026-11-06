@@ -1,4 +1,7 @@
-import { expect, test as base, type Page } from "@playwright/test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, expect, test as base, type Page } from "@playwright/test";
 
 export { expect };
 
@@ -19,8 +22,29 @@ export async function createProject(page: Page, name = "测试项目") {
  * Opens the editor for every test, with a project unless the test says otherwise, and fails the
  * test when anything was logged as an error.
  */
-export const test = base.extend<{ problems: string[]; withProject: boolean }>({
+export const test = base.extend<{ problems: string[]; withProject: boolean; onDisk: boolean }>({
   withProject: [true, { option: true }],
+  /**
+   * Keeps what the browser saves on the disk, as for people. Normally a test runs in something like
+   * a private window, with IndexedDB in memory and little room in it.
+   */
+  onDisk: [false, { option: true }],
+  context: async ({ context, onDisk, baseURL, viewport }, use) => {
+    if (!onDisk) {
+      await use(context);
+      return;
+    }
+    const folder = mkdtempSync(join(tmpdir(), "animaquill-profile-"));
+    const persistent = await chromium.launchPersistentContext(folder, {
+      channel: "chromium",
+      acceptDownloads: true,
+      ...(baseURL ? { baseURL } : {}),
+      viewport,
+    });
+    await use(persistent);
+    await persistent.close();
+    rmSync(folder, { recursive: true, force: true });
+  },
   problems: [
     async ({ page, withProject }, use) => {
       const problems: string[] = [];
