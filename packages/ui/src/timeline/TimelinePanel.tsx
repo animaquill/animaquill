@@ -105,13 +105,11 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
 
   return (
     <div className={styles.toolbarArea}>
-      <div
-        className={styles.toolbar}
-        role="toolbar"
-        aria-label={t("timeline.toolbar")}
-        // The tools start where the timeline starts.
-        style={{ paddingLeft: headerWidth }}
-      >
+      <div className={styles.toolbar} role="toolbar" aria-label={t("timeline.toolbar")}>
+        {/* The tools start where the timeline starts. */}
+        <span className={styles.axes} style={{ width: headerWidth }}>
+          {t("timeline.axes")}
+        </span>
         <div className={styles.middle}>
           <div className={styles.zone} role="group" aria-label={t("timeline.zone.tools")}>
             <ToolButton

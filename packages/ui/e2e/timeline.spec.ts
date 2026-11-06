@@ -3,8 +3,7 @@ import { content, expect, tab, test } from "./support.ts";
 
 const panel = (page: Page) => content(page, "timeline");
 const clips = (page: Page) => panel(page).getByRole("option");
-const timecode = (page: Page) =>
-  page.getByRole("contentinfo").getByRole("status", { name: "播放头" });
+const timecode = (page: Page) => content(page, "preview").locator("output");
 const playhead = (page: Page) => panel(page).getByRole("slider", { name: "播放头" });
 const addColorButton = (page: Page) => panel(page).getByRole("button", { name: "纯色片段" });
 const stage = (page: Page) => panel(page).getByRole("group", { name: "时间轴" });
@@ -1190,7 +1189,9 @@ test.describe("the status bar", () => {
     await page.getByRole("textbox", { name: "当前时间" }).fill("00:00:02:00");
     await page.keyboard.press("Enter");
     await expect(timecode(page)).toHaveText("00:00:02:00");
-    await expect(bar(page).getByText("/ 00:00:20:00")).toBeVisible();
+    await expect(bar(page).getByRole("button", { name: "当前时间和总时长" })).toHaveText(
+      "2:00 / 20:00",
+    );
   });
 
   test("says so when a time makes no sense, and Escape leaves it", async ({ page }) => {

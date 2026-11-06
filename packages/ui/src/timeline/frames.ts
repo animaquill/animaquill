@@ -34,6 +34,12 @@ export function formatTimecode(frame: number, { nominal }: FrameRate): string {
   return [hours, minutes, seconds % 60, frame % nominal].map(twoDigits).join(":");
 }
 
+/** A timecode without its leading zeros, for where room is short: 1:05:12 and 5:12. */
+export const formatShortTimecode = (frame: number, rate: FrameRate): string =>
+  formatTimecode(frame, rate)
+    .replace(/^(?:00:)+/, "")
+    .replace(/^0(?=\d)/, "");
+
 /**
  * The frame people mean by what they typed: a timecode, filled up from the right, or seconds.
  * Undefined when it is neither.

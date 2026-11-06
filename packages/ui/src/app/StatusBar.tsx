@@ -93,9 +93,9 @@ export function StatusBar() {
           {saveText}
         </span>
       )}
+      <span className={styles.spacer} />
       {project && <TimeStatus />}
       {project && <FrameRateStatus />}
-      <span className={styles.spacer} />
       <InputSwitch />
     </footer>
   );

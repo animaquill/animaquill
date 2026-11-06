@@ -5,6 +5,7 @@ import {
   frameAt,
   frameRate,
   frameSeconds,
+  formatShortTimecode,
   frameTime,
   parseTimecode,
 } from "./frames.ts";
@@ -65,5 +66,19 @@ describe("typing a time", () => {
   it("reads back what it writes", () => {
     const rate = frameRate("30000/1001");
     expect(parseTimecode(formatTimecode(1234, rate), rate)).toBe(1234);
+  });
+});
+
+describe("a short timecode", () => {
+  it.each([
+    [0, "0"],
+    [12, "12"],
+    [30, "1:00"],
+    [162, "5:12"],
+    [1800, "1:00:00"],
+    [108_000, "1:00:00:00"],
+    [108_012, "1:00:00:12"],
+  ])("frame %i is %s", (frame, text) => {
+    expect(formatShortTimecode(frame, frameRate("30"))).toBe(text);
   });
 });
