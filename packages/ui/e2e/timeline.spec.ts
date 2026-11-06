@@ -958,6 +958,72 @@ test.describe("explaining itself", () => {
   });
 });
 
+test.describe("the input mode", () => {
+  test("shows in the status bar and can be chosen, or left to the editor", async ({ page }) => {
+    await addColor(page);
+    const button = page.getByRole("button", { name: /^输入方式/ });
+    await expect(button).toHaveText("鼠标");
+    await button.click();
+    await page.getByRole("radio", { name: /^触控板/ }).click();
+    await expect(button).toHaveText("触控板");
+    await button.click();
+    await expect(page.getByRole("radio", { name: /^触控板/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await page.getByRole("radio", { name: /^自动识别/ }).click();
+    await expect(button).toHaveText("鼠标");
+  });
+});
+
+test.describe("the toolbar", () => {
+  test("starts its tools where the timeline starts", async ({ page }) => {
+    const tools = await boxOf(panel(page).getByRole("group", { name: "工具", exact: true }));
+    const area = await boxOf(stage(page));
+    expect(Math.abs(tools.x - area.x)).toBeLessThanOrEqual(1);
+  });
+
+  test("keeps them there when the track headers get wider", async ({ page }) => {
+    const divider = panel(page).getByRole("separator", { name: "调整轨道头宽度" });
+    const [x, y] = await middleOf(divider);
+    await drag(page, [x, y], [x + 80, y]);
+    await settle(page);
+    const tools = await boxOf(panel(page).getByRole("group", { name: "工具", exact: true }));
+    const area = await boxOf(stage(page));
+    expect(Math.abs(tools.x - area.x)).toBeLessThanOrEqual(1);
+  });
+
+  test("the track headers can get wider", async ({ page }) => {
+    const divider = panel(page).getByRole("separator", { name: "调整轨道头宽度" });
+    const before = await boxOf(stage(page));
+    const [x, y] = await middleOf(divider);
+    await drag(page, [x, y], [x + 80, y]);
+    await expect.poll(async () => (await boxOf(stage(page))).x).toBeGreaterThan(before.x + 60);
+  });
+
+  test("keeps tools, switches and actions apart", async ({ page }) => {
+    const zone = (name: string) => panel(page).getByRole("group", { name, exact: true });
+    await expect(zone("工具").getByRole("button")).toHaveCount(2);
+    await expect(zone("开关").getByRole("button")).toHaveCount(3);
+    await expect(zone("操作").getByRole("button", { name: "在播放头切割" })).toBeVisible();
+  });
+
+  test("showing everything twice goes back to the zoom from before", async ({ page }) => {
+    await addColor(page, 2);
+    await page.keyboard.press("Home");
+    await panel(page).getByRole("slider", { name: "缩放" }).fill("0.4");
+    await settle(page);
+    const before = await boxOf(clips(page).first());
+    const fit = panel(page).getByRole("button", { name: "显示全部" });
+    await fit.click();
+    await settle(page);
+    expect((await boxOf(clips(page).first())).width).toBeLessThan(before.width);
+    await fit.click();
+    await settle(page);
+    expect((await boxOf(clips(page).first())).width).toBeCloseTo(before.width, 0);
+  });
+});
+
 test.describe("the preview", () => {
   const preview = (page: Page) => content(page, "preview");
 
