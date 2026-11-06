@@ -39,6 +39,7 @@ class FakeDock implements Dock {
   serialize = () => this.state;
   open = vi.fn();
   items = () => [{ type: "timeline", visible: true }];
+  active = () => "timeline";
 
   onChange(listener: () => void) {
     this.#listener = listener;
@@ -296,6 +297,14 @@ describe("workspaces", () => {
     layout.switchWorkspace("animate");
     await vi.runAllTimersAsync();
     expect(values.get("layout")).toMatchObject({ workspace: "animate" });
+  });
+
+  it("knows which panel is in use", async () => {
+    const { layout, dock } = setup();
+    await layout.load();
+    expect(layout.getSnapshot().active).toBeUndefined();
+    layout.attach(dock);
+    expect(layout.getSnapshot().active).toBe("timeline");
   });
 
   it("ignores a workspace that does not exist", async () => {

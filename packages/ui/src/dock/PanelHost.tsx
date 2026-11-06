@@ -47,7 +47,8 @@ export function PanelHost({ params }: IDockviewPanelProps<PanelParams>) {
 
   const Content = definition.component;
   return (
-    <div className={styles.content} data-panel={definition.type}>
+    // Focusable, so that clicking anywhere in a panel makes it the panel that keys go to.
+    <div className={styles.content} data-panel={definition.type} tabIndex={-1}>
       <PanelBoundary message={t("panel.crashed")} retry={t("panel.retry")}>
         <Content />
       </PanelBoundary>

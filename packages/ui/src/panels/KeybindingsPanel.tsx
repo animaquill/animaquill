@@ -38,7 +38,7 @@ function Recorder({ action, onClose }: { action: Action; onClose: () => void }) 
       setConflict(undefined);
       setRefused(undefined);
       if (!isBindable(combo)) return setRefused(combo);
-      const owner = keybindings.ownerOf(combo);
+      const owner = keybindings.ownerOf(combo, action.scope);
       if (owner === action.id) return onClose();
       if (owner) return setConflict({ combo, owner });
       take(combo);

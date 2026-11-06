@@ -1,0 +1,241 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--aq-timeline-background);
+}
+
+.toolbarArea {
+  flex: none;
+  container-type: inline-size;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 8px;
+  overflow: hidden;
+  background: var(--aq-bg-panel);
+  border-bottom: 1px solid var(--aq-border);
+}
+
+/* The timeline can sit in a narrow group, and then words give way before buttons do. */
+@container (max-width: 620px) {
+  .buttonLabel {
+    display: none;
+  }
+}
+
+@container (max-width: 460px) {
+  .zoom {
+    display: none;
+  }
+}
+
+.timecode {
+  min-width: 96px;
+  margin-right: 8px;
+  color: var(--aq-timeline-playhead);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 6px;
+  background: var(--aq-border);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  color: var(--aq-text);
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.button[aria-pressed="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.zoom {
+  width: 96px;
+  height: 16px;
+  margin: 0 2px;
+  accent-color: var(--aq-accent);
+  cursor: pointer;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.headers {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 148px;
+  overflow: hidden;
+  background: var(--aq-bg-panel);
+  border-right: 1px solid var(--aq-border);
+}
+
+.corner {
+  flex: none;
+  height: 28px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.headerList {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 8px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.headerName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerButton {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.headerButton:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}
+
+.headerButton[aria-pressed="true"] {
+  color: var(--aq-warning);
+}
+
+/* Both scrollbars always show, so that the size of the drawing area never depends on the content. */
+.scroller {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: scroll;
+  overscroll-behavior: contain;
+}
+
+.content {
+  position: relative;
+}
+
+/* Stays put while the scroller moves underneath: what is drawn follows the scroll position. */
+.stage {
+  position: sticky;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.stage:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--aq-accent);
+}
+
+.canvas {
+  display: block;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--aq-timeline-playhead);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.playhead::before {
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 11px;
+  height: 14px;
+  background: var(--aq-timeline-playhead);
+  clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+  content: "";
+}
+
+/* Clips are drawn on a canvas. This is the same list for screen readers, in the same places. */
+.clipList {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.clipItem {
+  position: absolute;
+}
+
+.hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  color: var(--aq-text-muted);
+}

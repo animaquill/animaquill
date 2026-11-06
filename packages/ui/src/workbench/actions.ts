@@ -26,6 +26,10 @@ export interface Action {
   readonly palette?: false;
   /** Whether it can run right now. Menus grey it out, the palette leaves it out. */
   readonly enabled?: () => boolean;
+  /** The panel it belongs to. Its keys only work there, so that panels can use the same keys. */
+  readonly scope?: string;
+  /** Keeps running while the key is held down, like moving through frames. */
+  readonly repeats?: boolean;
 }
 
 export class ActionRegistry {

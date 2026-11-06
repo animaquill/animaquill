@@ -67,7 +67,7 @@ const KnownSource = z.discriminatedUnion("kind", [
   /** Another timeline. It follows the language and format of the one it is in. */
   z.strictObject({ kind: z.literal("timeline"), timeline: Id }),
   z.strictObject({ kind: z.literal("color"), color: Color }),
-  /** A caption. With words, each one has its own moment, for karaoke-style lyrics. */
+  /** A caption. With words, each one has its moment on the clip's clock, for karaoke-style lyrics. */
   z.strictObject({
     kind: z.literal("caption"),
     text: Text,
@@ -97,7 +97,10 @@ export const Clip = z.strictObject({
   start: Time,
   duration: Duration,
   source: ClipSource,
-  /** Where in the source the clip begins. */
+  /**
+   * What the clock of the clip reads at its first frame. Keys are on this clock, so trimming and
+   * cutting a clip leave them alone. Without `time.speed` it is also where in the source it begins.
+   */
   offset: Time.optional(),
   loop: z.boolean().optional(),
   fadeIn: Time.optional(),

@@ -1,5 +1,15 @@
 import { Check } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import {
+  Fragment,
+  forwardRef,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import styles from "./Menu.module.css";
 
 export interface MenuItem {
@@ -20,6 +30,78 @@ const itemsIn = (root: HTMLElement | null) => [
   ...(root?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? []),
 ];
 
+interface MenuListProps {
+  readonly label: string;
+  readonly groups: readonly (readonly MenuItem[])[];
+  readonly className?: string | undefined;
+  readonly onClose: () => void;
+}
+
+/** The items of a menu, and moving through them with the keyboard. */
+const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
+  { label, groups, className, onClose },
+  ref,
+) {
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const list = itemsIn(event.currentTarget);
+    const index = list.indexOf(document.activeElement as HTMLElement);
+    const moves: Record<string, number> = {
+      ArrowDown: (index + 1) % list.length,
+      ArrowUp: (index - 1 + list.length) % list.length,
+      Home: 0,
+      End: list.length - 1,
+    };
+    const next = moves[event.key];
+    if (next !== undefined) {
+      event.preventDefault();
+      list[next]?.focus();
+    } else if (event.key === "Escape") {
+      onClose();
+    }
+  };
+
+  return (
+    <div
+      ref={ref}
+      className={`${styles.menu} ${className ?? ""}`}
+      role="menu"
+      aria-label={label}
+      onKeyDown={onKeyDown}
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      {groups.map((group, index) => (
+        <Fragment key={group[0]?.id ?? index}>
+          {index > 0 && <div className={styles.separator} role="separator" />}
+          {group.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={styles.item}
+              role={item.selected === undefined ? "menuitem" : "menuitemradio"}
+              {...(item.selected === undefined ? {} : { "aria-checked": item.selected })}
+              {...(item.shortcut ? { "aria-keyshortcuts": item.shortcut } : {})}
+              tabIndex={-1}
+              disabled={item.disabled === true}
+              onClick={() => {
+                item.run();
+                onClose();
+              }}
+            >
+              <span className={styles.mark}>{item.selected && <Check size={14} />}</span>
+              <span className={styles.label}>{item.label}</span>
+              {item.shortcut && (
+                <kbd className={styles.shortcut} aria-hidden="true">
+                  {item.shortcut}
+                </kbd>
+              )}
+            </button>
+          ))}
+        </Fragment>
+      ))}
+    </div>
+  );
+});
+
 export function Menu({ label, groups }: MenuProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -39,24 +121,6 @@ export function Menu({ label, groups }: MenuProps) {
     button.current?.focus();
   };
 
-  const onKeyDown = (event: KeyboardEvent) => {
-    const list = itemsIn(root.current);
-    const index = list.indexOf(document.activeElement as HTMLElement);
-    const moves: Record<string, number> = {
-      ArrowDown: (index + 1) % list.length,
-      ArrowUp: (index - 1 + list.length) % list.length,
-      Home: 0,
-      End: list.length - 1,
-    };
-    const next = moves[event.key];
-    if (next !== undefined) {
-      event.preventDefault();
-      list[next]?.focus();
-    } else if (event.key === "Escape") {
-      close();
-    }
-  };
-
   return (
     <div className={styles.root} ref={root} onBlur={closeOnLeaving}>
       <button
@@ -69,45 +133,48 @@ export function Menu({ label, groups }: MenuProps) {
       >
         {label}
       </button>
-      {open && (
-        <div
-          className={styles.menu}
-          role="menu"
-          aria-label={label}
-          onKeyDown={onKeyDown}
-          onMouseDown={(event) => event.preventDefault()}
-        >
-          {groups.map((group, index) => (
-            <Fragment key={group[0]?.id ?? index}>
-              {index > 0 && <div className={styles.separator} role="separator" />}
-              {group.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={styles.item}
-                  role={item.selected === undefined ? "menuitem" : "menuitemradio"}
-                  {...(item.selected === undefined ? {} : { "aria-checked": item.selected })}
-                  {...(item.shortcut ? { "aria-keyshortcuts": item.shortcut } : {})}
-                  tabIndex={-1}
-                  disabled={item.disabled === true}
-                  onClick={() => {
-                    item.run();
-                    close();
-                  }}
-                >
-                  <span className={styles.mark}>{item.selected && <Check size={14} />}</span>
-                  <span className={styles.label}>{item.label}</span>
-                  {item.shortcut && (
-                    <kbd className={styles.shortcut} aria-hidden="true">
-                      {item.shortcut}
-                    </kbd>
-                  )}
-                </button>
-              ))}
-            </Fragment>
-          ))}
-        </div>
-      )}
+      {open && <MenuList label={label} groups={groups} onClose={close} />}
     </div>
+  );
+}
+
+interface PopupMenuProps {
+  readonly label: string;
+  readonly groups: readonly (readonly MenuItem[])[];
+  /** Where it opens, in pixels from the top left of the window. */
+  readonly x: number;
+  readonly y: number;
+  readonly onClose: () => void;
+}
+
+/** A menu that opens at the pointer, for right clicks. It stays inside the window. */
+export function PopupMenu({ label, groups, x, y, onClose }: PopupMenuProps) {
+  const list = useRef<HTMLDivElement>(null);
+  const opener = useRef<Element | null>(null);
+
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    opener.current = document.activeElement;
+    const { width, height } = element.getBoundingClientRect();
+    element.style.left = `${Math.max(Math.min(x, innerWidth - width - 4), 4)}px`;
+    element.style.top = `${Math.max(Math.min(y, innerHeight - height - 4), 4)}px`;
+    itemsIn(element)[0]?.focus();
+  }, [x, y]);
+
+  const close = () => {
+    onClose();
+    if (opener.current instanceof HTMLElement) opener.current.focus({ preventScroll: true });
+  };
+
+  return createPortal(
+    <div
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) onClose();
+      }}
+    >
+      <MenuList ref={list} className={styles.popup} label={label} groups={groups} onClose={close} />
+    </div>,
+    document.body,
   );
 }

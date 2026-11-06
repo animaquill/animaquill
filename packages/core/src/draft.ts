@@ -12,6 +12,11 @@ export class CommandError extends Error {
   }
 }
 
+/** Stops a command. Nothing it planned so far gets written. */
+export const fail = (code: string, message: string): never => {
+  throw new CommandError(code, message);
+};
+
 /** One change, and how to take it back. */
 export interface Step {
   readonly patch: Patch;

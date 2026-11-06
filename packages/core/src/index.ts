@@ -2,12 +2,17 @@ export { COMMANDS, type CommandDefinition } from "./commands.ts";
 export { CommandError, Draft } from "./draft.ts";
 export { isSourceFile } from "./import-file.ts";
 export {
+  clipEnd,
+  clipOffset,
+  clipStart,
   orderedSections,
   orderedTracks,
   projectToState,
   stateToProject,
   stateToTimeline,
+  timelineLength,
   timelineToState,
+  trackKindFor,
   type ClipState,
   type ExportedProject,
   type ProjectState,

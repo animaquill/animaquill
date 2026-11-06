@@ -121,7 +121,7 @@ test.describe("command palette", () => {
 
   test("finds characters that are not next to each other", async ({ page }) => {
     await openPalette(page);
-    await input(page).fill("时轴");
+    await input(page).fill("选时轴");
     await expect(active(page)).toContainText("打开选项卡：时间轴");
   });
 
@@ -395,7 +395,7 @@ test.describe("shortcuts", () => {
     await search.fill("alt+2");
     await expect(page.locator("[data-action]")).toHaveCount(1);
     await expect(row(page, "view.workspace.animate")).toBeVisible();
-    await search.fill("时间轴");
+    await search.fill("打开选项卡：时间轴");
     await expect(page.locator("[data-action]")).toHaveCount(1);
     await search.fill("没有这个");
     await expect(content(page, "keybindings").getByText("没有匹配的命令")).toBeVisible();

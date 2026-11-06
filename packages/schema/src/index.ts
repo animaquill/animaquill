@@ -36,5 +36,13 @@ export {
   Transition,
   canHold,
 } from "./timeline.ts";
-export { Animation, Key, MediaRef, Properties, PropertyValue, Value } from "./values.ts";
+export {
+  Animation,
+  Key,
+  MediaRef,
+  Properties,
+  PropertyValue,
+  Value,
+  isAnimation,
+} from "./values.ts";
 export { CURRENT_FORMAT_VERSION } from "./version.ts";

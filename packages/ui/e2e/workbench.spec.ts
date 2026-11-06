@@ -16,6 +16,20 @@ async function box(locator: Locator) {
   return value;
 }
 
+/** The layout follows the window a moment later, so measuring right away can give the old place. */
+async function settledBox(locator: Locator) {
+  let before = "";
+  await expect
+    .poll(async () => {
+      const now = JSON.stringify(await box(locator));
+      const stable = now === before;
+      before = now;
+      return stable;
+    })
+    .toBe(true);
+  return box(locator);
+}
+
 async function savedLayout(page: Page) {
   const text = await page.evaluate((key) => localStorage.getItem(key), LAYOUT_KEY);
   return text ?? "";
@@ -464,7 +478,7 @@ test("the active tab stays in view when the strip first runs out of room", async
 test("a tab dragged into a full strip is in view", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 620 });
   // In the middle, because near the ends the strip scrolls by itself during a drag.
-  const strip = await box(group(page, "assets").locator(".dv-tabs-container"));
+  const strip = await settledBox(group(page, "assets").locator(".dv-tabs-container"));
   await dragTab(page, "properties", strip.x + strip.width / 2, strip.y + strip.height / 2);
   await expect(group(page, "assets").locator('[data-tab="properties"]')).toBeVisible();
   await expectTabInView(page, "properties");
@@ -473,7 +487,7 @@ test("a tab dragged into a full strip is in view", async ({ page }) => {
 test("the wheel scrolls a tab strip that is full", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 620 });
   const list = group(page, "assets").locator(".dv-tabs-container");
-  const strip = await box(list);
+  const strip = await settledBox(list);
   await page.mouse.move(strip.x + 40, strip.y + strip.height / 2);
   await page.mouse.wheel(0, 120);
   await expect

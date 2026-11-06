@@ -40,12 +40,15 @@ export interface Dock {
   serialize(): unknown;
   open(type: string): void;
   items(): readonly DockItem[];
+  /** The panel people are working in. */
+  active(): string | undefined;
   onChange(listener: () => void): () => void;
 }
 
 export interface LayoutSnapshot {
   readonly workspace: string;
   readonly visible: ReadonlySet<string>;
+  readonly active: string | undefined;
 }
 
 export interface LayoutMessages {
@@ -106,7 +109,7 @@ export class LayoutController {
     this.#messages = messages;
     this.#workspace = first.id;
     this.#saved = { version: FORMAT_VERSION, workspace: first.id, states: {} };
-    this.#snapshot = { workspace: first.id, visible: new Set() };
+    this.#snapshot = { workspace: first.id, visible: new Set(), active: undefined };
   }
 
   subscribe = this.#emitter.subscribe;
@@ -238,7 +241,7 @@ export class LayoutController {
   #refresh(): void {
     const visible = new Set<string>();
     for (const item of this.#dock?.items() ?? []) if (item.visible) visible.add(item.type);
-    this.#snapshot = { workspace: this.#workspace, visible };
+    this.#snapshot = { workspace: this.#workspace, visible, active: this.#dock?.active() };
     this.#emitter.emit();
   }
 

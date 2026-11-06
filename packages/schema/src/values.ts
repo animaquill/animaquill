@@ -24,7 +24,7 @@ export const Value = z.union([
 
 const Handle = z.tuple([z.number(), z.number()]);
 
-/** How a value changes from one key to the next. Times are relative to the start of the clip. */
+/** How a value changes from one key to the next. Times are on the clock of the clip: see `offset`. */
 export const Key = z
   .strictObject({
     time: Time,
@@ -97,11 +97,13 @@ export const PropertyPath = z
 /** Sorted, so that a file only changes when a value does. */
 export const Properties = z.record(PropertyPath, PropertyValue).overwrite(sortKeys);
 
+/** Whether a property changes over time. A list of numbers is a value, and it has `keys` too. */
+export const isAnimation = (value: z.output<typeof PropertyValue>): value is Animation =>
+  typeof value === "object" && value !== null && !Array.isArray(value) && "keys" in value;
+
 /** The plain values of a property, whether it has keys or not. */
 const valuesOf = (value: z.output<typeof PropertyValue>) =>
-  typeof value === "object" && value !== null && "keys" in value
-    ? (value.keys as readonly Key[]).map((key) => key.value)
-    : [value];
+  isAnimation(value) ? value.keys.map((key) => key.value) : [value];
 
 /** Finds misspelled names and impossible values, for one property. */
 export function checkProperty(

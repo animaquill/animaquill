@@ -23,6 +23,24 @@
   --aq-scrollbar: #79797966;
   --aq-scrollbar-hover: #646464b3;
   --aq-scrollbar-active: #bfbfbf66;
+
+  --aq-timeline-background: #161616;
+  --aq-timeline-lane: #1c1c1c;
+  --aq-timeline-lane-locked: #232220;
+  --aq-timeline-line: #2b2b2b;
+  --aq-timeline-ruler: #181818;
+  --aq-timeline-tick: #5f5f5f;
+  --aq-timeline-label: #9d9d9d;
+  --aq-timeline-picture: #3f6fb5;
+  --aq-timeline-sound: #3f9a7a;
+  --aq-timeline-caption: #a8873f;
+  --aq-timeline-selected: #ffffff;
+  --aq-timeline-playhead: #ff5c5c;
+  --aq-timeline-snap: #ffd23f;
+  --aq-timeline-covered: #e5484d;
+  --aq-timeline-outside: #0000006b;
+  --aq-timeline-end: #8a8a8a;
+  --aq-timeline-marquee: #2aaaff;
 }
 
 *,

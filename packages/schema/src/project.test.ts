@@ -187,6 +187,15 @@ describe("when something is wrong with a file", () => {
     expect(clip?.source).toEqual({ kind: "plugin.lottie", loops: 3, src: { asset: "logo" } });
   });
 
+  it("opens a property whose value is a list of numbers", () => {
+    const files = withChange(MAIN, (document) => {
+      document.tracks[0].clips[0].properties["param.points"] = [1, 2, 3];
+    });
+    expect(codes(files)).not.toContain("invalid-document");
+    const clip = readProject(files).project?.timelines.get("main")?.document?.tracks[0]?.clips[0];
+    expect(clip?.properties?.["param.points"]).toEqual([1, 2, 3]);
+  });
+
   it("finds a misspelled property, but allows parameters of scenes", () => {
     const typo = withChange(MAIN, (document) => {
       document.tracks[0].clips[0].properties["transfrom.x"] = 1;

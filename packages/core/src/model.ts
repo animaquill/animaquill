@@ -9,9 +9,13 @@ import {
   SceneManifest,
   SoundManifest,
   Timeline,
+  ZERO,
+  add,
+  parseTime,
   type Clip,
   type Problem,
   type Project,
+  type Rational,
   type TimelineFiles,
   type Track,
 } from "@animaquill/schema";
@@ -25,8 +29,10 @@ type Transition = NonNullable<Extract<Track, { kind: "video" }>["transitions"]>[
 /** A section in the live model. Sections have an order, a map of them does not. */
 export type SectionState = Section & { readonly order: number };
 
+type OmitFromEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 /** A track without its content. Clips point at their track instead. */
-export type TrackState = Omit<Track, "clips" | "transitions"> & { readonly order: number };
+export type TrackState = OmitFromEach<Track, "clips" | "transitions"> & { readonly order: number };
 
 /**
  * A clip in the live model. Clips sit next to each other and name their track, so moving a clip to
@@ -136,6 +142,20 @@ const inOrder = <T extends { readonly id: string; readonly order: number }>(
 export const orderedTracks = (timeline: TimelineState) => inOrder(timeline.tracks);
 export const orderedSections = (timeline: TimelineState) => inOrder(timeline.sections);
 
+/** Exact times of a clip, for calculations. */
+export const clipStart = (clip: ClipState): Rational => parseTime(clip.start);
+export const clipEnd = (clip: ClipState): Rational =>
+  add(parseTime(clip.start), parseTime(clip.duration));
+export const clipOffset = (clip: ClipState): Rational =>
+  clip.offset === undefined ? ZERO : parseTime(clip.offset);
+
+/** Sections end to end make up the length of a timeline, which is kept nowhere else. */
+export const timelineLength = (timeline: TimelineState): Rational =>
+  Object.values(timeline.sections).reduce(
+    (length, section) => add(length, parseTime(section.duration)),
+    ZERO,
+  );
+
 const KINDS_OF_TRACK: Readonly<Record<string, string>> = {
   audio: "audio",
   sound: "audio",
@@ -143,7 +163,9 @@ const KINDS_OF_TRACK: Readonly<Record<string, string>> = {
   caption: "caption",
 };
 
-const trackKindFor = (clip: ClipState) => KINDS_OF_TRACK[clip.source.kind] ?? "video";
+/** The kind of track a clip belongs on. */
+export const trackKindFor = (clip: ClipState): Track["kind"] =>
+  (KINDS_OF_TRACK[clip.source.kind] as Track["kind"] | undefined) ?? "video";
 
 const FALLBACK_SECTION = { id: "section-recovered", duration: "1" };
 
@@ -176,6 +198,8 @@ export function stateToTimeline(state: TimelineState): unknown {
   }
   for (const transition of Object.values(state.transitions)) {
     const { track: owner, ...rest } = transition;
+    // Two people can each remove the clip on one side. Nothing is left to go from or to.
+    if (rest.from === undefined && rest.to === undefined) continue;
     find(owner)?.transitions.push(rest as TransitionState);
   }
 

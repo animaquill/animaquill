@@ -317,3 +317,155 @@ describe("several windows", () => {
     expect(service.keysFor("open")).toEqual(["mod+k"]);
   });
 });
+
+describe("keys of a panel", () => {
+  const inPanel = (name: string) =>
+    ({ closest: () => ({ getAttribute: () => name }) }) as unknown as EventTarget;
+
+  async function withPanels() {
+    const context = await setup();
+    const inTimeline = { ...action("timeline.delete", ["delete"]), scope: "timeline" };
+    const inKeyframes = { ...action("keyframes.delete", ["delete"]), scope: "keyframes" };
+    const everywhere = action("global.delete", ["delete"]);
+    for (const item of [inTimeline, inKeyframes, everywhere]) context.actions.register(item);
+    await context.service.load();
+    return { ...context, inTimeline, inKeyframes, everywhere };
+  }
+
+  it("lets panels use the same key", async () => {
+    const { service, inTimeline, inKeyframes } = await withPanels();
+    service.handle(keyDown("Delete", { target: inPanel("keyframes") }));
+    expect(inKeyframes.run).toHaveBeenCalledOnce();
+    expect(inTimeline.run).not.toHaveBeenCalled();
+    expect(service.keysFor("timeline.delete")).toEqual(["delete"]);
+  });
+
+  it("uses the key for everywhere outside of the panel", async () => {
+    const { service, inTimeline, everywhere } = await withPanels();
+    service.handle(keyDown("Delete"));
+    expect(everywhere.run).toHaveBeenCalledOnce();
+    expect(inTimeline.run).not.toHaveBeenCalled();
+  });
+
+  it("stays with the panel in use while something else has the focus", async () => {
+    const { service, inTimeline } = await withPanels();
+    service.notePanel("timeline");
+    service.handle(keyDown("Delete"));
+    expect(inTimeline.run).toHaveBeenCalledOnce();
+  });
+
+  it("goes by the panel in use when the focus stayed behind in another one", async () => {
+    const { service, inTimeline, inKeyframes } = await withPanels();
+    service.notePanel("timeline");
+    service.handle(keyDown("Delete", { target: inPanel("keyframes") }));
+    expect(inTimeline.run).toHaveBeenCalledOnce();
+    expect(inKeyframes.run).not.toHaveBeenCalled();
+  });
+
+  it("keeps a panel's keys away from an open menu", async () => {
+    const { service, inTimeline, everywhere } = await withPanels();
+    service.notePanel("timeline");
+    const item = {
+      closest: (selector: string) => (selector.includes("menu") ? {} : null),
+    } as unknown as EventTarget;
+    service.handle(keyDown("Delete", { target: item }));
+    expect(inTimeline.run).not.toHaveBeenCalled();
+    expect(everywhere.run).toHaveBeenCalledOnce();
+  });
+
+  it("does not reach into a panel from a text box somewhere else", async () => {
+    const { service, inTimeline, everywhere } = await withPanels();
+    service.assign("timeline.delete", "mod+k");
+    service.notePanel("timeline");
+    const box = { tagName: "INPUT", closest: () => null };
+    service.handle(keyDown("KeyK", { ctrlKey: true, target: box as unknown as EventTarget }));
+    expect(inTimeline.run).not.toHaveBeenCalled();
+    expect(everywhere.run).not.toHaveBeenCalled();
+  });
+
+  it("leaves a key to the action for everywhere when the panel cannot use it", async () => {
+    const context = await setup();
+    const unavailable = {
+      ...action("timeline.delete", ["delete"]),
+      scope: "timeline",
+      enabled: () => false,
+    };
+    const everywhere = action("global.delete", ["delete"]);
+    context.actions.register(unavailable);
+    context.actions.register(everywhere);
+    await context.service.load();
+    context.service.handle(keyDown("Delete", { target: inPanel("timeline") }));
+    expect(everywhere.run).toHaveBeenCalledOnce();
+    expect(unavailable.run).not.toHaveBeenCalled();
+  });
+
+  it("takes a key away only from the same panel", async () => {
+    const { service } = await withPanels();
+    service.assign("keyframes.delete", "x");
+    service.assign("timeline.delete", "x");
+    expect(service.keysFor("keyframes.delete")).toContain("x");
+    expect(service.ownerOf("x", "timeline")).toBe("timeline.delete");
+    expect(service.ownerOf("x", "keyframes")).toBe("keyframes.delete");
+  });
+
+  it("stays out of a text box", async () => {
+    const { service, inTimeline } = await withPanels();
+    const box = { tagName: "INPUT", closest: () => ({ getAttribute: () => "timeline" }) };
+    const event = keyDown("Delete", { target: box as unknown as EventTarget });
+    service.handle(event);
+    expect(inTimeline.run).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("inputs that take no typing", () => {
+  it("leave shortcuts alone, apart from the keys a slider moves with", async () => {
+    const context = await setup();
+    const remove = action("delete", ["delete"]);
+    const step = action("step", ["left"]);
+    context.actions.register(remove);
+    context.actions.register(step);
+    await context.service.load();
+    const slider = { tagName: "INPUT", type: "range" } as unknown as EventTarget;
+
+    context.service.handle(keyDown("Delete", { target: slider }));
+    expect(remove.run).toHaveBeenCalledOnce();
+
+    const arrow = keyDown("ArrowLeft", { target: slider });
+    context.service.handle(arrow);
+    expect(step.run).not.toHaveBeenCalled();
+    expect(arrow.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("count as typing when they are for text", async () => {
+    const context = await setup();
+    const remove = action("delete", ["delete"]);
+    context.actions.register(remove);
+    await context.service.load();
+    for (const type of ["text", "search", undefined]) {
+      const box = { tagName: "INPUT", type } as unknown as EventTarget;
+      context.service.handle(keyDown("Delete", { target: box }));
+    }
+    expect(remove.run).not.toHaveBeenCalled();
+  });
+});
+
+describe("a key held down", () => {
+  it("runs once, unless the action asks for more", async () => {
+    const context = await setup();
+    const held = { ...action("step", ["left"]), repeats: true };
+    context.actions.register(held);
+    await context.service.load();
+    context.service.handle(keyDown("ArrowLeft", { repeat: true }));
+    expect(held.run).toHaveBeenCalledOnce();
+    context.service.handle(keyDown("KeyS", { ctrlKey: true, repeat: true }));
+    expect(context.save.run).not.toHaveBeenCalled();
+  });
+
+  it("does not reach the browser the second time around", async () => {
+    const { service } = await setup();
+    const event = keyDown("KeyS", { ctrlKey: true, repeat: true });
+    service.handle(event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+  });
+});

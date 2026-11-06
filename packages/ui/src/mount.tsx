@@ -39,7 +39,9 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // Pages can go away without warning, so hiding is the last reliable moment to save.
   const save = () => {
-    if (document.visibilityState === "hidden") void workbench.layout.flush();
+    if (document.visibilityState !== "hidden") return;
+    void workbench.layout.flush();
+    workbench.timeline.flush();
   };
   document.addEventListener("visibilitychange", save);
 

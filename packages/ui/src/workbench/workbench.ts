@@ -2,6 +2,8 @@ import type { Host } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import type { ProjectStore } from "@animaquill/core";
 import type { ProjectSummary } from "@animaquill/host";
+import { registerTimelineActions } from "../timeline/actions.ts";
+import { TimelineEditor } from "../timeline/editor.ts";
 import { ActionRegistry } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
 import { KeybindingService } from "./keybindings.ts";
@@ -33,6 +35,7 @@ export class Workbench {
   readonly palette: CommandPalette;
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
+  readonly timeline: TimelineEditor;
   #changingProject = false;
 
   constructor({ host, t, version, platform, panels, workspaces }: WorkbenchOptions) {
@@ -46,6 +49,7 @@ export class Workbench {
       restoreFailed: () => this.notifications.push(t("notice.keybindingsRestoreFailed")),
       saveFailed: () => this.notifications.push(t("notice.keybindingsSaveFailed")),
     });
+    this.layout.subscribe(() => this.keybindings.notePanel(this.layout.getSnapshot().active));
     this.palette = new CommandPalette(host.settings, this.actions);
     this.session = new ProjectSession(host.projects, host.address, {
       createFailed: () => this.notifications.push(t("notice.projectCreateFailed")),
@@ -56,10 +60,14 @@ export class Workbench {
       saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
+    this.timeline = new TimelineEditor(this.session, host.windowMemory, {
+      commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+    });
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
     this.#registerEditActions();
     this.#registerViewActions();
+    registerTimelineActions(this.actions, this.timeline);
   }
 
   async load(): Promise<void> {

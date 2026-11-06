@@ -18,6 +18,7 @@
 ## 开发
 
 - 命令：`pnpm dev`、`pnpm check`、`pnpm e2e`。
+- 测试里出现 `Yjs was already imported`，是依赖重新链接后 Vitest 还留着旧路径，删掉 `node_modules/.vitest-cache`。
 - 包的依赖方向只能往下，比如 `ui` 依赖 `host`。
 - import 写完整的扩展名，这样 Node.js 也能直接运行这些源码。
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
@@ -26,6 +27,8 @@
 - 设置是所有窗口共享的，只放偏好，不放这个窗口正在做什么。窗口显示哪个项目由 `Host.address` 决定，其他窗口自己的状态放 `Host.windowMemory`。整份写回的设置要用 `listen` 跟上其他窗口的改动。
 - 宿主只提供存储，接口在 `packages/host`，不要让它依赖 Yjs。保存的逻辑在 `packages/ui/src/workbench/session.ts`，切换项目走 `Workbench`，它会先处理没保存的改动。
 - 对话框用 `Workbench.dialogs`，不要自己写弹窗。
+- 动作的按键只属于一个选项卡时写 `scope`。
+- 时间轴在 `packages/ui/src/timeline`。缩放、播放头、选中是窗口的状态，不进项目。手势只改预览，松手才执行命令，一次拖动是一步撤销。手势和规则写在不碰 DOM 的 `TimelineEditor` 里，用单元测试盯住。
 
 ## 命令系统
 
@@ -34,6 +37,9 @@
 - 文档里哪些层是独立的 Map，定义在 `packages/core/src/structure.ts`，它决定了冲突的粒度。
 - 不用 `Y.UndoManager`：两边同时改一个字段再撤销时，它可能让这个字段没有值。撤销用命令记录的逆操作。
 - 涉及并发的改动要跑随机测试 `packages/core/src/fuzz.test.ts`，手写用例发现不了这类问题。
+- 命令要经得起一次处理几千个片段：不要在循环里再扫一遍全部片段，先按轨道排序。
+- 浮点时间只用来画和找位置。切不切、有没有空位这类判断用精确时间，否则片段边缘会判断错。
+- 判断属性是不是动画用 `isAnimation`：数组也有 `keys`。
 
 ## 项目格式
 

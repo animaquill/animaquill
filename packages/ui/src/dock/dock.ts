@@ -94,6 +94,7 @@ export function createDock(api: DockviewApi, panels: PanelRegistry, t: TFunction
       });
     },
     items: () => api.panels.map((panel) => ({ type: typeOf(panel), visible: panel.api.isVisible })),
+    active: () => (api.activePanel ? typeOf(api.activePanel) : undefined),
     onChange(listener) {
       const subscriptions = [api.onDidLayoutChange(listener), api.onDidActivePanelChange(listener)];
       return () => subscriptions.forEach((subscription) => subscription.dispose());

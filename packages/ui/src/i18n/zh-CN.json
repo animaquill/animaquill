@@ -11,7 +11,8 @@
   "menu": {
     "file": "文件",
     "edit": "编辑",
-    "view": "视图"
+    "view": "视图",
+    "timeline": "时间轴"
   },
   "edit": {
     "undo": "撤销",
@@ -118,25 +119,148 @@
       "title": "不可用",
       "hint": "这个选项卡在当前版本里不存在，可以关闭它。"
     },
-    "files": { "title": "文件", "hint": "项目里的场景、时间轴和素材文件。" },
-    "assets": { "title": "素材库", "hint": "项目关联的素材，可以浏览、搜索和拖到时间轴。" },
-    "notes": { "title": "经验库", "hint": "项目关联的经验，AI 工作时会参考。" },
-    "history": { "title": "历史记录", "hint": "项目的存档，可以查看和回到任何一个。" },
-    "preview": { "title": "预览", "hint": "画面在这里播放。" },
-    "code": { "title": "代码", "hint": "场景的 HTML、CSS 和 JavaScript。" },
-    "versions": { "title": "版本矩阵", "hint": "一个项目的所有语言和画幅。" },
-    "properties": { "title": "属性", "hint": "选中对象的属性和动画。" },
-    "chat": { "title": "聊天", "hint": "和 AI 工具对话。" },
-    "annotations": { "title": "批注", "hint": "在画面上标出要改的地方，发给 AI。" },
-    "timeline": { "title": "时间轴", "hint": "片段、轨道和播放头。" },
-    "keyframes": { "title": "关键帧", "hint": "关键帧和动画曲线。" },
-    "music": { "title": "音乐", "hint": "编写音乐和合成音效。" },
-    "recording": { "title": "录音", "hint": "看着画面录旁白。" },
-    "differences": { "title": "差异列表", "hint": "每个版本和主版本的不同之处。" },
-    "problems": { "title": "问题", "hint": "项目里需要处理的问题。" },
-    "terminal": { "title": "终端", "hint": "AI 工具的命令行。" },
-    "cache": { "title": "缓存", "hint": "预览用的素材和占用的空间。" },
-    "performance": { "title": "性能", "hint": "哪个场景拖慢了画面。" },
-    "keybindings": { "title": "快捷键" }
+    "files": {
+      "title": "文件",
+      "hint": "项目里的场景、时间轴和素材文件。"
+    },
+    "assets": {
+      "title": "素材库",
+      "hint": "项目关联的素材，可以浏览、搜索和拖到时间轴。"
+    },
+    "notes": {
+      "title": "经验库",
+      "hint": "项目关联的经验，AI 工作时会参考。"
+    },
+    "history": {
+      "title": "历史记录",
+      "hint": "项目的存档，可以查看和回到任何一个。"
+    },
+    "preview": {
+      "title": "预览",
+      "hint": "画面在这里播放。"
+    },
+    "code": {
+      "title": "代码",
+      "hint": "场景的 HTML、CSS 和 JavaScript。"
+    },
+    "versions": {
+      "title": "版本矩阵",
+      "hint": "一个项目的所有语言和画幅。"
+    },
+    "properties": {
+      "title": "属性",
+      "hint": "选中对象的属性和动画。"
+    },
+    "chat": {
+      "title": "聊天",
+      "hint": "和 AI 工具对话。"
+    },
+    "annotations": {
+      "title": "批注",
+      "hint": "在画面上标出要改的地方，发给 AI。"
+    },
+    "timeline": {
+      "title": "时间轴",
+      "hint": "片段、轨道和播放头。"
+    },
+    "keyframes": {
+      "title": "关键帧",
+      "hint": "关键帧和动画曲线。"
+    },
+    "music": {
+      "title": "音乐",
+      "hint": "编写音乐和合成音效。"
+    },
+    "recording": {
+      "title": "录音",
+      "hint": "看着画面录旁白。"
+    },
+    "differences": {
+      "title": "差异列表",
+      "hint": "每个版本和主版本的不同之处。"
+    },
+    "problems": {
+      "title": "问题",
+      "hint": "项目里需要处理的问题。"
+    },
+    "terminal": {
+      "title": "终端",
+      "hint": "AI 工具的命令行。"
+    },
+    "cache": {
+      "title": "缓存",
+      "hint": "预览用的素材和占用的空间。"
+    },
+    "performance": {
+      "title": "性能",
+      "hint": "哪个场景拖慢了画面。"
+    },
+    "keybindings": {
+      "title": "快捷键"
+    }
+  },
+  "timeline": {
+    "toolbar": "时间轴工具",
+    "playhead": "播放头",
+    "zoom": "缩放",
+    "clips": "时间轴片段",
+    "clipLabel": "{{name}}，{{track}}，{{start}} 到 {{end}}",
+    "addTrack": "添加轨道",
+    "trackName": "轨道名称",
+    "renameTrack": "重命名轨道",
+    "removeTrack": "删除轨道",
+    "lock": "锁定 {{track}}",
+    "hide": "隐藏 {{track}}",
+    "mute": "静音 {{track}}",
+    "emptyHint": "点上方的“纯色片段”，或者右键视频轨道，添加第一个片段",
+    "missing": "这个项目没有能打开的时间轴。",
+    "track": {
+      "video": "视频 {{number}}",
+      "audio": "音频 {{number}}",
+      "caption": "字幕 {{number}}"
+    },
+    "kind": {
+      "video": "视频",
+      "image": "图片",
+      "audio": "音频",
+      "scene": "场景",
+      "sound": "声音",
+      "music": "音乐",
+      "timeline": "嵌套时间轴",
+      "color": "纯色",
+      "caption": "字幕"
+    },
+    "action": {
+      "addColor": "添加纯色片段",
+      "addVideoTrack": "添加视频轨道",
+      "addAudioTrack": "添加音频轨道",
+      "addCaptionTrack": "添加字幕轨道",
+      "split": "在播放头切割",
+      "delete": "删除片段",
+      "selectAll": "全选片段",
+      "toolSelect": "选择工具",
+      "toolRazor": "切割工具",
+      "toggleSnapping": "切换吸附",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "zoomToFit": "显示全部",
+      "previousFrame": "上一帧",
+      "nextFrame": "下一帧",
+      "backFiveFrames": "后退 5 帧",
+      "forwardFiveFrames": "前进 5 帧",
+      "previousEdit": "上一个剪辑点",
+      "nextEdit": "下一个剪辑点",
+      "start": "跳到开头",
+      "end": "跳到结尾"
+    },
+    "color": "纯色片段",
+    "snapping": "吸附",
+    "newTrack": {
+      "video": "视频轨道",
+      "audio": "音频轨道",
+      "caption": "字幕轨道"
+    },
+    "command": "时间轴：{{action}}",
+    "goneTrack": "已删除的轨道"
   }
 }

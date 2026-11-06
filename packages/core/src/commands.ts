@@ -9,11 +9,28 @@ import {
   Time,
   Track,
   canHold,
+  compare,
   newId,
+  parseTime,
 } from "@animaquill/schema";
 import { z } from "zod";
-import { CommandError, type Draft } from "./draft.ts";
 import {
+  assertFree,
+  clearSpans,
+  clipPath,
+  extendToFit,
+  removeClips,
+  spanOf,
+  splitClip,
+  timelineOf,
+  timelinePath,
+  trimClip,
+  type Span,
+} from "./clip-edits.ts";
+import { fail, type Draft } from "./draft.ts";
+import {
+  clipEnd,
+  clipStart,
   orderedSections,
   orderedTracks,
   type ClipState,
@@ -40,17 +57,7 @@ function define<S extends z.ZodType>(
   return { type, params, run: run as CommandDefinition["run"], ...options };
 }
 
-const fail = (code: string, message: string): never => {
-  throw new CommandError(code, message);
-};
-
-const timelinePath = (timeline: string) => ["timelines", timeline];
-const clipPath = (timeline: string, clip: string) => ["timelines", timeline, "clips", clip];
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
-
-function timelineOf(draft: Draft, id: string): TimelineState {
-  return draft.state.timelines[id] ?? fail("not-found", `没有这条时间轴：${id}`);
-}
 
 function trackOf(timeline: TimelineState, id: string): TrackState {
   return timeline.tracks[id] ?? fail("not-found", `没有这条轨道：${id}`);
@@ -63,9 +70,10 @@ function editableTrack(timeline: TimelineState, id: string): TrackState {
   return track;
 }
 
+/** Two people at once can leave a clip behind on a track that is gone. People can still clean up. */
 function editableClip(timeline: TimelineState, id: string): ClipState {
   const clip = timeline.clips[id] ?? fail("not-found", `没有这个片段：${id}`);
-  editableTrack(timeline, clip.track);
+  if (timeline.tracks[clip.track]) editableTrack(timeline, clip.track);
   return clip;
 }
 
@@ -97,6 +105,24 @@ function orderBefore<T extends { readonly id: string; readonly order: number }>(
   const before = others[index - 1]?.order;
   if (after === undefined) return (before ?? -1) + 1;
   return before === undefined ? after - 1 : (before + after) / 2;
+}
+
+/**
+ * What happens to clips in the way. An editor drops over them, like people expect from any video
+ * editor. Everyone else has to say so: a change nobody asked for is worse than a refused command.
+ */
+const Overlap = z.enum(["reject", "overwrite"]).optional();
+
+function makeRoom(
+  draft: Draft,
+  timeline: string,
+  track: string,
+  spans: readonly Span[],
+  moving: ReadonlySet<string>,
+  overlap: z.output<typeof Overlap>,
+): void {
+  if (overlap === "overwrite") clearSpans(draft, timeline, track, spans, moving);
+  else assertFree(timelineOf(draft, timeline), track, spans, moving);
 }
 
 const ClipFields = Clip.omit({ id: true });
@@ -262,13 +288,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "clip.add",
-    z.strictObject({ timeline: Id, track: Id, clip: ClipInput }),
-    (draft, { timeline, track, clip }) => {
+    z.strictObject({ timeline: Id, track: Id, clip: ClipInput, overlap: Overlap }),
+    (draft, { timeline, track, clip, overlap }) => {
       const target = timelineOf(draft, timeline);
       checkFits(editableTrack(target, track), clip);
       const id = clip.id ?? newId("clip");
       if (target.clips[id]) fail("id-taken", `这个 ID 已经有片段了：${id}`);
-      draft.set(clipPath(timeline, id), { ...clip, id, track });
+      const added = { ...clip, id, track };
+      makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
+      draft.set(clipPath(timeline, id), added);
+      extendToFit(draft, timeline, clipEnd(added));
       return { id };
     },
   ),
@@ -279,17 +308,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { timeline, clips }) => {
       const target = timelineOf(draft, timeline);
       for (const id of clips) editableClip(target, id);
-      const removed = new Set(clips);
-      for (const id of clips) draft.delete(clipPath(timeline, id));
-      for (const transition of Object.values(target.transitions)) {
-        const path = [...timelinePath(timeline), "transitions", transition.id];
-        const from = transition.from && removed.has(transition.from);
-        const to = transition.to && removed.has(transition.to);
-        if (!from && !to) continue;
-        const keepsSide = (!from && transition.from) || (!to && transition.to);
-        if (!keepsSide) draft.delete(path);
-        else draft.delete([...path, from ? "from" : "to"]);
-      }
+      removeClips(draft, timeline, clips);
     },
   ),
 
@@ -307,22 +326,115 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const next: Record<string, unknown> = { ...current, ...changes };
       for (const field of clear ?? []) delete next[field];
       checkClip(next as ClipState);
-      checkFits(trackOf(target, current.track), next as ClipState);
+      const home = target.tracks[current.track];
+      if (home) checkFits(home, next as ClipState);
+      const updated = next as ClipState;
+      // Clips can overlap after a merge, and that should not stop people from renaming one.
+      const moves = changes.start !== undefined || changes.duration !== undefined;
+      if (moves) assertFree(target, current.track, [spanOf(updated)], new Set([clip]));
       draft.replace(clipPath(timeline, clip), next);
+      if (moves) extendToFit(draft, timeline, clipEnd(updated));
     },
   ),
 
+  /** Several clips move in one step, because the place one of them leaves is free for another. */
   define(
     "clip.move",
-    z.strictObject({ timeline: Id, clip: Id, start: Time.optional(), track: Id.optional() }),
-    (draft, { timeline, clip, start, track }) => {
+    z.strictObject({
+      timeline: Id,
+      clips: z
+        .array(z.strictObject({ clip: Id, start: Time.optional(), track: Id.optional() }))
+        .min(1),
+      overlap: Overlap,
+    }),
+    (draft, { timeline, clips, overlap }) => {
+      const target = timelineOf(draft, timeline);
+      const moving = new Set(clips.map(({ clip }) => clip));
+      if (moving.size !== clips.length) fail("invalid-value", "同一个片段不能移动两次");
+      const landed = clips.map(({ clip, start, track }) => {
+        const current = editableClip(target, clip);
+        if (track !== undefined) checkFits(editableTrack(target, track), current);
+        const moved = { ...current, start: start ?? current.start, track: track ?? current.track };
+        return { moved, span: spanOf(moved) };
+      });
+
+      const byTrack = new Map<string, typeof landed>();
+      for (const item of landed) {
+        const onTrack = byTrack.get(item.moved.track);
+        if (onTrack) onTrack.push(item);
+        else byTrack.set(item.moved.track, [item]);
+      }
+      for (const [track, items] of byTrack) {
+        const inOrder = items.toSorted((a, b) => compare(a.span.from, b.span.from));
+        inOrder.forEach(({ moved, span }, index) => {
+          const next = inOrder[index + 1];
+          if (next && compare(span.to, next.span.from) > 0) {
+            fail("overlap", `片段落在了同一个位置：${moved.id}、${next.moved.id}`);
+          }
+        });
+        const spans = inOrder.map(({ span }) => span);
+        makeRoom(draft, timeline, track, spans, moving, overlap);
+      }
+
+      for (const { moved } of landed) {
+        const path = clipPath(timeline, moved.id);
+        const before = target.clips[moved.id];
+        if (moved.track !== before?.track) draft.set([...path, "track"], moved.track);
+        if (moved.start !== before?.start) draft.set([...path, "start"], moved.start);
+      }
+      const last = landed.reduce((a, b) => (compare(a.span.to, b.span.to) >= 0 ? a : b));
+      extendToFit(draft, timeline, last.span.to);
+    },
+  ),
+
+  /** Moves the edges of a clip, which is different from changing its numbers: see trimClip. */
+  define(
+    "clip.trim",
+    z.strictObject({ timeline: Id, clip: Id, start: Time.optional(), end: Time.optional() }),
+    (draft, { timeline, clip, start, end }) => {
       const target = timelineOf(draft, timeline);
       const current = editableClip(target, clip);
-      if (track !== undefined) {
-        checkFits(editableTrack(target, track), current);
-        draft.set([...clipPath(timeline, clip), "track"], track);
-      }
-      if (start !== undefined) draft.set([...clipPath(timeline, clip), "start"], start);
+      const span: Span = {
+        from: start === undefined ? clipStart(current) : parseTime(start),
+        to: end === undefined ? clipEnd(current) : parseTime(end),
+      };
+      if (compare(span.to, span.from) <= 0) fail("invalid-value", "片段的结尾要在开头之后");
+      assertFree(target, current.track, [span], new Set([clip]));
+      trimClip(draft, timeline, current, span);
+      extendToFit(draft, timeline, span.to);
+    },
+  ),
+
+  /**
+   * Cuts a clip in two at a moment on the timeline. Clips linked to it are cut along with it, and
+   * the parts after the cut get a link of their own: otherwise all four would move as one.
+   */
+  define(
+    "clip.split",
+    z.strictObject({ timeline: Id, clip: Id, at: Time, id: Id.optional() }),
+    (draft, { timeline, clip, at, id }) => {
+      const target = timelineOf(draft, timeline);
+      const current = editableClip(target, clip);
+      const moment = parseTime(at);
+      const isInside = (candidate: ClipState) =>
+        compare(moment, clipStart(candidate)) > 0 && compare(moment, clipEnd(candidate)) < 0;
+      if (!isInside(current)) fail("invalid-value", "切割点要在片段中间");
+      const rightId = id ?? newId("clip");
+      if (target.clips[rightId]) fail("id-taken", `这个 ID 已经有片段了：${rightId}`);
+
+      // A locked track stays as it is, so a partner there is left whole and keeps its link.
+      const cut = Object.values(target.clips).filter(
+        (other) =>
+          current.link &&
+          other.id !== clip &&
+          other.link === current.link &&
+          isInside(other) &&
+          target.tracks[other.track]?.locked !== true,
+      );
+      const link = cut.length > 0 ? newId("link") : undefined;
+      splitClip(draft, timeline, current, moment, rightId, link);
+      for (const partner of cut) splitClip(draft, timeline, partner, moment, newId("clip"), link);
+      return { id: rightId };
     },
   ),
 

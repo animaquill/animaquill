@@ -21,6 +21,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
@@ -34,7 +35,7 @@ type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 
 /** A panel whose real content comes in a later stage. */
 function planned(
-  type: Exclude<Type, "unknown" | "keybindings">,
+  type: Exclude<Type, "unknown" | "keybindings" | "timeline">,
   area: PanelArea,
   icon: PanelDefinition["icon"],
   extra: Extra = {},
@@ -80,7 +81,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
   planned("properties", "right", SlidersHorizontal),
   planned("chat", "right", MessagesSquare, { activity: true, keepAlive: true }),
   planned("annotations", "right", MessageSquareText),
-  planned("timeline", "bottom", Rows3),
+  {
+    type: "timeline",
+    title: (t) => t("panel.timeline.title"),
+    icon: Rows3,
+    area: "bottom",
+    component: TimelinePanel,
+  },
   planned("keyframes", "bottom", Diamond),
   planned("differences", "bottom", Diff),
   planned("problems", "bottom", TriangleAlert, { keys: ["mod+shift+m"] }),

@@ -51,8 +51,38 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
   const timeline = "main";
   const color = { kind: "color", color: "#112233" };
   const calls: (() => CommandCall)[] = [
-    () => ({ type: "clip.move", params: { timeline, clip, start: String(random.int(60)) } }),
-    () => ({ type: "clip.move", params: { timeline, clip, track } }),
+    () => ({
+      type: "clip.move",
+      params: { timeline, clips: [{ clip, start: String(random.int(60)) }] },
+    }),
+    () => ({
+      type: "clip.move",
+      params: { timeline, clips: [{ clip, start: String(random.int(60)) }], overlap: "overwrite" },
+    }),
+    () => ({
+      type: "clip.move",
+      params: {
+        timeline,
+        clips: clips
+          .filter(() => random.chance(0.3))
+          .map((id) => ({ clip: id, start: String(random.int(60)) })),
+        overlap: "overwrite",
+      },
+    }),
+    () => ({ type: "clip.move", params: { timeline, clips: [{ clip, track }] } }),
+    () => ({
+      type: "clip.move",
+      params: { timeline, clips: [{ clip, track }], overlap: "overwrite" },
+    }),
+    () => ({
+      type: "clip.trim",
+      params: { timeline, clip, end: String(1 + random.int(80)) },
+    }),
+    () => ({
+      type: "clip.trim",
+      params: { timeline, clip, start: String(random.int(40)) },
+    }),
+    () => ({ type: "clip.split", params: { timeline, clip, at: String(random.int(60)) } }),
     () => ({
       type: "clip.setProperty",
       params: { timeline, clip, path: "opacity", value: random.int(100) / 100 },
@@ -72,6 +102,7 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
         timeline,
         track,
         clip: { start: String(random.int(60)), duration: "1", source: color },
+        overlap: "overwrite",
       },
     }),
     () => ({ type: "track.add", params: { timeline, kind: "video" } }),
@@ -122,5 +153,37 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work on two devices, seed %i", (
     // The state kept up with every change along the way, so it has to match a fresh read.
     const fresh = new ProjectStore(a.doc);
     expect(deepEqual(fresh.getState(), a.getState())).toBe(true);
+  });
+});
+
+/**
+ * Undo can leave an empty `properties` behind where a first property was added. Taking the object
+ * away as well could take what somebody else put in it, and an empty one means the same.
+ */
+function withoutEmptyObjects(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const entries = Object.entries(value)
+    .map(([key, item]) => [key, withoutEmptyObjects(item)] as const)
+    .filter(([, item]) => item !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work, undone step by step, seed %i", (seed) => {
+  const same = (a: unknown, b: unknown) =>
+    deepEqual(withoutEmptyObjects(a), withoutEmptyObjects(b));
+
+  it("comes back exactly, and goes forward exactly", () => {
+    const random = randomFrom(seed);
+    const store = openUnlocked();
+    for (let round = 0; round < 300; round++) {
+      const before = store.getState();
+      const result = store.execute(randomCommand(store, random));
+      if (!result.ok || store.getState() === before) continue;
+      const after = store.getState();
+      expect(store.undo()).toBe(true);
+      expect(same(store.getState(), before)).toBe(true);
+      expect(store.redo()).toBe(true);
+      expect(same(store.getState(), after)).toBe(true);
+    }
   });
 });

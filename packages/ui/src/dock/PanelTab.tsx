@@ -25,6 +25,13 @@ export function PanelTab({ api, params, tabLocation }: IDockviewPanelHeaderProps
   const Icon = definition?.icon ?? CircleHelp;
   const title = definition ? definition.title(t) : t("panel.unknown.title");
 
+  /** After a click people want to work in the panel. The keyboard stays in the tab strip. */
+  const focusContent = (event: MouseEvent) => {
+    if (event.detail === 0) return;
+    const content = document.querySelector<HTMLElement>(`[data-panel="${params.type}"]`);
+    content?.focus({ preventScroll: true });
+  };
+
   const closeOnMiddleClick = (event: MouseEvent) => {
     if (event.button !== 1) return;
     event.preventDefault();
@@ -36,6 +43,7 @@ export function PanelTab({ api, params, tabLocation }: IDockviewPanelHeaderProps
       ref={element}
       className={styles.tab}
       data-tab={params.type}
+      onClick={focusContent}
       onAuxClick={closeOnMiddleClick}
     >
       <Icon size={14} />

@@ -382,15 +382,23 @@ export class ProjectStore {
       return { ok: true, revision: this.#revision, results, patches };
     }
 
+    // A change can write a field twice. Only the first write replaced what somebody wrote before.
+    const written = new Set<string>();
     const entry: UndoEntry = {
-      steps: draft.steps.map((step) => ({
-        ...step,
-        previous: this.#writes.get(keyOf(step.patch.path))?.origin,
-      })),
+      steps: draft.steps.map((step) => {
+        const key = keyOf(step.patch.path);
+        const previous = written.has(key) ? origin : this.#writes.get(key)?.origin;
+        written.add(key);
+        return { ...step, previous };
+      }),
     };
     this.doc.transact(() => {
       for (const patch of patches) this.#apply(patch);
     }, origin);
+    // Yjs reports nothing about a field of something that went away in the same change, and undo
+    // has to know that the field was ours to bring back.
+    const write = { revision: this.#revision, origin };
+    for (const { path } of patches) this.#markWrite(path, write, false);
 
     if (!options.isUndo) {
       const log = this.#logOf(origin);

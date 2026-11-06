@@ -1,9 +1,15 @@
-import { createProject, readProject, type Project } from "@animaquill/schema";
+import {
+  createProject,
+  formatTime,
+  readProject,
+  toSeconds,
+  type Project,
+} from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { COMMANDS } from "./commands.ts";
-import { orderedSections, orderedTracks } from "./model.ts";
+import { orderedSections, orderedTracks, timelineLength } from "./model.ts";
 import {
   ProjectStore,
   USER,
@@ -52,9 +58,13 @@ const setProperty = (
     options,
   );
 
+/** The track of this clip is full, and these tests are about something else than making room. */
 const moveClip = (store: ProjectStore, start: string, options: ExecuteOptions = {}) =>
   store.execute(
-    { type: "clip.move", params: { timeline: "main", clip: "clip_title", start } },
+    {
+      type: "clip.move",
+      params: { timeline: "main", clips: [{ clip: "clip_title", start }], overlap: "overwrite" },
+    },
     options,
   );
 
@@ -308,7 +318,7 @@ describe("running commands", () => {
     const store = open();
     const result = store.execute({
       type: "clip.move",
-      params: { timeline: "main", clip: "clip_title", start: 5 },
+      params: { timeline: "main", clips: [{ clip: "clip_title", start: 5 }] },
     });
     expect(failure(result).code).toBe("invalid-params");
     expect(failure(store.execute({ type: "project.rename", params: { name: "" } })).code).toBe(
@@ -339,7 +349,7 @@ describe("running commands", () => {
     const store = open();
     const result = store.execute({
       type: "clip.move",
-      params: { timeline: "main", clip: "clip_title", track: "track_voice" },
+      params: { timeline: "main", clips: [{ clip: "clip_title", track: "track_voice" }] },
     });
     expect(failure(result).code).toBe("wrong-track");
     const added = store.execute({
@@ -368,7 +378,7 @@ describe("running commands", () => {
     expect(failure(remove).code).toBe("track-locked");
     const moveIn = store.execute({
       type: "clip.move",
-      params: { timeline: "main", clip: "clip_title", track: "track_overlay" },
+      params: { timeline: "main", clips: [{ clip: "clip_title", track: "track_overlay" }] },
     });
     expect(failure(moveIn).code).toBe("track-locked");
   });
@@ -439,7 +449,7 @@ describe("batches", () => {
     const revision = store.revision;
     const result = store.executeBatch([
       { type: "project.rename", params: { name: "新名字" } },
-      { type: "clip.move", params: { timeline: "main", clip: "gone", start: "1" } },
+      { type: "clip.move", params: { timeline: "main", clips: [{ clip: "gone", start: "1" }] } },
     ]);
     expect(failure(result).code).toBe("not-found");
     expect(store.getState().manifest.name).toBe("原子是什么");
@@ -499,6 +509,35 @@ describe("undo", () => {
     store.undo();
     expect(property(store, "param.size")).toBe(64);
     expect(property(store, "param.accent")).toBe("#ff0000");
+  });
+});
+
+describe("undo of a change that writes a field twice", () => {
+  it("goes all the way back", () => {
+    const store = open();
+    success(
+      store.executeBatch([
+        { type: "project.rename", params: { name: "第一次" } },
+        { type: "project.rename", params: { name: "第二次" } },
+      ]),
+    );
+    store.undo();
+    expect(store.getState().manifest.name).toBe("原子是什么");
+    store.redo();
+    expect(store.getState().manifest.name).toBe("第二次");
+  });
+
+  it("still stops at what somebody else wrote before it", () => {
+    const store = open();
+    success(store.execute({ type: "project.rename", params: { name: "AI 写的" } }, { origin: AI }));
+    success(
+      store.executeBatch([
+        { type: "project.rename", params: { name: "第一次" } },
+        { type: "project.rename", params: { name: "第二次" } },
+      ]),
+    );
+    store.undo();
+    expect(store.getState().manifest.name).toBe("AI 写的");
   });
 });
 
@@ -771,10 +810,13 @@ describe("clips and tracks", () => {
 
   it("moves a clip to another track by changing one field", () => {
     const store = open();
+    success(
+      store.execute({ type: "track.add", params: { timeline: "main", id: "free", kind: "video" } }),
+    );
     const result = success(
       store.execute({
         type: "clip.move",
-        params: { timeline: "main", clip: "clip_logo", track: "track_video" },
+        params: { timeline: "main", clips: [{ clip: "clip_logo", track: "free" }] },
       }),
     );
     expect(result.patches).toHaveLength(1);
@@ -902,6 +944,856 @@ describe("clips and tracks", () => {
   });
 });
 
+describe("editing clips on the timeline", () => {
+  const color = { kind: "color", color: "#000000" };
+  const video = { kind: "video", media: { asset: "interview" } };
+
+  /** A project with one empty video track, and these clips on it. */
+  function withClips(clips: readonly Record<string, unknown>[]) {
+    const store = ProjectStore.create(createProject({ name: "剪辑" }));
+    const main = store.getState().timelines["main"];
+    const track = main && orderedTracks(main).find(({ kind }) => kind === "video");
+    if (!track) throw new Error("no video track");
+    for (const added of clips) {
+      success(
+        store.execute({
+          type: "clip.add",
+          params: { timeline: "main", track: track.id, clip: { source: color, ...added } },
+        }),
+      );
+    }
+    return { store, track: track.id };
+  }
+
+  const spanOf = (store: ProjectStore, id: string) => {
+    const found = clip(store, id);
+    return [found?.start, found?.duration, found?.offset];
+  };
+  const trim = (store: ProjectStore, id: string, edges: Record<string, string>) =>
+    store.execute({ type: "clip.trim", params: { timeline: "main", clip: id, ...edges } });
+  const move = (store: ProjectStore, id: string, start: string, overlap?: string) =>
+    store.execute({
+      type: "clip.move",
+      params: {
+        timeline: "main",
+        clips: [{ clip: id, start }],
+        ...(overlap ? { overlap } : {}),
+      },
+    });
+  const length = (store: ProjectStore) => timelineLength(timeline(store));
+
+  describe("overlaps", () => {
+    it("refuses a clip where there already is one", () => {
+      const { store, track } = withClips([{ id: "a", start: "0", duration: "5" }]);
+      const result = store.execute({
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track,
+          clip: { start: "4", duration: "2", source: color },
+        },
+      });
+      expect(failure(result).code).toBe("overlap");
+    });
+
+    it("lets clips touch", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "5" },
+        { id: "b", start: "5", duration: "5" },
+      ]);
+      expect(clip(store, "b")?.start).toBe("5");
+    });
+
+    it("refuses to move onto another clip, unless told to overwrite", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "5", duration: "2" },
+      ]);
+      expect(failure(move(store, "a", "4")).code).toBe("overlap");
+      expect(clip(store, "a")?.start).toBe("0");
+      success(move(store, "a", "4", "overwrite"));
+      expect(spanOf(store, "b")).toEqual(["6", "1", "1"]);
+    });
+
+    it("refuses to change the numbers of a clip so that it overlaps", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "5", duration: "2" },
+      ]);
+      const result = store.execute({
+        type: "clip.update",
+        params: { timeline: "main", clip: "a", changes: { duration: "6" } },
+      });
+      expect(failure(result).code).toBe("overlap");
+    });
+
+    it("still lets people name a clip that overlaps after a merge", () => {
+      const { store: a, track } = withClips([]);
+      const b = twin(a);
+      const add = (store: ProjectStore, id: string) =>
+        success(
+          store.execute({
+            type: "clip.add",
+            params: {
+              timeline: "main",
+              track,
+              clip: { id, start: "0", duration: "5", source: color },
+            },
+          }),
+        );
+      add(a, "a");
+      add(b, "b");
+      sync(a, b);
+      success(
+        a.execute({
+          type: "clip.update",
+          params: { timeline: "main", clip: "a", changes: { name: "新名字" } },
+        }),
+      );
+      expect(clip(a, "a")?.name).toBe("新名字");
+    });
+
+    it("refuses to trim into a neighbour", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "5", duration: "2" },
+      ]);
+      expect(failure(trim(store, "a", { end: "5.5" })).code).toBe("overlap");
+      success(trim(store, "a", { end: "5" }));
+    });
+  });
+
+  describe("overwriting", () => {
+    it("removes what is covered completely", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "5" },
+        { id: "b", start: "6", duration: "1" },
+      ]);
+      success(move(store, "a", "4", "overwrite"));
+      expect(clip(store, "b")).toBeUndefined();
+    });
+
+    it("trims the end of what it lands on", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "5" },
+        { id: "b", start: "6", duration: "1" },
+      ]);
+      success(move(store, "b", "4", "overwrite"));
+      expect(spanOf(store, "a")).toEqual(["0", "4", undefined]);
+    });
+
+    it("cuts a long clip in two when it lands in the middle", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "10" },
+        { id: "b", start: "12", duration: "2" },
+      ]);
+      success(move(store, "b", "4", "overwrite"));
+      expect(spanOf(store, "a")).toEqual(["0", "4", undefined]);
+      const rest = Object.values(timeline(store).clips).find(({ start }) => start === "6");
+      expect(rest?.duration).toBe("4");
+      expect(rest?.offset).toBe("6");
+    });
+
+    it("undoes a clip that was first trimmed and then covered, in one step", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "4" },
+        { id: "b", start: "4", duration: "4" },
+        { id: "c", start: "10", duration: "5" },
+      ]);
+      const before = timeline(store).clips;
+      success(
+        store.execute({
+          type: "clip.move",
+          params: {
+            timeline: "main",
+            clips: [
+              { clip: "a", start: "8" },
+              { clip: "b", start: "12" },
+            ],
+            overlap: "overwrite",
+          },
+        }),
+      );
+      expect(clip(store, "c")).toBeUndefined();
+      store.undo();
+      expect(timeline(store).clips).toEqual(before);
+    });
+
+    it("cuts a long clip wherever several clips land on it", () => {
+      const { store } = withClips([
+        { id: "long", start: "0", duration: "10" },
+        { id: "a", start: "20", duration: "1" },
+        { id: "b", start: "21", duration: "1" },
+        { id: "c", start: "22", duration: "1" },
+      ]);
+      success(
+        store.execute({
+          type: "clip.move",
+          params: {
+            timeline: "main",
+            clips: [
+              { clip: "a", start: "1" },
+              { clip: "b", start: "4" },
+              { clip: "c", start: "7" },
+            ],
+            overlap: "overwrite",
+          },
+        }),
+      );
+      const parts = Object.values(timeline(store).clips)
+        .filter(({ id }) => !["a", "b", "c"].includes(id))
+        .map(({ start, duration, offset }) => [start, duration, offset])
+        .toSorted((x, y) => Number(x[0]) - Number(y[0]));
+      expect(parts).toEqual([
+        ["0", "1", undefined],
+        ["2", "2", "2"],
+        ["5", "2", "5"],
+        ["8", "2", "8"],
+      ]);
+    });
+
+    it("removes clips between the ones that land, and keeps those next to them", () => {
+      const { store } = withClips([
+        { id: "stays", start: "0", duration: "2" },
+        { id: "goes", start: "2", duration: "2" },
+        { id: "trimmed", start: "4", duration: "2" },
+        { id: "a", start: "20", duration: "3" },
+      ]);
+      success(move(store, "a", "2", "overwrite"));
+      expect(clip(store, "goes")).toBeUndefined();
+      expect(clip(store, "stays")?.duration).toBe("2");
+      expect(spanOf(store, "trimmed")).toEqual(["5", "1", "1"]);
+    });
+
+    it("is one step to undo", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "10" },
+        { id: "b", start: "12", duration: "2" },
+      ]);
+      const before = timeline(store).clips;
+      success(move(store, "b", "4", "overwrite"));
+      store.undo();
+      expect(timeline(store).clips).toEqual(before);
+    });
+
+    it("works when adding a clip too", () => {
+      const { store, track } = withClips([{ id: "a", start: "0", duration: "10" }]);
+      success(
+        store.execute({
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track,
+            clip: { id: "b", start: "8", duration: "5", source: color },
+            overlap: "overwrite",
+          },
+        }),
+      );
+      expect(spanOf(store, "a")).toEqual(["0", "8", undefined]);
+    });
+
+    it("does not reach into another track", () => {
+      const { store, track } = withClips([{ id: "a", start: "0", duration: "5" }]);
+      success(
+        store.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "other", kind: "video" },
+        }),
+      );
+      success(
+        store.execute({
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: "other",
+            clip: { id: "b", start: "0", duration: "5", source: color },
+            overlap: "overwrite",
+          },
+        }),
+      );
+      expect(clip(store, "a")?.track).toBe(track);
+      expect(spanOf(store, "a")).toEqual(["0", "5", undefined]);
+    });
+
+    it("stays away from a locked track", () => {
+      const { store, track } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "5", duration: "2" },
+      ]);
+      success(
+        store.execute({
+          type: "track.update",
+          params: { timeline: "main", track, changes: { locked: true } },
+        }),
+      );
+      expect(failure(move(store, "a", "4", "overwrite")).code).toBe("track-locked");
+      expect(clip(store, "b")?.start).toBe("5");
+    });
+  });
+
+  describe("moving several clips", () => {
+    const moveAll = (
+      store: ProjectStore,
+      clips: readonly Record<string, string>[],
+      overlap?: string,
+    ) =>
+      store.execute({
+        type: "clip.move",
+        params: { timeline: "main", clips, ...(overlap ? { overlap } : {}) },
+      });
+
+    it("moves neighbours past each other's old place", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "2", duration: "2" },
+      ]);
+      success(
+        moveAll(store, [
+          { clip: "a", start: "1" },
+          { clip: "b", start: "3" },
+        ]),
+      );
+      expect(clip(store, "a")?.start).toBe("1");
+      expect(clip(store, "b")?.start).toBe("3");
+      expect(clip(store, "b")?.duration).toBe("2");
+    });
+
+    it("does not let the clips it moves overwrite each other", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "2", duration: "2" },
+      ]);
+      success(
+        moveAll(
+          store,
+          [
+            { clip: "a", start: "1" },
+            { clip: "b", start: "3" },
+          ],
+          "overwrite",
+        ),
+      );
+      expect(clip(store, "a")?.duration).toBe("2");
+      expect(clip(store, "b")?.duration).toBe("2");
+    });
+
+    it("refuses when they would land on each other", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "2", duration: "2" },
+      ]);
+      const result = moveAll(store, [
+        { clip: "a", start: "5" },
+        { clip: "b", start: "5" },
+      ]);
+      expect(failure(result).code).toBe("overlap");
+    });
+
+    it("refuses the same clip twice", () => {
+      const { store } = withClips([{ id: "a", start: "0", duration: "2" }]);
+      const result = moveAll(store, [
+        { clip: "a", start: "5" },
+        { clip: "a", start: "6" },
+      ]);
+      expect(failure(result).code).toBe("invalid-value");
+    });
+
+    it("is one step to undo", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "2" },
+        { id: "b", start: "2", duration: "2" },
+      ]);
+      success(
+        moveAll(store, [
+          { clip: "a", start: "10" },
+          { clip: "b", start: "12" },
+        ]),
+      );
+      store.undo();
+      expect(clip(store, "a")?.start).toBe("0");
+      expect(clip(store, "b")?.start).toBe("2");
+    });
+
+    it("stays quick with thousands of clips", () => {
+      const clips = Array.from({ length: 3000 }, (_, index) => ({
+        id: `c${index}`,
+        start: String(index * 2),
+        duration: "1",
+      }));
+      const project = createProject({ name: "大项目" });
+      const main = project.timelines.get("main")?.document;
+      if (!main) throw new Error("no timeline");
+      const track = {
+        id: "track",
+        kind: "video",
+        clips: clips.map((item) => ({ ...item, source: color })),
+      };
+      const store = ProjectStore.create({
+        ...project,
+        timelines: new Map([
+          ["main", { document: { ...main, tracks: [track] } as never, overrides: new Map() }],
+        ]),
+      });
+      const started = performance.now();
+      success(
+        store.execute({
+          type: "clip.move",
+          params: {
+            timeline: "main",
+            clips: clips.map(({ id, start }) => ({ clip: id, start: `${start}.5` })),
+            overlap: "overwrite",
+          },
+        }),
+      );
+      expect(performance.now() - started).toBeLessThan(2000);
+      expect(clip(store, "c2999")?.start).toBe("5998.5");
+    });
+
+    it("writes nothing for a clip that stays where it is", () => {
+      const { store } = withClips([{ id: "a", start: "0", duration: "2" }]);
+      const revision = store.revision;
+      success(moveAll(store, [{ clip: "a", start: "0" }]));
+      expect(store.revision).toBe(revision);
+      expect(store.canUndo).toBe(true);
+    });
+  });
+
+  describe("the length of a timeline", () => {
+    it("grows with a clip placed past the end, in the last section", () => {
+      const { store, track } = withClips([]);
+      success(
+        store.execute({
+          type: "section.add",
+          params: { timeline: "main", id: "second", duration: "2" },
+        }),
+      );
+      expect(toSeconds(length(store))).toBe(12);
+      success(
+        store.execute({
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track,
+            clip: { start: "15", duration: "5", source: color },
+          },
+        }),
+      );
+      expect(toSeconds(length(store))).toBe(20);
+      expect(timeline(store).sections["second"]?.duration).toBe("10");
+    });
+
+    it("grows when a clip moves or gets longer past the end", () => {
+      const { store } = withClips([{ id: "a", start: "0", duration: "2" }]);
+      success(move(store, "a", "11"));
+      expect(toSeconds(length(store))).toBe(13);
+      success(trim(store, "a", { end: "14" }));
+      expect(toSeconds(length(store))).toBe(14);
+      success(
+        store.execute({
+          type: "clip.update",
+          params: { timeline: "main", clip: "a", changes: { duration: "5" } },
+        }),
+      );
+      expect(toSeconds(length(store))).toBe(16);
+    });
+
+    it("stays as it is when there is room, and undoes with the change", () => {
+      const { store } = withClips([{ id: "a", start: "0", duration: "2" }]);
+      expect(toSeconds(length(store))).toBe(10);
+      success(move(store, "a", "20"));
+      store.undo();
+      expect(toSeconds(length(store))).toBe(10);
+    });
+
+    it("stays exact with frame rates that have no finite decimal", () => {
+      const { store } = withClips([{ id: "a", start: "1001/30000", duration: "10" }]);
+      expect(formatTime(length(store))).toBe("301001/30000");
+    });
+  });
+
+  describe("trimming", () => {
+    const animated = {
+      opacity: {
+        keys: [
+          { time: "1", value: 0 },
+          { time: "3", value: 1 },
+        ],
+      },
+    };
+
+    it("moves the end without touching anything else", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      success(trim(store, "a", { end: "4" }));
+      expect(spanOf(store, "a")).toEqual(["2", "2", undefined]);
+    });
+
+    it("moves the start, and the content stays where it is on the timeline", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      success(trim(store, "a", { start: "3.5" }));
+      expect(spanOf(store, "a")).toEqual(["3.5", "3.5", "1.5"]);
+    });
+
+    it("leaves keys alone, so that they come back when trimmed back", () => {
+      const { store } = withClips([{ id: "a", start: "0", duration: "5", properties: animated }]);
+      success(trim(store, "a", { start: "2" }));
+      expect(property(store, "opacity", "a")).toEqual(animated.opacity);
+      success(trim(store, "a", { start: "0" }));
+      expect(spanOf(store, "a")).toEqual(["0", "5", undefined]);
+      expect(property(store, "opacity", "a")).toEqual(animated.opacity);
+    });
+
+    it("can move both edges at once", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      success(trim(store, "a", { start: "3", end: "4" }));
+      expect(spanOf(store, "a")).toEqual(["3", "1", "1"]);
+    });
+
+    it("needs an end after the start", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      expect(failure(trim(store, "a", { end: "2" })).code).toBe("invalid-value");
+      expect(failure(trim(store, "a", { start: "7" })).code).toBe("invalid-value");
+    });
+
+    it("stops at the beginning of content that has one", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5", source: video }]);
+      expect(failure(trim(store, "a", { start: "1" })).code).toBe("source-start");
+      expect(clip(store, "a")?.start).toBe("2");
+    });
+
+    it("can bring back what was trimmed, up to the beginning", () => {
+      const { store } = withClips([
+        { id: "a", start: "2", duration: "5", source: video, offset: "3" },
+      ]);
+      success(trim(store, "a", { start: "0" }));
+      expect(spanOf(store, "a")).toEqual(["0", "7", "1"]);
+    });
+
+    it("lets a picture grow forward, moving its keys along", () => {
+      const words = [{ text: "你好", time: "1" }];
+      const effects = [
+        { id: "fx", type: "blur", properties: { radius: { keys: [{ time: "1", value: 2 }] } } },
+      ];
+      const { store } = withClips([
+        { id: "a", start: "2", duration: "5", properties: animated, effects },
+      ]);
+      success(trim(store, "a", { start: "0.5" }));
+      expect(spanOf(store, "a")).toEqual(["0.5", "6.5", undefined]);
+      const keys = (property(store, "opacity", "a") as { keys: { time: string }[] }).keys;
+      expect(keys.map(({ time }) => time)).toEqual(["2.5", "4.5"]);
+      expect(clip(store, "a")?.effects?.[0]?.properties).toEqual({
+        radius: { keys: [{ time: "2.5", value: 2 }] },
+      });
+
+      const caption = ProjectStore.create(createProject({ name: "字幕" }));
+      success(
+        caption.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "captions", kind: "caption" },
+        }),
+      );
+      success(
+        caption.execute({
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: "captions",
+            clip: {
+              id: "c",
+              start: "2",
+              duration: "1",
+              source: { kind: "caption", text: "你好", words },
+            },
+          },
+        }),
+      );
+      success(trim(caption, "c", { start: "1" }));
+      expect(clip(caption, "c")?.source).toMatchObject({ words: [{ time: "2" }] });
+    });
+
+    it("copes with values that are lists", () => {
+      const effects = [{ id: "fx", type: "tint", properties: { color: [1, 0, 0] } }];
+      const { store } = withClips([
+        { id: "a", start: "5", duration: "2", effects, properties: { "param.points": [1, 2, 3] } },
+      ]);
+      success(trim(store, "a", { start: "4" }));
+      expect(clip(store, "a")?.effects?.[0]?.properties).toEqual({ color: [1, 0, 0] });
+      expect(property(store, "param.points", "a")).toEqual([1, 2, 3]);
+    });
+
+    it("leaves a move by somebody else alone when only the end changes", () => {
+      const { store: a } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      const b = twin(a);
+      success(trim(a, "a", { end: "5" }));
+      success(move(b, "a", "20"));
+      sync(a, b);
+      expect(clip(a, "a")?.start).toBe("20");
+      expect(clip(a, "a")?.duration).toBe("3");
+    });
+
+    it("takes the keys of a version along when a picture grows forward", () => {
+      const store = open();
+      success(
+        store.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "free", kind: "video" },
+        }),
+      );
+      success(
+        store.execute({
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: "free",
+            clip: { id: "pic", start: "5", duration: "1", source: color },
+          },
+        }),
+      );
+      const main = store.getState().timelines["main"];
+      const version = Object.keys(main?.overrides ?? {})[0] as string;
+      success(
+        store.importFile(
+          `timelines/main/overrides/${version}.json`,
+          JSON.stringify({
+            scope: main?.overrides[version]?.scope,
+            clips: {
+              pic: {
+                properties: { opacity: { value: { keys: [{ time: "1", value: 0.5 }] } } },
+              },
+            },
+          }),
+        ),
+      );
+      success(trim(store, "pic", { start: "4.5" }));
+      const after = timeline(store).overrides[version]?.clips?.["pic"]?.properties;
+      expect(after?.["opacity"]?.value).toEqual({ keys: [{ time: "1.5", value: 0.5 }] });
+    });
+
+    it("does not touch a locked track", () => {
+      const { store, track } = withClips([{ id: "a", start: "0", duration: "5" }]);
+      success(
+        store.execute({
+          type: "track.update",
+          params: { timeline: "main", track, changes: { locked: true } },
+        }),
+      );
+      expect(failure(trim(store, "a", { end: "4" })).code).toBe("track-locked");
+    });
+
+    it("is one step to undo", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      success(trim(store, "a", { start: "3", end: "4" }));
+      store.undo();
+      expect(spanOf(store, "a")).toEqual(["2", "5", undefined]);
+    });
+  });
+
+  describe("cutting", () => {
+    const split = (store: ProjectStore, id: string, at: string) => {
+      const result = success(
+        store.execute({ type: "clip.split", params: { timeline: "main", clip: id, at } }),
+      );
+      return (result.results[0] as { id: string }).id;
+    };
+
+    it("makes two clips that together show the same", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "6", offset: "1" }]);
+      const right = split(store, "a", "5");
+      expect(spanOf(store, "a")).toEqual(["2", "3", "1"]);
+      expect(spanOf(store, right)).toEqual(["5", "3", "4"]);
+    });
+
+    it("gives both parts all keys, which keeps every value the same", () => {
+      const opacity = {
+        keys: [
+          { time: "1", value: 0 },
+          { time: "3", value: 1 },
+        ],
+      };
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "6", properties: { opacity } },
+      ]);
+      const right = split(store, "a", "2");
+      expect(property(store, "opacity", "a")).toEqual(opacity);
+      expect(property(store, "opacity", right)).toEqual(opacity);
+    });
+
+    it("keeps the fades on the outside", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "6", fadeIn: "1", fadeOut: "2" },
+      ]);
+      const right = split(store, "a", "3");
+      expect(clip(store, "a")?.fadeIn).toBe("1");
+      expect(clip(store, "a")?.fadeOut).toBeUndefined();
+      expect(clip(store, right)?.fadeIn).toBeUndefined();
+      expect(clip(store, right)?.fadeOut).toBe("2");
+    });
+
+    it("hands a transition out of the clip to the part after the cut", () => {
+      const store = open();
+      const right = split(store, "clip_title", "2");
+      expect(timeline(store).transitions["tr_1"]?.from).toBe(right);
+      expect(timeline(store).transitions["tr_1"]?.to).toBe("clip_interview");
+    });
+
+    it("cuts linked clips along, and the parts after the cut stay linked to each other", () => {
+      const { store, track } = withClips([]);
+      success(
+        store.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "sound", kind: "audio" },
+        }),
+      );
+      const sound = { kind: "audio", media: { asset: "interview" } };
+      const add = (id: string, on: string, source: unknown) =>
+        success(
+          store.execute({
+            type: "clip.add",
+            params: {
+              timeline: "main",
+              track: on,
+              clip: { id, start: "0", duration: "6", link: "link_a", source },
+            },
+          }),
+        );
+      add("picture", track, video);
+      add("voice", "sound", sound);
+      const right = split(store, "picture", "2");
+      const clips = Object.values(timeline(store).clips);
+      expect(clips).toHaveLength(4);
+      const parts = clips.filter((item) => item.start === "2");
+      expect(parts.map(({ id }) => id)).toContain(right);
+      expect(new Set(parts.map(({ link }) => link)).size).toBe(1);
+      expect(parts[0]?.link).not.toBe("link_a");
+      expect(clip(store, "voice")?.link).toBe("link_a");
+      expect(clip(store, "voice")?.duration).toBe("2");
+    });
+
+    it("leaves a linked clip alone when it does not reach the cut", () => {
+      const { store, track } = withClips([]);
+      success(
+        store.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "sound", kind: "audio" },
+        }),
+      );
+      const addTo = (id: string, on: string, duration: string, source: unknown) =>
+        success(
+          store.execute({
+            type: "clip.add",
+            params: {
+              timeline: "main",
+              track: on,
+              clip: { id, start: "0", duration, link: "link_a", source },
+            },
+          }),
+        );
+      addTo("picture", track, "6", video);
+      addTo("voice", "sound", "1", { kind: "audio", media: { asset: "interview" } });
+      const right = split(store, "picture", "2");
+      expect(clip(store, "voice")?.duration).toBe("1");
+      expect(clip(store, right)?.link).toBe("link_a");
+    });
+
+    it("leaves a linked clip on a locked track whole", () => {
+      const { store, track } = withClips([]);
+      const sound = { kind: "audio", media: { asset: "interview" } };
+      success(
+        store.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "sound", kind: "audio" },
+        }),
+      );
+      const addTo = (id: string, on: string, source: unknown) =>
+        success(
+          store.execute({
+            type: "clip.add",
+            params: {
+              timeline: "main",
+              track: on,
+              clip: { id, start: "0", duration: "6", link: "link_a", source },
+            },
+          }),
+        );
+      addTo("picture", track, video);
+      addTo("voice", "sound", sound);
+      success(
+        store.execute({
+          type: "track.update",
+          params: { timeline: "main", track: "sound", changes: { locked: true } },
+        }),
+      );
+      split(store, "picture", "2");
+      expect(clip(store, "voice")?.duration).toBe("6");
+      expect(clip(store, "picture")?.duration).toBe("2");
+    });
+
+    it("gives both parts what a version changes about the clip", () => {
+      const store = open();
+      const main = store.getState().timelines["main"];
+      const version = Object.keys(main?.overrides ?? {})[0] as string;
+      success(
+        store.importFile(
+          `timelines/main/overrides/${version}.json`,
+          JSON.stringify({
+            scope: main?.overrides[version]?.scope,
+            clips: { clip_card: { hidden: { value: true }, offset: { value: "1" } } },
+          }),
+        ),
+      );
+      const right = split(store, "clip_card", "26");
+      const clips = timeline(store).overrides[version]?.clips;
+      expect(clips?.[right]?.hidden).toEqual({ value: true });
+      expect(clips?.[right]?.offset).toBeUndefined();
+      expect(clips?.["clip_card"]?.hidden).toEqual({ value: true });
+      store.undo();
+      expect(timeline(store).overrides[version]?.clips?.[right]).toBeUndefined();
+    });
+
+    it("needs a moment inside the clip", () => {
+      const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
+      for (const at of ["2", "7", "1", "9"]) {
+        const result = store.execute({
+          type: "clip.split",
+          params: { timeline: "main", clip: "a", at },
+        });
+        expect(failure(result).code).toBe("invalid-value");
+      }
+    });
+
+    it("refuses an id that is taken", () => {
+      const { store } = withClips([
+        { id: "a", start: "0", duration: "5" },
+        { id: "b", start: "6", duration: "1" },
+      ]);
+      const result = store.execute({
+        type: "clip.split",
+        params: { timeline: "main", clip: "a", at: "2", id: "b" },
+      });
+      expect(failure(result).code).toBe("id-taken");
+    });
+
+    it("is one step to undo", () => {
+      const { store } = withClips([{ id: "a", start: "0", duration: "6" }]);
+      const before = timeline(store).clips;
+      split(store, "a", "2");
+      store.undo();
+      expect(timeline(store).clips).toEqual(before);
+      store.redo();
+      expect(Object.keys(timeline(store).clips)).toHaveLength(2);
+    });
+
+    it("writes valid files", () => {
+      const store = open();
+      split(store, "clip_interview", "10");
+      const { files, problems } = store.exportFiles();
+      expect(problems).toEqual([]);
+      expect(readProject(files).problems.filter(({ severity }) => severity === "error")).toEqual(
+        [],
+      );
+    });
+  });
+});
+
 describe("two people at once", () => {
   it("keeps both changes to different properties of one clip", () => {
     const a = open();
@@ -928,14 +1820,87 @@ describe("two people at once", () => {
     const a = open();
     const b = twin(a);
     success(
+      a.execute({ type: "track.add", params: { timeline: "main", id: "free", kind: "video" } }),
+    );
+    sync(a, b);
+    success(
       a.execute({
         type: "clip.move",
-        params: { timeline: "main", clip: "clip_logo", track: "track_video" },
+        params: { timeline: "main", clips: [{ clip: "clip_logo", track: "free" }] },
       }),
     );
     success(setProperty(b, "opacity", 0.5, {}, "clip_logo"));
     sync(a, b);
     expect(property(a, "opacity", "clip_logo")).toBe(0.5);
+  });
+
+  it("still writes a valid timeline when both sides of a transition go at once", () => {
+    const a = open();
+    const b = twin(a);
+    const remove = (store: ProjectStore, id: string) =>
+      success(store.execute({ type: "clip.remove", params: { timeline: "main", clips: [id] } }));
+    remove(a, "clip_title");
+    remove(b, "clip_interview");
+    sync(a, b);
+    expect(a.exportFiles().problems).toEqual([]);
+  });
+
+  describe("a clip left behind on a track someone removed", () => {
+    const leftBehind = () => {
+      const a = open();
+      const b = twin(a);
+      success(
+        a.execute({ type: "track.remove", params: { timeline: "main", track: "track_captions" } }),
+      );
+      success(
+        b.execute({
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: "track_captions",
+            clip: {
+              id: "clip_late",
+              start: "20",
+              duration: "1",
+              source: { kind: "caption", text: "还在" },
+            },
+          },
+        }),
+      );
+      sync(a, b);
+      return a;
+    };
+
+    it("can be removed", () => {
+      const store = leftBehind();
+      success(
+        store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["clip_late"] } }),
+      );
+      expect(clip(store, "clip_late")).toBeUndefined();
+    });
+
+    it("can be changed, moved and moved away", () => {
+      const store = leftBehind();
+      success(
+        store.execute({
+          type: "clip.update",
+          params: { timeline: "main", clip: "clip_late", changes: { name: "新名字" } },
+        }),
+      );
+      success(
+        store.execute({
+          type: "track.add",
+          params: { timeline: "main", id: "new", kind: "caption" },
+        }),
+      );
+      success(
+        store.execute({
+          type: "clip.move",
+          params: { timeline: "main", clips: [{ clip: "clip_late", track: "new" }] },
+        }),
+      );
+      expect(clip(store, "clip_late")?.track).toBe("new");
+    });
   });
 
   it("keeps a clip added to a track someone removed", () => {

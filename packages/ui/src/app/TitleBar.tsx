@@ -6,7 +6,7 @@ import { useLayout, useProject, useSession, useWorkbench } from "./context.ts";
 import { Menu } from "./Menu.tsx";
 import styles from "./TitleBar.module.css";
 
-const MENUS = ["file", "edit", "view"] as const;
+const MENUS = ["file", "edit", "view", "timeline"] as const;
 
 export function TitleBar() {
   const workbench = useWorkbench();
