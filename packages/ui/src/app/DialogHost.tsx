@@ -1,11 +1,53 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { DialogRequest } from "../workbench/dialogs.ts";
+import type { DialogRequest, ProgressRequest } from "../workbench/dialogs.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./DialogHost.module.css";
 
+/** Something that takes a while. It stays until that is over, whatever people press. */
+function Progress({ request }: { request: ProgressRequest }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+
+  const { title, detail, ratio, amount, cancel, stopping, stopped, stop } = request;
+  return (
+    <dialog
+      ref={dialog}
+      className={styles.dialog}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        stop();
+      }}
+    >
+      <div className={styles.content}>
+        <h2>{title}</h2>
+        <p className={styles.detail}>{stopped ? stopping : (detail ?? "\u00A0")}</p>
+        <progress
+          className={styles.bar}
+          aria-label={title}
+          {...(ratio === undefined ? {} : { value: ratio })}
+        />
+        <div className={styles.buttons}>
+          <span className={styles.amount}>{amount}</span>
+          <button type="button" disabled={stopped} onClick={stop}>
+            {cancel}
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+type QuestionRequest = Exclude<DialogRequest, ProgressRequest>;
+
 /** The browser's own dialog: it keeps the focus inside and hands it back afterwards. */
-function Dialog({ request }: { request: DialogRequest }) {
+function Dialog({ request }: { request: QuestionRequest }) {
   const { dialogs } = useWorkbench();
   const { t } = useTranslation();
   const [value, setValue] = useState(request.kind === "prompt" ? (request.value ?? "") : "");
@@ -26,6 +68,7 @@ function Dialog({ request }: { request: DialogRequest }) {
 
   const isPrompt = request.kind === "prompt";
   const danger = request.kind === "confirm" && request.danger === true;
+  const details = request.kind === "confirm" ? (request.details ?? []) : [];
   const canConfirm = !isPrompt || value.trim().length > 0;
   const confirm = () => {
     if (canConfirm) dialogs.answer(isPrompt ? value.trim() : true);
@@ -43,7 +86,7 @@ function Dialog({ request }: { request: DialogRequest }) {
   return (
     <dialog
       ref={dialog}
-      className={styles.dialog}
+      className={details.length > 0 ? styles.wide : styles.dialog}
       aria-label={request.title}
       onCancel={(event) => {
         event.preventDefault();
@@ -57,6 +100,16 @@ function Dialog({ request }: { request: DialogRequest }) {
       <div className={styles.content} onKeyDown={onKeyDown}>
         <h2>{request.title}</h2>
         {request.kind === "confirm" && <p>{request.message}</p>}
+        {details.map(({ title, items }) => (
+          <section key={title} className={styles.list}>
+            <h3>{title}</h3>
+            <ul>
+              {items.map((item, index) => (
+                <li key={`${index}:${item}`}>{item}</li>
+              ))}
+            </ul>
+          </section>
+        ))}
         {isPrompt && (
           <input
             ref={input}
@@ -89,5 +142,7 @@ function Dialog({ request }: { request: DialogRequest }) {
 export function DialogHost() {
   const { dialogs } = useWorkbench();
   const request = useSyncExternalStore(dialogs.subscribe, dialogs.getSnapshot);
-  return request ? <Dialog key={request.id} request={request} /> : null;
+  if (!request) return null;
+  if (request.kind === "progress") return <Progress key={request.id} request={request} />;
+  return <Dialog key={request.id} request={request} />;
 }

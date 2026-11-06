@@ -1,5 +1,5 @@
 import type { ProjectSummary } from "@animaquill/host";
-import { Feather, Plus, X } from "lucide-react";
+import { Feather, FolderInput, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "./context.ts";
@@ -33,10 +33,24 @@ export function StartPage() {
         </h1>
         <p className={styles.tagline}>{t("app.tagline")}</p>
 
-        <button type="button" className={styles.create} onClick={() => void workbench.newProject()}>
-          <Plus size={16} />
-          {t("project.new")}
-        </button>
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.create}
+            onClick={() => void workbench.newProject()}
+          >
+            <Plus size={16} />
+            {t("project.new")}
+          </button>
+          <button
+            type="button"
+            className={styles.bringIn}
+            onClick={() => void workbench.importProject().then(refresh)}
+          >
+            <FolderInput size={16} />
+            {t("transfer.importAction")}
+          </button>
+        </div>
 
         {projects && projects.length > 0 && <h2>{t("project.recent")}</h2>}
         {projects?.length === 0 && <p className={styles.muted}>{t("project.none")}</p>}

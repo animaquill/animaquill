@@ -1,4 +1,5 @@
-.dialog {
+.dialog,
+.wide {
   width: min(420px, calc(100vw - 32px));
   margin: 96px auto auto;
   padding: 0;
@@ -9,7 +10,12 @@
   box-shadow: var(--aq-shadow);
 }
 
-.dialog::backdrop {
+.wide {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.dialog::backdrop,
+.wide::backdrop {
   background: #00000066;
 }
 
@@ -39,6 +45,68 @@
   border: 1px solid var(--aq-accent);
   border-radius: 3px;
   outline: 0;
+}
+
+.list {
+  margin-bottom: 12px;
+}
+
+.content .list h3 {
+  margin: 0 0 4px;
+  color: var(--aq-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.list ul {
+  max-height: 144px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  list-style: none;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.list li + li {
+  margin-top: 2px;
+}
+
+.content .detail {
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  accent-color: var(--aq-accent);
+}
+
+.bar::-webkit-progress-bar {
+  background: var(--aq-bg-input);
+}
+
+.bar::-webkit-progress-value {
+  background: var(--aq-accent);
+}
+
+.amount {
+  flex: 1;
+  align-self: center;
+  color: var(--aq-text-muted);
+  font-size: 12px;
 }
 
 .buttons {

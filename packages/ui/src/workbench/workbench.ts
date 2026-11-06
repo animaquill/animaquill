@@ -13,6 +13,7 @@ import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/reco
 import { MediaLibrary } from "../media/library.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
+import { ProjectTransfer } from "../transfer/transfer.ts";
 import { ActionRegistry } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
 import { InputMode } from "./input-mode.ts";
@@ -60,6 +61,7 @@ export class Workbench {
   readonly timeline: TimelineEditor;
   readonly input: InputMode;
   readonly media: MediaLibrary;
+  readonly transfer: ProjectTransfer;
   readonly diagnostics: DiagnosticsRecorder;
   readonly #sink: DiagnosticsSink | undefined;
   readonly projects: ProjectLibrary;
@@ -105,6 +107,14 @@ export class Workbench {
       },
       compositorUrl,
     );
+    this.transfer = new ProjectTransfer({
+      folders: host.folders,
+      projects: host.projects,
+      session: this.session,
+      dialogs: this.dialogs,
+      notifications: this.notifications,
+      t,
+    });
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
@@ -144,6 +154,14 @@ export class Workbench {
   /** Back to the start page. */
   async closeProject(): Promise<void> {
     await this.#changeProject();
+  }
+
+  /** The open project stays open until the new one is there, so a failure costs nothing. */
+  async importProject(): Promise<void> {
+    const report = await this.transfer.importProject();
+    if (!report) return;
+    await this.openProject(report.id);
+    await this.transfer.announceImport(report);
   }
 
   async renameProject(): Promise<void> {
@@ -346,6 +364,19 @@ export class Workbench {
       title: (t) => t("project.frameRate"),
       run: () => void this.setFrameRate(),
       menu: { name: "file", group: "project" },
+      enabled: isOpen,
+    });
+    this.actions.register({
+      id: "project.importFolder",
+      title: (t) => t("transfer.importAction"),
+      run: () => void this.importProject(),
+      menu: { name: "file", group: "folder" },
+    });
+    this.actions.register({
+      id: "project.exportFolder",
+      title: (t) => t("transfer.exportAction"),
+      run: () => void this.transfer.exportProject(),
+      menu: { name: "file", group: "folder" },
       enabled: isOpen,
     });
   }

@@ -1,7 +1,7 @@
 import { computePeaks, readSound } from "@animaquill/audio";
 import type { ClipState, ProjectStore } from "@animaquill/core";
 import type { ProjectLibrary } from "@animaquill/host";
-import { probeMedia, type MediaFacts } from "@animaquill/media";
+import { formatHash, probeMedia, type MediaFacts } from "@animaquill/media";
 import {
   fromSeconds,
   formatTime,
@@ -38,8 +38,7 @@ export interface MediaMessages {
 
 async function hashOf(file: Blob): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  const text = String.fromCharCode(...new Uint8Array(digest));
-  return `sha256-${btoa(text).replaceAll("+", "-").replaceAll("/", "_")}`;
+  return formatHash(new Uint8Array(digest));
 }
 
 const extensionOf = (name: string) => /\.([A-Za-z0-9]{1,8})$/.exec(name)?.[1]?.toLowerCase();

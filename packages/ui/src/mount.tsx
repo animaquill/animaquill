@@ -63,7 +63,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
-    if (workbench.session.hasUnsavedChanges) event.preventDefault();
+    if (workbench.session.hasUnsavedChanges || workbench.transfer.running) event.preventDefault();
   };
   window.addEventListener("beforeunload", onBeforeUnload);
 

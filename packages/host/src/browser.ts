@@ -1,5 +1,7 @@
+import { browserFolders } from "./folders.ts";
 import type {
   Host,
+  IncomingProject,
   MediaStore,
   ProjectAddress,
   ProjectLibrary,
@@ -28,6 +30,11 @@ interface UpdateRecord {
   readonly seq?: number;
   readonly project: string;
   readonly update: Uint8Array;
+}
+
+/** A project that is still on its way in holds on to its id, and stays out of the list. */
+interface ProjectRecord extends ProjectSummary {
+  readonly incoming?: true;
 }
 
 const resultOf = <T>(request: IDBRequest<T>) =>
@@ -165,14 +172,135 @@ function openMedia(database: () => Promise<IDBDatabase>, project: string): Media
   };
 }
 
-function createLibrary(factory: () => IDBFactory): ProjectLibrary {
-  const database = connector(factory);
+/** Removes all there is of a project, as part of a transaction on all stores. */
+function removeFrom(transaction: IDBTransaction, id: string): void {
+  transaction.objectStore(PROJECTS).delete(id);
+  for (const name of [UPDATES, MEDIA]) {
+    const store = transaction.objectStore(name);
+    const keys = store.index(BY_PROJECT).getAllKeys(id);
+    keys.addEventListener("success", () => {
+      for (const key of keys.result) store.delete(key);
+    });
+  }
+}
 
-  return {
+/**
+ * Holds a lock until the returned function runs. The browser lets go by itself when a page goes
+ * away, which is how a project left behind by a page that went away can be told apart from one
+ * that is still coming in. Resolves to undefined when somebody else holds the lock.
+ */
+const hold = (locks: LockManager, name: string) =>
+  new Promise<(() => void) | undefined>((resolve, reject) => {
+    locks
+      .request(name, { ifAvailable: true }, (lock) => {
+        if (!lock) {
+          resolve(undefined);
+          return undefined;
+        }
+        return new Promise<void>((release) => resolve(release));
+      })
+      .catch(reject);
+  });
+
+function createLibrary(
+  factory: () => IDBFactory,
+  lockManager: () => LockManager | undefined,
+): ProjectLibrary {
+  const database = connector(factory);
+  const incomingLock = (id: string) => `${PREFIX}incoming.${id}`;
+  const allStores = [UPDATES, PROJECTS, MEDIA];
+
+  /** Checks once more inside the transaction, because this deletes: it may have finished by now. */
+  const removeIfIncoming = async (id: string) => {
+    const transaction = (await database()).transaction(allStores, "readwrite");
+    const read = transaction.objectStore(PROJECTS).get(id);
+    read.addEventListener("success", () => {
+      if ((read.result as ProjectRecord | undefined)?.incoming) removeFrom(transaction, id);
+    });
+    await committed(transaction);
+  };
+
+  /** What a page that went away had brought in so far. It would take up space for good. */
+  const sweep = async (locks: LockManager) => {
+    const transaction = (await database()).transaction(PROJECTS);
+    const records = await resultOf<ProjectRecord[]>(transaction.objectStore(PROJECTS).getAll());
+    for (const { id, incoming } of records) {
+      if (!incoming) continue;
+      // While this holds the lock, nobody can start bringing in a project with this id.
+      const release = await hold(locks, incomingLock(id));
+      if (!release) continue;
+      try {
+        await removeIfIncoming(id);
+      } finally {
+        release();
+      }
+    }
+  };
+
+  /** Resolves to whether the id was free. */
+  const claim = async (id: string, name: string) => {
+    const transaction = (await database()).transaction(PROJECTS, "readwrite");
+    const projects = transaction.objectStore(PROJECTS);
+    const read = projects.get(id);
+    let free = false;
+    read.addEventListener("success", () => {
+      free = read.result === undefined;
+      const record: ProjectRecord = { id, name, updatedAt: Date.now(), incoming: true };
+      if (free) projects.add(record);
+    });
+    await committed(transaction);
+    return free;
+  };
+
+  const library: ProjectLibrary = {
     async list() {
       const transaction = (await database()).transaction(PROJECTS);
-      const projects = await resultOf<ProjectSummary[]>(transaction.objectStore(PROJECTS).getAll());
-      return projects.toSorted((a, b) => b.updatedAt - a.updatedAt);
+      const projects = await resultOf<ProjectRecord[]>(transaction.objectStore(PROJECTS).getAll());
+      return projects
+        .filter((project) => !project.incoming)
+        .toSorted((a, b) => b.updatedAt - a.updatedAt);
+    },
+    async receive({ id, name }) {
+      const locks = lockManager();
+      // Tidying up is no reason for this to fail. It gets another chance the next time.
+      await (locks && sweep(locks))?.catch((error: unknown) => {
+        console.warn("Could not clean up after a project that did not arrive", error);
+      });
+      // The lock comes first, so that a record of this project always has somebody holding it.
+      const release = locks ? await hold(locks, incomingLock(id)) : () => {};
+      if (!release) return undefined;
+      try {
+        if (!(await claim(id, name))) {
+          release();
+          return undefined;
+        }
+      } catch (error) {
+        release();
+        throw error;
+      }
+      const incoming: IncomingProject = {
+        media: library.media(id),
+        async finish(state) {
+          const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
+            durability: "strict",
+          });
+          const summary: ProjectSummary = { id, name, updatedAt: Date.now() };
+          transaction.objectStore(PROJECTS).put(summary);
+          transaction
+            .objectStore(UPDATES)
+            .add({ project: id, update: state } satisfies UpdateRecord);
+          await committed(transaction);
+          release();
+        },
+        async abandon() {
+          try {
+            await removeIfIncoming(id);
+          } finally {
+            release();
+          }
+        },
+      };
+      return incoming;
     },
     async create({ id, name }, state) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
@@ -189,19 +317,12 @@ function createLibrary(factory: () => IDBFactory): ProjectLibrary {
     },
     media: (id) => openMedia(database, id),
     async remove(id) {
-      const stores = [UPDATES, PROJECTS, MEDIA];
-      const transaction = (await database()).transaction(stores, "readwrite");
-      transaction.objectStore(PROJECTS).delete(id);
-      for (const name of [UPDATES, MEDIA]) {
-        const store = transaction.objectStore(name);
-        const keys = store.index(BY_PROJECT).getAllKeys(id);
-        keys.addEventListener("success", () => {
-          for (const key of keys.result) store.delete(key);
-        });
-      }
+      const transaction = (await database()).transaction(allStores, "readwrite");
+      removeFrom(transaction, id);
       await committed(transaction);
     },
   };
+  return library;
 }
 
 /** The address bar has exactly the right lifetime: one per window, kept through a reload. */
@@ -241,6 +362,7 @@ export function createBrowserHost(
   storage: () => Storage = () => localStorage,
   database: () => IDBFactory = () => indexedDB,
   windowStorage: () => Storage = () => sessionStorage,
+  locks: () => LockManager | undefined = () => navigator.locks,
 ): Host {
   const settings: SettingsStore = {
     async load(key) {
@@ -266,8 +388,9 @@ export function createBrowserHost(
   };
   return {
     settings,
-    projects: createLibrary(database),
+    projects: createLibrary(database, locks),
     address,
     windowMemory: createWindowMemory(windowStorage),
+    folders: browserFolders(),
   };
 }

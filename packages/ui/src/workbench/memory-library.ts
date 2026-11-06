@@ -1,4 +1,5 @@
 import type {
+  IncomingProject,
   MediaStore,
   ProjectAddress,
   ProjectLibrary,
@@ -33,6 +34,8 @@ export class MemoryLibrary implements ProjectLibrary {
   readonly summaries = new Map<string, ProjectSummary>();
   readonly listeners = new Map<string, Set<(update: Uint8Array) => void>>();
   readonly files = new Map<string, Blob>();
+  /** Projects on their way in. */
+  readonly incoming = new Set<string>();
   failing = false;
   compactions = 0;
   /** Called while `load` reads, as if another window was writing at that moment. */
@@ -47,8 +50,26 @@ export class MemoryLibrary implements ProjectLibrary {
 
   async create({ id, name }: { id: string; name: string }, state: Uint8Array) {
     if (this.failing) throw new Error("quota");
+    if (this.summaries.has(id)) throw new Error("taken");
     this.summaries.set(id, { id, name, updatedAt: 1 });
     this.updates.set(id, [state]);
+  }
+
+  async receive({ id, name }: { id: string; name: string }): Promise<IncomingProject | undefined> {
+    if (this.summaries.has(id) || this.incoming.has(id)) return undefined;
+    this.incoming.add(id);
+    return {
+      media: this.media(id),
+      finish: async (state) => {
+        if (this.failing) throw new Error("quota");
+        this.incoming.delete(id);
+        await this.create({ id, name }, state);
+      },
+      abandon: async () => {
+        this.incoming.delete(id);
+        this.#removeFiles(id);
+      },
+    };
   }
 
   async open(id: string): Promise<ProjectLog> {
@@ -89,7 +110,10 @@ export class MemoryLibrary implements ProjectLibrary {
   media(project: string): MediaStore {
     const key = (hash: string) => `${project}/${hash}`;
     return {
-      put: async (hash, file) => void this.files.set(key(hash), file),
+      put: async (hash, file) => {
+        if (this.failing) throw new Error("quota");
+        this.files.set(key(hash), file);
+      },
       get: async (hash) => this.files.get(key(hash)),
     };
   }
@@ -99,8 +123,15 @@ export class MemoryLibrary implements ProjectLibrary {
     for (const listener of this.listeners.get(id) ?? []) listener(update);
   }
 
+  #removeFiles(project: string) {
+    for (const key of this.files.keys()) {
+      if (key.startsWith(`${project}/`)) this.files.delete(key);
+    }
+  }
+
   async remove(id: string) {
     this.summaries.delete(id);
     this.updates.delete(id);
+    this.#removeFiles(id);
   }
 }

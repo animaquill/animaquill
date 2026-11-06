@@ -1,10 +1,18 @@
-import type { Host } from "@animaquill/host";
+import { ProjectStore } from "@animaquill/core";
+import type { FolderAccess, Host } from "@animaquill/host";
+import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryTarget, memorySource } from "../transfer/memory-folder.ts";
 import { MemoryLibrary, memoryAddress, memoryWindow } from "./memory-library.ts";
 import { Workbench } from "./workbench.ts";
 import { workspaces } from "./workspaces.ts";
 
-function setup() {
+const noFolders: FolderAccess = {
+  chooseSource: async () => undefined,
+  chooseTarget: async () => undefined,
+};
+
+function setup(folders = noFolders) {
   const library = new MemoryLibrary();
   const values = new Map<string, unknown>();
   const host: Host = {
@@ -16,6 +24,7 @@ function setup() {
       save: async (key, value) => void values.set(key, value),
       listen: () => () => {},
     },
+    folders,
   };
   const workbench = new Workbench({
     host,
@@ -164,5 +173,82 @@ describe("changes that do not go through", () => {
     lock(workbench);
     workbench.actions.get("edit.undo")?.run();
     expect(notices(workbench)).toEqual(["notice.undoFailed"]);
+  });
+});
+
+describe("moving projects", () => {
+  const projectFolder = (name = "文件夹里的项目") => {
+    const store = ProjectStore.create(createProject({ name }));
+    return memorySource("文件夹", store.exportFiles().files);
+  };
+
+  it("can export with a project open, and import at any time", async () => {
+    const { workbench } = setup();
+    const canRun = (id: string) => workbench.actions.get(id)?.enabled?.() !== false;
+    expect(canRun("project.exportFolder")).toBe(false);
+    expect(canRun("project.importFolder")).toBe(true);
+    await create(workbench, "我的项目");
+    expect(canRun("project.exportFolder")).toBe(true);
+    expect(canRun("project.importFolder")).toBe(true);
+  });
+
+  it("offers both in the file menu", () => {
+    const { workbench } = setup();
+    const ids = workbench.actions
+      .menu("file")
+      .flat()
+      .map((action) => action.id);
+    expect(ids).toEqual(expect.arrayContaining(["project.exportFolder", "project.importFolder"]));
+  });
+
+  it("exports the open project from the menu", async () => {
+    const target = new MemoryTarget();
+    const { workbench } = setup({ ...noFolders, chooseTarget: async () => target });
+    await create(workbench, "我的项目");
+    workbench.actions.get("project.exportFolder")?.run();
+    await dialogOf(workbench);
+    await vi.waitFor(() => expect(workbench.dialogs.getSnapshot()?.kind).toBe("confirm"));
+    expect(await target.text("animaquill.json")).toContain("我的项目");
+  });
+
+  it("leaves the open project for the new one once that is there", async () => {
+    const source = projectFolder();
+    const { workbench, library } = setup({ ...noFolders, chooseSource: async () => source });
+    await create(workbench, "我的项目");
+    await workbench.importProject();
+    expect(nameOf(workbench)).toBe("文件夹里的项目");
+    expect(library.summaries.size).toBe(2);
+  });
+
+  it("stays with the open project when a folder cannot come in", async () => {
+    const source = memorySource("假期照片", [["a.jpg", "x"]]);
+    const { workbench, library } = setup({ ...noFolders, chooseSource: async () => source });
+    await create(workbench, "我的项目");
+    const importing = workbench.importProject();
+    await vi.waitFor(() => expect(workbench.dialogs.getSnapshot()?.kind).toBe("confirm"));
+    workbench.dialogs.answer(true);
+    await importing;
+    expect(nameOf(workbench)).toBe("我的项目");
+    expect(library.summaries.size).toBe(1);
+  });
+
+  it("keeps what came in when people stay with changes that could not be saved", async () => {
+    const source = projectFolder();
+    const { workbench, library } = setup({ ...noFolders, chooseSource: async () => source });
+    await create(workbench, "我的项目");
+    await failToSave(workbench, library);
+    library.failing = false;
+    const taken = vi.spyOn(workbench.session, "trySave").mockResolvedValue(false);
+    const importing = workbench.importProject();
+    await vi.waitFor(() => {
+      const current = workbench.dialogs.getSnapshot();
+      expect(current?.kind === "confirm" && current.danger).toBe(true);
+    });
+    workbench.dialogs.answer(false);
+    await importing;
+    taken.mockRestore();
+    expect(nameOf(workbench)).toBe("没保存上");
+    expect(library.summaries.size).toBe(2);
+    expect(notices(workbench)).toContain("transfer.imported");
   });
 });

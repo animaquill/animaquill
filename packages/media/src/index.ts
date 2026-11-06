@@ -1,5 +1,7 @@
 import { ALL_FORMATS, BlobSource, Input } from "mediabunny";
 
+export { formatHash, hashFile, isSameHash, type HashOptions } from "./hash.ts";
+
 /** What a file contains, as far as the project cares. */
 export interface MediaFacts {
   readonly kind: "video" | "audio" | "image";
