@@ -161,10 +161,10 @@ test("the files of a project go with it", async ({ page }) => {
 test("a project saved before files existed still opens, and takes files", async ({ page }) => {
   const url = page.url();
   await page.evaluate(async () => {
-    const read = <T>(request: IDBRequest<T>) =>
+    const read = <T>(asked: IDBRequest<T>) =>
       new Promise<T>((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+        asked.onsuccess = () => resolve(asked.result);
+        asked.onerror = () => reject(asked.error);
       });
     const current = await read(indexedDB.open("animaquill"));
     const transaction = current.transaction(["projects", "updates"]);
