@@ -5,6 +5,7 @@ import type {
   ProjectLog,
   ProjectSummary,
   SettingsStore,
+  WindowMemory,
 } from "./index.ts";
 
 const PREFIX = "animaquill.";
@@ -180,10 +181,32 @@ const address: ProjectAddress = {
   },
 };
 
+/** Session storage has the lifetime of a tab, and a duplicated tab starts with a copy of it. */
+function createWindowMemory(storage: () => Storage): WindowMemory {
+  return {
+    read(key) {
+      try {
+        return storage().getItem(`${PREFIX}window.${key}`) ?? undefined;
+      } catch (error) {
+        console.warn("Window memory is out of reach", error);
+        return undefined;
+      }
+    },
+    write(key, value) {
+      try {
+        storage().setItem(`${PREFIX}window.${key}`, value);
+      } catch (error) {
+        console.warn("Window memory is out of reach", error);
+      }
+    },
+  };
+}
+
 /** Keeps everything in this browser. Used until an account or a local folder can hold it. */
 export function createBrowserHost(
   storage: () => Storage = () => localStorage,
   database: () => IDBFactory = () => indexedDB,
+  windowStorage: () => Storage = () => sessionStorage,
 ): Host {
   const settings: SettingsStore = {
     async load(key) {
@@ -193,6 +216,24 @@ export function createBrowserHost(
     async save(key, value) {
       storage().setItem(PREFIX + key, JSON.stringify(value));
     },
+    listen(key, listener) {
+      // The browser tells every window but the one that wrote.
+      const onStorage = (event: StorageEvent) => {
+        if (event.key !== PREFIX + key || event.newValue === null) return;
+        try {
+          listener(JSON.parse(event.newValue));
+        } catch (error) {
+          console.warn(`Setting ${key} from another window is unreadable`, error);
+        }
+      };
+      addEventListener("storage", onStorage);
+      return () => removeEventListener("storage", onStorage);
+    },
   };
-  return { settings, projects: createLibrary(database), address };
+  return {
+    settings,
+    projects: createLibrary(database),
+    address,
+    windowMemory: createWindowMemory(windowStorage),
+  };
 }

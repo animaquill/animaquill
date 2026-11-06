@@ -21,6 +21,7 @@ async function setup(stored?: unknown) {
     save: vi.fn(async (key: string, value: unknown) => {
       values.set(key, structuredClone(value));
     }),
+    listen: () => () => {},
   };
   const actions = new ActionRegistry();
   const items = [

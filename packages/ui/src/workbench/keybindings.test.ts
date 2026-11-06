@@ -30,11 +30,16 @@ function keyDown(code: string, modifiers: Partial<KeyDown> = {}): KeyDown {
 async function setup(stored?: unknown) {
   const values = new Map<string, unknown>();
   if (stored !== undefined) values.set("keybindings", stored);
+  let fromOtherWindow: (value: unknown) => void = () => {};
   const settings: SettingsStore = {
     load: vi.fn(async (key: string) => values.get(key)),
     save: vi.fn(async (key: string, value: unknown) => {
       values.set(key, structuredClone(value));
     }),
+    listen: (_, listener) => {
+      fromOtherWindow = listener;
+      return () => {};
+    },
   };
   const open = action("open", ["mod+o", "f2"]);
   const save = action("save", ["mod+s"]);
@@ -44,7 +49,17 @@ async function setup(stored?: unknown) {
   const messages = { restoreFailed: vi.fn(), saveFailed: vi.fn() };
   const service = new KeybindingService(settings, actions, "other", messages);
   await service.load();
-  return { service, actions, open, save, plain, settings, values, messages };
+  return {
+    service,
+    actions,
+    open,
+    save,
+    plain,
+    settings,
+    values,
+    messages,
+    saveInOtherWindow: (value: unknown) => fromOtherWindow(value),
+  };
 }
 
 const overrides = (data: Record<string, string[]>) => ({ version: 1, overrides: data });
@@ -268,5 +283,37 @@ describe("saving", () => {
     await Promise.resolve();
     expect(messages.saveFailed).toHaveBeenCalledOnce();
     expect(service.keysFor("plain")).toEqual(["j", "k"]);
+  });
+});
+
+describe("several windows", () => {
+  it("uses what another window changed right away", async () => {
+    const { service, saveInOtherWindow } = await setup();
+    saveInOtherWindow(overrides({ open: ["mod+k"] }));
+    expect(service.keysFor("open")).toEqual(["mod+k"]);
+    expect(service.ownerOf("mod+o")).toBeUndefined();
+  });
+
+  it("does not bring back an old value when saving here", async () => {
+    const { service, values, saveInOtherWindow } = await setup();
+    saveInOtherWindow(overrides({ open: ["mod+k"] }));
+    service.assign("plain", "mod+j");
+    await vi.waitFor(() =>
+      expect(values.get("keybindings")).toEqual(overrides({ open: ["mod+k"], plain: ["mod+j"] })),
+    );
+  });
+
+  it("tells the screen about it", async () => {
+    const { service, saveInOtherWindow } = await setup();
+    const listener = vi.fn<() => void>();
+    service.subscribe(listener);
+    saveInOtherWindow(overrides({ open: ["mod+k"] }));
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it("ignores what it cannot read", async () => {
+    const { service, saveInOtherWindow } = await setup(overrides({ open: ["mod+k"] }));
+    saveInOtherWindow({ version: 99 });
+    expect(service.keysFor("open")).toEqual(["mod+k"]);
   });
 });

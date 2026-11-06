@@ -81,12 +81,14 @@ export class KeybindingService {
   async load(): Promise<void> {
     const reading = await readSetting(this.#settings, SETTINGS_KEY, parseSaved);
     if (reading.kind === "broken") this.#messages.restoreFailed();
-    if (reading.kind === "ok") {
-      for (const [id, keys] of Object.entries(reading.value.overrides)) {
-        this.#overrides.set(id, keys);
-      }
-    }
+    if (reading.kind === "ok") this.#adopt(reading.value);
     this.#rebuild();
+    this.#settings.listen(SETTINGS_KEY, (value) => {
+      const saved = parseSaved(value);
+      if (!saved) return;
+      this.#adopt(saved);
+      this.#rebuild();
+    });
   }
 
   keysFor(actionId: string): readonly KeyCombo[] {
@@ -149,6 +151,11 @@ export class KeybindingService {
     if (action?.enabled?.() === false) return;
     event.preventDefault();
     action?.run();
+  }
+
+  #adopt(saved: SavedKeybindings): void {
+    this.#overrides.clear();
+    for (const [id, keys] of Object.entries(saved.overrides)) this.#overrides.set(id, keys);
   }
 
   #override(actionId: string, keys: readonly KeyCombo[]): void {

@@ -38,7 +38,7 @@ export class Workbench {
   constructor({ host, t, version, platform, panels, workspaces }: WorkbenchOptions) {
     this.t = t;
     this.version = version;
-    this.layout = new LayoutController(host.settings, workspaces, {
+    this.layout = new LayoutController(host.settings, host.windowMemory, workspaces, {
       restoreFailed: () => this.notifications.push(t("notice.layoutRestoreFailed")),
       saveFailed: () => this.notifications.push(t("notice.layoutSaveFailed")),
     });

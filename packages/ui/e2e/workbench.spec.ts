@@ -194,6 +194,94 @@ test("every workspace keeps its own arrangement", async ({ page }) => {
   await expect(tab(page, "chat")).toHaveCount(0);
 });
 
+test.describe("several windows", () => {
+  const workspace = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
+
+  async function secondWindow(page: Page) {
+    const other = await page.context().newPage();
+    await other.goto(page.url());
+    await expect(tab(other, "preview")).toBeVisible();
+    return other;
+  }
+
+  test("each window keeps its workspace through a reload", async ({ page }) => {
+    const other = await secondWindow(page);
+    const before = await savedLayout(other);
+    await workspace(other, "动画").click();
+    await waitForSave(other, before);
+
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect(workspace(page, "剪辑")).toHaveAttribute("aria-pressed", "true");
+
+    await other.reload();
+    await expect(tab(other, "preview")).toBeVisible();
+    await expect(workspace(other, "动画")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("a new window starts in the workspace chosen last", async ({ page }) => {
+    const before = await savedLayout(page);
+    await workspace(page, "动画").click();
+    await waitForSave(page, before);
+    const other = await secondWindow(page);
+    await expect(workspace(other, "动画")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("a window on the start page has not chosen a workspace yet", async ({ page }) => {
+    const waiting = await page.context().newPage();
+    await waiting.goto("/");
+    await expect(waiting.getByRole("button", { name: "新建项目" })).toBeVisible();
+
+    const before = await savedLayout(page);
+    await workspace(page, "动画").click();
+    await waitForSave(page, before);
+
+    await waiting.getByRole("button", { name: /^测试项目/ }).click();
+    await expect(tab(waiting, "preview")).toBeVisible();
+    await expect(workspace(waiting, "动画")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("windows do not undo each other's arrangement", async ({ page }) => {
+    const other = await secondWindow(page);
+    await workspace(other, "动画").click();
+    await expect(tab(other, "keyframes")).toBeVisible();
+
+    let before = await savedLayout(other);
+    await tab(other, "keyframes").click({ button: "middle" });
+    await waitForSave(other, before);
+
+    before = await savedLayout(page);
+    await tab(page, "chat").click({ button: "middle" });
+    await waitForSave(page, before);
+
+    // Both ask for the other workspace too: an arrangement that is gone looks the same as one that
+    // is not on screen.
+    await other.reload();
+    await expect(tab(other, "preview")).toBeVisible();
+    await workspace(other, "动画").click();
+    await expect(tab(other, "preview")).toBeVisible();
+    await expect(tab(other, "keyframes")).toHaveCount(0);
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await workspace(page, "剪辑").click();
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect(tab(page, "chat")).toHaveCount(0);
+  });
+
+  test("switching shows what another window arranged", async ({ page }) => {
+    const other = await secondWindow(page);
+    await workspace(other, "动画").click();
+    await expect(tab(other, "keyframes")).toBeVisible();
+    const before = await savedLayout(other);
+    await tab(other, "keyframes").click({ button: "middle" });
+    await waitForSave(other, before);
+
+    await workspace(page, "动画").click();
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect(tab(page, "keyframes")).toHaveCount(0);
+  });
+});
+
 test("reset brings back the design of the current workspace only", async ({ page }) => {
   await tab(page, "chat").click({ button: "middle" });
   await page.getByRole("button", { name: "动画", exact: true }).click();

@@ -6,6 +6,7 @@ import {
   type LayoutNode,
   type WorkspaceDefinition,
 } from "./layout.ts";
+import { memoryWindow } from "./memory-library.ts";
 
 const layoutOf = (panel: string): LayoutNode => ({ kind: "tabs", panels: [panel] });
 
@@ -52,19 +53,28 @@ class FakeDock implements Dock {
   }
 }
 
-function setup(stored?: unknown) {
+function setup(stored?: unknown, memory = memoryWindow()) {
   const values = new Map<string, unknown>();
   if (stored !== undefined) values.set("layout", stored);
+  let fromOtherWindow: (value: unknown) => void = () => {};
   const settings: SettingsStore = {
     load: vi.fn(async (key: string) => values.get(key)),
     save: vi.fn(async (key: string, value: unknown) => {
       values.set(key, structuredClone(value));
     }),
+    listen: (_, listener) => {
+      fromOtherWindow = listener;
+      return () => {};
+    },
   };
   const messages = { restoreFailed: vi.fn(), saveFailed: vi.fn() };
-  const layout = new LayoutController(settings, WORKSPACES, messages);
+  const layout = new LayoutController(settings, memory, WORKSPACES, messages);
   const dock = new FakeDock();
-  return { layout, dock, settings, messages, values };
+  const saveInOtherWindow = (value: unknown) => {
+    values.set("layout", value);
+    fromOtherWindow(value);
+  };
+  return { layout, dock, settings, messages, values, memory, saveInOtherWindow };
 }
 
 const saved = (workspace: string, states: Record<string, unknown>) => ({
@@ -302,5 +312,129 @@ describe("workspaces", () => {
     layout.attach(dock);
     await layout.forget();
     expect(values.get("layout")).toEqual(saved("edit", {}));
+  });
+});
+
+describe("several windows", () => {
+  it("starts a new window in the workspace chosen last", async () => {
+    const { layout, dock } = setup(saved("animate", {}));
+    await layout.load();
+    layout.attach(dock);
+    expect(layout.getSnapshot().workspace).toBe("animate");
+  });
+
+  it("stays in its own workspace through a reload, whatever was chosen elsewhere", async () => {
+    const memory = memoryWindow();
+    memory.write("workspace", "edit");
+    const { layout, dock } = setup(saved("animate", {}), memory);
+    await layout.load();
+    expect(layout.getSnapshot().workspace).toBe("edit");
+    layout.attach(dock);
+    expect(layout.getSnapshot().workspace).toBe("edit");
+    expect(dock.state).toEqual(layoutOf("timeline"));
+  });
+
+  it("remembers the workspace it started in, not only one it switched to", async () => {
+    const { layout, dock, memory } = setup();
+    await layout.load();
+    layout.attach(dock);
+    expect(memory.read("workspace")).toBe("edit");
+  });
+
+  it("remembers the workspace it switched to", async () => {
+    const { layout, dock, memory } = setup();
+    await layout.load();
+    layout.attach(dock);
+    layout.switchWorkspace("animate");
+    expect(memory.read("workspace")).toBe("animate");
+  });
+
+  it("does not choose before it shows something", async () => {
+    const { layout, dock, memory, saveInOtherWindow } = setup();
+    await layout.load();
+    expect(memory.read("workspace")).toBeUndefined();
+    saveInOtherWindow(saved("animate", {}));
+    layout.attach(dock);
+    expect(layout.getSnapshot().workspace).toBe("animate");
+  });
+
+  it("uses the workspace chosen last when its own no longer exists", async () => {
+    const memory = memoryWindow();
+    memory.write("workspace", "removed");
+    const { layout, dock, messages } = setup(saved("animate", {}), memory);
+    await layout.load();
+    layout.attach(dock);
+    expect(layout.getSnapshot().workspace).toBe("animate");
+    expect(messages.restoreFailed).not.toHaveBeenCalled();
+  });
+
+  it("keeps its workspace when saved data is broken", async () => {
+    const memory = memoryWindow();
+    memory.write("workspace", "animate");
+    const { layout, dock, messages } = setup("garbage", memory);
+    await layout.load();
+    layout.attach(dock);
+    expect(layout.getSnapshot().workspace).toBe("animate");
+    expect(messages.restoreFailed).toHaveBeenCalledOnce();
+  });
+
+  it("stays where it is when another window switches", async () => {
+    const { layout, dock, saveInOtherWindow } = setup();
+    await layout.load();
+    layout.attach(dock);
+    saveInOtherWindow(saved("animate", {}));
+    expect(layout.getSnapshot().workspace).toBe("edit");
+    expect(dock.state).toEqual(layoutOf("timeline"));
+  });
+
+  it("does not bring back an old arrangement when saving", async () => {
+    const { layout, dock, values, saveInOtherWindow } = setup(saved("edit", { animate: "old" }));
+    await layout.load();
+    layout.attach(dock);
+    saveInOtherWindow(saved("animate", { animate: "theirs" }));
+    await dock.userChanges("mine");
+    await vi.runAllTimersAsync();
+    expect(values.get("layout")).toEqual(saved("animate", { animate: "theirs", edit: "mine" }));
+  });
+
+  it("shows what another window arranged when switching to it", async () => {
+    const { layout, dock, saveInOtherWindow } = setup();
+    await layout.load();
+    layout.attach(dock);
+    saveInOtherWindow(saved("animate", { animate: "theirs" }));
+    layout.switchWorkspace("animate");
+    expect(dock.state).toBe("theirs");
+  });
+
+  it("does not lose the arrangement it just left to news from another window", async () => {
+    const { layout, dock, values, saveInOtherWindow } = setup();
+    await layout.load();
+    layout.attach(dock);
+    await dock.userChanges("my edit");
+    layout.switchWorkspace("animate");
+    await Promise.resolve();
+    const other = structuredClone(values.get("layout")) as ReturnType<typeof saved>;
+    saveInOtherWindow(saved("animate", { ...other.states, animate: "theirs" }));
+    layout.switchWorkspace("edit");
+    expect(dock.state).toBe("my edit");
+  });
+
+  it("does not write what another window just wrote", async () => {
+    const { layout, dock, settings, saveInOtherWindow } = setup();
+    await layout.load();
+    layout.attach(dock);
+    saveInOtherWindow(saved("animate", { edit: layoutOf("timeline") }));
+    await dock.userChanges(layoutOf("timeline"));
+    await vi.runAllTimersAsync();
+    expect(settings.save).not.toHaveBeenCalled();
+  });
+
+  it("ignores what it cannot read", async () => {
+    const { layout, dock, saveInOtherWindow } = setup(saved("edit", { animate: "mine" }));
+    await layout.load();
+    layout.attach(dock);
+    saveInOtherWindow({ version: 99 });
+    layout.switchWorkspace("animate");
+    expect(dock.state).toBe("mine");
   });
 });

@@ -1,6 +1,6 @@
 import type { Host } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryLibrary, memoryAddress } from "./memory-library.ts";
+import { MemoryLibrary, memoryAddress, memoryWindow } from "./memory-library.ts";
 import { Workbench } from "./workbench.ts";
 import { workspaces } from "./workspaces.ts";
 
@@ -10,9 +10,11 @@ function setup() {
   const host: Host = {
     projects: library,
     address: memoryAddress(),
+    windowMemory: memoryWindow(),
     settings: {
       load: async (key) => values.get(key),
       save: async (key, value) => void values.set(key, value),
+      listen: () => () => {},
     },
   };
   const workbench = new Workbench({

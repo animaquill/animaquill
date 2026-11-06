@@ -1,4 +1,10 @@
-import type { ProjectAddress, ProjectLibrary, ProjectLog, ProjectSummary } from "@animaquill/host";
+import type {
+  ProjectAddress,
+  ProjectLibrary,
+  ProjectLog,
+  ProjectSummary,
+  WindowMemory,
+} from "@animaquill/host";
 
 /** For tests: the address of one window. */
 export function memoryAddress(start?: string): ProjectAddress {
@@ -8,6 +14,15 @@ export function memoryAddress(start?: string): ProjectAddress {
     write: (id) => {
       current = id;
     },
+  };
+}
+
+/** For tests: what one window remembers. */
+export function memoryWindow(): WindowMemory {
+  const values = new Map<string, string>();
+  return {
+    read: (key) => values.get(key),
+    write: (key, value) => void values.set(key, value),
   };
 }
 

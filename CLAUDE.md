@@ -23,7 +23,7 @@
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
 - 界面文字都放在 `packages/ui/src/i18n`，不写在组件里。
 - 改动项目的操作走命令系统。界面上的操作是动作，两者不要混用。
-- 设置是所有窗口共享的，只放偏好，不放这个窗口正在做什么。窗口显示哪个项目由 `Host.address` 决定。
+- 设置是所有窗口共享的，只放偏好，不放这个窗口正在做什么。窗口显示哪个项目由 `Host.address` 决定，其他窗口自己的状态放 `Host.windowMemory`。整份写回的设置要用 `listen` 跟上其他窗口的改动。
 - 宿主只提供存储，接口在 `packages/host`，不要让它依赖 Yjs。保存的逻辑在 `packages/ui/src/workbench/session.ts`，切换项目走 `Workbench`，它会先处理没保存的改动。
 - 对话框用 `Workbench.dialogs`，不要自己写弹窗。
 
