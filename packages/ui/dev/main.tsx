@@ -52,5 +52,6 @@ if (root)
   await mountEditor(root, {
     host: createBrowserHost(),
     version: "dev",
+    compositorUrl: "/compositor.html",
     panels: [crashTest, frameTest],
   });

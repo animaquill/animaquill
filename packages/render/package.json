@@ -1,0 +1,21 @@
+{
+  "name": "@animaquill/render",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./compositor": "./src/compositor.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@animaquill/core": "workspace:*",
+    "mediabunny": "1.65.2"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

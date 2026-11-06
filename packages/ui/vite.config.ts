@@ -5,5 +5,6 @@ import { defineConfig } from "vite";
 export default defineConfig({
   root: "dev",
   plugins: [react()],
-  server: { host: "0.0.0.0", port: 5173, strictPort: true },
+  // The compositor runs in a sandbox with no origin of its own, so its modules need CORS.
+  server: { host: "0.0.0.0", port: 5173, strictPort: true, cors: true },
 });

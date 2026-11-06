@@ -1,23 +1,42 @@
-import { MonitorPlay, Pause, Play, SkipBack, SkipForward } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../app/context.ts";
+import { useSession, useWorkbench } from "../app/context.ts";
+import { PreviewLink } from "../preview/link.ts";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
 
 export function PreviewPanel() {
-  const { timeline } = useWorkbench();
+  const { timeline, projects, compositorUrl, notifications } = useWorkbench();
   const { t } = useTranslation();
+  const { store } = useSession();
   const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
+  const picture = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const element = picture.current;
+    if (!element || !store) return;
+    const warned = new Set<string>();
+    const link = new PreviewLink(element, timeline, store, projects, (file) => {
+      if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));
+      warned.add(file);
+    });
+    // The compositor says hello once it has loaded, so the link has to listen first.
+    element.src = compositorUrl;
+    return () => link.dispose();
+  }, [compositorUrl, notifications, projects, store, t, timeline]);
 
   return (
     <div className={styles.panel}>
-      <div className={styles.picture}>
-        <MonitorPlay size={32} />
-        <p>{t("panel.preview.hint")}</p>
-      </div>
+      <iframe
+        ref={picture}
+        className={styles.picture}
+        title={t("panel.preview.title")}
+        // No same-origin: whatever runs there one day has no way into the editor.
+        sandbox="allow-scripts"
+      />
       <div className={styles.transport} role="toolbar" aria-label={t("timeline.transport")}>
         <div className={styles.buttons}>
           <ToolButton

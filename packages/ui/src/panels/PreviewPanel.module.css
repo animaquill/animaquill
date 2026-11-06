@@ -5,18 +5,10 @@
 }
 
 .picture {
-  display: flex;
   flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
   min-height: 0;
-  color: var(--aq-text-muted);
-}
-
-.picture p {
-  margin: 0;
+  background: #000;
+  border: 0;
 }
 
 .transport {

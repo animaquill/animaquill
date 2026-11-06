@@ -1,5 +1,11 @@
 export { COMMANDS, type CommandDefinition } from "./commands.ts";
 export { CommandError, Draft } from "./draft.ts";
+export {
+  buildRenderPlan,
+  type LayerSource,
+  type RenderLayer,
+  type RenderPlan,
+} from "./render-plan.ts";
 export { isSourceFile } from "./import-file.ts";
 export {
   clipEnd,

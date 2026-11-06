@@ -118,7 +118,8 @@
     "frameRateInvalid": "帧率要写成大于 0 的数字，比如 30 或 30000/1001。",
     "mediaUnsupported": "这个浏览器解不了“{{name}}”，没有导入。",
     "mediaTooLarge": "“{{name}}”超过 2 GB，现在还导入不了。",
-    "mediaSaveFailed": "“{{name}}”保存失败，可能是浏览器的存储空间不够。"
+    "mediaSaveFailed": "“{{name}}”保存失败，可能是浏览器的存储空间不够。",
+    "previewCannotDecode": "有素材在这个浏览器里解不了或者找不到，预览里显示不出来。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -144,8 +145,7 @@
       "hint": "项目的存档，可以查看和回到任何一个。"
     },
     "preview": {
-      "title": "预览",
-      "hint": "画面在这里播放。"
+      "title": "预览"
     },
     "code": {
       "title": "代码",

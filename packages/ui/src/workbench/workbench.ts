@@ -1,4 +1,4 @@
-import type { Host } from "@animaquill/host";
+import type { Host, ProjectLibrary } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { projectFrameRate, type ProjectStore } from "@animaquill/core";
 import type { ProjectSummary } from "@animaquill/host";
@@ -23,6 +23,7 @@ export interface WorkbenchOptions {
   readonly platform: Platform;
   readonly panels: readonly PanelDefinition[];
   readonly workspaces: readonly WorkspaceDefinition[];
+  readonly compositorUrl: string;
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
@@ -40,11 +41,17 @@ export class Workbench {
   readonly timeline: TimelineEditor;
   readonly input: InputMode;
   readonly media: MediaLibrary;
+  readonly projects: ProjectLibrary;
+  /** Where the page with the compositor is. A site of its own keeps it apart from the editor. */
+  readonly compositorUrl: string;
   #changingProject = false;
 
-  constructor({ host, t, version, platform, panels, workspaces }: WorkbenchOptions) {
+  constructor(options: WorkbenchOptions) {
+    const { host, t, version, platform, panels, workspaces, compositorUrl } = options;
     this.t = t;
     this.version = version;
+    this.projects = host.projects;
+    this.compositorUrl = compositorUrl;
     this.layout = new LayoutController(host.settings, host.windowMemory, workspaces, {
       restoreFailed: () => this.notifications.push(t("notice.layoutRestoreFailed")),
       saveFailed: () => this.notifications.push(t("notice.layoutSaveFailed")),

@@ -13,6 +13,8 @@ export interface EditorOptions {
   readonly host: Host;
   /** Shown in the status bar, so that a report can say which build it is about. */
   readonly version: string;
+  /** The page with the compositor, on a site of its own where that is possible. */
+  readonly compositorUrl: string;
   /** Panels the host adds to the built-in ones. */
   readonly panels?: readonly PanelDefinition[];
 }
@@ -27,6 +29,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     platform: /Mac/.test(navigator.platform) ? "mac" : "other",
     panels: [...builtinPanels, ...(options.panels ?? [])],
     workspaces,
+    compositorUrl: options.compositorUrl,
   });
   await workbench.load();
 

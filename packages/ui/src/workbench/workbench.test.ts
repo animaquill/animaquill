@@ -24,6 +24,7 @@ function setup() {
     platform: "other",
     panels: [],
     workspaces,
+    compositorUrl: "",
   });
   return { workbench, library };
 }

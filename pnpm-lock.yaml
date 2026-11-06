@@ -220,6 +220,19 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/render:
+    dependencies:
+      '@animaquill/core':
+        specifier: workspace:*
+        version: link:../core
+      mediabunny:
+        specifier: 1.65.2
+        version: 1.65.2
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/schema:
     dependencies:
       zod:
@@ -247,6 +260,9 @@ importers:
       '@animaquill/media':
         specifier: workspace:*
         version: link:../media
+      '@animaquill/render':
+        specifier: workspace:*
+        version: link:../render
       '@animaquill/schema':
         specifier: workspace:*
         version: link:../schema
