@@ -72,11 +72,16 @@ export class Workbench {
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
     this.input = new InputMode(host.settings);
-    this.media = new MediaLibrary(this.session, host.projects, {
-      unsupported: (name) => this.notifications.push(t("notice.mediaUnsupported", { name })),
-      tooLarge: (name) => this.notifications.push(t("notice.mediaTooLarge", { name })),
-      saveFailed: (name) => this.notifications.push(t("notice.mediaSaveFailed", { name })),
-    });
+    this.media = new MediaLibrary(
+      this.session,
+      host.projects,
+      {
+        unsupported: (name) => this.notifications.push(t("notice.mediaUnsupported", { name })),
+        tooLarge: (name) => this.notifications.push(t("notice.mediaTooLarge", { name })),
+        saveFailed: (name) => this.notifications.push(t("notice.mediaSaveFailed", { name })),
+      },
+      compositorUrl,
+    );
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });

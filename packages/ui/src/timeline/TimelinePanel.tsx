@@ -625,6 +625,7 @@ function Surface({
       editor,
       (box) => labels.current(box),
       (clip) => media.peaksOf(clip),
+      (clip) => media.stripOfClip(clip),
     );
     const stopMedia = media.subscribe(() => painter.invalidate());
 

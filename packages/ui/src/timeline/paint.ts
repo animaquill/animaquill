@@ -10,6 +10,7 @@ const ROW_INSET = 2;
 const CLIP_RADIUS = 3;
 const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
+const LABEL_PLATE_PADDING = 3;
 const EDGE_HANDLE = 6;
 const END_HANDLE = 6;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
@@ -81,12 +82,19 @@ interface ClipLook {
  * Draws the timeline. Nothing here decides anything: it shows what the editor says, once per frame
  * at most, and only what is on screen.
  */
+interface ClipStrip {
+  readonly image: ImageBitmap;
+  readonly count: number;
+  readonly duration: number;
+}
+
 export class TimelinePainter {
   readonly #canvas: HTMLCanvasElement;
   readonly #context: CanvasRenderingContext2D;
   readonly #editor: TimelineEditor;
   readonly #labelOf: ClipLabel;
   readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
+  readonly #stripOf: (clip: ClipState) => ClipStrip | undefined;
   /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
   #theme!: Theme;
   #ratio = 1;
@@ -97,6 +105,7 @@ export class TimelinePainter {
     editor: TimelineEditor,
     labelOf: ClipLabel,
     peaksOf: (clip: ClipState) => Uint8Array | undefined,
+    stripOf: (clip: ClipState) => ClipStrip | undefined,
   ) {
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("No 2D context");
@@ -105,6 +114,7 @@ export class TimelinePainter {
     this.#editor = editor;
     this.#labelOf = labelOf;
     this.#peaksOf = peaksOf;
+    this.#stripOf = stripOf;
     // The browser can drop what a canvas holds, for example after a problem with the graphics card.
     canvas.addEventListener("contextrestored", () => this.invalidate());
   }
@@ -261,6 +271,9 @@ export class TimelinePainter {
       context.fill();
     }
 
+    if (box.clip.source.kind === "video") {
+      this.#paintFilmstrip(box, look, { left, right, top, height, width });
+    }
     if (box.clip.source.kind === "audio") {
       this.#paintWaveform(box, look, { left, right, top, height }, fill);
     }
@@ -279,6 +292,45 @@ export class TimelinePainter {
       context.stroke();
     }
     context.globalAlpha = alpha;
+  }
+
+  /** Pictures side by side, from the part of the video that plays at each place. */
+  #paintFilmstrip(
+    box: ClipBox,
+    look: { readonly start: number; readonly end: number },
+    area: {
+      readonly left: number;
+      readonly right: number;
+      readonly top: number;
+      readonly height: number;
+      readonly width: number;
+    },
+  ): void {
+    const strip = this.#stripOf(box.clip);
+    if (!strip || strip.duration <= 0) return;
+    const editor = this.#editor;
+    const context = this.#context;
+    const { image, count, duration } = strip;
+    const frameWidth = image.width / count;
+    const tile = Math.max((area.height * frameWidth) / image.height, 8);
+    const moved = look.end - look.start === box.end - box.start ? look.start - box.start : 0;
+    const offset = toSeconds(clipOffset(box.clip));
+
+    context.save();
+    context.beginPath();
+    context.roundRect(area.left, area.top, area.width, area.height, CLIP_RADIUS);
+    context.clip();
+    context.globalAlpha *= 0.8;
+    // Tiles stay on a grid that starts at the clip, and only the ones that show get drawn.
+    const skipped = Math.max(Math.floor(-area.left / tile), 0);
+    const end = Math.min(area.right, editor.width);
+    for (let x = area.left + skipped * tile; x < end; x += tile) {
+      const clock = offset + editor.timeAt(x + tile / 2) - moved - box.start;
+      const slot = Math.min(Math.max(Math.floor((clock / duration) * count), 0), count - 1);
+      const from = slot * frameWidth;
+      context.drawImage(image, from, 0, frameWidth, image.height, x, area.top, tile, area.height);
+    }
+    context.restore();
   }
 
   /** One bar per pixel, and only where it shows, so that a long file costs no more than a short one. */
@@ -345,9 +397,18 @@ export class TimelinePainter {
     context.beginPath();
     context.rect(left, top, width, height);
     context.clip();
-    context.fillStyle = readableOn(fill);
     const x = Math.max(left, 0) + LABEL_PADDING;
-    context.fillText(this.#labelOf(box), x, top + Math.min(height / 2, 12));
+    const y = top + Math.min(height / 2, 12);
+    const label = this.#labelOf(box);
+    // Over pictures no single colour stays readable.
+    const onPicture = box.clip.source.kind === "video" && this.#stripOf(box.clip) !== undefined;
+    if (onPicture) {
+      context.fillStyle = "#000000a6";
+      const plate = context.measureText(label).width + LABEL_PLATE_PADDING * 2;
+      context.fillRect(x - LABEL_PLATE_PADDING, y - 8, plate, 16);
+    }
+    context.fillStyle = onPicture ? "#ffffff" : readableOn(fill);
+    context.fillText(label, x, y);
     context.restore();
   }
 

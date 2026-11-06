@@ -159,3 +159,45 @@ test("plays sound, and stops when paused", async ({ page }) => {
   await page.waitForTimeout(500);
   expect(await sounds()).toBe(stopped);
 });
+
+test("a video shows its frames on the clip and in the list, also after a reload", async ({
+  page,
+}) => {
+  await importAndPlace(page, redBlue);
+  const clip = content(page, "timeline").getByRole("option").first();
+  await expect(clip).toBeVisible();
+  const canvas = content(page, "timeline").locator("canvas");
+  /** How much red and how much blue there is at both ends of the clip. */
+  const ends = async () => {
+    const box = await clip.boundingBox();
+    const area = await canvas.boundingBox();
+    if (!box || !area) return false;
+    return canvas.evaluate(
+      (element: HTMLCanvasElement, { left, right, y }) => {
+        const ratio = element.width / element.clientWidth;
+        const context = element.getContext("2d");
+        const at = (x: number) => context?.getImageData(x * ratio, y * ratio, 1, 1).data ?? [];
+        const [leftRed = 0, , leftBlue = 0] = at(left);
+        const [rightRed = 0, , rightBlue = 0] = at(right);
+        return leftRed > leftBlue + 60 && rightBlue > rightRed + 60;
+      },
+      {
+        left: box.x - area.x + 12,
+        right: box.x - area.x + box.width - 12,
+        y: box.y - area.y + box.height - 8,
+      },
+    );
+  };
+  await expect.poll(ends).toBe(true);
+  await expect(items(page).first().locator("canvas")).toBeVisible();
+  await page.reload();
+  await expect(clip).toBeVisible();
+  await expect.poll(ends).toBe(true);
+});
+
+test("frames appear with the preview tab closed", async ({ page }) => {
+  await tab(page, "preview").click({ button: "middle" });
+  await expect(tab(page, "preview")).toHaveCount(0);
+  await importAndPlace(page, redBlue);
+  await expect(items(page).first().locator("canvas")).toBeVisible();
+});

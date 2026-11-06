@@ -2,12 +2,30 @@ import { computePeaks, readSound } from "@animaquill/audio";
 import type { ClipState, ProjectStore } from "@animaquill/core";
 import type { ProjectLibrary } from "@animaquill/host";
 import { probeMedia, type MediaFacts } from "@animaquill/media";
-import { fromSeconds, formatTime, newId, type Asset } from "@animaquill/schema";
+import {
+  fromSeconds,
+  formatTime,
+  newId,
+  parseTime,
+  toSeconds,
+  type Asset,
+} from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
+import { encodeStrip, stripCount, StripMaker } from "./strips.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 
 /** Peaks are worked out from a file. A new way of doing that gets a new key, and old ones stay unused. */
 const peaksKey = (hash: string) => `peaks-1:${hash}`;
+
+const stripKey = (hash: string) => `strip-1:${hash}`;
+
+/** Frames of a video side by side, evenly spread over its length. */
+export interface FilmStrip {
+  readonly image: ImageBitmap;
+  readonly count: number;
+  /** Seconds. */
+  readonly duration: number;
+}
 
 /** Hashing reads a whole file into memory, and browsers stop somewhere around here. */
 const MAX_FILE_BYTES = 2 * 1024 ** 3;
@@ -49,10 +67,19 @@ export class MediaLibrary {
   readonly #peaks = new Map<string, Uint8Array | undefined>();
   /** One at a time, because decoding takes the whole file. */
   #peaksQueue: Promise<void> = Promise.resolve();
+  readonly #strips = new Map<string, FilmStrip | undefined>();
+  #stripsQueue: Promise<void> = Promise.resolve();
+  readonly #stripMaker: StripMaker;
   #store: ProjectStore | undefined;
   #importing = 0;
 
-  constructor(session: ProjectSession, projects: ProjectLibrary, messages: MediaMessages) {
+  constructor(
+    session: ProjectSession,
+    projects: ProjectLibrary,
+    messages: MediaMessages,
+    compositorUrl: string,
+  ) {
+    this.#stripMaker = new StripMaker(compositorUrl);
     this.#session = session;
     this.#projects = projects;
     this.#messages = messages;
@@ -71,6 +98,58 @@ export class MediaLibrary {
     }
     this.#urls.clear();
     this.#peaks.clear();
+    for (const strip of this.#strips.values()) strip?.image.close();
+    this.#strips.clear();
+  }
+
+  /** The frames of a video. They show up later when they have to be made first. */
+  stripOf(assetId: string): FilmStrip | undefined {
+    const store = this.#store;
+    const asset = store?.getState().assets?.[assetId];
+    if (!store || asset?.kind !== "video" || asset.hash === undefined) return undefined;
+    const { hash } = asset;
+    if (!this.#strips.has(hash)) {
+      this.#strips.set(hash, undefined);
+      const known = asset.info?.duration;
+      const duration = known === undefined ? 0 : toSeconds(parseTime(known));
+      this.#stripsQueue = this.#stripsQueue.then(() => this.#loadStrip(store, hash, duration));
+    }
+    return this.#strips.get(hash);
+  }
+
+  stripOfClip(clip: ClipState): FilmStrip | undefined {
+    const { media } = clip.source as { media?: { asset?: string } };
+    return media?.asset === undefined ? undefined : this.stripOf(media.asset);
+  }
+
+  async #loadStrip(store: ProjectStore, hash: string, duration: number): Promise<void> {
+    try {
+      const image = await this.#readStrip(store, hash, stripCount(duration));
+      if (!image) return;
+      if (store !== this.#store) {
+        image.close();
+        return;
+      }
+      this.#strips.set(hash, { image, count: stripCount(duration), duration });
+      this.#emitter.emit();
+    } catch (error) {
+      // Pictures on clips are a help. The preview says so when a video cannot be read.
+      console.warn("No frames for this video", error);
+    }
+  }
+
+  async #readStrip(
+    store: ProjectStore,
+    hash: string,
+    count: number,
+  ): Promise<ImageBitmap | undefined> {
+    const media = this.#media(store);
+    const saved = await media.get(stripKey(hash));
+    if (saved) return createImageBitmap(saved);
+    const file = await media.get(hash);
+    const image = file && (await this.#stripMaker.make(file, count));
+    if (image) await media.put(stripKey(hash), await encodeStrip(image));
+    return image;
   }
 
   /** The waveform of a clip. It shows up later when it has to be worked out first. */

@@ -1,10 +1,11 @@
 import type { Asset } from "@animaquill/schema";
 import { parseTime, toSeconds } from "@animaquill/schema";
 import { FileAudio, FileVideo, Image as ImageIcon, Upload } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore, type DragEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
+import type { FilmStrip } from "../media/library.ts";
 import styles from "./AssetsPanel.module.css";
 
 /** What a drag from this list carries. */
@@ -19,9 +20,36 @@ function lengthOf(asset: Asset): string | undefined {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/** The frame from about a quarter in, which says more than a first frame that is often black. */
+function Poster({ strip }: { strip: FilmStrip }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const element = canvas.current;
+    const frameWidth = strip.image.width / strip.count;
+    const slot = Math.floor(strip.count / 4);
+    element
+      ?.getContext("2d")
+      ?.drawImage(
+        strip.image,
+        slot * frameWidth,
+        0,
+        frameWidth,
+        strip.image.height,
+        0,
+        0,
+        element.width,
+        element.height,
+      );
+  }, [strip]);
+
+  return <canvas ref={canvas} className={styles.image} width={192} height={108} />;
+}
+
 function Thumbnail({ id, asset }: { id: string; asset: Asset }) {
   const { media } = useWorkbench();
   const [url, setUrl] = useState<string>();
+  const strip = useSyncExternalStore(media.subscribe, () => media.stripOf(id));
 
   useEffect(() => {
     let current = true;
@@ -35,6 +63,7 @@ function Thumbnail({ id, asset }: { id: string; asset: Asset }) {
     };
   }, [asset.kind, id, media]);
 
+  if (strip) return <Poster strip={strip} />;
   if (url) return <img className={styles.image} src={url} alt="" draggable={false} />;
   const Icon = asset.kind === "audio" || asset.kind === "video" ? ICONS[asset.kind] : ImageIcon;
   return <Icon size={28} />;

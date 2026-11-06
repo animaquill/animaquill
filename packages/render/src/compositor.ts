@@ -88,7 +88,8 @@ Object.assign(document.body.style, {
 Object.assign(canvas.style, { maxWidth: "100%", maxHeight: "100%", display: "block" });
 document.body.append(canvas);
 
-const send = (message: FromCompositor) => parent.postMessage(message, "*");
+const send = (message: FromCompositor, transfer: Transferable[] = []) =>
+  parent.postMessage(message, "*", transfer);
 
 let plan: RenderPlan | undefined;
 const files = new Map<string, Blob>();
@@ -236,8 +237,44 @@ async function refresh(): Promise<void> {
   drawing = false;
 }
 
+async function makeStrip(file: Blob, count: number, height: number) {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    if (!track || !(await track.canDecode())) return undefined;
+    const duration = await track.computeDuration();
+    const width = Math.max(Math.round((height * track.displayWidth) / track.displayHeight), 1);
+    const strip = new OffscreenCanvas(width * count, height);
+    const painter = strip.getContext("2d");
+    const moments = Array.from({ length: count }, (_, slot) => (duration * (slot + 0.5)) / count);
+    let slot = 0;
+    for await (const sample of new VideoSampleSink(track).samplesAtTimestamps(moments)) {
+      if (sample) {
+        painter?.drawImage(sample.toCanvasImageSource(), slot * width, 0, width, height);
+        sample.close();
+      }
+      slot += 1;
+    }
+    return strip.transferToImageBitmap();
+  } finally {
+    input.dispose();
+  }
+}
+
+async function answerStrip(request: number, file: Blob, count: number, height: number) {
+  const image = await makeStrip(file, count, height).catch((error: unknown) => {
+    console.warn("No frames for this video", error);
+    return undefined;
+  });
+  send({ type: "strip", request, image }, image ? [image] : []);
+}
+
 addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
   if (source !== parent) return;
+  if (data.type === "strip") {
+    void answerStrip(data.request, data.file, data.count, data.height);
+    return;
+  }
   if (data.type === "plan") plan = data.plan;
   else if (data.type === "seek") wanted = data.seconds;
   else files.set(data.id, data.file);
