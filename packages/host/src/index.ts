@@ -4,6 +4,14 @@ export interface Host {
   readonly projects: ProjectLibrary;
   readonly address: ProjectAddress;
   readonly windowMemory: WindowMemory;
+  /** Where reports go. Without it people get the report as a file and pass it on themselves. */
+  readonly diagnostics?: DiagnosticsSink;
+}
+
+/** Receives what people chose to send about how the editor runs. */
+export interface DiagnosticsSink {
+  /** Resolves to something people can quote. Rejects when it did not arrive. */
+  send(report: unknown): Promise<string>;
 }
 
 /**

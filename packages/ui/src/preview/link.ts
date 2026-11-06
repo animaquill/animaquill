@@ -1,7 +1,11 @@
 import { buildRenderPlan, type ProjectStore, type RenderPlan } from "@animaquill/core";
 import type { ProjectLibrary } from "@animaquill/host";
 import type { FromCompositor, ToCompositor } from "@animaquill/render";
+import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
+
+/** Over this a frame misses the next refresh of a 60 Hz screen. */
+const SLOW_FRAME_MS = 17;
 
 /**
  * The line to the compositor in its sandbox. The sandbox has no network and no storage, so the plan,
@@ -13,6 +17,7 @@ export class PreviewLink {
   readonly #store: ProjectStore;
   readonly #projects: ProjectLibrary;
   readonly #onProblem: (file: string) => void;
+  readonly #diagnostics: DiagnosticsRecorder;
   #ready = false;
   #plan: RenderPlan | undefined;
   #stop = () => {};
@@ -23,21 +28,25 @@ export class PreviewLink {
     store: ProjectStore,
     projects: ProjectLibrary,
     onProblem: (file: string) => void,
+    diagnostics: DiagnosticsRecorder,
   ) {
     this.#frame = frame;
     this.#timeline = timeline;
     this.#store = store;
     this.#projects = projects;
     this.#onProblem = onProblem;
+    this.#diagnostics = diagnostics;
     addEventListener("message", this.#onMessage);
     const stopStore = store.subscribe(this.#sendPlan);
     const stopView = timeline.subscribeView(this.#sendTime);
     // The timeline may get its model after the compositor said hello.
     const stopTimeline = timeline.subscribe(this.#sendAll);
+    const stopDiagnostics = diagnostics.subscribe(this.#sendRecording);
     this.#stop = () => {
       stopStore();
       stopView();
       stopTimeline();
+      stopDiagnostics();
       removeEventListener("message", this.#onMessage);
     };
   }
@@ -60,11 +69,22 @@ export class PreviewLink {
       this.#plan = undefined;
       this.#lastSeconds = undefined;
       this.#sendAll();
+      this.#sendRecording();
+    } else if (data.type === "frames") {
+      for (const { ms, seconds, cold, behindMs } of data.frames) {
+        const slow = ms > SLOW_FRAME_MS || cold > 0;
+        const facts = { seconds, cold, behindMs: Math.round(behindMs) };
+        this.#diagnostics.noteFrame(ms, facts, slow);
+      }
     } else if (data.type === "needs") {
       void this.#sendFile(data.id);
     } else if (data.type === "cannot-decode") {
       this.#onProblem(data.id);
     }
+  };
+
+  #sendRecording = (): void => {
+    if (this.#ready) this.#send({ type: "record", on: this.#diagnostics.getRecording() });
   };
 
   #sendAll = (): void => {

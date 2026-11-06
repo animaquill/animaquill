@@ -79,3 +79,8 @@
 .choice[aria-checked="true"] span {
   color: var(--aq-on-accent);
 }
+
+.recording {
+  margin-right: 4px;
+  color: var(--aq-timeline-playhead);
+}

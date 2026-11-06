@@ -6,6 +6,8 @@ export { computePeaks, PEAKS_PER_SECOND } from "./peaks.ts";
 /** How far ahead sound gets decoded and scheduled. It bridges a busy moment, and costs memory. */
 const LEAD_SECONDS = 1;
 const POLL_MS = 100;
+/** Less than this nobody hears. */
+const NOTICEABLE_LATE_MS = 5;
 
 export interface SoundChunk {
   readonly buffer: AudioBuffer;
@@ -35,6 +37,8 @@ export interface PlaybackAudioOptions {
   readonly read?: SoundReader;
   readonly createContext?: () => AudioContext;
   readonly wallClock?: () => number;
+  /** For people looking into a problem. */
+  readonly onNote?: (kind: string, data: Readonly<Record<string, string | number>>) => void;
 }
 
 interface Run {
@@ -64,6 +68,7 @@ export class PlaybackAudio {
   readonly #read: SoundReader;
   readonly #createContext: () => AudioContext;
   readonly #wallClock: () => number;
+  readonly #note: NonNullable<PlaybackAudioOptions["onNote"]>;
   #context: AudioContext | undefined;
   #run: Run | undefined;
   #time = 0;
@@ -77,6 +82,7 @@ export class PlaybackAudio {
     this.#createContext = options.createContext ?? (() => new AudioContext());
     this.#wallClock = options.wallClock ?? (() => performance.now());
     this.#lastWall = this.#wallClock();
+    this.#note = options.onNote ?? (() => {});
   }
 
   /** Milliseconds that only go forward, whichever of the two clocks is running. */
@@ -112,6 +118,12 @@ export class PlaybackAudio {
       stopped: false,
     };
     this.#run = run;
+    this.#note("audio.play", {
+      seconds,
+      sounds: plan.sounds.length,
+      state: context.state,
+      latencyMs: Math.round(run.latency * 1000),
+    });
     this.#startDue(run, context);
     run.timer = setInterval(() => this.#startDue(run, context), POLL_MS);
   }
@@ -201,6 +213,8 @@ export class PlaybackAudio {
     let when = this.#contextTime(run, context, begin);
     // Sound that arrives late stays in step by leaving out what has passed.
     if (when < context.currentTime) {
+      const lateMs = Math.round((context.currentTime - when) * 1000);
+      if (lateMs >= NOTICEABLE_LATE_MS) this.#note("audio.late", { ms: lateMs, seconds: at });
       begin += context.currentTime - when;
       when = context.currentTime;
     }

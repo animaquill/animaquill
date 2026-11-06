@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { Circle, CircleAlert } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
@@ -62,6 +62,27 @@ function InputSwitch() {
   );
 }
 
+/** Nothing gets recorded without this being on the screen. */
+function RecordingStatus() {
+  const workbench = useWorkbench();
+  const { diagnostics } = workbench;
+  const { t } = useTranslation();
+  const recording = useSyncExternalStore(diagnostics.subscribe, diagnostics.getRecording);
+  if (!recording) return null;
+  return (
+    <Tip name={t("diagnostics.recording")} usage={t("diagnostics.recordingUsage")}>
+      <button
+        type="button"
+        className={styles.name}
+        onClick={() => void workbench.sendDiagnostics()}
+      >
+        <Circle size={9} fill="currentColor" className={styles.recording} />
+        {t("diagnostics.recording")}
+      </button>
+    </Tip>
+  );
+}
+
 export function StatusBar() {
   const workbench = useWorkbench();
   const { store, save } = useSession();
@@ -94,6 +115,7 @@ export function StatusBar() {
         </span>
       )}
       <span className={styles.spacer} />
+      <RecordingStatus />
       {project && <TimeStatus />}
       {project && <FrameRateStatus />}
       <InputSwitch />

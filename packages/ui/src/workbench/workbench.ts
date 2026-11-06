@@ -1,7 +1,8 @@
-import type { Host, ProjectLibrary } from "@animaquill/host";
+import type { DiagnosticsSink, Host, ProjectLibrary } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { projectFrameRate, type ProjectStore } from "@animaquill/core";
 import type { ProjectSummary } from "@animaquill/host";
+import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
@@ -27,6 +28,15 @@ export interface WorkbenchOptions {
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
+function saveReport(report: DiagnosticsReport): void {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(report, undefined, 2)]));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `animaquill-diagnostics-${report.startedAt.replaceAll(":", "-")}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export class Workbench {
   readonly t: TFunction;
   readonly version: string;
@@ -41,6 +51,8 @@ export class Workbench {
   readonly timeline: TimelineEditor;
   readonly input: InputMode;
   readonly media: MediaLibrary;
+  readonly diagnostics: DiagnosticsRecorder;
+  readonly #sink: DiagnosticsSink | undefined;
   readonly projects: ProjectLibrary;
   /** Where the page with the compositor is. A site of its own keeps it apart from the editor. */
   readonly compositorUrl: string;
@@ -51,6 +63,8 @@ export class Workbench {
     this.t = t;
     this.version = version;
     this.projects = host.projects;
+    this.diagnostics = new DiagnosticsRecorder(version);
+    this.#sink = host.diagnostics;
     this.compositorUrl = compositorUrl;
     this.layout = new LayoutController(host.settings, host.windowMemory, workspaces, {
       restoreFailed: () => this.notifications.push(t("notice.layoutRestoreFailed")),
@@ -159,6 +173,54 @@ export class Workbench {
       confirm: t("project.frameRateConfirm"),
     });
     if (fps && !this.applyFrameRate(fps)) this.notifications.push(t("notice.frameRateInvalid"));
+  }
+
+  /** Facts about the size of a project, never its names or content. */
+  #projectFacts(): unknown {
+    const state = this.session.store?.getState();
+    if (!state) return undefined;
+    const timelines = Object.values(state.timelines);
+    return {
+      fps: state.manifest.fps,
+      formats: state.manifest.formats.map(({ width, height, fps }) => ({ width, height, fps })),
+      tracks: timelines.reduce((sum, { tracks }) => sum + Object.keys(tracks).length, 0),
+      clips: timelines.reduce((sum, { clips }) => sum + Object.keys(clips).length, 0),
+      assets: Object.values(state.assets ?? {}).map(({ kind, size, info }) => ({
+        kind,
+        size,
+        info,
+      })),
+    };
+  }
+
+  /** People decide what happens to a report after they know what is in it. */
+  async sendDiagnostics(): Promise<void> {
+    const { t } = this;
+    const confirmed = await this.dialogs.confirm({
+      title: t("diagnostics.sendTitle"),
+      message: t(this.#sink ? "diagnostics.sendMessage" : "diagnostics.saveMessage"),
+      confirm: t(this.#sink ? "diagnostics.send" : "diagnostics.save"),
+    });
+    if (!confirmed) return;
+    const report = this.diagnostics.finish(this.#projectFacts());
+    if (!this.#sink) {
+      saveReport(report);
+      return;
+    }
+    try {
+      const id = await this.#sink.send(report);
+      await this.dialogs.confirm({
+        title: t("diagnostics.sentTitle"),
+        message: t("diagnostics.sentMessage", { id }),
+        confirm: t("about.close"),
+        noticeOnly: true,
+      });
+    } catch (error) {
+      console.warn("The report did not arrive", error);
+      // What was recorded cannot be recorded again, so it must not get lost here.
+      saveReport(report);
+      this.notifications.push(t("diagnostics.sendFailed"));
+    }
   }
 
   async showAbout(): Promise<void> {
@@ -278,6 +340,28 @@ export class Workbench {
       title: (t) => t("about.title"),
       run: () => void this.showAbout(),
       menu: { name: "help", group: "about" },
+    });
+    const recording = () => this.diagnostics.getRecording();
+    this.actions.register({
+      id: "help.diagnostics.start",
+      title: (t) => t("diagnostics.start"),
+      run: () => this.diagnostics.start(),
+      menu: { name: "help", group: "diagnostics" },
+      enabled: () => !recording(),
+    });
+    this.actions.register({
+      id: "help.diagnostics.send",
+      title: (t) => t("diagnostics.finish"),
+      run: () => void this.sendDiagnostics(),
+      menu: { name: "help", group: "diagnostics" },
+      enabled: recording,
+    });
+    this.actions.register({
+      id: "help.diagnostics.discard",
+      title: (t) => t("diagnostics.discard"),
+      run: () => this.diagnostics.discard(),
+      menu: { name: "help", group: "diagnostics" },
+      enabled: recording,
     });
   }
 

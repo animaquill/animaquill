@@ -1,6 +1,6 @@
 import { ALL_FORMATS, BlobSource, Input, VideoSampleSink, type VideoSample } from "mediabunny";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
-import type { FromCompositor, ToCompositor } from "./index.ts";
+import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
 
 /**
  * The compositor. It runs in a sandbox on a site of its own, where it can decode, draw and later
@@ -14,6 +14,10 @@ interface Picture {
   close(): void;
 }
 
+const TIMINGS_EVERY_MS = 500;
+/** Longer than any file takes to open, short enough to hold only the next clip or two. */
+const GET_READY_SECONDS = 1.5;
+
 /** A jump this far ahead is cheaper by starting over at a keyframe than by decoding the way there. */
 const MAX_WALK_SECONDS = 2;
 
@@ -26,6 +30,10 @@ class VideoCursor {
   #samples: AsyncGenerator<VideoSample, void, unknown> | undefined;
   #current: VideoSample | undefined;
   #next: VideoSample | undefined;
+  /** Whether decoding started over since it was last asked. */
+  #cold = false;
+  /** Getting ready and drawing can ask at once, and a generator takes one question at a time. */
+  #queue: Promise<unknown> = Promise.resolve();
 
   constructor(sink: VideoSampleSink) {
     this.#sink = sink;
@@ -36,15 +44,36 @@ class VideoCursor {
     return result?.done === false ? result.value : undefined;
   }
 
+  takeCold(): boolean {
+    const cold = this.#cold;
+    this.#cold = false;
+    return cold;
+  }
+
   async #restart(seconds: number): Promise<void> {
-    await this.close();
+    await this.#release();
+    this.#cold = true;
     this.#samples = this.#sink.samples(seconds);
     this.#current = await this.#pull();
     this.#next = await this.#pull();
   }
 
+  #inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const turn = this.#queue.then(work);
+    this.#queue = turn.catch(() => {});
+    return turn;
+  }
+
   /** The frame showing at a moment. It stays open until the cursor moves on. */
-  async at(seconds: number): Promise<VideoSample | undefined> {
+  at(seconds: number): Promise<VideoSample | undefined> {
+    return this.#inTurn(() => this.#moveTo(seconds));
+  }
+
+  close(): Promise<void> {
+    return this.#inTurn(() => this.#release());
+  }
+
+  async #moveTo(seconds: number): Promise<VideoSample | undefined> {
     const current = this.#current;
     const behind = current === undefined || seconds < current.timestamp;
     const farAhead = this.#next && seconds - this.#next.timestamp > MAX_WALK_SECONDS;
@@ -57,7 +86,7 @@ class VideoCursor {
     return this.#current;
   }
 
-  async close(): Promise<void> {
+  async #release(): Promise<void> {
     this.#current?.close();
     this.#next?.close();
     this.#current = undefined;
@@ -100,6 +129,10 @@ const asked = new Set<string>();
 const cursors = new Map<string, { readonly file: string; readonly cursor: VideoCursor }>();
 
 let wanted = 0;
+let gettingReady = false;
+let recording = false;
+let coldInFrame = 0;
+let timings: FrameTiming[] = [];
 let drawing = false;
 let drawAgain = false;
 
@@ -144,6 +177,22 @@ function videoOf(id: string, file: Blob): Promise<VideoFile | undefined> {
   return video;
 }
 
+async function cursorOf(
+  layer: RenderLayer,
+  id: string,
+  file: Blob,
+): Promise<VideoCursor | undefined> {
+  const video = await videoOf(id, file);
+  if (!video) return undefined;
+  let entry = cursors.get(layer.id);
+  if (entry?.file !== id) {
+    await entry?.cursor.close();
+    entry = { file: id, cursor: new VideoCursor(video.sink) };
+    cursors.set(layer.id, entry);
+  }
+  return entry.cursor;
+}
+
 async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture | undefined> {
   const { source } = layer;
   if (source.kind === "color") return undefined;
@@ -153,15 +202,9 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
     const bitmap = await imageOf(source.file, file);
     return bitmap && { source: bitmap, width: bitmap.width, height: bitmap.height, close() {} };
   }
-  const video = await videoOf(source.file, file);
-  if (!video) return undefined;
-  let entry = cursors.get(layer.id);
-  if (entry?.file !== source.file) {
-    await entry?.cursor.close();
-    entry = { file: source.file, cursor: new VideoCursor(video.sink) };
-    cursors.set(layer.id, entry);
-  }
-  const sample = await entry.cursor.at(layer.offset + seconds - layer.start);
+  const cursor = await cursorOf(layer, source.file, file);
+  const sample = await cursor?.at(layer.offset + seconds - layer.start);
+  if (cursor?.takeCold()) coldInFrame += 1;
   if (!sample) return undefined;
   return {
     source: sample.toCanvasImageSource(),
@@ -171,9 +214,33 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
   };
 }
 
+/** Clips that start soon. */
+const upcomingAt = (seconds: number): readonly RenderLayer[] =>
+  plan?.layers.filter(({ start }) => start > seconds && start - seconds <= GET_READY_SECONDS) ?? [];
+
+/**
+ * Opening a file and decoding up to a first frame takes longer than a frame may, so a clip does that
+ * before it shows, and playing goes straight from one clip into the next.
+ */
+async function getReady(seconds: number): Promise<void> {
+  for (const layer of upcomingAt(seconds)) {
+    const { source } = layer;
+    if (source.kind === "color") continue;
+    const file = fileOf(source.file);
+    if (!file) continue;
+    if (source.kind === "image") {
+      await imageOf(source.file, file);
+      continue;
+    }
+    const cursor = await cursorOf(layer, source.file, file);
+    await cursor?.at(layer.offset);
+    cursor?.takeCold();
+  }
+}
+
 /** A decoder is a scarce thing, so a clip that left the picture gives its own back. */
-async function closeCursorsExcept(showing: readonly RenderLayer[]): Promise<void> {
-  const ids = new Set(showing.map(({ id }) => id));
+async function closeCursorsExcept(keep: readonly RenderLayer[]): Promise<void> {
+  const ids = new Set(keep.map(({ id }) => id));
   for (const [id, { cursor }] of cursors) {
     if (ids.has(id)) continue;
     cursors.delete(id);
@@ -199,7 +266,7 @@ function place(layer: RenderLayer, picture: Picture): void {
 async function drawFrame(seconds: number): Promise<void> {
   if (!plan) return;
   const showing = plan.layers.filter(({ start, end }) => seconds >= start && seconds < end);
-  await closeCursorsExcept(showing);
+  await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
   const pictures = await Promise.all(showing.map((layer) => pictureOf(layer, seconds)));
   if (canvas.width !== plan.width) canvas.width = plan.width;
   if (canvas.height !== plan.height) canvas.height = plan.height;
@@ -228,10 +295,26 @@ async function refresh(): Promise<void> {
   drawing = true;
   do {
     drawAgain = false;
+    const seconds = wanted;
+    const started = performance.now();
+    coldInFrame = 0;
     try {
-      await drawFrame(wanted);
+      await drawFrame(seconds);
     } catch (error) {
       console.warn("A frame could not be drawn", error);
+    }
+    if (!gettingReady) {
+      gettingReady = true;
+      void getReady(seconds)
+        .catch((error: unknown) => console.warn("A clip could not get ready", error))
+        .finally(() => {
+          gettingReady = false;
+        });
+    }
+    if (recording) {
+      const ms = performance.now() - started;
+      const behindMs = Math.max(wanted - seconds, 0) * 1000;
+      timings.push({ seconds, ms, cold: coldInFrame, behindMs });
     }
   } while (drawAgain);
   drawing = false;
@@ -275,10 +358,20 @@ addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
     void answerStrip(data.request, data.file, data.count, data.height);
     return;
   }
+  if (data.type === "record") {
+    recording = data.on;
+    return;
+  }
   if (data.type === "plan") plan = data.plan;
   else if (data.type === "seek") wanted = data.seconds;
   else files.set(data.id, data.file);
   void refresh();
 });
+
+setInterval(() => {
+  if (timings.length === 0) return;
+  send({ type: "frames", frames: timings });
+  timings = [];
+}, TIMINGS_EVERY_MS);
 
 send({ type: "ready" });

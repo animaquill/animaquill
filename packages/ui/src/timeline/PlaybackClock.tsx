@@ -6,7 +6,7 @@ import { useSession, useWorkbench } from "../app/context.ts";
 
 /** Plays the sound and keeps time by it, whichever panels are open. */
 export function PlaybackClock() {
-  const { timeline, projects, notifications } = useWorkbench();
+  const { timeline, projects, notifications, diagnostics } = useWorkbench();
   const { t } = useTranslation();
   const { store } = useSession();
   const { playing } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
@@ -22,12 +22,14 @@ export function PlaybackClock() {
         if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));
         warned.add(file);
       },
+      onNote: (kind, data) => diagnostics.note(kind, data),
     });
-  }, [notifications, projects, store, t]);
+  }, [diagnostics, notifications, projects, store, t]);
 
   useEffect(() => () => audio.dispose(), [audio]);
 
   useEffect(() => {
+    diagnostics.note(playing ? "play" : "pause", { frame: timeline.frame });
     if (!playing || !store) return;
     let plan: AudioPlan | undefined;
     let start = timeline.playbackStart;
@@ -62,7 +64,7 @@ export function PlaybackClock() {
       stopWatching();
       audio.stop();
     };
-  }, [audio, playing, store, timeline]);
+  }, [audio, diagnostics, playing, store, timeline]);
 
   return null;
 }

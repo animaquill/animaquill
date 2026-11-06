@@ -23,7 +23,8 @@ export interface MenuItem {
 
 interface MenuProps {
   readonly label: string;
-  readonly groups: readonly (readonly MenuItem[])[];
+  /** Asked when the menu opens, so that what is possible right now is what it shows. */
+  readonly groups: () => readonly (readonly MenuItem[])[];
 }
 
 const itemsIn = (root: HTMLElement | null) => [
@@ -133,7 +134,7 @@ export function Menu({ label, groups }: MenuProps) {
       >
         {label}
       </button>
-      {open && <MenuList label={label} groups={groups} onClose={close} />}
+      {open && <MenuList label={label} groups={groups()} onClose={close} />}
     </div>
   );
 }

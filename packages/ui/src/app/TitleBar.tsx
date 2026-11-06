@@ -51,7 +51,7 @@ export function TitleBar() {
         <small className={styles.version}>{workbench.version}</small>
       </div>
       {MENUS.map((menu) => (
-        <Menu key={menu} label={t(`menu.${menu}`)} groups={menuOf(menu)} />
+        <Menu key={menu} label={t(`menu.${menu}`)} groups={() => menuOf(menu)} />
       ))}
       {store && (
         <div className={styles.workspaces} role="group" aria-label={t("workspace.label")}>

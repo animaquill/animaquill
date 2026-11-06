@@ -9,7 +9,7 @@ import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
 
 export function PreviewPanel() {
-  const { timeline, projects, compositorUrl, notifications } = useWorkbench();
+  const { timeline, projects, compositorUrl, notifications, diagnostics } = useWorkbench();
   const { t } = useTranslation();
   const { store } = useSession();
   const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
@@ -20,14 +20,15 @@ export function PreviewPanel() {
     const element = picture.current;
     if (!element || !store) return;
     const warned = new Set<string>();
-    const link = new PreviewLink(element, timeline, store, projects, (file) => {
+    const onProblem = (file: string) => {
       if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));
       warned.add(file);
-    });
+    };
+    const link = new PreviewLink(element, timeline, store, projects, onProblem, diagnostics);
     // The compositor says hello once it has loaded, so the link has to listen first.
     element.src = compositorUrl;
     return () => link.dispose();
-  }, [compositorUrl, notifications, projects, store, t, timeline]);
+  }, [compositorUrl, diagnostics, notifications, projects, store, t, timeline]);
 
   return (
     <div className={styles.panel}>
