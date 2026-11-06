@@ -22,7 +22,8 @@ export const Value = z.union([
   MediaRef,
 ]);
 
-const Handle = z.tuple([z.number(), z.number()]);
+/** As in CSS: time has to go forwards, so x stays within the segment, and y can overshoot. */
+const Handle = z.tuple([z.number().min(0).max(1), z.number()]);
 
 /** How a value changes from one key to the next. Times are on the clock of the clip: see `offset`. */
 export const Key = z
@@ -87,12 +88,23 @@ export const Animation = z
 export const PropertyValue = z.union([Value, Animation]);
 
 /**
+ * One part of a path has the characters of an id. It cannot be a name that means something to a
+ * JavaScript object, because the content of a project is not to be trusted.
+ */
+const PATH_PART = "(?!(?:constructor|prototype)(?:\\.|$))[A-Za-z0-9][A-Za-z0-9_-]*";
+
+/**
  * Where a property lives. Built-in ones are listed in properties.ts. The others come from what a
- * clip contains: "param.title", "object.秤砣.x", "element.logo.opacity".
+ * clip contains: "param.title", "object.arm.x", "object.rig.arm_l.rotation", "element.logo.opacity".
+ * A path holds stable ids only, no display names and no hierarchy: it is the key of the stored
+ * values, so renaming something or giving it a new parent must not change it.
  */
 export const PropertyPath = z
   .string()
-  .regex(/^[^\s.]+(\.[^\s.]+)*$/, "属性路径要写成 transform.x 这样，用点分隔");
+  .regex(
+    new RegExp(`^${PATH_PART}(?:\\.${PATH_PART})*$`),
+    "属性路径要写成 transform.x 这样，用点分隔，每一段只能用英文字母、数字、下划线和连字符",
+  );
 
 /** Sorted, so that a file only changes when a value does. */
 export const Properties = z.record(PropertyPath, PropertyValue).overwrite(sortKeys);

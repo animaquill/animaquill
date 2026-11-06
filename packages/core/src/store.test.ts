@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { COMMANDS } from "./commands.ts";
+import { buildAudioPlan, buildRenderPlan } from "./render-plan.ts";
 import { orderedSections, orderedTracks, projectFrameRate, timelineLength } from "./model.ts";
 import {
   ProjectStore,
@@ -21,6 +22,14 @@ import {
 
 const MAIN = "timelines/main/timeline.json";
 const AI = aiTask("task-1");
+
+/**
+ * A project as the editor saved it before positions became world coordinates: a color, a video with
+ * an opacity and a fit, and a sound, but no transform. People have projects like this, so this is
+ * the real thing and not something built with today's code. Never change it.
+ */
+const SAVED_BEFORE_WORLD_COORDINATES =
+  "ATveyuOjDgAnAQdwcm9qZWN0CG1hbmlmZXN0ASgA3srjow4ADWZvcm1hdFZlcnNpb24BfQEoAN7K46MOAAJpZAF3EnByb2plY3RfbjdlNXRwY2lrZSgA3srjow4ABG5hbWUBdwnml6fpobnnm64oAN7K46MOAAlsYW5ndWFnZXMBdQF2AgJpZHcFemgtQ04EbmFtZXcG5Lit5paHKADeyuOjDgADZnBzAXcCMzAoAN7K46MOAAdmb3JtYXRzAXUBdgUCaWR3CWxhbmRzY2FwZQRuYW1ldwbmqKrlsY8Fd2lkdGh9gB4GaGVpZ2h0fbgQA2Zwc3cCMzAoAN7K46MOAAl0aW1lbGluZXMBdQF3BG1haW4nAQdwcm9qZWN0BnNjZW5lcwEnAQdwcm9qZWN0BnNvdW5kcwEnAQdwcm9qZWN0B2xvY2FsZXMBJwEHcHJvamVjdAl0aW1lbGluZXMBJwDeyuOjDgsEbWFpbgEoAN7K46MODARuYW1lAXcG5Li757q/JwDeyuOjDgwIc2VjdGlvbnMBJwDeyuOjDg4Sc2VjdGlvbl9sdmMzcnhhNWh5ASgA3srjow4PAmlkAXcSc2VjdGlvbl9sdmMzcnhhNWh5KADeyuOjDg8IZHVyYXRpb24BdwIxMCgA3srjow4PBW9yZGVyAX0AJwDeyuOjDgwGdHJhY2tzAScA3srjow4TEHRyYWNrXzhvYTZwM3BuemYBKADeyuOjDhQCaWQBdxB0cmFja184b2E2cDNwbnpmKADeyuOjDhQEa2luZAF3BXZpZGVvKADeyuOjDhQFb3JkZXIBfQAnAN7K46MOExB0cmFja19jZXV0bnRzZGgwASgA3srjow4YAmlkAXcQdHJhY2tfY2V1dG50c2RoMCgA3srjow4YBGtpbmQBdwVhdWRpbygA3srjow4YBW9yZGVyAX0BJwDeyuOjDgwFY2xpcHMBJwDeyuOjDgwLdHJhbnNpdGlvbnMBJwDeyuOjDgwHbWFya2VycwEnAN7K46MODAlvdmVycmlkZXMBJwEHcHJvamVjdAVmaWxlcwEnAQdwcm9qZWN0BmFzc2V0cwEoAN7K46MOIQdmb290YWdlAXYFBGtpbmR3BXZpZGVvBHBhdGh3DGFzc2V0cy9hLm1wNAdzdG9yYWdldwVsb2NhbARoYXNodwlzaGEyNTYtYWEEaW5mb3YDCGR1cmF0aW9udwIyMAV3aWR0aH2APAZoZWlnaHR9sCEnAN7K46MOHAdjX2NvbG9yASgA3srjow4jBXN0YXJ0AXcBMCgA3srjow4jCGR1cmF0aW9uAXcBMigA3srjow4jBnNvdXJjZQF2AgRraW5kdwVjb2xvcgVjb2xvcncHI2ZmMDAwMCgA3srjow4jAmlkAXcHY19jb2xvcigA3srjow4jBXRyYWNrAXcQdHJhY2tfOG9hNnAzcG56ZicA3srjow4cB2NfdmlkZW8BKADeyuOjDikFc3RhcnQBdwEyKADeyuOjDikIZHVyYXRpb24BdwE1KADeyuOjDikGc291cmNlAXYCBGtpbmR3BXZpZGVvBW1lZGlhdgEFYXNzZXR3B2Zvb3RhZ2UoAN7K46MOKQZvZmZzZXQBdwExKADeyuOjDikCaWQBdwdjX3ZpZGVvKADeyuOjDikFdHJhY2sBdxB0cmFja184b2E2cDNwbnpmJwDeyuOjDhwHY19hdWRpbwEoAN7K46MOMAVzdGFydAF3ATIoAN7K46MOMAhkdXJhdGlvbgF3ATUoAN7K46MOMAZzb3VyY2UBdgIEa2luZHcFYXVkaW8FbWVkaWF2AQVhc3NldHcHZm9vdGFnZScA3srjow4wCnByb3BlcnRpZXMBKADeyuOjDjQMYXVkaW8udm9sdW1lAX1DKADeyuOjDjACaWQBdwdjX2F1ZGlvKADeyuOjDjAFdHJhY2sBdxB0cmFja19jZXV0bnRzZGgwJwDeyuOjDikKcHJvcGVydGllcwEoAN7K46MOOAdvcGFjaXR5AXw/AAAAKADeyuOjDjgDZml0AXcFY292ZXIA";
 
 function openFiles(files: ReadonlyMap<string, string>): ProjectStore {
   const { store } = ProjectStore.open(files);
@@ -341,6 +350,8 @@ describe("running commands", () => {
   it("refuses values the format does not allow", () => {
     const store = open();
     expect(failure(setProperty(store, "opacity", 2)).code).toBe("invalid-value");
+    expect(failure(setProperty(store, "object.秤砣.x", 1)).code).toBe("invalid-value");
+    expect(failure(setProperty(store, "object.constructor.x", 1)).code).toBe("invalid-value");
     expect(failure(setProperty(store, "transfrom.x", 1)).code).toBe("invalid-value");
     expect(property(store, "transfrom.x")).toBeUndefined();
   });
@@ -2279,5 +2290,58 @@ describe("cleaning up", () => {
     expect(project).toBeDefined();
     store.doc.transact(() => store.doc.getMap("project").set("libraries", { libraries: [] }));
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("a project saved before positions became world coordinates", () => {
+  const saved = () => {
+    const update = Uint8Array.from(Buffer.from(SAVED_BEFORE_WORLD_COORDINATES, "base64"));
+    const { store, damaged } = ProjectStore.fromUpdates([update]);
+    expect(damaged).toBe(0);
+    if (!store) throw new Error("nothing opened");
+    return store;
+  };
+
+  it("shows the same picture and plays the same sound", () => {
+    const state = saved().getState();
+    const plan = buildRenderPlan(state, "main");
+    expect(plan).toMatchObject({ width: 1920, height: 1080, background: "#000000" });
+    expect(plan?.layers).toEqual([
+      {
+        id: "c_color",
+        start: 0,
+        end: 2,
+        offset: 0,
+        source: { kind: "color", color: "#ff0000" },
+        opacity: 1,
+        fit: "contain",
+      },
+      {
+        id: "c_video",
+        start: 2,
+        end: 7,
+        offset: 1,
+        source: { kind: "video", file: "sha256-aa" },
+        opacity: 0.5,
+        fit: "cover",
+      },
+    ]);
+    expect(buildAudioPlan(state, "main").sounds).toHaveLength(1);
+  });
+
+  it("still goes through the checks, so nothing is left out when it is written", () => {
+    const { files, problems } = saved().exportFiles();
+    expect(problems).toEqual([]);
+    expect(files.has(MAIN)).toBe(true);
+    const { project, problems: read } = readProject(files);
+    expect(read.filter((problem) => problem.severity === "error")).toEqual([]);
+    expect(project?.timelines.get("main")?.document?.tracks[0]?.clips).toHaveLength(2);
+  });
+
+  it("can be edited as before", () => {
+    const store = saved();
+    const set = { timeline: "main", clip: "c_video", path: "opacity", value: 0.25 };
+    success(store.execute({ type: "clip.setProperty", params: set }));
+    expect(buildRenderPlan(store.getState(), "main")?.layers[1]?.opacity).toBe(0.25);
   });
 });

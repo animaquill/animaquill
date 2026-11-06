@@ -46,17 +46,17 @@
               "keys": [
                 {
                   "time": "0",
-                  "value": 0.5,
+                  "value": 0,
                   "interp": "spring",
                   "spring": { "stiffness": 180, "damping": 12 }
                 },
-                { "time": "2", "value": 0.6, "interp": "preset", "preset": "back-out" },
-                { "time": "3", "value": 0.5 }
+                { "time": "2", "value": 192, "interp": "preset", "preset": "back-out" },
+                { "time": "3", "value": 0 }
               ],
               "before": "hold",
               "after": "pingpong",
               "modifiers": [
-                { "type": "noise", "amount": 0.01, "frequency": 3, "seed": 7 }
+                { "type": "noise", "amount": 19.2, "frequency": 3, "seed": 7 }
               ]
             }
           }
@@ -114,9 +114,9 @@
           },
           "properties": {
             "blend": "screen",
-            "transform.width": 0.1,
-            "transform.x": 0.9,
-            "transform.y": 0.1
+            "transform.width": 192,
+            "transform.x": 768,
+            "transform.y": -432
           }
         },
         {

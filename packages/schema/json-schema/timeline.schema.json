@@ -338,7 +338,10 @@
     "__schema30": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$" },
     "__schema31": {},
     "__schema32": { "$ref": "#/$defs/__schema49" },
-    "__schema33": { "type": "string", "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$" },
+    "__schema33": {
+      "type": "string",
+      "pattern": "^(?!(?:constructor|prototype)(?:\\.|$))[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.(?!(?:constructor|prototype)(?:\\.|$))[A-Za-z0-9][A-Za-z0-9_-]*)*$"
+    },
     "__schema34": {
       "anyOf": [
         { "$ref": "#/$defs/__schema35" },
@@ -393,7 +396,7 @@
     "__schema40": {
       "type": "array",
       "prefixItems": [
-        { "type": "number" },
+        { "type": "number", "minimum": 0, "maximum": 1 },
         { "type": "number" }
       ],
       "items": false,

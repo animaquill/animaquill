@@ -221,10 +221,13 @@ describe("when something is wrong with a file", () => {
   it.each([
     ["a value out of range", "opacity", 2],
     ["a percentage as text", "transform.x", "50%"],
+    ["a rotation as text", "transform.rotation", "90deg"],
     ["an unknown choice", "fit", "stretchy"],
     ["a number for a yes or no", "audio.preservePitch", 1],
     ["a negative speed", "time.speed", -1],
     ["a pan out of range", "audio.pan", 3],
+    ["a negative width", "transform.width", -10],
+    ["a display name in a path", "object.秤砣.x", 1],
   ])("finds %s", (_, property, value) => {
     const files = withChange(MAIN, (document) => {
       document.tracks[0].clips[1].properties[property] = value;
@@ -350,6 +353,19 @@ describe("rules inside a timeline", () => {
     invalid((document) => {
       delete document.tracks[0].clips[0].properties["transform.x"].modifiers[0].seed;
     });
+  });
+
+  it("refuses a bezier handle that would run back in time", () => {
+    invalid((document) => {
+      document.tracks[0].clips[0].properties.opacity.keys[0].out = [1.5, 0];
+    });
+  });
+
+  it("refuses a display name in the path of a difference", () => {
+    const files = withChange("timelines/main/overrides/format.vertical.json", (document) => {
+      document.clips.clip_title.properties["object.秤砣.x"] = { value: 1 };
+    });
+    expect(codes(files)).toContain("invalid-document");
   });
 
   it("refuses empty clips", () => {

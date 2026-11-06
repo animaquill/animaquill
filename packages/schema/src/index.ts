@@ -18,7 +18,13 @@ export {
   type ReadResult,
   type TimelineFiles,
 } from "./project.ts";
-export { BUILT_IN_PROPERTIES, isKnownProperty, type PropertySpec } from "./properties.ts";
+export {
+  BUILT_IN_PROPERTIES,
+  isKnownProperty,
+  type ObjectDescriptor,
+  type PropertySpec,
+  type ValueType,
+} from "./properties.ts";
 export * from "./time.ts";
 export {
   BeatGrid,

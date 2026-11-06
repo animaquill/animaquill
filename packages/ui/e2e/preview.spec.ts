@@ -326,11 +326,41 @@ test("time going on while playing is not a jump, and moving the playhead is", as
   await expect.poll(async () => (await seeks()).at(-1)).toBe(true);
 });
 
+/**
+ * Looks at the picture on every refresh of the page, and remembers. Polling from outside waits
+ * longer and longer between looks, and blue only lasts about a second.
+ */
+const watchForBlue = (frame: Frame) =>
+  frame.evaluate(() => {
+    const state = window as unknown as { sawBlue: boolean };
+    state.sawBlue = false;
+    const look = () => {
+      const canvas = document.querySelector("canvas");
+      const [red = 255, green = 255, blue = 0] =
+        canvas?.getContext("2d")?.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data ??
+        [];
+      if (red < 60 && green < 60 && blue > 200) state.sawBlue = true;
+      else requestAnimationFrame(look);
+    };
+    look();
+  });
+
 test("the picture changes while playing", async ({ page }) => {
   await importAndPlace(page, redBlue);
+  // Playing skips frames it has no time for. On a busy machine that can be all the blue of one
+  // clip, so there are three to go through. A picture that never changes still fails.
+  await items(page).first().dblclick();
+  await items(page).first().dblclick();
+  await expect(content(page, "timeline").getByRole("option")).toHaveCount(3);
   await expect.poll(() => isRed(page)).toBe(true);
+  const frame = compositor(page);
+  await watchForBlue(frame);
   await button(page, "播放").click();
-  await expect.poll(() => isBlue(page)).toBe(true);
+  await expect
+    .poll(() => frame.evaluate(() => (window as unknown as { sawBlue: boolean }).sawBlue), {
+      timeout: 15_000,
+    })
+    .toBe(true);
 });
 
 test("plays sound, and stops when paused", async ({ page }) => {
