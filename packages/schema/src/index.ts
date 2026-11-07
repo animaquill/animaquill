@@ -1,6 +1,6 @@
 export { Color, Duration, Id, LanguageId, Rate, Time, newId } from "./basics.ts";
 export { checkProject } from "./check.ts";
-export { createProject, type NewProject } from "./create.ts";
+export { createProject, createTimeline, type NewProject } from "./create.ts";
 export * from "./documents.ts";
 export { stringifyDocument } from "./json.ts";
 export { jsonSchemas } from "./json-schema.ts";

@@ -102,6 +102,45 @@ describe("one finger", () => {
     expect(selection(editor)).toEqual([]);
   });
 
+  describe("on a locked track", () => {
+    const locked = async () => {
+      const context = await setup();
+      const { editor, store } = context;
+      const track = store.getState().timelines["main"]?.clips["a"]?.track as string;
+      editor.updateTrack(track, { locked: true });
+      return context;
+    };
+
+    it("selects the clip with a tap", async () => {
+      const { editor, touch, onClip, y } = await locked();
+      touch.down(1, onClip(), y);
+      touch.up(1);
+      expect(selection(editor)).toEqual(["a"]);
+    });
+
+    it("selects the clip with a long press", async () => {
+      const { editor, touch, onClip, y } = await locked();
+      touch.down(1, onClip(), y);
+      vi.advanceTimersByTime(1000);
+      expect(selection(editor)).toEqual(["a"]);
+      touch.up(1);
+    });
+
+    it("moves the view, and not the clip, also when it is selected", async () => {
+      const { editor, touch, onClip, y, clip } = await locked();
+      const x = onClip();
+      touch.down(1, x, y);
+      touch.up(1);
+      const before = editor.scrollX;
+      touch.down(1, x, y);
+      touch.move(1, x - 100, y);
+      touch.up(1);
+      expect(editor.scrollX).toBeGreaterThan(before);
+      expect(clip()?.start).toBe("2");
+      expect(selection(editor)).toEqual(["a"]);
+    });
+  });
+
   it("stays on one axis during a swipe", async () => {
     const { editor, touch, y } = await setup();
     touch.down(1, 500, y);

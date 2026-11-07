@@ -29,6 +29,7 @@
 - 对话框用 `Workbench.dialogs`，不要自己写弹窗。
 - 动作的按键只属于一个选项卡时写 `scope`。
 - 时间轴在 `packages/ui/src/timeline`。缩放、播放头、选中是窗口的状态，不进项目。手势只改预览，松手才执行命令，一次拖动是一步撤销。手势和规则写在不碰 DOM 的 `TimelineEditor` 里，用单元测试盯住。
+- 锁定轨道的片段可以点选（看属性、复制），框选和全选不选它。选中不等于能改：改片段的操作要走 `TimelineEditor` 的 `#changeable`，不要直接用选中集合。
 - 控件改属性和关键帧都走 `PropertyWriter`，不要自己执行 `property.edit`：默认先进试改（`core/trial.ts` 的 `Trial`，界面这层是 `properties/trial.ts` 的 `TrialSession`）。试改是窗口自己的，不进 Yjs，别的窗口和 AI 看不到，保存时合成一条命令。预览拿 `PropertyWriter.getPreviewed`，新的渲染计划带着它发，不要发完计划再补，否则合成器会先画一帧旧值。
 - 试改的撤销步骤只记自己改过的属性，撤销重做回到当时的样子，结构变化只改当前的试改，不改步骤。项目的撤销带走的试改，在同一步重做时回来，保存后也一样。命令做了文档看不出来的事（切割、时钟移动、移动片段）时用 `draft.note` 说明，`Trial` 从 `store.change` 读。别的窗口和文件导入来的改动只有结果，`Trial` 只做有把握的判断，判断不了就不动值并提示。片段的开头、时长和 offset 都没变时，关键帧的移动不算时钟移动。`movedFrom` 只给用户用，只能指向同一批里移走的片段。
 - 用不上的试改（片段不在了，或者关键帧落到时钟开始之前）搁置，不丢，也不算进“试改 N 处”。片段回来就接着用。上限 200 个属性，超过时清掉最早的并提示；放了 30 天的在打开项目时清掉；放弃全部时一起清掉。
@@ -54,4 +55,4 @@
 - 改完运行 `pnpm --filter @animaquill/schema export-schema`，更新公开的 JSON Schema。
 - 项目内容是不可信的。ID 和路径字段都要防止指向项目之外。
 - 宿主里存的是 Yjs 文档，不是文件。第一次升级格式时，`ProjectSession` 也要迁移已保存的项目，现在只拒绝比编辑器新的格式。
-- 项目进出文件夹在 `packages/ui/src/transfer`，怎么读写文件夹由宿主决定（`Host.folders`）。导出时 `animaquill.json` 最后写，中途停下的文件夹就不会被当成项目。导入只产生新项目，走 `ProjectLibrary.receive`，完成前别人看不到，校验都在写入之前。读文件夹不要用 `FileSystemDirectoryHandle.values()`：Chrome 不允许的名字（比如 `aux.js`、`~草稿.html`）它不列出来，也不报错，文件就无声丢了。
+- 项目进出文件夹在 `packages/ui/src/transfer`，怎么读写文件夹由宿主决定（`Host.folders`）。导出时 `animaquill.json` 最后写，中途停下的文件夹就不会被当成项目。导入只产生新项目，走 `ProjectLibrary.receive`，完成前别人看不到，校验都在写入之前。清单之外的文档坏了可以跳过，但要用户在对话框里同意（`ProjectFolder.lost`），跳过后的内容重新走一遍 `readProject`，所以结果和健康的项目过同样的检查。读文件夹不要用 `FileSystemDirectoryHandle.values()`：Chrome 不允许的名字（比如 `aux.js`、`~草稿.html`）它不列出来，也不报错，文件就无声丢了。

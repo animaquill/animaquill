@@ -44,7 +44,7 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
   });
   add("delete", () => editor.deleteSelection(), {
     keys: ["delete", "backspace"],
-    enabled: () => hasTimeline() && hasSelection(),
+    enabled: () => editor.canChangeSelection,
     group: "edit",
   });
   add("selectAll", () => editor.selectAll(), { keys: ["mod+a"], group: "edit" });
@@ -56,7 +56,7 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
   });
   add("cut", () => editor.cutSelection(), {
     keys: ["mod+x"],
-    enabled: whileSelected,
+    enabled: () => editor.canChangeSelection,
     group: "clipboard",
   });
   add("paste", () => editor.paste(), {

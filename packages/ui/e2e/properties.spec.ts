@@ -329,13 +329,40 @@ test("does not let anything change while the playhead is outside of the clip", a
   await expect(x).toHaveValue("50");
 });
 
-test("a locked track takes the clip out of reach", async ({ page }) => {
+test("shows the clip of a locked track, and changes nothing", async ({ page }) => {
   await addColor(page);
+  await typeInto(field(page, "位置 X"), "50");
   await tab(page, "timeline").click();
   await content(page, "timeline").getByRole("button", { name: /^锁定/ }).first().click();
   await tab(page, "properties").click();
-  await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
-  await expect(panel(page)).toContainText("选中时间轴上的片段");
+
+  // It stays selected through locking, and what it shows is what the clip has.
+  await expect(panel(page).getByRole("status")).toContainText("轨道已锁定");
+  await expect(field(page, "位置 X")).toHaveValue("50");
+  await expect(field(page, "位置 X")).not.toBeEditable();
+  await expect(panel(page).getByRole("combobox", { name: "适应方式" })).toBeDisabled();
+  await expect(keyButton(page, "位置 X")).toHaveAttribute("aria-disabled", "true");
+
+  // A click on the clip selects it just the same.
+  await tab(page, "timeline").click();
+  const clip = clips(page).first();
+  const box = await clip.boundingBox();
+  if (!box) throw new Error("No clip on the screen");
+  const y = box.y + box.height / 2;
+  await page.mouse.click(box.x + box.width + 40, y);
+  await expect(clip).toHaveAttribute("aria-selected", "false");
+  await page.mouse.click(box.x + box.width / 2, y);
+  await expect(clip).toHaveAttribute("aria-selected", "true");
+  await tab(page, "properties").click();
+  await expect(field(page, "位置 X")).toHaveValue("50");
+
+  // Unlocked again, it can be changed from where it was.
+  await tab(page, "timeline").click();
+  await content(page, "timeline").getByRole("button", { name: /^锁定/ }).first().click();
+  await tab(page, "properties").click();
+  await expect(panel(page).getByRole("status")).toHaveCount(0);
+  await typeInto(field(page, "位置 X"), "60");
+  await expect(field(page, "位置 X")).toHaveValue("60");
 });
 
 test("shows one clip at a time", async ({ page }) => {

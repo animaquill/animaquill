@@ -683,7 +683,7 @@ test.describe("names on a real disk", () => {
   });
 });
 
-test.describe("a folder that cannot come in", () => {
+test.describe("a folder with something wrong with it", () => {
   let folder: string;
 
   test.beforeEach(async ({ page }) => {
@@ -702,19 +702,92 @@ test.describe("a folder that cannot come in", () => {
     await expect.poll(() => isRed(page)).toBe(true);
   }
 
-  test("says what is wrong with a broken file, and leaves all projects alone", async ({ page }) => {
+  test("asks about a broken file, and Enter leaves all projects alone", async ({ page }) => {
     writeFileSync(join(folder, "timelines/main/timeline.json"), "{ 不是 JSON");
+    const before = await stored(page);
+    await importFrom(page, folder);
+
+    const question = dialog(page);
+    await expect(question.getByRole("heading", { name: "有些内容带不过来" })).toBeVisible();
+    await expect(question.getByRole("listitem").first()).toContainText("时间轴 main");
+    await expect(question.getByRole("listitem").first()).toContainText("空的");
+    await expect(question.getByText("timelines/main/timeline.json")).toBeVisible();
+    await expect(question.getByRole("button", { name: "跳过这些继续导入" })).toBeVisible();
+    await expect(question.getByRole("button", { name: "取消" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(dialog(page)).toHaveCount(0);
+    await expectNothingChanged(page, before);
+  });
+
+  test("refuses a manifest that is broken, and leaves all projects alone", async ({ page }) => {
+    writeFileSync(join(folder, "animaquill.json"), "{ 不是 JSON");
     const before = await stored(page);
     await importFrom(page, folder);
 
     const report = dialog(page);
     await expect(report.getByRole("heading", { name: "这个文件夹不能导入" })).toBeVisible();
     await expect(report.getByText("现有的项目没有改动")).toBeVisible();
-    await expect(report.getByRole("listitem").first()).toContainText(
-      "timelines/main/timeline.json",
-    );
+    await expect(report.getByRole("listitem").first()).toContainText("animaquill.json");
     await closeDialog(page);
     await expectNothingChanged(page, before);
+  });
+
+  /** Says yes to the question, reads the report and is left with the project that came in. */
+  async function skipBroken(page: Page, lost: string) {
+    await importFrom(page, folder);
+    await expect(dialog(page).getByText(lost).first()).toBeVisible();
+    await dialog(page).getByRole("button", { name: "跳过这些继续导入" }).click();
+    await expect(dialog(page).getByRole("heading", { name: "项目已导入" })).toBeVisible();
+    await expect(dialog(page).getByText("原来的文件夹先不要删")).toBeVisible();
+    await expect(dialog(page).getByText(lost).first()).toBeVisible();
+    await closeDialog(page);
+    await expect(
+      page.locator("footer").getByRole("button", { name: "测试项目（副本）" }),
+    ).toBeVisible();
+  }
+
+  /** Whatever went missing, the project goes out and comes back without a question. */
+  async function comesBackWhole(page: Page) {
+    await saved(page);
+    await exportProject(page);
+    const again = await toDisk(page, "chosen/测试项目（副本）");
+    await importFrom(page, again);
+    await expect(dialog(page).getByRole("heading", { name: "有些内容带不过来" })).toHaveCount(0);
+    await expect(dialog(page).getByRole("heading", { name: "项目已导入" })).toBeVisible();
+    await closeDialog(page);
+  }
+
+  test("skips a broken timeline, and what is left can be used", async ({ page }) => {
+    writeFileSync(join(folder, "timelines/main/timeline.json"), "{ 不是 JSON");
+    const before = await stored(page);
+    await skipBroken(page, "时间轴 main");
+    await tab(page, "timeline").click();
+    await expect(clips(page)).toHaveCount(0);
+    await tab(page, "assets").click();
+    await expect(items(page)).toHaveCount(3);
+    await comesBackWhole(page);
+    expect((await stored(page)).projects.length).toBeGreaterThan(before.projects.length);
+  });
+
+  test("skips the list of assets, and clips without media do not stop anything", async ({
+    page,
+  }) => {
+    writeFileSync(join(folder, "assets.json"), "{ 不是 JSON");
+    await skipBroken(page, "所有素材");
+    await tab(page, "timeline").click();
+    await expect(clips(page)).toHaveCount(3);
+    await tab(page, "assets").click();
+    await expect(items(page)).toHaveCount(0);
+
+    // All of it is drawn and played without what it refers to.
+    await tab(page, "timeline").click();
+    await clips(page).first().click({ force: true });
+    await expect(clips(page).first()).toHaveAttribute("aria-selected", "true");
+    await tab(page, "properties").click();
+    await tab(page, "timeline").click();
+    await page.keyboard.press("Space");
+    await page.keyboard.press("Space");
+    await comesBackWhole(page);
   });
 
   test("refuses a project from a newer editor", async ({ page }) => {

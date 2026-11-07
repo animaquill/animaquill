@@ -498,6 +498,17 @@ test.describe("tracks", () => {
     await page.keyboard.press("Delete");
     await settle(page);
     await expect(clips(page)).toHaveCount(1);
+
+    // Selected, it is as safe as it was.
+    await page.mouse.click(x, y);
+    await expect(clip).toHaveAttribute("aria-selected", "true");
+    await stage(page).focus();
+    await page.keyboard.press("Delete");
+    await settle(page);
+    await expect(clips(page)).toHaveCount(1);
+    await drag(page, [x, y], [x + 200, y]);
+    await settle(page);
+    expect(await labelOf(clip)).toBe(before);
   });
 
   test("can be hidden and muted", async ({ page }) => {

@@ -1,11 +1,18 @@
-import type { FolderAccess, ProjectLibrary, TargetFolder } from "@animaquill/host";
+import type { FolderAccess, ProjectLibrary, SourceFolder, TargetFolder } from "@animaquill/host";
 import type { Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { DialogDetail, Dialogs, ProgressDialog } from "../workbench/dialogs.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import { INCOMPLETE_FILE, exportProject, type ExportReport, type TransferStep } from "./export.ts";
-import { ImportRefused, bringIn, readProjectFolder, type ImportReport } from "./import.ts";
+import {
+  ImportRefused,
+  bringIn,
+  pointingAtNothing,
+  readProjectFolder,
+  type ImportReport,
+  type ProjectFolder,
+} from "./import.ts";
 
 /** Often enough to see it move, and little enough for the file to be what takes the time. */
 const STEP_INTERVAL_MS = 100;
@@ -35,6 +42,9 @@ export function formatSize(bytes: number): string {
 
 /** Tells failures apart when people pass on what they got to read. */
 const errorName = (error: unknown) => (error instanceof Error ? error.name : "Error");
+
+/** Work that did not get to the end, and what to tell people about that. */
+type Stopped = () => Promise<void>;
 
 /** Moves projects out to folders and in from folders, and keeps people informed. */
 export class ProjectTransfer {
@@ -230,32 +240,89 @@ export class ProjectTransfer {
     const source = await this.#choose(t("transfer.importFailed"), () => this.#askForSource());
     if (!source) return undefined;
 
-    const result = await this.#run(async () => {
+    const folder = await this.#importStep(
+      source,
+      t("transfer.reading", { folder: source.name }),
+      async (options) => {
+        const found = await readProjectFolder(source, t, options);
+        // Past this point nothing looks at it any more, and the next step has a button of its own.
+        options.signal.throwIfAborted();
+        return found;
+      },
+    );
+    if (typeof folder === "function") {
+      await folder();
+      return undefined;
+    }
+    if (folder.lost.length > 0 && !(await this.#agreeToLose(folder, source.name))) {
+      this.#notifications.push(t("transfer.importCancelled"));
+      return undefined;
+    }
+
+    const { name } = folder.project.manifest;
+    const report = await this.#importStep(source, t("transfer.importing", { name }), (options) =>
+      bringIn(folder, this.#projects, {
+        copyName: (original) => t("transfer.copyName", { name: original }),
+        ...options,
+      }),
+    );
+    if (typeof report !== "function") return report;
+    await report();
+    return undefined;
+  }
+
+  /** One part of an import, which people can follow and stop. */
+  #importStep<T>(
+    source: SourceFolder,
+    title: string,
+    work: (options: {
+      readonly signal: AbortSignal;
+      readonly onStep: (step: TransferStep) => void;
+    }) => Promise<T>,
+  ): Promise<T | Stopped> {
+    const t = this.#t;
+    return this.#run(async () => {
       const progress = this.#dialogs.progress({
-        title: t("transfer.reading", { folder: source.name }),
+        title,
         cancel: t("dialog.cancel"),
         stopping: t("transfer.stopping"),
       });
       const { signal } = progress;
-      const onStep = this.#follow(progress);
       try {
-        const folder = await readProjectFolder(source, t, { signal, onStep });
-        const { name } = folder.project.manifest;
-        progress.update({ title: t("transfer.importing", { name }) });
-        return await bringIn(folder, this.#projects, {
-          copyName: (original) => t("transfer.copyName", { name: original }),
-          signal,
-          onStep,
-        });
+        return await work({ signal, onStep: this.#follow(progress) });
       } catch (error) {
         return () => this.#importStopped(error, source.name, signal.aborted);
       } finally {
         progress.close();
       }
     });
-    if (typeof result !== "function") return result;
-    await result();
-    return undefined;
+  }
+
+  /**
+   * Whether people want a project with these parts missing. This is the one question an import
+   * asks: anything but the one button means no, because the folder is all they have. Nothing is
+   * going on meanwhile, so it runs outside of `#run`.
+   */
+  #agreeToLose({ lost, warnings }: ProjectFolder, folder: string): Promise<boolean> {
+    const t = this.#t;
+    const details = [
+      this.#list(
+        t("transfer.skipLost"),
+        lost.map(({ consequence }) => consequence),
+      ),
+      this.#list(t("transfer.skipAffected"), pointingAtNothing(warnings).map(this.#describe)),
+      this.#list(
+        t("transfer.skipReasons"),
+        lost.flatMap(({ problems }) => problems).map(this.#describe),
+      ),
+    ];
+    return this.#dialogs.confirm({
+      title: t("transfer.skipTitle"),
+      message: t("transfer.skipMessage", { folder, count: lost.length }),
+      confirm: t("transfer.skipConfirm"),
+      danger: true,
+      details: details.filter((detail) => detail.items.length > 0),
+    });
   }
 
   /** People can take their time in the dialog, and what the browser asks comes after it. */
@@ -300,8 +367,9 @@ export class ProjectTransfer {
   /** Says what people have to know about a project that just came in. */
   async announceImport(report: ImportReport): Promise<void> {
     const t = this.#t;
-    const { name, copied, missing, damaged, skipped, warnings } = report;
+    const { name, copied, missing, damaged, skipped, lost, warnings } = report;
     const details = [
+      this.#list(t("transfer.importLost"), lost),
       this.#list(t("transfer.importMissing"), missing),
       this.#list(t("transfer.importDamaged"), damaged),
       this.#list(t("transfer.importSkipped"), skipped),
@@ -314,6 +382,7 @@ export class ProjectTransfer {
     const message = [
       t("transfer.imported", { name }),
       ...(copied ? [t("transfer.importedCopy")] : []),
+      ...(lost.length > 0 ? [t("transfer.importLostHint")] : []),
       ...(missing.length + damaged.length > 0 ? [t("transfer.importHint")] : []),
     ].join("");
     await this.#notice(t("transfer.importedTitle"), message, details);

@@ -3,9 +3,11 @@ import type { FolderFile, ProjectLibrary, SourceFolder } from "@animaquill/host"
 import { hashFile, isSameHash } from "@animaquill/media";
 import {
   MANIFEST_FILE,
+  createTimeline,
   documentSchema,
   newId,
   readProject,
+  stringifyDocument,
   writeProject,
   type Problem,
   type Project,
@@ -17,6 +19,15 @@ import { INCOMPLETE_FILE, MAX_SOURCE_BYTES, type TransferStep } from "./export.t
 const MAX_FILES = 100_000;
 /** What systems leave in folders, which is not worth a word to anybody. */
 const CLUTTER = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|[^/]*\.crswap)$/i;
+/** What a project still points at when something it needs stayed out. */
+const POINTS_AT_NOTHING = new Set([
+  "asset-missing",
+  "library-missing",
+  "scene-missing",
+  "sound-missing",
+  "string-missing",
+  "timeline-missing",
+]);
 
 export type RefusalReason =
   "not-a-project" | "several-projects" | "incomplete" | "too-many-files" | "too-new" | "invalid";
@@ -33,6 +44,15 @@ export class ImportRefused extends Error {
   }
 }
 
+/** A document that cannot be used, so the project can only come in without it. */
+export interface LostDocument {
+  readonly file: string;
+  /** What that costs, in words that mean something to people. */
+  readonly consequence: string;
+  /** What is wrong with it. */
+  readonly problems: readonly Problem[];
+}
+
 /** What was found in a folder, before any of it moved. */
 export interface ProjectFolder {
   readonly project: Project;
@@ -41,6 +61,8 @@ export interface ProjectFolder {
   readonly files: ReadonlyMap<string, FolderFile>;
   /** Files the project has no place for. */
   readonly skipped: readonly string[];
+  /** Without people saying so, a project does not come in with any of this missing. */
+  readonly lost: readonly LostDocument[];
   readonly warnings: readonly Problem[];
 }
 
@@ -106,11 +128,100 @@ const unreadable = (file: string, message: string): Problem => ({
   message,
 });
 
+const timelineFile = (id: string) => `timelines/${id}/timeline.json`;
+
+/** What people lose with a document. */
+function consequenceOf(file: string, project: Project, t: TFunction): string {
+  const named = (pattern: RegExp) => pattern.exec(file)?.slice(1) ?? [];
+  const [timeline] = named(/^timelines\/([^/]+)\/timeline\.json$/);
+  if (timeline !== undefined) {
+    const stays = project.manifest.timelines.includes(timeline);
+    return t(stays ? "transfer.lost.timeline" : "transfer.lost.otherTimeline", { id: timeline });
+  }
+  const [owner, version] = named(/^timelines\/([^/]+)\/overrides\/([^/]+)\.json$/);
+  if (owner !== undefined) return t("transfer.lost.override", { id: owner, version });
+  const [scene] = named(/^scenes\/([^/]+)\/scene\.json$/);
+  if (scene !== undefined) return t("transfer.lost.scene", { id: scene });
+  const [sound] = named(/^sounds\/([^/]+)\/sound\.json$/);
+  if (sound !== undefined) return t("transfer.lost.sound", { id: sound });
+  const [language] = named(/^locales\/([^/]+)\.json$/);
+  if (language !== undefined) return t("transfer.lost.locale", { id: language });
+  if (file === "assets.json") return t("transfer.lost.assets");
+  if (file === "notes.json") return t("transfer.lost.notes");
+  if (file === "libraries.json") return t("transfer.lost.libraries");
+  if (file === "libraries.lock.json") return t("transfer.lost.lock");
+  return file;
+}
+
+interface UsablePart {
+  readonly project: Project;
+  /** What is left to say about the project. */
+  readonly warnings: readonly Problem[];
+  readonly lost: readonly LostDocument[];
+}
+
 /**
- * Finds out what a folder holds and whether it can become a project, without writing anything. A
- * file that is broken costs the whole folder here, unlike when opening a project: a new project
- * with a part missing would look like what people had, and they may well trust it and throw the
- * folder away. They get the list, and can put the files right.
+ * Finds out what can come in. A document with an error goes, and the rest is read again: taking one
+ * out can make the next error show, and what comes out of this has been through all the checks a
+ * healthy project goes through. That is why it can be opened, and exported, and read again.
+ *
+ * A project needs its manifest, and the manifest stays as it is. So a timeline it lists comes in
+ * empty, which also keeps whatever refers to it pointing at something.
+ */
+function readUsablePart(
+  texts: Map<string, string>,
+  unusable: readonly Problem[],
+  t: TFunction,
+): UsablePart {
+  const lost = new Map<string, Problem[]>();
+  const lose = (problem: Problem) => {
+    lost.set(problem.file, [...(lost.get(problem.file) ?? []), problem]);
+    return texts.delete(problem.file);
+  };
+  unusable.forEach(lose);
+
+  for (;;) {
+    const { project, problems } = readProject(texts);
+    const tooNew = problems.find((problem) => problem.code === "format-too-new");
+    if (tooNew) throw new ImportRefused("too-new", [tooNew]);
+    const errors = problems.filter((problem) => problem.severity === "error");
+    if (!project) throw new ImportRefused("invalid", [...[...lost.values()].flat(), ...errors]);
+    if (errors.length === 0) {
+      const documents = [...lost].map(([file, reasons]) => ({
+        file,
+        consequence: consequenceOf(file, project, t),
+        problems: reasons,
+      }));
+      return { project, warnings: problems, lost: documents };
+    }
+
+    let changed = false;
+    // What the manifest says about a timeline is taken care of below, and it has nothing else.
+    for (const error of errors) {
+      if (error.file !== MANIFEST_FILE) changed = lose(error) || changed;
+    }
+    for (const id of project.manifest.timelines) {
+      const file = timelineFile(id);
+      if (texts.has(file)) continue;
+      if (!lost.has(file)) {
+        lost.set(file, [
+          { severity: "error", code: "timeline-missing", file, message: t("transfer.noTimeline") },
+        ]);
+      }
+      const empty = createTimeline(t("transfer.emptyTimeline", { id }));
+      texts.set(file, stringifyDocument(empty));
+      changed = true;
+    }
+    if (!changed) throw new ImportRefused("invalid", errors);
+  }
+}
+
+/**
+ * Finds out what a folder holds and whether it can become a project, without writing anything. What
+ * makes the whole folder useless is refused here. A document that is broken only costs that
+ * document, as when opening a project, but unlike there people get to hear about it first: a new
+ * project with a part missing looks like what they had, and they may well trust it and throw the
+ * folder away. That is why `lost` is not a detail, and has to be agreed to.
  */
 export async function readProjectFolder(
   source: SourceFolder,
@@ -145,11 +256,7 @@ export async function readProjectFolder(
     if (text !== undefined) texts.set(path, isDocument ? text.replace(/^\uFEFF/, "") : text);
   }
 
-  const { project, problems: found } = readProject(texts);
-  const tooNew = found.find((problem) => problem.code === "format-too-new");
-  if (tooNew) throw new ImportRefused("too-new", [tooNew]);
-  const errors = [...problems, ...found.filter((problem) => problem.severity === "error")];
-  if (!project || errors.length > 0) throw new ImportRefused("invalid", errors);
+  const { project, warnings, lost } = readUsablePart(texts, problems, t);
 
   // A document can be fine and still have no place, such as what belongs to no timeline.
   const kept = writeProject(project);
@@ -169,8 +276,9 @@ export async function readProjectFolder(
     sources: Object.fromEntries([...texts].filter(([path]) => isSourceFile(path))),
     files,
     skipped: [...skipped].toSorted(),
+    lost,
     warnings: [
-      ...found.filter((problem) => problem.severity !== "error"),
+      ...warnings,
       ...withoutEntry.map((file): Problem => ({
         severity: "warning",
         code: "entry-missing",
@@ -180,6 +288,10 @@ export async function readProjectFolder(
     ],
   };
 }
+
+/** The places where a project points at what stayed out, or was never there. */
+export const pointingAtNothing = (warnings: readonly Problem[]): readonly Problem[] =>
+  warnings.filter(({ code }) => POINTS_AT_NOTHING.has(code));
 
 /** What people have to know about a project that came in. */
 export interface ImportReport {
@@ -193,6 +305,8 @@ export interface ImportReport {
   readonly damaged: readonly string[];
   /** Files the project has no place for. */
   readonly skipped: readonly string[];
+  /** What is missing because people agreed to go on without it. */
+  readonly lost: readonly string[];
   readonly warnings: readonly Problem[];
 }
 
@@ -210,7 +324,7 @@ export async function bringIn(
   projects: ProjectLibrary,
   { copyName, signal, onStep }: BringInOptions,
 ): Promise<ImportReport> {
-  const { project, sources, files, skipped, warnings } = folder;
+  const { project, sources, files, skipped, lost, warnings } = folder;
   let { id, name } = project.manifest;
   let incoming = await projects.receive({ id, name });
   const copied = incoming === undefined;
@@ -279,6 +393,7 @@ export async function bringIn(
       missing,
       damaged: [...damaged.values()],
       skipped,
+      lost: lost.map(({ consequence }) => consequence),
       warnings,
     };
   } catch (error) {

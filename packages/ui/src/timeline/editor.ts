@@ -570,9 +570,9 @@ export class TimelineEditor {
     if (before && model && before.fps !== model.fps) {
       this.#frame = frameAt(frameSeconds(this.#frame, before.rate), model.rate);
     }
-    const selection = new Set(this.#selectable(this.#snapshot.selection, model));
+    const selection = new Set(this.#present(this.#snapshot.selection, model));
     const same = sameSet(selection, this.#snapshot.selection);
-    const cut = new Set(this.#selectable(this.#snapshot.cut, model));
+    const cut = new Set(this.#changeable(this.#snapshot.cut, model));
     this.#snapshot = {
       ...this.#snapshot,
       model,
@@ -651,16 +651,28 @@ export class TimelineEditor {
     this.#savePreferences();
   }
 
-  /** Clips that are there, and not on a locked track: nothing can be done with those. */
-  #selectable(ids: Iterable<string>, model: TimelineModel | undefined): readonly string[] {
-    return [...ids].filter(
-      (id) => model?.boxes.has(id) === true && model.rowOfClip.get(id)?.track.locked !== true,
+  #present(ids: Iterable<string>, model: TimelineModel | undefined): readonly string[] {
+    return [...ids].filter((id) => model?.boxes.has(id) === true);
+  }
+
+  /**
+   * Clips that are there, and not on a locked track. A locked clip can be selected to look at it,
+   * so whatever changes clips goes by this and not by the selection as such.
+   */
+  #changeable(ids: Iterable<string>, model: TimelineModel | undefined): readonly string[] {
+    return this.#present(ids, model).filter(
+      (id) => model?.rowOfClip.get(id)?.track.locked !== true,
     );
+  }
+
+  /** Whether there is anything in the selection that can be cut or deleted. */
+  get canChangeSelection(): boolean {
+    return this.#changeable(this.#snapshot.selection, this.model).length > 0;
   }
 
   #select(wanted: ReadonlySet<string>): void {
     // A drag can hold on to a clip that is gone by now.
-    const selection = new Set(this.#selectable(wanted, this.model));
+    const selection = new Set(this.#present(wanted, this.model));
     if (sameSet(selection, this.#snapshot.selection)) return;
     this.#snapshot = { ...this.#snapshot, selection };
     this.#emitter.emit();
@@ -675,8 +687,10 @@ export class TimelineEditor {
     this.#select(this.#withLinked(new Set([clip])));
   }
 
+  /** To do something with all of it, which is nothing for a locked clip. */
   selectAll(): void {
-    this.#select(new Set(this.model?.boxes.keys()));
+    const { model } = this;
+    this.#select(new Set(this.#changeable(model?.boxes.keys() ?? [], model)));
   }
 
   clearSelection(): void {
@@ -771,7 +785,7 @@ export class TimelineEditor {
 
   deleteSelection(): void {
     const { model } = this;
-    const clips = [...this.#snapshot.selection];
+    const clips = this.#changeable(this.#snapshot.selection, model);
     if (!model || clips.length === 0) return;
     this.#run([{ type: "clip.remove", params: { timeline: model.id, clips } }]);
   }
@@ -780,10 +794,14 @@ export class TimelineEditor {
     return this.#clipboard.length > 0;
   }
 
+  /** Taking a copy leaves a clip as it is, so a locked one can be part of it. */
   copySelection(): void {
+    this.#copy(this.#snapshot.selection);
+  }
+
+  #copy(clips: Iterable<string>): void {
     const { model } = this;
-    const { selection } = this.#snapshot;
-    const boxes = [...selection].flatMap((id) => model?.boxes.get(id) ?? []);
+    const boxes = [...clips].flatMap((id) => model?.boxes.get(id) ?? []);
     if (boxes.length === 0) return;
     this.#clipboard = boxes.map(({ clip }) => clip);
     this.#setCut(new Set());
@@ -791,10 +809,10 @@ export class TimelineEditor {
 
   /** Marks clips to go. They stay in their place until they are pasted, so this can be undone. */
   cutSelection(): void {
-    const { selection } = this.#snapshot;
-    if (selection.size === 0) return;
-    this.copySelection();
-    this.#setCut(selection);
+    const clips = new Set(this.#changeable(this.#snapshot.selection, this.model));
+    if (clips.size === 0) return;
+    this.#copy(clips);
+    this.#setCut(clips);
   }
 
   /** Changes nothing when there is no cut, and says so. */
@@ -877,7 +895,7 @@ export class TimelineEditor {
     const seconds = frameSeconds(this.#frame, model.rate);
     const moment = frameTime(this.#frame, model.rate);
     return model.rows.flatMap((row) => {
-      const box = clipAt(row, seconds);
+      const box = row.track.locked ? undefined : clipAt(row, seconds);
       const cuts = box && this.#snapshot.selection.has(box.id) && isInsideClip(box.clip, moment);
       return cuts ? [box] : [];
     });
@@ -1265,21 +1283,23 @@ export class TimelineEditor {
       this.#gesture = new TrimGesture(this.#host, box, row, edge, pointer);
       return;
     }
-    // Nothing can be done with a locked clip, so it counts as empty space.
-    if (row.track.locked) {
-      this.#gesture = new MarqueeGesture(this.#host, pointer);
-      return;
-    }
     const { selection } = this.#snapshot;
     const wasSelected = selection.has(box.id);
     const adding = pointer.shift || pointer.mod || this.#snapshot.multiSelecting;
     const own = this.#withLinked(new Set([box.id]));
-    if (!wasSelected) this.#select(new Set(adding ? [...selection, ...own] : own));
+    const selected = new Set(adding ? [...selection, ...own] : own);
     // What a press on a selected clip means shows when it ends: it may be the start of a drag.
     const onClick = () => {
-      if (!adding) this.#select(own);
-      else if (wasSelected) this.#select(new Set([...selection].filter((id) => !own.has(id))));
+      if (adding && wasSelected) {
+        this.#select(new Set([...selection].filter((id) => !own.has(id))));
+      } else this.#select(selected);
     };
+    // A locked clip can be looked at, but nothing moves it: a drag from there is a drag from nowhere.
+    if (row.track.locked) {
+      this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
+      return;
+    }
+    if (!wasSelected) this.#select(selected);
     this.#gesture = new MoveGesture(this.#host, box, row, pointer, onClick);
   }
 

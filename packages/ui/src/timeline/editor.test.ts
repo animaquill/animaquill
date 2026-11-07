@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-library.ts";
 import { ProjectSession } from "../workbench/session.ts";
 import { RULER_HEIGHT, TimelineEditor } from "./editor.ts";
+import { frameAt } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 
 const WIDTH = 1000;
@@ -1851,7 +1852,34 @@ describe("changing the project from the keyboard and menus", () => {
   });
 
   describe("locked tracks", () => {
-    it("cannot be selected in any way", async () => {
+    const click = (editor: TimelineEditor, pointer: Pointer) => {
+      editor.press(pointer);
+      editor.release(pointer);
+    };
+
+    it("show what is on them: a click selects the clip, a click next to it does not", async () => {
+      const { editor, addClip, at, selection, video } = await setup();
+      addClip("a", 1, 2);
+      editor.updateTrack(video, { locked: true });
+      click(editor, at(2));
+      expect(selection()).toEqual(["a"]);
+      click(editor, at(5));
+      expect(selection()).toEqual([]);
+    });
+
+    it("go in and out of a selection with Shift, like any clip", async () => {
+      const { editor, addClip, at, selection, video, audio } = await setup();
+      addClip("a", 1, 2);
+      addClip("b", 1, 2, audio);
+      editor.updateTrack(video, { locked: true });
+      click(editor, at(2, audio));
+      click(editor, at(2, video, { shift: true }));
+      expect(selection()).toEqual(["a", "b"]);
+      click(editor, at(2, video, { shift: true }));
+      expect(selection()).toEqual(["b"]);
+    });
+
+    it("stay out of what gets selected all at once", async () => {
       const { editor, addClip, at, drag, selection, video, audio } = await setup();
       addClip("a", 1, 2);
       addClip("b", 1, 2, audio);
@@ -1860,18 +1888,14 @@ describe("changing the project from the keyboard and menus", () => {
       expect(selection()).toEqual(["b"]);
       editor.selectAll();
       expect(selection()).toEqual(["b"]);
-      editor.clearSelection();
-      editor.press(at(2));
-      editor.release(at(2));
-      expect(selection()).toEqual([]);
     });
 
-    it("drop out of the selection when they get locked", async () => {
+    it("stay selected when they get locked", async () => {
       const { editor, addClip, selection, video } = await setup();
       addClip("a", 1, 2);
       editor.selectAll();
       editor.updateTrack(video, { locked: true });
-      expect(selection()).toEqual([]);
+      expect(selection()).toEqual(["a"]);
     });
 
     it("start a box when pressed on", async () => {
@@ -1881,6 +1905,126 @@ describe("changing the project from the keyboard and menus", () => {
       editor.updateTrack(video, { locked: true });
       drag(at(2), at(2.5, audio));
       expect(selection()).toEqual(["b"]);
+    });
+
+    it("leave the selection alone until it is clear what a press means", async () => {
+      const { editor, addClip, at, selection, video, audio } = await setup();
+      addClip("a", 1, 2);
+      addClip("b", 1, 2, audio);
+      editor.updateTrack(video, { locked: true });
+      click(editor, at(2, audio));
+      editor.press(at(2));
+      expect(selection()).toEqual(["b"]);
+      editor.release(at(2));
+      expect(selection()).toEqual(["a"]);
+    });
+
+    it("go back to what was selected when a box from them is cancelled", async () => {
+      const { editor, addClip, at, selection, video, audio } = await setup();
+      addClip("a", 1, 2);
+      addClip("b", 1, 2, audio);
+      editor.updateTrack(video, { locked: true });
+      click(editor, at(2, audio));
+      editor.press(at(2));
+      editor.drag(at(2.5, audio));
+      editor.cancelDrag();
+      expect(selection()).toEqual(["b"]);
+    });
+
+    it("cannot be moved, trimmed, cut or deleted while selected", async () => {
+      const { editor, store, addClip, at, drag, clip, selection, video, commandFailed } =
+        await setup();
+      addClip("a", 1, 2);
+      editor.selectAll();
+      editor.seek(frameAt(2, editor.model?.rate as never));
+      editor.updateTrack(video, { locked: true });
+      const { revision } = store;
+
+      expect(editor.canChangeSelection).toBe(false);
+      expect(editor.canSplit).toBe(false);
+      editor.deleteSelection();
+      editor.splitAtPlayhead();
+      editor.cutSelection();
+      expect(editor.getSnapshot().cut.size).toBe(0);
+      expect(editor.hasClipboard).toBe(false);
+      expect(selection()).toEqual(["a"]);
+
+      drag(at(2), at(4));
+      drag(at(1), at(1.5));
+      drag(at(3), at(3.5));
+      expect(store.revision).toBe(revision);
+      expect(clip("a").start).toBe("1");
+      expect(clip("a").duration).toBe("2");
+      expect(commandFailed).not.toHaveBeenCalled();
+    });
+
+    /** One clip that is free and one that is locked, both selected. */
+    const withBoth = async () => {
+      const context = await setup();
+      const { editor, addClip, at, video, audio } = context;
+      addClip("a", 1, 2);
+      addClip("b", 1, 2, audio);
+      editor.updateTrack(audio, { locked: true });
+      click(editor, at(2, video));
+      click(editor, at(2, audio, { shift: true }));
+      expect(context.selection()).toEqual(["a", "b"]);
+      return context;
+    };
+
+    it("stay behind when the rest of a selection goes", async () => {
+      const { editor, main, commandFailed } = await withBoth();
+      expect(editor.canChangeSelection).toBe(true);
+      editor.deleteSelection();
+      expect(Object.keys(main().clips)).toEqual(["b"]);
+      expect(commandFailed).not.toHaveBeenCalled();
+    });
+
+    it("stay behind when the rest of a selection is cut and pasted", async () => {
+      const { editor, main, clip, commandFailed } = await withBoth();
+      editor.cutSelection();
+      expect([...editor.getSnapshot().cut]).toEqual(["a"]);
+      editor.seek(frameAt(5, editor.model?.rate as never));
+      editor.paste();
+      expect(Object.keys(main().clips)).toHaveLength(2);
+      expect(clip("b").start).toBe("1");
+      expect(main().clips["a"]).toBeUndefined();
+      expect(commandFailed).not.toHaveBeenCalled();
+    });
+
+    it("stay whole when the rest of a selection is split", async () => {
+      const { editor, main, clip, commandFailed } = await withBoth();
+      editor.seek(frameAt(2, editor.model?.rate as never));
+      expect(editor.canSplit).toBe(true);
+      editor.splitAtPlayhead();
+      expect(Object.keys(main().clips)).toHaveLength(3);
+      expect(clip("b").duration).toBe("2");
+      expect(commandFailed).not.toHaveBeenCalled();
+    });
+
+    it("can be copied, because that leaves them as they are", async () => {
+      const { editor, addClip, at, main, video, audio, commandFailed } = await setup();
+      addClip("a", 1, 2);
+      editor.addTrack("video");
+      editor.updateTrack(video, { locked: true });
+      click(editor, at(2));
+      editor.copySelection();
+      editor.seek(frameAt(5, editor.model?.rate as never));
+      editor.paste();
+      const copies = Object.values(main().clips).filter(({ id }) => id !== "a");
+      expect(copies).toHaveLength(1);
+      expect(copies[0]?.track).not.toBe(video);
+      expect(copies[0]?.track).not.toBe(audio);
+      expect(commandFailed).not.toHaveBeenCalled();
+    });
+
+    it("are not part of what a cut waits to take away, once they get locked", async () => {
+      const { editor, addClip, video, selection } = await setup();
+      addClip("a", 1, 2);
+      editor.selectAll();
+      editor.cutSelection();
+      editor.updateTrack(video, { locked: true });
+      expect(editor.getSnapshot().cut.size).toBe(0);
+      expect(selection()).toEqual(["a"]);
     });
   });
 

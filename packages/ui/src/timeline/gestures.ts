@@ -576,7 +576,12 @@ export class TrimGesture implements Gesture {
   }
 }
 
-/** Draws a box around clips to select them. It adds to the selection when asked to. */
+/**
+ * Draws a box around clips to select them. It adds to the selection when asked to. A box is for
+ * doing something with clips, so locked ones stay out of it. With `onClick` it starts on something
+ * that a click means something for, and the selection stays until it is clear which of the two it
+ * is.
+ */
 export class MarqueeGesture implements Gesture {
   readonly reachesRows = true;
   readonly #host: GestureHost;
@@ -585,17 +590,19 @@ export class MarqueeGesture implements Gesture {
   readonly #fromTime: number;
   readonly #fromLane: number;
   readonly #press: Pointer;
+  readonly #onClick: (() => void) | undefined;
   #active = false;
 
-  constructor(host: GestureHost, press: Pointer) {
+  constructor(host: GestureHost, press: Pointer, onClick?: () => void) {
     this.#host = host;
     this.#press = press;
+    this.#onClick = onClick;
     this.#before = host.selection;
     const adding = press.shift || press.mod || host.multiSelecting;
     this.#base = adding ? host.selection : new Set();
     this.#fromTime = host.timeAt(press.x);
     this.#fromLane = host.laneAt(press.y);
-    if (!adding) host.select(new Set());
+    if (!adding && !onClick) host.select(new Set());
   }
 
   move(pointer: Pointer): void {
@@ -612,6 +619,7 @@ export class MarqueeGesture implements Gesture {
     const selected = new Set(this.#base);
     for (const row of this.#host.model.rows) {
       if (row.top + row.height <= marquee.top || row.top >= marquee.bottom) continue;
+      if (row.track.locked) continue;
       forEachBetween(row, marquee.from, marquee.to, (box) => selected.add(box.id));
     }
     this.#host.select(selected);
@@ -619,6 +627,7 @@ export class MarqueeGesture implements Gesture {
   }
 
   end(): void {
+    if (!this.#active) this.#onClick?.();
     this.#host.setPreview(undefined);
   }
 

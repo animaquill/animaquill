@@ -132,7 +132,12 @@ export class TouchController {
     const pointer = pointerAt(finger);
     const hit = this.#editor.hitAt(pointer);
     const { selection, tool } = this.#editor.getSnapshot();
-    this.#onSelected = hit.kind === "clip" && selection.has(hit.box.id) && tool === "select";
+    // A locked clip goes nowhere, so a finger on one moves the view, as next to it.
+    this.#onSelected =
+      hit.kind === "clip" &&
+      !hit.row.track.locked &&
+      selection.has(hit.box.id) &&
+      tool === "select";
     const onEdge = this.#onSelected && hit.kind === "clip" && hit.edge !== undefined;
     if (hit.kind === "ruler" || hit.kind === "end" || onEdge) {
       this.#mode = "editing";
@@ -147,7 +152,7 @@ export class TouchController {
     if (this.#mode !== "waiting") return;
     const hit = this.#editor.hitAt(pointerAt(this.#start));
     const { selection, multiSelecting } = this.#editor.getSnapshot();
-    if (hit.kind === "clip" && !hit.row.track.locked && !selection.has(hit.box.id)) {
+    if (hit.kind === "clip" && !selection.has(hit.box.id)) {
       if (multiSelecting) this.#editor.addToSelection(hit.box.id);
       else this.#editor.selectOnly(hit.box.id);
     }

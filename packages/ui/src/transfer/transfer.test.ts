@@ -1,12 +1,19 @@
-import { ProjectStore } from "@animaquill/core";
+import { ProjectStore, buildAudioPlan, buildRenderPlan, objectsOf } from "@animaquill/core";
 import type { FolderAccess, SourceFolder, TargetFolder } from "@animaquill/host";
 import { hashFile } from "@animaquill/media";
-import { createProject, readProject, stringifyDocument, type Asset } from "@animaquill/schema";
+import {
+  createProject,
+  documentSchema,
+  readProject,
+  stringifyDocument,
+  type Asset,
+} from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { zipTarget } from "../../../host/src/zip.ts";
 import { loadFixture } from "../../../schema/scripts/fixture.ts";
 import { createI18n } from "../i18n/i18n.ts";
-import { Dialogs, type ProgressRequest } from "../workbench/dialogs.ts";
+import { buildModel } from "../timeline/model.ts";
+import { Dialogs, type DialogDetail, type ProgressRequest } from "../workbench/dialogs.ts";
 import { MemoryLibrary, memoryAddress } from "../workbench/memory-library.ts";
 import { Notifications } from "../workbench/notifications.ts";
 import { ProjectSession } from "../workbench/session.ts";
@@ -51,13 +58,13 @@ function setup(library = new MemoryLibrary()) {
     t,
   });
   /** What the dialog on the screen says, and closes it, as people would. */
-  const readDialog = async () => {
+  const readDialog = async (answer = true) => {
     await vi.waitFor(() => {
       const current = dialogs.getSnapshot();
       expect(current?.kind).toBe("confirm");
     });
     const current = dialogs.getSnapshot();
-    dialogs.answer(true);
+    dialogs.answer(answer);
     if (current?.kind !== "confirm") throw new Error("No notice");
     return current;
   };
@@ -128,6 +135,30 @@ async function refused(window: Window, source: SourceFolder) {
   expect(await importing).toBeUndefined();
   return notice;
 }
+
+/** Goes as far as the question about broken files, and says no. */
+async function cancelled(window: Window, source: SourceFolder) {
+  window.next.source = source;
+  const importing = window.transfer.importProject();
+  const question = await window.readDialog(false);
+  expect(await importing).toBeUndefined();
+  return question;
+}
+
+/** Says yes to the question about broken files, and opens what came in. */
+async function skipping(window: Window, source: SourceFolder) {
+  window.next.source = source;
+  const importing = window.transfer.importProject();
+  const question = await window.readDialog(true);
+  const report = await importing;
+  if (!report) throw new Error("Nothing came in");
+  await window.session.open(report.id);
+  return { question, report };
+}
+
+/** All lines of the lists of a dialog. */
+const linesOf = ({ details }: { readonly details?: readonly DialogDetail[] | undefined }) =>
+  (details ?? []).flatMap(({ items }) => items).join("\n");
 
 const folderOf = (files: Iterable<readonly [string, string]>) => memorySource("文件夹", files);
 
@@ -1024,6 +1055,437 @@ describe("a project that is larger than anybody expected", () => {
   });
 });
 
+describe("a folder with broken files", () => {
+  const BROKEN = "{ oops";
+  const CLIP = new Blob([VIDEO]);
+  const color = { kind: "color", color: "#ff0000" };
+
+  /** The timeline of a new project, with a clip on its first track. */
+  const withClip = (text: string, source: object = color) => {
+    const timeline = JSON.parse(text);
+    timeline.tracks[0].clips = [{ id: "c", start: "0", duration: "1", source }];
+    return JSON.stringify(timeline);
+  };
+
+  const listing = (texts: Map<string, string>, ...timelines: string[]) => {
+    const manifest = JSON.parse(texts.get("animaquill.json") as string);
+    manifest.timelines = timelines;
+    texts.set("animaquill.json", JSON.stringify(manifest));
+  };
+
+  /** Takes a project out and back in, which must not need anybody's permission any more. */
+  async function comesBackWhole(window: Window) {
+    const { target, notice } = await exportTo(window);
+    // Files that were never there are a different matter.
+    expect(notice.details?.map(({ title }) => title).join()).not.toContain("这些内容有问题");
+    const again = setup();
+    const report = await importFrom(again, target.asSource());
+    expect(report?.lost).toEqual([]);
+    return again;
+  }
+
+  describe("asks first", () => {
+    const broken = () =>
+      folderOf(projectFiles((texts) => texts.set("timelines/main/timeline.json", BROKEN)));
+
+    it("says what goes, what that means and why, with cancelling as the way out", async () => {
+      const question = await cancelled(setup(), broken());
+      expect(question.title).toBe("有些内容带不过来");
+      expect(question.confirm).toBe("跳过这些继续导入");
+      expect(question.danger).toBe(true);
+      expect(question.noticeOnly).toBeUndefined();
+      expect(question.message).toContain("新项目");
+      expect(question.message).toContain("不要删掉");
+      const [lost, reasons] = question.details ?? [];
+      expect(lost?.title).toContain("这些内容会丢");
+      expect(lost?.items.join()).toContain("时间轴 main");
+      expect(lost?.items.join()).toContain("空的");
+      expect(reasons?.items.join()).toContain("timelines/main/timeline.json");
+      expect(reasons?.items.join()).toContain("不是有效的 JSON");
+    });
+
+    it("leaves everything as it was when people cancel", async () => {
+      const window = await projectWithFiles();
+      await window.session.trySave();
+      const id = idOf(window);
+      const before = {
+        updates: [...(window.library.updates.get(id) ?? [])],
+        summaries: [...window.library.summaries],
+        files: [...window.library.files],
+      };
+      await cancelled(window, broken());
+      expect(window.library.updates.get(id)).toEqual(before.updates);
+      expect([...window.library.summaries]).toEqual(before.summaries);
+      expect([...window.library.files]).toEqual(before.files);
+      expect(window.library.incoming.size).toBe(0);
+      expect(idOf(window)).toBe(id);
+      expect(window.notices()).toEqual(["导入已取消，现有的项目没有改动。"]);
+    });
+
+    it("takes anything that closes the question for a no", async () => {
+      const window = setup();
+      window.next.source = broken();
+      const importing = window.transfer.importProject();
+      await vi.waitFor(() => expect(window.dialogs.getSnapshot()?.kind).toBe("confirm"));
+      window.dialogs.answer(undefined);
+      expect(await importing).toBeUndefined();
+      expect(window.library.summaries.size).toBe(0);
+    });
+
+    it("has nothing unfinished while people think about it", async () => {
+      const window = setup();
+      window.next.source = broken();
+      const importing = window.transfer.importProject();
+      await vi.waitFor(() => expect(window.dialogs.getSnapshot()?.kind).toBe("confirm"));
+      expect(window.transfer.running).toBe(false);
+      expect(window.library.incoming.size).toBe(0);
+      window.dialogs.answer(false);
+      await importing;
+    });
+
+    it("can be stopped after people said yes, with nothing left of it", async () => {
+      const window = setup();
+      const hash = await hashFile(CLIP);
+      const asset = { kind: "video", path: "assets/a.mp4", storage: "local", hash };
+      const files: Map<string, string | Blob> = projectFiles((texts) => {
+        texts.set("notes.json", BROKEN);
+        texts.set("assets.json", stringifyDocument({ assets: { a: asset } }));
+      });
+      files.set("assets/a.mp4", CLIP);
+      const media = window.library.media.bind(window.library);
+      vi.spyOn(window.library, "media").mockImplementation((project) => {
+        const store = media(project);
+        return {
+          ...store,
+          put: async (key, file) => {
+            await store.put(key, file);
+            (window.dialogs.getSnapshot() as ProgressRequest).stop();
+          },
+        };
+      });
+      window.next.source = memorySource("文件夹", files);
+      const importing = window.transfer.importProject();
+      await window.readDialog(true);
+      expect(await importing).toBeUndefined();
+      expect(window.library.summaries.size).toBe(0);
+      expect(window.library.incoming.size).toBe(0);
+      expect(window.transfer.running).toBe(false);
+    });
+
+    it("stops when people cancel at the very end of reading, before anything is asked", async () => {
+      const window = setup();
+      const files = [...projectFiles((texts) => texts.set("notes.json", BROKEN))];
+      const good = memorySource("文件夹", files);
+      const last = files.at(-1)?.[0];
+      window.next.source = {
+        name: good.name,
+        async *files() {
+          for await (const file of good.files()) {
+            yield file.path === last
+              ? {
+                  path: file.path,
+                  read: async () => {
+                    (window.dialogs.getSnapshot() as ProgressRequest).stop();
+                    return file.read();
+                  },
+                }
+              : file;
+          }
+        },
+      };
+      expect(await window.transfer.importProject()).toBeUndefined();
+      expect(window.dialogs.getSnapshot()).toBeUndefined();
+      expect(window.notices()).toEqual(["导入已取消，现有的项目没有改动。"]);
+      expect(window.library.summaries.size).toBe(0);
+    });
+
+    it("does not ask when nothing is broken", async () => {
+      const window = setup();
+      const report = await importFrom(window, folderOf(projectFiles()));
+      expect(report?.lost).toEqual([]);
+      expect(window.dialogs.getSnapshot()).toBeUndefined();
+    });
+  });
+
+  describe("a timeline", () => {
+    it("that is broken comes in empty, and everything else comes along", async () => {
+      const window = setup();
+      const note = {
+        id: "n1",
+        status: "pending",
+        text: "还在",
+        timeline: "main",
+        time: "0",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      const { report } = await skipping(
+        window,
+        folderOf(
+          projectFiles((texts) => {
+            texts.set("timelines/main/timeline.json", BROKEN);
+            texts.set("notes.json", stringifyDocument({ notes: [note] }));
+          }),
+        ),
+      );
+      const state = window.session.store?.getState();
+      expect(state?.manifest.timelines).toEqual(["main"]);
+      const main = state?.timelines["main"];
+      expect(Object.keys(main?.clips ?? {})).toEqual([]);
+      expect(Object.keys(main?.tracks ?? {}).length).toBeGreaterThan(0);
+      expect(Object.keys(state?.notes ?? {})).toEqual(["n1"]);
+      expect(report.lost.join()).toContain("时间轴 main");
+      await comesBackWhole(window);
+    });
+
+    it("costs only itself, next to one that is fine", async () => {
+      const window = setup();
+      const files = projectFiles((texts) => {
+        const main = texts.get("timelines/main/timeline.json") as string;
+        texts.set("timelines/main/timeline.json", withClip(main));
+        texts.set("timelines/second/timeline.json", BROKEN);
+        listing(texts, "main", "second");
+      });
+      await skipping(window, folderOf(files));
+      const state = window.session.store?.getState();
+      expect(Object.keys(state?.timelines["main"]?.clips ?? {})).toEqual(["c"]);
+      expect(Object.keys(state?.timelines["second"]?.clips ?? {})).toEqual([]);
+      await comesBackWhole(window);
+    });
+
+    it("that is not in the folder at all comes in empty as well", async () => {
+      const window = setup();
+      const files = projectFiles((texts) => texts.delete("timelines/main/timeline.json"));
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("文件夹里没有这条时间轴");
+      expect(window.session.store?.getState().timelines["main"]).toBeDefined();
+      await comesBackWhole(window);
+    });
+
+    it("that the project does not list simply stays out, and says so", async () => {
+      const window = setup();
+      const files = projectFiles((texts) => texts.set("timelines/stray/timeline.json", BROKEN));
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("时间轴 stray");
+      expect(linesOf(question)).not.toContain("空的");
+      expect(window.session.store?.getState().timelines["stray"]).toBeUndefined();
+      await comesBackWhole(window);
+    });
+
+    it("that holds itself goes, which is what breaks the circle", async () => {
+      const window = setup();
+      const nest = (other: string) => ({ kind: "timeline", timeline: other });
+      const files = projectFiles((texts) => {
+        const main = texts.get("timelines/main/timeline.json") as string;
+        texts.set("timelines/main/timeline.json", withClip(main, nest("second")));
+        texts.set("timelines/second/timeline.json", withClip(main, nest("main")));
+        listing(texts, "main", "second");
+      });
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("不能嵌套自己");
+      const timelines = Object.values(window.session.store?.getState().timelines ?? {});
+      const clips = timelines.map(({ clips: all }) => Object.keys(all).length);
+      expect(clips.toSorted()).toEqual([0, 1]);
+      await comesBackWhole(window);
+    });
+
+    it("nested in another one leaves that clip with nothing to show", async () => {
+      const window = setup();
+      const files = projectFiles((texts) => {
+        const main = texts.get("timelines/main/timeline.json") as string;
+        texts.set(
+          "timelines/main/timeline.json",
+          withClip(main, { kind: "timeline", timeline: "stray" }),
+        );
+        texts.set("timelines/stray/timeline.json", BROKEN);
+      });
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("没有这条时间轴：stray");
+      const state = window.session.store?.getState();
+      expect(state?.timelines["main"]?.clips["c"]).toBeDefined();
+      await comesBackWhole(window);
+    });
+  });
+
+  describe("what a project refers to", () => {
+    it("says which clips lose their media when the list of assets goes", async () => {
+      const window = setup();
+      const files: Map<string, string | Blob> = projectFiles((texts) => {
+        const main = texts.get("timelines/main/timeline.json") as string;
+        const source = { kind: "video", media: { asset: "film" } };
+        texts.set("timelines/main/timeline.json", withClip(main, source));
+        texts.set("assets.json", BROKEN);
+      });
+      files.set("assets/a.mp4", CLIP);
+      const { question, report } = await skipping(window, memorySource("文件夹", files));
+      expect(linesOf(question)).toContain("所有素材");
+      expect(linesOf(question)).toContain("没有这个素材：film");
+      expect(window.session.store?.getState().assets).toBeUndefined();
+      expect(report.skipped).toEqual(["assets/a.mp4"]);
+      expect(window.library.files.size).toBe(0);
+
+      // The clip is still there, and people can bring the file in again.
+      const added = window.session.store?.execute({
+        type: "asset.add",
+        params: { id: "film", asset: { path: "assets/a.mp4", kind: "video", storage: "local" } },
+      });
+      expect(added?.ok).toBe(true);
+      await comesBackWhole(window);
+    });
+
+    it("reads nothing from a path that leads out of the project", async () => {
+      const window = setup();
+      const source = withAsset({ path: "../secret.mp4" }, [["../secret.mp4", "x"]]);
+      const { question, report } = await skipping(window, source);
+      expect(linesOf(question)).toContain("assets.json");
+      expect(window.session.store?.getState().assets).toBeUndefined();
+      expect(report.missing).toEqual([]);
+      expect(window.library.files.size).toBe(0);
+    });
+
+    it("keeps the code of a scene without its description, for putting it right", async () => {
+      const window = setup();
+      const files = projectFiles((texts) => {
+        const main = texts.get("timelines/main/timeline.json") as string;
+        const source = { kind: "scene", scene: "title" };
+        texts.set("timelines/main/timeline.json", withClip(main, source));
+        texts.set("scenes/title/scene.json", BROKEN);
+        texts.set("scenes/title/index.html", "<h1>标题</h1>");
+      });
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("场景 title");
+      expect(linesOf(question)).toContain("没有这个场景：title");
+      const state = window.session.store?.getState();
+      expect(state?.scenes).toEqual({});
+      expect(state?.files["scenes/title/index.html"]).toBe("<h1>标题</h1>");
+      const again = await comesBackWhole(window);
+      expect(again.session.store?.getState().files["scenes/title/index.html"]).toBe(
+        "<h1>标题</h1>",
+      );
+    });
+
+    it("leaves out a name that a project could not keep, and keeps what is next to it", async () => {
+      const window = setup();
+      const scene = stringifyDocument({ name: "标题", entry: "index.html", runtime: 1 });
+      const files = projectFiles((texts) => {
+        texts.set("scenes/__proto__/scene.json", scene);
+        texts.set("scenes/ok/scene.json", scene);
+        texts.set("scenes/ok/index.html", "<p></p>");
+      });
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("scenes/__proto__/scene.json");
+      expect(Object.keys(window.session.store?.getState().scenes ?? {})).toEqual(["ok"]);
+      await comesBackWhole(window);
+    });
+
+    it("takes a version of a timeline with the wrong file name out", async () => {
+      const window = setup();
+      const stray = "timelines/main/overrides/language.fr.json";
+      const files = projectFiles((texts) =>
+        texts.set(stray, JSON.stringify({ scope: { language: "en" } })),
+      );
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain(stray);
+      await comesBackWhole(window);
+    });
+
+    it("takes a document that is no text out, with the reason", async () => {
+      const window = setup();
+      const files: Map<string, string | Uint8Array<ArrayBuffer>> = projectFiles();
+      files.set("notes.json", new Uint8Array([0xff, 0xfe, 0x00]));
+      const { question, report } = await skipping(window, memorySource("文件夹", files));
+      expect(linesOf(question)).toContain("UTF-8");
+      expect(report.skipped).toEqual([]);
+      await comesBackWhole(window);
+    });
+
+    it("loses two notes with one id as a whole file, and says so", async () => {
+      const window = setup();
+      const note = {
+        id: "n1",
+        status: "pending",
+        text: "批注",
+        timeline: "main",
+        time: "0",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      const files = projectFiles((texts) =>
+        texts.set("notes.json", stringifyDocument({ notes: [note, note] })),
+      );
+      const { question } = await skipping(window, folderOf(files));
+      expect(linesOf(question)).toContain("批注");
+      expect(linesOf(question)).toContain("ID 重复：n1");
+      await comesBackWhole(window);
+    });
+  });
+
+  describe("every document of a whole project", () => {
+    const fixture = loadFixture("v1");
+    const documents = [...fixture.keys()].filter(
+      (path) => path !== "animaquill.json" && documentSchema(path) !== undefined,
+    );
+
+    /** What opening a project and looking at it comes down to. */
+    function expectUsable(window: Window) {
+      const state = window.session.store?.getState();
+      if (!state) throw new Error("No project");
+      for (const [id, timeline] of Object.entries(state.timelines)) {
+        buildRenderPlan(state, id);
+        buildAudioPlan(state, id);
+        const model = buildModel(id, timeline, "30", 1);
+        for (const { clip } of model.boxes.values()) objectsOf(clip);
+      }
+    }
+
+    it.each(documents)("can go: %s", async (path) => {
+      const files = new Map(fixture).set(path, BROKEN);
+      const window = setup();
+      const { question, report } = await skipping(window, memorySource("示例", files));
+      expect(question.details?.[0]?.items).toHaveLength(1);
+      expect(report.lost).toHaveLength(1);
+      expectUsable(window);
+      expectUsable(await comesBackWhole(window));
+    });
+
+    it("can all go at once", async () => {
+      const files = new Map(fixture);
+      for (const path of documents) files.set(path, BROKEN);
+      const window = setup();
+      const { report } = await skipping(window, memorySource("示例", files));
+      expect(report.lost).toHaveLength(documents.length);
+      expect(report.name).toBe("原子是什么");
+      expectUsable(window);
+      expectUsable(await comesBackWhole(window));
+    });
+  });
+
+  describe("afterwards", () => {
+    it("still says what stayed out, and to keep the folder", async () => {
+      const window = setup();
+      const files = projectFiles((texts) => texts.set("notes.json", BROKEN));
+      const { report } = await skipping(window, folderOf(files));
+      const announcing = window.transfer.announceImport(report);
+      const notice = await window.readDialog();
+      await announcing;
+      expect(notice.message).toContain("原来的文件夹");
+      expect(notice.details?.[0]?.title).toContain("没有带入");
+      expect(notice.details?.[0]?.items.join()).toContain("批注");
+    });
+
+    it("never takes the place of the project it came from", async () => {
+      const window = await projectWithFiles();
+      await window.session.trySave();
+      const id = idOf(window);
+      const before = [...(window.library.updates.get(id) ?? [])];
+      const { target } = await exportTo(window);
+      target.files.set("notes.json", new Blob([BROKEN]));
+      const { report } = await skipping(window, target.asSource());
+      expect(report.copied).toBe(true);
+      expect(report.id).not.toBe(id);
+      expect(window.library.updates.get(id)).toEqual(before);
+    });
+  });
+});
+
 describe("a folder that cannot come in", () => {
   /** Whatever the folder is, what was there before stays. */
   async function withProject() {
@@ -1092,107 +1554,40 @@ describe("a folder that cannot come in", () => {
     expectNothingChanged(state);
   });
 
-  it("refuses a timeline that is broken, instead of a project without it", async () => {
-    const state = await withProject();
-    const files = projectFiles((texts) => texts.set("timelines/main/timeline.json", "{ oops"));
-    const notice = await refused(state.window, folderOf(files));
-    expect(notice.message).toContain("没有导入");
-    expect(notice.details?.[0]?.items.join()).toContain("timelines/main/timeline.json");
-    expectNothingChanged(state);
-  });
-
-  const note = (id: string, text: string) => ({
-    id,
-    status: "pending",
-    text,
-    timeline: "main",
-    time: "0",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  });
-
-  it("refuses two notes with one id, of which only one could stay", async () => {
+  it("refuses a manifest that does not fit the format, whatever else is fine", async () => {
     const state = await withProject();
     const files = projectFiles((texts) => {
-      const notes = [note("n1", "第一条"), note("n1", "第二条"), note("n2", "第三条")];
-      texts.set("notes.json", stringifyDocument({ notes }));
+      const manifest = JSON.parse(texts.get("animaquill.json") as string);
+      manifest.timelines = [];
+      texts.set("animaquill.json", JSON.stringify(manifest));
     });
     const notice = await refused(state.window, folderOf(files));
-    expect(notice.details?.[0]?.items.join()).toContain("notes.json");
-    expect(notice.details?.[0]?.items.join()).toContain("ID 重复：n1");
+    expect(notice.title).toBe("这个文件夹不能导入");
+    expect(notice.details?.[0]?.items.join()).toContain("animaquill.json");
     expectNothingChanged(state);
   });
 
-  it("refuses two markers or transitions with one id", async () => {
-    const state = await withProject();
-    const files = projectFiles((texts) => {
-      const timeline = JSON.parse(texts.get("timelines/main/timeline.json") as string);
-      timeline.markers = [
-        { id: "m", time: "1", name: "一" },
-        { id: "m", time: "2", name: "二" },
-      ];
-      const color = { kind: "color", color: "#ff0000" };
-      timeline.tracks = [
-        {
-          id: "v",
-          kind: "video",
-          clips: [
-            { id: "a", start: "0", duration: "1", source: color },
-            { id: "b", start: "1", duration: "1", source: color },
-          ],
-          transitions: [
-            { id: "tr", type: "fade", from: "a", to: "b", duration: "1" },
-            { id: "tr", type: "wipe", from: "a", to: "b", duration: "1" },
-          ],
-        },
-      ];
-      texts.set("timelines/main/timeline.json", JSON.stringify(timeline));
-    });
-    const notice = await refused(state.window, folderOf(files));
-    const items = notice.details?.[0]?.items.join("\n");
-    expect(items).toContain("markers.1.id");
-    expect(items).toContain("tracks.0.transitions.1.id");
-    expectNothingChanged(state);
-  });
-
-  it("refuses a name that a project could not keep, instead of losing it", async () => {
-    const state = await withProject();
-    const scene = stringifyDocument({ name: "标题", entry: "index.html", runtime: 1 });
-    const files = projectFiles((texts) => {
-      texts.set("scenes/__proto__/scene.json", scene);
-      texts.set("scenes/ok/scene.json", scene);
-    });
-    const notice = await refused(state.window, folderOf(files));
-    expect(notice.details?.[0]?.items.join()).toContain("scenes/__proto__/scene.json");
-    expectNothingChanged(state);
-  });
-
-  it("refuses a field that does not exist, and says where", async () => {
-    const state = await withProject();
-    const files = projectFiles((texts) =>
-      texts.set("assets.json", JSON.stringify({ assets: {}, extra: 1 })),
-    );
-    const notice = await refused(state.window, folderOf(files));
-    expect(notice.details?.[0]?.items.join()).toContain("assets.json");
-    expectNothingChanged(state);
-  });
-
-  it("refuses a path that leads out of the project", async () => {
-    const state = await withProject();
-    const notice = await refused(
-      state.window,
-      withAsset({ path: "../secret.mp4" }, [["../secret.mp4", "x"]]),
-    );
-    expect(notice.details?.[0]?.items.join()).toContain("assets.json");
-    expectNothingChanged(state);
-  });
-
-  it("refuses a document that is not text", async () => {
+  it("refuses a manifest that is no text, and lists what else is wrong", async () => {
     const state = await withProject();
     const files: Map<string, string | Uint8Array<ArrayBuffer>> = projectFiles();
-    files.set("notes.json", new Uint8Array([0xff, 0xfe, 0x00]));
+    files.set("animaquill.json", new Uint8Array([0xff, 0xfe, 0x00]));
+    files.set("notes.json", "{ oops");
     const notice = await refused(state.window, memorySource("文件夹", files));
-    expect(notice.details?.[0]?.items[0]).toContain("notes.json");
-    expect(notice.details?.[0]?.items[0]).toContain("UTF-8");
+    expect(notice.title).toBe("这个文件夹不能导入");
+    expect(linesOf(notice)).toContain("animaquill.json");
+    expectNothingChanged(state);
+  });
+
+  it("is refused for its version, however broken the rest is", async () => {
+    const state = await withProject();
+    const files = projectFiles((texts) => {
+      const manifest = JSON.parse(texts.get("animaquill.json") as string);
+      manifest.formatVersion = 2;
+      texts.set("animaquill.json", JSON.stringify(manifest));
+      texts.set("notes.json", "{ oops");
+    });
+    const notice = await refused(state.window, folderOf(files));
+    expect(notice.message).toContain("版本 2");
     expectNothingChanged(state);
   });
 
