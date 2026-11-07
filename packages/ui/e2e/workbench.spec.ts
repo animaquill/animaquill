@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, group, tab, test } from "./support.ts";
+import { content, expect, group, needsDevPage, tab, test } from "./support.ts";
 
 const LAYOUT_KEY = "animaquill.layout";
 
@@ -378,7 +378,8 @@ test("a panel from another version shows a message instead of breaking", async (
   await expect(tab(page, "preview")).toBeVisible();
 });
 
-test("a crash stays inside its tab and can be retried", async ({ page, problems }) => {
+test("a crash stays inside its tab and can be retried", async ({ page, problems, devPage }) => {
+  test.skip(!devPage, needsDevPage("the tab 崩溃测试"));
   await chooseFromView(page, "崩溃测试");
   await content(page, "dev.crash").getByRole("button", { name: "崩溃" }).click();
   await expect(page.getByText("这个选项卡出错了，其他选项卡不受影响。")).toBeVisible();
@@ -390,7 +391,8 @@ test("a crash stays inside its tab and can be retried", async ({ page, problems 
   problems.splice(0, problems.length, ...others);
 });
 
-test("a panel that must stay alive is not reloaded by dragging", async ({ page }) => {
+test("a panel that must stay alive is not reloaded by dragging", async ({ page, devPage }) => {
+  test.skip(!devPage, needsDevPage("the tab 内嵌页面"));
   await chooseFromView(page, "内嵌页面");
   const loads = content(page, "dev.frame").locator("p");
   await expect(loads).toHaveText("加载次数：1");

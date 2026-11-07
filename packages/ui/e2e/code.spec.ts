@@ -2,6 +2,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import {
+  code,
+  editorTab,
+  files,
+  LOADING,
+  lines,
+  openFile,
+  replaceAll,
+  row,
+  save,
+} from "./code-support.ts";
+import {
   canCapture,
   chooseFolder,
   colorAt,
@@ -17,47 +28,17 @@ import {
   test,
 } from "./scene-support.ts";
 
-const files = (page: Page) => content(page, "files");
-const code = (page: Page) => content(page, "code");
 /** Monaco's list of suggestions has no roles that say what is in it. */
 const suggestion = (page: Page, text: RegExp) =>
   code(page).locator(".suggest-widget .monaco-list-row").filter({ hasText: text }).first();
 const problems = (page: Page) => content(page, "problems");
-/** By the name in the row. The accessible name can have more, like saying that it is an entry. */
-const row = (page: Page, name: string) =>
-  files(page)
-    .getByRole("treeitem")
-    .filter({ has: page.getByText(name, { exact: true }) });
-const editorTab = (page: Page, name: string) => code(page).getByRole("tab", { name });
-const lines = (page: Page) => code(page).locator(".view-lines");
 const status = (page: Page) => page.getByRole("contentinfo");
-
-async function openFile(page: Page, name: string): Promise<void> {
-  await tab(page, "files").click();
-  await row(page, name).click();
-  await expect(lines(page)).toBeVisible(LOADING);
-  await expect(editorTab(page, name)).toHaveAttribute("aria-selected", "true");
-}
-
-/** Puts the cursor in the editor and replaces everything, the way people do. */
-async function replaceAll(page: Page, typed: string): Promise<void> {
-  await lines(page).click();
-  await page.keyboard.press("Control+a");
-  await page.keyboard.press("Delete");
-  // Typing brackets and quotes one by one gets closed for you, which is not what this is about.
-  await page.keyboard.insertText(typed);
-}
 
 /** Puts the cursor at the start of the text, wherever a click would end up. */
 async function goToStart(page: Page): Promise<void> {
   await lines(page).click();
   await page.keyboard.press("Control+Home");
 }
-
-const save = (page: Page) => page.keyboard.press("Control+s");
-
-/** The editor and its workers are large, which takes a while the first time in a busy browser. */
-const LOADING = { timeout: 30000 };
 
 const PAGE = `<!doctype html>
 <html>

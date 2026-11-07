@@ -66,8 +66,15 @@ export const test = base.extend<{
   onDisk: boolean;
   trying: boolean;
   quality: "auto" | "full";
+  devPage: boolean;
 }>({
   withProject: [true, { option: true }],
+  /**
+   * Whether this is the development page, which has things for tests that the site does not:
+   * `window.aqExecute`, `?soundLimit=` and `?sceneStage=plain`, see `dev/main.tsx`, and the version
+   * `dev`. `scripts/e2e-prod` turns this off, and what needs them skips itself, see `needsDevPage`.
+   */
+  devPage: [true, { option: true }],
   /** Off for what is about controls and the project, where every change is written right away. */
   trying: [true, { option: true }],
   /**
@@ -135,3 +142,11 @@ export const test = base.extend<{
     { auto: true },
   ],
 });
+
+/** Why a test does not run against the site: `test.skip(!devPage, needsDevPage("…"))`. */
+export const needsDevPage = (what: string) => `only the development page has ${what}`;
+
+/** Skips the tests around it against the site, for what only the development page has. */
+export function devPageOnly(what: string, when = true): void {
+  test.skip(({ devPage }) => when && !devPage, needsDevPage(what));
+}

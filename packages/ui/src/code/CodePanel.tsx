@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } fr
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { isDirty, type CodeDocument } from "./documents.ts";
+import { loadCodeEditor } from "./load.ts";
 import styles from "./CodePanel.module.css";
 
 const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -82,7 +83,7 @@ function EditorHost({ hidden, onStage }: EditorHostProps) {
     if (!element) return;
     const editor = new AbortController();
     onStage("loading");
-    import("./monaco.ts").then(
+    loadCodeEditor().then(
       ({ CodeView }) => {
         if (editor.signal.aborted) return;
         const view = new CodeView(element, code, problems, t);

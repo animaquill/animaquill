@@ -8,10 +8,19 @@ import {
   type SceneManifest,
 } from "@animaquill/schema";
 import type { Frame, Page } from "@playwright/test";
-import { compositor, content, expect, findCompositor, tab, test } from "./support.ts";
+import { compositor, content, devPageOnly, expect, findCompositor, tab, test } from "./support.ts";
 
 /** Whether the browser of this run can capture. The one that comes with Playwright cannot yet. */
 export const canCapture = Boolean(process.env["AQ_CHROME"]);
+
+/**
+ * Opens the editor so that scenes run, also in a browser that cannot capture: there they run as
+ * normal pages. Only the development page can be told to, so against the site what needs that only
+ * runs in a browser that can capture, which `needsPlainStage` says.
+ */
+export const openForScenes = (page: Page) => page.goto(canCapture ? "/" : "/?sceneStage=plain");
+export const needsPlainStage = () =>
+  devPageOnly("?sceneStage=plain, for scenes in a browser that cannot capture", !canCapture);
 
 /** A clip with a scene, on the first video track. */
 export interface SceneClip {

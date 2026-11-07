@@ -3,9 +3,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createProject, writeProject, type SoundManifest } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
+import { openFile, replaceAll, save } from "./code-support.ts";
 import { typeInto } from "./property-helpers.ts";
 import { clickFirstClip, importFolder, sceneFrames } from "./scene-support.ts";
-import { content, createProject as createInEditor, expect, tab, test } from "./support.ts";
+import {
+  content,
+  createProject as createInEditor,
+  expect,
+  needsDevPage,
+  tab,
+  test,
+} from "./support.ts";
 
 // Making a sound starts a page and a worker, which takes its time on a busy computer.
 test.describe.configure({ timeout: 90_000 });
@@ -237,14 +245,31 @@ async function isReady(page: Page, name: string) {
   expect(await label(), await toldOf(page)).toMatch(ready);
 }
 
-const execute = (page: Page, type: string, params: object) =>
-  page.evaluate(
-    ([kind, values]) => {
-      const run = (window as unknown as { aqExecute: (call: object) => { ok: boolean } }).aqExecute;
-      return run({ type: kind, params: values }).ok;
-    },
-    [type, params] as const,
-  );
+/** Changes the code of a sound in the code editor, the way people do. */
+async function writeCode(page: Page, text: string): Promise<void> {
+  await openFile(page, "sound.js");
+  await replaceAll(page, text);
+  // The editor closes brackets as they come, after the cursor, which people would not type.
+  await page.keyboard.press("Control+Shift+End");
+  await page.keyboard.press("Delete");
+  await save(page);
+}
+
+/** Presses at one point and moves to another with real mouse events, then lets go. */
+async function drag(page: Page, from: [number, number], to: [number, number]): Promise<void> {
+  await page.mouse.move(...from);
+  await page.mouse.down();
+  await page.mouse.move(...to, { steps: 8 });
+  await page.mouse.up();
+}
+
+/** Waits for what the timeline says about a clip to change, and gives where it is now. */
+async function changed(page: Page, before: string | null) {
+  await expect(clips(page).first()).not.toHaveAttribute("aria-label", before ?? "");
+  const box = await clips(page).first().boundingBox();
+  if (!box) throw new Error("No clip");
+  return { ...box, label: await clips(page).first().getAttribute("aria-label") };
+}
 
 /** Not every message is about what is being tested. These are what a blocked request looks like. */
 const withoutBlocked = (problems: string[]) => {
@@ -419,8 +444,7 @@ test.describe("a sound from a folder", () => {
     await importFolder(page, soundFolder({ a: SINE }, [{}]));
     await isReady(page, "声音 a");
     const runs = countRuns(page);
-    const text = SINE.replace("0.5 *", "0.25 *");
-    expect(await execute(page, "file.write", { path: "sounds/a/sound.js", text })).toBe(true);
+    await writeCode(page, SINE.replace("0.5 *", "0.25 *"));
     await waitForStored(page, 2);
     expect(runs()).toBe(1);
     const [first, second] = await storedSounds(page);
@@ -431,11 +455,17 @@ test.describe("a sound from a folder", () => {
     await importFolder(page, soundFolder({ a: SINE }, [{}]));
     await isReady(page, "声音 a");
     const runs = countRuns(page);
-    const changes = { start: "3", duration: "1", offset: "0.5" };
-    const update = { timeline: "main", clip: "clip0", changes };
-    expect(await execute(page, "clip.update", update)).toBe(true);
-    const split = { timeline: "main", clip: "clip0", at: "3.5" };
-    expect(await execute(page, "clip.split", split)).toBe(true);
+    // Trimmed at the start, moved and cut, the way people do it.
+    let clip = await changed(page, null);
+    const middle = clip.y + clip.height / 2;
+    await drag(page, [clip.x + 2, middle], [clip.x + clip.width / 3, middle]);
+    clip = await changed(page, clip.label);
+    await drag(page, [clip.x + clip.width / 2, middle], [clip.x + clip.width * 2, middle]);
+    clip = await changed(page, clip.label);
+    await timeline(page).getByRole("group", { name: "时间轴" }).focus();
+    await page.keyboard.press("c");
+    await page.mouse.click(clip.x + clip.width / 2, middle);
+    await page.keyboard.press("v");
     await expect(clips(page)).toHaveCount(2);
     await page.waitForTimeout(1000);
     expect(runs()).toBe(0);
@@ -475,11 +505,15 @@ test.describe("a sound that is not there yet", () => {
 test.describe("code that means harm", () => {
   test.use({ withProject: false });
 
-  /** Time is up early here. Waiting a whole minute proves no more. */
+  /**
+   * Time is up early here. Waiting a whole minute proves no more, and only the development page can
+   * be told to: what needs that does not run against the site.
+   */
   const importQuickly = async (page: Page, folder: string) => {
     await page.goto("/?soundLimit=1500");
     await importFolder(page, folder);
   };
+  const SOUND_LIMIT = "?soundLimit=, which makes time run out early";
 
   const failed = (page: Page, index = 0) =>
     expect(clips(page).nth(index)).toHaveAttribute("aria-label", /生成失败/, { timeout: 20_000 });
@@ -531,7 +565,8 @@ test.describe("code that means harm", () => {
   ];
 
   for (const [name, code, says] of CASES) {
-    test(`does nothing to the editor: ${name}`, async ({ page }) => {
+    test(`does nothing to the editor: ${name}`, async ({ page, devPage }) => {
+      test.skip(!devPage && says.source === "算了太久", needsDevPage(SOUND_LIMIT));
       const good = `aq.sound(({ frames }) => new Float32Array(frames).fill(0.5));`;
       const folder = soundFolder({ bad: code, good }, [{}, { sound: "good", start: "5" }]);
       await importQuickly(page, folder);
@@ -561,14 +596,16 @@ test.describe("code that means harm", () => {
     withoutBlocked(problems);
   });
 
-  test("gets another chance when the code changes", async ({ page }) => {
+  test("gets another chance when the code changes", async ({ page, devPage }) => {
+    test.skip(!devPage, needsDevPage(SOUND_LIMIT));
     await importQuickly(page, soundFolder({ a: "for (;;) {}" }, [{}]));
     await failed(page);
-    expect(await execute(page, "file.write", { path: "sounds/a/sound.js", text: SINE })).toBe(true);
+    await writeCode(page, SINE);
     await isReady(page, "声音 a");
   });
 
-  test("does not cost the sites scenes run on", async ({ page }) => {
+  test("does not cost the sites scenes run on", async ({ page, devPage }) => {
+    test.skip(!devPage, needsDevPage(SOUND_LIMIT));
     const loop = "for (;;) {}";
     const sounds = Object.fromEntries(
       Array.from({ length: 9 }, (_, index) => [`s${index}`, `${loop} // ${index}`]),

@@ -11,7 +11,9 @@ import {
   expect,
   goTo,
   importFolder,
+  needsPlainStage,
   openAnyway,
+  openForScenes,
   openScene,
   previewButton,
   projectFolder,
@@ -473,6 +475,7 @@ test.describe("a scene from the start", () => {
 
 test.describe("the size of a box that is being tried", () => {
   test.use({ withProject: false });
+  needsPlainStage();
 
   const WIDTH = "大小 宽";
   const trial = (page: Page) => page.getByRole("group", { name: "试改", exact: true });
@@ -480,7 +483,7 @@ test.describe("the size of a box that is being tried", () => {
 
   /** The scene that runs, and the clip of it ready for its properties to be changed. */
   async function open(page: Page): Promise<Frame> {
-    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await openForScenes(page);
     await openScene(page, SLIDE);
     await expect.poll(() => widthOf(sceneFrames(page)[0])).toBe(1920);
     await select(page);
@@ -568,9 +571,10 @@ const isGreen = async (page: Page) => distance(await colorAt(page, 960, 540), [0
 
 test.describe("a clip that asks for a moment no scene gets to", () => {
   test.use({ withProject: false });
+  needsPlainStage();
 
   test("stops with a reason, and the rest of the picture goes on", async ({ page, problems }) => {
-    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await openForScenes(page);
     const green = `<!doctype html><style>body { background: #0f0 }</style>`;
     const folder = projectFolder({ good: { "index.html": green }, bad: { "index.html": green } }, [
       { scene: "good" },
@@ -590,9 +594,10 @@ test.describe("a clip that asks for a moment no scene gets to", () => {
 
 test.describe("a scene the editor did not answer for at first", () => {
   test.use({ withProject: false });
+  needsPlainStage();
 
   test("still comes when it is back after undo and redo", async ({ page, problems }) => {
-    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await openForScenes(page);
     await createProject(page);
     const newScene = content(page, "timeline").getByRole("button", { name: "新建场景" });
     await expect(newScene).toBeVisible();
@@ -620,9 +625,10 @@ test.describe("a scene the editor did not answer for at first", () => {
 
 test.describe("code in a project that comes in", () => {
   test.use({ withProject: false });
+  needsPlainStage();
 
   test("is announced before any of it runs, and only then", async ({ page }) => {
-    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await openForScenes(page);
     await chooseFolder(page, projectFolder({ a: { "index.html": SLIDE } }, [{}]));
     const notice = page.getByRole("dialog");
     await expect(notice.getByRole("heading", { name: "这个项目含有脚本" })).toBeVisible();

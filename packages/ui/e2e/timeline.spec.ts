@@ -1262,12 +1262,14 @@ test.describe("the status bar", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
-  test("leaves the version to the title bar and the about box", async ({ page }) => {
-    await expect(bar(page).getByText("dev")).toHaveCount(0);
-    await expect(page.getByRole("banner").getByText("dev")).toBeVisible();
+  test("leaves the version to the title bar and the about box", async ({ page, devPage }) => {
+    // The site has a version of its own, which only the release knows.
+    const version = devPage ? "dev" : String.raw`\d+\.\d+\.\d+`;
+    await expect(bar(page).getByText(new RegExp(version))).toHaveCount(0);
+    await expect(page.getByRole("banner").getByText(new RegExp(version))).toBeVisible();
     await page.getByRole("button", { name: "帮助" }).click();
     await page.getByRole("menuitem", { name: "关于 AnimaQuill" }).click();
-    await expect(page.getByRole("dialog")).toContainText("版本 dev");
+    await expect(page.getByRole("dialog")).toContainText(new RegExp(`版本 ${version}`));
     await page.getByRole("dialog").getByRole("button", { name: "关闭" }).click();
   });
 });

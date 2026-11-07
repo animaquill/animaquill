@@ -1,12 +1,13 @@
 import type { Frame, Page } from "@playwright/test";
 import {
-  canCapture,
   clickFirstClip,
   compositor,
   content,
   expect,
   findCompositor,
   importFolder,
+  needsPlainStage,
+  openForScenes,
   projectFolder,
   sceneFrames,
   test,
@@ -15,13 +16,14 @@ import {
 // A trace waits for every frame after every step, so with a frame that stands still it would hold
 // the test up along with it. What runs here does not care for traces anyway.
 test.use({ withProject: false, trace: "off" });
+needsPlainStage();
 
 /**
  * A scene written to do harm, in the real editor with the real compositor. In a browser that cannot
  * capture scenes run as normal pages, which is all this needs: what they can do is the same.
  */
 async function start(page: Page): Promise<void> {
-  await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+  await openForScenes(page);
 }
 
 /** Until a scene ran, there is nothing to ask it. */
@@ -342,10 +344,23 @@ test.describe("a scene that hangs", () => {
       })
       .catch(() => {});
 
+  /**
+   * Whether a scene is running, which the editor shows by showing its frame. A page that loaded is
+   * not there yet: one that hangs on the way in gets much longer before it counts as hung.
+   */
+  const running = (frame: Frame | undefined) =>
+    frame
+      ?.frameElement()
+      .then((element) =>
+        element.evaluate((it) => getComputedStyle(it as Element).visibility !== "hidden"),
+      )
+      .catch(() => false) ?? false;
+
   test("gets started again, and says so while that goes on", async ({ page, problems }) => {
     const victim = await openNextToVictim(page, `<!doctype html><p>a</p>`);
     await expect.poll(() => sceneFrames(page).length).toBe(2);
     const bad = () => sceneFrames(page).find((frame) => frame !== victim);
+    await expect.poll(() => running(bad())).toBe(true);
     await rememberNotices(page);
     const hung = bad();
     hang(hung);
@@ -363,24 +378,15 @@ test.describe("a scene that hangs", () => {
     await expect.poll(() => sceneFrames(page).length).toBe(2);
     const bad = () => sceneFrames(page).find((frame) => frame !== victim);
     for (let round = 0; round < 3; round += 1) {
-      await expect
-        .poll(
-          () =>
-            bad()
-              ?.evaluate(() => document.readyState)
-              .catch(() => "gone"),
-          {
-            timeout: 15000,
-          },
-        )
-        .toBe("complete");
+      await expect.poll(() => running(bad()), { timeout: 15000 }).toBe(true);
       const hung = bad();
       hang(hung);
       if (round < 2) await expect.poll(() => bad() !== hung, { timeout: 15000 }).toBe(true);
     }
-    // It can have hung on the way in, which gets more time.
     await expect(notice(page, "卡死了")).toBeVisible({ timeout: 30000 });
-    await expect(sceneFrames(page)).toEqual([victim]);
+    // The frame is gone before people hear of it, but its page hangs, and it takes a moment until
+    // the browser says so.
+    await expect.poll(() => sceneFrames(page)).toEqual([victim]);
     await expectAlive(victim);
     await expectEditorWorks(page);
     await content(page, "preview").getByRole("button", { name: "重试" }).click();
@@ -396,7 +402,8 @@ test.describe("a scene that hangs", () => {
     await importFolder(page, projectFolder({ bad: { "index.html": html } }, [{}]));
     await expectEditorWorks(page);
     await expect(notice(page, "卡死了")).toBeVisible({ timeout: 100000 });
-    await expect(sceneFrames(page)).toHaveLength(0);
+    // See above: a frame that hangs takes a moment to be gone for the browser.
+    await expect.poll(() => sceneFrames(page).length).toBe(0);
     await content(page, "preview").getByRole("button", { name: "重试" }).click();
     await expect(notice(page, "卡死了")).toHaveCount(0);
     await expect.poll(() => sceneFrames(page).length).toBe(1);

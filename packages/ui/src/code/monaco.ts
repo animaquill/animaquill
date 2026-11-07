@@ -1,6 +1,4 @@
 // oxlint-disable import/default, import/no-named-as-default -- `?worker` is something Vite makes
-// The messages have to be there before the editor reads them, so this goes first.
-import "monaco-editor/nls/lang/zh-cn.js";
 import * as monaco from "monaco-editor/editor/editor.api.js";
 // All of the features of the editor that are not languages, such as finding and folding.
 import "monaco-editor/internal/common/workers.js";
@@ -20,6 +18,7 @@ import type { CodeDocument, CodeDocuments, CodeSnapshot } from "./documents.ts";
 
 /**
  * This file is the only one that knows Monaco, and it comes with the code panel, not with the page.
+ * It comes through `load.ts`, which brings the messages of the editor first.
  * Everything that matters about open files is in `CodeDocuments`: this shows them, and says what
  * people typed.
  */
