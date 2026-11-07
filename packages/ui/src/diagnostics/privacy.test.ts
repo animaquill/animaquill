@@ -6,21 +6,38 @@ const SANDBOX = "https://sandbox.example";
 
 describe("messages", () => {
   it("keeps what the browser says about the code", () => {
-    expect(cleanMessage("Cannot read properties of undefined")).toBe(
+    for (const message of [
       "Cannot read properties of undefined",
-    );
-    expect(cleanMessage("e.at is not a function")).toBe("e.at is not a function");
-    expect(cleanMessage("Maximum call stack size exceeded")).toBe(
+      "e.at is not a function",
       "Maximum call stack size exceeded",
-    );
+      "Cannot convert a BigInt value to a number",
+      "Failed to execute postMessage on Window",
+      "n is not defined",
+      "Assignment to constant variable.",
+    ]) {
+      expect(cleanMessage(message)).toBe(message);
+    }
   });
 
-  it("loses names it knows, even without quotes around them", () => {
-    const message = cleanMessage("Project SecretLaunch has no clip TeaserCut", [
-      "SecretLaunch",
-      "TeaserCut",
-    ]);
-    expect(message).toBe("Project <name> has no clip <name>");
+  it("loses words that are not about code, which can be values people typed without quotes", () => {
+    expect(cleanMessage("Cannot use 'in' operator to search for 'kind' in Q3 revenue up 40%")).toBe(
+      "Cannot use <…> operator to search for <…> in …%",
+    );
+    expect(cleanMessage("Cannot convert Secret to a BigInt")).toBe("Cannot convert … to a BigInt");
+    expect(cleanMessage("Not a time: meet Acme at noon")).toBe("Not a time: … at …");
+    expect(cleanMessage("Invalid array length 123456")).toBe("Invalid array length …");
+  });
+
+  it("loses names it knows, whatever their case and also without their extension", () => {
+    const secrets = new Set(["my_scene", "intro_v2.html", "intro_v2", "fooBar", "ab"]);
+    expect(cleanMessage("MY_SCENE is not defined", secrets)).toBe("<name> is not defined");
+    expect(cleanMessage("intro_v2 is not a function", secrets)).toBe("<name> is not a function");
+    expect(cleanMessage("FooBar.x is not a function", secrets)).toBe("<name>.x is not a function");
+    expect(cleanMessage("x_ is not defined", new Set(["x_"]))).toBe("<name> is not defined");
+    // A short name that is no word of code goes like any other word.
+    expect(cleanMessage("ab is not defined", secrets)).toBe("… is not defined");
+    // Names inside other names stay, or code would lose its letters.
+    expect(cleanMessage("t.fooBarBaz is not defined", secrets)).toBe("t.fooBarBaz is not defined");
   });
 
   it("loses whatever is quoted, which is where names and values end up", () => {
@@ -43,13 +60,23 @@ describe("messages", () => {
 
   it("loses text in other languages, where the names of a Chinese project are", () => {
     expect(cleanMessage("没有这个命令：秘密发布会")).toBe("…");
-    expect(cleanMessage("Clip 片头动画 is locked")).toBe("Clip … is locked");
+    expect(cleanMessage("Clip 片头动画 is locked")).toBe("… is locked");
   });
 
   it("is short, and takes anything", () => {
-    expect(cleanMessage("x".repeat(1000))).toHaveLength(200);
-    expect(cleanMessage(42)).toBe("42");
+    expect(cleanMessage("x.y ".repeat(1000))).toHaveLength(200);
+    expect(cleanMessage(42)).toBe("…");
     expect(cleanMessage(undefined)).toBe("undefined");
+  });
+
+  it("costs little with many names, most of which could not be left anyway", () => {
+    const secrets = new Set(
+      Array.from({ length: 20_000 }, (_, index) => `素材 ${index} Clip number ${index}`),
+    );
+    const started = performance.now();
+    for (let index = 0; index < 100; index++)
+      cleanMessage(`e.at is not a function ${index}`, secrets);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
 

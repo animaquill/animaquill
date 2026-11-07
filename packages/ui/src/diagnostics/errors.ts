@@ -109,6 +109,15 @@ const MAX_KEPT = 50;
 const NAME = /^[\w.:-]{1,60}$/;
 /** Nothing is wrong: the browser only says that it put off some layout to the next frame. */
 const HARMLESS = [/^ResizeObserver loop/];
+/**
+ * More errors than this in a second are a storm: the rest are only counted, so that going wrong
+ * every frame does not also make the editor slow.
+ */
+const MAX_PER_SECOND = 20;
+/** A count that goes up every frame needs no new picture every frame. */
+const COUNTS_EVERY_MS = 250;
+/** Messages of errors without a place, already cleaned, for when they come again. */
+const MAX_CLEANED = 100;
 
 const EMPTY: ErrorsSnapshot = { errors: [], asking: undefined };
 
@@ -177,6 +186,12 @@ export class ErrorReports {
   #asked = 0;
   #nextId = 1;
   #catching = false;
+  #second = 0;
+  #inSecond = 0;
+  /** Counts went up since the last picture, which is made when somebody looks or soon after. */
+  #stale = false;
+  #countsSoon = false;
+  readonly #cleaned = new Map<string, string>();
 
   constructor(options: ErrorReportsOptions) {
     this.#options = options;
@@ -184,7 +199,10 @@ export class ErrorReports {
   }
 
   subscribe = this.#emitter.subscribe;
-  getSnapshot = (): ErrorsSnapshot => this.#snapshot;
+  getSnapshot = (): ErrorsSnapshot => {
+    if (this.#stale) this.#refresh();
+    return this.#snapshot;
+  };
 
   get canSend(): boolean {
     return this.#options.send !== undefined;
@@ -208,22 +226,43 @@ export class ErrorReports {
       if (this.#seen.has(error)) return;
       this.#seen.add(error);
     }
-    const { recorder, origins, secrets } = this.#options;
+    const { recorder, origins } = this.#options;
     const described = describe(error);
+    const raw = typeof described.message === "string" ? described.message : "";
+    // Before anything that costs: these come in storms of their own.
+    if (HARMLESS.some((pattern) => pattern.test(raw))) return;
+    const now = performance.now();
+    if (now - this.#second > 1000) {
+      this.#second = now;
+      this.#inSecond = 0;
+    }
+    this.#inSecond += 1;
+    if (this.#inSecond > MAX_PER_SECOND) {
+      recorder.trail.add("error.storm", {}, true);
+      return;
+    }
     const name = cleanName(described.name);
-    const cleaned = cleanMessage(described.message, secrets());
-    if (HARMLESS.some((pattern) => pattern.test(cleaned))) return;
     const { frames, dropped } = cleanStack(described.stack, origins());
+    // With a place, the message does not count, so the same error again costs next to nothing.
+    const known =
+      frames.length > 0
+        ? this.#errors.find(
+            (caught) => caught.fingerprint === fingerprintOf(source, name, "", frames),
+          )
+        : undefined;
     // None of it is in the code of the editor, so what it says could come from anywhere.
-    const message = frames.length === 0 && dropped > 0 ? "" : cleaned;
-    const fingerprint = fingerprintOf(source, name, message, frames);
+    const message = known
+      ? known.message
+      : frames.length === 0 && dropped > 0
+        ? ""
+        : this.#clean(described.message);
+    const fingerprint = known?.fingerprint ?? fingerprintOf(source, name, message, frames);
     // An error that comes every frame is one line, or it would push out what led to it.
     recorder.trail.add("error", { source, name }, true);
     recorder.note("error", { source, name, message });
-
-    const known = this.#errors.find((caught) => caught.fingerprint === fingerprint);
-    if (known) {
-      this.#replace(known, { count: known.count + 1 });
+    const again = known ?? this.#errors.find((caught) => caught.fingerprint === fingerprint);
+    if (again) {
+      this.#count(again);
       return;
     }
     const at = this.#now();
@@ -271,6 +310,36 @@ export class ErrorReports {
     this.#publish();
   }
 
+  /** Cleaning a message goes through every name in the project, so each is cleaned once. */
+  #clean(message: unknown): string {
+    const text = typeof message === "string" ? message : String(message);
+    let cleaned = this.#cleaned.get(text);
+    if (cleaned === undefined) {
+      cleaned = cleanMessage(text, this.#options.secrets());
+      if (this.#cleaned.size >= MAX_CLEANED) this.#cleaned.clear();
+      this.#cleaned.set(text, cleaned);
+    }
+    return cleaned;
+  }
+
+  /** One more of an error. Whoever watches hears of it a little later, with all that came since. */
+  #count(caught: CaughtError): void {
+    const count = caught.count + 1;
+    const next = {
+      ...caught,
+      count,
+      report: { ...caught.report, error: { ...caught.report.error, count } },
+    };
+    this.#errors = this.#errors.with(this.#errors.indexOf(caught), next);
+    this.#stale = true;
+    if (this.#countsSoon) return;
+    this.#countsSoon = true;
+    setTimeout(() => {
+      this.#countsSoon = false;
+      if (this.#stale) this.#publish();
+    }, COUNTS_EVERY_MS);
+  }
+
   /** Facts about the device are nice to have, and no reason to lose the error. */
   #device(): Readonly<Record<string, Value>> {
     try {
@@ -295,9 +364,14 @@ export class ErrorReports {
     return next;
   }
 
-  #publish(): void {
+  #refresh(): void {
     const errors = this.#errors;
     this.#snapshot = { errors, asking: errors.find(({ status }) => status === "asking") };
+    this.#stale = false;
+  }
+
+  #publish(): void {
+    this.#refresh();
     this.#emitter.emit();
   }
 

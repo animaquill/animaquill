@@ -8,6 +8,7 @@ function setup({
   send = vi.fn(async (_report: ErrorReport) => "20261107-1"),
   secrets = [] as string[],
   sends = true,
+  names = vi.fn(() => secrets),
 } = {}) {
   const recorder = new DiagnosticsRecorder(
     "0.3.6",
@@ -19,11 +20,11 @@ function setup({
     recorder,
     ...(sends && { send }),
     origins: () => [SITE],
-    secrets: () => secrets,
+    secrets: names,
     device: () => ({ cores: 8 }),
     now: () => 5000,
   });
-  return { recorder, reports, send };
+  return { recorder, reports, send, names };
 }
 
 /** An error the way the editor would throw it, thrown from a given place in its code. */
@@ -161,6 +162,44 @@ describe("taking in errors", () => {
   });
 });
 
+describe("storms", () => {
+  it("throw away what is harmless before anything that costs", () => {
+    const { reports, names } = setup();
+    for (let index = 0; index < 100; index++) {
+      reports.capture("window", { message: "ResizeObserver loop limit exceeded" });
+    }
+    expect(names).not.toHaveBeenCalled();
+    expect(reports.getSnapshot().errors).toEqual([]);
+  });
+
+  it("clean an error once, and only count it after that", () => {
+    const { reports, names } = setup();
+    const listener = vi.fn();
+    reports.subscribe(listener);
+    for (let index = 0; index < 15; index++) reports.capture("window", thrown("again"));
+    expect(names).toHaveBeenCalledOnce();
+    expect(reports.getSnapshot().errors[0]?.count).toBe(15);
+    expect(reports.getSnapshot().errors[0]?.report.error.count).toBe(15);
+    // The first one, and the counts together a moment later.
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("clean an error without a place once as well", () => {
+    const { reports, names } = setup();
+    for (let index = 0; index < 10; index++) reports.capture("promise", "same words");
+    expect(names).toHaveBeenCalledOnce();
+    expect(reports.getSnapshot().errors[0]?.count).toBe(10);
+  });
+
+  it("are only counted in the black box beyond a few a second", () => {
+    const { recorder, reports } = setup();
+    for (let column = 1; column <= 200; column++) reports.capture("window", thrown("many", column));
+    expect(reports.getSnapshot().errors.length).toBeLessThanOrEqual(20);
+    const storm = recorder.trail.entries().find(({ kind }) => kind === "error.storm");
+    expect(storm?.times).toBe(180);
+  });
+});
+
 describe("what leaves", () => {
   it("has nothing of the project: no names, paths or code", () => {
     const secrets = ["SecretLaunch", "TeaserCut", "scenes/launch/intro.html", "intro"];
@@ -191,7 +230,7 @@ describe("what leaves", () => {
       expect(text).not.toContain(secret);
     }
     expect(reports.getSnapshot().errors[0]?.report.error).toMatchObject({
-      message: "<name>: clip <name> in <name> failed at <…> …",
+      message: "<name>: … <name> in <name> failed at <…> …",
       commands: ["clip.move"],
       droppedFrames: 1,
     });
