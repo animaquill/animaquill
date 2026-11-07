@@ -3,6 +3,7 @@ import {
   Id,
   RelativePath,
   SceneManifest,
+  SoundManifest,
   newId,
   type SceneManifest as Manifest,
 } from "@animaquill/schema";
@@ -70,8 +71,19 @@ function assertSize(path: string, text: string): void {
   }
 }
 
+/** Where the folder of a scene or sound keeps what it is, which is no file anybody writes. */
+function manifestOf(path: string): string | undefined {
+  const owner = ownerOf(path);
+  if (owner.kind === "code") return undefined;
+  return owner.kind === "scene" ? `scenes/${owner.id}/scene.json` : `sounds/${owner.id}/sound.json`;
+}
+
 /** A folder and a file of one name cannot live next to each other once the project is a folder. */
 function assertFits(state: ProjectState, path: string): void {
+  const manifest = manifestOf(path);
+  if (manifest !== undefined && (path === manifest || path.startsWith(`${manifest}/`))) {
+    fail("path-taken", `这里是场景或声音自己的说明文件：${manifest}`);
+  }
   const parts = path.split("/");
   for (let length = 1; length < parts.length; length += 1) {
     const folder = parts.slice(0, length).join("/");
@@ -205,15 +217,29 @@ export function renameFile(draft: Draft, { from, to }: z.output<typeof FileRenam
   if (entryOf(state.files, to) !== undefined) fail("path-taken", `这里已经有文件了：${to}`);
   assertSourceEditable(state, from);
   const owner = startsWith(state, from);
+  const source = ownerOf(from);
   const target = ownerOf(to);
-  const stays = target.kind === "scene" && target.id === owner;
+  // An entry stays the entry of what it starts, a scene or a sound, so it stays in that folder.
+  const stays = target.kind === source.kind && target.kind !== "code" && target.id === owner;
   if (owner !== undefined && !stays) fail("entry-in-use", `入口文件不能移出它的文件夹：${from}`);
   draft.delete(["files", from]);
   checkWrite(draft.state, to, text);
   draft.setText(["files", to], text);
-  if (owner !== undefined && target.kind === "scene") {
-    updateScene(draft, { scene: owner, changes: { entry: target.rest.join("/") } });
+  if (owner === undefined || target.kind === "code") return;
+  const entry = target.rest.join("/");
+  if (target.kind === "scene") updateScene(draft, { scene: owner, changes: { entry } });
+  else renameSoundEntry(draft, owner, entry);
+}
+
+/** There are no commands for sounds yet, but the entry of one has to follow its file. */
+function renameSoundEntry(draft: Draft, id: string, entry: string): void {
+  const current = entryOf(draft.state.sounds, id) ?? fail("not-found", `没有这个声音：${id}`);
+  const result = SoundManifest.safeParse({ ...current, entry });
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    return fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
   }
+  draft.replace(["sounds", id], result.data);
 }
 
 function assertSceneUnused(state: ProjectState, scene: string): void {

@@ -35,6 +35,15 @@ describe("origins where something hung", () => {
 });
 
 describe("a compositor that hangs", () => {
+  it("that never came up is not started again, because that would not come up either", () => {
+    const { status, restarted } = setup();
+    status.hung("hello");
+    expect(status.getSnapshot()).toMatchObject({ compositor: "unreachable", generation: 0 });
+    expect(restarted).not.toHaveBeenCalled();
+    status.restart();
+    expect(status.getSnapshot()).toMatchObject({ compositor: "running", generation: 1 });
+  });
+
   it("gets a new frame, and people hear about it", () => {
     const { status, restarted } = setup();
     status.hung();

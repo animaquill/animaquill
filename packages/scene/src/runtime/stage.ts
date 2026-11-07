@@ -1,7 +1,16 @@
 import { pixelSizeOf, type SceneLoad, type SceneView } from "../protocol.ts";
 
-/** The canvas that the scene gets captured from. */
-const STAGE_ID = "aq-stage";
+/**
+ * What holds the canvas that the scene gets captured from. The canvas is in a closed shadow root:
+ * the page finds its own canvases and nothing else, and its code cannot get at the size of the
+ * picture. The body is slotted in, which is enough for the browser to draw it.
+ */
+const STAGE_TAG = "aq-stage";
+
+/** What the canvas needs, where nothing of the page reaches. */
+const SHADOW_STYLE =
+  `canvas{position:fixed;left:0;top:0;display:block;width:100vw;height:100vh;background:inherit}` +
+  `slot{background:inherit}`;
 
 /**
  * What every page starts with. It comes before anything of the project, so whatever the project
@@ -14,10 +23,11 @@ export function stageStyle({ width, height, pixelRatio }: SceneView, stage: Scen
   return (
     variables +
     `html{overflow:hidden}` +
-    `#${STAGE_ID}{position:fixed;left:0;top:0;display:block;width:100vw;height:100vh;background:inherit}` +
+    `${STAGE_TAG}{background:inherit}` +
     `body{position:relative;width:100%;height:100%;margin:0;overflow:hidden;background:inherit}` +
-    // These get drawn by themselves, see `startCapture`, and should not show twice.
-    `canvas:not(#${STAGE_ID}){visibility:hidden!important}`
+    // These get drawn by themselves, see `startCapture`, and should not show twice. The stage is
+    // out of reach of this.
+    `canvas{visibility:hidden!important}`
   );
 }
 
@@ -42,14 +52,19 @@ export interface Stage {
  */
 export function enterStage(view: SceneView): Stage {
   const body = document.body;
+  const host = document.createElement(STAGE_TAG);
+  const shadow = host.attachShadow({ mode: "closed" });
+  const style = document.createElement("style");
+  style.textContent = SHADOW_STYLE;
   const canvas = document.createElement("canvas");
   const { width, height } = pixelSizeOf(view);
-  canvas.id = STAGE_ID;
   canvas.setAttribute("content", "drawable");
   canvas.width = width;
   canvas.height = height;
-  document.documentElement.replaceChild(canvas, body);
-  canvas.append(body);
+  canvas.append(document.createElement("slot"));
+  shadow.append(style, canvas);
+  document.documentElement.replaceChild(host, body);
+  host.append(body);
   body.setAttribute("drawable", "");
   // The browser only takes a child of <html> for the body.
   Object.defineProperty(Document.prototype, "body", { configurable: true, get: () => body });

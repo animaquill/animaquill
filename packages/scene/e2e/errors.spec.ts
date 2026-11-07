@@ -423,6 +423,19 @@ test.describe("an origin where something hung", () => {
     expect(await originsAfterThat(page)).toContain(origin);
   });
 
+  test("is not given up on when the page did not get there, which is the network", async ({
+    page,
+  }) => {
+    const [first] = SCENES;
+    await page.route(`${first}/**`, (route) => route.abort());
+    const scene = await pageScene(page, FINE, { watchdog: { hello: 2500 } });
+    expect((await scene.info()).failures).toMatchObject([{ reason: "silent", phase: "hello" }]);
+    expect((await scene.info()).origin).not.toBe(first);
+    await scene.call("close");
+    await page.unroute(`${first}/**`);
+    expect(await originsAfterThat(page)).toContain(first);
+  });
+
   test("is not given up on for a scene that could say what is wrong", async ({ page }) => {
     for (let round = 0; round <= SCENES.length; round += 1) {
       const scene = await pageScene(page, FINE, { entry: "scenes/test/gone.html" });

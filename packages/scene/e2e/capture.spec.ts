@@ -101,6 +101,27 @@ test.describe("capture", () => {
       return (await scene.info()).pictures.at(-1)?.middle;
     };
 
+    test("is the one its code finds, and sizing it changes nothing about the picture", async ({
+      page,
+    }) => {
+      const scene = await pageScene(
+        page,
+        `<!doctype html><style>body { background: #00f }</style>
+        <canvas style="${FULL}"></canvas><script>
+          const mine = document.querySelector("canvas");
+          mine.width = 64;
+          mine.height = 32;
+          const painter = mine.getContext("2d");
+          painter.fillStyle = "#f00";
+          painter.fillRect(0, 0, 64, 32);
+        </script>`,
+      );
+      expect(await middleOf(scene)).toEqual([255, 0, 0, 255]);
+      const { pictures, failures } = await scene.info();
+      expect(pictures.at(-1)).toMatchObject({ width: 1280, height: 720 });
+      expect(failures).toEqual([]);
+    });
+
     test("shows a 2D canvas where it is", async ({ page }) => {
       const scene = await pageScene(
         page,

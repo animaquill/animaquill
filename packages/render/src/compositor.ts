@@ -296,9 +296,15 @@ async function drawFrame(seconds: number): Promise<void> {
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
   const askedAt = performance.now();
-  const pictures = await Promise.all(showing.map((layer) => pictureOf(layer, seconds)));
+  // A picture of a scene is held until it is drawn, so one that fails must not keep the others.
+  const results = await Promise.allSettled(showing.map((layer) => pictureOf(layer, seconds)));
+  const pictures = results.map((result) =>
+    result.status === "fulfilled" ? result.value : undefined,
+  );
   decodeMsInFrame = performance.now() - askedAt;
   try {
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
     if (!frameGivenUp) paintAll(shown, showing, pictures, seconds);
   } finally {
     for (const picture of pictures) picture?.close();
@@ -452,8 +458,12 @@ addEventListener("message", (event: MessageEvent<ToCompositor>) => {
       patience.jumped();
     }
   } else files.set(data.id, data.file);
-  scenes.follow(settledPlan, wanted);
-  void refresh();
+  try {
+    scenes.follow(settledPlan, wanted);
+  } finally {
+    // Whatever went wrong with a scene, the rest of the picture goes on.
+    void refresh();
+  }
 });
 
 setInterval(() => {

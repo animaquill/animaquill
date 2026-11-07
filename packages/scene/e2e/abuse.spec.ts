@@ -184,6 +184,95 @@ test.describe("a scene that talks too much to the compositor", () => {
   });
 });
 
+/** A chain of frames inside the scene, as deep as it says. The deepest one runs `leaf` when asked. */
+const NESTED = (depth: number, leaf: string) => `<!doctype html><script>
+  const BOOT = "<script>addEventListener('message', (e) => eval(e.data))<" + "/script>";
+  function leaf() { ${leaf} }
+  function step(left) {
+    if (left === 0) {
+      window.ready = true;
+      addEventListener("message", (event) => { if (event.data === "go") leaf(); });
+      return;
+    }
+    const frame = document.createElement("iframe");
+    frame.srcdoc = BOOT;
+    frame.onload = () => frame.contentWindow.postMessage(
+      "const BOOT = " + JSON.stringify(BOOT) + ";" + leaf.toString() + ";" + step.toString() +
+      "; step(" + (left - 1) + "); parent.postMessage('deeper', '*');", "*");
+    document.documentElement.append(frame);
+    addEventListener("message", (event) => {
+      if (event.data === "deeper") parent.postMessage("deeper", "*");
+      if (event.data === "go") frame.contentWindow.postMessage("go", "*");
+    });
+  }
+  window.attack = () => postMessage("go", "*");
+  step(${depth});
+</script>`;
+
+const PUMP = (target: string) => `
+  const { port1, port2 } = new MessageChannel();
+  port1.onmessage = () => {
+    for (let i = 0; i < 2000; i += 1) (${target}).postMessage(0, "*");
+    port2.postMessage(0);
+  };
+  port2.postMessage(0);`;
+
+const DEPTH = 12;
+
+test.describe("frames inside frames, deeper than anybody would go", () => {
+  test("flooding the compositor take the scene with them", async ({ page }) => {
+    const compositor = `(() => { let w = window; for (let i = 0; i <= ${DEPTH}; i += 1) w = w.parent; return w; })()`;
+    const victim = await pageScene(page, `<!doctype html><p>next door</p>`);
+    const scene = await pageScene(page, NESTED(DEPTH, PUMP(compositor)));
+    await page.waitForTimeout(1500);
+    await attack(scene);
+    await expectGone(scene, "flood");
+    await expectAllWell(page, victim);
+  });
+
+  test("flooding the editor take the scene with them", async ({ page }) => {
+    const scene = await pageScene(page, NESTED(DEPTH, PUMP("top")));
+    await page.waitForTimeout(1500);
+    await attack(scene);
+    await expectGone(scene, "flood");
+  });
+});
+
+test.describe("what is not a message of the protocol", () => {
+  test("a picture with anything next to it takes the scene away", async ({ page }) => {
+    const scene = await pageScene(
+      page,
+      `<!doctype html><script>
+        window.attack = async () => {
+          const { width, height, pixelRatio } = aq.view;
+          const size = [Math.round(width * pixelRatio), Math.round(height * pixelRatio)];
+          const image = await createImageBitmap(new ImageData(...size));
+          parent.postMessage({ type: "frame", frame: 1, image, pad: "x".repeat(1024) }, "*", [image]);
+        };
+      </script>`,
+    );
+    await attack(scene);
+    await expectGone(scene, "oversized");
+  });
+
+  for (const [what, value] of [
+    ["an error", `new Error("x".repeat(1024))`],
+    ["a pattern", `/x/`],
+    ["a big number", `10n ** 1000n`],
+  ] as const) {
+    test(`with ${what} in it weighs too much, whatever that holds`, async ({ page }) => {
+      const scene = await pageScene(
+        page,
+        `<!doctype html><script>
+          window.attack = () => parent.postMessage({ type: "pong", nonce: 1, inside: ${value} }, "*");
+        </script>`,
+      );
+      await attack(scene);
+      await expectGone(scene, "oversized");
+    });
+  }
+});
+
 test.describe("a message that is too big", () => {
   test("for the compositor takes the scene out on the first one", async ({ page }) => {
     const crashes: string[] = [];

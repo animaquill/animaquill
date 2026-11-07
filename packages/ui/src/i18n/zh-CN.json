@@ -595,7 +595,8 @@
   },
   "preview": {
     "restarted": "预览没有响应，已经重新启动。",
-    "stopped": "预览一直没有响应，已经停下。可能是场景里的代码让它卡住了。",
+    "stopped": "预览一直没有响应，已经停下。刷新页面可以恢复。",
+    "unreachable": "预览起不来。刷新页面可以恢复，还是不行就过两分钟再刷新。",
     "restart": "重新启动预览",
     "restartWithoutScenes": "不运行场景，重新启动",
     "restartWithScenes": "重新运行场景",
@@ -609,6 +610,7 @@
     "stoppedScene": {
       "failed": "“{{name}}”运行失败：{{message}}",
       "missing-entry": "“{{name}}”的入口文件不在，没有运行。",
+      "frame-out-of-range": "“{{name}}”的时间超出了场景能走到的范围，可能是偏移或帧率太大，没有运行。",
       "runtime-load": "“{{name}}”的运行时加载失败，可以重试。",
       "flood": "“{{name}}”发的消息太多，已经被移除。",
       "focus": "“{{name}}”反复抢键盘焦点，已经被移除。",

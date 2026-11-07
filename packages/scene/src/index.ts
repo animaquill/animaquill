@@ -1,5 +1,6 @@
 export {
   childFrameIndex,
+  childFrameOf,
   FOREIGN_MESSAGE_RULES,
   MESSAGE_RULES,
   MessageBudget,

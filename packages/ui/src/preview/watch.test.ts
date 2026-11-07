@@ -28,6 +28,15 @@ describe("watching the compositor", () => {
     expect(silent).not.toHaveBeenCalled();
     vi.advanceTimersByTime(2000);
     expect(silent).toHaveBeenCalledTimes(1);
+    // That one never got going, which is not the same as one that stopped.
+    expect(silent).toHaveBeenCalledWith("hello");
+  });
+
+  it("says that one that got going stopped while it ran", () => {
+    const { watch, silent } = setup();
+    watch.ready();
+    vi.advanceTimersByTime(COMPOSITOR_RULES.limitMs.running + 1000);
+    expect(silent).toHaveBeenCalledWith("running");
   });
 
   it("asks a running one whether it is there, and is happy with an answer", () => {

@@ -432,6 +432,60 @@ describe("an asset that code asks for", () => {
   });
 });
 
+describe("the file that says what a scene or sound is", () => {
+  it("is no place for a file of the scene, nor for a folder of them", () => {
+    const { run, code, addScene } = open();
+    addScene("title", { "index.html": PAGE, "a.js": "" });
+    expect(code(run("file.write", { path: "scenes/title/scene.json", text: "x" }))).not.toBe("ok");
+    const inside = "scenes/title/scene.json/a.js";
+    expect(code(run("file.write", { path: inside, text: "x" }))).toBe("path-taken");
+    expect(code(run("file.rename", { from: "scenes/title/a.js", to: inside }))).toBe("path-taken");
+  });
+
+  it("is no place for one of a sound either", () => {
+    const { run, code } = soundProject();
+    const path = "sounds/beep/sound.json/a.js";
+    expect(code(run("file.write", { path, text: "x" }))).toBe("path-taken");
+  });
+});
+
+/** A project with a sound, which only comes in with a project for now. */
+function soundProject() {
+  const sound = { name: "响", entry: "main.js", runtime: 1 };
+  const project = { ...createProject({ name: "声音" }), sounds: new Map([["beep", sound]]) };
+  const store = ProjectStore.create(project, { "sounds/beep/main.js": "// beep" });
+  const run = (type: string, params: object) => store.execute({ type, params } as CommandCall);
+  const code = (result: CommandResult) => (result.ok ? "ok" : result.error.code);
+  return { store, run, code, state: () => store.getState() };
+}
+
+describe("the entry of a sound", () => {
+  it("can get another name in its folder, and the sound follows, in one step", () => {
+    const { store, run, code, state } = soundProject();
+    const result = run("file.rename", { from: "sounds/beep/main.js", to: "sounds/beep/start.js" });
+    expect(code(result)).toBe("ok");
+    expect(state().sounds["beep"]?.entry).toBe("start.js");
+    expect(state().files["sounds/beep/start.js"]).toBe("// beep");
+    store.undo();
+    expect(state().sounds["beep"]?.entry).toBe("main.js");
+    expect(state().files["sounds/beep/main.js"]).toBe("// beep");
+  });
+
+  it("does not leave its folder, also not for a scene of the same name", () => {
+    const { run, code } = soundProject();
+    expect(code(run("file.rename", { from: "sounds/beep/main.js", to: "code/main.js" }))).toBe(
+      "entry-in-use",
+    );
+  });
+
+  it("needs a name that can start it", () => {
+    const { run, code } = soundProject();
+    expect(
+      code(run("file.rename", { from: "sounds/beep/main.js", to: "sounds/beep/main.ts" })),
+    ).not.toBe("ok");
+  });
+});
+
 describe("a clip of a scene", () => {
   const color = { kind: "color", color: "#000000" };
 

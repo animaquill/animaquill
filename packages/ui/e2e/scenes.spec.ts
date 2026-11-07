@@ -7,6 +7,7 @@ import {
   compositor,
   content,
   distance,
+  findCompositor,
   expect,
   goTo,
   importFolder,
@@ -19,6 +20,7 @@ import {
   test,
   type Color,
 } from "./scene-support.ts";
+import { createProject } from "./support.ts";
 
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
 const items = (page: Page) => content(page, "assets").getByRole("listitem");
@@ -246,6 +248,25 @@ test.describe("a scene from the start", () => {
       // Saving is when the box has its new size, which takes a new layout.
       await page.keyboard.press("Control+s");
       await expect.poll(() => sceneFrames(page)[0] !== frame, { timeout: 8000 }).toBe(true);
+    });
+
+    test("taken back while the new layout starts, keeps the one it had", async ({ page }) => {
+      const width = (frame: Frame) => frame.evaluate(() => innerWidth).catch(() => 0);
+      await openScene(page, SLIDE);
+      await expect
+        .poll(() => sceneFrames(page)[0] && width(sceneFrames(page)[0] as Frame))
+        .toBe(1920);
+      await tab(page, "timeline").click();
+      await clickFirstClip(page);
+      await tab(page, "properties").click();
+      await field(page, "大小 宽").click();
+      await field(page, "大小 宽").fill("800");
+      await field(page, "大小 宽").press("Enter");
+      await page.keyboard.press("Control+s");
+      await expect.poll(() => sceneFrames(page).length, { intervals: [10], timeout: 5000 }).toBe(2);
+      await page.keyboard.press("Control+z");
+      await page.waitForTimeout(3000);
+      expect(await Promise.all(sceneFrames(page).map(width))).toEqual([1920]);
     });
 
     test("behind another tab it has nothing to say", async ({ page }) => {
@@ -538,6 +559,60 @@ test.describe("the size of a box that is being tried", () => {
     await page.reload();
     await expect(trial(page).getByRole("status")).toHaveText("试改 1 处");
     await expect.poll(() => widthOf(sceneFrames(page)[0])).toBe(1920);
+  });
+});
+
+const isGreen = async (page: Page) => distance(await colorAt(page, 960, 540), [0, 255, 0]) < 12;
+
+test.describe("a clip that asks for a moment no scene gets to", () => {
+  test.use({ withProject: false });
+
+  test("stops with a reason, and the rest of the picture goes on", async ({ page, problems }) => {
+    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    const green = `<!doctype html><style>body { background: #0f0 }</style>`;
+    const folder = projectFolder({ good: { "index.html": green }, bad: { "index.html": green } }, [
+      { scene: "good" },
+      { scene: "bad", above: true, duration: "1", offset: "99999999999999999999" },
+    ]);
+    await importFolder(page, folder);
+    await expect(content(page, "preview").getByText("时间超出了场景能走到的范围")).toBeVisible();
+    await expect.poll(() => sceneFrames(page).length).toBe(1);
+    for (const time of ["0:01/00", "0:02/00", "0:03/00"]) {
+      await goTo(page, time);
+      await expect.poll(() => sceneFrames(page).length).toBe(1);
+    }
+    if (canCapture) await expect.poll(() => isGreen(page)).toBe(true);
+    problems.splice(0);
+  });
+});
+
+test.describe("a scene the editor did not answer for at first", () => {
+  test.use({ withProject: false });
+
+  test("still comes when it is back after undo and redo", async ({ page, problems }) => {
+    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await createProject(page);
+    const newScene = content(page, "timeline").getByRole("button", { name: "新建场景" });
+    await expect(newScene).toBeVisible();
+    await expect.poll(() => findCompositor(page) !== undefined).toBe(true);
+    await page.waitForTimeout(1000);
+    // The compositor is busy while the scene comes and goes, so that it asks when it is gone.
+    void findCompositor(page)
+      ?.evaluate(() => {
+        const until = performance.now() + 3000;
+        while (performance.now() < until);
+      })
+      .catch(() => {});
+    await page.waitForTimeout(300);
+    await newScene.click();
+    await expect(clips(page)).toHaveCount(1);
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(0);
+    await page.waitForTimeout(4500);
+    await page.keyboard.press("Control+Shift+z");
+    await expect(clips(page)).toHaveCount(1);
+    await expect.poll(() => sceneFrames(page).length, { timeout: 10000 }).toBe(1);
+    problems.splice(0);
   });
 });
 

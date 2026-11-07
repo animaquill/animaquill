@@ -133,7 +133,7 @@ test("puts the page in a canvas before anything in its body runs", async ({ page
   expect(facts).toEqual({
     inHead: true,
     seen: {
-      parent: "canvas",
+      parent: "aq-stage",
       grand: "html",
       queried: true,
       one: 1,
@@ -145,15 +145,31 @@ test("puts the page in a canvas before anything in its body runs", async ({ page
     },
     after: { added: true, written: true, order: ["script", "added", "written", "script"] },
   });
-  expect(await scene.read(() => document.getElementById("aq-stage")?.getAttribute("content"))).toBe(
-    "drawable",
+  expect(await scene.read(() => document.body.parentElement?.localName)).toBe("aq-stage");
+});
+
+test("keeps the stage out of the page's way: what the page finds is its own", async ({ page }) => {
+  const scene = await pageScene(
+    page,
+    `<!doctype html><canvas id="mine"></canvas><script>
+      const found = document.querySelector("canvas");
+      window.found = [found?.id, document.getElementsByTagName("canvas").length,
+        document.querySelectorAll("canvas").length];
+    </script>`,
+    { stage: "canvas" },
   );
+  expect(await scene.read(() => (window as unknown as { found: unknown }).found)).toEqual([
+    "mine",
+    1,
+    1,
+  ]);
+  expect(await scene.read(() => document.querySelector("aq-stage")?.shadowRoot)).toBeNull();
 });
 
 test("does not show the stage to a page that asked for a normal one", async ({ page }) => {
   const scene = await pageScene(page, `<!doctype html><body>`, { stage: "plain" });
   expect(await scene.read(() => document.body.parentElement?.localName)).toBe("html");
-  expect(await scene.read(() => document.getElementById("aq-stage"))).toBeNull();
+  expect(await scene.read(() => document.querySelector("aq-stage"))).toBeNull();
 });
 
 test("a page without a body tag gets a canvas just the same", async ({ page }) => {
@@ -163,19 +179,14 @@ test("a page without a body tag gets a canvas just the same", async ({ page }) =
     { stage: "canvas" },
   );
   expect(await scene.read(() => (window as unknown as { parentOfBody: string }).parentOfBody)).toBe(
-    "canvas",
+    "aq-stage",
   );
 });
 
-test("sizes the canvas in pixels of the output, and the page in those of the view", async ({
-  page,
-}) => {
+test("sizes the page in pixels of the view", async ({ page }) => {
   const scene = await pageScene(page, `<!doctype html><body>`, { stage: "canvas" });
-  const size = await scene.read(() => {
-    const canvas = document.getElementById("aq-stage") as HTMLCanvasElement;
-    return [canvas.width, canvas.height, innerWidth, innerHeight];
-  });
-  expect(size).toEqual([1280, 720, 1280, 720]);
+  // The canvas is out of reach of the page, see the pictures in capture.spec.ts for its size.
+  expect(await scene.read(() => [innerWidth, innerHeight])).toEqual([1280, 720]);
 });
 
 test("the background of the page reaches the body, which is what gets captured", async ({
@@ -592,13 +603,13 @@ test.describe("where the browser and the loader see a page differently", () => {
       inCanvas: document.body.parentElement?.localName,
       paragraph: document.getElementById("a")?.parentElement === document.body,
     }));
-    expect(facts).toEqual({ ran: false, lang: "en", inCanvas: "canvas", paragraph: true });
+    expect(facts).toEqual({ ran: false, lang: "en", inCanvas: "aq-stage", paragraph: true });
     expect((await scene.problems()).map(({ code }) => code)).toEqual(["unclosed-script"]);
   });
 
   test("a page that ends inside a title still gets its stage", async ({ page }) => {
     const scene = await pageScene(page, `<!doctype html><title>never closed`, { stage: "canvas" });
-    expect(await scene.read(() => document.body?.parentElement?.localName)).toBe("canvas");
+    expect(await scene.read(() => document.body?.parentElement?.localName)).toBe("aq-stage");
   });
 
   test("a closed shadow tree follows the clock too", async ({ page }) => {

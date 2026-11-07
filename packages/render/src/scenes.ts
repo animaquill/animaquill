@@ -29,6 +29,9 @@ const CORNER_SLOTS = 16;
 /** How long a frame of the screen takes at most, on this page, when it is on the screen at all. */
 const SCREEN_FRAME_MS = 250;
 
+/** How far ahead of the sound a playing scene can get, see `#stayIfAhead`. */
+const PAUSE_SLACK_MS = 500;
+
 /** What a canvas can have. A clip box can be anything, and a scene is not worth losing the tab. */
 const MAX_PICTURE_SIDE = 8192;
 
@@ -41,7 +44,17 @@ type SceneMessage = Extract<
 /** What this needs of a scene. */
 export type Host = Pick<
   SceneHost,
-  "open" | "close" | "seek" | "play" | "pause" | "evict" | "focusTaken" | "state" | "origin"
+  | "open"
+  | "close"
+  | "seek"
+  | "play"
+  | "pause"
+  | "evict"
+  | "focusTaken"
+  | "state"
+  | "origin"
+  | "position"
+  | "stateful"
 >;
 
 export interface SceneLayersOptions {
@@ -136,9 +149,25 @@ function whenOnScreen(run: () => void): void {
   const timer = setTimeout(() => cancelAnimationFrame(frame), SCREEN_FRAME_MS);
 }
 
+/**
+ * The last frame a scene can be on, years into it. A clip can say anything about its clock, and
+ * what is not a safe integer cannot even be asked for.
+ */
+export const MAX_SCENE_FRAME = 2 ** 31 - 1;
+
 /** What frame a scene is on when the clock of its clip reads this. */
 export function frameOf(clock: number, { num, den }: RenderPlan["scenes"]["fps"]): number {
-  return Math.max(Math.floor((clock * num) / den + FRAME_TOLERANCE), 0);
+  const frame = Math.floor((clock * num) / den + FRAME_TOLERANCE);
+  return Number.isNaN(frame) ? 0 : Math.min(Math.max(frame, 0), MAX_SCENE_FRAME);
+}
+
+/** Whether a clip gets to a moment of its scene that no scene can get to, by its offset or rate. */
+export function isOutOfReach(
+  layer: RenderLayer,
+  { num, den }: RenderPlan["scenes"]["fps"],
+): boolean {
+  const last = (clockOf(layer, layer.end) * num) / den;
+  return !(last <= MAX_SCENE_FRAME);
 }
 
 /** One unit of the world is one CSS pixel, and the picture has the pixels of the output. */
@@ -166,7 +195,8 @@ export function baseFor(layer: RenderLayer, plan: RenderPlan, base: PlayBase): T
   const at = base.at + ((from - base.seconds) * 1000) / (rate || 1);
   const exact = (clockOf(layer, from) * fps.num) / fps.den;
   const frame = frameOf(clockOf(layer, from), fps);
-  const late = ((exact - frame) * fps.den * 1000) / fps.num / (rate || 1);
+  const late =
+    frame === MAX_SCENE_FRAME ? 0 : ((exact - frame) * fps.den * 1000) / fps.num / (rate || 1);
   return { frame, at: at - late, rate };
 }
 
@@ -181,7 +211,8 @@ export class SceneLayers {
   readonly #options: SceneLayersOptions;
   readonly #entries = new Map<string, Entry>();
   readonly #contents = new Map<string, SceneContent>();
-  readonly #asked = new Set<string>();
+  /** What was asked for, and on which plan. An answer can stay away, see `#contentOf`. */
+  readonly #asked = new Map<string, RenderPlan | undefined>();
   readonly #failed = new Map<string, Failed>();
   #setup: SceneSetup | undefined;
   #origins: OriginPool | undefined;
@@ -204,10 +235,15 @@ export class SceneLayers {
         this.#origins = this.#poolOf(message);
         this.#follow();
         return true;
-      case "scene-files":
-        this.#contents.set(contentKey(message), message);
+      case "scene-files": {
+        const key = contentKey(message);
+        const had = this.#contents.has(key);
+        this.#contents.set(key, message);
+        // More of the same scene: an asset whose file came back. What runs started without it.
+        if (had) this.#renew(key, message);
         this.#follow();
         return true;
+      }
       case "scene-retry":
         this.#retry(message.layer);
         return true;
@@ -336,9 +372,10 @@ export class SceneLayers {
     if ((wasGoing || (moved && this.#base)) && entry.current) {
       this.#startMoving(entry, entry.current, plan);
     }
-    const blocked = this.#blocked(layer);
+    const blocked = this.#blocked(layer, plan);
     if (blocked) {
-      this.#setStatus(entry, { state: blocked });
+      this.#stopRuns(entry);
+      this.#setStatus(entry, blocked);
       return;
     }
     const key = this.#keyOf(layer, plan);
@@ -347,7 +384,15 @@ export class SceneLayers {
       this.#setStatus(entry, failed.status);
       return;
     }
-    if (entry.current?.key === key || entry.next?.key === key) return;
+    if (entry.current?.key === key) {
+      // Taken back while the new one was on its way. It must not take over when it gets there.
+      if (entry.next && entry.next.key !== key) {
+        entry.next.host.close();
+        entry.next = undefined;
+      }
+      return;
+    }
+    if (entry.next?.key === key) return;
     const content = this.#contentOf(layer.source);
     if (!content) return;
     this.#failed.delete(layer.id);
@@ -375,10 +420,28 @@ export class SceneLayers {
   }
 
   /** Why a scene does not get started at all. */
-  #blocked({ source }: { readonly source: SceneSource }): SceneStatus["state"] | undefined {
-    if (this.#setup?.run === false) return "off";
-    if (source.runtime > RUNTIME_VERSION) return "too-new";
-    return this.#canCapture && this.#origins ? undefined : "unsupported";
+  #blocked(
+    layer: RenderLayer & { source: SceneSource },
+    plan: RenderPlan,
+  ): SceneStatus | undefined {
+    if (this.#setup?.run === false) return { state: "off" };
+    if (layer.source.runtime > RUNTIME_VERSION) return { state: "too-new" };
+    if (isOutOfReach(layer, plan.scenes.fps)) {
+      return { state: "stopped", reason: "failed", message: "frame-out-of-range" };
+    }
+    return this.#canCapture && this.#origins ? undefined : { state: "unsupported" };
+  }
+
+  /** Whatever ran for this clip is not going to show any more. */
+  #stopRuns(entry: Entry): void {
+    entry.current?.host.close();
+    entry.next?.host.close();
+    entry.current = undefined;
+    entry.next = undefined;
+    if (!entry.picture) return;
+    entry.picture.replace();
+    entry.picture = undefined;
+    this.#options.redraw();
   }
 
   /** Whatever makes a scene another one, which is what takes a new document. */
@@ -401,8 +464,10 @@ export class SceneLayers {
     const key = contentKey(source);
     const content = this.#contents.get(key);
     if (content) return content;
-    if (!this.#asked.has(key)) {
-      this.#asked.add(key);
+    // The editor only answers for what its own plan shows, which can be a step behind or ahead of
+    // this one, so an answer can stay away. A new plan asks again for whatever is still missing.
+    if (!this.#asked.has(key) || this.#asked.get(key) !== this.#plan) {
+      this.#asked.set(key, this.#plan);
       const { scene, revision } = source;
       this.#options.send({ type: "needs-scene", scene, revision });
     }
@@ -414,12 +479,8 @@ export class SceneLayers {
     const keep = new Set(
       this.#plan?.layers.filter(isScene).map(({ source }) => contentKey(source)),
     );
-    for (const key of this.#contents.keys()) {
-      if (!keep.has(key)) {
-        this.#contents.delete(key);
-        this.#asked.delete(key);
-      }
-    }
+    for (const key of this.#contents.keys()) if (!keep.has(key)) this.#contents.delete(key);
+    for (const key of this.#asked.keys()) if (!keep.has(key)) this.#asked.delete(key);
   }
 
   #place(frame: HTMLIFrameElement, { width, height }: SceneView): void {
@@ -469,8 +530,14 @@ export class SceneLayers {
     const host = (this.#options.makeHost ?? ((all) => new SceneHost(all)))(options);
     const started: Run = { key, host, frame: undefined };
     run = started;
-    void host.open();
-    this.#startMoving(entry, started, plan);
+    try {
+      void host.open();
+      this.#startMoving(entry, started, plan);
+    } catch (error) {
+      // Nobody would ever close it: it would not be part of the clip yet.
+      host.close();
+      throw error;
+    }
     return started;
   }
 
@@ -522,8 +589,41 @@ export class SceneLayers {
   /** Where it ended up is up to the editor, which sends the time it stopped at. */
   #pause(): void {
     this.#base = undefined;
-    for (const run of this.#runs()) run.host.pause();
+    const plan = this.#plan;
+    for (const entry of this.#entries.values()) {
+      for (const run of [entry.current, entry.next]) {
+        if (!run) continue;
+        run.host.pause();
+        if (plan) this.#stayIfAhead(entry, run, plan);
+      }
+    }
     this.#follow();
+  }
+
+  /**
+   * A playing scene gets a little ahead of the sound now and then, and code that draws frame by
+   * frame cannot go back without starting over from the first frame. Stopping is not worth that:
+   * the picture stays where it got to until somebody moves the playhead.
+   */
+  #stayIfAhead(entry: Entry, run: Run, plan: RenderPlan): void {
+    const { position, stateful } = run.host;
+    const frame = this.#frameFor(entry.layer, plan);
+    if (!stateful || position === undefined || position <= frame) return;
+    const { num, den } = plan.scenes.fps;
+    if (position - frame <= Math.ceil((PAUSE_SLACK_MS * num) / den / 1000)) run.frame = frame;
+  }
+
+  /** The same scene with more of what it needs. Each clip of it gets a new run, which takes over. */
+  #renew(key: string, content: SceneContent): void {
+    const plan = this.#plan;
+    if (!plan) return;
+    for (const entry of this.#entries.values()) {
+      const { current } = entry;
+      if (!current || entry.stopLingering || !isScene(entry.layer)) continue;
+      if (contentKey(entry.layer.source) !== key) continue;
+      entry.next?.host.close();
+      entry.next = this.#start(entry, current.key, content, plan);
+    }
   }
 
   #onProblem(entry: Entry, problem: SceneProblem): void {

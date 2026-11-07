@@ -1,4 +1,10 @@
-import { MESSAGE_RULES, MessageBudget, TokenBucket, type MessageRules } from "./budget.ts";
+import {
+  MESSAGE_RULES,
+  MessageBudget,
+  TokenBucket,
+  childFrameOf,
+  type MessageRules,
+} from "./budget.ts";
 import { OriginPool } from "./origins.ts";
 import { SCENE_PAGE_PATH, SCENE_SANDBOX } from "./policy.ts";
 import {
@@ -26,9 +32,6 @@ const WATCH_EVERY_MS = 100;
 
 /** The most problems one scene gets to report. It takes real effort to have more of those. */
 const MAX_PROBLEMS = 200;
-
-/** How many frames deep a page in a scene can be and still be found out. */
-const MAX_NESTING = 8;
 
 /** A scene gets over a focus now and then, by accident. Taking it again and again is no accident. */
 const FOCUS_BURST = 3;
@@ -124,6 +127,8 @@ interface Frame {
   readonly asked: Map<number, number>;
   /** It started out at the beginning, so there was nothing for this one to go back through. */
   firstRequest: number | undefined;
+  /** The browser got a page into it, which a process that hung would not. */
+  loaded: boolean;
 }
 
 interface PendingSeek {
@@ -155,6 +160,7 @@ export class SceneHost {
   #next: Frame | undefined;
   #state: SceneHostState = "opening";
   #capture: boolean | undefined;
+  #stateful = false;
   #request = 0;
   /** Where the scene should be, which a new frame has to catch up with. */
   #wanted: number | undefined;
@@ -192,6 +198,16 @@ export class SceneHost {
   /** The origin of the frame in use. */
   get origin(): string | undefined {
     return this.#current?.origin;
+  }
+
+  /** The last frame the frame in use is known to have been on. */
+  get position(): number | undefined {
+    return this.#current?.position;
+  }
+
+  /** Whether going back takes it a new frame, as far as it said when it last got somewhere. */
+  get stateful(): boolean {
+    return this.#stateful;
   }
 
   /** Starts the scene. Finishes when it is ready or cannot be. */
@@ -317,7 +333,7 @@ export class SceneHost {
     if (this.#current) this.#current.element.before(element);
     else mount.append(element);
     const now = performance.now();
-    return {
+    const frame: Frame = {
       element,
       origin,
       dog: new Watchdog(now, this.#rules),
@@ -329,7 +345,11 @@ export class SceneHost {
       position: 0,
       asked: new Map(),
       firstRequest: undefined,
+      loaded: false,
     };
+    // Also an error page loads: that is the network, or a site that is not there right now.
+    element.addEventListener("load", () => (frame.loaded = true), { once: true });
+    return frame;
   }
 
   #remove(frame: Frame | undefined): void {
@@ -346,16 +366,12 @@ export class SceneHost {
     return [this.#current, this.#next].find((frame) => frame?.element.contentWindow === window);
   }
 
-  /** Which frame answers for a window. A page in a scene can write as well as the scene can. */
+  /**
+   * Which frame answers for a window. A page in a scene can write as well as the scene can, from as
+   * deep down as it likes, and it all counts for the frame of the scene that it is in.
+   */
   #senderOf(source: MessageEventSource | null): Frame | undefined {
-    let window = source as Window | null;
-    for (let depth = 0; window && depth < MAX_NESTING; depth += 1) {
-      const frame = this.#frameOf(window);
-      if (frame) return frame;
-      if (window.parent === window) return undefined;
-      window = window.parent;
-    }
-    return undefined;
+    return this.#frameOf(childFrameOf(window, source as Window | null));
   }
 
   /**
@@ -375,6 +391,10 @@ export class SceneHost {
     if (event.source !== frame.element.contentWindow) return;
     const data: unknown = event.data;
     const picture = readPicture(data);
+    if (picture === "malformed") {
+      this.#fail(frame, "oversized");
+      return;
+    }
     if (picture) {
       this.#picture(frame, picture, now);
       return;
@@ -401,6 +421,7 @@ export class SceneHost {
         break;
       case "seeked":
         this.#seeked(frame, message.request, message.frame);
+        if (frame === this.#current) this.#stateful = message.stateful;
         break;
       case "needs-replay":
         this.#replay(frame, message.request, message.frame);
@@ -582,8 +603,10 @@ export class SceneHost {
    */
   #fail(frame: Frame, reason: SceneFailureReason, message?: string): void {
     // Whatever this is, it can come from a loop that never ends, and that stays when the frame goes.
-    // Only a scene that says it cannot run has shown that it can still say something.
-    if (reason !== "failed") this.#options.origins.retire(frame.origin);
+    // Only a scene that says it cannot run has shown that it can still say something, and a page
+    // that loaded without saying hello did not get as far as running anything.
+    const ranNothing = reason === "silent" && frame.dog.phase === "hello" && frame.loaded;
+    if (reason !== "failed" && !ranNothing) this.#options.origins.retire(frame.origin);
     const canRetry = reason === "silent" || reason === "stuck";
     const retrying = canRetry && this.#strikes.hung(performance.now());
     const { target } = frame.dog;

@@ -10,7 +10,7 @@ import styles from "./PreviewNotices.module.css";
 
 type StoppedScene = keyof typeof zhCN.preview.stoppedScene;
 
-const RUNTIME_FAILURES = new Set(["missing-entry", "runtime-load"]);
+const RUNTIME_FAILURES = new Set(["missing-entry", "runtime-load", "frame-out-of-range"]);
 
 function Notice({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
   return (
@@ -62,12 +62,27 @@ export function PreviewNotices({ onRetry }: { onRetry: (clip: string) => void })
       (state === "stopped" || state === "retrying" || state === "too-new"),
   );
 
+  const reload = (
+    <button type="button" onClick={() => location.reload()}>
+      {t("preview.reload")}
+    </button>
+  );
+
+  if (compositor === "unreachable") {
+    return (
+      <div className={styles.notices}>
+        <Notice actions={reload}>{t("preview.unreachable")}</Notice>
+      </div>
+    );
+  }
+
   if (compositor === "stopped") {
     return (
       <div className={styles.notices}>
         <Notice
           actions={
             <>
+              {reload}
               <button type="button" onClick={() => preview.restart()}>
                 {t("preview.restart")}
               </button>
@@ -97,17 +112,7 @@ export function PreviewNotices({ onRetry }: { onRetry: (clip: string) => void })
         </Notice>
       )}
       {unsupported && <Notice>{t("preview.unsupported")}</Notice>}
-      {noOrigin && (
-        <Notice
-          actions={
-            <button type="button" onClick={() => location.reload()}>
-              {t("preview.reload")}
-            </button>
-          }
-        >
-          {t("preview.noOrigin")}
-        </Notice>
-      )}
+      {noOrigin && <Notice actions={reload}>{t("preview.noOrigin")}</Notice>}
       {others.map(([clip, status]) => (
         <Notice
           key={clip}

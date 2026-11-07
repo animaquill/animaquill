@@ -34,7 +34,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(hearsFirst?: (store: ProjectStore) => void) {
+function setup(
+  hearsFirst?: (store: ProjectStore) => void,
+  { files = new Map<string, Blob>() }: { files?: Map<string, Blob> } = {},
+) {
+  const restored: ((hash: string) => void)[] = [];
   const store = ProjectStore.create(createProject({ name: "预览" }));
   hearsFirst?.(store);
   const main = () => store.getState().timelines["main"];
@@ -105,10 +109,17 @@ function setup(hearsFirst?: (store: ProjectStore) => void) {
     timeline,
     writer,
     store,
-    {} as ProjectLibrary,
+    {
+      media: () => ({ get: (id: string) => Promise.resolve(files.get(id)) }),
+    } as unknown as ProjectLibrary,
     () => {},
     new DiagnosticsRecorder("test"),
-    { onRestored: () => () => {} } as unknown as MediaLibrary,
+    {
+      onRestored: (listener: (hash: string) => void) => {
+        restored.push(listener);
+        return () => {};
+      },
+    } as unknown as MediaLibrary,
     status,
     { origins: ["https://scene.example"], compositor: "https://box.example", run: true },
   );
@@ -121,10 +132,14 @@ function setup(hearsFirst?: (store: ProjectStore) => void) {
   const fromCompositor = (data: FromCompositor) => {
     for (const listener of listeners) listener({ data, source: contentWindow });
   };
+  const restore = (hash: string) => {
+    for (const listener of restored) listener(hash);
+  };
   return {
     store,
     run,
     clip,
+    restore,
     sent,
     preview,
     hello,
@@ -542,6 +557,41 @@ describe("how time goes over", () => {
     hello();
     tick(2);
     expect(ofType("play")).toHaveLength(2);
+  });
+});
+
+describe("an asset whose file comes back", () => {
+  const asset = { kind: "image", path: "assets/logo.png", storage: "local", hash: "sha256-a" };
+  const scene = { name: "标题", entry: "index.html", runtime: 1 };
+
+  function withScene() {
+    const files = new Map<string, Blob>();
+    const context = setup(undefined, { files });
+    context.run({ type: "asset.add", params: { id: "logo", asset } });
+    context.run({
+      type: "scene.add",
+      params: { id: "s", scene, files: { "index.html": `<script>aq.asset("logo")</script>` } },
+    });
+    context.clip("scene", { start: "6", source: { kind: "scene", scene: "s" } });
+    context.hello();
+    return { ...context, files };
+  }
+
+  it("goes to the scenes that ask for it, all of it again", async () => {
+    const { restore, sent, files } = withScene();
+    files.set("sha256-a", new Blob(["png"]));
+    restore("sha256-a");
+    await vi.waitFor(() => expect(sent.some(({ type }) => type === "scene-files")).toBe(true));
+    const message = sent.find((candidate) => candidate.type === "scene-files");
+    expect(message?.type === "scene-files" && message.assets.has("logo")).toBe(true);
+  });
+
+  it("is nothing to a scene that does not ask for it", async () => {
+    const { restore, sent } = withScene();
+    restore("sha256-other");
+    // Long enough for an answer that would be on its way.
+    await new Promise((done) => setTimeout(done, 50));
+    expect(sent.some(({ type }) => type === "scene-files")).toBe(false);
   });
 });
 

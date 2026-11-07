@@ -1,4 +1,4 @@
-import { Watchdog, WATCHDOG_RULES, type WatchdogRules } from "@animaquill/scene";
+import { Watchdog, WATCHDOG_RULES, type ScenePhase, type WatchdogRules } from "@animaquill/scene";
 
 /** How often the watchdog looks. It decides by itself when to ask. */
 const WATCH_EVERY_MS = 200;
@@ -23,12 +23,12 @@ const randomNonce = () => crypto.getRandomValues(new Uint32Array(1))[0] as numbe
 export class CompositorWatch {
   readonly #dog: Watchdog;
   readonly #ping: (nonce: number) => void;
-  readonly #silent: () => void;
+  readonly #silent: (phase: ScenePhase) => void;
   readonly #timer: ReturnType<typeof setInterval>;
 
   constructor(
     ping: (nonce: number) => void,
-    silent: () => void,
+    silent: (phase: ScenePhase) => void,
     rules: WatchdogRules = COMPOSITOR_RULES,
   ) {
     this.#dog = new Watchdog(performance.now(), rules);
@@ -54,7 +54,7 @@ export class CompositorWatch {
     const verdict = this.#dog.check(performance.now(), document.visibilityState === "visible");
     if (verdict === "silent" || verdict === "stuck") {
       this.dispose();
-      this.#silent();
+      this.#silent(this.#dog.phase);
     } else if (verdict === "ping") {
       const nonce = randomNonce();
       this.#dog.pinged(nonce);

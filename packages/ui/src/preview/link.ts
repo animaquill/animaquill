@@ -135,7 +135,7 @@ export class PreviewLink {
     });
     this.#watch = new CompositorWatch(
       (nonce) => this.#send({ type: "ping", nonce }),
-      () => status.hung(),
+      (phase) => status.hung(phase),
     );
     addEventListener("message", this.#onMessage);
     const stopStore = store.subscribe(this.#sendPlan);
@@ -144,7 +144,10 @@ export class PreviewLink {
     const stopTimeline = timeline.subscribe(this.#sendAll);
     const stopDiagnostics = diagnostics.subscribe(this.#sendRecording);
     // The compositor only asks for a file once.
-    const stopMedia = media.onRestored((hash) => void this.#sendFile(hash));
+    const stopMedia = media.onRestored((hash) => {
+      void this.#sendFile(hash);
+      this.#sendScenesWith(hash);
+    });
     const stopProperties = properties.subscribe(this.#sendPreview);
     this.#stop = () => {
       this.#keyboard.dispose();
@@ -318,6 +321,18 @@ export class PreviewLink {
       (id) => media.get(id),
     );
     if (content) this.#send(content);
+  }
+
+  /** A scene that got going without the file of one of its assets gets everything again, with it. */
+  #sendScenesWith(file: string): void {
+    const sent = new Set<string>();
+    for (const { source } of this.#plan?.layers ?? []) {
+      if (source.kind !== "scene" || !source.assets.some((asset) => asset.file === file)) continue;
+      const key = `${source.scene}\n${source.revision}`;
+      if (sent.has(key)) continue;
+      sent.add(key);
+      void this.#sendScene(source.scene, source.revision);
+    }
   }
 
   /** The sandbox runs code from projects, so it only gets what the plan uses. */

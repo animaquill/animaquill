@@ -101,7 +101,9 @@ export function PreviewPanel() {
     <div className={styles.panel}>
       <div className={styles.stage}>
         {/* One that hangs goes on taking a whole core, for as long as its frame is there. */}
-        {compositor !== "stopped" && <Compositor key={generation} onLink={onLink} />}
+        {compositor !== "stopped" && compositor !== "unreachable" && (
+          <Compositor key={generation} onLink={onLink} />
+        )}
         <PreviewNotices onRetry={(layer) => link.current?.retryScene(layer)} />
         {count > 0 && (
           <div className={styles.showing} data-comparing={comparing || undefined} role="status">

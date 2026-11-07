@@ -181,14 +181,16 @@ function readProblem(value: unknown): SceneProblem | undefined {
  * A picture out of a message. This is its own case because of what it weighs: a picture is meant to
  * be large, and it never gets copied, so the limits on what a message may weigh are not for this.
  */
-export function readPicture(data: unknown): ScenePicture | undefined {
+export function readPicture(data: unknown): ScenePicture | "malformed" | undefined {
   if (typeof data !== "object" || data === null) return undefined;
   const { type, frame, image } = data as Record<string, unknown>;
-  if (type !== "frame" || typeof ImageBitmap === "undefined") return undefined;
+  if (type !== "frame") return undefined;
+  // A picture goes without weighing, so nothing may come along with it.
+  const keys = Object.keys(data);
   const position = count(frame);
-  return position === undefined || !(image instanceof ImageBitmap)
-    ? undefined
-    : { frame: position, image };
+  const isPicture = typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap;
+  if (keys.length !== 3 || position === undefined || !isPicture) return "malformed";
+  return { frame: position, image };
 }
 
 /**

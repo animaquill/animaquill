@@ -76,6 +76,8 @@ export function weightOf(data: unknown, limit: number): number {
     const value = waiting.pop();
     weight += NODE_BYTES;
     if (typeof value === "string") weight += value.length * 2;
+    // As large as it likes, and nothing in the protocol is one.
+    else if (typeof value === "bigint") return Number.POSITIVE_INFINITY;
     else if (typeof value !== "object" || value === null) continue;
     else if (value instanceof Blob) weight += value.size;
     else if (typeof ImageBitmap !== "undefined" && value instanceof ImageBitmap) {
@@ -101,16 +103,25 @@ export function weightOf(data: unknown, limit: number): number {
         weight += NODE_BYTES;
         if (weight > limit) break;
       }
-    } else {
+    } else if (isPlain(value)) {
       for (const key of Object.keys(value)) {
         waiting.push(key, (value as Record<string, unknown>)[key]);
         weight += NODE_BYTES;
         if (weight > limit) break;
       }
+    } else {
+      // An error, a pattern, a wrapped string: whatever else can be sent hides what it holds, and
+      // looking would cost what is being kept out. None of it is part of the protocol.
+      return Number.POSITIVE_INFINITY;
     }
   }
   return weight;
 }
+
+const isPlain = (value: object) => {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
 
 /**
  * For a page that nothing has any business writing to but one frame. Nothing in a scene needs to
@@ -125,19 +136,28 @@ export const FOREIGN_MESSAGE_RULES: MessageRules = {
 };
 
 /**
- * Which child of a page a window belongs to, however deep inside it is. The editor can use this to
- * tell the compositor which frame is writing to it: the index is the same seen from both.
+ * The child of a page that a window is in, however deep: a frame can hold frames without end, and
+ * each of them can write. Going up always ends, at the top.
+ */
+export function childFrameOf(page: Window, source: Window | null): Window | undefined {
+  let window = source;
+  while (window) {
+    const { parent } = window;
+    if (parent === page) return window;
+    if (!parent || parent === window) return undefined;
+    window = parent;
+  }
+  return undefined;
+}
+
+/**
+ * Where that child is among the frames of the page. The editor can use this to tell the compositor
+ * which frame is writing to it: the index is the same seen from both.
  */
 export function childFrameIndex(page: Window, source: Window | null): number | undefined {
-  let window = source;
-  for (let depth = 0; window && depth < 8; depth += 1) {
-    if (window.parent === page) {
-      for (let index = 0; index < page.length; index += 1) if (page[index] === window) return index;
-      return undefined;
-    }
-    if (window.parent === window) return undefined;
-    window = window.parent;
-  }
+  const child = childFrameOf(page, source);
+  if (!child) return undefined;
+  for (let index = 0; index < page.length; index += 1) if (page[index] === child) return index;
   return undefined;
 }
 

@@ -135,6 +135,61 @@ const bigMessages = (target: string) => `<!doctype html><script>
   port2.postMessage(0);
 </script>`;
 
+/** A chain of frames inside the scene, the deepest of which runs `leaf` as soon as it is there. */
+const nested = (depth: number, leaf: string) => `<!doctype html><script>
+  const BOOT = "<script>addEventListener('message', (e) => eval(e.data))<" + "/script>";
+  function leaf() { ${leaf} }
+  function step(left) {
+    if (left === 0) return leaf();
+    const frame = document.createElement("iframe");
+    frame.srcdoc = BOOT;
+    frame.onload = () => frame.contentWindow.postMessage(
+      "const BOOT = " + JSON.stringify(BOOT) + ";" + leaf.toString() + ";" + step.toString() +
+      "; step(" + (left - 1) + ");", "*");
+    document.documentElement.append(frame);
+  }
+  addEventListener("load", () => step(${depth}));
+</script>`;
+
+test.describe("frames far down inside a scene", () => {
+  test("writing to the editor take the scene along, however deep they are", async ({
+    page,
+    problems,
+  }) => {
+    test.setTimeout(60000);
+    await countForeignReads(page);
+    const leaf = `setInterval(() => { for (let i = 0; i < 400; i += 1) top.postMessage(0, "*"); }, 4);`;
+    await start(page);
+    await importFolder(page, projectFolder({ bad: { "index.html": nested(12, leaf) } }, [{}]));
+    await expect(notice(page, "发的消息太多")).toBeVisible({ timeout: 30000 });
+    await expect.poll(() => sceneFrames(page).length).toBe(0);
+    await expectEditorWorks(page);
+    expect(await foreignReads(page)).toBe(0);
+    problems.splice(0);
+  });
+});
+
+test.describe("a compositor that never comes up", () => {
+  test.setTimeout(90000);
+
+  test("says that a new page is what helps, and that does", async ({ page, problems }) => {
+    await page.route("**/compositor.html", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<!doctype html><p>nothing here</p>" }),
+    );
+    await start(page);
+    await importFolder(page, projectFolder({ a: { "index.html": FINE } }, [{}]));
+    await expect(notice(page, "预览起不来")).toBeVisible({ timeout: 45000 });
+    expect(findCompositor(page)).toBeUndefined();
+    await expectEditorWorks(page);
+    await page.unroute("**/compositor.html");
+    await content(page, "preview").getByRole("button", { name: "刷新页面" }).click();
+    await expect.poll(() => findCompositor(page) !== undefined, { timeout: 20000 }).toBe(true);
+    await expect(notice(page, "预览起不来")).toHaveCount(0);
+    await expect.poll(() => sceneFrames(page).length, { timeout: 20000 }).toBe(1);
+    problems.splice(0);
+  });
+});
+
 test.describe("scenes that used up every origin", () => {
   test.setTimeout(120000);
 

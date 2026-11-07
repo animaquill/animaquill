@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MESSAGE_RULES, MessageBudget, TokenBucket, weightOf } from "./budget.ts";
+import {
+  MESSAGE_RULES,
+  MessageBudget,
+  TokenBucket,
+  childFrameIndex,
+  childFrameOf,
+  weightOf,
+} from "./budget.ts";
 
 describe("TokenBucket", () => {
   it("allows a burst and then says no", () => {
@@ -81,6 +88,53 @@ describe("weightOf", () => {
   it("weighs next to nothing for what the protocol sends", () => {
     expect(weightOf({ type: "pong", nonce: 1 }, big)).toBeLessThan(500);
     expect(weightOf(undefined, big)).toBeGreaterThan(0);
+  });
+});
+
+describe("what is not part of the protocol", () => {
+  const LIMIT = 1024;
+
+  it.each([
+    ["an error", () => new Error("x")],
+    ["a pattern", () => /x/],
+    ["a date", () => new Date(0)],
+    ["a wrapped string", () => new String("x")],
+    ["a big integer", () => 10n],
+  ])("weighs too much, whatever it holds: %s", (_, make) => {
+    expect(weightOf(make(), LIMIT)).toBeGreaterThan(LIMIT);
+    expect(weightOf({ type: "x", inside: [make()] }, LIMIT)).toBeGreaterThan(LIMIT);
+  });
+
+  it("is told apart from a plain object, also one without a prototype", () => {
+    expect(weightOf({ a: 1 }, LIMIT)).toBeLessThan(LIMIT);
+    expect(weightOf(Object.assign(Object.create(null), { a: 1 }), LIMIT)).toBeLessThan(LIMIT);
+  });
+});
+
+describe("the frame a window is in", () => {
+  const chain = (depth: number) => {
+    const page = { length: 2 } as unknown as Window & Record<number, unknown>;
+    const child = { parent: page } as unknown as Window;
+    page[0] = {} as Window;
+    page[1] = child;
+    let window = child;
+    for (let step = 0; step < depth; step += 1) window = { parent: window } as unknown as Window;
+    return { page, child, deepest: window };
+  };
+
+  it.each([0, 1, 8, 9, 200])("is found from %i frames further down", (depth) => {
+    const { page, child, deepest } = chain(depth);
+    expect(childFrameOf(page, deepest)).toBe(child);
+    expect(childFrameIndex(page, deepest)).toBe(1);
+  });
+
+  it("is nothing for a window that is somewhere else", () => {
+    const { page } = chain(0);
+    const top = {} as Window;
+    (top as { parent: Window }).parent = top;
+    const elsewhere = { parent: top } as unknown as Window;
+    expect(childFrameOf(page, elsewhere)).toBeUndefined();
+    expect(childFrameIndex(page, null)).toBeUndefined();
   });
 });
 

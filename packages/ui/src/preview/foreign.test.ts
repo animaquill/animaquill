@@ -56,6 +56,35 @@ describe("messages from anybody but the compositor", () => {
     expect(evict).toHaveBeenCalledTimes(2);
   });
 
+  it("count for the frame of the scene, however deep inside of it they come from", () => {
+    const { compositor, second } = pages();
+    let deepest = second;
+    for (let depth = 0; depth < 40; depth += 1) deepest = { parent: deepest } as unknown as Window;
+    const evict = vi.fn();
+    flood(new ForeignMessages(() => compositor, evict), deepest, limit + 1);
+    expect(evict).toHaveBeenCalledWith(1, 2);
+  });
+
+  it("get no new allowance from a new frame inside the same scene", () => {
+    const { compositor, second } = pages();
+    const evict = vi.fn();
+    const foreign = new ForeignMessages(() => compositor, evict);
+    for (let message = 0; message <= limit; message += 1) {
+      const fresh = { parent: second } as unknown as Window;
+      foreign.note(fresh as unknown as MessageEventSource, 0);
+    }
+    expect(evict).toHaveBeenCalledWith(1, 2);
+  });
+
+  it("from nowhere in particular share one allowance, and take nothing away", () => {
+    const { compositor, first } = pages();
+    const evict = vi.fn();
+    const foreign = new ForeignMessages(() => compositor, evict);
+    flood(foreign, null as unknown as Window, limit + 1);
+    flood(foreign, first, 1);
+    expect(evict).not.toHaveBeenCalled();
+  });
+
   it("count for the frame around a page inside of it", () => {
     const { compositor, inner } = pages();
     const evict = vi.fn();

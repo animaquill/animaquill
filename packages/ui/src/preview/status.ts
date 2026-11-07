@@ -1,4 +1,4 @@
-import type { SceneProblem } from "@animaquill/scene";
+import type { ScenePhase, SceneProblem } from "@animaquill/scene";
 import { Strikes, WATCHDOG_RULES } from "@animaquill/scene";
 import type { SceneStatus } from "@animaquill/render";
 import { Emitter } from "../workbench/emitter.ts";
@@ -10,7 +10,12 @@ export type CompositorState =
   /** It stopped answering, and it gets started again by itself. */
   | "restarting"
   /** It keeps hanging, so it stays off until somebody says otherwise. */
-  | "stopped";
+  | "stopped"
+  /**
+   * It never came up. Another one on the same site would not either for a while: a process that
+   * hung can stay for minutes after its frame is gone, see `OriginPool`. A new page gets a new one.
+   */
+  | "unreachable";
 
 export interface PreviewSnapshot {
   readonly compositor: CompositorState;
@@ -73,9 +78,11 @@ export class PreviewStatus {
   }
 
   /** It stopped answering. A new one gets all scenes to start over, so it knows nothing of them. */
-  hung(): void {
+  hung(phase: ScenePhase = "running"): void {
     const { generation } = this.#snapshot;
-    if (this.#strikes.hung(performance.now())) {
+    if (phase === "hello") {
+      this.#set({ compositor: "unreachable", scenes: new Map() });
+    } else if (this.#strikes.hung(performance.now())) {
       this.#set({ compositor: "restarting", generation: generation + 1, scenes: new Map() });
       this.#messages.restarted();
     } else this.#set({ compositor: "stopped", scenes: new Map() });

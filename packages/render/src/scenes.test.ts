@@ -7,12 +7,22 @@ import type {
 } from "@animaquill/scene";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FromCompositor, SceneStatus, ToCompositor } from "./index.ts";
-import { baseFor, frameOf, HeldPicture, SceneLayers, viewOf, type Host } from "./scenes.ts";
+import {
+  baseFor,
+  frameOf,
+  HeldPicture,
+  MAX_SCENE_FRAME,
+  SceneLayers,
+  viewOf,
+  type Host,
+} from "./scenes.ts";
 
 class FakeHost implements Host {
   readonly options: SceneHostOptions;
   state: SceneHostState = "opening";
   origin: string | undefined = "https://scene-0.example";
+  position: number | undefined;
+  stateful = false;
   opened = 0;
   closed = false;
   seeks: number[] = [];
@@ -36,7 +46,11 @@ class FakeHost implements Host {
     this.state = "closed";
   }
 
+  /** Makes every seek throw, the way a frame that is no frame would. */
+  static failSeeks = false;
+
   seek(frame: number): Promise<boolean> {
+    if (FakeHost.failSeeks) throw new RangeError(`No frame ${frame}`);
     this.seeks.push(frame);
     return Promise.resolve(true);
   }
@@ -211,8 +225,9 @@ describe("origins that may hold on to what hung", () => {
 describe("which scenes run", () => {
   it("asks for what a scene needs, once, and starts it when that came", () => {
     const { scenes, hosts, sent, asked } = setup();
-    scenes.follow(planOf(layer("a")), 12);
-    scenes.follow(planOf(layer("a")), 13);
+    const plan = planOf(layer("a"));
+    scenes.follow(plan, 12);
+    scenes.follow(plan, 13);
     expect(hosts).toEqual([]);
     expect(asked()).toEqual([{ type: "needs-scene", scene: "s", revision: "r1" }]);
     expect(sent).toContainEqual({
@@ -223,6 +238,26 @@ describe("which scenes run", () => {
     scenes.handle(CONTENT);
     expect(hosts).toHaveLength(1);
     expect(hosts[0]?.opened).toBe(1);
+  });
+
+  it("asks again with the next plan when nothing came, and only then", () => {
+    const { scenes, hosts, asked } = setup();
+    scenes.follow(planOf(layer("a")), 12);
+    scenes.follow(planOf(layer("b")), 12);
+    expect(asked()).toHaveLength(2);
+    scenes.handle(CONTENT);
+    scenes.follow(planOf(layer("a")), 12);
+    expect(asked()).toHaveLength(2);
+    expect(hosts.length).toBeGreaterThan(0);
+  });
+
+  it("asks again for a scene that went and came back before anybody answered", () => {
+    const { scenes, asked } = setup();
+    const plan = planOf(layer("a"));
+    scenes.follow(plan, 12);
+    scenes.follow(planOf(), 12);
+    scenes.follow(plan, 12);
+    expect(asked()).toHaveLength(2);
   });
 
   it("gets a scene ready before its clip comes up", () => {
@@ -600,6 +635,26 @@ describe("a project that changed", () => {
     expect(scenes.pictureOf("a")?.image).not.toBe(late);
   });
 
+  it("taken back while the new one starts, the new one does not take over", () => {
+    const { scenes, hosts, plan } = changed();
+    scenes.follow(plan, 12);
+    expect(hosts[1]?.closed).toBe(true);
+    hosts[1]?.picture(60);
+    expect(hosts[0]?.closed).toBe(false);
+    expect(hosts).toHaveLength(2);
+  });
+
+  it("starts over what runs when more of the same scene comes, an asset that came back", () => {
+    const { scenes, hosts } = showing();
+    hosts[0]?.ready();
+    hosts[0]?.picture(1);
+    scenes.handle({ ...CONTENT, assets: new Map([["logo", new Blob(["x"])]]) });
+    expect(hosts).toHaveLength(2);
+    expect(hosts[1]?.options.load.assets.has("logo")).toBe(true);
+    hosts[1]?.picture(60);
+    expect(hosts[0]?.closed).toBe(true);
+  });
+
   it("keeps up with changes that come one after the other", () => {
     const { scenes, hosts } = changed();
     const third = planOf(layer("a", { source: source({ revision: "r3" }) }));
@@ -786,6 +841,83 @@ describe("a scene that fails", () => {
     const problem: SceneProblem = { kind: "error", message: "oops", frame: 3 };
     hosts[0]?.options.onProblem?.(problem);
     expect(sent).toContainEqual({ type: "scene-problem", layer: "a", problem });
+  });
+});
+
+describe("a clock no scene gets to", () => {
+  const far = (extra: Partial<RenderLayer>) => planOf(layer("a", extra));
+
+  it("is capped, and a frame is always one that can be asked for", () => {
+    const fps = { num: 30, den: 1 };
+    expect(frameOf(1e20, fps)).toBe(MAX_SCENE_FRAME);
+    expect(frameOf(Number.NaN, fps)).toBe(0);
+    expect(Number.isSafeInteger(frameOf(1e300, { num: 1e300, den: 1 }))).toBe(true);
+  });
+
+  it("stops the clip with a reason instead of running it, by its offset", () => {
+    const { scenes, hosts, lastStatus } = setup();
+    scenes.follow(far({ offset: 1e20 }), 12);
+    scenes.handle(CONTENT);
+    expect(hosts).toEqual([]);
+    expect(lastStatus()).toMatchObject({ state: "stopped", message: "frame-out-of-range" });
+    expect(scenes.showsPlaceholder("a")).toBe(true);
+  });
+
+  it("or by a frame rate that no project should have", () => {
+    const { scenes, hosts, lastStatus } = setup();
+    const plan = {
+      ...far({}),
+      scenes: { format: "f", language: "zh-CN", fps: { num: 1e12, den: 1 } },
+    };
+    scenes.follow(plan, 12);
+    scenes.handle(CONTENT);
+    expect(hosts).toEqual([]);
+    expect(lastStatus()).toMatchObject({ state: "stopped", message: "frame-out-of-range" });
+  });
+
+  it("closes what ran when the clip gets there", () => {
+    const { scenes, hosts } = showing();
+    scenes.follow(far({ offset: 1e20 }), 12);
+    expect(hosts[0]?.closed).toBe(true);
+  });
+
+  it("closes a scene that could not get going, instead of leaving it behind", () => {
+    const { scenes, hosts } = setup();
+    scenes.follow(planOf(layer("a")), 12);
+    FakeHost.failSeeks = true;
+    try {
+      expect(() => scenes.handle(CONTENT)).toThrow();
+    } finally {
+      FakeHost.failSeeks = false;
+    }
+    expect(hosts[0]?.closed).toBe(true);
+  });
+});
+
+describe("a scene that stops playing", () => {
+  function playedAhead(stateful: boolean, ahead: number) {
+    const context = showing();
+    const host = context.hosts[0] as FakeHost;
+    host.ready();
+    context.scenes.handle({ type: "play", seconds: 12, at: 1000, rate: 1, jump: true });
+    host.seeks.length = 0;
+    host.stateful = stateful;
+    host.position = 60 + ahead;
+    context.scenes.follow(context.plan, 12);
+    context.scenes.handle({ type: "pause" });
+    return host;
+  }
+
+  it("stays where it got to when that is a little ahead and going back costs it everything", () => {
+    expect(playedAhead(true, 3).seeks).toEqual([]);
+  });
+
+  it("goes back when that costs nothing", () => {
+    expect(playedAhead(false, 3).seeks).toEqual([60]);
+  });
+
+  it("goes back when it is far off, which is no small difference any more", () => {
+    expect(playedAhead(true, 600).seeks).toEqual([60]);
   });
 });
 
