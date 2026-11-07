@@ -779,6 +779,7 @@ test.describe("a scene from a folder", () => {
 
 test.describe("a scene at a lower quality of the preview", () => {
   test.use({ withProject: false });
+  needsPlainStage();
 
   const ratioOf = (frame: Frame | undefined) =>
     frame
@@ -789,7 +790,7 @@ test.describe("a scene at a lower quality of the preview", () => {
       .catch(() => undefined);
 
   test("captures onto fewer pixels, laid out for the same box", async ({ page }) => {
-    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await openForScenes(page);
     await openScene(page, SLIDE);
     await expect.poll(() => ratioOf(sceneFrames(page)[0])).toEqual(["1", 1920]);
     await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
