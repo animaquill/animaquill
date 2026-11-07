@@ -3,6 +3,7 @@ import type { Host } from "@animaquill/host";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App.tsx";
+import { watchPage } from "./diagnostics/errors.ts";
 import { createI18n } from "./i18n/i18n.ts";
 import { builtinPanels } from "./panels/builtin.tsx";
 import type { PanelDefinition } from "./workbench/panels.ts";
@@ -45,6 +46,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     ...(options.sceneStage && { sceneStage: options.sceneStage }),
     ...(options.soundLimitMs !== undefined && { soundLimitMs: options.soundLimitMs }),
   });
+  // Before anything else runs, so that whatever fails from here on is caught.
+  const stopWatching = watchPage(workbench.errors, workbench.diagnostics, options.compositorUrl);
   await workbench.load();
   options.onWorkbench?.(workbench);
 
@@ -92,5 +95,6 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", save);
     root.unmount();
+    stopWatching();
   };
 }

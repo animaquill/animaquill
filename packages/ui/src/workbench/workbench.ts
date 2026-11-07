@@ -15,7 +15,9 @@ import type { ProjectSummary } from "@animaquill/host";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
-import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
+import { ErrorReports } from "../diagnostics/errors.ts";
+import { namesIn } from "../diagnostics/privacy.ts";
+import { DiagnosticsRecorder, deviceFacts } from "../diagnostics/recorder.ts";
 import { registerKeyframeActions } from "../keyframes/actions.ts";
 import { KeyframeEditor } from "../keyframes/editor.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -59,11 +61,11 @@ export interface WorkbenchOptions {
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
 const MAX_REPORTED_CLIPS = 500;
 
-function saveReport(report: DiagnosticsReport): void {
+function saveReport(report: unknown, name: string): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(report, undefined, 2)]));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `animaquill-diagnostics-${report.startedAt.replaceAll(":", "-")}.json`;
+  link.download = `${name.replaceAll(":", "-")}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -88,6 +90,8 @@ export class Workbench {
   readonly sounds: MadeSounds;
   readonly transfer: ProjectTransfer;
   readonly diagnostics: DiagnosticsRecorder;
+  /** Errors of the editor while this page is open, and whether people want to report them. */
+  readonly errors: ErrorReports;
   readonly #sink: DiagnosticsSink | undefined;
   readonly projects: ProjectLibrary;
   /** Where the page with the compositor is. A site of its own keeps it apart from the editor. */
@@ -112,7 +116,25 @@ export class Workbench {
     this.version = version;
     this.projects = host.projects;
     this.diagnostics = new DiagnosticsRecorder(version);
-    this.#sink = host.diagnostics;
+    const sink = host.diagnostics;
+    this.#sink = sink;
+    let names: { state: unknown; found: Set<string> } | undefined;
+    this.errors = new ErrorReports({
+      version,
+      recorder: this.diagnostics,
+      ...(sink && { send: (report) => sink.send(report) }),
+      origins: () =>
+        typeof location === "undefined"
+          ? []
+          : [location.origin, new URL(compositorUrl, location.href).origin],
+      secrets: () => {
+        // An error can come every frame, and the project rarely changes that often.
+        const state = this.session.store?.getState();
+        if (!names || names.state !== state) names = { state, found: namesIn(state) };
+        return names.found;
+      },
+      device: deviceFacts,
+    });
     this.compositorUrl = compositorUrl;
     this.sceneOrigins = options.sceneOrigins ?? [];
     this.sceneStage = options.sceneStage;
@@ -201,13 +223,15 @@ export class Workbench {
       run: soundMaker.run,
       messages: {
         problem: (sound, problem) => this.#noteSoundProblem(sound, problem),
-        failed: (sound, reason) =>
+        failed: (sound, reason) => {
+          this.diagnostics.mark("sound.failed", { reason });
           this.notifications.push(
             t(`sound.failed.${reason}`, {
               name: this.#soundName(sound),
               interpolation: { escapeValue: false },
             }),
-          ),
+          );
+        },
       },
       arrived: (file) => this.media.soundArrived(file),
       ...(options.soundLimitMs !== undefined && { limitMs: options.soundLimitMs }),
@@ -261,6 +285,7 @@ export class Workbench {
         notShown: () => this.notifications.push(t("notice.keysNotShown")),
       },
     );
+    this.#keepTrail();
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
     this.#registerCodeActions();
@@ -269,6 +294,62 @@ export class Workbench {
     this.#registerHelpActions();
     registerTimelineActions(this.actions, this.timeline, this.keyframes.inTimeline);
     registerKeyframeActions(this.actions, this.keyframes, this.timeline);
+  }
+
+  /**
+   * What people do goes in the black box: actions, tabs, the playhead, commands. Names and numbers
+   * only. What commands were given stays out, because that is what people make.
+   */
+  #keepTrail(): void {
+    const { diagnostics } = this;
+    this.actions.watch((action, way) => diagnostics.mark("action", { id: action.id, way }, true));
+    let active = this.layout.getSnapshot().active;
+    this.layout.subscribe(() => {
+      const now = this.layout.getSnapshot().active;
+      if (now !== active && now !== undefined) diagnostics.mark("panel", { id: now });
+      active = now;
+    });
+    let compositor = this.preview.getSnapshot().compositor;
+    this.preview.subscribe(() => {
+      const now = this.preview.getSnapshot().compositor;
+      if (now !== compositor) diagnostics.mark("compositor", { state: now });
+      compositor = now;
+    });
+    let frame = this.timeline.frame;
+    this.timeline.subscribe(() => {
+      const now = this.timeline.frame;
+      if (now !== frame && !this.timeline.getSnapshot().playing) {
+        diagnostics.mark("seek", { frame: now }, true);
+      }
+      frame = now;
+    });
+    let store: ProjectStore | undefined;
+    let stopWatching: (() => void) | undefined;
+    const follow = () => {
+      if (this.session.store === store) return;
+      stopWatching?.();
+      store = this.session.store;
+      diagnostics.mark("project", { open: store !== undefined });
+      stopWatching = store?.watchCommands(({ commands, by, ok, dryRun, code, error }) => {
+        if (dryRun && ok) return;
+        const [name] = commands;
+        diagnostics.mark(
+          "command",
+          {
+            name,
+            by,
+            ok,
+            ...(commands.length > 1 && { count: commands.length }),
+            ...(code !== undefined && { code }),
+            ...(dryRun && { dryRun }),
+          },
+          true,
+        );
+        if (code === "threw") this.errors.capture("command", error, { commands });
+      });
+    };
+    this.session.subscribe(follow);
+    follow();
   }
 
   #clipName(clip: string): string {
@@ -281,6 +362,7 @@ export class Workbench {
    * worth interrupting people for, and not while they are looking at the list.
    */
   #noteSceneProblem(clip: string, revision: string, problem: SceneProblem, first: boolean): void {
+    this.#markCodeProblem("scene.problem", problem);
     const { t } = this;
     const name = this.#clipName(clip);
     const { line, ...withoutLine } = problem;
@@ -301,6 +383,10 @@ export class Workbench {
   }
 
   #noteStoppedScene(clip: string, status: SceneStatus | undefined): void {
+    if (status) {
+      const { reason, phase } = status;
+      this.diagnostics.mark("scene.stopped", { reason, phase });
+    }
     if (!status) {
       this.problems.noteStopped(clip, undefined);
       return;
@@ -407,7 +493,19 @@ export class Workbench {
     return this.session.store?.getState().sounds[sound]?.name ?? this.t("timeline.kind.sound");
   }
 
+  /**
+   * Something went wrong with the code of a project. Only its kind goes in the black box: what it
+   * says and where comes from that code, which is what people make.
+   */
+  #markCodeProblem(
+    kind: "scene.problem" | "sound.problem",
+    { kind: type, code }: SceneProblem,
+  ): void {
+    this.diagnostics.mark(kind, { type, ...(code !== undefined && { code }) });
+  }
+
   #noteSoundProblem(sound: string, problem: SceneProblem): void {
+    this.#markCodeProblem("sound.problem", problem);
     const words = { name: this.#soundName(sound), interpolation: { escapeValue: false } };
     const text = describeProblem(this.t, problem);
     this.notifications.push(this.t("scene.problem", { ...words, text }));
@@ -448,7 +546,10 @@ export class Workbench {
 
   /** The open project stays open until the new one is there, so a failure costs nothing. */
   async importProject(): Promise<void> {
-    const report = await this.transfer.importProject();
+    this.diagnostics.mark("import", { step: "start" });
+    const report = await this.transfer
+      .importProject()
+      .finally(() => this.diagnostics.mark("import", { step: "end" }));
     if (!report) return;
     await this.transfer.warnAboutCode(report);
     await this.openProject(report.id);
@@ -534,7 +635,13 @@ export class Workbench {
 
   saveDiagnostics(): void {
     const { report } = this.diagnostics.getSnapshot();
-    if (report) saveReport(report);
+    if (report) saveReport(report, `animaquill-diagnostics-${report.startedAt}`);
+  }
+
+  /** For when there is nowhere to send it, or it did not arrive. */
+  saveErrorReport(id: number): void {
+    const caught = this.errors.getSnapshot().errors.find((error) => error.id === id);
+    if (caught) saveReport(caught.report, `animaquill-error-${caught.report.at}`);
   }
 
   /** Nothing leaves before people press send, with the whole report in front of them. */
@@ -623,7 +730,12 @@ export class Workbench {
       });
       if (answer === undefined || (answer === "save" && !this.trials.save())) return;
     }
-    await this.transfer.exportProject();
+    this.diagnostics.mark("export", { step: "start" });
+    try {
+      await this.transfer.exportProject();
+    } finally {
+      this.diagnostics.mark("export", { step: "end" });
+    }
   }
 
   /** Resolves to false when people would rather stay with what they are trying out. */

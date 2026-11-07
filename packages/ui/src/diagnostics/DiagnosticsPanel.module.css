@@ -53,7 +53,7 @@
 .about {
   max-width: 640px;
   margin: 0;
-  padding: 14px 12px;
+  padding: 6px 2px 4px;
   color: var(--aq-text-muted);
   line-height: 1.6;
 }
@@ -219,6 +219,46 @@ button.event:hover {
 .finished pre {
   max-height: 260px;
   margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  font-size: 11px;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.errors {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.errors ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.errorLine {
+  display: grid;
+  grid-template-columns: 44px 64px 1fr auto;
+  gap: 8px;
+}
+
+.quietText {
+  color: var(--aq-text-muted);
+}
+
+.error pre {
+  max-height: 260px;
+  margin: 2px 0 0;
   padding: 8px;
   overflow: auto;
   font-size: 11px;

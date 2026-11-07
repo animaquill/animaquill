@@ -10,6 +10,16 @@
   max-width: calc(100vw - 24px);
 }
 
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.items:empty {
+  display: none;
+}
+
 .item {
   display: flex;
   align-items: flex-start;

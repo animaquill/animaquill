@@ -177,6 +177,13 @@ export type FromCompositor =
   /** Scenes must stay away from there, also in the next compositor. */
   | { readonly type: "origin-retired"; readonly origin: string }
   | { readonly type: "pong"; readonly nonce: number }
+  /** Something went wrong in the compositor itself, with where in its code. */
+  | {
+      readonly type: "failed";
+      readonly name: string | undefined;
+      readonly message: string | undefined;
+      readonly stack: string | undefined;
+    }
   | { readonly type: "frames"; readonly frames: readonly FrameTiming[] }
   /**
    * New places on the timeline that reached the canvas, as how many milliseconds before this message

@@ -1,5 +1,5 @@
 import type { IDockviewPanelProps } from "dockview-react";
-import { Component, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import styles from "./PanelHost.module.css";
@@ -8,6 +8,7 @@ import type { PanelParams } from "./toDockview.ts";
 interface BoundaryProps {
   readonly message: string;
   readonly retry: string;
+  readonly onError: (error: unknown, info: ErrorInfo) => void;
   readonly children: ReactNode;
 }
 
@@ -17,6 +18,10 @@ class PanelBoundary extends Component<BoundaryProps, { failed: boolean }> {
 
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
+    this.props.onError(error, info);
   }
 
   override render() {
@@ -49,7 +54,16 @@ export function PanelHost({ params }: IDockviewPanelProps<PanelParams>) {
   return (
     // Focusable, so that clicking anywhere in a panel makes it the panel that keys go to.
     <div className={styles.content} data-panel={definition.type} tabIndex={-1}>
-      <PanelBoundary message={t("panel.crashed")} retry={t("panel.retry")}>
+      <PanelBoundary
+        message={t("panel.crashed")}
+        retry={t("panel.retry")}
+        onError={(error, { componentStack }) =>
+          workbench.errors.capture("panel", error, {
+            panel: definition.type,
+            ...(componentStack && { componentStack }),
+          })
+        }
+      >
         <Content />
       </PanelBoundary>
     </div>

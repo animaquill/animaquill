@@ -1,9 +1,9 @@
 import { Emitter } from "../workbench/emitter.ts";
+import { Trail } from "./trail.ts";
 
 /** Enough to catch a problem. It ends by itself, so that a forgotten recording costs nothing. */
 const MAX_RECORDING_MS = 10 * 60 * 1000;
 const MAX_EVENTS = 6000;
-const MAX_TEXT = 300;
 /** Two frames at 60 Hz: anything longer is something people can see. */
 const NOTICEABLE_GAP_MS = 34;
 const MEMORY_EVERY_MS = 5000;
@@ -94,7 +94,7 @@ function graphicsCard(): string | undefined {
   }
 }
 
-function deviceFacts(): Readonly<Record<string, Value>> {
+export function deviceFacts(): Readonly<Record<string, Value>> {
   const { deviceMemory } = navigator as { deviceMemory?: number };
   return {
     userAgent: navigator.userAgent,
@@ -106,13 +106,13 @@ function deviceFacts(): Readonly<Record<string, Value>> {
   };
 }
 
-const shorten = (value: unknown) => String(value).slice(0, MAX_TEXT);
-
 /**
  * Collects how the editor runs, while people ask for it. It holds numbers and never what people
- * make: no names of projects or files, and no content.
+ * make: no names of projects or files, and no content. What people do also goes in the black box,
+ * which is always on and goes with a report of an error.
  */
 export class DiagnosticsRecorder {
+  readonly trail = new Trail();
   readonly #emitter = new Emitter();
   readonly #version: string;
   readonly #sample: (note: Note) => () => void;
@@ -166,7 +166,7 @@ export class DiagnosticsRecorder {
       if (kind === "frame" && typeof cold === "number") counts.cold += cold;
       if (kind === "gap") counts.gaps += 1;
       if (kind === "audio.late") counts.audioLate += 1;
-      if (kind === "error" || kind === "rejection") counts.errors += 1;
+      if (kind === "error") counts.errors += 1;
       if (kind === "memory" && typeof mb === "number") memoryMb = mb;
       if (kind === "limit") limitReached = true;
     }
@@ -209,6 +209,12 @@ export class DiagnosticsRecorder {
     this.#events = [];
     this.#snapshot = IDLE;
     this.#emitter.emit();
+  }
+
+  /** Something people did or the editor went through, for the black box and any recording. */
+  mark(kind: string, data: Readonly<Record<string, Value>> = {}, merge = false): void {
+    this.trail.add(kind, data, merge);
+    this.note(kind, data);
   }
 
   note(kind: string, data: Readonly<Record<string, Value>> = {}): void {
@@ -269,12 +275,8 @@ function samplePage(note: Note): () => void {
     frame = requestAnimationFrame(watch);
   });
 
-  const onError = (event: ErrorEvent) => note("error", { message: shorten(event.message) });
-  const onRejection = (event: PromiseRejectionEvent) =>
-    note("rejection", { message: shorten(event.reason) });
+  // Errors come from `ErrorReports`, which takes out what people made.
   const onVisibility = () => note("visibility", { state: document.visibilityState });
-  addEventListener("error", onError);
-  addEventListener("unhandledrejection", onRejection);
   document.addEventListener("visibilitychange", onVisibility);
 
   const tasks =
@@ -299,8 +301,6 @@ function samplePage(note: Note): () => void {
     clearTimeout(limit);
     tasks?.disconnect();
     document.removeEventListener("visibilitychange", onVisibility);
-    removeEventListener("unhandledrejection", onRejection);
-    removeEventListener("error", onError);
   };
   const limit = setTimeout(() => {
     note("limit", {});

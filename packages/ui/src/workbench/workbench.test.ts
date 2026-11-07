@@ -1053,3 +1053,67 @@ describe("moving projects", () => {
     expect(notices(workbench)).toContain("transfer.imported");
   });
 });
+
+describe("the black box", () => {
+  const kinds = (workbench: Workbench) =>
+    workbench.diagnostics.trail.entries().map((entry) => {
+      const { t, ...rest } = entry;
+      expect(t).toBeTypeOf("number");
+      return rest;
+    });
+
+  it("has what people did, by name, and nothing they wrote", async () => {
+    const { workbench } = setup();
+    await create(workbench, "秘密发布会");
+    const store = workbench.session.store as ProjectStore;
+    const action = workbench.actions.get("view.resetLayout");
+    if (!action) throw new Error("No action");
+    workbench.actions.perform(action, "palette");
+    store.execute({ type: "project.rename", params: { name: "更秘密的名字" } });
+    store.execute({ type: "project.rename", params: { name: "" } });
+    const trail = kinds(workbench);
+    expect(trail).toContainEqual({ kind: "project", open: true });
+    expect(trail).toContainEqual({ kind: "action", id: "view.resetLayout", way: "palette" });
+    expect(trail).toContainEqual({ kind: "command", name: "project.rename", by: "user", ok: true });
+    expect(trail).toContainEqual({
+      kind: "command",
+      name: "project.rename",
+      by: "user",
+      ok: false,
+      code: "invalid-params",
+    });
+    expect(JSON.stringify(trail)).not.toMatch(/秘密/);
+  });
+
+  it("follows the project that is open now", async () => {
+    const { workbench } = setup();
+    await create(workbench, "一");
+    const first = workbench.session.store as ProjectStore;
+    await create(workbench, "二");
+    first.execute({ type: "project.rename", params: { name: "旧的" } });
+    expect(kinds(workbench).filter(({ kind }) => kind === "command")).toEqual([]);
+  });
+
+  it("reports a command that went wrong, with its name and no project in it", async () => {
+    const { workbench } = setup();
+    await create(workbench, "SecretLaunch");
+    const store = workbench.session.store as ProjectStore;
+    const broken = new TypeError("SecretLaunch cannot be renamed");
+    vi.spyOn(store.doc, "transact").mockImplementation(() => {
+      throw broken;
+    });
+    expect(() => store.execute({ type: "project.rename", params: { name: "x" } })).toThrow(broken);
+    const [caught] = workbench.errors.getSnapshot().errors;
+    expect(caught?.report.error).toMatchObject({
+      source: "command",
+      name: "TypeError",
+      commands: ["project.rename"],
+    });
+    expect(JSON.stringify(caught?.report)).not.toContain("SecretLaunch");
+    expect(caught?.report.trail.at(-2)).toMatchObject({
+      kind: "command",
+      name: "project.rename",
+      code: "threw",
+    });
+  });
+});

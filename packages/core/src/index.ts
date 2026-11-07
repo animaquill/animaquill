@@ -124,6 +124,7 @@ export {
   mergeUpdates,
   type CommandCall,
   type CommandFailure,
+  type CommandOutcome,
   type CommandResult,
   type ExecuteOptions,
   type HistoryEntry,

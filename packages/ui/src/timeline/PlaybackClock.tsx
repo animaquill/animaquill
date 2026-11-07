@@ -29,7 +29,7 @@ export function PlaybackClock() {
   useEffect(() => () => audio.dispose(), [audio]);
 
   useEffect(() => {
-    diagnostics.note(playing ? "play" : "pause", { frame: timeline.frame });
+    diagnostics.mark(playing ? "play" : "pause", { frame: timeline.frame });
     if (!playing || !store) return;
     let plan: AudioPlan | undefined;
     let start = timeline.playbackStart;

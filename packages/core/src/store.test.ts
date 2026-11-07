@@ -403,6 +403,69 @@ describe("running commands", () => {
   });
 });
 
+describe("watching commands", () => {
+  it("says by name what became of each one, and nothing of what it was given", () => {
+    const store = open();
+    const watcher = vi.fn();
+    const stop = store.watchCommands(watcher);
+    success(setProperty(store, "param.size", 80));
+    failure(setProperty(store, "opacity", 2, { dryRun: true }));
+    failure(store.execute({ type: "project.rename", params: { name: "" } }, { origin: AI }));
+    expect(watcher.mock.calls.map(([outcome]) => outcome)).toEqual([
+      { commands: ["clip.setProperty"], by: "user", ok: true },
+      {
+        commands: ["clip.setProperty"],
+        by: "user",
+        dryRun: true,
+        ok: false,
+        code: "invalid-value",
+      },
+      { commands: ["project.rename"], by: "ai", ok: false, code: "invalid-params" },
+    ]);
+    stop();
+    success(setProperty(store, "param.size", 90));
+    expect(watcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("says when one went wrong, and still lets the error through", () => {
+    const store = open();
+    const watcher = vi.fn();
+    store.watchCommands(watcher);
+    const command = COMMANDS.find(({ type }) => type === "project.rename");
+    if (!command) throw new Error("No such command");
+    const broken = new Error("Broken");
+    const run = vi.spyOn(command, "run").mockImplementation(() => {
+      throw broken;
+    });
+    try {
+      expect(() => store.execute({ type: "project.rename", params: { name: "x" } })).toThrow(
+        broken,
+      );
+    } finally {
+      run.mockRestore();
+    }
+    expect(watcher).toHaveBeenCalledWith({
+      commands: ["project.rename"],
+      by: "user",
+      ok: false,
+      code: "threw",
+      error: broken,
+    });
+  });
+
+  it("goes on when a watcher fails", () => {
+    const store = open();
+    const after = vi.fn();
+    store.watchCommands(() => {
+      throw new Error("Watcher");
+    });
+    store.watchCommands(after);
+    success(setProperty(store, "param.size", 80));
+    expect(property(store, "param.size")).toBe(80);
+    expect(after).toHaveBeenCalledOnce();
+  });
+});
+
 describe("checking without doing", () => {
   it("reports what would happen and changes nothing", () => {
     const store = open();

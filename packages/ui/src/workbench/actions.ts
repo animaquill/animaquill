@@ -32,8 +32,24 @@ export interface Action {
   readonly repeats?: boolean;
 }
 
+/** How people got an action to run. */
+export type ActionWay = "menu" | "palette" | "keys";
+
 export class ActionRegistry {
   readonly #actions = new Map<string, Action>();
+  readonly #watchers = new Set<(action: Action, way: ActionWay) => void>();
+
+  /** Runs an action for people. Whoever watches hears of it first, so that it is on record if it fails. */
+  perform(action: Action, way: ActionWay): void {
+    for (const watcher of this.#watchers) watcher(action, way);
+    action.run();
+  }
+
+  /** Returns how to stop. */
+  watch(watcher: (action: Action, way: ActionWay) => void): () => void {
+    this.#watchers.add(watcher);
+    return () => this.#watchers.delete(watcher);
+  }
 
   register(action: Action): void {
     if (this.#actions.has(action.id)) throw new Error(`Action already registered: ${action.id}`);

@@ -58,10 +58,27 @@ const sceneStage = new URLSearchParams(location.search).get("sceneStage") === "p
 /** Waiting a whole minute for code that never ends is no way to test it. */
 const soundLimit = new URLSearchParams(location.search).get("soundLimit");
 
+/**
+ * Reports go where they go on a site, which the development server does not answer: tests stand in
+ * for the server there.
+ */
+const diagnostics = {
+  async send(report: unknown): Promise<string> {
+    const response = await fetch("/api/diagnostics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(report),
+    });
+    if (!response.ok) throw new Error(`The server answered ${response.status}`);
+    const { id } = (await response.json()) as { id: string };
+    return id;
+  },
+};
+
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
   await mountEditor(root, {
-    host: createBrowserHost(),
+    host: { ...createBrowserHost(), diagnostics },
     version: "dev",
     compositorUrl: "/compositor.html",
     sceneOrigins,

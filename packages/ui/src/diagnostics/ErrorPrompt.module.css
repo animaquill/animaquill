@@ -1,0 +1,111 @@
+.prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--aq-text);
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-left: 3px solid var(--aq-warning);
+  border-radius: 4px;
+  box-shadow: var(--aq-shadow);
+}
+
+.prompt header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prompt strong {
+  flex: 1;
+  color: var(--aq-text-strong);
+  font-weight: 500;
+}
+
+.icon {
+  flex: none;
+  color: var(--aq-warning);
+}
+
+.prompt p {
+  margin: 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.prompt button {
+  padding: 3px 10px;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.prompt button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.prompt button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.prompt button.primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.prompt button.link {
+  margin-left: auto;
+  padding: 3px 2px;
+  color: var(--aq-match);
+  background: none;
+}
+
+.prompt button.close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: none;
+}
+
+.prompt button.close:hover {
+  background: var(--aq-bg-hover);
+}
+
+.report {
+  max-height: 240px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  font-size: 11px;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+/* Where nothing else is left: the editor itself could not be drawn. */
+.corner {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1001;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  text-align: left;
+}

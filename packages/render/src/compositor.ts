@@ -35,6 +35,30 @@ interface Picture {
   close(): void;
 }
 
+/**
+ * Errors of the compositor itself go to the editor, which asks people whether to report them. The
+ * code of projects runs on pages of its own, so nothing of it is in here. A few say it all.
+ */
+const MAX_FAILURES = 20;
+let failures = 0;
+function sayFailed(error: unknown): void {
+  if (failures >= MAX_FAILURES) return;
+  failures += 1;
+  const text = (value: unknown, limit: number) =>
+    typeof value === "string" ? value.slice(0, limit) : undefined;
+  const { name, message, stack } =
+    error instanceof Error ? error : { name: undefined, message: String(error), stack: undefined };
+  const failed: FromCompositor = {
+    type: "failed",
+    name: text(name, 100),
+    message: text(message, 1000),
+    stack: text(stack, 8000),
+  };
+  parent.postMessage(failed, "*");
+}
+addEventListener("error", (event) => sayFailed(event.error ?? event.message));
+addEventListener("unhandledrejection", (event) => sayFailed(event.reason));
+
 const TIMINGS_EVERY_MS = 500;
 /** Often enough that the editor can count the last second without waiting for the next word. */
 const PAINTED_EVERY_MS = 250;

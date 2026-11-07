@@ -2,6 +2,7 @@ import { Circle, Copy, Download, Send, Square, Trash2 } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import { ErrorList } from "./ErrorList.tsx";
 import { frameAt } from "../timeline/frames.ts";
 import { FRAME_TIME_GROUPS, type DiagnosticsEvent, type DiagnosticsSnapshot } from "./recorder.ts";
 import styles from "./DiagnosticsPanel.module.css";
@@ -213,18 +214,21 @@ export function DiagnosticsPanel() {
         )}
         {limitReached && <span className={styles.bad}>{t("diagnostics.limitReached")}</span>}
       </div>
-      {status === "idle" ? (
-        <p className={styles.about}>{t("diagnostics.about")}</p>
-      ) : (
-        <div className={styles.body}>
-          {status === "finished" && <Finished snapshot={snapshot} />}
-          <Stats snapshot={snapshot} />
-          <div className={styles.columns}>
-            <FrameTimes times={snapshot.frameTimes} />
-            <Events events={snapshot.recent} />
-          </div>
-        </div>
-      )}
+      <div className={styles.body}>
+        {status === "idle" ? (
+          <p className={styles.about}>{t("diagnostics.about")}</p>
+        ) : (
+          <>
+            {status === "finished" && <Finished snapshot={snapshot} />}
+            <Stats snapshot={snapshot} />
+            <div className={styles.columns}>
+              <FrameTimes times={snapshot.frameTimes} />
+              <Events events={snapshot.recent} />
+            </div>
+          </>
+        )}
+        <ErrorList />
+      </div>
     </div>
   );
 }

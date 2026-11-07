@@ -186,7 +186,7 @@ export class KeybindingService {
     if (isSlider(event.target) && SLIDER_KEYS.has(combo)) return;
     // Also for a key that is held down, or the browser would get it the second time around.
     event.preventDefault();
-    if (!event.repeat || action.repeats) action.run();
+    if (!event.repeat || action.repeats) this.#actions.perform(action, "keys");
   }
 
   /**

@@ -69,7 +69,7 @@ export class CommandPalette {
     this.#settings
       .save(SETTINGS_KEY, { version: FORMAT_VERSION, recent: this.#recent })
       .catch((error: unknown) => console.warn("Recent commands could not be saved", error));
-    action.run();
+    this.#actions.perform(action, "palette");
   }
 
   #setOpen(open: boolean): void {

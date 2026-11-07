@@ -1,6 +1,8 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import type { i18n } from "i18next";
+import { ErrorPrompt } from "../diagnostics/ErrorPrompt.tsx";
+import promptStyles from "../diagnostics/ErrorPrompt.module.css";
 import { DockArea } from "../dock/DockArea.tsx";
 import { PlaybackClock } from "../timeline/PlaybackClock.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
@@ -27,34 +29,46 @@ class AppBoundary extends Component<{ workbench: Workbench; children: ReactNode 
     return { failed: true };
   }
 
+  override componentDidCatch(error: unknown, { componentStack }: ErrorInfo) {
+    this.props.workbench.errors.capture("app", error, {
+      ...(componentStack && { componentStack }),
+    });
+  }
+
   override render() {
     if (!this.state.failed) return this.props.children;
-    const { t, layout, session } = this.props.workbench;
+    const { workbench } = this.props;
+    const { t, layout, session } = workbench;
     return (
-      <div className={styles.crashed} role="alert">
-        <h1>{t("app.crashed")}</h1>
-        <p>{t("app.crashedHint")}</p>
-        <div>
-          <button type="button" onClick={() => location.reload()}>
-            {t("app.reload")}
-          </button>
-          <button
-            type="button"
-            onClick={() => void layout.forget().finally(() => location.reload())}
-          >
-            {t("app.resetAndReload")}
-          </button>
-          {/* The project opens again after a reload, so if it is the cause this is the way out. */}
-          {session.store && (
+      <>
+        <div className={styles.crashed} role="alert">
+          <h1>{t("app.crashed")}</h1>
+          <p>{t("app.crashedHint")}</p>
+          <div>
+            <button type="button" onClick={() => location.reload()}>
+              {t("app.reload")}
+            </button>
             <button
               type="button"
-              onClick={() => void session.close().finally(() => location.reload())}
+              onClick={() => void layout.forget().finally(() => location.reload())}
             >
-              {t("app.closeAndReload")}
+              {t("app.resetAndReload")}
             </button>
-          )}
+            {/* The project opens again after a reload, so if it is the cause this is the way out. */}
+            {session.store && (
+              <button
+                type="button"
+                onClick={() => void session.close().finally(() => location.reload())}
+              >
+                {t("app.closeAndReload")}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+        <div className={promptStyles.corner}>
+          <ErrorPrompt workbench={workbench} />
+        </div>
+      </>
     );
   }
 }

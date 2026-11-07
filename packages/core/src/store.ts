@@ -72,6 +72,19 @@ export interface CommandFailure {
   readonly problems?: readonly Problem[];
 }
 
+/** What became of a command, by name only, for whoever keeps track of how the editor runs. */
+export interface CommandOutcome {
+  readonly commands: readonly string[];
+  /** A person, an AI task, or the editor itself. */
+  readonly by: "user" | "ai" | "other";
+  readonly ok: boolean;
+  /** It only checked, and wrote nothing. */
+  readonly dryRun?: boolean;
+  /** Why it said no. `threw` when it went wrong instead, with what it threw as `error`. */
+  readonly code?: string;
+  readonly error?: unknown;
+}
+
 export type CommandResult =
   | {
       readonly ok: true;
@@ -318,6 +331,7 @@ export class ProjectStore {
   readonly doc: Y.Doc;
   readonly #root: Y.Map<unknown>;
   readonly #listeners = new Set<() => void>();
+  readonly #watchers = new Set<(outcome: CommandOutcome) => void>();
   readonly #undo = new Map<Origin, UndoLog>();
   readonly #writes = new Map<string, Write>();
   readonly #removals = new Map<string, Write>();
@@ -424,6 +438,25 @@ export class ProjectStore {
     };
     this.doc.on("update", onUpdate);
     return () => this.doc.off("update", onUpdate);
+  }
+
+  /**
+   * Hears what became of every command that runs here, also of those that only check. Returns how to
+   * stop. A listener that fails changes nothing about the command.
+   */
+  watchCommands(listener: (outcome: CommandOutcome) => void): () => void {
+    this.#watchers.add(listener);
+    return () => this.#watchers.delete(listener);
+  }
+
+  #tell(outcome: CommandOutcome): void {
+    for (const watcher of this.#watchers) {
+      try {
+        watcher(outcome);
+      } catch {
+        // Watchers only keep track, and have to look after their own failures: the command stands.
+      }
+    }
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -587,6 +620,26 @@ export class ProjectStore {
   }
 
   #commit(
+    commands: readonly string[],
+    origin: Origin,
+    options: CommitOptions,
+    plan: (draft: Draft) => readonly unknown[],
+  ): CommandResult {
+    if (this.#watchers.size === 0) return this.#write(commands, origin, options, plan);
+    const by = origin === USER ? "user" : origin.startsWith("ai:") ? "ai" : "other";
+    const told = { commands, by, ...(options.dryRun && { dryRun: true }) } as const;
+    let result: CommandResult;
+    try {
+      result = this.#write(commands, origin, options, plan);
+    } catch (error) {
+      this.#tell({ ...told, ok: false, code: "threw", error });
+      throw error;
+    }
+    this.#tell({ ...told, ok: result.ok, ...(!result.ok && { code: result.error.code }) });
+    return result;
+  }
+
+  #write(
     commands: readonly string[],
     origin: Origin,
     options: CommitOptions,

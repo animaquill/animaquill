@@ -14,7 +14,7 @@ export interface Host {
   readonly drafts: DraftStore;
 }
 
-/** Receives what people chose to send about how the editor runs. */
+/** Receives what people chose to send: how the editor runs, or what went wrong in it. */
 export interface DiagnosticsSink {
   /** Resolves to something people can quote. Rejects when it did not arrive. */
   send(report: unknown): Promise<string>;
