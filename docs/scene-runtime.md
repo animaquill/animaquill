@@ -104,3 +104,50 @@ aq.frame((seconds) => {
 - 写给比这个编辑器更新的运行时版本的场景不运行，预览里显示占位。
 - 地址要在页面、样式表和脚本里写成项目里的路径。代码拼出来的 CSS `url()`、`innerHTML` 里的相对路径改写不到，会被挡，并列进问题选项卡。素材用 `aq.asset(id)`。
 - `history.pushState` 不生效，`history.back` 这类操作也不做事。`location.hash` 改了会进标签页的历史记录，不要用。
+
+## 声音
+
+声音的代码和场景用同一个运行时版本（`sound.json` 里的 `runtime`），也在沙箱里，但没有页面：入口是一个 ES 模块，跑在 Worker 里，没有 `document`，也不会给时间轴的每一帧运行。它只运行一次，算出整段声音。
+
+```js
+aq.sound(({ duration, frames, sampleRate, seed, params, output }) => {
+  const samples = new Float32Array(frames);
+  for (let at = 0; at < frames; at += 1) {
+    samples[at] = 0.5 * Math.sin((2 * Math.PI * 440 * at) / sampleRate);
+  }
+  return samples;
+});
+```
+
+| 接口 | 含义 |
+| --- | --- |
+| `aq.runtime` | 运行时接口版本 |
+| `aq.sound(callback)` | 登记生成声音的函数，模块运行完后调用一次。多次调用时用最后一个。回调可以是 `async` |
+
+回调拿到的内容：
+
+| 字段 | 含义 |
+| --- | --- |
+| `duration` | 要多长，秒 |
+| `frames` | 每个声道多少个样本，就是 `duration × sampleRate` 取整 |
+| `sampleRate` | 每秒多少个样本。现在总是 48000，代码不要写死 |
+| `seed` | `param.seed`，整数 |
+| `params` | 全部 `param.<id>` 的值，`duration` 和 `seed` 也在里面 |
+| `output` | 片段选的输出，没有时是 `undefined` |
+
+返回一个 `Float32Array` 是单声道，返回两个一样长的 `Float32Array` 组成的数组是立体声，第一个是左声道。比 `frames` 短没关系，后面是静音。比 `frames` 长、声道多于两个、数组类型不对都算失败。样本在 -1 到 1 之间，超出的部分被削掉，不是数字的样本算 0。
+
+### 确定性
+
+同样的代码、参数、种子、采样率和时长，算出来的样本相同。`Math.random`、`crypto.getRandomValues`、`crypto.randomUUID` 来自种子，`Date`、`performance.now` 这些是固定的时钟，定时器按这个时钟走。
+
+结果按这些内容存起来，刷新后不重算。项目里不再用到的结果，超过 7 天没用过，或者全部结果超过 500 MB 时，在打开项目时清掉，最久没用的先清。导入的素材不会被清。`sounds/<id>/` 或 `code/` 里任何文件变了都算新的声音。跨浏览器时 `Math.sin` 这类函数的最后几位可能不同，运行时管不到。
+
+### 限制
+
+- 能读到的文件是自己的文件夹和 `code/`。不能用素材，`aq.asset` 不存在。
+- 代码最多运行 60 秒，超时被停止。死循环只占一个 CPU 核，影响不到编辑器和播放。
+- 声音最长 300 秒。
+- 向外发太多消息的代码会被停止。
+- 没算好的声音不挡播放：片段上显示状态，时间照常走，算好后从当时的位置响起来。
+- 失败的声音不自动重试。属性选项卡和片段的右键菜单里有“重试”，改代码或者刷新页面也会再算一次。

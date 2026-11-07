@@ -1,5 +1,5 @@
 import { computePeaks, readSound } from "@animaquill/audio";
-import type { ClipState, ProjectStore } from "@animaquill/core";
+import { madeSoundOf, type ClipState, type ProjectStore } from "@animaquill/core";
 import type { ProjectLibrary } from "@animaquill/host";
 import { formatHash, isSameHash, probeMedia, type MediaFacts } from "@animaquill/media";
 import {
@@ -162,12 +162,18 @@ export class MediaLibrary {
     return image;
   }
 
+  /** Which file a clip with sound plays. Code may still be making it. */
+  #soundFileOf(store: ProjectStore, clip: ClipState): string | undefined {
+    const state = store.getState();
+    if (clip.source.kind === "sound") return madeSoundOf(state, clip)?.file;
+    const { media } = clip.source as { media?: { asset?: string } };
+    return media?.asset === undefined ? undefined : state.assets?.[media.asset]?.hash;
+  }
+
   /** The waveform of a clip. It shows up later when it has to be worked out first. */
   peaksOf(clip: ClipState): Uint8Array | undefined {
-    const { media } = clip.source as { media?: { asset?: string } };
     const store = this.#store;
-    const asset = media?.asset === undefined ? undefined : store?.getState().assets?.[media.asset];
-    const hash = asset?.hash;
+    const hash = store && this.#soundFileOf(store, clip);
     if (!store || hash === undefined) return undefined;
     if (!this.#peaks.has(hash)) {
       this.#peaks.set(hash, undefined);
@@ -197,6 +203,12 @@ export class MediaLibrary {
     const peaks = await computePeaks(readSound(file, 0, Number.POSITIVE_INFINITY));
     await media.put(peaksKey(hash), new Blob([peaks as Uint8Array<ArrayBuffer>]));
     return peaks;
+  }
+
+  /** Code finished making a sound, so whatever looked for that file has to look again. */
+  soundArrived(file: string): void {
+    this.#peaks.delete(file);
+    this.#emitter.emit();
   }
 
   /** Lets people choose files. Resolves to the assets they became. */

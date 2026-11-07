@@ -14,4 +14,12 @@ describe("bundleRuntime", () => {
     expect(notices).toContain("Permission is hereby granted");
     expect(() => new Function(code)).not.toThrow();
   }, 60000);
+
+  it("makes one for sounds too, which has nothing to do with drawing", async () => {
+    const { code, files } = await bundleRuntime({ kind: "sound" });
+    expect(files.some((file) => file.endsWith("/sound-main.ts"))).toBe(true);
+    expect(files.some((file) => file.endsWith("/capture.ts"))).toBe(false);
+    expect(code.slice(0, code.indexOf("*/"))).toContain("es-module-lexer ");
+    expect(() => new Function(code)).not.toThrow();
+  }, 60000);
 });

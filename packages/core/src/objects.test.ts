@@ -1,4 +1,10 @@
-import { BUILT_IN_PROPERTIES, CLIP_VISUAL, SCENE_VISUAL, createProject } from "@animaquill/schema";
+import {
+  BUILT_IN_PROPERTIES,
+  CLIP_SOUND,
+  CLIP_VISUAL,
+  SCENE_VISUAL,
+  createProject,
+} from "@animaquill/schema";
 import type { PropertySpec } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import type { ClipState } from "./model.ts";
@@ -38,7 +44,11 @@ describe("what a clip offers", () => {
     );
   });
 
-  it.each(["audio", "sound", "music", "timeline", "caption", "plugin.lottie"])(
+  it("a sound made by code has its volume", () => {
+    expect(objectsOf(clip({ kind: "sound" }))).toEqual([CLIP_SOUND]);
+  });
+
+  it.each(["audio", "music", "timeline", "caption", "plugin.lottie"])(
     "a %s has nothing to place yet",
     (kind) => {
       expect(objectsOf(clip({ kind }))).toEqual([]);

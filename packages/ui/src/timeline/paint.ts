@@ -35,6 +35,7 @@ interface Theme {
   readonly outside: string;
   readonly end: string;
   readonly marquee: string;
+  readonly failed: string;
 }
 
 function readTheme(element: Element): Theme {
@@ -58,6 +59,7 @@ function readTheme(element: Element): Theme {
     outside: color("outside"),
     end: color("end"),
     marquee: color("marquee"),
+    failed: style.getPropertyValue("--aq-danger").trim(),
   };
 }
 
@@ -82,6 +84,9 @@ interface ClipLook {
  * Draws the timeline. Nothing here decides anything: it shows what the editor says, once per frame
  * at most, and only what is on screen.
  */
+/** How high the line is under what could not be made. */
+const FAILED_BAR = 3;
+
 interface ClipStrip {
   readonly image: ImageBitmap;
   readonly count: number;
@@ -95,6 +100,7 @@ export class TimelinePainter {
   readonly #labelOf: ClipLabel;
   readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
   readonly #stripOf: (clip: ClipState) => ClipStrip | undefined;
+  readonly #hasFailed: (clip: ClipState) => boolean;
   /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
   #theme!: Theme;
   #ratio = 1;
@@ -106,6 +112,7 @@ export class TimelinePainter {
     labelOf: ClipLabel,
     peaksOf: (clip: ClipState) => Uint8Array | undefined,
     stripOf: (clip: ClipState) => ClipStrip | undefined,
+    hasFailed: (clip: ClipState) => boolean,
   ) {
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("No 2D context");
@@ -115,6 +122,7 @@ export class TimelinePainter {
     this.#labelOf = labelOf;
     this.#peaksOf = peaksOf;
     this.#stripOf = stripOf;
+    this.#hasFailed = hasFailed;
     // The browser can drop what a canvas holds, for example after a problem with the graphics card.
     canvas.addEventListener("contextrestored", () => this.invalidate());
   }
@@ -274,10 +282,15 @@ export class TimelinePainter {
     if (box.clip.source.kind === "video") {
       this.#paintFilmstrip(box, look, { left, right, top, height, width });
     }
-    if (box.clip.source.kind === "audio") {
+    if (box.clip.source.kind === "audio" || box.clip.source.kind === "sound") {
       this.#paintWaveform(box, look, { left, right, top, height }, fill);
     }
     if (width >= LABEL_MIN_WIDTH) this.#paintLabel(box, left, top, width, height, fill);
+    // Too narrow for words it should still show, and on any clip it stays out of the way.
+    if (this.#hasFailed(box.clip)) {
+      context.fillStyle = this.#theme.failed;
+      context.fillRect(left, top + height - FAILED_BAR, width, FAILED_BAR);
+    }
 
     if (look.edge) {
       context.fillStyle = "#ffffff66";

@@ -144,6 +144,16 @@ export const SCENE_VISUAL: ObjectDescriptor = {
   properties: CLIP_VISUAL.properties.filter(({ path }) => path !== "fit"),
 };
 
+/**
+ * What a clip made by code sounds like. Only the volume does anything yet, and it has one value for
+ * a whole clip: keys on sound come later.
+ */
+export const CLIP_SOUND: ObjectDescriptor = {
+  id: "sound",
+  type: "clip.sound",
+  properties: [{ ...(BUILT_IN_PROPERTIES["audio.volume"] as PropertySpec), animatable: false }],
+};
+
 /** Properties that are not built in but come from the content of a clip. */
 export const OPEN_PROPERTY_PREFIXES = ["param.", "object.", "element.", "caption."] as const;
 

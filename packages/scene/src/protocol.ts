@@ -53,6 +53,103 @@ export interface SceneLoad {
   readonly stage: "canvas" | "plain";
 }
 
+/**
+ * Everything a sound gets to run. Like a scene it gets nothing else, and what it is called and what
+ * it comes out as are not up to it.
+ */
+export interface SoundLoad {
+  /** The module to start with, by path from the root of the project. */
+  readonly entry: string;
+  /** By path from the root of the project. */
+  readonly files: ReadonlyMap<string, Blob>;
+  /** Seconds, which comes down to `frames` samples for each channel. */
+  readonly duration: number;
+  readonly frames: number;
+  readonly sampleRate: number;
+  readonly maxChannels: number;
+  /** Random numbers come from this, and code gets it to work with. */
+  readonly seed: number;
+  /** Made of plain values, so they can travel. */
+  readonly params: Readonly<Record<string, unknown>>;
+  /** Which one of the results of a program. */
+  readonly output?: string;
+  /** How long the code may run. */
+  readonly limitMs: number;
+}
+
+/** What code that made a sound came up with. It is only ever data. */
+export interface SoundSamples {
+  readonly channels: number;
+  /** Samples of each channel. */
+  readonly frames: number;
+  /** All of the first channel, then all of the next one, as 32-bit floats. */
+  readonly samples: Blob;
+}
+
+/**
+ * Why a sound did not come about. Most of these are things the code did. `no-origin` and `silent`
+ * are about where it runs: there is nowhere left to do that, or that place stopped answering.
+ */
+export type SoundFailureReason =
+  /** It threw something, which comes as a problem of its own. */
+  | "error"
+  /** It sent more messages than making a sound takes. */
+  | "flood"
+  /** It never called `aq.sound`. */
+  | "no-sound"
+  | "no-origin"
+  /** What it came up with is no sound. */
+  | "bad-result"
+  /** The entry is no script, or it is not there. */
+  | "no-entry"
+  /** It sent a message that is no message of the protocol. */
+  | "oversized"
+  | "silent"
+  /** It ran out of time. */
+  | "time"
+  /** It made more than it was asked for. */
+  | "too-long";
+
+const SOUND_FAILURES: ReadonlySet<string> = new Set<SoundFailureReason>([
+  "bad-result",
+  "error",
+  "flood",
+  "no-entry",
+  "no-origin",
+  "no-sound",
+  "oversized",
+  "silent",
+  "time",
+  "too-long",
+]);
+
+/** What a failure message of a sound says, with nothing else getting through. */
+export const readSoundFailure = (message: string): SoundFailureReason =>
+  SOUND_FAILURES.has(message) ? (message as SoundFailureReason) : "error";
+
+const BYTES_PER_SAMPLE = 4;
+
+/**
+ * Samples out of a message, or nothing when they are not what was asked for. Like a picture this is
+ * its own case: samples are meant to be large, a blob says how large without being read, and nothing
+ * here reads it. It has to fit exactly, because what is in it was made by code from a project.
+ */
+export function readSamples(
+  data: unknown,
+  { maxChannels, frames: maxFrames }: { readonly maxChannels: number; readonly frames: number },
+): SoundSamples | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { type, channels, frames, samples } = data as Record<string, unknown>;
+  if (type !== "samples" || !(samples instanceof Blob)) return undefined;
+  const channelCount = count(channels);
+  const frameCount = count(frames);
+  if (channelCount === undefined || channelCount < 1 || channelCount > maxChannels)
+    return undefined;
+  if (frameCount === undefined || frameCount < 1 || frameCount > maxFrames) return undefined;
+  if (samples.size !== channelCount * frameCount * BYTES_PER_SAMPLE) return undefined;
+  return { channels: channelCount, frames: frameCount, samples };
+}
+
 /** Where the time of a playing scene comes from. Sent once, not with every frame. */
 export interface TimeBase {
   /** The frame at the moment `at`. */
@@ -70,7 +167,7 @@ export type ToScene =
       readonly type: "boot";
       readonly runtime: number;
       readonly code: Blob;
-      readonly scene: SceneLoad;
+      readonly scene: SceneLoad | SoundLoad;
     }
   /** Go to a frame and hold it. Answered by `seeked` or `needs-replay`. */
   | { readonly type: "seek"; readonly request: number; readonly frame: number }

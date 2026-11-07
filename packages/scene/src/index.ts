@@ -19,7 +19,14 @@ export {
   scenePage,
   scenePolicyHeader,
 } from "./policy.ts";
-export { pixelSizeOf, readFromScene, readPicture, RUNTIME_VERSION } from "./protocol.ts";
+export {
+  pixelSizeOf,
+  readFromScene,
+  readPicture,
+  readSamples,
+  readSoundFailure,
+  RUNTIME_VERSION,
+} from "./protocol.ts";
 export type {
   FrameRate,
   FromScene,
@@ -27,8 +34,13 @@ export type {
   ScenePicture,
   SceneProblem,
   SceneView,
+  SoundFailureReason,
+  SoundLoad,
+  SoundSamples,
   TimeBase,
   ToScene,
 } from "./protocol.ts";
+export { SoundHost, SOUND_START_LIMIT_MS } from "./sound-host.ts";
+export type { SoundHostOptions, SoundOutcome } from "./sound-host.ts";
 export { Strikes, THROTTLED_ANSWER_MS, Watchdog, WATCHDOG_RULES } from "./watchdog.ts";
 export type { ScenePhase, WatchdogRules, WatchdogVerdict } from "./watchdog.ts";

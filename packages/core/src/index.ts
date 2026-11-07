@@ -28,7 +28,21 @@ export {
   type Version,
 } from "./render-plan.ts";
 export { MAX_SOURCE_BYTES } from "./scene-edits.ts";
-export { sceneFilesOf, sceneSourceOf, type SceneAsset, type SceneSource } from "./scene-plan.ts";
+export {
+  sceneFilesOf,
+  sceneSourceOf,
+  soundFilesOf,
+  type SceneAsset,
+  type SceneSource,
+} from "./scene-plan.ts";
+export {
+  MAX_SOUND_CHANNELS,
+  MAX_SOUND_SECONDS,
+  madeSoundOf,
+  madeSoundsOf,
+  SOUND_SAMPLE_RATE,
+  type MadeSound,
+} from "./sound-plan.ts";
 export {
   boxOf,
   clockOf,

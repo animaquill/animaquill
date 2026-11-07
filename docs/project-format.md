@@ -289,9 +289,32 @@ k = 1080 / min(format.width, format.height)
 
 参数的 `type` 是 `text`、`number`、`color`、`boolean`、`choice` 或 `asset`。片段用 `param.<id>` 赋值。差异可以覆盖片段的任何属性，场景文件本身不能差异化。
 
-声音和场景一样，放在 `sounds/`，代码生成音频。`outputs` 列出一段程序能产生的多个声音。
+声音和场景一样，放在 `sounds/`，代码生成音频。`outputs` 列出一段程序能产生的多个声音，片段用 `source.output` 选一个。入口要是 `.js` 或 `.mjs` 文件，代码能用什么见[场景运行时](scene-runtime.md#声音)。
 
-场景和声音的代码可以共用 `code/` 里的模块。场景在沙箱里运行，不能联网。
+```json
+{
+  "name": "提示音",
+  "entry": "sound.js",
+  "runtime": 1,
+  "params": [
+    { "id": "duration", "name": "时长", "type": "number", "default": 1.5, "min": 0.05, "max": 300 },
+    { "id": "seed", "name": "种子", "type": "number", "default": 1 }
+  ]
+}
+```
+
+片段用 `param.<id>` 赋值，代码拿到的是片段的值，没有时是 `default`。声音的结果只由这些决定，所以有两个参数是有固定含义的：
+
+| 参数 | 含义 |
+| --- | --- |
+| `param.duration` | 声音有多长，秒，最长 300 |
+| `param.seed` | 随机数的种子。代码里的 `Math.random` 也来自它。没有时用声音 ID 算出的固定值 |
+
+裁剪和切割片段只是露出声音的一部分，不改变声音，所以时长不跟着片段走，片段也不能拉得比时长更长。编辑器放声音时总会写下时长。手写的片段没有 `param.duration` 时，声音的长度是片段时钟结束时的读数，这时裁剪和切割会重新生成，切开的前一半是另一个声音。
+
+参数打了关键帧时只用第一个的值。
+
+场景和声音的代码可以共用 `code/` 里的模块。场景和声音都在沙箱里运行，不能联网。
 
 ## 素材
 

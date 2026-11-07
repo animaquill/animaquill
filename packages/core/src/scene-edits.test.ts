@@ -486,6 +486,151 @@ describe("the entry of a sound", () => {
   });
 });
 
+describe("a sound", () => {
+  const SOUND = { name: "铃", entry: "sound.js", runtime: 1 };
+  const CODE = "aq.sound(({ frames }) => new Float32Array(frames));";
+  const add = ({ ok, run }: ReturnType<typeof open>) =>
+    ok(run("sound.add", { id: "bell", sound: SOUND, files: { "sound.js": CODE } }));
+  const audioTrack = ({ ok, run }: ReturnType<typeof open>) => {
+    ok(run("track.add", { timeline: "main", id: "voice", kind: "audio" }));
+    return "voice";
+  };
+  const use = (context: ReturnType<typeof open>, track = audioTrack(context)) =>
+    context.run("clip.add", {
+      timeline: "main",
+      track,
+      clip: { id: "c", start: "0", duration: "1", source: { kind: "sound", sound: "bell" } },
+    });
+
+  it("comes with its files, in one step", () => {
+    const context = open();
+    add(context);
+    const { state, store } = context;
+    expect(state().sounds["bell"]).toEqual(SOUND);
+    expect(state().files["sounds/bell/sound.js"]).toBe(CODE);
+    store.undo();
+    expect(state().sounds["bell"]).toBeUndefined();
+    expect(state().files).toEqual({});
+    store.redo();
+    expect(state().files["sounds/bell/sound.js"]).toBe(CODE);
+  });
+
+  it("gets an id when it does not bring one", () => {
+    const { run, ok } = open();
+    const result = ok(run("sound.add", { sound: SOUND, files: { "sound.js": CODE } }));
+    expect((result.results[0] as { id: string }).id).toMatch(/^sound_/);
+  });
+
+  it("cannot take the place of another one", () => {
+    const context = open();
+    add(context);
+    const again = { id: "bell", sound: SOUND, files: { "sound.js": CODE } };
+    expect(context.code(context.run("sound.add", again))).toBe("id-taken");
+  });
+
+  it("needs its entry, and that has to be a script", () => {
+    const { run, code } = open();
+    const none = { id: "a", sound: SOUND, files: {} };
+    expect(code(run("sound.add", none))).toBe("missing-entry");
+    const page = { ...SOUND, entry: "index.html" };
+    const pageFiles = { id: "b", sound: page, files: { "index.html": PAGE } };
+    expect(code(run("sound.add", pageFiles))).toBe("invalid-value");
+  });
+
+  it("cannot be written for a newer runtime", () => {
+    const { run, code } = open();
+    const files = { "sound.js": CODE };
+    const newer = { id: "a", sound: { ...SOUND, runtime: 99 }, files };
+    expect(code(run("sound.add", newer))).toBe("runtime-too-new");
+  });
+
+  it("keeps its files inside of its folder", () => {
+    const { run, code } = open();
+    const above = { id: "a", sound: SOUND, files: { "sound.js": CODE, "../b/x.js": "1" } };
+    expect(code(run("sound.add", above))).not.toBe("ok");
+  });
+
+  it("can have another entry, as long as that is there", () => {
+    const context = open();
+    add(context);
+    const { run, code, ok, state } = context;
+    const changes = { entry: "other.js" };
+    expect(code(run("sound.update", { sound: "bell", changes }))).toBe("missing-entry");
+    ok(run("file.write", { path: "sounds/bell/other.js", text: CODE }));
+    ok(run("sound.update", { sound: "bell", changes }));
+    expect(state().sounds["bell"]?.entry).toBe("other.js");
+  });
+
+  it("takes its entry along when that gets a new name", () => {
+    const context = open();
+    add(context);
+    const { run, ok, state } = context;
+    const from = "sounds/bell/sound.js";
+    ok(run("file.rename", { from, to: "sounds/bell/main.js" }));
+    expect(state().sounds["bell"]?.entry).toBe("main.js");
+  });
+
+  it("does not let its entry leave", () => {
+    const context = open();
+    add(context);
+    const { run, code, ok } = context;
+    ok(run("sound.add", { id: "b", sound: SOUND, files: { "sound.js": CODE } }));
+    const to = "sounds/b/moved.js";
+    expect(code(run("file.rename", { from: "sounds/bell/sound.js", to }))).toBe("entry-in-use");
+    expect(code(run("file.remove", { path: "sounds/bell/sound.js" }))).toBe("entry-in-use");
+  });
+
+  it("goes with its files, unless a clip uses it", () => {
+    const context = open();
+    add(context);
+    const { run, code, ok, state } = context;
+    ok(use(context));
+    expect(code(run("sound.remove", { sound: "bell" }))).toBe("sound-in-use");
+    ok(run("clip.remove", { timeline: "main", clips: ["c"] }));
+    ok(run("sound.remove", { sound: "bell" }));
+    expect(state().sounds["bell"]).toBeUndefined();
+    expect(state().files).toEqual({});
+  });
+
+  it("has to be there for a clip", () => {
+    const context = open();
+    expect(context.code(use(context))).toBe("not-found");
+  });
+
+  it("only goes on a track for sound", () => {
+    const context = open();
+    add(context);
+    expect(context.code(use(context, context.track))).not.toBe("ok");
+  });
+
+  it("is safe from changes while it is on a locked track", () => {
+    const context = open();
+    add(context);
+    const { run, code, ok } = context;
+    const track = audioTrack(context);
+    ok(use(context, track));
+    ok(run("track.update", { timeline: "main", track, changes: { locked: true } }));
+    const path = "sounds/bell/sound.js";
+    expect(code(run("file.write", { path, text: "changed" }))).toBe("track-locked");
+    expect(code(run("sound.update", { sound: "bell", changes: { name: "钟" } }))).toBe(
+      "track-locked",
+    );
+  });
+
+  it("comes back with a clip that comes back", () => {
+    const context = open();
+    add(context);
+    const { run, ok, state, store } = context;
+    ok(use(context));
+    ok(run("clip.remove", { timeline: "main", clips: ["c"] }));
+    ok(run("sound.remove", { sound: "bell" }));
+    store.undo();
+    store.undo();
+    expect(state().sounds["bell"]).toEqual(SOUND);
+    expect(state().timelines["main"]?.clips["c"]).toBeDefined();
+  });
+});
+
 describe("a clip of a scene", () => {
   const color = { kind: "color", color: "#000000" };
 

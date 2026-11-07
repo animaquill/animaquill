@@ -17,6 +17,7 @@ import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
+import { MadeSounds, SoundMaker } from "../media/sounds.ts";
 import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
 import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts";
 import { PreviewStatus } from "../preview/status.ts";
@@ -47,6 +48,8 @@ export interface WorkbenchOptions {
   readonly compositorUrl: string;
   readonly sceneOrigins?: readonly string[];
   readonly sceneStage?: "plain";
+  /** For tests: how long code gets to make a sound. */
+  readonly soundLimitMs?: number;
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
@@ -77,6 +80,7 @@ export class Workbench {
   readonly properties: PropertyWriter;
   readonly input: InputMode;
   readonly media: MediaLibrary;
+  readonly sounds: MadeSounds;
   readonly transfer: ProjectTransfer;
   readonly diagnostics: DiagnosticsRecorder;
   readonly #sink: DiagnosticsSink | undefined;
@@ -172,6 +176,33 @@ export class Workbench {
       },
       compositorUrl,
     );
+    const soundMaker = new SoundMaker({
+      url: compositorUrl,
+      setup: () => ({
+        origins: this.sceneOrigins,
+        retired: this.preview.retiredOrigins,
+        compositor: new URL(compositorUrl, location.href).origin,
+        run: false,
+      }),
+      onRetired: (origin) => this.preview.noteRetired(origin),
+    });
+    this.sounds = new MadeSounds({
+      session: this.session,
+      projects: host.projects,
+      run: soundMaker.run,
+      messages: {
+        problem: (sound, problem) => this.#noteSoundProblem(sound, problem),
+        failed: (sound, reason) =>
+          this.notifications.push(
+            t(`sound.failed.${reason}`, {
+              name: this.#soundName(sound),
+              interpolation: { escapeValue: false },
+            }),
+          ),
+      },
+      arrived: (file) => this.media.soundArrived(file),
+      ...(options.soundLimitMs !== undefined && { limitMs: options.soundLimitMs }),
+    });
     this.transfer = new ProjectTransfer({
       folders: host.folders,
       projects: host.projects,
@@ -183,6 +214,8 @@ export class Workbench {
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       sceneName: (number) => t("scene.newName", { number }),
+      soundName: (number) => t("sound.newName", { number }),
+      soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),
     });
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
@@ -340,6 +373,16 @@ export class Workbench {
     if (answer === "save") return this.code.saveAll();
     this.code.discardAll();
     return true;
+  }
+
+  #soundName(sound: string): string {
+    return this.session.store?.getState().sounds[sound]?.name ?? this.t("timeline.kind.sound");
+  }
+
+  #noteSoundProblem(sound: string, problem: SceneProblem): void {
+    const words = { name: this.#soundName(sound), interpolation: { escapeValue: false } };
+    const text = describeProblem(this.t, problem);
+    this.notifications.push(this.t("scene.problem", { ...words, text }));
   }
 
   async load(): Promise<void> {

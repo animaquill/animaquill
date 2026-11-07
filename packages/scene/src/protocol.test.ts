@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFromScene } from "./protocol.ts";
+import { readFromScene, readSamples, readSoundFailure } from "./protocol.ts";
 
 const problem = { kind: "error", message: "boom", file: "a.js", line: 3, column: 7, frame: 12 };
 
@@ -80,5 +80,58 @@ describe("readFromScene", () => {
       runtime: 1,
       capture: false,
     });
+  });
+});
+
+describe("readSamples", () => {
+  const asked = { maxChannels: 2, frames: 100 };
+  const message = (channels: unknown, frames: unknown, bytes: number) => ({
+    type: "samples",
+    channels,
+    frames,
+    samples: new Blob([new Uint8Array(bytes)]),
+  });
+
+  it("takes what was asked for, without reading it", () => {
+    const { samples } = message(2, 100, 800);
+    expect(readSamples({ type: "samples", channels: 2, frames: 100, samples }, asked)).toEqual({
+      channels: 2,
+      frames: 100,
+      samples,
+    });
+  });
+
+  it("takes less than was asked for", () => {
+    expect(readSamples(message(1, 10, 40), asked)?.frames).toBe(10);
+  });
+
+  it.each([
+    ["no message", undefined],
+    ["something else", { type: "hello" }],
+    ["a size that does not fit", message(1, 100, 401)],
+    ["a size that is too small", message(1, 100, 399)],
+    ["more than was asked for", message(1, 101, 404)],
+    ["too many channels", message(3, 10, 120)],
+    ["no channels", message(0, 10, 0)],
+    ["no frames", message(1, 0, 0)],
+    ["parts of a sample", message(1.5, 10, 60)],
+    ["a channel count that is no number", message("1", 10, 40)],
+    ["frames that are no number", message(1, "10", 40)],
+    ["samples that are no blob", { type: "samples", channels: 1, frames: 1, samples: "aaaa" }],
+    ["samples that are an array", { ...message(1, 1, 4), samples: new Float32Array(1) }],
+  ])("does not take %s", (_, data) => {
+    expect(readSamples(data, asked)).toBeUndefined();
+  });
+});
+
+describe("readSoundFailure", () => {
+  it("knows the reasons there are", () => {
+    expect(readSoundFailure("time")).toBe("time");
+    expect(readSoundFailure("too-long")).toBe("too-long");
+  });
+
+  it("does not repeat what anybody can make it say", () => {
+    expect(readSoundFailure("<img src=x>")).toBe("error");
+    expect(readSoundFailure("constructor")).toBe("error");
   });
 });

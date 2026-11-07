@@ -1654,6 +1654,9 @@ describe("a folder that cannot come in", () => {
           throw new DOMException("no room", "QuotaExceededError");
         },
         get: async (key: string) => this.files.get(`${project}/${key}`),
+        listMade: async () => [],
+        touchMade: async () => {},
+        removeMade: async () => {},
       };
     });
     window.next.source = withAsset({ hash }, [["assets/a.mp4", new Blob([VIDEO])]]);

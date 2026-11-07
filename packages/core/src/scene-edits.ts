@@ -6,6 +6,7 @@ import {
   SoundManifest,
   newId,
   type SceneManifest as Manifest,
+  type SoundManifest as SoundManifestType,
 } from "@animaquill/schema";
 import { z } from "zod";
 import { fail, type Draft } from "./draft.ts";
@@ -105,13 +106,27 @@ function checkWrite(state: ProjectState, path: string, text: string): void {
 }
 
 const sceneFile = (id: string, entry: string) => `scenes/${id}/${entry}`;
+const soundFile = (id: string, entry: string) => `sounds/${id}/${entry}`;
 
-function assertManifest(id: string, scene: Manifest, files: ProjectState["files"]): void {
-  if (scene.runtime > CURRENT_SCENE_RUNTIME) {
+function assertRuntime({ runtime }: { readonly runtime: number }): void {
+  if (runtime > CURRENT_SCENE_RUNTIME) {
     fail("runtime-too-new", `这个编辑器只有运行时版本 ${CURRENT_SCENE_RUNTIME}，要先更新编辑器`);
   }
+}
+
+function assertManifest(id: string, scene: Manifest, files: ProjectState["files"]): void {
+  assertRuntime(scene);
   if (entryOf(files, sceneFile(id, scene.entry)) === undefined) {
     fail("missing-entry", `场景的入口文件不在：${scene.entry}`);
+  }
+}
+
+/** A sound runs in a worker, where no page can be. */
+function assertSoundManifest(id: string, sound: SoundManifestType, files: ProjectState["files"]) {
+  assertRuntime(sound);
+  if (!/\.m?js$/.test(sound.entry)) fail("invalid-value", "声音的入口要是 .js 或 .mjs 文件");
+  if (entryOf(files, soundFile(id, sound.entry)) === undefined) {
+    fail("missing-entry", `声音的入口文件不在：${sound.entry}`);
   }
 }
 
@@ -181,6 +196,74 @@ export function removeScene(draft: Draft, { scene }: z.output<typeof SceneRemove
   draft.delete(["scenes", scene]);
 }
 
+export const SoundAdd = z.strictObject({
+  id: Id.optional(),
+  sound: SoundManifest,
+  /** By path in the folder of the sound. */
+  files: z.record(RelativePath, z.string()),
+});
+
+/** A sound with its files. An entry that is not there is a sound that can never be made. */
+export function addSound(draft: Draft, params: z.output<typeof SoundAdd>): { id: string } {
+  const { sound, files } = params;
+  const id = params.id ?? newId("sound");
+  if (entryOf(draft.state.sounds, id)) fail("id-taken", `这个 ID 已经有声音了：${id}`);
+  const paths = Object.keys(files).map((name) => SourcePath.safeParse(soundFile(id, name)));
+  for (const path of paths) {
+    if (!path.success) fail("invalid-value", path.error.issues[0]?.message ?? "路径不对");
+  }
+  draft.set(["sounds", id], sound);
+  for (const [name, text] of Object.entries(files)) {
+    const path = soundFile(id, name);
+    checkWrite(draft.state, path, text);
+    draft.setText(["files", path], text);
+  }
+  assertSoundManifest(id, sound, draft.state.files);
+  return { id };
+}
+
+const ClearableSoundField = z.enum(["description", "params", "outputs"]);
+
+export const SoundUpdate = z.strictObject({
+  sound: Id,
+  changes: SoundManifest.partial(),
+  clear: z.array(ClearableSoundField).optional(),
+});
+
+function soundOf(state: ProjectState, id: string): SoundManifestType {
+  return entryOf(state.sounds, id) ?? fail("not-found", `没有这个声音：${id}`);
+}
+
+export function updateSound(draft: Draft, params: z.output<typeof SoundUpdate>): void {
+  const { sound: id, changes, clear } = params;
+  const current = soundOf(draft.state, id);
+  assertSourceEditable(draft.state, soundFile(id, "sound.json"));
+  const next: Record<string, unknown> = { ...current, ...changes };
+  for (const field of clear ?? []) delete next[field];
+  const result = SoundManifest.safeParse(next);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    return fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
+  }
+  assertSoundManifest(id, result.data, draft.state.files);
+  draft.replace(["sounds", id], result.data);
+}
+
+export const SoundRemove = z.strictObject({ sound: Id });
+
+/** Its files go along: nothing else can reach them. */
+export function removeSound(draft: Draft, { sound }: z.output<typeof SoundRemove>): void {
+  soundOf(draft.state, sound);
+  if (isInUse(draft.state, ["sounds", sound])) {
+    fail("sound-in-use", "还有片段或版本在用这个声音，要先换掉或删除它们");
+  }
+  const folder = soundFile(sound, "");
+  for (const path of Object.keys(draft.state.files)) {
+    if (path.startsWith(folder)) draft.delete(["files", path]);
+  }
+  draft.delete(["sounds", sound]);
+}
+
 export const FileWrite = z.strictObject({ path: SourcePath, text: z.string() });
 
 /** What did not change writes nothing, so that saving the same text leaves no step to undo. */
@@ -228,18 +311,7 @@ export function renameFile(draft: Draft, { from, to }: z.output<typeof FileRenam
   if (owner === undefined || target.kind === "code") return;
   const entry = target.rest.join("/");
   if (target.kind === "scene") updateScene(draft, { scene: owner, changes: { entry } });
-  else renameSoundEntry(draft, owner, entry);
-}
-
-/** There are no commands for sounds yet, but the entry of one has to follow its file. */
-function renameSoundEntry(draft: Draft, id: string, entry: string): void {
-  const current = entryOf(draft.state.sounds, id) ?? fail("not-found", `没有这个声音：${id}`);
-  const result = SoundManifest.safeParse({ ...current, entry });
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    return fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
-  }
-  draft.replace(["sounds", id], result.data);
+  else updateSound(draft, { sound: owner, changes: { entry } });
 }
 
 function assertSceneUnused(state: ProjectState, scene: string): void {

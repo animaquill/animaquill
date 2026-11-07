@@ -7,6 +7,7 @@ import {
   subtract,
   toSeconds,
   type Rational,
+  type SoundManifest,
 } from "@animaquill/schema";
 import {
   clipEnd,
@@ -26,6 +27,7 @@ import type { ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
 import { sceneTemplate } from "./scene-template.ts";
+import { soundTemplate } from "./sound-template.ts";
 import {
   EndGesture,
   MarqueeGesture,
@@ -137,6 +139,9 @@ export interface TimelineMessages {
   commandFailed(message: string): void;
   /** What a new scene is called. */
   sceneName?(number: number): string;
+  /** What a new sound is called, and the words for what it has to be told. */
+  soundName?(number: number): string;
+  soundWords?(): { readonly duration: string; readonly seed: string };
 }
 
 interface ViewPlace {
@@ -1019,7 +1024,7 @@ export class TimelineEditor {
   /** Puts a scene on the timeline, at a place or else at the playhead. */
   addScene(scene: string, place?: DropPlace): void {
     const known = this.#store?.getState().scenes[scene];
-    if (known) this.#placeScene(scene, known.name, place, []);
+    if (known) this.#placeCode({ kind: "scene", scene }, known.name, place, []);
   }
 
   /** A new scene from the template, on the timeline right away, to see it move and to change it. */
@@ -1030,12 +1035,54 @@ export class TimelineEditor {
     const name = this.#messages.sceneName?.(number) ?? `Scene ${number}`;
     const scene = newId("scene");
     const params = { id: scene, ...sceneTemplate(name) };
-    this.#placeScene(scene, name, place, [{ type: "scene.add", params }]);
+    this.#placeCode({ kind: "scene", scene }, name, place, [{ type: "scene.add", params }]);
+  }
+
+  /** Puts a sound on the timeline, at a place or else at the playhead. */
+  addSound(sound: string, place?: DropPlace): void {
+    const known = this.#store?.getState().sounds[sound];
+    if (known) this.#placeCode({ kind: "sound", sound }, known.name, place, []);
+  }
+
+  /** A new sound from the template, on the timeline right away, to hear it and to change it. */
+  createSound(place?: DropPlace): void {
+    const state = this.#store?.getState();
+    if (!state) return;
+    const number = Object.keys(state.sounds).length + 1;
+    const name = this.#messages.soundName?.(number) ?? `Sound ${number}`;
+    const words = this.#messages.soundWords?.() ?? { duration: "Length", seed: "Seed" };
+    const sound = newId("sound");
+    const params = { id: sound, ...soundTemplate(name, words) };
+    this.#placeCode({ kind: "sound", sound }, name, place, [{ type: "sound.add", params }]);
+  }
+
+  /**
+   * How long a clip with a sound is, and what it has to write down for that. A sound stays what it
+   * is when the clip gets trimmed or cut, so its length cannot come from the clip, and this is the
+   * last moment that it can be told.
+   */
+  #soundClip(
+    model: TimelineModel,
+    sound: string,
+    before: readonly CommandCall[],
+  ): { readonly duration: Rational; readonly properties?: Readonly<Record<string, number>> } {
+    const added = before.flatMap(({ type, params }) =>
+      type === "sound.add" ? [(params as { readonly sound: SoundManifest }).sound] : [],
+    );
+    const manifest = added[0] ?? this.#store?.getState().sounds[sound];
+    const stated = manifest?.params?.find(({ id }) => id === "duration")?.default;
+    if (typeof stated === "number" && stated > 0) {
+      return { duration: frameTime(Math.max(Math.floor(stated * model.rate.fps), 1), model.rate) };
+    }
+    const duration = this.#newClipDuration(model);
+    return { duration, properties: { "param.duration": toSeconds(duration) } };
   }
 
   /** What is there stays and it goes after that, unless people overwrite. Along with `before`, it is one step. */
-  #placeScene(
-    scene: string,
+  #placeCode(
+    source:
+      | { readonly kind: "scene"; readonly scene: string }
+      | { readonly kind: "sound"; readonly sound: string },
     name: string,
     place: DropPlace | undefined,
     before: readonly CommandCall[],
@@ -1045,8 +1092,11 @@ export class TimelineEditor {
     const { rate } = model;
     const seconds = place?.seconds ?? frameSeconds(this.#frame, rate);
     const start = frameTime(frameAt(Math.max(seconds, 0), rate), rate);
-    const duration = this.#newClipDuration(model);
-    const row = this.#rowForNew(model, "video", place?.lane);
+    const sound =
+      source.kind === "sound" ? this.#soundClip(model, source.sound, before) : undefined;
+    const duration = sound?.duration ?? this.#newClipDuration(model);
+    const kind = source.kind === "sound" ? "audio" : "video";
+    const row = this.#rowForNew(model, kind, place?.lane);
     const end = add(start, duration);
     const placed: Placed[] = row
       ? [
@@ -1066,9 +1116,7 @@ export class TimelineEditor {
     const id = newId("clip");
     const calls: CommandCall[] = [
       ...before,
-      ...(row
-        ? []
-        : [{ type: "track.add", params: { timeline: model.id, id: track, kind: "video" } }]),
+      ...(row ? [] : [{ type: "track.add", params: { timeline: model.id, id: track, kind } }]),
       {
         type: "clip.add",
         params: {
@@ -1079,7 +1127,8 @@ export class TimelineEditor {
             name,
             start: formatTime(at),
             duration: formatTime(duration),
-            source: { kind: "scene", scene },
+            source,
+            ...(sound?.properties && { properties: sound.properties }),
           },
           ...(overwriting ? { overlap: "overwrite" } : {}),
         },

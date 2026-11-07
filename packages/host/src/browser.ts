@@ -1,4 +1,5 @@
 import { browserFolders } from "./folders.ts";
+import { isMadeFile } from "./index.ts";
 import type {
   Host,
   IncomingProject,
@@ -7,6 +8,7 @@ import type {
   ProjectLibrary,
   ProjectLog,
   ProjectSummary,
+  MadeFile,
   SettingsStore,
   WindowPlace,
   WindowPlaces,
@@ -52,6 +54,8 @@ interface MediaRecord {
   readonly project: string;
   readonly hash: string;
   readonly file: Blob;
+  /** Only made files have this, see `isMadeFile`. */
+  readonly usedAt?: number;
 }
 
 interface UpdateRecord {
@@ -226,11 +230,39 @@ function openLog(
   };
 }
 
+function refuseUnmade(name: string): void {
+  if (!isMadeFile(name)) throw new Error(`Only files the editor made can go this way: ${name}`);
+}
+
 function openMedia(database: () => Promise<IDBDatabase>, project: string): MediaStore {
   return {
     async put(hash, file) {
       const transaction = (await database()).transaction(MEDIA, "readwrite");
-      transaction.objectStore(MEDIA).put({ project, hash, file } satisfies MediaRecord);
+      const used = isMadeFile(hash) ? { usedAt: Date.now() } : {};
+      transaction.objectStore(MEDIA).put({ project, hash, file, ...used } satisfies MediaRecord);
+      await committed(transaction);
+    },
+    async listMade() {
+      const transaction = (await database()).transaction(MEDIA);
+      const index = transaction.objectStore(MEDIA).index(BY_PROJECT);
+      // Records hold their files by reference, so reading them reads none of the files.
+      const records = await resultOf<MediaRecord[]>(index.getAll(project));
+      return records.flatMap(({ hash, file, usedAt = 0 }): MadeFile[] =>
+        isMadeFile(hash) ? [{ name: hash, size: file.size, usedAt }] : [],
+      );
+    },
+    async touchMade(name) {
+      if (!isMadeFile(name)) return;
+      const transaction = (await database()).transaction(MEDIA, "readwrite");
+      const media = transaction.objectStore(MEDIA);
+      const record = await resultOf<MediaRecord | undefined>(media.get([project, name]));
+      if (record) media.put({ ...record, usedAt: Date.now() } satisfies MediaRecord);
+      await committed(transaction);
+    },
+    async removeMade(name) {
+      refuseUnmade(name);
+      const transaction = (await database()).transaction(MEDIA, "readwrite");
+      transaction.objectStore(MEDIA).delete([project, name]);
       await committed(transaction);
     },
     async get(hash) {

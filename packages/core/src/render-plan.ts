@@ -22,6 +22,7 @@ import {
 } from "./model.ts";
 import type { ProjectState } from "./model.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
+import { madeSoundOf } from "./sound-plan.ts";
 import { stageOf, type Size } from "./view.ts";
 
 /** What a compositor draws from. It knows nothing about projects, versions or Yjs. */
@@ -80,6 +81,8 @@ export interface SoundLayer {
   readonly offset: number;
   /** 1 is the original volume. */
   readonly gain: number;
+  /** Code makes this file, so it not being here yet is no problem, and it may be soon. */
+  readonly made?: true;
 }
 
 /** What a timeline sounds like. */
@@ -269,8 +272,24 @@ export function samePlan(a: RenderPlan, b: RenderPlan): boolean {
 
 const gainOf = (decibels: number) => 10 ** (decibels / 20);
 
-/** Solo wins: as soon as one track has it, only those tracks sound. */
-export function buildAudioPlan(state: ProjectState, timelineId: string): AudioPlan {
+/** The file of a clip with sound, as far as there is one. */
+function soundFileOf(state: ProjectState, clip: ClipState): string | undefined {
+  const { source } = clip;
+  if (source.kind === "sound") return madeSoundOf(state, clip)?.file;
+  if (source.kind !== "audio") return undefined;
+  const media = source.media as MediaRef;
+  return "asset" in media ? entryOf(state.assets, media.asset)?.hash : undefined;
+}
+
+/**
+ * Solo wins: as soon as one track has it, only those tracks sound. `volumeOf` is for what people are
+ * trying out, which they have to hear: it gives the volume of a clip when that is not the saved one.
+ */
+export function buildAudioPlan(
+  state: ProjectState,
+  timelineId: string,
+  volumeOf?: (clip: string) => number | undefined,
+): AudioPlan {
   const timeline = entryOf(state.timelines, timelineId);
   if (!timeline) return { sounds: [] };
   const tracks = orderedTracks(timeline).filter(
@@ -285,14 +304,12 @@ export function buildAudioPlan(state: ProjectState, timelineId: string): AudioPl
   const sounds: SoundLayer[] = [];
   for (const clip of Object.values(timeline.clips)) {
     const track = audible.get(clip.track);
-    const { source } = clip;
-    if (!track || clip.hidden || source.kind !== "audio") continue;
-    const media = source.media as MediaRef;
-    const file = "asset" in media ? entryOf(state.assets, media.asset)?.hash : undefined;
+    if (!track || clip.hidden) continue;
+    const file = soundFileOf(state, clip);
     if (file === undefined) continue;
     const decibels =
       numberOf(track.properties, "audio.volume", 0) +
-      numberOf(effectiveProperties(clip), "audio.volume", 0);
+      (volumeOf?.(clip.id) ?? numberOf(effectiveProperties(clip), "audio.volume", 0));
     sounds.push({
       id: clip.id,
       file,
@@ -300,6 +317,7 @@ export function buildAudioPlan(state: ProjectState, timelineId: string): AudioPl
       end: toSeconds(clipEnd(clip)),
       offset: toSeconds(clipOffset(clip)),
       gain: gainOf(decibels),
+      ...(clip.source.kind === "sound" && { made: true as const }),
     });
   }
   return { sounds };

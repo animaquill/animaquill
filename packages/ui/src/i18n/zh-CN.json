@@ -384,7 +384,10 @@
         "rotation": "旋转"
       },
       "opacity": "不透明度",
-      "fit": "适应方式"
+      "fit": "适应方式",
+      "audio": {
+        "volume": "音量"
+      }
     },
     "choice": {
       "fit": {
@@ -428,6 +431,7 @@
     "action": {
       "addColor": "添加纯色片段",
       "addScene": "新建场景",
+      "addSound": "新建声音",
       "addVideoTrack": "添加视频轨道",
       "addAudioTrack": "添加音频轨道",
       "addCaptionTrack": "添加字幕轨道",
@@ -552,7 +556,38 @@
     "addToTimeline": "添加到时间轴",
     "remove": "删除素材",
     "newScene": "新建场景",
-    "removeScene": "删除场景"
+    "removeScene": "删除场景",
+    "newSound": "新建声音",
+    "removeSound": "删除声音"
+  },
+  "sound": {
+    "newName": "声音 {{number}}",
+    "param": {
+      "duration": "时长",
+      "seed": "种子"
+    },
+    "clip": "{{name}} · {{state}}",
+    "retry": "重试",
+    "state": {
+      "waiting": "等待生成",
+      "making": "正在生成",
+      "failed": "生成失败"
+    },
+    "failed": {
+      "bad-result": "“{{name}}”算出来的不是声音。要返回 Float32Array，或者一到两个一样长的 Float32Array。",
+      "error": "“{{name}}”运行失败。",
+      "flood": "“{{name}}”发的消息太多，已经停止。",
+      "no-entry": "“{{name}}”的入口文件不在，或者不是 .js 或 .mjs 文件。",
+      "no-origin": "现在没有能运行声音的地方。刷新页面可以恢复。",
+      "no-sound": "“{{name}}”没有调用 aq.sound，所以没有声音。",
+      "over-limit": "“{{name}}”太长了，声音最长 5 分钟。",
+      "oversized": "“{{name}}”发了不该发的数据，已经停止。",
+      "save": "“{{name}}”算好了，但是存不下：浏览器的存储空间不够。",
+      "silent": "“{{name}}”的运行环境没有响应，已经停止。",
+      "time": "“{{name}}”算了太久，已经停止。检查一下代码里有没有死循环。",
+      "too-long": "“{{name}}”算出来的声音比要求的时长更长。",
+      "too-new": "“{{name}}”是用更新的编辑器写的，要先更新 AnimaQuill。"
+    }
   },
   "scene": {
     "newName": "场景 {{number}}",

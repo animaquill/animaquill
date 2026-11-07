@@ -1,4 +1,5 @@
 import type { FromCompositor, ToCompositor } from "@animaquill/render";
+import { openHiddenCompositor, type HiddenCompositor } from "./hidden-compositor.ts";
 
 /** Long enough for a large file on a slow computer. Without it a stuck frame would block all others. */
 const TIMEOUT_MS = 60_000;
@@ -15,39 +16,18 @@ export const stripCount = (seconds: number | undefined): number =>
  */
 export class StripMaker {
   readonly #url: string;
-  #frame: HTMLIFrameElement | undefined;
-  #ready: Promise<void> | undefined;
+  #compositor: HiddenCompositor | undefined;
   #nextRequest = 0;
 
   constructor(url: string) {
     this.#url = url;
   }
 
-  #start(): Promise<void> {
-    this.#ready ??= new Promise((resolve) => {
-      const frame = document.createElement("iframe");
-      frame.setAttribute("sandbox", "allow-scripts");
-      frame.tabIndex = -1;
-      frame.hidden = true;
-      frame.title = "";
-      // Anything can write to this page, and reading `data` is what builds a message.
-      const onReady = (event: MessageEvent<FromCompositor>) => {
-        if (event.source !== frame.contentWindow || event.data.type !== "ready") return;
-        removeEventListener("message", onReady);
-        resolve();
-      };
-      addEventListener("message", onReady);
-      frame.src = this.#url;
-      document.body.append(frame);
-      this.#frame = frame;
-    });
-    return this.#ready;
-  }
-
   /** Resolves to undefined when the video cannot be read here. */
   async make(file: Blob, count: number): Promise<ImageBitmap | undefined> {
-    await this.#start();
-    const frame = this.#frame;
+    this.#compositor ??= openHiddenCompositor(this.#url);
+    const { frame, ready } = this.#compositor;
+    await ready;
     this.#nextRequest += 1;
     const request = this.#nextRequest;
     return new Promise((resolve) => {
@@ -58,7 +38,7 @@ export class StripMaker {
       };
       const timer = setTimeout(() => finish(undefined), TIMEOUT_MS);
       const onMessage = (event: MessageEvent<FromCompositor>) => {
-        if (event.source !== frame?.contentWindow) return;
+        if (event.source !== frame.contentWindow) return;
         const { data } = event;
         if (data.type === "strip" && data.request === request) finish(data.image);
       };
@@ -72,7 +52,7 @@ export class StripMaker {
       };
       // The sandbox has no origin of its own to name.
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- see above
-      frame?.contentWindow?.postMessage(message, "*");
+      frame.contentWindow?.postMessage(message, "*");
     });
   }
 }

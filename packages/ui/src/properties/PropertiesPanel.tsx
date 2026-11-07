@@ -269,6 +269,25 @@ function BlockedHint({ blocked, firstFrame }: { blocked: Blocked; firstFrame: nu
   );
 }
 
+/** A sound that code makes says how that is going, and one that failed can try again. */
+function SoundStatus({ clip }: { clip: ClipInspection["box"]["clip"] }) {
+  const { sounds } = useWorkbench();
+  const { t } = useTranslation();
+  useSyncExternalStore(sounds.subscribe, sounds.getVersion);
+  const sound = sounds.stateOf(clip);
+  if (!sound || sound.state === "ready") return null;
+  return (
+    <div className={styles.hint} role="status">
+      <span>{t(`sound.state.${sound.state}`)}</span>
+      {sound.state === "failed" && (
+        <button type="button" className={styles.hintButton} onClick={() => sounds.retry(clip)}>
+          {t("sound.retry")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ClipProperties({ inspection }: { inspection: ClipInspection }) {
   const { t } = useTranslation();
   const { box, blocked, objects, firstFrame } = inspection;
@@ -280,6 +299,7 @@ function ClipProperties({ inspection }: { inspection: ClipInspection }) {
         <span className={styles.title}>{box.clip.name ?? kindName}</span>
         {box.clip.name !== undefined && <span className={styles.kind}>{kindName}</span>}
       </header>
+      {kind === "sound" && <SoundStatus clip={box.clip} />}
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
       <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
         {objects.map(({ object, rows }) => (

@@ -1,6 +1,14 @@
 import type { Asset } from "@animaquill/schema";
 import { parseTime, toSeconds } from "@animaquill/schema";
-import { CodeXml, FileAudio, FileVideo, Image as ImageIcon, Plus, Upload } from "lucide-react";
+import {
+  AudioWaveform,
+  CodeXml,
+  FileAudio,
+  FileVideo,
+  Image as ImageIcon,
+  Plus,
+  Upload,
+} from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
@@ -11,6 +19,7 @@ import styles from "./AssetsPanel.module.css";
 /** What a drag from this list carries. */
 export const ASSET_DRAG_TYPE = "application/x-animaquill-asset";
 export const SCENE_DRAG_TYPE = "application/x-animaquill-scene";
+export const SOUND_DRAG_TYPE = "application/x-animaquill-sound";
 
 const ICONS = { video: FileVideo, audio: FileAudio } as const;
 
@@ -105,7 +114,15 @@ export function AssetsPanel() {
     }
   };
 
+  const removeSound = (id: string) => {
+    const result = store?.execute({ type: "sound.remove", params: { sound: id } });
+    if (result && !result.ok) {
+      notifications.push(t("notice.commandFailed", { message: result.error.message }));
+    }
+  };
+
   const scenes = Object.entries(project?.scenes ?? {});
+  const sounds = Object.entries(project?.sounds ?? {});
 
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
 
@@ -134,9 +151,13 @@ export function AssetsPanel() {
           <Plus size={14} />
           {t("assets.newScene")}
         </button>
+        <button type="button" onClick={() => timeline.createSound()}>
+          <Plus size={14} />
+          {t("assets.newSound")}
+        </button>
         {importing > 0 && <span role="status">{t("assets.importing", { count: importing })}</span>}
       </div>
-      {assets.length === 0 && scenes.length === 0 ? (
+      {assets.length === 0 && scenes.length === 0 && sounds.length === 0 ? (
         <p className={styles.empty}>{t("assets.empty")}</p>
       ) : (
         <ul className={styles.list} aria-label={t("panel.assets.title")}>
@@ -177,6 +198,45 @@ export function AssetsPanel() {
                 <CodeXml size={28} />
               </div>
               <span className={styles.name}>{scene.name}</span>
+            </li>
+          ))}
+          {sounds.map(([id, sound]) => (
+            <li
+              key={`sound ${id}`}
+              className={styles.item}
+              title={sound.description ?? sound.name}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData(SOUND_DRAG_TYPE, id);
+                event.dataTransfer.effectAllowed = "copy";
+              }}
+              onDoubleClick={() => timeline.addSound(id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setPopup({
+                  x: event.clientX,
+                  y: event.clientY,
+                  groups: [
+                    [
+                      {
+                        id: "add",
+                        label: t("assets.addToTimeline"),
+                        run: () => timeline.addSound(id),
+                      },
+                      {
+                        id: "remove",
+                        label: t("assets.removeSound"),
+                        run: () => removeSound(id),
+                      },
+                    ],
+                  ],
+                });
+              }}
+            >
+              <div className={styles.thumbnail}>
+                <AudioWaveform size={28} />
+              </div>
+              <span className={styles.name}>{sound.name}</span>
             </li>
           ))}
           {assets.map(([id, asset]) => (

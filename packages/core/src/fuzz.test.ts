@@ -83,6 +83,7 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
   const color = { kind: "color", color: "#112233" };
   const state = store.getState();
   const scene = random.pick(Object.keys(state.scenes)) ?? "none";
+  const sound = random.pick(Object.keys(state.sounds)) ?? "none";
   const file = random.pick(Object.keys(state.files)) ?? "code/none.js";
   const page = { "index.html": `<p>${random.int(9)}</p>`, "a.js": String(random.int(9)) };
   const calls: (() => CommandCall)[] = [
@@ -97,6 +98,16 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
     () => ({ type: "scene.update", params: { scene, changes: { name: `n${random.int(9)}` } } }),
     () => ({ type: "scene.remove", params: { scene } }),
     () => ({
+      type: "sound.add",
+      params: {
+        id: random.pick(["n1", "n2", "n3"]),
+        sound: { name: "声音", entry: "a.js", runtime: 1 },
+        files: { "a.js": String(random.int(9)) },
+      },
+    }),
+    () => ({ type: "sound.update", params: { sound, changes: { name: `n${random.int(9)}` } } }),
+    () => ({ type: "sound.remove", params: { sound } }),
+    () => ({
       type: "clip.add",
       params: {
         timeline,
@@ -109,11 +120,24 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
         overlap: "overwrite",
       },
     }),
+    () => ({
+      type: "clip.add",
+      params: {
+        timeline,
+        track,
+        clip: { start: String(random.int(60)), duration: "1", source: { kind: "sound", sound } },
+        overlap: "overwrite",
+      },
+    }),
     () => ({ type: "file.write", params: { path: file, text: `t${random.int(9)}` } }),
     () => ({ type: "file.write", params: { path: `code/f${random.int(3)}.js`, text: "x" } }),
     () => ({
       type: "file.write",
       params: { path: `scenes/${scene}/n${random.int(3)}.js`, text: "x" },
+    }),
+    () => ({
+      type: "file.write",
+      params: { path: `sounds/${sound}/n${random.int(3)}.js`, text: "x" },
     }),
     () => ({ type: "file.remove", params: { path: file } }),
     () => ({ type: "file.rename", params: { from: file, to: `code/r${random.int(3)}.js` } }),
@@ -183,6 +207,7 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
       },
     }),
     () => ({ type: "track.add", params: { timeline, kind: "video" } }),
+    () => ({ type: "track.add", params: { timeline, kind: "audio" } }),
     () => ({ type: "track.remove", params: { timeline, track } }),
     () => ({ type: "track.move", params: { timeline, track, before: random.pick(tracks) } }),
     () => ({ type: "section.add", params: { timeline, duration: "2" } }),
@@ -651,22 +676,31 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back around locked tracks, seed 
       const clips = Object.values(state.timelines["main"]?.clips ?? {});
       return clips.filter(({ track }) => tracks.includes(track));
     };
-    /** What a scene on a locked track runs is what it shows, so that stays too. */
+    /** What a scene or sound on a locked track runs is what it shows or plays, so that stays too. */
     const codeOf = (state: ProjectState, tracks: readonly string[]) => {
-      const scenes = contentOf(state, tracks).flatMap(({ source }) =>
-        source.kind === "scene" ? [source.scene as string] : [],
+      const content = contentOf(state, tracks);
+      // One from a library runs nothing of the project.
+      const scenes = content.flatMap(({ source }) =>
+        source.kind === "scene" && source.scene !== undefined ? [source.scene as string] : [],
+      );
+      const sounds = content.flatMap(({ source }) =>
+        source.kind === "sound" && source.sound !== undefined ? [source.sound as string] : [],
       );
       const isTheirs = (path: string) =>
         scenes.some((id) => path.startsWith(`scenes/${id}/`)) ||
-        (scenes.length > 0 && path.startsWith("code/"));
+        sounds.some((id) => path.startsWith(`sounds/${id}/`)) ||
+        (scenes.length + sounds.length > 0 && path.startsWith("code/"));
       return {
-        manifests: scenes.map((id) => state.scenes[id]),
+        manifests: [
+          ...scenes.map((id) => state.scenes[id]),
+          ...sounds.map((id) => state.sounds[id]),
+        ],
         files: Object.entries(state.files).filter(([path]) => isTheirs(path)),
       };
     };
     let held = 0;
     let lockedCode = 0;
-    for (let round = 0; round < 1000; round++) {
+    for (let round = 0; round < 2000; round++) {
       const task = `t${random.int(3)}`;
       const roll = random.int(100);
       const before = store.getState();

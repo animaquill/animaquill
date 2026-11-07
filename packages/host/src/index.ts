@@ -91,12 +91,34 @@ export interface ProjectSummary {
   readonly updatedAt: number;
 }
 
+/**
+ * Whether a file of the media store is one the editor made itself and can make again, such as a
+ * sound from code and its waveform. Only those can ever be removed one by one. What people brought
+ * in is named by its SHA-256, and that never looks like this.
+ */
+export const isMadeFile = (name: string): boolean => /^(?:peaks-\d+:)?sound-\d+:/.test(name);
+
+/** A file the editor made, as far as cleaning up goes. */
+export interface MadeFile {
+  readonly name: string;
+  /** Bytes. */
+  readonly size: number;
+  /** Milliseconds since 1970. 0 when nobody knows. */
+  readonly usedAt: number;
+}
+
 /** The files of a project. They are kept by their content, so a file only exists once. */
 export interface MediaStore {
-  /** Rejects when there is no room. */
+  /** Rejects when there is no room. A made file counts as used now. */
   put(hash: string, file: Blob): Promise<void>;
   /** Resolves to undefined when this host does not have the file. */
   get(hash: string): Promise<Blob | undefined>;
+  /** The made files of the project, see `isMadeFile`. Nothing else shows up here. */
+  listMade(): Promise<readonly MadeFile[]>;
+  /** A made file was used just now. Nothing happens for any other file. */
+  touchMade(name: string): Promise<void>;
+  /** Removes a made file. Rejects for any other, so that this can never take what people brought in. */
+  removeMade(name: string): Promise<void>;
 }
 
 /**

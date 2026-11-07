@@ -1,3 +1,4 @@
+import { isMadeFile } from "@animaquill/host";
 import type {
   IncomingProject,
   MediaStore,
@@ -158,14 +159,37 @@ export class MemoryLibrary implements ProjectLibrary {
 
   media(project: string): MediaStore {
     const key = (hash: string) => `${project}/${hash}`;
+    const used = this.usedAt;
     return {
       put: async (hash, file) => {
         if (this.failing) throw new Error("quota");
         this.files.set(key(hash), file);
+        if (isMadeFile(hash)) used.set(key(hash), this.now());
       },
       get: async (hash) => this.files.get(key(hash)),
+      listMade: async () =>
+        [...this.files]
+          .filter(([name]) => name.startsWith(`${project}/`))
+          .map(([name, file]) => ({ name: name.slice(project.length + 1), file, at: name }))
+          .filter(({ name }) => isMadeFile(name))
+          .map(({ name, file, at }) => ({ name, size: file.size, usedAt: used.get(at) ?? 0 })),
+      touchMade: async (name) => {
+        if (isMadeFile(name) && this.files.has(key(name))) used.set(key(name), this.now());
+      },
+      removeMade: async (name) => {
+        if (!isMadeFile(name)) throw new Error(`Only made files can go: ${name}`);
+        if (this.failingToRemove.has(name)) throw new Error("blocked");
+        this.files.delete(key(name));
+      },
     };
   }
+
+  /** When made files were last used, by the same key as `files`. */
+  readonly usedAt = new Map<string, number>();
+  /** Made files that cannot be removed, as when the database is busy. */
+  readonly failingToRemove = new Set<string>();
+  /** The clock of `usedAt`. */
+  now = () => Date.now();
 
   /** Delivers an update to everyone on a project, as another window would. */
   broadcast(id: string, update: Uint8Array) {

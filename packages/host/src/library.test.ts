@@ -747,3 +747,65 @@ describe("what is being tried out", () => {
     await vi.waitFor(async () => expect(await trialRecords()).toEqual([]));
   });
 });
+
+describe("files the editor made", () => {
+  const SOUND = "sound-1:abc";
+  const PEAKS = "peaks-1:sound-1:abc";
+  const ASSET = "sha256-n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg=";
+
+  async function withFiles() {
+    const { library } = browser();
+    await library.create(PROJECT, STATE);
+    const media = library.media(PROJECT.id);
+    await media.put(ASSET, file("用户的视频"));
+    await media.put("peaks-1:sha256-other", file("视频的波形"));
+    await media.put(SOUND, file("声音"));
+    await media.put(PEAKS, file("声音的波形"));
+    return { library, media };
+  }
+
+  it("are all that a listing has, with their size and when they were used", async () => {
+    const { media } = await withFiles();
+    const listed = await media.listMade();
+    expect(listed.map(({ name }) => name).toSorted()).toEqual([PEAKS, SOUND]);
+    for (const { size, usedAt } of listed) {
+      expect(size).toBeGreaterThan(0);
+      expect(usedAt).toBeGreaterThan(0);
+    }
+  });
+
+  it("are all that can be removed: what people brought in can never go this way", async () => {
+    const { media } = await withFiles();
+    await expect(media.removeMade(ASSET)).rejects.toThrow();
+    await expect(media.removeMade("peaks-1:sha256-other")).rejects.toThrow();
+    await expect(media.removeMade("sha256-sound-1:abc")).rejects.toThrow();
+    expect(await textIn(await media.get(ASSET))).toBe("用户的视频");
+    expect(await textIn(await media.get("peaks-1:sha256-other"))).toBe("视频的波形");
+    await media.removeMade(SOUND);
+    expect(await media.get(SOUND)).toBeUndefined();
+    expect(await textIn(await media.get(PEAKS))).toBe("声音的波形");
+  });
+
+  it("are only those of the project", async () => {
+    const { library, media } = await withFiles();
+    const other = { id: "project_b", name: "别的" };
+    await library.create(other, STATE);
+    await library.media(other.id).put("sound-1:zzz", file("别的声音"));
+    expect((await media.listMade()).map(({ name }) => name)).not.toContain("sound-1:zzz");
+    await media.removeMade("sound-1:zzz");
+    expect(await textIn(await library.media(other.id).get("sound-1:zzz"))).toBe("别的声音");
+  });
+
+  it("count as used when somebody says so, and nothing else does", async () => {
+    const { media } = await withFiles();
+    vi.spyOn(Date, "now").mockReturnValue(10);
+    await media.put("sound-1:old", file("旧的"));
+    vi.spyOn(Date, "now").mockReturnValue(99);
+    await media.touchMade("sound-1:old");
+    await media.touchMade(ASSET);
+    const old = (await media.listMade()).find(({ name }) => name === "sound-1:old");
+    expect(old?.usedAt).toBe(99);
+    expect(await textIn(await media.get(ASSET))).toBe("用户的视频");
+    vi.restoreAllMocks();
+  });
+});

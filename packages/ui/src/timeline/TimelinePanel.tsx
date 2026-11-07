@@ -31,7 +31,7 @@ import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
-import { ASSET_DRAG_TYPE, SCENE_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
+import { ASSET_DRAG_TYPE, SCENE_DRAG_TYPE, SOUND_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
 import type zhCN from "../i18n/zh-CN.json";
 import type { TimelineAction } from "./actions.ts";
 import { RULER_HEIGHT, type TimelineEditor, type VisibleClip } from "./editor.ts";
@@ -73,9 +73,16 @@ type ClipKind = keyof typeof zhCN.timeline.kind;
 /** What a clip is called. A kind from a plugin has no word here, and shows as it is. */
 function useClipLabel() {
   const { t } = useTranslation();
+  const { sounds } = useWorkbench();
+  // What a sound is up to shows on its clip, and that comes from elsewhere than the timeline.
+  useSyncExternalStore(sounds.subscribe, sounds.getVersion);
   return ({ clip }: ClipBox) => {
     const { kind } = clip.source;
-    return clip.name ?? t(`timeline.kind.${kind as ClipKind}`, { defaultValue: kind });
+    const name = clip.name ?? t(`timeline.kind.${kind as ClipKind}`, { defaultValue: kind });
+    const sound = sounds.stateOf(clip);
+    return !sound || sound.state === "ready"
+      ? name
+      : t("sound.clip", { name, state: t(`sound.state.${sound.state}`) });
   };
 }
 
@@ -588,7 +595,7 @@ function Surface({
   showMenu: ShowMenu;
 }) {
   const { t } = useTranslation();
-  const { input, media } = useWorkbench();
+  const { input, media, sounds } = useWorkbench();
   const labelOf = useClipLabel();
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -633,8 +640,10 @@ function Surface({
       (box) => labels.current(box),
       (clip) => media.peaksOf(clip),
       (clip) => media.stripOfClip(clip),
+      (clip) => sounds.stateOf(clip)?.state === "failed",
     );
     const stopMedia = media.subscribe(() => painter.invalidate());
+    const stopSounds = sounds.subscribe(() => painter.invalidate());
 
     const show = () => {
       const { model: current } = editor;
@@ -719,9 +728,10 @@ function Surface({
       observer.disconnect();
       stopView();
       stopMedia();
+      stopSounds();
       painter.dispose();
     };
-  }, [editor, input, media]);
+  }, [editor, input, media, sounds]);
 
   /** Dragging near an edge keeps going, also when the mouse does not move. */
   const scrollWhileNearEdge = (now: number, before = now) => {
@@ -784,6 +794,7 @@ function Surface({
   const carriesMedia = (event: DragEvent) =>
     event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
     event.dataTransfer.types.includes(SCENE_DRAG_TYPE) ||
+    event.dataTransfer.types.includes(SOUND_DRAG_TYPE) ||
     event.dataTransfer.types.includes("Files");
 
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -808,6 +819,11 @@ function Surface({
     const scene = event.dataTransfer.getData(SCENE_DRAG_TYPE);
     if (scene) {
       editor.addScene(scene, place);
+      return;
+    }
+    const sound = event.dataTransfer.getData(SOUND_DRAG_TYPE);
+    if (sound) {
+      editor.addSound(sound, place);
       return;
     }
     void media.importFiles([...event.dataTransfer.files]).then((ids) => {
@@ -849,6 +865,9 @@ function Surface({
             item("split", () => editor.splitAtPlayhead(), !editor.canSplit),
             item("delete", () => editor.deleteSelection()),
           ],
+          ...(sounds.stateOf(hit.box.clip)?.state === "failed"
+            ? [[{ id: "retry", label: t("sound.retry"), run: () => sounds.retry(hit.box.clip) }]]
+            : []),
         ],
       });
     } else if (hit.kind === "lane" && !hit.row.track.locked && !hit.row.gone) {

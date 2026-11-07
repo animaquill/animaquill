@@ -55,6 +55,9 @@ const sceneOrigins = [0, 1, 2, 3, 4, 5, 6, 7].map(
 /** A browser without capture can still run scenes as normal pages, which is enough for some tests. */
 const sceneStage = new URLSearchParams(location.search).get("sceneStage") === "plain";
 
+/** Waiting a whole minute for code that never ends is no way to test it. */
+const soundLimit = new URLSearchParams(location.search).get("soundLimit");
+
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
   await mountEditor(root, {
@@ -63,5 +66,9 @@ if (root)
     compositorUrl: "/compositor.html",
     sceneOrigins,
     ...(sceneStage && { sceneStage: "plain" }),
+    ...(soundLimit !== null && { soundLimitMs: Number(soundLimit) }),
     panels: [crashTest, frameTest],
+    onWorkbench: (workbench) => {
+      Object.assign(window, { aqExecute: (call: never) => workbench.session.store?.execute(call) });
+    },
   });

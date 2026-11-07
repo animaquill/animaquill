@@ -11,6 +11,8 @@ import {
   Timeline,
   ZERO,
   add,
+  fromSeconds,
+  isAnimation,
   parseTime,
   type Clip,
   type MediaRef,
@@ -19,6 +21,7 @@ import {
   type Rational,
   type TimelineFiles,
   type Track,
+  type Value,
 } from "@animaquill/schema";
 import type { z } from "zod";
 
@@ -160,14 +163,42 @@ export const clipEnd = (clip: ClipState): Rational =>
 export const clipOffset = (clip: ClipState): Rational =>
   clip.offset === undefined ? ZERO : parseTime(clip.offset);
 
+/** A parameter of a sound: what the clip says, or else what the sound starts out with. */
+export function paramOf(
+  clip: ClipState,
+  manifest: SoundManifest | undefined,
+  id: string,
+): Value | undefined {
+  const value = entryOf(clip.properties, `param.${id}`);
+  // Keys on what makes a sound would have to make it again for every moment.
+  const plain = value !== undefined && isAnimation(value) ? value.keys[0]?.value : value;
+  return plain ?? manifest?.params?.find((param) => param.id === id)?.default;
+}
+
+/**
+ * How long a sound made by code is, in seconds, when something says so. That has to come from
+ * somewhere else than the length of the clip: trimming and cutting show less of a sound, and do not
+ * make another one.
+ */
+export function statedSoundLength(state: ProjectState, clip: ClipState): number | undefined {
+  const { sound } = clip.source as { readonly sound?: string };
+  const manifest = sound === undefined ? undefined : entryOf(state.sounds, sound);
+  const value = paramOf(clip, manifest, "duration");
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 /**
  * How far the clock of a clip can run before its content ends. Undefined when nothing stops it:
  * a loop, a changing speed, or content of no known length.
  */
 export function sourceLength(state: ProjectState, clip: ClipState): Rational | undefined {
   const { source } = clip;
-  if ((source.kind !== "video" && source.kind !== "audio") || clip.loop) return undefined;
-  if (clip.properties?.["time.speed"] !== undefined) return undefined;
+  if (clip.loop || clip.properties?.["time.speed"] !== undefined) return undefined;
+  if (source.kind === "sound") {
+    const seconds = statedSoundLength(state, clip);
+    return seconds === undefined ? undefined : fromSeconds(seconds);
+  }
+  if (source.kind !== "video" && source.kind !== "audio") return undefined;
   const media = source.media as MediaRef;
   const duration =
     "asset" in media ? entryOf(state.assets, media.asset)?.info?.duration : undefined;

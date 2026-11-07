@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, type Rollup } from "vite";
 
-const ENTRY = fileURLToPath(new URL("./runtime/main.ts", import.meta.url));
+const ENTRIES = {
+  scene: fileURLToPath(new URL("./runtime/main.ts", import.meta.url)),
+  sound: fileURLToPath(new URL("./runtime/sound-main.ts", import.meta.url)),
+};
 
 export interface RuntimeBundle {
   /** One classic script, which is what the scene page runs. */
@@ -38,7 +41,10 @@ function licenseNotices(files: readonly string[]): string {
  * Makes the runtime into one script. Scenes get it as text, in a message, so it cannot be a set of
  * modules, and it needs a bundler the way a web worker does.
  */
-export async function bundleRuntime({ minify = true } = {}): Promise<RuntimeBundle> {
+export async function bundleRuntime({
+  minify = true,
+  kind = "scene" as keyof typeof ENTRIES,
+} = {}): Promise<RuntimeBundle> {
   const output = (await build({
     configFile: false,
     logLevel: "silent",
@@ -47,10 +53,10 @@ export async function bundleRuntime({ minify = true } = {}): Promise<RuntimeBund
       minify,
       emptyOutDir: false,
       lib: {
-        entry: ENTRY,
+        entry: ENTRIES[kind],
         formats: ["iife"],
-        name: "animaquillSceneRuntime",
-        fileName: () => "scene-runtime.js",
+        name: "animaquillRuntime",
+        fileName: () => "runtime.js",
       },
     },
   })) as Rollup.RollupOutput | Rollup.RollupOutput[];

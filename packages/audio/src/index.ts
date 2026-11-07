@@ -2,12 +2,15 @@ import type { AudioPlan, SoundLayer } from "@animaquill/core";
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
 
 export { computePeaks, PEAKS_PER_SECOND } from "./peaks.ts";
+export { wavOf } from "./wav.ts";
 
 /** How far ahead sound gets decoded and scheduled. It bridges a busy moment, and costs memory. */
 const LEAD_SECONDS = 1;
 const POLL_MS = 100;
 /** Less than this nobody hears. */
 const NOTICEABLE_LATE_MS = 5;
+/** How often to look whether a sound that code is still making is there yet. */
+const LOOK_AGAIN_MS = 500;
 
 export interface SoundChunk {
   readonly buffer: AudioBuffer;
@@ -42,15 +45,18 @@ export interface PlaybackAudioOptions {
 }
 
 interface Run {
-  readonly plan: AudioPlan;
+  plan: AudioPlan;
   /** The timeline was here when the clock showed `at`. */
   readonly seconds: number;
   readonly at: number;
   /** What the device adds. It stays the same during a run, or chunks would not fit together. */
   readonly latency: number;
   readonly started: Set<string>;
+  /** When to look again for what was not there yet, by sound. */
+  readonly waiting: Map<string, number>;
   readonly nodes: Set<AudioBufferSourceNode>;
-  readonly gains: Set<GainNode>;
+  /** By sound. */
+  readonly gains: Map<string, GainNode>;
   timer: ReturnType<typeof setInterval> | undefined;
   stopped: boolean;
 }
@@ -112,8 +118,9 @@ export class PlaybackAudio {
       at,
       latency: context.outputLatency || context.baseLatency || 0,
       started: new Set(),
+      waiting: new Map(),
       nodes: new Set(),
-      gains: new Set(),
+      gains: new Map(),
       timer: undefined,
       stopped: false,
     };
@@ -135,7 +142,25 @@ export class PlaybackAudio {
     run.stopped = true;
     clearInterval(run.timer);
     for (const node of run.nodes) node.stop();
-    for (const gain of run.gains) gain.disconnect();
+    for (const gain of run.gains.values()) gain.disconnect();
+  }
+
+  /** Whether a plan only changes how loud things are, which `changeGains` does on the spot. */
+  static sameButGains(a: AudioPlan, b: AudioPlan): boolean {
+    if (a === b) return true;
+    const plain = ({ sounds }: AudioPlan) => sounds.map((sound) => ({ ...sound, gain: 0 }));
+    return JSON.stringify(plain(a)) === JSON.stringify(plain(b));
+  }
+
+  /** Starting over for this would be a gap in the sound with every step of a slider. */
+  changeGains({ sounds }: AudioPlan): void {
+    const run = this.#run;
+    if (!run) return;
+    for (const { id, gain } of sounds) {
+      const node = run.gains.get(id);
+      if (node) node.gain.value = gain;
+    }
+    run.plan = { sounds };
   }
 
   dispose(): void {
@@ -159,31 +184,41 @@ export class PlaybackAudio {
 
   #startDue(run: Run, context: AudioContext): void {
     const position = this.#position(run);
+    const now = this.#wallClock();
     for (const sound of run.plan.sounds) {
       const ahead = sound.start - position;
       if (run.started.has(sound.id) || sound.end <= run.seconds || ahead > LEAD_SECONDS) continue;
+      const waiting = run.waiting.get(sound.id);
+      if (waiting !== undefined && (now < waiting || sound.end <= position)) continue;
       run.started.add(sound.id);
-      this.#feed(run, context, sound).catch((error: unknown) => {
-        console.warn("A sound could not be played", error);
-        if (!run.stopped) this.#onProblem(sound.file);
-      });
+      this.#feed(run, context, sound, waiting === undefined ? run.seconds : position).catch(
+        (error: unknown) => {
+          console.warn("A sound could not be played", error);
+          if (!run.stopped) this.#onProblem(sound.file);
+        },
+      );
     }
   }
 
-  async #feed(run: Run, context: AudioContext, sound: SoundLayer): Promise<void> {
+  /** Plays a sound from a place on the timeline on, when that is in it. */
+  async #feed(run: Run, context: AudioContext, sound: SoundLayer, since: number): Promise<void> {
     const file = await this.#fileOf(sound.file);
     if (run.stopped) return;
     if (!file) {
-      this.#onProblem(sound.file);
+      // Time goes on without it. When code is done with it, what is left of it comes in on time.
+      if (sound.made) {
+        run.started.delete(sound.id);
+        run.waiting.set(sound.id, this.#wallClock() + LOOK_AGAIN_MS);
+      } else this.#onProblem(sound.file);
       return;
     }
     const gain = context.createGain();
-    gain.gain.value = sound.gain;
+    gain.gain.value = run.plan.sounds.find(({ id }) => id === sound.id)?.gain ?? sound.gain;
     gain.connect(context.destination);
-    run.gains.add(gain);
+    run.gains.set(sound.id, gain);
 
     const toFile = (seconds: number) => seconds - sound.start + sound.offset;
-    const from = toFile(Math.max(sound.start, run.seconds));
+    const from = toFile(Math.max(sound.start, since));
     for await (const chunk of this.#read(file, from, toFile(sound.end))) {
       // A suspended context does not move, so nothing it would schedule can be right.
       while (context.state !== "running" && !run.stopped) await sleep(POLL_MS / 2);

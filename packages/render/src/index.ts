@@ -1,5 +1,11 @@
 import type { Channel, RenderLayer, RenderPlan } from "@animaquill/core";
-import type { SceneFailure, ScenePhase, SceneProblem } from "@animaquill/scene";
+import type {
+  SceneFailure,
+  ScenePhase,
+  SceneProblem,
+  SoundFailureReason,
+  SoundLoad,
+} from "@animaquill/scene";
 
 export { layerWith, type LayerChanges } from "./plan.ts";
 
@@ -112,6 +118,12 @@ export type ToCompositor =
     }
   /** Somebody wants to give a scene that stopped another chance. */
   | { readonly type: "scene-retry"; readonly layer: string }
+  /** Runs the code of a sound, which comes back as `sound-done` or `sound-failed`. */
+  | { readonly type: "sound-make"; readonly request: number; readonly load: SoundLoad }
+  /** Nobody needs that sound any more. */
+  | { readonly type: "sound-cancel"; readonly request: number }
+  /** The samples of a sound have been read, so what made them can go. */
+  | { readonly type: "sound-release"; readonly request: number }
   /** The frame with this index, out of this many, keeps writing to the editor. */
   | { readonly type: "evict"; readonly index: number; readonly frames: number }
   /** A frame in here took the keyboard. Only while it still has it can this page tell which one. */
@@ -145,6 +157,16 @@ export type FromCompositor =
       readonly revision: string;
       readonly problem: SceneProblem;
     }
+  /** What came out of the code of a sound. Only ever data, and checked again on arrival. */
+  | {
+      readonly type: "sound-done";
+      readonly request: number;
+      readonly channels: number;
+      readonly frames: number;
+      readonly samples: Blob;
+    }
+  | { readonly type: "sound-failed"; readonly request: number; readonly reason: SoundFailureReason }
+  | { readonly type: "sound-problem"; readonly request: number; readonly problem: SceneProblem }
   /** It looked at who took the keyboard. */
   | { readonly type: "focus-checked"; readonly request: number }
   /** Scenes must stay away from there, also in the next compositor. */

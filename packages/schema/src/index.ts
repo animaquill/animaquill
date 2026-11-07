@@ -20,6 +20,7 @@ export {
 } from "./project.ts";
 export {
   BUILT_IN_PROPERTIES,
+  CLIP_SOUND,
   CLIP_VISUAL,
   SCENE_VISUAL,
   cannotHaveKeys,

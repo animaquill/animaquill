@@ -1,6 +1,7 @@
 // oxlint-disable-next-line typescript/triple-slash-reference -- packages that bundle this need it too
 /// <reference path="./virtual.d.ts" />
 import code from "virtual:animaquill-scene-runtime";
+import soundCode from "virtual:animaquill-sound-runtime";
 import { ALL_FORMATS, BlobSource, Input, VideoSampleSink, type VideoSample } from "mediabunny";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
 import {
@@ -18,6 +19,7 @@ import { GiveUpTimer } from "./patience.ts";
 import { withChannels } from "./plan.ts";
 import { placeholderPicture } from "./placeholder.ts";
 import { SceneLayers } from "./scenes.ts";
+import { SoundJobs } from "./sounds.ts";
 import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
 
 /**
@@ -424,6 +426,14 @@ const scenes = new SceneLayers({
   redraw: () => void refresh(),
 });
 
+let soundRuntime: Blob | undefined;
+
+const sounds = new SoundJobs({
+  mount: document.body,
+  runtime: () => (soundRuntime ??= new Blob([soundCode], { type: "text/javascript" })),
+  send,
+});
+
 addEventListener("message", (event: MessageEvent<ToCompositor>) => {
   // A scene can write here too, and only reading `data` builds a message: that comes after this.
   if (event.source !== parent) return;
@@ -437,6 +447,7 @@ addEventListener("message", (event: MessageEvent<ToCompositor>) => {
     send({ type: "focus-checked", request: data.request });
     return;
   }
+  if (sounds.handle(data)) return;
   if (scenes.handle(data)) return;
   if (data.type === "strip") {
     void answerStrip(data.request, data.file, data.count, data.height);

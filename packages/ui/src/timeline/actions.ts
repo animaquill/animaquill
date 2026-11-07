@@ -34,6 +34,7 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
 
   add("addColor", () => editor.addColorClip(), { group: "add" });
   add("addScene", () => editor.createScene(), { group: "add" });
+  add("addSound", () => editor.createSound(), { group: "add" });
   add("addVideoTrack", () => editor.addTrack("video"), { group: "add" });
   add("addAudioTrack", () => editor.addTrack("audio"), { group: "add" });
   add("addCaptionTrack", () => editor.addTrack("caption"), { group: "add" });

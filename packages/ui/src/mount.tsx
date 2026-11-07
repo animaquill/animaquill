@@ -22,8 +22,12 @@ export interface EditorOptions {
   readonly sceneOrigins?: readonly string[];
   /** For development: runs scenes as normal pages, without capture. */
   readonly sceneStage?: "plain";
+  /** For tests: how long code gets to make a sound. */
+  readonly soundLimitMs?: number;
   /** Panels the host adds to the built-in ones. */
   readonly panels?: readonly PanelDefinition[];
+  /** For tests: what no control can do yet, such as changing code. */
+  readonly onWorkbench?: (workbench: Workbench) => void;
 }
 
 /** Starts the editor in an element. Returns how to remove it again. */
@@ -39,8 +43,10 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     compositorUrl: options.compositorUrl,
     sceneOrigins: options.sceneOrigins ?? [],
     ...(options.sceneStage && { sceneStage: options.sceneStage }),
+    ...(options.soundLimitMs !== undefined && { soundLimitMs: options.soundLimitMs }),
   });
   await workbench.load();
+  options.onWorkbench?.(workbench);
 
   const root = createRoot(element);
   root.render(

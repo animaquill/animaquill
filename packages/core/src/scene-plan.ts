@@ -22,10 +22,11 @@ export interface SceneSource {
   readonly seed: number;
 }
 
-/** Everything in here goes to every scene that asks. */
+/** Everything in here goes to every scene and sound that asks. */
 const SHARED_FOLDER = "code/";
 
 const folderOf = (scene: string) => `scenes/${scene}/`;
+const soundFolderOf = (sound: string) => `sounds/${sound}/`;
 
 /**
  * Tells two texts apart: this is about seeing that something changed, and keeps nobody from doing
@@ -63,7 +64,7 @@ class FileIndex {
   readonly #files: ProjectState["files"];
   #before: FileIndex | undefined;
   readonly #facts = new Map<string, FileFacts>();
-  /** The paths in each folder of `scenes/`, and in `code/`. */
+  /** The paths in each folder of `scenes/` and `sounds/`, and in `code/`. */
   #folders: Map<string, string[]> | undefined;
 
   constructor(files: ProjectState["files"], before: FileIndex | undefined) {
@@ -97,14 +98,14 @@ class FileIndex {
     return this.#facts.get(path);
   }
 
-  /** Which files a scene gets: its own folder and what all of them share. */
-  pathsOf(scene: string): readonly string[] {
+  /** Which files a scene or sound gets: its own folder and what all of them share. */
+  pathsIn(own: string): readonly string[] {
     if (!this.#folders) {
       this.#folders = new Map();
       for (const path of Object.keys(this.#files)) {
         const folder = path.startsWith(SHARED_FOLDER)
           ? SHARED_FOLDER
-          : /^scenes\/[^/]+\//.exec(path)?.[0];
+          : /^(?:scenes|sounds)\/[^/]+\//.exec(path)?.[0];
         if (folder === undefined) continue;
         const paths = this.#folders.get(folder);
         if (paths) paths.push(path);
@@ -112,7 +113,7 @@ class FileIndex {
       }
     }
     return [
-      ...(this.#folders.get(folderOf(scene)) ?? []),
+      ...(this.#folders.get(own) ?? []),
       ...(this.#folders.get(SHARED_FOLDER) ?? []),
     ].toSorted();
   }
@@ -135,7 +136,17 @@ function indexOf(files: ProjectState["files"]): FileIndex {
  * with what it reads, it cannot be about anything else in the project.
  */
 export const sceneFilesOf = (state: ProjectState, scene: string): readonly string[] =>
-  indexOf(state.files).pathsOf(scene);
+  indexOf(state.files).pathsIn(folderOf(scene));
+
+/** The same for a sound, which gets nothing else either. */
+export const soundFilesOf = (state: ProjectState, sound: string): readonly string[] =>
+  indexOf(state.files).pathsIn(soundFolderOf(sound));
+
+/** What the content of some files comes to. It changes when one of them does, and only then. */
+export function revisionOfFiles(state: ProjectState, paths: readonly string[]): readonly string[] {
+  const files = indexOf(state.files);
+  return paths.map((path) => `${path}\n${files.factsOf(path).hash}`);
+}
 
 const assetIdOf = (value: PropertyValue | undefined) => {
   const plain = value !== undefined && isAnimation(value) ? undefined : value;
@@ -185,12 +196,11 @@ const sources = new Map<string, SceneSource>();
 export function sceneSourceOf(state: ProjectState, scene: string): SceneSource | undefined {
   const manifest = entryOf(state.scenes, scene);
   if (!manifest) return undefined;
-  const files = indexOf(state.files);
   const paths = sceneFilesOf(state, scene);
   const assets = assetsOf(state, scene, paths);
   const entry = `${folderOf(scene)}${manifest.entry}`;
   const { runtime } = manifest;
-  const content = paths.map((path) => `${path}\n${files.factsOf(path).hash}`);
+  const content = revisionOfFiles(state, paths);
   const revision = hashOfText(JSON.stringify([entry, runtime, content, assets]));
   const known = sources.get(scene);
   // A scene that stays what it was keeps its identity, which is how a plan sees that nothing changed.
