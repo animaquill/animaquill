@@ -1,4 +1,5 @@
 import type { RenderLayer } from "@animaquill/core";
+import { TIME_TOLERANCE } from "@animaquill/core/view";
 
 /** Longer than any file takes to open, short enough to hold only the next clip or two. */
 export const GET_READY_SECONDS = 1.5;
@@ -7,10 +8,10 @@ export const GET_READY_SECONDS = 1.5;
 const MAX_WALK_SECONDS = 2;
 
 export const showsAt = ({ start, end }: RenderLayer, seconds: number): boolean =>
-  seconds >= start && seconds < end;
+  seconds >= start - TIME_TOLERANCE && seconds < end - TIME_TOLERANCE;
 
 export const comesUpAfter = ({ start }: RenderLayer, seconds: number): boolean =>
-  start > seconds && start - seconds <= GET_READY_SECONDS;
+  start - TIME_TOLERANCE > seconds && start - seconds <= GET_READY_SECONDS;
 
 /** Where in its file a clip gets read when the playhead is at a moment, if at all. */
 export function readingAt(layer: RenderLayer, seconds: number): number | undefined {
@@ -136,10 +137,11 @@ export class VideoCursor<Frame extends TimedFrame> {
 
   async #moveTo(seconds: number, round: number): Promise<Frame | undefined> {
     const current = this.#current;
-    const behind = current === undefined || seconds < current.timestamp;
+    const behind = current === undefined || seconds + TIME_TOLERANCE < current.timestamp;
     const farAhead = this.#next && seconds - this.#next.timestamp > MAX_WALK_SECONDS;
     if (behind || farAhead) await this.#restart(seconds, round);
-    while (this.#next && this.#next.timestamp <= seconds) {
+    // A frame that starts at this moment is the one that shows, also with a float a little short.
+    while (this.#next && this.#next.timestamp <= seconds + TIME_TOLERANCE) {
       this.#current?.close();
       this.#current = this.#next;
       this.#next = await this.#pull();

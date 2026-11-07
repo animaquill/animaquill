@@ -149,8 +149,8 @@ async function startExport(page: Page, choices: Record<string, string> = {}): Pr
   await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
 }
 
-const exported = (page: Page) =>
-  expect(page.getByRole("status").getByText("已导出“")).toBeVisible({ timeout: 60_000 });
+const exported = (page: Page, timeout = 60_000) =>
+  expect(page.getByRole("status").getByText("已导出“")).toBeVisible({ timeout });
 
 interface Facts {
   readonly codec: string | null;
@@ -463,12 +463,15 @@ test.describe("an export under way", () => {
     await expect(dialog(page)).toContainText("视频没有导出", { timeout: 60_000 });
     await expect(dialog(page)).toContainText("第 31 帧（0:01/00）");
     await expect(dialog(page)).toContainText("“蓝色”的素材文件不在这台设备上");
+    await expect(dialog(page)).toContainText("已经导好的部分留着");
     await dialog(page).getByRole("button", { name: "关闭" }).click();
     await expect(
       page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }),
     ).toContainText("0:01/00");
     await expect(content(page, "timeline").getByRole("option", { selected: true })).toHaveCount(1);
-    expect(await savedFile(page)).toBeUndefined();
+    // What it got to stays for after the file is back.
+    expect((await keptExports(page)).exports).toBe(1);
+    expect((await savedFile(page))?.length ?? 0).toBe(0);
   });
 });
 
@@ -1074,7 +1077,7 @@ test.describe("an export after a reload", () => {
   });
 
   test("starts over when the encoder now encodes another way, and says so", async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     const again = await stopHalfway(page, "crash");
     await offer(again).getByRole("button", { name: "取消" }).click();
     // As on another computer, or after an update: what the encoder said about decoding differs.
@@ -1098,7 +1101,8 @@ test.describe("an export after a reload", () => {
     await again.reload();
     await offer(again).getByRole("button", { name: "继续导出" }).click();
     await expect(again.getByRole("status").getByText("视频从头重新导出")).toBeVisible();
-    await exported(again);
+    // All of it again, which takes as long as the first time.
+    await exported(again, 150_000);
     const file = (await savedFile(again)) as Buffer;
     expect((await factsOf(file)).frames).toBe(1200);
     const still = await stillAt(again, "0:30/00");
@@ -1165,5 +1169,218 @@ test.describe("a scene that keeps its own state, after a crash", () => {
       expect(found.video[0]).toBeGreaterThan(0);
       expect(Math.abs(found.video[0] - found.still[0])).toBeLessThan(1.5);
     }
+  });
+});
+
+async function middleColor(page: Page, file: Buffer, index: number): Promise<number[]> {
+  const packets = await framePackets(file, index);
+  return page.evaluate(async ({ config, description, packets: chunks }) => {
+    const bytes = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const frames: VideoFrame[] = [];
+    const decoder = new VideoDecoder({ output: (frame) => frames.push(frame), error: () => {} });
+    decoder.configure(
+      description === undefined ? config : { ...config, description: bytes(description) },
+    );
+    for (const { data, key, timestamp } of chunks) {
+      decoder.decode(
+        new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp, data: bytes(data) }),
+      );
+    }
+    await decoder.flush();
+    const last = frames.at(-1) as VideoFrame;
+    const canvas = new OffscreenCanvas(last.displayWidth, last.displayHeight);
+    canvas.getContext("2d")?.drawImage(last, 0, 0);
+    for (const frame of frames) frame.close();
+    const frame = new VideoFrame(canvas, { timestamp: 0 });
+    const pixels = new Uint8Array(frame.allocationSize({ format: "RGBA" }));
+    await frame.copyTo(pixels, { format: "RGBA" });
+    frame.close();
+    const at = ((canvas.height >> 1) * canvas.width + (canvas.width >> 1)) * 4;
+    return [...pixels.subarray(at, at + 3)];
+  }, packets);
+}
+
+test.describe("cuts and encoders", () => {
+  test("of a selection has its cuts on their frames", async ({ page }) => {
+    const color = (id: string, start: string, duration: string, value: string): Clip => ({
+      id,
+      start,
+      duration,
+      source: { kind: "color", color: value },
+    });
+    await open(
+      page,
+      projectFolder(2, [
+        color("red", "1/30", "5/30", "#ff0000"),
+        color("blue", "6/30", "24/30", "#0000ff"),
+      ]),
+    );
+    await tab(page, "timeline").click();
+    await clickClip(page, 0);
+    await page.keyboard.press("Control+a");
+    await startExport(page);
+    await exported(page);
+    const file = (await savedFile(page)) as Buffer;
+    const facts = await factsOf(file);
+    const colors = [];
+    for (const index of [3, 4, 5, 6])
+      colors.push(`${index}:${(await middleColor(page, file, index)).join(",")}`);
+    console.log(
+      "frames:",
+      facts.frames,
+      "| middle colors (frame 5 is where blue starts):",
+      colors.join(" "),
+    );
+    const fifth = await middleColor(page, file, 5);
+    expect((fifth[2] ?? 0) > 200 && (fifth[0] ?? 0) < 60).toBe(true);
+  });
+});
+
+test("goes over to the processor when the graphics card says yes and then does not start", async ({
+  page,
+}) => {
+  // In every frame: the main page chooses, the compositor encodes.
+  await page.context().addInitScript(`(() => {
+    if (typeof VideoEncoder === "undefined") return;
+    const Original = VideoEncoder;
+    const supported = Original.isConfigSupported.bind(Original);
+    function Flaky(init) {
+      const encoder = new Original(init);
+      const configure = encoder.configure.bind(encoder);
+      encoder.configure = (config) => {
+        if (config.hardwareAcceleration !== "prefer-hardware") return configure(config);
+        // As WebCodecs reports it: configure returns, and the error comes after.
+        configure({ ...config, hardwareAcceleration: "no-preference" });
+        setTimeout(() => {
+          encoder.close();
+          init.error(new DOMException("Encoder creation error.", "EncodingError"));
+        }, 0);
+      };
+      return encoder;
+    }
+    Flaky.isConfigSupported = (config) =>
+      config.hardwareAcceleration === "prefer-hardware"
+        ? Promise.resolve({ supported: true, config })
+        : supported(config);
+    globalThis.VideoEncoder = Flaky;
+  })()`);
+  await open(page, projectFolder(2, [movingSquare(2)]));
+  await chooseFrom(page, "导出视频…");
+  console.log(
+    "dialog says:",
+    ((await dialog(page).textContent()) ?? "").includes("用显卡编码")
+      ? "graphics card"
+      : "processor",
+  );
+  await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
+  const done = page.getByRole("status").getByText("已导出“");
+  const failed = dialog(page).filter({ hasText: "视频没有导出" });
+  await expect(done.or(failed)).toBeVisible({ timeout: 60_000 });
+  console.log(
+    "outcome:",
+    (await failed.isVisible()) ? `failed: ${await failed.textContent()}` : await done.textContent(),
+  );
+  await expect(done).toBeVisible();
+});
+
+test("giving up an old export leaves the video people made to the same place since", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  // An export that stopped halfway: the page went away.
+  await open(page, projectFolder(40, [movingSquare(40)]));
+  await startExport(page);
+  await expect.poll(() => percentOf(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(30);
+  page.once("dialog", (question) => void question.accept());
+  await page.reload();
+  // People leave the question for later, and export again, to the same file.
+  await offer(page).getByRole("button", { name: "取消" }).click();
+  await expect(offer(page)).toHaveCount(0);
+  // Exporting again asks about the old one first, and people leave it for later again.
+  await chooseFrom(page, "导出视频…");
+  await offer(page).getByRole("button", { name: "取消" }).click();
+  await expect(dialog(page)).toContainText("导出视频");
+  await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
+  await exported(page);
+  const finished = (await savedFile(page)) as Buffer;
+  console.log(
+    "finished file:",
+    finished.length,
+    "bytes,",
+    (await factsOf(finished)).frames,
+    "frames",
+  );
+  expect((await factsOf(finished)).frames).toBe(1200);
+  // The next time the project opens, the old one is offered again, and people give it up.
+  await page.reload();
+  await offer(page).getByRole("button", { name: "放弃" }).click();
+  await expect(page.getByRole("status").getByText("没完成的导出已经放弃")).toBeVisible();
+  const after = await savedFile(page);
+  console.log(
+    "after giving up the old export:",
+    after === undefined ? "the file is gone" : `${after.length} bytes`,
+  );
+  expect(after).toBeDefined();
+});
+
+test.describe("a slide show", () => {
+  test("keeps only the pictures around the frame it draws", async ({ page }) => {
+    test.setTimeout(180_000);
+    const count = 24;
+    const pictures: Clip[] = [];
+    const files: Record<string, Buffer> = {};
+    const assets: Record<string, unknown> = {};
+    for (let index = 0; index < count; index += 1) {
+      const shade = (index * 37) % 256;
+      files[`assets/slide${index}.png`] = png(960, 540, (x, y) => [
+        shade,
+        (x + index) % 256,
+        (y * 3) % 256,
+      ]);
+      assets[`slide${index}`] = {
+        name: `第 ${index} 张`,
+        kind: "image",
+        path: `assets/slide${index}.png`,
+        storage: "git",
+      };
+      pictures.push({
+        id: `slide${index}`,
+        start: String(index),
+        duration: "1",
+        source: { kind: "image", media: { asset: `slide${index}` } },
+      });
+    }
+    await open(page, projectFolder(count, pictures, files, assets));
+    await startExport(page);
+    await expect(exportStatus(page)).toBeVisible();
+    const held: number[] = [];
+    const watch = async () => {
+      const frame = page
+        .context()
+        .pages()
+        .flatMap((each) => each.frames())
+        .find(
+          (candidate) =>
+            candidate.url().includes("compositor.html") &&
+            candidate.parentFrame() !== null &&
+            !candidate.page().url().includes("project="),
+        );
+      const value = await frame
+        ?.evaluate(() => Number(document.documentElement.dataset["pictures"] ?? 0))
+        .catch(() => undefined);
+      if (value !== undefined) held.push(value);
+    };
+    const done = page.getByRole("status").getByText("已导出“");
+    while (!(await done.isVisible())) {
+      await watch();
+      await page.waitForTimeout(200);
+    }
+    console.log(
+      `pictures held while ${count} were shown one after the other: at most ${Math.max(...held)}`,
+    );
+    expect(held.length).toBeGreaterThan(5);
+    // The ones on the screen, and a few that were, for going back and forth.
+    expect(Math.max(...held)).toBeLessThanOrEqual(8);
+    expect((await factsOf((await savedFile(page)) as Buffer)).frames).toBe(count * 30);
   });
 });

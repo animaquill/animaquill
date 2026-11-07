@@ -61,8 +61,12 @@ function chosenFile(handle: FileSystemFileHandle): GrowingFile {
     finish: async () => (await writable.get()).close(),
     async abandon() {
       await writable.abort();
+      // Only the empty file the dialog made is this one's to take away. What has something in it
+      // now got that from somewhere else, maybe another export to the same place, and stays.
+      const now = await handle.getFile().catch(() => undefined);
+      if (!now || now.size > 0) return;
       const { remove } = handle as RemovableHandle;
-      // The dialog made the file. Without a way to take it away an empty one stays.
+      // Without a way to take it away an empty one stays.
       if (!remove) throw new Error("The file stays");
       await remove.call(handle);
     },
@@ -87,6 +91,15 @@ export async function reopenedFile(
     throw error;
   }
   return chosenFile(handle);
+}
+
+/** What downloads left in the private folder of the site, once they are surely over. */
+export async function cleanUpDownloads(
+  scratch: () => Promise<FileSystemDirectoryHandle>,
+): Promise<void> {
+  const root = await scratch();
+  const folder = await root.getDirectoryHandle(SCRATCH_FOLDER).catch(() => undefined);
+  if (folder) await cleanUp(folder);
 }
 
 /** Old files of downloads that are surely over. Nothing else gets there. */

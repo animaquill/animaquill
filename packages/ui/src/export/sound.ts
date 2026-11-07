@@ -52,6 +52,8 @@ export async function chooseSoundEncoding(
 /** What a mixer gives: a piece of the timeline as samples. */
 export interface PieceMixer {
   mix(from: number, frames: number): Promise<AudioBuffer>;
+  /** Lets go of the files it reads. */
+  close?(): void;
 }
 
 export type MakeAudioEncoder = (
@@ -146,12 +148,14 @@ export class SoundTrackEncoder {
   /** All of it, and everything out of the encoder. */
   async finish(): Promise<void> {
     await this.until(Infinity);
+    this.#mixer.close?.();
     await this.#encoder.flush();
     this.#encoder.close();
     if (this.#failed !== undefined) throw this.#failed;
   }
 
   close(): void {
+    this.#mixer.close?.();
     try {
       this.#encoder.close();
     } catch {

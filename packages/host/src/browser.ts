@@ -649,7 +649,11 @@ export function createBrowserHost(
   const forget = async (project: string) => {
     await Promise.all([trials.forget(project), drafts.forget(project)]);
     for (const saved of await exports.list(project).catch(() => [])) {
+      // One that a window is at is that window's to finish or give up.
+      const release = await exports.claim(saved.id);
+      if (!release) continue;
       await exports.remove(saved.id).catch(() => {});
+      release();
     }
   };
   return {

@@ -44,6 +44,8 @@ export interface ExportPiece {
  */
 export interface ExportStore {
   list(project: string): Promise<readonly SavedExport[]>;
+  /** Of all projects, for people to see what takes room. */
+  all(): Promise<readonly SavedExport[]>;
   save(saved: SavedExport): Promise<void>;
   addPiece(id: string, track: string, piece: ExportPiece): Promise<void>;
   /** The pieces of a track in order, a few at a time, so that they never all are in memory. */

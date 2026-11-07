@@ -1,5 +1,5 @@
 import type { AudioPlan, SoundLayer } from "@animaquill/core";
-import { readSound, type SoundReader } from "./index.ts";
+import { readSound, type SoundChunk, type SoundReader } from "./index.ts";
 
 /** What a mix is rendered at. Every encoder takes it, and video works with it. */
 export const MIX_SAMPLE_RATE = 48_000;
@@ -64,9 +64,33 @@ export function placementsIn(plan: AudioPlan, from: number, to: number): Placeme
  * sound at its place, from its offset, with its volume. Muted and soloed tracks are already in the
  * plan. Nothing here holds more than a piece.
  */
+/** A sound being read front to back, from one piece of the mix to the next. */
+interface Stream {
+  readonly chunks: AsyncIterator<SoundChunk>;
+  /** What was read for the next piece already. */
+  held: SoundChunk[];
+  /** Seconds in the file up to which it was mixed. */
+  mixed: number;
+}
+
+/** Further back than this is a new reading of the file: frames do not start exactly anywhere. */
+const BACK_TOLERANCE = 1e-6;
+/** Further ahead than this is quicker to get to by finding the place than by reading through. */
+const SKIP_AHEAD_SECONDS = 5;
+
+/**
+ * Mixes what a plan says, one piece of the timeline at a time, the way playback would sound: each
+ * sound at its place, from its offset, with its volume. Muted and soloed tracks are already in the
+ * plan. Nothing here holds more than a piece.
+ *
+ * Each sound gets read once, front to back, over all the pieces it is in. Reading from somewhere in
+ * the middle can take long: a file without an index, such as many MP3, gets read from its start for
+ * that, and every piece would pay for it again.
+ */
 export class SoundMixer {
   readonly #plan: AudioPlan;
   readonly #options: MixerOptions;
+  readonly #streams = new Map<string, Stream>();
 
   constructor(plan: AudioPlan, options: MixerOptions) {
     this.#plan = plan;
@@ -85,41 +109,92 @@ export class SoundMixer {
       ((channels, length, sampleRate) => new OfflineAudioContext(channels, length, sampleRate));
     const context = create(MIX_CHANNELS, frames, MIX_SAMPLE_RATE);
     const to = from + frames / MIX_SAMPLE_RATE;
-    for (const placement of placementsIn(this.#plan, from, to)) {
-      await this.#place(context, placement, from);
-    }
+    const placements = placementsIn(this.#plan, from, to);
+    // What is over, or not in this piece, is not read any further.
+    const heard = new Set(placements.map(({ sound }) => sound.id));
+    for (const id of this.#streams.keys()) if (!heard.has(id)) this.#end(id);
+    for (const placement of placements) await this.#place(context, placement, from);
     return context.startRendering();
   }
 
-  async #readerOf(sound: SoundLayer) {
+  /** Lets go of every file. */
+  close(): void {
+    for (const id of this.#streams.keys()) this.#end(id);
+  }
+
+  #end(id: string): void {
+    const stream = this.#streams.get(id);
+    this.#streams.delete(id);
+    void stream?.chunks.return?.().catch(() => {});
+  }
+
+  async #open(sound: SoundLayer, from: number): Promise<Stream> {
+    const toFile = (seconds: number) => seconds - sound.start + sound.offset;
+    let read: (from: number, to: number) => ReturnType<SoundReader>;
     const own = await this.#options.source?.(sound);
-    if (own) return own;
-    const file = await this.#options.fileOf(sound.file).catch(() => undefined);
-    if (!file) throw new SoundFailed(sound, "missing-file");
-    const read = this.#options.read ?? readSound;
-    return (from: number, to: number) => read(file, from, to);
+    if (own) read = own;
+    else {
+      const file = await this.#options.fileOf(sound.file).catch(() => undefined);
+      if (!file) throw new SoundFailed(sound, "missing-file");
+      const reader = this.#options.read ?? readSound;
+      read = (start, end) => reader(file, start, end);
+    }
+    const chunks = read(from, toFile(sound.end))[Symbol.asyncIterator]();
+    return { chunks, held: [], mixed: from };
   }
 
   async #place(context: MixContext, { sound, from, to }: Placement, start: number): Promise<void> {
-    const read = await this.#readerOf(sound);
+    const toFile = (seconds: number) => seconds - sound.start + sound.offset;
+    const fileFrom = toFile(from);
+    const fileTo = toFile(to);
+    let stream = this.#streams.get(sound.id);
+    const elsewhere =
+      stream &&
+      (fileFrom + BACK_TOLERANCE < stream.mixed || fileFrom - stream.mixed > SKIP_AHEAD_SECONDS);
+    if (!stream || elsewhere) {
+      if (stream) this.#end(sound.id);
+      stream = await this.#open(sound, fileFrom);
+      this.#streams.set(sound.id, stream);
+    }
     const gain = context.createGain();
     gain.gain.value = sound.gain;
     gain.connect(context.destination);
-    const toFile = (seconds: number) => seconds - sound.start + sound.offset;
     try {
-      for await (const chunk of read(toFile(from), toFile(to))) {
+      for (;;) {
+        const chunk = stream.held.shift() ?? (await this.#pull(stream));
+        if (!chunk) break;
+        const ends = chunk.timestamp + chunk.duration;
+        // What was read past the last piece and is still before this one.
+        if (ends <= fileFrom) continue;
+        if (chunk.timestamp >= fileTo) {
+          stream.held.unshift(chunk);
+          break;
+        }
         // Where the chunk is on the timeline, and the part of it that is heard here.
         const at = sound.start + chunk.timestamp - sound.offset;
         const begin = Math.max(at, from);
         const end = Math.min(at + chunk.duration, to);
-        if (end <= begin) continue;
-        const node = context.createBufferSource();
-        node.buffer = chunk.buffer;
-        node.connect(gain);
-        node.start(begin - start, begin - at, end - begin);
+        if (end > begin) {
+          const node = context.createBufferSource();
+          node.buffer = chunk.buffer;
+          node.connect(gain);
+          node.start(begin - start, begin - at, end - begin);
+        }
+        // It goes on into the next piece.
+        if (ends > fileTo) {
+          stream.held.unshift(chunk);
+          break;
+        }
       }
+      stream.mixed = fileTo;
     } catch (error) {
+      this.#end(sound.id);
       throw new SoundFailed(sound, "cannot-decode", error);
     }
+  }
+
+  async #pull(stream: Stream): Promise<SoundChunk | undefined> {
+    const result = await stream.chunks.next();
+    return result.done ? undefined : result.value;
   }
 }

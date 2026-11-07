@@ -83,6 +83,10 @@ export function createExportStore(
       const index = transaction.objectStore(EXPORTS).index(BY_PROJECT);
       return (await resultOf(index.getAll(project))) as SavedExport[];
     },
+    async all() {
+      const transaction = (await database()).transaction(EXPORTS);
+      return (await resultOf(transaction.objectStore(EXPORTS).getAll())) as SavedExport[];
+    },
     save: (saved) => write([EXPORTS], (transaction) => transaction.objectStore(EXPORTS).put(saved)),
     addPiece: (id, track, piece) =>
       write([PIECES], (transaction) => {

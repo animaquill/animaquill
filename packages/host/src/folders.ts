@@ -1,4 +1,4 @@
-import { growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
+import { cleanUpDownloads, growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
 import type { FolderAccess, SourceFolder, TargetFolder, WriteOptions } from "./index.ts";
 import { FALLBACK_NAME, folderNameFor, partsOf } from "./paths.ts";
 import { zipTarget } from "./zip.ts";
@@ -245,8 +245,17 @@ function saveWithLink(file: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), KEEP_DOWNLOAD_MS);
 }
 
-export const browserFolders = (): FolderAccess =>
-  createFolderAccess({
+/** A page that starts takes away what downloads of exports left, a while before. */
+const CLEAN_UP_AFTER_MS = 10_000;
+
+export function browserFolders(): FolderAccess {
+  const scratch = () => navigator.storage.getDirectory();
+  setTimeout(() => {
+    cleanUpDownloads(scratch).catch((error: unknown) => {
+      console.warn("Downloads of exports stay for now", error);
+    });
+  }, CLEAN_UP_AFTER_MS);
+  return createFolderAccess({
     picker: () =>
       (globalThis as { showDirectoryPicker?: DirectoryPicker }).showDirectoryPicker?.bind(
         globalThis,
@@ -255,5 +264,6 @@ export const browserFolders = (): FolderAccess =>
     saveFile: saveWithLink,
     savePicker: () =>
       (globalThis as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker?.bind(globalThis),
-    scratch: () => navigator.storage.getDirectory(),
+    scratch,
   });
+}

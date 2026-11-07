@@ -73,6 +73,13 @@ export const multiply = (first: Matrix, second: Matrix): Matrix => {
   ];
 };
 
+/**
+ * Moments this close are the same moment. Times are floats, and `1/30 + 5/30` is a little less than
+ * `6/30`: without this a clip that starts on a frame would start one frame late, and a video would
+ * show the frame before the right one.
+ */
+export const TIME_TOLERANCE = 1e-6;
+
 /** What the clock of a clip reads at a moment on the timeline. */
 export const clockOf = (layer: Pick<RenderLayer, "offset" | "start">, time: number): number =>
   layer.offset + time - layer.start;

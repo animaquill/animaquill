@@ -66,7 +66,14 @@ const PAINTED_EVERY_MS = 250;
 
 interface VideoFile {
   readonly sink: VideoSampleSink;
+  readonly input: Input;
 }
+
+/**
+ * Decoded pictures and opened videos that are not needed at the moment stay around for this many
+ * files, for going back and forth: a picture takes its pixels in memory, whatever size the file is.
+ */
+const KEEP_FILES = 6;
 
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d", { alpha: false });
@@ -162,7 +169,8 @@ function imageOf(id: string, file: Blob): Promise<ImageBitmap | undefined> {
 async function openVideo(id: string, file: Blob): Promise<VideoFile | undefined> {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   const track = await input.getPrimaryVideoTrack();
-  if (track && (await track.canDecode())) return { sink: new VideoSampleSink(track) };
+  if (track && (await track.canDecode())) return { sink: new VideoSampleSink(track), input };
+  input.dispose();
   send({ type: "cannot-decode", id });
   return undefined;
 }
@@ -274,6 +282,32 @@ async function getReady(seconds: number): Promise<void> {
   }
 }
 
+/** When each file was last needed, for letting go of the ones that have not been for longest. */
+const lastNeeded = new Map<string, number>();
+let needs = 0;
+
+/** Lets go of pictures and videos no clip around this moment uses, but for the latest few. */
+function releaseFilesExcept(keep: readonly RenderLayer[]): void {
+  needs += 1;
+  for (const { source } of keep) {
+    if (source.kind === "image" || source.kind === "video") lastNeeded.set(source.file, needs);
+  }
+  const stale = [...lastNeeded]
+    .filter(([, at]) => at !== needs)
+    .toSorted(([, a], [, b]) => b - a)
+    .slice(KEEP_FILES);
+  for (const [id] of stale) {
+    lastNeeded.delete(id);
+    void images.get(id)?.then((bitmap) => bitmap?.close());
+    images.delete(id);
+    void videos.get(id)?.then((video) => video?.input.dispose());
+    videos.delete(id);
+  }
+  // For seeing how much is held, also from a test.
+  document.documentElement.dataset["pictures"] = String(images.size);
+  document.documentElement.dataset["videos"] = String(videos.size);
+}
+
 /** A decoder is a scarce thing, so a clip that left the picture gives its own back. */
 async function closeCursorsExcept(keep: readonly RenderLayer[]): Promise<void> {
   const ids = new Set(keep.map(({ id }) => id));
@@ -345,6 +379,7 @@ async function drawFrame(seconds: number): Promise<boolean> {
   if (!shown) return false;
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
+  releaseFilesExcept([...showing, ...upcomingAt(seconds)]);
   const askedAt = performance.now();
   // A picture of a scene is held until it is drawn, so one that fails must not keep the others.
   const results = await Promise.allSettled(showing.map((layer) => pictureOf(layer, seconds)));
@@ -447,6 +482,7 @@ async function paintStill(seconds: number): Promise<void> {
   scenes.follow(settledPlan, seconds);
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept(showing);
+  releaseFilesExcept(showing);
   const pictures = await stillPictures<Picture>(showing, seconds, {
     file(id) {
       const file = fileOf(id);
@@ -531,7 +567,8 @@ function decoderConfigOf(
 }
 
 function startEncoding(config: VideoEncoderConfig): void {
-  encoding?.encoder.close();
+  // One that failed closed itself already.
+  if (encoding?.encoder.state !== "closed") encoding?.encoder.close();
   const current: Encoding = {
     failed: undefined,
     encoder: new VideoEncoder({

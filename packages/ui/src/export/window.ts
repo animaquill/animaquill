@@ -87,6 +87,8 @@ export interface WindowView {
   readonly total: number;
   readonly remainingMs?: number;
   readonly stopping: boolean;
+  readonly catchingUp?: number;
+  readonly writing?: boolean;
 }
 
 /** Minutes and seconds, which is as exact as an estimate gets. */
@@ -159,11 +161,15 @@ export function fillExportWindow(
   const show = () => {
     const job = watch.getSnapshot();
     if (!job) return;
-    const { name, done, total, remainingMs, stopping } = job;
+    const { name, done, total, remainingMs, stopping, catchingUp, writing } = job;
     const percent = total > 0 ? Math.floor((done / total) * 100) : 0;
     heading.textContent = stopping
       ? t("export.video.stopping")
-      : t("export.video.running", { percent });
+      : writing
+        ? t("export.video.writing")
+        : catchingUp !== undefined
+          ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
+          : t("export.video.running", { percent });
     file.textContent = name;
     bar.max = Math.max(total, 1);
     bar.value = done;

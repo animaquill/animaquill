@@ -123,6 +123,56 @@ describe("a mix", () => {
     ]);
   });
 
+  it("reads a sound once over all the pieces it is in, front to back", async () => {
+    const context = fakeContext();
+    const asked: { from: number; to: number }[] = [];
+    const long = sound({ start: 0, end: 30, offset: 0 });
+    const mixer = new SoundMixer(plan(long), {
+      fileOf: file,
+      read: chunked(asked),
+      createContext: context.create,
+    });
+    for (const from of [0, 10, 20]) await mixer.mix(from, 10 * MIX_SAMPLE_RATE);
+    expect(asked).toEqual([{ from: 0, to: 30 }]);
+    expect(context.started.map(({ buffer }) => (buffer as { second: number }).second)).toEqual(
+      Array.from({ length: 30 }, (_, second) => second),
+    );
+  });
+
+  it("puts a chunk that goes over the end of a piece into both", async () => {
+    const context = fakeContext();
+    // Chunks of a second that start half a second into the timeline.
+    const mixer = new SoundMixer(plan(sound({ start: 0.5, end: 20, offset: 0 })), {
+      fileOf: file,
+      read: chunked(),
+      createContext: context.create,
+    });
+    await mixer.mix(0, 10 * MIX_SAMPLE_RATE);
+    await mixer.mix(10, 10 * MIX_SAMPLE_RATE);
+    const across = context.started.filter(
+      ({ buffer }) => (buffer as { second: number }).second === 9,
+    );
+    expect(across).toEqual([
+      expect.objectContaining({ when: 9.5, offset: 0, duration: 0.5 }),
+      expect.objectContaining({ when: 0, offset: 0.5, duration: 0.5 }),
+    ]);
+  });
+
+  it("reads again from where it is asked when that is further back", async () => {
+    const asked: { from: number; to: number }[] = [];
+    const mixer = new SoundMixer(plan(sound({ start: 0, end: 30, offset: 0 })), {
+      fileOf: file,
+      read: chunked(asked),
+      createContext: fakeContext().create,
+    });
+    await mixer.mix(10, 10 * MIX_SAMPLE_RATE);
+    await mixer.mix(0, 10 * MIX_SAMPLE_RATE);
+    expect(asked).toEqual([
+      { from: 10, to: 30 },
+      { from: 0, to: 30 },
+    ]);
+  });
+
   it("stops when the file of a sound is missing, and says which", async () => {
     const mixer = new SoundMixer(plan(sound()), {
       fileOf: async () => undefined,

@@ -19,7 +19,13 @@ import type { ProjectSession } from "../workbench/session.ts";
 import { WindowClosed, type ExportCompositorOptions } from "./compositor.ts";
 import type { ExportWindow, ExportWindows } from "./window.ts";
 import type { MakeAudioEncoder } from "./sound.ts";
-import { framesOf, VideoExport, type VideoExportOptions, type VideoWriter } from "./video.ts";
+import {
+  framesOf,
+  VideoExport,
+  type SavedState,
+  type VideoExportOptions,
+  type VideoWriter,
+} from "./video.ts";
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const { interpolation: _, ...fields } = options ?? {};
@@ -101,7 +107,10 @@ class FakeCompositor {
       timestamp: frame.timestamp,
       duration: frame.duration,
       ...(first && {
-        decoderConfig: { codec: "avc1.64001e", description: new Uint8Array(this.description) },
+        decoderConfig: {
+          codec: this.config?.codec ?? "avc1.64001e",
+          description: new Uint8Array(this.description),
+        },
       }),
     });
     while (this.queued.length > this.lag) this.#emit();
@@ -432,7 +441,7 @@ describe("exporting a video", () => {
     expect(context.compositor.config).toMatchObject({ width: 640, height: 360, framerate: 30 });
     expect(context.writer.frames).toHaveLength(60);
     expect(context.writer.frames[1]?.timestamp).toBeCloseTo(1 / 30, 5);
-    expect(context.writer.configs[0]).toMatchObject({ codec: "avc1.64001e" });
+    expect(context.writer.configs[0]).toMatchObject({ codec: context.compositor.config?.codec });
     expect(context.writer.finished).toBe(true);
     expect(context.file.finished).toBe(true);
     expect(context.file.abandoned).toBe(false);
@@ -683,7 +692,9 @@ describe("the sound of a video", () => {
     expect(shown.message).toContain("export.failure.missingFile");
     expect(shown.message).toContain('"frame":31');
     expect(context.timeline.seek).toHaveBeenCalledWith(30);
-    expect(context.file.abandoned).toBe(true);
+    // What it got to stays, for after what went wrong is put right.
+    expect(context.file.abandoned).toBe(false);
+    expect(context.exports.saved.size).toBe(1);
   });
 });
 
@@ -739,7 +750,9 @@ describe("an export that does not finish", () => {
     expect(context.timeline.seek).toHaveBeenCalledWith(45);
     expect(context.timeline.selectOnly).toHaveBeenCalledWith("c");
     expect(context.compositor.frames).toHaveLength(45);
-    expect(context.file.abandoned).toBe(true);
+    // What it got to stays, for after what went wrong is put right.
+    expect(context.file.abandoned).toBe(false);
+    expect(context.exports.saved.size).toBe(1);
     expect(context.writer.finished).toBe(false);
   });
 
@@ -752,8 +765,9 @@ describe("an export that does not finish", () => {
     await running;
     expect(shown.message).toContain("export.video.writeFailed");
     expect(shown.message).toContain("disk full");
-    expect(context.file.abandoned).toBe(true);
-    expect(context.exports.saved.size).toBe(0);
+    // What it got to stays, for after what went wrong is put right.
+    expect(context.file.abandoned).toBe(false);
+    expect(context.exports.saved.size).toBe(1);
   });
 
   it("stops when this device has no room to keep what it does", async () => {
@@ -766,7 +780,9 @@ describe("an export that does not finish", () => {
     await running;
     expect(shown.message).toContain("export.video.writeFailed");
     expect(context.compositor.frames.length).toBeLessThan(60);
-    expect(context.file.abandoned).toBe(true);
+    // What it got to stays, for after what went wrong is put right.
+    expect(context.file.abandoned).toBe(false);
+    expect(context.exports.saved.size).toBe(1);
   });
 
   it("stops when the compositor goes away", async () => {
@@ -777,7 +793,9 @@ describe("an export that does not finish", () => {
     await answer(context);
     expect((await notice(context)).message).toContain("export.failure.compositor");
     await running;
-    expect(context.file.abandoned).toBe(true);
+    // What it got to stays, for after what went wrong is put right.
+    expect(context.file.abandoned).toBe(false);
+    expect(context.exports.saved.size).toBe(1);
   });
 
   it("does not start without a file", async () => {
@@ -923,18 +941,19 @@ describe("the window of an export", () => {
       expect(context.writer.frames).toHaveLength(60);
     });
 
-    it("stops when the new encoder encodes another way, because the file cannot take that", async () => {
+    it("starts over when the new encoder encodes another way, as after a reload", async () => {
       const context = closing();
       const running = context.videos.start();
       await answer(context);
       await vi.waitFor(() => expect(context.videos.getSnapshot()?.paused).toBe(true));
       context.compositor.description = [9, 9];
       context.videos.resume();
-      const shown = await notice(context);
       await running;
-      expect(shown.message).toContain("export.window.resumeFailed");
-      expect(context.file.abandoned).toBe(true);
-      expect(context.writer.frames).toHaveLength(0);
+      // As after a reload: it starts over, and says so.
+      expect(context.said()).toContain("export.resume.encoderChanged");
+      const times = context.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+      expect(times).toEqual(Array.from({ length: 60 }, (_, index) => index));
+      expect(context.file.finished).toBe(true);
     });
   });
 });
@@ -996,7 +1015,7 @@ describe("an export that stopped halfway", () => {
     expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
     // The bytes of the first part are those of the first page.
     expect(next.writer.frames[299]?.data[0]).toBe(299 % 256);
-    expect(next.writer.configs[0]).toMatchObject({ codec: "avc1.64001e" });
+    expect(next.writer.configs[0]).toMatchObject({ codec: next.compositor.config?.codec });
     expect(next.file.finished).toBe(true);
     expect(next.exports.saved.size).toBe(0);
     expect(next.exports.count([...first.exports.kept.keys()][0] ?? "", "video")).toBe(0);
@@ -1023,6 +1042,26 @@ describe("an export that stopped halfway", () => {
     expect(next.compositor.frames[0]?.index).toBe(0);
     expect(next.compositor.frames).toHaveLength(600);
     expect(next.writer.frames).toHaveLength(600);
+  });
+
+  it("exports the whole timeline as it is now when it starts over with what there is now", async () => {
+    const { next } = await crashed();
+    const main = () => next.store.getState().timelines["main"];
+    const track = orderedTracks(main() as never).find(({ kind }) => kind === "video")?.id;
+    const longer = {
+      id: "d",
+      start: "20",
+      duration: "5",
+      source: { kind: "color", color: "#0000ff" },
+    };
+    next.store.execute({ type: "clip.add", params: { timeline: "main", track, clip: longer } });
+    const { offering } = await offered(next, "continue");
+    await vi.waitFor(() =>
+      expect(next.dialogs.getSnapshot()).toMatchObject({ title: "export.resume.changedTitle" }),
+    );
+    next.dialogs.answer("again");
+    await offering;
+    expect(next.writer.frames).toHaveLength(750);
   });
 
   it("can be given up when the project changed", async () => {
@@ -1088,3 +1127,286 @@ describe("an export that stopped halfway", () => {
     expect(next.dialogs.getSnapshot()).toBeUndefined();
   });
 });
+
+describe("an export and the windows around it", () => {
+  const crashedAt = async (frame: number) => {
+    const first = setup({}, 20);
+    first.compositor.crashAt = frame;
+    first.compositor.lag = 2;
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(frame));
+    first.exports.claimed.clear();
+    return first;
+  };
+
+  const choice = (context: Context) =>
+    vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+
+  it("asks in one window at a time, so that two never do two things with one export", async () => {
+    const first = await crashedAt(360);
+    const one = setup({}, 20, false, first);
+    const other = setup({}, 20, false, first);
+    const asking = one.videos.offerResume();
+    await choice(one);
+    await other.videos.offerResume();
+    expect(other.dialogs.getSnapshot()).toBeUndefined();
+    one.dialogs.answer("continue");
+    await asking;
+    expect(one.writer.frames).toHaveLength(600);
+  });
+
+  it("gives up only what nobody is at", async () => {
+    const first = await crashedAt(360);
+    const one = setup({}, 20, false, first);
+    const other = setup({}, 20, false, first);
+    const hold = Promise.withResolvers<void>();
+    one.compositor.hold = hold.promise;
+    const asking = one.videos.offerResume();
+    await choice(one);
+    one.dialogs.answer("continue");
+    await vi.waitFor(() => expect(one.videos.getSnapshot()).toBeDefined());
+    // The other window does not get to give it up while this one goes on.
+    await other.videos.offerResume();
+    expect(other.dialogs.getSnapshot()).toBeUndefined();
+    expect(other.windows.opened).toHaveLength(0);
+    hold.resolve();
+    await asking;
+    const times = one.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
+  });
+
+  it("comes first when people export again, and no second export starts next to it", async () => {
+    const first = await crashedAt(360);
+    const next = setup({}, 20, false, first);
+    const starting = next.videos.start();
+    await choice(next);
+    // Asking again meanwhile asks nothing more.
+    await next.videos.offerResume();
+    expect(next.dialogs.getSnapshot()?.kind).toBe("choice");
+    next.dialogs.answer("continue");
+    await starting;
+    expect(next.opened).toHaveLength(1);
+    expect(next.compositor.frames[0]?.index).toBe(300);
+  });
+
+  it("does not ask about one that stopped while a new one is being started", async () => {
+    const first = await crashedAt(360);
+    const next = setup({}, 20, false, first);
+    const starting = next.videos.start();
+    await choice(next);
+    // People leave the old one for later, and go on to a new export.
+    next.dialogs.answer(undefined);
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("form"));
+    const asking = next.videos.offerResume();
+    let asked = 0;
+    next.dialogs.subscribe(() => {
+      if (next.dialogs.getSnapshot()?.kind === "choice") asked += 1;
+    });
+    await answer(next);
+    await starting;
+    await asking;
+    expect(asked).toBe(0);
+    expect(next.opened).toHaveLength(1);
+  });
+
+  it("is drawn from the project as it was when its snapshot was taken", async () => {
+    const first = setup({}, 20);
+    first.compositor.crashAt = 360;
+    void first.videos.start();
+    await vi.waitFor(() => expect(first.dialogs.getSnapshot()?.kind).toBe("form"));
+    // Another window renames the project while people choose how to export.
+    first.store.execute({ type: "project.rename", params: { name: "改了" } });
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(360));
+    expect(first.opened[0]?.state.manifest.name).toBe("改了");
+    first.exports.claimed.clear();
+    const next = setup({}, 20, false, first);
+    const { offering } = await offeredNow(next, "continue");
+    await offering;
+    // Nothing changed since the snapshot, so it goes on without asking.
+    expect(next.compositor.frames[0]?.index).toBe(300);
+    expect(next.opened[0]?.state.manifest.name).toBe("改了");
+  });
+
+  it("keeps a place to go on from that fits, right after it started over", async () => {
+    const first = await crashedAt(360);
+    const next = setup({}, 20, false, first);
+    next.compositor.description = [7, 7, 7];
+    next.compositor.chunkBytes = 512 * 1024;
+    next.compositor.crashAt = 100;
+    void offeredNow(next, "continue");
+    await vi.waitFor(() => expect(next.said()).toContain("export.resume.encoderChanged"));
+    await vi.waitFor(() =>
+      expect(next.compositor.frames.filter(({ index }) => index < 100)).toHaveLength(100),
+    );
+    const saved = [...first.exports.saved.values()][0]?.state as SavedState;
+    expect(saved.progress).toMatchObject({ frame: 0, videoPieces: 0 });
+    next.exports.claimed.clear();
+    const third = setup({}, 20, false, first);
+    third.compositor.description = [1, 2, 3];
+    const { offering } = await offeredNow(third, "continue");
+    await offering;
+    const times = third.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
+  });
+
+  it("pauses again when its new window is closed before it got going", async () => {
+    const context = setup();
+    context.windows.supported = true;
+    context.compositor.lag = 2;
+    context.compositor.closeAt = 30;
+    const running = context.videos.start();
+    await answer(context);
+    await vi.waitFor(() => expect(context.videos.getSnapshot()?.paused).toBe(true));
+    const start = context.compositor.startEncoding.bind(context.compositor);
+    let closing = 1;
+    context.compositor.startEncoding = async (config, onChunk) => {
+      if (closing > 0) {
+        closing -= 1;
+        throw new WindowClosed();
+      }
+      return start(config, onChunk);
+    };
+    context.videos.resume();
+    await vi.waitFor(() => expect(closing).toBe(0));
+    await vi.waitFor(() => expect(context.videos.getSnapshot()?.paused).toBe(true));
+    expect(context.dialogs.getSnapshot()).toBeUndefined();
+    expect(context.file.abandoned).toBe(false);
+    context.videos.resume();
+    await running;
+    expect(context.writer.frames).toHaveLength(60);
+  });
+
+  it("keeps what it got to when it fails, and goes on from there once that is put right", async () => {
+    const context = setup({}, 20);
+    context.compositor.lag = 2;
+    context.compositor.failAt = {
+      index: 400,
+      failure: { reason: "missing-file", layer: "c", file: "a" },
+    };
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.video.kept");
+    expect(context.file.abandoned).toBe(false);
+    // The file is back. Exporting again goes on where it stopped.
+    context.compositor.failAt = undefined;
+    const frames = context.compositor.frames.length;
+    const again = context.videos.start();
+    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+    context.dialogs.answer("continue");
+    await again;
+    expect(context.compositor.frames[frames]).toMatchObject({ index: 300, keyFrame: true });
+    const times = context.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
+  });
+
+  it("goes over to the processor when the graphics card fails on the first frame", async () => {
+    const context = setup();
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    context.compositor.encodeFrame = async (frame) => {
+      // As WebCodecs does it: configuring works, and the error comes with encoding.
+      if (context.compositor.config?.hardwareAcceleration === "prefer-hardware") {
+        throw new StillFailed({ reason: "failed", message: "Encoder creation error." });
+      }
+      return encode(frame);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    await running;
+    expect(context.compositor.config?.hardwareAcceleration).toBe("prefer-software");
+    expect(context.writer.frames).toHaveLength(60);
+    expect(context.said()[0]).toContain("export.video.encoded.software");
+  });
+
+  it("does not take what the compositor gives that it did not ask for", async () => {
+    const context = setup();
+    const start = context.compositor.startEncoding.bind(context.compositor);
+    const tenth = framesOf({ from: 0, to: 1 }, { num: 30, den: 1 }).at(10).timestamp;
+    context.compositor.startEncoding = (config, onChunk) =>
+      start(config, (chunk) =>
+        // A time no frame has, in place of the one of its frame.
+        onChunk(chunk.timestamp === tenth ? { ...chunk, timestamp: 123 } : chunk),
+      );
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.video.wrongOutput");
+    expect(context.writer.frames).toHaveLength(0);
+  });
+
+  it("stops at a place to go on from when frames went missing", async () => {
+    const context = setup({}, 20);
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    context.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 200) {
+        // Into the encoder, and never out of it.
+        context.compositor.frames.push(frame);
+        return;
+      }
+      return encode(frame);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.video.wrongOutput");
+    expect(context.compositor.frames.length).toBeLessThanOrEqual(301);
+  });
+
+  it("asks first when the browser has little room for what it keeps", async () => {
+    const context = setup({ storage: async () => ({ quota: 1000, usage: 900 }) }, 20);
+    const running = context.videos.start();
+    await answer(context);
+    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+    const asked = context.dialogs.getSnapshot() as Extract<
+      ReturnType<Dialogs["getSnapshot"]>,
+      { kind: "choice" }
+    >;
+    expect(asked.title).toBe("export.storage.title");
+    expect(asked.message).toContain("needed");
+    context.dialogs.answer(undefined);
+    await running;
+    expect(context.chooseFile).not.toHaveBeenCalled();
+  });
+
+  it("says that the storage of the browser is full, not the file", async () => {
+    const context = setup({}, 20);
+    context.compositor.chunkBytes = 1024 * 1024;
+    context.exports.addPiece = async () => {
+      throw new DOMException("full", "QuotaExceededError");
+    };
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.storage.full");
+  });
+
+  it("says how far the sound got while it catches up after a reload", async () => {
+    const first = setup({}, 120, true);
+    first.compositor.crashAt = 3200;
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(3200));
+    first.exports.claimed.clear();
+    const next = setup({}, 120, false, first);
+    const seen: (number | undefined)[] = [];
+    next.videos.subscribe(() => seen.push(next.videos.getSnapshot()?.catchingUp));
+    const { offering } = await offeredNow(next, "continue");
+    await offering;
+    expect(seen.some((ratio) => ratio !== undefined && ratio > 0 && ratio < 1)).toBe(true);
+    expect(next.writer.sounds.at(-1)?.timestamp).toBe(110);
+  });
+});
+
+/** Asks about an unfinished export now, and answers. */
+async function offeredNow(context: Context, choice: string | undefined) {
+  const offering = context.videos.offerResume();
+  await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+  context.dialogs.answer(choice);
+  return { offering };
+}

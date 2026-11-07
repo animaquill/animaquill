@@ -122,6 +122,19 @@ describe("a file people chose", () => {
     expect(file.removed).toBe(true);
   });
 
+  it("leaves a file alone that has something in it now, which is not this export's", async () => {
+    const { file, picker } = chosen();
+    const target = await growingFile("片子.mp4", KIND, {
+      picker,
+      scratch: undefined,
+      saveFile: vi.fn(),
+    });
+    // Another export to the same place, finished meanwhile.
+    file.content = bytes(1, 2, 3);
+    await target?.abandon();
+    expect(file.removed).toBe(false);
+  });
+
   it("says so when an empty file has to stay", async () => {
     const { file, picker } = chosen();
     delete file.remove;

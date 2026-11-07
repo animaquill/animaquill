@@ -229,6 +229,10 @@ export class MemoryExports implements ExportStore {
       .map((saved) => structuredClone(saved));
   }
 
+  async all(): Promise<readonly SavedExport[]> {
+    return [...this.saved.values()].map((saved) => structuredClone(saved));
+  }
+
   async save(saved: SavedExport): Promise<void> {
     if (this.failing) throw new Error("quota");
     this.saved.set(saved.id, structuredClone(saved));
