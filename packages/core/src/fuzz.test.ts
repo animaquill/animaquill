@@ -570,6 +570,15 @@ describe.each([1, 2, 3, 4])("updates that arrive late and out of order, seed %i"
         expect(store.revision).toBe(before);
       }
       for (let count = random.int(3); count > 0; count--) deliver(random.int(stores.length));
+      for (const each of stores) {
+        // What people see is always whole, also while the document is not.
+        for (const clip of Object.values(each.getState().timelines["main"]?.clips ?? {})) {
+          expect(clip.start).toBeDefined();
+          expect(clip.duration).toBeDefined();
+          expect(clip.source).toBeDefined();
+        }
+        if (round % 20 === 0) expect(each.exportFiles().problems).toEqual([]);
+      }
     }
     expect(refused).toBeGreaterThan(0);
     for (const index of stores.keys()) while (queues[index]?.length) deliver(index);
@@ -583,5 +592,50 @@ describe.each([1, 2, 3, 4])("updates that arrive late and out of order, seed %i"
       expect(clip.source).toBeDefined();
     }
     expect(stores[0]?.exportFiles().problems).toEqual([]);
+  });
+});
+
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back around locked tracks, seed %i", (seed) => {
+  it("leaves what is on them as it is, for everyone", () => {
+    const random = randomFrom(seed);
+    const store = openUnlocked();
+    const lockedIn = (state: ProjectState) =>
+      Object.values(state.timelines["main"]?.tracks ?? {})
+        .filter(({ locked }) => locked)
+        .map(({ id }) => id);
+    const contentOf = (state: ProjectState, tracks: readonly string[]) => {
+      const clips = Object.values(state.timelines["main"]?.clips ?? {});
+      return clips.filter(({ track }) => tracks.includes(track));
+    };
+    let held = 0;
+    for (let round = 0; round < 1000; round++) {
+      const task = `t${random.int(3)}`;
+      const roll = random.int(100);
+      const before = store.getState();
+      if (roll < 25) {
+        const tracks = Object.keys(before.timelines["main"]?.tracks ?? {});
+        const track = random.pick(tracks);
+        const changes = { locked: random.chance(0.5) };
+        store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
+        continue;
+      }
+      if (roll < 70) {
+        const origin = random.chance(0.5) ? aiTask(task) : USER;
+        store.execute(randomCommand(store, random), { origin });
+        continue;
+      }
+      const result =
+        roll < 80
+          ? store.undoTask(task)
+          : roll < 85
+            ? store.redoTask(task)
+            : roll < 95
+              ? store.undo()
+              : store.redo();
+      if (!result.ok && result.error.obstacle === "locked") held += 1;
+      const locked = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
+      expect(contentOf(store.getState(), locked)).toEqual(contentOf(before, locked));
+    }
+    expect(held).toBeGreaterThan(0);
   });
 });

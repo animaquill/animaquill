@@ -101,7 +101,10 @@ export function NumberField(props: NumberFieldProps) {
       }}
       onFocus={() => {
         field.startTyping();
-        requestAnimationFrame(() => input.current?.select());
+        // Selecting takes the focus as well, and people can have left by the next frame.
+        requestAnimationFrame(() => {
+          if (document.activeElement === input.current) input.current?.select();
+        });
       }}
       onBlur={() => field.finishTyping()}
       onKeyDown={onKeyDown}

@@ -3266,6 +3266,30 @@ describe("a step that cannot go back", () => {
     expect(store.redoTask("nobody").ok).toBe(false);
   });
 
+  it("says why: somebody else changed it", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5, { origin: AI });
+    expect(blocked(store.undo()).obstacle).toBe("changed");
+  });
+
+  it("says nothing about why when all of it went back", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    expect(taken(store.undo())).not.toHaveProperty("obstacle");
+  });
+
+  it("says why for the part that stayed", () => {
+    const store = freshProject();
+    const both = [
+      { owner: { clip: "c" }, path: "opacity", op: "set", value: 0.5 },
+      { owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 },
+    ];
+    success(store.execute({ type: "property.edit", params: { timeline: "main", edits: both } }));
+    setOpacity(store, 0.7, { origin: AI }, "d");
+    expect(taken(store.undo()).obstacle).toBe("changed");
+  });
+
   it("is told apart from a locked project, which keeps its history", () => {
     const store = freshProject();
     setOpacity(store, 0.5, { origin: AI });
@@ -3281,6 +3305,267 @@ describe("a step that cannot go back", () => {
     expect(opacity(store)).toBeUndefined();
     taken(store.undo());
     expect(store.getState().manifest.tags).toEqual(lock.tags);
+  });
+});
+
+describe("taking back what is on a locked track", () => {
+  const trackOf = (store: ProjectStore, id = "c") => clip(store, id)?.track as string;
+  const lockTrack = (
+    store: ProjectStore,
+    track: string | undefined,
+    locked = true,
+    options: ExecuteOptions = {},
+  ) =>
+    success(
+      store.execute(
+        { type: "track.update", params: { timeline: "main", track, changes: { locked } } },
+        options,
+      ),
+    );
+  const addTrack = (store: ProjectStore, id = "k") =>
+    success(store.execute({ type: "track.add", params: { timeline: "main", kind: "video", id } }));
+  const moveToTrack = (store: ProjectStore, track: string, options: ExecuteOptions = {}) =>
+    success(
+      store.execute(
+        { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", track }] } },
+        options,
+      ),
+    );
+
+  it("does not change it for an AI task", () => {
+    const store = freshProject();
+    moveTo(store, "c", "1", { origin: AI });
+    lockTrack(store, trackOf(store));
+    expect(blocked(store.undoTask("task-1")).obstacle).toBe("locked");
+    expect(clip(store, "c")?.start).toBe("1");
+  });
+
+  it("does not change it for the person either, when the lock came from elsewhere", () => {
+    const store = freshProject();
+    setOpacity(store, 0.5);
+    lockTrack(store, trackOf(store), true, { origin: AI });
+    expect(blocked(store.undo()).obstacle).toBe("locked");
+    expect(opacity(store)).toBe(0.5);
+  });
+
+  it("does not change it on the way forward", () => {
+    const store = freshProject();
+    moveTo(store, "c", "1");
+    store.undo();
+    lockTrack(store, trackOf(store), true, { origin: AI });
+    expect(blocked(store.redo()).obstacle).toBe("locked");
+    expect(clip(store, "c")?.start).toBe("0");
+  });
+
+  it("does not take a clip away from it", () => {
+    const store = freshProject();
+    const added = {
+      id: "e",
+      start: "8",
+      duration: "1",
+      source: { kind: "color", color: "#000000" },
+    };
+    const params = { timeline: "main", track: trackOf(store), clip: added };
+    success(store.execute({ type: "clip.add", params }));
+    lockTrack(store, trackOf(store), true, { origin: AI });
+    blocked(store.undo());
+    expect(clip(store, "e")).toBeDefined();
+  });
+
+  it("does not bring back a clip on it", () => {
+    const store = freshProject();
+    success(store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["d"] } }));
+    lockTrack(store, trackOf(store), true, { origin: AI });
+    expect(blocked(store.undo()).obstacle).toBe("locked");
+    expect(clip(store, "d")).toBeUndefined();
+  });
+
+  it("does not move a clip back onto it", () => {
+    const store = freshProject();
+    const home = trackOf(store);
+    addTrack(store);
+    moveToTrack(store, "k");
+    lockTrack(store, home, true, { origin: AI });
+    expect(blocked(store.undo()).obstacle).toBe("locked");
+    expect(trackOf(store)).toBe("k");
+  });
+
+  it("does not take a clip off it", () => {
+    const store = freshProject();
+    addTrack(store);
+    moveToTrack(store, "k");
+    lockTrack(store, "k", true, { origin: AI });
+    blocked(store.undo());
+    expect(trackOf(store)).toBe("k");
+  });
+
+  it("does not take the track itself away", () => {
+    const store = freshProject();
+    addTrack(store);
+    lockTrack(store, "k", true, { origin: AI });
+    expect(blocked(store.undo()).obstacle).toBe("locked");
+    expect(timeline(store).tracks["k"]).toBeDefined();
+  });
+
+  it("does not change a transition on it", () => {
+    const store = open();
+    const track = clip(store)?.track;
+    success(
+      store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["clip_title"] } }),
+    );
+    lockTrack(store, track, true, { origin: AI });
+    blocked(store.undo());
+    expect(clip(store)).toBeUndefined();
+    expect(timeline(store).transitions["tr_1"]?.from).toBeUndefined();
+  });
+
+  it("does not change what a version changes about a clip on it", () => {
+    const store = open();
+    const file = "timelines/main/overrides/language.en.json";
+    const document = JSON.parse(store.exportFiles().files.get(file) as string);
+    document.clips["clip_title"] = { hidden: { value: true } };
+    success(store.importFile(file, JSON.stringify(document)));
+    lockTrack(store, clip(store)?.track, true, { origin: AI });
+    blocked(store.undo());
+    expect(timeline(store).overrides["language.en"]?.clips?.["clip_title"]).toBeDefined();
+  });
+
+  it("takes back the rest of the change", () => {
+    const store = freshProject();
+    const other = (addTrack(store), "k");
+    const added = {
+      id: "e",
+      start: "0",
+      duration: "1",
+      source: { kind: "color", color: "#000000" },
+    };
+    success(
+      store.execute({ type: "clip.add", params: { timeline: "main", track: other, clip: added } }),
+    );
+    const both = [
+      { owner: { clip: "c" }, path: "opacity", op: "set", value: 0.5 },
+      { owner: { clip: "e" }, path: "opacity", op: "set", value: 0.5 },
+    ];
+    success(store.execute({ type: "property.edit", params: { timeline: "main", edits: both } }));
+    lockTrack(store, trackOf(store), true, { origin: AI });
+    const result = taken(store.undo());
+    expect(result.obstacle).toBe("locked");
+    expect(opacity(store)).toBe(0.5);
+    expect(opacity(store, "e")).toBeUndefined();
+  });
+
+  it("takes back what a file wrote there, which goes back to what the lock is for", () => {
+    const store = freshProject();
+    const track = trackOf(store);
+    lockTrack(store, track);
+    const before = store.getState();
+    const document = JSON.parse(store.exportFiles().files.get(MAIN) as string);
+    for (const each of document.tracks) {
+      for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
+    }
+    success(store.importFile(MAIN, JSON.stringify(document)));
+    expect(opacity(store)).toBe(0.5);
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+    expect(taken(store.redo()).kept).toEqual([]);
+    expect(opacity(store)).toBe(0.5);
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(opacity(store)).toBeUndefined();
+  });
+
+  it("does not take a file for permission once the lock came after it", () => {
+    const store = freshProject();
+    const document = JSON.parse(store.exportFiles().files.get(MAIN) as string);
+    for (const each of document.tracks) {
+      for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
+    }
+    success(store.importFile(MAIN, JSON.stringify(document)));
+    lockTrack(store, trackOf(store), true, { origin: AI });
+    blocked(store.undo());
+    expect(opacity(store)).toBe(0.5);
+  });
+
+  it("leaves the track itself open: a lock can always be taken back", () => {
+    const store = freshProject();
+    moveTo(store, "c", "1");
+    lockTrack(store, trackOf(store));
+    taken(store.undo());
+    expect(timeline(store).tracks[trackOf(store)]?.locked).toBeUndefined();
+    taken(store.undo());
+    expect(clip(store, "c")?.start).toBe("0");
+  });
+
+  it("can go on after the lock is gone", () => {
+    const store = freshProject();
+    moveTo(store, "c", "1", { origin: AI });
+    lockTrack(store, trackOf(store));
+    lockTrack(store, trackOf(store), false);
+    taken(store.undoTask("task-1"));
+    expect(clip(store, "c")?.start).toBe("0");
+  });
+
+  it("does not mind other tracks", () => {
+    const store = freshProject();
+    addTrack(store);
+    moveTo(store, "c", "1");
+    lockTrack(store, "k", true, { origin: AI });
+    taken(store.undo());
+    expect(clip(store, "c")?.start).toBe("0");
+  });
+
+  it("goes by the moment of each step: a change that locks after moving goes back whole", () => {
+    const store = freshProject();
+    const track = trackOf(store);
+    success(
+      store.executeBatch([
+        { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", start: "1" }] } },
+        { type: "track.update", params: { timeline: "main", track, changes: { locked: true } } },
+      ]),
+    );
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(clip(store, "c")?.start).toBe("0");
+    expect(timeline(store).tracks[track]?.locked).toBeUndefined();
+  });
+
+  it("goes by the moment of each step: a change that unlocks first goes back whole", () => {
+    const store = freshProject();
+    const track = trackOf(store);
+    lockTrack(store, track);
+    success(
+      store.executeBatch([
+        { type: "track.update", params: { timeline: "main", track, changes: { locked: false } } },
+        { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", start: "1" }] } },
+      ]),
+    );
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(clip(store, "c")?.start).toBe("0");
+    expect(timeline(store).tracks[track]?.locked).toBe(true);
+  });
+});
+
+describe("an asset that only a version uses", () => {
+  const file = "timelines/main/overrides/language.en.json";
+
+  it("cannot be removed, like one a clip uses", () => {
+    const store = open();
+    const error = failure(
+      store.execute({ type: "asset.remove", params: { asset: "narration-en" } }),
+    );
+    expect(error.code).toBe("asset-in-use");
+    expect(error.message).toContain("版本");
+    expect(store.getState().assets?.["narration-en"]).toBeDefined();
+    expect(
+      Object.values(timeline(store).clips).map(({ source }) => JSON.stringify(source)),
+    ).not.toContainEqual(expect.stringContaining("narration-en"));
+  });
+
+  it("can go once the version does not use it", () => {
+    const store = open();
+    const document = JSON.parse(store.exportFiles().files.get(file) as string);
+    for (const changes of Object.values<{ source?: object }>(document.clips)) delete changes.source;
+    success(store.importFile(file, JSON.stringify(document)));
+    success(store.execute({ type: "asset.remove", params: { asset: "narration-en" } }));
+    expect(store.getState().assets?.["narration-en"]).toBeUndefined();
   });
 });
 
@@ -3406,7 +3691,7 @@ describe("taking back what something else came to depend on", () => {
     const store = freshProject();
     addAsset(store, { origin: AI });
     addClip(store, "e", picture);
-    blocked(store.undoTask("task-1"));
+    expect(blocked(store.undoTask("task-1")).obstacle).toBe("inUse");
     expect(store.getState().assets?.["pic"]).toBeDefined();
     expect(store.exportFiles().problems).toEqual([]);
   });
@@ -3778,10 +4063,92 @@ describe("while an update is missing", () => {
 
   const code = (result: CommandResult | UndoResult) => (result.ok ? undefined : result.error.code);
 
-  it("has a window with a hole in it, which is why this matters", () => {
+  it("has a document with a hole in it, which is why this matters", () => {
     const { b } = torn();
     expect(b.isMissingUpdates).toBe(true);
+    const reading = new ProjectStore(b.doc);
+    expect(clip(reading, "c")?.start).toBeUndefined();
+    reading.destroy();
+  });
+
+  it("shows the last whole project, which can still be drawn and saved", () => {
+    const { b } = torn();
+    expect(clip(b, "c")?.start).toBe("0");
+    expect(buildRenderPlan(b.getState(), "main")).toBeDefined();
+    expect(b.exportFiles().problems).toEqual([]);
+  });
+
+  it("holds back everything that arrives in the meantime", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const c = twin(a);
+    const fromA: Uint8Array[] = [];
+    a.onLocalUpdate((update) => fromA.push(update));
+    moveTo(a, "c", "1");
+    moveTo(a, "c", "2");
+    const fromC: Uint8Array[] = [];
+    c.onLocalUpdate((update) => fromC.push(update));
+    success(c.execute({ type: "project.rename", params: { name: "第三个窗口" } }));
+    const seen = vi.fn<() => void>();
+    b.subscribe(seen);
+    const before = b.getState();
+    b.applyUpdates([fromA[1] as Uint8Array]);
+    b.applyUpdates(fromC);
+    expect(b.getState()).toBe(before);
+    expect(seen).not.toHaveBeenCalled();
+    b.applyUpdates([fromA[0] as Uint8Array]);
+    expect(seen).toHaveBeenCalledOnce();
+    expect(clip(b, "c")?.start).toBe("2");
+    expect(b.getState().manifest.name).toBe("第三个窗口");
+  });
+
+  it("shows what it held back also when the last piece changes nothing", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const updates: Uint8Array[] = [];
+    a.onLocalUpdate((update) => updates.push(update));
+    moveTo(a, "c", "1");
+    success(a.execute({ type: "clip.remove", params: { timeline: "main", clips: ["c"] } }));
+    b.applyUpdates([updates.at(-1) as Uint8Array]);
+    expect(b.isMissingUpdates).toBe(true);
+    expect(clip(b, "c")).toBeDefined();
+    const seen = vi.fn<() => void>();
+    b.subscribe(seen);
+    b.applyUpdates([Y.encodeStateAsUpdate(a.doc, Y.encodeStateVector(b.doc))]);
+    expect(b.isMissingUpdates).toBe(false);
+    expect(clip(b, "c")).toBeUndefined();
+    expect(seen).toHaveBeenCalledOnce();
+  });
+
+  it("does not hold back what needs nothing", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const updates: Uint8Array[] = [];
+    a.onLocalUpdate((update) => updates.push(update));
+    moveTo(a, "c", "1");
+    const seen = vi.fn<() => void>();
+    b.subscribe(seen);
+    b.applyUpdates(updates);
+    expect(seen).toHaveBeenCalledOnce();
+    expect(clip(b, "c")?.start).toBe("1");
+  });
+
+  it("shows what there is once nothing more is coming, holes and all", () => {
+    const { b } = torn();
+    const seen = vi.fn<() => void>();
+    b.subscribe(seen);
+    b.catchUp([]);
+    expect(seen).toHaveBeenCalledOnce();
     expect(clip(b, "c")?.start).toBeUndefined();
+  });
+
+  it("goes on from what it held back, keeping what did not change", () => {
+    const { b, updates } = torn();
+    const before = b.getState();
+    b.applyUpdates(updates);
+    expect(clip(b, "c")?.start).toBe("2");
+    expect(b.getState().timelines["main"]?.tracks).toBe(before.timelines["main"]?.tracks);
+    expect(new ProjectStore(b.doc).getState()).toEqual(b.getState());
   });
 
   it("takes no commands, and says why", () => {

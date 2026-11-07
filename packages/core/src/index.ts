@@ -74,6 +74,7 @@ export {
   type CommandResult,
   type ExecuteOptions,
   type HistoryEntry,
+  type UndoObstacle,
   type UndoResult,
   type Origin,
 } from "./store.ts";

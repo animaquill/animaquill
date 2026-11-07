@@ -1,7 +1,8 @@
 import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import type { ProjectState, TimelineState } from "./model.ts";
-import { danglingAt } from "./references.ts";
+import type { Patch } from "./patch.ts";
+import { danglingAt, isInUse, touchesLockedTrack } from "./references.ts";
 import { ProjectStore } from "./store.ts";
 
 const ASSET = { kind: "image", path: "assets/a.png", storage: "local", hash: "sha256-a" };
@@ -228,5 +229,132 @@ describe("what points at nothing", () => {
     const { state } = project((timeline) => withSource(timeline, undefined));
     expect(danglingAt(state, CLIP)).toEqual([]);
     expect(danglingAt(state, ["assets", "a"])).toEqual([]);
+  });
+});
+
+describe("what counts as in use", () => {
+  const changed = {
+    overrides: {
+      v: {
+        scope: { language: "en" },
+        clips: { c: { source: { value: { kind: "image", media: { asset: "b" } } } } },
+      },
+    },
+  } as unknown as Partial<TimelineState>;
+
+  it("is what clips use", () => {
+    const { state } = project();
+    expect(isInUse(state, ["assets", "a"])).toBe(true);
+    expect(isInUse(state, ["assets", "b"])).toBe(false);
+  });
+
+  it("is also what a version uses", () => {
+    const { state } = project(() => changed);
+    expect(isInUse(state, ["assets", "b"])).toBe(true);
+  });
+});
+
+describe("what reaches a locked track", () => {
+  const LOCKED = "k";
+  const OPEN = "m";
+  const transition = { id: "t", type: "dissolve", duration: "1", track: LOCKED };
+  const setUp = () => {
+    const { state, timeline, track } = project(({ tracks }) => {
+      const [first] = Object.values(tracks);
+      return {
+        tracks: {
+          [LOCKED]: { ...first, id: LOCKED, locked: true },
+          [OPEN]: { ...first, id: OPEN },
+        },
+        transitions: { t: transition, u: { ...transition, id: "u", track: OPEN } },
+      } as unknown as Partial<TimelineState>;
+    });
+    void timeline;
+    void track;
+    const main = state.timelines["main"] as TimelineState;
+    const on = (track2: string) => ({ ...main.clips["c"], track: track2 });
+    const timelines = {
+      main: {
+        ...main,
+        clips: { c: on(LOCKED), d: { ...on(OPEN), id: "d" } },
+        overrides: {
+          v: { clips: { c: { hidden: { value: true } }, d: { hidden: { value: true } } } },
+        },
+      },
+    };
+    return { ...state, timelines } as unknown as ProjectState;
+  };
+  const path = (...rest: readonly string[]) => ["timelines", "main", ...rest];
+  const deleting = (...rest: readonly string[]): Patch => ({ op: "delete", path: path(...rest) });
+  const setting = (value: unknown, ...rest: readonly string[]): Patch => ({
+    op: "set",
+    path: path(...rest),
+    value,
+  });
+
+  it("is a clip on it, and whatever is in that clip", () => {
+    const state = setUp();
+    expect(touchesLockedTrack(state, deleting("clips", "c"))).toBe(true);
+    expect(touchesLockedTrack(state, setting("1", "clips", "c", "start"))).toBe(true);
+    expect(touchesLockedTrack(state, setting(1, "clips", "c", "properties", "opacity"))).toBe(true);
+    expect(touchesLockedTrack(state, deleting("clips", "d"))).toBe(false);
+    expect(touchesLockedTrack(state, setting("1", "clips", "d", "start"))).toBe(false);
+  });
+
+  it("is a clip that would end up on it", () => {
+    const state = setUp();
+    expect(touchesLockedTrack(state, setting({ track: LOCKED }, "clips", "e"))).toBe(true);
+    expect(touchesLockedTrack(state, setting({ track: OPEN }, "clips", "e"))).toBe(false);
+    expect(touchesLockedTrack(state, setting(LOCKED, "clips", "d", "track"))).toBe(true);
+    expect(touchesLockedTrack(state, setting(OPEN, "clips", "d", "track"))).toBe(false);
+    expect(touchesLockedTrack(state, setting(LOCKED, "clips", "d", "name"))).toBe(false);
+  });
+
+  it("is a transition on it, or one that would end up on it", () => {
+    const state = setUp();
+    expect(touchesLockedTrack(state, deleting("transitions", "t"))).toBe(true);
+    expect(touchesLockedTrack(state, deleting("transitions", "t", "from"))).toBe(true);
+    expect(touchesLockedTrack(state, deleting("transitions", "u"))).toBe(false);
+    expect(touchesLockedTrack(state, setting({ track: LOCKED }, "transitions", "w"))).toBe(true);
+    expect(touchesLockedTrack(state, setting({ track: OPEN }, "transitions", "w"))).toBe(false);
+  });
+
+  it("is the track going away, not what is written on it", () => {
+    const state = setUp();
+    expect(touchesLockedTrack(state, deleting("tracks", LOCKED))).toBe(true);
+    expect(touchesLockedTrack(state, deleting("tracks", OPEN))).toBe(false);
+    expect(touchesLockedTrack(state, setting(false, "tracks", LOCKED, "locked"))).toBe(false);
+    expect(touchesLockedTrack(state, setting("名字", "tracks", LOCKED, "name"))).toBe(false);
+    expect(touchesLockedTrack(state, setting({ locked: true }, "tracks", "new"))).toBe(false);
+  });
+
+  it("is what a version changes about a clip on it", () => {
+    const state = setUp();
+    const hidden = ["overrides", "v", "clips"];
+    expect(touchesLockedTrack(state, deleting(...hidden, "c"))).toBe(true);
+    expect(touchesLockedTrack(state, deleting(...hidden, "c", "hidden"))).toBe(true);
+    expect(touchesLockedTrack(state, deleting(...hidden, "d"))).toBe(false);
+    expect(touchesLockedTrack(state, deleting("overrides", "v", "scope"))).toBe(false);
+    expect(touchesLockedTrack(state, deleting("overrides", "v", "sections", "c"))).toBe(false);
+  });
+
+  it("is a whole timeline with such a track", () => {
+    const state = setUp();
+    expect(touchesLockedTrack(state, { op: "delete", path: path() })).toBe(true);
+    const { state: open } = project();
+    expect(touchesLockedTrack(open, { op: "delete", path: path() })).toBe(false);
+  });
+
+  it("is nothing elsewhere", () => {
+    const state = setUp();
+    expect(touchesLockedTrack(state, { op: "set", path: ["manifest", "name"], value: "x" })).toBe(
+      false,
+    );
+    expect(touchesLockedTrack(state, { op: "delete", path: ["assets", "a"] })).toBe(false);
+    expect(
+      touchesLockedTrack(state, { op: "delete", path: ["timelines", "none", "clips", "c"] }),
+    ).toBe(false);
+    expect(touchesLockedTrack(state, deleting("markers", "m"))).toBe(false);
+    expect(touchesLockedTrack(state, deleting("sections", "s"))).toBe(false);
   });
 });

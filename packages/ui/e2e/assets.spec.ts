@@ -132,7 +132,7 @@ test("a file in use cannot be removed", async ({ page }) => {
   await expect(clips(page)).toHaveCount(1);
   await items(page).first().click({ button: "right" });
   await page.getByRole("menuitem", { name: "删除素材" }).click();
-  await expect(page.getByText("还有片段在用这个素材")).toBeVisible();
+  await expect(page.getByText("还有片段或版本在用这个素材")).toBeVisible();
   await expect(items(page)).toHaveCount(1);
 });
 

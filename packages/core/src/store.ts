@@ -11,7 +11,7 @@ import { CommandError, Draft, type Step } from "./draft.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
 import { Mutator, type Patch } from "./patch.ts";
-import { danglingAt } from "./references.ts";
+import { danglingAt, touchesLockedTrack } from "./references.ts";
 import { flatEntry, flatKey, isContainer, isFlat, type Path } from "./structure.ts";
 import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
 
@@ -52,11 +52,19 @@ interface CommitOptions extends ExecuteOptions {
   };
 }
 
+/**
+ * Why something stays when a change is taken back: somebody else changed it, it would leave
+ * something pointing at nothing, or it is on a locked track.
+ */
+export type UndoObstacle = "changed" | "inUse" | "locked";
+
 export interface CommandFailure {
   readonly code: string;
   readonly message: string;
   /** What changed in the meantime, for a conflict. */
   readonly conflicts?: readonly Path[];
+  /** Why a change cannot be taken back. */
+  readonly obstacle?: UndoObstacle;
   /** What is wrong with a file, for an import. */
   readonly problems?: readonly Problem[];
 }
@@ -78,6 +86,8 @@ export type UndoResult =
       readonly patches: readonly Patch[];
       /** What stayed as it is, because it can no longer go back. */
       readonly kept: readonly Path[];
+      /** Why, when something did. */
+      readonly obstacle?: UndoObstacle;
     }
   | { readonly ok: false; readonly error: CommandFailure };
 
@@ -261,6 +271,11 @@ const PROJECT_LOCKED: CommandFailure = {
   message: "项目有不可编辑的标签，要先移除标签",
 };
 const NOTHING_TO_UNDO: CommandFailure = { code: "nothing-to-undo", message: "没有可以撤销的步骤" };
+const OBSTACLES: Readonly<Record<UndoObstacle, string>> = {
+  changed: "这一步之后别人改过，已跳过",
+  inUse: "这一步还被别的内容用着，或者用到的东西已经没了，已跳过",
+  locked: "这一步在锁定的轨道上，已跳过",
+};
 
 /**
  * A project while it is open. Yjs holds the truth, so that changes from other people and devices
@@ -273,21 +288,25 @@ export class ProjectStore {
   readonly #undo = new Map<Origin, UndoLog>();
   readonly #writes = new Map<string, Write>();
   readonly #removals = new Map<string, Write>();
+  /** What everyone sees. */
   #state: ProjectState;
+  /** What the document holds, which can have holes while an update is missing. */
+  #latest: ProjectState;
   #revision = 0;
   #history: HistoryEntry[] = [];
   /** Which write the document holds where. Only taking changes back needs this: see `Written`. */
   #written: Written = UNWRITTEN;
   /** The change being written here, which already knows what it wrote. */
   #writing: Y.Transaction | undefined;
-  /** Something arrived that needs an earlier change, which should be on its way. */
-  #isBehind = false;
+  /** Whoever brings updates has said that what is missing is not coming. See catchUp(). */
+  #isSettled = true;
 
   /** Opens a document that already has content, such as one that came from the platform. */
   constructor(doc: Y.Doc) {
     this.doc = doc;
     this.#root = doc.getMap<unknown>(ROOT);
     this.#state = toState([], this.#root) as ProjectState;
+    this.#latest = this.#state;
     this.#root.observeDeep(this.#onChange);
   }
 
@@ -323,15 +342,17 @@ export class ProjectStore {
   }
 
   /**
-   * Takes in changes that were made somewhere else. When one of them needs an earlier one, what the
-   * project shows can have holes: a field that was overwritten is gone, but the new value is still
-   * waiting. Nothing can be planned on top of that until catchUp() says so, or the holes would end
-   * up in the undo history and from there in the document, for good.
+   * Takes in changes that were made somewhere else. When one of them needs an earlier one, the
+   * document can have holes: a field that was overwritten is gone, but the new value is still
+   * waiting. Until that is over or catchUp() says it never will be, the project shows the last
+   * whole state and takes no changes. A hole would stop whatever draws the project, and from the
+   * undo history it would end up in the document, for good.
    */
   applyUpdates(updates: readonly Uint8Array[]): void {
     if (updates.length === 0) return;
+    this.#isSettled = false;
     applyAll(this.doc, updates, REMOTE);
-    this.#isBehind = this.isMissingUpdates;
+    this.#show();
   }
 
   /**
@@ -340,7 +361,8 @@ export class ProjectStore {
    */
   catchUp(updates: readonly Uint8Array[]): void {
     applyAll(this.doc, updates, REMOTE);
-    this.#isBehind = false;
+    this.#isSettled = true;
+    this.#show();
   }
 
   /** Whether a change is waiting for an earlier one that has not arrived. */
@@ -373,7 +395,10 @@ export class ProjectStore {
     return () => this.#listeners.delete(listener);
   };
 
-  /** The project now. It never changes in place, and what did not change keeps its identity. */
+  /**
+   * The project now, or the last time it was whole. It never changes in place, and what did not
+   * change keeps its identity.
+   */
   getState = (): ProjectState => this.#state;
 
   get revision(): number {
@@ -467,6 +492,18 @@ export class ProjectStore {
 
   get #isLocked(): boolean {
     return this.#state.manifest.tags?.some((tag) => tag.locked) === true;
+  }
+
+  /** Waiting for an update that should be on its way. */
+  get #isBehind(): boolean {
+    return !this.#isSettled && this.isMissingUpdates;
+  }
+
+  /** Shows what the document holds, unless the holes in it are about to be filled. */
+  #show(): void {
+    if (this.#isBehind || this.#state === this.#latest) return;
+    this.#state = this.#latest;
+    for (const listener of this.#listeners) listener();
   }
 
   #assertUnlocked(draft: Draft): void {
@@ -590,27 +627,36 @@ export class ProjectStore {
   }
 
   /**
-   * Which steps of these changes can go back, last one first. The document holds their write, and
-   * nothing new ends up pointing at nothing: an AI task cannot take back the asset a person started
-   * to use. What was like that before this, or when the change was made, is not this step's doing.
-   * That can only be told from where all of them end up, because what points at something can come
-   * back before the thing it points at. When that keeps a step here, others can depend on it, so it
-   * takes another look.
+   * Which steps of these changes can go back, last one first. The document holds their write, they
+   * stay out of locked tracks, which protect their content from everyone, and nothing new ends up
+   * pointing at nothing: an AI task cannot take back the asset a person started to use. What was
+   * like that before this, or when the change was made, is not this step's doing. That can only be
+   * told from where all of them end up, because what points at something can come back before the
+   * thing it points at. When that keeps a step here, others can depend on it, so it takes another
+   * look. Locks go step by step, because going back can also be what opens or closes one.
    */
-  #stepsThatGoBack(entries: readonly UndoEntry[], origin: Origin): readonly Step[] {
+  #planBack(entries: readonly UndoEntry[], origin: Origin) {
     const steps = entries.toReversed().flatMap((entry) => entry.steps.toReversed());
     const known = new Set(entries.flatMap((entry) => entry.danglingBefore));
     const stuck = new Set<Step>();
     for (;;) {
       const draft = new Draft(this.#state, origin, this.#written);
-      const back = steps.filter((step) => !stuck.has(step) && draft.takeBack(step));
+      let obstacle: UndoObstacle = stuck.size > 0 ? "inUse" : "changed";
+      const back = steps.filter((step) => {
+        if (stuck.has(step)) return false;
+        if (step.pastLock || !touchesLockedTrack(draft.state, step.inverse)) {
+          return draft.takeBack(step);
+        }
+        obstacle = "locked";
+        return false;
+      });
       const dangling = back.filter(({ patch }) => {
         const already = danglingAt(this.#state, patch.path);
         return danglingAt(draft.state, patch.path).some(
           (link) => !known.has(link) && !already.includes(link),
         );
       });
-      if (dangling.length === 0) return back;
+      if (dangling.length === 0) return { back: new Set(back), obstacle };
       for (const step of dangling) stuck.add(step);
     }
   }
@@ -621,7 +667,7 @@ export class ProjectStore {
    * changed it at once. Here a field always gets a value back, or stays as it is.
    */
   #takeBack(entries: readonly UndoEntry[], to: UndoEntry[], origin: Origin): UndoResult {
-    const back = new Set(this.#stepsThatGoBack(entries, origin));
+    const { back, obstacle } = this.#planBack(entries, origin);
     const kept = new Map<string, Path>();
     for (const { steps } of entries) {
       for (const step of steps) {
@@ -630,15 +676,16 @@ export class ProjectStore {
     }
     const paths = [...kept.values()];
     if (back.size === 0) {
-      const message = "这一步之后别人改过，已跳过";
-      return { ok: false, error: { code: "undo-blocked", message, conflicts: paths } };
+      const message = OBSTACLES[obstacle];
+      return { ok: false, error: { code: "undo-blocked", message, conflicts: paths, obstacle } };
     }
     const result = this.#commit(["undo"], origin, { takesBack: { entries, to } }, (draft) => {
       for (const step of back) draft.takeBack(step);
       return [];
     });
     if (!result.ok) return result;
-    return { ok: true, revision: result.revision, patches: result.patches, kept: paths };
+    const { revision, patches } = result;
+    return { ok: true, revision, patches, kept: paths, ...(paths.length ? { obstacle } : {}) };
   }
 
   /** Conflicts are about what a command touches: changes elsewhere do not get in its way. */
@@ -717,7 +764,7 @@ export class ProjectStore {
     if (!isLoad) this.#revision += 1;
     const origin = typeof transaction.origin === "string" ? transaction.origin : "other";
     const write = { revision: this.#revision, origin };
-    const mutator = new Mutator(this.#state);
+    const mutator = new Mutator(this.#latest);
     // What is written here comes with its steps, which know more: see #commit.
     const writes = new WriteTree(this.#written);
     const written = { by: Symbol("write") };
@@ -746,8 +793,8 @@ export class ProjectStore {
     }
 
     this.#written = writes.root;
-    this.#state = mutator.root;
-    for (const listener of this.#listeners) listener();
+    this.#latest = mutator.root;
+    this.#show();
   };
 }
 

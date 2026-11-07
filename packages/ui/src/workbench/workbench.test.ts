@@ -181,6 +181,15 @@ describe("changes that do not go through", () => {
       store?.execute({ type: "project.rename", params: { name } }, options);
     const firstTrack = (store: ProjectStore | undefined) =>
       Object.values(store?.getState().timelines["main"]?.tracks ?? {})[0];
+    const addColorCall = (store: ProjectStore | undefined) => ({
+      type: "clip.add",
+      params: {
+        timeline: "main",
+        track: firstTrack(store)?.id,
+        clip: { start: "0", duration: "1", source: { kind: "color", color: "#000000" } },
+      },
+    });
+    const setTrackClip = (store: ProjectStore | undefined) => store?.execute(addColorCall(store));
     const setTrack = (store: ProjectStore | undefined, name: string, options = {}) => {
       const params = { timeline: "main", track: firstTrack(store)?.id, changes: { name } };
       return store?.execute({ type: "track.update", params }, options);
@@ -195,11 +204,11 @@ describe("changes that do not go through", () => {
       rename(store, "三", AI);
       const undo = workbench.actions.get("edit.undo");
       undo?.run();
-      expect(notices(workbench)).toEqual(["notice.undoBlocked"]);
+      expect(notices(workbench)).toEqual(["notice.undoBlocked.changed"]);
       expect(nameOf(workbench)).toBe("三");
       expect(firstTrack(store)?.name).toBe("我的轨道");
       undo?.run();
-      expect(notices(workbench)).toEqual(["notice.undoBlocked"]);
+      expect(notices(workbench)).toEqual(["notice.undoBlocked.changed"]);
       expect(firstTrack(store)?.name).not.toBe("我的轨道");
     });
 
@@ -211,7 +220,7 @@ describe("changes that do not go through", () => {
       store?.undo();
       rename(store, "三", AI);
       workbench.actions.get("edit.redo")?.run();
-      expect(notices(workbench)).toEqual(["notice.undoBlocked"]);
+      expect(notices(workbench)).toEqual(["notice.undoBlocked.changed"]);
       expect(nameOf(workbench)).toBe("三");
     });
 
@@ -226,8 +235,89 @@ describe("changes that do not go through", () => {
       ]);
       rename(store, "三", AI);
       workbench.actions.get("edit.undo")?.run();
-      expect(notices(workbench)).toEqual(["notice.undoPartly"]);
+      expect(notices(workbench)).toEqual(["notice.undoPartly.changed"]);
       expect(nameOf(workbench)).toBe("三");
+    });
+
+    const addAsset = (store: ProjectStore | undefined) =>
+      store?.execute({
+        type: "asset.add",
+        params: { id: "a", asset: { kind: "image", path: "assets/a.png", storage: "local" } },
+      });
+    const useAsset = (store: ProjectStore | undefined, options = {}) =>
+      store?.execute(
+        {
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: firstTrack(store)?.id,
+            clip: {
+              start: "0",
+              duration: "1",
+              source: { kind: "image", media: { asset: "a" } },
+            },
+          },
+        },
+        options,
+      );
+
+    it("says something is still in use, when that is why", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      addAsset(store);
+      useAsset(store, AI);
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual(["notice.undoBlocked.inUse"]);
+    });
+
+    it("says part of it is still in use, when that is why", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      store?.executeBatch([
+        { type: "project.rename", params: { name: "二" } },
+        {
+          type: "asset.add",
+          params: { id: "a", asset: { kind: "image", path: "assets/a.png", storage: "local" } },
+        },
+      ]);
+      useAsset(store, AI);
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual(["notice.undoPartly.inUse"]);
+    });
+
+    const lockTrack = (store: ProjectStore | undefined) =>
+      store?.execute(
+        {
+          type: "track.update",
+          params: { timeline: "main", track: firstTrack(store)?.id, changes: { locked: true } },
+        },
+        AI,
+      );
+
+    it("says the track is locked, when that is why", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      setTrackClip(store);
+      lockTrack(store);
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual(["notice.undoBlocked.locked"]);
+    });
+
+    it("says part of it is on a locked track, when that is why", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      store?.executeBatch([
+        { type: "project.rename", params: { name: "二" } },
+        addColorCall(store),
+      ]);
+      lockTrack(store);
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual(["notice.undoPartly.locked"]);
+      expect(nameOf(workbench)).toBe("一");
     });
 
     it("says nothing when all of it went back", async () => {

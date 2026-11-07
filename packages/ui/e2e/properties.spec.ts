@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { crc32, deflateSync } from "node:zlib";
 import type { Frame, Locator, Page } from "@playwright/test";
 import {
@@ -79,6 +80,25 @@ async function typeInto(locator: Locator, text: string) {
   await locator.click();
   await locator.fill(text);
   await locator.press("Enter");
+}
+
+/**
+ * Keeps the page from getting to its next frame, as on a busy computer, until the returned function
+ * is called. Keys can arrive first then, and these tests are about that.
+ */
+async function holdFrames(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const waiting: FrameRequestCallback[] = [];
+    const original = window.requestAnimationFrame;
+    window.requestAnimationFrame = (callback) => waiting.push(callback);
+    Object.assign(window, {
+      showFrames: () => {
+        window.requestAnimationFrame = original;
+        for (const callback of waiting) callback(performance.now());
+      },
+    });
+  });
+  return () => page.evaluate(() => (window as unknown as { showFrames: () => void }).showFrames());
 }
 
 async function dragField(page: Page, locator: Locator, pixels: number, steps = 8) {
@@ -306,6 +326,17 @@ test("clicking into a field and out again changes nothing", async ({ page }) => 
   await field(page, "位置 X").click();
   await panel(page).getByRole("spinbutton", { name: "旋转" }).click();
   await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+z");
+  await expect(clips(page)).toHaveCount(0);
+});
+
+test("a field that was left stays left, however late the next frame is", async ({ page }) => {
+  await addColor(page);
+  await field(page, "位置 X").click();
+  const showFrames = await holdFrames(page);
+  await panel(page).getByRole("spinbutton", { name: "旋转" }).click();
+  await page.keyboard.press("Escape");
+  await showFrames();
   await page.keyboard.press("Control+z");
   await expect(clips(page)).toHaveCount(0);
 });
@@ -625,39 +656,18 @@ for (const fit of ["contain", "cover"] as const) {
 
 /**
  * What a phone records upright: stored on its side, with a note to turn it. The left half is red, so
- * once it is turned the top half has to be.
+ * once it is turned the top half has to be. Made once with mediabunny in the browser: 320 by 160, VP9
+ * in MP4, rotation 90. A file, so that this also runs against the deployed site.
  */
-const sidewaysVideo = (page: Page) =>
-  compositor(page).evaluate(async () => {
-    const isLibrary = ({ name }: PerformanceEntry) => name.includes("mediabunny");
-    const library = performance.getEntriesByType("resource").find(isLibrary)?.name as string;
-    const { BufferTarget, CanvasSource, Mp4OutputFormat, Output } = await import(
-      /* @vite-ignore */ library
-    );
-    const canvas = new OffscreenCanvas(320, 160);
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("no canvas");
-    context.fillStyle = "#ff0000";
-    context.fillRect(0, 0, 160, 160);
-    context.fillStyle = "#0000ff";
-    context.fillRect(160, 0, 160, 160);
-    const target = new BufferTarget();
-    const output = new Output({ format: new Mp4OutputFormat(), target });
-    const source = new CanvasSource(canvas, { codec: "vp9", bitrate: 2_000_000 });
-    output.addVideoTrack(source, { rotation: 90, frameRate: 30 });
-    await output.start();
-    for (let frame = 0; frame < 30; frame += 1) {
-      // oxlint-disable-next-line no-await-in-loop -- frames go in one after the other
-      await source.add(frame / 30, 1 / 30);
-    }
-    await output.finalize();
-    return [...new Uint8Array(target.buffer as ArrayBuffer)];
-  });
+const sideways = {
+  name: "竖拍.mp4",
+  mimeType: "video/mp4",
+  buffer: readFileSync(new URL("./fixtures/sideways.mp4", import.meta.url)),
+};
 
 test("a video that a phone recorded upright shows upright", async ({ page }) => {
   await compositorListens(page);
-  const buffer = Buffer.from(await sidewaysVideo(page));
-  await placeImage(page, { name: "竖拍.mp4", mimeType: "video/mp4", buffer });
+  await placeImage(page, sideways);
   await expectColor(page, 960, 270, [255, 0, 0], 40);
   await expectColor(page, 960, 810, [0, 0, 255], 40);
   // It is 540 wide in a picture of 1920, so there is nothing to the left of that.

@@ -408,9 +408,9 @@ export class Workbench {
     if (!store) return;
     const result = step(store);
     if (result.ok) {
-      if (result.kept.length > 0) this.notifications.push(this.t("notice.undoPartly"));
-    } else if (result.error.code === "undo-blocked") {
-      this.notifications.push(this.t("notice.undoBlocked"));
+      if (result.obstacle) this.notifications.push(this.t(`notice.undoPartly.${result.obstacle}`));
+    } else if (result.error.obstacle) {
+      this.notifications.push(this.t(`notice.undoBlocked.${result.error.obstacle}`));
     } else {
       this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
     }

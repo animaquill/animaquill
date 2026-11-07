@@ -49,6 +49,7 @@ import {
 } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
+import { isInUse } from "./references.ts";
 
 export interface CommandDefinition<P = unknown> {
   readonly type: string;
@@ -242,13 +243,9 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define("asset.remove", z.strictObject({ asset: Id }), (draft, { asset }) => {
     if (!entryOf(draft.state.assets, asset)) fail("not-found", `没有这个素材：${asset}`);
-    const inUse = Object.values(draft.state.timelines).some((timeline) =>
-      Object.values(timeline.clips).some(({ source }) => {
-        const { media } = source as { media?: { asset?: string } };
-        return media?.asset === asset;
-      }),
-    );
-    if (inUse) fail("asset-in-use", "还有片段在用这个素材，要先删除那些片段");
+    if (isInUse(draft.state, ["assets", asset])) {
+      fail("asset-in-use", "还有片段或版本在用这个素材，要先换掉或删除它们");
+    }
     draft.delete(["assets", asset]);
   }),
 

@@ -1,6 +1,6 @@
 import { canHold } from "@animaquill/schema";
 import { entryOf, type ClipState, type ProjectState, type TimelineState } from "./model.ts";
-import { getIn } from "./patch.ts";
+import { getIn, type Patch } from "./patch.ts";
 import type { Path } from "./structure.ts";
 
 const NONE: readonly string[] = [];
@@ -69,6 +69,10 @@ function usersIn(state: ProjectState): ReadonlyMap<string, readonly string[]> {
 
 const usersOf = (state: ProjectState, target: Path) =>
   (usersIn(state).get(target.join("/")) ?? NONE).map((from) => link(from, target));
+
+/** Whether clips, or what versions change about them, use something. */
+export const isInUse = (state: ProjectState, target: Path): boolean =>
+  usersIn(state).has(target.join("/"));
 
 const missing = (state: ProjectState, from: string, source: unknown) =>
   targetsOf(source)
@@ -213,4 +217,36 @@ export function danglingAt(state: ProjectState, path: Path): readonly string[] {
   return isTarget && path.length === 2 && getIn(state, path) === undefined
     ? usersOf(state, path)
     : NONE;
+}
+
+/**
+ * Whether a change reaches what is on a locked track: what is there now, or what would end up there.
+ * The track itself stays open, or nobody could take the lock off. It only cannot go away.
+ */
+export function touchesLockedTrack(state: ProjectState, patch: Patch): boolean {
+  const { path } = patch;
+  const [root, id = "", level, item = "", field] = path;
+  const timeline = root === "timelines" ? entryOf(state.timelines, id) : undefined;
+  if (!timeline) return false;
+  const isLocked = (track: string | undefined) =>
+    track !== undefined && entryOf(timeline.tracks, track)?.locked === true;
+  const value = patch.op === "set" ? patch.value : undefined;
+  const coming = () => {
+    if (path.length === 4) return (value as { readonly track?: string } | undefined)?.track;
+    return field === "track" ? (value as string | undefined) : undefined;
+  };
+  switch (level) {
+    case undefined:
+      return Object.values(timeline.tracks).some(({ locked }) => locked);
+    case "tracks":
+      return path.length === 4 && isLocked(item);
+    case "clips":
+      return isLocked(entryOf(timeline.clips, item)?.track) || isLocked(coming());
+    case "transitions":
+      return isLocked(entryOf(timeline.transitions, item)?.track) || isLocked(coming());
+    case "overrides":
+      return field === "clips" && isLocked(entryOf(timeline.clips, path[5] ?? "")?.track);
+    default:
+      return false;
+  }
 }

@@ -1,5 +1,6 @@
 import type { ProjectState } from "./model.ts";
 import { Mutator, diff, getIn, settled, settledPatch, type Patch } from "./patch.ts";
+import { touchesLockedTrack } from "./references.ts";
 import { isFlat, type Path } from "./structure.ts";
 import { UNWRITTEN, WriteTree, sameWrites, type WriteId, type Written } from "./write-tree.ts";
 
@@ -26,6 +27,11 @@ export interface Step {
   readonly replaced: Written;
   /** What it left there. As long as that is still there, the step is free to go back. */
   readonly left: Written;
+  /**
+   * It wrote on a locked track, which only a file can. A lock keeps what was there when it came, so
+   * it does not stop this step from going back to that.
+   */
+  readonly pastLock: boolean;
 }
 
 /**
@@ -68,20 +74,20 @@ export class Draft {
     }
     const patch = settledPatch(change);
     if (patch.op === "delete" && getIn(this.state, patch.path) === undefined) return;
-    this.#record(patch, { by: this.#write });
+    this.#record(patch, { by: this.#write }, touchesLockedTrack(this.state, patch));
   }
 
   /**
    * Takes back a step of an earlier change. Only the write that the document holds now can go, also
    * when something else left the same value. Returns whether it went. See `Written`.
    */
-  takeBack({ patch, inverse, replaced, left }: Step): boolean {
+  takeBack({ patch, inverse, replaced, left, pastLock }: Step): boolean {
     if (!sameWrites(this.#writes.at(patch.path), left)) return false;
-    this.#record(inverse, replaced);
+    this.#record(inverse, replaced, pastLock);
     return true;
   }
 
-  #record(patch: Patch, left: Written): void {
+  #record(patch: Patch, left: Written, pastLock: boolean): void {
     const { path } = patch;
     const before = getIn(this.state, path);
     let inverse: Patch;
@@ -91,7 +97,7 @@ export class Draft {
     const replaced = this.#writes.at(path);
     this.#mutator.apply(patch);
     this.#writes.put(path, left);
-    this.#steps.push({ patch, inverse, replaced, left });
+    this.#steps.push({ patch, inverse, replaced, left, pastLock });
   }
 
   set(path: Path, value: unknown): void {
