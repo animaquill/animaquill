@@ -859,6 +859,7 @@ export class TimelineEditor {
           track,
           clip: { ...copy, start: formatTime(add(clipStart(clip), moved)) },
           ...(overwriting ? { overlap: "overwrite" } : {}),
+          ...(cut.has(clip.id) ? { movedFrom: clip.id } : {}),
         },
       };
     });

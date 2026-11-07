@@ -7,7 +7,7 @@ import {
 } from "@animaquill/schema";
 import * as Y from "yjs";
 import { COMMANDS, type CommandDefinition } from "./commands.ts";
-import { CommandError, Draft, type Step } from "./draft.ts";
+import { CommandError, Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
 import { Mutator, type Patch } from "./patch.ts";
@@ -49,6 +49,9 @@ interface CommitOptions extends ExecuteOptions {
     readonly entries: readonly UndoEntry[];
     /** Where the way to do it again goes. */
     readonly to: UndoEntry[];
+    /** What it comes to. Undefined when only a part of it goes back, which nobody can tell. */
+    readonly facts: readonly ClipFact[] | undefined;
+    readonly direction: "undo" | "redo";
   };
 }
 
@@ -91,6 +94,22 @@ export type UndoResult =
     }
   | { readonly ok: false; readonly error: CommandFailure };
 
+/** A change that is being made here, which knows more about itself than the document does. */
+export interface LocalChange {
+  readonly origin: Origin;
+  /** It takes something back or does it again, so it is no new step. */
+  readonly takesBack: "undo" | "redo" | undefined;
+  /**
+   * What it does to clips. Undefined when nobody can say: only a part of something goes back, or a
+   * file has nothing but its outcome.
+   */
+  readonly facts: readonly ClipFact[] | undefined;
+  /** Stands for this change in the history. */
+  readonly step: number;
+  /** What it takes back, when that is one step. */
+  readonly back: number | undefined;
+}
+
 export interface HistoryEntry {
   readonly revision: number;
   readonly origin: Origin;
@@ -107,7 +126,11 @@ interface Write {
 
 /** What it takes to undo one change. */
 interface UndoEntry {
+  /** Counts up with every entry, so it says what came later whatever the log has forgotten. */
+  readonly serial: number;
   readonly steps: readonly Step[];
+  /** What the change did to clips, if that is known. */
+  readonly facts: readonly ClipFact[] | undefined;
   /**
    * What pointed at nothing around these steps before and after the change, see `danglingAt`. A
    * file can do that, and going back to how things were is not what makes it worse.
@@ -120,6 +143,16 @@ interface UndoEntry {
 interface UndoLog {
   done: UndoEntry[];
   undone: UndoEntry[];
+}
+
+/** What taking these changes back does to clips, if all of them are known. */
+function factsOf(entries: readonly UndoEntry[]): readonly ClipFact[] | undefined {
+  const facts: ClipFact[] = [];
+  for (const entry of entries) {
+    if (!entry.facts) return undefined;
+    facts.push(...entry.facts);
+  }
+  return factsTakenBack(facts);
 }
 
 const keyOf = (path: Path) => path.join("\n");
@@ -298,6 +331,9 @@ export class ProjectStore {
   #written: Written = UNWRITTEN;
   /** The change being written here, which already knows what it wrote. */
   #writing: Y.Transaction | undefined;
+  #change: LocalChange | undefined;
+  /** The last number an undo entry got. */
+  #serial = 0;
   /** Whoever brings updates has said that what is missing is not coming. See catchUp(). */
   #isSettled = true;
 
@@ -405,6 +441,11 @@ export class ProjectStore {
     return this.#revision;
   }
 
+  /** What listeners are hearing about, if it was made here. */
+  get change(): LocalChange | undefined {
+    return this.#change;
+  }
+
   /** The latest changes, newest last. For showing what happened and who did it. */
   get history(): readonly HistoryEntry[] {
     return this.#history;
@@ -435,6 +476,7 @@ export class ProjectStore {
     const origin = options.origin ?? USER;
     return this.#commit(["file.import"], origin, options, (draft) => {
       this.#assertUnlocked(draft);
+      draft.knowsOnlyOutcome();
       const problems = planFileImport(draft, path, text);
       if (problems.length > 0) throw new ImportRejected(problems);
       return [];
@@ -447,6 +489,14 @@ export class ProjectStore {
 
   get canRedo(): boolean {
     return (this.#undo.get(USER)?.undone.length ?? 0) > 0;
+  }
+
+  /**
+   * The change of the person that undo would take back, to tell what came before what. Zero when
+   * there is none. It stands for a place in the history, which keeps working when old changes go.
+   */
+  get lastStep(): number {
+    return this.#undo.get(USER)?.done.at(-1)?.serial ?? 0;
   }
 
   /**
@@ -470,7 +520,7 @@ export class ProjectStore {
     const log = this.#undo.get(origin);
     const entries = log?.done.splice(0) ?? [];
     if (!log || entries.length === 0) return { ok: false, error: NOTHING_TO_UNDO };
-    return this.#takeBack(entries, log.undone, origin);
+    return this.#takeBack(entries, log.undone, origin, "undo");
   }
 
   redoTask(task: string): UndoResult {
@@ -528,6 +578,11 @@ export class ProjectStore {
       const issue = params.error.issues[0];
       throw new CommandError("invalid-params", `${issue?.path.join(".")}：${issue?.message}`);
     }
+    if (draft.origin !== USER) {
+      const given = params.data as Record<string, unknown>;
+      const name = command.userOnlyParams?.find((param) => given[param] !== undefined);
+      if (name) throw new CommandError("user-only", `只有用户能用这个参数：${name}`);
+    }
     return command.run(draft, params.data);
   }
 
@@ -563,18 +618,31 @@ export class ProjectStore {
     }
 
     const entry = this.#entryOf(draft, options);
-    this.doc.transact((transaction) => {
-      this.#writing = transaction;
-      for (const patch of patches) this.#apply(patch);
-    }, origin);
-    this.#writing = undefined;
+    const { takesBack } = options;
+    this.#change = {
+      origin,
+      takesBack: takesBack?.direction,
+      facts: entry.facts,
+      step: entry.serial,
+      back: takesBack?.entries.length === 1 ? takesBack.entries[0]?.serial : undefined,
+    };
+    try {
+      this.doc.transact((transaction) => {
+        this.#writing = transaction;
+        for (const patch of patches) this.#apply(patch);
+      }, origin);
+    } finally {
+      // A listener can fail, and the next change should not look like this one.
+      this.#writing = undefined;
+      this.#change = undefined;
+    }
     this.#written = draft.written;
     // Yjs reports nothing about a field of something that went away in the same change.
     const write = { revision: this.#revision, origin };
     for (const { path } of patches) this.#markWrite(path, write, false);
 
-    if (options.takesBack) {
-      options.takesBack.to.push(entry);
+    if (takesBack) {
+      takesBack.to.push(entry);
     } else {
       const log = this.#logOf(origin);
       log.done.push(entry);
@@ -591,9 +659,13 @@ export class ProjectStore {
   /** What it takes to undo a change that is about to be written. */
   #entryOf(draft: Draft, { takesBack }: CommitOptions): UndoEntry {
     const { steps } = draft;
+    this.#serial += 1;
+    const serial = this.#serial;
     if (takesBack) {
       return {
+        serial,
         steps,
+        facts: takesBack.facts,
         danglingBefore: takesBack.entries.flatMap((entry) => entry.danglingAfter),
         danglingAfter: takesBack.entries.flatMap((entry) => entry.danglingBefore),
       };
@@ -601,7 +673,9 @@ export class ProjectStore {
     const danglingIn = (state: ProjectState) =>
       steps.flatMap((step) => danglingAt(state, step.patch.path));
     return {
+      serial,
       steps,
+      facts: draft.facts,
       danglingBefore: danglingIn(this.#state),
       danglingAfter: danglingIn(draft.state),
     };
@@ -623,7 +697,7 @@ export class ProjectStore {
     const log = this.#undo.get(origin);
     const entry = log?.[from].pop();
     if (!log || !entry) return { ok: false, error: NOTHING_TO_UNDO };
-    return this.#takeBack([entry], log[to], origin);
+    return this.#takeBack([entry], log[to], origin, from === "done" ? "undo" : "redo");
   }
 
   /**
@@ -666,7 +740,12 @@ export class ProjectStore {
    * own, but it works on single fields and can leave a field with no value at all when two people
    * changed it at once. Here a field always gets a value back, or stays as it is.
    */
-  #takeBack(entries: readonly UndoEntry[], to: UndoEntry[], origin: Origin): UndoResult {
+  #takeBack(
+    entries: readonly UndoEntry[],
+    to: UndoEntry[],
+    origin: Origin,
+    direction: "undo" | "redo",
+  ): UndoResult {
     const { back, obstacle } = this.#planBack(entries, origin);
     const kept = new Map<string, Path>();
     for (const { steps } of entries) {
@@ -679,7 +758,9 @@ export class ProjectStore {
       const message = OBSTACLES[obstacle];
       return { ok: false, error: { code: "undo-blocked", message, conflicts: paths, obstacle } };
     }
-    const result = this.#commit(["undo"], origin, { takesBack: { entries, to } }, (draft) => {
+    const facts = paths.length === 0 ? factsOf(entries) : undefined;
+    const takesBack = { entries, to, facts, direction };
+    const result = this.#commit(["undo"], origin, { takesBack }, (draft) => {
       for (const step of back) draft.takeBack(step);
       return [];
     });

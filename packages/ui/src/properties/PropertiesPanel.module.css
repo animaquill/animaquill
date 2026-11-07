@@ -91,11 +91,23 @@
 }
 
 .row {
+  position: relative;
   display: grid;
   grid-template-columns: 60px 20px minmax(56px, 1fr) 84px;
   gap: 0 4px;
   align-items: center;
   min-height: 24px;
+}
+
+/* Like the mark for a changed line next to the code in VS Code. */
+.row[data-tried]::before {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: -6px;
+  width: 2px;
+  background: var(--aq-trial);
+  content: "";
 }
 
 .name {
@@ -149,6 +161,11 @@
   color: var(--aq-match);
 }
 
+.number[data-tried],
+.choice[data-tried] {
+  color: var(--aq-trial);
+}
+
 .number:hover,
 .choice:hover {
   border-color: var(--aq-timeline-tick);
@@ -180,6 +197,14 @@
   justify-content: flex-end;
 }
 
+.elsewhere {
+  margin: 0 0 3px;
+  padding-left: 84px;
+  color: var(--aq-warning);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .rowButton {
   display: flex;
   align-items: center;
@@ -208,4 +233,9 @@
 .rowButton[aria-pressed="true"],
 .keyed {
   color: var(--aq-match);
+}
+
+.row[data-tried] .rowButton[aria-pressed="true"],
+.row[data-tried] .keyed {
+  color: var(--aq-trial);
 }

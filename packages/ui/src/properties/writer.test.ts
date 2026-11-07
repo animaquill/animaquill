@@ -2,11 +2,17 @@ import { type PropertyEdit } from "@animaquill/core";
 import { describe, expect, it, vi } from "vitest";
 import { orderedTracks } from "@animaquill/core";
 import { TimelineEditor } from "../timeline/editor.ts";
-import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-library.ts";
+import {
+  MemoryLibrary,
+  MemoryTrials,
+  memoryAddress,
+  memoryWindow,
+} from "../workbench/memory-library.ts";
 import { ProjectSession } from "../workbench/session.ts";
+import { TrialSession } from "./trial.ts";
 import { PropertyWriter } from "./writer.ts";
 
-async function setup() {
+async function setup({ trying = false } = {}) {
   const session = new ProjectSession(new MemoryLibrary(), memoryAddress(), {
     createFailed: vi.fn(),
     notFound: vi.fn(),
@@ -20,7 +26,7 @@ async function setup() {
   const store = session.store;
   if (!store) throw new Error("no project");
   const settings = {
-    load: async () => undefined,
+    load: async (key: string) => (key === "trial" ? { version: 1, enabled: trying } : undefined),
     save: async () => {},
     listen: () => () => {},
   };
@@ -28,14 +34,30 @@ async function setup() {
     commandFailed: vi.fn(),
   });
   const commandFailed = vi.fn<(message: string) => void>();
-  const writer = new PropertyWriter(session, timeline, { commandFailed });
+  const trials = new TrialSession(session, timeline, new MemoryTrials(), settings, {
+    commandFailed,
+    overwrote: vi.fn(),
+    discarded: vi.fn(),
+    setAside: vi.fn(),
+    back: vi.fn(),
+    asideDropped: vi.fn(),
+    unsure: vi.fn(),
+    restored: vi.fn(),
+    dropped: vi.fn(),
+    readFailed: vi.fn(),
+    keepFailed: vi.fn(),
+    keepRecovered: vi.fn(),
+  });
+  await trials.load();
+  await trials.settle();
+  const writer = new PropertyWriter(session, timeline, trials, { commandFailed });
   const state = () => store.getState().timelines["main"];
   const track = orderedTracks(state() as never).find(({ kind }) => kind === "video")?.id;
   const clip = { id: "c", start: "0", duration: "5", source: { kind: "color", color: "#ff0000" } };
   store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
   const value = (path: string) => state()?.clips["c"]?.properties?.[path];
   const shown = (path: string) => writer.getPreviewed().get("c")?.get(path);
-  return { store, writer, commandFailed, value, shown, track };
+  return { store, writer, trials, commandFailed, value, shown, track };
 }
 
 const owner = { clip: "c" };
@@ -208,5 +230,114 @@ describe("committing", () => {
     expect(writer.getPreviewed().size).toBe(0);
     expect(commandFailed).not.toHaveBeenCalled();
     expect(store.revision).toBe(revision);
+  });
+});
+
+describe("while people try things out", () => {
+  const trying = { trying: true };
+
+  it("a step goes there, and the project stays as it is", async () => {
+    const { store, writer, trials, value, shown } = await setup(trying);
+    const { revision } = store;
+    expect(writer.commit([write(10)])).toBe(true);
+    expect(value("transform.x")).toBeUndefined();
+    expect(store.revision).toBe(revision);
+    expect(trials.getSnapshot().count).toBe(1);
+    expect(shown("transform.x")).toBe(10);
+  });
+
+  it("the picture keeps it after the step", async () => {
+    const { writer, shown } = await setup(trying);
+    writer.preview([write(10)]);
+    writer.commit([write(10)]);
+    expect(shown("transform.x")).toBe(10);
+  });
+
+  it("a drag starts from what is being tried, not from what is saved", async () => {
+    const { writer, shown, store } = await setup(trying);
+    const key = { owner, path: "transform.x", op: "setKey", time: "0", value: 1 } as const;
+    writer.commit([key]);
+    writer.preview([write(9)]);
+    expect(shown("transform.x")).toEqual({
+      keys: [
+        { time: "0", value: 1 },
+        { time: "1", value: 9 },
+      ],
+    });
+    expect(store.getState().timelines["main"]?.clips["c"]?.properties).toBeUndefined();
+  });
+
+  it("a drag that gets cancelled goes back to what is being tried", async () => {
+    const { writer, shown } = await setup(trying);
+    writer.commit([write(10)]);
+    writer.preview([write(20)]);
+    expect(shown("transform.x")).toBe(20);
+    writer.cancel();
+    expect(shown("transform.x")).toBe(10);
+  });
+
+  it("a drag on one property leaves the others in the picture", async () => {
+    const { writer, shown } = await setup(trying);
+    writer.commit([write(0.5, "1", "opacity")]);
+    writer.preview([write(20)]);
+    expect(shown("opacity")).toBe(0.5);
+    expect(shown("transform.x")).toBe(20);
+  });
+
+  it("a drag on one clip leaves what is tried on the others in the picture", async () => {
+    const { writer, shown, store, track } = await setup(trying);
+    const clip = {
+      id: "d",
+      start: "9",
+      duration: "1",
+      source: { kind: "color", color: "#00ff00" },
+    };
+    store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+    writer.commit([{ owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 }]);
+    writer.preview([write(20)]);
+    expect(shown("transform.x")).toBe(20);
+    expect(writer.getPreviewed().get("d")?.get("opacity")).toBe(0.5);
+  });
+
+  it("the picture hears about what happens to what is being tried", async () => {
+    const { writer, trials, shown } = await setup(trying);
+    writer.commit([write(10)]);
+    const listener = vi.fn();
+    writer.subscribe(listener);
+    trials.discard();
+    expect(listener).toHaveBeenCalled();
+    expect(shown("transform.x")).toBeUndefined();
+  });
+
+  it("comparing shows the project, and going back shows what is being tried", async () => {
+    const { writer, trials, shown } = await setup(trying);
+    writer.commit([write(10)]);
+    trials.toggleCompare();
+    expect(writer.getPreviewed().size).toBe(0);
+    trials.toggleCompare();
+    expect(shown("transform.x")).toBe(10);
+  });
+
+  it("says when something cannot be tried, like when it cannot be written", async () => {
+    const { store, writer, commandFailed, track, trials } = await setup(trying);
+    const changes = { locked: true };
+    store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
+    expect(writer.commit([write(1)])).toBe(false);
+    expect(commandFailed).toHaveBeenCalledOnce();
+    expect(trials.getSnapshot().count).toBe(0);
+  });
+
+  it("what is being tried stays in charge after the setting went off", async () => {
+    const { store, writer, trials, value, shown } = await setup(trying);
+    writer.commit([write(10)]);
+    trials.setEnabled(false);
+    writer.commit([write(20)]);
+    expect(value("transform.x")).toBeUndefined();
+    expect(shown("transform.x")).toBe(20);
+    trials.save();
+    expect(value("transform.x")).toBe(20);
+    writer.commit([write(30)]);
+    expect(value("transform.x")).toBe(30);
+    expect(store.canUndo).toBe(true);
   });
 });

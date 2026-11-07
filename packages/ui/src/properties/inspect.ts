@@ -49,6 +49,17 @@ export interface PropertyRow {
   /** The frames of the nearest keys inside the clip. */
   readonly previousKey: number | undefined;
   readonly nextKey: number | undefined;
+  /** What it shows is being tried, and not in the project yet. */
+  readonly tried: boolean;
+  /** Somebody else changed what the project holds since people started to try this. */
+  readonly changedElsewhere: boolean;
+}
+
+/** What is being tried out, as far as showing it goes. */
+export interface TrialLook {
+  apply(clip: ClipState): ClipState;
+  holds(clip: string, path: string): boolean;
+  changedElsewhere(clip: string, path: string): boolean;
 }
 
 export interface InspectedObject {
@@ -80,7 +91,7 @@ export function keyEdit(clip: string, row: PropertyRow, time: string): PropertyE
 }
 
 /** Why nothing can be changed right now. */
-export type Blocked = "locked" | "outside";
+export type Blocked = "locked" | "outside" | "comparing";
 
 export type Inspection =
   /** Nothing is selected. */
@@ -158,7 +169,7 @@ function placeOf(state: ProjectState, model: TimelineModel, clip: ClipState, fra
 const frameOfKey = ({ clip, model, firstFrame }: Place, key: Key | undefined) =>
   key && Math.max(frameContaining(momentOf(clip, key), model.rate), firstFrame);
 
-function rowOf(spec: PropertySpec, place: Place): PropertyRow {
+function rowOf(spec: PropertySpec, place: Place, look: TrialLook | undefined): PropertyRow {
   const { state, clip, moment, clock, from, to } = place;
   const properties = effectiveProperties(clip);
   const { path } = spec;
@@ -186,6 +197,8 @@ function rowOf(spec: PropertySpec, place: Place): PropertyRow {
     keyTime: under?.time,
     previousKey: before > first ? frameOfKey(place, keys[before - 1]) : undefined,
     nextKey: after < end ? frameOfKey(place, keys[after]) : undefined,
+    tried: look?.holds(clip.id, path) === true,
+    changedElsewhere: look?.changedElsewhere(clip.id, path) === true,
   };
 }
 
@@ -194,11 +207,13 @@ function inspectClip(
   model: TimelineModel,
   box: ClipBox,
   frame: number,
+  { look, comparing }: TrialView,
 ): Inspection {
-  const { clip } = box;
+  const clip = look?.apply(box.clip) ?? box.clip;
   const place = placeOf(state, model, clip, frame);
   let blocked: Blocked | undefined;
-  if (model.rowOfClip.get(clip.id)?.track.locked) blocked = "locked";
+  if (comparing) blocked = "comparing";
+  else if (model.rowOfClip.get(clip.id)?.track.locked) blocked = "locked";
   else if (!shows(clip, place.moment)) blocked = "outside";
   return {
     kind: "clip",
@@ -208,9 +223,17 @@ function inspectClip(
     firstFrame: place.firstFrame,
     objects: objectsOf(clip).map((object) => ({
       object,
-      rows: object.properties.map((spec) => rowOf(spec, place)),
+      rows: object.properties.map((spec) => rowOf(spec, place, look)),
     })),
   };
+}
+
+/** What the tab goes by apart from the project. */
+export interface TrialView {
+  /** What goes on top of the project. */
+  readonly look?: TrialLook | undefined;
+  /** People are looking at what is saved, so what they see is not what an edit would start from. */
+  readonly comparing?: boolean;
 }
 
 /**
@@ -222,6 +245,7 @@ export function inspect(
   model: TimelineModel,
   selection: ReadonlySet<string>,
   frame: number,
+  trial: TrialView = {},
 ): Inspection {
   if (selection.size === 0) return { kind: "nothing" };
   const boxes = [...selection].flatMap((id) => {
@@ -231,5 +255,5 @@ export function inspect(
   const [box] = boxes;
   if (!box) return { kind: "no-properties" };
   if (boxes.length > 1) return { kind: "several", count: boxes.length };
-  return inspectClip(state, model, box, frame);
+  return inspectClip(state, model, box, frame, trial);
 }

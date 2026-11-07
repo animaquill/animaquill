@@ -8,6 +8,8 @@ import type {
   ProjectLog,
   ProjectSummary,
   SettingsStore,
+  TrialPlace,
+  TrialStore,
   WindowMemory,
 } from "./index.ts";
 
@@ -19,6 +21,23 @@ const UPDATES = "updates";
 const MEDIA = "media";
 const BY_PROJECT = "project";
 const PROJECT_PARAM = "project";
+/**
+ * What is being tried gets a database of its own. It comes and goes, and a new version of the main
+ * database would lock out every page that is still open, for something that is not even a project.
+ */
+const TRIAL_DATABASE = "animaquill-trials";
+const TRIAL_DATABASE_VERSION = 1;
+const TRIALS = "trials";
+/** Without locks all windows share one place, which is the best that can be done. */
+const ONLY_PLACE = "only";
+/** A page that goes away holds on to its locks for a moment. */
+const LEAVING_WAIT_MS = 300;
+/**
+ * A window that gets reloaded is waiting for itself, so it can wait longer. It is the same wait for
+ * a window that got duplicated with its memory, which gets a place of its own after that.
+ */
+const OWN_PLACE_WAIT_MS = 3000;
+const LOCK_POLL_MS = 100;
 
 interface MediaRecord {
   readonly project: string;
@@ -30,6 +49,16 @@ interface UpdateRecord {
   readonly seq?: number;
   readonly project: string;
   readonly update: Uint8Array;
+}
+
+interface TrialRecord {
+  readonly project: string;
+  readonly place: string;
+  /** Which project with this id it belongs to: see ProjectRecord. */
+  readonly instance: string | undefined;
+  /** Milliseconds since 1970. */
+  readonly savedAt: number;
+  readonly trial: unknown;
 }
 
 interface ProjectRecord extends ProjectSummary {
@@ -76,17 +105,26 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return resultOf(request);
 }
 
+function openTrialDatabase(factory: IDBFactory): Promise<IDBDatabase> {
+  const request = factory.open(TRIAL_DATABASE, TRIAL_DATABASE_VERSION);
+  request.addEventListener("upgradeneeded", () => {
+    const trials = request.result.createObjectStore(TRIALS, { keyPath: [BY_PROJECT, "place"] });
+    trials.createIndex(BY_PROJECT, BY_PROJECT);
+  });
+  return resultOf(request);
+}
+
 /**
  * The connection to the database, opened on first use. It reconnects after losing the connection,
  * and a failed attempt is not remembered, so that a passing problem stays a passing problem.
  */
-function connector(factory: () => IDBFactory): () => Promise<IDBDatabase> {
+function connector(open: () => Promise<IDBDatabase>): () => Promise<IDBDatabase> {
   let opening: Promise<IDBDatabase> | undefined;
   const forget = () => {
     opening = undefined;
   };
   const connect = async () => {
-    const database = await openDatabase(factory());
+    const database = await open();
     // Another tab runs a newer version and cannot upgrade the data while this one holds on to it.
     database.addEventListener("versionchange", () => {
       database.close();
@@ -111,6 +149,10 @@ function channelFor(id: string): BroadcastChannel | undefined {
     : new BroadcastChannel(`${PREFIX}project.${id}`);
 }
 
+/** Whether a project is the one with this instance, and not one that came after it with its id. */
+const isInstance = (record: ProjectRecord | undefined, instance: string | undefined) =>
+  record !== undefined && !record.incoming && record.instance === instance;
+
 function openLog(
   database: () => Promise<IDBDatabase>,
   id: string,
@@ -118,8 +160,7 @@ function openLog(
 ): ProjectLog {
   // Windows on another project with this id have nothing to say to this one.
   const channel = channelFor(instance === undefined ? id : `${id}.${instance}`);
-  const isOurs = (record: ProjectRecord | undefined) =>
-    record !== undefined && !record.incoming && record.instance === instance;
+  const isOurs = (record: ProjectRecord | undefined) => isInstance(record, instance);
 
   return {
     async load() {
@@ -220,10 +261,10 @@ const hold = (locks: LockManager, name: string) =>
   });
 
 function createLibrary(
-  factory: () => IDBFactory,
+  database: () => Promise<IDBDatabase>,
   lockManager: () => LockManager | undefined,
+  forgetTrials: (project: string) => Promise<void>,
 ): ProjectLibrary {
-  const database = connector(factory);
   const incomingLock = (id: string) => `${PREFIX}incoming.${id}`;
   const allStores = [UPDATES, PROJECTS, MEDIA];
 
@@ -341,9 +382,153 @@ function createLibrary(
       const transaction = (await database()).transaction(allStores, "readwrite");
       removeFrom(transaction, id);
       await committed(transaction);
+      // The project is gone either way, and what stays behind gets swept up later.
+      await forgetTrials(id).catch((error: unknown) => {
+        console.warn("What was being tried on a project that is gone stays for now", error);
+      });
     },
   };
   return library;
+}
+
+function createTrials(
+  projects: () => Promise<IDBDatabase>,
+  factory: () => IDBFactory,
+  lockManager: () => LockManager | undefined,
+  memory: WindowMemory,
+) {
+  const database = connector(() => openTrialDatabase(factory()));
+  const placeLock = (project: string, place: string) => `${PREFIX}trial.${project}.${place}`;
+  const memoryKey = (project: string) => `trial.${project}`;
+  let isSwept = false;
+
+  const projectOf = async (project: string) => {
+    const transaction = (await projects()).transaction(PROJECTS);
+    return resultOf<ProjectRecord | undefined>(transaction.objectStore(PROJECTS).get(project));
+  };
+
+  /** Places with something in them on this project, the most recent first. */
+  const keptPlaces = async (project: string, instance: string | undefined) => {
+    const transaction = (await database()).transaction(TRIALS);
+    const index = transaction.objectStore(TRIALS).index(BY_PROJECT);
+    const records = await resultOf<TrialRecord[]>(index.getAll(project));
+    return records
+      .filter((record) => record.instance === instance)
+      .toSorted((a, b) => b.savedAt - a.savedAt)
+      .map(({ place }) => place);
+  };
+
+  /** Takes away what belongs to a project that is gone, for all of it or for one. */
+  const remove = async (isGone: (record: TrialRecord) => boolean) => {
+    const transaction = (await database()).transaction(TRIALS, "readwrite");
+    const trials = transaction.objectStore(TRIALS);
+    const read = trials.getAll();
+    read.addEventListener("success", () => {
+      for (const record of read.result as TrialRecord[]) {
+        if (isGone(record)) trials.delete([record.project, record.place]);
+      }
+    });
+    await committed(transaction);
+  };
+
+  /**
+   * What removing a project could not reach, because it is two databases and that can fail halfway.
+   * Once per page is enough, and it is no reason for anything else to fail.
+   */
+  const sweep = async () => {
+    if (isSwept) return;
+    isSwept = true;
+    const transaction = (await projects()).transaction(PROJECTS);
+    const all = await resultOf<ProjectRecord[]>(transaction.objectStore(PROJECTS).getAll());
+    const instances = new Map(all.map(({ id, instance }) => [id, instance]));
+    await remove(
+      ({ project, instance }) => !instances.has(project) || instances.get(project) !== instance,
+    );
+  };
+
+  /** The first of these places that no window holds. */
+  const firstFree = async (locks: LockManager, project: string, places: readonly string[]) => {
+    for (const place of places) {
+      const release = await hold(locks, placeLock(project, place));
+      if (release) return { place, release };
+    }
+    return undefined;
+  };
+
+  /** Keeps asking for a while. Resolves to undefined when somebody else keeps holding on to it. */
+  const waitFor = async (locks: LockManager, name: string, wait: number) => {
+    const until = Date.now() + wait;
+    for (;;) {
+      const release = await hold(locks, name);
+      if (release || Date.now() >= until) return release;
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+    }
+  };
+
+  const placeOf = (
+    project: string,
+    place: string,
+    instance: string | undefined,
+    release: () => void,
+  ): TrialPlace => {
+    memory.write(memoryKey(project), place);
+    return {
+      async load() {
+        const transaction = (await database()).transaction(TRIALS);
+        const request = transaction.objectStore(TRIALS).get([project, place]);
+        const record = await resultOf<TrialRecord | undefined>(request);
+        return record?.instance === instance ? record?.trial : undefined;
+      },
+      async save(trial) {
+        // This starts right here, with nothing to wait for: the page may be on its way out. Asking
+        // whether the project is still there first would cost that, and sweeping takes care of it.
+        // "strict" for the same reason as a project: what people tried should survive a power cut.
+        const transaction = (await database()).transaction(TRIALS, "readwrite", {
+          durability: "strict",
+        });
+        const trials = transaction.objectStore(TRIALS);
+        if (trial === undefined) trials.delete([project, place]);
+        else {
+          const record: TrialRecord = { project, place, instance, savedAt: Date.now(), trial };
+          trials.put(record);
+        }
+        await committed(transaction);
+      },
+      close: release,
+    };
+  };
+
+  const store: TrialStore = {
+    async open(project) {
+      void sweep().catch((error: unknown) => {
+        console.warn("Could not clean up after projects that are gone", error);
+      });
+      const instance = (await projectOf(project))?.instance;
+      const locks = lockManager();
+      if (!locks) return placeOf(project, ONLY_PLACE, instance, () => {});
+      // Its own place first: a window that comes back has to find what it left, and nothing else.
+      const own = memory.read(memoryKey(project));
+      if (own !== undefined) {
+        const release = await waitFor(locks, placeLock(project, own), OWN_PLACE_WAIT_MS);
+        if (release) return placeOf(project, own, instance, release);
+      }
+      const places = await keptPlaces(project, instance);
+      const others = places.filter((place) => place !== own);
+      let free = await firstFree(locks, project, others);
+      if (!free && own === undefined && others.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, LEAVING_WAIT_MS));
+        free = await firstFree(locks, project, others);
+      }
+      if (free) return placeOf(project, free.place, instance, free.release);
+      const place = newInstance();
+      const release = await hold(locks, placeLock(project, place));
+      return placeOf(project, place, instance, release ?? (() => {}));
+    },
+  };
+  return {
+    store,
+    forget: (project: string) => remove((record) => record.project === project),
+  };
 }
 
 /** The address bar has exactly the right lifetime: one per window, kept through a reload. */
@@ -407,11 +592,15 @@ export function createBrowserHost(
       return () => removeEventListener("storage", onStorage);
     },
   };
+  const windowMemory = createWindowMemory(windowStorage);
+  const projects = connector(() => openDatabase(database()));
+  const trials = createTrials(projects, database, locks, windowMemory);
   return {
     settings,
-    projects: createLibrary(database, locks),
+    projects: createLibrary(projects, locks, trials.forget),
     address,
-    windowMemory: createWindowMemory(windowStorage),
+    windowMemory,
     folders: browserFolders(),
+    trials: trials.store,
   };
 }

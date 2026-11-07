@@ -4,6 +4,40 @@ import { Dialogs, type ProgressRequest } from "./dialogs.ts";
 const options = { title: "正在做", cancel: "取消", stopping: "正在停下" };
 const shown = (dialogs: Dialogs) => dialogs.getSnapshot() as ProgressRequest;
 
+describe("a dialog with several ways to go on", () => {
+  const question = {
+    title: "怎么办",
+    message: "选一个",
+    choices: [
+      { id: "keep", label: "留着" },
+      { id: "go", label: "走", kind: "danger" as const },
+    ],
+  };
+
+  it("resolves to what people chose", async () => {
+    const dialogs = new Dialogs();
+    const answer = dialogs.choose(question);
+    expect(dialogs.getSnapshot()).toMatchObject({ kind: "choice", ...question });
+    dialogs.answer("go");
+    expect(await answer).toBe("go");
+    expect(dialogs.getSnapshot()).toBeUndefined();
+  });
+
+  it("resolves to nothing when they cancel", async () => {
+    const dialogs = new Dialogs();
+    const answer = dialogs.choose(question);
+    dialogs.answer(undefined);
+    expect(await answer).toBeUndefined();
+  });
+
+  it("gives way to the next dialog, as a cancelled one", async () => {
+    const dialogs = new Dialogs();
+    const answer = dialogs.choose(question);
+    void dialogs.choose(question);
+    expect(await answer).toBeUndefined();
+  });
+});
+
 describe("a dialog for something that takes a while", () => {
   it("shows up, follows along and goes away", () => {
     const dialogs = new Dialogs();

@@ -1,6 +1,7 @@
 import { Feather, Search } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { TrialStatus } from "../properties/TrialStatus.tsx";
 import { formatCombo } from "../workbench/keys.ts";
 import { useLayout, useProject, useSession, useWorkbench } from "./context.ts";
 import { Menu } from "./Menu.tsx";
@@ -67,16 +68,20 @@ export function TitleBar() {
           ))}
         </div>
       )}
-      <button
-        type="button"
-        className={styles.search}
-        {...(paletteShortcut ? { "aria-keyshortcuts": paletteShortcut } : {})}
-        onClick={() => workbench.palette.toggle()}
-      >
-        <Search size={14} />
-        <span>{t("palette.title")}</span>
-        {paletteShortcut && <kbd aria-hidden="true">{paletteShortcut}</kbd>}
-      </button>
+      <div className={styles.end}>
+        {store && <TrialStatus />}
+        <button
+          type="button"
+          className={styles.search}
+          aria-label={t("palette.title")}
+          {...(paletteShortcut ? { "aria-keyshortcuts": paletteShortcut } : {})}
+          onClick={() => workbench.palette.toggle()}
+        >
+          <Search size={14} />
+          <span>{t("palette.title")}</span>
+          {paletteShortcut && <kbd aria-hidden="true">{paletteShortcut}</kbd>}
+        </button>
+      </div>
     </header>
   );
 }

@@ -59,13 +59,15 @@ export interface CommandDefinition<P = unknown> {
   readonly whileLocked?: boolean;
   /** Only people can do this, never an AI task. */
   readonly userOnly?: boolean;
+  /** Only people can use these parameters. */
+  readonly userOnlyParams?: readonly string[];
 }
 
 function define<S extends z.ZodType>(
   type: string,
   params: S,
   run: (draft: Draft, params: z.output<S>) => unknown,
-  options: Pick<CommandDefinition, "whileLocked" | "userOnly"> = {},
+  options: Pick<CommandDefinition, "whileLocked" | "userOnly" | "userOnlyParams"> = {},
 ): CommandDefinition {
   return { type, params, run: run as CommandDefinition["run"], ...options };
 }
@@ -143,7 +145,11 @@ function checkKeys(path: string, value: PropertyValue): void {
 }
 
 /** Only what gets written. Something else being wrong must not stop people from fixing it. */
-function checkWrite(path: string, before: PropertyValue | undefined, after: PropertyValue): void {
+export function checkWrite(
+  path: string,
+  before: PropertyValue | undefined,
+  after: PropertyValue,
+): void {
   const result = KnownProperties.safeParse({ [path]: after });
   if (!result.success) {
     const issue = result.error.issues[0];
@@ -370,8 +376,18 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "clip.add",
-    z.strictObject({ timeline: Id, track: Id, clip: ClipInput, overlap: Overlap }),
-    (draft, { timeline, track, clip, overlap }) => {
+    z.strictObject({
+      timeline: Id,
+      track: Id,
+      clip: ClipInput,
+      overlap: Overlap,
+      /**
+       * The clip that this one takes the place of, which went away earlier in the same batch. What
+       * people are trying goes along, so AI has no say in this: it does not even see that.
+       */
+      movedFrom: Id.optional(),
+    }),
+    (draft, { timeline, track, clip, overlap, movedFrom }) => {
       const target = timelineOf(draft, timeline);
       checkFits(editableTrack(target, track), clip);
       const id = clip.id ?? newId("clip");
@@ -381,8 +397,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
       makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
       draft.set(clipPath(timeline, id), added);
       extendToFit(draft, timeline, clipEnd(added));
+      if (movedFrom !== undefined) {
+        if (!draft.wentAway(clipPath(timeline, movedFrom))) {
+          fail("not-moved", `这一批改动没有移走这个片段：${movedFrom}`);
+        }
+        draft.note({ kind: "moved", from: movedFrom, to: id });
+      }
       return { id };
     },
+    { userOnlyParams: ["movedFrom"] },
   ),
 
   define(

@@ -183,7 +183,18 @@
     "mediaUnsupported": "这个浏览器解不了“{{name}}”，没有导入。",
     "mediaTooLarge": "“{{name}}”超过 2 GB，现在还导入不了。",
     "mediaSaveFailed": "“{{name}}”保存失败，可能是浏览器的存储空间不够。",
-    "previewCannotDecode": "有素材在这个浏览器里解不了或者找不到，预览里显示不出来。"
+    "previewCannotDecode": "有素材在这个浏览器里解不了或者找不到，预览里显示不出来。",
+    "trialOverwrote": "保存好了。其中 {{count}} 处别人也改过，用的是你的值。",
+    "trialDiscarded": "放弃了 {{count}} 处试改。撤销可以找回。",
+    "trialSetAside": "{{count}} 处试改现在用不上，比如片段不在了，先放着。片段回来后接着用，放弃全部试改时一起清掉。",
+    "trialBack": "放着的 {{count}} 处试改回来了。",
+    "trialAsideDropped": "放着的试改太多，最早的 {{count}} 处清掉了。",
+    "trialUnsure": "别的窗口改了有试改的片段，这里判断不了试改要不要跟着动，先没有动。看一下预览对不对。",
+    "trialRestored": "接着上次的试改，还有 {{count}} 处没有保存。",
+    "trialDropped": "上次的试改有些已经不合法了，这些没有恢复。",
+    "trialReadFailed": "上次的试改读不出来，记录没有动，稍后再试。这期间的试改还存不到这个浏览器。",
+    "trialKeepFailed": "试改无法存到这个浏览器，刷新或关闭页面后会丢失。可以先保存。",
+    "trialKeepRecovered": "试改又能存到这个浏览器了。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -267,7 +278,46 @@
     },
     "keybindings": {
       "title": "快捷键"
+    },
+    "settings": {
+      "title": "设置"
     }
+  },
+  "settings": {
+    "editing": "编辑",
+    "trial": "先试改再保存",
+    "trialHelp": "手动改属性和关键帧时先进入试改，预览马上生效，保存后才写进项目。关掉后每次改动立即保存。",
+    "trialPending": "还有 {{count}} 处试改，保存或放弃之后才生效。"
+  },
+  "trial": {
+    "label": "试改",
+    "count": "试改 {{count}} 处",
+    "conflicts": "{{count}} 处别人改过",
+    "conflictsHelp": "AI 或别的窗口在你试改时改了这些属性。预览仍然是你的试改，保存时用你的值。",
+    "compare": "对比",
+    "compareHelp": "在试改和已保存的内容之间切换，播放中也能切。",
+    "discard": "放弃",
+    "discardHelp": "放弃全部试改，回到已保存的内容。撤销可以找回。",
+    "discardProperty": "放弃这个属性的试改",
+    "save": "保存",
+    "saveHelp": "写进项目，是一步可以撤销的改动。",
+    "showingTrial": "试改",
+    "showingSaved": "已保存",
+    "backToTrial": "回到试改",
+    "changedElsewhere": "别人改过这里",
+    "action": {
+      "compare": "对比试改和已保存",
+      "discard": "放弃全部试改"
+    },
+    "leaveTitle": "有 {{count}} 处试改没有保存",
+    "leaveMessage": "保留到下次时，下次打开这个项目会接着试改，只在这台设备上。",
+    "keep": "保留到下次",
+    "notKeptTitle": "试改没有存到这台设备",
+    "notKeptMessage": "现在离开，这些试改会丢失。",
+    "exportTitle": "有 {{count}} 处试改没有保存",
+    "exportMessage": "导出的是已保存的内容，不包括试改。",
+    "exportSaved": "导出已保存的内容",
+    "exportWithTrial": "保存后导出"
   },
   "property": {
     "nothing": "选中时间轴上的片段，这里会显示它的属性和动画。",
@@ -277,7 +327,8 @@
     "goToClip": "跳到片段",
     "blocked": {
       "locked": "轨道已锁定，解锁后才能修改。",
-      "outside": "播放头不在这个片段上。"
+      "outside": "播放头不在这个片段上。",
+      "comparing": "正在看已保存的内容。"
     },
     "previousKey": "上一个关键帧",
     "nextKey": "下一个关键帧",

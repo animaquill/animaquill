@@ -28,31 +28,44 @@ const plan: RenderPlan = {
 
 describe("new curves on a layer", () => {
   it("change what was said and leave the rest", () => {
-    const { layers } = withChannels(plan, "a", { "transform.x": moved });
+    const { layers } = withChannels(plan, "a", { channels: { "transform.x": moved } });
     expect(layers[0]?.channels).toEqual({ "transform.x": moved, "transform.y": y });
   });
 
   it("do not touch the other layers", () => {
-    const { layers } = withChannels(plan, "a", { "transform.x": moved });
+    const { layers } = withChannels(plan, "a", { channels: { "transform.x": moved } });
     expect(layers[1]).toBe(plan.layers[1]);
   });
 
   it("can add a property", () => {
-    const { layers } = withChannels(plan, "b", { opacity: moved });
+    const { layers } = withChannels(plan, "b", { channels: { opacity: moved } });
     expect(layers[1]?.channels).toEqual({ "transform.x": x, opacity: moved });
   });
 
   it("can take one away, so that the layer goes back to the default", () => {
-    const { layers } = withChannels(plan, "a", { "transform.x": null });
+    const { layers } = withChannels(plan, "a", { channels: { "transform.x": null } });
     expect(layers[0]?.channels).toEqual({ "transform.y": y });
   });
 
   it("leave a plan alone that has no such layer, which is how a clip that left looks", () => {
-    expect(withChannels(plan, "gone", { opacity: moved }).layers).toEqual(plan.layers);
+    expect(withChannels(plan, "gone", { channels: { opacity: moved } }).layers).toEqual(
+      plan.layers,
+    );
   });
 
   it("leave the plan they came from as it was", () => {
-    withChannels(plan, "a", { "transform.x": moved });
+    withChannels(plan, "a", { channels: { "transform.x": moved } });
     expect(plan.layers[0]?.channels["transform.x"]).toBe(x);
+  });
+
+  it("can come with another way of fitting the media, which is no curve", () => {
+    const { layers } = withChannels(plan, "a", { channels: {}, fit: "cover" });
+    expect(layers[0]?.fit).toBe("cover");
+    expect(layers[0]?.channels).toEqual(plan.layers[0]?.channels);
+  });
+
+  it("leave the way of fitting alone when they say nothing about it", () => {
+    const { layers } = withChannels(plan, "a", { channels: { opacity: moved } });
+    expect(layers[0]?.fit).toBe("contain");
   });
 });

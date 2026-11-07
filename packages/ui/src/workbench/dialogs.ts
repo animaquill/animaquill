@@ -18,6 +18,20 @@ export interface ConfirmOptions {
   readonly details?: readonly DialogDetail[];
 }
 
+export interface ChoiceOptions {
+  readonly title: string;
+  readonly message: string;
+  /** In the order of the buttons. Cancelling is always there, in front of them. */
+  readonly choices: readonly DialogChoice[];
+}
+
+export interface DialogChoice {
+  readonly id: string;
+  readonly label: string;
+  /** What people most likely want, or what cannot be taken back. */
+  readonly kind?: "primary" | "danger";
+}
+
 export interface DialogDetail {
   readonly title: string;
   readonly items: readonly string[];
@@ -60,6 +74,7 @@ export type ProgressRequest = {
 export type DialogRequest =
   | ({ readonly kind: "prompt"; readonly id: number } & PromptOptions)
   | ({ readonly kind: "confirm"; readonly id: number } & ConfirmOptions)
+  | ({ readonly kind: "choice"; readonly id: number } & ChoiceOptions)
   | ProgressRequest;
 
 /** Asks one thing at a time and answers with a promise. */
@@ -81,6 +96,13 @@ export class Dialogs {
 
   async confirm(options: ConfirmOptions): Promise<boolean> {
     return (await this.#ask({ kind: "confirm", id: this.#nextId++, ...options })) === true;
+  }
+
+  /** Resolves to the id of the choice, or to undefined when cancelled. */
+  choose(options: ChoiceOptions): Promise<string | undefined> {
+    return this.#ask({ kind: "choice", id: this.#nextId++, ...options }) as Promise<
+      string | undefined
+    >;
   }
 
   /** Stays until `close`. Like every dialog it takes the place of the one before. */

@@ -8,6 +8,8 @@ export interface Host {
   readonly diagnostics?: DiagnosticsSink;
   /** The way to folders outside of the host, which is how projects get in and out. */
   readonly folders: FolderAccess;
+  /** Where what people are trying out waits until they save it or give up on it. */
+  readonly trials: TrialStore;
 }
 
 /** Receives what people chose to send about how the editor runs. */
@@ -50,6 +52,29 @@ export interface SettingsStore {
    * Returns how to stop listening.
    */
   listen(key: string, listener: (value: unknown) => void): () => void;
+}
+
+/**
+ * What is being tried out on projects, kept on this device only. It is not part of a project: it is
+ * there so that a reload or a crash costs nothing, and the host keeps whatever it gets as it is.
+ */
+export interface TrialStore {
+  /**
+   * Gets a window a place of its own on a project, since two windows try out different things. A
+   * window that was reloaded or crashed finds the place it had. Other places that no window has any
+   * more go to the next window that needs one, the most recent one first. Rejects when the host
+   * cannot keep anything.
+   */
+  open(project: string): Promise<TrialPlace>;
+}
+
+export interface TrialPlace {
+  /** Resolves to undefined when nothing is kept here. */
+  load(): Promise<unknown>;
+  /** Replaces what is kept. Undefined leaves nothing. Rejects when it could not be kept. */
+  save(trial: unknown): Promise<void>;
+  /** Lets go of the place. What is kept stays, for the next window. */
+  close(): void;
 }
 
 export interface ProjectSummary {

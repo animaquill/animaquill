@@ -67,13 +67,14 @@ function Dialog({ request }: { request: QuestionRequest }) {
   }, []);
 
   const isPrompt = request.kind === "prompt";
-  const danger = request.kind === "confirm" && request.danger === true;
+  const isConfirm = request.kind === "confirm";
+  const danger = isConfirm && request.danger === true;
   const details = request.kind === "confirm" ? (request.details ?? []) : [];
   const canConfirm = !isPrompt || value.trim().length > 0;
   const confirm = () => {
     if (canConfirm) dialogs.answer(isPrompt ? value.trim() : true);
   };
-  const dismiss = () => dialogs.answer(isPrompt ? undefined : false);
+  const dismiss = () => dialogs.answer(isConfirm ? false : undefined);
 
   const onKeyDown = (event: KeyboardEvent) => {
     // During composition Enter belongs to the input method.
@@ -99,7 +100,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
     >
       <div className={styles.content} onKeyDown={onKeyDown}>
         <h2>{request.title}</h2>
-        {request.kind === "confirm" && <p>{request.message}</p>}
+        {!isPrompt && <p>{request.message}</p>}
         {details.map(({ title, items }) => (
           <section key={title} className={styles.list}>
             <h3>{title}</h3>
@@ -120,19 +121,32 @@ function Dialog({ request }: { request: QuestionRequest }) {
           />
         )}
         <div className={styles.buttons}>
-          {!(request.kind === "confirm" && request.noticeOnly) && (
+          {!(isConfirm && request.noticeOnly) && (
             <button ref={cancel} type="button" onClick={dismiss}>
               {t("dialog.cancel")}
             </button>
           )}
-          <button
-            type="button"
-            className={danger ? styles.danger : styles.primary}
-            disabled={!canConfirm}
-            onClick={confirm}
-          >
-            {request.confirm}
-          </button>
+          {request.kind === "choice" ? (
+            request.choices.map(({ id, label, kind }) => (
+              <button
+                key={id}
+                type="button"
+                {...(kind ? { className: styles[kind] } : {})}
+                onClick={() => dialogs.answer(id)}
+              >
+                {label}
+              </button>
+            ))
+          ) : (
+            <button
+              type="button"
+              className={danger ? styles.danger : styles.primary}
+              disabled={!canConfirm}
+              onClick={confirm}
+            >
+              {request.confirm}
+            </button>
+          )}
         </div>
       </div>
     </dialog>

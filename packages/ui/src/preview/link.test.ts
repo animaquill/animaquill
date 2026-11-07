@@ -22,8 +22,9 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function setup() {
+function setup(hearsFirst?: (store: ProjectStore) => void) {
   const store = ProjectStore.create(createProject({ name: "预览" }));
+  hearsFirst?.(store);
   const main = () => store.getState().timelines["main"];
   const track = orderedTracks(main() as never).find(({ kind }) => kind === "video")?.id;
   const run = (call: CommandCall) => {
@@ -170,19 +171,105 @@ describe("a preview", () => {
     preview(showing({ opacity: 1, "transform.x": 10 }));
     preview(showing({ "transform.x": 20 }));
     const after = ofType("channels").slice(1);
-    expect(after).toHaveLength(2);
-    expect(after[0]?.channels).toEqual({ "transform.x": { kind: "still", value: 20 } });
-    expect(after[1]?.channels).toEqual({ opacity: { kind: "still", value: 0.5 } });
+    expect(after).toHaveLength(1);
+    expect(after[0]?.channels).toEqual({
+      "transform.x": { kind: "still", value: 20 },
+      opacity: { kind: "still", value: 0.5 },
+    });
   });
 
-  it("stays in the picture when a new plan comes in the middle of it", () => {
-    const { hello, preview, run, sent } = setup();
+  it("is part of a new plan that comes in the middle of it, so that it never leaves the picture", () => {
+    const { hello, preview, run, sent, ofType } = setup();
     hello();
     preview(showing({ "transform.x": 10 }));
     sent.length = 0;
     run(set("c", "opacity", 0.25));
-    expect(sent.map(({ type }) => type)).toEqual(["plan", "channels"]);
-    expect(sent[1]).toMatchObject({ channels: { "transform.x": { value: 10 } } });
+    expect(sent.map(({ type }) => type)).toEqual(["plan"]);
+    expect(ofType("plan")[0]?.plan.layers[0]?.channels).toMatchObject({
+      "transform.x": { value: 10 },
+      opacity: { value: 0.25 },
+    });
+  });
+
+  it("wins over what a new plan says about the same property", () => {
+    const { hello, preview, run, ofType } = setup();
+    hello();
+    preview(showing({ opacity: 1 }));
+    run(set("c", "opacity", 0.25));
+    expect(ofType("plan").at(-1)?.plan.layers[0]?.channels["opacity"]).toMatchObject({ value: 1 });
+  });
+
+  it("goes on from what the new plan has when it ends", () => {
+    const { hello, preview, run, ofType } = setup();
+    hello();
+    preview(showing({ opacity: 1 }));
+    run(set("c", "opacity", 0.25));
+    preview(new Map());
+    expect(ofType("channels").at(-1)?.channels).toEqual({
+      opacity: { kind: "still", value: 0.25 },
+    });
+  });
+
+  it("does not send what is the same as before, however much else is shown", () => {
+    const { hello, preview, ofType } = setup();
+    hello();
+    preview(showing({ opacity: 1, "transform.x": 10 }));
+    const before = ofType("channels").length;
+    preview(showing({ opacity: 1, "transform.x": 10 }));
+    expect(ofType("channels")).toHaveLength(before);
+    preview(showing({ opacity: 1, "transform.x": 20 }));
+    expect(ofType("channels").at(-1)?.channels).toEqual({
+      "transform.x": { kind: "still", value: 20 },
+    });
+  });
+
+  it("sends the way of fitting the media, which is no curve", () => {
+    const { hello, preview, ofType } = setup();
+    hello();
+    preview(showing({ fit: "cover" }));
+    expect(ofType("channels").at(-1)).toEqual({
+      type: "channels",
+      layer: "c",
+      channels: {},
+      fit: "cover",
+    });
+    preview(new Map());
+    expect(ofType("channels").at(-1)?.fit).toBe("contain");
+  });
+
+  it("gives back the way of fitting that the plan has", () => {
+    const { hello, preview, run, ofType } = setup();
+    hello();
+    run(set("c", "fit", "fixed"));
+    preview(showing({ fit: "cover" }));
+    preview(new Map());
+    expect(ofType("channels").at(-1)?.fit).toBe("fixed");
+  });
+
+  it("has the way of fitting in a new plan too", () => {
+    const { hello, preview, run, ofType } = setup();
+    hello();
+    preview(showing({ fit: "fixed" }));
+    run(set("c", "opacity", 0.25));
+    expect(ofType("plan").at(-1)?.plan.layers[0]?.fit).toBe("fixed");
+  });
+
+  it("ending with the project taking over does not bring back the old value for a moment", () => {
+    // What is being tried hears about a change before the link does, and ends the preview with it.
+    let onChange = () => {};
+    const { hello, preview, store, sent, ofType } = setup((early) => {
+      early.subscribe(() => onChange());
+    });
+    hello();
+    preview(showing({ opacity: 0.25 }));
+    sent.length = 0;
+    onChange = () => {
+      onChange = () => {};
+      preview(new Map());
+    };
+    store.execute(set("c", "opacity", 0.25));
+    expect(sent.map(({ type }) => type)).toEqual(["plan"]);
+    expect(ofType("plan")[0]?.plan.layers[0]?.channels["opacity"]).toMatchObject({ value: 0.25 });
   });
 
   it("has nothing to give back for a clip that left, and does not stumble over it", () => {
@@ -207,8 +294,9 @@ describe("a preview", () => {
     preview(showing({ "transform.x": 10 }));
     hello();
     expect(ofType("plan")).toHaveLength(2);
-    expect(ofType("channels").at(-1)?.channels).toEqual({
-      "transform.x": { kind: "still", value: 10 },
+    expect(ofType("plan").at(-1)?.plan.layers[0]?.channels["transform.x"]).toEqual({
+      kind: "still",
+      value: 10,
     });
   });
 });

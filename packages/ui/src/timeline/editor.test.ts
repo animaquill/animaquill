@@ -1762,6 +1762,27 @@ describe("changing the project from the keyboard and menus", () => {
       expect(Object.keys(main().clips)).toEqual(["a"]);
     });
 
+    it("says that what was cut goes on as the clip it became, and what was copied does not", async () => {
+      const { editor, addClip, main, store } = await setup();
+      addClip("a", 1, 1);
+      addClip("b", 3, 1);
+      const moves: unknown[] = [];
+      store.subscribe(() => moves.push(...(store.change?.facts ?? [])));
+      editor.selectAll();
+      editor.copySelection();
+      editor.seek(150);
+      editor.paste();
+      expect(moves).toEqual([]);
+
+      editor.seek(0);
+      editor.selectOnly("a");
+      editor.cutSelection();
+      editor.seek(300);
+      editor.paste();
+      const [added] = Object.values(main().clips).filter(({ start }) => start === "10");
+      expect(moves).toEqual([{ kind: "moved", from: "a", to: added?.id }]);
+    });
+
     it("can paste what was cut onto its own place", async () => {
       const { editor, addClip, main } = await setup();
       addClip("a", 1, 2);

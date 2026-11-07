@@ -1,7 +1,26 @@
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+/* Which of the two people are looking at, since that is the whole point of comparing them. */
+.showing {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 6px;
+  color: #1f1f1f;
+  font-size: 11px;
+  background: var(--aq-trial);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.showing[data-comparing] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-input);
 }
 
 .picture {

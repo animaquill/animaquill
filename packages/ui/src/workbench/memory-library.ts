@@ -5,6 +5,8 @@ import type {
   ProjectLibrary,
   ProjectLog,
   ProjectSummary,
+  TrialPlace,
+  TrialStore,
   WindowMemory,
 } from "@animaquill/host";
 
@@ -26,6 +28,48 @@ export function memoryWindow(): WindowMemory {
     read: (key) => values.get(key),
     write: (key, value) => void values.set(key, value),
   };
+}
+
+/** For tests: what is being tried out, kept the way a host does, by value. */
+export class MemoryTrials implements TrialStore {
+  /** What is kept, by project and then by place. */
+  readonly kept = new Map<string, Map<string, unknown>>();
+  /** Everything that was asked to be kept, in order. */
+  readonly writes: unknown[] = [];
+  /** The places windows have right now. */
+  readonly held = new Set<string>();
+  #nextPlace = 1;
+  failing = false;
+  /** Reading fails, which is something else than not being able to write. */
+  failingToRead = false;
+  /** Called while `save` writes, as if people kept working in the meantime. */
+  duringSave: (() => Promise<void> | void) | undefined;
+  /** Called while `load` reads, as if the disk was busy. */
+  duringLoad: (() => Promise<void> | void) | undefined;
+
+  async open(project: string): Promise<TrialPlace> {
+    if (this.failing) throw new Error("blocked");
+    const places = this.kept.get(project) ?? new Map<string, unknown>();
+    this.kept.set(project, places);
+    const free = [...places.keys()].toReversed().find((name) => !this.held.has(name));
+    const place = free ?? `place${this.#nextPlace++}`;
+    this.held.add(place);
+    return {
+      load: async () => {
+        await this.duringLoad?.();
+        if (this.failingToRead) throw new Error("damaged");
+        return structuredClone(places.get(place));
+      },
+      save: async (trial) => {
+        if (this.failing) throw new Error("quota");
+        await this.duringSave?.();
+        this.writes.push(trial);
+        if (trial === undefined) places.delete(place);
+        else places.set(place, structuredClone(trial));
+      },
+      close: () => void this.held.delete(place),
+    };
+  }
 }
 
 /** For tests: keeps projects in memory, and windows on the same project hear each other. */

@@ -127,6 +127,10 @@ function laterKeys(animation: Animation, by: Rational): Animation {
   return { ...animation, keys };
 }
 
+/** A value at another place on the clock of its clip. Only keys have a place. */
+export const laterValue = (value: PropertyValue, by: Rational): PropertyValue =>
+  isAnimation(value) ? laterKeys(value, by) : value;
+
 const laterProperties = <T extends Readonly<Record<string, PropertyValue>>>(
   properties: T,
   by: Rational,
@@ -143,6 +147,7 @@ const laterProperties = <T extends Readonly<Record<string, PropertyValue>>>(
  * its clock reads zero, which is the one thing its clock cannot do by itself.
  */
 function moveClockForward(draft: Draft, timeline: string, clip: ClipState, by: Rational): void {
+  draft.note({ kind: "clock", clip: clip.id, by: formatTime(by) });
   const path = clipPath(timeline, clip.id);
   for (const [name, value] of Object.entries(clip.properties ?? {})) {
     if (isAnimation(value)) draft.set([...path, "properties", name], laterKeys(value, by));
@@ -176,6 +181,25 @@ function moveClockForward(draft: Draft, timeline: string, clip: ClipState, by: R
     }
   });
 }
+
+/** How far a clip that went from one state to the other would have moved its clock forward. */
+function movedForward(was: ClipState, now: ClipState): Rational {
+  const offset = add(clipOffset(was), subtract(clipStart(now), clipStart(was)));
+  const grewPastZero =
+    isTimeless(now) &&
+    was.duration !== now.duration &&
+    compare(offset, ZERO) < 0 &&
+    compare(clipOffset(now), ZERO) === 0;
+  return grewPastZero ? subtract(ZERO, offset) : ZERO;
+}
+
+/**
+ * Whether two states of a clip look like its clock moved: by growing past zero, or by taking that
+ * back. Only a hint, because a clip can get there in other ways, and its keys stay where they are
+ * then. Who has seen it happen knows: see `ClipFact`.
+ */
+export const looksLikeClockMoved = (was: ClipState, now: ClipState): boolean =>
+  compare(movedForward(was, now), ZERO) !== 0 || compare(movedForward(now, was), ZERO) !== 0;
 
 type ClipChanges = NonNullable<Overrides["clips"]>[string];
 
@@ -238,6 +262,7 @@ export function splitClip(
 ): void {
   const { fadeIn: _fadeIn, offset: _offset, ...rest } = clip;
   const offset = add(clipOffset(clip), subtract(at, clipStart(clip)));
+  draft.note({ kind: "cut", clip: clip.id, piece: rightId });
   draft.set(clipPath(timeline, rightId), {
     ...rest,
     id: rightId,

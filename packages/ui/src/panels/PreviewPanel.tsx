@@ -9,12 +9,14 @@ import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
 
 export function PreviewPanel() {
-  const { timeline, properties, projects, media, compositorUrl, notifications, diagnostics } =
-    useWorkbench();
+  const workbench = useWorkbench();
+  const { timeline, properties, trials, projects, media, compositorUrl } = workbench;
+  const { notifications, diagnostics } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
+  const { count, comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
   const picture = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -50,6 +52,11 @@ export function PreviewPanel() {
         sandbox="allow-scripts"
         tabIndex={-1}
       />
+      {count > 0 && (
+        <div className={styles.showing} data-comparing={comparing || undefined} role="status">
+          {comparing ? t("trial.showingSaved") : t("trial.showingTrial")}
+        </div>
+      )}
       <div className={styles.transport} role="toolbar" aria-label={t("timeline.transport")}>
         <div className={styles.buttons}>
           <ToolButton

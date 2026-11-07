@@ -16,6 +16,7 @@ import {
   MonitorPlay,
   Music,
   Rows3,
+  Settings,
   SlidersHorizontal,
   SquareTerminal,
   TriangleAlert,
@@ -29,6 +30,7 @@ import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
+import { SettingsPanel } from "./SettingsPanel.tsx";
 import styles from "./Placeholder.module.css";
 
 type Type = {
@@ -41,7 +43,14 @@ type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
 function planned(
   type: Exclude<
     Type,
-    "unknown" | "keybindings" | "timeline" | "preview" | "assets" | "performance" | "properties"
+    | "unknown"
+    | "keybindings"
+    | "timeline"
+    | "preview"
+    | "assets"
+    | "performance"
+    | "properties"
+    | "settings"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -98,6 +107,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     icon: Keyboard,
     area: "center",
     component: KeybindingsPanel,
+  },
+  {
+    type: "settings",
+    title: (t) => t("panel.settings.title"),
+    icon: Settings,
+    area: "center",
+    component: SettingsPanel,
   },
   {
     type: "properties",

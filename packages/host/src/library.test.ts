@@ -1,4 +1,4 @@
-import { IDBFactory } from "fake-indexeddb";
+import { IDBDatabase, IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBrowserHost } from "./browser.ts";
 import type { ProjectLog } from "./index.ts";
@@ -35,17 +35,37 @@ class Locks {
 
 /** A browser with its database. Every window gets a library of its own on the same data. */
 function browser(locks: Locks | undefined = new Locks()) {
-  const factory = new IDBFactory();
-  const window = () =>
+  const real = new IDBFactory();
+  /** The database for what is being tried can fail on its own. */
+  const state = { trialsBroken: false };
+  const factory = new Proxy(real, {
+    get(target, name) {
+      if (name !== "open") return Reflect.get(target, name) as unknown;
+      return (database: string, version?: number) => {
+        if (state.trialsBroken && database === "animaquill-trials") throw new Error("broken");
+        return target.open(database, version);
+      };
+    },
+  });
+  /** What a tab remembers: a reload keeps it, and a new window starts without. */
+  const tab = () => {
+    const values = new Map<string, string>();
+    return {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    } as Storage;
+  };
+  const host = (memory = tab()) =>
     createBrowserHost(
       () => ({}) as Storage,
       () => factory,
-      () => ({}) as Storage,
+      () => memory,
       () => locks as unknown as LockManager | undefined,
-    ).projects;
-  const raw = async <T>(work: (database: IDBDatabase) => Promise<T>) => {
+    );
+  const window = () => host().projects;
+  const raw = async <T>(work: (database: IDBDatabase) => Promise<T>, name = "animaquill") => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const open = factory.open("animaquill");
+      const open = real.open(name);
       open.addEventListener("success", () => resolve(open.result));
       open.addEventListener("error", () => reject(open.error));
     });
@@ -76,7 +96,39 @@ function browser(locks: Locks | undefined = new Locks()) {
           transaction.addEventListener("complete", () => resolve());
         }),
     );
-  return { library: window(), window, locks, records, change };
+  const trialRecords = () =>
+    raw(
+      (database) =>
+        new Promise<Record<string, unknown>[]>((resolve) => {
+          const request = database.transaction("trials").objectStore("trials").getAll();
+          request.addEventListener("success", () => resolve(request.result));
+        }),
+      "animaquill-trials",
+    );
+  const addTrialRecord = (record: object) =>
+    raw(
+      (database) =>
+        new Promise<void>((resolve) => {
+          const transaction = database.transaction("trials", "readwrite");
+          transaction.objectStore("trials").put(record);
+          transaction.addEventListener("complete", () => resolve());
+        }),
+      "animaquill-trials",
+    );
+  return {
+    library: window(),
+    window,
+    trials: () => host().trials,
+    host,
+    tab,
+    state,
+    locks,
+    records,
+    change,
+    factory: real,
+    trialRecords,
+    addTrialRecord,
+  };
 }
 
 const open: ProjectLog[] = [];
@@ -382,5 +434,316 @@ describe("a project saved before projects told each other apart", () => {
     second.listen(heard);
     await first.append(UPDATE, "名字");
     await vi.waitFor(() => expect(heard).toHaveBeenCalled());
+  });
+});
+
+describe("what is being tried out", () => {
+  async function setup(locks?: Locks | null) {
+    const opened = browser(locks === null ? (null as unknown as undefined) : locks);
+    await opened.library.create(PROJECT, STATE);
+    return opened;
+  }
+
+  it("has nothing to give in a place nobody used", async () => {
+    const { trials } = await setup();
+    const place = await trials().open(PROJECT.id);
+    expect(await place.load()).toBeUndefined();
+  });
+
+  it("reads back what it kept, as it was", async () => {
+    const { trials } = await setup();
+    const place = await trials().open(PROJECT.id);
+    await place.save({ changes: [{ value: 1 }] });
+    expect(await place.load()).toEqual({ changes: [{ value: 1 }] });
+  });
+
+  it("gives every window a place of its own", async () => {
+    const { trials } = await setup();
+    const first = await trials().open(PROJECT.id);
+    await first.save("一");
+    const second = await trials().open(PROJECT.id);
+    expect(await second.load()).toBeUndefined();
+    await second.save("二");
+    expect(await first.load()).toBe("一");
+  });
+
+  it("gives a place back to the window that comes after a reload", async () => {
+    const { trials, locks } = await setup();
+    await (await trials().open(PROJECT.id)).save("试改");
+    locks.dropAll();
+    expect(await (await trials().open(PROJECT.id)).load()).toBe("试改");
+  });
+
+  it("gives a place to the next window after closing", async () => {
+    const { trials } = await setup();
+    const first = await trials().open(PROJECT.id);
+    await first.save("试改");
+    first.close();
+    await vi.waitFor(async () => {
+      const place = await trials().open(PROJECT.id);
+      expect(await place.load()).toBe("试改");
+    });
+  });
+
+  it("waits a moment for a page that is going away", async () => {
+    const { trials } = await setup();
+    const first = await trials().open(PROJECT.id);
+    await first.save("试改");
+    const coming = trials().open(PROJECT.id);
+    setTimeout(() => first.close(), 50);
+    expect(await (await coming).load()).toBe("试改");
+  });
+
+  it("gives a window that comes back what it left, not what another window left later", async () => {
+    const { host, tab } = await setup();
+    const mine = tab();
+    const window = await host(mine).trials.open(PROJECT.id);
+    await window.save("这个窗口的");
+    const other = await host().trials.open(PROJECT.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await other.save("别的窗口的，时间更新");
+    other.close();
+    window.close();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const reloaded = await host(mine).trials.open(PROJECT.id);
+    expect(await reloaded.load()).toBe("这个窗口的");
+  });
+
+  it("waits for its own place for as long as the page before it can take", async () => {
+    const { host, tab } = await setup();
+    const mine = tab();
+    const before = await host(mine).trials.open(PROJECT.id);
+    await before.save("试改");
+    const coming = host(mine).trials.open(PROJECT.id);
+    setTimeout(() => before.close(), 800);
+    const started = Date.now();
+    expect(await (await coming).load()).toBe("试改");
+    expect(Date.now() - started).toBeGreaterThan(500);
+  });
+
+  it("gets a place of its own in a tab that got duplicated, after that wait", async () => {
+    const { host, tab } = await setup();
+    const mine = tab();
+    const original = await host(mine).trials.open(PROJECT.id);
+    await original.save("原来的");
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 1000));
+    const copy = await host(mine).trials.open(PROJECT.id);
+    vi.restoreAllMocks();
+    expect(await copy.load()).toBeUndefined();
+    await copy.save("副本的");
+    expect(await original.load()).toBe("原来的");
+  });
+
+  it("remembers a place it took over", async () => {
+    const { host, tab, locks } = await setup();
+    await (await host().trials.open(PROJECT.id)).save("别的窗口留下的");
+    locks.dropAll();
+    const mine = tab();
+    const taken = await host(mine).trials.open(PROJECT.id);
+    expect(await taken.load()).toBe("别的窗口留下的");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await (await host().trials.open(PROJECT.id)).save("更新的");
+    locks.dropAll();
+    expect(await (await host(mine).trials.open(PROJECT.id)).load()).toBe("别的窗口留下的");
+  });
+
+  it("does not take what another window is working on", async () => {
+    const { trials } = await setup();
+    const first = await trials().open(PROJECT.id);
+    await first.save("一");
+    const second = await trials().open(PROJECT.id);
+    expect(await second.load()).toBeUndefined();
+    await second.save("二");
+    await expect(first.load()).resolves.toBe("一");
+  });
+
+  it("goes for the most recent of what windows left behind", async () => {
+    const { trials, locks } = await setup();
+    const older = await trials().open(PROJECT.id);
+    const newer = await trials().open(PROJECT.id);
+    await older.save("旧");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await newer.save("新");
+    locks.dropAll();
+    expect(await (await trials().open(PROJECT.id)).load()).toBe("新");
+    expect(await (await trials().open(PROJECT.id)).load()).toBe("旧");
+  });
+
+  it("leaves nothing behind when there is nothing left to keep", async () => {
+    const { trials, locks, trialRecords } = await setup();
+    const place = await trials().open(PROJECT.id);
+    await place.save("试改");
+    await place.save(undefined);
+    locks.dropAll();
+    expect(await (await trials().open(PROJECT.id)).load()).toBeUndefined();
+    expect(await trialRecords()).toEqual([]);
+  });
+
+  it("keeps projects apart", async () => {
+    const { trials, library } = await setup();
+    await library.create({ id: "project_b", name: "别的" }, STATE);
+    await (await trials().open(PROJECT.id)).save("试改");
+    expect(await (await trials().open("project_b")).load()).toBeUndefined();
+  });
+
+  it("goes away with the project", async () => {
+    const { trials, library, locks, trialRecords } = await setup();
+    await (await trials().open(PROJECT.id)).save("试改");
+    await library.remove(PROJECT.id);
+    expect(await trialRecords()).toEqual([]);
+    locks.dropAll();
+    await library.create(PROJECT, STATE);
+    expect(await (await trials().open(PROJECT.id)).load()).toBeUndefined();
+  });
+
+  it("does not take what a project with the same id left behind", async () => {
+    const { trials, addTrialRecord } = await setup();
+    (await trials().open(PROJECT.id)).close();
+    await addTrialRecord({
+      project: PROJECT.id,
+      place: "old",
+      instance: "another",
+      savedAt: 1,
+      trial: "旧",
+    });
+    expect(await (await trials().open(PROJECT.id)).load()).toBeUndefined();
+  });
+
+  it("goes for what this project left, also when one with the same id wrote later", async () => {
+    const { host, library, addTrialRecord } = await setup();
+    await library.create({ id: "project_b", name: "别的" }, STATE);
+    const first = await host().trials.open(PROJECT.id);
+    await first.save("这个项目的");
+    first.close();
+    const { trials } = host();
+    await trials.open("project_b");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await addTrialRecord({
+      project: PROJECT.id,
+      place: "old",
+      instance: "another",
+      savedAt: Date.now() + 1000,
+      trial: "旧",
+    });
+    expect(await (await trials.open(PROJECT.id)).load()).toBe("这个项目的");
+  });
+
+  it("does not take what one with the same id left in the place of this window", async () => {
+    const { host, tab, library, state } = await setup();
+    await library.create({ id: "project_b", name: "别的" }, STATE);
+    const { trials } = host(tab());
+    const first = await trials.open(PROJECT.id);
+    await first.save("删掉的项目的");
+    first.close();
+    state.trialsBroken = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await library.remove(PROJECT.id);
+    vi.restoreAllMocks();
+    state.trialsBroken = false;
+    await library.create(PROJECT, STATE);
+    expect(await (await trials.open(PROJECT.id)).load()).toBeUndefined();
+  });
+
+  it("leaves nothing behind for a project that is gone, whatever a window went on writing", async () => {
+    const { trials, library, trialRecords } = await setup();
+    await library.create({ id: "project_b", name: "别的" }, STATE);
+    const place = await trials().open(PROJECT.id);
+    await library.remove(PROJECT.id);
+    await place.save("试改");
+    expect(await trialRecords()).toHaveLength(1);
+    await trials().open("project_b");
+    await vi.waitFor(async () => expect(await trialRecords()).toEqual([]));
+  });
+
+  it("does not take a project with the same id for the one it was opened for", async () => {
+    const { trials, library } = await setup();
+    const place = await trials().open(PROJECT.id);
+    await library.remove(PROJECT.id);
+    await library.create(PROJECT, STATE);
+    await place.save("试改");
+    expect(await (await trials().open(PROJECT.id)).load()).toBeUndefined();
+  });
+
+  it("starts writing at once, because the page may be on its way out", async () => {
+    const { trials } = await setup();
+    const place = await trials().open(PROJECT.id);
+    await place.save("先连上数据库");
+    const transaction = vi.spyOn(IDBDatabase.prototype, "transaction");
+    const saving = place.save("试改");
+    // Only what is already done can get through here: nothing that has to wait for a database.
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    const stores = transaction.mock.calls.map(([names]) => names);
+    vi.restoreAllMocks();
+    expect(stores).toEqual(["trials"]);
+    await saving;
+    expect(await place.load()).toBe("试改");
+  });
+
+  it("makes do with one place for all windows where there are no locks", async () => {
+    const { trials } = await setup(null);
+    await (await trials().open(PROJECT.id)).save("试改");
+    expect(await (await trials().open(PROJECT.id)).load()).toBe("试改");
+  });
+
+  it("stays out of the database of the projects, so that pages still open there go on", async () => {
+    const { factory, library, trials, records } = await setup();
+    const old = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("animaquill");
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    const told = vi.fn();
+    old.addEventListener("versionchange", told);
+    const place = await trials().open(PROJECT.id);
+    await place.save("试改");
+    expect(await place.load()).toBe("试改");
+    expect(told).not.toHaveBeenCalled();
+    expect(old.version).toBe(2);
+    expect([...old.objectStoreNames]).toEqual(["media", "projects", "updates"]);
+    old.close();
+    expect((await library.list()).map(({ id }) => id)).toEqual([PROJECT.id]);
+    expect(await records()).toHaveLength(1);
+  });
+
+  it("does not get in the way of removing a project when it cannot be reached", async () => {
+    const { library, trials, state, trialRecords } = await setup();
+    await (await trials().open(PROJECT.id)).save("试改");
+    state.trialsBroken = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await library.remove(PROJECT.id);
+    vi.restoreAllMocks();
+    state.trialsBroken = false;
+    expect((await library.list()).map(({ id }) => id)).toEqual([]);
+    expect(await trialRecords()).toHaveLength(1);
+  });
+
+  it("gets swept up later when that happened, and what is in use stays", async () => {
+    const { library, trials, state, trialRecords } = await setup();
+    await library.create({ id: "project_b", name: "别的" }, STATE);
+    await (await trials().open(PROJECT.id)).save("试改");
+    await (await trials().open("project_b")).save("还在用");
+    state.trialsBroken = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await library.remove(PROJECT.id);
+    vi.restoreAllMocks();
+    state.trialsBroken = false;
+    await trials().open("project_b");
+    await vi.waitFor(async () => expect(await trialRecords()).toHaveLength(1));
+    expect((await trialRecords())[0]).toMatchObject({ project: "project_b" });
+  });
+
+  it("sweeps up what a project with the same id left behind as well", async () => {
+    const { trials, addTrialRecord, trialRecords } = await setup();
+    (await trials().open(PROJECT.id)).close();
+    await addTrialRecord({
+      project: PROJECT.id,
+      place: "old",
+      instance: "another",
+      savedAt: 1,
+      trial: "旧",
+    });
+    await trials().open(PROJECT.id);
+    await vi.waitFor(async () => expect(await trialRecords()).toEqual([]));
   });
 });

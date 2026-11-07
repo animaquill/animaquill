@@ -12,6 +12,7 @@ import { toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
+import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
@@ -61,6 +62,7 @@ export class Workbench {
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
+  readonly trials: TrialSession;
   readonly properties: PropertyWriter;
   readonly input: InputMode;
   readonly media: MediaLibrary;
@@ -122,7 +124,21 @@ export class Workbench {
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
-    this.properties = new PropertyWriter(this.session, this.timeline, {
+    this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
+      commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
+      discarded: (count) => this.notifications.push(t("notice.trialDiscarded", { count })),
+      setAside: (count) => this.notifications.push(t("notice.trialSetAside", { count })),
+      back: (count) => this.notifications.push(t("notice.trialBack", { count })),
+      asideDropped: (count) => this.notifications.push(t("notice.trialAsideDropped", { count })),
+      unsure: () => this.notifications.push(t("notice.trialUnsure")),
+      restored: (count) => this.notifications.push(t("notice.trialRestored", { count })),
+      dropped: () => this.notifications.push(t("notice.trialDropped")),
+      readFailed: () => this.notifications.push(t("notice.trialReadFailed")),
+      keepFailed: () => this.notifications.push(t("notice.trialKeepFailed")),
+      keepRecovered: () => this.notifications.push(t("notice.trialKeepRecovered")),
+    });
+    this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
     for (const panel of panels) this.panels.register(panel);
@@ -140,6 +156,7 @@ export class Workbench {
       this.palette.load(),
       this.timeline.load(),
       this.input.load(),
+      this.trials.load(),
     ]);
     await this.session.restore();
   }
@@ -309,9 +326,76 @@ export class Workbench {
     }
   }
 
+  /**
+   * Saves what is being tried. Without that every change is saved already, and people only press this
+   * out of habit, so there is nothing to do but try again what could not be saved, and to keep the
+   * browser from answering with its dialog for saving the web page.
+   */
+  async save(): Promise<void> {
+    // A number that is still being typed is part of what people mean to save.
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLInputElement) {
+      if (document.activeElement.matches('[role="spinbutton"]')) document.activeElement.blur();
+    }
+    if (this.trials.getSnapshot().count > 0) this.trials.save();
+    else await this.session.trySave();
+  }
+
+  /** An export is what is saved, which is not what people have been looking at while trying. */
+  async exportProject(): Promise<void> {
+    const { t } = this;
+    const { count } = this.trials.getSnapshot();
+    if (count > 0) {
+      const answer = await this.dialogs.choose({
+        title: t("trial.exportTitle", { count }),
+        message: t("trial.exportMessage"),
+        choices: [
+          { id: "saved", label: t("trial.exportSaved") },
+          { id: "save", label: t("trial.exportWithTrial"), kind: "primary" },
+        ],
+      });
+      if (answer === undefined || (answer === "save" && !this.trials.save())) return;
+    }
+    await this.transfer.exportProject();
+  }
+
+  /** Resolves to false when people would rather stay with what they are trying out. */
+  async #settleTrial(): Promise<boolean> {
+    await this.trials.settle();
+    const { count } = this.trials.getSnapshot();
+    if (count === 0) return !this.trials.notKept || this.#leaveWithoutKeeping();
+    const { t } = this;
+    const answer = await this.dialogs.choose({
+      title: t("trial.leaveTitle", { count }),
+      message: t("trial.leaveMessage"),
+      choices: [
+        { id: "discard", label: t("trial.discard"), kind: "danger" },
+        { id: "keep", label: t("trial.keep") },
+        { id: "save", label: t("trial.save"), kind: "primary" },
+      ],
+    });
+    if (answer === undefined) return false;
+    if (answer === "save") return this.trials.save();
+    if (answer === "discard") {
+      this.trials.discard();
+      return true;
+    }
+    return (await this.trials.settle()) || this.#leaveWithoutKeeping();
+  }
+
+  #leaveWithoutKeeping(): Promise<boolean> {
+    const { t } = this;
+    return this.dialogs.confirm({
+      title: t("trial.notKeptTitle"),
+      message: t("trial.notKeptMessage"),
+      confirm: t("project.leaveAnyway"),
+      danger: true,
+    });
+  }
+
   /** Resolves to false when people would rather stay with what could not be saved. */
   async #leaveProject(): Promise<boolean> {
     if (!this.session.store) return true;
+    if (!(await this.#settleTrial())) return false;
     if (!(await this.session.trySave())) {
       const { t } = this;
       const leave = await this.dialogs.confirm({
@@ -342,12 +426,10 @@ export class Workbench {
       menu: { name: "file", group: "open" },
       enabled: isOpen,
     });
-    // Every change is saved right away. Still, people press this out of habit, and the browser
-    // would answer with its dialog for saving the web page.
     this.actions.register({
       id: "project.save",
       title: (t) => t("project.save"),
-      run: () => void this.session.trySave(),
+      run: () => void this.save(),
       keys: ["mod+s"],
       menu: { name: "file", group: "project" },
       enabled: isOpen,
@@ -382,7 +464,7 @@ export class Workbench {
     this.actions.register({
       id: "project.exportFolder",
       title: (t) => t("transfer.exportAction"),
-      run: () => void this.transfer.exportProject(),
+      run: () => void this.exportProject(),
       menu: { name: "file", group: "folder" },
       enabled: isOpen,
     });
@@ -420,18 +502,41 @@ export class Workbench {
     this.actions.register({
       id: "edit.undo",
       title: (t) => t("edit.undo"),
-      run: () => this.#stepThroughHistory((store) => store.undo()),
+      run: () => {
+        if (this.trials.undoesFirst) this.trials.undo();
+        else this.#stepThroughHistory((store) => store.undo());
+      },
       keys: ["mod+z"],
       menu: { name: "edit", group: "history" },
-      enabled: () => this.session.store?.canUndo === true,
+      enabled: () => this.session.store?.canUndo === true || this.trials.canUndo,
     });
     this.actions.register({
       id: "edit.redo",
       title: (t) => t("edit.redo"),
-      run: () => this.#stepThroughHistory((store) => store.redo()),
+      run: () => {
+        if (this.trials.redoesFirst) this.trials.redo();
+        else this.#stepThroughHistory((store) => store.redo());
+      },
       keys: ["mod+shift+z", "mod+y"],
       menu: { name: "edit", group: "history" },
-      enabled: () => this.session.store?.canRedo === true,
+      enabled: () => this.session.store?.canRedo === true || this.trials.canRedo,
+    });
+    this.actions.register({
+      id: "trial.compare",
+      title: (t) => t("trial.action.compare"),
+      run: () => this.trials.toggleCompare(),
+      menu: { name: "edit", group: "trial" },
+      enabled: () => this.trials.getSnapshot().count > 0,
+    });
+    this.actions.register({
+      id: "trial.discard",
+      title: (t) => t("trial.action.discard"),
+      run: () => this.trials.discard(),
+      menu: { name: "edit", group: "trial" },
+      enabled: () => {
+        const { count, setAside } = this.trials.getSnapshot();
+        return count + setAside > 0;
+      },
     });
   }
 

@@ -2,8 +2,9 @@ import type { PropertyEdit } from "@animaquill/core";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { PropertySpec, ValueType } from "@animaquill/schema";
-import { useSyncExternalStore, type ComponentType, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { PopupMenu } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import {
@@ -50,6 +51,7 @@ function NumberControl({ row, label, readOnly, onPreview, onCommit, onCancel }: 
       automatic={row.automatic}
       placeholder={t("property.automatic")}
       animated={row.animated}
+      tried={row.tried}
       readOnly={readOnly}
       onPreview={onPreview}
       onCommit={onCommit}
@@ -66,6 +68,7 @@ function ChoiceControl({ row, label, readOnly, onCommit }: ControlProps) {
       className={styles.choice}
       aria-label={label}
       disabled={readOnly}
+      data-tried={row.tried || undefined}
       value={String(value)}
       onChange={(event) => onCommit(event.target.value)}
     >
@@ -126,9 +129,10 @@ interface RowProps {
 }
 
 function Row({ inspection, row, startsGroup }: RowProps) {
-  const { properties, timeline } = useWorkbench();
+  const { properties, timeline, trials } = useWorkbench();
   const { t } = useTranslation();
-  const { spec, path, animated, keyTime, previousKey, nextKey, stored } = row;
+  const [menu, setMenu] = useState<{ readonly x: number; readonly y: number }>();
+  const { spec, path, animated, keyTime, previousKey, nextKey, stored, tried } = row;
   const { box, blocked, time } = inspection;
   const name = nameOf(t, spec);
   const { group } = spec;
@@ -140,79 +144,109 @@ function Row({ inspection, row, startsGroup }: RowProps) {
   const reset: PropertyEdit = { owner: { clip: box.id }, path, op: "clear" };
 
   return (
-    <div className={styles.row} role="group" aria-label={label}>
-      {group === undefined ? (
-        <span className={styles.name}>{name}</span>
-      ) : (
-        <>
-          <span className={styles.group}>{startsGroup ? groupOf(t, group) : ""}</span>
-          <span className={styles.part}>{name}</span>
-        </>
-      )}
-      <Control
-        row={row}
-        label={label}
-        readOnly={readOnly}
-        onPreview={(number) => properties.preview([writeEdit(box.id, row, time, number)])}
-        // The playhead can leave the clip while a value is still in somebody's hands.
-        onCommit={(number) => {
-          if (readOnly) properties.cancel();
-          else properties.commit([writeEdit(box.id, row, time, number)]);
+    <>
+      <div
+        className={styles.row}
+        role="group"
+        aria-label={label}
+        data-tried={tried || undefined}
+        onContextMenu={(event) => {
+          if (!tried) return;
+          event.preventDefault();
+          setMenu({ x: event.clientX, y: event.clientY });
         }}
-        onCancel={() => properties.cancel()}
-      />
-      <div className={styles.rowButtons}>
-        {spec.animatable !== false && (
+      >
+        {group === undefined ? (
+          <span className={styles.name}>{name}</span>
+        ) : (
           <>
-            <RowButton
-              name={t("property.previousKey")}
-              usage={t("property.help.previousKey")}
-              unavailable={previousKey === undefined}
-              onClick={() => timeline.seek(previousKey as number)}
-            >
-              <ChevronLeft size={13} />
-            </RowButton>
-            <RowButton
-              name={onKey ? t("property.removeKey") : t("property.addKey")}
-              usage={animated ? t("property.help.key") : t("property.help.firstKey")}
-              unavailable={readOnly || key === undefined}
-              pressed={onKey}
-              onClick={() => {
-                if (key) properties.commit([key]);
-              }}
-            >
-              <Diamond
-                size={12}
-                className={animated ? styles.keyed : undefined}
-                {...(onKey ? { fill: "currentColor" } : {})}
-              />
-            </RowButton>
-            <RowButton
-              name={t("property.nextKey")}
-              usage={t("property.help.nextKey")}
-              unavailable={nextKey === undefined}
-              onClick={() => timeline.seek(nextKey as number)}
-            >
-              <ChevronRight size={13} />
-            </RowButton>
+            <span className={styles.group}>{startsGroup ? groupOf(t, group) : ""}</span>
+            <span className={styles.part}>{name}</span>
           </>
         )}
-        <RowButton
-          name={t("property.reset")}
-          usage={t("property.help.reset")}
-          unavailable={readOnly || stored === undefined}
-          onClick={() => properties.commit([reset])}
-        >
-          <RotateCcw size={12} />
-        </RowButton>
+        <Control
+          row={row}
+          label={label}
+          readOnly={readOnly}
+          onPreview={(number) => properties.preview([writeEdit(box.id, row, time, number)])}
+          // The playhead can leave the clip while a value is still in somebody's hands.
+          onCommit={(number) => {
+            if (readOnly) properties.cancel();
+            else properties.commit([writeEdit(box.id, row, time, number)]);
+          }}
+          onCancel={() => properties.cancel()}
+        />
+        <div className={styles.rowButtons}>
+          {spec.animatable !== false && (
+            <>
+              <RowButton
+                name={t("property.previousKey")}
+                usage={t("property.help.previousKey")}
+                unavailable={previousKey === undefined}
+                onClick={() => timeline.seek(previousKey as number)}
+              >
+                <ChevronLeft size={13} />
+              </RowButton>
+              <RowButton
+                name={onKey ? t("property.removeKey") : t("property.addKey")}
+                usage={animated ? t("property.help.key") : t("property.help.firstKey")}
+                unavailable={readOnly || key === undefined}
+                pressed={onKey}
+                onClick={() => {
+                  if (key) properties.commit([key]);
+                }}
+              >
+                <Diamond
+                  size={12}
+                  className={animated ? styles.keyed : undefined}
+                  {...(onKey ? { fill: "currentColor" } : {})}
+                />
+              </RowButton>
+              <RowButton
+                name={t("property.nextKey")}
+                usage={t("property.help.nextKey")}
+                unavailable={nextKey === undefined}
+                onClick={() => timeline.seek(nextKey as number)}
+              >
+                <ChevronRight size={13} />
+              </RowButton>
+            </>
+          )}
+          <RowButton
+            name={t("property.reset")}
+            usage={t("property.help.reset")}
+            unavailable={readOnly || stored === undefined}
+            onClick={() => properties.commit([reset])}
+          >
+            <RotateCcw size={12} />
+          </RowButton>
+        </div>
       </div>
-    </div>
+      {row.changedElsewhere && <p className={styles.elsewhere}>{t("trial.changedElsewhere")}</p>}
+      {menu && (
+        <PopupMenu
+          label={label}
+          x={menu.x}
+          y={menu.y}
+          groups={[
+            [
+              {
+                id: "discard",
+                label: t("trial.discardProperty"),
+                run: () => trials.discardProperty(box.id, path),
+              },
+            ],
+          ]}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
+    </>
   );
 }
 
 /** Says why the controls do not react, and how to change that when something can be done. */
 function BlockedHint({ blocked, firstFrame }: { blocked: Blocked; firstFrame: number }) {
-  const { timeline } = useWorkbench();
+  const { timeline, trials } = useWorkbench();
   const { t } = useTranslation();
   return (
     <div className={styles.hint} role="status">
@@ -224,6 +258,11 @@ function BlockedHint({ blocked, firstFrame }: { blocked: Blocked; firstFrame: nu
           onClick={() => timeline.seek(firstFrame)}
         >
           {t("property.goToClip")}
+        </button>
+      )}
+      {blocked === "comparing" && (
+        <button type="button" className={styles.hintButton} onClick={() => trials.toggleCompare()}>
+          {t("trial.backToTrial")}
         </button>
       )}
     </div>
@@ -271,14 +310,17 @@ function Message({ text }: { text: string }) {
 }
 
 export function PropertiesPanel() {
-  const { timeline } = useWorkbench();
+  const { timeline, trials } = useWorkbench();
   const { t } = useTranslation();
   const { store } = useSession();
   const state = useProject(store);
   const { model, selection } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
+  const { comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
   const inspection: Inspection =
-    state && model ? inspect(state, model, selection, frame) : { kind: "nothing" };
+    state && model
+      ? inspect(state, model, selection, frame, { look: trials.look, comparing })
+      : { kind: "nothing" };
 
   return (
     // Focusable, so that the keyboard has somewhere to go after a field, without a frame around it.

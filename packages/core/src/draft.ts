@@ -1,3 +1,4 @@
+import { ZERO, formatTime, parseTime, subtract } from "@animaquill/schema";
 import type { ProjectState } from "./model.ts";
 import { Mutator, diff, getIn, settled, settledPatch, type Patch } from "./patch.ts";
 import { touchesLockedTrack } from "./references.ts";
@@ -18,6 +19,39 @@ export class CommandError extends Error {
 export const fail = (code: string, message: string): never => {
   throw new CommandError(code, message);
 };
+
+/**
+ * What a change did to clips, beyond the fields it wrote. The document only has the outcome, and the
+ * same outcome can have different reasons: a clip that starts earlier can have grown, with its keys
+ * moving along, or it can have been given a new start. Whatever depends on the difference, like what
+ * is tried on a clip, goes by this.
+ */
+export type ClipFact =
+  /** Everything on the clock of a clip moved. A time, which is negative to go back. */
+  | { readonly kind: "clock"; readonly clip: string; readonly by: string }
+  /** A clip got cut, and `piece` is the part that is new. */
+  | { readonly kind: "cut"; readonly clip: string; readonly piece: string }
+  /** That was taken back. */
+  | { readonly kind: "joined"; readonly clip: string; readonly piece: string }
+  /** A clip became another one, which is how cutting it out and pasting it works. */
+  | { readonly kind: "moved"; readonly from: string; readonly to: string };
+
+function factTakenBack(fact: ClipFact): ClipFact {
+  switch (fact.kind) {
+    case "clock":
+      return { ...fact, by: formatTime(subtract(ZERO, parseTime(fact.by))) };
+    case "cut":
+      return { ...fact, kind: "joined" };
+    case "joined":
+      return { ...fact, kind: "cut" };
+    case "moved":
+      return { kind: "moved", from: fact.to, to: fact.from };
+  }
+}
+
+/** What taking changes back does, given what they did. */
+export const factsTakenBack = (facts: readonly ClipFact[]): readonly ClipFact[] =>
+  facts.toReversed().map(factTakenBack);
 
 /** One change, and how to take it back. */
 export interface Step {
@@ -43,11 +77,14 @@ export class Draft {
   readonly #writes: WriteTree;
   readonly #write: WriteId = Symbol("write");
   readonly #steps: Step[] = [];
+  readonly #before: ProjectState;
+  #facts: ClipFact[] | undefined = [];
 
   /** Who is asking. */
   readonly origin: string;
 
   constructor(state: ProjectState, origin: string, written: Written = UNWRITTEN) {
+    this.#before = state;
     this.#mutator = new Mutator(state);
     this.#writes = new WriteTree(written);
     this.origin = origin;
@@ -59,6 +96,25 @@ export class Draft {
 
   get steps(): readonly Step[] {
     return this.#steps;
+  }
+
+  get facts(): readonly ClipFact[] | undefined {
+    return this.#facts;
+  }
+
+  /** Says what this change does to a clip, in the order it does it. */
+  note(fact: ClipFact): void {
+    this.#facts?.push(fact);
+  }
+
+  /** This change comes from somewhere that says nothing about what happened, like a file. */
+  knowsOnlyOutcome(): void {
+    this.#facts = undefined;
+  }
+
+  /** Whether what was at this path when this started is gone by now. */
+  wentAway(path: Path): boolean {
+    return getIn(this.#before, path) !== undefined && getIn(this.state, path) === undefined;
   }
 
   /** What was written where, with this draft on top of it. */

@@ -22,8 +22,15 @@ export async function createProject(page: Page, name = "测试项目") {
  * Opens the editor for every test, with a project unless the test says otherwise, and fails the
  * test when anything was logged as an error.
  */
-export const test = base.extend<{ problems: string[]; withProject: boolean; onDisk: boolean }>({
+export const test = base.extend<{
+  problems: string[];
+  withProject: boolean;
+  onDisk: boolean;
+  trying: boolean;
+}>({
   withProject: [true, { option: true }],
+  /** Off for what is about controls and the project, where every change is written right away. */
+  trying: [true, { option: true }],
   /**
    * Keeps what the browser saves on the disk, as for people. Normally a test runs in something like
    * a private window, with IndexedDB in memory and little room in it.
@@ -46,7 +53,7 @@ export const test = base.extend<{ problems: string[]; withProject: boolean; onDi
     rmSync(folder, { recursive: true, force: true });
   },
   problems: [
-    async ({ page, withProject }, use) => {
+    async ({ page, withProject, trying }, use) => {
       const problems: string[] = [];
       page.on("pageerror", (error) => problems.push(error.message));
       page.on("console", (message) => {
@@ -60,6 +67,13 @@ export const test = base.extend<{ problems: string[]; withProject: boolean; onDi
           console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
         });
       });
+      if (!trying) {
+        // This runs in every frame, and the sandbox of the compositor has no storage.
+        await page.addInitScript(() => {
+          if (window !== window.top) return;
+          localStorage.setItem("animaquill.trial", '{"version":1,"enabled":false}');
+        });
+      }
       await page.goto("/");
       if (withProject) await createProject(page);
       await use(problems);

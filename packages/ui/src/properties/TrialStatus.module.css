@@ -1,0 +1,46 @@
+.status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.count {
+  margin-right: 4px;
+  color: var(--aq-trial);
+}
+
+.conflicts {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 4px;
+  color: var(--aq-warning);
+  font-size: 12px;
+}
+
+.button,
+.save {
+  padding: 1px 8px;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.button:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.button[aria-pressed="true"] {
+  color: #1f1f1f;
+  background: var(--aq-trial);
+}
+
+.save {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}

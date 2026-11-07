@@ -16,6 +16,8 @@ interface NumberFieldProps extends NumberEditProps {
   /** Shown instead of a number that is not its own. */
   readonly placeholder: string;
   readonly animated: boolean;
+  /** What it shows is not in the project yet. */
+  readonly tried: boolean;
 }
 
 /** Moves the keyboard back to the tab, where undo means the project again. */
@@ -23,7 +25,7 @@ const leave = (input: HTMLInputElement) =>
   input.closest<HTMLElement>("[tabindex]")?.focus({ preventScroll: true });
 
 export function NumberField(props: NumberFieldProps) {
-  const { label, spec, value, automatic, placeholder, animated, readOnly } = props;
+  const { label, spec, value, automatic, placeholder, animated, tried, readOnly } = props;
   const [field] = useState(() => new NumberEdit(props));
   const { typed, dragged } = useSyncExternalStore(field.subscribe, field.getSnapshot);
   const input = useRef<HTMLInputElement>(null);
@@ -78,6 +80,7 @@ export function NumberField(props: NumberFieldProps) {
       {...(spec.max === undefined ? {} : { "aria-valuemax": spec.max })}
       {...(field.isInvalid ? { "aria-invalid": true } : {})}
       data-animated={animated || undefined}
+      data-tried={tried || undefined}
       data-typing={typed !== undefined || undefined}
       value={typed ?? text}
       readOnly={readOnly || typed === undefined}

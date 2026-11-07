@@ -394,7 +394,7 @@ addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
   }
   if (data.type === "plan") plan = data.plan;
   else if (data.type === "channels") {
-    if (plan) plan = withChannels(plan, data.layer, data.channels);
+    if (plan) plan = withChannels(plan, data.layer, data);
   } else if (data.type === "seek") {
     wanted = data.seconds;
     if (data.jump) {

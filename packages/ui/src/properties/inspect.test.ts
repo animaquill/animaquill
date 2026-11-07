@@ -1,8 +1,21 @@
-import { ProjectStore, buildRenderPlan, orderedTracks, type CommandCall } from "@animaquill/core";
+import {
+  ProjectStore,
+  Trial,
+  buildRenderPlan,
+  orderedTracks,
+  type CommandCall,
+} from "@animaquill/core";
 import { createProject, type PropertyValue } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { buildModel, type TimelineModel } from "../timeline/model.ts";
-import { inspect, keyEdit, writeEdit, type Inspection, type PropertyRow } from "./inspect.ts";
+import {
+  inspect,
+  keyEdit,
+  writeEdit,
+  type Inspection,
+  type PropertyRow,
+  type TrialView,
+} from "./inspect.ts";
 
 const red = { kind: "color", color: "#ff0000" };
 
@@ -30,15 +43,17 @@ function setup(fps = "30") {
       },
     });
   const model = (): TimelineModel => buildModel("main", main(), fps);
-  const look = (selection: readonly string[], frame: number) =>
-    inspect(store.getState(), model(), new Set(selection), frame);
-  const clipView = (id: string, frame: number) => {
-    const inspection = look([id], frame);
+  const look = (selection: readonly string[], frame: number, trial?: TrialView) =>
+    inspect(store.getState(), model(), new Set(selection), frame, trial);
+  const clipView = (id: string, frame: number, trial?: TrialView) => {
+    const inspection = look([id], frame, trial);
     if (inspection.kind !== "clip") throw new Error(`nothing to see: ${inspection.kind}`);
     return inspection;
   };
-  const row = (id: string, frame: number, path: string): PropertyRow => {
-    const found = clipView(id, frame).objects[0]?.rows.find(({ spec }) => spec.path === path);
+  const row = (id: string, frame: number, path: string, trial?: TrialView): PropertyRow => {
+    const found = clipView(id, frame, trial).objects[0]?.rows.find(
+      ({ spec }) => spec.path === path,
+    );
     if (!found) throw new Error(`no row: ${path}`);
     return found;
   };
@@ -542,5 +557,96 @@ describe("going from key to key", () => {
   it("skips a key that is on the frame of the playhead without being exactly there", () => {
     const { row } = onClip({ properties: { "transform.x": keys("1", "1.001", "2") } });
     expect(row("c", 60, "transform.x")).toMatchObject({ nextKey: 90, keyTime: "1" });
+  });
+});
+
+describe("what is being tried out", () => {
+  const owner = { clip: "c" };
+
+  function trying() {
+    const context = setup();
+    context.add("c");
+    const look = new Trial(context.store, "main");
+    return { ...context, look, view: { look } };
+  }
+
+  it("is what a row shows, and it says so", () => {
+    const { row, look, view } = trying();
+    look.write([{ owner, path: "transform.x", op: "set", value: 10 }]);
+    expect(row("c", 0, "transform.x", view)).toMatchObject({ value: 10, tried: true });
+    expect(row("c", 0, "transform.y", view).tried).toBe(false);
+  });
+
+  it("is left out without a look at it", () => {
+    const { row, look } = trying();
+    look.write([{ owner, path: "transform.x", op: "set", value: 10 }]);
+    expect(row("c", 0, "transform.x")).toMatchObject({ value: 0, tried: false });
+  });
+
+  it("shows keys as keys, with the buttons going by them", () => {
+    const { row, look, view } = trying();
+    look.write([
+      { owner, path: "transform.x", op: "setKey", time: "0", value: 1 },
+      { owner, path: "transform.x", op: "setKey", time: "1", value: 2 },
+    ]);
+    expect(row("c", 0, "transform.x", view)).toMatchObject({
+      animated: true,
+      keyTime: "0",
+      nextKey: 30,
+    });
+    expect(row("c", 15, "transform.x", view).value).toBe(1.5);
+  });
+
+  it("can have taken a property away", () => {
+    const { row, run, look, view } = trying();
+    run({
+      type: "property.edit",
+      params: {
+        timeline: "main",
+        edits: [{ owner, path: "transform.x", op: "set", value: 5 }],
+      },
+    });
+    look.write([{ owner, path: "transform.x", op: "clear" }]);
+    expect(row("c", 0, "transform.x", view)).toMatchObject({
+      value: 0,
+      stored: undefined,
+      tried: true,
+    });
+  });
+
+  it("goes into what follows from it, like a box that follows the media", () => {
+    const { row, look, view } = trying();
+    expect(row("c", 0, "transform.width", view).value).toBe(1920);
+    look.write([{ owner, path: "transform.height", op: "set", value: 540 }]);
+    expect(row("c", 0, "transform.width", view).value).toBe(1920 / 2);
+  });
+
+  it("marks what somebody else changed in the meantime", () => {
+    const { row, run, look, view } = trying();
+    look.write([{ owner, path: "transform.x", op: "set", value: 10 }]);
+    expect(row("c", 0, "transform.x", view).changedElsewhere).toBe(false);
+    run({
+      type: "property.edit",
+      params: {
+        timeline: "main",
+        edits: [{ owner, path: "transform.x", op: "set", value: 7 }],
+      },
+    });
+    expect(row("c", 0, "transform.x", view)).toMatchObject({ value: 10, changedElsewhere: true });
+  });
+
+  it("makes way while comparing: what is saved shows, and nothing can be changed", () => {
+    const { clipView, row, look } = trying();
+    look.write([{ owner, path: "transform.x", op: "set", value: 10 }]);
+    const comparing = { comparing: true };
+    expect(row("c", 0, "transform.x", comparing)).toMatchObject({ value: 0, tried: false });
+    expect(clipView("c", 0, comparing).blocked).toBe("comparing");
+  });
+
+  it("says what matters first when more than one thing is in the way", () => {
+    const { clipView, add } = setup();
+    add("c", { start: "5" });
+    expect(clipView("c", 0).blocked).toBe("outside");
+    expect(clipView("c", 0, { comparing: true }).blocked).toBe("comparing");
   });
 });

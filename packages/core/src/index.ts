@@ -7,7 +7,7 @@ export {
   type Channels,
   type CurveChannel,
 } from "./curve.ts";
-export { CommandError, Draft } from "./draft.ts";
+export { CommandError, Draft, type ClipFact } from "./draft.ts";
 export { naturalSizeOf, objectsOf, valueWithout } from "./objects.ts";
 export { PropertyEdit, applyEdit, firstKeyFrom, type ValueEdit } from "./property-edit.ts";
 export {
@@ -17,6 +17,7 @@ export {
   channelsOf,
   effectiveProperties,
   firstValue,
+  fitOf,
   samePlan,
   type AudioPlan,
   type LayerSource,
@@ -39,6 +40,15 @@ export {
   type Rect,
   type Size,
 } from "./view.ts";
+export {
+  Trial,
+  type TrialChange,
+  type TrialChanges,
+  type TrialNotice,
+  type TrialRestored,
+  type TrialResult,
+  type TrialSaved,
+} from "./trial.ts";
 export { isSourceFile } from "./import-file.ts";
 export {
   clipEnd,
@@ -74,6 +84,7 @@ export {
   type CommandResult,
   type ExecuteOptions,
   type HistoryEntry,
+  type LocalChange,
   type UndoObstacle,
   type UndoResult,
   type Origin,
