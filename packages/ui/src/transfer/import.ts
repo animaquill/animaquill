@@ -308,6 +308,8 @@ export interface ImportReport {
   /** What is missing because people agreed to go on without it. */
   readonly lost: readonly string[];
   readonly warnings: readonly Problem[];
+  /** It holds scenes or sounds, whose code runs as soon as the project is open. */
+  readonly runsCode: boolean;
 }
 
 export interface BringInOptions extends ReadOptions {
@@ -395,6 +397,7 @@ export async function bringIn(
       skipped,
       lost: lost.map(({ consequence }) => consequence),
       warnings,
+      runsCode: project.scenes.size + project.sounds.size > 0,
     };
   } catch (error) {
     await incoming.abandon().catch((failure: unknown) => {

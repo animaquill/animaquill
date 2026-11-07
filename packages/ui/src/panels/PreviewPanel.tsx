@@ -1,22 +1,26 @@
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../app/Tip.tsx";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { PreviewLink } from "../preview/link.ts";
+import { PreviewNotices } from "../preview/PreviewNotices.tsx";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
 
-export function PreviewPanel() {
+/**
+ * The compositor. A new one of these is the only way out of one that hangs: going to another address
+ * would have to wait for it. Everything it knows comes from the link when it says hello.
+ */
+function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => void }) {
   const workbench = useWorkbench();
-  const { timeline, properties, trials, projects, media, compositorUrl } = workbench;
-  const { notifications, diagnostics } = workbench;
+  const { timeline, properties, projects, media, compositorUrl, notifications, diagnostics } =
+    workbench;
+  const { preview, sceneOrigins, sceneStage } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
-  const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
-  const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
-  const { count, comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
+  const { runScenes } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
   const picture = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -27,6 +31,7 @@ export function PreviewPanel() {
       if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));
       warned.add(file);
     };
+    const compositor = new URL(compositorUrl, location.href).origin;
     const link = new PreviewLink(
       element,
       timeline,
@@ -36,27 +41,74 @@ export function PreviewPanel() {
       onProblem,
       diagnostics,
       media,
+      preview,
+      {
+        origins: sceneOrigins,
+        compositor,
+        run: runScenes,
+        ...(sceneStage && { stage: sceneStage }),
+      },
     );
+    onLink(link);
     // The compositor says hello once it has loaded, so the link has to listen first.
     element.src = compositorUrl;
-    return () => link.dispose();
-  }, [compositorUrl, diagnostics, media, notifications, projects, properties, store, t, timeline]);
+    return () => {
+      link.dispose();
+      onLink(undefined);
+    };
+  }, [
+    compositorUrl,
+    diagnostics,
+    media,
+    notifications,
+    onLink,
+    preview,
+    projects,
+    properties,
+    runScenes,
+    sceneOrigins,
+    sceneStage,
+    store,
+    t,
+    timeline,
+  ]);
+
+  return (
+    <iframe
+      ref={picture}
+      className={styles.picture}
+      title={t("panel.preview.title")}
+      // No same-origin: what runs there has no way into the editor.
+      sandbox="allow-scripts"
+      tabIndex={-1}
+    />
+  );
+}
+
+export function PreviewPanel() {
+  const { timeline, preview, trials } = useWorkbench();
+  const { t } = useTranslation();
+  const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
+  const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
+  const { compositor, generation } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
+  const { count, comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
+  const link = useRef<PreviewLink>(undefined);
+  const onLink = useCallback((current: PreviewLink | undefined) => {
+    link.current = current;
+  }, []);
 
   return (
     <div className={styles.panel}>
-      <iframe
-        ref={picture}
-        className={styles.picture}
-        title={t("panel.preview.title")}
-        // No same-origin: whatever runs there one day has no way into the editor.
-        sandbox="allow-scripts"
-        tabIndex={-1}
-      />
-      {count > 0 && (
-        <div className={styles.showing} data-comparing={comparing || undefined} role="status">
-          {comparing ? t("trial.showingSaved") : t("trial.showingTrial")}
-        </div>
-      )}
+      <div className={styles.stage}>
+        {/* One that hangs goes on taking a whole core, for as long as its frame is there. */}
+        {compositor !== "stopped" && <Compositor key={generation} onLink={onLink} />}
+        <PreviewNotices onRetry={(layer) => link.current?.retryScene(layer)} />
+        {count > 0 && (
+          <div className={styles.showing} data-comparing={comparing || undefined} role="status">
+            {comparing ? t("trial.showingSaved") : t("trial.showingTrial")}
+          </div>
+        )}
+      </div>
       <div className={styles.transport} role="toolbar" aria-label={t("timeline.transport")}>
         <div className={styles.buttons}>
           <ToolButton

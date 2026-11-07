@@ -1,6 +1,6 @@
 import type { Asset } from "@animaquill/schema";
 import { parseTime, toSeconds } from "@animaquill/schema";
-import { FileAudio, FileVideo, Image as ImageIcon, Upload } from "lucide-react";
+import { CodeXml, FileAudio, FileVideo, Image as ImageIcon, Plus, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
@@ -10,6 +10,7 @@ import styles from "./AssetsPanel.module.css";
 
 /** What a drag from this list carries. */
 export const ASSET_DRAG_TYPE = "application/x-animaquill-asset";
+export const SCENE_DRAG_TYPE = "application/x-animaquill-scene";
 
 const ICONS = { video: FileVideo, audio: FileAudio } as const;
 
@@ -97,6 +98,15 @@ export function AssetsPanel() {
     }
   };
 
+  const removeScene = (id: string) => {
+    const result = store?.execute({ type: "scene.remove", params: { scene: id } });
+    if (result && !result.ok) {
+      notifications.push(t("notice.commandFailed", { message: result.error.message }));
+    }
+  };
+
+  const scenes = Object.entries(project?.scenes ?? {});
+
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
 
   return (
@@ -120,12 +130,55 @@ export function AssetsPanel() {
           <Upload size={14} />
           {t("assets.import")}
         </button>
+        <button type="button" onClick={() => timeline.createScene()}>
+          <Plus size={14} />
+          {t("assets.newScene")}
+        </button>
         {importing > 0 && <span role="status">{t("assets.importing", { count: importing })}</span>}
       </div>
-      {assets.length === 0 ? (
+      {assets.length === 0 && scenes.length === 0 ? (
         <p className={styles.empty}>{t("assets.empty")}</p>
       ) : (
         <ul className={styles.list} aria-label={t("panel.assets.title")}>
+          {scenes.map(([id, scene]) => (
+            <li
+              key={`scene ${id}`}
+              className={styles.item}
+              title={scene.description ?? scene.name}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData(SCENE_DRAG_TYPE, id);
+                event.dataTransfer.effectAllowed = "copy";
+              }}
+              onDoubleClick={() => timeline.addScene(id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setPopup({
+                  x: event.clientX,
+                  y: event.clientY,
+                  groups: [
+                    [
+                      {
+                        id: "add",
+                        label: t("assets.addToTimeline"),
+                        run: () => timeline.addScene(id),
+                      },
+                      {
+                        id: "remove",
+                        label: t("assets.removeScene"),
+                        run: () => removeScene(id),
+                      },
+                    ],
+                  ],
+                });
+              }}
+            >
+              <div className={styles.thumbnail}>
+                <CodeXml size={28} />
+              </div>
+              <span className={styles.name}>{scene.name}</span>
+            </li>
+          ))}
           {assets.map(([id, asset]) => (
             <li
               key={id}

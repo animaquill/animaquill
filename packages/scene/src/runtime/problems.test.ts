@@ -108,6 +108,15 @@ describe("ProblemLog", () => {
     expect(sent.at(-1)?.target).toBe("http://elsewhere/c.png");
   });
 
+  it("holds back what did not load in the same way, because the same mix-up causes that", () => {
+    const { log, sent } = setup();
+    log.report({ kind: "resource", target: "http://scene/a.png" });
+    log.report({ kind: "resource", target: "http://scene/b.png" });
+    expect(sent).toEqual([]);
+    log.release(new Set(["http://scene/a.png"]));
+    expect(sent.map(({ target }) => target)).toEqual(["http://scene/b.png"]);
+  });
+
   it("finds the place of what was thrown", () => {
     const { log, sent } = setup();
     const error = new TypeError("no");

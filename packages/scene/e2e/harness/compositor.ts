@@ -9,7 +9,7 @@ import {
   type SceneProblem,
 } from "../../src/index.ts";
 import { COMPOSITOR, SCENES } from "../hosts.ts";
-import type { Call, OpenScene, Reply, SceneInfo } from "./messages.ts";
+import type { Call, OpenScene, PictureInfo, Reply, SceneInfo } from "./messages.ts";
 
 /**
  * Stands in for the compositor: it holds scenes and passes on what the test says. It takes orders
@@ -49,6 +49,18 @@ interface Scene {
   readonly problems: SceneProblem[];
   readonly failures: SceneFailure[];
   readonly positions: number[];
+  readonly pictures: PictureInfo[];
+}
+
+/** What a picture shows, as far as a test wants to know: here is its middle. */
+function look(frame: number, image: ImageBitmap): PictureInfo {
+  const { width, height } = image;
+  const canvas = new OffscreenCanvas(width, height);
+  const painter = canvas.getContext("2d", { willReadFrequently: true });
+  painter?.drawImage(image, 0, 0);
+  const middle = painter?.getImageData(width / 2, height / 2, 1, 1).data ?? [];
+  image.close();
+  return { frame, width, height, middle: [...middle] };
 }
 
 const scenes = new Map<number, Scene>();
@@ -73,6 +85,7 @@ function open(scene: OpenScene) {
   const problems: SceneProblem[] = [];
   const failures: SceneFailure[] = [];
   const positions: number[] = [];
+  const pictures: PictureInfo[] = [];
   const options: SceneHostOptions = {
     mount: document.body,
     origins,
@@ -83,7 +96,13 @@ function open(scene: OpenScene) {
       assets: new Map(Object.entries(assets ?? {}).map(([name, value]) => [name, blobOf(value)])),
       fps: { num: fps ?? 60, den: 1 },
       seed: seed ?? 1,
-      view: { width: 1280, height: 720, pixelRatio: 1, format: "landscape", language: "en" },
+      view: {
+        width: 1280,
+        height: 720,
+        pixelRatio: scene.pixelRatio ?? 1,
+        format: "landscape",
+        language: "en",
+      },
     },
     ...(stage && { stage }),
     ...(scene.messageRules && { messageRules: { ...MESSAGE_RULES, ...scene.messageRules } }),
@@ -103,6 +122,10 @@ function open(scene: OpenScene) {
       if (scene.closeOnFailure) host.close();
     },
     onPosition: (frame) => positions.push(frame),
+    onPicture: ({ frame, image }) => {
+      if (scene.closePictures) image.close();
+      else pictures.push(look(frame, image));
+    },
     rules: {
       ...WATCHDOG_RULES,
       limitMs: {
@@ -116,7 +139,7 @@ function open(scene: OpenScene) {
     },
   };
   const host = new SceneHost(options);
-  scenes.set(id, { host, problems, failures, positions });
+  scenes.set(id, { host, problems, failures, positions, pictures });
   const opened = host.open();
   // Again and again, so that some of it arrives while the project is loading. The host holds this
   // back until the scene is ready, so it also goes straight to the frame, to see that it holds up.
@@ -155,7 +178,7 @@ const methods: Readonly<Record<string, (...args: never[]) => unknown>> = {
     for (const { host } of scenes.values()) if (source) host.evict(source, "flood");
   },
   info: (id: number): SceneInfo => {
-    const { host, problems, failures, positions } = sceneOf(id);
+    const { host, problems, failures, positions, pictures } = sceneOf(id);
     return {
       origin: host.origin,
       state: host.state,
@@ -163,6 +186,7 @@ const methods: Readonly<Record<string, (...args: never[]) => unknown>> = {
       problems,
       failures,
       positions,
+      pictures,
       frames: frames(),
     };
   },

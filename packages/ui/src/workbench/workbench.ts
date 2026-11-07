@@ -8,10 +8,13 @@ import {
   type ProjectStore,
   type UndoResult,
 } from "@animaquill/core";
+import type { SceneProblem } from "@animaquill/scene";
 import { toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
+import { describeProblem, sceneClipName } from "../preview/problems.ts";
+import { PreviewStatus } from "../preview/status.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
@@ -36,6 +39,8 @@ export interface WorkbenchOptions {
   readonly panels: readonly PanelDefinition[];
   readonly workspaces: readonly WorkspaceDefinition[];
   readonly compositorUrl: string;
+  readonly sceneOrigins?: readonly string[];
+  readonly sceneStage?: "plain";
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
@@ -72,6 +77,10 @@ export class Workbench {
   readonly projects: ProjectLibrary;
   /** Where the page with the compositor is. A site of its own keeps it apart from the editor. */
   readonly compositorUrl: string;
+  /** Where scenes run, which is never where the compositor is. */
+  readonly sceneOrigins: readonly string[];
+  readonly sceneStage: "plain" | undefined;
+  readonly preview: PreviewStatus;
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -82,6 +91,12 @@ export class Workbench {
     this.diagnostics = new DiagnosticsRecorder(version);
     this.#sink = host.diagnostics;
     this.compositorUrl = compositorUrl;
+    this.sceneOrigins = options.sceneOrigins ?? [];
+    this.sceneStage = options.sceneStage;
+    this.preview = new PreviewStatus({
+      problem: (clip, problem, last) => this.#noteSceneProblem(clip, problem, last),
+      restarted: () => this.notifications.push(t("preview.restarted")),
+    });
     this.layout = new LayoutController(host.settings, host.windowMemory, workspaces, {
       restoreFailed: () => this.notifications.push(t("notice.layoutRestoreFailed")),
       saveFailed: () => this.notifications.push(t("notice.layoutSaveFailed")),
@@ -123,6 +138,7 @@ export class Workbench {
     });
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      sceneName: (number) => t("scene.newName", { number }),
     });
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
@@ -147,6 +163,16 @@ export class Workbench {
     this.#registerViewActions();
     this.#registerHelpActions();
     registerTimelineActions(this.actions, this.timeline);
+  }
+
+  /** Until there is a list of problems to go to, people get to read them here. */
+  #noteSceneProblem(clip: string, problem: SceneProblem, last: boolean): void {
+    const box = this.timeline.model?.boxes.get(clip);
+    const name = sceneClipName(box?.clip, this.session.store?.getState(), this.t);
+    const words = { name, interpolation: { escapeValue: false } };
+    const text = describeProblem(this.t, problem);
+    this.notifications.push(this.t("scene.problem", { ...words, text }));
+    if (last) this.notifications.push(this.t("scene.tooManyProblems", words));
   }
 
   async load(): Promise<void> {
@@ -184,6 +210,7 @@ export class Workbench {
   async importProject(): Promise<void> {
     const report = await this.transfer.importProject();
     if (!report) return;
+    await this.transfer.warnAboutCode(report);
     await this.openProject(report.id);
     await this.transfer.announceImport(report);
   }

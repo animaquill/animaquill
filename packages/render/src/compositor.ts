@@ -1,3 +1,6 @@
+// oxlint-disable-next-line typescript/triple-slash-reference -- packages that bundle this need it too
+/// <reference path="./virtual.d.ts" />
+import code from "virtual:animaquill-scene-runtime";
 import { ALL_FORMATS, BlobSource, Input, VideoSampleSink, type VideoSample } from "mediabunny";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
 import {
@@ -13,6 +16,8 @@ import {
 import { comesUpAfter, readingAt, showsAt, VideoCursor } from "./cursor.ts";
 import { GiveUpTimer } from "./patience.ts";
 import { withChannels } from "./plan.ts";
+import { placeholderPicture } from "./placeholder.ts";
+import { SceneLayers } from "./scenes.ts";
 import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
 
 /**
@@ -55,6 +60,8 @@ const send = (message: FromCompositor, transfer: Transferable[] = []) =>
   parent.postMessage(message, "*", transfer);
 
 let plan: RenderPlan | undefined;
+/** The plan without what somebody is only trying out. A scene does not start over for that. */
+let settledPlan: RenderPlan | undefined;
 const files = new Map<string, Blob>();
 const images = new Map<string, Promise<ImageBitmap | undefined>>();
 const videos = new Map<string, Promise<VideoFile | undefined>>();
@@ -138,13 +145,13 @@ async function cursorOf(
   return entry.cursor;
 }
 
-const imagePicture = (bitmap: ImageBitmap): Picture => ({
+const imagePicture = (bitmap: ImageBitmap | OffscreenCanvas, close = () => {}): Picture => ({
   width: bitmap.width,
   height: bitmap.height,
   draw(x, y, width, height) {
     draw.drawImage(bitmap, x, y, width, height, x, y, width, height);
   },
-  close() {},
+  close,
 });
 
 /**
@@ -165,9 +172,17 @@ const videoPicture = (sample: VideoSample): Picture => ({
   close() {},
 });
 
+/** Whatever a scene has last. It runs at its own pace, and frames in between just do not show. */
+function scenePictureOf({ id }: RenderLayer): Picture | undefined {
+  const held = scenes.pictureOf(id);
+  if (held) return imagePicture(held.image, held.release);
+  return scenes.showsPlaceholder(id) ? imagePicture(placeholderPicture()) : undefined;
+}
+
 async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture | undefined> {
   const { source } = layer;
   if (source.kind === "color") return undefined;
+  if (source.kind === "scene") return scenePictureOf(layer);
   const file = fileOf(source.file);
   if (!file) return undefined;
   if (source.kind === "image") {
@@ -196,7 +211,7 @@ const upcomingAt = (seconds: number): readonly RenderLayer[] =>
 async function getReady(seconds: number): Promise<void> {
   for (const layer of upcomingAt(seconds)) {
     const { source } = layer;
-    if (source.kind === "color") continue;
+    if (source.kind === "color" || source.kind === "scene") continue;
     const file = fileOf(source.file);
     if (!file) continue;
     if (source.kind === "image") {
@@ -256,7 +271,8 @@ function paint(
   const { source } = layer;
   const opacity = opacityAt(layer, seconds);
   if (opacity <= 0 || (source.kind !== "color" && !picture)) return;
-  const box = boxOf(layer, seconds, picture, stage);
+  // A scene is laid out for its box, so its picture says nothing about what that box is.
+  const box = boxOf(layer, seconds, source.kind === "scene" ? undefined : picture, stage);
   if (box.width <= 0 || box.height <= 0) return;
   const toPicture = multiply(view, layerMatrix(layer, seconds, box));
   draw.globalAlpha = opacity;
@@ -282,7 +298,19 @@ async function drawFrame(seconds: number): Promise<void> {
   const askedAt = performance.now();
   const pictures = await Promise.all(showing.map((layer) => pictureOf(layer, seconds)));
   decodeMsInFrame = performance.now() - askedAt;
-  if (frameGivenUp) return;
+  try {
+    if (!frameGivenUp) paintAll(shown, showing, pictures, seconds);
+  } finally {
+    for (const picture of pictures) picture?.close();
+  }
+}
+
+function paintAll(
+  shown: RenderPlan,
+  showing: readonly RenderLayer[],
+  pictures: readonly (Picture | undefined)[],
+  seconds: number,
+): void {
   if (canvas.width !== shown.width) canvas.width = shown.width;
   if (canvas.height !== shown.height) canvas.height = shown.height;
   draw.resetTransform();
@@ -293,7 +321,6 @@ async function drawFrame(seconds: number): Promise<void> {
   showing.forEach((layer, index) => {
     paint(layer, pictures[index], view, seconds, shown.stage);
   });
-  for (const picture of pictures) picture?.close();
 }
 
 /** One frame at a time. When time runs ahead of it, frames in between are skipped. */
@@ -382,8 +409,29 @@ async function answerStrip(request: number, file: Blob, count: number, height: n
   send({ type: "strip", request, image }, image ? [image] : []);
 }
 
-addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
-  if (source !== parent) return;
+let sceneRuntime: Blob | undefined;
+
+const scenes = new SceneLayers({
+  mount: document.body,
+  runtime: () => (sceneRuntime ??= new Blob([code], { type: "text/javascript" })),
+  send,
+  redraw: () => void refresh(),
+});
+
+addEventListener("message", (event: MessageEvent<ToCompositor>) => {
+  // A scene can write here too, and only reading `data` builds a message: that comes after this.
+  if (event.source !== parent) return;
+  const { data } = event;
+  if (data.type === "ping") {
+    send({ type: "pong", nonce: data.nonce });
+    return;
+  }
+  if (data.type === "focus-taken") {
+    scenes.focusTaken();
+    send({ type: "focus-checked", request: data.request });
+    return;
+  }
+  if (scenes.handle(data)) return;
   if (data.type === "strip") {
     void answerStrip(data.request, data.file, data.count, data.height);
     return;
@@ -392,8 +440,10 @@ addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
     recording = data.on;
     return;
   }
-  if (data.type === "plan") plan = data.plan;
-  else if (data.type === "channels") {
+  if (data.type === "plan") {
+    plan = data.plan;
+    settledPlan = data.settled ?? data.plan;
+  } else if (data.type === "channels") {
     if (plan) plan = withChannels(plan, data.layer, data);
   } else if (data.type === "seek") {
     wanted = data.seconds;
@@ -402,6 +452,7 @@ addEventListener("message", ({ data, source }: MessageEvent<ToCompositor>) => {
       patience.jumped();
     }
   } else files.set(data.id, data.file);
+  scenes.follow(settledPlan, wanted);
   void refresh();
 });
 

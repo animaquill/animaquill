@@ -50,6 +50,21 @@ import {
 import { deepEqual } from "./patch.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
 import { isInUse } from "./references.ts";
+import {
+  FileRemove,
+  FileRename,
+  FileWrite,
+  SceneAdd,
+  SceneRemove,
+  SceneUpdate,
+  addScene,
+  removeFile,
+  removeScene,
+  renameFile,
+  updateScene,
+  writeFile,
+} from "./scene-edits.ts";
+import { codeUsingAsset } from "./scene-plan.ts";
 
 export interface CommandDefinition<P = unknown> {
   readonly type: string;
@@ -105,6 +120,13 @@ function checkFits(track: TrackState, clip: { readonly source: ClipSource }): vo
   if (!canHold(track.kind, clip.source.kind)) {
     fail("wrong-track", `${track.kind} 轨道不能放 ${clip.source.kind} 片段`);
   }
+}
+
+/** A clip on a scene that is not there would show nothing, and nothing would say why. */
+function checkScene(state: Draft["state"], { source }: { readonly source: ClipSource }): void {
+  if (source.kind !== "scene" || source.scene === undefined) return;
+  const scene = source.scene as string;
+  if (!entryOf(state.scenes, scene)) fail("not-found", `没有这个场景：${scene}`);
 }
 
 /** A number for something that goes before `next` in a list, without renumbering the others. */
@@ -252,8 +274,17 @@ export const COMMANDS: readonly CommandDefinition[] = [
     if (isInUse(draft.state, ["assets", asset])) {
       fail("asset-in-use", "还有片段或版本在用这个素材，要先换掉或删除它们");
     }
+    const code = codeUsingAsset(draft.state, asset);
+    if (code !== undefined) fail("asset-in-use", `代码在用这个素材，要先改掉：${code}`);
     draft.delete(["assets", asset]);
   }),
+
+  define("scene.add", SceneAdd, addScene),
+  define("scene.update", SceneUpdate, updateScene),
+  define("scene.remove", SceneRemove, removeScene),
+  define("file.write", FileWrite, writeFile),
+  define("file.remove", FileRemove, removeFile),
+  define("file.rename", FileRename, renameFile),
 
   define(
     "timeline.rename",
@@ -390,6 +421,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { timeline, track, clip, overlap, movedFrom }) => {
       const target = timelineOf(draft, timeline);
       checkFits(editableTrack(target, track), clip);
+      checkScene(draft.state, clip);
       const id = clip.id ?? newId("clip");
       if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
@@ -434,6 +466,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       checkClip(next as ClipState);
       const home = entryOf(target.tracks, current.track);
       if (home) checkFits(home, next as ClipState);
+      if (changes.source) checkScene(draft.state, next as ClipState);
       const updated = next as ClipState;
       // Clips can overlap after a merge, and that should not stop people from renaming one.
       const moves = changes.start !== undefined || changes.duration !== undefined;

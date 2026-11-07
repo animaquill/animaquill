@@ -744,6 +744,32 @@ describe("importing", () => {
     expect(window.notices()).toEqual(["“文件夹里的项目”已导入。"]);
   });
 
+  it("says nothing about code when there is none", async () => {
+    const window = setup();
+    const report = await importFrom(window, folderOf(projectFiles()));
+    expect(report?.runsCode).toBe(false);
+    await window.transfer.warnAboutCode(report as never);
+    expect(window.dialogs.getSnapshot()).toBeUndefined();
+  });
+
+  it("says that a project holds code, and waits for people to take that in", async () => {
+    const window = setup();
+    const files = projectFiles();
+    const scene = { name: "标题", entry: "index.html", runtime: 1 };
+    files.set("scenes/title/scene.json", stringifyDocument(scene));
+    files.set("scenes/title/index.html", "<!doctype html><p>a</p>");
+    const report = await importFrom(window, folderOf(files));
+    expect(report?.runsCode).toBe(true);
+    let warned = false;
+    const warning = window.transfer.warnAboutCode(report as never).then(() => (warned = true));
+    await vi.waitFor(() => expect(window.dialogs.getSnapshot()).toBeDefined());
+    expect(warned).toBe(false);
+    const notice = await window.readDialog();
+    await warning;
+    expect(notice.title).toBe("这个项目含有脚本");
+    expect(notice.message).toContain("“文件夹里的项目”");
+  });
+
   it("says when it became a copy", async () => {
     const window = setup();
     const files = projectFiles();

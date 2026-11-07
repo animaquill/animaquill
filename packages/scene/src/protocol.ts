@@ -27,6 +27,12 @@ export interface SceneView {
   readonly language: string;
 }
 
+/** How many pixels of the output a scene's picture has. The canvas it is captured from has as many. */
+export const pixelSizeOf = ({ width, height, pixelRatio }: SceneView) => ({
+  width: Math.round(width * pixelRatio),
+  height: Math.round(height * pixelRatio),
+});
+
 /** Everything a scene gets to run. It gets nothing else, so it can leak nothing else. */
 export interface SceneLoad {
   /** The page or module to start with, by path from the root of the project. */
@@ -101,6 +107,13 @@ export interface SceneProblem {
   readonly frame: number;
 }
 
+/** What a scene looks like on a frame. */
+export interface ScenePicture {
+  readonly frame: number;
+  /** It belongs to whoever gets it, and has to be closed. */
+  readonly image: ImageBitmap;
+}
+
 /** From a scene to the compositor. */
 export type FromScene =
   /** The page is there and can take `boot`. */
@@ -120,6 +133,8 @@ export type FromScene =
   | { readonly type: "needs-replay"; readonly request: number; readonly frame: number }
   /** Where a playing scene got to. */
   | { readonly type: "position"; readonly frame: number }
+  /** A picture of it, for every frame it arrives at. Comes before `seeked` and `position`. */
+  | ({ readonly type: "frame" } & ScenePicture)
   /** How far a long way to a frame has come, so that it can be told from a scene that is stuck. */
   | { readonly type: "progress"; readonly frame: number }
   | { readonly type: "problem"; readonly problem: SceneProblem }
@@ -163,10 +178,25 @@ function readProblem(value: unknown): SceneProblem | undefined {
 }
 
 /**
- * Reads a message that came out of a scene. Whatever is in it was made by code from the project, so
- * this keeps what it recognizes, cuts it down to a sane size, and drops the rest.
+ * A picture out of a message. This is its own case because of what it weighs: a picture is meant to
+ * be large, and it never gets copied, so the limits on what a message may weigh are not for this.
  */
-export function readFromScene(data: unknown): FromScene | undefined {
+export function readPicture(data: unknown): ScenePicture | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { type, frame, image } = data as Record<string, unknown>;
+  if (type !== "frame" || typeof ImageBitmap === "undefined") return undefined;
+  const position = count(frame);
+  return position === undefined || !(image instanceof ImageBitmap)
+    ? undefined
+    : { frame: position, image };
+}
+
+/**
+ * Reads a message that came out of a scene. Whatever is in it was made by code from the project, so
+ * this keeps what it recognizes, cuts it down to a sane size, and drops the rest. A picture has to
+ * be taken out first, see `readPicture`.
+ */
+export function readFromScene(data: unknown): Exclude<FromScene, { type: "frame" }> | undefined {
   if (typeof data !== "object" || data === null) return undefined;
   const message = data as Record<string, unknown>;
   switch (message.type) {

@@ -511,6 +511,7 @@ describe("problems that do not stop a project from opening", () => {
     ],
     ["string-missing", MAIN, (d: any) => (d.tracks[4].clips[0].source.text.string = "gone")],
     ["param-unknown", MAIN, (d: any) => (d.tracks[0].clips[0].properties["param.gone"] = 1)],
+    ["scene-runtime-too-new", "scenes/title/scene.json", (d: any) => (d.runtime = 2)],
     ["bus-missing", MAIN, (d: any) => (d.tracks[3].output = "gone")],
     ["transition-clip-missing", MAIN, (d: any) => (d.tracks[0].transitions[0].from = "gone")],
     ["clip-overlap", MAIN, (d: any) => (d.tracks[0].clips[1].start = "4")],

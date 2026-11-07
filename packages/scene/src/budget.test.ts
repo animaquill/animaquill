@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MESSAGE_RULES, MessageBudget, TokenBucket, weightOf } from "./budget.ts";
 
 describe("TokenBucket", () => {
@@ -84,6 +84,26 @@ describe("weightOf", () => {
   });
 });
 
+describe("a picture in a message", () => {
+  class FakeBitmap {
+    readonly width = 1000;
+    readonly height = 1000;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("weighs what its pixels do, because nothing else says what it takes", () => {
+    vi.stubGlobal("ImageBitmap", FakeBitmap);
+    expect(weightOf({ image: new FakeBitmap() }, 8_000_000)).toBeGreaterThan(4_000_000);
+  });
+
+  it("gets a message thrown out that is not there for pictures", () => {
+    vi.stubGlobal("ImageBitmap", FakeBitmap);
+    const budget = new MessageBudget(0);
+    expect(budget.weigh({ type: "pong", nonce: 1, image: new FakeBitmap() }, 0)).toBe("oversized");
+  });
+});
+
 describe("MessageBudget", () => {
   const rules = {
     burstMessages: 10,
@@ -91,6 +111,8 @@ describe("MessageBudget", () => {
     maxMessageBytes: 1000,
     burstBytes: 3000,
     bytesPerSecond: 1000,
+    burstPictures: 10,
+    picturesPerSecond: 1,
   };
 
   it("lets ordinary traffic through for as long as it goes on", () => {

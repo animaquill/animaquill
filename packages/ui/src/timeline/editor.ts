@@ -25,6 +25,7 @@ import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
+import { sceneTemplate } from "./scene-template.ts";
 import {
   EndGesture,
   MarqueeGesture,
@@ -88,6 +89,12 @@ const NEW_CLIP_COLORS = ["#3f6fb5", "#3f9a7a", "#b57a3f", "#8f5fb5", "#b5536a", 
 
 export type Tool = "select" | "razor";
 
+/** Where something dragged here goes. */
+export interface DropPlace {
+  readonly lane: number;
+  readonly seconds: number;
+}
+
 export type Hit =
   | { readonly kind: "ruler" }
   | { readonly kind: "end" }
@@ -128,6 +135,8 @@ export interface VisibleClip {
 
 export interface TimelineMessages {
   commandFailed(message: string): void;
+  /** What a new scene is called. */
+  sceneName?(number: number): string;
 }
 
 interface ViewPlace {
@@ -940,7 +949,7 @@ export class TimelineEditor {
    * linked clips. What is there stays and the clips go after it, unless people overwrite. A track
    * that can take them is found or made.
    */
-  addAsset(assetId: string, place?: { readonly lane: number; readonly seconds: number }): void {
+  addAsset(assetId: string, place?: DropPlace): void {
     const { model } = this;
     const asset = this.#store?.getState().assets?.[assetId];
     if (!model || !asset) return;
@@ -1005,6 +1014,78 @@ export class TimelineEditor {
       };
     });
     if (this.#run([...trackCalls, ...calls])) this.#select(new Set(ids));
+  }
+
+  /** Puts a scene on the timeline, at a place or else at the playhead. */
+  addScene(scene: string, place?: DropPlace): void {
+    const known = this.#store?.getState().scenes[scene];
+    if (known) this.#placeScene(scene, known.name, place, []);
+  }
+
+  /** A new scene from the template, on the timeline right away, to see it move and to change it. */
+  createScene(place?: DropPlace): void {
+    const state = this.#store?.getState();
+    if (!state) return;
+    const number = Object.keys(state.scenes).length + 1;
+    const name = this.#messages.sceneName?.(number) ?? `Scene ${number}`;
+    const scene = newId("scene");
+    const params = { id: scene, ...sceneTemplate(name) };
+    this.#placeScene(scene, name, place, [{ type: "scene.add", params }]);
+  }
+
+  /** What is there stays and it goes after that, unless people overwrite. Along with `before`, it is one step. */
+  #placeScene(
+    scene: string,
+    name: string,
+    place: DropPlace | undefined,
+    before: readonly CommandCall[],
+  ): void {
+    const { model } = this;
+    if (!model) return;
+    const { rate } = model;
+    const seconds = place?.seconds ?? frameSeconds(this.#frame, rate);
+    const start = frameTime(frameAt(Math.max(seconds, 0), rate), rate);
+    const duration = this.#newClipDuration(model);
+    const row = this.#rowForNew(model, "video", place?.lane);
+    const end = add(start, duration);
+    const placed: Placed[] = row
+      ? [
+          {
+            row,
+            start: toSeconds(start),
+            end: toSeconds(end),
+            exactStart: () => start,
+            exactEnd: () => end,
+          },
+        ]
+      : [];
+    const { overwriting } = this.#snapshot;
+    const shift = overwriting ? undefined : freeShift(placed, new Set(), 1);
+    const at = shift ? add(start, shift.exact()) : start;
+    const track = row?.id ?? newId("track");
+    const id = newId("clip");
+    const calls: CommandCall[] = [
+      ...before,
+      ...(row
+        ? []
+        : [{ type: "track.add", params: { timeline: model.id, id: track, kind: "video" } }]),
+      {
+        type: "clip.add",
+        params: {
+          timeline: model.id,
+          track,
+          clip: {
+            id,
+            name,
+            start: formatTime(at),
+            duration: formatTime(duration),
+            source: { kind: "scene", scene },
+          },
+          ...(overwriting ? { overlap: "overwrite" } : {}),
+        },
+      },
+    ];
+    if (this.#run(calls)) this.#select(new Set([id]));
   }
 
   /** The row at a height when it fits, or else the first one that does. */

@@ -22,7 +22,7 @@ describe("OriginPool", () => {
   it("goes back to an origin that became free", () => {
     const pool = new OriginPool([a, b], box);
     pool.take();
-    const second = pool.take();
+    const second = pool.take() as string;
     pool.give(second);
     expect(pool.take()).toBe(second);
   });
@@ -31,7 +31,7 @@ describe("OriginPool", () => {
     const pool = new OriginPool([a, b, c], box);
     const old = pool.take();
     for (let round = 0; round < 10; round += 1) {
-      const next = pool.take(old);
+      const next = pool.take(old) as string;
       expect(next).not.toBe(old);
       pool.give(next);
     }
@@ -56,9 +56,62 @@ describe("OriginPool", () => {
     expect(() => new OriginPool([], box)).toThrow();
   });
 
+  it("never hands out an origin that retired, also not when that is free", () => {
+    const pool = new OriginPool([a, b, c], box);
+    const hung = pool.take() as string;
+    pool.retire(hung);
+    pool.give(hung);
+    for (let round = 0; round < 10; round += 1) {
+      const next = pool.take() as string;
+      expect(next).not.toBe(hung);
+      pool.give(next);
+    }
+  });
+
+  it("keeps it out when it was given back first, which is how a frame goes", () => {
+    const pool = new OriginPool([a, b], box);
+    pool.give(pool.take() as string);
+    pool.retire(a);
+    expect([pool.take(), pool.take()]).toEqual([b, b]);
+  });
+
+  it("shares what is left rather than come back to a retired origin", () => {
+    const pool = new OriginPool([a, b], box);
+    pool.retire(a);
+    expect(pool.take(b)).toBe(b);
+    expect(pool.take()).toBe(b);
+  });
+
+  it("has nothing to hand out when all of them retired, whatever it is asked", () => {
+    const pool = new OriginPool([a, b], box);
+    pool.retire(a);
+    pool.retire(b);
+    expect(pool.take()).toBeUndefined();
+    expect(pool.take(a)).toBeUndefined();
+  });
+
+  it("says so once, for whoever makes the next pool", () => {
+    const retired: string[] = [];
+    const pool = new OriginPool([a, b], box, { onRetire: (origin) => retired.push(origin) });
+    pool.retire(a);
+    pool.retire(a);
+    expect(retired).toEqual([a]);
+  });
+
+  it("starts from what a pool before it knew, without saying that again", () => {
+    const retired: string[] = [];
+    const pool = new OriginPool([a, b], box, {
+      retired: [a],
+      onRetire: (origin) => retired.push(origin),
+    });
+    pool.retire(a);
+    expect([pool.take(), pool.take()]).toEqual([b, b]);
+    expect(retired).toEqual([]);
+  });
+
   it("keeps its count when something is given back twice", () => {
     const pool = new OriginPool([a, b], box);
-    const first = pool.take();
+    const first = pool.take() as string;
     pool.give(first);
     pool.give(first);
     pool.give("https://nothing.test");

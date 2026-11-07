@@ -230,6 +230,36 @@ describe("Transport", () => {
       expect(log).toEqual(["position 6"]);
     });
 
+    it("answers a seek for the frame it asked for, also when playing starts right after it", async () => {
+      let done = () => {};
+      const arrived = () => new Promise<void>((resolve) => (done = resolve));
+      const { transport, log, settled, screenFrame } = setup({ arrived });
+      transport.seek(1, 3);
+      transport.play({ frame: 3, at: 0, rate: 1 });
+      await settled();
+      await screenFrame(1000);
+      done();
+      await settled();
+      expect(log).toEqual(["seeked 1 3 false"]);
+      await screenFrame(2000);
+      done();
+      await settled();
+      expect(log).toEqual(["seeked 1 3 false", "position 23"]);
+    });
+
+    it("says where it is, also with the next frame already wanted when it gets there", async () => {
+      let done = () => {};
+      const arrived = () => new Promise<void>((resolve) => (done = resolve));
+      const { transport, log, settled, screenFrame } = setup({ arrived });
+      transport.play({ frame: 0, at: 0, rate: 1 });
+      await screenFrame(100);
+      await screenFrame(200);
+      await settled();
+      done();
+      await settled();
+      expect(log).toEqual(["position 1"]);
+    });
+
     it("stops playing for a seek", async () => {
       const { transport, log, screenFrame, settled, setPosition } = setup();
       setPosition(0);

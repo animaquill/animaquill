@@ -550,6 +550,7 @@ for (const fit of ["contain", "cover"] as const) {
         height,
         stage: { width: width * units, height: height * units },
         camera: {},
+        scenes: { format: "f", language: "zh-CN", fps: { num: 30, den: 1 } },
         background: "#102030",
         layers: [
           {

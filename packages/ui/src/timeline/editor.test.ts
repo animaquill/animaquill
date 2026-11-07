@@ -7,6 +7,7 @@ import { ProjectSession } from "../workbench/session.ts";
 import { RULER_HEIGHT, TimelineEditor } from "./editor.ts";
 import { frameAt } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
+import { sceneTemplate } from "./scene-template.ts";
 
 const WIDTH = 1000;
 const HEIGHT = 400;
@@ -2104,6 +2105,114 @@ describe("changing the project from the keyboard and menus", () => {
       editor.removeTrack(audio);
       editor.addAsset("song");
       expect(main().tracks[clips()[0]?.track as string]?.kind).toBe("audio");
+    });
+
+    describe("a scene", () => {
+      const withScenes = async () => {
+        const context = await withAssets();
+        const page = { "index.html": "<p>a</p>" };
+        const scene = { name: "片头", entry: "index.html", runtime: 1 };
+        context.store.execute({ type: "scene.add", params: { id: "s", scene, files: page } });
+        return context;
+      };
+
+      it("goes on a video track at the playhead, with the name of the scene", async () => {
+        const { editor, clips, video, selection } = await withScenes();
+        editor.seek(30);
+        editor.addScene("s");
+        expect(clips()[0]).toMatchObject({
+          track: video,
+          start: "1",
+          duration: "5",
+          name: "片头",
+          source: { kind: "scene", scene: "s" },
+        });
+        expect(selection()).toHaveLength(1);
+      });
+
+      it("goes after what is there, unless people overwrite", async () => {
+        const { editor, clips, addClip } = await withScenes();
+        addClip("x", 0, 2);
+        editor.addScene("s");
+        expect(clips().find(({ id }) => id !== "x")?.start).toBe("2");
+      });
+
+      it("goes to the track it was dropped on", async () => {
+        const { editor, clips, store } = await withScenes();
+        store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+        const row = editor.model?.rows.find((item) => item.id === "up");
+        editor.addScene("s", { lane: (row?.top ?? 0) + 2, seconds: 1 });
+        expect(clips()[0]).toMatchObject({ track: "up", start: "1" });
+      });
+
+      it("makes a track when there is none", async () => {
+        const { editor, clips, video, main } = await withScenes();
+        editor.removeTrack(video);
+        editor.addScene("s");
+        expect(main().tracks[clips()[0]?.track as string]?.kind).toBe("video");
+      });
+
+      it("does nothing for a scene that is not there", async () => {
+        const { editor, clips } = await withScenes();
+        editor.addScene("nope");
+        expect(clips()).toEqual([]);
+      });
+
+      it("leaves a locked track alone", async () => {
+        const { editor, clips, video, store, commandFailed, main } = await withScenes();
+        store.execute({
+          type: "track.update",
+          params: { timeline: "main", track: video, changes: { locked: true } },
+        });
+        editor.addScene("s");
+        expect(commandFailed).not.toHaveBeenCalled();
+        expect(main().tracks[clips()[0]?.track as string]?.locked).toBeUndefined();
+      });
+
+      it("a new one comes with its files and a clip, in one step", async () => {
+        const { editor, clips, store, selection } = await withAssets();
+        editor.createScene();
+        const clip = clips()[0] as ClipState;
+        const id = clip.source["scene" as never] as string;
+        expect(clip.name).toBe("Scene 1");
+        const { scenes, files } = store.getState();
+        expect(scenes[id]).toMatchObject({ name: "Scene 1", entry: "index.html", runtime: 1 });
+        expect(files[`scenes/${id}/index.html`]).toContain("<h1>Scene 1</h1>");
+        expect(files[`scenes/${id}/style.css`]).toContain("@keyframes");
+        expect(selection()).toEqual([clip.id]);
+        store.undo();
+        expect(clips()).toEqual([]);
+        expect(store.getState().scenes).toEqual({});
+        expect(store.getState().files).toEqual({});
+      });
+
+      it("a new one gets the next number, in the words of the editor", async () => {
+        const context = await withScenes();
+        const { store, clips, main } = context;
+        const words = { commandFailed: () => {}, sceneName: (n: number) => `场景 ${n}` };
+        const session = { store, subscribe: () => () => {} } as never;
+        const memory = { read: () => undefined, write: () => {} } as never;
+        const settings = {
+          load: async () => undefined,
+          save: async () => {},
+          listen: () => () => {},
+        };
+        const editor = new TimelineEditor(session, memory, settings as never, words);
+        editor.createScene();
+        expect(clips()[0]?.name).toBe("场景 2");
+        expect(Object.keys(main().clips)).toHaveLength(1);
+      });
+
+      it("a name with something HTML means something by stays what it says", () => {
+        const { files } = sceneTemplate("A & <B>");
+        expect(files["index.html"]).toContain("<h1>A &amp; &lt;B></h1>");
+      });
+
+      it("the template is what commands take", async () => {
+        const { store } = await withAssets();
+        const params = { id: "t", ...sceneTemplate("模板") };
+        expect(store.execute({ type: "scene.add", params }).ok).toBe(true);
+      });
     });
 
     describe("once on the timeline", () => {

@@ -2,10 +2,13 @@ import { MESSAGE_RULES, MessageBudget, TokenBucket, type MessageRules } from "./
 import { OriginPool } from "./origins.ts";
 import { SCENE_PAGE_PATH, SCENE_SANDBOX } from "./policy.ts";
 import {
+  pixelSizeOf,
   readFromScene,
+  readPicture,
   RUNTIME_VERSION,
   type FromScene,
   type SceneLoad,
+  type ScenePicture,
   type SceneProblem,
   type TimeBase,
   type ToScene,
@@ -38,6 +41,8 @@ export type SceneFailureReason =
   | "flood"
   /** It keeps taking the keyboard away from the editor. */
   | "focus"
+  /** There is nowhere left to run it, see `OriginPool`. Only a new page helps. */
+  | "no-origin"
   /** It sent a message that is no message of the protocol. */
   | "oversized"
   /** It went on asking for a new frame, or asked where that makes no sense. */
@@ -94,6 +99,10 @@ export interface SceneHostOptions {
   readonly onFailure?: (failure: SceneFailure) => void;
   /** Where a playing scene got to. */
   readonly onPosition?: (frame: number) => void;
+  /** What it looks like now. Whoever gets a picture has to close it. */
+  readonly onPicture?: (picture: ScenePicture) => void;
+  /** An origin not to start on: where the scene this one replaces runs, which may be stuck. */
+  readonly avoid?: string;
   readonly rules?: WatchdogRules;
   readonly messageRules?: MessageRules;
 }
@@ -105,6 +114,9 @@ interface Frame {
   readonly dog: Watchdog;
   readonly budget: MessageBudget;
   readonly focus: TokenBucket;
+  readonly pictures: TokenBucket;
+  /** The picture of a frame that has not taken over yet. */
+  held: ScenePicture | undefined;
   ready: boolean;
   /** Where it last said it was. */
   position: number;
@@ -193,6 +205,7 @@ export class SceneHost {
     this.#watching = setInterval(this.#watch, WATCH_EVERY_MS);
     this.#setState("opening");
     this.#current = this.#start();
+    if (!this.#current) this.#giveUp();
     return this.#opened.promise;
   }
 
@@ -285,9 +298,11 @@ export class SceneHost {
     frame?.element.contentWindow?.postMessage(message, "*", transfer);
   }
 
-  #start(except?: string): Frame {
-    const { mount, origins, place, messageRules = MESSAGE_RULES } = this.#options;
-    const origin = origins.take(except);
+  /** A new frame, somewhere else than the one in use. Nothing when there is no origin left. */
+  #start(): Frame | undefined {
+    const { mount, origins, place, avoid, messageRules = MESSAGE_RULES } = this.#options;
+    const origin = origins.take(this.#current?.origin ?? avoid);
+    if (origin === undefined) return undefined;
     const element = document.createElement("iframe");
     element.setAttribute("sandbox", SCENE_SANDBOX);
     element.src = `${origin}${SCENE_PAGE_PATH}`;
@@ -308,6 +323,8 @@ export class SceneHost {
       dog: new Watchdog(now, this.#rules),
       budget: new MessageBudget(now, messageRules),
       focus: new TokenBucket(FOCUS_BURST, FOCUS_PER_SECOND, now),
+      pictures: new TokenBucket(messageRules.burstPictures, messageRules.picturesPerSecond, now),
+      held: undefined,
       ready: false,
       position: 0,
       asked: new Map(),
@@ -317,7 +334,11 @@ export class SceneHost {
 
   #remove(frame: Frame | undefined): void {
     if (!frame) return;
+    // Nobody may have noticed yet, but a frame going away does not end what it left behind.
+    if (frame.dog.isQuiet) this.#options.origins.retire(frame.origin);
     frame.element.remove();
+    frame.held?.image.close();
+    frame.held = undefined;
     this.#options.origins.give(frame.origin);
   }
 
@@ -353,6 +374,11 @@ export class SceneHost {
     // A scene can write to this page from a frame of its own, which counts, and means nothing.
     if (event.source !== frame.element.contentWindow) return;
     const data: unknown = event.data;
+    const picture = readPicture(data);
+    if (picture) {
+      this.#picture(frame, picture, now);
+      return;
+    }
     const weighed = frame.budget.weigh(data, now);
     if (weighed !== "ok") {
       this.#fail(frame, weighed);
@@ -393,6 +419,44 @@ export class SceneHost {
         break;
       default:
     }
+  }
+
+  /**
+   * A picture only costs what it costs where it was made, and it reaches this page without a copy,
+   * so there is no weighing it. What can go wrong is how many there are and how large they are: this
+   * page draws them. Anything not used here has to be closed, or it stays around until it gets
+   * collected, however large it is.
+   */
+  #picture(frame: Frame, picture: ScenePicture, now: number): void {
+    const { image } = picture;
+    if (!frame.pictures.take(1, now)) {
+      image.close();
+      this.#fail(frame, "flood");
+      return;
+    }
+    const { width, height } = pixelSizeOf(this.#options.load.view);
+    if (image.width !== width || image.height !== height) {
+      image.close();
+      this.#fail(frame, "oversized");
+      return;
+    }
+    if (frame === this.#next) {
+      frame.held?.image.close();
+      frame.held = picture;
+    } else this.#show(picture);
+  }
+
+  #show(picture: ScenePicture): void {
+    if (this.#options.onPicture) this.#options.onPicture(picture);
+    else picture.image.close();
+  }
+
+  /** A frame takes over from the one before it, and what it looks like comes along. */
+  #takeOver(frame: Frame): void {
+    this.#current = frame;
+    const { held } = frame;
+    frame.held = undefined;
+    if (held) this.#show(held);
   }
 
   #hello(frame: Frame, capture: boolean): void {
@@ -453,8 +517,8 @@ export class SceneHost {
       // It only counts once it has got to the latest frame. Until then the old one stays.
       if (!latest) return;
       this.#remove(this.#current);
-      this.#current = frame;
       this.#next = undefined;
+      this.#takeOver(frame);
     }
     this.#finishSeeks(request, true);
   }
@@ -481,7 +545,8 @@ export class SceneHost {
       this.#remove(frame);
       this.#next = undefined;
     }
-    this.#next ??= this.#start(this.#current?.origin);
+    this.#next ??= this.#start();
+    if (!this.#next) this.#giveUp();
   }
 
   #position(frame: Frame, position: number): void {
@@ -516,6 +581,9 @@ export class SceneHost {
    * so that comes last, and what is left to do after it only happens when nobody did.
    */
   #fail(frame: Frame, reason: SceneFailureReason, message?: string): void {
+    // Whatever this is, it can come from a loop that never ends, and that stays when the frame goes.
+    // Only a scene that says it cannot run has shown that it can still say something.
+    if (reason !== "failed") this.#options.origins.retire(frame.origin);
     const canRetry = reason === "silent" || reason === "stuck";
     const retrying = canRetry && this.#strikes.hung(performance.now());
     const { target } = frame.dog;
@@ -536,12 +604,25 @@ export class SceneHost {
     // A scene next to a hung one on the same origin would never start, so the old one goes first.
     this.#remove(frame);
     const wasNext = frame === this.#next;
-    if (!wasNext) this.#current = this.#next;
+    const heir = this.#next;
     this.#next = undefined;
+    if (!wasNext) {
+      this.#current = undefined;
+      if (heir) this.#takeOver(heir);
+    }
     this.#options.onFailure?.(failure);
     if (this.#state === "closed") return;
-    if (wasNext) this.#next = this.#start(frame.origin);
-    else this.#current ??= this.#start(frame.origin);
+    if (wasNext) this.#next = this.#start();
+    else this.#current ??= this.#start();
+    if (!this.#current || (wasNext && !this.#next)) this.#giveUp();
+  }
+
+  /** There is nowhere to start a frame, and asking again would not change that. */
+  #giveUp(): void {
+    const frame = this.#wanted ?? 0;
+    this.#end();
+    this.#setState("stopped");
+    this.#options.onFailure?.({ reason: "no-origin", phase: "hello", frame, retrying: false });
   }
 
   #watch = (): void => {

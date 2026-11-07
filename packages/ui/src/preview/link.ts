@@ -14,6 +14,7 @@ import {
   type ChannelChanges,
   type FromCompositor,
   type LayerChanges,
+  type SceneSetup,
   type ToCompositor,
 } from "@animaquill/render";
 import { BUILT_IN_PROPERTIES, type PropertyValue } from "@animaquill/schema";
@@ -21,9 +22,20 @@ import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
 import type { MediaLibrary } from "../media/library.ts";
 import type { PreviewedValues, PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
+import { sceneContent } from "./content.ts";
+import { ForeignMessages } from "./foreign.ts";
+import { KeyboardKeeper } from "./keyboard.ts";
+import type { PreviewStatus } from "./status.ts";
+import { CompositorWatch } from "./watch.ts";
 
 /** Over this a frame misses the next refresh of a 60 Hz screen. */
 const SLOW_FRAME_MS = 17;
+
+/**
+ * The clock of a playing timeline is the sound, and what goes by itself has to stay with it. What is
+ * ahead cannot go back and has to wait for the sound, so this is how far ahead it can get.
+ */
+const CORRECT_TIME_EVERY_MS = 250;
 
 type ShownValues = ReturnType<PreviewedValues["get"]>;
 
@@ -78,6 +90,11 @@ export class PreviewLink {
   readonly #projects: ProjectLibrary;
   readonly #onProblem: (file: string) => void;
   readonly #diagnostics: DiagnosticsRecorder;
+  readonly #status: PreviewStatus;
+  readonly #setup: SceneSetup;
+  readonly #foreign: ForeignMessages;
+  readonly #keyboard: KeyboardKeeper;
+  readonly #watch: CompositorWatch;
   #ready = false;
   #recording = false;
   #plan: RenderPlan | undefined;
@@ -97,6 +114,8 @@ export class PreviewLink {
     onProblem: (file: string) => void,
     diagnostics: DiagnosticsRecorder,
     media: MediaLibrary,
+    status: PreviewStatus,
+    setup: SceneSetup,
   ) {
     this.#frame = frame;
     this.#timeline = timeline;
@@ -105,6 +124,19 @@ export class PreviewLink {
     this.#projects = projects;
     this.#onProblem = onProblem;
     this.#diagnostics = diagnostics;
+    this.#status = status;
+    this.#setup = setup;
+    this.#foreign = new ForeignMessages(
+      () => frame.contentWindow,
+      (index, frames) => this.#send({ type: "evict", index, frames }),
+    );
+    this.#keyboard = new KeyboardKeeper(frame, (request) => {
+      this.#send({ type: "focus-taken", request });
+    });
+    this.#watch = new CompositorWatch(
+      (nonce) => this.#send({ type: "ping", nonce }),
+      () => status.hung(),
+    );
     addEventListener("message", this.#onMessage);
     const stopStore = store.subscribe(this.#sendPlan);
     const stopView = timeline.subscribeView(this.#sendTime);
@@ -115,6 +147,8 @@ export class PreviewLink {
     const stopMedia = media.onRestored((hash) => void this.#sendFile(hash));
     const stopProperties = properties.subscribe(this.#sendPreview);
     this.#stop = () => {
+      this.#keyboard.dispose();
+      this.#watch.dispose();
       stopProperties();
       stopStore();
       stopView();
@@ -135,17 +169,45 @@ export class PreviewLink {
     this.#frame.contentWindow?.postMessage(message, "*");
   }
 
-  #onMessage = ({ data, source }: MessageEvent<FromCompositor>): void => {
-    if (source !== this.#frame.contentWindow) return;
+  /** Gives a scene that stopped another chance. */
+  retryScene(layer: string): void {
+    this.#send({ type: "scene-retry", layer });
+  }
+
+  /** Reading `data` is what builds a message, so that only happens for what comes from the frame. */
+  #onMessage = (event: MessageEvent<FromCompositor>): void => {
+    const { source } = event;
+    if (source !== this.#frame.contentWindow) {
+      this.#foreign.note(source);
+      return;
+    }
+    const { data } = event;
     if (data.type === "ready") {
       // A page that loaded again knows nothing.
       this.#ready = true;
       this.#plan = undefined;
       this.#planned = undefined;
       this.#lastSeconds = undefined;
+      this.#playingSince = undefined;
       this.#recording = false;
+      this.#watch.ready();
+      this.#status.forgetScenes();
+      this.#send({ type: "setup", ...this.#setup, retired: this.#status.retiredOrigins });
       this.#sendAll();
       this.#sendRecording();
+    } else if (data.type === "pong") {
+      this.#watch.pong(data.nonce);
+      this.#status.worked();
+    } else if (data.type === "focus-checked") {
+      this.#keyboard.checked(data.request);
+    } else if (data.type === "needs-scene") {
+      void this.#sendScene(data.scene, data.revision);
+    } else if (data.type === "scene-status") {
+      this.#status.noteScene(data.layer, data.status);
+    } else if (data.type === "scene-problem") {
+      this.#status.noteProblem(data.layer, data.problem);
+    } else if (data.type === "origin-retired") {
+      this.#status.noteRetired(data.origin);
     } else if (data.type === "frames") {
       for (const frame of data.frames) {
         const { ms, seconds, cold, behindMs, decodeMs, gettingReady, abandoned } = frame;
@@ -191,7 +253,8 @@ export class PreviewLink {
     // A new plan replaces everything. What is shown on top of it goes along, because the compositor
     // starts to draw as soon as it gets a plan, and the picture must not jump back in between.
     this.#shown = this.#properties.getPreviewed();
-    this.#send({ type: "plan", plan: withShown(plan, this.#shown) });
+    const shown = withShown(plan, this.#shown);
+    this.#send({ type: "plan", plan: shown, ...(shown !== plan && { settled: plan }) });
   };
 
   /** Only what changed crosses over, because this happens with every move of a drag. */
@@ -212,6 +275,8 @@ export class PreviewLink {
 
   #lastSeconds: number | undefined;
   #lastPlayback: TimelineEditor["playbackStart"];
+  /** When the compositor last heard what time it is, while time goes on. */
+  #playingSince: number | undefined;
 
   #sendTime = (): void => {
     const { model, frame, playbackStart } = this.#timeline;
@@ -221,15 +286,44 @@ export class PreviewLink {
     const carried = playing && playbackStart && playbackStart === this.#lastPlayback;
     this.#lastPlayback = playbackStart;
     const seconds = frame / model.rate.fps;
-    if (seconds === this.#lastSeconds) return;
-    this.#lastSeconds = seconds;
-    this.#send({ type: "seek", seconds, jump: !carried });
+    if (seconds !== this.#lastSeconds) {
+      this.#lastSeconds = seconds;
+      this.#send({ type: "seek", seconds, jump: !carried });
+    }
+    this.#sendPlaying(playing, Boolean(carried), seconds);
   };
 
-  /** The sandbox will run code from projects one day, so it only gets what the plan uses. */
+  /** Scenes follow time by themselves, because being told every frame is too slow for them. */
+  #sendPlaying(playing: boolean, carried: boolean, seconds: number): void {
+    const now = performance.now();
+    if (!playing) {
+      if (this.#playingSince !== undefined) this.#send({ type: "pause" });
+      this.#playingSince = undefined;
+      return;
+    }
+    const since = this.#playingSince;
+    if (carried && since !== undefined && now - since < CORRECT_TIME_EVERY_MS) return;
+    this.#playingSince = now;
+    const at = performance.timeOrigin + now;
+    this.#send({ type: "play", seconds, at, rate: 1, jump: !carried });
+  }
+
+  async #sendScene(scene: string, revision: string): Promise<void> {
+    const project = this.#store.getState().manifest.id;
+    const media = this.#projects.media(project);
+    const content = await sceneContent(
+      this.#store.getState(),
+      this.#plan,
+      { scene, revision },
+      (id) => media.get(id),
+    );
+    if (content) this.#send(content);
+  }
+
+  /** The sandbox runs code from projects, so it only gets what the plan uses. */
   async #sendFile(id: string): Promise<void> {
     const used = this.#plan?.layers.some(
-      ({ source }) => source.kind !== "color" && source.file === id,
+      ({ source }) => (source.kind === "image" || source.kind === "video") && source.file === id,
     );
     if (!used) return;
     const project = this.#store.getState().manifest.id;

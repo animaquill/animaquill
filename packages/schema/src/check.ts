@@ -3,6 +3,7 @@ import { cannotHaveKeys } from "./properties.ts";
 import { add, compare, parseTime } from "./time.ts";
 import type { ClipSource, Timeline, Track } from "./timeline.ts";
 import type { MediaRef, Properties, PropertyValue } from "./values.ts";
+import { CURRENT_SCENE_RUNTIME } from "./version.ts";
 
 const warning = (code: string, file: string, path: string, message: string): Problem => ({
   severity: "warning",
@@ -328,6 +329,15 @@ export function checkProject(project: Project): Problem[] {
   }
 
   checkCycles(project, problems);
+
+  for (const [id, { runtime }] of project.scenes) {
+    if (runtime > CURRENT_SCENE_RUNTIME) {
+      const message = `场景 ${id} 要运行时版本 ${runtime}，这个编辑器只有 ${CURRENT_SCENE_RUNTIME}，要先更新编辑器`;
+      problems.push(
+        warning("scene-runtime-too-new", `scenes/${id}/scene.json`, "runtime", message),
+      );
+    }
+  }
 
   for (const [id, locale] of project.locales) {
     const file = `locales/${id}.json`;

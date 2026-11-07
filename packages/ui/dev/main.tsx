@@ -47,11 +47,21 @@ const frameTest: PanelDefinition = {
   component: FrameTest,
 };
 
+/** Every scene has an origin of its own, and `*.localhost` is this computer in every browser. */
+const sceneOrigins = [0, 1, 2, 3, 4, 5, 6, 7].map(
+  (index) => `${location.protocol}//scene-${index}.localhost:${location.port}`,
+);
+
+/** A browser without capture can still run scenes as normal pages, which is enough for some tests. */
+const sceneStage = new URLSearchParams(location.search).get("sceneStage") === "plain";
+
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
   await mountEditor(root, {
     host: createBrowserHost(),
     version: "dev",
     compositorUrl: "/compositor.html",
+    sceneOrigins,
+    ...(sceneStage && { sceneStage: "plain" }),
     panels: [crashTest, frameTest],
   });

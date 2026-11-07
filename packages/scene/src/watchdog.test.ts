@@ -122,6 +122,27 @@ describe("Watchdog", () => {
       expect(pass(TICK, { answer: false })).toBe("silent");
     });
 
+    it("goes quiet when it stops answering for longer than a throttled frame takes", () => {
+      const { dog, pass } = setup("running");
+      pass(THROTTLED_ANSWER_MS, { answer: false });
+      expect(dog.isQuiet).toBe(false);
+      pass(TICK, { answer: false });
+      expect(dog.isQuiet).toBe(true);
+    });
+
+    it("is not quiet any more after an answer", () => {
+      const { dog, pass } = setup("running");
+      pass(THROTTLED_ANSWER_MS + TICK, { answer: false });
+      pass(pingEveryMs);
+      expect(dog.isQuiet).toBe(false);
+    });
+
+    it("is not quiet for time nobody could have heard anything", () => {
+      const { dog, pass } = setup("running");
+      pass(THROTTLED_ANSWER_MS * 2, { answer: false, visible: false });
+      expect(dog.isQuiet).toBe(false);
+    });
+
     it("takes no answer but one to a ping that went out", () => {
       const { dog, pass, verdicts } = setup("running");
       for (let round = 0; round < 100; round += 1) {
@@ -301,6 +322,14 @@ describe("Watchdog", () => {
       pass(limitMs.running + TICK * 2, { answer: false });
       expect(lands(verdicts, "silent")).toBe(true);
     });
+  });
+});
+
+describe("a frame that never answered yet", () => {
+  it.each(["hello", "loading"] as const)("is not quiet while it is at %s", (phase) => {
+    const { dog, pass } = setup(phase === "hello" ? undefined : phase);
+    pass(limitMs[phase]);
+    expect(dog.isQuiet).toBe(false);
   });
 });
 

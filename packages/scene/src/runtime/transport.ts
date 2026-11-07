@@ -78,6 +78,8 @@ export class Transport {
     const base = this.#base;
     if (!base) return;
     this.#nextTick();
+    // Somebody is waiting to hear about the frame they asked for, and time catches up after that.
+    if (this.#request !== undefined) return;
     const frame = frameAt(base, this.#hooks.wall(), this.#hooks.fps);
     // Time that went back a little is a correction, and it passes by itself.
     if (frame > (this.#wanted ?? this.#clock.frame)) {
@@ -109,8 +111,12 @@ export class Transport {
 
   async #arrive(frame: number): Promise<void> {
     await this.#hooks.arrived();
-    // Somebody may have asked for something else in the meantime.
-    if (this.#wanted !== frame) return;
+    // Somebody may have asked for something else in the meantime. A playing scene often gets here
+    // with the next frame already wanted, and it did get here.
+    if (this.#wanted !== frame) {
+      if (this.#request === undefined) this.#hooks.position(frame);
+      return;
+    }
     this.#wanted = undefined;
     if (this.#request === undefined) {
       this.#hooks.position(frame);

@@ -75,7 +75,7 @@ export class ProblemLog {
   readonly #frame: () => number;
   readonly #seen = new Set<string>();
   #sources: Sources = new Map();
-  /** What the sandbox stopped before it is known whether that was only a mix-up. */
+  /** What did not load before it is known whether that was only a mix-up. */
   #held: SceneProblem[] | undefined = [];
 
   constructor(send: (problem: SceneProblem) => void, frame: () => number) {
@@ -93,13 +93,13 @@ export class ProblemLog {
     if (this.#seen.has(key) || this.#seen.size >= MAX_PROBLEMS) return;
     this.#seen.add(key);
     const sent = { ...shortened(problem), frame: this.#frame() };
-    if (this.#held && kind === "blocked") this.#held.push(sent);
+    if (this.#held && (kind === "blocked" || kind === "resource")) this.#held.push(sent);
     else this.#send(sent);
   }
 
   /**
-   * The page is there. What the sandbox stopped while it loaded counts from now on, unless it was
-   * something that got put right: the loader and the browser can disagree on where a tag ends up.
+   * The page is there. What did not load until now counts from here on, unless it was something
+   * that got put right: the loader and the browser can disagree on where a tag ends up.
    */
   release(putRight: ReadonlySet<string>): void {
     const held = this.#held ?? [];

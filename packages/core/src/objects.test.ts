@@ -1,4 +1,4 @@
-import { BUILT_IN_PROPERTIES, CLIP_VISUAL, createProject } from "@animaquill/schema";
+import { BUILT_IN_PROPERTIES, CLIP_VISUAL, SCENE_VISUAL, createProject } from "@animaquill/schema";
 import type { PropertySpec } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import type { ClipState } from "./model.ts";
@@ -30,7 +30,15 @@ describe("what a clip offers", () => {
     expect(objectsOf(clip({ kind }))).toEqual([CLIP_VISUAL]);
   });
 
-  it.each(["audio", "sound", "music", "scene", "timeline", "caption", "plugin.lottie"])(
+  it("a scene has a picture to place, and nothing has to fit in its box", () => {
+    expect(objectsOf(clip({ kind: "scene" }))).toEqual([SCENE_VISUAL]);
+    const paths = SCENE_VISUAL.properties.map(({ path }) => path);
+    expect(paths).toEqual(
+      CLIP_VISUAL.properties.map(({ path }) => path).filter((p) => p !== "fit"),
+    );
+  });
+
+  it.each(["audio", "sound", "music", "timeline", "caption", "plugin.lottie"])(
     "a %s has nothing to place yet",
     (kind) => {
       expect(objectsOf(clip({ kind }))).toEqual([]);

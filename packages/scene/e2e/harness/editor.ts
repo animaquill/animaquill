@@ -31,6 +31,8 @@ Object.defineProperty(MessageEvent.prototype, "data", {
   },
 });
 const foreignBudgets = new WeakMap<object, MessageBudget>();
+/** Once is enough: everything it wrote until it went arrives here too, and frames move up. */
+const reported = new WeakSet<object>();
 const { promise: compositorReady, resolve: compositorIsReady } = Promise.withResolvers<void>();
 
 function checkForeign(source: MessageEventSource): void {
@@ -41,7 +43,8 @@ function checkForeign(source: MessageEventSource): void {
     budget = new MessageBudget(now, FOREIGN_MESSAGE_RULES);
     foreignBudgets.set(source, budget);
   }
-  if (budget.admit(now) === "ok") return;
+  if (budget.admit(now) === "ok" || reported.has(source)) return;
+  reported.add(source);
   const index = frame.contentWindow && childFrameIndex(frame.contentWindow, source as Window);
   if (index !== undefined && index !== null) void lab.call("evict", index);
 }

@@ -15,6 +15,13 @@ export interface EditorOptions {
   readonly version: string;
   /** The page with the compositor, on a site of its own where that is possible. */
   readonly compositorUrl: string;
+  /**
+   * Where scenes run, each with an origin of its own, and none where the compositor is. Without
+   * them scenes show a placeholder.
+   */
+  readonly sceneOrigins?: readonly string[];
+  /** For development: runs scenes as normal pages, without capture. */
+  readonly sceneStage?: "plain";
   /** Panels the host adds to the built-in ones. */
   readonly panels?: readonly PanelDefinition[];
 }
@@ -30,6 +37,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     panels: [...builtinPanels, ...(options.panels ?? [])],
     workspaces,
     compositorUrl: options.compositorUrl,
+    sceneOrigins: options.sceneOrigins ?? [],
+    ...(options.sceneStage && { sceneStage: options.sceneStage }),
   });
   await workbench.load();
 

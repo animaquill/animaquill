@@ -1,3 +1,4 @@
+import { startCapture, type Capture } from "./capture.ts";
 import { loadProject, type LoadedProject } from "../loader/project.ts";
 import { pathOfVirtual } from "../loader/paths.ts";
 import { RUNTIME_VERSION, type FromScene, type SceneLoad, type ToScene } from "../protocol.ts";
@@ -9,6 +10,7 @@ import { installRandom } from "./random.ts";
 import {
   describeDocument,
   enterStage,
+  keepDrawings,
   keepFocusAway,
   keepHistory,
   stageStyle,
@@ -196,6 +198,7 @@ const transport = new Transport(clock, {
     runFrameCallbacks();
     animations.sync();
     await contentReady(true);
+    await capture?.take(clock.frame);
   },
   seeked: (request, frame, stateful) => send({ type: "seeked", request, frame, stateful }),
   needsReplay: (request, frame) => send({ type: "needs-replay", request, frame }),
@@ -305,11 +308,18 @@ function installApi(project: LoadedProject): void {
 }
 
 let staged = false;
+let capture: Capture | undefined;
 
 function useStage(): void {
   if (staged) return;
   staged = true;
-  if (scene.stage === "canvas") enterStage(scene.view);
+  if (scene.stage !== "canvas") return;
+  capture = startCapture(enterStage(scene.view), {
+    send: (picture) => postToCompositor({ type: "frame", ...picture }, "*", [picture.image]),
+    report: (code) => problems.report({ kind: "api", code }),
+    sleep,
+    onScreenFrame: (run) => real.requestFrame(run),
+  });
 }
 
 const importModule = new Function("url", "return import(url)") as (url: string) => Promise<unknown>;
@@ -344,6 +354,7 @@ async function main(): Promise<void> {
   listen();
   installTime(clock);
   keepHistory();
+  keepDrawings();
   keepFocusAway(() => problems.report({ kind: "api", code: "focus" }));
   warnAboutTopLayer((api) => problems.report({ kind: "api", code: "top-layer", target: api }));
 

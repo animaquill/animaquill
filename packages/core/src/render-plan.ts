@@ -21,6 +21,7 @@ import {
   type TrackState,
 } from "./model.ts";
 import type { ProjectState } from "./model.ts";
+import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
 import { stageOf, type Size } from "./view.ts";
 
 /** What a compositor draws from. It knows nothing about projects, versions or Yjs. */
@@ -33,14 +34,24 @@ export interface RenderPlan {
   /** Empty, which is a camera that stands still, until cameras exist: see viewMatrix. */
   readonly camera: Channels;
   readonly background: string;
+  /** What scenes get told about the version they are shown in. */
+  readonly scenes: SceneContext;
   /** Back to front. */
   readonly layers: readonly RenderLayer[];
+}
+
+export interface SceneContext {
+  readonly format: string;
+  readonly language: string;
+  /** Frames per second of the picture, as a fraction, so that 30000/1001 stays exact. */
+  readonly fps: { readonly num: number; readonly den: number };
 }
 
 export type LayerSource =
   | { readonly kind: "color"; readonly color: string }
   | { readonly kind: "image"; readonly file: string }
-  | { readonly kind: "video"; readonly file: string };
+  | { readonly kind: "video"; readonly file: string }
+  | SceneSource;
 
 export interface RenderLayer {
   readonly id: string;
@@ -144,6 +155,11 @@ function assetOf(state: ProjectState, clip: ClipState): Asset | undefined {
   return media && "asset" in media ? entryOf(state.assets, media.asset) : undefined;
 }
 
+const sceneOf = (state: ProjectState, { source }: ClipState): SceneSource | undefined =>
+  source.kind === "scene" && source.scene !== undefined
+    ? sceneSourceOf(state, source.scene as string)
+    : undefined;
+
 function sourceOf(clip: ClipState, asset: Asset | undefined): LayerSource | undefined {
   const { source } = clip;
   if (source.kind === "color") return { kind: "color", color: source.color as string };
@@ -156,6 +172,7 @@ const secondsOf = (time: string | undefined) =>
 
 interface BuiltLayer {
   readonly asset: Asset | undefined;
+  readonly scene: SceneSource | undefined;
   readonly properties: Properties;
   readonly layer: RenderLayer | undefined;
 }
@@ -172,21 +189,25 @@ function layerOf(
   version: Version | undefined,
 ): RenderLayer | undefined {
   const asset = assetOf(state, clip);
+  const scene = sceneOf(state, clip);
   const properties = effectiveProperties(clip, version);
   const known = built.get(clip);
-  if (known && known.asset === asset && known.properties === properties) return known.layer;
-  const source = sourceOf(clip, asset);
+  if (known?.asset === asset && known?.scene === scene && known?.properties === properties) {
+    return known?.layer;
+  }
+  const source = scene ?? sourceOf(clip, asset);
   const layer: RenderLayer | undefined = source && {
     id: clip.id,
     start: toSeconds(clipStart(clip)),
     end: toSeconds(clipEnd(clip)),
     offset: toSeconds(clipOffset(clip)),
     source,
-    fit: fitOf(properties),
+    // A scene is laid out for its box, so there is nothing to keep in proportion.
+    fit: scene ? "fixed" : fitOf(properties),
     fades: { in: secondsOf(clip.fadeIn), out: secondsOf(clip.fadeOut) },
     channels: channelsOf(properties),
   };
-  built.set(clip, { asset, properties, layer });
+  built.set(clip, { asset, scene, properties, layer });
   return layer;
 }
 
@@ -207,6 +228,7 @@ export function buildRenderPlan(
   const timeline = entryOf(state.timelines, timelineId);
   const format = formatOf(state, version);
   if (!timeline || !format) return undefined;
+  const { n, d } = parseTime(format.fps);
   const tracks = orderedTracks(timeline).filter((track) => track.kind === "video" && !track.hidden);
   const lanes = new Map(tracks.map(({ id }) => [id, [] as RenderLayer[]]));
   for (const clip of Object.values(timeline.clips)) {
@@ -220,6 +242,11 @@ export function buildRenderPlan(
     stage: stageOf(format),
     camera: STILL_CAMERA,
     background: timeline.background ?? "#000000",
+    scenes: {
+      format: format.id,
+      language: state.manifest.languages[0]?.id ?? "",
+      fps: { num: Number(n), den: Number(d) },
+    },
     layers: [...lanes.values()].flatMap((lane) => lane.toSorted((a, b) => a.start - b.start)),
   };
 }
@@ -231,6 +258,10 @@ export function samePlan(a: RenderPlan, b: RenderPlan): boolean {
     a.height === b.height &&
     a.background === b.background &&
     a.camera === b.camera &&
+    a.scenes.format === b.scenes.format &&
+    a.scenes.language === b.scenes.language &&
+    a.scenes.fps.num === b.scenes.fps.num &&
+    a.scenes.fps.den === b.scenes.fps.den &&
     a.layers.length === b.layers.length &&
     a.layers.every((layer, index) => layer === b.layers[index])
   );

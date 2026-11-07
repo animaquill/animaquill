@@ -22,6 +22,7 @@ const plan: RenderPlan = {
   height: 1080,
   stage: { width: 1920, height: 1080 },
   camera: {},
+  scenes: { format: "f", language: "zh-CN", fps: { num: 30, den: 1 } },
   background: "#000000",
   layers: [layer("a", { "transform.x": x, "transform.y": y }), layer("b", { "transform.x": x })],
 };

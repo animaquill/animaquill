@@ -9,6 +9,9 @@ export interface OpenScene {
   readonly stage?: "canvas" | "plain";
   readonly fps?: number;
   readonly seed?: number;
+  readonly pixelRatio?: number;
+  /** Looking at pictures takes time, which a test about how many there are does not have. */
+  readonly closePictures?: boolean;
   /** Keeps asking for this frame until the scene is ready, without waiting for it. */
   readonly seekAtOnce?: number;
   /** Starts with a frame of no size, like a frame in a process that has not caught up yet. */
@@ -25,8 +28,10 @@ export interface OpenScene {
   readonly closeOnFailure?: boolean;
   /** Tighter than the real rules, to get to the limit sooner. */
   readonly messageRules?: {
-    readonly burstMessages: number;
-    readonly messagesPerSecond: number;
+    readonly burstMessages?: number;
+    readonly messagesPerSecond?: number;
+    readonly burstPictures?: number;
+    readonly picturesPerSecond?: number;
   };
 }
 
@@ -42,6 +47,15 @@ export interface Reply {
   readonly error?: string;
 }
 
+/** A picture that came out of a scene. */
+export interface PictureInfo {
+  readonly frame: number;
+  readonly width: number;
+  readonly height: number;
+  /** The color in the middle of it, with its alpha. */
+  readonly middle: readonly number[];
+}
+
 /** What the test can see of a scene. */
 export interface SceneInfo {
   readonly origin: string | undefined;
@@ -50,5 +64,6 @@ export interface SceneInfo {
   readonly problems: readonly SceneProblem[];
   readonly failures: readonly SceneFailure[];
   readonly positions: readonly number[];
+  readonly pictures: readonly PictureInfo[];
   readonly frames: number;
 }

@@ -1,6 +1,6 @@
 import type { MediaLibrary } from "../media/library.ts";
 import { ProjectStore, orderedTracks, type CommandCall } from "@animaquill/core";
-import type { ToCompositor } from "@animaquill/render";
+import type { FromCompositor, ToCompositor } from "@animaquill/render";
 import type { ProjectLibrary } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,18 +9,30 @@ import type { PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { PreviewLink } from "./link.ts";
+import { PreviewStatus } from "./status.ts";
 
 type Listener = (event: { data: unknown; source: unknown }) => void;
 
 let listeners: Listener[] = [];
+const links: PreviewLink[] = [];
 
 beforeEach(() => {
   listeners = [];
-  vi.stubGlobal("addEventListener", (_: string, listener: Listener) => listeners.push(listener));
+  vi.stubGlobal("addEventListener", (type: string, listener: Listener) => {
+    if (type === "message") listeners.push(listener);
+  });
   vi.stubGlobal("removeEventListener", () => {});
+  vi.stubGlobal("document", {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    visibilityState: "visible",
+  });
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  for (const link of links.splice(0)) link.dispose();
+  vi.unstubAllGlobals();
+});
 
 function setup(hearsFirst?: (store: ProjectStore) => void) {
   const store = ProjectStore.create(createProject({ name: "预览" }));
@@ -61,14 +73,33 @@ function setup(hearsFirst?: (store: ProjectStore) => void) {
     subscribe: emitter.subscribe,
     getPreviewed: () => previewed,
   } as unknown as PropertyWriter;
+  const view: (() => void)[] = [];
+  const clock = {
+    playing: false,
+    frame: 0,
+    playbackStart: undefined as { frame: number; since: number } | undefined,
+  };
   const timeline = {
     subscribe: () => () => {},
-    subscribeView: () => () => {},
-    getSnapshot: () => ({ playing: false }),
+    subscribeView: (listener: () => void) => {
+      view.push(listener);
+      return () => {};
+    },
+    getSnapshot: () => ({ playing: clock.playing }),
     model: { id: "main", rate: { fps: 30 } },
-    frame: 0,
-    playbackStart: undefined,
+    get frame() {
+      return clock.frame;
+    },
+    get playbackStart() {
+      return clock.playbackStart;
+    },
   } as unknown as TimelineEditor;
+  /** The playhead got here. */
+  const tick = (to: number) => {
+    clock.frame = to;
+    for (const listener of view) listener();
+  };
+  const status = new PreviewStatus({ problem: () => {}, restarted: () => {} });
   const link = new PreviewLink(
     frame,
     timeline,
@@ -78,13 +109,33 @@ function setup(hearsFirst?: (store: ProjectStore) => void) {
     () => {},
     new DiagnosticsRecorder("test"),
     { onRestored: () => () => {} } as unknown as MediaLibrary,
+    status,
+    { origins: ["https://scene.example"], compositor: "https://box.example", run: true },
   );
+  links.push(link);
   const hello = () => {
     for (const listener of listeners) listener({ data: { type: "ready" }, source: contentWindow });
   };
   const ofType = <T extends ToCompositor["type"]>(type: T) =>
     sent.filter((message): message is Extract<ToCompositor, { type: T }> => message.type === type);
-  return { store, run, clip, sent, preview, hello, link, ofType };
+  const fromCompositor = (data: FromCompositor) => {
+    for (const listener of listeners) listener({ data, source: contentWindow });
+  };
+  return {
+    store,
+    run,
+    clip,
+    sent,
+    preview,
+    hello,
+    link,
+    ofType,
+    clock,
+    tick,
+    status,
+    contentWindow,
+    fromCompositor,
+  };
 }
 
 const set = (clip: string, path: string, value: unknown) => ({
@@ -189,6 +240,34 @@ describe("a preview", () => {
       "transform.x": { value: 10 },
       opacity: { value: 0.25 },
     });
+  });
+
+  it("says what the project has underneath, so that nothing gets laid out for what is only shown", () => {
+    const { hello, preview, run, ofType } = setup();
+    hello();
+    preview(showing({ "transform.width": 400 }));
+    run(set("c", "opacity", 0.25));
+    const [message] = ofType("plan").slice(-1);
+    expect(message?.plan.layers[0]?.channels["transform.width"]).toMatchObject({ value: 400 });
+    expect(message?.settled?.layers[0]?.channels["transform.width"]).toBeUndefined();
+    expect(message?.settled?.layers[0]?.channels["opacity"]).toMatchObject({ value: 0.25 });
+  });
+
+  it("has nothing to say about that when nothing is shown", () => {
+    const { hello, run, ofType } = setup();
+    hello();
+    run(set("c", "opacity", 0.25));
+    expect(ofType("plan").at(-1)).not.toHaveProperty("settled");
+  });
+
+  it("says that again to a compositor that loaded in the middle of it", () => {
+    const { hello, preview, ofType } = setup();
+    hello();
+    preview(showing({ "transform.width": 400 }));
+    hello();
+    const message = ofType("plan").at(-1);
+    expect(message?.plan.layers[0]?.channels["transform.width"]).toMatchObject({ value: 400 });
+    expect(message?.settled?.layers[0]?.channels["transform.width"]).toBeUndefined();
   });
 
   it("wins over what a new plan says about the same property", () => {
@@ -298,5 +377,186 @@ describe("a preview", () => {
       kind: "still",
       value: 10,
     });
+  });
+});
+
+describe("who gets read", () => {
+  /** A message that goes off when somebody looks at what is in it. */
+  const trap = (source: unknown) => {
+    let reads = 0;
+    const event = {
+      source,
+      get data() {
+        reads += 1;
+        return { type: "ready" };
+      },
+    };
+    return { event, reads: () => reads };
+  };
+
+  it("nobody but the compositor, because reading is what builds a message", () => {
+    const { sent } = setup();
+    const stranger = { parent: undefined };
+    const { event, reads } = trap(stranger);
+    for (const listener of listeners) listener(event);
+    expect(reads()).toBe(0);
+    expect(sent).toEqual([]);
+  });
+
+  it("a message of the compositor, once", () => {
+    const { contentWindow } = setup();
+    const { event, reads } = trap(contentWindow);
+    for (const listener of listeners) listener(event);
+    expect(reads()).toBe(1);
+  });
+
+  it("not even when there is a whole flood of it, and the sender goes", () => {
+    const { contentWindow, ofType } = setup();
+    const scene = {} as { parent: unknown };
+    const page = Object.assign(contentWindow, { 0: scene, length: 1 });
+    scene.parent = page;
+    const { event, reads } = trap(scene);
+    for (let message = 0; message < 40; message += 1) {
+      for (const listener of listeners) listener(event);
+    }
+    expect(reads()).toBe(0);
+    expect(ofType("evict")).toEqual([{ type: "evict", index: 0, frames: 1 }]);
+  });
+});
+
+describe("a compositor that said hello", () => {
+  it("first hears where scenes run", () => {
+    const { hello, sent } = setup();
+    hello();
+    expect(sent[0]).toEqual({
+      type: "setup",
+      origins: ["https://scene.example"],
+      compositor: "https://box.example",
+      run: true,
+      retired: [],
+    });
+    expect(sent[1]?.type).toBe("plan");
+  });
+
+  it("hears where a compositor before it saw something hang, which it cannot know", () => {
+    const { hello, ofType, fromCompositor } = setup();
+    hello();
+    fromCompositor({ type: "origin-retired", origin: "https://scene.example" });
+    hello();
+    expect(ofType("setup").at(-1)?.retired).toEqual(["https://scene.example"]);
+  });
+
+  it("knows nothing, so the same goes for one that loaded again", () => {
+    const { hello, ofType, status } = setup();
+    hello();
+    status.noteScene("c", { state: "stopped", reason: "flood" });
+    hello();
+    expect(ofType("setup")).toHaveLength(2);
+    expect(status.getSnapshot().scenes.size).toBe(0);
+  });
+});
+
+describe("how time goes over", () => {
+  const start = { frame: 0, since: 0 };
+
+  it("while paused, as a jump for every move", () => {
+    const { hello, tick, ofType } = setup();
+    hello();
+    tick(30);
+    expect(ofType("seek").at(-1)).toEqual({ type: "seek", seconds: 1, jump: true });
+    expect(ofType("play")).toEqual([]);
+  });
+
+  it("starting to play tells where from, and that it is a jump", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    tick(30);
+    expect(ofType("play")).toHaveLength(1);
+    expect(ofType("play")[0]).toMatchObject({ seconds: 1, rate: 1, jump: true });
+  });
+
+  it("while playing, does not say so with every frame", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    for (let frame = 1; frame < 10; frame += 1) tick(frame);
+    expect(ofType("play")).toHaveLength(1);
+  });
+
+  it("corrects itself every now and then, which is not a jump", () => {
+    vi.useFakeTimers();
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    tick(1);
+    tick(2);
+    vi.advanceTimersByTime(1100);
+    tick(3);
+    vi.useRealTimers();
+    expect(ofType("play")).toHaveLength(2);
+    expect(ofType("play").at(-1)).toMatchObject({ seconds: 0.1, jump: false });
+  });
+
+  it("moving the playhead while playing is a jump again", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    tick(1);
+    tick(2);
+    clock.playbackStart = { frame: 90, since: 500 };
+    tick(90);
+    expect(ofType("play").at(-1)).toMatchObject({ seconds: 3, jump: true });
+  });
+
+  it("stopping says so, once", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    tick(1);
+    clock.playing = false;
+    tick(1);
+    tick(1);
+    expect(ofType("pause")).toHaveLength(1);
+  });
+
+  it("never says that it stopped without having started", () => {
+    const { hello, tick, ofType } = setup();
+    hello();
+    tick(1);
+    tick(2);
+    expect(ofType("pause")).toEqual([]);
+  });
+
+  it("a compositor that loaded again starts over", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    tick(1);
+    hello();
+    tick(2);
+    expect(ofType("play")).toHaveLength(2);
+  });
+});
+
+describe("what the compositor says about scenes", () => {
+  it("goes to the status of the preview", () => {
+    const { hello, fromCompositor, status } = setup();
+    hello();
+    fromCompositor({ type: "scene-status", layer: "c", status: { state: "unsupported" } });
+    expect(status.getSnapshot().scenes.get("c")).toEqual({ state: "unsupported" });
+  });
+
+  it("gets a retry through", () => {
+    const { hello, link, ofType } = setup();
+    hello();
+    link.retryScene("c");
+    expect(ofType("scene-retry")).toEqual([{ type: "scene-retry", layer: "c" }]);
   });
 });

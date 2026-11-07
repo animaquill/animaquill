@@ -201,13 +201,27 @@ function danglingFromTimeline(
 }
 
 /**
+ * A file that a scene or sound can miss. Writing a new file to one that was there all along knows
+ * this from before, so that step is free to go back: this only keeps the files of something that
+ * has to stay from going back with it. Either both go, or they stay together.
+ */
+function danglingFile(state: ProjectState, path: Path): readonly string[] {
+  const [, file = ""] = path;
+  const [folder = "", name = ""] = file.split("/");
+  const owner = [folder, name];
+  const isOwned = CODE_ROOTS.includes(folder) && getIn(state, owner) !== undefined;
+  return isOwned && getIn(state, path) === undefined ? [link(owner.join("/"), path)] : NONE;
+}
+
+/**
  * What points at nothing because of what is at a path now, or is no longer there: a clip whose track
- * or asset is gone, a transition without its clips, or a timeline without sections. Commands do not
- * do this, but a file and two people at once can. Taking a change back has to look, because it puts
- * back an older state while the rest of the project moved on.
+ * or asset is gone, a transition without its clips, a timeline without sections, or a scene without
+ * a file of it. Commands do not do this, but a file and two people at once can. Taking a change back
+ * has to look, because it puts back an older state while the rest of the project moved on.
  */
 export function danglingAt(state: ProjectState, path: Path): readonly string[] {
   const [root, id = ""] = path;
+  if (root === "files") return danglingFile(state, path);
   if (root === "timelines") {
     if (path.length > 2) return danglingInTimeline(state, path);
     const timeline = entryOf(state.timelines, id);
@@ -219,12 +233,61 @@ export function danglingAt(state: ProjectState, path: Path): readonly string[] {
     : NONE;
 }
 
+const CODE_ROOTS = ["scenes", "sounds"];
+
+/** A timeline only changes by being replaced, and a file can take away thousands of things. */
+const lockedByTimelines = new WeakMap<ProjectState["timelines"], ReadonlySet<string>>();
+
+/** The scenes and sounds that are on a locked track, also where a version puts them there. */
+function runningOnLockedTracks(state: ProjectState): ReadonlySet<string> {
+  const known = lockedByTimelines.get(state.timelines);
+  if (known) return known;
+  const running = new Set<string>();
+  for (const timeline of Object.values(state.timelines)) {
+    const isLocked = ({ track }: ClipState) => entryOf(timeline.tracks, track)?.locked === true;
+    if (!Object.values(timeline.tracks).some(({ locked }) => locked)) continue;
+    const add = (source: unknown) => {
+      for (const target of targetsOf(source)) {
+        if (CODE_ROOTS.includes(target[0] as string)) running.add(target.join("/"));
+      }
+    };
+    for (const clip of Object.values(timeline.clips)) {
+      if (!isLocked(clip)) continue;
+      add(clip.source);
+      for (const { clips } of Object.values(timeline.overrides)) {
+        add(entryOf(clips, clip.id)?.source?.value);
+      }
+    }
+  }
+  lockedByTimelines.set(state.timelines, running);
+  return running;
+}
+
+/** Whether a locked track shows this scene or plays this sound. */
+export const isOnLockedTrack = (state: ProjectState, target: Path): boolean =>
+  runningOnLockedTracks(state).has(target.join("/"));
+
+/** Whether a locked track runs any code at all. Shared code can be behind each of them. */
+export const runsOnLockedTrack = (state: ProjectState): boolean =>
+  runningOnLockedTracks(state).size > 0;
+
+/** Whether writing here changes what a locked track runs. */
+function reachesLockedCode(state: ProjectState, path: Path): boolean {
+  const [root, id = ""] = path;
+  if (root !== "files")
+    return CODE_ROOTS.includes(root ?? "") && isOnLockedTrack(state, path.slice(0, 2));
+  const [folder, name = ""] = id.split("/");
+  if (folder === "code") return runsOnLockedTrack(state);
+  return CODE_ROOTS.includes(folder ?? "") && isOnLockedTrack(state, [folder as string, name]);
+}
+
 /**
  * Whether a change reaches what is on a locked track: what is there now, or what would end up there.
  * The track itself stays open, or nobody could take the lock off. It only cannot go away.
  */
 export function touchesLockedTrack(state: ProjectState, patch: Patch): boolean {
   const { path } = patch;
+  if (reachesLockedCode(state, path)) return true;
   const [root, id = "", level, item = "", field] = path;
   const timeline = root === "timelines" ? entryOf(state.timelines, id) : undefined;
   if (!timeline) return false;

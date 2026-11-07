@@ -1,4 +1,4 @@
-export { Color, Duration, Id, LanguageId, Rate, Time, newId } from "./basics.ts";
+export { Color, Duration, Id, LanguageId, Rate, RelativePath, Time, newId } from "./basics.ts";
 export { checkProject } from "./check.ts";
 export { createProject, createTimeline, type NewProject } from "./create.ts";
 export * from "./documents.ts";
@@ -21,6 +21,7 @@ export {
 export {
   BUILT_IN_PROPERTIES,
   CLIP_VISUAL,
+  SCENE_VISUAL,
   cannotHaveKeys,
   isAnimation,
   isKnownProperty,
@@ -55,4 +56,4 @@ export {
   PropertyValue,
   Value,
 } from "./values.ts";
-export { CURRENT_FORMAT_VERSION } from "./version.ts";
+export { CURRENT_FORMAT_VERSION, CURRENT_SCENE_RUNTIME } from "./version.ts";

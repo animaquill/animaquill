@@ -43,6 +43,12 @@ export interface MessageRules {
   /** Bytes at once, and in the long run. */
   readonly burstBytes: number;
   readonly bytesPerSecond: number;
+  /**
+   * Pictures at once, and in the long run. A scene sends one when a frame of the screen came along,
+   * so this is more than any screen does, and far less than a picture costs to make for no reason.
+   */
+  readonly burstPictures: number;
+  readonly picturesPerSecond: number;
 }
 
 export const MESSAGE_RULES: MessageRules = {
@@ -51,10 +57,13 @@ export const MESSAGE_RULES: MessageRules = {
   maxMessageBytes: 64 * 1024,
   burstBytes: 4 * 1024 * 1024,
   bytesPerSecond: 1024 * 1024,
+  burstPictures: 600,
+  picturesPerSecond: 300,
 };
 
 /** What the structure around a value costs, as a rough figure. */
 const NODE_BYTES = 16;
+const BYTES_PER_PIXEL = 4;
 
 /**
  * About how many bytes a message takes up. It stops looking at `limit`, so the time it takes has
@@ -69,7 +78,10 @@ export function weightOf(data: unknown, limit: number): number {
     if (typeof value === "string") weight += value.length * 2;
     else if (typeof value !== "object" || value === null) continue;
     else if (value instanceof Blob) weight += value.size;
-    else if (value instanceof ArrayBuffer) weight += value.byteLength;
+    else if (typeof ImageBitmap !== "undefined" && value instanceof ImageBitmap) {
+      // Nothing about one shows otherwise, and a picture has no business being anywhere else.
+      weight += value.width * value.height * BYTES_PER_PIXEL;
+    } else if (value instanceof ArrayBuffer) weight += value.byteLength;
     else if (ArrayBuffer.isView(value)) weight += value.byteLength;
     else if (Array.isArray(value)) {
       for (const entry of value) {

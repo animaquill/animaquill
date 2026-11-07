@@ -13,6 +13,7 @@
     "@animaquill/host": "workspace:*",
     "@animaquill/media": "workspace:*",
     "@animaquill/render": "workspace:*",
+    "@animaquill/scene": "workspace:*",
     "@animaquill/schema": "workspace:*",
     "dockview-react": "8.8.3",
     "i18next": "26.7.1",

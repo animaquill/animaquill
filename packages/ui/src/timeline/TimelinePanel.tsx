@@ -31,7 +31,7 @@ import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
-import { ASSET_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
+import { ASSET_DRAG_TYPE, SCENE_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
 import type zhCN from "../i18n/zh-CN.json";
 import type { TimelineAction } from "./actions.ts";
 import { RULER_HEIGHT, type TimelineEditor, type VisibleClip } from "./editor.ts";
@@ -175,6 +175,13 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               icon={Plus}
               text={t("timeline.color")}
               onClick={() => editor.addColorClip()}
+            />
+            <ToolButton
+              name={t("timeline.action.addScene")}
+              usage={t("timeline.help.addScene")}
+              icon={Plus}
+              text={t("timeline.scene")}
+              onClick={() => editor.createScene()}
             />
           </div>
         </div>
@@ -776,6 +783,7 @@ function Surface({
 
   const carriesMedia = (event: DragEvent) =>
     event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
+    event.dataTransfer.types.includes(SCENE_DRAG_TYPE) ||
     event.dataTransfer.types.includes("Files");
 
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -795,6 +803,11 @@ function Surface({
     const dragged = event.dataTransfer.getData(ASSET_DRAG_TYPE);
     if (dragged) {
       editor.addAsset(dragged, place);
+      return;
+    }
+    const scene = event.dataTransfer.getData(SCENE_DRAG_TYPE);
+    if (scene) {
+      editor.addScene(scene, place);
       return;
     }
     void media.importFiles([...event.dataTransfer.files]).then((ids) => {
@@ -846,6 +859,11 @@ function Surface({
                 id: "add",
                 label: t("timeline.color"),
                 run: () => editor.addColorClip({ row: hit.row, seconds: hit.seconds }),
+              },
+              {
+                id: "addScene",
+                label: t("timeline.scene"),
+                run: () => editor.createScene({ lane: hit.row.top + 1, seconds: hit.seconds }),
               },
             ]
           : [];

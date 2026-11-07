@@ -365,6 +365,18 @@ export class ProjectTransfer {
   }
 
   /** Says what people have to know about a project that just came in. */
+  /** What people bring in can be from anybody, and this is the moment before any of it runs. */
+  async warnAboutCode({ name, runsCode }: ImportReport): Promise<void> {
+    if (!runsCode) return;
+    const t = this.#t;
+    await this.#dialogs.confirm({
+      title: t("transfer.codeTitle"),
+      message: t("transfer.codeWarning", { name }),
+      confirm: t("transfer.codeConfirm"),
+      noticeOnly: true,
+    });
+  }
+
   async announceImport(report: ImportReport): Promise<void> {
     const t = this.#t;
     const { name, copied, missing, damaged, skipped, lost, warnings } = report;

@@ -195,6 +195,10 @@ async function chooseFolder(page: Page, folder: string, start: () => Promise<unk
   await (await chooser).setFiles(folder);
 }
 
+/** A project with scenes says so first. */
+const openAnyway = (page: Page) =>
+  dialog(page).getByRole("button", { name: "知道了，打开项目" }).click();
+
 const importButton = (page: Page) => page.getByRole("button", { name: "导入项目文件夹" });
 const importFrom = (page: Page, folder: string) =>
   chooseFolder(page, folder, () => startImport(page));
@@ -1089,6 +1093,7 @@ test.describe("a browser that cannot write to folders", () => {
   test("brings in a folder written by hand, with what the format has", async ({ page }) => {
     const folder = fileURLToPath(new URL("../../schema/fixtures/v1", import.meta.url));
     await importFrom(page, folder);
+    await openAnyway(page);
 
     const report = dialog(page);
     await expect(report.getByRole("heading", { name: "项目已导入" })).toBeVisible();
@@ -1165,6 +1170,7 @@ test.describe("a file with a name that a folder on a disk does not allow", () =>
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
     await importFrom(page, folderWithSuchNames());
+    await openAnyway(page);
     await expect(page.getByText("“手写的项目”已导入。")).toBeVisible();
 
     const download = page.waitForEvent("download");
@@ -1182,6 +1188,7 @@ test.describe("a file with a name that a folder on a disk does not allow", () =>
   test("stays out of a folder with a word, and the rest goes on", async ({ page }) => {
     await useFolders(page);
     await importFrom(page, folderWithSuchNames());
+    await openAnyway(page);
     await expect(page.getByText("“手写的项目”已导入。")).toBeVisible();
     await page.evaluate((names) => {
       window.refusedNames = names;
@@ -1211,6 +1218,7 @@ test.describe("the question the browser asks about uploading", () => {
     await expect(hint).toBeVisible();
 
     await chooser.setFiles(fileURLToPath(new URL("../../schema/fixtures/v1", import.meta.url)));
+    await openAnyway(page);
     await expect(dialog(page).getByRole("heading", { name: "项目已导入" })).toBeVisible();
     await expect(hint).toHaveCount(0);
   });

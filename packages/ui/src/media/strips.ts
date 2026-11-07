@@ -30,8 +30,9 @@ export class StripMaker {
       frame.tabIndex = -1;
       frame.hidden = true;
       frame.title = "";
-      const onReady = ({ data, source }: MessageEvent<FromCompositor>) => {
-        if (source !== frame.contentWindow || data.type !== "ready") return;
+      // Anything can write to this page, and reading `data` is what builds a message.
+      const onReady = (event: MessageEvent<FromCompositor>) => {
+        if (event.source !== frame.contentWindow || event.data.type !== "ready") return;
         removeEventListener("message", onReady);
         resolve();
       };
@@ -56,8 +57,9 @@ export class StripMaker {
         resolve(image);
       };
       const timer = setTimeout(() => finish(undefined), TIMEOUT_MS);
-      const onMessage = ({ data, source }: MessageEvent<FromCompositor>) => {
-        if (source !== frame?.contentWindow) return;
+      const onMessage = (event: MessageEvent<FromCompositor>) => {
+        if (event.source !== frame?.contentWindow) return;
+        const { data } = event;
         if (data.type === "strip" && data.request === request) finish(data.image);
       };
       addEventListener("message", onMessage);

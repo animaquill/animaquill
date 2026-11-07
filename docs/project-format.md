@@ -283,7 +283,9 @@ k = 1080 / min(format.width, format.height)
 }
 ```
 
-场景的文件夹里是真实的代码，`entry` 是入口，要是 `.html`、`.js` 或 `.mjs` 文件。代码直接运行，不经过编译，所以用 JavaScript，不用 TypeScript。`runtime` 是这段代码面向的运行时接口版本，新版编辑器会继续支持旧接口，所以旧项目的渲染结果不变。
+场景的文件夹里是真实的代码，`entry` 是入口，要是 `.html`、`.js` 或 `.mjs` 文件。代码直接运行，不经过编译，所以用 JavaScript，不用 TypeScript。`runtime` 是这段代码面向的运行时接口版本，现在是 1，内容见[场景运行时](scene-runtime.md)。新版编辑器会继续支持旧接口，所以旧项目的渲染结果不变。写给更新版本的场景不运行，列入问题。
+
+场景的文件夹只放文本。图片、字体这些放进 `assets.json`，代码里用 `aq.asset(id)` 取。
 
 参数的 `type` 是 `text`、`number`、`color`、`boolean`、`choice` 或 `asset`。片段用 `param.<id>` 赋值。差异可以覆盖片段的任何属性，场景文件本身不能差异化。
 

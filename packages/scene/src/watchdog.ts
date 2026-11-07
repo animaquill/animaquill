@@ -98,6 +98,15 @@ export class Watchdog {
     return this.#seek?.target;
   }
 
+  /**
+   * Whether it stopped answering, for longer than a working frame takes when it is throttled. This
+   * comes before the limit that makes it `silent`, for a frame that goes away before that. A frame
+   * that never answered yet says nothing: it may only be slow to load.
+   */
+  get isQuiet(): boolean {
+    return this.#phase === "running" && this.#counted - this.#answeredAt > THROTTLED_ANSWER_MS;
+  }
+
   /** A new phase gets its full patience. */
   enter(phase: "loading" | "running"): void {
     this.#phase = phase;

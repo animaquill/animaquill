@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@animaquill/core": "workspace:*",
+    "@animaquill/scene": "workspace:*",
     "mediabunny": "1.65.2"
   },
   "devDependencies": {

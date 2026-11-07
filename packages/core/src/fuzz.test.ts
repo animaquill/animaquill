@@ -81,7 +81,42 @@ function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom
   const section = random.pick(sections) ?? "none";
   const timeline = "main";
   const color = { kind: "color", color: "#112233" };
+  const state = store.getState();
+  const scene = random.pick(Object.keys(state.scenes)) ?? "none";
+  const file = random.pick(Object.keys(state.files)) ?? "code/none.js";
+  const page = { "index.html": `<p>${random.int(9)}</p>`, "a.js": String(random.int(9)) };
   const calls: (() => CommandCall)[] = [
+    () => ({
+      type: "scene.add",
+      params: {
+        id: random.pick(["s1", "s2", "s3"]),
+        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        files: page,
+      },
+    }),
+    () => ({ type: "scene.update", params: { scene, changes: { name: `n${random.int(9)}` } } }),
+    () => ({ type: "scene.remove", params: { scene } }),
+    () => ({
+      type: "clip.add",
+      params: {
+        timeline,
+        track,
+        clip: {
+          start: String(random.int(60)),
+          duration: "1",
+          source: { kind: "scene", scene },
+        },
+        overlap: "overwrite",
+      },
+    }),
+    () => ({ type: "file.write", params: { path: file, text: `t${random.int(9)}` } }),
+    () => ({ type: "file.write", params: { path: `code/f${random.int(3)}.js`, text: "x" } }),
+    () => ({
+      type: "file.write",
+      params: { path: `scenes/${scene}/n${random.int(3)}.js`, text: "x" },
+    }),
+    () => ({ type: "file.remove", params: { path: file } }),
+    () => ({ type: "file.rename", params: { from: file, to: `code/r${random.int(3)}.js` } }),
     () => ({
       type: "clip.move",
       params: { timeline, clips: [{ clip, start: String(random.int(60)) }] },
@@ -486,9 +521,10 @@ function danglingIn(state: ProjectState): readonly string[] {
     if (Object.keys(timeline.sections).length === 0) wrong.push("no section");
     for (const clip of Object.values(timeline.clips)) {
       if (!timeline.tracks[clip.track]) wrong.push(`${clip.id} is on ${clip.track}`);
-      const { media } = clip.source as { media?: { asset?: string } };
+      const { media, scene } = clip.source as { media?: { asset?: string }; scene?: string };
       if (media?.asset && !state.assets?.[media.asset])
         wrong.push(`${clip.id} uses ${media.asset}`);
+      if (scene && !state.scenes[scene]) wrong.push(`${clip.id} shows ${scene}`);
     }
     for (const transition of Object.values(timeline.transitions)) {
       for (const clip of [transition.from, transition.to]) {
@@ -496,6 +532,10 @@ function danglingIn(state: ProjectState): readonly string[] {
       }
       if (!timeline.tracks[transition.track]) wrong.push(`${transition.id} is on a lost track`);
     }
+  }
+  for (const [id, { entry }] of Object.entries(state.scenes)) {
+    const path = `scenes/${id}/${entry}`;
+    if (state.files[path] === undefined) wrong.push(`${id} has no ${entry}`);
   }
   return wrong;
 }
@@ -611,7 +651,21 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back around locked tracks, seed 
       const clips = Object.values(state.timelines["main"]?.clips ?? {});
       return clips.filter(({ track }) => tracks.includes(track));
     };
+    /** What a scene on a locked track runs is what it shows, so that stays too. */
+    const codeOf = (state: ProjectState, tracks: readonly string[]) => {
+      const scenes = contentOf(state, tracks).flatMap(({ source }) =>
+        source.kind === "scene" ? [source.scene as string] : [],
+      );
+      const isTheirs = (path: string) =>
+        scenes.some((id) => path.startsWith(`scenes/${id}/`)) ||
+        (scenes.length > 0 && path.startsWith("code/"));
+      return {
+        manifests: scenes.map((id) => state.scenes[id]),
+        files: Object.entries(state.files).filter(([path]) => isTheirs(path)),
+      };
+    };
     let held = 0;
+    let lockedCode = 0;
     for (let round = 0; round < 1000; round++) {
       const task = `t${random.int(3)}`;
       const roll = random.int(100);
@@ -626,6 +680,9 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back around locked tracks, seed 
       if (roll < 70) {
         const origin = random.chance(0.5) ? aiTask(task) : USER;
         store.execute(randomCommand(store, random), { origin });
+        const still = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
+        if (codeOf(before, still).files.length > 0) lockedCode += 1;
+        expect(codeOf(store.getState(), still)).toEqual(codeOf(before, still));
         continue;
       }
       const result =
@@ -639,8 +696,10 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back around locked tracks, seed 
       if (!result.ok && result.error.obstacle === "locked") held += 1;
       const locked = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
       expect(contentOf(store.getState(), locked)).toEqual(contentOf(before, locked));
+      expect(codeOf(store.getState(), locked)).toEqual(codeOf(before, locked));
     }
     expect(held).toBeGreaterThan(0);
+    expect(lockedCode).toBeGreaterThan(0);
   });
 });
 

@@ -1,5 +1,6 @@
 import {
   CLIP_VISUAL,
+  SCENE_VISUAL,
   toSeconds,
   type MediaRef,
   type ObjectDescriptor,
@@ -17,8 +18,10 @@ const WITH_A_PICTURE = new Set(["video", "image", "color"]);
  * or changes properties reads this instead of knowing them. Effects, scenes and code objects come in
  * here with the same description.
  */
-export const objectsOf = (clip: ClipState): readonly ObjectDescriptor[] =>
-  WITH_A_PICTURE.has(clip.source.kind) ? [CLIP_VISUAL] : [];
+export function objectsOf(clip: ClipState): readonly ObjectDescriptor[] {
+  if (clip.source.kind === "scene") return [SCENE_VISUAL];
+  return WITH_A_PICTURE.has(clip.source.kind) ? [CLIP_VISUAL] : [];
+}
 
 /** How large the media of a clip is, as far as the project knows. */
 export function naturalSizeOf(state: ProjectState, clip: ClipState): Size | undefined {

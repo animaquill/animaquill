@@ -9,7 +9,7 @@
 .showing {
   position: absolute;
   top: 6px;
-  left: 6px;
+  right: 6px;
   padding: 1px 6px;
   color: #1f1f1f;
   font-size: 11px;
@@ -23,9 +23,16 @@
   background: var(--aq-bg-input);
 }
 
-.picture {
+.stage {
+  position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
+}
+
+.picture {
+  flex: 1;
+  min-width: 0;
   background: #000;
   border: 0;
 

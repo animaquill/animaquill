@@ -116,6 +116,9 @@
     },
     "imported": "“{{name}}”已导入。",
     "importedTitle": "项目已导入",
+    "codeTitle": "这个项目含有脚本",
+    "codeWarning": "“{{name}}”里有场景或声音的代码，打开项目后就会运行。代码跑在沙箱里，碰不到你的账号和别的项目，但能把这个项目里给它的内容发到网上。不是自己做的项目，先确认来源可信。",
+    "codeConfirm": "知道了，打开项目",
     "importedCopy": "这个浏览器里已经有这个项目，它没有改动，这次导入成了副本。",
     "importHint": "用到这些素材的片段暂时没有画面或声音。在素材库里导入同样的文件，就能补上。",
     "copyName": "{{name}}（副本）",
@@ -424,6 +427,7 @@
     },
     "action": {
       "addColor": "添加纯色片段",
+      "addScene": "新建场景",
       "addVideoTrack": "添加视频轨道",
       "addAudioTrack": "添加音频轨道",
       "addCaptionTrack": "添加字幕轨道",
@@ -454,6 +458,7 @@
       "play": "播放或暂停"
     },
     "color": "纯色片段",
+    "scene": "场景",
     "snapping": "吸附",
     "newTrack": {
       "video": "视频轨道",
@@ -471,6 +476,7 @@
       "snapping": "拖动时贴到片段边缘和播放头，按住 Alt 暂时不吸附。",
       "overwriting": "打开后拖到别的片段上会盖住它们。关闭时片段落到最近的空位。",
       "addColor": "在播放头处放一段纯色，这里没有空位时放到新轨道。",
+      "addScene": "在播放头处放一段用 HTML 和 CSS 写的动画，先用内置的模板。",
       "addTrack": "添加一条视频、音频或字幕轨道。",
       "zoomOut": "缩小时间轴，看到更长的时间。",
       "zoomIn": "放大时间轴，看清每一帧。",
@@ -544,7 +550,73 @@
     "importing": "正在导入 {{count}} 个文件",
     "empty": "把视频、音频或图片拖到这里，或者点导入。素材保存在这个浏览器里。",
     "addToTimeline": "添加到时间轴",
-    "remove": "删除素材"
+    "remove": "删除素材",
+    "newScene": "新建场景",
+    "removeScene": "删除场景"
+  },
+  "scene": {
+    "newName": "场景 {{number}}",
+    "problem": "“{{name}}”：{{text}}",
+    "tooManyProblems": "“{{name}}”还有更多问题，这里不再一一提示。",
+    "problems": {
+      "error": "代码出错：{{message}}",
+      "errorAt": "代码出错：{{message}}（{{file}} 第 {{line}} 行）",
+      "rejection": "有一个 Promise 没有处理：{{message}}",
+      "resource": "资源读不出来：{{target}}",
+      "blocked": "沙箱挡住了对 {{target}} 的访问。场景只能用项目里的文件",
+      "other": "{{code}}",
+      "codes": {
+        "above-root": "路径走到了项目外面：{{target}}",
+        "bad-import-map": "import map 写得不对",
+        "bad-path": "路径写得不对：{{target}}",
+        "bare-import": "找不到这个模块：{{target}}",
+        "base-tag": "<base> 标签不起作用",
+        "canvas-layer": "场景里的 canvas 单独合成：它盖在 HTML 上面，CSS 滤镜和 3D 变换不起作用",
+        "capture-failed": "这一帧捕获失败，预览里显示的是之前的画面",
+        "capture-timeout": "浏览器没有绘制这一帧，预览里显示的是之前的画面",
+        "content-timeout": "图片或字体三秒内没有准备好，这一帧继续往下走",
+        "css-import-cycle": "样式表互相引用：{{target}}",
+        "external-url": "场景不能联网，这个地址被挡住了：{{target}}",
+        "focus": "场景不能拿走键盘焦点",
+        "frameset": "不支持 frameset",
+        "import-map-scopes": "import map 的 scopes 不起作用",
+        "missing-asset": "这个素材场景拿不到：{{target}}",
+        "missing-entry": "入口文件不在：{{file}}",
+        "missing-file": "文件不在：{{target}}",
+        "slow-work": "读取文件或者加载模块超过一秒，有的结果可能到得晚",
+        "too-many-problems": "问题太多，后面的不再记录",
+        "top-layer": "{{target}} 捕获不到，这部分不会出现在预览里",
+        "unclosed-script": "<script> 没有闭合，没有运行",
+        "worker-import-cycle": "Worker 的模块互相引用：{{target}}",
+        "worker-timing": "用了 Worker：它的消息什么时候到是真实时间，每次运行可能不同",
+        "worklet": "用了 Worklet：里面的时间和随机数不受时间轴控制"
+      }
+    }
+  },
+  "preview": {
+    "restarted": "预览没有响应，已经重新启动。",
+    "stopped": "预览一直没有响应，已经停下。可能是场景里的代码让它卡住了。",
+    "restart": "重新启动预览",
+    "restartWithoutScenes": "不运行场景，重新启动",
+    "restartWithScenes": "重新运行场景",
+    "scenesOff": "场景没有运行，先修好出问题的场景，再重新运行。",
+    "noOrigin": "场景卡死的次数太多，这次打开不能再运行场景了。刷新页面可以恢复。",
+    "reload": "刷新页面",
+    "unsupported": "这个浏览器不能捕获场景，预览里场景的位置显示占位。请用 Chrome 或 Edge 157 以上的版本。",
+    "tooNew": "“{{name}}”是用更新的编辑器写的，要先更新 AnimaQuill。",
+    "retrying": "“{{name}}”没有响应，正在重新打开。",
+    "retry": "重试",
+    "stoppedScene": {
+      "failed": "“{{name}}”运行失败：{{message}}",
+      "missing-entry": "“{{name}}”的入口文件不在，没有运行。",
+      "runtime-load": "“{{name}}”的运行时加载失败，可以重试。",
+      "flood": "“{{name}}”发的消息太多，已经被移除。",
+      "focus": "“{{name}}”反复抢键盘焦点，已经被移除。",
+      "oversized": "“{{name}}”发了不该发的数据，已经被移除。",
+      "replay": "“{{name}}”不断要求重来，已经被移除。",
+      "silent": "“{{name}}”卡死了，已经停止运行。",
+      "stuck": "“{{name}}”走不到这一帧，已经停止运行。"
+    }
   },
   "diagnostics": {
     "about": "遇到卡顿或者报错时，开始记录，把问题重现一遍，再结束。这里会实时显示每帧耗时和发生了什么，结束后可以看到报告的全部内容，由你决定发不发送。报告只有时间、设备型号和项目规模的数字，不包含项目名、文件名和内容。最多记录 10 分钟，刷新页面会丢失正在记录的内容。",

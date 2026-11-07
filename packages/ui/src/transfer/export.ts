@@ -1,4 +1,4 @@
-import { isSourceFile, type ProjectStore } from "@animaquill/core";
+import { MAX_SOURCE_BYTES, isSourceFile, type ProjectStore } from "@animaquill/core";
 import type { MediaStore, TargetFolder } from "@animaquill/host";
 import { hashFile, isSameHash } from "@animaquill/media";
 import { MANIFEST_FILE, readProject, type Problem } from "@animaquill/schema";
@@ -14,7 +14,7 @@ export const INCOMPLETE_FILE = "导出未完成.txt";
  * as a video. Documents have no such limit: they are what makes a project, and all of it is in
  * memory while it is open anyway.
  */
-export const MAX_SOURCE_BYTES = 32 * 1024 ** 2;
+export { MAX_SOURCE_BYTES };
 
 /** How far moving a project has got. */
 export interface TransferStep {

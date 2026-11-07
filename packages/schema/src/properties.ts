@@ -138,6 +138,12 @@ export const CLIP_VISUAL: ObjectDescriptor = {
   properties: VISUAL_PATHS.map((path) => BUILT_IN_PROPERTIES[path] as PropertySpec),
 };
 
+/** A scene is laid out for its box, whatever size that is, so nothing has to fit in it. */
+export const SCENE_VISUAL: ObjectDescriptor = {
+  ...CLIP_VISUAL,
+  properties: CLIP_VISUAL.properties.filter(({ path }) => path !== "fit"),
+};
+
 /** Properties that are not built in but come from the content of a clip. */
 export const OPEN_PROPERTY_PREFIXES = ["param.", "object.", "element.", "caption."] as const;
 

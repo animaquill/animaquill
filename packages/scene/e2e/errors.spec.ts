@@ -1,5 +1,6 @@
-import { test } from "@playwright/test";
-import { expect, openLab, openScene, pageScene, type TestScene } from "./support.ts";
+import { test, type Page } from "@playwright/test";
+import { SCENES } from "./hosts.ts";
+import { expect, expectGone, openLab, openScene, pageScene, type TestScene } from "./support.ts";
 
 test.beforeEach(({ page }) => openLab(page));
 
@@ -362,6 +363,102 @@ test.describe("a scene that hangs", () => {
       await page.waitForTimeout(100);
     }
     expect(await page.evaluate(() => window.lab.call("alive"))).toBe(true);
+  });
+});
+
+test.describe("an origin where something hung", () => {
+  test.setTimeout(60000);
+
+  const HANGS = `<!doctype html><script>window.hang = () => { for (;;); };</script>`;
+  const FINE = `<!doctype html><p>a</p>`;
+  /** A hang on one origin, gone in a moment: nothing here takes as long as a real one. */
+  const FLOOD = `<!doctype html><script>
+    for (let i = 0; i < 100000; i += 1) parent.postMessage({ type: "progress", frame: i }, "*");
+  </script>`;
+
+  const hang = async (scene: TestScene) => {
+    const frame = await scene.frame();
+    void frame.evaluate(() => (window as unknown as { hang: () => void }).hang()).catch(() => {});
+  };
+
+  /** More scenes than there are origins, one after the other: going round finds them all. */
+  async function originsAfterThat(page: Page): Promise<ReadonlySet<string | undefined>> {
+    const origins = new Set<string | undefined>();
+    for (let round = 0; round <= SCENES.length; round += 1) {
+      const scene = await pageScene(page, FINE);
+      origins.add((await scene.info()).origin);
+      await scene.call("close");
+    }
+    return origins;
+  }
+
+  test("stays out of use, also for what opens later", async ({ page }) => {
+    const scene = await pageScene(page, HANGS, { watchdog: { running: 2500 } });
+    const { origin } = await scene.info();
+    await hang(scene);
+    await expect.poll(async () => (await scene.info()).failures.length, { timeout: 8000 }).toBe(1);
+    await expect.poll(async () => (await scene.info()).state, { timeout: 8000 }).toBe("ready");
+    expect((await scene.info()).origin).not.toBe(origin);
+    await scene.call("close");
+    const origins = await originsAfterThat(page);
+    expect(origins).not.toContain(origin);
+    expect(origins.size).toBe(SCENES.length - 1);
+  });
+
+  test("stays out of use when the scene goes before anybody called it hung", async ({ page }) => {
+    const scene = await pageScene(page, HANGS, { watchdog: { running: 40000 } });
+    const { origin } = await scene.info();
+    await hang(scene);
+    await page.waitForTimeout(3000);
+    expect((await scene.info()).failures).toEqual([]);
+    await scene.call("close");
+    expect(await originsAfterThat(page)).not.toContain(origin);
+  });
+
+  test("is not given up on for a scene that works and goes", async ({ page }) => {
+    const scene = await pageScene(page, FINE);
+    const { origin } = await scene.info();
+    await page.waitForTimeout(2500);
+    await scene.call("close");
+    expect(await originsAfterThat(page)).toContain(origin);
+  });
+
+  test("is not given up on for a scene that could say what is wrong", async ({ page }) => {
+    for (let round = 0; round <= SCENES.length; round += 1) {
+      const scene = await pageScene(page, FINE, { entry: "scenes/test/gone.html" });
+      expect((await scene.info()).failures).toMatchObject([{ reason: "failed" }]);
+    }
+    expect((await originsAfterThat(page)).size).toBe(SCENES.length);
+  });
+
+  test("when none are left, a scene says so at once and nothing tries again", async ({ page }) => {
+    for (let round = 0; round < SCENES.length; round += 1) {
+      await expectGone(await pageScene(page, FLOOD), "flood");
+    }
+    const scene = await pageScene(page, FINE);
+    const { state, origin, frames, failures } = await scene.info();
+    expect({ state, origin, frames }).toEqual({ state: "stopped", origin: undefined, frames: 0 });
+    expect(failures).toEqual([{ reason: "no-origin", phase: "hello", frame: 0, retrying: false }]);
+    await page.waitForTimeout(1000);
+    const later = await scene.info();
+    expect(later.failures).toHaveLength(1);
+    expect(later.frames).toBe(0);
+    expect(await page.evaluate(() => window.lab.call("alive"))).toBe(true);
+  });
+
+  test("the last frame to go on stops the scene, with nothing left to run it", async ({ page }) => {
+    for (let round = 0; round < SCENES.length - 1; round += 1) {
+      await expectGone(await pageScene(page, FLOOD), "flood");
+    }
+    const scene = await pageScene(page, HANGS, { watchdog: { running: 2500 } });
+    await hang(scene);
+    await expect.poll(async () => (await scene.info()).state, { timeout: 8000 }).toBe("stopped");
+    const { failures, frames } = await scene.info();
+    expect(failures.map(({ reason, retrying }) => [reason, retrying])).toEqual([
+      ["silent", true],
+      ["no-origin", false],
+    ]);
+    expect(frames).toBe(0);
   });
 });
 

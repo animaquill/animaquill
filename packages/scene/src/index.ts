@@ -18,11 +18,12 @@ export {
   scenePage,
   scenePolicyHeader,
 } from "./policy.ts";
-export { readFromScene, RUNTIME_VERSION } from "./protocol.ts";
+export { pixelSizeOf, readFromScene, readPicture, RUNTIME_VERSION } from "./protocol.ts";
 export type {
   FrameRate,
   FromScene,
   SceneLoad,
+  ScenePicture,
   SceneProblem,
   SceneView,
   TimeBase,

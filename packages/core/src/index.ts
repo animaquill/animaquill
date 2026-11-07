@@ -23,9 +23,12 @@ export {
   type LayerSource,
   type RenderLayer,
   type RenderPlan,
+  type SceneContext,
   type SoundLayer,
   type Version,
 } from "./render-plan.ts";
+export { MAX_SOURCE_BYTES } from "./scene-edits.ts";
+export { sceneFilesOf, sceneSourceOf, type SceneAsset, type SceneSource } from "./scene-plan.ts";
 export {
   boxOf,
   clockOf,
