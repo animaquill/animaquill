@@ -1447,7 +1447,7 @@ test("goes over to the processor with every frame when the graphics card took a 
   expect((await factsOf((await savedFile(page)) as Buffer)).frames).toBe(60);
 });
 
-test("trying again in the same way replaces the old export, and leaves the file the new one makes", async ({
+test("exporting again when people say so replaces the old export, and leaves the file the new one makes", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -1460,13 +1460,16 @@ test("trying again in the same way replaces the old export, and leaves the file 
   // People leave the question for later, and export again, to the same file.
   await offer(page).getByRole("button", { name: "取消" }).click();
   await expect(offer(page)).toHaveCount(0);
-  // Exporting again asks about the old one first, and people leave it for later again.
+  // Exporting again asks about the old one first, and people say they want a new one.
   await chooseFrom(page, "导出视频…");
-  await offer(page).getByRole("button", { name: "取消" }).click();
+  await offer(page).getByRole("button", { name: "重新导出" }).click();
   await expect(dialog(page)).toContainText("导出视频");
   await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
-  // The old one went for the new one, and the empty file they share stayed for it.
-  await expect(page.getByRole("status").getByText("已经换成这一次的")).toBeVisible();
+  // Once the new one has a place to go on from of its own, ten seconds in, the old one goes, and
+  // the empty file they share stays for the new one.
+  await expect(page.getByRole("status").getByText("已经换成这一次的")).toBeVisible({
+    timeout: 60_000,
+  });
   await exported(page, 150_000);
   const finished = (await savedFile(page)) as Buffer;
   expect((await factsOf(finished)).frames).toBe(1200);
@@ -1477,6 +1480,70 @@ test("trying again in the same way replaces the old export, and leaves the file 
   await page.waitForTimeout(2000);
   await expect(offer(page)).toHaveCount(0);
   expect((await savedFile(page))?.length).toBe(finished.length);
+});
+
+test("a new export that stops early leaves the file of the one left for later, which then goes on", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const square = png(64, 64, () => [0, 0, 255]);
+  await open(
+    page,
+    projectFolder(
+      40,
+      [
+        movingSquare(1),
+        {
+          id: "picture",
+          start: "1",
+          duration: "2",
+          source: { kind: "image", media: { asset: "blue" } },
+        },
+        { ...movingSquare(37, "rest"), start: "3" },
+      ],
+      { "assets/blue.png": square },
+      { blue: { name: "蓝色", kind: "image", path: "assets/blue.png", storage: "git" } },
+    ),
+  );
+  await startExport(page);
+  await expect.poll(() => percentOf(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(55);
+  // A crash.
+  const address = page.url();
+  const again = await page.context().newPage();
+  await page.close({ runBeforeUnload: false });
+  await again.goto(address);
+  await offer(again).getByRole("button", { name: "取消" }).click();
+  await expect(offer(again)).toHaveCount(0);
+  expect((await keptExports(again)).exports).toBe(1);
+  // The picture is not on this device any more, so the next export stops at frame 31.
+  await again.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("animaquill");
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    const transaction = database.transaction("media", "readwrite");
+    transaction.objectStore("media").clear();
+    await new Promise((resolve) => transaction.addEventListener("complete", resolve));
+    database.close();
+  });
+  // Another quality, to the same file.
+  await chooseFrom(again, "导出视频…");
+  await offer(again).getByRole("button", { name: "取消" }).click();
+  await expect(dialog(again)).toContainText("导出视频");
+  await dialog(again).getByLabel("码率").selectOption({ label: "较高" });
+  await dialog(again).getByRole("button", { name: "导出", exact: true }).click();
+  await expect(dialog(again)).toContainText("视频没有导出", { timeout: 60_000 });
+  await dialog(again).getByRole("button", { name: "关闭" }).click();
+  const left = await keptExports(again);
+  const file = await savedFile(again);
+  // The first one is still there, with its empty file, and goes on into it.
+  expect(left.exports).toBe(1);
+  expect(file?.length).toBe(0);
+  await again.reload();
+  await offer(again).getByRole("button", { name: "继续导出" }).click();
+  await exported(again, 150_000);
+  expect((await factsOf((await savedFile(again)) as Buffer)).frames).toBe(1200);
 });
 
 test.describe("a slide show", () => {

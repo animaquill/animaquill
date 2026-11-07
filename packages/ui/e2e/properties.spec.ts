@@ -737,7 +737,7 @@ test("a key that is not on a frame any more can be reached and removed", async (
   await goTo(page, "0:02/00");
   await typeInto(x, "300");
   // 10 frames at 30 is 1/3 of a second, which is between two frames at 25.
-  await page.getByRole("contentinfo").getByRole("button", { name: /帧/ }).click();
+  await page.getByRole("contentinfo").getByRole("button", { name: "项目帧率" }).click();
   await page.getByRole("radio", { name: "25", exact: true }).click();
   await goTo(page, "0:01/00");
   await row(page, "位置 X").getByRole("button", { name: "上一个关键帧" }).click();

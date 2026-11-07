@@ -655,9 +655,15 @@ export function createBrowserHost(
       if (!release) continue;
       await exports.remove(saved.id).catch(() => {});
       release();
-      // Its file too, while that is still the empty one it made. Nothing asks about it now.
-      const others = (await exports.all().catch(() => [])).map(({ target }) => target);
-      await dropTarget(saved.target, others, false).catch(() => {});
+      // Its file too, while that is still the empty one it made. Nothing asks about it now, and
+      // without knowing where the other exports go it stays.
+      const all = await exports.all().catch(() => undefined);
+      if (!all) continue;
+      await dropTarget(
+        saved.target,
+        all.map(({ target }) => target),
+        false,
+      ).catch(() => {});
     }
   };
   return {

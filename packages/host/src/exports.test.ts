@@ -77,7 +77,9 @@ describe("what an export keeps", () => {
 describe("a piece of an export", () => {
   it("does not go in when the export is not there, or not any more", async () => {
     const exports = store();
-    await expect(exports.addPiece("a", "video", piece(0))).rejects.toThrow();
+    await expect(exports.addPiece("a", "video", piece(0))).rejects.toMatchObject({
+      name: "NotFoundError",
+    });
     await exports.save(saved("a"));
     await exports.addPiece("a", "video", piece(0));
     await exports.remove("a");

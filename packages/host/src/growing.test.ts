@@ -109,6 +109,26 @@ describe("a file people chose", () => {
     expect(file.content).toEqual(bytes(1, 9, 3, 4));
   });
 
+  it("stays when it is abandoned and another export goes to the same file, or that is unknown", async () => {
+    const { file, picker } = chosen();
+    const options = { picker, scratch: undefined, saveFile: vi.fn() };
+    const same = Object.assign(file, { isSameEntry: async (other: unknown) => other === file });
+    const target = await growingFile("片子.mp4", KIND, options);
+    await target?.abandon([{ kind: "file", handle: same }]);
+    expect(file.removed).toBe(false);
+    const unsure = Object.assign(new FakeFile("别的.mp4"), {
+      isSameEntry: async () => {
+        throw new DOMException("no", "NotAllowedError");
+      },
+    });
+    const other = await growingFile("别的.mp4", KIND, {
+      ...options,
+      picker: async () => unsure as unknown as FileSystemFileHandle,
+    });
+    await other?.abandon([{ kind: "file", handle: file }]);
+    expect(unsure.removed).toBe(false);
+  });
+
   it("goes away when it is abandoned", async () => {
     const { file, picker } = chosen();
     const target = await growingFile("片子.mp4", KIND, {
@@ -236,6 +256,13 @@ describe("a file to go back to after a reload", () => {
     const options = { picker: undefined, scratch: undefined, saveFile: vi.fn() };
     expect(await reopenTarget(target, KIND, options)).toBe("denied");
     expect(file.requestPermission).toHaveBeenCalledWith({ mode: "readwrite" });
+  });
+
+  it("is not written when something else is in it now", async () => {
+    const file = new FakeFile("片子.mp4");
+    file.content = bytes(1, 2);
+    const options = { picker: undefined, scratch: undefined, saveFile: vi.fn() };
+    expect(await reopenTarget({ kind: "file", handle: file }, KIND, options)).toBe("taken");
   });
 
   it("says so when the file is gone", async () => {

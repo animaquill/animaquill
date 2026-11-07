@@ -49,9 +49,11 @@ class FakeFile implements GrowingFile {
   async finish() {
     this.finished = true;
   }
-  async abandon() {
-    this.abandoned = true;
+  /** As the host does it: the file only goes when no other export goes to the same place. */
+  async abandon(others: readonly unknown[] = []) {
     if (this.failAbandon) throw new Error("stays");
+    const same = (other: unknown) => JSON.stringify(other) === JSON.stringify(this.target);
+    if (!others.some(same)) this.abandoned = true;
   }
 }
 
@@ -100,7 +102,7 @@ class FakeCompositor {
     this.#first = true;
     this.queued = [];
     if (this.noHardware && config.hardwareAcceleration === "prefer-hardware") {
-      throw new StillFailed({ reason: "failed", message: "no hardware" });
+      throw new StillFailed({ reason: "encoder", message: "no hardware" });
     }
     this.config = config;
     this.onChunk = onChunk;
@@ -973,6 +975,56 @@ describe("an export that does not finish", () => {
     expect(await context.exports.all()).toEqual([]);
   });
 
+  it("does not hold a compositor that stops answering against the graphics card", async () => {
+    const context = setup();
+    const start = context.compositor.startEncoding.bind(context.compositor);
+    let calls = 0;
+    context.compositor.startEncoding = async (config, onChunk, onWrong) => {
+      calls += 1;
+      // As after the watch gave up on it: every request fails from then on.
+      if (calls <= 1) throw new StillFailed({ reason: "compositor" });
+      return start(config, onChunk, onWrong);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.failure.compositor");
+    expect(context.values.get("export.hardwareFailed")).toBeUndefined();
+    const again = context.videos.start();
+    const form = await answer(context);
+    await again;
+    expect(form.notes).toContain("export.video.acceleration.hardware");
+  });
+
+  it("stops and says so when what it keeps is cleared while it runs", async () => {
+    const context = setup({}, 20);
+    context.compositor.chunkBytes = 100 * 1024;
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    const gate = Promise.withResolvers<void>();
+    let reached = false;
+    context.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 320 && !reached) {
+        reached = true;
+        await gate.promise;
+      }
+      return encode(frame);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    await vi.waitFor(() => expect(reached).toBe(true));
+    const [saved] = await context.exports.all();
+    await context.exports.remove(saved?.id ?? "");
+    gate.resolve();
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.video.notKept");
+    expect(shown.message).not.toContain("export.video.kept");
+    expect(shown.message).not.toContain("export.video.writeFailed");
+    expect(await context.exports.all()).toEqual([]);
+    expect(context.file.abandoned).toBe(true);
+  });
+
   it("does not start without a file", async () => {
     const context = setup();
     context.chooseFile.mockResolvedValueOnce(undefined);
@@ -1303,6 +1355,143 @@ describe("an export that stopped halfway", () => {
     expect(await next.exports.all()).toEqual([]);
   });
 
+  it("goes on with the processor after a reload when the processor had taken over", async () => {
+    /** Hardware describes its stream as [1,2,3], the processor as [9,9,9]; hardware fails at 450. */
+    const flaky = (context: Context) => {
+      const start = context.compositor.startEncoding.bind(context.compositor);
+      context.compositor.startEncoding = async (config, onChunk, onWrong) => {
+        context.compositor.description =
+          config.hardwareAcceleration === "prefer-software" ? [9, 9, 9] : [1, 2, 3];
+        return start(config, onChunk, onWrong);
+      };
+      const encode = context.compositor.encodeFrame.bind(context.compositor);
+      context.compositor.encodeFrame = async (frame) => {
+        if (
+          context.compositor.config?.hardwareAcceleration === "prefer-hardware" &&
+          frame.index === 450
+        ) {
+          throw new StillFailed({ reason: "encoder", message: "Encoder failure." });
+        }
+        return encode(frame);
+      };
+    };
+    const first = setup({}, 30);
+    flaky(first);
+    // The processor takes over, starts over from 0, and the page goes away at frame 500 of it.
+    first.compositor.crashAt = 500;
+    const configs: (string | undefined)[] = [];
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() =>
+      expect(first.compositor.frames.filter(({ index }) => index === 499).length).toBeGreaterThan(
+        0,
+      ),
+    );
+    // What it kept was encoded by the processor, after the graphics card failed.
+    const kept = first.exports.saved.values().next().value?.state as SavedState | undefined;
+    expect(kept?.progress.acceleration).toBe("software");
+    first.exports.claimed.clear();
+    const next = setup({}, 30, false, first);
+    // The same browser: what it remembers is there too.
+    for (const [key, value] of first.values) next.values.set(key, value);
+    flaky(next);
+    const start = next.compositor.startEncoding.bind(next.compositor);
+    next.compositor.startEncoding = async (config, onChunk, onWrong) => {
+      configs.push(config.hardwareAcceleration);
+      return start(config, onChunk, onWrong);
+    };
+    const offering = next.videos.offerResume();
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
+    next.dialogs.answer("continue");
+    await offering;
+    expect(configs[0]).toBe("prefer-software");
+    expect(next.said()).not.toContain("export.resume.encoderChanged");
+    expect(next.said().join()).toContain("export.video.encoded.software");
+    const times = next.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 900 }, (_, index) => index));
+  });
+
+  it("starts over once more with the processor when the graphics card fails after a start over", async () => {
+    const first = setup({}, 20);
+    first.compositor.crashAt = 360;
+    first.compositor.lag = 2;
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(360));
+    first.exports.claimed.clear();
+    const next = setup({}, 20, false, first);
+    // This browser now encodes another way, so it starts over from the first frame.
+    next.compositor.description = [7, 7, 7];
+    const start = next.compositor.startEncoding.bind(next.compositor);
+    next.compositor.startEncoding = async (config, onChunk, onWrong) => {
+      // The processor describes its stream in its own way, as OpenH264 does next to a driver.
+      if (config.hardwareAcceleration === "prefer-software")
+        next.compositor.description = [9, 9, 9];
+      return start(config, onChunk, onWrong);
+    };
+    const encode = next.compositor.encodeFrame.bind(next.compositor);
+    let hardwareFrames = 0;
+    next.compositor.encodeFrame = async (frame) => {
+      if (next.compositor.config?.hardwareAcceleration === "prefer-hardware") {
+        hardwareFrames += 1;
+        // After the start over, at frame 450.
+        if (hardwareFrames > 1 && frame.index === 450) {
+          throw new StillFailed({ reason: "encoder", message: "Encoder failure." });
+        }
+      }
+      return encode(frame);
+    };
+    const offering = next.videos.offerResume();
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
+    next.dialogs.answer("continue");
+    await offering;
+    expect(next.said().join()).toContain("export.video.encoded.software");
+    const times = next.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
+  });
+
+  it("says that the graphics card failed before, and tries it again when people say so", async () => {
+    const context = setup();
+    context.compositor.noHardware = true;
+    const first = context.videos.start();
+    await answer(context);
+    await first;
+    expect(context.values.get("export.hardwareFailed")).toMatchObject({
+      failed: { avc: expect.any(Number) },
+    });
+    context.compositor.noHardware = false;
+    const retry = context.videos.start();
+    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("form"));
+    const form = context.dialogs.getSnapshot() as Extract<
+      ReturnType<Dialogs["getSnapshot"]>,
+      { kind: "form" }
+    >;
+    expect(form.fields.map(({ id }) => id)).toContain("card");
+    context.dialogs.answer({
+      ...Object.fromEntries(form.fields.map(({ id, value }) => [id, value])),
+      card: "retry",
+    });
+    await retry;
+    expect(context.compositor.config?.hardwareAcceleration).toBe("prefer-hardware");
+    expect(context.values.get("export.hardwareFailed")).toMatchObject({ failed: {} });
+  });
+
+  it("does not write into a file that has something else in it now, and asks for another place", async () => {
+    const { next } = await crashed();
+    next.reopen.mockResolvedValueOnce("taken");
+    const offering = next.videos.offerResume();
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
+    next.dialogs.answer("continue");
+    await vi.waitFor(() =>
+      expect((next.dialogs.getSnapshot() as { message?: string } | undefined)?.message).toContain(
+        "export.resume.taken",
+      ),
+    );
+    next.dialogs.answer(undefined);
+    await offering;
+    expect(next.compositor.frames).toEqual([]);
+  });
+
   it("can be given up, and leaves nothing", async () => {
     const { first, next } = await crashed();
     const { offering } = await offered(next, "discard");
@@ -1377,7 +1566,7 @@ describe("an export and the windows around it", () => {
     const first = await crashedAt(360);
     const next = setup({}, 20, false, first);
     const starting = next.videos.start();
-    await choice(next);
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
     // Asking again meanwhile asks nothing more.
     await next.videos.offerResume();
     expect(next.dialogs.getSnapshot()?.kind).toBe("choice");
@@ -1391,7 +1580,7 @@ describe("an export and the windows around it", () => {
     const first = await crashedAt(360);
     const next = setup({}, 20, false, first);
     const starting = next.videos.start();
-    await choice(next);
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
     // People leave the old one for later, and go on to a new export.
     next.dialogs.answer(undefined);
     await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("form"));
@@ -1746,40 +1935,71 @@ describe("what unfinished exports leave", () => {
     expect(context.dropTarget).toHaveBeenCalledWith(saved.target, [], false);
   });
 
-  it("is one, however often people try again and leave the old one for later", async () => {
+  /** Starts an export with the one before waiting: people answer the question about it. */
+  async function again(context: Context, choice: string | undefined, failAt?: number) {
+    context.compositor.failAt =
+      failAt === undefined
+        ? undefined
+        : { index: failAt, failure: { reason: "missing-file", layer: "c", file: "a" } };
+    const running = context.videos.start();
+    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+    context.dialogs.answer(choice);
+    await answer(context);
+    if (failAt !== undefined) await notice(context);
+    await running;
+  }
+
+  it("takes the place of the one before when people say so, once it has a place of its own", async () => {
     const context = setup({}, 20);
     await stopped(context);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const running = context.videos.start();
-      // Asked about the one before first, and left for later.
-      await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
-      context.dialogs.answer(undefined);
-      await answer(context);
-      await notice(context);
-      await running;
-    }
-    expect(await context.exports.all()).toHaveLength(1);
-    expect(context.said().join()).toContain("export.resume.replaced");
+    const [older] = await context.exports.all();
+    await again(context, "new", 400);
+    const left = await context.exports.all();
+    expect(left).toHaveLength(1);
+    expect(left[0]?.id).not.toBe(older?.id);
+    expect(context.exports.count(older?.id ?? "", "video")).toBe(0);
+    expect(context.said()).toContain("export.resume.replaced");
     // The new one goes to the same file, which therefore stays.
     expect(context.file.abandoned).toBe(false);
   });
 
-  it("keeps an older one of another part of the timeline", async () => {
+  it("leaves the one before when the new one stops before it has a place of its own", async () => {
     const context = setup({}, 20);
     await stopped(context);
-    const [saved] = await context.exports.all();
-    if (!saved) throw new Error("Nothing kept");
-    const state = saved.state as SavedState;
-    const other = { ...state.plan, range: { id: "selection", from: 1, to: 5 } };
-    await context.exports.save({ ...saved, id: "other", state: { ...state, plan: other } });
-    const running = context.videos.start();
-    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
-    context.dialogs.answer(undefined);
-    await answer(context);
-    await notice(context);
-    await running;
-    const ids = (await context.exports.all()).map(({ id }) => id);
-    expect(ids).toContain("other");
-    expect(ids).toHaveLength(2);
+    const [older] = await context.exports.all();
+    await again(context, "new", 100);
+    expect((await context.exports.all()).map(({ id }) => id)).toEqual([older?.id]);
+    expect(context.said()).not.toContain("export.resume.replaced");
+    // That one still goes to the file, which therefore stays.
+    expect(context.file.abandoned).toBe(false);
+  });
+
+  it("leaves the one before when people leave it for later", async () => {
+    const context = setup({}, 20);
+    await stopped(context);
+    await again(context, undefined, 400);
+    expect(await context.exports.all()).toHaveLength(2);
+    expect(context.said()).not.toContain("export.resume.replaced");
+  });
+
+  it("finished, takes the place of the one before too", async () => {
+    const context = setup({}, 20);
+    await stopped(context);
+    await again(context, "new");
+    expect(await context.exports.all()).toEqual([]);
+    expect(context.said()).toContain("export.resume.replaced");
+  });
+
+  it("suggests another name than one that an unfinished export of the project goes to", async () => {
+    const context = setup({}, 20);
+    await stopped(context);
+    const [older] = await context.exports.all();
+    if (!older) throw new Error("Nothing kept");
+    const first = context.chooseFile.mock.calls[0]?.[0] ?? "";
+    await context.exports.save({ ...older, target: { kind: "download", name: first } });
+    await again(context, undefined, 400);
+    const names = context.chooseFile.mock.calls.map(([name]) => name);
+    expect(names[1]).not.toBe(names[0]);
+    expect(names[1]).toContain("export.video.fileNumbered");
   });
 });

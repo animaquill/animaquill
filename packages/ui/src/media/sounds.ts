@@ -478,6 +478,11 @@ export class MadeSounds {
     } finally {
       run.release();
     }
+    // A project that was taken away meanwhile would get its media store back with only this in it.
+    if (!open() && !(await this.#exists(state.manifest.id))) {
+      this.#fail(job, "error");
+      return;
+    }
     try {
       await media.put(file, wav);
     } catch (error) {
@@ -487,6 +492,12 @@ export class MadeSounds {
     }
     if (!stillWanted()) return;
     this.#done(job);
+  }
+
+  async #exists(project: string): Promise<boolean> {
+    // When that cannot be read, the sound does not go anywhere: it can be made again.
+    const all = await this.#options.projects.list().catch(() => undefined);
+    return all?.some(({ id }) => id === project) ?? false;
   }
 
   #loadOf(state: ProjectState, made: MadeSound): SoundLoad {

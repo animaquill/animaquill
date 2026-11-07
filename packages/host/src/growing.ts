@@ -59,10 +59,11 @@ function chosenFile(handle: FileSystemFileHandle): GrowingFile {
     write: async (data, position) =>
       (await writable.get()).write({ type: "write", position, data }),
     finish: async () => (await writable.get()).close(),
-    async abandon() {
+    async abandon(others = []) {
       await writable.abort();
       // Only the empty file the dialog made is this one's to take away. What has something in it
-      // now got that from somewhere else, maybe another export to the same place, and stays.
+      // now got that from somewhere else, and an empty one that another export goes to is its.
+      if (await isAnyOf(handle, others)) return;
       const now = await handle.getFile().catch(() => undefined);
       if (!now || now.size > 0) return;
       const { remove } = handle as RemovableHandle;
@@ -76,7 +77,7 @@ function chosenFile(handle: FileSystemFileHandle): GrowingFile {
 /** A file people chose before, if it is still there and may still be written. */
 export async function reopenedFile(
   handle: FileSystemFileHandle,
-): Promise<GrowingFile | "gone" | "denied"> {
+): Promise<GrowingFile | "gone" | "denied" | "taken"> {
   const { queryPermission, requestPermission } = handle as RemovableHandle;
   const options = { mode: "readwrite" } as const;
   let permission = (await queryPermission?.call(handle, options)) ?? "granted";
@@ -84,12 +85,16 @@ export async function reopenedFile(
     permission = (await requestPermission?.call(handle, options).catch(() => "denied")) ?? "denied";
   }
   if (permission !== "granted") return "denied";
+  let now: File;
   try {
-    await handle.getFile();
+    now = await handle.getFile();
   } catch (error) {
     if (error instanceof Error && error.name === "NotFoundError") return "gone";
     throw error;
   }
+  // An export only writes its file at the end, so until then it is empty. Something in it is from
+  // somewhere else, maybe another export that went to the same place, and stays as it is.
+  if (now.size > 0) return "taken";
   return chosenFile(handle);
 }
 
@@ -194,11 +199,7 @@ export async function dropTarget(
   const known = target as FileTarget | undefined;
   if (known?.kind !== "file") return false;
   const { handle } = known;
-  for (const other of others) {
-    const theirs = other as FileTarget | undefined;
-    if (theirs?.kind !== "file") continue;
-    if (await handle.isSameEntry(theirs.handle).catch(() => false)) return false;
-  }
+  if (await isAnyOf(handle, others)) return false;
   const { queryPermission, requestPermission, remove } = handle as RemovableHandle;
   const options = { mode: "readwrite" } as const;
   let permission =
@@ -217,12 +218,25 @@ export async function dropTarget(
   );
 }
 
+/**
+ * Whether one of the targets is this file. When the browser cannot say, it might be: what goes
+ * wrong here must not take away a file that is somebody else's.
+ */
+async function isAnyOf(handle: FileSystemFileHandle, others: readonly unknown[]): Promise<boolean> {
+  for (const other of others) {
+    const theirs = other as FileTarget | undefined;
+    if (theirs?.kind !== "file") continue;
+    if (await handle.isSameEntry(theirs.handle).catch(() => true)) return true;
+  }
+  return false;
+}
+
 /** The same file as before, from a target that survived the page. */
 export async function reopenTarget(
   target: unknown,
   kind: FileKind,
   { scratch, saveFile }: GrowingFileOptions,
-): Promise<GrowingFile | "gone" | "denied"> {
+): Promise<GrowingFile | "gone" | "denied" | "taken"> {
   const known = target as FileTarget | undefined;
   if (known?.kind === "file") return reopenedFile(known.handle);
   if (known?.kind === "download" && scratch) {

@@ -47,7 +47,10 @@ export interface ExportStore {
   /** Of all projects, for people to see what takes room. */
   all(): Promise<readonly SavedExport[]>;
   save(saved: SavedExport): Promise<void>;
-  /** Rejects when the export is not there, or not any more: its pieces would stay forever. */
+  /**
+   * Rejects with a "NotFoundError" when the export is not there, or not any more: its pieces would
+   * stay forever.
+   */
   addPiece(id: string, track: string, piece: ExportPiece): Promise<void>;
   /** The pieces of a track in order, a few at a time, so that they never all are in memory. */
   pieces(id: string, track: string): AsyncIterable<ExportPiece>;
@@ -292,8 +295,12 @@ export interface GrowingFile {
   readonly target: unknown;
   write(data: Uint8Array<ArrayBuffer>, position: number): Promise<void>;
   finish(): Promise<void>;
-  /** Takes back what was written. Rejects when something had to stay, such as an empty file. */
-  abandon(): Promise<void>;
+  /**
+   * Takes back what was written. The file only goes while it is still empty and none of `others`,
+   * targets of other exports, is the same file. Rejects when something had to stay, such as an
+   * empty file.
+   */
+  abandon(others?: readonly unknown[]): Promise<void>;
 }
 
 /** How people get to folders. Both ask them, so both need to run right after they did something. */
@@ -320,9 +327,10 @@ export interface FolderAccess {
   /**
    * A file from `chooseFile` again, after a reload, to write it from the start. The browser may ask
    * whether that is all right, which has to run right after people did something. "gone" when it
-   * is not there any more, "denied" when it may not be written.
+   * is not there any more, "denied" when it may not be written, "taken" when something else is in
+   * it now, which stays as it is.
    */
-  reopen(target: unknown, kind: FileKind): Promise<GrowingFile | "gone" | "denied">;
+  reopen(target: unknown, kind: FileKind): Promise<GrowingFile | "gone" | "denied" | "taken">;
   /**
    * Takes away the file of a target that is given up, as far as it is still empty and none of
    * `others` is the same file. With `ask` the browser may ask whether that is all right, which has

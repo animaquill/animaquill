@@ -168,6 +168,8 @@ export interface SavedProgress {
   readonly bytes?: number;
   /** What the encoder said about decoding, which a new one has to say the same way. */
   readonly decoderConfig?: VideoDecoderConfig;
+  /** How what is kept was encoded, which can be the processor after the graphics card failed. */
+  readonly acceleration?: VideoEncoding["acceleration"];
 }
 
 export interface SavedState {
@@ -292,6 +294,12 @@ function problemWith(
   if (decoderConfig && !decoderConfig.codec.startsWith(codec)) return "codec";
   return undefined;
 }
+
+/** What the export kept was cleared while it ran, see `ExportStore.addPiece`. */
+const isGone = (error: unknown): boolean =>
+  error instanceof DOMException
+    ? error.name === "NotFoundError"
+    : error instanceof Error && isGone(error.cause);
 
 const isQuotaError = (error: unknown): boolean =>
   error instanceof DOMException
@@ -435,7 +443,7 @@ export class VideoExport {
    * Asks about each export of this project that stopped before it was finished. Returns whether
    * people went on with one or gave it up, as opposed to leaving it for later or there being none.
    */
-  async #offer(store: ProjectStore): Promise<boolean> {
+  async #offer(store: ProjectStore, fromStart = false): Promise<boolean | Replacing> {
     const { exports, dialogs, t } = this.#options;
     if (this.#isBusy()) return false;
     const id = store.getState().manifest.id;
@@ -473,9 +481,12 @@ export class VideoExport {
           }),
           choices: [
             { id: "discard", label: t("export.resume.discard") },
+            // People who chose to export may want another one, which then takes its place.
+            ...(fromStart ? [{ id: "new", label: t("export.resume.startNew") }] : []),
             { id: "continue", label: t("export.resume.continue"), kind: "primary" },
           ],
         });
+        if (answer === "new") return { saved, release };
         // Going back from there leaves it for the next time.
         if (answer === undefined) {
           release();
@@ -539,8 +550,34 @@ export class VideoExport {
   async #drop(saved: SavedExport, ask: boolean): Promise<boolean> {
     const { exports, folders } = this.#options;
     await exports.remove(saved.id).catch(() => {});
-    const others = (await exports.all().catch(() => [])).map(({ target }) => target);
+    const others = await this.#othersThan(saved.id);
+    if (!others) return true;
     return folders.dropTarget(saved.target, others, ask).catch(() => true);
+  }
+
+  /**
+   * Where the other exports kept here go, or undefined when that cannot be read: then nothing may
+   * be taken away, since it could be one of theirs.
+   */
+  async #othersThan(id: string): Promise<readonly unknown[] | undefined> {
+    const all = await this.#options.exports.all().catch(() => undefined);
+    return all?.filter((saved) => saved.id !== id).map(({ target }) => target);
+  }
+
+  /**
+   * Takes back what an export of this window wrote, and its file as far as that is still empty and
+   * no other export goes there. Resolves to whether everything went.
+   */
+  async #abandon(file: GrowingFile, id: string): Promise<boolean> {
+    // Without the others, the file is as good as theirs: it stays.
+    const others = (await this.#othersThan(id)) ?? [file.target];
+    return file.abandon(others).then(
+      () => true,
+      (reason: unknown) => {
+        console.warn("An unfinished export stayed behind", reason);
+        return false;
+      },
+    );
   }
 
   /**
@@ -559,29 +596,6 @@ export class VideoExport {
         release();
       }
     }
-  }
-
-  /**
-   * Older unfinished exports of the same part of the same project, in the same way, that people left
-   * for later: this one does what they would, and two of them would only take room. They go, and
-   * people hear about it.
-   */
-  async #replaceOlder(id: string, project: string, plan: SavedPlan): Promise<void> {
-    const { exports, notifications, t } = this.#options;
-    let replaced = 0;
-    for (const saved of await exports.list(project).catch(() => [])) {
-      const other = (saved.state as SavedState | undefined)?.plan;
-      if (saved.id === id || !other || !sameSettings(other, plan)) continue;
-      const release = await exports.claim(saved.id);
-      if (!release) continue;
-      try {
-        if (await this.#drop(saved, false)) this.#sayEmptyLeft(saved);
-        replaced += 1;
-      } finally {
-        release();
-      }
-    }
-    if (replaced > 0) notifications.push(t("export.resume.replaced", { count: replaced }));
   }
 
   async #continue(store: ProjectStore, saved: SavedExport, release: () => void): Promise<void> {
@@ -608,7 +622,7 @@ export class VideoExport {
       if (typeof file === "string") {
         const answer = await dialogs.choose({
           title: t("export.resume.goneTitle"),
-          message: t(file === "gone" ? "export.resume.gone" : "export.resume.denied", {
+          message: t(`export.resume.${file}`, {
             file: name,
             ...plain,
           }),
@@ -626,7 +640,10 @@ export class VideoExport {
         if (!chosen) return false;
         file = chosen;
       }
-      if (!(await (this.#options.support ?? browserSupport)(plan.encoding.config))) {
+      // The way what is kept was encoded, which the processor may have taken over.
+      const keptWay =
+        progress?.acceleration === "software" ? inSoftware(plan.encoding) : plan.encoding;
+      if (!(await (this.#options.support ?? browserSupport)(keptWay.config))) {
         const encoding = await this.#encodingFor(store.getState(), plan);
         // The file was asked for as one kind, and the other kind would not open as that.
         if (!encoding || containerOf(encoding.codec) !== containerOf(plan.encoding.codec)) {
@@ -748,8 +765,13 @@ export class VideoExport {
     const { store } = session;
     if (!store) return;
     // One that stopped halfway comes first: it is what people likely want, and it holds the place.
-    if (await this.#offer(store)) return;
-    if (this.#isBusy()) return;
+    const offered = await this.#offer(store, true);
+    if (offered === true) return;
+    const replacing = offered === false ? undefined : offered;
+    if (this.#isBusy()) {
+      replacing?.release();
+      return;
+    }
     this.#busy = true;
     let job: Job | undefined;
     let release: (() => void) | undefined;
@@ -760,7 +782,8 @@ export class VideoExport {
     } finally {
       this.#busy = false;
     }
-    if (job && release) await this.#run(job, release);
+    if (job && release) await this.#run(job, release, replacing);
+    else replacing?.release();
   }
 
   async #prepare(
@@ -774,16 +797,21 @@ export class VideoExport {
     const quality = await this.#savedQuality();
     const support = this.#options.support ?? browserSupport;
     const noHardware = await this.#noHardware();
-    const encodings = new Map<string, VideoEncoding | undefined>();
-    await Promise.all(
-      formats.flatMap((format) =>
-        QUALITIES.map(async (each) => {
-          const shape = { width: format.width, height: format.height, fps: fpsOf(format.fps) };
-          const chosen = await chooseEncoding(shape, each, support, noHardware);
-          encodings.set(`${format.id}/${each}`, chosen);
-        }),
-      ),
-    );
+    const encodingsWith = async (avoid: ReadonlySet<VideoCodecName>) => {
+      const found = new Map<string, VideoEncoding | undefined>();
+      await Promise.all(
+        formats.flatMap((format) =>
+          QUALITIES.map(async (each) => {
+            const shape = { width: format.width, height: format.height, fps: fpsOf(format.fps) };
+            found.set(`${format.id}/${each}`, await chooseEncoding(shape, each, support, avoid));
+          }),
+        ),
+      );
+      return found;
+    };
+    const encodings = await encodingsWith(noHardware);
+    // The graphics card failed here before: people can see that, and give it another try.
+    const remembered = noHardware.size > 0 ? await encodingsWith(new Set()) : undefined;
     if (![...encodings.values()].some(Boolean)) {
       await this.#notice(t("export.video.failed"), t("export.video.cannotEncode"));
       return undefined;
@@ -799,9 +827,12 @@ export class VideoExport {
     };
     const audible = !new SoundMixer(audioPlan, { fileOf: async () => undefined }).silent;
     const firstSound = firstEncoding && sounds[containerOf(firstEncoding.codec)];
+    // Where unfinished exports of this project go, so that a new one does not suggest the same.
+    const kept = await exports.list(asked.manifest.id).catch(() => []);
+    const taken = new Set(kept.map(({ target }) => nameOfTarget(target)));
     const answer = await dialogs.form({
       title: t("export.video.title"),
-      fields: this.#fields(asked, ranges, quality),
+      fields: this.#fields(asked, ranges, quality, remembered !== undefined),
       notes: this.#notes(asked, firstEncoding, audible, firstSound),
       confirm: t("export.video.start"),
     });
@@ -809,7 +840,9 @@ export class VideoExport {
     const format = formats.find(({ id }) => id === answer["format"]) ?? first;
     const range = ranges.find(({ id }) => id === answer["range"]) ?? ranges[0];
     const chosen = isQuality(answer["quality"]) ? answer["quality"] : quality;
-    const encoding = format && encodings.get(`${format.id}/${chosen}`);
+    const retry = remembered !== undefined && answer["card"] === "retry";
+    if (retry) await this.#forgetHardwareFailed();
+    const encoding = format && (retry ? remembered : encodings).get(`${format.id}/${chosen}`);
     if (!format || !range) return undefined;
     if (!encoding) {
       await this.#notice(t("export.video.failed"), t("export.video.cannotEncodeFormat"));
@@ -833,12 +866,17 @@ export class VideoExport {
       mime: `video/${container}`,
       extension: container,
     };
-    const name = t("export.video.file", {
-      name: asked.manifest.name,
-      format: format.name,
-      extension: container,
-      interpolation: { escapeValue: false },
-    });
+    const nameWith = (number: number) =>
+      t(number === 1 ? "export.video.file" : "export.video.fileNumbered", {
+        name: asked.manifest.name,
+        format: format.name,
+        extension: container,
+        number,
+        interpolation: { escapeValue: false },
+      });
+    let number = 1;
+    while (taken.has(nameWith(number))) number += 1;
+    const name = nameWith(number);
     // This has to come right after people pressed the button: the browser asks where it goes.
     let file: GrowingFile | undefined;
     try {
@@ -851,7 +889,7 @@ export class VideoExport {
     if (!file) return undefined;
     const place = await this.#placeFor();
     if (!place) {
-      await file.abandon().catch(() => {});
+      await this.#abandon(file, "");
       return undefined;
     }
     void this.#saveQuality(chosen);
@@ -901,7 +939,7 @@ export class VideoExport {
     return answer === "go";
   }
 
-  async #run(job: Job, release: () => void): Promise<void> {
+  async #run(job: Job, release: () => void, replaces?: Replacing): Promise<void> {
     const { t, notifications } = this.#options;
     const exports = this.#options.exports;
     const { id, state, file, plan: saved } = job;
@@ -934,7 +972,10 @@ export class VideoExport {
     let written: Promise<void> = Promise.resolve();
     let unwritten = 0;
     let writeFailed: WriteFailed | undefined;
-    let used = saved.encoding;
+    // A place to go on from was encoded by the processor after the graphics card failed: it goes on
+    // that way, or it would not fit what is there.
+    let used =
+      job.progress?.acceleration === "software" ? inSoftware(saved.encoding) : saved.encoding;
     /** The disk does not keep up, and frames would pile up in memory. */
     const behind = () => unwritten > MAX_UNWRITTEN;
     const openCompositor = (where: ExportWindow): VideoCompositor => {
@@ -954,8 +995,11 @@ export class VideoExport {
     let wrong: string | undefined;
     /** Timestamps of frames asked for, whose chunks have not come yet. */
     const asked = new Set<number>();
-    /** The first frames of a new encoder showed that it does not go on with what was there. */
-    let startedOver = false;
+    /**
+     * The first frames of a new encoder showed that it does not go on with what was there, so it
+     * started over: once for each way of encoding, which the graphics card failing can change.
+     */
+    let startedOverWith: VideoEncoding["acceleration"] | undefined;
     /**
      * An encoder is on its way out. What it still gives comes before the next one has started, and
      * belongs to frames that are asked for again: counting it would put them in the file twice.
@@ -976,6 +1020,22 @@ export class VideoExport {
         });
     };
     let target = file.target;
+    /**
+     * The export people chose to do again with this one. It goes once this one has a place to go
+     * on from of its own: until then, what that one did is all there is.
+     */
+    let toReplace = replaces;
+    const dropReplaced = async () => {
+      const old = toReplace;
+      if (!old) return;
+      toReplace = undefined;
+      try {
+        if (await this.#drop(old.saved, false)) this.#sayEmptyLeft(old.saved);
+        notifications.push(t("export.resume.replaced"));
+      } finally {
+        old.release();
+      }
+    };
     /** How many of the bytes are of the picture, which can go back to the last place kept. */
     let videoBytes = 0;
     /** The last place kept, which an encoder that broke goes back to. */
@@ -996,6 +1056,7 @@ export class VideoExport {
             videoPieces: video.nextSeq,
             bytes,
             ...(decoding && { decoderConfig: decoding }),
+            acceleration: used.acceleration,
           },
         },
       );
@@ -1011,7 +1072,6 @@ export class VideoExport {
       await exports.dropPieces(id, "video", video.nextSeq);
       await exports.dropPieces(id, "sound", 0);
       await checkpoint(index);
-      if (!job.progress) await this.#replaceOlder(id, state.manifest.id, saved);
       // An encoder may leave out how long a frame is, which would make the last one last no time.
       const frameMicros = Math.round((1e6 * plan.scenes.fps.den) / plan.scenes.fps.num);
       const prefix = used.config.codec.slice(0, 4);
@@ -1138,6 +1198,7 @@ export class VideoExport {
               // A frame for each frame, and none more.
               if (videoChunks !== index) throw new WrongOutput("count");
               await checkpoint(index);
+              await dropReplaced();
             }
             const planned = frames.at(index);
             const frame = index === restartAt ? { ...planned, keyFrame: true } : planned;
@@ -1161,7 +1222,8 @@ export class VideoExport {
         } catch (error) {
           if (signal.aborted) throw error;
           replacing = true;
-          if (error instanceof ResumeFailed && !startedOver && videoChunks === encoderStart) {
+          const again = startedOverWith !== used.acceleration;
+          if (error instanceof ResumeFailed && again && videoChunks === encoderStart) {
             // A new encoder that encodes another way: what was there cannot go on with this.
             notifications.push(t("export.resume.encoderChanged"));
             await untilAborted(written, signal);
@@ -1173,7 +1235,7 @@ export class VideoExport {
             videoChunks = 0;
             bytes = 0;
             videoBytes = 0;
-            startedOver = true;
+            startedOverWith = used.acceleration;
             await checkpoint(0);
             started = { at: performance.now(), done: 0 };
             next = "encoder";
@@ -1219,6 +1281,7 @@ export class VideoExport {
       await sound.flush();
       if (writeFailed) throw writeFailed;
       await checkpoint(total);
+      await dropReplaced();
       compositor?.dispose();
       place.close();
       await this.#writeFile(id, file, saved, fps, decoding, soundDecoding, signal);
@@ -1242,15 +1305,15 @@ export class VideoExport {
       this.#set(undefined);
       if (signal.aborted) {
         // People said stop: nothing of it stays.
-        const cleaned = await file.abandon().then(
-          () => true,
-          (reason: unknown) => {
-            console.warn("An unfinished export stayed behind", reason);
-            return false;
-          },
-        );
         await exports.remove(id).catch(() => {});
+        const cleaned = await this.#abandon(file, id);
         await this.#stopped(error, true, cleaned, file, state, range);
+      } else if (isGone(error)) {
+        // Somebody cleared what it kept while it ran: there is nothing to go on from. What a last
+        // place to go on from wrote again goes too.
+        await exports.remove(id).catch(() => {});
+        const cleaned = await this.#abandon(file, id);
+        await this.#stopped(error, false, cleaned, file, state, range, false);
       } else if (kept.frame > 0) {
         // What it got to stays, as far as there is a place to go on from: once what went wrong is
         // put right, it goes on from there.
@@ -1258,16 +1321,14 @@ export class VideoExport {
       } else {
         // Nothing to go on from: going on would be starting over, and an empty file says nothing.
         await exports.remove(id).catch(() => {});
-        const cleaned = await file.abandon().then(
-          () => true,
-          () => false,
-        );
+        const cleaned = await this.#abandon(file, id);
         await this.#stopped(error, false, cleaned, file, state, range, false);
       }
     } finally {
       compositor?.dispose();
       place.close();
       release();
+      toReplace?.release();
       this.#resume = undefined;
       this.#controller = undefined;
       this.#set(undefined);
@@ -1426,10 +1487,10 @@ export class VideoExport {
       await untilAborted(compositor.startEncoding(encoding.config, onChunk, onWrong), signal);
       return encoding;
     } catch (error) {
-      // A window that went away is no reason to think less of the graphics card.
-      if (signal.aborted || error instanceof WindowClosed || encoding.acceleration !== "hardware") {
-        throw error;
-      }
+      // Only the encoder failing says something about the graphics card: a window that went away
+      // or a compositor that stopped answering does not, and the processor would not help.
+      const encoder = error instanceof StillFailed && error.failure.reason === "encoder";
+      if (signal.aborted || !encoder || encoding.acceleration !== "hardware") throw error;
       console.warn("The graphics card does not encode, the processor does", error);
       void this.#noteHardwareFailed(encoding.codec);
       const software = inSoftware(encoding);
@@ -1480,6 +1541,9 @@ export class VideoExport {
     if (isQuotaError(error)) {
       console.warn("Export stopped", error);
       message = t("export.storage.full");
+    } else if (isGone(error)) {
+      console.warn("Export stopped", error);
+      message = t("export.video.notKept");
     } else if (error instanceof FrameFailed) {
       const at = this.#locate(error, range);
       const reason = describeFailure(t, error.failure, state, timeline);
@@ -1525,7 +1589,12 @@ export class VideoExport {
     return [all, { id: "selection", from, to }];
   }
 
-  #fields(state: ProjectState, ranges: readonly Range[], quality: Quality): FormField[] {
+  #fields(
+    state: ProjectState,
+    ranges: readonly Range[],
+    quality: Quality,
+    cardFailed: boolean,
+  ): FormField[] {
     const { t, timeline } = this.#options;
     const rate = timeline.model?.rate;
     const at = (seconds: number) =>
@@ -1556,6 +1625,19 @@ export class VideoExport {
         value: quality,
         options: QUALITIES.map((id) => ({ id, label: t(`export.video.qualities.${id}`) })),
       },
+      ...(cardFailed
+        ? [
+            {
+              id: "card",
+              label: t("export.video.card"),
+              value: "processor",
+              options: [
+                { id: "processor", label: t("export.video.cardFailed") },
+                { id: "retry", label: t("export.video.cardRetry") },
+              ],
+            },
+          ]
+        : []),
     ];
   }
 
@@ -1639,6 +1721,10 @@ export class VideoExport {
     return new Set((await this.#hardwareFailures()).keys());
   }
 
+  async #forgetHardwareFailed(): Promise<void> {
+    await this.#options.settings.save(HARDWARE_KEY, { version: 1, failed: {} }).catch(() => {});
+  }
+
   async #noteHardwareFailed(codec: VideoCodecName): Promise<void> {
     const failed = await this.#hardwareFailures();
     failed.set(codec, Date.now());
@@ -1652,16 +1738,14 @@ const VIDEO_CODECS: ReadonlySet<string> = new Set<VideoCodecName>(["avc", "vp9",
 
 const PLAIN = { interpolation: { escapeValue: false } };
 
-const isExpired = ({ savedAt }: SavedExport) => Date.now() - savedAt > KEEP_UNFINISHED_MS;
+/** An export that stopped, which people chose to do again with a new one. */
+interface Replacing {
+  readonly saved: SavedExport;
+  /** The claim on it, which the new export holds until it takes its place. */
+  readonly release: () => void;
+}
 
-/** Two exports of the same part, in the same format and quality, make the same video. */
-const sameSettings = (a: SavedPlan, b: SavedPlan) =>
-  a.timeline === b.timeline &&
-  a.format === b.format &&
-  a.quality === b.quality &&
-  a.range.from === b.range.from &&
-  a.range.to === b.range.to &&
-  a.kind.extension === b.kind.extension;
+const isExpired = ({ savedAt }: SavedExport) => Date.now() - savedAt > KEEP_UNFINISHED_MS;
 
 /** What a target was called when it was made, for people. */
 function nameOfTarget(target: unknown): string {

@@ -676,4 +676,22 @@ describe("a sound an export waits for", () => {
     expect(await waiting).toEqual({ state: "ready" });
     expect(await media.get(made.file)).toBeDefined();
   });
+
+  it("of a project that was taken away meanwhile goes nowhere", async () => {
+    const { make, runs, addSound, addClip, clip, store, session, media, projects } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    await settle();
+    const state = store.getState();
+    const made = madeSoundOf(state, clip());
+    if (!made) throw new Error("No sound");
+    const waiting = sounds.whenMade(made, state);
+    await session.create("另一个项目");
+    await settle();
+    await projects.remove(state.manifest.id);
+    runs.at(-1)?.finish(silence());
+    expect(await waiting).toEqual({ state: "failed", reason: "error" });
+    expect(await media.get(made.file)).toBeUndefined();
+  });
 });

@@ -89,18 +89,26 @@ export function createExportStore(
     },
     save: (saved) => write([EXPORTS], (transaction) => transaction.objectStore(EXPORTS).put(saved)),
     // A piece of an export that is gone, given up while it was on its way, would stay forever.
-    addPiece: (id, track, piece) =>
-      write([EXPORTS, PIECES], (transaction) => {
-        const found = transaction.objectStore(EXPORTS).getKey(id);
-        found.addEventListener("success", () => {
-          if (found.result === undefined) {
-            transaction.abort();
-            return;
-          }
-          const record: PieceRecord = { id, track, ...piece };
-          transaction.objectStore(PIECES).put(record);
+    async addPiece(id, track, piece) {
+      let missing = false;
+      try {
+        await write([EXPORTS, PIECES], (transaction) => {
+          const found = transaction.objectStore(EXPORTS).getKey(id);
+          found.addEventListener("success", () => {
+            if (found.result === undefined) {
+              missing = true;
+              transaction.abort();
+              return;
+            }
+            const record: PieceRecord = { id, track, ...piece };
+            transaction.objectStore(PIECES).put(record);
+          });
         });
-      }),
+      } catch (error) {
+        if (missing) throw new DOMException("The export is not kept any more", "NotFoundError");
+        throw error;
+      }
+    },
     async *pieces(id, track) {
       let from = 0;
       for (;;) {
