@@ -1423,41 +1423,6 @@ describe("editing clips on the timeline", () => {
       expect(clip(store, "b")?.start).toBe("2");
     });
 
-    it("stays quick with thousands of clips", () => {
-      const clips = Array.from({ length: 3000 }, (_, index) => ({
-        id: `c${index}`,
-        start: String(index * 2),
-        duration: "1",
-      }));
-      const project = createProject({ name: "大项目" });
-      const main = project.timelines.get("main")?.document;
-      if (!main) throw new Error("no timeline");
-      const track = {
-        id: "track",
-        kind: "video",
-        clips: clips.map((item) => ({ ...item, source: color })),
-      };
-      const store = ProjectStore.create({
-        ...project,
-        timelines: new Map([
-          ["main", { document: { ...main, tracks: [track] } as never, overrides: new Map() }],
-        ]),
-      });
-      const started = performance.now();
-      success(
-        store.execute({
-          type: "clip.move",
-          params: {
-            timeline: "main",
-            clips: clips.map(({ id, start }) => ({ clip: id, start: `${start}.5` })),
-            overlap: "overwrite",
-          },
-        }),
-      );
-      expect(performance.now() - started).toBeLessThan(2000);
-      expect(clip(store, "c2999")?.start).toBe("5998.5");
-    });
-
     it("writes nothing for a clip that stays where it is", () => {
       const { store } = withClips([{ id: "a", start: "0", duration: "2" }]);
       const revision = store.revision;

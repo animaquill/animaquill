@@ -17,7 +17,8 @@
 
 ## 开发
 
-- 命令：`pnpm dev`、`pnpm check`、`pnpm e2e`。
+- 命令：`pnpm dev`、`pnpm check`、`pnpm e2e`。量时间的单元测试放在 `*.perf.test.ts`，`pnpm check` 不跑，用 `pnpm test:perf`，CI 会跑。
+- 浏览器测试跑在开发页的构建上（`vite build` 再 `vite preview`），不是开发服务器。已经开着 `pnpm dev` 时用它，改了代码不用重新构建。
 - 测试里出现 `Yjs was already imported`，是依赖重新链接后 Vitest 还留着旧路径，删掉 `node_modules/.vitest-cache`。
 - 包的依赖方向只能往下，比如 `ui` 依赖 `host`。
 - import 写完整的扩展名，这样 Node.js 也能直接运行这些源码。
@@ -43,7 +44,7 @@
 - 新命令写在 `packages/core/src/commands.ts`。命令只规划改动，校验都在写入之前完成，因为 Yjs 不能回滚。
 - 文档里哪些层是独立的 Map，定义在 `packages/core/src/structure.ts`，它决定了冲突的粒度。
 - 不用 `Y.UndoManager`：两边同时改一个字段再撤销时，它可能让这个字段没有值。撤销用命令记录的逆操作。
-- 涉及并发的改动要跑随机测试 `packages/core/src/fuzz.test.ts`，手写用例发现不了这类问题。
+- 涉及并发的改动要跑随机测试 `packages/core/src/fuzz*.test.ts`，手写用例发现不了这类问题。分成几个文件是为了同时跑，共用的在 `fuzz-support.ts`。
 - 命令要经得起一次处理几千个片段：不要在循环里再扫一遍全部片段，先按轨道排序。
 - 浮点时间只用来画和找位置。切不切、有没有空位这类判断用精确时间，否则片段边缘会判断错。
 - 判断属性是不是动画用 `isAnimation`：数组也有 `keys`。

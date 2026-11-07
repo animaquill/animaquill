@@ -1,0 +1,240 @@
+/**
+ * What the random tests share, `fuzz*.test.ts`. They are in several files so that they run at the
+ * same time: in one, they took longer than all the other unit tests together.
+ */
+import * as Y from "yjs";
+import { loadFixture } from "../../schema/scripts/fixture.ts";
+import type { KeyEase } from "./property-edit.ts";
+import { ProjectStore, type CommandCall } from "./store.ts";
+
+/** Small and repeatable: a failure can be reproduced from its seed. */
+export type Random = ReturnType<typeof randomFrom>;
+
+export function randomFrom(seed: number) {
+  let state = seed;
+  const next = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+  return {
+    int: (limit: number) => Math.floor(next() * limit),
+    pick: <T>(items: readonly T[]): T | undefined => items[Math.floor(next() * items.length)],
+    chance: (probability: number) => next() < probability,
+  };
+}
+
+export function openUnlocked(): ProjectStore {
+  const files = loadFixture("v1");
+  const manifest = JSON.parse(files.get("animaquill.json") as string);
+  delete manifest.tags;
+  files.set("animaquill.json", JSON.stringify(manifest));
+  const { store } = ProjectStore.open(files);
+  if (!store) throw new Error("fixture did not open");
+  return store;
+}
+
+export function replica(store: ProjectStore): ProjectStore {
+  const doc = new Y.Doc();
+  Y.applyUpdate(doc, Y.encodeStateAsUpdate(store.doc), "sync");
+  return new ProjectStore(doc);
+}
+
+export function sync(a: ProjectStore, b: ProjectStore): void {
+  Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc, Y.encodeStateVector(b.doc)), "sync");
+  Y.applyUpdate(a.doc, Y.encodeStateAsUpdate(b.doc, Y.encodeStateVector(a.doc)), "sync");
+}
+
+const MOMENTS = ["0", "1/3", "1", "2.5", "7/3"];
+export const EASES: readonly KeyEase[] = [
+  { interp: "linear" },
+  { interp: "hold" },
+  { interp: "bezier", out: [0.42, 0] },
+  { interp: "bezier", out: [0.42, 0], in: [0.58, 1] },
+];
+export const HOLD = { interp: "hold" } as const;
+
+/** Few moments and few properties, so that edits land on each other's keys all the time. */
+export function randomEdit(clip: string, random: ReturnType<typeof randomFrom>): object {
+  const owner = { clip };
+  const path = random.pick(["opacity", "transform.x", "transform.rotation"]) as string;
+  const moment = () => random.pick(MOMENTS) as string;
+  const time = moment();
+  const value = random.int(100) / 100;
+  const edits = [
+    { owner, path, op: "write", time, value },
+    { owner, path, op: "write", time, value },
+    { owner, path, op: "setKey", time, value },
+    { owner, path, op: "setKey", time, value },
+    { owner, path, op: "removeKey", time },
+    { owner, path, op: "moveKey", moves: [{ from: time, to: moment() }] },
+    {
+      owner,
+      path,
+      op: "moveKey",
+      moves: [
+        { from: moment(), to: time },
+        { from: time, to: "3" },
+      ],
+    },
+    { owner, path, op: "setInterp", times: [time, moment()], ease: random.pick(EASES) },
+    { owner, path, op: "setInterp", times: [time], ease: random.pick(EASES) },
+    { owner, path, op: "putKeys", keys: [{ time, value, interp: "hold" }] },
+    { owner, path, op: "set", value },
+    { owner, path, op: "clear" },
+  ];
+  return random.pick(edits) as object;
+}
+
+export function randomCommand(
+  store: ProjectStore,
+  random: ReturnType<typeof randomFrom>,
+): CommandCall {
+  const main = store.getState().timelines["main"];
+  const clips = Object.keys(main?.clips ?? {});
+  const tracks = Object.keys(main?.tracks ?? {});
+  const sections = Object.keys(main?.sections ?? {});
+  const clip = random.pick(clips) ?? "none";
+  const track = random.pick(tracks) ?? "none";
+  const section = random.pick(sections) ?? "none";
+  const timeline = "main";
+  const color = { kind: "color", color: "#112233" };
+  const state = store.getState();
+  const scene = random.pick(Object.keys(state.scenes)) ?? "none";
+  const sound = random.pick(Object.keys(state.sounds)) ?? "none";
+  const file = random.pick(Object.keys(state.files)) ?? "code/none.js";
+  const page = { "index.html": `<p>${random.int(9)}</p>`, "a.js": String(random.int(9)) };
+  const calls: (() => CommandCall)[] = [
+    () => ({
+      type: "scene.add",
+      params: {
+        id: random.pick(["s1", "s2", "s3"]),
+        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        files: page,
+      },
+    }),
+    () => ({ type: "scene.update", params: { scene, changes: { name: `n${random.int(9)}` } } }),
+    () => ({ type: "scene.remove", params: { scene } }),
+    () => ({
+      type: "sound.add",
+      params: {
+        id: random.pick(["n1", "n2", "n3"]),
+        sound: { name: "声音", entry: "a.js", runtime: 1 },
+        files: { "a.js": String(random.int(9)) },
+      },
+    }),
+    () => ({ type: "sound.update", params: { sound, changes: { name: `n${random.int(9)}` } } }),
+    () => ({ type: "sound.remove", params: { sound } }),
+    () => ({
+      type: "clip.add",
+      params: {
+        timeline,
+        track,
+        clip: {
+          start: String(random.int(60)),
+          duration: "1",
+          source: { kind: "scene", scene },
+        },
+        overlap: "overwrite",
+      },
+    }),
+    () => ({
+      type: "clip.add",
+      params: {
+        timeline,
+        track,
+        clip: { start: String(random.int(60)), duration: "1", source: { kind: "sound", sound } },
+        overlap: "overwrite",
+      },
+    }),
+    () => ({ type: "file.write", params: { path: file, text: `t${random.int(9)}` } }),
+    () => ({ type: "file.write", params: { path: `code/f${random.int(3)}.js`, text: "x" } }),
+    () => ({
+      type: "file.write",
+      params: { path: `scenes/${scene}/n${random.int(3)}.js`, text: "x" },
+    }),
+    () => ({
+      type: "file.write",
+      params: { path: `sounds/${sound}/n${random.int(3)}.js`, text: "x" },
+    }),
+    () => ({ type: "file.remove", params: { path: file } }),
+    () => ({ type: "file.rename", params: { from: file, to: `code/r${random.int(3)}.js` } }),
+    () => ({
+      type: "clip.move",
+      params: { timeline, clips: [{ clip, start: String(random.int(60)) }] },
+    }),
+    () => ({
+      type: "clip.move",
+      params: { timeline, clips: [{ clip, start: String(random.int(60)) }], overlap: "overwrite" },
+    }),
+    () => ({
+      type: "clip.move",
+      params: {
+        timeline,
+        clips: clips
+          .filter(() => random.chance(0.3))
+          .map((id) => ({ clip: id, start: String(random.int(60)) })),
+        overlap: "overwrite",
+      },
+    }),
+    () => ({ type: "clip.move", params: { timeline, clips: [{ clip, track }] } }),
+    () => ({
+      type: "clip.move",
+      params: { timeline, clips: [{ clip, track }], overlap: "overwrite" },
+    }),
+    () => ({
+      type: "clip.trim",
+      params: { timeline, clip, end: String(1 + random.int(80)) },
+    }),
+    () => ({
+      type: "clip.trim",
+      params: { timeline, clip, start: String(random.int(40)) },
+    }),
+    () => ({ type: "clip.split", params: { timeline, clip, at: String(random.int(60)) } }),
+    () => ({
+      type: "clip.setProperty",
+      params: { timeline, clip, path: "opacity", value: random.int(100) / 100 },
+    }),
+    () => ({
+      type: "clip.setProperty",
+      params: { timeline, clip, path: "transform.x", value: random.int(100) / 100 },
+    }),
+    () => ({ type: "property.edit", params: { timeline, edits: [randomEdit(clip, random)] } }),
+    () => ({ type: "property.edit", params: { timeline, edits: [randomEdit(clip, random)] } }),
+    () => ({
+      type: "property.edit",
+      params: {
+        timeline,
+        edits: clips
+          .filter(() => random.chance(0.3))
+          .flatMap((id) => [randomEdit(id, random), randomEdit(id, random)]),
+      },
+    }),
+    () => ({
+      type: "clip.update",
+      params: { timeline, clip, changes: { name: `n${random.int(9)}` } },
+    }),
+    () => ({ type: "clip.remove", params: { timeline, clips: [clip] } }),
+    () => ({
+      type: "clip.add",
+      params: {
+        timeline,
+        track,
+        clip: { start: String(random.int(60)), duration: "1", source: color },
+        overlap: "overwrite",
+      },
+    }),
+    () => ({ type: "track.add", params: { timeline, kind: "video" } }),
+    () => ({ type: "track.add", params: { timeline, kind: "audio" } }),
+    () => ({ type: "track.remove", params: { timeline, track } }),
+    () => ({ type: "track.move", params: { timeline, track, before: random.pick(tracks) } }),
+    () => ({ type: "section.add", params: { timeline, duration: "2" } }),
+    () => ({ type: "section.remove", params: { timeline, section } }),
+    () => ({ type: "section.update", params: { timeline, section, duration: "3" } }),
+    () => ({ type: "marker.add", params: { timeline, marker: { time: String(random.int(60)) } } }),
+    () => ({ type: "project.rename", params: { name: `name ${random.int(9)}` } }),
+  ];
+  return (random.pick(calls) as () => CommandCall)();
+}
+
+/** Many rounds each, which takes seconds on a busy machine, with every file at the same time. */
+export const FUZZ = { timeout: 60_000 };

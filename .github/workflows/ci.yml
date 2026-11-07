@@ -20,6 +20,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      # Not in check: these measure time, which a busy machine gets wrong. See vitest.config.ts.
+      - run: pnpm test:perf
 
   browser:
     runs-on: ubuntu-24.04

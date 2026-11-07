@@ -129,26 +129,6 @@ describe("objects from a flat list", () => {
     expect(detached.length).toBeGreaterThan(0);
   });
 
-  it("puts many thousands in order without going through them again for each one", () => {
-    const many = 200_000;
-    const lists = [
-      [object("root"), ...Array.from({ length: many }, (_, index) => object(`o${index}`, "root"))],
-      Array.from({ length: many }, (_, index) => object(`o${index}`)),
-      Array.from({ length: many }, (_, index) =>
-        object(`o${index}`, index === 0 ? undefined : `o${index - 1}`),
-      ),
-    ];
-    for (const list of lists) {
-      const started = performance.now();
-      const { roots } = objectForest(list);
-      // Many times what it takes. Going through them again for each one took minutes.
-      expect(performance.now() - started).toBeLessThan(3000);
-      const count = (trees: typeof roots): number =>
-        trees.reduce((sum, { children }) => sum + 1 + count(children), 0);
-      expect(count(roots)).toBe(list.length);
-    }
-  });
-
   it("takes the first object of an id", () => {
     const first: ObjectDescriptor = { id: "a", name: "first", properties: [] };
     const { roots } = objectForest([first, { id: "a", name: "second", properties: [] }]);

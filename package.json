@@ -17,9 +17,10 @@
     "dev": "pnpm --filter @animaquill/ui dev",
     "typecheck": "pnpm -r typecheck",
     "lint": "oxlint",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --write --cache --cache-strategy content .",
+    "format:check": "prettier --check --cache --cache-strategy content .",
     "test": "vitest run",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
     "e2e": "pnpm --filter @animaquill/ui --filter @animaquill/scene --workspace-concurrency=1 e2e",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   }

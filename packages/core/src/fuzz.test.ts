@@ -1,263 +1,21 @@
 import {
-  Animation as AnimationSchema,
-  add,
   compare,
   createProject,
-  formatTime,
   isAnimation,
   parseTime,
   readProject,
-  type Animation,
-  type Key,
-  type PropertyValue,
   type Rational,
 } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import * as Y from "yjs";
-import { loadFixture } from "../../schema/scripts/fixture.ts";
-import {
-  MAX_SPLIT_Y,
-  MIN_SPLIT_Y,
-  compileChannel,
-  sample,
-  secondsOf,
-  type Channel,
-} from "./curve.ts";
+import { sample } from "./curve.ts";
+import { FUZZ, openUnlocked, randomCommand, randomFrom, replica, sync } from "./fuzz-support.ts";
 import type { ProjectState } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { buildRenderPlan } from "./render-plan.ts";
-import { applyEdit, type KeyEase, type PropertyEdit } from "./property-edit.ts";
 import { ProjectStore, USER, aiTask, type CommandCall } from "./store.ts";
-import { Trial } from "./trial.ts";
 import { clockOf } from "./view.ts";
 
-/** Small and repeatable: a failure can be reproduced from its seed. */
-type Random = ReturnType<typeof randomFrom>;
-
-function randomFrom(seed: number) {
-  let state = seed;
-  const next = () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 2 ** 32;
-  };
-  return {
-    int: (limit: number) => Math.floor(next() * limit),
-    pick: <T>(items: readonly T[]): T | undefined => items[Math.floor(next() * items.length)],
-    chance: (probability: number) => next() < probability,
-  };
-}
-
-function openUnlocked(): ProjectStore {
-  const files = loadFixture("v1");
-  const manifest = JSON.parse(files.get("animaquill.json") as string);
-  delete manifest.tags;
-  files.set("animaquill.json", JSON.stringify(manifest));
-  const { store } = ProjectStore.open(files);
-  if (!store) throw new Error("fixture did not open");
-  return store;
-}
-
-function replica(store: ProjectStore): ProjectStore {
-  const doc = new Y.Doc();
-  Y.applyUpdate(doc, Y.encodeStateAsUpdate(store.doc), "sync");
-  return new ProjectStore(doc);
-}
-
-function sync(a: ProjectStore, b: ProjectStore): void {
-  Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc, Y.encodeStateVector(b.doc)), "sync");
-  Y.applyUpdate(a.doc, Y.encodeStateAsUpdate(b.doc, Y.encodeStateVector(a.doc)), "sync");
-}
-
-const MOMENTS = ["0", "1/3", "1", "2.5", "7/3"];
-const EASES: readonly KeyEase[] = [
-  { interp: "linear" },
-  { interp: "hold" },
-  { interp: "bezier", out: [0.42, 0] },
-  { interp: "bezier", out: [0.42, 0], in: [0.58, 1] },
-];
-const HOLD = { interp: "hold" } as const;
-
-/** Few moments and few properties, so that edits land on each other's keys all the time. */
-function randomEdit(clip: string, random: ReturnType<typeof randomFrom>): object {
-  const owner = { clip };
-  const path = random.pick(["opacity", "transform.x", "transform.rotation"]) as string;
-  const moment = () => random.pick(MOMENTS) as string;
-  const time = moment();
-  const value = random.int(100) / 100;
-  const edits = [
-    { owner, path, op: "write", time, value },
-    { owner, path, op: "write", time, value },
-    { owner, path, op: "setKey", time, value },
-    { owner, path, op: "setKey", time, value },
-    { owner, path, op: "removeKey", time },
-    { owner, path, op: "moveKey", moves: [{ from: time, to: moment() }] },
-    {
-      owner,
-      path,
-      op: "moveKey",
-      moves: [
-        { from: moment(), to: time },
-        { from: time, to: "3" },
-      ],
-    },
-    { owner, path, op: "setInterp", times: [time, moment()], ease: random.pick(EASES) },
-    { owner, path, op: "setInterp", times: [time], ease: random.pick(EASES) },
-    { owner, path, op: "putKeys", keys: [{ time, value, interp: "hold" }] },
-    { owner, path, op: "set", value },
-    { owner, path, op: "clear" },
-  ];
-  return random.pick(edits) as object;
-}
-
-function randomCommand(store: ProjectStore, random: ReturnType<typeof randomFrom>): CommandCall {
-  const main = store.getState().timelines["main"];
-  const clips = Object.keys(main?.clips ?? {});
-  const tracks = Object.keys(main?.tracks ?? {});
-  const sections = Object.keys(main?.sections ?? {});
-  const clip = random.pick(clips) ?? "none";
-  const track = random.pick(tracks) ?? "none";
-  const section = random.pick(sections) ?? "none";
-  const timeline = "main";
-  const color = { kind: "color", color: "#112233" };
-  const state = store.getState();
-  const scene = random.pick(Object.keys(state.scenes)) ?? "none";
-  const sound = random.pick(Object.keys(state.sounds)) ?? "none";
-  const file = random.pick(Object.keys(state.files)) ?? "code/none.js";
-  const page = { "index.html": `<p>${random.int(9)}</p>`, "a.js": String(random.int(9)) };
-  const calls: (() => CommandCall)[] = [
-    () => ({
-      type: "scene.add",
-      params: {
-        id: random.pick(["s1", "s2", "s3"]),
-        scene: { name: "场景", entry: "index.html", runtime: 1 },
-        files: page,
-      },
-    }),
-    () => ({ type: "scene.update", params: { scene, changes: { name: `n${random.int(9)}` } } }),
-    () => ({ type: "scene.remove", params: { scene } }),
-    () => ({
-      type: "sound.add",
-      params: {
-        id: random.pick(["n1", "n2", "n3"]),
-        sound: { name: "声音", entry: "a.js", runtime: 1 },
-        files: { "a.js": String(random.int(9)) },
-      },
-    }),
-    () => ({ type: "sound.update", params: { sound, changes: { name: `n${random.int(9)}` } } }),
-    () => ({ type: "sound.remove", params: { sound } }),
-    () => ({
-      type: "clip.add",
-      params: {
-        timeline,
-        track,
-        clip: {
-          start: String(random.int(60)),
-          duration: "1",
-          source: { kind: "scene", scene },
-        },
-        overlap: "overwrite",
-      },
-    }),
-    () => ({
-      type: "clip.add",
-      params: {
-        timeline,
-        track,
-        clip: { start: String(random.int(60)), duration: "1", source: { kind: "sound", sound } },
-        overlap: "overwrite",
-      },
-    }),
-    () => ({ type: "file.write", params: { path: file, text: `t${random.int(9)}` } }),
-    () => ({ type: "file.write", params: { path: `code/f${random.int(3)}.js`, text: "x" } }),
-    () => ({
-      type: "file.write",
-      params: { path: `scenes/${scene}/n${random.int(3)}.js`, text: "x" },
-    }),
-    () => ({
-      type: "file.write",
-      params: { path: `sounds/${sound}/n${random.int(3)}.js`, text: "x" },
-    }),
-    () => ({ type: "file.remove", params: { path: file } }),
-    () => ({ type: "file.rename", params: { from: file, to: `code/r${random.int(3)}.js` } }),
-    () => ({
-      type: "clip.move",
-      params: { timeline, clips: [{ clip, start: String(random.int(60)) }] },
-    }),
-    () => ({
-      type: "clip.move",
-      params: { timeline, clips: [{ clip, start: String(random.int(60)) }], overlap: "overwrite" },
-    }),
-    () => ({
-      type: "clip.move",
-      params: {
-        timeline,
-        clips: clips
-          .filter(() => random.chance(0.3))
-          .map((id) => ({ clip: id, start: String(random.int(60)) })),
-        overlap: "overwrite",
-      },
-    }),
-    () => ({ type: "clip.move", params: { timeline, clips: [{ clip, track }] } }),
-    () => ({
-      type: "clip.move",
-      params: { timeline, clips: [{ clip, track }], overlap: "overwrite" },
-    }),
-    () => ({
-      type: "clip.trim",
-      params: { timeline, clip, end: String(1 + random.int(80)) },
-    }),
-    () => ({
-      type: "clip.trim",
-      params: { timeline, clip, start: String(random.int(40)) },
-    }),
-    () => ({ type: "clip.split", params: { timeline, clip, at: String(random.int(60)) } }),
-    () => ({
-      type: "clip.setProperty",
-      params: { timeline, clip, path: "opacity", value: random.int(100) / 100 },
-    }),
-    () => ({
-      type: "clip.setProperty",
-      params: { timeline, clip, path: "transform.x", value: random.int(100) / 100 },
-    }),
-    () => ({ type: "property.edit", params: { timeline, edits: [randomEdit(clip, random)] } }),
-    () => ({ type: "property.edit", params: { timeline, edits: [randomEdit(clip, random)] } }),
-    () => ({
-      type: "property.edit",
-      params: {
-        timeline,
-        edits: clips
-          .filter(() => random.chance(0.3))
-          .flatMap((id) => [randomEdit(id, random), randomEdit(id, random)]),
-      },
-    }),
-    () => ({
-      type: "clip.update",
-      params: { timeline, clip, changes: { name: `n${random.int(9)}` } },
-    }),
-    () => ({ type: "clip.remove", params: { timeline, clips: [clip] } }),
-    () => ({
-      type: "clip.add",
-      params: {
-        timeline,
-        track,
-        clip: { start: String(random.int(60)), duration: "1", source: color },
-        overlap: "overwrite",
-      },
-    }),
-    () => ({ type: "track.add", params: { timeline, kind: "video" } }),
-    () => ({ type: "track.add", params: { timeline, kind: "audio" } }),
-    () => ({ type: "track.remove", params: { timeline, track } }),
-    () => ({ type: "track.move", params: { timeline, track, before: random.pick(tracks) } }),
-    () => ({ type: "section.add", params: { timeline, duration: "2" } }),
-    () => ({ type: "section.remove", params: { timeline, section } }),
-    () => ({ type: "section.update", params: { timeline, section, duration: "3" } }),
-    () => ({ type: "marker.add", params: { timeline, marker: { time: String(random.int(60)) } } }),
-    () => ({ type: "project.rename", params: { name: `name ${random.int(9)}` } }),
-  ];
-  return (random.pick(calls) as () => CommandCall)();
-}
-
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work on two devices, seed %i", (seed) => {
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work on two devices, seed %i", FUZZ, (seed) => {
   it("a curve is always one that can be read", () => {
     const random = randomFrom(seed);
     const store = openUnlocked();
@@ -317,6 +75,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work on two devices, seed %i", (
 
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   "two devices, each with its own properties, seed %i",
+  FUZZ,
   (seed) => {
     const PATHS: readonly (readonly string[])[] = [
       ["opacity", "transform.x", "transform.rotation"],
@@ -381,7 +140,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   },
 );
 
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys through cuts and trims, seed %i", (seed) => {
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys through cuts and trims, seed %i", FUZZ, (seed) => {
   const FRAMES = 240;
   const moment = (frame: number) => frame / 30;
 
@@ -442,22 +201,26 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys through cuts and trims, seed %i", 
   });
 });
 
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work, undone step by step, seed %i", (seed) => {
-  it("comes back exactly, and goes forward exactly", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    for (let round = 0; round < 300; round++) {
-      const before = store.getState();
-      const result = store.execute(randomCommand(store, random));
-      if (!result.ok || store.getState() === before) continue;
-      const after = store.getState();
-      expect(store.undo()).toMatchObject({ ok: true, kept: [] });
-      expect(deepEqual(store.getState(), before)).toBe(true);
-      expect(store.redo()).toMatchObject({ ok: true, kept: [] });
-      expect(deepEqual(store.getState(), after)).toBe(true);
-    }
-  });
-});
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
+  "random work, undone step by step, seed %i",
+  FUZZ,
+  (seed) => {
+    it("comes back exactly, and goes forward exactly", () => {
+      const random = randomFrom(seed);
+      const store = openUnlocked();
+      for (let round = 0; round < 300; round++) {
+        const before = store.getState();
+        const result = store.execute(randomCommand(store, random));
+        if (!result.ok || store.getState() === before) continue;
+        const after = store.getState();
+        expect(store.undo()).toMatchObject({ ok: true, kept: [] });
+        expect(deepEqual(store.getState(), before)).toBe(true);
+        expect(store.redo()).toMatchObject({ ok: true, kept: [] });
+        expect(deepEqual(store.getState(), after)).toBe(true);
+      }
+    });
+  },
+);
 
 /** What can be written by whom, few enough that the same value is written over and over. */
 const WRITERS = [USER, USER, aiTask("t0"), aiTask("t1")];
@@ -513,69 +276,73 @@ class WrittenModel {
   }
 }
 
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back what others write over, seed %i", (seed) => {
-  it("goes by who wrote what, never by the value", () => {
-    const random = randomFrom(seed);
-    const store = ProjectStore.create(createProject({ name: "模型" }));
-    const track = Object.values(store.getState().timelines["main"]?.tracks ?? {})[0]?.id;
-    for (const [index, id] of ["c", "d"].entries()) {
-      const clip = {
-        id,
-        start: String(index),
-        duration: "1",
-        source: { kind: "color", color: "#000000" },
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
+  "taking back what others write over, seed %i",
+  FUZZ,
+  (seed) => {
+    it("goes by who wrote what, never by the value", () => {
+      const random = randomFrom(seed);
+      const store = ProjectStore.create(createProject({ name: "模型" }));
+      const track = Object.values(store.getState().timelines["main"]?.tracks ?? {})[0]?.id;
+      for (const [index, id] of ["c", "d"].entries()) {
+        const clip = {
+          id,
+          start: String(index),
+          duration: "1",
+          source: { kind: "color", color: "#000000" },
+        };
+        store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+      }
+      const model = new WrittenModel();
+      const read = ([clip, path]: readonly string[]) =>
+        store.getState().timelines["main"]?.clips[clip as string]?.properties?.[path as string];
+      const matches = () => {
+        for (const path of PATHS) {
+          expect(read(path)).toBe(model.current.get(path.join(" "))?.value);
+        }
       };
-      store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
-    }
-    const model = new WrittenModel();
-    const read = ([clip, path]: readonly string[]) =>
-      store.getState().timelines["main"]?.clips[clip as string]?.properties?.[path as string];
-    const matches = () => {
-      for (const path of PATHS) {
-        expect(read(path)).toBe(model.current.get(path.join(" "))?.value);
+      for (let round = 0; round < 600; round++) {
+        const task = `t${random.int(2)}`;
+        const roll = random.int(100);
+        if (roll < 60) {
+          const origin = random.pick(WRITERS) as string;
+          const path = random.pick(PATHS) as readonly string[];
+          const value = random.int(2) / 2;
+          if (read(path) === value) continue;
+          const [clip, name] = path;
+          store.execute(
+            { type: "clip.setProperty", params: { timeline: "main", clip, path: name, value } },
+            { origin },
+          );
+          model.write(origin, path.join(" "), value);
+        } else if (roll < 75) {
+          const entry = model.list(model.done, USER).pop();
+          if (!entry) continue;
+          const went = model.takeBack(entry, model.list(model.undone, USER));
+          expect(store.undo().ok).toBe(went > 0);
+        } else if (roll < 85) {
+          const entry = model.list(model.undone, USER).pop();
+          if (!entry) continue;
+          const went = model.bringBack(entry, model.list(model.done, USER));
+          expect(store.redo().ok).toBe(went > 0);
+        } else if (roll < 95) {
+          const origin = aiTask(task);
+          const writes = model.list(model.done, origin).splice(0).flat();
+          if (writes.length === 0) continue;
+          const went = model.takeBack(writes.toReversed(), model.list(model.undone, origin));
+          expect(store.undoTask(task).ok).toBe(went > 0);
+        } else {
+          const origin = aiTask(task);
+          const entry = model.list(model.undone, origin).pop();
+          if (!entry) continue;
+          const went = model.bringBack(entry.toReversed(), model.list(model.done, origin));
+          expect(store.redoTask(task).ok).toBe(went > 0);
+        }
+        matches();
       }
-    };
-    for (let round = 0; round < 600; round++) {
-      const task = `t${random.int(2)}`;
-      const roll = random.int(100);
-      if (roll < 60) {
-        const origin = random.pick(WRITERS) as string;
-        const path = random.pick(PATHS) as readonly string[];
-        const value = random.int(2) / 2;
-        if (read(path) === value) continue;
-        const [clip, name] = path;
-        store.execute(
-          { type: "clip.setProperty", params: { timeline: "main", clip, path: name, value } },
-          { origin },
-        );
-        model.write(origin, path.join(" "), value);
-      } else if (roll < 75) {
-        const entry = model.list(model.done, USER).pop();
-        if (!entry) continue;
-        const went = model.takeBack(entry, model.list(model.undone, USER));
-        expect(store.undo().ok).toBe(went > 0);
-      } else if (roll < 85) {
-        const entry = model.list(model.undone, USER).pop();
-        if (!entry) continue;
-        const went = model.bringBack(entry, model.list(model.done, USER));
-        expect(store.redo().ok).toBe(went > 0);
-      } else if (roll < 95) {
-        const origin = aiTask(task);
-        const writes = model.list(model.done, origin).splice(0).flat();
-        if (writes.length === 0) continue;
-        const went = model.takeBack(writes.toReversed(), model.list(model.undone, origin));
-        expect(store.undoTask(task).ok).toBe(went > 0);
-      } else {
-        const origin = aiTask(task);
-        const entry = model.list(model.undone, origin).pop();
-        if (!entry) continue;
-        const went = model.bringBack(entry.toReversed(), model.list(model.done, origin));
-        expect(store.redoTask(task).ok).toBe(went > 0);
-      }
-      matches();
-    }
-  });
-});
+    });
+  },
+);
 
 /** Everything that can point at something else, looked at the slow way. */
 function danglingIn(state: ProjectState): readonly string[] {
@@ -603,743 +370,48 @@ function danglingIn(state: ProjectState): readonly string[] {
   return wrong;
 }
 
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back with several people, seed %i", (seed) => {
-  it("never leaves anything pointing at nothing", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    expect(danglingIn(store.getState())).toEqual([]);
-    const assets = ["a", "b", "c"];
-    const asset = { kind: "image", path: "assets/a.png", storage: "local" };
-    for (let round = 0; round < 500; round++) {
-      const task = `t${random.int(3)}`;
-      const roll = random.int(100);
-      const origin = random.chance(0.5) ? aiTask(task) : USER;
-      const id = random.pick(assets) as string;
-      const tracks = Object.values(store.getState().timelines["main"]?.tracks ?? {});
-      const video = random.pick(tracks.filter(({ kind }) => kind === "video"))?.id;
-      if (roll < 10) store.undo();
-      else if (roll < 15) store.redo();
-      else if (roll < 25) store.undoTask(task);
-      else if (roll < 30) store.redoTask(task);
-      else if (roll < 40) store.execute({ type: "asset.add", params: { id, asset } }, { origin });
-      else if (roll < 50)
-        store.execute({ type: "asset.remove", params: { asset: id } }, { origin });
-      else if (roll < 65) {
-        const clip = {
-          start: String(random.int(60)),
-          duration: "1",
-          source: { kind: "image", media: { asset: id } },
-        };
-        if (store.getState().assets?.[id]) {
-          store.execute(
-            {
-              type: "clip.add",
-              params: { timeline: "main", track: video, clip, overlap: "overwrite" },
-            },
-            { origin },
-          );
-        }
-      } else store.execute(randomCommand(store, random), { origin });
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
+  "taking back with several people, seed %i",
+  FUZZ,
+  (seed) => {
+    it("never leaves anything pointing at nothing", () => {
+      const random = randomFrom(seed);
+      const store = openUnlocked();
       expect(danglingIn(store.getState())).toEqual([]);
-    }
-  });
-});
-
-describe.each([1, 2, 3, 4])("updates that arrive late and out of order, seed %i", (seed) => {
-  it("leave no holes, whatever people do in the meantime", () => {
-    const random = randomFrom(seed);
-    const stores = [openUnlocked()];
-    stores.push(replica(stores[0] as ProjectStore), replica(stores[0] as ProjectStore));
-    const queues: Uint8Array[][] = stores.map(() => []);
-    stores.forEach((store, from) =>
-      store.onLocalUpdate((update) =>
-        queues.forEach((queue, to) => {
-          if (to !== from) queue.push(update);
-        }),
-      ),
-    );
-    const deliver = (index: number) => {
-      const queue = queues[index] as Uint8Array[];
-      const [update] = queue.splice(random.int(queue.length), 1);
-      if (update) stores[index]?.applyUpdates([update]);
-    };
-    let refused = 0;
-    for (let round = 0; round < 400; round++) {
-      const store = random.pick(stores) as ProjectStore;
-      const behind = store.isMissingUpdates;
-      const before = store.revision;
-      const result = random.chance(0.1)
-        ? store.undo()
-        : store.execute(randomCommand(store, random));
-      if (behind) {
-        refused += 1;
-        expect(result.ok).toBe(false);
-        expect(store.revision).toBe(before);
-      }
-      for (let count = random.int(3); count > 0; count--) deliver(random.int(stores.length));
-      for (const each of stores) {
-        // What people see is always whole, also while the document is not.
-        for (const clip of Object.values(each.getState().timelines["main"]?.clips ?? {})) {
-          expect(clip.start).toBeDefined();
-          expect(clip.duration).toBeDefined();
-          expect(clip.source).toBeDefined();
-        }
-        if (round % 20 === 0) expect(each.exportFiles().problems).toEqual([]);
-      }
-    }
-    expect(refused).toBeGreaterThan(0);
-    for (const index of stores.keys()) while (queues[index]?.length) deliver(index);
-    for (const store of stores) expect(store.isMissingUpdates).toBe(false);
-    expect(stores[1]?.getState()).toEqual(stores[0]?.getState());
-    expect(stores[2]?.getState()).toEqual(stores[0]?.getState());
-    const clips = Object.values(stores[0]?.getState().timelines["main"]?.clips ?? {});
-    for (const clip of clips) {
-      expect(clip.start).toBeDefined();
-      expect(clip.duration).toBeDefined();
-      expect(clip.source).toBeDefined();
-    }
-    expect(stores[0]?.exportFiles().problems).toEqual([]);
-  });
-});
-
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("taking back around locked tracks, seed %i", (seed) => {
-  it("leaves what is on them as it is, for everyone", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const lockedIn = (state: ProjectState) =>
-      Object.values(state.timelines["main"]?.tracks ?? {})
-        .filter(({ locked }) => locked)
-        .map(({ id }) => id);
-    const contentOf = (state: ProjectState, tracks: readonly string[]) => {
-      const clips = Object.values(state.timelines["main"]?.clips ?? {});
-      return clips.filter(({ track }) => tracks.includes(track));
-    };
-    /** What a scene or sound on a locked track runs is what it shows or plays, so that stays too. */
-    const codeOf = (state: ProjectState, tracks: readonly string[]) => {
-      const content = contentOf(state, tracks);
-      // One from a library runs nothing of the project.
-      const scenes = content.flatMap(({ source }) =>
-        source.kind === "scene" && source.scene !== undefined ? [source.scene as string] : [],
-      );
-      const sounds = content.flatMap(({ source }) =>
-        source.kind === "sound" && source.sound !== undefined ? [source.sound as string] : [],
-      );
-      const isTheirs = (path: string) =>
-        scenes.some((id) => path.startsWith(`scenes/${id}/`)) ||
-        sounds.some((id) => path.startsWith(`sounds/${id}/`)) ||
-        (scenes.length + sounds.length > 0 && path.startsWith("code/"));
-      return {
-        manifests: [
-          ...scenes.map((id) => state.scenes[id]),
-          ...sounds.map((id) => state.sounds[id]),
-        ],
-        files: Object.entries(state.files).filter(([path]) => isTheirs(path)),
-      };
-    };
-    let held = 0;
-    let lockedCode = 0;
-    for (let round = 0; round < 2000; round++) {
-      const task = `t${random.int(3)}`;
-      const roll = random.int(100);
-      const before = store.getState();
-      if (roll < 25) {
-        const tracks = Object.keys(before.timelines["main"]?.tracks ?? {});
-        const track = random.pick(tracks);
-        const changes = { locked: random.chance(0.5) };
-        store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
-        continue;
-      }
-      if (roll < 70) {
+      const assets = ["a", "b", "c"];
+      const asset = { kind: "image", path: "assets/a.png", storage: "local" };
+      for (let round = 0; round < 500; round++) {
+        const task = `t${random.int(3)}`;
+        const roll = random.int(100);
         const origin = random.chance(0.5) ? aiTask(task) : USER;
-        store.execute(randomCommand(store, random), { origin });
-        const still = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
-        if (codeOf(before, still).files.length > 0) lockedCode += 1;
-        expect(codeOf(store.getState(), still)).toEqual(codeOf(before, still));
-        continue;
+        const id = random.pick(assets) as string;
+        const tracks = Object.values(store.getState().timelines["main"]?.tracks ?? {});
+        const video = random.pick(tracks.filter(({ kind }) => kind === "video"))?.id;
+        if (roll < 10) store.undo();
+        else if (roll < 15) store.redo();
+        else if (roll < 25) store.undoTask(task);
+        else if (roll < 30) store.redoTask(task);
+        else if (roll < 40) store.execute({ type: "asset.add", params: { id, asset } }, { origin });
+        else if (roll < 50)
+          store.execute({ type: "asset.remove", params: { asset: id } }, { origin });
+        else if (roll < 65) {
+          const clip = {
+            start: String(random.int(60)),
+            duration: "1",
+            source: { kind: "image", media: { asset: id } },
+          };
+          if (store.getState().assets?.[id]) {
+            store.execute(
+              {
+                type: "clip.add",
+                params: { timeline: "main", track: video, clip, overlap: "overwrite" },
+              },
+              { origin },
+            );
+          }
+        } else store.execute(randomCommand(store, random), { origin });
+        expect(danglingIn(store.getState())).toEqual([]);
       }
-      const result =
-        roll < 80
-          ? store.undoTask(task)
-          : roll < 85
-            ? store.redoTask(task)
-            : roll < 95
-              ? store.undo()
-              : store.redo();
-      if (!result.ok && result.error.obstacle === "locked") held += 1;
-      const locked = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
-      expect(contentOf(store.getState(), locked)).toEqual(contentOf(before, locked));
-      expect(codeOf(store.getState(), locked)).toEqual(codeOf(before, locked));
-    }
-    expect(held).toBeGreaterThan(0);
-    expect(lockedCode).toBeGreaterThan(0);
-  });
-});
-
-/** Changes to clips that do the same on two copies of a project, so nothing that makes up an id. */
-function randomClipChange(
-  store: ProjectStore,
-  random: ReturnType<typeof randomFrom>,
-  round: number,
-): CommandCall {
-  const main = store.getState().timelines["main"];
-  const clips = Object.values(main?.clips ?? {});
-  const clip = random.pick(clips)?.id ?? "none";
-  const alone = random.pick(clips.filter(({ link }) => link === undefined))?.id ?? "none";
-  const track = random.pick(Object.keys(main?.tracks ?? {})) ?? "none";
-  const timeline = "main";
-  const calls: (() => CommandCall)[] = [
-    () => ({
-      type: "clip.split",
-      params: { timeline, clip: alone, at: String(random.int(60)), id: `cut${round}` },
-    }),
-    () => ({
-      type: "clip.split",
-      params: { timeline, clip: alone, at: `${random.int(180)}/3`, id: `cut${round}` },
-    }),
-    () => ({ type: "clip.trim", params: { timeline, clip, start: String(random.int(40)) } }),
-    () => ({ type: "clip.trim", params: { timeline, clip, end: String(1 + random.int(80)) } }),
-    () => ({
-      type: "clip.move",
-      params: { timeline, clips: [{ clip, start: String(random.int(60)) }] },
-    }),
-    () => ({ type: "clip.move", params: { timeline, clips: [{ clip, track }] } }),
-    () => ({ type: "clip.remove", params: { timeline, clips: [clip] } }),
-    () => ({
-      type: "clip.add",
-      params: {
-        timeline,
-        track,
-        clip: {
-          id: `new${round}`,
-          start: String(random.int(60)),
-          duration: "4",
-          source: { kind: "color", color: "#112233" },
-        },
-      },
-    }),
-  ];
-  return (random.pick(calls) as () => CommandCall)();
-}
-
-/** What cutting a clip out and pasting it does: the clip goes, and a copy takes its place. */
-function moveByPasting(store: ProjectStore, random: Random, round: number): readonly CommandCall[] {
-  const main = store.getState().timelines["main"];
-  const moved = random.pick(Object.values(main?.clips ?? {}).filter(({ link }) => !link));
-  if (!moved) return [];
-  const { track, ...clip } = moved;
-  const copy = { ...clip, id: `moved${round}`, start: String(100 + round * 40) };
-  return [
-    { type: "clip.remove", params: { timeline: "main", clips: [moved.id] } },
-    { type: "clip.add", params: { timeline: "main", track, clip: copy, movedFrom: moved.id } },
-  ];
-}
-
-/** Everything that can be seen and everything that waits, without when it started waiting. */
-function lookAt(store: ProjectStore, trial: Trial) {
-  const clips = Object.values(store.getState().timelines["main"]?.clips ?? {});
-  const tried = [...trial.kept].flatMap(([clip, held]) =>
-    [...held].map(([path, { base, value, moved }]) => ({ clip, path, base, value, moved })),
-  );
-  return {
-    clips: clips.toSorted((a, b) => a.id.localeCompare(b.id)),
-    tried: tried.toSorted((a, b) => `${a.clip} ${a.path}`.localeCompare(`${b.clip} ${b.path}`)),
-  };
-}
-
-/** What people get from the keys: whatever they did last goes first. */
-const historyOf = (store: ProjectStore, trial: Trial) => ({
-  canUndo: () => store.canUndo || trial.canUndo,
-  undo: () => (trial.undoesFirst ? trial.undo() : store.undo()),
-  redo: () => (trial.redoesFirst ? trial.redo() : store.redo()),
-});
-
-const randomClipOf = (store: ProjectStore, random: ReturnType<typeof randomFrom>) =>
-  random.pick(Object.keys(store.getState().timelines["main"]?.clips ?? {})) ?? "none";
-
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys that move, seed %i", (seed) => {
-  const moments = (count: number, random: Random) =>
-    Array.from({ length: count }, () => `${random.int(40)}/${1 + random.int(4)}`);
-
-  const randomKeys = (random: Random): Animation => {
-    const seen = new Set<string>();
-    const keys: Key[] = [];
-    for (const time of moments(2 + random.int(10), random)) {
-      const canonical = formatTime(parseTime(time));
-      if (seen.has(canonical)) continue;
-      seen.add(canonical);
-      keys.push({ time: canonical, value: keys.length, ...(random.chance(0.3) ? HOLD : {}) });
-    }
-    return {
-      keys: keys.toSorted((a, b) => compare(parseTime(a.time), parseTime(b.time))),
-    };
-  };
-
-  it("leaves them in order, each moment once, and each key with what it had", () => {
-    const random = randomFrom(seed);
-    for (let round = 0; round < 500; round += 1) {
-      const before = randomKeys(random);
-      const chosen = before.keys.filter(() => random.chance(0.4));
-      if (chosen.length === 0) continue;
-      const by = parseTime(`${random.int(20) - 10}/${1 + random.int(3)}`);
-      const moves = chosen.map(({ time }) => ({
-        from: time,
-        to: formatTime(add(parseTime(time), by)),
-      }));
-      if (moves.some(({ to }) => to.startsWith("-"))) continue;
-      const after = applyEdit(before, { op: "moveKey", moves }) as Animation;
-      expect(AnimationSchema.safeParse(after).success).toBe(true);
-
-      // What moved is there, by value, and what it landed on is what went.
-      const landed = new Set(moves.map(({ to }) => to));
-      const stayed = before.keys.filter((key) => !chosen.includes(key) && !landed.has(key.time));
-      expect(after.keys).toHaveLength(chosen.length + stayed.length);
-      for (const [index, key] of chosen.entries()) {
-        const moved = after.keys.find(({ time }) => time === moves[index]?.to);
-        expect(moved).toEqual({ ...key, time: moves[index]?.to });
-      }
-      for (const key of stayed) expect(after.keys).toContain(key);
-
-      // All of it by the same time and back again comes to the same, as nothing got replaced.
-      if (chosen.length !== before.keys.length) continue;
-      const back = moves.map(({ from, to }) => ({ from: to, to: from }));
-      expect(applyEdit(after, { op: "moveKey", moves: back })).toEqual(before);
-    }
-  });
-
-  it("how keys go on stays valid, whatever order it gets set in", () => {
-    const random = randomFrom(seed);
-    for (let round = 0; round < 500; round += 1) {
-      let value: PropertyValue = randomKeys(random);
-      for (let step = 0; step < 6; step += 1) {
-        const { keys } = value as Animation;
-        const times = keys.filter(() => random.chance(0.5)).map(({ time }) => time);
-        if (times.length === 0) continue;
-        const ease = random.pick(EASES) as KeyEase;
-        value = applyEdit(value, { op: "setInterp", times, ease }) as PropertyValue;
-        expect(AnimationSchema.safeParse(value).success).toBe(true);
-        for (const time of times) {
-          const key = (value as Animation).keys.find((one) => one.time === time);
-          expect(key?.interp ?? "linear").toBe(ease.interp);
-        }
-      }
-    }
-  });
-
-  /** A handle as people write it, with a few digits. Beyond a reach of 1 it goes past what cuts allow. */
-  const randomHandle = (random: Random, reach: number): [number, number] => [
-    random.int(101) / 100,
-    ((random.int(300) - 100) * reach) / 100,
-  ];
-
-  /** A stretch of a bezier from 0 to 100. */
-  const randomStretch = (random: Random, reach: number): Animation => ({
-    keys: [
-      { time: "0", value: 0, interp: "bezier", out: randomHandle(random, reach) },
-      { time: "4", value: 100, in: randomHandle(random, reach) },
-    ],
-  });
-
-  /** A key somewhere in it: with what the curve shows there, as the diamond does, or with any value. */
-  const randomKey = (random: Random, channel: Channel) => {
-    const time = `${1 + random.int(399)}/100`;
-    const there = sample(channel, secondsOf(time)) as number;
-    const value = random.chance(0.5) ? there : random.int(4000) / 10 - 150;
-    return { time, there, value };
-  };
-
-  /** The handles of keys, in the order they come. */
-  const handlesOf = ({ keys }: Animation) => keys.flatMap((key) => [key.in, key.out]);
-
-  it("a key that goes in keeps the curve or leaves the keys around it, and never swings far", () => {
-    const random = randomFrom(seed);
-    for (let round = 0; round < 400; round += 1) {
-      const before = randomStretch(random, random.chance(0.5) ? 1 : 3);
-      const channel = compileChannel(before, "number");
-      if (!channel) throw new Error("no channel");
-      const { time, there, value } = randomKey(random, channel);
-      const after = applyEdit(before, { op: "setKey", time, value }) as Animation;
-      expect(AnimationSchema.safeParse(after).success).toBe(true);
-      const split = compileChannel(after, "number");
-      if (!split) throw new Error("no channel");
-      expect(sample(split, secondsOf(time))).toBeCloseTo(value, 6);
-      const [first, added, last] = after.keys as [Key, Key, Key];
-      if (added.interp !== "bezier") {
-        // What could not keep its shape leaves the others as they were, and is a linear key.
-        expect(first).toEqual(before.keys[0]);
-        expect(last).toEqual(before.keys[1]);
-        expect(added).toEqual({ time, value });
-        continue;
-      }
-      // Whatever value went in, nothing it wrote reaches further than easing does.
-      for (const handle of [first.out, added.in, added.out, last.in]) {
-        const [x, y] = handle ?? [1, 1];
-        expect(x).toBeGreaterThanOrEqual(0);
-        expect(x).toBeLessThanOrEqual(1);
-        expect(y).toBeGreaterThanOrEqual(MIN_SPLIT_Y);
-        expect(y).toBeLessThanOrEqual(MAX_SPLIT_Y);
-      }
-      if (value !== there) continue;
-      for (const clock of [0.2, 1, 1.9, 2.1, 3, 3.8]) {
-        expect(sample(split, clock)).toBeCloseTo(sample(channel, clock) as number, 5);
-      }
-    }
-  });
-
-  it("a key that goes in and comes out again leaves what was there, digit for digit", () => {
-    const random = randomFrom(seed);
-    for (let round = 0; round < 400; round += 1) {
-      const before = randomStretch(random, random.chance(0.5) ? 1 : 3);
-      const channel = compileChannel(before, "number");
-      if (!channel) throw new Error("no channel");
-      const { time, value } = randomKey(random, channel);
-      const op = random.chance(0.5) ? "setKey" : "write";
-      const added = applyEdit(before, { op, time, value });
-      expect(applyEdit(added, { op: "removeKey", time })).toEqual(before);
-    }
-  });
-
-  /** Three keys that go in one after the other, with what was there or with anything. */
-  const threeIn = (random: Random) => {
-    const before = randomStretch(random, 1);
-    const steps: { time: string; value: PropertyValue }[] = [];
-    let value: PropertyValue = before;
-    for (let step = 0; step < 3; step += 1) {
-      const channel = compileChannel(value, "number");
-      if (!channel) throw new Error("no channel");
-      const key = randomKey(random, channel);
-      if ((value as Animation).keys.some(({ time }) => time === key.time)) continue;
-      value = applyEdit(value, { op: "setKey", time: key.time, value: key.value }) as PropertyValue;
-      steps.push({ time: key.time, value });
-    }
-    return { before, steps, value };
-  };
-
-  /** Keys that are the same, with handles that floats cannot tell apart. */
-  const expectSameKeys = (found: PropertyValue | undefined, wanted: PropertyValue) => {
-    const keys = (found as Animation).keys;
-    expect(keys.map(({ time, value, interp }) => ({ time, value, interp }))).toEqual(
-      (wanted as Animation).keys.map(({ time, value, interp }) => ({ time, value, interp })),
-    );
-    const handles = handlesOf(wanted as Animation);
-    for (const [index, handle] of handlesOf(found as Animation).entries()) {
-      const other = handles[index];
-      expect(handle === undefined).toBe(other === undefined);
-      for (const [axis, number] of (handle ?? []).entries()) {
-        expect(number).toBeCloseTo(other?.[axis] as number, 7);
-      }
-    }
-  };
-
-  it("keys that went in come out again the other way around, and leave what was there", () => {
-    const random = randomFrom(seed);
-    for (let round = 0; round < 200; round += 1) {
-      const { before, steps } = threeIn(random);
-      let value = steps.at(-1)?.value ?? before;
-      for (let index = steps.length - 1; index >= 0; index -= 1) {
-        const earlier = index === 0 ? before : (steps[index - 1] as (typeof steps)[number]).value;
-        value = applyEdit(value, {
-          op: "removeKey",
-          time: (steps[index] as (typeof steps)[number]).time,
-        }) as PropertyValue;
-        // What a cut wrote keeps all of its digits, which come back as close as a join tidies.
-        expectSameKeys(value, earlier);
-      }
-      // What people wrote comes back digit for digit.
-      expect(value).toEqual(before);
-    }
-  });
-
-  it("keys that went in come out in any order, and leave nothing that swings far", () => {
-    const random = randomFrom(seed);
-    for (let round = 0; round < 200; round += 1) {
-      const { before, steps, value: all } = threeIn(random);
-      const changed = new Set(handlesOf(before).map((handle) => JSON.stringify(handle)));
-      let value = all;
-      for (const { time } of steps.toSorted(() => (random.chance(0.5) ? 1 : -1))) {
-        value = applyEdit(value, { op: "removeKey", time }) as PropertyValue;
-        expect(AnimationSchema.safeParse(value).success).toBe(true);
-        for (const handle of handlesOf(value as Animation)) {
-          if (handle === undefined || changed.has(JSON.stringify(handle))) continue;
-          expect(handle[1]).toBeGreaterThanOrEqual(MIN_SPLIT_Y);
-          expect(handle[1]).toBeLessThanOrEqual(MAX_SPLIT_Y);
-        }
-      }
-      expect((value as Animation).keys.map(({ time }) => time)).toEqual(["0", "4"]);
-    }
-  });
-});
-
-describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", (seed) => {
-  it("saving comes to the same as writing right away, whatever happens to the clips", () => {
-    const random = randomFrom(seed);
-    const direct = openUnlocked();
-    const tried = replica(direct);
-    const trial = new Trial(tried, "main");
-    const same = () => {
-      expect(trial.save().ok).toBe(true);
-      expect(trial.count).toBe(0);
-      expect(deepEqual(tried.getState().timelines, direct.getState().timelines)).toBe(true);
-    };
-    for (let round = 0; round < 400; round++) {
-      if (random.chance(0.75)) {
-        const clip = randomClipOf(direct, random);
-        const edits = [randomEdit(clip, random), randomEdit(clip, random)] as PropertyEdit[];
-        const wrote = direct.execute({
-          type: "property.edit",
-          params: { timeline: "main", edits },
-        });
-        expect(trial.write(edits).ok).toBe(wrote.ok);
-      } else if (random.chance(0.2)) {
-        // A copy brings along what the project holds, which is what makes the two different here.
-        const start = random.int(1000);
-        const calls = (store: ProjectStore) => moveByPasting(store, randomFrom(start), round);
-        expect(tried.executeBatch(calls(tried)).ok).toBe(direct.executeBatch(calls(direct)).ok);
-      } else {
-        const call = randomClipChange(direct, random, round);
-        expect(tried.execute(call).ok).toBe(direct.execute(call).ok);
-      }
-      if (random.chance(0.05)) same();
-    }
-    same();
-  });
-
-  it("going back and forth shows exactly what was there", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const trial = new Trial(store, "main");
-    const seen = () => JSON.stringify(lookAt(store, trial).tried);
-    const past: string[] = [];
-    let future: string[] = [];
-    for (let round = 0; round < 150; round++) {
-      const before = seen();
-      if (past.length > 0 && random.chance(0.3)) {
-        expect(trial.undo()).toBe(true);
-        expect(seen()).toBe(past.pop());
-        future.push(before);
-      } else if (future.length > 0 && random.chance(0.3)) {
-        expect(trial.redo()).toBe(true);
-        expect(seen()).toBe(future.pop());
-        past.push(before);
-      } else {
-        if (random.chance(0.1)) trial.discard();
-        else trial.write([randomEdit(randomClipOf(store, random), random) as PropertyEdit]);
-        if (seen() !== before) {
-          past.push(before);
-          future = [];
-        }
-      }
-    }
-    expect(store.canUndo).toBe(false);
-  });
-
-  it("what people try wins, whatever others do at the same time", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const other = replica(store);
-    const trial = new Trial(store, "main");
-    const clips = () => store.getState().timelines["main"]?.clips ?? {};
-    for (let round = 0; round < 300; round++) {
-      trial.write([randomEdit(randomClipOf(store, random), random) as PropertyEdit]);
-      if (random.chance(0.5)) {
-        other.execute(randomCommand(other, random));
-        sync(store, other);
-      }
-      for (const clip of trial.changes.keys()) expect(Object.hasOwn(clips(), clip)).toBe(true);
-      if (!random.chance(0.1)) continue;
-      const wanted = [...trial.changes].flatMap(([clip, held]) =>
-        [...held].map(([path, { value }]) => ({ clip, path, value })),
-      );
-      expect(trial.save().ok).toBe(true);
-      for (const { clip, path, value } of wanted) {
-        expect(deepEqual(clips()[clip]?.properties?.[path], value)).toBe(true);
-      }
-      expect(trial.count).toBe(0);
-      sync(store, other);
-    }
-  });
-
-  /** Everything people can do on their own, on a few clips, so that it all lands on each other. */
-  function randomWork(
-    store: ProjectStore,
-    trial: Trial,
-    random: Random,
-    round: number,
-    { saving = true } = {},
-  ): void {
-    const clip = randomClipOf(store, random);
-    const roll = random.int(13);
-    if (roll < 6) {
-      const path = random.pick(["opacity", "transform.x", "transform.y"]) as string;
-      const time = String(random.int(9));
-      const value = random.int(100) / 100;
-      const owner = { clip };
-      const to = String(random.int(9));
-      const edits: PropertyEdit[] = [
-        { owner, path, op: "setKey", time, value },
-        { owner, path, op: "setKey", time, value },
-        { owner, path, op: "write", time, value },
-        { owner, path, op: "moveKey", moves: [{ from: time, to }] },
-        { owner, path, op: "setInterp", times: [time], ease: { interp: "hold" } },
-        { owner, path, op: "putKeys", keys: [{ time, value, interp: "hold" }] },
-        { owner, path, op: "set", value },
-        { owner, path, op: "clear" },
-      ];
-      trial.write([random.pick(edits) as PropertyEdit]);
-    } else if (roll === 6) trial.discard({ clip, path: "transform.x" });
-    else if (roll === 7) trial.discard();
-    else if (roll === 8) store.executeBatch(moveByPasting(store, random, round));
-    else if (roll === 9 && saving) trial.save();
-    else store.execute(randomClipChange(store, random, round));
-  }
-
-  it("going back and forward comes to exactly the same, whatever happened to the clips", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const trial = new Trial(store, "main");
-    const { canUndo, undo, redo } = historyOf(store, trial);
-    let steps = 0;
-    for (let round = 0; round < 500; round++) {
-      randomWork(store, trial, random, round);
-      if (!random.chance(0.2)) continue;
-      const before = lookAt(store, trial);
-      const count = 1 + random.int(12);
-      let taken = 0;
-      while (taken < count && canUndo()) {
-        undo();
-        taken += 1;
-      }
-      for (let step = 0; step < taken; step += 1) redo();
-      expect(lookAt(store, trial)).toEqual(before);
-      steps += taken;
-    }
-    expect(steps).toBeGreaterThan(100);
-  });
-
-  it.each([
-    ["without saving", false],
-    ["with saving", true],
-  ])("going all the way back and forward comes to the same as well, %s", (_, saving) => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const trial = new Trial(store, "main");
-    const { canUndo, undo, redo } = historyOf(store, trial);
-    for (let round = 0; round < 60; round++) randomWork(store, trial, random, round, { saving });
-    const before = lookAt(store, trial);
-    let taken = 0;
-    while (canUndo()) {
-      undo();
-      taken += 1;
-    }
-    // Saving ends the steps, and what is set aside then stays until it gets a clip again.
-    if (!saving) expect([...trial.kept.keys()]).toEqual([]);
-    for (let step = 0; step < taken; step += 1) redo();
-    expect(lookAt(store, trial)).toEqual(before);
-  });
-
-  it("a reload brings back all of it, whatever the state", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const trial = new Trial(store, "main");
-    const { undo } = historyOf(store, trial);
-    for (let round = 0; round < 300; round++) {
-      randomWork(store, trial, random, round);
-      if (random.chance(0.3) && store.canUndo) undo();
-      if (!random.chance(0.15)) continue;
-      const next = new Trial(store, "main");
-      const kept: unknown = JSON.parse(JSON.stringify(trial.toStored() ?? null)) ?? undefined;
-      expect(next.restore(kept)).toMatchObject({ dropped: 0, stale: 0, unreadable: false });
-      expect(lookAt(store, next).tried).toEqual(lookAt(store, trial).tried);
-      next.dispose();
-    }
-  });
-
-  it("what is shown can always be saved", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const trial = new Trial(store, "main");
-    const { undo } = historyOf(store, trial);
-    const clips = () => store.getState().timelines["main"]?.clips ?? {};
-    for (let round = 0; round < 300; round++) {
-      randomWork(store, trial, random, round);
-      if (random.chance(0.2) && store.canUndo) undo();
-      if (!random.chance(0.1)) continue;
-      const wanted = [...trial.changes].flatMap(([clip, held]) =>
-        [...held].map(([path, { value }]) => ({ clip, path, value })),
-      );
-      expect(trial.save().ok).toBe(true);
-      for (const { clip, path, value } of wanted) {
-        expect(deepEqual(clips()[clip]?.properties?.[path], value)).toBe(true);
-      }
-      expect(trial.count).toBe(0);
-    }
-  });
-
-  it("AI working on the same clips takes nothing away from going back and forward", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const trial = new Trial(store, "main");
-    const { canUndo, undo, redo } = historyOf(store, trial);
-    for (let round = 0; round < 300; round++) {
-      randomWork(store, trial, random, round);
-      const task = `t${round % 3}`;
-      if (random.chance(0.3)) {
-        store.execute(randomClipChange(store, random, 2000 + round), { origin: aiTask(task) });
-      }
-      if (random.chance(0.05)) store.undoTask(task);
-      if (random.chance(0.05)) store.redoTask(task);
-      if (!random.chance(0.1)) continue;
-      const before = lookAt(store, trial);
-      const count = 1 + random.int(6);
-      let taken = 0;
-      while (taken < count && canUndo()) {
-        undo();
-        taken += 1;
-      }
-      for (let step = 0; step < taken; step += 1) redo();
-      const after = lookAt(store, trial);
-      const onClips = ({ tried, clips }: typeof after) =>
-        tried.filter(({ clip }) => clips.some(({ id }) => id === clip));
-      expect(after.clips).toEqual(before.clips);
-      expect(onClips(after)).toEqual(onClips(before));
-    }
-  });
-
-  it("going back and forward holds while another window takes things back as well", () => {
-    const random = randomFrom(seed);
-    const store = openUnlocked();
-    const other = replica(store);
-    const trial = new Trial(store, "main");
-    const { canUndo, undo, redo } = historyOf(store, trial);
-    let inOther = 0;
-    const goBackAndForward = (count: number) => {
-      const before = lookAt(store, trial);
-      let taken = 0;
-      while (taken < count && canUndo()) {
-        undo();
-        taken += 1;
-      }
-      for (let step = 0; step < taken; step += 1) redo();
-      const after = lookAt(store, trial);
-      expect(after.clips).toEqual(before.clips);
-      const onClips = ({ tried, clips }: typeof after) =>
-        tried.filter(({ clip }) => clips.some(({ id }) => id === clip));
-      expect(onClips(after)).toEqual(onClips(before));
-      // What another window got in the way of goes back only in part, which says too little to tell
-      // what became of a clip. That can leave a copy with what is set aside, but nothing goes missing.
-      expect(after.tried).toEqual(expect.arrayContaining(before.tried));
-    };
-    for (let round = 0; round < 300; round++) {
-      randomWork(store, trial, random, round);
-      if (random.chance(0.4)) {
-        const roll = random.int(4);
-        if (roll === 0 && other.canUndo) inOther += other.undo().ok ? 1 : 0;
-        else if (roll === 1 && other.canRedo) other.redo();
-        else other.execute(randomClipChange(other, random, 1000 + round));
-        sync(store, other);
-      }
-      if (random.chance(0.1)) goBackAndForward(1 + random.int(6));
-    }
-    goBackAndForward(Number.POSITIVE_INFINITY);
-    expect(inOther).toBeGreaterThan(0);
-  });
-});
+    });
+  },
+);
