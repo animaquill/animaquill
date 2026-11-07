@@ -170,7 +170,6 @@ describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
     keyframes.setRange("all");
     keyframes.toggleOpen("c0");
     timeline.seek(0);
-    keyframes.setLinked(false);
     const { panel } = keyframes;
     panel.zoomAround(0, 400);
     // Near the last of them, which is where looking through them from the first takes longest.

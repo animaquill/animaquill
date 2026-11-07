@@ -22,7 +22,7 @@ import {
   type KeyGestureHost,
   type KeyPreview,
 } from "./gestures.ts";
-import { LANE_HEIGHT, firstLaneBelow, laneAt, type Lane } from "./lanes.ts";
+import { firstLaneBelow, laneAt, type Lane } from "./lanes.ts";
 import { KeySelection, type KeyRef } from "./selection.ts";
 import {
   SAME_MOMENT,
@@ -230,7 +230,7 @@ export abstract class KeyArea {
     if (lane.node.kind === "property" && lane.open && fromBottom <= CURVE_EDGE_REACH) {
       return { kind: "edge", lane };
     }
-    const spot = y - lane.top < LANE_HEIGHT ? this.#spotNear(lane, pointer.x) : undefined;
+    const spot = y - lane.top < lane.keyHeight ? this.#spotNear(lane, pointer.x) : undefined;
     return spot
       ? { kind: "key", ...spot }
       : { kind: "lane", lane, seconds: this.timeAt(pointer.x) };
@@ -410,7 +410,7 @@ export abstract class KeyArea {
     const to = this.timeAt(this.width);
     const top = this.laneY(0);
     for (const lane of this.lanesBetween(top, this.laneY(this.screenHeight))) {
-      const y = this.screenY(lane.top) + LANE_HEIGHT / 2;
+      const y = this.screenY(lane.top) + lane.keyHeight / 2;
       this.forEachBox(lane, from, to, (box) => {
         const table = this.tableOf(lane, box);
         if (!table) return;

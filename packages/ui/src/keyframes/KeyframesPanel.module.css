@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   height: 32px;
-  padding: 0 8px;
+  padding-right: 8px;
   overflow: hidden;
   background: var(--aq-bg-panel);
   border-bottom: 1px solid var(--aq-border);
@@ -15,6 +15,21 @@
   gap: 4px;
   padding: 0 6px 0 4px;
   border-bottom: 1px solid var(--aq-border);
+}
+
+/* The width and the line on the right are those of the list below. */
+.searchArea {
+  display: flex;
+  flex: none;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 6px 0 4px;
+  border-right: 1px solid var(--aq-border);
+}
+
+/* The tools start right where the list ends. */
+.toolbar .firstZone {
+  padding-left: 4px;
 }
 
 .search {

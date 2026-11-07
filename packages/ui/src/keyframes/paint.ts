@@ -6,7 +6,7 @@ import { forEachBetween, type ClipBox } from "../timeline/model.ts";
 import { paintRuler } from "../timeline/ruler.ts";
 import { StagePainter, readTheme, type Theme } from "../timeline/stage-painter.ts";
 import type { KeyArea } from "./area.ts";
-import { LANE_HEIGHT, type Lane } from "./lanes.ts";
+import type { Lane } from "./lanes.ts";
 import {
   KEY_EASED,
   KEY_HOLD,
@@ -187,7 +187,7 @@ export class LanePainter {
     const alpha = context.globalAlpha;
     const colors = [theme.picture, theme.sound, theme.caption];
     const top = y + 3;
-    const height = LANE_HEIGHT - 7;
+    const height = lane.keyHeight - 7;
     const { seconds } = keyTableOf(animation);
     const toClock = box.offset - box.start;
     const first = Math.max(firstFrom(seconds, from + toClock) - 1, 0);
@@ -226,8 +226,8 @@ export class LanePainter {
     { y, from, to }: Band,
   ): void {
     const area = this.#area;
-    const top = y + LANE_HEIGHT;
-    const height = lane.height - LANE_HEIGHT - 1;
+    const top = y + lane.keyHeight;
+    const height = lane.height - lane.keyHeight - 1;
     const left = Math.max(area.xAt(box.start), 0);
     const right = Math.min(area.xAt(box.end), area.width);
     if (right <= left) return;
@@ -318,7 +318,7 @@ export class LanePainter {
     const isSummary = node.kind !== "property";
     const radius = isSummary ? SUMMARY_RADIUS : KEY_RADIUS;
     const color = isSummary ? theme.keySummary : theme.key;
-    const middle = y + LANE_HEIGHT / 2;
+    const middle = y + lane.keyHeight / 2;
     const { seconds, marks: shapes } = table;
     const toClock = box.offset - box.start;
     const selected = keyframes.selectedSeconds(lane, box);

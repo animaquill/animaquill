@@ -1,5 +1,5 @@
 import type { ListRange } from "@animaquill/core";
-import { Link2, Link2Off, Magnet, Spline, ZoomIn, ZoomOut, FoldHorizontal } from "lucide-react";
+import { Magnet, Spline, ZoomIn, ZoomOut, FoldHorizontal } from "lucide-react";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../app/Tip.tsx";
@@ -19,12 +19,17 @@ import type { KeyframesView } from "./view.ts";
 const RANGES: readonly ListRange[] = ["here", "all", "keyed"];
 /** What a wheel that counts in lines goes by. */
 const LINE_HEIGHT = 16;
+/** How much the wheel changes the height of rows, as for zooming on the timeline. */
+const ROW_ZOOM = 0.002;
 
 function Toolbar({ view }: { view: KeyframesView }) {
   const { keyframes } = view;
   const { timeline } = useWorkbench();
   const { t } = useTranslation();
-  const { linked, selection } = useSyncExternalStore(keyframes.subscribe, keyframes.getSnapshot);
+  const { selection, listWidth, query } = useSyncExternalStore(
+    keyframes.subscribe,
+    keyframes.getSnapshot,
+  );
   const { snapping } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const [anchor, setAnchor] = useState<DOMRect>();
   const hasKeys = selection.size > 0;
@@ -32,7 +37,25 @@ function Toolbar({ view }: { view: KeyframesView }) {
   return (
     <div className={timelineStyles.toolbarArea}>
       <div className={styles.toolbar} role="toolbar" aria-label={t("keyframes.toolbar")}>
-        <div className={timelineStyles.zone}>
+        {/* Over the list it searches, as wide as it is: the tools start where the time does. */}
+        <div className={styles.searchArea} style={{ width: listWidth }}>
+          <input
+            className={styles.search}
+            type="search"
+            placeholder={t("keyframes.search")}
+            aria-label={t("keyframes.search")}
+            spellCheck={false}
+            value={query}
+            onChange={(event) => keyframes.setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query !== "") {
+                event.stopPropagation();
+                keyframes.setQuery("");
+              }
+            }}
+          />
+        </div>
+        <div className={`${timelineStyles.zone} ${styles.firstZone}`}>
           <ToolButton
             name={t("timeline.snapping")}
             usage={t("timeline.help.snapping")}
@@ -41,14 +64,6 @@ function Toolbar({ view }: { view: KeyframesView }) {
             pressed={snapping}
             isSwitch
             onClick={() => timeline.toggleSnapping()}
-          />
-          <ToolButton
-            name={t("keyframes.link")}
-            usage={t("keyframes.linkHelp")}
-            icon={linked ? Link2 : Link2Off}
-            pressed={linked}
-            isSwitch
-            onClick={() => keyframes.setLinked(!linked)}
           />
         </div>
         <div className={timelineStyles.zone}>
@@ -93,25 +108,11 @@ function Toolbar({ view }: { view: KeyframesView }) {
 function Corner({ view }: { view: KeyframesView }) {
   const { keyframes } = view;
   const { t } = useTranslation();
-  const { range, query } = useSyncExternalStore(keyframes.subscribe, keyframes.getSnapshot);
+  const { range } = useSyncExternalStore(keyframes.subscribe, keyframes.getSnapshot);
 
+  // Next to the ruler, above the list that they choose what goes in.
   return (
     <div className={styles.corner} style={{ height: RULER_HEIGHT }}>
-      <input
-        className={styles.search}
-        type="search"
-        placeholder={t("keyframes.search")}
-        aria-label={t("keyframes.search")}
-        spellCheck={false}
-        value={query}
-        onChange={(event) => keyframes.setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && query !== "") {
-            event.stopPropagation();
-            keyframes.setQuery("");
-          }
-        }}
-      />
       <div className={styles.ranges} role="radiogroup" aria-label={t("keyframes.rangeLabel")}>
         {RANGES.map((id) => (
           <Tip key={id} name={t(`keyframes.range.${id}`)} usage={t(`keyframes.rangeHelp.${id}`)}>
@@ -155,7 +156,13 @@ function List({ view }: { view: KeyframesView }) {
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE;
-      view.setScroll(view.scrollX, view.scrollY + event.deltaY * (lines ? LINE_HEIGHT : 1));
+      const delta = event.deltaY * (lines ? LINE_HEIGHT : 1);
+      // As over the headers of the timeline, Ctrl and Shift change the height of rows.
+      if ((event.ctrlKey || event.metaKey || event.altKey) && event.shiftKey) {
+        const box = element?.getBoundingClientRect();
+        const y = event.clientY - (box?.top ?? 0) + RULER_HEIGHT;
+        view.zoomRowsAround(y, Math.exp(-(delta || event.deltaX) * ROW_ZOOM));
+      } else view.setScroll(view.scrollX, view.scrollY + delta);
     };
     element?.addEventListener("wheel", onWheel, { passive: false });
     return () => element?.removeEventListener("wheel", onWheel);
@@ -285,6 +292,8 @@ function Surface({ view }: { view: KeyframesView }) {
         <ZoomBar
           axis="y"
           label={t("timeline.scrollY")}
+          handleLabel={t("keyframes.handleY")}
+          handleUsage={t("keyframes.zoomHandleY")}
           subscribe={keyframes.subscribeView}
           read={() => ({
             content: view.contentHeight - RULER_HEIGHT,
@@ -292,6 +301,11 @@ function Surface({ view }: { view: KeyframesView }) {
             offset: view.scrollY,
           })}
           scrollTo={(offset) => view.setScroll(view.scrollX, offset)}
+          beginZoom={(edge) => {
+            const start = view.rowScale;
+            const y = edge === "start" ? view.height : RULER_HEIGHT;
+            return (ratio) => view.zoomRowsAround(y, start / ratio / view.rowScale);
+          }}
         />
       </div>
       <ZoomBar

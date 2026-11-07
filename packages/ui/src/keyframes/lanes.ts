@@ -21,8 +21,10 @@ export interface Lane {
   readonly depth: number;
   /** The distance from the top of the first lane. */
   readonly top: number;
-  /** All of it. The keys are in the first `LANE_HEIGHT` pixels. */
+  /** All of it. The keys are in the first `keyHeight` pixels. */
   readonly height: number;
+  /** The height of the row of keys, which is `LANE_HEIGHT` unless the rows were made taller. */
+  readonly keyHeight: number;
   /** The group it is in, which is what tells its X and Y from those of other groups. */
   readonly group: string | undefined;
   readonly open: boolean;
@@ -48,6 +50,7 @@ interface Placing {
   readonly lanes: Lane[];
   readonly rules: LaneRules;
   readonly model: TimelineModel;
+  readonly keyHeight: number;
   row: Row;
   top: number;
 }
@@ -63,13 +66,14 @@ function place(
   const { rules, lanes } = placing;
   const open = rules.isOpen(node) && canOpen(node);
   const curve = open && node.kind === "property" ? rules.curveHeight(node) : undefined;
-  const height = LANE_HEIGHT + (curve ?? 0);
+  const height = placing.keyHeight + (curve ?? 0);
   lanes.push({
     id: node.id,
     node,
     depth,
     top: placing.top,
     height,
+    keyHeight: placing.keyHeight,
     group,
     open,
     canOpen: canOpen(node),
@@ -100,11 +104,12 @@ export function lanesOfTracks(
   model: TimelineModel,
   tracks: readonly TrackNode[],
   rules: LaneRules,
+  keyHeight = LANE_HEIGHT,
 ): readonly Lane[] {
   const lanes: Lane[] = [];
   const [first] = model.rows;
   if (!first) return lanes;
-  const placing: Placing = { lanes, rules, model, row: first, top: 0 };
+  const placing: Placing = { lanes, rules, model, keyHeight, row: first, top: 0 };
   const rows = new Map(model.rows.map((row) => [row.id, row]));
   for (const track of tracks) {
     const row = rows.get(track.track);
@@ -128,7 +133,7 @@ export function lanesOfClip(
   if (!box) return [];
   const lanes: Lane[] = [];
   const own = new Map([[box.id, pathsBelow(node)]]);
-  place({ lanes, rules, model, row, top }, node, 0, box, own);
+  place({ lanes, rules, model, keyHeight: LANE_HEIGHT, row, top }, node, 0, box, own);
   return lanes;
 }
 

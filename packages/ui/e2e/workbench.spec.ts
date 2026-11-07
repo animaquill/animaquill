@@ -67,6 +67,31 @@ test("opens with the editing workspace", async ({ page }) => {
   await expect(page.locator("footer").getByRole("button", { name: "测试项目" })).toBeVisible();
 });
 
+test("the status bar has the project on the left and what goes on now on the right", async ({
+  page,
+}) => {
+  const bar = page.locator("footer");
+  const left = [
+    bar.getByRole("button", { name: "测试项目" }),
+    bar.getByLabel("项目分辨率：1920×1080"),
+    bar.getByRole("button", { name: "项目帧率" }),
+    bar.getByRole("status").filter({ hasText: "已保存" }),
+  ];
+  const right = [
+    bar.getByRole("button", { name: "当前时间和总时长" }),
+    bar.getByLabel(/^预览画质和帧率/),
+  ];
+  await expect(left[2] as Locator).toHaveText("30 帧");
+  const xs = await Promise.all([...left, ...right].map(async (item) => (await box(item)).x));
+  expect(xs).toEqual(xs.toSorted((a, b) => a - b));
+  const barBox = await box(bar);
+  expect(xs[3]).toBeLessThan(barBox.x + barBox.width / 2);
+  expect(xs[4]).toBeGreaterThan(barBox.x + barBox.width / 2);
+  // Each is there once.
+  await expect(bar.getByText("1920×1080")).toHaveCount(1);
+  await expect(bar.getByText(/帧/)).toHaveCount(1);
+});
+
 test("a tab can be dragged into another group", async ({ page }) => {
   const target = await box(group(page, "timeline").locator(".dv-tabs-container"));
   await dragTab(page, "properties", target.x + target.width / 2, target.y + target.height / 2);

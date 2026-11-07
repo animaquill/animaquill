@@ -2,8 +2,7 @@ import { Circle, CircleAlert, CircleX, TriangleAlert } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
-import { FrameRateStatus as PreviewFrameRateStatus } from "../preview/FrameRateStatus.tsx";
-import { ResolutionStatus } from "../preview/Quality.tsx";
+import { PreviewStatus } from "../preview/Quality.tsx";
 import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
@@ -102,6 +101,22 @@ function ProblemsStatus() {
   );
 }
 
+/** The size the project is made at, which is what an export gets. */
+function SizeStatus({ width, height }: { width: number; height: number }) {
+  const { t } = useTranslation();
+  return (
+    <Tip name={t("project.size")} usage={t("project.sizeUsage")}>
+      <span className={styles.info} aria-label={t("project.sizeLabel", { width, height })}>
+        {t("project.sizeValue", { width, height })}
+      </span>
+    </Tip>
+  );
+}
+
+/**
+ * As in VS Code, the left is about the project and stays much the same: its name, size, frame rate,
+ * whether it is saved and how many problems it has. The right is about what goes on right now.
+ */
 export function StatusBar() {
   const workbench = useWorkbench();
   const { store, save } = useSession();
@@ -113,6 +128,7 @@ export function StatusBar() {
     saving: t("project.saving"),
     failed: t("project.saveFailed"),
   }[save];
+  const format = project?.manifest.formats[0];
 
   return (
     <footer className={styles.bar}>
@@ -127,6 +143,8 @@ export function StatusBar() {
       ) : (
         <span>{t("app.noProject")}</span>
       )}
+      {format && <SizeStatus width={format.width} height={format.height} />}
+      {project && <FrameRateStatus />}
       {project && (
         <span className={save === "failed" ? styles.failed : undefined} role="status">
           {save === "failed" && <CircleAlert size={12} />}
@@ -137,9 +155,7 @@ export function StatusBar() {
       <span className={styles.spacer} />
       <RecordingStatus />
       {project && <TimeStatus />}
-      {project && <FrameRateStatus />}
-      {project && <ResolutionStatus />}
-      {project && <PreviewFrameRateStatus />}
+      {project && <PreviewStatus />}
       <InputSwitch />
     </footer>
   );

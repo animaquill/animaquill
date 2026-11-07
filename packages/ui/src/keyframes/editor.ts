@@ -92,8 +92,6 @@ export interface KeyframeSnapshot {
   readonly query: string;
   readonly pinned: ReadonlySet<string>;
   readonly selection: KeySelection;
-  /** Whether the tab goes along with the timeline. */
-  readonly linked: boolean;
   /** The width of the list on the left of the tab. */
   readonly listWidth: number;
   readonly hasClipboard: boolean;
@@ -114,6 +112,8 @@ interface RememberedState {
   readonly curves?: readonly (readonly [string, number])[];
   readonly open?: readonly string[];
   readonly view?: { readonly pixelsPerSecond: number; readonly scrollX: number };
+  /** How much taller the rows of keys are. */
+  readonly rows?: number;
 }
 
 /** What the rows of one frame show. */
@@ -181,7 +181,6 @@ export class KeyframeEditor {
     query: "",
     pinned: new Set(),
     selection: NO_KEYS,
-    linked: true,
     listWidth: DEFAULT_LIST_WIDTH,
     hasClipboard: false,
   };
@@ -328,15 +327,13 @@ export class KeyframeEditor {
       if (this.#isThere(id)) this.#curves.set(id, height);
     }
     this.inTimeline.openAll(there(stringsIn(remembered.open)));
-    this.panel.adoptView(remembered.view);
+    this.panel.adoptView(remembered.view, remembered.rows);
     const range = remembered.range;
     this.#show({
       range: range && RANGES.includes(range) ? range : "here",
       query: "",
       pinned: new Set(there(stringsIn(remembered.pinned))),
       selection: NO_KEYS,
-      // Going its own way takes a place to look at.
-      linked: this.panel.ownView === undefined,
       hasClipboard: false,
     });
     this.#seenFrame = this.#timeline.frame;
@@ -369,6 +366,7 @@ export class KeyframeEditor {
     const { frame } = this.#timeline;
     if (frame !== this.#seenFrame) {
       this.#seenFrame = frame;
+      this.panel.followPlayhead();
       const { playing } = this.#timeline.getSnapshot();
       if (!playing && this.#snapshot.range === "here") {
         this.#listedFrame = frame;
@@ -619,13 +617,6 @@ export class KeyframeEditor {
     if (!pinned.delete(id)) pinned.add(id);
     this.#show({ pinned });
     this.#relist();
-    this.#rememberSoon();
-  }
-
-  setLinked(linked: boolean): void {
-    if (linked === this.#snapshot.linked) return;
-    this.panel.link(linked);
-    this.#show({ linked });
     this.#rememberSoon();
   }
 
@@ -989,6 +980,7 @@ export class KeyframeEditor {
       curves: [...this.#curves].filter(([one]) => this.#isThere(one)),
       open: there(this.inTimeline.opened),
       ...(view ? { view } : {}),
+      ...(this.panel.rowScale === 1 ? {} : { rows: this.panel.rowScale }),
     };
     this.#memory.write(`keyframes.${id}`, JSON.stringify(remembered));
   }

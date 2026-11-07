@@ -327,7 +327,7 @@ describe("what the list shows", () => {
     first.keyframes.setRange("all");
     first.keyframes.togglePin("a");
     first.keyframes.toggleOpen("a");
-    first.keyframes.setLinked(false);
+    first.panel.zoomAround(100, 2);
     first.keyframes.flush();
     const id = first.store.getState().manifest.id;
     const saved = JSON.parse(memory.read(`keyframes.${id}`) as string) as Record<string, unknown>;
@@ -345,19 +345,22 @@ describe("what the list shows", () => {
     keyframes.togglePin("a");
     keyframes.toggleOpen("a");
     keyframes.setCurveHeight("a/transform.x", 150);
-    keyframes.setLinked(false);
     panel.zoomAround(100, 3);
+    panel.rowsTaller();
     const seen = panel.pixelsPerSecond;
+    const rows = panel.rowScale;
     first.timeline.setScroll(0, 0);
     keyframes.flush();
 
     const again = first.reopen();
-    expect(again.getSnapshot()).toMatchObject({ range: "keyed", linked: false });
+    expect(again.getSnapshot()).toMatchObject({ range: "keyed" });
     expect(again.getSnapshot().pinned.has("a")).toBe(true);
     expect(again.curveHeightOf("a/transform.x")).toBe(150);
     again.panel.setViewport(WIDTH, HEIGHT);
     expect(again.panel.lanes.find(({ id }) => id === "a")?.open).toBe(true);
     expect(again.panel.pixelsPerSecond).toBe(seen);
+    expect(again.panel.rowScale).toBe(rows);
+    expect(rows).toBeGreaterThan(1);
   });
 
   it("forgets what it remembers of clips and tracks that are gone", async () => {
@@ -398,12 +401,15 @@ describe("what the list shows", () => {
       "not json",
       "null",
       '{"range":"everything","pinned":5,"curves":[["a"],7]}',
-      '{"linked":false,"view":{"pixelsPerSecond":-1,"scrollX":"a"}}',
+      '{"view":{"pixelsPerSecond":-1,"scrollX":"a"},"rows":"tall"}',
+      '{"rows":1e9}',
     ]) {
       memory.write(key, broken);
       const editor = reopen();
       expect(editor.getSnapshot().range).toBe("here");
-      expect(editor.getSnapshot().linked).toBe(true);
+      editor.panel.setViewport(WIDTH, HEIGHT);
+      expect(editor.panel.pixelsPerSecond).toBeGreaterThan(0);
+      expect(editor.panel.rowScale).toBeLessThanOrEqual(3);
       expect(editor.getSnapshot().pinned.size).toBe(0);
     }
   });
@@ -1012,33 +1018,71 @@ describe("a row with its curve", () => {
 });
 
 describe("the view of the tab", () => {
-  it("goes along with the timeline, and can go its own way", async () => {
-    const { addClip, timeline, panel, keyframes } = await setup();
+  it("scrolls and zooms on its own, and the timeline on its own", async () => {
+    const { addClip, timeline, panel } = await setup();
     addClip("a", 0, 60);
-    timeline.setScroll(100, 0);
-    expect(panel.scrollX).toBe(timeline.scrollX);
-    expect(panel.pixelsPerSecond).toBe(timeline.pixelsPerSecond);
+    const scale = timeline.pixelsPerSecond;
     panel.zoomAround(100, 2);
-    expect(panel.pixelsPerSecond).toBe(timeline.pixelsPerSecond);
-    const shared = timeline.pixelsPerSecond;
+    panel.setScroll(300, 0);
+    expect(timeline.pixelsPerSecond).toBe(scale);
+    expect(timeline.scrollX).toBe(0);
+    const own = { pixelsPerSecond: panel.pixelsPerSecond, scrollX: panel.scrollX };
+    timeline.zoomAround(0, 4);
+    timeline.setScroll(1000, 0);
+    expect({ pixelsPerSecond: panel.pixelsPerSecond, scrollX: panel.scrollX }).toEqual(own);
+  });
 
-    keyframes.setLinked(false);
-    panel.zoomAround(100, 2);
-    expect(panel.pixelsPerSecond).toBeCloseTo(shared * 2);
-    expect(timeline.pixelsPerSecond).toBe(shared);
-    panel.setScroll(0, 0);
-    expect(panel.scrollX).toBe(0);
-    expect(timeline.scrollX).not.toBe(0);
+  it("follows the playhead, which is the one of the timeline", async () => {
+    const { addClip, timeline, panel } = await setup();
+    addClip("a", 0, 60);
+    panel.zoomAround(0, 8);
+    timeline.seek(timeline.model ? 50 * timeline.model.rate.fps : 0);
+    const x = panel.xAt(50);
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(WIDTH);
+    // Out of sight, it waits until it shows again.
+    panel.setViewport(0, 0);
+    timeline.seek(0);
+    panel.setViewport(WIDTH, HEIGHT);
+    expect(panel.xAt(0)).toBeGreaterThanOrEqual(0);
+    expect(panel.xAt(0)).toBeLessThanOrEqual(WIDTH);
+  });
 
-    keyframes.setLinked(true);
-    expect(panel.pixelsPerSecond).toBe(shared);
-    expect(panel.scrollX).toBe(timeline.scrollX);
+  it("the ruler moves the playhead under the mouse, whatever the timeline shows", async () => {
+    const { addClip, timeline, panel } = await setup();
+    addClip("a", 0, 60);
+    // The timeline is narrow, or out of sight: neither moves what the tab shows.
+    for (const width of [200, 0]) {
+      timeline.setViewport(width, 400);
+      panel.zoomToFit();
+      const pointer = { x: 700, y: RULER_HEIGHT / 2, shift: false, alt: false, mod: false };
+      panel.press(pointer);
+      for (let step = 0; step < 5; step += 1) panel.drag(pointer);
+      panel.release(pointer);
+      expect(panel.xAt(timeline.frame / (timeline.model?.rate.fps ?? 30))).toBeCloseTo(700, -1);
+    }
+  });
+
+  it("rows of keys get taller and shorter, and what is at the top stays there", async () => {
+    const { addClip, keyframes, panel } = await setup();
+    for (let index = 0; index < 60; index += 1) addClip(`c${index}`, index, 1);
+    keyframes.setRange("all");
+    const lane = panel.lanes[10];
+    if (!lane) throw new Error("no lane");
+    panel.setScroll(panel.scrollX, lane.top);
+    panel.rowsTaller();
+    const taller = panel.lanes.find(({ id }) => id === lane.id);
+    expect(taller?.keyHeight).toBe(30);
+    expect(taller?.top).toBe(panel.scrollY);
+    for (let step = 0; step < 10; step += 1) panel.rowsShorter();
+    expect(panel.lanes[0]?.keyHeight).toBe(20);
+    for (let step = 0; step < 20; step += 1) panel.zoomRowsAround(RULER_HEIGHT, 2);
+    expect(panel.lanes[0]?.keyHeight).toBe(72);
   });
 
   it("the moment under a zoom stays where it is on its own", async () => {
-    const { addClip, panel, keyframes } = await setup();
+    const { addClip, panel } = await setup();
     addClip("a", 0, 60);
-    keyframes.setLinked(false);
     const moment = panel.timeAt(300);
     panel.zoomAround(300, 3);
     expect(panel.timeAt(300)).toBeCloseTo(moment);
@@ -1553,8 +1597,7 @@ describe("fingers", () => {
   });
 
   it("anywhere else a finger moves the view, and a key stays where it is", async () => {
-    const { panel, at, shownTimes, keyframes } = await keyed();
-    keyframes.setLinked(false);
+    const { panel, at, shownTimes } = await keyed();
     panel.zoomAround(0, 4);
     panel.setScroll(100, 0);
     const touch = new TouchController(panel, environment);

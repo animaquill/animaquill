@@ -42,6 +42,10 @@
     "unsavedTitle": "有改动没有保存",
     "unsavedWarning": "现在离开，这些改动会丢失。留在这里的话，恢复后会自动保存。",
     "leaveAnyway": "仍然离开",
+    "size": "项目分辨率",
+    "sizeValue": "{{width}}×{{height}}",
+    "sizeLabel": "项目分辨率：{{width}}×{{height}}",
+    "sizeUsage": "导出就是这个分辨率。预览画质只影响预览，不改变它。",
     "frameRate": "项目帧率",
     "frameRateLabel": "项目帧率，比如 24、30、60 或 30000/1001",
     "frameRateConfirm": "确定"
@@ -650,17 +654,22 @@
         "half": "像素是全分辨率的 1/4，画得更快，画面稍模糊。",
         "quarter": "像素是全分辨率的 1/16，画得最快，画面明显模糊。"
       },
-      "decodeNote": "视频解码的还是原片，4K 视频解码跟不上时，降低画质帮不上忙。",
-      "status": "{{width}}×{{height}}",
-      "statusName": "预览分辨率",
-      "statusLabel": "预览分辨率：{{width}}×{{height}}",
-      "statusUsage": "预览现在画的分辨率，画质是{{choice}}。导出始终是全分辨率 {{fullWidth}}×{{fullHeight}}。点击修改画质。"
+      "decodeNote": "视频解码的还是原片，4K 视频解码跟不上时，降低画质帮不上忙。"
+    },
+    "status": {
+      "name": "预览",
+      "label": "预览画质和帧率：{{value}}",
+      "value": "预览 {{quality}}",
+      "playing": "预览 {{quality}} · {{painted}} 帧",
+      "auto": "自动 {{scale}}",
+      "scale": {
+        "full": "完整",
+        "half": "1/2",
+        "quarter": "1/4"
+      },
+      "usage": "画质是{{choice}}，现在画 {{width}}×{{height}}，导出始终是全分辨率 {{fullWidth}}×{{fullHeight}}。{{frames}}点击修改画质。"
     },
     "frameRate": {
-      "name": "预览实际帧率",
-      "value": "预览 {{painted}} 帧",
-      "idle": "预览 —",
-      "label": "预览实际帧率：{{value}}",
       "paused": "播放时显示预览最近 1 秒实际画出的帧数，用来和项目帧率比较。",
       "waiting": "正在统计最近 1 秒实际画出的帧数。",
       "playing": "最近 1 秒实际画出 {{painted}} 帧，项目帧率 {{fps}} 帧，丢了 {{dropped}} 帧。"
@@ -845,8 +854,8 @@
     "unpin": "取消钉住 {{name}}",
     "pinHelp": "钉住后不管播放头在哪都一直列出，可以同时看几个对象。",
     "toolbar": "关键帧工具",
-    "link": "和时间轴同步",
-    "linkHelp": "打开时缩放和滚动跟着时间轴走，关掉后这里可以单独放大。",
+    "handleY": "关键帧行高手柄",
+    "zoomHandleY": "拖动两端手柄调整关键帧的行高，拖动中间滚动。",
     "interp": "插值",
     "interpHelp": "选中的关键帧到下一个关键帧怎么变化。",
     "interpNeedsKeys": "先选中关键帧。",
@@ -880,6 +889,8 @@
       "zoomIn": "放大",
       "zoomOut": "缩小",
       "zoomToFit": "显示全部",
+      "rowsTaller": "增加行高",
+      "rowsShorter": "降低行高",
       "previousFrame": "上一帧或前移一帧",
       "nextFrame": "下一帧或后移一帧",
       "backFiveFrames": "后退 5 帧或前移 5 帧",

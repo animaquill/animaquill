@@ -22,7 +22,7 @@ import {
 } from "../properties/inspect.ts";
 import type { ClipBox } from "../timeline/model.ts";
 import type { KeyArea } from "./area.ts";
-import { LANE_HEIGHT, firstLaneBelow, type Lane } from "./lanes.ts";
+import { firstLaneBelow, type Lane } from "./lanes.ts";
 import styles from "./LaneRows.module.css";
 
 /** Where a value comes from, which is not the same as what it is. */
@@ -268,7 +268,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
     >
       <div
         className={styles.line}
-        style={{ height: LANE_HEIGHT, paddingLeft: lane.depth * INDENT + 2 }}
+        style={{ height: lane.keyHeight, paddingLeft: lane.depth * INDENT + 2 }}
       >
         {canOpen ? (
           <button

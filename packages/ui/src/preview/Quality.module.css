@@ -18,6 +18,11 @@
   color: var(--aq-text-muted);
 }
 
+/* The preview shows fewer frames than the project has. */
+.status[data-short] {
+  color: var(--aq-warning);
+}
+
 .button:hover,
 .status:hover {
   color: var(--aq-text-strong);

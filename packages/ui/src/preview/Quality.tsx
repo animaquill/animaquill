@@ -6,7 +6,7 @@ import { useWorkbench } from "../app/context.ts";
 import { QUALITY_CHOICES, type QualityChoice, type QualityScale } from "./quality.ts";
 import styles from "./Quality.module.css";
 
-const SCALE_NAMES: Readonly<Record<QualityScale, QualityChoice>> = {
+const SCALE_NAMES: Readonly<Record<QualityScale, Exclude<QualityChoice, "auto">>> = {
   1: "full",
   0.5: "half",
   0.25: "quarter",
@@ -60,12 +60,8 @@ function QualityBubble({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
 export function QualityButton() {
   const { previewQuality } = useWorkbench();
   const { t } = useTranslation();
-  const { choice, scale } = useSyncExternalStore(
-    previewQuality.subscribe,
-    previewQuality.getSnapshot,
-  );
+  const { choice } = useSyncExternalStore(previewQuality.subscribe, previewQuality.getSnapshot);
   const [anchor, setAnchor] = useState<DOMRect>();
-  const name = useChoiceName();
   return (
     <>
       <Tip name={t("preview.quality.label")} usage={t("preview.quality.usage")}>
@@ -76,7 +72,7 @@ export function QualityButton() {
           aria-haspopup="dialog"
           onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
         >
-          {t("preview.quality.button", { choice: name(choice, scale) })}
+          {t("preview.quality.button", { choice: t(`preview.quality.${choice}`) })}
         </button>
       </Tip>
       {anchor && <QualityBubble anchor={anchor} onClose={() => setAnchor(undefined)} />}
@@ -84,34 +80,58 @@ export function QualityButton() {
   );
 }
 
-/** What the preview really draws at, for the status bar. */
-export function ResolutionStatus() {
-  const { previewQuality } = useWorkbench();
+/** Rounded the way the frame rate of the project is shown. */
+const shownRate = (fps: number) => Number(fps.toFixed(2));
+
+/**
+ * How the preview is doing, for the right of the status bar: the quality it draws at and, while
+ * playing, how many frames it really shows. It changes all the time, and opens the same choices as
+ * the button of the preview.
+ */
+export function PreviewStatus() {
+  const { previewQuality, frameRate } = useWorkbench();
   const { t } = useTranslation();
   const { choice, scale, size } = useSyncExternalStore(
     previewQuality.subscribe,
     previewQuality.getSnapshot,
   );
+  const frames = useSyncExternalStore(frameRate.subscribe, frameRate.getSnapshot);
   const [anchor, setAnchor] = useState<DOMRect>();
   const name = useChoiceName();
   if (!size) return null;
-  const { width, height } = size.shown;
-  const usage = t("preview.quality.statusUsage", {
+  const reading = frames.state === "playing" ? frames.reading : undefined;
+  const short = t(`preview.status.scale.${SCALE_NAMES[scale]}`);
+  const quality = choice === "auto" ? t("preview.status.auto", { scale: short }) : short;
+  const value = reading
+    ? t("preview.status.playing", { quality, painted: reading.painted })
+    : t("preview.status.value", { quality });
+  const framesUsage = reading
+    ? t("preview.frameRate.playing", {
+        painted: reading.painted,
+        fps: shownRate(reading.fps),
+        dropped: reading.dropped,
+      })
+    : t(frames.state === "playing" ? "preview.frameRate.waiting" : "preview.frameRate.paused");
+  const usage = t("preview.status.usage", {
     choice: name(choice, scale),
+    width: size.shown.width,
+    height: size.shown.height,
     fullWidth: size.full.width,
     fullHeight: size.full.height,
+    frames: framesUsage,
   });
   return (
     <>
-      <Tip name={t("preview.quality.statusName")} usage={usage}>
+      <Tip name={t("preview.status.name")} usage={usage}>
         <button
           type="button"
           className={styles.status}
-          aria-label={t("preview.quality.statusLabel", { width, height })}
+          data-short={reading?.short || undefined}
+          aria-label={t("preview.status.label", { value })}
           aria-haspopup="dialog"
           onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
         >
-          {t("preview.quality.status", { width, height })}
+          {value}
         </button>
       </Tip>
       {anchor && <QualityBubble anchor={anchor} onClose={() => setAnchor(undefined)} />}

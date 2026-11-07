@@ -33,6 +33,12 @@
   background: var(--aq-bg-hover);
 }
 
+.info {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+
 .counts {
   display: inline-flex;
   align-items: center;

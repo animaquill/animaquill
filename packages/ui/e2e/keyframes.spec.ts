@@ -12,7 +12,7 @@ import {
   typeInto,
 } from "./property-helpers.ts";
 import { importClips } from "./project-files.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, group, tab, test } from "./support.ts";
 
 const RED = [255, 0, 0] as const;
 
@@ -67,6 +67,11 @@ const showAll = async (page: Page) => {
   await panel(page).getByRole("button", { name: "显示全部" }).click();
 };
 
+/** The same on the timeline, which zooms on its own. */
+const showAllOnTimeline = async (page: Page) => {
+  await content(page, "timeline").getByRole("button", { name: "显示全部" }).click();
+};
+
 /** A clip with keys on X at 1 and 3 seconds, in the workspace for animating, and opened up. */
 async function keyedColor(page: Page) {
   await addColor(page);
@@ -75,6 +80,7 @@ async function keyedColor(page: Page) {
   await typeInto(field(page, "位置 X"), "300");
   await animate(page);
   await showAll(page);
+  await showAllOnTimeline(page);
   await open(page, "纯色");
   await open(page, "位置");
   await expect(keys(page, "位置 X")).toHaveCount(2);
@@ -545,7 +551,7 @@ test.describe("with changes written right away", () => {
     expect(shown).toBeGreaterThan(450);
   });
 
-  test("the tab goes along with the timeline, until it does not", async ({ page }) => {
+  test("the tab scrolls and zooms on its own, and the playhead is the same", async ({ page }) => {
     await keyedColor(page);
     const button = (name: string) => panel(page).getByRole("button", { name, exact: true });
     const gap = async () => {
@@ -554,21 +560,67 @@ test.describe("with changes written right away", () => {
       if (!first || !second) return 0;
       return (await centerOf(second)).x - (await centerOf(first)).x;
     };
+    const timeline = content(page, "timeline");
+    const zoom = timeline.getByRole("slider", { name: "缩放" });
+    const shared = await zoom.inputValue();
+    const clip = await clips(page).first().boundingBox();
     const start = await gap();
     await button("放大").click();
     await expect.poll(gap).toBeGreaterThan(start * 1.3);
-    const zoomed = await gap();
-    const zoom = content(page, "timeline").getByRole("slider", { name: "缩放" });
-    const shared = await zoom.inputValue();
-
-    await button("和时间轴同步").click();
-    await button("缩小").click();
-    await button("缩小").click();
-    await expect.poll(gap).toBeLessThan(start);
     expect(await zoom.inputValue()).toBe(shared);
+    expect(await clips(page).first().boundingBox()).toEqual(clip);
 
-    await button("和时间轴同步").click();
+    // The other way round, too.
+    const zoomed = await gap();
+    await zoom.fill("0.9");
     await expect.poll(gap).toBeCloseTo(zoomed, 0);
+
+    // The ruler of the tab moves the one playhead.
+    const box = await stage(page).boundingBox();
+    if (!box) throw new Error("no stage");
+    await page.mouse.click(box.x + box.width / 2, box.y + 14);
+    const time = await page
+      .getByRole("contentinfo")
+      .getByRole("status", { name: "播放头" })
+      .textContent();
+    await expect(timeline.getByRole("slider", { name: "播放头", exact: true })).toHaveAttribute(
+      "aria-valuetext",
+      time ?? "",
+    );
+  });
+
+  test("rows of keys get taller and shorter, as on the timeline, and stay so", async ({ page }) => {
+    await keyedColor(page);
+    const height = async () => (await row(page, "位置 X").boundingBox())?.height ?? 0;
+    const start = await height();
+    await stage(page).focus();
+    await page.keyboard.press("Shift+=");
+    await expect.poll(height).toBeGreaterThan(start);
+    // What is on the timeline stays as it was.
+    const clip = await clips(page).first().boundingBox();
+    const taller = await height();
+    const center = await centerOf(row(page, "位置 X"));
+    await page.mouse.move(center.x, center.y);
+    await page.keyboard.down("Control");
+    await page.keyboard.down("Shift");
+    await page.mouse.wheel(0, 300);
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Control");
+    await expect.poll(height).toBeLessThan(taller);
+    expect(await clips(page).first().boundingBox()).toEqual(clip);
+    await page.keyboard.press("Shift+=");
+    await page.keyboard.press("Shift+=");
+    const tallest = await height();
+    expect(tallest).toBeGreaterThan(start);
+    // A key is still where its row is.
+    const key = await centerOf(keys(page, "位置 X").first());
+    const rowBox = await row(page, "位置 X").boundingBox();
+    if (!rowBox) throw new Error("no row");
+    expect(key.y).toBeGreaterThan(rowBox.y);
+    expect(key.y).toBeLessThan(rowBox.y + rowBox.height);
+    await page.waitForTimeout(500);
+    await page.reload();
+    await expect.poll(height).toBeCloseTo(tallest, 0);
   });
 
   /** The clip of `keyedColor`, opened up on the timeline with the key for it. */
@@ -713,6 +765,115 @@ test.describe("with changes written right away", () => {
     await expect(keys(page, "位置 Y").first()).toHaveAttribute("aria-selected", "true");
   });
 });
+
+/** The ways the timeline can be out of sight while the keyframe tab shows. */
+const hidingTimeline = {
+  closed: async (page: Page) => {
+    await group(page, "timeline").locator('button[aria-label="关闭 时间轴"]').click();
+    await expect(tab(page, "timeline")).toHaveCount(0);
+  },
+  "behind the keyframe tab": async (page: Page) => {
+    const from = await tab(page, "keyframes").boundingBox();
+    const strip = await group(page, "timeline").locator(".dv-tabs-container").boundingBox();
+    if (!from || !strip) throw new Error("no tabs");
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 8, { steps: 3 });
+    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await expect(group(page, "timeline").locator('[data-tab="keyframes"]')).toBeVisible();
+    await expect(content(page, "timeline")).toBeHidden();
+  },
+};
+
+for (const [how, hide] of Object.entries(hidingTimeline)) {
+  test.describe(`with the timeline ${how}`, () => {
+    test.use({ trying: false });
+
+    const playheadHere = (page: Page) =>
+      stage(page).getByRole("slider", { name: "播放头", exact: true });
+    /** Where the playhead line is on screen. */
+    const playheadX = async (page: Page) => {
+      const box = await playheadHere(page).boundingBox();
+      if (!box) throw new Error("no playhead");
+      return box.x + box.width / 2;
+    };
+
+    test("the ruler puts the playhead where the mouse is", async ({ page }) => {
+      await keyedColor(page);
+      // How wide the timeline was is what the view used to go by, also after it was closed.
+      const timeline = await content(page, "timeline")
+        .getByRole("group", { name: "时间轴", exact: true })
+        .boundingBox();
+      if (!timeline) throw new Error("no timeline");
+      await hide(page);
+      const button = (name: string) => panel(page).getByRole("button", { name, exact: true });
+      // Zoomed in, the end of the timeline is far on the right, and the mouse stays before it.
+      await button("放大").click();
+      await button("放大").click();
+      const box = await stage(page).boundingBox();
+      if (!box) throw new Error("no stage");
+      const y = box.y + 14;
+      const end = await playheadHere(page).getAttribute("aria-valuemax");
+      await page.mouse.move(box.x + 20, y);
+      await page.mouse.down();
+      for (const share of [0.3, 0.6, 0.9, 1.1, 0.7]) {
+        const x = box.x + Math.min(share * timeline.width, box.width * 0.9);
+        await page.mouse.move(x, y, { steps: 5 });
+        await expect.poll(() => playheadX(page)).toBeCloseTo(x, -1);
+        await expect(playheadHere(page)).not.toHaveAttribute("aria-valuenow", end ?? "");
+      }
+      await page.mouse.up();
+      const x = await playheadX(page);
+      // Going on by a frame does not throw the view somewhere else.
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => playheadX(page)).toBeGreaterThan(x);
+      expect(await playheadX(page)).toBeLessThan(x + 20);
+    });
+
+    test("zooming and showing all still work", async ({ page }) => {
+      await keyedColor(page);
+      await hide(page);
+      const button = (name: string) => panel(page).getByRole("button", { name, exact: true });
+      const gap = async () => {
+        const [first, second] = await keys(page, "位置 X").all();
+        if (!first || !second) return 0;
+        return (await centerOf(second)).x - (await centerOf(first)).x;
+      };
+      // Showing all again would go back to where it was before.
+      await button("放大").click();
+      await showAll(page);
+      const all = await gap();
+      await button("放大").click();
+      await expect.poll(gap).toBeGreaterThan(all * 1.3);
+      await showAll(page);
+      await expect.poll(gap).toBeCloseTo(all, -1);
+      const box = await stage(page).boundingBox();
+      const last = await centerOf(keys(page, "位置 X").nth(1));
+      if (!box) throw new Error("no stage");
+      // All of it fits, with the end of the timeline before the right edge.
+      expect(last.x).toBeLessThan(box.x + box.width);
+    });
+
+    test("a key goes where it is dragged, and a box selects", async ({ page }) => {
+      await keyedColor(page);
+      await hide(page);
+      const first = await centerOf(keys(page, "位置 X").first());
+      const second = await centerOf(keys(page, "位置 X").nth(1));
+      await dragBy(page, keys(page, "位置 X").nth(1), (first.x - second.x) / 2);
+      await expect(keys(page, "位置 X").nth(1)).toHaveAttribute("aria-label", /0:02\/\d\d$/);
+      const moved = await centerOf(keys(page, "位置 X").nth(1));
+      expect(moved.x).toBeCloseTo((first.x + second.x) / 2, -1);
+
+      await page.mouse.move(first.x - 30, first.y - 8);
+      await page.mouse.down();
+      await page.mouse.move(first.x + 20, first.y + 6, { steps: 6 });
+      await page.mouse.up();
+      await expect(keys(page, "位置 X").first()).toHaveAttribute("aria-selected", "true");
+      await expect(keys(page, "位置 X").nth(1)).toHaveAttribute("aria-selected", "false");
+    });
+  });
+}
 
 test.describe("a project written by hand", () => {
   test.use({ withProject: false, trying: false });

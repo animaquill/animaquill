@@ -47,6 +47,8 @@ export function registerKeyframeActions(
   add("zoomIn", () => keyframes.panel.zoomIn(), { keys: ["="], repeats: true });
   add("zoomOut", () => keyframes.panel.zoomOut(), { keys: ["-"], repeats: true });
   add("zoomToFit", () => keyframes.panel.zoomToFit(), { keys: ["\\"] });
+  add("rowsTaller", () => keyframes.panel.rowsTaller(), { keys: ["shift+="], repeats: true });
+  add("rowsShorter", () => keyframes.panel.rowsShorter(), { keys: ["shift+-"], repeats: true });
 
   // Selected keys move by frames. Without any, the playhead does, as on the timeline.
   const step = (frames: number) => () => {

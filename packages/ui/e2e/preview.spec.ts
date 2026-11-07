@@ -428,17 +428,17 @@ test("the status bar says how many frames the preview really shows", async ({ pa
   await items(page).first().dblclick();
   await items(page).first().dblclick();
   await expect(content(page, "timeline").getByRole("option")).toHaveCount(3);
-  const status = page.getByRole("contentinfo").getByLabel(/^预览实际帧率/);
-  await expect(status).toHaveText("预览 —");
+  const status = page.getByRole("contentinfo").getByLabel(/^预览画质和帧率/);
+  await expect(status).toHaveText("预览 完整");
   await button(page, "播放").click();
   // A number only comes from frames that reached the canvas, so a preview that draws nothing shows 0.
-  await expect(status).toHaveText(/^预览 [1-9]\d* 帧$/, { timeout: 5000 });
+  await expect(status).toHaveText(/^预览 完整 · [1-9]\d* 帧$/, { timeout: 5000 });
   await status.hover();
   await expect(
-    page.getByText(/^最近 1 秒实际画出 \d+ 帧，项目帧率 30 帧，丢了 \d+ 帧。$/),
+    page.getByText(/最近 1 秒实际画出 \d+ 帧，项目帧率 30 帧，丢了 \d+ 帧。点击修改画质。$/),
   ).toBeVisible();
   await button(page, "暂停").click();
-  await expect(status).toHaveText("预览 —");
+  await expect(status).toHaveText("预览 完整");
   // Without a preview there is nothing to count.
   await group(page, "preview").locator('button[aria-label="关闭 预览"]').click();
   await expect(tab(page, "preview")).toHaveCount(0);
@@ -468,15 +468,15 @@ test.describe("the quality of the preview", () => {
     await expect.poll(() => isRed(page)).toBe(true);
     const full = await canvasSize(page);
     expect(full).toMatchObject({ width: 1920, height: 1080 });
-    const status = page.getByRole("contentinfo").getByLabel(/^预览分辨率/);
-    await expect(status).toHaveText("1920×1080");
+    const status = page.getByRole("contentinfo").getByLabel(/^预览画质和帧率/);
+    await expect(status).toHaveText("预览 完整");
 
     await choose(page, "1/2");
     await expect.poll(() => canvasSize(page)).toEqual({ ...full, width: 960, height: 540 });
     await expect.poll(() => isRed(page)).toBe(true);
-    await expect(status).toHaveText("960×540");
+    await expect(status).toHaveText("预览 1/2");
     await status.hover();
-    await expect(page.getByText(/导出始终是全分辨率 1920×1080/)).toBeVisible();
+    await expect(page.getByText(/现在画 960×540，导出始终是全分辨率 1920×1080/)).toBeVisible();
     await expect(content(page, "preview").getByRole("button", { name: "预览画质" })).toHaveText(
       "画质 1/2",
     );
@@ -484,11 +484,16 @@ test.describe("the quality of the preview", () => {
     await page.reload();
     await expect.poll(() => isRed(page)).toBe(true);
     expect(await canvasSize(page)).toEqual({ ...full, width: 960, height: 540 });
-    await expect(status).toHaveText("960×540");
+    await expect(status).toHaveText("预览 1/2");
 
-    await choose(page, "全分辨率");
+    // The status bar opens the same choices.
+    await status.click();
+    await page
+      .getByRole("dialog", { name: "预览画质" })
+      .getByRole("radio", { name: /^全分辨率/ })
+      .click();
     await expect.poll(() => canvasSize(page)).toEqual(full);
-    await expect(status).toHaveText("1920×1080");
+    await expect(status).toHaveText("预览 完整");
   });
 
   test.describe("left to the editor", () => {
@@ -497,7 +502,13 @@ test.describe("the quality of the preview", () => {
     test("is automatic, and says that decoding videos does not get any faster", async ({
       page,
     }) => {
-      await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
+      // Short: what automatic stands for right now is in the status bar.
+      const opener = content(page, "preview").getByRole("button", { name: "预览画质" });
+      await expect(opener).toHaveText("画质 自动");
+      await expect(page.getByRole("contentinfo").getByLabel(/^预览画质和帧率/)).toHaveText(
+        "预览 自动 完整",
+      );
+      await opener.click();
       await expect(page.getByText(/视频解码的还是原片/)).toBeVisible();
       await expect(page.getByRole("radio", { name: /^自动（现在 全分辨率）/ })).toHaveAttribute(
         "aria-checked",

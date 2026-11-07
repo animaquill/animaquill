@@ -5,7 +5,7 @@ import type { TouchStart } from "../timeline/touch.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { KeyArea } from "./area.ts";
 import type { KeyframeEditor, ShownClips } from "./editor.ts";
-import { lanesOfTracks, type Lane } from "./lanes.ts";
+import { LANE_HEIGHT, laneAt, lanesOfTracks, type Lane } from "./lanes.ts";
 
 const SNAP_REACH = 8;
 const ZOOM_STEP = 1.5;
@@ -13,8 +13,15 @@ const ZOOM_STEP = 1.5;
 const TAIL_SHARE = 0.25;
 const BOTTOM_MARGIN = 48;
 const FIT_SHARE = 0.95;
+/** How close to an edge the playhead can be before the view follows it, as on the timeline. */
+const REVEAL_MARGIN = 48;
+/** The rows of keys get taller as on the timeline. Lower than this, the values do not fit. */
+const MIN_ROW_SCALE = 20 / LANE_HEIGHT;
+const MAX_ROW_SCALE = 3;
+const ROW_SCALE_STEP = 1.25;
 
-interface OwnView {
+/** What the tab shows of the time, which is up to it and not to the timeline. */
+export interface OwnView {
   readonly pixelsPerSecond: number;
   readonly scrollX: number;
 }
@@ -22,15 +29,20 @@ interface OwnView {
 const NO_LANES: readonly Lane[] = [];
 
 /**
- * The keyframe tab: the list on the left and the time on the right. It goes along with the timeline
- * by default, so that both show the same stretch of time, and can also go its own way.
+ * The keyframe tab: the list on the left and the time on the right. It scrolls and zooms on its
+ * own, so that people can look closely at keys while the timeline shows all of it. The playhead is
+ * the one of the timeline, and the view follows it as the timeline does.
  */
 export class KeyframesView extends KeyArea implements StageEditor {
   readonly #timeline: TimelineEditor;
   readonly #lanesChanged = new Emitter();
   #lanes = NO_LANES;
-  /** Where it looks when it does not go along with the timeline. */
-  #own: OwnView | undefined;
+  /** No scale yet means that it shows all of the timeline once it has a size. */
+  #pixelsPerSecond = 0;
+  #scrollX = 0;
+  #rowScale = 1;
+  /** The playhead moved while this did not show, so it gets in sight once it does. */
+  #revealLater = false;
   #width = 0;
   #height = 0;
   #scrollY = 0;
@@ -78,19 +90,28 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   get scrollX(): number {
-    return this.#own ? this.#own.scrollX : this.#timeline.scrollX;
+    return this.#scrollX;
   }
 
+  /** Before it ever had a size, what it would show all of the timeline at. */
   get pixelsPerSecond(): number {
-    return this.#own ? this.#own.pixelsPerSecond : this.#timelineScale();
+    return this.#pixelsPerSecond > 0 ? this.#pixelsPerSecond : this.#fitScale();
   }
 
-  /** A timeline that never showed has no scale yet. */
-  #timelineScale(): number {
-    const scale = this.#timeline.pixelsPerSecond;
-    if (scale > 0) return scale;
-    const duration = Math.max(this.model?.duration ?? 0, 1);
-    return (Math.max(this.#width, 1) * FIT_SHARE) / duration;
+  #fitScale(): number {
+    const { model } = this;
+    const duration = Math.max(model?.duration ?? 0, 1);
+    const [low, high] = zoomRange(this.#width, model?.duration ?? 1, model?.rate.fps ?? 30);
+    return clamp((Math.max(this.#width, 1) * FIT_SHARE) / duration, low, high);
+  }
+
+  /** How much taller the rows of keys are than usual. */
+  get rowScale(): number {
+    return this.#rowScale;
+  }
+
+  get #keyHeight(): number {
+    return Math.round(LANE_HEIGHT * this.#rowScale);
   }
 
   xAt(seconds: number): number {
@@ -161,7 +182,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
       return;
     }
     const { laneRules } = this.keyframes;
-    this.#setLanes(lanesOfTracks(model, this.keyframes.tracks(model), laneRules));
+    this.#setLanes(lanesOfTracks(model, this.keyframes.tracks(model), laneRules, this.#keyHeight));
   }
 
   #setLanes(lanes: readonly Lane[]): void {
@@ -175,6 +196,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
           lane.box === other.box &&
           lane.top === other.top &&
           lane.height === other.height &&
+          lane.keyHeight === other.keyHeight &&
           lane.open === other.open
         );
       });
@@ -194,41 +216,33 @@ export class KeyframesView extends KeyArea implements StageEditor {
     this.#height = height;
     if (width === 0) this.cancelDrag();
     if (showing) this.relist();
+    if (this.#pixelsPerSecond === 0 && width > 0) this.#pixelsPerSecond = this.#fitScale();
     this.#clampScroll();
+    if (this.#revealLater) this.#revealPlayhead();
     this.keyframes.redrawTab();
   }
 
   #clampScroll(): void {
     this.#scrollY = clamp(this.#scrollY, 0, this.contentHeight - this.#height);
-    if (this.#own) {
-      const scrollX = clamp(this.#own.scrollX, 0, this.contentWidth - this.#width);
-      this.#own = { ...this.#own, scrollX };
-    }
+    this.#scrollX = clamp(this.#scrollX, 0, this.contentWidth - this.#width);
   }
 
   setScroll(x: number, y: number): void {
-    if (this.#own) this.#own = { ...this.#own, scrollX: x };
-    else this.#timeline.setScroll(x, this.#timeline.scrollY);
+    this.#scrollX = x;
     this.#scrollY = y;
     this.#clampScroll();
-    this.keyframes.rememberSoon();
-    this.keyframes.redrawTab();
+    this.#viewChanged();
   }
 
   zoomAround(x: number, factor: number): void {
-    const own = this.#own;
-    if (!own) {
-      this.#timeline.zoomAround(x, factor);
-      return;
-    }
+    if (this.#pixelsPerSecond === 0) return;
     const { model } = this;
     const moment = this.timeAt(x);
     const [low, high] = zoomRange(this.#width, model?.duration ?? 1, model?.rate.fps ?? 30);
-    const pixelsPerSecond = clamp(own.pixelsPerSecond * factor, low, high);
-    this.#own = { pixelsPerSecond, scrollX: moment * pixelsPerSecond - x };
+    this.#pixelsPerSecond = clamp(this.#pixelsPerSecond * factor, low, high);
+    this.#scrollX = moment * this.#pixelsPerSecond - x;
     this.#clampScroll();
-    this.keyframes.rememberSoon();
-    this.keyframes.redrawTab();
+    this.#viewChanged();
   }
 
   zoomIn(): void {
@@ -239,16 +253,13 @@ export class KeyframesView extends KeyArea implements StageEditor {
     this.zoomAround(this.#zoomCenter(), 1 / ZOOM_STEP);
   }
 
-  /** Shows all of the timeline. Going along with it, that is what it does as well. */
+  /** Shows all of the timeline. */
   zoomToFit(): void {
-    if (!this.#own) {
-      this.#timeline.zoomToFit();
-      return;
-    }
-    const duration = Math.max(this.model?.duration ?? 0, 1);
-    this.#own = { pixelsPerSecond: (this.#width * FIT_SHARE) / duration, scrollX: 0 };
-    this.keyframes.rememberSoon();
-    this.keyframes.redrawTab();
+    if (this.#width === 0) return;
+    this.#pixelsPerSecond = this.#fitScale();
+    this.#scrollX = 0;
+    this.#clampScroll();
+    this.#viewChanged();
   }
 
   #zoomCenter(): number {
@@ -258,30 +269,76 @@ export class KeyframesView extends KeyArea implements StageEditor {
     return x >= 0 && x <= this.#width ? x : this.#width / 2;
   }
 
-  /** There are no taller lanes here. */
-  zoomRowsAround(): void {}
+  /** Changes the height of the rows of keys while what is at height `y` stays where it is. */
+  zoomRowsAround(y: number, factor: number): void {
+    if (this.#gesture) return;
+    const scale = clamp(this.#rowScale * factor, MIN_ROW_SCALE, MAX_ROW_SCALE);
+    if (scale === this.#rowScale) return;
+    const inLanes = this.laneY(Math.max(y, RULER_HEIGHT));
+    const lane = laneAt(this.#lanes, inLanes);
+    const share = lane ? (inLanes - lane.top) / lane.height : 0;
+    const before = this.#rowScale;
+    this.#rowScale = scale;
+    this.relist();
+    const after = lane && this.#lanes.find(({ id }) => id === lane.id);
+    const target = after ? after.top + share * after.height : (inLanes * scale) / before;
+    this.#scrollY = target - (Math.max(y, RULER_HEIGHT) - RULER_HEIGHT);
+    this.#clampScroll();
+    this.#viewChanged();
+  }
 
-  /** Keeps what it shows when it stops going along. Going along again, it shows what the timeline does. */
-  link(linked: boolean): void {
-    this.#own = linked
-      ? undefined
-      : { pixelsPerSecond: this.pixelsPerSecond, scrollX: this.scrollX };
+  rowsTaller(): void {
+    this.zoomRowsAround(RULER_HEIGHT, ROW_SCALE_STEP);
+  }
+
+  rowsShorter(): void {
+    this.zoomRowsAround(RULER_HEIGHT, 1 / ROW_SCALE_STEP);
+  }
+
+  /** The playhead moved. Like the timeline, this scrolls just far enough that it can be seen. */
+  followPlayhead(): void {
+    this.#revealPlayhead();
+  }
+
+  #revealPlayhead(): void {
+    const { model } = this;
+    this.#revealLater = this.#width === 0;
+    if (!model || this.#revealLater || this.#pixelsPerSecond === 0) return;
+    const x = this.xAt(this.frame / model.rate.fps);
+    const margin = Math.min(REVEAL_MARGIN, this.#width / 4);
+    const before = this.#scrollX;
+    if (x < margin) this.#scrollX += x - margin;
+    else if (x > this.#width - margin) this.#scrollX += x - (this.#width - margin);
+    this.#clampScroll();
+    if (this.#scrollX !== before) this.keyframes.rememberSoon();
+  }
+
+  #viewChanged(): void {
+    this.keyframes.rememberSoon();
     this.keyframes.redrawTab();
   }
 
-  /** Where it looks on its own, to come back to. */
+  /** What it shows, to come back to. Nothing before it ever had a size. */
   get ownView(): OwnView | undefined {
-    return this.#own;
+    const pixelsPerSecond = this.#pixelsPerSecond;
+    return pixelsPerSecond > 0 ? { pixelsPerSecond, scrollX: this.#scrollX } : undefined;
   }
 
   /** Starts from what was remembered, as far as that makes sense. */
-  adoptView(view: OwnView | undefined): void {
+  adoptView(view: OwnView | undefined, rowScale: unknown): void {
     const fits =
       view && Number.isFinite(view.pixelsPerSecond) && view.pixelsPerSecond > 0
         ? Number.isFinite(view.scrollX)
         : false;
-    this.#own = fits ? view : undefined;
+    this.#pixelsPerSecond = fits && view ? view.pixelsPerSecond : 0;
+    this.#scrollX = fits && view ? view.scrollX : 0;
+    if (this.#pixelsPerSecond === 0 && this.#width > 0) this.#pixelsPerSecond = this.#fitScale();
+    this.#rowScale =
+      typeof rowScale === "number" && Number.isFinite(rowScale)
+        ? clamp(rowScale, MIN_ROW_SCALE, MAX_ROW_SCALE)
+        : 1;
     this.#scrollY = 0;
+    this.#revealLater = false;
   }
 
   /* The mouse. */
