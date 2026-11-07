@@ -1005,6 +1005,26 @@ describe("a scene that stops playing", () => {
   it("goes back when it is far off, which is no small difference any more", () => {
     expect(playedAhead(true, 600).seeks).toEqual([60]);
   });
+
+  it("goes back after all for somebody who takes only the picture of the frame", async () => {
+    const context = showing();
+    const host = context.hosts[0] as FakeHost;
+    host.ready();
+    context.scenes.handle({ type: "play", seconds: 12, at: 1000, rate: 1, jump: true });
+    host.stateful = true;
+    host.position = 63;
+    host.picture(63);
+    context.scenes.handle({ type: "pause" });
+    host.seeks.length = 0;
+    const picture = context.scenes.exactPicture("a");
+    await Promise.resolve();
+    expect(host.seeks).toEqual([60]);
+    const image = host.picture(60);
+    expect((await picture).image).toBe(image);
+    // Once it is there, it is there like any frame it went to.
+    context.scenes.follow(context.plan, 12);
+    expect(host.seeks).toEqual([60]);
+  });
 });
 
 describe("what cannot run", () => {

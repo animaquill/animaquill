@@ -126,6 +126,8 @@ interface Run {
   readonly host: Host;
   /** The frame it was last sent to. Undefined while it follows the time. */
   frame: number | undefined;
+  /** It stopped a little past `frame` and stays there, see `#stayIfAhead`. */
+  ahead?: boolean;
 }
 
 /** Somebody who only takes the picture of one frame. */
@@ -344,6 +346,10 @@ export class SceneLayers {
     return new Promise((got, failed) => {
       this.#endExact(entry, this.#notRunning(entry));
       entry.exact = { frame, got, failed, stopGrace: undefined };
+      // What stayed a little ahead is fine to look at, and not the frame: it goes back after all.
+      for (const run of [entry.current, entry.next]) {
+        if (run?.ahead) void this.#goTo(entry, run, frame);
+      }
       this.#expectPicture(entry);
     });
   }
@@ -656,6 +662,7 @@ export class SceneLayers {
     this.#goTo(entry, run, this.#frameFor(layer, plan));
     if (!this.#base) return;
     run.frame = undefined;
+    run.ahead = false;
     run.host.play(baseFor(layer, plan, this.#base));
   }
 
@@ -673,6 +680,7 @@ export class SceneLayers {
 
   #goTo(entry: Entry, run: Run, frame: number): Promise<boolean> {
     run.frame = frame;
+    run.ahead = false;
     entry.reached = undefined;
     return run.host.seek(frame).then((reached) => {
       if (reached && run.frame === frame) {
@@ -697,6 +705,7 @@ export class SceneLayers {
         if (base.jump) this.#startMoving(entry, run, plan);
         else {
           run.frame = undefined;
+          run.ahead = false;
           run.host.play(baseFor(entry.layer, plan, base));
         }
       }
@@ -727,7 +736,9 @@ export class SceneLayers {
     const frame = this.#frameFor(entry.layer, plan);
     if (!stateful || position === undefined || position <= frame) return;
     const { num, den } = plan.scenes.fps;
-    if (position - frame <= Math.ceil((PAUSE_SLACK_MS * num) / den / 1000)) run.frame = frame;
+    if (position - frame > Math.ceil((PAUSE_SLACK_MS * num) / den / 1000)) return;
+    run.frame = frame;
+    run.ahead = true;
   }
 
   /** The same scene with more of what it needs. Each clip of it gets a new run, which takes over. */
