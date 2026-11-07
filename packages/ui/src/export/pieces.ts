@@ -37,9 +37,12 @@ export class PieceWriter {
     return this.#seq;
   }
 
-  /** Forgets what it has, for a track that starts again from nothing. */
-  restart(): void {
-    this.#seq = 0;
+  /**
+   * Forgets what it has not written yet, and goes on as if only the pieces before this one were
+   * there. Taking those that are after it out of the store is up to whoever goes back.
+   */
+  rewind(seq: number): void {
+    this.#seq = seq;
     this.#parts = [];
     this.#entries = [];
     this.#bytes = 0;

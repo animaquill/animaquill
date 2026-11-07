@@ -47,6 +47,7 @@ export interface ExportStore {
   /** Of all projects, for people to see what takes room. */
   all(): Promise<readonly SavedExport[]>;
   save(saved: SavedExport): Promise<void>;
+  /** Rejects when the export is not there, or not any more: its pieces would stay forever. */
   addPiece(id: string, track: string, piece: ExportPiece): Promise<void>;
   /** The pieces of a track in order, a few at a time, so that they never all are in memory. */
   pieces(id: string, track: string): AsyncIterable<ExportPiece>;
@@ -322,4 +323,15 @@ export interface FolderAccess {
    * is not there any more, "denied" when it may not be written.
    */
   reopen(target: unknown, kind: FileKind): Promise<GrowingFile | "gone" | "denied">;
+  /**
+   * Takes away the file of a target that is given up, as far as it is still empty and none of
+   * `others` is the same file. With `ask` the browser may ask whether that is all right, which has
+   * to run right after people did something. Resolves to whether an empty file stays behind.
+   */
+  dropTarget(target: unknown, others: readonly unknown[], ask: boolean): Promise<boolean>;
+  /**
+   * Files from `chooseFile` are put together in the storage of the browser first and then become
+   * downloads, so that what an export keeps there takes twice the room.
+   */
+  readonly savesInBrowser: boolean;
 }

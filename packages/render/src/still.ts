@@ -17,6 +17,8 @@ export type StillFailure =
       /** The frame of the picture it does have. */
       readonly got?: number;
     }
+  /** The encoder of an export failed, which may be the graphics card, and is no fault of the project. */
+  | { readonly reason: "encoder"; readonly message: string }
   /** The compositor stopped answering. */
   | { readonly reason: "compositor" }
   /** Drawing or reading back went wrong, which says something about the browser. */

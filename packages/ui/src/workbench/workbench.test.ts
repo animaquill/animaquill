@@ -19,6 +19,8 @@ const noFolders: FolderAccess = {
   saveFile: () => {},
   chooseFile: async () => undefined,
   reopen: async () => "gone" as const,
+  dropTarget: async () => false,
+  savesInBrowser: false,
 };
 
 function setup(folders = noFolders) {
@@ -580,6 +582,8 @@ describe("exporting with something being tried", () => {
       saveFile: vi.fn(),
       chooseFile: async () => undefined,
       reopen: async () => "gone" as const,
+      dropTarget: async () => false,
+      savesInBrowser: false,
     };
     return access;
   };

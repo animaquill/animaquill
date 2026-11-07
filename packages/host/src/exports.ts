@@ -88,10 +88,18 @@ export function createExportStore(
       return (await resultOf(transaction.objectStore(EXPORTS).getAll())) as SavedExport[];
     },
     save: (saved) => write([EXPORTS], (transaction) => transaction.objectStore(EXPORTS).put(saved)),
+    // A piece of an export that is gone, given up while it was on its way, would stay forever.
     addPiece: (id, track, piece) =>
-      write([PIECES], (transaction) => {
-        const record: PieceRecord = { id, track, ...piece };
-        transaction.objectStore(PIECES).put(record);
+      write([EXPORTS, PIECES], (transaction) => {
+        const found = transaction.objectStore(EXPORTS).getKey(id);
+        found.addEventListener("success", () => {
+          if (found.result === undefined) {
+            transaction.abort();
+            return;
+          }
+          const record: PieceRecord = { id, track, ...piece };
+          transaction.objectStore(PIECES).put(record);
+        });
       }),
     async *pieces(id, track) {
       let from = 0;

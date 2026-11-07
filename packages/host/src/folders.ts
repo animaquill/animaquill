@@ -1,4 +1,10 @@
-import { cleanUpDownloads, growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
+import {
+  cleanUpDownloads,
+  dropTarget,
+  growingFile,
+  reopenTarget,
+  type SaveFilePicker,
+} from "./growing.ts";
 import type { FolderAccess, SourceFolder, TargetFolder, WriteOptions } from "./index.ts";
 import { FALLBACK_NAME, folderNameFor, partsOf } from "./paths.ts";
 import { zipTarget } from "./zip.ts";
@@ -218,6 +224,10 @@ export function createFolderAccess(options: FolderAccessOptions): FolderAccess {
       growingFile(fileNameFor(name), kind, { picker: savePicker?.(), scratch, saveFile }),
     reopen: (target, kind) =>
       reopenTarget(target, kind, { picker: savePicker?.(), scratch, saveFile }),
+    dropTarget,
+    get savesInBrowser() {
+      return !savePicker?.();
+    },
   };
 }
 

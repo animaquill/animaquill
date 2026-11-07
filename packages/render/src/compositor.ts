@@ -292,8 +292,10 @@ function releaseFilesExcept(keep: readonly RenderLayer[]): void {
   for (const { source } of keep) {
     if (source.kind === "image" || source.kind === "video") lastNeeded.set(source.file, needs);
   }
+  // A cursor may still read a file while a frame that went before it gets drawn.
+  const reading = new Set([...cursors.values()].map(({ file }) => file));
   const stale = [...lastNeeded]
-    .filter(([, at]) => at !== needs)
+    .filter(([id, at]) => at !== needs && !reading.has(id))
     .toSorted(([, a], [, b]) => b - a)
     .slice(KEEP_FILES);
   for (const [id] of stale) {
@@ -587,13 +589,26 @@ function startEncoding(config: VideoEncoderConfig): void {
         send(encoded, [data]);
       },
       error(error) {
-        current.failed ??= error;
+        current.failed ??= encoderFailed(error);
       },
     }),
   };
   encoding = current;
-  current.encoder.configure(config);
+  try {
+    current.encoder.configure(config);
+  } catch (error) {
+    throw encoderFailed(error);
+  }
 }
+
+/** What the encoder says when it fails, as a failure of the encoder and not of the picture. */
+const encoderFailed = (error: unknown) =>
+  error instanceof StillFailed
+    ? error
+    : new StillFailed({
+        reason: "encoder",
+        message: error instanceof Error ? error.message : String(error),
+      });
 
 const encoderOf = (): Encoding => {
   if (!encoding) throw new StillFailed({ reason: "failed", message: "No encoder" });
@@ -626,6 +641,8 @@ async function encodeFrame({ seconds, timestamp, duration, keyFrame }: FrameToEn
   const frame = new VideoFrame(canvas, { timestamp, duration });
   try {
     current.encoder.encode(frame, { keyFrame });
+  } catch (error) {
+    throw current.failed ?? encoderFailed(error);
   } finally {
     frame.close();
   }
@@ -634,7 +651,9 @@ async function encodeFrame({ seconds, timestamp, duration, keyFrame }: FrameToEn
 
 async function flushEncoding(): Promise<void> {
   const current = encoderOf();
-  await current.encoder.flush();
+  await current.encoder.flush().catch((error: unknown) => {
+    throw current.failed ?? encoderFailed(error);
+  });
   if (current.failed !== undefined) throw current.failed;
 }
 
@@ -642,7 +661,9 @@ async function finishEncoding(): Promise<void> {
   const current = encoderOf();
   encoding = undefined;
   // Everything it has comes out before this is over, so the answer comes after all of it.
-  await current.encoder.flush();
+  await current.encoder.flush().catch((error: unknown) => {
+    throw current.failed ?? encoderFailed(error);
+  });
   current.encoder.close();
   if (current.failed !== undefined) throw current.failed;
 }

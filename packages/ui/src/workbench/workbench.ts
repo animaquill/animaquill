@@ -285,6 +285,8 @@ export class Workbench {
       sceneOrigins: this.sceneOrigins,
       sceneStage: this.sceneStage,
     });
+    // What nobody went on with for long goes, whichever project it is of.
+    void this.videos.cleanUp();
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),

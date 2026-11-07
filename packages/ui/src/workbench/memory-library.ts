@@ -254,6 +254,7 @@ export class MemoryExports implements ExportStore {
 
   async addPiece(id: string, track: string, piece: ExportPiece): Promise<void> {
     if (this.failing || this.failingPieces) throw new Error("quota");
+    if (!this.saved.has(id)) throw new DOMException("No such export", "AbortError");
     this.#track(id, track).set(piece.seq, piece);
   }
 

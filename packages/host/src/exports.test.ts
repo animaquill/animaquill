@@ -39,6 +39,8 @@ describe("what an export keeps", () => {
 
   it("has its pieces in order, however many there are", async () => {
     const exports = store();
+    await exports.save(saved("a"));
+    await exports.save(saved("b"));
     for (const seq of [2, 0, 1, 4, 3, 5, 6, 7, 8, 9])
       await exports.addPiece("a", "video", piece(seq));
     await exports.addPiece("a", "sound", piece(0));
@@ -51,6 +53,7 @@ describe("what an export keeps", () => {
 
   it("loses the pieces after a place it goes on from", async () => {
     const exports = store();
+    await exports.save(saved("a"));
     for (const seq of [0, 1, 2, 3]) await exports.addPiece("a", "video", piece(seq));
     await exports.addPiece("a", "sound", piece(0));
     await exports.dropPieces("a", "video", 2);
@@ -68,6 +71,18 @@ describe("what an export keeps", () => {
     expect(await exports.list("p")).toEqual([saved("ab")]);
     expect(await all(exports.pieces("a", "video"))).toEqual([]);
     expect(await all(exports.pieces("ab", "video"))).toEqual(["piece 0"]);
+  });
+});
+
+describe("a piece of an export", () => {
+  it("does not go in when the export is not there, or not any more", async () => {
+    const exports = store();
+    await expect(exports.addPiece("a", "video", piece(0))).rejects.toThrow();
+    await exports.save(saved("a"));
+    await exports.addPiece("a", "video", piece(0));
+    await exports.remove("a");
+    await expect(exports.addPiece("a", "video", piece(1))).rejects.toThrow();
+    expect(await all(exports.pieces("a", "video"))).toEqual([]);
   });
 });
 

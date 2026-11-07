@@ -639,17 +639,41 @@ describe("a sound an export waits for", () => {
     expect(runs[1]?.cancel).toHaveBeenCalled();
   });
 
-  it("of another project does not get made here", async () => {
-    const { make, addSound, addClip, clip, store, runs } = await setup();
+  it("of a project that is not open any more is still there for the export", async () => {
+    const { make, runs, addSound, addClip, clip, store, session } = await setup();
     addSound();
     addClip();
     const sounds = make();
+    await settle();
+    runs[0]?.finish(silence());
+    await settle();
     const state = store.getState();
     const made = madeSoundOf(state, clip());
     if (!made) throw new Error("No sound");
-    const other = { ...state, manifest: { ...state.manifest, id: "别的" } };
-    expect(await sounds.whenMade(made, other)).toEqual({ state: "failed", reason: "error" });
+    // People open another project while the export of this one goes on.
+    await session.create("另一个项目");
     await settle();
+    expect(await sounds.whenMade(made, state)).toEqual({ state: "ready" });
     expect(runs).toHaveLength(1);
+  });
+
+  it("of a project that is not open any more gets made into the media store of that project", async () => {
+    const { make, runs, addSound, addClip, clip, store, session, media } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    await settle();
+    const state = store.getState();
+    const made = madeSoundOf(state, clip());
+    if (!made) throw new Error("No sound");
+    const waiting = sounds.whenMade(made, state);
+    await session.create("另一个项目");
+    await settle();
+    // What ran for the open project stopped with it, and what the export waits for runs again.
+    expect(runs[0]?.cancel).toHaveBeenCalled();
+    expect(runs).toHaveLength(2);
+    runs[1]?.finish(silence());
+    expect(await waiting).toEqual({ state: "ready" });
+    expect(await media.get(made.file)).toBeDefined();
   });
 });

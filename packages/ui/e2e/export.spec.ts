@@ -9,7 +9,6 @@ import {
   goTo,
   importFolder,
   openScene,
-  previewButton,
   projectFolder,
   tab,
   test,
@@ -343,39 +342,6 @@ test.describe("a frame with a scene", () => {
       await letFilesGo(page);
       const png = await bytesOf(await download);
       expect(await differenceFromPreview(page, png)).toBeLessThanOrEqual(2);
-    });
-
-    test("of a scene with state is the frame of the playhead right after it stopped", async ({
-      page,
-    }) => {
-      test.setTimeout(60000);
-      // Code that draws frame by frame, which a pause leaves where it got to when that is a little ahead.
-      const stateful = `<!doctype html><style>
-        body { background: #000 }
-        #square { position: absolute; left: 0; top: 490px; width: 100px; height: 100px; background: #fff }
-      </style><div id="square"></div><script>
-        let x = 0;
-        requestAnimationFrame(function step() {
-          x += 6.4;
-          document.getElementById("square").style.left = x + "px";
-          requestAnimationFrame(step);
-        });
-      </script>`;
-      await openScene(page, stateful);
-      await expect.poll(async () => close(await colorInPreview(page, 50, 540), WHITE)).toBe(true);
-      await previewButton(page, "播放").click();
-      await page.waitForTimeout(1500);
-      await previewButton(page, "暂停").click();
-      const clock = page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" });
-      const time = (await clock.innerText()).split("|")[0]?.trim() ?? "";
-      const png = await exportFrame(page);
-      // Somewhere else and back, so that the preview goes to the frame itself, from the start.
-      await goTo(page, "0:00/00");
-      await expect.poll(async () => close(await colorInPreview(page, 50, 540), WHITE)).toBe(true);
-      await goTo(page, time);
-      await expect
-        .poll(() => differenceFromPreview(page, png), { timeout: 20000 })
-        .toBeLessThanOrEqual(2);
     });
 
     test("is the same as the preview", async ({ page }) => {

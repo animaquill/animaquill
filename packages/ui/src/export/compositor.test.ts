@@ -6,7 +6,7 @@ import {
   type ToCompositor,
 } from "@animaquill/render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ExportCompositor, WindowClosed } from "./compositor.ts";
+import { ExportCompositor, MAX_DESCRIPTION_BYTES, ownChunk, WindowClosed } from "./compositor.ts";
 
 type Listener = (event: unknown) => void;
 
@@ -412,5 +412,36 @@ describe("encoding in an export compositor", () => {
     compositor.dispose();
     say({ type: "encoded", data: new ArrayBuffer(1), key: true, timestamp: 0, duration: 1 });
     expect(onChunk).not.toHaveBeenCalled();
+  });
+});
+
+describe("what an encoder of the sandbox gives back", () => {
+  const chunk = { key: true, timestamp: 0, duration: 33_333 };
+
+  it("is copied into bytes of this page", () => {
+    const data = new Uint8Array([1, 2, 3]).buffer;
+    const description = new Uint8Array([9, 9]);
+    const own = ownChunk({ ...chunk, data, decoderConfig: { codec: "avc1.64001e", description } });
+    if (typeof own === "string") throw new Error(own);
+    expect([...new Uint8Array(own.data)]).toEqual([1, 2, 3]);
+    expect(own.data).not.toBe(data);
+    expect([...new Uint8Array(own.decoderConfig?.description as ArrayBuffer)]).toEqual([9, 9]);
+  });
+
+  it("is no chunk when its bytes are a number or only look like bytes, and nothing gets made", () => {
+    expect(ownChunk({ ...chunk, data: 2 ** 31 })).toBe("data");
+    expect(ownChunk({ ...chunk, data: { length: 2 ** 31, byteLength: 2 ** 31 } })).toBe("data");
+    expect(ownChunk({ ...chunk, data: [1, 2, 3] })).toBe("data");
+    expect(ownChunk(7)).toBe("chunk");
+  });
+
+  it("is no chunk with a description larger than any decoder needs", () => {
+    const data = new ArrayBuffer(1);
+    const description = new ArrayBuffer(MAX_DESCRIPTION_BYTES + 1);
+    const decoderConfig = { codec: "avc1.64001e", description };
+    expect(ownChunk({ ...chunk, data, decoderConfig })).toBe("description");
+    const odd = { codec: "avc1.64001e", description: { length: 3 } };
+    expect(ownChunk({ ...chunk, data, decoderConfig: odd })).toBe("description");
+    expect(ownChunk({ ...chunk, data, decoderConfig: { codec: 7 } })).toBe("codec");
   });
 });

@@ -178,6 +178,45 @@ export async function growingFile(
   return downloadedFile(scratch, name, kind, saveFile);
 }
 
+/**
+ * Takes away the file of an export that was given up, as far as it is still the empty one the
+ * dialog made, and no other export in `others` is going to write to it: two exports may have been
+ * told the same place. With `ask` the browser may ask first, which has to run right after people
+ * did something; without it nothing asks, and a file that would need that stays. Resolves to
+ * whether an empty file stays behind. A download has nothing to take away: what it leaves in the
+ * private folder of the site goes by itself.
+ */
+export async function dropTarget(
+  target: unknown,
+  others: readonly unknown[],
+  ask: boolean,
+): Promise<boolean> {
+  const known = target as FileTarget | undefined;
+  if (known?.kind !== "file") return false;
+  const { handle } = known;
+  for (const other of others) {
+    const theirs = other as FileTarget | undefined;
+    if (theirs?.kind !== "file") continue;
+    if (await handle.isSameEntry(theirs.handle).catch(() => false)) return false;
+  }
+  const { queryPermission, requestPermission, remove } = handle as RemovableHandle;
+  const options = { mode: "readwrite" } as const;
+  let permission =
+    (await queryPermission?.call(handle, options).catch(() => "denied")) ?? "granted";
+  if (permission === "prompt" && ask) {
+    permission = (await requestPermission?.call(handle, options).catch(() => "denied")) ?? "denied";
+  }
+  if (permission !== "granted") return true;
+  const now = await handle.getFile().catch(() => undefined);
+  // Gone, or with something in it from somewhere else: not this one's to take away.
+  if (!now || now.size > 0) return false;
+  if (!remove) return true;
+  return remove.call(handle).then(
+    () => false,
+    () => true,
+  );
+}
+
 /** The same file as before, from a target that survived the page. */
 export async function reopenTarget(
   target: unknown,

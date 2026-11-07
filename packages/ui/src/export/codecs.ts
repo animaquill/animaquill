@@ -133,16 +133,19 @@ export function inSoftware(encoding: VideoEncoding): VideoEncoding {
 
 /**
  * The first codec this browser can encode the video with, or nothing at all. For each codec the
- * graphics card comes first, as in the export demo, and then the processor.
+ * graphics card comes first, as in the export demo, and then the processor. A graphics card that
+ * failed at a codec here before does not get it again: the processor is slower, but it finishes.
  */
 export async function chooseEncoding(
   shape: VideoShape,
   quality: Quality,
   supported: SupportCheck = browserSupport,
+  noHardware: ReadonlySet<VideoCodecName> = new Set(),
 ): Promise<VideoEncoding | undefined> {
   const bitrate = bitrateFor(shape, quality);
   for (const codec of CODECS) {
     for (const [acceleration, hardwareAcceleration] of ACCELERATIONS) {
+      if (acceleration === "hardware" && noHardware.has(codec)) continue;
       const config: VideoEncoderConfig = {
         codec: codecString(codec, shape, bitrate),
         width: shape.width,

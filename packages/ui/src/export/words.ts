@@ -35,6 +35,9 @@ export function describeFailure(
 ): string {
   const plain = { interpolation: { escapeValue: false } };
   if (failure.reason === "compositor") return t("export.failure.compositor");
+  if (failure.reason === "encoder") {
+    return t("export.failure.encoder", { message: failure.message, ...plain });
+  }
   if (failure.reason === "failed") {
     return t("export.failure.other", { message: failure.message, ...plain });
   }

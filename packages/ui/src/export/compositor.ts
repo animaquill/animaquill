@@ -52,27 +52,60 @@ export class WindowClosed extends Error {
   }
 }
 
-/**
- * Bytes of this page. What comes from a window of its own is made there, and fails `instanceof`
- * here, which is what libraries check: Mediabunny would not take it.
- */
-const ownBytes = (bytes: AllowSharedBufferSource): Uint8Array<ArrayBuffer> =>
-  ArrayBuffer.isView(bytes)
-    ? new Uint8Array(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength))
-    : new Uint8Array(new Uint8Array(bytes));
+/** Larger than any frame an encoder gives at any bitrate it takes. */
+export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
+/** What a decoder needs to know first is a few hundred bytes. */
+export const MAX_DESCRIPTION_BYTES = 64 * 1024;
 
-/** A chunk as if it had been made on this page. */
-function ownChunk(chunk: EncodedChunk): EncodedChunk {
-  const { data, key, timestamp, duration, decoderConfig } = chunk;
-  const config = decoderConfig && {
-    ...decoderConfig,
-    ...(decoderConfig.description && { description: ownBytes(decoderConfig.description) }),
-  };
+/**
+ * Bytes as they came in a message, from this page or a window of its own, where `instanceof` says
+ * no. Anything else, a number or something with a length, is not bytes, however it would convert.
+ */
+function bytesOf(value: unknown, most: number): Uint8Array | undefined {
+  const tag = Object.prototype.toString.call(value);
+  if (tag === "[object ArrayBuffer]") {
+    const buffer = value as ArrayBuffer;
+    return buffer.byteLength <= most ? new Uint8Array(buffer) : undefined;
+  }
+  if (!ArrayBuffer.isView(value) || value.byteLength > most) return undefined;
+  if (Object.prototype.toString.call(value.buffer) !== "[object ArrayBuffer]") return undefined;
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+}
+
+/**
+ * A chunk as if it had been made on this page, which libraries check with `instanceof`. What does
+ * not even have the shape of one says what is wrong instead: it gets checked before anything of it
+ * is copied, since what the sandbox sends could be anything.
+ */
+export function ownChunk(raw: unknown): EncodedChunk | string {
+  if (typeof raw !== "object" || raw === null) return "chunk";
+  const { data, key, timestamp, duration, decoderConfig } = raw as Record<string, unknown>;
+  const bytes = bytesOf(data, MAX_CHUNK_BYTES);
+  if (!bytes) return "data";
+  let config: VideoDecoderConfig | undefined;
+  if (decoderConfig !== undefined) {
+    if (typeof decoderConfig !== "object" || decoderConfig === null) return "config";
+    const { codec, description, codedWidth, codedHeight } = decoderConfig as Record<
+      string,
+      unknown
+    >;
+    if (typeof codec !== "string" || codec.length > 100) return "codec";
+    const size = (value: unknown) =>
+      value === undefined || (Number.isInteger(value) && (value as number) > 0);
+    if (!size(codedWidth) || !size(codedHeight)) return "config";
+    const head =
+      description === undefined ? undefined : bytesOf(description, MAX_DESCRIPTION_BYTES);
+    if (description !== undefined && !head) return "description";
+    config = {
+      ...(decoderConfig as VideoDecoderConfig),
+      ...(head && { description: new Uint8Array(head) }),
+    };
+  }
   return {
-    data: ownBytes(data).buffer,
-    key,
-    timestamp,
-    duration,
+    data: new Uint8Array(bytes).buffer,
+    key: key as boolean,
+    timestamp: timestamp as number,
+    duration: duration as number,
     ...(config && { decoderConfig: config }),
   };
 }
@@ -99,6 +132,8 @@ export class ExportCompositor {
   /** Why it is gone, if it is. */
   #stopped: unknown;
   #onChunk: ((chunk: EncodedChunk) => void) | undefined;
+  /** What came back is not even a chunk. */
+  #onWrong: ((what: string) => void) | undefined;
   /** What the compositor said hello with, if anything. */
   #port: MessagePort | undefined;
 
@@ -165,8 +200,10 @@ export class ExportCompositor {
   async startEncoding(
     config: VideoEncoderConfig,
     onChunk: (chunk: EncodedChunk) => void,
+    onWrong: (what: string) => void = () => {},
   ): Promise<void> {
     this.#onChunk = onChunk;
+    this.#onWrong = onWrong;
     await this.#ask({ type: "encode-start", config });
   }
 
@@ -208,6 +245,7 @@ export class ExportCompositor {
     this.#stopped ??= reason;
     this.#window.removeEventListener("pagehide", this.#onGone);
     this.#onChunk = undefined;
+    this.#onWrong = undefined;
     this.#watch.dispose();
     this.#keyboard.dispose();
     this.#window.removeEventListener("message", this.#onMessage);
@@ -251,7 +289,11 @@ export class ExportCompositor {
     else if (data.type === "origin-retired") this.#options.onRetired?.(data.origin);
     else if (data.type === "still") this.#answer(data);
     else if (data.type === "encode-answer") this.#answerEncoding(data);
-    else if (data.type === "encoded") this.#onChunk?.(ownChunk(data));
+    else if (data.type === "encoded") {
+      const chunk = ownChunk(data);
+      if (typeof chunk === "string") this.#onWrong?.(chunk);
+      else this.#onChunk?.(chunk);
+    }
   };
 
   #answerEncoding({ request, failure }: Extract<FromCompositor, { type: "encode-answer" }>) {

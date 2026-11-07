@@ -496,15 +496,15 @@ test.describe("an export under way", () => {
     await expect(dialog(page)).toContainText("视频没有导出", { timeout: 60_000 });
     await expect(dialog(page)).toContainText("第 31 帧（0:01/00）");
     await expect(dialog(page)).toContainText("“蓝色”的素材文件不在这台设备上");
-    await expect(dialog(page)).toContainText("已经导好的部分留着");
+    // Three seconds are less than a place to go on from: nothing stays, and nothing says it does.
+    await expect(dialog(page)).not.toContainText("已经导好的部分留着");
     await dialog(page).getByRole("button", { name: "关闭" }).click();
     await expect(
       page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }),
     ).toContainText("0:01/00");
     await expect(content(page, "timeline").getByRole("option", { selected: true })).toHaveCount(1);
-    // What it got to stays for after the file is back.
-    expect((await keptExports(page)).exports).toBe(1);
-    expect((await savedFile(page))?.length ?? 0).toBe(0);
+    expect((await keptExports(page)).exports).toBe(0);
+    expect(await savedFile(page)).toBeUndefined();
   });
 });
 
@@ -888,6 +888,8 @@ test.describe("the sound of a video with a sound that code makes", () => {
     await startExport(page);
     const status = page.getByRole("contentinfo").getByRole("status");
     await expect(status.filter({ hasText: "正在生成要用到的声音" })).toBeVisible();
+    // The window of the export says so too, which is where people look while it runs.
+    await expect.poll(() => windowText(page)).toContain("正在生成要用到的声音");
     await exported(page, 90_000);
     const file = (await savedFile(page)) as Buffer;
     const video = await factsOf(file);
@@ -1386,6 +1388,57 @@ test("goes over to the processor when the graphics card says yes and then does n
     (await failed.isVisible()) ? `failed: ${await failed.textContent()}` : await done.textContent(),
   );
   await expect(done).toBeVisible();
+});
+
+test("goes over to the processor with every frame when the graphics card took a few and then fails", async ({
+  page,
+}) => {
+  await page.context().addInitScript(`(() => {
+    if (typeof VideoEncoder === "undefined") return;
+    const Original = VideoEncoder;
+    const supported = Original.isConfigSupported.bind(Original);
+    function Flaky(init) {
+      let flaky = false;
+      const encoder = new Original({
+        output: (chunk, meta) => { if (!flaky) init.output(chunk, meta); },
+        error: (error) => init.error(error),
+      });
+      const configure = encoder.configure.bind(encoder);
+      const encode = encoder.encode.bind(encoder);
+      let encodes = 0;
+      encoder.configure = (config) => {
+        if (config.hardwareAcceleration !== "prefer-hardware") return configure(config);
+        flaky = true;
+        configure({ ...config, hardwareAcceleration: "no-preference" });
+      };
+      encoder.encode = (frame, options) => {
+        encode(frame, options);
+        if (!flaky) return;
+        encodes += 1;
+        // A graphics card that takes a moment to find out it cannot: a few frames went in.
+        if (encodes === 3) {
+          setTimeout(() => {
+            encoder.close();
+            init.error(new DOMException("Encoder creation error.", "EncodingError"));
+          }, 0);
+        }
+      };
+      return encoder;
+    }
+    Flaky.isConfigSupported = (config) =>
+      config.hardwareAcceleration === "prefer-hardware"
+        ? Promise.resolve({ supported: true, config })
+        : supported(config);
+    globalThis.VideoEncoder = Flaky;
+  })()`);
+  await open(page, projectFolder(2, [movingSquare(2)]));
+  await chooseFrom(page, "导出视频…");
+  await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
+  const done = page.getByRole("status").getByText("已导出“");
+  const failed = dialog(page).filter({ hasText: "视频没有导出" });
+  await expect(done.or(failed)).toBeVisible({ timeout: 60_000 });
+  await expect(done).toContainText("处理器编码");
+  expect((await factsOf((await savedFile(page)) as Buffer)).frames).toBe(60);
 });
 
 test("giving up an old export leaves the video people made to the same place since", async ({

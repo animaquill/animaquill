@@ -1,5 +1,6 @@
 import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
+import { dropTarget } from "./growing.ts";
 import { isMadeFile } from "./index.ts";
 import type {
   Host,
@@ -654,6 +655,9 @@ export function createBrowserHost(
       if (!release) continue;
       await exports.remove(saved.id).catch(() => {});
       release();
+      // Its file too, while that is still the empty one it made. Nothing asks about it now.
+      const others = (await exports.all().catch(() => [])).map(({ target }) => target);
+      await dropTarget(saved.target, others, false).catch(() => {});
     }
   };
   return {

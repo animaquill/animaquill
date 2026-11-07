@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
+import { dropTarget, growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
 
 const KIND = { description: "MP4 视频", mime: "video/mp4", extension: "mp4" };
 
@@ -262,5 +262,49 @@ describe("a file to go back to after a reload", () => {
     await reopened.write(bytes(3) as Uint8Array<ArrayBuffer>, 0);
     await reopened.finish();
     expect(saveFile.mock.calls[0]?.[1]).toBe("片子.mp4");
+  });
+});
+
+describe("the file of an export that is given up", () => {
+  /** A handle as Chrome has it, which knows whether it is the same file as another. */
+  const handleOf = (file: FakeFile, permission: PermissionState = "granted") =>
+    Object.assign(file, {
+      isSameEntry: async (other: unknown) => other === file,
+      queryPermission: async () => permission,
+      requestPermission: vi.fn(async () => "granted" as PermissionState),
+    });
+
+  it("goes while it is the empty one the export made", async () => {
+    const file = handleOf(new FakeFile("片子.mp4"));
+    expect(await dropTarget({ kind: "file", handle: file }, [], false)).toBe(false);
+    expect(file.removed).toBe(true);
+  });
+
+  it("stays when another export goes to the same place", async () => {
+    const file = handleOf(new FakeFile("片子.mp4"));
+    const target = { kind: "file", handle: file };
+    const other = { kind: "file", handle: file };
+    expect(await dropTarget(target, [{ kind: "download", name: "x" }, other], false)).toBe(false);
+    expect(file.removed).toBe(false);
+  });
+
+  it("stays when there is something in it, from somewhere else", async () => {
+    const file = handleOf(new FakeFile("片子.mp4"));
+    file.content = new Uint8Array([1]);
+    expect(await dropTarget({ kind: "file", handle: file }, [], false)).toBe(false);
+    expect(file.removed).toBe(false);
+  });
+
+  it("asks only when it may, and else stays and says so", async () => {
+    const file = handleOf(new FakeFile("片子.mp4"), "prompt");
+    expect(await dropTarget({ kind: "file", handle: file }, [], false)).toBe(true);
+    expect(file.requestPermission).not.toHaveBeenCalled();
+    expect(file.removed).toBe(false);
+    expect(await dropTarget({ kind: "file", handle: file }, [], true)).toBe(false);
+    expect(file.removed).toBe(true);
+  });
+
+  it("is nothing to take away for a download", async () => {
+    expect(await dropTarget({ kind: "download", name: "片子.mp4" }, [], true)).toBe(false);
   });
 });

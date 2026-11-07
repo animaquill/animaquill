@@ -167,19 +167,40 @@ export class SoundMaker {
 /** The sound being looked for or made. */
 interface Busy {
   readonly file: string;
+  /** Somebody waits for it, whatever project is open. */
+  readonly hold?: Hold;
   cancel: () => void;
+}
+
+/** A sound to look for or make, and what for. */
+interface Job {
+  readonly made: MadeSound;
+  /** What it is made from. */
+  readonly state: ProjectState;
+  /** The open project wants it. */
+  readonly store?: ProjectStore;
+  /** Somebody waits for it. */
+  readonly hold?: Hold;
 }
 
 /** How a sound that somebody waits for came out. */
 export type SoundOutcomeState = Extract<SoundState, { state: "ready" | "failed" }>;
 
-/** A sound somebody waits for, which stays wanted until it is there, whatever the project does. */
+/**
+ * A sound somebody waits for, which stays wanted until it is there or failed, whatever happens to
+ * the project and whichever project is open meanwhile: it has what it is made from, and the media
+ * store it goes into is that of its own project.
+ */
 interface Hold {
+  readonly key: string;
   readonly made: MadeSound;
   /** What it is made from, which need not be what the project is now. */
   readonly state: ProjectState;
   readonly waiters: Set<(outcome: SoundOutcomeState) => void>;
 }
+
+/** The same name can be a sound of two projects, each in a media store of its own. */
+const holdKey = (project: string, file: string) => `${project}\n${file}`;
 
 export interface MadeSoundsOptions {
   readonly session: ProjectSession;
@@ -207,7 +228,7 @@ export class MadeSounds {
   /** By file, as far as anybody needs them. */
   readonly #states = new Map<string, SoundState>();
   #wanted: ReadonlyMap<string, MadeSound> = new Map();
-  /** By file. */
+  /** By `holdKey`, in the order they came. */
   readonly #holds = new Map<string, Hold>();
   #store: ProjectStore | undefined;
   #stopStore = () => {};
@@ -245,61 +266,66 @@ export class MadeSounds {
   }
 
   /**
-   * Resolves once a sound is in the media store, or is not going to be. It gets made from `state`,
-   * like an export needs it, and stays wanted until then even when the project changes meanwhile.
-   * A sound that failed before is failed: making it again is up to people, see `retry`. When the
-   * signal says stop, it rejects, and the sound goes on only if something else needs it.
+   * Resolves once a sound is in the media store of the project of `state`, or is not going to be.
+   * It gets made from `state`, like an export needs it, and stays wanted until then, even when the
+   * project changes or another one opens meanwhile. A sound of the open project that failed before
+   * is failed: making it again is up to people, see `retry`. When the signal says stop, it rejects,
+   * and the sound goes on only if something else needs it.
    */
   whenMade(made: MadeSound, state: ProjectState, signal?: AbortSignal): Promise<SoundOutcomeState> {
-    const known = this.#states.get(made.file);
+    const project = state.manifest.id;
+    const known = this.#isOpen(project) ? this.#states.get(made.file) : undefined;
     if (known?.state === "ready" || known?.state === "failed") return Promise.resolve(known);
-    if (!this.#store || this.#store.getState().manifest.id !== state.manifest.id) {
-      return Promise.resolve({ state: "failed", reason: "error" });
-    }
     if (signal?.aborted) return Promise.reject(signal.reason);
     const { promise, resolve, reject } = Promise.withResolvers<SoundOutcomeState>();
-    let hold = this.#holds.get(made.file);
+    const key = holdKey(project, made.file);
+    let hold = this.#holds.get(key);
     if (!hold) {
-      hold = { made, state, waiters: new Set() };
-      this.#holds.set(made.file, hold);
+      hold = { key, made, state, waiters: new Set() };
+      this.#holds.set(key, hold);
     }
     const held = hold;
     held.waiters.add(resolve);
     signal?.addEventListener("abort", () => {
       reject(signal.reason);
       held.waiters.delete(resolve);
-      if (held.waiters.size > 0 || this.#holds.get(made.file) !== held) return;
-      this.#holds.delete(made.file);
-      this.#follow();
+      if (held.waiters.size > 0 || this.#holds.get(key) !== held) return;
+      this.#holds.delete(key);
+      if (this.#busy?.hold === held) this.#busy.cancel();
     });
-    this.#follow();
+    this.#next();
     return promise;
+  }
+
+  #isOpen(project: string): boolean {
+    return this.#store?.getState().manifest.id === project;
   }
 
   #set(file: string, state: SoundState): void {
     this.#states.set(file, state);
     this.#version += 1;
     this.#emitter.emit();
-    if (state.state === "ready" || state.state === "failed") this.#endHold(file, state);
   }
 
-  #endHold(file: string, outcome: SoundOutcomeState): void {
-    const hold = this.#holds.get(file);
-    this.#holds.delete(file);
-    for (const waiter of hold?.waiters ?? []) waiter(outcome);
+  /** The same name in the same project is the same sound, whoever it was made for. */
+  #endHoldOf({ made, state }: Job, outcome: SoundOutcomeState): void {
+    const key = holdKey(state.manifest.id, made.file);
+    const hold = this.#holds.get(key);
+    if (!hold) return;
+    this.#holds.delete(key);
+    for (const waiter of hold.waiters) waiter(outcome);
   }
 
   #followSession(): void {
     const { store } = this.#options.session;
     if (store === this.#store) return;
     this.#stopStore();
-    this.#busy?.cancel();
-    this.#busy = undefined;
-    this.#states.clear();
-    // Another project has other sounds, and what was made for the last one is not for this one.
-    for (const file of this.#holds.keys()) {
-      this.#endHold(file, { state: "failed", reason: "error" });
+    // What somebody waits for goes on: it does not depend on which project is open.
+    if (!this.#busy?.hold) {
+      this.#busy?.cancel();
+      this.#busy = undefined;
     }
+    this.#states.clear();
     this.#wanted = new Map();
     this.#store = store;
     this.#stopStore = store?.subscribe(this.#later) ?? (() => {});
@@ -316,6 +342,10 @@ export class MadeSounds {
     }
     for (const asset of Object.values(state.assets ?? {})) {
       if (asset.hash !== undefined) needed.add(asset.hash);
+    }
+    // An export may still need a sound of an older state of this project.
+    for (const { made, state: held } of this.#holds.values()) {
+      if (held.manifest.id === state.manifest.id) needed.add(made.file);
     }
     const media = this.#options.projects.media(state.manifest.id);
     const now = this.#options.now?.() ?? Date.now();
@@ -339,10 +369,9 @@ export class MadeSounds {
     for (const timeline of Object.keys(state.timelines)) {
       for (const made of madeSoundsOf(state, timeline)) wanted.set(made.file, made);
     }
-    for (const [file, { made }] of this.#holds) wanted.set(file, made);
     this.#wanted = wanted;
     for (const file of this.#states.keys()) if (!wanted.has(file)) this.#states.delete(file);
-    if (this.#busy && !wanted.has(this.#busy.file)) this.#busy.cancel();
+    if (this.#busy && !this.#busy.hold && !wanted.has(this.#busy.file)) this.#busy.cancel();
     this.#version += 1;
     this.#emitter.emit();
     this.#next();
@@ -350,18 +379,30 @@ export class MadeSounds {
 
   #next(): void {
     if (this.#busy) return;
-    const store = this.#store;
     // Somebody waits for a held one, which is therefore first.
-    const waiting = [...this.#holds.values()].map(({ made }) => made);
-    const made = [...waiting, ...this.#wanted.values()].find(({ file }) => !this.#states.has(file));
+    const [hold] = this.#holds.values();
+    if (hold) {
+      this.#start({ made: hold.made, state: hold.state, hold });
+      return;
+    }
+    const store = this.#store;
+    const made = [...this.#wanted.values()].find(({ file }) => !this.#states.has(file));
     if (!made || !store) return;
-    const busy = { file: made.file, cancel: () => {} };
-    this.#busy = busy;
     this.#states.set(made.file, { state: "waiting" });
-    void this.#get(store, made, busy)
+    this.#start({ made, state: store.getState(), store });
+  }
+
+  #start(job: Job): void {
+    const busy: Busy = {
+      file: job.made.file,
+      ...(job.hold && { hold: job.hold }),
+      cancel: () => {},
+    };
+    this.#busy = busy;
+    void this.#get(job, busy)
       .catch((error: unknown) => {
         console.warn("A sound could not be made", error);
-        if (this.#store === store) this.#fail(made, "error");
+        if (this.#isWanted(job)) this.#fail(job, "error");
       })
       .finally(() => {
         if (this.#busy !== busy) return;
@@ -370,47 +411,65 @@ export class MadeSounds {
       });
   }
 
+  /** Whether what it is made for still needs it. */
+  #isWanted({ made, store, hold }: Job): boolean {
+    if (hold) return this.#holds.get(hold.key) === hold;
+    return this.#store === store && this.#wanted.has(made.file);
+  }
+
+  /** It is there, for the open project as far as it is a sound of it, and for who waits. */
+  #done(job: Job): void {
+    const { made, state } = job;
+    this.#endHoldOf(job, { state: "ready" });
+    if (!this.#isOpen(state.manifest.id) || !this.#wanted.has(made.file)) return;
+    this.#set(made.file, { state: "ready" });
+    this.#options.arrived(made.file);
+  }
+
   /** `told` is for what people heard about from the code already. */
-  #fail(made: MadeSound, reason: SoundFailure, told = false): void {
+  #fail(job: Job, reason: SoundFailure, told = false): void {
+    const { made, state } = job;
+    this.#endHoldOf(job, { state: "failed", reason });
+    // What goes wrong with a project that is not open is for whoever waits for it to say.
+    if (!this.#isOpen(state.manifest.id)) return;
     if (this.#wanted.has(made.file)) this.#set(made.file, { state: "failed", reason });
-    else this.#endHold(made.file, { state: "failed", reason });
     if (!told) this.#options.messages.failed(made.sound, reason);
   }
 
-  async #get(store: ProjectStore, made: MadeSound, busy: Busy): Promise<void> {
+  async #get(job: Job, busy: Busy): Promise<void> {
+    const { made, state } = job;
     const { file } = made;
-    const { projects, arrived } = this.#options;
-    const media = projects.media(store.getState().manifest.id);
-    const stillWanted = () => this.#store === store && this.#wanted.has(file);
+    const media = this.#options.projects.media(state.manifest.id);
+    const stillWanted = () => this.#isWanted(job);
+    const open = () => this.#isOpen(state.manifest.id);
     // A store that cannot be read is a store that does not have it.
     const saved = await media.get(file).catch(() => undefined);
     if (!stillWanted()) return;
     if (saved) {
       // What gets used stays, however old it is.
       void media.touchMade(file).catch(() => {});
-      this.#set(file, { state: "ready" });
-      arrived(file);
+      this.#done(job);
       return;
     }
     if (made.runtime > RUNTIME_VERSION) {
-      this.#fail(made, "too-new");
+      this.#fail(job, "too-new");
       return;
     }
     if (made.duration > MAX_SOUND_SECONDS) {
-      this.#fail(made, "over-limit");
+      this.#fail(job, "over-limit");
       return;
     }
-    this.#set(file, { state: "making" });
+    if (open() && this.#wanted.has(file)) this.#set(file, { state: "making" });
     let told = 0;
-    const run = this.#options.run(this.#loadOf(store, made), (problem) => {
+    const run = this.#options.run(this.#loadOf(state, made), (problem) => {
       told += 1;
-      if (told <= MAX_PROBLEMS_TOLD) this.#options.messages.problem(made.sound, problem);
+      if (told <= MAX_PROBLEMS_TOLD && open()) this.#options.messages.problem(made.sound, problem);
     });
     busy.cancel = run.cancel;
     const outcome = await run.outcome;
     if (!outcome || !stillWanted()) return;
     if (!outcome.ok) {
-      this.#fail(made, outcome.reason, outcome.reason === "error" && told > 0);
+      this.#fail(job, outcome.reason, outcome.reason === "error" && told > 0);
       return;
     }
     let wav: Blob;
@@ -423,17 +482,14 @@ export class MadeSounds {
       await media.put(file, wav);
     } catch (error) {
       console.warn("A sound could not be saved", error);
-      this.#fail(made, "save");
+      this.#fail(job, "save");
       return;
     }
     if (!stillWanted()) return;
-    this.#set(file, { state: "ready" });
-    arrived(file);
+    this.#done(job);
   }
 
-  #loadOf(store: ProjectStore, made: MadeSound): SoundLoad {
-    // Two states that name a sound the same make it the same, so either one does.
-    const state = this.#holds.get(made.file)?.state ?? store.getState();
+  #loadOf(state: ProjectState, made: MadeSound): SoundLoad {
     const paths = soundFilesOf(state, made.sound);
     const { entry, duration, sampleRate, seed, params, output } = made;
     return {
