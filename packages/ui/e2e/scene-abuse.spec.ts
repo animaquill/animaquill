@@ -180,7 +180,8 @@ test.describe("a compositor that never comes up", () => {
     await start(page);
     await importFolder(page, projectFolder({ a: { "index.html": FINE } }, [{}]));
     await expect(notice(page, "预览起不来")).toBeVisible({ timeout: 45000 });
-    expect(await findCompositor(page)).toBeUndefined();
+    // The frame goes with its element, and the test hears of that a moment after the notice.
+    await expect.poll(() => findCompositor(page)).toBeUndefined();
     await expectEditorWorks(page);
     await page.unroute("**/compositor.html");
     await content(page, "preview").getByRole("button", { name: "刷新页面" }).click();
@@ -443,7 +444,8 @@ test.describe("a compositor that hangs", () => {
       if (round < 2) await page.waitForTimeout(9000);
     }
     await expect(notice(page, "预览一直没有响应")).toBeVisible({ timeout: 15000 });
-    expect(await findCompositor(page)).toBeUndefined();
+    // The frame goes with its element, and the test hears of that a moment after the notice.
+    await expect.poll(() => findCompositor(page)).toBeUndefined();
     expect(sceneFrames(page)).toHaveLength(0);
     await expectEditorWorks(page);
     await content(page, "preview").getByRole("button", { name: "不运行场景，重新启动" }).click();
