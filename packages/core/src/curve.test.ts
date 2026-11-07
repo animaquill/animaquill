@@ -582,8 +582,111 @@ describe("kinds of value", () => {
   });
 
   it("has a rule for every type", () => {
-    const types: readonly ValueType[] = ["number", "angle", "text", "choice", "boolean", "asset"];
+    const types: readonly ValueType[] = [
+      "number",
+      "angle",
+      "text",
+      "choice",
+      "boolean",
+      "asset",
+      "color",
+      "vec2",
+      "vec3",
+      "vec4",
+      "numbers",
+    ];
     expect(Object.keys(VALUE_TYPES).toSorted()).toEqual(types.toSorted());
+  });
+});
+
+describe("colors", () => {
+  const between = (from: string, to: string): Animation => ({
+    keys: [
+      { time: "0", value: from },
+      { time: "1", value: to },
+    ],
+  });
+
+  it("are the keys themselves on the keys, as they were written", () => {
+    const keys = between("#FF0000", "#0000ff");
+    expect(at(keys, 0, "color")).toBe("#FF0000");
+    expect(at(keys, 1, "color")).toBe("#0000ff");
+  });
+
+  it("go through Oklab, so that the middle of red and blue is not a dark grey", () => {
+    const middle = at(between("#ff0000", "#0000ff"), 0.5, "color") as string;
+    expect(middle).toMatch(/^#[0-9a-f]{6}$/);
+    // Straight in sRGB this would be #800080. Oklab keeps it light.
+    const [red, green, blue] = [1, 3, 5].map((from) =>
+      Number.parseInt(middle.slice(from, from + 2), 16),
+    );
+    expect(red).toBeGreaterThan(128);
+    expect(blue).toBeGreaterThan(128);
+    expect(green).toBeLessThan(red as number);
+  });
+
+  it("change evenly between two greys, which Oklab keeps grey", () => {
+    const grey = at(between("#000000", "#ffffff"), 0.5, "color") as string;
+    expect(grey.slice(1, 3)).toBe(grey.slice(3, 5));
+    expect(grey.slice(3, 5)).toBe(grey.slice(5, 7));
+  });
+
+  it("weigh what shows through, so that fading out keeps the color", () => {
+    const fading = at(between("#ff000000", "#0000ffff"), 0.5, "color") as string;
+    expect(fading).toMatch(/^#0000ff[0-9a-f]{2}$/);
+    expect(Number.parseInt(fading.slice(7), 16)).toBe(128);
+  });
+
+  it("ease like anything else", () => {
+    const keys: Animation = {
+      keys: [
+        { time: "0", value: "#000000", interp: "hold" },
+        { time: "1", value: "#ffffff" },
+      ],
+    };
+    expect(at(keys, 0.9, "color")).toBe("#000000");
+  });
+
+  it.each(["red", "#fff", "#12345", 12])("do nothing as %j", (value) => {
+    expect(compileChannel(value as Value, "color")).toBeUndefined();
+  });
+});
+
+describe("lists of numbers", () => {
+  const keys: Animation = {
+    keys: [
+      { time: "0", value: [0, 10, -4] },
+      { time: "2", value: [10, 30, 4] },
+    ],
+  };
+
+  it("change each number with the same easing", () => {
+    expect(at(keys, 1, "vec3")).toEqual([5, 20, 0]);
+    expect(at(keys, 2, "vec3")).toEqual([10, 30, 4]);
+  });
+
+  it("hold when the lists are not as long as each other", () => {
+    const uneven: Animation = {
+      keys: [
+        { time: "0", value: [1, 2] },
+        { time: "2", value: [3, 4, 5] },
+      ],
+    };
+    expect(at(uneven, 1, "numbers")).toEqual([1, 2]);
+    expect(at(uneven, 2, "numbers")).toEqual([3, 4, 5]);
+  });
+
+  it("go on as they ended, not by their speed: going on is for numbers alone", () => {
+    expect(at({ ...keys, after: "continue" }, 4, "vec3")).toEqual([10, 30, 4]);
+  });
+
+  it.each<[ValueType, Value]>([
+    ["vec2", [1, 2, 3]],
+    ["vec3", [1, 2]],
+    ["vec2", [1, Number.NaN]],
+    ["numbers", "1,2"],
+  ])("a %s does nothing with %j", (type, value) => {
+    expect(compileChannel(value, type)).toBeUndefined();
   });
 });
 

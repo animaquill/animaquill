@@ -66,6 +66,16 @@ export class Transport {
     this.#base = undefined;
   }
 
+  /**
+   * What the frame shows changed while nothing moves, like a value people drag: the frame gets
+   * there again, and is seen again. Whatever is under way gets there with the change anyway.
+   */
+  refresh(): void {
+    if (this.#base || this.#walking || this.#clock.frame < 0) return;
+    this.#wanted = this.#clock.frame;
+    void this.#walk();
+  }
+
   /** Only one at a time, however often playing starts and stops within a frame of the screen. */
   #nextTick(): void {
     if (this.#ticking) return;

@@ -14,6 +14,8 @@ export interface Host {
   readonly drafts: DraftStore;
   /** Where an export keeps what it has done, so that a reload or a crash costs only a little. */
   readonly exports: ExportStore;
+  /** What the editor worked out and can work out again, kept to save time. Optional: see `WorkCache`. */
+  readonly caches?: WorkCache;
 }
 
 /** An export that stopped before it was finished, and can go on from where it got. */
@@ -63,6 +65,18 @@ export interface ExportStore {
    * or to undefined when another window has it. A window that goes away lets go by itself.
    */
   claim(id: string): Promise<(() => void) | undefined>;
+}
+
+/**
+ * What the editor worked out and can work out again, such as what the code of a scene registered,
+ * kept on this device so that the next time does not have to wait for it. Losing any of it does no
+ * harm, so nothing here fails: what cannot be read is not there, and what cannot be kept is not
+ * kept. The host decides how much it keeps, and what goes first. Values must survive JSON.
+ */
+export interface WorkCache {
+  /** Resolves to undefined when nothing is kept under this key. */
+  read(key: string): Promise<unknown>;
+  write(key: string, value: unknown): Promise<void>;
 }
 
 /** Receives what people chose to send: how the editor runs, or what went wrong in it. */

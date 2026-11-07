@@ -1,11 +1,26 @@
-import { isAnimation, type MediaRef, type PropertyValue } from "@animaquill/schema";
+import {
+  isAnimation,
+  type MediaRef,
+  type PropertyValue,
+  type SceneManifest,
+  type Value,
+  type ValueType,
+} from "@animaquill/schema";
 import { entryOf, type ProjectState } from "./model.ts";
+import { isIdPart } from "./registration.ts";
 
 /** One asset a scene can ask for with `aq.asset(id)`. */
 export interface SceneAsset {
   readonly id: string;
   /** The file, by its content. */
   readonly file: string;
+}
+
+/** A parameter a scene declares, as far as its code needs to know: `aq.param(id)`. */
+export interface SceneParam {
+  readonly id: string;
+  readonly type: ValueType;
+  readonly default?: Value;
 }
 
 /** What a clip shows when it shows a scene. Two of these are the same scene when they are equal. */
@@ -18,9 +33,25 @@ export interface SceneSource {
   /** Changes when anything the scene gets changes, and only then. */
   readonly revision: string;
   readonly assets: readonly SceneAsset[];
+  /** What `scene.json` declares. Clips give them values with `param.<id>`. */
+  readonly params: readonly SceneParam[];
   /** What its random numbers come from. A clip that gets cut in two goes on as it was. */
   readonly seed: number;
 }
+
+/** Parameters with an id that no path can hold cannot get a value from a clip, so they stay out. */
+const paramsOf = (manifest: SceneManifest): readonly SceneParam[] =>
+  (manifest.params ?? []).flatMap((param) =>
+    isIdPart(param.id)
+      ? [
+          {
+            id: param.id,
+            type: param.type as ValueType,
+            ...(param.default !== undefined && { default: param.default }),
+          },
+        ]
+      : [],
+  );
 
 /** Everything in here goes to every scene and sound that asks. */
 const SHARED_FOLDER = "code/";
@@ -201,7 +232,8 @@ export function sceneSourceOf(state: ProjectState, scene: string): SceneSource |
   const entry = `${folderOf(scene)}${manifest.entry}`;
   const { runtime } = manifest;
   const content = revisionOfFiles(state, paths);
-  const revision = hashOfText(JSON.stringify([entry, runtime, content, assets]));
+  const params = paramsOf(manifest);
+  const revision = hashOfText(JSON.stringify([entry, runtime, content, assets, params]));
   const known = sources.get(scene);
   // A scene that stays what it was keeps its identity, which is how a plan sees that nothing changed.
   if (known?.revision === revision) return known;
@@ -212,6 +244,7 @@ export function sceneSourceOf(state: ProjectState, scene: string): SceneSource |
     runtime,
     revision,
     assets,
+    params,
     seed: Number.parseInt(hashOfText(scene).slice(0, 6), 36),
   };
   sources.set(scene, source);

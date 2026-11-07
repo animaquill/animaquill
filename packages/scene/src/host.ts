@@ -8,6 +8,7 @@ import {
 import { OriginPool } from "./origins.ts";
 import { SCENE_PAGE_PATH, SCENE_SANDBOX } from "./policy.ts";
 import {
+  isRegistration,
   pixelSizeOf,
   readFromScene,
   readPicture,
@@ -104,6 +105,11 @@ export interface SceneHostOptions {
   readonly onPosition?: (frame: number) => void;
   /** What it looks like now. Whoever gets a picture has to close it. */
   readonly onPicture?: (picture: ScenePicture) => void;
+  /**
+   * What its code registered, and the elements of its page with an id. Nothing but a list of each
+   * was checked: it is for `readRegistration`.
+   */
+  readonly onObjects?: (registration: unknown) => void;
   /** An origin not to start on: where the scene this one replaces runs, which may be stuck. */
   readonly avoid?: string;
   readonly rules?: WatchdogRules;
@@ -269,11 +275,26 @@ export class SceneHost {
     this.#send(this.#next ?? this.#current, { type: "pause" });
   }
 
-  /** New curves for a layer. They survive the scene being replaced. */
+  /**
+   * What changed of what the clip holds for the scene, see `ToScene`. It survives the scene being
+   * replaced: a new frame starts with all of it.
+   */
   channels(layer: string, channels: Readonly<Record<string, unknown>>): void {
-    this.#channels.set(layer, { ...this.#channels.get(layer), ...channels });
+    const merged: Record<string, unknown> = { ...this.#channels.get(layer) };
+    for (const [path, value] of Object.entries(channels)) {
+      if (value === null) delete merged[path];
+      else merged[path] = value;
+    }
+    this.#channels.set(layer, merged);
     this.#send(this.#current, { type: "channels", layer, channels });
     this.#send(this.#next, { type: "channels", layer, channels });
+  }
+
+  /** All that the clips hold for the scene, for a frame that starts. */
+  #values(): Readonly<Record<string, unknown>> {
+    const values: Record<string, unknown> = {};
+    for (const channels of this.#channels.values()) Object.assign(values, channels);
+    return values;
   }
 
   /**
@@ -399,7 +420,7 @@ export class SceneHost {
       this.#picture(frame, picture, now);
       return;
     }
-    const weighed = frame.budget.weigh(data, now);
+    const weighed = frame.budget.weigh(data, now, isRegistration(data));
     if (weighed !== "ok") {
       this.#fail(frame, weighed);
       return;
@@ -434,6 +455,10 @@ export class SceneHost {
         break;
       case "problem":
         this.#problem(message.problem);
+        break;
+      case "objects":
+        // A frame on its way to take over runs the same code, and what it found counts as much.
+        this.#options.onObjects?.(message.registration);
         break;
       case "pong":
         frame.dog.answered(message.nonce);
@@ -494,7 +519,7 @@ export class SceneHost {
       type: "boot",
       runtime: RUNTIME_VERSION,
       code: this.#options.runtime,
-      scene: { ...this.#options.load, stage },
+      scene: { ...this.#options.load, stage, values: this.#values() },
     });
   }
 

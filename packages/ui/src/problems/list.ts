@@ -18,6 +18,10 @@ export interface ListedProblem {
   readonly place?: string;
   /** Who says so: the clip with the scene, the code editor, or an import. */
   readonly origin: string;
+  /** The property of a clip it is about, which is where going to it goes. */
+  readonly target?: { readonly clip: string; readonly path: string };
+  /** What can be done about it right away, as one step. */
+  readonly action?: { readonly label: string; readonly run: () => void };
 }
 
 export interface ProblemsSnapshot {
@@ -74,6 +78,8 @@ export class ProblemList {
   /** What the code editor sees in open files, by path. */
   readonly #files = new Map<string, readonly ListedProblem[]>();
   #imported: readonly ListedProblem[] = [];
+  /** What is wrong with what clips hold for their scenes, all of it at once. */
+  #properties: readonly ListedProblem[] = [];
   #snapshot = NOTHING;
 
   subscribe = this.#emitter.subscribe;
@@ -88,6 +94,7 @@ export class ProblemList {
     for (const problem of this.#stopped.values()) add(problem);
     for (const problems of this.#files.values()) problems.forEach(add);
     this.#imported.forEach(add);
+    this.#properties.forEach(add);
     const problems = [...seen.values()].toSorted(compare);
     const errors = problems.filter(({ severity }) => severity === "error").length;
     this.#snapshot = {
@@ -145,6 +152,19 @@ export class ProblemList {
     this.#changed();
   }
 
+  /** All that is wrong with what clips hold for their scenes right now. */
+  setProperties(problems: readonly Listed[]): void {
+    if (problems.length === 0 && this.#properties.length === 0) return;
+    const listed = problems.slice(0, MAX_PROBLEMS).map(withId);
+    const same =
+      listed.length === this.#properties.length &&
+      listed.every((problem, index) => problem.id === this.#properties[index]?.id);
+    this.#properties = listed;
+    // An action belongs to the state it was made in, so a list that reads the same still changes.
+    if (same && listed.every((problem) => problem.action === undefined)) return;
+    this.#changed();
+  }
+
   /** What an import found. Nobody looks at it again, so it stays until people clear it. */
   noteImport(problems: readonly Listed[]): void {
     this.#imported = problems.slice(0, MAX_PROBLEMS).map(withId);
@@ -163,6 +183,7 @@ export class ProblemList {
     this.#stopped.clear();
     this.#files.clear();
     this.#imported = [];
+    this.#properties = [];
     if (this.#snapshot === NOTHING) return;
     this.#snapshot = NOTHING;
     this.#emitter.emit();

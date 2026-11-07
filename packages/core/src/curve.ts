@@ -1,4 +1,9 @@
-import { isAnimation, type ValueType } from "@animaquill/schema/properties";
+import {
+  COLOR_PATTERN,
+  VECTOR_LENGTHS,
+  isAnimation,
+  type ValueType,
+} from "@animaquill/schema/properties";
 import { TIME_PATTERN, parseTime, toSeconds } from "@animaquill/schema/time";
 import type { Animation, Key, PropertyValue, Value } from "@animaquill/schema";
 
@@ -69,6 +74,95 @@ const NUMBER: TypeRule = {
 
 const isObject = (value: Value) => typeof value === "object" && !Array.isArray(value);
 
+type Rgba = readonly [red: number, green: number, blue: number, alpha: number];
+
+/** A color as shares of 0 to 1, as it is written: in sRGB. */
+function rgbaOf(color: string): Rgba {
+  const part = (at: number) => Number.parseInt(color.slice(at, at + 2), 16) / 255;
+  return [part(1), part(3), part(5), color.length === 9 ? part(7) : 1];
+}
+
+const toLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const toGamma = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+
+/** Oklab, by Björn Ottosson: a straight line in it looks like an even change of color. */
+function oklabOf([red, green, blue]: Rgba): readonly [number, number, number] {
+  const [r, g, b] = [toLinear(red), toLinear(green), toLinear(blue)];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+function rgbOf([lightness, a, b]: readonly [number, number, number]): readonly number[] {
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map(toGamma);
+}
+
+const byte = (share: number) =>
+  Math.round(Math.min(Math.max(share, 0), 1) * 255)
+    .toString(16)
+    .padStart(2, "0");
+
+/**
+ * Part of the way from one color to another, in Oklab, with what shows through weighed the way CSS
+ * does it: a color that cannot be seen lends its neighbour nothing but how much shows. Comes out as
+ * `#rrggbb` when nothing shows through.
+ */
+export function mixColors(from: string, to: string, progress: number): string {
+  if (progress <= 0) return from;
+  if (progress >= 1) return to;
+  const a = rgbaOf(from);
+  const b = rgbaOf(to);
+  const alpha = a[3] + (b[3] - a[3]) * progress;
+  if (alpha <= 0) return "#00000000";
+  const labA = oklabOf(a);
+  const labB = oklabOf(b);
+  const lab = labA.map((value, index) => {
+    const weighedA = value * a[3];
+    const weighedB = (labB[index] as number) * b[3];
+    return (weighedA + (weighedB - weighedA) * progress) / alpha;
+  }) as unknown as readonly [number, number, number];
+  const rgb = rgbOf(lab).map(byte).join("");
+  const shown = byte(alpha);
+  return shown === "ff" ? `#${rgb}` : `#${rgb}${shown}`;
+}
+
+const isColor = (value: Value): value is string =>
+  typeof value === "string" && COLOR_PATTERN.test(value);
+
+const COLOR: TypeRule = {
+  accepts: isColor,
+  mix: (from, to, progress) => mixColors(from as string, to as string, progress),
+};
+
+const isNumberList = (value: Value): value is number[] =>
+  Array.isArray(value) && value.every((part) => typeof part === "number" && Number.isFinite(part));
+
+/** Each number on its own. Lists that are not as long as each other stay until the next key. */
+function mixNumbers(from: Value, to: Value, progress: number): Value {
+  const a = from as readonly number[];
+  const b = to as readonly number[];
+  if (a.length !== b.length) return from;
+  return a.map((part, index) => part + ((b[index] as number) - part) * progress);
+}
+
+/** A vector has as many numbers as it says, all of them changing with one easing. */
+const vector = (length: number | undefined): TypeRule => ({
+  accepts: (value) => isNumberList(value) && (length === undefined || value.length === length),
+  mix: mixNumbers,
+});
+
 /**
  * What every kind of value does. Easing does not depend on the type: progress from 0 to 1 is worked
  * out first, and only `mix` knows what it means, so a new type is a new line here.
@@ -81,7 +175,18 @@ export const VALUE_TYPES: Readonly<Record<ValueType, TypeRule>> = {
   choice: { accepts: (value) => typeof value === "string" },
   text: { accepts: (value) => typeof value === "string" || isObject(value) },
   asset: { accepts: isObject },
+  color: COLOR,
+  vec2: vector(VECTOR_LENGTHS.vec2),
+  vec3: vector(VECTOR_LENGTHS.vec3),
+  vec4: vector(VECTOR_LENGTHS.vec4),
+  numbers: vector(undefined),
 };
+
+/** Whether a stored value is one of a type. */
+export const accepts = (type: ValueType, value: Value): boolean => VALUE_TYPES[type].accepts(value);
+
+/** Whether values of a type are one number, which is what has a curve of its own. */
+export const isNumeric = (type: ValueType): boolean => VALUE_TYPES[type].numeric === true;
 
 export const clampToUnit = (value: number): number => Math.min(Math.max(value, 0), 1);
 

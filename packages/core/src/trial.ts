@@ -20,6 +20,7 @@ import { CommandError, fail, type ClipFact } from "./draft.ts";
 import { clipEnd, clipOffset, clipStart, entryOf, type ClipState } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
+import { convertedValue, type Conversion } from "./rename.ts";
 import { effectiveProperties } from "./render-plan.ts";
 import { USER, type CommandFailure, type ProjectStore } from "./store.ts";
 
@@ -221,6 +222,28 @@ function applyFact(entries: Entries, fact: ClipFact, clocks: Map<string, Rationa
       }
       break;
     }
+    case "renamed": {
+      // What is tried goes along. Something tried under the new path already is newer than this.
+      const held = entries.get(fact.clip);
+      const change = held?.get(fact.from);
+      if (!change || held?.has(fact.to)) break;
+      const moved = renamedChange(change, fact);
+      put(entries, fact.clip, fact.from, undefined);
+      if (moved) put(entries, fact.clip, fact.to, moved);
+      break;
+    }
+  }
+}
+
+/** A tried change under its new path, in the unit of that path. Undefined when it cannot be. */
+function renamedChange(change: TrialChange, conversion: Conversion): TrialChange | undefined {
+  const convert = (value: PropertyValue | undefined) =>
+    value === undefined ? undefined : convertedValue(value, conversion);
+  try {
+    return { ...change, base: convert(change.base), value: convert(change.value) };
+  } catch (error) {
+    if (error instanceof CommandError) return undefined;
+    throw error;
   }
 }
 

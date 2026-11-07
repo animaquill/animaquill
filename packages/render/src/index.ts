@@ -37,6 +37,14 @@ export interface FrameTiming {
 /** What changed about the curves of a layer, by property path. Null takes a property away. */
 export type ChannelChanges = Readonly<Record<string, Channel | null>>;
 
+/**
+ * What changed of what a clip holds for its scene, by path, as the clip stores it: see
+ * `RenderLayer.content`. Null takes a path away.
+ */
+export type ContentChanges = Readonly<
+  Record<string, NonNullable<RenderLayer["content"]>[string] | null>
+>;
+
 /** What the compositor needs to know to run scenes. Comes first, and only comes once. */
 export interface SceneSetup {
   /** Where scenes run. None means a host that has no way of running them. */
@@ -109,6 +117,8 @@ export type ToCompositor =
       readonly layer: string;
       readonly channels: ChannelChanges;
       readonly fit?: RenderLayer["fit"];
+      /** For what the scene of the layer works out itself. */
+      readonly content?: ContentChanges;
     }
   | { readonly type: "file"; readonly id: string; readonly file: Blob }
   /** What it asked for with `needs` is not there, so that waiting for it is over. */
@@ -190,6 +200,16 @@ export type FromCompositor =
       readonly layer: string;
       readonly revision: string;
       readonly problem: SceneProblem;
+    }
+  /**
+   * What the code of a scene registered and which elements its page has, in the state it came
+   * from. Only ever data: the editor reads it with `readRegistration`.
+   */
+  | {
+      readonly type: "scene-objects";
+      readonly layer: string;
+      readonly revision: string;
+      readonly registration: unknown;
     }
   /** What came out of the code of a sound. Only ever data, and checked again on arrival. */
   | {

@@ -69,4 +69,14 @@ describe("new curves on a layer", () => {
     const { layers } = withChannels(plan, "a", { channels: { opacity: moved } });
     expect(layers[0]?.fit).toBe("contain");
   });
+
+  it("change what a scene works out itself, and only on a layer with a scene", () => {
+    const scene = { ...layer("s", {}), content: { "param.size": 10, "object.a.x": 1 } };
+    const both = { ...plan, layers: [scene, ...plan.layers] };
+    const content = { "param.size": 20, "object.a.x": null, "element.e.opacity": 0.5 };
+    const { layers } = withChannels(both, "s", { channels: {}, content });
+    expect(layers[0]?.content).toEqual({ "param.size": 20, "element.e.opacity": 0.5 });
+    const plain = withChannels(plan, "a", { channels: {}, content });
+    expect(plain.layers[0]?.content).toBeUndefined();
+  });
 });

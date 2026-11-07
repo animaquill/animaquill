@@ -2,6 +2,7 @@ import {
   buildRenderPlan,
   channelOf,
   fitOf,
+  isSceneOwned,
   samePlan,
   type ProjectState,
   type ProjectStore,
@@ -12,6 +13,7 @@ import type { ProjectLibrary } from "@animaquill/host";
 import {
   layerWith,
   type ChannelChanges,
+  type ContentChanges,
   type FromCompositor,
   type LayerChanges,
   type SceneSetup,
@@ -20,6 +22,7 @@ import {
 import { BUILT_IN_PROPERTIES, type PropertyValue } from "@animaquill/schema";
 import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
 import type { MediaLibrary } from "../media/library.ts";
+import type { SceneRegistrations } from "../properties/registrations.ts";
 import type { PreviewedValues, PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { sceneContent } from "./content.ts";
@@ -56,18 +59,24 @@ function changesOf(
   now: ShownValues,
 ): LayerChanges | undefined {
   const channels: Record<string, ChannelChanges[string]> = {};
+  const content: Record<string, ContentChanges[string]> = {};
   let fit: RenderLayer["fit"] | undefined;
   let changed = false;
+  let forScene = false;
   for (const path of new Set([...(was?.keys() ?? []), ...(now?.keys() ?? [])])) {
     const shown = now?.has(path) === true;
     const value = now?.get(path);
     if (shown && was?.has(path) === true && was.get(path) === value) continue;
     changed = true;
     if (path === "fit") fit = shown ? fitOf(value === undefined ? {} : { fit: value }) : layer.fit;
-    else channels[path] = shown ? channelFor(path, value) : (layer.channels[path] ?? null);
+    else if (layer.content && isSceneOwned(path)) {
+      // The scene works these out itself, so they go as the clip would store them.
+      content[path] = (shown ? value : layer.content[path]) ?? null;
+      forScene = true;
+    } else channels[path] = shown ? channelFor(path, value) : (layer.channels[path] ?? null);
   }
   if (!changed) return undefined;
-  return { channels, ...(fit === undefined ? {} : { fit }) };
+  return { channels, ...(fit === undefined ? {} : { fit }), ...(forScene && { content }) };
 }
 
 /** A plan with something on top of it, for the compositor to start from. */
@@ -116,6 +125,7 @@ export class PreviewLink {
   readonly #watch: CompositorWatch;
   readonly #painted: FrameRateFeed;
   readonly #quality: PreviewQuality;
+  readonly #registrations: SceneRegistrations | undefined;
   /** What the last plan was drawn at. */
   #scale: number | undefined;
   #ready = false;
@@ -141,7 +151,9 @@ export class PreviewLink {
     setup: SceneSetup,
     frameRate: PreviewFrameRate,
     quality: PreviewQuality,
+    registrations?: SceneRegistrations,
   ) {
+    this.#registrations = registrations;
     this.#frame = frame;
     this.#timeline = timeline;
     this.#properties = properties;
@@ -245,6 +257,9 @@ export class PreviewLink {
       if (shown?.kind === "scene" && shown.revision === data.revision) {
         this.#status.noteProblem(data.layer, data.revision, data.problem);
       }
+    } else if (data.type === "scene-objects") {
+      // What any state of a scene registered is true of that state, also one on its way out.
+      this.#registrations?.note(data.revision, data.registration);
     } else if (data.type === "origin-retired") {
       this.#status.noteRetired(data.origin);
     } else if (data.type === "frames") {

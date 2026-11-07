@@ -1,4 +1,5 @@
 import type { PropertyNode } from "@animaquill/core";
+import type { Value } from "@animaquill/schema";
 import {
   ChevronDown,
   ChevronLeft,
@@ -102,7 +103,7 @@ function ValueControl(props: PropertyControlsProps) {
   const readOnly = blocked !== undefined;
   const Control = CONTROLS[node.spec.type] ?? PlainValue;
   /** What a change writes, for the moment it happens. Its key can be somewhere else by then. */
-  const edit = (value: number | string | boolean) => {
+  const edit = (value: Value) => {
     const now = area.keyframes.inspect(box, node.spec) ?? inspected;
     return writeEdit(box.id, now.row, now.time, value);
   };
@@ -297,7 +298,8 @@ interface LaneRowProps {
 const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
   const { keyframes } = area;
   const { t } = useTranslation();
-  const { trials } = useWorkbench();
+  const workbench = useWorkbench();
+  const { trials, properties } = workbench;
   const [menu, setMenu] = useState<{ readonly x: number; readonly y: number }>();
   const { node, open, canOpen, row, box } = lane;
   const isProperty = node.kind === "property";
@@ -308,6 +310,9 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
     () => isProperty && box !== undefined && keyframes.isTried(box.id, node.spec.path),
   );
   const chevronName = t(open ? "keyframes.close" : "keyframes.open", { name: label });
+  // Keys that nothing describes can go somewhere that does, or away.
+  const orphan = isProperty && node.orphan === true && box !== undefined;
+  const changeable = box !== undefined && keyframes.canMove(box.id);
 
   const selectKeys = (event: MouseEvent) => {
     area.selectLane(lane, event.shiftKey || event.ctrlKey || event.metaKey);
@@ -325,7 +330,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
       data-tall={lane.tall || undefined}
       style={{ top: lane.top, height: lane.height }}
       onContextMenu={(event) => {
-        if (!tried) return;
+        if (!tried && !orphan) return;
         event.preventDefault();
         setMenu({ x: event.clientX, y: event.clientY });
       }}
@@ -372,13 +377,38 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
           x={menu.x}
           y={menu.y}
           groups={[
-            [
-              {
-                id: "discard",
-                label: t("trial.discardProperty"),
-                run: () => trials.discardProperty(box.id, node.spec.path),
-              },
-            ],
+            ...(orphan
+              ? [
+                  [
+                    {
+                      id: "connect",
+                      label: t("keyframes.connect.action"),
+                      disabled: !changeable,
+                      run: () => void workbench.connectProperty(box.id, node.spec.path),
+                    },
+                    {
+                      id: "remove",
+                      label: t("keyframes.connect.remove"),
+                      disabled: !changeable,
+                      run: () =>
+                        properties.commit([
+                          { owner: { clip: box.id }, path: node.spec.path, op: "clear" },
+                        ]),
+                    },
+                  ],
+                ]
+              : []),
+            ...(tried
+              ? [
+                  [
+                    {
+                      id: "discard",
+                      label: t("trial.discardProperty"),
+                      run: () => trials.discardProperty(box.id, node.spec.path),
+                    },
+                  ],
+                ]
+              : []),
           ]}
           onClose={() => setMenu(undefined)}
         />

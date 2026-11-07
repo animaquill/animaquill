@@ -20,8 +20,100 @@
 | `aq.view` | `width`、`height`、`pixelRatio`、`format`、`language` |
 | `aq.asset(id)` | 素材的地址。只有这个场景用到的素材才有，没有时返回空地址，并列进问题选项卡。编辑器从代码里找用到的素材，所以 `id` 要写成字面量，比如 `aq.asset("logo")`。`asset` 类型参数的默认值也算用到。这样用到的素材不能删除，要先改掉代码 |
 | `aq.frame(callback)` | 注册帧回调，返回取消注册的函数 |
+| `aq.object(id, options)` | 登记一个能打关键帧的对象，见下面[可以打关键帧的对象](#可以打关键帧的对象) |
+| `aq.param(id, seconds?)` | 参数在这一刻的值：片段的值或关键帧，没有时是 `scene.json` 里的 `default`。不写 `seconds` 是现在 |
 
 页面上同时有 `lang`、`data-format`，以及 CSS 变量 `--aq-width`、`--aq-height`、`--aq-pixel-ratio`。
+
+## 可以打关键帧的对象
+
+场景里能动的东西有三种来源，都进编辑器的属性树，用同一套关键帧。关键帧存在片段上，不写进代码，所以改关键帧不用改场景代码，同一个场景放两次，两个片段有各自的关键帧。
+
+| 来源 | 属性路径 | 怎么进属性树 |
+| --- | --- | --- |
+| 参数 | `param.<id>` | `scene.json` 里声明 |
+| 页面元素 | `element.<id>.<属性>` | 有 `id` 的元素自动列出 |
+| 代码对象 | `object.<对象>.<属性>` | 代码用 `aq.object` 登记 |
+
+值都是这一帧的：编辑器把曲线一次交给场景，场景自己在每一帧求值，不用每帧传值。拖动和试改的值也会到场景里。场景停着的时候值变了，运行时会重新走到这一帧，`aq.frame` 的回调再跑一次，然后重新画。用 `requestAnimationFrame` 画的内容要等播放头动了才更新。
+
+### 代码对象
+
+```js
+const arm = aq.object("arm", {
+  name: "手臂",
+  properties: {
+    x: { type: "number", unit: "world", default: 0, group: "position" },
+    y: { type: "number", unit: "world", default: 0, group: "position" },
+    rotation: { type: "angle", default: 0, min: -180, max: 180 },
+    tint: { type: "color", default: "#ffffff" },
+    visible: true,
+  },
+});
+
+aq.frame((seconds) => {
+  const { x, y, rotation, tint } = arm.at(seconds);
+  draw(x, y, rotation, tint);
+});
+```
+
+- 第一个参数是稳定 ID，只能用英文字母、数字、下划线和连字符，可以用点分出层级，比如 `rig.arm_l`。中文名字写在 `name` 里。属性路径是 `object.<ID>.<属性>`，所以改了 ID，旧的关键帧就没有对象认领了，见下面[改名](#改名)。
+- 属性的名字只能是一段 ID，不能有点。
+- `type` 是 `number`、`angle`、`boolean`、`choice`、`text`、`asset`、`color`、`vec2`、`vec3`、`vec4` 或 `numbers`。`choice` 要写 `options`。只写一个值是简写：`visible: true` 等于 `{ type: "boolean", default: true }`，类型按值推断，`"#ff0000"` 这样的字符串是颜色，两到四个数字的数组是向量。
+- 其他字段：`default`、`min`、`max`、`softMin`、`softMax`（拖动时的建议范围）、`unit`（`world`、`deg`、`ratio` 这类）、`name`、`group`（一层分组）、`components`（向量每个分量的名字，默认 `x`、`y`、`z`、`w`）、`animatable: false`（不能打关键帧）、`aliases`（改名前的名字）。
+- 对象的字段：`name`、`parent`（属性树里的父对象，只决定显示位置，换父级不改路径）、`spans`（在片段时钟上存在的时间段，比如 `[[0, 2], [5, 8]]`，单位秒）、`presence`（对象自己的一个开关或数字属性，为真或大于 0 时才算存在）、`aliases`（改名前的 ID）。`spans` 和 `presence` 只影响属性树默认列出什么。
+- `arm.at(seconds)` 返回这一刻全部属性的值，关键帧已经算进去。不写 `seconds` 是现在。每次返回同一个对象，下次调用会改它的值。
+- 同一个 ID 再登记一次，描述一样时什么都不变，可以在 `aq.frame` 里调用；描述不一样时换成新的。
+- 坐标用场景坐标：原点在片段框中心，y 向下，单位是世界单位，所以横屏竖屏用同一份关键帧。
+- 登记的内容是普通数据，编辑器会检查：ID 和属性名不合规、类型写错、默认值和类型对不上的，那一项不生效，并列进问题选项卡，能定位到调用 `aq.object` 的那一行。值的类型和登记的不一样时用默认值，也列进问题选项卡。最多 2000 个对象、一共 10000 个属性、每个对象 256 个属性。
+
+### 参数
+
+```js
+aq.frame((seconds) => {
+  title.textContent = aq.param("title", seconds);
+  title.style.fontSize = `${aq.param("size", seconds)}px`;
+});
+```
+
+参数在 `scene.json` 里声明，片段用 `param.<id>` 赋值或打关键帧。ID 只能用英文字母、数字、下划线和连字符，否则片段不能给它赋值，问题选项卡里有提示。场景打开时就能读到片段的值。只在打开时读一次的参数，之后的修改和关键帧不会显示，问题选项卡里会提示，要在 `aq.frame` 里读。`asset` 参数的值是 `{ "asset": "<id>" }`，文字参数可能是字符串表的引用 `{ "string": "<键>" }`，都原样返回。
+
+### 页面元素
+
+有 `id` 的元素自动进属性树，`id` 要是一段 ID：英文字母、数字、下划线和连字符，不能有点。
+
+| 属性 | HTML 元素 | SVG 元素 | 写到哪里 |
+| --- | --- | --- | --- |
+| `x`、`y` | 有 | 有 | CSS `translate`，相对元素原来的位置，世界单位 |
+| `scale` | 有 | 有 | CSS `scale` |
+| `rotation` | 有 | 有 | CSS `rotate`，度 |
+| `opacity` | 有 | 有 | CSS `opacity` |
+| `blur` | 有 | 没有 | CSS `filter: blur()`，世界单位 |
+| `color`、`background` | 有 | 没有 | CSS `color`、`background-color` |
+| `fill`、`stroke` | 没有 | 有 | CSS `fill`、`stroke` |
+
+- 没有值时元素保持页面里的样子。有值时写成元素自己的样式，带 `!important`，所以压过样式表、CSS 动画和代码里不带 `!important` 的写法。值都在 `aq.frame` 的回调之后写上去。
+- `translate`、`rotate`、`scale` 是单独的 CSS 属性，和元素自己的 `transform` 叠加，不会替换它。但会替换元素自己的 `translate`、`rotate`、`scale`，`blur` 会替换元素自己的 `filter`。
+- 旋转和缩放绕元素中心。SVG 元素默认绕画布原点，所以运行时给它加上 `transform-box: fill-box` 和 `transform-origin: center`，元素自己写了的不动。
+- 行内元素（比如 `<span>`）不能移动、旋转和缩放，问题选项卡里有提示，给它加上 `display: inline-block`。
+- 编辑器列出场景打开时页面上的元素，最多 1000 个。代码后来加的元素，片段给它设了值以后也会列出。
+
+### 改名
+
+改了对象或属性的 ID，旧的关键帧还在片段上，但没有对象认领，不起作用。它们放在关键帧编辑器的“未连接”组里，也列进问题选项卡，可以连接到别的属性，也可以删除。任何时候编辑器都不会自己删除或改写它们。
+
+在代码里写 `aliases`，旧的关键帧就照样生效：
+
+```js
+aq.object("arm_l", {
+  aliases: ["arm"],
+  properties: { angle: { type: "angle", aliases: ["rotation"] } },
+});
+```
+
+`object.arm.rotation` 上的关键帧会给 `arm_l` 的 `angle` 用。这时问题选项卡里有“迁移”，点了把关键帧移到新路径上，是一步，可以撤销。AI 用 `property.rename` 命令做同样的事，可以一次改整个对象，比如 `object.arm.*` 换成 `object.arm_l.*`，还可以带单位换算。
+
+场景报错没有跑完时，编辑器不知道它还会登记什么，这时代码对象和元素上没人认领的关键帧放在“未运行”组里，不算没有对象认领。
 
 ## 时间
 

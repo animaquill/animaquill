@@ -40,6 +40,11 @@ export interface MessageRules {
   readonly messagesPerSecond: number;
   /** One message that weighs more than this is not one that the protocol has. */
   readonly maxMessageBytes: number;
+  /**
+   * What a scene registered is the one message that can be large: a skeleton has hundreds of bones.
+   * It comes once, and again when the code changes it.
+   */
+  readonly maxRegistrationBytes: number;
   /** Bytes at once, and in the long run. */
   readonly burstBytes: number;
   readonly bytesPerSecond: number;
@@ -55,6 +60,7 @@ export const MESSAGE_RULES: MessageRules = {
   burstMessages: 2000,
   messagesPerSecond: 1000,
   maxMessageBytes: 64 * 1024,
+  maxRegistrationBytes: 2 * 1024 * 1024,
   burstBytes: 4 * 1024 * 1024,
   bytesPerSecond: 1024 * 1024,
   burstPictures: 600,
@@ -180,10 +186,14 @@ export class MessageBudget {
     return this.#messages.take(1, now) ? "ok" : "flood";
   }
 
-  /** Comes right after reading it. One big message is reason enough, however few came before. */
-  weigh(data: unknown, now: number): MessageVerdict {
-    const weight = weightOf(data, this.#rules.maxMessageBytes);
-    if (weight > this.#rules.maxMessageBytes) return "oversized";
+  /**
+   * Comes right after reading it. One big message is reason enough, however few came before. A
+   * registration may weigh more, see `maxRegistrationBytes`, and it counts like any other.
+   */
+  weigh(data: unknown, now: number, registration = false): MessageVerdict {
+    const limit = registration ? this.#rules.maxRegistrationBytes : this.#rules.maxMessageBytes;
+    const weight = weightOf(data, limit);
+    if (weight > limit) return "oversized";
     return this.#bytes.take(weight, now) ? "ok" : "flood";
   }
 }

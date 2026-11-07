@@ -1,4 +1,5 @@
 import {
+  SCENE_OBJECT_TYPES,
   canMix,
   channelOf,
   clipNodeOf,
@@ -8,10 +9,12 @@ import {
   entryOf,
   firstKeyFrom,
   hasOrphans,
+  isNumeric,
   listedTrack,
   objectsOf,
   secondsOf,
   type ClipChild,
+  type ClipDescription,
   type ClipNode,
   type ClipState,
   type KeyEase,
@@ -39,6 +42,7 @@ import {
 import type { TFunction } from "i18next";
 import { inspectProperty, type InspectedProperty } from "../properties/inspect.ts";
 import { groupOf, nameOf, textOf } from "../properties/names.ts";
+import { ClipDescriptions, SceneRegistrations } from "../properties/registrations.ts";
 import type { TrialSession } from "../properties/trial.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
@@ -200,6 +204,7 @@ export class KeyframeEditor {
   readonly #settings: SettingsStore;
   readonly #t: TFunction;
   readonly #messages: KeyframeMessages;
+  readonly #descriptions: ClipDescriptions;
   readonly #emitter = new Emitter();
   readonly #viewEmitter = new Emitter();
   /** The tab. */
@@ -256,6 +261,7 @@ export class KeyframeEditor {
     settings: SettingsStore,
     t: TFunction,
     messages: KeyframeMessages,
+    registrations: SceneRegistrations = new SceneRegistrations(),
   ) {
     this.#session = session;
     this.#timeline = timeline;
@@ -265,6 +271,8 @@ export class KeyframeEditor {
     this.#settings = settings;
     this.#t = t;
     this.#messages = messages;
+    this.#descriptions = new ClipDescriptions(registrations);
+    registrations.subscribe(this.#followRegistrations);
     this.panel = new KeyframesView(this, timeline);
     this.inTimeline = new TimelineLanes(this, timeline);
     timeline.setExtras(this.inTimeline);
@@ -415,6 +423,25 @@ export class KeyframeEditor {
     }
     this.#viewEmitter.emit();
   };
+
+  /** What scenes registered changes what their clips offer, and that is all it changes. */
+  #followRegistrations = (): void => {
+    this.#orphaned = undefined;
+    this.#relist();
+    this.redraw();
+    this.#emitter.emit();
+  };
+
+  /** What a clip offers, with what its scene declares and registered. */
+  describe = (clip: ClipState): ClipDescription | undefined => {
+    const { state } = this;
+    return state ? this.#descriptions.describe(state, clip) : undefined;
+  };
+
+  /** What can be animated on a clip, as the tree has it. */
+  nodeOf(clip: ClipState): ClipNode {
+    return clipNodeOf(clip, this.describe(clip));
+  }
 
   #followTrial = (): void => {
     this.#looks.clear();
@@ -583,8 +610,14 @@ export class KeyframeEditor {
         const kind = clip?.source.kind ?? "";
         return clip?.name ?? textOf(t, `timeline.kind.${kind}`, kind);
       }
-      case "object":
-        return node.orphans ? t("keyframes.orphans") : (node.object.name ?? node.object.id);
+      case "object": {
+        if (node.orphans) return t("keyframes.orphans");
+        if (node.pending) return t("keyframes.pending");
+        const { type } = node.object;
+        if (type === SCENE_OBJECT_TYPES.params) return t("keyframes.objects.params");
+        if (type === SCENE_OBJECT_TYPES.elements) return t("keyframes.objects.elements");
+        return node.object.name ?? node.object.id;
+      }
       case "group":
         return groupOf(t, node.group);
       case "property":
@@ -653,7 +686,8 @@ export class KeyframeEditor {
     value: PropertyValue,
     spec: PropertySpec,
   ): ValueRange | undefined {
-    const channel = channelOf(value, spec.type);
+    // Only a number has a curve that goes up and down. A color or a list changes another way.
+    const channel = isNumeric(spec.type) ? channelOf(value, spec.type) : undefined;
     const range = channel && rangeOfChannel(channel);
     return range && unionOf(range, this.#heldRanges.get(rowKey(clip, path)));
   }
@@ -686,7 +720,7 @@ export class KeyframeEditor {
   specOf(clip: string, path: string): PropertySpec | undefined {
     const box = this.model?.boxes.get(clip);
     if (!box) return undefined;
-    const node = clipNodeOf(this.shown(box.clip));
+    const node = this.nodeOf(this.shown(box.clip));
     let specs = this.#specs.get(node);
     if (!specs) {
       const found = new Map<string, PropertySpec>();
@@ -760,7 +794,7 @@ export class KeyframeEditor {
     if (this.#orphaned) return this.#orphaned;
     const found = new Set<string>();
     for (const box of model.boxes.values()) {
-      if (hasOrphans(clipNodeOf(this.shown(box.clip)))) found.add(box.id);
+      if (hasOrphans(this.nodeOf(this.shown(box.clip)))) found.add(box.id);
     }
     this.#orphaned = found;
     return found;
@@ -804,7 +838,8 @@ export class KeyframeEditor {
     return model.rows.flatMap((row) => {
       const boxes = range === "here" ? this.#clipsNear(model, row, seconds) : row.clips;
       const clips = boxes.map(({ clip }) => this.shown(clip));
-      const node = clips.length > 0 ? listedTrack(row.track, clips, filter) : undefined;
+      const node =
+        clips.length > 0 ? listedTrack(row.track, clips, filter, this.describe) : undefined;
       return node ? [node] : [];
     });
   }
@@ -1087,7 +1122,7 @@ export class KeyframeEditor {
     let only: ClipState | undefined;
     for (const id of this.#timeline.getSnapshot().selection) {
       const clip = model?.boxes.get(id)?.clip;
-      if (!clip || objectsOf(clip).length === 0) continue;
+      if (!clip || (this.describe(clip)?.objects ?? objectsOf(clip)).length === 0) continue;
       // Several clips are no one place to go, and there is no need to look any further.
       if (only) return model?.boxes.get(source)?.clip;
       only = clip;

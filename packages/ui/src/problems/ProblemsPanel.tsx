@@ -19,15 +19,15 @@ function byFile(problems: readonly ListedProblem[]) {
 function Row({ problem }: { problem: ListedProblem }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
-  const { severity, text, file, line, column, place, origin } = problem;
+  const { severity, text, file, line, column, place, origin, target, action } = problem;
   const Icon = severity === "error" ? CircleX : TriangleAlert;
   const where = line === undefined ? place : t("problems.position", { line, column: column ?? 1 });
   return (
-    <li>
+    <li className={styles.item}>
       <button
         type="button"
         className={styles.row}
-        disabled={file === undefined}
+        disabled={file === undefined && target === undefined}
         data-severity={severity}
         onClick={() => workbench.goToProblem(problem)}
       >
@@ -36,6 +36,11 @@ function Row({ problem }: { problem: ListedProblem }) {
         <span className={styles.origin}>{origin}</span>
         {where !== undefined && <span className={styles.where}>{where}</span>}
       </button>
+      {action && (
+        <button type="button" className={styles.action} onClick={action.run}>
+          {action.label}
+        </button>
+      )}
     </li>
   );
 }

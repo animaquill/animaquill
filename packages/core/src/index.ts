@@ -3,9 +3,12 @@ export {
   MAX_SPLIT_Y,
   MIN_SPLIT_Y,
   SHAPE,
+  accepts,
   bezierProgress,
   canMix,
   compileChannel,
+  isNumeric,
+  mixColors,
   numberAt,
   sample,
   secondsOf,
@@ -16,11 +19,53 @@ export {
 } from "./curve.ts";
 export { AUTO_REACH, hasAutoTangents, withAutoTangents } from "./tangents.ts";
 export { CommandError, Draft, type ClipFact } from "./draft.ts";
-export { naturalSizeOf, objectsOf, valueWithout } from "./objects.ts";
+export {
+  SCENE_OBJECT_TYPES,
+  describeClip,
+  nameKeyOf,
+  naturalSizeOf,
+  objectsOf,
+  valueWithout,
+  type ClipDescription,
+  type PendingRename,
+  type SceneRegistry,
+  type SceneRun,
+} from "./objects.ts";
+export {
+  REGISTRATION_LIMITS,
+  SCENE_PREFIXES,
+  elementPath,
+  isIdPart,
+  isObjectId,
+  isRegistered,
+  isSceneOwned,
+  objectPath,
+  paramPath,
+  readElement,
+  readObject,
+  readRegistration,
+  readValue,
+  zeroOf,
+  type ReadRegistration,
+  type Registration,
+  type RegistrationProblem,
+  type RegistrationProblemCode,
+  type SceneElement,
+} from "./registration.ts";
 export { KeyEase, PropertyEdit, applyEdit, firstKeyFrom, type ValueEdit } from "./property-edit.ts";
+export {
+  PropertyRename,
+  convertedValue,
+  inverseOf,
+  isWildcard,
+  movesOf,
+  type Conversion,
+} from "./rename.ts";
 export {
   clipIsHere,
   clipNodeOf,
+  guessedSpec,
+  guessedType,
   hasOrphans,
   listedClip,
   listedTrack,
@@ -31,6 +76,7 @@ export {
   rowsOf,
   type ClipChild,
   type ClipNode,
+  type Describe,
   type GroupNode,
   type ListFilter,
   type ListRange,
@@ -46,6 +92,7 @@ export {
   buildRenderPlan,
   channelOf,
   channelsOf,
+  contentOf,
   effectiveProperties,
   firstValue,
   fitOf,
@@ -64,6 +111,7 @@ export {
   sceneSourceOf,
   soundFilesOf,
   type SceneAsset,
+  type SceneParam,
   type SceneSource,
 } from "./scene-plan.ts";
 export {

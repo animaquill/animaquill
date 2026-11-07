@@ -10,6 +10,7 @@ import {
   objectsOf,
   sample,
   valueWithout,
+  type ClipDescription,
   type ClipState,
   type ProjectState,
   type PropertyEdit,
@@ -208,12 +209,16 @@ function blockedAt({ model, clip, moment }: Place, comparing: boolean | undefine
   return shows(clip, moment) ? undefined : "outside";
 }
 
+/** What a clip offers, with what its scene declares and registered when there is a way to know. */
+const objectsOfClip = (clip: ClipState, describe: TrialView["describe"]) =>
+  describe?.(clip)?.objects ?? objectsOf(clip);
+
 function inspectClip(
   state: ProjectState,
   model: TimelineModel,
   box: ClipBox,
   frame: number,
-  { look, comparing }: TrialView,
+  { look, comparing, describe }: TrialView,
 ): Inspection {
   const clip = look?.apply(box.clip) ?? box.clip;
   const place = placeOf(state, model, clip, frame);
@@ -223,7 +228,7 @@ function inspectClip(
     blocked: blockedAt(place, comparing),
     time: formatTime(place.clock),
     firstFrame: place.firstFrame,
-    objects: objectsOf(clip).map((object) => ({
+    objects: objectsOfClip(clip, describe).map((object) => ({
       object,
       rows: object.properties.map((spec) => rowOf(spec, place, look)),
     })),
@@ -261,6 +266,8 @@ export interface TrialView {
   readonly look?: TrialLook | undefined;
   /** People are looking at what is saved, so what they see is not what an edit would start from. */
   readonly comparing?: boolean;
+  /** What clips offer beyond what the editor knows by itself: see `describeClip`. */
+  readonly describe?: (clip: ClipState) => ClipDescription | undefined;
 }
 
 /**
@@ -277,7 +284,7 @@ export function inspect(
   if (selection.size === 0) return { kind: "nothing" };
   const boxes = [...selection].flatMap((id) => {
     const box = model.boxes.get(id);
-    return box && objectsOf(box.clip).length > 0 ? [box] : [];
+    return box && objectsOfClip(box.clip, trial.describe).length > 0 ? [box] : [];
   });
   const [box] = boxes;
   if (!box) return { kind: "no-properties" };

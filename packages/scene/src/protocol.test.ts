@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFromScene, readSamples, readSoundFailure } from "./protocol.ts";
+import { isRegistration, readFromScene, readSamples, readSoundFailure } from "./protocol.ts";
 
 const problem = { kind: "error", message: "boom", file: "a.js", line: 3, column: 7, frame: 12 };
 
@@ -14,8 +14,24 @@ describe("readFromScene", () => {
     [{ type: "progress", frame: 7 }],
     [{ type: "problem", problem }],
     [{ type: "pong", nonce: 9 }],
+    [{ type: "objects", registration: { objects: [], elements: [], complete: true } }],
   ])("takes %j", (message) => {
     expect(readFromScene(message)).toEqual(message);
+  });
+
+  it.each([
+    { type: "objects" },
+    { type: "objects", registration: "all of it" },
+    { type: "objects", registration: { objects: {}, elements: [] } },
+    { type: "objects", registration: { objects: [] } },
+  ])("takes no registration without its lists, as in %j", (message) => {
+    expect(readFromScene(message)).toBeUndefined();
+  });
+
+  it("tells a registration by its type, which is all it reads", () => {
+    expect(isRegistration({ type: "objects" })).toBe(true);
+    expect(isRegistration({ type: "frame" })).toBe(false);
+    expect(isRegistration("objects")).toBe(false);
   });
 
   it.each([

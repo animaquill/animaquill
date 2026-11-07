@@ -263,6 +263,12 @@ importers:
 
   packages/scene:
     dependencies:
+      '@animaquill/core':
+        specifier: workspace:*
+        version: link:../core
+      '@animaquill/schema':
+        specifier: workspace:*
+        version: link:../schema
       '@csstools/css-tokenizer':
         specifier: 4.0.2
         version: 4.0.2

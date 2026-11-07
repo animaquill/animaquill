@@ -523,6 +523,7 @@
     "reset": "恢复默认",
     "on": "开",
     "off": "关",
+    "numbers": "{{count}} 个数字",
     "help": {
       "previousKey": "把播放头移到这个片段里的上一个关键帧。",
       "nextKey": "把播放头移到这个片段里的下一个关键帧。",
@@ -550,6 +551,18 @@
       "fit": "适应方式",
       "audio": {
         "volume": "音量"
+      },
+      "element": {
+        "x": "X",
+        "y": "Y",
+        "scale": "缩放",
+        "rotation": "旋转",
+        "opacity": "不透明度",
+        "blur": "模糊",
+        "color": "文字颜色",
+        "background": "背景色",
+        "fill": "填充",
+        "stroke": "描边"
       }
     },
     "choice": {
@@ -776,6 +789,7 @@
         "capture-timeout": "浏览器没有绘制这一帧，预览里显示的是之前的画面",
         "content-timeout": "图片或字体三秒内没有准备好，这一帧继续往下走",
         "css-import-cycle": "样式表互相引用：{{target}}",
+        "element-inline": "元素 #{{target}} 是行内元素，移动、旋转和缩放对它不起作用。给它加上 display: inline-block",
         "external-url": "场景不能联网，这个地址被挡住了：{{target}}",
         "focus": "场景不能拿走键盘焦点",
         "frameset": "不支持 frameset",
@@ -783,6 +797,19 @@
         "missing-asset": "这个素材场景拿不到：{{target}}",
         "missing-entry": "入口文件不在：{{file}}",
         "missing-file": "文件不在：{{target}}",
+        "missing-param": "scene.json 里没有这个参数：{{target}}",
+        "object-alias": "{{target}} 的 aliases 里有不能用的 ID",
+        "object-default": "属性 {{target}} 的默认值和它的类型对不上，用了这个类型的空值",
+        "object-id": "aq.object 的 ID 不能用：{{target}}。只能用英文字母、数字、下划线和连字符，用点分出层级，比如 rig.arm_l",
+        "object-parent": "对象 {{target}} 的 parent 不能用",
+        "object-presence": "对象 {{target}} 的 presence 要写成它自己的一个开关或数字属性",
+        "object-property": "属性 {{target}} 不能用：名字只能用英文字母、数字、下划线和连字符，type 要写对，choice 要有 options",
+        "object-property-twice": "属性 {{target}} 写了两次，只用第一个",
+        "object-range": "属性 {{target}} 的范围不对：最小值不能比最大值大",
+        "object-spans": "对象 {{target}} 的 spans 不对：每一段写成 [开始, 结束]，单位是秒，开始在前",
+        "object-too-many": "登记的内容太多（{{target}}），后面的没有用上",
+        "object-twice": "有两个 ID 都是 {{target}} 的对象，只用第一个",
+        "param-read-once": "参数 {{target}} 只在场景打开时读了一次，之后的修改和关键帧不会显示。在 aq.frame 里用 aq.param 读，就会跟着变",
         "slow-work": "读取文件或者加载模块超过一秒，有的结果可能到得晚",
         "too-many-problems": "问题太多，后面的不再记录",
         "top-layer": "{{target}} 捕获不到，这部分不会出现在预览里",
@@ -985,6 +1012,26 @@
       "missing": "素材的文件不在文件夹里：{{name}}",
       "damaged": "素材的文件和项目记录的内容不一样，没有导入：{{name}}",
       "skipped": "项目用不上这个文件，没有带进来：{{name}}"
+    },
+    "properties": {
+      "orphan": "{{path}} 没有对象认领，关键帧不起作用。可以在关键帧编辑器的“未连接”里连接到别的属性，或者删除",
+      "renamed": "{{from}} 改名成了 {{to}}，关键帧还在旧路径上，照样生效",
+      "migrate": "迁移",
+      "mismatch": "{{path}} 的值不是{{type}}，不起作用，用的是默认值",
+      "param": "参数“{{name}}”的 ID 不能用作属性路径，片段不能给它赋值，也不能打关键帧。ID 只能用英文字母、数字、下划线和连字符",
+      "types": {
+        "number": "数字",
+        "angle": "角度",
+        "text": "文字",
+        "choice": "选项",
+        "boolean": "开关",
+        "asset": "素材",
+        "color": "颜色",
+        "vec2": "两个数字",
+        "vec3": "三个数字",
+        "vec4": "四个数字",
+        "numbers": "一组数字"
+      }
     }
   },
   "keyframes": {
@@ -1011,6 +1058,19 @@
       "search": "没有找到这个属性。"
     },
     "orphans": "未连接",
+    "pending": "未运行",
+    "objects": {
+      "params": "参数",
+      "elements": "元素"
+    },
+    "connect": {
+      "action": "连接到…",
+      "title": "把“{{name}}”连接到别的属性",
+      "field": "连接到",
+      "confirm": "连接",
+      "none": "这个片段里没有能接住这些关键帧的属性。属性要有对象认领、类型对得上，并且自己还没有值。",
+      "remove": "删除这些关键帧"
+    },
     "on": "开",
     "off": "关",
     "open": "展开 {{name}}",

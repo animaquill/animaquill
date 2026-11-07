@@ -14,6 +14,8 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@animaquill/core": "workspace:*",
+    "@animaquill/schema": "workspace:*",
     "@csstools/css-tokenizer": "4.0.2",
     "es-module-lexer": "3.0.4",
     "parse5": "8.1.0"

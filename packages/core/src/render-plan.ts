@@ -21,6 +21,7 @@ import {
   type TrackState,
 } from "./model.ts";
 import type { ProjectState } from "./model.ts";
+import { isSceneOwned } from "./registration.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
 import { madeSoundOf } from "./sound-plan.ts";
 import { stageOf, type Size } from "./view.ts";
@@ -68,6 +69,12 @@ export interface RenderLayer {
   readonly fades: { readonly in: number; readonly out: number };
   /** What changes over time, on the clock of the clip: `transform.*` and `opacity`. */
   readonly channels: Channels;
+  /**
+   * What the content works out by itself, as the clip stores it: a scene gets its `param.*`,
+   * `element.*` and `object.*`. Only the scene knows what types those are, see `describeClip`, so
+   * they go as they are and it prepares them itself.
+   */
+  readonly content?: Readonly<Record<string, PropertyValue>>;
 }
 
 export interface SoundLayer {
@@ -173,6 +180,19 @@ function sourceOf(clip: ClipState, asset: Asset | undefined): LayerSource | unde
 const secondsOf = (time: string | undefined) =>
   time === undefined ? 0 : toSeconds(parseTime(time));
 
+const NO_CONTENT: Readonly<Record<string, PropertyValue>> = {};
+
+/** What of a clip is for its scene. */
+export function contentOf(properties: Properties): Readonly<Record<string, PropertyValue>> {
+  let content: Record<string, PropertyValue> | undefined;
+  for (const [path, value] of Object.entries(properties)) {
+    if (!isSceneOwned(path)) continue;
+    content ??= {};
+    content[path] = value;
+  }
+  return content ?? NO_CONTENT;
+}
+
 interface BuiltLayer {
   readonly asset: Asset | undefined;
   readonly scene: SceneSource | undefined;
@@ -209,6 +229,7 @@ function layerOf(
     fit: scene ? "fixed" : fitOf(properties),
     fades: { in: secondsOf(clip.fadeIn), out: secondsOf(clip.fadeOut) },
     channels: channelsOf(properties),
+    ...(scene && { content: contentOf(properties) }),
   };
   built.set(clip, { asset, scene, properties, layer });
   return layer;

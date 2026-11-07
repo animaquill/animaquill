@@ -56,7 +56,13 @@ export const HOLD = { interp: "hold" } as const;
 /** Few moments and few properties, so that edits land on each other's keys all the time. */
 export function randomEdit(clip: string, random: ReturnType<typeof randomFrom>): object {
   const owner = { clip };
-  const path = random.pick(["opacity", "transform.x", "transform.rotation"]) as string;
+  const path = random.pick([
+    "opacity",
+    "transform.x",
+    "transform.rotation",
+    "object.arm.x",
+    "object.arm_l.x",
+  ]) as string;
   const moment = () => random.pick(MOMENTS) as string;
   const time = moment();
   const value = random.int(100) / 100;
@@ -103,7 +109,42 @@ export function randomCommand(
   const sound = random.pick(Object.keys(state.sounds)) ?? "none";
   const file = random.pick(Object.keys(state.files)) ?? "code/none.js";
   const page = { "index.html": `<p>${random.int(9)}</p>`, "a.js": String(random.int(9)) };
+  // Two names for one object, so that keys go back and forth between them and land on each other.
+  const [from, to] = random.chance(0.5)
+    ? ["object.arm", "object.arm_l"]
+    : ["object.arm_l", "object.arm"];
+  const rename = (renames: readonly object[]): CommandCall => ({
+    type: "property.rename",
+    params: { timeline, renames },
+  });
+  // Mostly a clip that has something to rename, or nothing would ever get renamed.
+  const withArm = clips.filter((id) =>
+    Object.keys(main?.clips[id]?.properties ?? {}).some((path) => path.startsWith("object.arm")),
+  );
+  const armed = (random.chance(0.8) ? random.pick(withArm) : undefined) ?? clip;
   const calls: (() => CommandCall)[] = [
+    () => rename([{ owner: { clip: armed }, from: `${from}.*`, to: `${to}.*` }]),
+    () =>
+      rename([
+        {
+          owner: { clip: armed },
+          from: `${from}.x`,
+          to: `${to}.x`,
+          scale: random.pick([2, 0.5, -1]),
+          offset: random.int(3),
+        },
+      ]),
+    () =>
+      rename([
+        { owner: { clip: armed }, from: "object.arm.x", to: "object.arm_l.x" },
+        { owner: { clip: armed }, from: "object.arm_l.x", to: "object.arm.x" },
+      ]),
+    () =>
+      rename(
+        clips
+          .filter(() => random.chance(0.3))
+          .map((id) => ({ owner: { clip: id }, from: `${from}.*`, to: `${to}.*` })),
+      ),
     () => ({
       type: "scene.add",
       params: {

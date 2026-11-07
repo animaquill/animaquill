@@ -1054,7 +1054,8 @@ test.describe("a project written by hand", () => {
     await open(page, "纯色");
     await open(page, "未连接");
     await expect(row(page, "param.title")).toBeVisible();
-    await expect(row(page, "param.title")).toContainText("你好");
+    // Words can be written in their row.
+    await expect(row(page, "param.title").getByRole("textbox")).toHaveValue("你好");
     await expect(row(page, "param.visible")).toContainText("开");
     await expect(keys(page, "param.title")).toHaveCount(2);
     await expect(keys(page, "param.title").first()).toHaveAttribute("data-mark", "hold");

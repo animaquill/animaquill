@@ -39,13 +39,15 @@ export function projectFolder(
   scenes: Readonly<Record<string, Readonly<Record<string, string>>>>,
   clips: readonly SceneClip[],
   format?: NewProject["format"],
+  /** What goes into `scene.json` of a scene apart from its name and its entry. */
+  manifests: Readonly<Record<string, Partial<SceneManifest>>> = {},
 ): string {
-  const manifests = Object.keys(scenes).map((id): [string, SceneManifest] => [
+  const written = Object.keys(scenes).map((id): [string, SceneManifest] => [
     id,
-    { name: `场景 ${id}`, entry: "index.html", runtime: 1 },
+    { name: `场景 ${id}`, entry: "index.html", runtime: 1, ...manifests[id] },
   ]);
   const created = createProject({ name: "场景项目", ...(format && { format }) });
-  const project = { ...created, scenes: new Map(manifests) };
+  const project = { ...created, scenes: new Map(written) };
   const files = writeProject(project);
   const path = "timelines/main/timeline.json";
   const timeline = JSON.parse(files.get(path) as string) as {
@@ -53,7 +55,7 @@ export function projectFolder(
     tracks: { clips: unknown[] }[];
   };
   timeline.sections = timeline.sections.map((section) => ({ ...section, duration: "30" }));
-  const written = clips.map((clip, index) => ({
+  const placed = clips.map((clip, index) => ({
     id: clip.id ?? `clip${index}`,
     start: clip.start ?? "0",
     duration: clip.duration ?? "10",
@@ -62,8 +64,8 @@ export function projectFolder(
     ...(clip.properties && { properties: clip.properties }),
   }));
   const isAbove = (index: number) => clips[index]?.above === true;
-  (timeline.tracks[0] as { clips: unknown[] }).clips = written.filter((_, at) => !isAbove(at));
-  const upper = written.filter((_, at) => isAbove(at));
+  (timeline.tracks[0] as { clips: unknown[] }).clips = placed.filter((_, at) => !isAbove(at));
+  const upper = placed.filter((_, at) => isAbove(at));
   if (upper.length > 0)
     timeline.tracks.splice(1, 0, { id: "upper", kind: "video", clips: upper } as never);
   files.set(path, JSON.stringify(timeline));

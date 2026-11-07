@@ -5,6 +5,7 @@ import {
   clipOffset,
   clipStart,
   projectFrameRate,
+  type ClipState,
   type ProjectStore,
   type UndoResult,
 } from "@animaquill/core";
@@ -19,6 +20,7 @@ import { ErrorReports } from "../diagnostics/errors.ts";
 import { namesIn } from "../diagnostics/privacy.ts";
 import { DiagnosticsRecorder, deviceFacts } from "../diagnostics/recorder.ts";
 import { registerKeyframeActions } from "../keyframes/actions.ts";
+import { connectionsFor, type Connection } from "../keyframes/connect.ts";
 import { KeyframeEditor } from "../keyframes/editor.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
@@ -29,6 +31,8 @@ import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts
 import { PreviewFrameRate } from "../preview/frame-rate.ts";
 import { PreviewQuality } from "../preview/quality.ts";
 import { PreviewStatus } from "../preview/status.ts";
+import { propertyProblems } from "../properties/problems.ts";
+import { SceneRegistrations } from "../properties/registrations.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
@@ -62,6 +66,8 @@ export interface WorkbenchOptions {
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
 const MAX_REPORTED_CLIPS = 500;
+/** How long problems of properties wait for more changes, so that a burst of them is one look. */
+const PROPERTY_PROBLEMS_DELAY_MS = 150;
 
 function saveReport(report: unknown, name: string): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(report, undefined, 2)]));
@@ -109,6 +115,8 @@ export class Workbench {
   /** How sharp the preview is drawn. Never what gets exported. */
   readonly previewQuality: PreviewQuality;
   readonly problems = new ProblemList();
+  /** What the code of scenes registered when it ran, which is not in the project. */
+  readonly registrations: SceneRegistrations;
   readonly code: CodeDocuments;
   readonly files: FileActions;
   readonly drafts: CodeDrafts;
@@ -168,10 +176,13 @@ export class Workbench {
       saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
+    this.registrations = new SceneRegistrations(host.caches);
     let open = this.session.store;
+    this.registrations.open(open?.getState().manifest.id);
     this.session.subscribe(() => {
       if (this.session.store !== open) this.problems.clear();
       open = this.session.store;
+      this.registrations.open(open?.getState().manifest.id);
     });
     this.code = new CodeDocuments(
       this.session,
@@ -321,8 +332,10 @@ export class Workbench {
         notShown: () => this.notifications.push(t("notice.keysNotShown")),
         gone: () => this.notifications.push(t("notice.keysGone")),
       },
+      this.registrations,
     );
     this.#keepTrail();
+    this.#keepPropertyProblems();
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
     this.#registerCodeActions();
@@ -389,6 +402,99 @@ export class Workbench {
     follow();
   }
 
+  /**
+   * What is wrong with what clips hold for their scenes changes with the project and with what the
+   * scenes registered. It is worked out after a moment, once for all that changed in between.
+   */
+  #keepPropertyProblems(): void {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const note = () => {
+      timer = undefined;
+      const state = this.session.store?.getState();
+      const timeline = this.timeline.model?.id;
+      if (!state || timeline === undefined) {
+        this.problems.setProperties([]);
+        return;
+      }
+      const sources = {
+        describe: this.keyframes.describe,
+        registered: (revision: string) => this.registrations.problemsOf(revision),
+        clipName: (clip: ClipState) => sceneClipName(clip, state, this.t),
+        rename: (clip: string, from: string, to: string) => this.renameProperty(clip, from, to),
+      };
+      this.problems.setProperties(propertyProblems(state, timeline, sources, this.t));
+    };
+    const soon = () => {
+      timer ??= setTimeout(note, PROPERTY_PROBLEMS_DELAY_MS);
+    };
+    let store: ProjectStore | undefined;
+    let stop: (() => void) | undefined;
+    const follow = () => {
+      if (this.session.store === store) return;
+      stop?.();
+      store = this.session.store;
+      stop = store?.subscribe(soon);
+      soon();
+    };
+    this.session.subscribe(follow);
+    follow();
+    this.registrations.subscribe(soon);
+    this.timeline.subscribe(soon);
+  }
+
+  /**
+   * Gives the keys of a property another path, which is how keys that lost their object find one
+   * again. One step, which undo takes back.
+   */
+  renameProperty(clip: string, from: string, to: string): boolean {
+    const store = this.session.store;
+    const timeline = this.timeline.model?.id;
+    if (!store || timeline === undefined) return false;
+    const renames = [{ owner: { clip }, from, to }];
+    const result = store.execute({ type: "property.rename", params: { timeline, renames } });
+    if (!result.ok) {
+      this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
+    }
+    return result.ok;
+  }
+
+  /**
+   * Asks where keys that nothing describes should go, and takes them there. Only properties that
+   * can take them are on offer.
+   */
+  async connectProperty(clip: string, path: string): Promise<void> {
+    const box = this.timeline.model?.boxes.get(clip);
+    if (!box) return;
+    const { t, keyframes } = this;
+    const found = connectionsFor(keyframes.nodeOf(box.clip), box.clip, path, (node) =>
+      keyframes.nameOfNode(node),
+    );
+    const words = { name: path, interpolation: { escapeValue: false } };
+    if (found.length === 0) {
+      await this.dialogs.confirm({
+        title: t("keyframes.connect.title", words),
+        message: t("keyframes.connect.none"),
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+      return;
+    }
+    const answer = await this.dialogs.form({
+      title: t("keyframes.connect.title", words),
+      fields: [
+        {
+          id: "to",
+          label: t("keyframes.connect.field"),
+          options: found.map(({ path: id, label }) => ({ id, label })),
+          value: (found[0] as Connection).path,
+        },
+      ],
+      confirm: t("keyframes.connect.confirm"),
+    });
+    const to = answer?.["to"];
+    if (to !== undefined) this.renameProperty(clip, path, to);
+  }
+
   #clipName(clip: string): string {
     const box = this.timeline.model?.boxes.get(clip);
     return sceneClipName(box?.clip, this.session.store?.getState(), this.t);
@@ -433,8 +539,14 @@ export class Workbench {
     this.problems.noteStopped(clip, { severity: "error", text, origin });
   }
 
-  /** Goes to where a problem is, if the project has that file. */
-  goToProblem({ file, line, column }: ListedProblem): void {
+  /** Goes to where a problem is: a file of the project, or the keys of a property of a clip. */
+  goToProblem({ file, line, column, target }: ListedProblem): void {
+    if (target) {
+      if (!this.timeline.model?.boxes.has(target.clip)) return;
+      this.timeline.selectOnly(target.clip);
+      this.layout.openPanel("keyframes");
+      return;
+    }
     if (file === undefined) return;
     const place = line === undefined ? undefined : { line, ...(column && { column }) };
     if (!this.showCode(file, place)) {

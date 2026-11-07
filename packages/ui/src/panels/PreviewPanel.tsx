@@ -18,7 +18,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
   const workbench = useWorkbench();
   const { timeline, properties, projects, media, compositorUrl, notifications, diagnostics } =
     workbench;
-  const { preview, sceneOrigins, sceneStage, frameRate, previewQuality } = workbench;
+  const { preview, sceneOrigins, sceneStage, frameRate, previewQuality, registrations } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const { runScenes } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
@@ -51,6 +51,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
       },
       frameRate,
       previewQuality,
+      registrations,
     );
     onLink(link);
     // The compositor says hello once it has loaded, so the link has to listen first.
@@ -70,6 +71,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
     previewQuality,
     projects,
     properties,
+    registrations,
     runScenes,
     sceneOrigins,
     sceneStage,

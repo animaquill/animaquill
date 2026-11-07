@@ -185,6 +185,33 @@
   cursor: pointer;
 }
 
+.text {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+.text:hover,
+.text:focus {
+  border-color: var(--aq-timeline-tick);
+  outline: none;
+}
+
+.text[data-tried] {
+  color: var(--aq-trial);
+}
+
+.text:read-only {
+  color: var(--aq-text-muted);
+  background: transparent;
+}
+
 .switch {
   display: flex;
   align-items: center;
@@ -231,6 +258,62 @@
 
 .switch:disabled:hover {
   border-color: transparent;
+}
+
+.color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.swatch {
+  flex: none;
+  width: 30px;
+  height: 20px;
+  padding: 1px;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.swatch:disabled {
+  cursor: default;
+}
+
+.colorText {
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.color[data-tried] .colorText {
+  color: var(--aq-trial);
+}
+
+.vector {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.objectName {
+  margin: 8px 0 2px;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.object:first-child .objectName {
+  margin-top: 0;
 }
 
 .plain {

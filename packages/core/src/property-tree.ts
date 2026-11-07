@@ -1,13 +1,14 @@
 import {
   BUILT_IN_PROPERTIES,
+  COLOR_PATTERN,
   add,
   compare,
   isAnimation,
   subtract,
   toSeconds,
-  type Animation,
   type ObjectDescriptor,
   type PropertySpec,
+  type PropertyValue,
   type Rational,
   type Value,
   type ValueType,
@@ -23,7 +24,8 @@ import {
   type TimelineState,
   type TrackState,
 } from "./model.ts";
-import { objectsOf } from "./objects.ts";
+import { objectsOf, type ClipDescription } from "./objects.ts";
+import { isRegistered, isSceneOwned } from "./registration.ts";
 import { channelOf, effectiveProperties } from "./render-plan.ts";
 
 /**
@@ -40,19 +42,25 @@ export interface RowShape {
   readonly component?: { readonly index: number; readonly name: string };
   /**
    * What the keys sit on. `segments` is for what does not change gradually: there is one value from
-   * one key to the next, and that is the thing to show.
+   * one key to the next, and that is the thing to show. `gradient` is a color, which shows what it
+   * is on the way from one key to the next.
    */
-  readonly band: "keys" | "segments";
-  /** What opening the row shows. `value` is a curve of the numbers themselves. */
-  readonly curve: "value" | "none";
+  readonly band: "keys" | "segments" | "gradient";
+  /**
+   * What the row shows of the way from one key to the next. `value` is a curve of the numbers
+   * themselves. `progress` is the easing alone, for what has no number to draw.
+   */
+  readonly curve: "value" | "progress" | "none";
   /** What is next to the name. */
-  readonly readout: "number" | "value";
+  readonly readout: "number" | "value" | "color" | "components" | "count";
 }
 
 type Shape = Pick<RowShape, "band" | "curve" | "readout">;
 
 const GRADUAL: Shape = { band: "keys", curve: "value", readout: "number" };
 const STEPPED: Shape = { band: "segments", curve: "none", readout: "value" };
+/** A vector has one row for all of it, and one curve of numbers for each of its parts. */
+const VECTOR: Shape = { band: "keys", curve: "none", readout: "components" };
 
 /** A new type of value is a new line here, and the compiler asks for it. */
 const SHAPES: Readonly<Record<ValueType, Shape>> = {
@@ -62,17 +70,24 @@ const SHAPES: Readonly<Record<ValueType, Shape>> = {
   choice: STEPPED,
   text: STEPPED,
   asset: STEPPED,
+  color: { band: "gradient", curve: "progress", readout: "color" },
+  vec2: VECTOR,
+  vec3: VECTOR,
+  vec4: VECTOR,
+  numbers: { band: "keys", curve: "progress", readout: "count" },
 };
 
 /**
  * The rows of a property. The first one stands for all of it. A vector also has a row for each part,
- * which is a view of the same channel: its keys are the keys of the vector.
+ * which is a view of the same channel: its keys are the keys of the vector, and its curve is that of
+ * the one number.
  */
 export function rowsOf(spec: PropertySpec): readonly RowShape[] {
   const shape = SHAPES[spec.type];
   const whole: RowShape = { path: spec.path, ...shape };
   const parts = (spec.components ?? []).map((name, index): RowShape => ({
-    ...whole,
+    path: spec.path,
+    ...GRADUAL,
     component: { index, name },
   }));
   return [whole, ...parts];
@@ -84,6 +99,8 @@ export interface PropertyNode {
   readonly clip: string;
   readonly spec: PropertySpec;
   readonly rows: readonly RowShape[];
+  /** Nothing describes it, see `ObjectNode.orphans`. */
+  readonly orphan?: true;
 }
 
 export interface GroupNode {
@@ -104,6 +121,11 @@ export interface ObjectNode {
   readonly children: readonly ClipChild[];
   /** Channels nobody describes. They do nothing, and they stay in sight so that it shows. */
   readonly orphans?: true;
+  /**
+   * Channels that code has to describe, of a scene that did not get through loading here yet. They
+   * may well be fine, so they show as they are and nothing is said about them.
+   */
+  readonly pending?: true;
 }
 
 export interface ClipNode {
@@ -245,38 +267,82 @@ function objectNode(clip: string, prefix: string, tree: ObjectTree): ObjectNode 
 const isClipItself = (object: ObjectDescriptor) => object.type === "clip.visual";
 
 /** What a value looks like, for a channel without a description. */
-function guessedType(value: Value | undefined): ValueType {
+export function guessedType(value: Value | undefined): ValueType {
   if (typeof value === "number") return "number";
-  return typeof value === "boolean" ? "boolean" : "text";
+  if (typeof value === "boolean") return "boolean";
+  if (Array.isArray(value)) return "numbers";
+  return typeof value === "string" && COLOR_PATTERN.test(value) ? "color" : "text";
 }
 
-function orphanSpec(path: string, { keys }: Animation): PropertySpec {
+/** A description for a channel without one, from what it holds. */
+export function guessedSpec(path: string, stored: PropertyValue): PropertySpec {
   const known = Object.hasOwn(BUILT_IN_PROPERTIES, path) ? BUILT_IN_PROPERTIES[path] : undefined;
-  return known ?? { path, type: guessedType(keys[0]?.value) };
+  const value = isAnimation(stored) ? stored.keys[0]?.value : stored;
+  return known ?? { path, type: guessedType(value) };
 }
 
-/** Keys that no object describes, which is what is left of a renamed object for example. */
-function orphansOf(
+/** A group of channels that nothing describes, for one reason or another. */
+function undescribedNode(
   clip: ClipState,
-  described: ReadonlySet<string>,
   prefix: string,
+  specs: readonly PropertySpec[],
+  kind: "orphans" | "pending",
 ): ObjectNode | undefined {
-  const specs = Object.entries(effectiveProperties(clip)).flatMap(([path, stored]) =>
-    described.has(path) || !isAnimation(stored) ? [] : [orphanSpec(path, stored)],
-  );
   if (specs.length === 0) return undefined;
-  const object = { id: "orphans", properties: specs };
-  const id = `${prefix}/object:orphans`;
-  const children = specs.map((spec) => propertyNode(clip.id, id, spec));
-  return { kind: "object", id, clip: clip.id, object, children, orphans: true };
+  const object = { id: kind, properties: specs };
+  const id = `${prefix}/object:${kind}`;
+  const children = specs.map((spec) => {
+    const node = propertyNode(clip.id, id, spec);
+    return kind === "orphans" ? { ...node, orphan: true as const } : node;
+  });
+  return { kind: "object", id, clip: clip.id, object, children, [kind]: true };
 }
 
-const allSpecs = ({ object, children }: ObjectTree): readonly PropertySpec[] => [
-  ...object.properties,
-  ...children.flatMap(allSpecs),
-];
+/**
+ * Channels that no object describes. That is what is left of a renamed object, for example, or of
+ * one whose code is gone. Keys always show. A plain value only shows where it is about the content
+ * of a scene: other properties of a clip have a plain value without anything to show it yet. While
+ * the code of a scene has not got through loading, what only code describes is not known to be gone.
+ */
+function undescribedOf(
+  clip: ClipState,
+  objects: readonly ObjectTree[],
+  ran: ClipDescription["ran"],
+  prefix: string,
+): readonly ObjectNode[] {
+  const animatable = new Set<string>();
+  const known = new Set<string>();
+  const visit = ({ object, children }: ObjectTree) => {
+    for (const { path, animatable: can } of object.properties) {
+      known.add(path);
+      if (can !== false) animatable.add(path);
+    }
+    children.forEach(visit);
+  };
+  objects.forEach(visit);
+  const orphans: PropertySpec[] = [];
+  const pending: PropertySpec[] = [];
+  for (const [path, stored] of Object.entries(effectiveProperties(clip))) {
+    if (animatable.has(path)) continue;
+    const keyed = isAnimation(stored);
+    if (known.has(path)) {
+      // What cannot have keys and has them anyway: only a hand-written project gets there.
+      if (keyed) orphans.push(guessedSpec(path, stored));
+      continue;
+    }
+    if (ran !== undefined && ran !== "complete" && isRegistered(path)) {
+      pending.push(guessedSpec(path, stored));
+    } else if (keyed || (ran !== undefined && isSceneOwned(path))) {
+      orphans.push(guessedSpec(path, stored));
+    }
+  }
+  return [
+    undescribedNode(clip, prefix, pending, "pending"),
+    undescribedNode(clip, prefix, orphans, "orphans"),
+  ].filter((node): node is ObjectNode => node !== undefined);
+}
 
-function buildClipNode(clip: ClipState, objects: readonly ObjectDescriptor[]): ClipNode {
+function buildClipNode(clip: ClipState, { objects, ran }: ClipDescription): ClipNode {
   const id = clip.id;
   const { roots } = objectForest(objects);
   const children = roots.flatMap((tree): readonly ClipChild[] => {
@@ -289,25 +355,38 @@ function buildClipNode(clip: ClipState, objects: readonly ObjectDescriptor[]): C
     const node = objectNode(id, id, tree);
     return node.children.length > 0 ? [node] : [];
   });
-  const described = new Set(
-    roots.flatMap(allSpecs).flatMap(({ path, animatable }) => (animatable === false ? [] : [path])),
-  );
-  const orphans = orphansOf(clip, described, id);
-  return { kind: "clip", id, clip: id, children: orphans ? [...children, orphans] : children };
+  const undescribed = undescribedOf(clip, roots, ran, id);
+  return { kind: "clip", id, clip: id, children: [...children, ...undescribed] };
 }
 
-/** Unchanged clips keep their identity, so a list of thousands costs nothing the second time. */
-const nodes = new WeakMap<ClipState, ClipNode>();
+/**
+ * Unchanged clips keep their identity, so a list of thousands costs nothing the second time. So does
+ * what describes them, see `describeClip`.
+ */
+const nodes = new WeakMap<
+  ClipState,
+  { readonly described: ClipDescription | undefined; readonly node: ClipNode }
+>();
 
-/** What can be animated on a clip, which comes from its objects unless they are given. */
-export function clipNodeOf(clip: ClipState, objects?: readonly ObjectDescriptor[]): ClipNode {
-  if (objects) return buildClipNode(clip, objects);
+/**
+ * What can be animated on a clip, which comes from what the editor knows of it unless it gets a
+ * description: a scene declares and registers more, see `describeClip`.
+ */
+export function clipNodeOf(
+  clip: ClipState,
+  described?: ClipDescription | readonly ObjectDescriptor[],
+): ClipNode {
+  if (Array.isArray(described)) return buildClipNode(clip, { objects: described });
+  const description = described as ClipDescription | undefined;
   const known = nodes.get(clip);
-  if (known) return known;
-  const node = buildClipNode(clip, objectsOf(clip));
-  nodes.set(clip, node);
+  if (known && known.described === description) return known.node;
+  const node = buildClipNode(clip, description ?? { objects: objectsOf(clip) });
+  nodes.set(clip, { described: description, node });
   return node;
 }
+
+/** What describes a clip, for whoever knows more about it than the project: see `describeClip`. */
+export type Describe = (clip: ClipState) => ClipDescription | undefined;
 
 /** What the paths below something are, in the order of the tree. */
 const paths = new WeakMap<TreeNode, readonly string[]>();
@@ -457,9 +536,10 @@ export function listedTrack(
   track: Pick<TrackState, "id">,
   clips: readonly ClipState[],
   filter: ListFilter,
+  describe?: Describe,
 ): TrackNode | undefined {
   const children = clips.flatMap((clip) => {
-    const node = listedClip(clipNodeOf(clip), clip, filter);
+    const node = listedClip(clipNodeOf(clip, describe?.(clip)), clip, filter);
     return node ? [node] : [];
   });
   if (children.length === 0) return undefined;
@@ -467,7 +547,11 @@ export function listedTrack(
 }
 
 /** The tree of a timeline, as far as a filter lists it. */
-export function propertyTree(timeline: TimelineState, filter: ListFilter): readonly TrackNode[] {
+export function propertyTree(
+  timeline: TimelineState,
+  filter: ListFilter,
+  describe?: Describe,
+): readonly TrackNode[] {
   const clips = Object.values(timeline.clips).toSorted((a, b) =>
     compare(clipStart(a), clipStart(b)),
   );
@@ -476,6 +560,7 @@ export function propertyTree(timeline: TimelineState, filter: ListFilter): reado
       track,
       clips.filter((clip) => clip.track === track.id),
       filter,
+      describe,
     );
     return node ? [node] : [];
   });

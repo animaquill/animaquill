@@ -34,7 +34,19 @@ export type ClipFact =
   /** That was taken back. */
   | { readonly kind: "joined"; readonly clip: string; readonly piece: string }
   /** A clip became another one, which is how cutting it out and pasting it works. */
-  | { readonly kind: "moved"; readonly from: string; readonly to: string };
+  | { readonly kind: "moved"; readonly from: string; readonly to: string }
+  /**
+   * A property of a clip went to another path, for code that renamed what it is about. Its values
+   * became `value × scale + offset` on the way, when those are there.
+   */
+  | {
+      readonly kind: "renamed";
+      readonly clip: string;
+      readonly from: string;
+      readonly to: string;
+      readonly scale?: number;
+      readonly offset?: number;
+    };
 
 function factTakenBack(fact: ClipFact): ClipFact {
   switch (fact.kind) {
@@ -46,6 +58,11 @@ function factTakenBack(fact: ClipFact): ClipFact {
       return { ...fact, kind: "cut" };
     case "moved":
       return { kind: "moved", from: fact.to, to: fact.from };
+    case "renamed": {
+      const { clip, from, to, scale = 1, offset = 0 } = fact;
+      const back = scale === 1 && offset === 0 ? {} : { scale: 1 / scale, offset: -offset / scale };
+      return { kind: "renamed", clip, from: to, to: from, ...back };
+    }
   }
 }
 

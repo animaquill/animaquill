@@ -49,6 +49,7 @@ import {
 } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
+import { PropertyRename, convertedValue, movesOf } from "./rename.ts";
 import { isInUse } from "./references.ts";
 import {
   FileRemove,
@@ -220,6 +221,118 @@ function editProperties(draft: Draft, timeline: string, edits: readonly Property
         draft.set(where, value);
       }
     }
+  }
+}
+
+type ClipOverrides = NonNullable<TimelineState["overrides"][string]["clips"]>[string];
+
+/** The property paths of a clip, also those that only a version has. */
+function pathsOfClip(timeline: TimelineState, clip: ClipState): ReadonlySet<string> {
+  const paths = new Set(Object.keys(clip.properties ?? {}));
+  for (const override of Object.values(timeline.overrides)) {
+    const changes: ClipOverrides | undefined = entryOf(override.clips, clip.id);
+    for (const path of Object.keys(changes?.properties ?? {})) paths.add(path);
+  }
+  return paths;
+}
+
+interface PlannedMove {
+  readonly to: string;
+  readonly rename: PropertyRename;
+}
+
+/**
+ * Moves channels to other paths, with their keys and in every version, for code that renamed what
+ * they are about. Everything gets checked first: a path cannot go to two places, and nothing gets
+ * written over, apart from what moves away in the same step, so that two properties can swap.
+ */
+function renameProperties(
+  draft: Draft,
+  timeline: string,
+  renames: readonly PropertyRename[],
+): number {
+  const target = timelineOf(draft, timeline);
+  const plans = new Map<string, Map<string, PlannedMove>>();
+  for (const rename of renames) {
+    const clip = editableClip(target, rename.owner.clip);
+    const moves = movesOf(pathsOfClip(target, clip), rename);
+    if (moves.length === 0) fail("not-found", `没有这个属性：${rename.from}`);
+    const plan = plans.get(clip.id) ?? new Map<string, PlannedMove>();
+    plans.set(clip.id, plan);
+    for (const [from, to] of moves) {
+      if (!PropertyPath.safeParse(to).success) fail("invalid-value", `不是属性路径：${to}`);
+      if (from === to) fail("invalid-value", `改名前后是同一个属性：${from}`);
+      if (plan.has(from)) fail("invalid-value", `同一个属性不能改名两次：${from}`);
+      plan.set(from, { to, rename });
+    }
+  }
+  let moved = 0;
+  for (const [id, plan] of plans) {
+    const clip = entryOf(target.clips, id) as ClipState;
+    const paths = pathsOfClip(target, clip);
+    const targets = new Set<string>();
+    for (const { to } of plan.values()) {
+      if (targets.has(to)) fail("invalid-value", `两个属性不能改成同一个名字：${to}`);
+      targets.add(to);
+      if (paths.has(to) && !plan.has(to)) fail("conflict", `已经有这个属性：${to}`);
+    }
+    moveProperties(draft, timeline, clip, plan);
+    moved += plan.size;
+  }
+  return moved;
+}
+
+function moveProperties(
+  draft: Draft,
+  timeline: string,
+  clip: ClipState,
+  plan: ReadonlyMap<string, PlannedMove>,
+): void {
+  const properties = clip.properties ?? {};
+  const where = [...clipPath(timeline, clip.id), "properties"];
+  const written = new Map<string, PropertyValue>();
+  for (const [from, { to, rename }] of plan) {
+    const value = entryOf(properties, from);
+    if (value === undefined) continue;
+    const converted = convertedValue(value, rename);
+    checkWrite(to, undefined, converted);
+    written.set(to, converted);
+  }
+  // Changes of versions first, all of them checked before anything gets written.
+  const versions: [string[], Map<string, unknown>, readonly string[]][] = [];
+  for (const [version, override] of Object.entries(timelineOf(draft, timeline).overrides)) {
+    const changes = entryOf(override.clips, clip.id)?.properties;
+    if (!changes) continue;
+    const moved = new Map<string, unknown>();
+    const leaving: string[] = [];
+    for (const [from, { to, rename }] of plan) {
+      const change = entryOf(changes, from);
+      if (!change) continue;
+      const value = convertedValue(change.value, rename);
+      checkWrite(to, undefined, value);
+      const base = change.base === undefined ? undefined : convertedValue(change.base, rename);
+      moved.set(to, base === undefined ? { value } : { value, base });
+      leaving.push(from);
+    }
+    const path = [...timelinePath(timeline), "overrides", version, "clips", clip.id, "properties"];
+    if (moved.size > 0) versions.push([path, moved, leaving]);
+  }
+  for (const [from, { to, rename }] of plan) {
+    const { scale, offset } = rename;
+    if (entryOf(properties, from) !== undefined) draft.delete([...where, from]);
+    draft.note({
+      kind: "renamed",
+      clip: clip.id,
+      from,
+      to,
+      ...(scale !== undefined && { scale }),
+      ...(offset !== undefined && { offset }),
+    });
+  }
+  for (const [to, value] of written) draft.set([...where, to], value);
+  for (const [path, moved, leaving] of versions) {
+    for (const from of leaving) draft.delete([...path, from]);
+    for (const [to, change] of moved) draft.set([...path, to], change);
   }
 }
 
@@ -620,6 +733,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { timeline, edits }) => {
       editProperties(draft, timeline, edits);
     },
+  ),
+
+  /**
+   * Gives keys and values another path, for code that renamed what they are about: one property,
+   * or everything under a path with `object.arm.*`. Nothing renames anything by itself.
+   */
+  define(
+    "property.rename",
+    z.strictObject({ timeline: Id, renames: z.array(PropertyRename).min(1) }),
+    (draft, { timeline, renames }) => ({ renamed: renameProperties(draft, timeline, renames) }),
   ),
 
   define(

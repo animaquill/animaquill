@@ -109,6 +109,15 @@ export class ProblemLog {
     }
   }
 
+  /**
+   * Where the code of the project is that called the runtime, by the stack as it is right now: the
+   * line of an `aq.object` that something is wrong with, for example.
+   */
+  caller(): Place | undefined {
+    const { stack } = new Error();
+    return stack === undefined ? undefined : readStack(stack, this.#sources).top;
+  }
+
   /** Something that was thrown, wherever it came from. */
   thrown(kind: "error" | "rejection", thrown: unknown, near?: Place): void {
     const error = thrown instanceof Error ? thrown : undefined;

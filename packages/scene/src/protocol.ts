@@ -1,3 +1,5 @@
+import type { SceneParam } from "@animaquill/core";
+
 /**
  * What the compositor and a scene say to each other. A scene runs code from the project, so what
  * comes out of one is only ever data to check, never something to trust: see `readFromScene`.
@@ -51,6 +53,13 @@ export interface SceneLoad {
    * all a browser without capture can lay out.
    */
   readonly stage: "canvas" | "plain";
+  /** What `scene.json` declares, for `aq.param`. */
+  readonly params: readonly SceneParam[];
+  /**
+   * What the clip holds for the scene when it starts, as it stores it: `param.*`, `element.*` and
+   * `object.*`. Code that reads a parameter right away gets it from here. Changes come as `channels`.
+   */
+  readonly values?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -175,7 +184,10 @@ export type ToScene =
   | { readonly type: "play"; readonly base: TimeBase }
   /** Stay on the current frame. */
   | { readonly type: "pause" }
-  /** New curves for one layer, only those that changed. What is in them comes with properties. */
+  /**
+   * What changed of what the clip holds for the scene, by path, as it stores it. Null takes a path
+   * away. The scene knows the types and prepares the curves itself, see `SceneLoad.values`.
+   */
   | {
       readonly type: "channels";
       readonly layer: string;
@@ -235,7 +247,16 @@ export type FromScene =
   /** How far a long way to a frame has come, so that it can be told from a scene that is stuck. */
   | { readonly type: "progress"; readonly frame: number }
   | { readonly type: "problem"; readonly problem: SceneProblem }
+  /**
+   * What its code registered with `aq.object` and which elements of its page have an id, once it is
+   * `ready` and whenever that changes. Only ever data, which the editor reads with `readRegistration`.
+   */
+  | { readonly type: "objects"; readonly registration: unknown }
   | { readonly type: "pong"; readonly nonce: number };
+
+/** Whether a message is about what a scene registered, which is the one that can be large. */
+export const isRegistration = (data: unknown): boolean =>
+  typeof data === "object" && data !== null && (data as { type?: unknown }).type === "objects";
 
 /** Longer than any line of an error message a person would read. */
 const MAX_TEXT = 2000;
@@ -336,6 +357,15 @@ export function readFromScene(data: unknown): Exclude<FromScene, { type: "frame"
     case "problem": {
       const problem = readProblem(message.problem);
       return problem && { type: "problem", problem };
+    }
+    case "objects": {
+      const { registration } = message;
+      const lists =
+        typeof registration === "object" &&
+        registration !== null &&
+        Array.isArray((registration as { objects?: unknown }).objects) &&
+        Array.isArray((registration as { elements?: unknown }).elements);
+      return lists ? { type: "objects", registration } : undefined;
     }
     case "pong": {
       const nonce = count(message.nonce);

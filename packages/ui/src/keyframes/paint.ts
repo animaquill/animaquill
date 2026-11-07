@@ -41,6 +41,9 @@ const GHOST_ALPHA = 0.35;
 const PARENT_SHADE = "#00000033";
 const CLIP_SPAN_ALPHA = 0.18;
 const SEGMENT_ALPHA = 0.5;
+/** How wide a step of the colors on the way from one key to the next is. */
+const GRADIENT_STEP = 3;
+const GRADIENT_ALPHA = 0.85;
 
 /** What a value says, in words. */
 export type ValueLabel = (spec: PropertySpec, value: unknown) => string;
@@ -266,6 +269,10 @@ export class LanePainter {
       this.#segments(context, theme, lane, node.spec, box, animation, band);
       return;
     }
+    if (shape?.band === "gradient") {
+      this.#gradient(context, lane, node.spec, box, animation, band);
+      return;
+    }
     if (shape?.curve !== "value") return;
     const scale = this.#area.scaleOf(lane, box);
     const channel = channelOf(animation, node.spec.type);
@@ -314,6 +321,37 @@ export class LanePainter {
         context.restore();
       }
     }
+  }
+
+  /**
+   * A color shows what it is on the way from one key to the next, as a band under its keys. It goes
+   * as far as the clip does: outside of it nothing shows the color.
+   */
+  #gradient(
+    context: CanvasRenderingContext2D,
+    lane: Lane,
+    spec: PropertySpec,
+    box: ClipBox,
+    animation: Animation,
+    { y, from, to }: Band,
+  ): void {
+    const channel = channelOf(animation, spec.type);
+    if (!channel) return;
+    const area = this.#area;
+    const toClock = box.offset - box.start;
+    const left = Math.max(area.xAt(Math.max(box.start, from)), 0);
+    const right = Math.min(area.xAt(Math.min(box.end, to)), area.width);
+    const top = y + 3;
+    const height = lane.height - 7;
+    const alpha = context.globalAlpha;
+    context.globalAlpha = alpha * GRADIENT_ALPHA;
+    for (let x = left; x < right; x += GRADIENT_STEP) {
+      const color = sample(channel, area.timeAt(x + GRADIENT_STEP / 2) + toClock);
+      if (typeof color !== "string") continue;
+      context.fillStyle = color;
+      context.fillRect(x, top, Math.min(GRADIENT_STEP, right - x), height);
+    }
+    context.globalAlpha = alpha;
   }
 
   /**

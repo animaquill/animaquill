@@ -123,4 +123,35 @@ describe("how bad a problem is", () => {
     expect(severityOf({ kind: "loader" })).toBe("warning");
     expect(severityOf({ kind: "resource" })).toBe("warning");
   });
+
+  it("has what is wrong with properties, which is all of that at once", () => {
+    const list = new ProblemList();
+    let heard = 0;
+    list.subscribe(() => (heard += 1));
+    const orphan = { severity: "warning" as const, text: "没人认领", origin: "片段" };
+    list.setProperties([orphan]);
+    expect(texts(list)).toEqual(["没人认领"]);
+    list.setProperties([orphan]);
+    expect(heard).toBe(1);
+    list.setProperties([]);
+    expect(texts(list)).toEqual([]);
+    list.setProperties([orphan]);
+    list.clear();
+    expect(texts(list)).toEqual([]);
+  });
+
+  it("gets the newest action of a problem that reads the same", () => {
+    const list = new ProblemList();
+    const run = vi.fn();
+    const problem = (go: () => void) => ({
+      severity: "warning" as const,
+      text: "改名了",
+      origin: "片段",
+      action: { label: "迁移", run: go },
+    });
+    list.setProperties([problem(() => {})]);
+    list.setProperties([problem(run)]);
+    list.getSnapshot().problems[0]?.action?.run();
+    expect(run).toHaveBeenCalledOnce();
+  });
 });

@@ -1,4 +1,4 @@
-import { clipNodeOf, type ClipNode } from "@animaquill/core";
+import type { ClipNode } from "@animaquill/core";
 import type { LaneKeys } from "../timeline/actions.ts";
 import { RULER_HEIGHT, type RowExtras, type TimelineEditor } from "../timeline/editor.ts";
 import type { Gesture, Pointer } from "../timeline/gestures.ts";
@@ -101,7 +101,7 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   }
 
   canOpen({ clip }: ClipBox): boolean {
-    return clipNodeOf(this.keyframes.shown(clip)).children.length > 0;
+    return this.keyframes.nodeOf(this.keyframes.shown(clip)).children.length > 0;
   }
 
   isOpen({ id }: ClipBox): boolean {
@@ -127,7 +127,7 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   #nodesOf(model: TimelineModel, row: Row): readonly ClipNode[] {
     return row.clips.flatMap((box) => {
       if (!this.#open.has(box.id)) return [];
-      const node = clipNodeOf(this.keyframes.shown(box.clip));
+      const node = this.keyframes.nodeOf(this.keyframes.shown(box.clip));
       return node.children.length > 0 && model.boxes.has(box.id) ? [node] : [];
     });
   }

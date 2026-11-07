@@ -481,7 +481,7 @@ async function paintStill(seconds: number): Promise<void> {
   const shown = plan;
   if (!shown) throw new StillFailed({ reason: "failed", message: "No plan" });
   wanted = seconds;
-  scenes.follow(settledPlan, seconds);
+  scenes.follow(settledPlan, seconds, shown);
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept(showing);
   releaseFilesExcept(showing);
@@ -813,7 +813,7 @@ function handle(data: ToCompositor): void {
   // It goes where `still` says, and a scene at the start of the plan is not worth opening for nothing.
   if (exporting) return;
   try {
-    scenes.follow(settledPlan, wanted);
+    scenes.follow(settledPlan, wanted, plan);
   } finally {
     // Whatever went wrong with a scene, the rest of the picture goes on.
     void refresh();

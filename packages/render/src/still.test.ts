@@ -39,6 +39,7 @@ const scene = (id = "scene") =>
     runtime: 1,
     seed: 1,
     assets: [],
+    params: [],
   });
 const color = layer("color", { kind: "color", color: "#ff0000" });
 

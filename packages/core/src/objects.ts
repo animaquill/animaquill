@@ -1,28 +1,253 @@
 import {
   CLIP_SOUND,
   CLIP_VISUAL,
+  ELEMENT_PROPERTIES,
   SCENE_VISUAL,
   toSeconds,
   type MediaRef,
   type ObjectDescriptor,
   type PropertySpec,
+  type SceneManifest,
   type Value,
+  type ValueType,
 } from "@animaquill/schema";
 import { clipOffset, clipStart, entryOf, type ClipState, type ProjectState } from "./model.ts";
+import {
+  elementPath,
+  isIdPart,
+  objectPath,
+  paramPath,
+  type Registration,
+  type SceneElement,
+} from "./registration.ts";
 import { channelsOf, effectiveProperties, fitOf, formatOf, type Version } from "./render-plan.ts";
+import { sceneSourceOf } from "./scene-plan.ts";
 import { boxOf, stageOf, type Size } from "./view.ts";
 
 const WITH_A_PICTURE = new Set(["video", "image", "color"]);
 
 /**
- * The objects of a clip, which is everything about it that can be edited or animated. Whatever shows
- * or changes properties reads this instead of knowing them. Effects, scenes and code objects come in
- * here with the same description.
+ * The objects of a clip that the editor knows by itself, which is everything about it that can be
+ * edited or animated apart from what the scene of a clip declares and registers: see `describeClip`.
  */
 export function objectsOf(clip: ClipState): readonly ObjectDescriptor[] {
   if (clip.source.kind === "scene") return [SCENE_VISUAL];
   if (clip.source.kind === "sound") return [CLIP_SOUND];
   return WITH_A_PICTURE.has(clip.source.kind) ? [CLIP_VISUAL] : [];
+}
+
+/** What is known of scenes apart from the project: what their code registered when it ran. */
+export interface SceneRegistry {
+  /** What a state of a scene registered, by its revision. Undefined when it did not run here. */
+  registrationOf(revision: string): Registration | undefined;
+}
+
+/**
+ * How far the code of a scene got when it last ran: through loading, or not, or it never ran here.
+ * Only after `complete` is a channel that nothing describes one that lost its object.
+ */
+export type SceneRun = "complete" | "partial" | "never";
+
+/** Keys of a property that are under a path it went by before. */
+export interface PendingRename {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** What a clip offers, and how much of that is known. */
+export interface ClipDescription {
+  readonly objects: readonly ObjectDescriptor[];
+  /** For a clip with a scene. */
+  readonly ran?: SceneRun;
+  /** Properties that read keys from a path they went by before, which `property.rename` moves. */
+  readonly renames?: readonly PendingRename[];
+}
+
+/** The objects of a scene that are the same for every clip of it. Built-in types have a name. */
+export const SCENE_OBJECT_TYPES = {
+  params: "scene.params",
+  elements: "scene.elements",
+  element: "scene.element",
+} as const;
+
+const PARAMS_ID = "params";
+const ELEMENTS_ID = "elements";
+
+/** What `scene.json` declares, as properties. Parameters with ids no path can hold are left out. */
+function paramsObject(manifest: SceneManifest | undefined): ObjectDescriptor | undefined {
+  const properties = (manifest?.params ?? []).flatMap((param): PropertySpec[] => {
+    if (!isIdPart(param.id)) return [];
+    const spec: Record<string, unknown> = {
+      path: paramPath(param.id),
+      type: param.type as ValueType,
+      name: param.name,
+    };
+    for (const key of ["default", "min", "max", "options"] as const) {
+      if (param[key] !== undefined) spec[key] = param[key];
+    }
+    return [spec as unknown as PropertySpec];
+  });
+  return properties.length > 0
+    ? { id: PARAMS_ID, type: SCENE_OBJECT_TYPES.params, properties }
+    : undefined;
+}
+
+function elementObject({ id, kind, start }: SceneElement): ObjectDescriptor {
+  return {
+    id: `element.${id}`,
+    name: id,
+    type: SCENE_OBJECT_TYPES.element,
+    parent: ELEMENTS_ID,
+    properties: ELEMENT_PROPERTIES[kind].map((spec): PropertySpec => {
+      const begins = start && entryOf(start, spec.path);
+      return {
+        ...spec,
+        path: elementPath(id, spec.path),
+        ...(begins !== undefined && { default: begins }),
+      };
+    }),
+  };
+}
+
+/** A property with the paths it went by before, in the order they count. */
+interface Placed {
+  readonly spec: PropertySpec;
+  readonly before: readonly string[];
+}
+
+interface Resolved {
+  readonly objects: readonly ObjectDescriptor[];
+  /** Properties with paths from before. Empty for most scenes. */
+  readonly renamed: readonly {
+    readonly object: number;
+    readonly index: number;
+    readonly placed: Placed;
+  }[];
+}
+
+/** An object of code with paths for the clip, and where it can find its keys under older names. */
+function codeObject(
+  object: ObjectDescriptor,
+  renamed: (index: number, placed: Placed) => void,
+): ObjectDescriptor {
+  const { id, name, parent, spans, presence, aliases = [] } = object;
+  const properties = object.properties.map((spec, index): PropertySpec => {
+    const own = spec.aliases ?? [];
+    const before = [
+      ...own.map((alias) => objectPath(id, alias)),
+      ...aliases.flatMap((was) => [spec.path, ...own].map((alias) => objectPath(was, alias))),
+    ];
+    const { aliases: _aliases, ...rest } = spec;
+    const placed: PropertySpec = {
+      ...rest,
+      path: objectPath(id, spec.path),
+      name: spec.name ?? spec.path,
+    };
+    if (before.length > 0) renamed(index, { spec: placed, before });
+    return placed;
+  });
+  return {
+    id: `object.${id}`,
+    name: name ?? id,
+    ...(parent !== undefined && { parent: `object.${parent}` }),
+    ...(spans && { spans }),
+    ...(presence !== undefined && { presence: objectPath(id, presence) }),
+    properties,
+  };
+}
+
+/** What every clip of a state of a scene has, apart from older paths that it has keys under. */
+function resolve(
+  manifest: SceneManifest | undefined,
+  registration: Registration | undefined,
+): Resolved {
+  const objects: ObjectDescriptor[] = [SCENE_VISUAL];
+  const params = paramsObject(manifest);
+  if (params) objects.push(params);
+  const elements = registration?.elements ?? [];
+  if (elements.length > 0) {
+    objects.push({ id: ELEMENTS_ID, type: SCENE_OBJECT_TYPES.elements, properties: [] });
+    objects.push(...elements.map(elementObject));
+  }
+  const renamed: Resolved["renamed"][number][] = [];
+  for (const object of registration?.objects ?? []) {
+    const at = objects.length;
+    objects.push(
+      codeObject(object, (index, placed) => renamed.push({ object: at, index, placed })),
+    );
+  }
+  return { objects, renamed };
+}
+
+const NO_REGISTRATION = {};
+const NO_MANIFEST = {};
+const resolved = new WeakMap<object, WeakMap<object, Resolved>>();
+
+function resolvedOf(manifest: SceneManifest | undefined, registration: Registration | undefined) {
+  const byRegistration = registration ?? NO_REGISTRATION;
+  let known = resolved.get(byRegistration);
+  if (!known) resolved.set(byRegistration, (known = new WeakMap()));
+  const byManifest = manifest ?? NO_MANIFEST;
+  let found = known.get(byManifest);
+  if (!found) known.set(byManifest, (found = resolve(manifest, registration)));
+  return found;
+}
+
+/**
+ * Where the keys of a property are for a clip: under its path, or else under the first path it went
+ * by before that has any. That is what keeps keys working when code renames what they are about.
+ */
+function withRenames(clip: ClipState, { objects, renamed }: Resolved) {
+  if (renamed.length === 0) return { objects, renames: [] };
+  const properties = effectiveProperties(clip);
+  const renames: PendingRename[] = [];
+  let changed: ObjectDescriptor[] | undefined;
+  for (const { object, index, placed } of renamed) {
+    const { spec, before } = placed;
+    if (entryOf(properties, spec.path) !== undefined) continue;
+    const from = before.find((path) => entryOf(properties, path) !== undefined);
+    if (from === undefined) continue;
+    renames.push({ from, to: spec.path });
+    changed ??= [...objects];
+    const target = changed[object] as ObjectDescriptor;
+    const list = [...target.properties];
+    list[index] = { ...spec, path: from };
+    const presence = target.presence === spec.path ? { presence: from } : {};
+    changed[object] = { ...target, ...presence, properties: list };
+  }
+  return { objects: changed ?? objects, renames };
+}
+
+/**
+ * Everything a clip offers: what the editor knows of it, the parameters its scene declares, and
+ * what the code of the scene registered when it last ran here. Paths are those of the clip, so
+ * the properties of code objects are `object.<id>.<property>`. What code registered is not trusted:
+ * it went through `readRegistration`.
+ */
+export function describeClip(
+  state: ProjectState,
+  clip: ClipState,
+  registry: SceneRegistry | undefined,
+): ClipDescription {
+  const { source } = clip;
+  if (source.kind !== "scene" || typeof source.scene !== "string") {
+    return { objects: objectsOf(clip) };
+  }
+  const scene = sceneSourceOf(state, source.scene);
+  const manifest = entryOf(state.scenes, source.scene);
+  const registration = scene && registry?.registrationOf(scene.revision);
+  const { objects, renames } = withRenames(clip, resolvedOf(manifest, registration));
+  const ran: SceneRun = registration ? (registration.complete ? "complete" : "partial") : "never";
+  return { objects, ran, ...(renames.length > 0 && { renames }) };
+}
+
+/**
+ * What the name of a property is looked up by: the properties of elements have the same names,
+ * whatever the ids of the elements are.
+ */
+export function nameKeyOf(path: string): string {
+  const element = /^element\.[^.]+\.([^.]+)$/.exec(path);
+  return element ? `element.${element[1]}` : path;
 }
 
 /** How large the media of a clip is, as far as the project knows. */

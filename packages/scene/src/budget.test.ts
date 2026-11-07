@@ -163,6 +163,7 @@ describe("MessageBudget", () => {
     burstMessages: 10,
     messagesPerSecond: 5,
     maxMessageBytes: 1000,
+    maxRegistrationBytes: 2000,
     burstBytes: 3000,
     bytesPerSecond: 1000,
     burstPictures: 10,
@@ -175,6 +176,14 @@ describe("MessageBudget", () => {
       expect(budget.admit(at)).toBe("ok");
       expect(budget.weigh({ type: "position", frame: at }, at)).toBe("ok");
     }
+  });
+
+  it("lets a registration weigh more, and no more than that", () => {
+    const budget = new MessageBudget(0, rules);
+    const heavy = (bytes: number) => ({ type: "objects", registration: "x".repeat(bytes / 2) });
+    expect(budget.weigh(heavy(1500), 0)).toBe("oversized");
+    expect(budget.weigh(heavy(1500), 0, true)).toBe("ok");
+    expect(budget.weigh(heavy(2500), 0, true)).toBe("oversized");
   });
 
   it("calls too many messages a flood before anything looks at them", () => {

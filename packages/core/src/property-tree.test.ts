@@ -63,6 +63,39 @@ describe("the rows of a property", () => {
     },
   );
 
+  it("a color is keys on the colors in between, with the easing as its curve", () => {
+    expect(rowsOf({ path: "a", type: "color" })).toEqual([
+      { path: "a", band: "gradient", curve: "progress", readout: "color" },
+    ]);
+  });
+
+  it("a vector is one row of keys, and a curve of numbers for each of its parts", () => {
+    const rows = rowsOf({ path: "a", type: "vec2", components: ["x", "y"] });
+    expect(rows).toEqual([
+      { path: "a", band: "keys", curve: "none", readout: "components" },
+      {
+        path: "a",
+        band: "keys",
+        curve: "value",
+        readout: "number",
+        component: { index: 0, name: "x" },
+      },
+      {
+        path: "a",
+        band: "keys",
+        curve: "value",
+        readout: "number",
+        component: { index: 1, name: "y" },
+      },
+    ]);
+  });
+
+  it("a list of numbers is one row, with the easing as its curve", () => {
+    expect(rowsOf({ path: "a", type: "numbers" })).toEqual([
+      { path: "a", band: "keys", curve: "progress", readout: "count" },
+    ]);
+  });
+
   it("a vector has one row for all of it, and one for each part of the same channel", () => {
     const rows = rowsOf({ path: "a", type: "number", components: ["x", "y"] });
     expect(rows.map(({ path }) => path)).toEqual(["a", "a", "a"]);
@@ -226,6 +259,76 @@ describe("the tree of a clip", () => {
   it("has no such group without such keys", () => {
     const node = clipNodeOf(clip({ properties: { "param.plain": 3, opacity: keys("0") } }));
     expect(node.children.some((child) => child.kind === "object")).toBe(false);
+  });
+});
+
+describe("the tree of a clip with a scene", () => {
+  const scene = (properties: object) =>
+    clip({ id: "s", properties }, { kind: "scene", scene: "a" });
+  const arm: ObjectDescriptor = {
+    id: "object.arm",
+    name: "手臂",
+    properties: [number("object.arm.x"), { ...number("object.arm.size"), animatable: false }],
+  };
+  const groups = (node: ReturnType<typeof clipNodeOf>) =>
+    Object.fromEntries(
+      node.children
+        .filter((child): child is ObjectNode => child.kind === "object")
+        .map((child) => [
+          child.orphans ? "orphans" : child.pending ? "pending" : child.object.id,
+          pathsBelow(child),
+        ]),
+    );
+  const properties = {
+    "object.arm.x": keys("0"),
+    "object.arm.size": 3,
+    "object.gone.x": keys("0"),
+    "object.gone.y": 2,
+    "element.logo.opacity": 0.5,
+    "param.old": 4,
+    "transform.x": keys("1"),
+    "audio.volume": -3,
+  };
+
+  it("keeps what code has to describe as it is, while the code did not get through", () => {
+    for (const ran of ["never", "partial"] as const) {
+      const node = clipNodeOf(scene(properties), { objects: [CLIP_VISUAL, arm], ran });
+      expect(groups(node)).toEqual({
+        "object.arm": ["object.arm.x"],
+        pending: ["object.gone.x", "object.gone.y", "element.logo.opacity"],
+        orphans: ["param.old"],
+      });
+    }
+  });
+
+  it("knows what lost its object once the code got through", () => {
+    const node = clipNodeOf(scene(properties), { objects: [CLIP_VISUAL, arm], ran: "complete" });
+    expect(groups(node)).toEqual({
+      "object.arm": ["object.arm.x"],
+      orphans: ["object.gone.x", "object.gone.y", "element.logo.opacity", "param.old"],
+    });
+    const orphans = node.children.at(-1) as ObjectNode;
+    expect(orphans.children.every((child) => child.kind === "property" && child.orphan)).toBe(true);
+  });
+
+  it("keeps what is there in sight by what it holds", () => {
+    const node = clipNodeOf(
+      scene({ "object.a.c": "#ff0000", "object.a.v": [1, 2], "object.a.t": "hi" }),
+      { objects: [CLIP_VISUAL], ran: "complete" },
+    );
+    const orphans = node.children.at(-1) as ObjectNode;
+    expect(orphans.children.map((child) => (child as { spec: PropertySpec }).spec.type)).toEqual([
+      "color",
+      "numbers",
+      "text",
+    ]);
+  });
+
+  it("is the same as long as the clip and its description are", () => {
+    const one = scene(properties);
+    const described = { objects: [CLIP_VISUAL, arm], ran: "complete" as const };
+    expect(clipNodeOf(one, described)).toBe(clipNodeOf(one, described));
+    expect(clipNodeOf(one, { ...described })).not.toBe(clipNodeOf(one, described));
   });
 });
 

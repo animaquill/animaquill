@@ -67,6 +67,13 @@ class FakeHost implements Host {
     this.pauses += 1;
   }
 
+  /** What it got of what the clip holds, in order. */
+  values: Readonly<Record<string, unknown>>[] = [];
+
+  channels(_layer: string, channels: Readonly<Record<string, unknown>>): void {
+    this.values.push(channels);
+  }
+
   evict(source: unknown): void {
     this.evicted.push(source);
   }
@@ -113,6 +120,7 @@ const source = (extra: Partial<SceneSource> = {}): SceneSource => ({
   runtime: 1,
   revision: "r1",
   assets: [],
+  params: [],
   seed: 1,
   ...extra,
 });
@@ -1307,5 +1315,55 @@ describe("the picture of one frame", () => {
     await vi.waitFor(() => expect(graces).toHaveLength(1));
     const image = host.picture(90);
     expect((await picture).image).toBe(image);
+  });
+});
+
+describe("what clips hold for their scenes", () => {
+  const keyed = { keys: [{ time: "0", value: 1 }] };
+
+  it("goes to a scene before it runs, the way it shows with what is being tried", () => {
+    const { scenes, hosts } = setup();
+    const saved = planOf(layer("a", { content: { "param.size": 10, "object.arm.x": keyed } }));
+    const shown = planOf(layer("a", { content: { "param.size": 20, "object.arm.x": keyed } }));
+    scenes.follow(saved, 12, shown);
+    scenes.handle(CONTENT);
+    expect(hosts[0]?.values).toEqual([{ "param.size": 20, "object.arm.x": keyed }]);
+  });
+
+  it("only sends what changed, also when every value is a new copy", () => {
+    const { scenes, hosts } = setup();
+    const plan = (content: object) => planOf(layer("a", { content: content as never }));
+    scenes.follow(plan({ "param.size": 10, "object.arm.x": keyed }), 12);
+    scenes.handle(CONTENT);
+    scenes.follow(plan({ "param.size": 10, "object.arm.x": structuredClone(keyed) }), 12);
+    scenes.follow(plan({ "param.size": 11 }), 12);
+    expect(hosts[0]?.values).toEqual([
+      { "param.size": 10, "object.arm.x": keyed },
+      { "param.size": 11, "object.arm.x": null },
+    ]);
+  });
+
+  it("goes to the scene that takes over in full, from the start", () => {
+    const { scenes, hosts } = setup();
+    const content = { "param.size": 10 };
+    scenes.follow(planOf(layer("a", { content })), 12);
+    scenes.handle(CONTENT);
+    const newer = planOf(layer("a", { content, source: source({ revision: "r2" }) }));
+    scenes.follow(newer, 12);
+    scenes.handle({ ...CONTENT, revision: "r2" });
+    expect(hosts).toHaveLength(2);
+    expect(hosts[1]?.values).toEqual([content]);
+  });
+
+  it("and what a scene registered goes to the editor, with the state it came from", () => {
+    const { hosts, sent } = showing();
+    const registration = { objects: [], elements: [], complete: true };
+    hosts[0]?.options.onObjects?.(registration);
+    expect(sent).toContainEqual({
+      type: "scene-objects",
+      layer: "a",
+      revision: "r1",
+      registration,
+    });
   });
 });

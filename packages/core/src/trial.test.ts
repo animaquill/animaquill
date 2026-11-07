@@ -2473,3 +2473,42 @@ describe("going away", () => {
     expect(trial.count).toBe(1);
   });
 });
+
+describe("what is tried on a property that gets another path", () => {
+  const rename = (from: string, to: string, extra: object = {}): CommandCall => ({
+    type: "property.rename",
+    params: { timeline: "main", renames: [{ owner, from, to, ...extra }] },
+  });
+
+  it("goes along, and back again with undo", () => {
+    const { run, store, trial, tried } = setup();
+    run(set(1, "object.arm.x"));
+    trial.write([write(5, "object.arm.x")]);
+    run(rename("object.arm.x", "object.arm_l.x"));
+    expect(trial.holds("c", "object.arm.x")).toBe(false);
+    expect(tried("object.arm_l.x")).toBe(5);
+    store.undo();
+    expect(trial.holds("c", "object.arm_l.x")).toBe(false);
+    expect(tried("object.arm.x")).toBe(5);
+    expect(trial.count).toBe(1);
+  });
+
+  it("goes along in the new unit, and back in the old one", () => {
+    const { run, store, trial, tried } = setup();
+    run(set(1, "object.arm.r"));
+    trial.write([write(10, "object.arm.r")]);
+    run(rename("object.arm.r", "object.arm.turns", { scale: 0.5 }));
+    expect(tried("object.arm.turns")).toBe(5);
+    expect(trial.changes.get("c")?.get("object.arm.turns")?.base).toBe(0.5);
+    store.undo();
+    expect(tried("object.arm.r")).toBe(10);
+  });
+
+  it("leaves what is tried under the new path as it is", () => {
+    const { run, trial, tried } = setup();
+    run(set(1, "object.a.x"));
+    trial.write([write(5, "object.a.x"), write(7, "object.b.x")]);
+    run(rename("object.a.x", "object.b.x"));
+    expect(tried("object.b.x")).toBe(7);
+  });
+});

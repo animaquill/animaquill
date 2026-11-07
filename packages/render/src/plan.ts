@@ -1,21 +1,35 @@
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
-import type { ChannelChanges } from "./index.ts";
+import type { ChannelChanges, ContentChanges } from "./index.ts";
 
 /** What changes about a layer without a new plan. */
 export interface LayerChanges {
   readonly channels: ChannelChanges;
   /** It is no curve, because it cannot change over time, but it can still be changed. */
   readonly fit?: RenderLayer["fit"];
+  /** What the scene of the layer works out itself, as the clip would store it. */
+  readonly content?: ContentChanges;
+}
+
+/** What is left of a map after changes. Null takes an entry away. */
+function merged<T>(
+  before: Readonly<Record<string, T>> | undefined,
+  changes: Readonly<Record<string, T | null>>,
+): Record<string, T> {
+  const entries = Object.entries({ ...before, ...changes });
+  return Object.fromEntries(entries.filter(([, value]) => value !== null)) as Record<string, T>;
 }
 
 /** A layer with new curves. Null takes a curve away, so that the default applies again. */
-export function layerWith(layer: RenderLayer, { channels, fit }: LayerChanges): RenderLayer {
-  const merged = Object.entries({ ...layer.channels, ...channels });
-  const left = merged.filter(([, channel]) => channel !== null);
+export function layerWith(
+  layer: RenderLayer,
+  { channels, fit, content }: LayerChanges,
+): RenderLayer {
   return {
     ...layer,
     ...(fit === undefined ? {} : { fit }),
-    channels: Object.fromEntries(left) as typeof layer.channels,
+    channels: merged(layer.channels, channels) as typeof layer.channels,
+    // A layer without a scene has nothing that would work it out.
+    ...(content && layer.content && { content: merged(layer.content, content) }),
   };
 }
 

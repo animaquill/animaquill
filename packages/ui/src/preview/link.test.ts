@@ -5,6 +5,7 @@ import type { ProjectLibrary } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
+import { SceneRegistrations } from "../properties/registrations.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { Emitter } from "../workbench/emitter.ts";
@@ -38,7 +39,10 @@ afterEach(() => {
 
 function setup(
   hearsFirst?: (store: ProjectStore) => void,
-  { files = new Map<string, Blob>() }: { files?: Map<string, Blob> } = {},
+  {
+    files = new Map<string, Blob>(),
+    registrations,
+  }: { files?: Map<string, Blob>; registrations?: SceneRegistrations } = {},
 ) {
   const restored: ((hash: string) => void)[] = [];
   const store = ProjectStore.create(createProject({ name: "预览" }));
@@ -138,6 +142,7 @@ function setup(
     { origins: ["https://scene.example"], compositor: "https://box.example", run: true },
     frameRate,
     quality,
+    registrations,
   );
   links.push(link);
   const hello = () => {
@@ -740,5 +745,57 @@ describe("what the compositor says about scenes", () => {
     hello();
     link.retryScene("c");
     expect(ofType("scene-retry")).toEqual([{ type: "scene-retry", layer: "c" }]);
+  });
+});
+
+describe("what a scene works out itself", () => {
+  function withScene(registrations?: SceneRegistrations) {
+    const context = setup(undefined, registrations ? { registrations } : {});
+    context.run({
+      type: "scene.add",
+      params: {
+        id: "s",
+        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        files: { "index.html": "one" },
+      },
+    });
+    context.clip("sc", {
+      start: "5",
+      source: { kind: "scene", scene: "s" },
+      properties: { "param.size": 10, opacity: 0.5 },
+    });
+    context.hello();
+    return context;
+  }
+  const onScene = (values: Record<string, unknown>) =>
+    new Map([["sc", new Map(Object.entries(values))]]);
+  const keys = { keys: [{ time: "0", value: 1 }] };
+
+  it("goes in the plan as the clip stores it", () => {
+    const { ofType } = withScene();
+    const layer = ofType("plan")[0]?.plan.layers.find(({ id }) => id === "sc");
+    expect(layer?.content).toEqual({ "param.size": 10 });
+  });
+
+  it("goes with a preview as the clip would store it, and back to what it stores", () => {
+    const { preview, ofType } = withScene();
+    preview(onScene({ "param.size": keys, "object.arm.x": 3, "transform.x": 5 }));
+    expect(ofType("channels").at(-1)).toEqual({
+      type: "channels",
+      layer: "sc",
+      channels: { "transform.x": { kind: "still", value: 5 } },
+      content: { "param.size": keys, "object.arm.x": 3 },
+    });
+    preview(new Map());
+    expect(ofType("channels").at(-1)?.content).toEqual({ "param.size": 10, "object.arm.x": null });
+  });
+
+  it("registers what it says about itself, for the state it came from", () => {
+    const registrations = new SceneRegistrations();
+    registrations.open("p");
+    const { fromCompositor } = withScene(registrations);
+    const registration = { objects: [{ id: "arm", properties: [] }], elements: [], complete: true };
+    fromCompositor({ type: "scene-objects", layer: "sc", revision: "r9", registration });
+    expect(registrations.registrationOf("r9")?.objects).toEqual([{ id: "arm", properties: [] }]);
   });
 });

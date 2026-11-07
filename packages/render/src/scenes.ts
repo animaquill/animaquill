@@ -58,6 +58,7 @@ export type Host = Pick<
   | "seek"
   | "play"
   | "pause"
+  | "channels"
   | "evict"
   | "focusTaken"
   | "state"
@@ -128,6 +129,8 @@ interface Run {
   frame: number | undefined;
   /** It stopped a little past `frame` and stays there, see `#stayIfAhead`. */
   ahead?: boolean;
+  /** What it got of what the clip holds for it, by path, as text to tell a change by. */
+  readonly sent: Map<string, { readonly value: unknown; readonly text: string }>;
 }
 
 /** Somebody who only takes the picture of one frame. */
@@ -265,6 +268,10 @@ export class SceneLayers {
   #setup: SceneSetup | undefined;
   #origins: OriginPool | undefined;
   #plan: RenderPlan | undefined;
+  /** What shows, with what is being tried and dragged, which is what scenes work out values of. */
+  #shown: RenderPlan | undefined;
+  #shownLayers:
+    { readonly plan: RenderPlan; readonly layers: Map<string, RenderLayer> } | undefined;
   #seconds = 0;
   #base: PlayBase | undefined;
   /** False once a page said that this browser cannot capture. */
@@ -315,9 +322,18 @@ export class SceneLayers {
     return new OriginPool(origins, compositor, { retired, onRetire });
   }
 
-  /** The plan or the time changed. Curves that changed count too: a box can get another size. */
-  follow(plan: RenderPlan | undefined, seconds: number): void {
+  /**
+   * The plan or the time changed. Curves that changed count too: a box can get another size. Which
+   * scenes run, and how large, goes by what is saved, so that trying something out does not open
+   * them again. What they show of their clips goes by what `shown` has on top of that.
+   */
+  follow(
+    plan: RenderPlan | undefined,
+    seconds: number,
+    shown: RenderPlan | undefined = plan,
+  ): void {
     this.#plan = plan;
+    this.#shown = shown;
     this.#seconds = seconds;
     this.#follow();
   }
@@ -445,7 +461,52 @@ export class SceneLayers {
     }
     for (const layer of wanted) this.#keepUp(layer, plan);
     this.#forgetContent();
+    for (const entry of this.#entries.values()) this.#sendValues(entry);
     if (!this.#base) for (const entry of this.#entries.values()) this.#seek(entry, plan);
+  }
+
+  /** A layer the way it shows. */
+  #shownLayer(layer: RenderLayer): RenderLayer {
+    const shown = this.#shown;
+    if (!shown || shown === this.#plan) return layer;
+    if (this.#shownLayers?.plan !== shown) {
+      this.#shownLayers = {
+        plan: shown,
+        layers: new Map(shown.layers.map((one) => [one.id, one])),
+      };
+    }
+    return this.#shownLayers.layers.get(layer.id) ?? layer;
+  }
+
+  /**
+   * What changed of what a clip holds for its scene goes to each run of it. A run that just started
+   * gets all of it, before it runs any code. Only what changed goes, because a drag changes one
+   * value at a time and a skeleton has thousands. What is the same object is the same.
+   */
+  #sendValues(entry: Entry): void {
+    const { id } = entry.layer;
+    const content = this.#shownLayer(entry.layer).content ?? {};
+    for (const run of [entry.current, entry.next]) {
+      if (!run) continue;
+      const changes: Record<string, unknown> = {};
+      let changed = false;
+      for (const [path, value] of Object.entries(content)) {
+        const known = run.sent.get(path);
+        if (known?.value === value) continue;
+        const text = JSON.stringify(value);
+        run.sent.set(path, { value, text });
+        if (known?.text === text) continue;
+        changes[path] = value;
+        changed = true;
+      }
+      for (const path of run.sent.keys()) {
+        if (Object.hasOwn(content, path)) continue;
+        run.sent.delete(path);
+        changes[path] = null;
+        changed = true;
+      }
+      if (changed) run.host.channels(id, changes);
+    }
   }
 
   /** The clip left the part of the timeline that counts, so its scene goes after a moment. */
@@ -629,6 +690,7 @@ export class SceneLayers {
         assets: content.assets,
         fps: { num, den },
         seed: source.seed,
+        params: source.params,
         view,
       },
       ...(stage && { stage }),
@@ -641,9 +703,14 @@ export class SceneLayers {
         if (run) this.#onPicture(entry, run, new HeldPicture(image, frame));
         else image.close();
       },
+      onObjects: (registration) => {
+        const { id } = entry.layer;
+        const { revision } = source;
+        this.#options.send({ type: "scene-objects", layer: id, revision, registration });
+      },
     };
     const host = (this.#options.makeHost ?? ((all) => new SceneHost(all)))(options);
-    const started: Run = { key, host, frame: undefined };
+    const started: Run = { key, host, frame: undefined, sent: new Map() };
     run = started;
     try {
       void host.open();

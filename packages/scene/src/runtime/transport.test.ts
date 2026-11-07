@@ -276,4 +276,38 @@ describe("Transport", () => {
       expect(screen).toHaveLength(0);
     });
   });
+
+  describe("drawing a frame again", () => {
+    it("gets there again where it stands, and tells nobody it was asked", async () => {
+      let arrivals = 0;
+      const { transport, log, settled, setPosition } = setup({
+        arrived: async () => void (arrivals += 1),
+      });
+      setPosition(4);
+      transport.refresh();
+      await settled();
+      expect(arrivals).toBe(1);
+      expect(log).toEqual(["position 4"]);
+    });
+
+    it("is nothing before the first frame, while playing, or on the way somewhere", async () => {
+      let arrivals = 0;
+      const { transport, settled, setPosition } = setup({
+        arrived: async () => void (arrivals += 1),
+      });
+      transport.refresh();
+      await settled();
+      expect(arrivals).toBe(0);
+      setPosition(0);
+      transport.play({ frame: 0, at: 0, rate: 1 });
+      transport.refresh();
+      await settled();
+      expect(arrivals).toBe(0);
+      transport.pause();
+      transport.seek(1, 3);
+      transport.refresh();
+      await settled();
+      expect(arrivals).toBe(1);
+    });
+  });
 });

@@ -1,3 +1,4 @@
+import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
 import { dropTarget } from "./growing.ts";
@@ -675,5 +676,6 @@ export function createBrowserHost(
     trials: trials.store,
     drafts: drafts.store,
     exports,
+    caches: createWorkCache(database),
   };
 }

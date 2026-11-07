@@ -1,4 +1,6 @@
-import type { PropertyEdit } from "@animaquill/core";
+import { SCENE_OBJECT_TYPES, type PropertyEdit } from "@animaquill/core";
+import type { ObjectDescriptor } from "@animaquill/schema";
+import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
@@ -185,9 +187,39 @@ function SoundStatus({ clip }: { clip: ClipInspection["box"]["clip"] }) {
   );
 }
 
+/** What an object of a clip is called by itself, unless it is the clip itself. */
+function ownName(t: TFunction, { type, name, id }: ObjectDescriptor): string | undefined {
+  if (type === "clip.visual" || type === "clip.sound") return undefined;
+  if (type === SCENE_OBJECT_TYPES.params) return t("keyframes.objects.params");
+  if (type === SCENE_OBJECT_TYPES.elements) return t("keyframes.objects.elements");
+  return name ?? id;
+}
+
+/** Objects can be inside each other, which a flat list says with the names of what they are in. */
+const MAX_NAMED_PARENTS = 4;
+
+function objectName(
+  t: TFunction,
+  object: ObjectDescriptor,
+  byId: ReadonlyMap<string, ObjectDescriptor>,
+): string | undefined {
+  const own = ownName(t, object);
+  if (own === undefined) return undefined;
+  const names = [own];
+  const seen = new Set([object.id]);
+  let parent = object.parent === undefined ? undefined : byId.get(object.parent);
+  while (parent && !seen.has(parent.id) && names.length <= MAX_NAMED_PARENTS) {
+    seen.add(parent.id);
+    names.unshift(ownName(t, parent) ?? parent.id);
+    parent = parent.parent === undefined ? undefined : byId.get(parent.parent);
+  }
+  return names.join(" › ");
+}
+
 function ClipProperties({ inspection }: { inspection: ClipInspection }) {
   const { t } = useTranslation();
   const { box, blocked, objects, firstFrame } = inspection;
+  const byId = new Map(objects.map(({ object }) => [object.id, object]));
   const { kind } = box.clip.source;
   const kindName = textOf(t, `timeline.kind.${kind}`, kind);
   return (
@@ -199,19 +231,28 @@ function ClipProperties({ inspection }: { inspection: ClipInspection }) {
       {kind === "sound" && <SoundStatus clip={box.clip} />}
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
       <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
-        {objects.map(({ object, rows }) => (
-          // Another clip gets fields of its own, so nothing typed can end up on the wrong one.
-          <section key={`${box.id} ${object.id}`} className={styles.object}>
-            {rows.map((row, index) => (
-              <Row
-                key={row.path}
-                inspection={inspection}
-                row={row}
-                startsGroup={rows[index - 1]?.spec.group !== row.spec.group}
-              />
-            ))}
-          </section>
-        ))}
+        {objects.map(({ object, rows }) => {
+          if (rows.length === 0) return null;
+          const name = objectName(t, object, byId);
+          return (
+            // Another clip gets fields of its own, so nothing typed can end up on the wrong one.
+            <section
+              key={`${box.id} ${object.id}`}
+              className={styles.object}
+              {...(name !== undefined && { "aria-label": name })}
+            >
+              {name !== undefined && <h3 className={styles.objectName}>{name}</h3>}
+              {rows.map((row, index) => (
+                <Row
+                  key={row.path}
+                  inspection={inspection}
+                  row={row}
+                  startsGroup={rows[index - 1]?.spec.group !== row.spec.group}
+                />
+              ))}
+            </section>
+          );
+        })}
       </div>
     </>
   );
@@ -227,16 +268,19 @@ function Message({ text }: { text: string }) {
 }
 
 export function PropertiesPanel() {
-  const { timeline, trials } = useWorkbench();
+  const { timeline, trials, keyframes, registrations } = useWorkbench();
   const { t } = useTranslation();
   const { store } = useSession();
   const state = useProject(store);
   const { model, selection } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
   const { comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
+  // What scenes registered changes what their clips have to show.
+  useSyncExternalStore(registrations.subscribe, registrations.getVersion);
+  const { describe } = keyframes;
   const inspection: Inspection =
     state && model
-      ? inspect(state, model, selection, frame, { look: trials.look, comparing })
+      ? inspect(state, model, selection, frame, { look: trials.look, comparing, describe })
       : { kind: "nothing" };
 
   return (

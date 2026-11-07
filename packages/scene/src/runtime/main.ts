@@ -1,8 +1,12 @@
+import { REGISTRATION_LIMITS, type Registration } from "@animaquill/core/registration";
 import { startCapture, type Capture } from "./capture.ts";
+import { MESSAGE_RULES, weightOf } from "../budget.ts";
 import { loadProject, type LoadedProject } from "../loader/project.ts";
 import { pathOfVirtual } from "../loader/paths.ts";
 import { RUNTIME_VERSION, type FromScene, type SceneLoad, type ToScene } from "../protocol.ts";
 import { AnimationClock } from "./animations.ts";
+import { ClipValues, CodeObjects, SceneParams } from "./content.ts";
+import { PageElements } from "./elements.ts";
 import { SceneClock } from "./clock.ts";
 import { installFileAccess } from "./files.ts";
 import { ProblemLog } from "./problems.ts";
@@ -130,10 +134,83 @@ const clock: SceneClock = new SceneClock(scene.fps, {
 });
 
 const animations = new AnimationClock(() => clock.now);
+
+/** Time stands still until the project is there. The compositor asks again when it hears `ready`. */
+let ready = false;
+
+/** Something the project threw while it loaded, which may have kept it from registering the rest. */
+let loadFailed = false;
+
 const problems = new ProblemLog(
-  (problem) => send({ type: "problem", problem }),
+  (problem) => {
+    if (!ready && (problem.kind === "error" || problem.kind === "rejection")) loadFailed = true;
+    send({ type: "problem", problem });
+  },
   () => clock.frameNow,
 );
+
+/** A mistake in how the project uses `aq`, with the line it came from. */
+const misused = (code: string, target?: string) =>
+  problems.report({
+    kind: "api",
+    code,
+    ...(target !== undefined && { target }),
+    ...problems.caller(),
+  });
+
+/** Where the scene is in time, in seconds, which is what code reads values at. */
+const seconds = () => clock.now / 1000;
+
+const values = new ClipValues(scene.values);
+const objects = new CodeObjects(values, seconds, () => registrationChanged());
+const params = new SceneParams(scene.params, values, seconds, misused);
+const elements = new PageElements(
+  values,
+  (code, target) => problems.report({ kind: "api", code, ...(target !== undefined && { target }) }),
+  REGISTRATION_LIMITS.elements,
+);
+
+/** A registration goes again after a change, and not more often than this. */
+const REGISTRATION_EVERY_MS = 250;
+/** What the compositor takes in one message, less what the message itself weighs. */
+const REGISTRATION_BYTES = MESSAGE_RULES.maxRegistrationBytes - 1024;
+let registrationWaiting = false;
+let registrationSent = Number.NEGATIVE_INFINITY;
+
+/**
+ * Says what code registered and which elements there are. The compositor would take a scene away
+ * that sends more than a message can hold, so what does not fit stays out, and people hear why.
+ */
+function sendRegistration(): void {
+  registrationWaiting = false;
+  registrationSent = real.now();
+  const all = objects.descriptors();
+  const registration = (count: number): Registration => ({
+    objects: all.slice(0, count),
+    elements: elements.found,
+    complete: !loadFailed,
+  });
+  let fits = all.length;
+  if (weightOf(registration(fits), REGISTRATION_BYTES) > REGISTRATION_BYTES) {
+    let low = 0;
+    while (low < fits) {
+      const middle = (low + fits + 1) >> 1;
+      if (weightOf(registration(middle), REGISTRATION_BYTES) > REGISTRATION_BYTES)
+        fits = middle - 1;
+      else low = middle;
+    }
+    problems.report({ kind: "api", code: "object-too-many", target: "bytes" });
+  }
+  send({ type: "objects", registration: registration(fits) });
+}
+
+/** Before the scene is ready all of it goes at once, after that a change goes after a moment. */
+function registrationChanged(): void {
+  if (!ready || registrationWaiting) return;
+  registrationWaiting = true;
+  const wait = Math.max(REGISTRATION_EVERY_MS - (real.now() - registrationSent), 0);
+  real.setTimeout(sendRegistration, wait);
+}
 
 const frameCallbacks = new Set<(seconds: number) => void>();
 
@@ -177,13 +254,13 @@ async function contentReady(showing: boolean): Promise<void> {
   for (const image of images) if (image.loading === "lazy") image.loading = "eager";
   const undecoded = showing ? images.filter((image) => !decoded.has(image)) : [];
   for (const image of undecoded) decoded.add(image);
-  const ready = Promise.allSettled([
+  const settled = Promise.allSettled([
     document.fonts.ready,
     ...images.map(imageLoaded),
     ...undecoded.map((image) => image.decode()),
   ]);
   const inTime = await Promise.race([
-    ready.then(() => true),
+    settled.then(() => true),
     sleep(CONTENT_LIMIT_MS).then(() => false),
   ]);
   if (!inTime) problems.report({ kind: "api", code: "content-timeout" });
@@ -196,6 +273,12 @@ let lastProgress = 0;
 const transport = new Transport(clock, {
   arrived: async () => {
     runFrameCallbacks();
+    // What the clip says about elements comes last, so that it wins over code.
+    try {
+      elements.apply(seconds());
+    } catch (error) {
+      reportError(error);
+    }
     animations.sync();
     await contentReady(true);
     await capture?.take(clock.frame);
@@ -215,11 +298,6 @@ const transport = new Transport(clock, {
   fps,
 });
 
-const channels = new Map<string, Readonly<Record<string, unknown>>>();
-
-/** Time stands still until the project is there. The compositor asks again when it hears `ready`. */
-let ready = false;
-
 function onMessage(event: MessageEvent<ToScene>): void {
   // A scene can reach its neighbours, and they can reach it. Only the compositor gets to say.
   if (event.source !== compositor) return;
@@ -235,9 +313,14 @@ function onMessage(event: MessageEvent<ToScene>): void {
     case "pause":
       transport.pause();
       break;
-    case "channels":
-      channels.set(data.layer, { ...channels.get(data.layer), ...data.channels });
+    case "channels": {
+      const changed = values.change(data.channels);
+      if (changed.length === 0) break;
+      params.changed(changed);
+      // Nothing else would show it while the scene stands still.
+      if (ready) transport.refresh();
       break;
+    }
     case "ping":
       send({ type: "pong", nonce: data.nonce });
       break;
@@ -285,6 +368,8 @@ function installApi(project: LoadedProject): void {
       view: Object.freeze({ width, height, pixelRatio, format, language }),
       asset,
       frame,
+      object: (id: unknown, options: unknown) => objects.register(id, options, misused),
+      param: (id: unknown, at?: unknown) => params.read(id, at),
     }),
     enumerable: true,
     // Scripts may declare a variable of that name, which cannot be done to what is fixed.
@@ -406,6 +491,9 @@ async function main(): Promise<void> {
   animations.start();
   animations.sync();
   ready = true;
+  params.loaded();
+  elements.scan(registrationChanged);
+  sendRegistration();
   send({ type: "ready", width: innerWidth, height: innerHeight });
 }
 

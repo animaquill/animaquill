@@ -96,6 +96,7 @@ function open(scene: OpenScene) {
       assets: new Map(Object.entries(assets ?? {}).map(([name, value]) => [name, blobOf(value)])),
       fps: { num: fps ?? 60, den: 1 },
       seed: seed ?? 1,
+      params: [],
       view: {
         width: 1280,
         height: 720,

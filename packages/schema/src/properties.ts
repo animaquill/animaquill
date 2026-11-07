@@ -1,7 +1,35 @@
 import type { Animation, PropertyValue, Value } from "./values.ts";
 
-/** What a value holds, which decides how it is checked, animated and edited. */
-export type ValueType = "number" | "angle" | "text" | "choice" | "boolean" | "asset";
+/**
+ * What a value holds, which decides how it is checked, animated and edited. A color is `#rrggbb` or
+ * `#rrggbbaa`. The vectors and `numbers` are lists of numbers: a vector has as many as it says, and
+ * `numbers` any number of them.
+ */
+export type ValueType =
+  | "number"
+  | "angle"
+  | "text"
+  | "choice"
+  | "boolean"
+  | "asset"
+  | "color"
+  | "vec2"
+  | "vec3"
+  | "vec4"
+  | "numbers";
+
+/** How many numbers a vector has. */
+export const VECTOR_LENGTHS: Readonly<Partial<Record<ValueType, number>>> = {
+  vec2: 2,
+  vec3: 3,
+  vec4: 4,
+};
+
+/** What the parts of a vector are called when its description does not say. */
+export const VECTOR_COMPONENTS: readonly string[] = ["x", "y", "z", "w"];
+
+/** `#rrggbb` or `#rrggbbaa`, the way colors are written everywhere in a project. */
+export const COLOR_PATTERN = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 /**
  * One property that can take a value or keys. This is plain data, so that it can cross a sandbox and
@@ -47,6 +75,8 @@ export interface ObjectDescriptor {
   readonly type?: string;
   /** Only decides the place in the property tree. */
   readonly parent?: string;
+  /** Ids this object went by before, so that the keys of a renamed object still count. */
+  readonly aliases?: readonly string[];
   /** When it exists, in seconds on the clock of the clip. Missing means as long as the clip. */
   readonly spans?: readonly (readonly [number, number])[];
   /** A property that says whether it exists right now. */
@@ -154,6 +184,35 @@ export const CLIP_SOUND: ObjectDescriptor = {
   properties: [{ ...(BUILT_IN_PROPERTIES["audio.volume"] as PropertySpec), animatable: false }],
 };
 
+/**
+ * What an element of a scene with a stable id offers, by `element.<id>.<path>`. Without a value the
+ * element stays as its page has it, so colors have no default: the scene says what it starts with.
+ * The position moves the element from where its page puts it, and turning and scaling go around the
+ * middle of it.
+ */
+const ELEMENT_DESCRIBED: Readonly<Record<string, Described>> = {
+  x: { ...world, default: 0, group: "position" },
+  y: { ...world, default: 0, group: "position" },
+  scale: { type: "number", unit: "ratio", default: 1 },
+  rotation: { type: "angle", unit: "deg", default: 0 },
+  opacity: { ...ratio, default: 1 },
+  /** How far it gets blurred, in world units. */
+  blur: { ...world, default: 0, min: 0 },
+  color: { type: "color" },
+  background: { type: "color" },
+  fill: { type: "color" },
+  stroke: { type: "color" },
+};
+
+const elementSpecs = (paths: readonly string[]): readonly PropertySpec[] =>
+  paths.map((path) => ({ path, ...(ELEMENT_DESCRIBED[path] as Described) }));
+
+/** What HTML and SVG elements offer, with paths of their own: see `ELEMENT_DESCRIBED`. */
+export const ELEMENT_PROPERTIES: Readonly<Record<"html" | "svg", readonly PropertySpec[]>> = {
+  html: elementSpecs(["x", "y", "scale", "rotation", "opacity", "blur", "color", "background"]),
+  svg: elementSpecs(["x", "y", "scale", "rotation", "opacity", "fill", "stroke"]),
+};
+
 /** Properties that are not built in but come from the content of a clip. */
 export const OPEN_PROPERTY_PREFIXES = ["param.", "object.", "element.", "caption."] as const;
 
@@ -184,5 +243,17 @@ export function propertyValueProblem(path: string, value: unknown): string | und
       return typeof value === "object" && !Array.isArray(value)
         ? undefined
         : `${path} 要写成素材引用`;
+    case "color":
+      return typeof value === "string" && COLOR_PATTERN.test(value)
+        ? undefined
+        : `${path} 要写成 #rrggbb 或 #rrggbbaa`;
+    case "vec2":
+    case "vec3":
+    case "vec4":
+    case "numbers": {
+      const length = VECTOR_LENGTHS[spec.type];
+      const fits = Array.isArray(value) && (length === undefined || value.length === length);
+      return fits ? undefined : `${path} 要写成 ${length ?? "一组"} 个数字`;
+    }
   }
 }
