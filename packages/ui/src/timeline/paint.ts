@@ -1,6 +1,6 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
 import type { ClipState } from "@animaquill/core";
-import { EXPANDER_SIZE, RULER_HEIGHT, expanderBox, type TimelineEditor } from "./editor.ts";
+import { EXPANDER_SIZE, RULER_HEIGHT, type TimelineEditor } from "./editor.ts";
 import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "./model.ts";
 import { paintRuler } from "./ruler.ts";
 import { StagePainter, readTheme, type Theme } from "./stage-painter.ts";
@@ -209,7 +209,7 @@ export class TimelinePainter extends StagePainter {
     if (box.clip.source.kind === "audio" || box.clip.source.kind === "sound") {
       this.#paintWaveform(box, look, { left, right, top, height }, fill);
     }
-    const expander = editor.showsExpander(box) ? expanderBox(left, width) : undefined;
+    const expander = editor.showsExpander(box) ? editor.expanderAt(left, width) : undefined;
     if (width >= LABEL_MIN_WIDTH) {
       const room = expander === undefined ? 0 : EXPANDER_SIZE;
       this.#paintLabel(box, left, top, width, height, fill, room);

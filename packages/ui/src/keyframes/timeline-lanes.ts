@@ -6,7 +6,7 @@ import type { ClipBox, Row, TimelineModel } from "../timeline/model.ts";
 import type { TouchStart } from "../timeline/touch.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { KeyArea } from "./area.ts";
-import type { KeyframeEditor } from "./editor.ts";
+import type { KeyframeEditor, ShownClips } from "./editor.ts";
 import { lanesOfClip, laneAt, type Lane, type LaneRules } from "./lanes.ts";
 
 const SNAP_REACH = 8;
@@ -96,6 +96,10 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
     for (const clip of clips) this.#open.add(clip);
   }
 
+  get holdsDrag(): boolean {
+    return this.keyframes.preview !== undefined && this.keyframes.isPreviewOf(this);
+  }
+
   canOpen({ clip }: ClipBox): boolean {
     return clipNodeOf(this.keyframes.shown(clip)).children.length > 0;
   }
@@ -171,14 +175,15 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
 
   /* What the keys of the timeline mean for keys. */
 
-  /** Keys of a clip that is open here, which is what people are working on then. */
+  /** Only keys of clips that are open here show here. */
+  readonly shownClips: ShownClips = (clip) => this.#open.has(clip);
+
   get hasSelection(): boolean {
-    const { selection } = this.keyframes;
-    return [...this.#open].some((clip) => selection.hasClip(clip));
+    return this.keyframes.selection.size > 0;
   }
 
   get canChangeSelection(): boolean {
-    return this.hasSelection && this.keyframes.hasMovableSelection;
+    return this.keyframes.movingChannels(this.shownClips).length > 0;
   }
 
   get hasClipboard(): boolean {
@@ -186,19 +191,19 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   }
 
   nudge(frames: number): void {
-    this.keyframes.nudge(frames);
+    this.keyframes.nudge(frames, this.shownClips);
   }
 
   deleteSelected(): void {
-    this.keyframes.deleteSelected();
+    this.keyframes.deleteSelected(this.shownClips);
   }
 
   copySelected(): void {
-    this.keyframes.copySelected();
+    this.keyframes.copySelected(this.shownClips);
   }
 
-  forgetClipboard(): void {
-    this.keyframes.forgetClipboard();
+  cutSelected(): void {
+    this.keyframes.cutSelected(this.shownClips);
   }
 
   paste(): void {

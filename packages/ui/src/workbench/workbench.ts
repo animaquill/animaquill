@@ -248,6 +248,9 @@ export class Workbench {
       {
         pasteTooEarly: () => this.notifications.push(t("notice.keysPasteTooEarly")),
         pasteNowhere: () => this.notifications.push(t("notice.keysPasteNowhere")),
+        comparing: () => this.notifications.push(t("notice.keysComparing")),
+        locked: () => this.notifications.push(t("notice.keysLocked")),
+        notShown: () => this.notifications.push(t("notice.keysNotShown")),
       },
     );
     for (const panel of panels) this.panels.register(panel);

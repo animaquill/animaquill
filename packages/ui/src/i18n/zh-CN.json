@@ -221,7 +221,10 @@
     "trialKeepFailed": "试改无法存到这个浏览器，刷新或关闭页面后会丢失。可以先保存。",
     "trialKeepRecovered": "试改又能存到这个浏览器了。",
     "keysPasteTooEarly": "这里放不下：关键帧会落到片段时钟开始之前。把播放头往后移一些再粘贴。",
-    "keysPasteNowhere": "这些关键帧没有地方放：片段不在了，或者轨道锁定了。"
+    "keysPasteNowhere": "这些关键帧没有地方放：片段不在了，或者轨道锁定了。",
+    "keysComparing": "正在对比已保存的内容，关键帧不能改。关掉对比再试。",
+    "keysLocked": "轨道已锁定，这些关键帧不能改。",
+    "keysNotShown": "选中的关键帧不在时间轴上。展开它们的片段，或者到关键帧选项卡里操作。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -841,6 +844,7 @@
       "delete": "删除关键帧",
       "selectAll": "全选关键帧",
       "copy": "复制关键帧",
+      "cut": "剪切关键帧",
       "paste": "粘贴关键帧到播放头",
       "toggleSnapping": "吸附",
       "zoomIn": "放大",

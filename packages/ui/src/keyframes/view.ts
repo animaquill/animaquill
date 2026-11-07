@@ -4,7 +4,7 @@ import type { StageEditor } from "../timeline/stage.ts";
 import type { TouchStart } from "../timeline/touch.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { KeyArea } from "./area.ts";
-import type { KeyframeEditor } from "./editor.ts";
+import type { KeyframeEditor, ShownClips } from "./editor.ts";
 import { lanesOfTracks, type Lane } from "./lanes.ts";
 
 const SNAP_REACH = 8;
@@ -35,6 +35,8 @@ export class KeyframesView extends KeyArea implements StageEditor {
   #height = 0;
   #scrollY = 0;
   #gesture: Gesture | undefined;
+  /** What is selected is listed here, wherever it is. */
+  readonly shownClips: ShownClips = () => true;
 
   constructor(keyframes: KeyframeEditor, timeline: TimelineEditor) {
     super(keyframes);
@@ -143,8 +145,8 @@ export class KeyframesView extends KeyArea implements StageEditor {
     return "";
   }
 
-  get preview(): unknown {
-    return this.keyframes.preview;
+  get holdsDrag(): boolean {
+    return this.keyframes.preview !== undefined;
   }
 
   toggleLane({ id }: Lane): void {

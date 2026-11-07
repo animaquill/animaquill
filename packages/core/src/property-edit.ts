@@ -14,7 +14,7 @@ import {
   type Rational,
 } from "@animaquill/schema";
 import { z } from "zod";
-import { splitBezier } from "./curve.ts";
+import { joinBezier, splitBezier, type Handles, type KeyPoint } from "./curve.ts";
 import { fail } from "./draft.ts";
 
 /** Whose property it is. Tracks and effects get their own shape of this later. */
@@ -81,24 +81,42 @@ export function firstKeyFrom(keys: readonly Key[], moment: Rational): number {
 export const isAt = (key: Key | undefined, moment: Rational): key is Key =>
   key !== undefined && compare(parseTime(key.time), moment) === 0;
 
-/** A bezier between two keys, as two that come to the same curve at a moment in between. */
-function halvesAt(from: Key, to: Key, time: string) {
+const DEFAULT_ARRIVAL = [1, 1] as const;
+
+/** A key as a point of its curve, when it is a number there. */
+function pointOf({ time, value }: Key): KeyPoint | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? { time: toSeconds(parseTime(time)), value }
+    : undefined;
+}
+
+/** The handles of the bezier that leaves a key, or undefined when it does not leave as one. */
+function bezierFrom(from: Key, to: Key): Handles | undefined {
   if (from.interp !== "bezier" || !from.out) return undefined;
-  const [x1, y1] = from.out;
-  const [x2, y2] = to.in ?? [1, 1];
-  const start = toSeconds(parseTime(from.time));
-  const share = (toSeconds(parseTime(time)) - start) / (toSeconds(parseTime(to.time)) - start);
-  return splitBezier([x1, y1, x2, y2], share);
+  const [x2, y2] = to.in ?? DEFAULT_ARRIVAL;
+  return [from.out[0], from.out[1], x2, y2];
+}
+
+/** How a key arrives, without writing what it would do anyway, give or take what floats lose. */
+function arrivingAs(key: Key, [x, y]: readonly [number, number]): Key {
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1e-12;
+  if (key.in === undefined && near(x, DEFAULT_ARRIVAL[0]) && near(y, DEFAULT_ARRIVAL[1]))
+    return key;
+  return { ...key, in: [x, y] };
 }
 
 /**
- * A key that goes in keeps what a bezier looks like, as far as it holds the value that was there.
- * Everywhere else a new key is linear.
+ * A key that goes in keeps what a bezier looks like where it holds the value that was there, and
+ * bends it where it holds another one, as far as `splitBezier` can. Everywhere else a new key is
+ * linear, and the keys around it stay as they are, so that taking it away again leaves what was there.
  */
 function keysWith(keys: readonly Key[], index: number, added: Key): readonly Key[] {
   const before = keys[index - 1];
   const after = keys[index];
-  const halves = before && after ? halvesAt(before, after, added.time) : undefined;
+  const handles = before && after ? bezierFrom(before, after) : undefined;
+  const points = before && after ? [pointOf(before), pointOf(after), pointOf(added)] : [];
+  const [from, to, at] = points;
+  const halves = handles && from && to && at ? splitBezier(from, to, handles, at) : undefined;
   if (!before || !after || !halves) return keys.toSpliced(index, 0, added);
   const [x1, y1, x2, y2] = halves.before;
   const [x3, y3, x4, y4] = halves.after;
@@ -107,8 +125,24 @@ function keysWith(keys: readonly Key[], index: number, added: Key): readonly Key
     2,
     { ...before, out: [x1, y1] },
     { ...added, in: [x2, y2], interp: "bezier", out: [x3, y3] },
-    { ...after, in: [x4, y4] },
+    arrivingAs(after, [x4, y4]),
   );
+}
+
+/** The keys without one, which takes the bezier that was cut there back to what it was before. */
+function keysWithout(keys: readonly Key[], index: number): readonly Key[] {
+  const before = keys[index - 1];
+  const key = keys[index] as Key;
+  const after = keys[index + 1];
+  const left = before ? bezierFrom(before, key) : undefined;
+  const right = after ? bezierFrom(key, after) : undefined;
+  const points = before && after ? [pointOf(before), pointOf(key), pointOf(after)] : [];
+  const [from, middle, to] = points;
+  const joined =
+    left && right && from && middle && to ? joinBezier(from, middle, to, left, right) : undefined;
+  if (!before || !after || !joined) return keys.toSpliced(index, 1);
+  const [x1, y1, x2, y2] = joined;
+  return keys.toSpliced(index - 1, 3, { ...before, out: [x1, y1] }, arrivingAs(after, [x2, y2]));
 }
 
 /** A key that is there keeps how it goes on, so changing its value does not change the easing. */
@@ -135,7 +169,7 @@ function withoutKey(value: PropertyValue | undefined, time: string): PropertyVal
   const keys = value !== undefined && isAnimation(value) ? value.keys : [];
   const index = indexOfKey(keys, time);
   if (keys.length === 1) return (keys[index] as Key).value;
-  return { ...(value as Animation), keys: keys.toSpliced(index, 1) };
+  return { ...(value as Animation), keys: keysWithout(keys, index) as Key[] };
 }
 
 /** New keys among those that stay. Where one comes down on a key that stays, the new one is what is left. */

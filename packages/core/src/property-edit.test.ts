@@ -1,6 +1,6 @@
 import { Animation, createProject, type Key, type PropertyValue } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import { compileChannel, sample } from "./curve.ts";
+import { compileChannel, sample, secondsOf } from "./curve.ts";
 import { CommandError } from "./draft.ts";
 import { orderedTracks } from "./model.ts";
 import { applyEdit, type KeyEase } from "./property-edit.ts";
@@ -65,6 +65,139 @@ describe("applying an edit", () => {
         expect(sample(channel, clock)).toBeCloseTo(sample(before, clock) as number, 3);
       }
       expect((after as Animation).keys).toHaveLength(3);
+    });
+
+    it("bends a bezier where a key goes in with another value, and does not swing far", () => {
+      // What overshoots, from 0 to 100 in two seconds, with 80 written at every frame.
+      const overshoot: Animation = {
+        keys: [
+          { time: "0", value: 0, interp: "bezier", out: [0.34, 1.56] },
+          { time: "2", value: 100, in: [0.64, 1] },
+        ],
+      };
+      for (let frame = 1; frame < 60; frame += 1) {
+        const after = applyEdit(overshoot, { op: "write", time: `${frame}/30`, value: 80 });
+        expect(Animation.safeParse(after).success).toBe(true);
+        const channel = compileChannel(after, "number");
+        if (!channel) throw new Error("no channel");
+        expect(sample(channel, frame / 30)).toBeCloseTo(80, 9);
+        for (let step = 0; step <= 200; step += 1) {
+          // As far as the curve itself goes, which is 109.8.
+          expect(sample(channel, step / 100)).toBeLessThan(110);
+          expect(sample(channel, step / 100)).toBeGreaterThan(-1);
+        }
+      }
+    });
+
+    it("a key that goes in and comes out again leaves the curve exactly as it was", () => {
+      const eases = [
+        [
+          [0.25, 0.1],
+          [0.25, 1],
+        ],
+        [
+          [0, 0],
+          [0.58, 1],
+        ],
+        [
+          [0.42, 0],
+          [0.58, 1],
+        ],
+        [[0.42, 0], undefined],
+        [
+          [0.34, 1.56],
+          [0.64, 1],
+        ],
+        [
+          [0.36, 0],
+          [0.66, -0.56],
+        ],
+      ] as const;
+      for (const [out, arriving] of eases) {
+        const before: Animation = {
+          keys: [
+            { time: "0", value: 0, interp: "bezier", out: [...out] },
+            { time: "2", value: 100, ...(arriving ? { in: [...arriving] } : {}) },
+          ],
+        };
+        const channel = compileChannel(before, "number");
+        if (!channel) throw new Error("no channel");
+        for (const time of ["0.3", "1/3", "0.5", "1", "1.6", "59/30"]) {
+          // The diamond writes what is there. Typing writes something else.
+          const there = sample(channel, secondsOf(time));
+          for (const value of [there, 80, -30, 100]) {
+            const added = applyEdit(before, { op: "setKey", time, value });
+            expect(applyEdit(added, { op: "removeKey", time })).toEqual(before);
+          }
+        }
+      }
+    });
+
+    it("keeps the shape of the usual easings wherever a key goes in with the value that was there", () => {
+      for (const [out, arriving] of [
+        [
+          [0.42, 0],
+          [0.58, 1],
+        ],
+        [
+          [0.42, 0],
+          [1, 1],
+        ],
+        [
+          [0, 0],
+          [0.58, 1],
+        ],
+      ] as const) {
+        const eased: Animation = {
+          keys: [
+            { time: "0", value: 0, interp: "bezier", out: [...out] },
+            { time: "2", value: 100, in: [...arriving] },
+          ],
+        };
+        const before = compileChannel(eased, "number");
+        if (!before) throw new Error("no channel");
+        for (let frame = 1; frame < 60; frame += 1) {
+          const value = sample(before, frame / 30) as number;
+          const after = applyEdit(eased, { op: "setKey", time: `${frame}/30`, value });
+          expect((after as Animation).keys[1]?.interp).toBe("bezier");
+          const channel = compileChannel(after, "number");
+          if (!channel) throw new Error("no channel");
+          for (let step = 0; step <= 40; step += 1) {
+            expect(sample(channel, step / 20)).toBeCloseTo(sample(before, step / 20) as number, 6);
+          }
+        }
+      }
+    });
+
+    it("where keeping the shape would take a handle that swings far, the keys around stay", () => {
+      const overshoot: Animation = {
+        keys: [
+          { time: "0", value: 0, interp: "bezier", out: [0.34, 1.56] },
+          { time: "2", value: 100, in: [0.64, 1] },
+        ],
+      };
+      const channel = compileChannel(overshoot, "number");
+      if (!channel) throw new Error("no channel");
+      // Right where the curve goes past 100 the stretch after the key would barely change.
+      const after = applyEdit(overshoot, {
+        op: "setKey",
+        time: "2/3",
+        value: sample(channel, 2 / 3),
+      }) as Animation;
+      expect(after.keys[0]).toEqual(overshoot.keys[0]);
+      expect(after.keys[1]).toEqual({ time: "2/3", value: sample(channel, 2 / 3) });
+      expect(after.keys[2]).toEqual(overshoot.keys[1]);
+    });
+
+    it("a stretch that stands still gets a linear key, and the keys around it stay", () => {
+      const still: Animation = {
+        keys: [
+          { time: "0", value: 5, interp: "bezier", out: [0.42, 0] },
+          { time: "2", value: 5, in: [0.58, 1] },
+        ],
+      };
+      const after = applyEdit(still, { op: "setKey", time: "1", value: 30 }) as Animation;
+      expect(after.keys).toEqual([still.keys[0], { time: "1", value: 30 }, still.keys[1]]);
     });
 
     it("leaves a bezier that stands still around the key alone, and writes a linear key", () => {

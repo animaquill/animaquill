@@ -12,7 +12,10 @@ import {
   memoryAddress,
   memoryWindow,
 } from "../workbench/memory-library.ts";
+import { ActionRegistry } from "../workbench/actions.ts";
+import { registerTimelineActions } from "../timeline/actions.ts";
 import { ProjectSession } from "../workbench/session.ts";
+import { registerKeyframeActions } from "./actions.ts";
 import { KeyframeEditor } from "./editor.ts";
 import { LANE_HEIGHT, type Lane } from "./lanes.ts";
 import { KeySelection, type KeyRef } from "./selection.ts";
@@ -64,10 +67,16 @@ async function setup({ trying = true, memory = memoryWindow() } = {}) {
   const writer = new PropertyWriter(session, timeline, trials, { commandFailed });
   const pasteTooEarly = vi.fn();
   const pasteNowhere = vi.fn();
+  const comparing = vi.fn();
+  const locked = vi.fn();
+  const notShown = vi.fn();
   const open = () =>
     new KeyframeEditor(session, timeline, trials, writer, memory, settings, t, {
       pasteTooEarly,
       pasteNowhere,
+      comparing,
+      locked,
+      notShown,
     });
   const keyframes = open();
   const { panel } = keyframes;
@@ -172,6 +181,9 @@ async function setup({ trying = true, memory = memoryWindow() } = {}) {
     commandFailed,
     pasteTooEarly,
     pasteNowhere,
+    comparing,
+    locked,
+    notShown,
     main,
     addClip,
     edit,
@@ -346,6 +358,36 @@ describe("what the list shows", () => {
     again.panel.setViewport(WIDTH, HEIGHT);
     expect(again.panel.lanes.find(({ id }) => id === "a")?.open).toBe(true);
     expect(again.panel.pixelsPerSecond).toBe(seen);
+  });
+
+  it("forgets what it remembers of clips and tracks that are gone", async () => {
+    const memory = memoryWindow();
+    const first = await setup({ memory });
+    const { addClip, keys, keyframes, store, timeline } = first;
+    addClip("a", 0, 4);
+    keys("a", X, 1);
+    addClip("b", 4, 4);
+    keys("b", X, 1);
+    keyframes.toggleOpen("b");
+    keyframes.togglePin("b");
+    keyframes.setCurveHeight("b/transform.x", 120);
+    const box = timeline.model?.boxes.get("b");
+    if (!box) throw new Error("no clip");
+    keyframes.inTimeline.toggle(box);
+    keyframes.toggleOpen("a");
+    store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["b"] } });
+    keyframes.flush();
+    const id = store.getState().manifest.id;
+    const written = memory.read(`keyframes.${id}`) ?? "";
+    expect(written).not.toContain('"b');
+    expect(written).toContain('"a"');
+    // What was written before the clip went is forgotten as well, when it is read again.
+    const before = { toggled: ["a", "b"], pinned: ["b"], open: ["b"] };
+    memory.write(`keyframes.${id}`, JSON.stringify(before));
+    const again = first.reopen();
+    expect([...again.getSnapshot().pinned]).toEqual([]);
+    expect(again.inTimeline.opened).toEqual([]);
+    expect(again.isOpen({ kind: "clip", id: "a" } as never)).toBe(true);
   });
 
   it("makes the best of what it remembers when that is damaged", async () => {
@@ -1022,6 +1064,26 @@ describe("the view of the tab", () => {
     expect(panel.scrollY).toBe(0);
   });
 
+  it("the ruler covers what scrolled under it: a click there reaches no key and no row", async () => {
+    const { addClip, keys, open, panel, keyframes, timeline } = await setup();
+    keyframes.setRange("all");
+    for (let index = 0; index < 6; index += 1) {
+      addClip(`c${index}`, index * 3, 3);
+      keys(`c${index}`, X, 1, 2);
+      open(`c${index}`, "position");
+    }
+    const lane = panel.lanes.find(({ id }) => id === "c2/transform.x");
+    if (!lane) throw new Error("no lane");
+    // That lane is right under the ruler now, with its key at 7 on the timeline.
+    panel.setScroll(panel.scrollX, lane.top + 10);
+    const onRuler = { x: panel.xAt(7), y: RULER_HEIGHT / 2, shift: false, alt: false, mod: false };
+    expect(panel.hitAt(onRuler)).toEqual({ kind: "empty" });
+    const box = timeline.model?.boxes.get("c2");
+    if (!box) throw new Error("no clip");
+    keyframes.inTimeline.toggle(box);
+    expect(keyframes.inTimeline.hitAt(onRuler)).toEqual({ kind: "empty" });
+  });
+
   it("the ruler moves the playhead", async () => {
     const { addClip, panel, timeline } = await setup();
     addClip("a", 0, 10);
@@ -1248,6 +1310,207 @@ describe("keys on the timeline", () => {
   });
 });
 
+describe("what the keys of the timeline are about", () => {
+  /** Keys on X at 2 and 3 of a clip that starts at 1 and is open on the timeline, and a clip after it. */
+  async function onTimeline() {
+    const setting = await setup();
+    const { addClip, keys, keyframes, timeline, main } = setting;
+    addClip("a", 1, 8);
+    keys("a", X, 2, 3);
+    addClip("b", 10, 4);
+    keys("b", X, 1, 2);
+    const box = timeline.model?.boxes.get("a");
+    if (!box) throw new Error("no clip");
+    keyframes.inTimeline.toggle(box);
+    keyframes.toggleOpen("a/group:position");
+    const { inTimeline } = keyframes;
+    /** A key on the timeline, by where it is on the timeline. */
+    const keyAt = (seconds: number, id: string): Pointer => {
+      const lane = inTimeline.lanes.find((one) => one.id === id);
+      if (!lane) throw new Error(`no lane ${id}`);
+      const y = inTimeline.screenY(lane.top) + LANE_HEIGHT / 2;
+      return { x: timeline.xAt(seconds), y, shift: false, alt: false, mod: false };
+    };
+    const clickOn = (pointer: Pointer) => {
+      timeline.press(pointer);
+      timeline.release(pointer);
+    };
+    const actions = new ActionRegistry();
+    registerTimelineActions(actions, timeline, inTimeline);
+    registerKeyframeActions(actions, keyframes, timeline);
+    /** What a key does: nothing at all while what it does cannot be done. */
+    const press = (id: string) => {
+      const action = actions.get(id);
+      if (!action) throw new Error(`no action ${id}`);
+      if (action.enabled?.() !== false) action.run();
+    };
+    const clips = () => Object.keys(main().clips).toSorted();
+    const selectedClips = () => [...timeline.getSnapshot().selection].toSorted();
+    return { ...setting, box, keyAt, clickOn, press, clips, selectedClips };
+  }
+
+  it("while comparing, Delete is about the selected key, says why it cannot go, and leaves the clip", async () => {
+    const setting = await onTimeline();
+    const { writer, trials, keyframes, keyAt, clickOn, press, clips, shownTimes, comparing } =
+      setting;
+    writer.commit([{ owner: { clip: "a" }, path: Y, op: "set", value: 5 }]);
+    trials.toggleCompare();
+    clickOn(keyAt(3, laneOf("a", X)));
+    expect(keyframes.selection.size).toBe(1);
+    press("timeline.delete");
+    expect(clips()).toEqual(["a", "b"]);
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+    expect(comparing).toHaveBeenCalledOnce();
+  });
+
+  it("on a locked track, Delete is about the selected key, and no clip goes, wherever it is", async () => {
+    const setting = await onTimeline();
+    const { store, main, timeline, keyframes, video, press, clips, shownTimes, locked } = setting;
+    store.execute({ type: "track.add", params: { timeline: "main", kind: "video" } });
+    const other = orderedTracks(main()).find(({ id, kind }) => kind === "video" && id !== video)
+      ?.id as string;
+    const source = { kind: "color", color: "#445566" };
+    store.execute({
+      type: "clip.add",
+      params: {
+        timeline: "main",
+        track: other,
+        clip: { id: "l", start: "1", duration: "8", source },
+      },
+    });
+    setting.keys("l", X, 2);
+    timeline.updateTrack(other, { locked: true });
+    const box = timeline.model?.boxes.get("l");
+    if (!box) throw new Error("no clip");
+    keyframes.inTimeline.toggle(box);
+    keyframes.toggleOpen("l/group:position");
+    // Another clip was selected before the key of the locked one.
+    timeline.selectOnly("b");
+    setting.clickOn(setting.keyAt(3, laneOf("l", X)));
+    expect(keyframes.selection.size).toBe(1);
+    press("timeline.delete");
+    expect(clips()).toEqual(["a", "b", "l"]);
+    expect(shownTimes("l", X)).toEqual(["2"]);
+    expect(locked).toHaveBeenCalledOnce();
+  });
+
+  it("selected keys select their clip, and selecting clips lets go of the keys", async () => {
+    const { timeline, keyframes, keyAt, clickOn, press, clips, selectedClips } = await onTimeline();
+    timeline.selectOnly("b");
+    clickOn(keyAt(3, laneOf("a", X)));
+    expect(selectedClips()).toEqual(["a"]);
+    // Everything on the timeline is about clips, so Delete then takes the clips.
+    press("timeline.selectAll");
+    expect(keyframes.selection.size).toBe(0);
+    expect(selectedClips()).toEqual(["a", "b"]);
+    press("timeline.delete");
+    expect(clips()).toEqual([]);
+  });
+
+  it("the keys of the timeline are only about the keys it shows", async () => {
+    const setting = await onTimeline();
+    const { keyframes, open, at, click, press, shownTimes, clips, notShown } = setting;
+    keyframes.setRange("all");
+    open("a", "position");
+    open("b", "position");
+    // A key of b, which is closed on the timeline, selected in the tab.
+    click(at(11, laneOf("b", X)));
+    for (const key of ["timeline.delete", "timeline.cut", "timeline.copy"]) press(key);
+    expect(notShown).toHaveBeenCalledTimes(3);
+    expect(keyframes.getSnapshot().hasClipboard).toBe(false);
+    expect(shownTimes("b", X)).toEqual(["1", "2"]);
+    expect(clips()).toEqual(["a", "b"]);
+    // With a key that shows there as well, only that one goes.
+    click(at(3, laneOf("a", X), { mod: true }));
+    press("timeline.delete");
+    expect(shownTimes("a", X)).toEqual(["3"]);
+    expect(shownTimes("b", X)).toEqual(["1", "2"]);
+    // The tab shows both, so its keys are about both.
+    click(at(4, laneOf("a", X)));
+    click(at(11, laneOf("b", X), { mod: true }));
+    press("keyframes.delete");
+    expect(shownTimes("b", X)).toEqual(["2"]);
+  });
+
+  it("the clipboard holds what was copied or cut last", async () => {
+    const { timeline, keyframes, keyAt, clickOn, press, main, shownTimes } = await onTimeline();
+    clickOn(keyAt(3, laneOf("a", X)));
+    press("timeline.copy");
+    expect(keyframes.getSnapshot().hasClipboard).toBe(true);
+    // Clips that are cut after that are what a paste is about.
+    timeline.selectOnly("b");
+    press("timeline.cut");
+    expect(keyframes.getSnapshot().hasClipboard).toBe(false);
+    timeline.seek(12 * 30);
+    press("timeline.paste");
+    expect(main().clips["b"]).toBeUndefined();
+    expect(Object.values(main().clips).map(({ start }) => start)).toContain("12");
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+
+    // Clips copied from their menu, and keys after that: the keys go in.
+    timeline.selectOnly("a");
+    timeline.copySelection();
+    clickOn(keyAt(3, laneOf("a", X)));
+    press("timeline.copy");
+    expect(timeline.hasClipboard).toBe(false);
+    timeline.seek(6 * 30);
+    const before = Object.keys(main().clips).length;
+    press("timeline.paste");
+    expect(Object.keys(main().clips)).toHaveLength(before);
+    expect(shownTimes("a", X)).toEqual(["2", "3", "5"]);
+
+    // Keys copied while clips wait to be moved: those stay where they are.
+    timeline.selectOnly("a");
+    press("timeline.cut");
+    expect(timeline.getSnapshot().cut.size).toBe(1);
+    clickOn(keyAt(3, laneOf("a", X)));
+    press("timeline.copy");
+    expect(timeline.getSnapshot().cut.size).toBe(0);
+  });
+
+  it("cutting keys takes them away in one step, and pastes them at the playhead", async () => {
+    const { timeline, keyframes, keyAt, clickOn, press, clips, shownTimes, trials } =
+      await onTimeline();
+    clickOn(keyAt(3, laneOf("a", X)));
+    press("timeline.cut");
+    expect(shownTimes("a", X)).toEqual(["3"]);
+    expect(clips()).toEqual(["a", "b"]);
+    expect(keyframes.getSnapshot().hasClipboard).toBe(true);
+    timeline.seek(6 * 30);
+    press("timeline.paste");
+    expect(shownTimes("a", X)).toEqual(["3", "5"]);
+    trials.undo();
+    trials.undo();
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+  });
+
+  it("pasting while comparing says that nothing can change", async () => {
+    const setting = await onTimeline();
+    const { writer, trials, keyAt, clickOn, press, shownTimes, comparing, pasteNowhere } = setting;
+    clickOn(keyAt(3, laneOf("a", X)));
+    press("timeline.copy");
+    writer.commit([{ owner: { clip: "a" }, path: Y, op: "set", value: 5 }]);
+    trials.toggleCompare();
+    setting.timeline.seek(6 * 30);
+    press("timeline.paste");
+    expect(comparing).toHaveBeenCalledOnce();
+    expect(pasteNowhere).not.toHaveBeenCalled();
+    trials.toggleCompare();
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+  });
+
+  it("the Delete of the tab says why the selected keys cannot go", async () => {
+    const setting = await onTimeline();
+    const { writer, trials, keyAt, clickOn, press, shownTimes, comparing } = setting;
+    clickOn(keyAt(3, laneOf("a", X)));
+    writer.commit([{ owner: { clip: "a" }, path: Y, op: "set", value: 5 }]);
+    trials.toggleCompare();
+    press("keyframes.delete");
+    expect(comparing).toHaveBeenCalledOnce();
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+  });
+});
+
 describe("fingers", () => {
   const environment = {
     later: () => () => {},
@@ -1343,6 +1606,53 @@ describe("fingers", () => {
     timeline.hold(key);
     expect(timeline.touchAt(key)).toBe("selected");
     expect(keyframes.selection.size).toBe(1);
+  });
+
+  it("a second finger is a hand resting on the screen while a key under a clip goes along", async () => {
+    const { timeline, keyframes, addClip, keys, shownTimes } = await setup();
+    addClip("b", 0, 8);
+    keys("b", X, 2, 4);
+    const box = timeline.model?.boxes.get("b");
+    if (!box) throw new Error("no clip");
+    keyframes.inTimeline.toggle(box);
+    keyframes.toggleOpen("b/group:position");
+    const lane = keyframes.inTimeline.lanes.find(({ id }) => id === laneOf("b", X));
+    if (!lane) throw new Error("no lane");
+    const y = keyframes.inTimeline.screenY(lane.top) + LANE_HEIGHT / 2;
+    const x = timeline.xAt(2);
+    timeline.setTouchInput(true);
+    const touch = new TouchController(timeline, environment);
+    touch.down(1, x, y);
+    touch.up(1);
+    expect(keyframes.selection.size).toBe(1);
+    touch.down(1, x, y);
+    touch.move(1, x + 20, y);
+    touch.move(1, x + 40, y);
+    expect(keyframes.preview).toBeDefined();
+    touch.down(2, x + 300, y + 100);
+    touch.move(1, timeline.xAt(3), y);
+    touch.up(2);
+    touch.up(1);
+    expect(shownTimes("b", X)).toEqual(["3", "4"]);
+  });
+
+  it("with a finger, the start of a selected clip trims, and its button is past that", async () => {
+    const { timeline, keyframes, addClip, keys, video } = await setup();
+    addClip("b", 1, 8);
+    keys("b", X, 2);
+    timeline.selectOnly("b");
+    timeline.setTouchInput(true);
+    const box = timeline.model?.boxes.get("b");
+    const row = timeline.model?.rows.find(({ id }) => id === video);
+    if (!box || !row) throw new Error("no clip");
+    const left = timeline.xAt(box.start);
+    const y = RULER_HEIGHT - timeline.scrollY + row.top + 10;
+    const edge = { x: left + 10, y, shift: false, alt: false, mod: false };
+    expect(timeline.hitAt(edge)).toMatchObject({ kind: "clip", edge: "start" });
+    const button = timeline.expanderAt(left, timeline.xAt(box.end) - left);
+    if (button === undefined) throw new Error("no button");
+    expect(timeline.hitAt({ ...edge, x: button + 4 })).toMatchObject({ expander: true });
+    expect(keyframes.inTimeline.canOpen(box)).toBe(true);
   });
 });
 

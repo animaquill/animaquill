@@ -640,6 +640,27 @@ test.describe("with changes written right away", () => {
     await expect.poll(() => timeOf(keysOf(timeline, "位置 X").nth(1))).toBe("0:03/00");
   });
 
+  test("after keys were copied, clips that are cut are what a paste moves", async ({ page }) => {
+    const { timeline } = await openOnTimeline(page);
+    const second = await centerOf(keysOf(timeline, "位置 X").nth(1));
+    await page.mouse.click(second.x, second.y);
+    await page.keyboard.press("Control+c");
+    const box = await clips(page).first().boundingBox();
+    if (!box) throw new Error("no clip");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(keysOf(timeline, "位置 X").nth(1)).toHaveAttribute("aria-selected", "false");
+    await page.keyboard.press("Control+x");
+    await goTo(page, "0:06/00");
+    await timeline.getByRole("group", { name: "时间轴", exact: true }).focus();
+    await page.keyboard.press("Control+v");
+    await expect.poll(async () => (await clips(page).first().boundingBox())?.x).not.toBe(box.x);
+    await expect(clips(page)).toHaveCount(1);
+    // The clip went with its two keys, and no key went anywhere. It is a new clip, with its
+    // position closed, which sums up what is in it.
+    await page.keyboard.press("u");
+    await expect(keysOf(timeline, "位置")).toHaveCount(2);
+  });
+
   test("a clip opens with the button on it and from its menu", async ({ page }) => {
     await keyedColor(page);
     const timeline = content(page, "timeline");
@@ -763,6 +784,31 @@ test.describe("while trying things out", () => {
     await expect(keys(page, "位置 X").nth(1)).not.toHaveAttribute("data-tried");
     await page.keyboard.press("Control+z");
     await expect.poll(() => timeOf(keys(page, "位置 X").nth(1))).toBe("0:03/00");
+  });
+
+  test("while comparing, Delete on a key under a clip says why it stays, and the clip stays", async ({
+    page,
+  }) => {
+    await keyedColor(page);
+    await saveTrial(page);
+    await dragBy(page, keys(page, "位置 X").nth(1), 60);
+    await expect(trialBar(page).getByRole("status")).toHaveText("试改 1 处");
+    await trialBar(page).getByRole("button", { name: "对比" }).click();
+    const timeline = content(page, "timeline");
+    const box = await clips(page).first().boundingBox();
+    if (!box) throw new Error("no clip");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.keyboard.press("u");
+    await expect(keysOf(timeline, "位置 X")).toHaveCount(2);
+    const first = await centerOf(keysOf(timeline, "位置 X").first());
+    await page.mouse.click(first.x, first.y);
+    await expect(keysOf(timeline, "位置 X").first()).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Delete");
+    await expect(
+      page.getByText("正在对比已保存的内容，关键帧不能改。", { exact: false }),
+    ).toBeVisible();
+    await expect(clips(page)).toHaveCount(1);
+    await expect(keysOf(timeline, "位置 X")).toHaveCount(2);
   });
 
   test("a row can give up on what is tried, and comparing shows what is saved", async ({

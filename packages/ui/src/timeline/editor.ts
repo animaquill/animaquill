@@ -97,10 +97,15 @@ const MAX_HEADER_WIDTH = 360;
 /** Colours that tell clips apart while they are only placeholders. */
 const NEW_CLIP_COLORS = ["#3f6fb5", "#3f9a7a", "#b57a3f", "#8f5fb5", "#b5536a", "#5f8fa8"];
 
-/** Where that button is, or undefined when there is no room for it. */
-export function expanderBox(left: number, width: number): number | undefined {
-  const x = Math.max(left, 0) + EXPANDER_INSET;
-  return x + EXPANDER_SIZE <= left + width && width >= EXPANDER_MIN_WIDTH ? x : undefined;
+/**
+ * Where that button is, past where a press at either edge trims, or undefined when there is no
+ * room for it. A finger trims from further in.
+ */
+export function expanderBox(left: number, width: number, edgeReach: number): number | undefined {
+  const reach = Math.min(edgeReach, width / 3);
+  const x = Math.max(left, 0) + Math.max(EXPANDER_INSET, reach + 1);
+  const fits = width >= EXPANDER_MIN_WIDTH && x + EXPANDER_SIZE <= left + width - reach;
+  return fits ? x : undefined;
 }
 
 export type Tool = "select" | "razor";
@@ -136,6 +141,8 @@ export interface RowExtras {
   /** A long press there. Says whether it was. */
   hold(pointer: Pointer): boolean;
   setTouchInput(on: boolean): void;
+  /** Whether a drag there shows a change. */
+  readonly holdsDrag: boolean;
   /** Whether a clip has something to show there. */
   canOpen(box: ClipBox): boolean;
   isOpen(box: ClipBox): boolean;
@@ -259,6 +266,8 @@ export class TimelineEditor implements TouchTarget {
   readonly #messages: TimelineMessages;
   readonly #emitter = new Emitter();
   readonly #viewEmitter = new Emitter();
+  readonly #copied = new Emitter();
+  readonly #chosen = new Emitter();
   #snapshot: TimelineSnapshot = {
     model: undefined,
     selection: new Set(),
@@ -337,6 +346,13 @@ export class TimelineEditor implements TouchTarget {
   getSnapshot = (): TimelineSnapshot => this.#snapshot;
   /** Everything that changes what is on screen, up to once per frame. */
   subscribeView = this.#viewEmitter.subscribe;
+  /** Hears when clips go on the clipboard, which is when anything else that was there goes. */
+  subscribeCopies = this.#copied.subscribe;
+  /**
+   * Hears when people select clips, also the ones that were selected already: what they do next is
+   * about clips then. Keys selecting their clips is not that.
+   */
+  subscribeChoices = this.#chosen.subscribe;
 
   get model(): TimelineModel | undefined {
     return this.#snapshot.model;
@@ -364,6 +380,10 @@ export class TimelineEditor implements TouchTarget {
 
   get height(): number {
     return this.#height;
+  }
+
+  get holdsDrag(): boolean {
+    return this.preview !== undefined || this.#extras?.holdsDrag === true;
   }
 
   get preview(): Preview | undefined {
@@ -751,6 +771,11 @@ export class TimelineEditor implements TouchTarget {
   }
 
   #select(wanted: ReadonlySet<string>): void {
+    this.#setSelection(wanted);
+    this.#chosen.emit();
+  }
+
+  #setSelection(wanted: ReadonlySet<string>): void {
     // A drag can hold on to a clip that is gone by now.
     const selection = new Set(this.#present(wanted, this.model));
     if (sameSet(selection, this.#snapshot.selection)) return;
@@ -765,6 +790,11 @@ export class TimelineEditor implements TouchTarget {
 
   selectOnly(clip: string): void {
     this.#select(this.#withLinked(new Set([clip])));
+  }
+
+  /** The clips of selected keys and what is linked to them, which keeps the keys selected. */
+  selectClipsOfKeys(clips: Iterable<string>): void {
+    this.#setSelection(this.#withLinked(new Set(clips)));
   }
 
   /** To do something with all of it, which is nothing for a locked clip. */
@@ -884,6 +914,14 @@ export class TimelineEditor implements TouchTarget {
     const boxes = [...clips].flatMap((id) => model?.boxes.get(id) ?? []);
     if (boxes.length === 0) return;
     this.#clipboard = boxes.map(({ clip }) => clip);
+    this.#setCut(new Set());
+    this.#copied.emit();
+  }
+
+  /** Something else went on the clipboard: what was copied goes, and nothing waits to be moved. */
+  forgetClipboard(): void {
+    if (this.#clipboard.length === 0 && this.#snapshot.cut.size === 0) return;
+    this.#clipboard = [];
     this.#setCut(new Set());
   }
 
@@ -1403,9 +1441,14 @@ export class TimelineEditor implements TouchTarget {
     return this.#snapshot.selection.has(box.id) || extras.isOpen(box);
   }
 
+  /** Where the button of a clip on screen is. */
+  expanderAt(left: number, width: number): number | undefined {
+    return expanderBox(left, width, this.#edgeReach);
+  }
+
   #onExpander(box: ClipBox, row: Row, x: number, y: number): boolean {
     const left = this.xAt(box.start);
-    const at = expanderBox(left, this.xAt(box.end) - left);
+    const at = this.expanderAt(left, this.xAt(box.end) - left);
     const inside = at !== undefined && x >= at && x < at + EXPANDER_SIZE;
     return inside && this.laneAt(y) - row.top <= EXPANDER_HEIGHT && this.showsExpander(box);
   }

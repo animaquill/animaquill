@@ -2,12 +2,17 @@ import { readFileSync } from "node:fs";
 import type { Animation, Key, PropertyValue, Value, ValueType } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import {
+  MAX_SPLIT_Y,
+  MIN_SPLIT_Y,
   VALUE_TYPES,
   bezierProgress,
   compileChannel,
+  joinBezier,
   numberAt,
   sample,
+  splitBezier,
   type Channel,
+  type Handles,
 } from "./curve.ts";
 
 const compiled = (value: PropertyValue, type: ValueType = "number"): Channel => {
@@ -223,6 +228,105 @@ describe("bezier", () => {
         expect(found).toBeGreaterThanOrEqual(0);
         expect(found).toBeLessThanOrEqual(1);
       }
+    });
+  });
+
+  describe("cut where a key goes in", () => {
+    const from = { time: 0, value: 0 };
+    const to = { time: 2, value: 100 };
+    const halves = (handles: Handles, time: number, value?: number) => {
+      const curve = eased2(handles);
+      const there = value ?? (at(curve, time) as number);
+      return { curve, there, cut: splitBezier(from, to, handles, { time, value: there }) };
+    };
+    /** From 0 to 100 in two seconds. */
+    const eased2 = ([x1, y1, x2, y2]: Handles): Animation => ({
+      keys: [
+        { time: "0", value: 0, interp: "bezier", out: [x1, y1] },
+        { time: "2", value: 100, in: [x2, y2] },
+      ],
+    });
+    const asKeys = (time: number, value: number, before: Handles, after: Handles): Animation => ({
+      keys: [
+        { time: "0", value: 0, interp: "bezier", out: [before[0], before[1]] },
+        {
+          time: String(time),
+          value,
+          interp: "bezier",
+          in: [before[2], before[3]],
+          out: [after[0], after[1]],
+        },
+        { time: "2", value: 100, in: [after[2], after[3]] },
+      ],
+    });
+
+    it("keeps the curve with the value that is there", () => {
+      const handles: Handles = [0.42, 0, 0.58, 1];
+      const { curve, there, cut } = halves(handles, 0.7);
+      if (!cut) throw new Error("not cut");
+      const both = asKeys(0.7, there, cut.before, cut.after);
+      for (let step = 0; step <= 40; step += 1) {
+        expect(at(both, step / 20)).toBeCloseTo(at(curve, step / 20) as number, 7);
+      }
+    });
+
+    it("bends it through another value, with what steers it from the keys that were there kept", () => {
+      const handles: Handles = [0.42, 0, 0.58, 1];
+      const { cut } = halves(handles, 0.7, 80);
+      if (!cut) throw new Error("not cut");
+      expect(at(asKeys(0.7, 80, cut.before, cut.after), 0.7)).toBeCloseTo(80, 9);
+      const [, y1, , y2] = [...cut.before, ...cut.after];
+      expect(y1).toBe(0);
+      expect(y2).toBeLessThanOrEqual(MAX_SPLIT_Y);
+      expect(cut.after[3]).toBe(1);
+    });
+
+    it("does not cut where a handle would have to reach further than easing goes", () => {
+      // Where what overshoots goes past 100, the stretch after it hardly changes.
+      const handles: Handles = [0.34, 1.56, 0.64, 1];
+      expect(halves(handles, 2 / 3).cut).toBeUndefined();
+      const { cut } = halves(handles, 1.6);
+      if (!cut) throw new Error("not cut");
+      for (const y of [cut.before[1], cut.before[3], cut.after[1], cut.after[3]]) {
+        expect(y).toBeGreaterThanOrEqual(MIN_SPLIT_Y);
+        expect(y).toBeLessThanOrEqual(MAX_SPLIT_Y);
+      }
+    });
+
+    it("does not cut a stretch that stands still, or one that would", () => {
+      const handles: Handles = [0.42, 0, 0.58, 1];
+      expect(splitBezier(from, { time: 2, value: 0 }, handles, { time: 1, value: 5 })).toBe(
+        undefined,
+      );
+      expect(splitBezier(from, to, handles, { time: 1, value: 0 })).toBeUndefined();
+      expect(splitBezier(from, to, handles, { time: 1, value: 100 })).toBeUndefined();
+    });
+
+    it("joins what it cut back to what it was, digit for digit", () => {
+      for (const handles of [
+        [0.25, 0.1, 0.25, 1],
+        [0.42, 0, 1, 1],
+        [0, 0, 0.58, 1],
+        [0.34, 1.56, 0.64, 1],
+      ] satisfies Handles[]) {
+        for (const time of [0.05, 0.3, 1, 1.6, 1.97]) {
+          for (const value of [undefined, 12.5, 80]) {
+            const { there, cut } = halves(handles, time, value);
+            if (!cut) continue;
+            const middle = { time, value: there };
+            expect(joinBezier(from, middle, to, cut.before, cut.after)).toEqual(handles);
+          }
+        }
+      }
+    });
+
+    it("does not join beziers that were not cut from one", () => {
+      const middle = { time: 1, value: 50 };
+      expect(joinBezier(from, middle, to, [0.42, 0, 0.58, 1], [0.42, 0, 0.58, 1])).toBeUndefined();
+      const { there, cut } = halves([0.42, 0, 0.58, 1], 1);
+      if (!cut) throw new Error("not cut");
+      const moved = { time: 1, value: there + 3 };
+      expect(joinBezier(from, moved, to, cut.before, cut.after)).toBeUndefined();
     });
   });
 

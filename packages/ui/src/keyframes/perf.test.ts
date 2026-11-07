@@ -11,6 +11,7 @@ import {
 } from "../workbench/memory-library.ts";
 import { ProjectSession } from "../workbench/session.ts";
 import { KeyframeEditor } from "./editor.ts";
+import { KeySelection } from "./selection.ts";
 
 const CLIPS = 5000;
 const KEYS = 5;
@@ -83,6 +84,9 @@ async function big() {
   const keyframes = new KeyframeEditor(session, timeline, trials, writer, memory, settings, t, {
     pasteTooEarly: vi.fn(),
     pasteNowhere: vi.fn(),
+    comparing: vi.fn(),
+    locked: vi.fn(),
+    notShown: vi.fn(),
   });
   keyframes.panel.setViewport(1000, 600);
   return { store, timeline, keyframes, writer, trials };
@@ -125,6 +129,81 @@ describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
     timed("nudging all of it", () => keyframes.nudge(1), 30_000);
     expect(trials.getSnapshot().count).toBe(CLIPS * 2);
     timed("taking that back", () => trials.undo(), 10_000);
+  });
+
+  it("keys go to the playhead without going through every selected clip for each of them", async () => {
+    const { store, keyframes, timeline } = await big();
+    const owner = { clip: "c0" };
+    const keys = Array.from({ length: 5000 }, (_, index) => ({
+      time: String(index / 10),
+      value: index,
+    }));
+    const edit: PropertyEdit = { owner, path: "transform.rotation", op: "set", value: { keys } };
+    store.execute({ type: "property.edit", params: { timeline: "main", edits: [edit] } });
+    keyframes.select(
+      KeySelection.of(keys.map(({ time }) => ({ clip: "c0", path: "transform.rotation", time }))),
+    );
+    keyframes.copySelected();
+    timeline.selectAll();
+    timeline.seek(30 * 30);
+    // Going through the 5000 selected clips for each key took 59 seconds.
+    timed("pasting 5000 keys with 5000 clips selected", () => keyframes.paste(), 5000);
+    const box = timeline.model?.boxes.get("c0");
+    if (!box) throw new Error("no clip");
+    const value = keyframes.shown(box.clip).properties?.["transform.rotation"] as {
+      keys: unknown[];
+    };
+    expect(value.keys.length).toBeGreaterThan(5000);
+  });
+
+  it("tells keys that are tried from the others without going through all of them", async () => {
+    const { store, keyframes, timeline, writer } = await big();
+    const owner = { clip: "c0" };
+    const keys = Array.from({ length: 100_000 }, (_, index) => ({
+      time: String(index / 1000),
+      value: index,
+    }));
+    const edit: PropertyEdit = { owner, path: "transform.rotation", op: "set", value: { keys } };
+    store.execute({ type: "property.edit", params: { timeline: "main", edits: [edit] } });
+    const moves = [{ from: "0", to: "0.0005" }];
+    writer.commit([{ owner, path: "transform.rotation", op: "moveKey", moves }]);
+    keyframes.setRange("all");
+    keyframes.toggleOpen("c0");
+    timeline.seek(0);
+    keyframes.setLinked(false);
+    const { panel } = keyframes;
+    panel.zoomAround(0, 400);
+    // Near the last of them, which is where looking through them from the first takes longest.
+    panel.setScroll(98 * panel.pixelsPerSecond, panel.scrollY);
+    let found = 0;
+    // Looking through all of them for each key on screen took seconds for this.
+    timed(
+      "the keys on screen, 20 times",
+      () => {
+        for (let round = 0; round < 20; round += 1) found = panel.visibleKeys(200).length;
+      },
+      1000,
+    );
+    expect(found).toBeGreaterThan(100);
+  });
+
+  it("a box of keys across thousands of clips does not list everything again with each step", async () => {
+    const { keyframes, timeline } = await big();
+    keyframes.setRange("all");
+    // Keys select their clips. Listing all of them again for that took 4 seconds for this.
+    timed(
+      "50 steps of a box that grows",
+      () => {
+        for (let step = 1; step <= 50; step += 1) {
+          const clips = Array.from({ length: step * 100 }, (_, index) => `c${index}`);
+          keyframes.select(
+            KeySelection.of(clips.map((clip) => ({ clip, path: "transform.x", time: "0" }))),
+          );
+        }
+      },
+      2000,
+    );
+    expect(timeline.getSnapshot().selection.size).toBe(CLIPS);
   });
 
   it("a key among thousands moves without going through the rest", async () => {

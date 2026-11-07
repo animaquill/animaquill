@@ -11,6 +11,10 @@ const KEYS_PER_PROPERTY = 5;
  */
 const WORST_FRAME_MS = 300;
 const AVERAGE_FRAME_MS = 30;
+/** How long the page may stop at most, while scrolling and drawing. */
+const LONGEST_TASK_MS = 300;
+/** Pasting is one command, which may take a moment, but not seconds. */
+const LONGEST_PASTE_MS = 1500;
 
 test.use({ withProject: false });
 test.setTimeout(240_000);
@@ -113,9 +117,10 @@ async function report(page: Page, name: string): Promise<Measured> {
 }
 
 async function reportSmooth(page: Page, name: string): Promise<void> {
-  const { worst, average } = await report(page, name);
+  const { worst, average, longest } = await report(page, name);
   expect(worst, name).toBeLessThan(WORST_FRAME_MS);
   expect(average, name).toBeLessThan(AVERAGE_FRAME_MS);
+  expect(longest, name).toBeLessThan(LONGEST_TASK_MS);
 }
 
 test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
@@ -165,6 +170,23 @@ test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
   await turnWheel(page, 30, 0, 240);
   await reportSmooth(page, "selecting 50000 keys, and going through them");
   await page.keyboard.press("Escape");
+
+  // Keys of one clip go to the playhead while every clip is selected.
+  const key = panel(page).getByRole("option").first();
+  const place = await key.boundingBox();
+  if (!place) throw new Error("no key on screen");
+  await page.mouse.click(place.x + place.width / 2, place.y + place.height / 2);
+  await expect(key).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Control+c");
+  await content(page, "timeline").getByRole("group", { name: "时间轴", exact: true }).focus();
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("End");
+  await startCounting(page);
+  await page.keyboard.press("Control+v");
+  await expect(page.getByRole("group", { name: "试改", exact: true })).toBeVisible();
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  const pasted = await report(page, "pasting keys with every clip selected");
+  expect(pasted.longest, "pasting").toBeLessThan(LONGEST_PASTE_MS);
 
   // Rows of values follow the playhead, in every frame.
   await panel(page).getByRole("radio", { name: "当前位置" }).click();

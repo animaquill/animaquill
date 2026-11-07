@@ -47,6 +47,17 @@ export class KeySelection {
     return this.#clips.has(clip);
   }
 
+  /** The clips the keys are on. */
+  clips(): IterableIterator<string> {
+    return this.#clips.keys();
+  }
+
+  /** The keys on some of the clips. The same one when that is all of them. */
+  onClips(wanted: (clip: string) => boolean): KeySelection {
+    const clips = new Map([...this.#clips].filter(([clip]) => wanted(clip)));
+    return clips.size === this.#clips.size ? this : new KeySelection(clips);
+  }
+
   /** Keys by property, which is how edits go. */
   *channels(): Generator<{ clip: string; path: string; times: Times }> {
     for (const [clip, channels] of this.#clips) {

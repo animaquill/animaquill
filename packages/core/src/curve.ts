@@ -133,44 +133,199 @@ export function bezierProgress(
   return ((ay * s + by) * s + cy) * s;
 }
 
-const between = (from: number, to: number, share: number) => from + (to - from) * share;
-
-/** What is left of a handle once rounded: more digits than anyone can see, and none of the noise. */
-const rounded = (value: number) => Number(value.toFixed(6));
+/** A key as a point: seconds on the clock of its clip, and a number. */
+export interface KeyPoint {
+  readonly time: number;
+  readonly value: number;
+}
 
 /**
- * One `cubic-bezier` as two that make up the same curve, for a key that goes in between. Undefined
- * where the curve stands at 0 or 1, because a part that does not get anywhere has no handles. Handles
- * that reach very far in x can leave a part with a handle outside of 0 and 1, which cannot be written:
- * that one stops at the edge, and the two come close instead of being the same.
+ * How far up and down a handle that a new key writes may reach, as a share of the change between its
+ * keys. The usual easings stay within this, overshooting ones too. A handle that reaches further
+ * turns any later change of a value into a swing that goes far past both keys.
+ */
+export const MIN_SPLIT_Y = -1;
+export const MAX_SPLIT_Y = 2;
+/** How close two curves have to be to count as one, in shares of time and of the change. */
+const SAME_CURVE = 1e-9;
+
+interface Point {
+  readonly t: number;
+  readonly v: number;
+}
+
+const lerp = (a: Point, b: Point, share: number): Point => ({
+  t: a.t + (b.t - a.t) * share,
+  v: a.v + (b.v - a.v) * share,
+});
+
+/** The parameter of a CSS `cubic-bezier` at a share of the time, as close as floats go. */
+function preciseParameterAt(x1: number, x2: number, time: number): number {
+  const cx = 3 * x1;
+  const bx = 3 * (x2 - x1) - cx;
+  const ax = 1 - cx - bx;
+  const xAt = (s: number) => ((ax * s + bx) * s + cx) * s;
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 64 && high - low > Number.EPSILON; step += 1) {
+    const middle = (low + high) / 2;
+    if (xAt(middle) < time) low = middle;
+    else high = middle;
+  }
+  return (low + high) / 2;
+}
+
+/** How far a short decimal can be from what a join works out, and still be what people wrote. */
+const JOIN_REACH = 1e-9;
+/** Handles as people write them have a few digits. What took more stays as it came out. */
+const TIDY_DIGITS = 6;
+/** What floats lose in a cut and a join, in shares of a stretch. */
+const FLOAT_NOISE = 1e-11;
+
+/**
+ * The shortest decimal of a few digits within reach of a number, so that what went through a cut
+ * and a join comes back as it was written: 0.42 and not 0.42000000000000004.
+ */
+function tidy(value: number): number {
+  for (let digits = 0; digits <= TIDY_DIGITS; digits += 1) {
+    const short = Number(value.toFixed(digits));
+    if (Math.abs(short - value) <= JOIN_REACH) return short === 0 ? 0 : short;
+  }
+  return value;
+}
+
+/** A point that steers a curve, as a handle: in shares of the time and of the change of its stretch. */
+function handleOf(
+  at: Point,
+  from: Point,
+  length: number,
+  change: number,
+): readonly [number, number] {
+  return [(at.t - from.t) / length, (at.v - from.v) / change];
+}
+
+/** Whether a stretch writes handles that a key can hold and that do not swing far. */
+function fits([x1, y1, x2, y2]: Handles): boolean {
+  const xs = x1 >= -SAME_CURVE && x1 <= 1 + SAME_CURVE && x2 >= -SAME_CURVE && x2 <= 1 + SAME_CURVE;
+  const inReach = (y: number) => y >= MIN_SPLIT_Y - SAME_CURVE && y <= MAX_SPLIT_Y + SAME_CURVE;
+  return xs && inReach(y1) && inReach(y2);
+}
+
+/** What a cut writes keeps all of its digits, so that a join can give back what was there. */
+const written = ([x1, y1, x2, y2]: Handles): Handles => [clampToUnit(x1), y1, clampToUnit(x2), y2];
+
+/** The points that steer a `cubic-bezier` from one key to the next, in seconds and values. */
+function controlsOf(from: KeyPoint, to: KeyPoint, [x1, y1, x2, y2]: Handles): readonly Point[] {
+  const length = to.time - from.time;
+  const change = to.value - from.value;
+  return [
+    { t: from.time, v: from.value },
+    { t: from.time + x1 * length, v: from.value + y1 * change },
+    { t: from.time + x2 * length, v: from.value + y2 * change },
+    { t: to.time, v: to.value },
+  ];
+}
+
+/** Whether a change of value is too small to carry a shape, next to the numbers around it. */
+const isFlat = (change: number, scale: number) => Math.abs(change) <= SAME_CURVE * scale;
+
+/**
+ * A key that goes in between two keys of a bezier, as the two beziers on either side of it. The
+ * curve is cut where the key is, in seconds and values: what steers it from the keys that are
+ * there stays where it was, and what steers it next to the new key goes along with the value of
+ * that key. So a key with the value that was there leaves the curve as it was, and one with another
+ * value bends it there. Undefined when that takes a handle a key cannot hold, or one that reaches
+ * further than `MIN_SPLIT_Y` and `MAX_SPLIT_Y`: then the keys around it had better stay as they are.
  */
 export function splitBezier(
-  [x1, y1, x2, y2]: Handles,
-  time: number,
+  from: KeyPoint,
+  to: KeyPoint,
+  handles: Handles,
+  at: KeyPoint,
 ): { readonly before: Handles; readonly after: Handles } | undefined {
-  if (time <= 0 || time >= 1) return undefined;
-  const s = parameterAt(x1, x2, time);
-  const ax = between(0, x1, s);
-  const ay = between(0, y1, s);
-  const bx = between(x1, x2, s);
-  const by = between(y1, y2, s);
-  const cx = between(x2, 1, s);
-  const cy = between(y2, 1, s);
-  const dx = between(ax, bx, s);
-  const dy = between(ay, by, s);
-  const ex = between(bx, cx, s);
-  const ey = between(by, cy, s);
-  const px = between(dx, ex, s);
-  const py = between(dy, ey, s);
-  if (Math.abs(py) < 1e-9 || Math.abs(1 - py) < 1e-9) return undefined;
-  const firstX = (x: number) => rounded(clampToUnit(x / px));
-  const firstY = (y: number) => rounded(y / py);
-  const lastX = (x: number) => rounded(clampToUnit((x - px) / (1 - px)));
-  const lastY = (y: number) => rounded((y - py) / (1 - py));
-  return {
-    before: [firstX(ax), firstY(ay), firstX(dx), firstY(dy)],
-    after: [lastX(ex), lastY(ey), lastX(cx), lastY(cy)],
+  const length = to.time - from.time;
+  const share = (at.time - from.time) / length;
+  // What reaches that far already is left alone, so that whatever comes of it can be joined again.
+  if (!(length > 0) || !(share > 0 && share < 1) || !fits(handles)) return undefined;
+  const [p0, p1, p2, p3] = controlsOf(from, to, handles) as [Point, Point, Point, Point];
+  const s = preciseParameterAt(handles[0], handles[2], share);
+  const q1 = lerp(p0, p1, s);
+  const q2 = lerp(p1, p2, s);
+  const q3 = lerp(p2, p3, s);
+  const r1 = lerp(q1, q2, s);
+  const r2 = lerp(q2, q3, s);
+  const shift = at.value - lerp(r1, r2, s).v;
+  const middle: Point = { t: at.time, v: at.value };
+  const scale = Math.max(...[p0, p1, p2, p3, middle].map(({ v }) => Math.abs(v)), 1);
+  const before = at.value - from.value;
+  const after = to.value - at.value;
+  // A stretch that does not change has no shape to keep, and one that would not has none to take.
+  const flat = [to.value - from.value, before, after].some((change) => isFlat(change, scale));
+  if (flat) return undefined;
+  const left: Handles = [
+    ...handleOf(q1, p0, at.time - from.time, before),
+    ...handleOf({ t: r1.t, v: r1.v + shift }, p0, at.time - from.time, before),
+  ];
+  const right: Handles = [
+    ...handleOf({ t: r2.t, v: r2.v + shift }, middle, to.time - at.time, after),
+    ...handleOf(q3, middle, to.time - at.time, after),
+  ];
+  if (!fits(left) || !fits(right)) return undefined;
+  return { before: written(left), after: written(right) };
+}
+
+/**
+ * Two beziers on either side of a key as one, for when that key goes: the curve it was cut from,
+ * as far as it was cut from one, and as far as that reaches no further than a cut may. A key that
+ * `splitBezier` put in comes out again without a trace, whatever value it went in with. Undefined
+ * for anything else.
+ */
+export function joinBezier(
+  from: KeyPoint,
+  middle: KeyPoint,
+  to: KeyPoint,
+  before: Handles,
+  after: Handles,
+): Handles | undefined {
+  const length = to.time - from.time;
+  const change = to.value - from.value;
+  const share = (middle.time - from.time) / length;
+  if (!(length > 0) || !(share > 0 && share < 1)) return undefined;
+  const scale = Math.max(Math.abs(from.value), Math.abs(middle.value), Math.abs(to.value), 1);
+  if (isFlat(change, scale)) return undefined;
+  const [p0, q1, r1] = controlsOf(from, middle, before) as [Point, Point, Point];
+  const [, r2, q3, p3] = controlsOf(middle, to, after) as [Point, Point, Point, Point];
+  // Where the key is along the line between the two handles next to it is how far along it was cut.
+  if (!(r2.t - r1.t > SAME_CURVE * length)) return undefined;
+  const s = (middle.time - r1.t) / (r2.t - r1.t);
+  if (!(s > 0 && s < 1)) return undefined;
+  const p1 = { t: p0.t + (q1.t - p0.t) / s, v: p0.v + (q1.v - p0.v) / s };
+  const p2 = { t: p3.t + (q3.t - p3.t) / (1 - s), v: p3.v + (q3.v - p3.v) / (1 - s) };
+  const joined: Handles = [
+    (p1.t - p0.t) / length,
+    (p1.v - p0.v) / change,
+    (p2.t - p0.t) / length,
+    (p2.v - p0.v) / change,
+  ];
+  const [x1, y1, x2, y2] = joined;
+  // How far cutting a curve again lands from the two that are there. What was cut from it lands
+  // right on them, so a few digits that do that are what people wrote, and all of them are not.
+  const missOf = (handles: Handles) => {
+    const again = fits(handles) ? splitBezier(from, to, handles, middle) : undefined;
+    if (!again) return Number.POSITIVE_INFINITY;
+    const sides = [...again.before, ...again.after];
+    return Math.max(
+      ...[...before, ...after].map((value, index) => Math.abs(value - (sides[index] as number))),
+    );
   };
+  const short = written([tidy(x1), tidy(y1), tidy(x2), tidy(y2)]);
+  const whole = written(joined);
+  const shortMiss = missOf(short);
+  const wholeMiss = missOf(whole);
+  // What floats lose on the way is far less than what tidying moves a number that needs its digits.
+  const [handles, miss] =
+    shortMiss <= wholeMiss + FLOAT_NOISE ? [short, shortMiss] : [whole, wholeMiss];
+  return miss <= SAME_CURVE * 100 ? handles : undefined;
 }
 
 /**

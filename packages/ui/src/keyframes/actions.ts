@@ -13,7 +13,6 @@ export function registerKeyframeActions(
 ): void {
   const hasTimeline = () => timeline.model !== undefined;
   const hasKeys = () => keyframes.selection.size > 0;
-  const canMove = () => keyframes.hasMovableSelection;
 
   const add = (
     id: KeyframeAction,
@@ -32,12 +31,14 @@ export function registerKeyframeActions(
       ...extra,
     });
 
+  // What cannot change says why, rather than doing nothing.
   add("delete", () => keyframes.deleteSelected(), {
     keys: ["delete", "backspace"],
-    enabled: canMove,
+    enabled: hasKeys,
   });
   add("selectAll", () => keyframes.panel.selectAll(), { keys: ["mod+a"] });
   add("copy", () => keyframes.copySelected(), { keys: ["mod+c"], enabled: hasKeys });
+  add("cut", () => keyframes.cutSelected(), { keys: ["mod+x"], enabled: hasKeys });
   add("paste", () => keyframes.paste(), {
     keys: ["mod+v"],
     enabled: () => keyframes.getSnapshot().hasClipboard,

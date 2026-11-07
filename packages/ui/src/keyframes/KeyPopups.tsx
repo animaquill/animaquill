@@ -110,7 +110,7 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
           {
             id: "copy",
             label: t("keyframes.action.copy"),
-            run: () => keyframes.copySelected(),
+            run: () => keyframes.copySelected(area.shownClips),
           },
           {
             id: "paste",
@@ -122,7 +122,7 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
             id: "delete",
             label: t("keyframes.action.delete"),
             disabled: !canMove,
-            run: () => keyframes.deleteSelected(),
+            run: () => keyframes.deleteSelected(area.shownClips),
           },
         ],
         [

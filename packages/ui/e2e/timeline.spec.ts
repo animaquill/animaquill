@@ -2,7 +2,9 @@ import type { Locator, Page } from "@playwright/test";
 import { content, expect, tab, test } from "./support.ts";
 
 const panel = (page: Page) => content(page, "timeline");
-const clips = (page: Page) => panel(page).getByRole("option");
+/** The clips, and not the keys that show under them. */
+const clips = (page: Page) =>
+  panel(page).getByRole("listbox", { name: "时间轴片段", exact: true }).getByRole("option");
 const timecode = (page: Page) => content(page, "preview").locator("output");
 const playhead = (page: Page) => panel(page).getByRole("slider", { name: "播放头" });
 const addColorButton = (page: Page) => panel(page).getByRole("button", { name: "纯色片段" });

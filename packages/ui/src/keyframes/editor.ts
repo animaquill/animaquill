@@ -73,7 +73,18 @@ export interface KeyframeMessages {
   pasteTooEarly(): void;
   /** There is no clip to put keys on. */
   pasteNowhere(): void;
+  /** Nothing changes while people compare with what is saved. */
+  comparing(): void;
+  /** The selected keys are on locked tracks. */
+  locked(): void;
+  /** None of the selected keys show where people asked for something to happen to them. */
+  notShown(): void;
 }
+
+/** Which clips a place shows keys of. Without one, it is all of them. */
+export type ShownClips = (clip: string) => boolean;
+
+const ALL_CLIPS: ShownClips = () => true;
 
 /** What React shows. The view changes far more often and goes through `subscribeView`. */
 export interface KeyframeSnapshot {
@@ -192,10 +203,12 @@ export class KeyframeEditor {
   #inspected: Inspected = { state: undefined, frame: -1, changes: undefined, rows: new Map() };
   readonly #searchNames = new Map<string, string>();
   /** What is tried on clips, once per clip: a clip with something on it is a new object every time. */
-  readonly #shownClips = new Map<string, { clip: ClipState; shown: ClipState }>();
+  readonly #looks = new Map<string, { clip: ClipState; shown: ClipState }>();
   /** Worked out once for a selection, because a drag asks for it with every frame. */
   readonly #selected = new WeakMap<KeySelection, Map<string, Float64Array | undefined>>();
   readonly #tried = new WeakMap<ClipState, Map<string, Float64Array | undefined>>();
+  /** Keys that are not what is saved, by what a clip looks like and property. */
+  readonly #triedTimes = new WeakMap<ClipState, Map<string, ReadonlySet<string>>>();
   #rememberTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
@@ -219,6 +232,10 @@ export class KeyframeEditor {
     this.panel = new KeyframesView(this, timeline);
     this.inTimeline = new TimelineLanes(this, timeline);
     timeline.setExtras(this.inTimeline);
+    // One clipboard: what was copied last is what goes in.
+    timeline.subscribeCopies(() => this.forgetClipboard());
+    // Keys select their clips. People selecting clips are about clips, and that lets go of keys.
+    timeline.subscribeChoices(() => this.#setKeys(NO_KEYS));
     session.subscribe(this.#followSession);
     timeline.subscribe(this.#followTimeline);
     timeline.subscribeView(this.#followView);
@@ -298,22 +315,25 @@ export class KeyframeEditor {
     this.#remember();
     this.#store = store;
     this.#clipboard = [];
-    this.#shownClips.clear();
+    this.#looks.clear();
     this.#toggled.clear();
     this.#curves.clear();
     this.inTimeline.forgetAll();
     const remembered = store
       ? parseRemembered(this.#memory.read(`keyframes.${store.getState().manifest.id}`))
       : {};
-    for (const id of stringsIn(remembered.toggled)) this.#toggled.add(id);
-    for (const [id, height] of curvesIn(remembered.curves)) this.#curves.set(id, height);
-    this.inTimeline.openAll(stringsIn(remembered.open));
+    const there = (ids: readonly string[]) => ids.filter((id) => this.#isThere(id));
+    for (const id of there(stringsIn(remembered.toggled))) this.#toggled.add(id);
+    for (const [id, height] of curvesIn(remembered.curves)) {
+      if (this.#isThere(id)) this.#curves.set(id, height);
+    }
+    this.inTimeline.openAll(there(stringsIn(remembered.open)));
     this.panel.adoptView(remembered.view);
     const range = remembered.range;
     this.#show({
       range: range && RANGES.includes(range) ? range : "here",
       query: "",
-      pinned: new Set(stringsIn(remembered.pinned)),
+      pinned: new Set(there(stringsIn(remembered.pinned))),
       selection: NO_KEYS,
       // Going its own way takes a place to look at.
       linked: this.panel.ownView === undefined,
@@ -329,8 +349,9 @@ export class KeyframeEditor {
     const changed =
       model !== this.#seenModel || selection !== this.#seenClips || playing !== this.#seenPlaying;
     if (!changed) return;
+    const onlySelection = model === this.#seenModel && playing === this.#seenPlaying;
     if (model !== this.#seenModel) {
-      this.#shownClips.clear();
+      this.#looks.clear();
       this.#orphaned = undefined;
     }
     this.#seenModel = model;
@@ -338,7 +359,9 @@ export class KeyframeEditor {
     this.#seenPlaying = playing;
     if (!playing) this.#listedFrame = this.#timeline.frame;
     this.panel.checkDrag();
-    this.#relist();
+    // All of it is listed anyway, so what is selected changes nothing there. Keys select their
+    // clips, and a box of keys across thousands of clips does that with every step.
+    if (!onlySelection || this.#snapshot.range !== "all") this.#relist();
     this.#keepSelection();
   };
 
@@ -356,7 +379,7 @@ export class KeyframeEditor {
   };
 
   #followTrial = (): void => {
-    this.#shownClips.clear();
+    this.#looks.clear();
     this.#orphaned = undefined;
     this.#relist();
     this.#keepSelection();
@@ -374,17 +397,17 @@ export class KeyframeEditor {
         box && animationIn(entryOf(effectiveProperties(this.shown(box.clip)), path));
       return animation !== undefined && hasKeyAt(animation, time);
     });
-    if (next !== selection) this.select(next);
+    if (next !== selection) this.#setKeys(next);
   }
 
   /** A clip the way it looks with what is being tried. */
   shown(clip: ClipState): ClipState {
     const { look } = this.#trials;
     if (!look) return clip;
-    const known = this.#shownClips.get(clip.id);
+    const known = this.#looks.get(clip.id);
     if (known?.clip === clip) return known.shown;
     const shown = look.apply(clip);
-    if (shown !== clip) this.#shownClips.set(clip.id, { clip, shown });
+    if (shown !== clip) this.#looks.set(clip.id, { clip, shown });
     return shown;
   }
 
@@ -414,13 +437,21 @@ export class KeyframeEditor {
     return this.#trials.look?.holds(clip, path) === true;
   }
 
-  /** Whether a key is not what is saved. */
+  /** Whether a key is not what is saved. The list on screen asks for a few hundred at a time. */
   isTriedKey({ clip, path, time }: KeyRef): boolean {
     const box = this.model?.boxes.get(clip);
     if (!box || this.#trials.look?.holds(clip, path) !== true) return false;
-    const key = this.#keysOf(this.shown(box.clip), path).find((one) => one.time === time);
-    const saved = this.#keysOf(box.clip, path).find((one) => one.time === time);
-    return key !== undefined && !sameKey(key, saved);
+    const shown = this.shown(box.clip);
+    let known = this.#triedTimes.get(shown);
+    if (!known) this.#triedTimes.set(shown, (known = new Map()));
+    let times = known.get(path);
+    if (!times) {
+      const saved = new Map(this.#keysOf(box.clip, path).map((one) => [one.time, one]));
+      const tried = this.#keysOf(shown, path).filter((one) => !sameKey(one, saved.get(one.time)));
+      times = new Set(tried.map((one) => one.time));
+      known.set(path, times);
+    }
+    return times.has(time);
   }
 
   #keysOf(clip: ClipState, path: string): readonly Key[] {
@@ -698,7 +729,14 @@ export class KeyframeEditor {
 
   /* Keys. */
 
+  /** Selected keys select their clips, which is what the timeline and the properties are about then. */
   select(selection: KeySelection): void {
+    if (selection === this.#snapshot.selection) return;
+    this.#setKeys(selection);
+    if (selection.size > 0) this.#timeline.selectClipsOfKeys(selection.clips());
+  }
+
+  #setKeys(selection: KeySelection): void {
     if (selection === this.#snapshot.selection) return;
     this.#show({ selection });
     this.redraw();
@@ -731,11 +769,11 @@ export class KeyframeEditor {
     return done;
   }
 
-  /** The selected keys that can change, by property. */
-  movingChannels(): readonly MovingChannel[] {
+  /** The selected keys that can change, by property, of the clips a place shows. */
+  movingChannels(shown: ShownClips = ALL_CLIPS): readonly MovingChannel[] {
     const channels: MovingChannel[] = [];
     for (const { clip, path, times } of this.selection.channels()) {
-      if (this.canMove(clip)) channels.push({ clip, path, times: [...times] });
+      if (shown(clip) && this.canMove(clip)) channels.push({ clip, path, times: [...times] });
     }
     return channels;
   }
@@ -744,10 +782,24 @@ export class KeyframeEditor {
     return this.movingChannels().length > 0;
   }
 
+  /**
+   * The keys that something can happen to, or none after saying why not: they are not where people
+   * look, people compare with what is saved, or the tracks are locked.
+   */
+  #changeable(shown: ShownClips): readonly MovingChannel[] {
+    const channels = this.movingChannels(shown);
+    if (channels.length > 0 || this.selection.size === 0) return channels;
+    const there = this.selection.onClips(shown);
+    if (there.size === 0) this.#messages.notShown();
+    else if (this.comparing) this.#messages.comparing();
+    else this.#messages.locked();
+    return channels;
+  }
+
   /** Moves the selected keys by whole frames. It is all or nothing, and the keys stay on their clock. */
-  nudge(frames: number): void {
+  nudge(frames: number, shown: ShownClips = ALL_CLIPS): void {
     const { model } = this;
-    const channels = this.movingChannels();
+    const channels = this.movingChannels(shown);
     if (!model || channels.length === 0) return;
     const step = frameTime(Math.abs(frames), model.rate);
     const by = frames < 0 ? subtract(ZERO, step) : step;
@@ -759,12 +811,23 @@ export class KeyframeEditor {
     this.commitMove(moveEdits(channels, by), moved);
   }
 
-  deleteSelected(): void {
-    const edits = this.movingChannels().flatMap(({ clip, path, times }) =>
+  /** Takes the selected keys away, in one step, or says why that cannot be. */
+  deleteSelected(shown: ShownClips = ALL_CLIPS): void {
+    const edits = this.#changeable(shown).flatMap(({ clip, path, times }) =>
       times.map((time): PropertyEdit => ({ owner: { clip }, path, op: "removeKey", time })),
     );
-    if (edits.length === 0) return;
-    this.#writer.commit(edits);
+    if (edits.length > 0) this.#writer.commit(edits);
+  }
+
+  /** Copies the selected keys and takes them away, or says why that cannot be. */
+  cutSelected(shown: ShownClips = ALL_CLIPS): void {
+    const channels = this.#changeable(shown);
+    if (channels.length === 0) return;
+    const keys = channels.flatMap(({ clip, path, times }) =>
+      times.map((time) => ({ clip, path, time })),
+    );
+    this.#copy(keys);
+    this.deleteSelected(shown);
   }
 
   /** How the selected keys go on, as far as they all agree on it. */
@@ -798,18 +861,29 @@ export class KeyframeEditor {
   /* Copying. */
 
   /** Taking a copy leaves a key as it is, so a locked one can be part of it. */
-  copySelected(): void {
+  copySelected(shown: ShownClips = ALL_CLIPS): void {
+    const keys = this.selection.onClips(shown);
+    if (keys.size === 0) {
+      if (this.selection.size > 0) this.#messages.notShown();
+      return;
+    }
+    this.#copy(keys);
+  }
+
+  #copy(keys: Iterable<KeyRef>): void {
     const copied: CopiedKey[] = [];
-    for (const { clip, path, time } of this.selection) {
+    for (const { clip, path, time } of keys) {
       const box = this.model?.boxes.get(clip);
       if (!box) continue;
       const shown = this.shown(box.clip);
-      const keys = this.#keysOf(shown, path);
-      const key = keys[firstKeyFrom(keys, parseTime(time))];
+      const found = this.#keysOf(shown, path);
+      const key = found[firstKeyFrom(found, parseTime(time))];
       if (key) copied.push({ clip, path, moment: momentOfKey(shown, time), key });
     }
+    if (copied.length === 0) return;
     this.#clipboard = copied;
-    this.#show({ hasClipboard: copied.length > 0 });
+    this.#show({ hasClipboard: true });
+    this.#timeline.forgetClipboard();
   }
 
   forgetClipboard(): void {
@@ -821,13 +895,15 @@ export class KeyframeEditor {
   /** Where keys of one clip go: to the clip people selected, if that is one other clip. */
   #pasteTarget(source: string): ClipState | undefined {
     const { model } = this;
-    const selected = [...this.#timeline.getSnapshot().selection].flatMap((id) => {
+    let only: ClipState | undefined;
+    for (const id of this.#timeline.getSnapshot().selection) {
       const clip = model?.boxes.get(id)?.clip;
-      return clip && objectsOf(clip).length > 0 ? [clip] : [];
-    });
-    const [only] = selected;
-    if (only && selected.length === 1) return only;
-    return model?.boxes.get(source)?.clip;
+      if (!clip || objectsOf(clip).length === 0) continue;
+      // Several clips are no one place to go, and there is no need to look any further.
+      if (only) return model?.boxes.get(source)?.clip;
+      only = clip;
+    }
+    return only ?? model?.boxes.get(source)?.clip;
   }
 
   /**
@@ -840,6 +916,10 @@ export class KeyframeEditor {
     const { model } = this;
     const [first] = copied;
     if (!model || !first) return;
+    if (this.comparing) {
+      this.#messages.comparing();
+      return;
+    }
     const sources = new Set(copied.map(({ clip }) => clip));
     const earliest = copied.reduce(
       (found, { moment }) => (compare(moment, found) < 0 ? moment : found),
@@ -848,8 +928,9 @@ export class KeyframeEditor {
     const by = subtract(frameTime(this.frame, model.rate), earliest);
     const edits = new Map<string, { clip: string; path: string; keys: Key[] }>();
     const pasted: KeyRef[] = [];
+    const single = sources.size === 1 ? this.#pasteTarget(first.clip) : undefined;
     for (const { clip: source, path, moment, key } of copied) {
-      const target = sources.size === 1 ? this.#pasteTarget(source) : model.boxes.get(source)?.clip;
+      const target = sources.size === 1 ? single : model.boxes.get(source)?.clip;
       if (!target || !this.canMove(target.id)) {
         this.#messages.pasteNowhere();
         return;
@@ -899,15 +980,26 @@ export class KeyframeEditor {
     if (id === undefined) return;
     const { range, pinned } = this.#snapshot;
     const view = this.panel.ownView;
+    // What is gone stays out of it, so that it does not grow with every clip there ever was.
+    const there = (ids: Iterable<string>) => [...ids].filter((one) => this.#isThere(one));
     const remembered: RememberedState = {
       range,
-      toggled: [...this.#toggled],
-      pinned: [...pinned],
-      curves: [...this.#curves],
-      open: this.inTimeline.opened,
+      toggled: there(this.#toggled),
+      pinned: there(pinned),
+      curves: [...this.#curves].filter(([one]) => this.#isThere(one)),
+      open: there(this.inTimeline.opened),
       ...(view ? { view } : {}),
     };
     this.#memory.write(`keyframes.${id}`, JSON.stringify(remembered));
+  }
+
+  /** Whether what an id of the list is about is still in the project: a clip, or a track. */
+  #isThere(id: string): boolean {
+    const { model } = this;
+    if (!model) return true;
+    const track = /^track:(.+)$/.exec(id)?.[1];
+    if (track !== undefined) return model.rows.some((row) => row.track.id === track);
+    return model.boxes.has(id.split("/")[0] as string);
   }
 }
 

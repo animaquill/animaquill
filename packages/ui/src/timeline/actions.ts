@@ -4,16 +4,19 @@ import type { TimelineEditor } from "./editor.ts";
 
 export type TimelineAction = keyof typeof zhCN.timeline.action;
 
-/** Keys that show under the clips. While some are selected, what people do is about those. */
+/**
+ * Keys that show under the clips. While some are selected, what people do is about those and never
+ * about clips, even though keys select their clips: what cannot be done to them says why instead.
+ */
 export interface LaneKeys {
   readonly hasSelection: boolean;
-  /** Whether any of what is selected can change. */
+  /** Whether any of the selected keys that show here can change. */
   readonly canChangeSelection: boolean;
   readonly hasClipboard: boolean;
   nudge(frames: number): void;
   deleteSelected(): void;
   copySelected(): void;
-  forgetClipboard(): void;
+  cutSelected(): void;
   paste(): void;
 }
 
@@ -75,12 +78,12 @@ export function registerTimelineActions(
   add(
     "delete",
     () => {
-      if (keys.canChangeSelection) keys.deleteSelected();
+      if (hasKeys()) keys.deleteSelected();
       else editor.deleteSelection();
     },
     {
       keys: ["delete", "backspace"],
-      enabled: () => keys.canChangeSelection || editor.canChangeSelection,
+      enabled: () => hasKeys() || editor.canChangeSelection,
       group: "edit",
     },
   );
@@ -90,20 +93,24 @@ export function registerTimelineActions(
   add(
     "copy",
     () => {
-      if (hasKeys()) {
-        keys.copySelected();
-        return;
-      }
-      keys.forgetClipboard();
-      editor.copySelection();
+      if (hasKeys()) keys.copySelected();
+      else editor.copySelection();
     },
     { keys: ["mod+c"], enabled: whileSelected, group: "clipboard" },
   );
-  add("cut", () => editor.cutSelection(), {
-    keys: ["mod+x"],
-    enabled: () => editor.canChangeSelection,
-    group: "clipboard",
-  });
+  add(
+    "cut",
+    () => {
+      if (hasKeys()) keys.cutSelected();
+      else editor.cutSelection();
+    },
+    {
+      keys: ["mod+x"],
+      enabled: () => hasKeys() || editor.canChangeSelection,
+      group: "clipboard",
+    },
+  );
+  // There is one clipboard: copying clips lets go of keys, and copying keys of clips.
   add(
     "paste",
     () => {

@@ -15,7 +15,14 @@ import {
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
-import { compileChannel, sample } from "./curve.ts";
+import {
+  MAX_SPLIT_Y,
+  MIN_SPLIT_Y,
+  compileChannel,
+  sample,
+  secondsOf,
+  type Channel,
+} from "./curve.ts";
 import type { ProjectState } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { buildRenderPlan } from "./render-plan.ts";
@@ -918,48 +925,146 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys that move, seed %i", (seed) => {
     }
   });
 
-  /** A stretch with a bezier from 0 to 100, and what it becomes with a key at what it shows there. */
-  const withKeyOn = (x1: number, x2: number, random: Random) => {
-    const before: Animation = {
-      keys: [
-        { time: "0", value: 0, interp: "bezier", out: [x1, random.int(300) / 100 - 1] },
-        { time: "4", value: 100, in: [x2, random.int(300) / 100 - 1] },
-      ],
-    };
-    const channel = compileChannel(before, "number");
-    if (!channel) throw new Error("no channel");
-    const time = (0.1 + random.int(380) / 100).toFixed(2);
-    const value = sample(channel, Number(time)) as number;
-    const after = applyEdit(before, { op: "write", time, value }) as Animation;
-    return { channel, after, time, value };
+  /** A handle as people write it, with a few digits. Beyond a reach of 1 it goes past what cuts allow. */
+  const randomHandle = (random: Random, reach: number): [number, number] => [
+    random.int(101) / 100,
+    ((random.int(300) - 100) * reach) / 100,
+  ];
+
+  /** A stretch of a bezier from 0 to 100. */
+  const randomStretch = (random: Random, reach: number): Animation => ({
+    keys: [
+      { time: "0", value: 0, interp: "bezier", out: randomHandle(random, reach) },
+      { time: "4", value: 100, in: randomHandle(random, reach) },
+    ],
+  });
+
+  /** A key somewhere in it: with what the curve shows there, as the diamond does, or with any value. */
+  const randomKey = (random: Random, channel: Channel) => {
+    const time = `${1 + random.int(399)}/100`;
+    const there = sample(channel, secondsOf(time)) as number;
+    const value = random.chance(0.5) ? there : random.int(4000) / 10 - 150;
+    return { time, there, value };
   };
 
-  it("a key that goes in with the value that was there leaves a curve as it was", () => {
+  /** The handles of keys, in the order they come. */
+  const handlesOf = ({ keys }: Animation) => keys.flatMap((key) => [key.in, key.out]);
+
+  it("a key that goes in keeps the curve or leaves the keys around it, and never swings far", () => {
     const random = randomFrom(seed);
-    for (let round = 0; round < 300; round += 1) {
-      const { channel, after } = withKeyOn(
-        random.int(60) / 100,
-        0.4 + random.int(60) / 100,
-        random,
-      );
+    for (let round = 0; round < 400; round += 1) {
+      const before = randomStretch(random, random.chance(0.5) ? 1 : 3);
+      const channel = compileChannel(before, "number");
+      if (!channel) throw new Error("no channel");
+      const { time, there, value } = randomKey(random, channel);
+      const after = applyEdit(before, { op: "setKey", time, value }) as Animation;
+      expect(AnimationSchema.safeParse(after).success).toBe(true);
       const split = compileChannel(after, "number");
       if (!split) throw new Error("no channel");
+      expect(sample(split, secondsOf(time))).toBeCloseTo(value, 6);
+      const [first, added, last] = after.keys as [Key, Key, Key];
+      if (added.interp !== "bezier") {
+        // What could not keep its shape leaves the others as they were, and is a linear key.
+        expect(first).toEqual(before.keys[0]);
+        expect(last).toEqual(before.keys[1]);
+        expect(added).toEqual({ time, value });
+        continue;
+      }
+      // Whatever value went in, nothing it wrote reaches further than easing does.
+      for (const handle of [first.out, added.in, added.out, last.in]) {
+        const [x, y] = handle ?? [1, 1];
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThanOrEqual(1);
+        expect(y).toBeGreaterThanOrEqual(MIN_SPLIT_Y);
+        expect(y).toBeLessThanOrEqual(MAX_SPLIT_Y);
+      }
+      if (value !== there) continue;
       for (const clock of [0.2, 1, 1.9, 2.1, 3, 3.8]) {
-        expect(sample(split, clock)).toBeCloseTo(sample(channel, clock) as number, 1);
+        expect(sample(split, clock)).toBeCloseTo(sample(channel, clock) as number, 5);
       }
     }
   });
 
-  it("stays something that can be written, where handles reach very far", () => {
+  it("a key that goes in and comes out again leaves what was there, digit for digit", () => {
     const random = randomFrom(seed);
-    for (let round = 0; round < 300; round += 1) {
-      const { after, time, value } = withKeyOn(
-        random.int(101) / 100,
-        random.int(101) / 100,
-        random,
-      );
-      expect(AnimationSchema.safeParse(after).success).toBe(true);
-      expect(after.keys.find((key) => key.time === time)?.value).toBe(value);
+    for (let round = 0; round < 400; round += 1) {
+      const before = randomStretch(random, random.chance(0.5) ? 1 : 3);
+      const channel = compileChannel(before, "number");
+      if (!channel) throw new Error("no channel");
+      const { time, value } = randomKey(random, channel);
+      const op = random.chance(0.5) ? "setKey" : "write";
+      const added = applyEdit(before, { op, time, value });
+      expect(applyEdit(added, { op: "removeKey", time })).toEqual(before);
+    }
+  });
+
+  /** Three keys that go in one after the other, with what was there or with anything. */
+  const threeIn = (random: Random) => {
+    const before = randomStretch(random, 1);
+    const steps: { time: string; value: PropertyValue }[] = [];
+    let value: PropertyValue = before;
+    for (let step = 0; step < 3; step += 1) {
+      const channel = compileChannel(value, "number");
+      if (!channel) throw new Error("no channel");
+      const key = randomKey(random, channel);
+      if ((value as Animation).keys.some(({ time }) => time === key.time)) continue;
+      value = applyEdit(value, { op: "setKey", time: key.time, value: key.value }) as PropertyValue;
+      steps.push({ time: key.time, value });
+    }
+    return { before, steps, value };
+  };
+
+  /** Keys that are the same, with handles that floats cannot tell apart. */
+  const expectSameKeys = (found: PropertyValue | undefined, wanted: PropertyValue) => {
+    const keys = (found as Animation).keys;
+    expect(keys.map(({ time, value, interp }) => ({ time, value, interp }))).toEqual(
+      (wanted as Animation).keys.map(({ time, value, interp }) => ({ time, value, interp })),
+    );
+    const handles = handlesOf(wanted as Animation);
+    for (const [index, handle] of handlesOf(found as Animation).entries()) {
+      const other = handles[index];
+      expect(handle === undefined).toBe(other === undefined);
+      for (const [axis, number] of (handle ?? []).entries()) {
+        expect(number).toBeCloseTo(other?.[axis] as number, 7);
+      }
+    }
+  };
+
+  it("keys that went in come out again the other way around, and leave what was there", () => {
+    const random = randomFrom(seed);
+    for (let round = 0; round < 200; round += 1) {
+      const { before, steps } = threeIn(random);
+      let value = steps.at(-1)?.value ?? before;
+      for (let index = steps.length - 1; index >= 0; index -= 1) {
+        const earlier = index === 0 ? before : (steps[index - 1] as (typeof steps)[number]).value;
+        value = applyEdit(value, {
+          op: "removeKey",
+          time: (steps[index] as (typeof steps)[number]).time,
+        }) as PropertyValue;
+        // What a cut wrote keeps all of its digits, which come back as close as a join tidies.
+        expectSameKeys(value, earlier);
+      }
+      // What people wrote comes back digit for digit.
+      expect(value).toEqual(before);
+    }
+  });
+
+  it("keys that went in come out in any order, and leave nothing that swings far", () => {
+    const random = randomFrom(seed);
+    for (let round = 0; round < 200; round += 1) {
+      const { before, steps, value: all } = threeIn(random);
+      const changed = new Set(handlesOf(before).map((handle) => JSON.stringify(handle)));
+      let value = all;
+      for (const { time } of steps.toSorted(() => (random.chance(0.5) ? 1 : -1))) {
+        value = applyEdit(value, { op: "removeKey", time }) as PropertyValue;
+        expect(AnimationSchema.safeParse(value).success).toBe(true);
+        for (const handle of handlesOf(value as Animation)) {
+          if (handle === undefined || changed.has(JSON.stringify(handle))) continue;
+          expect(handle[1]).toBeGreaterThanOrEqual(MIN_SPLIT_Y);
+          expect(handle[1]).toBeLessThanOrEqual(MAX_SPLIT_Y);
+        }
+      }
+      expect((value as Animation).keys.map(({ time }) => time)).toEqual(["0", "4"]);
     }
   });
 });

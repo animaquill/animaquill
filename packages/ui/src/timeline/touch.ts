@@ -17,8 +17,8 @@ export type TouchStart = "grab" | "selected" | "plain";
 
 /** What fingers work on. */
 export interface TouchTarget {
-  /** Something a drag shows, which a second finger should not take away. */
-  readonly preview: unknown;
+  /** Whether a drag shows a change, which a second finger should not take away. */
+  readonly holdsDrag: boolean;
   readonly scrollX: number;
   readonly scrollY: number;
   press(pointer: Pointer): void;
@@ -173,7 +173,7 @@ export class TouchController {
 
   /** A second finger while a clip is on the move is a hand resting on the screen. */
   #secondFinger(): void {
-    if (this.#mode === "editing" && this.#editor.preview) return;
+    if (this.#mode === "editing" && this.#editor.holdsDrag) return;
     this.#stopTimer();
     this.#editor.cancelDrag();
     const [a, b] = [...this.#fingers.values()] as [Finger, Finger];

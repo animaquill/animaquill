@@ -146,12 +146,16 @@ export function objectForest(objects: readonly ObjectDescriptor[]): ObjectForest
   const byId = new Map<string, ObjectDescriptor>();
   for (const object of objects) if (!byId.has(object.id)) byId.set(object.id, object);
   const below = new Map<string, ObjectDescriptor[]>();
+  // A queue that only grows, read from the front: thousands of objects at the top are common.
   const waiting: ObjectDescriptor[] = [];
+  let next = 0;
   const detached: string[] = [];
   for (const object of byId.values()) {
     const { parent } = object;
     if (parent !== undefined && parent !== object.id && byId.has(parent)) {
-      below.set(parent, [...(below.get(parent) ?? []), object]);
+      let children = below.get(parent);
+      if (!children) below.set(parent, (children = []));
+      children.push(object);
     } else {
       if (parent !== undefined) detached.push(object.id);
       waiting.push(object);
@@ -164,15 +168,15 @@ export function objectForest(objects: readonly ObjectDescriptor[]): ObjectForest
     if (depth < MAX_OBJECT_DEPTH) {
       return { object, children: children.map((child) => grow(child, depth + 1)) };
     }
-    detached.push(...children.map(({ id }) => id));
-    waiting.push(...children);
+    for (const child of children) {
+      detached.push(child.id);
+      waiting.push(child);
+    }
     return { object, children: [] };
   };
   const roots: ObjectTree[] = [];
   const growWaiting = () => {
-    for (let object = waiting.shift(); object; object = waiting.shift()) {
-      roots.push(grow(object, 1));
-    }
+    for (; next < waiting.length; next += 1) roots.push(grow(waiting[next] as ObjectDescriptor, 1));
   };
   growWaiting();
   // All that nothing leads to goes around in a circle, or hangs from one.

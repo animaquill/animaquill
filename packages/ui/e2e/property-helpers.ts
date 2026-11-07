@@ -45,7 +45,11 @@ export const keyButton = (page: Page, name: string) =>
   row(page, name)
     .getByRole("button", { name: /关键帧$/ })
     .nth(1);
-export const clips = (page: Page) => content(page, "timeline").getByRole("option");
+/** The clips of the timeline, and not the keys that show under them. */
+export const clips = (page: Page) =>
+  content(page, "timeline")
+    .getByRole("listbox", { name: "时间轴片段", exact: true })
+    .getByRole("option");
 
 export async function goTo(page: Page, time: string) {
   await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();

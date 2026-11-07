@@ -8,11 +8,12 @@ import {
   type PropertyEdit,
 } from "@animaquill/core";
 import { add, parseTime, subtract, type Key, type Rational } from "@animaquill/schema";
+import { RULER_HEIGHT } from "../timeline/editor.ts";
 import type { Gesture, Marquee, Pointer } from "../timeline/gestures.ts";
 import { forEachBetween, type ClipBox } from "../timeline/model.ts";
 import type { SnapPoint } from "../timeline/snap.ts";
 import type { TouchStart } from "../timeline/touch.ts";
-import type { KeyframeEditor } from "./editor.ts";
+import type { KeyframeEditor, ShownClips } from "./editor.ts";
 import {
   CurveHeightGesture,
   KeyMarqueeGesture,
@@ -111,6 +112,8 @@ export abstract class KeyArea {
   /** Back from there to a height on screen. */
   abstract screenY(laneTop: number): number;
   abstract snapDistance(pointer: Pointer): number;
+  /** The clips this shows keys of, which are the only ones what people do here is about. */
+  abstract readonly shownClips: ShownClips;
 
   /**
    * All that a drawing depends on. When none of it changed, what is there is still right, which is
@@ -217,7 +220,9 @@ export abstract class KeyArea {
     return keys.length > 0 ? { lane, box, clock, keys } : undefined;
   }
 
+  /** What is at a place. The ruler covers what has scrolled under it, so there is nothing there. */
   hitAt(pointer: Pointer): LaneHit {
+    if (pointer.y < RULER_HEIGHT) return { kind: "empty" };
     const y = this.laneY(pointer.y);
     const lane = laneAt(this.lanes, y);
     if (!lane) return { kind: "empty" };
