@@ -9,9 +9,10 @@ import type { ClipBox, Row, TimelineModel } from "../timeline/model.ts";
 
 /** One row of keys: the height of a control, so that values and keys line up. */
 export const LANE_HEIGHT = 24;
-export const DEFAULT_CURVE_HEIGHT = 72;
-export const MIN_CURVE_HEIGHT = 32;
-export const MAX_CURVE_HEIGHT = 360;
+/** A row made taller to work on its curve, until people pull its edge to another height. */
+export const DEFAULT_TALL_HEIGHT = 120;
+export const MIN_TALL_HEIGHT = 40;
+export const MAX_TALL_HEIGHT = 480;
 
 /** One row of the list of what has keys, with where it is. */
 export interface Lane {
@@ -21,10 +22,15 @@ export interface Lane {
   readonly depth: number;
   /** The distance from the top of the first lane. */
   readonly top: number;
-  /** All of it. The keys are in the first `keyHeight` pixels. */
+  /** All of it. A row of a number is the curve of it, from top to bottom. */
   readonly height: number;
-  /** The height of the row of keys, which is `LANE_HEIGHT` unless the rows were made taller. */
+  /**
+   * The height of a row, which is `LANE_HEIGHT` unless the rows were made taller. A row that was
+   * made taller on its own has its name and value in this much at the top.
+   */
   readonly keyHeight: number;
+  /** Made taller on its own, to work on its curve. */
+  readonly tall: boolean;
   /** The group it is in, which is what tells its X and Y from those of other groups. */
   readonly group: string | undefined;
   readonly open: boolean;
@@ -39,12 +45,12 @@ export interface Lane {
 /** What is open is up to the view. */
 export interface LaneRules {
   isOpen(node: TreeNode): boolean;
-  /** The height of the curve of a property. Undefined while it is not showing. */
-  curveHeight(node: PropertyNode): number | undefined;
+  /** How tall a row is that was made taller on its own. Undefined for one that is not. */
+  tallHeight(node: PropertyNode): number | undefined;
 }
 
-const canOpen = (node: TreeNode) =>
-  node.kind === "property" ? node.rows[0]?.curve !== "none" : node.children.length > 0;
+/** A property is a row of its own: what it shows is in the row. */
+const canOpen = (node: TreeNode) => node.kind !== "property" && node.children.length > 0;
 
 interface Placing {
   readonly lanes: Lane[];
@@ -65,8 +71,8 @@ function place(
 ): void {
   const { rules, lanes } = placing;
   const open = rules.isOpen(node) && canOpen(node);
-  const curve = open && node.kind === "property" ? rules.curveHeight(node) : undefined;
-  const height = placing.keyHeight + (curve ?? 0);
+  const tall = node.kind === "property" ? rules.tallHeight(node) : undefined;
+  const height = Math.max(tall ?? 0, placing.keyHeight);
   lanes.push({
     id: node.id,
     node,
@@ -74,6 +80,7 @@ function place(
     top: placing.top,
     height,
     keyHeight: placing.keyHeight,
+    tall: tall !== undefined,
     group,
     open,
     canOpen: canOpen(node),

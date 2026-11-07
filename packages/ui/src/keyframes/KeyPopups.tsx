@@ -7,7 +7,10 @@ import type { Pointer } from "../timeline/gestures.ts";
 import type { KeyArea, KeySpot } from "./area.ts";
 import { EASE_PRESETS } from "./easing.ts";
 import type { KeyframeEditor } from "./editor.ts";
+import type { TangentMode } from "./handles.ts";
 import styles from "./KeyPopups.module.css";
+
+const TANGENTS: readonly TangentMode[] = ["auto", "aligned", "broken"];
 
 /** What a stretch looks like, with room above and below for what overshoots. */
 const CURVE_WIDTH = 36;
@@ -67,6 +70,7 @@ export function InterpBubble({ keyframes, anchor, onClose }: InterpBubbleProps) 
           </button>
         ))}
       </div>
+      <p className={styles.hint}>{t("keyframes.handleHint")}</p>
     </Bubble>
   );
 }
@@ -94,6 +98,9 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
   const openOnKey = (spot: KeySpot, x: number, y: number) => {
     if (!keyframes.selection.includes(spot.keys)) area.selectSpot(spot);
     const canMove = keyframes.canMove(spot.box.id);
+    // Switches, choices and words only hold, so there is nothing to ease or to steer.
+    const canEase = canMove && keyframes.canEase;
+    const tangent = canEase ? keyframes.selectedTangent : undefined;
     setMenu({
       x,
       y,
@@ -102,10 +109,17 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
           {
             id: "interp",
             label: t("keyframes.interpMore"),
-            disabled: !canMove,
+            disabled: !canEase,
             run: () => setAnchor(new DOMRect(x, y, 0, 0)),
           },
         ],
+        TANGENTS.map((mode) => ({
+          id: `tangent-${mode}`,
+          label: t(`keyframes.tangent.${mode}`),
+          disabled: !canEase,
+          selected: tangent === mode,
+          run: () => keyframes.setTangent(mode),
+        })),
         [
           {
             id: "copy",

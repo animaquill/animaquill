@@ -13,7 +13,7 @@ export interface ControlProps {
   readonly label: string;
   readonly readOnly: boolean;
   readonly onPreview: (value: number) => void;
-  readonly onCommit: (value: number | string) => void;
+  readonly onCommit: (value: number | string | boolean) => void;
   readonly onCancel: () => void;
   /** How a value without a control of its own reads, where that is said somewhere else as well. */
   readonly format?: (value: unknown) => string;
@@ -59,6 +59,26 @@ function ChoiceControl({ row, label, readOnly, onCommit }: ControlProps) {
   );
 }
 
+/** A switch goes the other way with a click. With keys that is a key at the playhead. */
+function BooleanControl({ row, label, readOnly, onCommit }: ControlProps) {
+  const { t } = useTranslation();
+  const on = row.value === true;
+  return (
+    <button
+      type="button"
+      role="switch"
+      className={styles.switch}
+      aria-label={label}
+      aria-checked={on}
+      disabled={readOnly}
+      data-tried={row.tried || undefined}
+      onClick={() => onCommit(!on)}
+    >
+      {t(on ? "property.on" : "property.off")}
+    </button>
+  );
+}
+
 export function PlainValue({ row, format }: ControlProps) {
   const text = row.value === undefined ? "" : format ? format(row.value) : String(row.value);
   return <span className={styles.plain}>{text}</span>;
@@ -69,6 +89,7 @@ export const CONTROLS: Partial<Record<ValueType, ComponentType<ControlProps>>> =
   number: NumberControl,
   angle: NumberControl,
   choice: ChoiceControl,
+  boolean: BooleanControl,
 };
 
 interface RowButtonProps {

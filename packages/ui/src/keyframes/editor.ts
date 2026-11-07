@@ -1,4 +1,6 @@
 import {
+  canMix,
+  channelOf,
   clipNodeOf,
   clipOffset,
   clipStart,
@@ -9,6 +11,8 @@ import {
   listedTrack,
   objectsOf,
   secondsOf,
+  type ClipChild,
+  type ClipNode,
   type ClipState,
   type KeyEase,
   type ListRange,
@@ -47,13 +51,15 @@ import { momentOfKey, type KeyArea } from "./area.ts";
 import type { ValueLabel } from "./paint.ts";
 import { presetOf, type EasePreset } from "./easing.ts";
 import { moveEdits, movedSelection, type KeyPreview, type MovingChannel } from "./gestures.ts";
+import { tangentOf, withTangent, type TangentMode } from "./handles.ts";
 import {
-  DEFAULT_CURVE_HEIGHT,
-  MAX_CURVE_HEIGHT,
-  MIN_CURVE_HEIGHT,
+  DEFAULT_TALL_HEIGHT,
+  MAX_TALL_HEIGHT,
+  MIN_TALL_HEIGHT,
   type Lane,
   type LaneRules,
 } from "./lanes.ts";
+import { rangeOfChannel, unionOf, type ValueRange } from "./scale.ts";
 import { KeySelection, NO_KEYS, type KeyRef } from "./selection.ts";
 import { animationIn, hasKeyAt } from "./tables.ts";
 import { TimelineLanes } from "./timeline-lanes.ts";
@@ -105,11 +111,15 @@ interface CopiedKey {
   readonly key: Key;
 }
 
+/** A row made taller, by clip and path: how tall, and whether it is right now. */
+type TallRow = readonly [clip: string, path: string, height: number, on: boolean];
+
 interface RememberedState {
   readonly range?: ListRange;
   readonly toggled?: readonly string[];
   readonly pinned?: readonly string[];
-  readonly curves?: readonly (readonly [string, number])[];
+  /** Rows made taller, which stay at their height when they are made taller again. */
+  readonly tall?: readonly TallRow[];
   readonly open?: readonly string[];
   readonly view?: { readonly pixelsPerSecond: number; readonly scrollX: number };
   /** How much taller the rows of keys are. */
@@ -139,12 +149,30 @@ function parseRemembered(text: string | undefined): RememberedState {
 const stringsIn = (value: unknown): readonly string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
-function curvesIn(value: unknown): readonly (readonly [string, number])[] {
+/** What was remembered of rows made taller, as far as it makes sense. Anything else goes. */
+function tallRowsIn(value: unknown): readonly TallRow[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
-    (item): item is readonly [string, number] =>
-      Array.isArray(item) && typeof item[0] === "string" && Number.isFinite(item[1]),
+    (item): item is TallRow =>
+      Array.isArray(item) &&
+      typeof item[0] === "string" &&
+      typeof item[1] === "string" &&
+      Number.isFinite(item[2]) &&
+      typeof item[3] === "boolean",
   );
+}
+
+const clampTall = (height: number) =>
+  Math.min(Math.max(Math.round(height), MIN_TALL_HEIGHT), MAX_TALL_HEIGHT);
+
+/** A row of one property of one clip, which is what a row made taller is about. */
+const rowKey = (clip: string, path: string) => `${clip} ${path}`;
+
+interface TallState {
+  readonly clip: string;
+  readonly path: string;
+  readonly height: number;
+  readonly on: boolean;
 }
 
 function parseWidth(value: unknown): number | undefined {
@@ -186,7 +214,14 @@ export class KeyframeEditor {
   };
   /** Nodes that are not the way they start out: tracks are open, everything else closed. */
   readonly #toggled = new Set<string>();
-  readonly #curves = new Map<string, number>();
+  /** Rows made taller, by clip and path. A row that is back keeps its height for the next time. */
+  readonly #tall = new Map<string, TallState>();
+  /**
+   * What rows of numbers covered when a drag started, by clip and path. While people drag a value
+   * or a handle the row does not shrink under the mouse: it only grows to take in what is new.
+   */
+  #heldRanges: ReadonlyMap<string, ValueRange> = new Map();
+  readonly #specs = new WeakMap<ClipNode, ReadonlyMap<string, PropertySpec>>();
   #store: ProjectStore | undefined;
   #clipboard: readonly CopiedKey[] = [];
   #preview: KeyPreview | undefined;
@@ -316,15 +351,18 @@ export class KeyframeEditor {
     this.#clipboard = [];
     this.#looks.clear();
     this.#toggled.clear();
-    this.#curves.clear();
+    this.#tall.clear();
+    this.#heldRanges = new Map();
     this.inTimeline.forgetAll();
     const remembered = store
       ? parseRemembered(this.#memory.read(`keyframes.${store.getState().manifest.id}`))
       : {};
     const there = (ids: readonly string[]) => ids.filter((id) => this.#isThere(id));
     for (const id of there(stringsIn(remembered.toggled))) this.#toggled.add(id);
-    for (const [id, height] of curvesIn(remembered.curves)) {
-      if (this.#isThere(id)) this.#curves.set(id, height);
+    // What came before rows were curves themselves, such as `curves`, is not read at all.
+    for (const [clip, path, height, on] of tallRowsIn(remembered.tall)) {
+      if (!this.#isThere(clip)) continue;
+      this.#tall.set(rowKey(clip, path), { clip, path, height: clampTall(height), on });
     }
     this.inTimeline.openAll(there(stringsIn(remembered.open)));
     this.panel.adoptView(remembered.view, remembered.rows);
@@ -566,23 +604,105 @@ export class KeyframeEditor {
 
   readonly #rules: LaneRules = {
     isOpen: (node) => this.isOpen(node),
-    curveHeight: (node: PropertyNode) => this.curveHeightOf(node.id),
+    tallHeight: (node: PropertyNode) =>
+      this.isTall(node.clip, node.spec.path)
+        ? this.tallHeightOf(node.clip, node.spec.path)
+        : undefined,
   };
 
   get laneRules(): LaneRules {
     return this.#rules;
   }
 
-  curveHeightOf(id: string): number {
-    return this.#curves.get(id) ?? DEFAULT_CURVE_HEIGHT;
+  /* Rows made taller. */
+
+  isTall(clip: string, path: string): boolean {
+    return this.#tall.get(rowKey(clip, path))?.on === true;
   }
 
-  setCurveHeight(id: string, height: number): void {
-    const limited = Math.min(Math.max(Math.round(height), MIN_CURVE_HEIGHT), MAX_CURVE_HEIGHT);
-    if (limited === this.curveHeightOf(id)) return;
-    this.#curves.set(id, limited);
+  /** How tall a row is when it is made taller: as it was last time, or the usual. */
+  tallHeightOf(clip: string, path: string): number {
+    return this.#tall.get(rowKey(clip, path))?.height ?? DEFAULT_TALL_HEIGHT;
+  }
+
+  /** Makes a row taller, or back to what the other rows are. Either way it keeps its height. */
+  toggleTall(clip: string, path: string): void {
+    const on = !this.isTall(clip, path);
+    this.#tall.set(rowKey(clip, path), { clip, path, height: this.tallHeightOf(clip, path), on });
     this.#relist();
     this.#rememberSoon();
+  }
+
+  /** While its edge is pulled. It stays taller, at that height, also for the next time. */
+  setTallHeight(clip: string, path: string, height: number): void {
+    const limited = clampTall(height);
+    if (this.isTall(clip, path) && limited === this.tallHeightOf(clip, path)) return;
+    this.#tall.set(rowKey(clip, path), { clip, path, height: limited, on: true });
+    this.#relist();
+    this.#rememberSoon();
+  }
+
+  /* What rows of numbers cover. */
+
+  /** What a row of a number covers, and what it covered when a drag started. */
+  rangeOf(
+    clip: string,
+    path: string,
+    value: PropertyValue,
+    spec: PropertySpec,
+  ): ValueRange | undefined {
+    const channel = channelOf(value, spec.type);
+    const range = channel && rangeOfChannel(channel);
+    return range && unionOf(range, this.#heldRanges.get(rowKey(clip, path)));
+  }
+
+  /** Something that changes when what rows cover is held or let go, for drawing again. */
+  get heldRanges(): unknown {
+    return this.#heldRanges;
+  }
+
+  /** Keeps rows from shrinking while a drag goes on in them. */
+  holdRanges(rows: readonly { readonly clip: string; readonly path: string }[]): void {
+    const held = new Map<string, ValueRange>();
+    for (const { clip, path } of rows) {
+      const box = this.model?.boxes.get(clip);
+      const spec = box && this.specOf(clip, path);
+      const value = box && this.shownValue(box.clip, path);
+      const range = spec && value !== undefined ? this.rangeOf(clip, path, value, spec) : undefined;
+      if (range) held.set(rowKey(clip, path), range);
+    }
+    this.#heldRanges = held;
+  }
+
+  releaseRanges(): void {
+    if (this.#heldRanges.size === 0) return;
+    this.#heldRanges = new Map();
+    this.redraw();
+  }
+
+  /** What a property of a clip is, as the tree of the clip describes it. */
+  specOf(clip: string, path: string): PropertySpec | undefined {
+    const box = this.model?.boxes.get(clip);
+    if (!box) return undefined;
+    const node = clipNodeOf(this.shown(box.clip));
+    let specs = this.#specs.get(node);
+    if (!specs) {
+      const found = new Map<string, PropertySpec>();
+      const visit = (child: ClipChild) => {
+        if (child.kind === "property") found.set(child.spec.path, child.spec);
+        else for (const below of child.children) visit(below);
+      };
+      for (const child of node.children) visit(child);
+      specs = found;
+      this.#specs.set(node, specs);
+    }
+    return specs.get(path);
+  }
+
+  /** Whether a property changes gradually, which is what has curves, handles and ways of easing. */
+  isGradual(clip: string, path: string): boolean {
+    const spec = this.specOf(clip, path);
+    return spec !== undefined && canMix(spec.type);
   }
 
   toggleOpen(id: string): void {
@@ -821,10 +941,24 @@ export class KeyframeEditor {
     this.deleteSelected(shown);
   }
 
+  /** The selected keys that can change and have curves, by property. */
+  #gradualChannels(): readonly MovingChannel[] {
+    return this.movingChannels().filter(({ clip, path }) => this.isGradual(clip, path));
+  }
+
+  /** Whether some selected keys have a way of easing: switches, choices and words only hold. */
+  get canEase(): boolean {
+    for (const { clip, path } of this.selection.channels()) {
+      if (this.isGradual(clip, path)) return true;
+    }
+    return false;
+  }
+
   /** How the selected keys go on, as far as they all agree on it. */
   get selectedPreset(): EasePreset | undefined {
     const found = new Set<EasePreset | undefined>();
     for (const { clip, path, times } of this.selection.channels()) {
+      if (!this.isGradual(clip, path)) continue;
       const box = this.model?.boxes.get(clip);
       const animation =
         box && animationIn(entryOf(effectiveProperties(this.shown(box.clip)), path));
@@ -839,13 +973,53 @@ export class KeyframeEditor {
   }
 
   setEase(ease: KeyEase): void {
-    const edits = this.movingChannels().map(({ clip, path, times }): PropertyEdit => ({
+    const edits = this.#gradualChannels().map(({ clip, path, times }): PropertyEdit => ({
       owner: { clip },
       path,
       op: "setInterp",
       times: [...times],
       ease,
     }));
+    if (edits.length > 0) this.#writer.commit(edits);
+  }
+
+  /** The keys of a property of a clip as people see them, with where the selected ones are. */
+  #selectedIndices(clip: string, path: string, times: Iterable<string>) {
+    const box = this.model?.boxes.get(clip);
+    const animation = box && animationIn(entryOf(effectiveProperties(this.shown(box.clip)), path));
+    if (!animation) return undefined;
+    const indices: number[] = [];
+    for (const time of times) {
+      const index = firstKeyFrom(animation.keys, parseTime(time));
+      if (animation.keys[index]?.time === time) indices.push(index);
+    }
+    return { keys: animation.keys, indices: indices.toSorted((a, b) => a - b) };
+  }
+
+  /** How the selected keys change their handles, as far as they all agree on it. */
+  get selectedTangent(): TangentMode | undefined {
+    const found = new Set<TangentMode>();
+    for (const { clip, path, times } of this.selection.channels()) {
+      if (!this.isGradual(clip, path)) continue;
+      const selected = this.#selectedIndices(clip, path, times);
+      for (const index of selected?.indices ?? []) {
+        found.add(tangentOf(selected?.keys ?? [], index));
+        if (found.size > 1) return undefined;
+      }
+    }
+    return [...found][0];
+  }
+
+  /** Says how the selected keys change their handles, in one step: see `withTangent`. */
+  setTangent(mode: TangentMode): void {
+    const edits = this.#gradualChannels().flatMap(({ clip, path, times }): PropertyEdit[] => {
+      const selected = this.#selectedIndices(clip, path, times);
+      if (!selected) return [];
+      const changed = withTangent(selected.keys, selected.indices, mode);
+      return changed.size > 0
+        ? [{ owner: { clip }, path, op: "putKeys", keys: [...changed.values()] }]
+        : [];
+    });
     if (edits.length > 0) this.#writer.commit(edits);
   }
 
@@ -977,7 +1151,9 @@ export class KeyframeEditor {
       range,
       toggled: there(this.#toggled),
       pinned: there(pinned),
-      curves: [...this.#curves].filter(([one]) => this.#isThere(one)),
+      tall: [...this.#tall.values()].flatMap(({ clip, path, height, on }): TallRow[] =>
+        this.#isThere(clip) ? [[clip, path, height, on]] : [],
+      ),
       open: there(this.inTimeline.opened),
       ...(view ? { view } : {}),
       ...(this.panel.rowScale === 1 ? {} : { rows: this.panel.rowScale }),

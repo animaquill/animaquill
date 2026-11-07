@@ -22,6 +22,8 @@ export interface Theme {
   readonly keyTried: string;
   readonly keySummary: string;
   readonly curve: string;
+  readonly handle: string;
+  readonly warning: string;
 }
 
 export function readTheme(element: Element): Theme {
@@ -50,6 +52,8 @@ export function readTheme(element: Element): Theme {
     keyTried: style.getPropertyValue("--aq-trial").trim(),
     keySummary: color("key-summary"),
     curve: color("curve"),
+    handle: color("handle"),
+    warning: style.getPropertyValue("--aq-warning").trim(),
   };
 }
 

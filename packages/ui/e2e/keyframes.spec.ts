@@ -1,13 +1,16 @@
+import { bezierProgress } from "@animaquill/core";
 import type { Locator, Page } from "@playwright/test";
 import {
   BLACK,
   addColor,
   clips,
+  colorAt,
   dragField,
   expectColor,
   field,
   goTo,
   keyButton,
+  near,
   placeImage,
   typeInto,
 } from "./property-helpers.ts";
@@ -62,9 +65,51 @@ async function deselect(page: Page) {
   await page.mouse.click(box.x + box.width - 20, box.y + box.height - 20);
 }
 
-/** All of the timeline in view, so that keys have room to go. */
+/**
+ * What a reading comes to once it stays the same for a moment. The tab measures itself a moment
+ * after it shows or moves, and the list of keys follows the view a moment after that.
+ */
+async function settled<T>(read: () => Promise<T>): Promise<T> {
+  let before = JSON.stringify(await read());
+  await expect
+    .poll(
+      async () => {
+        const now = JSON.stringify(await read());
+        const same = now === before;
+        before = now;
+        return same;
+      },
+      { intervals: [150] },
+    )
+    .toBe(true);
+  return JSON.parse(before) as T;
+}
+
+/** Where the keys of the tab are, by the list that is in the same places. */
+const keyPlaces = (page: Page) =>
+  panel(page)
+    .getByRole("option")
+    .evaluateAll((items) =>
+      items.map((item) => [item.getAttribute("aria-label"), item.getAttribute("style")]),
+    );
+
+/**
+ * All of the timeline in view, so that keys have room to go. What fits is what the tab measured, so
+ * that waits for the tab to have its size, and what is read after it for the keys to follow.
+ */
 const showAll = async (page: Page) => {
+  await settled(() => stage(page).boundingBox());
   await panel(page).getByRole("button", { name: "显示全部" }).click();
+  await settled(() => keyPlaces(page));
+};
+
+const tallButton = (page: Page, name: string) =>
+  panel(page).getByRole("button", { name: `加高 ${name} 这一行`, exact: true });
+
+/** Makes a row taller, and waits for the keys to be where they go then. */
+const makeTall = async (page: Page, name: string) => {
+  await tallButton(page, name).click();
+  await settled(() => keyPlaces(page));
 };
 
 /** The same on the timeline, which zooms on its own. */
@@ -365,7 +410,10 @@ test.describe("with changes written right away", () => {
     await expect(keys(page, "位置 X")).toHaveCount(2);
     await expect(keys(page, "位置 Y")).toHaveCount(1);
 
-    await dragBy(page, keys(page, "位置").first(), 58);
+    // Not as far as the next key of X, whatever the size of the tab.
+    const one = await centerOf(keys(page, "位置 X").first());
+    const three = await centerOf(keys(page, "位置 X").nth(1));
+    await dragBy(page, keys(page, "位置").first(), (three.x - one.x) * 0.4);
     await expect.poll(() => timeOf(keys(page, "位置 Y").first())).not.toBe("0:01/00");
     const landed = await timeOf(keys(page, "位置 Y").first());
     expect(await timeOf(keys(page, "位置 X").first())).toBe(landed);
@@ -419,61 +467,163 @@ test.describe("with changes written right away", () => {
     await expect(bubble).toHaveCount(0);
   });
 
-  test("a row opens up to show its curve, and the bottom of it can be pulled", async ({ page }) => {
-    await keyedColor(page);
-    const canvas = panel(page).locator("canvas");
-    const box = await canvas.boundingBox();
-    if (!box) throw new Error("no canvas");
-
-    /** Where the curve is in a column of the canvas, by its colour. */
-    const curveAt = (x: number, top: number, bottom: number) =>
-      canvas.evaluate(
+  /**
+   * Where the curve is in a column of the canvas, by its colour, between two heights: the middle of
+   * the pixels it covers there, which are more where it is steep.
+   */
+  const curveAt = (page: Page, x: number, top: number, bottom: number) =>
+    panel(page)
+      .locator("canvas")
+      .evaluate(
         (element, area) => {
-          const context = (element as HTMLCanvasElement).getContext("2d");
-          const ratio = (element as HTMLCanvasElement).width / element.clientWidth;
-          const pixels = context?.getImageData(area.x * ratio, 0, 1, element.clientHeight * ratio);
-          for (let y = area.top * ratio; y < area.bottom * ratio; y += 1) {
-            const [red = 0, green = 0, blue = 0] = pixels?.data.slice(y * 4, y * 4 + 3) ?? [];
-            if (red < 90 && green > 130 && blue > 200) return y / ratio;
+          const canvas = element as HTMLCanvasElement;
+          const box = canvas.getBoundingClientRect();
+          const ratio = canvas.width / canvas.clientWidth;
+          const column = Math.round((area.x - box.x) * ratio);
+          const pixels = canvas.getContext("2d")?.getImageData(column, 0, 1, canvas.height).data;
+          const from = Math.round((area.top - box.y) * ratio);
+          const to = Math.round((area.bottom - box.y) * ratio);
+          const covered: number[] = [];
+          for (let y = from; y < to; y += 1) {
+            const [red = 0, green = 0, blue = 0] = pixels?.slice(y * 4, y * 4 + 3) ?? [];
+            // The curve is a light blue, and only it.
+            if (red < 90 && green > 130 && blue > 200) covered.push(y);
           }
-          return undefined;
+          const [first, last] = [covered[0], covered.at(-1)];
+          if (first === undefined || last === undefined) return undefined;
+          return box.y + ((first + last) / 2 + 0.5) / ratio;
         },
         { x, top, bottom },
       );
 
+  test("a row is the curve of its number, the way it is worked out", async ({ page }) => {
+    await keyedColor(page);
+    await makeTall(page, "位置 X");
     const first = await centerOf(keys(page, "位置 X").first());
     const last = await centerOf(keys(page, "位置 X").nth(1));
-    const inCanvas = (x: number) => Math.round(x - box.x);
-    const rowTop = first.y - box.y + 12;
-    const beforeCurve = await curveAt(inCanvas((first.x + last.x) / 2), rowTop, rowTop + 72);
-    expect(beforeCurve).toBeUndefined();
+    // 300 is higher up than 0.
+    expect(last.y).toBeLessThan(first.y - 60);
+    const lane = await row(page, "位置 X").boundingBox();
+    if (!lane) throw new Error("no row");
+    const measure = async (progress: (share: number) => number) => {
+      for (const share of [0.25, 0.5, 0.75]) {
+        const x = first.x + (last.x - first.x) * share;
+        const expected = first.y + (last.y - first.y) * progress(share);
+        const found = () => curveAt(page, x, lane.y, lane.y + lane.height);
+        await expect.poll(async () => Math.abs(((await found()) ?? 0) - expected)).toBeLessThan(2);
+      }
+    };
+    await measure((share) => share);
 
-    await panel(page).getByRole("button", { name: "显示 位置 X 的曲线" }).click();
-    const quarter = inCanvas(first.x + (last.x - first.x) / 4);
-    const half = inCanvas((first.x + last.x) / 2);
-    const most = inCanvas(first.x + ((last.x - first.x) * 3) / 4);
-    await expect.poll(() => curveAt(half, rowTop, rowTop + 72)).toBeDefined();
-    const [low, middle, high] = [
-      await curveAt(quarter, rowTop, rowTop + 72),
-      await curveAt(half, rowTop, rowTop + 72),
-      await curveAt(most, rowTop, rowTop + 72),
-    ] as [number, number, number];
-    expect(low).toBeGreaterThan(middle);
-    expect(middle).toBeGreaterThan(high);
+    await page.mouse.click(first.x, first.y);
+    await panel(page).getByRole("button", { name: "插值" }).click();
+    const bubble = page.getByRole("dialog", { name: "插值" });
+    await bubble.getByRole("radio", { name: "缓入缓出" }).click();
+    await page.keyboard.press("Escape");
+    await measure((share) => bezierProgress(0.42, 0, 0.58, 1, share));
 
-    // Linear: as much from a quarter to the middle as from there to three quarters.
-    expect(Math.abs(low - middle - (middle - high))).toBeLessThanOrEqual(2);
+    await panel(page).getByRole("button", { name: "插值" }).click();
+    await bubble.getByRole("radio", { name: "保持" }).click();
+    await page.keyboard.press("Escape");
+    await measure(() => 0);
+  });
 
-    const lower = await row(page, "位置 X").boundingBox();
-    if (!lower) throw new Error("no row");
-    const edge = lower.y + lower.height - 2;
-    await page.mouse.move(box.x + 300, edge);
+  test("a handle of a selected key bends the curve, and the picture follows, in one step", async ({
+    page,
+  }) => {
+    await keyedColor(page);
+    await makeTall(page, "位置 X");
+    await goTo(page, "0:02/00");
+    await expect(value(page, "位置 X")).toHaveValue("150");
+    // The clip is as big as the stage, and half way it is 150 to the right.
+    const blackAt200 = async () => near(await colorAt(page, 200, 540), BLACK);
+    await expect.poll(blackAt200).toBe(false);
+    const first = await centerOf(keys(page, "位置 X").first());
+    await page.mouse.click(first.x, first.y);
+    const handle = panel(page).locator('[data-handle="out"][data-of="位置 X"]');
+    await expect(handle).toHaveCount(1);
+    const from = await centerOf(handle);
+    // A third of the way along a straight line.
+    const last = await centerOf(keys(page, "位置 X").nth(1));
+    expect(from.x).toBeCloseTo(first.x + (last.x - first.x) / 3, -1);
+    expect(from.y).toBeCloseTo(first.y + (last.y - first.y) / 3, -1);
+    await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    await page.mouse.move(box.x + 300, edge + 30, { steps: 3 });
+    await page.mouse.move(from.x - 20, from.y - 30, { steps: 4 });
+    await page.mouse.move(from.x - 40, from.y - 60, { steps: 4 });
+    // While the mouse holds it, the picture already shows what it does.
+    await expect.poll(blackAt200).toBe(true);
     await page.mouse.up();
+    await expect(keys(page, "位置 X").first()).toHaveAttribute("data-mark", "eased");
+    const bent = Number(await value(page, "位置 X").inputValue());
+    expect(bent).toBeGreaterThan(200);
+    await page.keyboard.press("Control+z");
+    await expect(value(page, "位置 X")).toHaveValue("150");
+    await expect(keys(page, "位置 X").first()).toHaveAttribute("data-mark", "linear");
+    await expect.poll(blackAt200).toBe(false);
+    await page.keyboard.press("Control+Shift+z");
+    await expect(value(page, "位置 X")).toHaveValue(String(bent));
+  });
+
+  test("a key goes up and down for its value, and Shift keeps it to one way", async ({ page }) => {
+    await keyedColor(page);
+    await makeTall(page, "位置 X");
+    await goTo(page, "0:03/00");
+    await expect(value(page, "位置 X")).toHaveValue("300");
+    await dragBy(page, keys(page, "位置 X").nth(1), 0, 40);
     await expect
-      .poll(async () => (await row(page, "位置 X").boundingBox())?.height)
-      .toBe(lower.height + 30);
+      .poll(async () => Number(await value(page, "位置 X").inputValue()))
+      .toBeLessThan(300);
+    await expect(keys(page, "位置 X").nth(1)).toHaveAttribute("aria-label", /0:03\/00$/);
+    await page.keyboard.press("Control+z");
+    await expect(value(page, "位置 X")).toHaveValue("300");
+
+    const key = await centerOf(keys(page, "位置 X").nth(1));
+    await page.keyboard.down("Shift");
+    await page.mouse.move(key.x, key.y);
+    await page.mouse.down();
+    await page.mouse.move(key.x + 30, key.y + 10, { steps: 4 });
+    await page.mouse.move(key.x + 60, key.y + 20, { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+    await expect(keys(page, "位置 X").nth(1)).not.toHaveAttribute("aria-label", /0:03\/00$/);
+    // It stayed as high up as it was, which is its value.
+    expect((await centerOf(keys(page, "位置 X").nth(1))).y).toBeCloseTo(key.y, 0);
+  });
+
+  test("a row is made taller on its own, pulled to a height, and stays so", async ({ page }) => {
+    await keyedColor(page);
+    const height = async () => (await row(page, "位置 X").boundingBox())?.height ?? 0;
+    const usual = await height();
+    await makeTall(page, "位置 X");
+    await expect.poll(height).toBe(120);
+    // The bottom edge, on the side of the keys.
+    const box = await row(page, "位置 X").boundingBox();
+    const canvas = await panel(page).locator("canvas").boundingBox();
+    if (!box || !canvas) throw new Error("no row");
+    const edge = box.y + box.height - 2;
+    await page.mouse.move(canvas.x + 200, edge);
+    await page.mouse.down();
+    await page.mouse.move(canvas.x + 200, edge + 40, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(height).toBe(160);
+    // And on the side of the list.
+    const separator = panel(page).getByRole("separator", { name: "拖动调整 位置 X 这一行的高度" });
+    const line = await centerOf(separator);
+    await page.mouse.move(line.x, line.y);
+    await page.mouse.down();
+    await page.mouse.move(line.x, line.y - 20, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(height).toBe(140);
+    await page.waitForTimeout(500);
+    await page.reload();
+    await expect.poll(height).toBe(140);
+    await panel(page)
+      .getByRole("button", { name: "恢复 位置 X 这一行的高度", exact: true })
+      .click();
+    await expect.poll(height).toBe(usual);
+    await makeTall(page, "位置 X");
+    await expect.poll(height).toBe(140);
   });
 
   test("keys are drawn where they are, in the shape of how they go on", async ({ page }) => {
@@ -913,6 +1063,74 @@ test.describe("a project written by hand", () => {
 
     await dragBy(page, keys(page, "param.title").nth(1), 50);
     await expect.poll(() => timeOf(keys(page, "param.title").nth(1))).not.toBe("0:02/00");
+  });
+
+  test("a switch and a choice change in their row, at the playhead when they have keys", async ({
+    page,
+  }) => {
+    const stepped = (first: string | boolean, second: string | boolean) => ({
+      keys: [
+        { time: "0", value: first },
+        { time: "2", value: second },
+      ],
+    });
+    await importClips(page, 10, [
+      {
+        id: "c",
+        start: "0",
+        duration: "5",
+        source: { kind: "color", color: "#336699" },
+        properties: {
+          "param.visible": stepped(true, false),
+          blend: stepped("normal", "screen"),
+        },
+      },
+    ]);
+    await page.getByRole("button", { name: "关闭", exact: true }).click();
+    await animate(page);
+    await showAll(page);
+    await open(page, "纯色");
+    await open(page, "未连接");
+    await goTo(page, "0:01/00");
+    const toggle = panel(page).getByRole("switch", { name: "param.visible" });
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(keys(page, "param.visible")).toHaveCount(3);
+    expect(await timesOf(keys(page, "param.visible"))).toEqual(["0:00/00", "0:01/00", "0:02/00"]);
+    const choice = panel(page).getByRole("combobox", { name: "blend" });
+    await expect(choice).toHaveValue("normal");
+    await choice.selectOption("multiply");
+    await expect(keys(page, "blend")).toHaveCount(3);
+    await page.keyboard.press("Control+z");
+    await expect(keys(page, "blend")).toHaveCount(2);
+
+    // Taller, it still has its values from key to key, and nothing to ease.
+    await panel(page).getByRole("button", { name: "加高 param.visible 这一行" }).click();
+    const list = await panel(page).getByRole("tree").boundingBox();
+    if (!list) throw new Error("no list");
+    await page.mouse.move(list.x + 40, list.y + 40);
+    await page.mouse.wheel(0, 400);
+    /** Where something is, without scrolling what is around it. */
+    const boxOf = async (locator: Locator) => {
+      const box = await locator.boundingBox();
+      if (!box) throw new Error("not there");
+      return { ...box, middle: box.y + box.height / 2, center: box.x + box.width / 2 };
+    };
+    await expect.poll(async () => (await boxOf(row(page, "param.visible"))).height).toBe(120);
+    const tall = await boxOf(row(page, "param.visible"));
+    await expect
+      .poll(async () => (await boxOf(keys(page, "param.visible").nth(1))).middle)
+      .toBeCloseTo(tall.middle, 0);
+    const found = await boxOf(keys(page, "param.visible").nth(1));
+    const key = { x: found.center, y: found.middle };
+    await page.mouse.click(key.x, key.y);
+    await expect(keys(page, "param.visible").nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(keys(page, "param.visible").nth(1)).toHaveAttribute("data-mark", "hold");
+    await expect(panel(page).getByRole("button", { name: "插值" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 });
 

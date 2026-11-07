@@ -8,6 +8,8 @@ import {
   parseTime,
   subtract,
   toSeconds,
+  type Key,
+  type PropertySpec,
   type Rational,
 } from "@animaquill/schema";
 import {
@@ -20,20 +22,49 @@ import {
 } from "../timeline/gestures.ts";
 import type { TimelineModel } from "../timeline/model.ts";
 import { snapPointsOf, type SnapPoint, type SnapPoints } from "../timeline/snap.ts";
+import {
+  dragHandle,
+  tangentOf,
+  type ChangedKeys,
+  type CurvePoint,
+  type HandleSide,
+} from "./handles.ts";
 import { KeySelection, NO_KEYS, type KeyRef } from "./selection.ts";
 
 /** Without snapping a key can go anywhere, to the millisecond. */
 const FREE_STEPS_PER_SECOND = 1000;
 /** Moving more keys than this only shows on the keys until the mouse lets go. */
 const MAX_KEYS_IN_PICTURE = 2000;
+/**
+ * Up and down this far from where a key was, its value stays: a key that is dragged along the time
+ * moves a little up and down as well, and in a row of the usual height that is a lot of a value.
+ */
+const VALUE_STICK = 6;
+/** Enough for anything a person means, and it keeps float noise out of project files. */
+const KEPT_DIGITS = 6;
+
+/** The handle that is being dragged, and whether it got as far as the pointer. */
+export interface HandleHint {
+  readonly clip: string;
+  readonly path: string;
+  readonly time: string;
+  readonly side: HandleSide;
+  readonly clamped: boolean;
+  /** Where the pointer is, which the handle would be at but for what it can hold. */
+  readonly x: number;
+  readonly y: number;
+}
 
 /** What a drag would do. Nothing of it is in the project until the drag ends. */
 export interface KeyPreview {
   /** How far the selected keys go, in seconds. */
   readonly shift?: number;
+  /** How far the selected numbers go up, in their own units, by `clip path`. */
+  readonly lift?: ReadonlyMap<string, number>;
   /** Where something snapped, for the line that shows it. */
   readonly snap?: number;
   readonly marquee?: Marquee;
+  readonly handle?: HandleHint;
 }
 
 /** The selected keys of one property that can move. */
@@ -41,6 +72,17 @@ export interface MovingChannel {
   readonly clip: string;
   readonly path: string;
   readonly times: readonly string[];
+}
+
+/** The selected keys of a number that go up and down with the mouse. */
+export interface LiftedChannel {
+  readonly clip: string;
+  readonly path: string;
+  readonly spec: PropertySpec;
+  /** What a pixel up is worth in the row it is in, as it was when the drag started. */
+  readonly perPixel: number;
+  /** The keys that go, as they were, by time. */
+  readonly keys: ReadonlyMap<string, Key>;
 }
 
 /** What gestures on keys need from where they happen. */
@@ -63,6 +105,50 @@ export interface KeyGestureHost {
   cancelPreview(): void;
   /** Writes them as one step, with what is selected afterwards. */
   commit(edits: readonly PropertyEdit[], selection: KeySelection): boolean;
+  /** Keeps rows from shrinking under the mouse while it drags in them, and lets go of that. */
+  holdRanges(rows: readonly { readonly clip: string; readonly path: string }[]): void;
+  releaseRanges(): void;
+}
+
+/** A value within what its property can hold, as far as it says. */
+export const withinSpec = (spec: PropertySpec, value: number): number =>
+  Math.min(
+    Math.max(value, spec.min ?? Number.NEGATIVE_INFINITY),
+    spec.max ?? Number.POSITIVE_INFINITY,
+  );
+
+/** How far a value goes for some pixels, in a step that a pixel is worth: no float noise. */
+function liftBy(perPixel: number, pixels: number): number {
+  if (pixels === 0 || !(perPixel > 0)) return 0;
+  const step = 10 ** Math.floor(Math.log10(perPixel));
+  return Number((Math.round((pixels * perPixel) / step) * step).toFixed(KEPT_DIGITS));
+}
+
+/** Where `lift` of a preview has what one property goes up by. */
+export const liftKey = (clip: string, path: string) => `${clip} ${path}`;
+
+/**
+ * The edits of keys that go along the time and up and down: they move, and then the numbers among
+ * them get their new values, keeping how they go on.
+ */
+export function liftEdits(
+  channels: readonly MovingChannel[],
+  by: Rational,
+  lifted: readonly LiftedChannel[],
+  lift: ReadonlyMap<string, number>,
+): readonly PropertyEdit[] {
+  const moving = compare(by, ZERO) === 0 ? [] : moveEdits(channels, by);
+  const valued = lifted.flatMap(({ clip, path, spec, keys }): PropertyEdit[] => {
+    const up = lift.get(liftKey(clip, path)) ?? 0;
+    if (up === 0) return [];
+    const placed = [...keys.values()].map((key) => ({
+      ...key,
+      time: formatTime(add(parseTime(key.time), by)),
+      value: Number(withinSpec(spec, (key.value as number) + up).toFixed(KEPT_DIGITS)),
+    }));
+    return [{ owner: { clip }, path, op: "putKeys", keys: placed }];
+  });
+  return [...moving, ...valued];
 }
 
 /** Where keys go when they all move by the same time. */
@@ -128,6 +214,8 @@ export class KeyMoveGesture implements Gesture {
   readonly #press: Pointer;
   readonly #grabTime: number;
   readonly #channels: readonly MovingChannel[];
+  /** The numbers among them that go up and down, which is none when what was grabbed is not one. */
+  readonly #lifted: readonly LiftedChannel[];
   readonly #points: SnapPoints;
   readonly #inPicture: boolean;
   /** Going further back than this takes the earliest key before its clock starts. */
@@ -135,12 +223,20 @@ export class KeyMoveGesture implements Gesture {
   readonly #onClick: () => void;
   #dragging = false;
   #landing: Landing | undefined;
+  #lift: ReadonlyMap<string, number> = new Map();
 
-  constructor(host: KeyGestureHost, grabbed: Grabbed, press: Pointer, onClick: () => void) {
+  constructor(
+    host: KeyGestureHost,
+    grabbed: Grabbed,
+    press: Pointer,
+    onClick: () => void,
+    lifted: readonly LiftedChannel[] = [],
+  ) {
     this.#host = host;
     this.#grabbed = grabbed;
     this.#press = press;
     this.#onClick = onClick;
+    this.#lifted = lifted;
     this.#grabTime = host.timeAt(press.x);
     this.#channels = host.moving();
     this.#points = snapPointsOf(host.model, host.frame, new Set(), host.snapTargets());
@@ -151,19 +247,44 @@ export class KeyMoveGesture implements Gesture {
 
   move(pointer: Pointer): void {
     if (!this.#dragging && !hasMoved(this.#press, pointer)) return;
+    if (!this.#dragging) this.#host.holdRanges(this.#lifted);
     this.#dragging = true;
-    const landing = this.#land(pointer);
+    // Shift keeps it to the way it went furthest: only along the time, or only up and down.
+    const across = Math.abs(pointer.x - this.#press.x);
+    const down = pointer.y - this.#press.y;
+    const along = !pointer.shift || across >= Math.abs(down);
+    const landing = along ? this.#land(pointer) : this.#stay();
+    const stick = this.#host.snapDistance(pointer) > 0 ? VALUE_STICK : 0;
+    const pixels = (pointer.shift && along) || Math.abs(down) < stick ? 0 : -down;
+    const lift = new Map<string, number>();
+    for (const { clip, path, perPixel } of this.#lifted) {
+      const up = liftBy(perPixel, pixels);
+      if (up !== 0) lift.set(liftKey(clip, path), up);
+    }
     const shift = landing.seconds - this.#grabbed.seconds;
     const previous = this.#landing;
+    const sameLift = sameValues(lift, this.#lift);
     this.#landing = landing;
-    this.#host.show({ shift, ...(landing.line === undefined ? {} : { snap: landing.line }) });
-    if (!this.#inPicture || previous?.seconds === landing.seconds) return;
-    if (shift === 0) this.#host.cancelPreview();
-    else this.#host.preview(moveEdits(this.#channels, this.#by(landing)));
+    this.#lift = lift;
+    this.#host.show({
+      shift,
+      ...(lift.size > 0 ? { lift } : {}),
+      ...(landing.line === undefined ? {} : { snap: landing.line }),
+    });
+    if (!this.#inPicture || (previous?.seconds === landing.seconds && sameLift)) return;
+    const by = this.#by(landing);
+    if (compare(by, ZERO) === 0 && lift.size === 0) this.#host.cancelPreview();
+    else this.#host.preview(liftEdits(this.#channels, by, this.#lifted, lift));
   }
 
   #by(landing: Landing): Rational {
     return subtract(landing.exact(), this.#grabbed.exact());
+  }
+
+  /** Where it was, for a drag that only goes up and down. */
+  #stay(): Landing {
+    const start = this.#grabbed.seconds;
+    return { seconds: start, exact: () => this.#grabbed.exact() };
   }
 
   #land(pointer: Pointer): Landing {
@@ -194,22 +315,26 @@ export class KeyMoveGesture implements Gesture {
     this.move(pointer);
     this.#commit();
     this.#host.show(undefined);
+    this.#host.releaseRanges();
   }
 
   #commit(): void {
     const landing = this.#landing;
     const by = landing && this.#by(landing);
-    if (!by || compare(by, ZERO) === 0) {
+    const lift = this.#lift;
+    if (!by || (compare(by, ZERO) === 0 && lift.size === 0)) {
       this.#host.cancelPreview();
       return;
     }
     const moved = KeySelection.of(movedSelection(this.#host.selection, this.#channels, by));
-    if (!this.#host.commit(moveEdits(this.#channels, by), moved)) this.#host.cancelPreview();
+    const edits = liftEdits(this.#channels, by, this.#lifted, lift);
+    if (!this.#host.commit(edits, moved)) this.#host.cancelPreview();
   }
 
   cancel(): void {
     this.#host.cancelPreview();
     this.#host.show(undefined);
+    this.#host.releaseRanges();
   }
 
   isStale(model: TimelineModel): boolean {
@@ -271,8 +396,87 @@ export class KeyMarqueeGesture implements Gesture {
   }
 }
 
-/** Pulls the bottom of a curve. */
-export class CurveHeightGesture implements Gesture {
+const sameValues = (a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>) =>
+  a.size === b.size && [...a].every(([key, value]) => b.get(key) === value);
+
+/** What a handle drag needs to know about the row it is in. */
+export interface HandleGrab {
+  readonly clip: string;
+  readonly path: string;
+  /** The keys of the property when the drag started. */
+  readonly keys: readonly Key[];
+  readonly index: number;
+  readonly side: HandleSide;
+  /** Where the pointer is on the clock of the clip and in the units of the property. */
+  pointAt(pointer: Pointer): CurvePoint;
+}
+
+/**
+ * Drags a handle of a key, which bends the curve as in a curve editor. It goes as far as a handle
+ * can, and shows when it stops. Alt moves only this handle and Ctrl keeps the other one on a line
+ * with it; without either the key does what it says, or what it looks like it does. One drag is
+ * one step, and a click changes nothing.
+ */
+export class HandleGesture implements Gesture {
+  readonly #host: KeyGestureHost;
+  readonly #grab: HandleGrab;
+  readonly #press: Pointer;
+  readonly #usual: "aligned" | "broken";
+  #dragging = false;
+  #changed: ChangedKeys | undefined;
+
+  constructor(host: KeyGestureHost, grab: HandleGrab, press: Pointer) {
+    this.#host = host;
+    this.#grab = grab;
+    this.#press = press;
+    const mode = tangentOf(grab.keys, grab.index);
+    // Dragging an automatic handle is saying where it goes, as in Blender: it stays on a line.
+    this.#usual = mode === "broken" ? "broken" : "aligned";
+  }
+
+  move(pointer: Pointer): void {
+    if (!this.#dragging && !hasMoved(this.#press, pointer)) return;
+    if (!this.#dragging) this.#host.holdRanges([this.#grab]);
+    this.#dragging = true;
+    const { clip, path, keys, index, side } = this.#grab;
+    const mode = pointer.alt ? "broken" : pointer.mod ? "aligned" : this.#usual;
+    const dragged = dragHandle({ keys, index, side, to: this.#grab.pointAt(pointer), mode });
+    if (!dragged) return;
+    this.#changed = dragged.changed;
+    const time = (keys[index] as Key).time;
+    const { clamped } = dragged;
+    this.#host.show({ handle: { clip, path, time, side, clamped, x: pointer.x, y: pointer.y } });
+    this.#host.preview(this.#edits(dragged.changed));
+  }
+
+  #edits(changed: ChangedKeys): readonly PropertyEdit[] {
+    const { clip, path } = this.#grab;
+    return [{ owner: { clip }, path, op: "putKeys", keys: [...changed.values()] }];
+  }
+
+  end(pointer: Pointer): void {
+    if (this.#dragging) this.move(pointer);
+    const changed = this.#changed;
+    if (changed && !this.#host.commit(this.#edits(changed), this.#host.selection)) {
+      this.#host.cancelPreview();
+    }
+    this.#host.show(undefined);
+    this.#host.releaseRanges();
+  }
+
+  cancel(): void {
+    this.#host.cancelPreview();
+    this.#host.show(undefined);
+    this.#host.releaseRanges();
+  }
+
+  isStale(model: TimelineModel): boolean {
+    return !model.boxes.has(this.#grab.clip);
+  }
+}
+
+/** Pulls the bottom of a row that was made taller. */
+export class TallHeightGesture implements Gesture {
   readonly #resize: (height: number) => void;
   readonly #before: number;
   readonly #fromY: number;

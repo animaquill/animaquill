@@ -40,7 +40,7 @@ function setup() {
 
 const allOpen = {
   isOpen: () => true,
-  curveHeight: (_node: PropertyNode) => undefined,
+  tallHeight: (_node: PropertyNode) => undefined,
 };
 
 describe("lanes of a tree", () => {
@@ -87,12 +87,27 @@ describe("lanes of a tree", () => {
     expect(lanes[3]?.group).toBeUndefined();
   });
 
-  it("make room for a curve, and only for what can have one", () => {
+  it("make a property taller on its own, and nothing else, never shorter than a row", () => {
     const { model, tracks } = setup();
-    const lanes = lanesOfTracks(model, tracks, { ...allOpen, curveHeight: () => 50 });
-    expect(lanes[3]?.height).toBe(LANE_HEIGHT + 50);
-    expect(lanes[4]?.top).toBe((lanes[3]?.top ?? 0) + LANE_HEIGHT + 50);
+    const lanes = lanesOfTracks(model, tracks, { ...allOpen, tallHeight: () => 80 });
+    expect(lanes[3]?.height).toBe(80);
+    expect(lanes[3]?.tall).toBe(true);
+    expect(lanes[3]?.keyHeight).toBe(LANE_HEIGHT);
+    expect(lanes[4]?.top).toBe((lanes[3]?.top ?? 0) + 80);
     expect(lanes[2]?.height).toBe(LANE_HEIGHT);
+    expect(lanes[2]?.tall).toBe(false);
+    // Rows taller than that as a whole leave nothing to make taller there.
+    const tallRows = lanesOfTracks(model, tracks, { ...allOpen, tallHeight: () => 40 }, 60);
+    expect(tallRows[3]?.height).toBe(60);
+  });
+
+  it("of a property have nothing to open: its curve is the row itself", () => {
+    const { model, tracks } = setup();
+    const lanes = lanesOfTracks(model, tracks, allOpen);
+    expect(lanes[3]?.node.kind).toBe("property");
+    expect(lanes[3]?.canOpen).toBe(false);
+    expect(lanes[3]?.open).toBe(false);
+    expect(lanes[3]?.height).toBe(LANE_HEIGHT);
   });
 
   it("of one clip start where they are told to", () => {
@@ -105,9 +120,9 @@ describe("lanes of a tree", () => {
 
   it("can be found by height", () => {
     const { model, tracks } = setup();
-    const lanes = lanesOfTracks(model, tracks, { ...allOpen, curveHeight: () => 50 });
+    const lanes = lanesOfTracks(model, tracks, { ...allOpen, tallHeight: () => 74 });
     expect(laneAt(lanes, 0)).toBe(lanes[0]);
-    expect(laneAt(lanes, LANE_HEIGHT * 3 + 40)).toBe(lanes[3]);
+    expect(laneAt(lanes, LANE_HEIGHT * 3 + 60)).toBe(lanes[3]);
     expect(laneAt(lanes, -1)).toBeUndefined();
     expect(laneAt(lanes, 100_000)).toBeUndefined();
     expect(firstLaneBelow(lanes, -5)).toBe(0);

@@ -143,7 +143,8 @@ test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
   await turnWheel(page, 120, 0, 240);
   await reportSmooth(page, "up and down through 5000 clips");
 
-  await page.getByRole("button", { name: "显示全部" }).first().click();
+  // The tab zooms on its own: its own button shows all of it.
+  await panel(page).getByRole("button", { name: "显示全部" }).click();
   await page.evaluate(() => new Promise(requestAnimationFrame));
   await startCounting(page);
   await turnWheel(page, 60, 0, 240);
@@ -160,9 +161,28 @@ test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
   await startCounting(page);
   await turnWheel(page, 120, 0, 240);
   await reportSmooth(page, "up and down through 5000 rows of keys");
+
+  // A screen of curves: rows of X, close enough in time that each shows its curve, all of their
+  // keys selected so that the handles show too, and a row made taller.
+  const stage = panel(page).getByRole("group", { name: "关键帧", exact: true });
+  await panel(page).getByRole("button", { name: "显示全部" }).click();
+  for (let step = 0; step < 18; step += 1) await zoomIn.click();
+  await turnWheel(page, 1, 0, -1_000_000);
+  await panel(page)
+    .getByRole("button", { name: /^加高 / })
+    .first()
+    .click();
+  await stage.focus();
+  await page.keyboard.press("Control+a");
+  await expect(panel(page).locator("[data-handle]").first()).toBeAttached();
+  const handles = await panel(page).locator("[data-handle]").count();
+  await startCounting(page);
+  await turnWheel(page, 60, 0, 16);
+  await turnWheel(page, 60, 2, 0);
+  await reportSmooth(page, `a screen of curves, with ${handles} handles and a taller row`);
+  await page.keyboard.press("Escape");
   await panel(page).getByRole("searchbox").fill("");
 
-  const stage = panel(page).getByRole("group", { name: "关键帧", exact: true });
   await stage.focus();
   await startCounting(page);
   await page.keyboard.press("Control+a");
@@ -171,7 +191,25 @@ test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
   await reportSmooth(page, "selecting 50000 keys, and going through them");
   await page.keyboard.press("Escape");
 
-  // Keys of one clip go to the playhead while every clip is selected.
+  // Keys of one clip go to the playhead while every clip is selected. The tab scrolls on its own:
+  // back at the start, its keys are on screen to take one of. The list of them follows a moment later.
+  await turnWheel(page, 1, 0, -1_000_000);
+  await content(page, "timeline").getByRole("group", { name: "时间轴", exact: true }).focus();
+  await page.keyboard.press("Home");
+  let listed = "";
+  await expect
+    .poll(
+      async () => {
+        const now = await panel(page)
+          .getByRole("option")
+          .evaluateAll((items) => items.map((item) => item.getAttribute("style")).join());
+        const settled = now !== "" && now === listed;
+        listed = now;
+        return settled;
+      },
+      { intervals: [150] },
+    )
+    .toBe(true);
   const key = panel(page).getByRole("option").first();
   const place = await key.boundingBox();
   if (!place) throw new Error("no key on screen");

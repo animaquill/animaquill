@@ -30,3 +30,11 @@
   color: var(--aq-match);
   overflow: visible;
 }
+
+.hint {
+  max-width: 228px;
+  margin: 8px 0 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}

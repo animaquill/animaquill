@@ -18,6 +18,9 @@ const LINEAR = 0;
 const HOLD = 1;
 const BEZIER = 2;
 
+/** What `shapes` of a channel hold, for drawing a curve the way it is worked out. */
+export const SHAPE = { linear: LINEAR, hold: HOLD, bezier: BEZIER } as const;
+
 /** A property that stays the same. */
 export interface StillChannel {
   readonly kind: "still";

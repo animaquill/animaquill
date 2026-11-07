@@ -7,7 +7,6 @@ import {
   KEY_EASED,
   KEY_HOLD,
   KEY_LINEAR,
-  curveRangeOf,
   firstFrom,
   hasKeyAt,
   indexAt,
@@ -113,33 +112,6 @@ describe("a summary", () => {
     const one = clip(properties);
     const paths = ["transform.x"];
     expect(summaryOf(one, paths)).toBe(summaryOf(one, paths));
-  });
-});
-
-describe("how far a curve goes", () => {
-  it("covers its keys, and what an easing does between them", () => {
-    expect(
-      curveRangeOf({
-        keys: [
-          { time: "0", value: 3 },
-          { time: "1", value: -2 },
-        ],
-      }),
-    ).toEqual({
-      min: -2,
-      max: 3,
-    });
-    const range = curveRangeOf({
-      keys: [
-        { time: "0", value: 0, interp: "bezier", out: [0.34, 1.56] },
-        { time: "1", value: 10, in: [0.64, 1] },
-      ],
-    });
-    expect(range?.max).toBeGreaterThan(10);
-  });
-
-  it("has none for what are no numbers", () => {
-    expect(curveRangeOf({ keys: [{ time: "0", value: "a" }] })).toBeUndefined();
   });
 });
 

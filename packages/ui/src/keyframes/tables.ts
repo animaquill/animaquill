@@ -1,11 +1,4 @@
-import {
-  bezierProgress,
-  canMix,
-  effectiveProperties,
-  entryOf,
-  secondsOf,
-  type ClipState,
-} from "@animaquill/core";
+import { canMix, effectiveProperties, entryOf, secondsOf, type ClipState } from "@animaquill/core";
 import {
   isAnimation,
   type Animation,
@@ -31,6 +24,8 @@ export interface KeyTable {
   /** Seconds on the clock of the clip, in order. */
   readonly seconds: Float64Array;
   readonly marks: Uint8Array;
+  /** The values, when all of them are numbers. A summary has none. */
+  readonly numbers?: Float64Array;
 }
 
 function markOf({ interp }: Key): KeyMark {
@@ -56,9 +51,11 @@ export function keyTableOf(animation: Animation): KeyTable {
   const known = tables.get(animation);
   if (known) return known;
   const { keys } = animation;
+  const isNumbers = keys.every(({ value }) => typeof value === "number");
   const table = {
     seconds: Float64Array.from(keys, ({ time }) => secondsOf(time)),
     marks: Uint8Array.from(keys, markOf),
+    ...(isNumbers ? { numbers: Float64Array.from(keys, ({ value }) => value as number) } : {}),
   };
   tables.set(animation, table);
   return table;
@@ -136,43 +133,4 @@ export function summaryOf(clip: ClipState, paths: readonly string[]): KeyTable {
   const summary = buildSummary(clip, paths);
   byClip.set(clip, summary);
   return summary;
-}
-
-/** How far a curve goes from top to bottom, also where an easing overshoots. */
-export interface CurveRange {
-  readonly min: number;
-  readonly max: number;
-}
-
-const ranges = new WeakMap<Animation, CurveRange>();
-
-/** What an easing can reach between two keys, on a few points of the way. */
-function rangeBetween(from: Key, to: Key, range: { min: number; max: number }): void {
-  if (from.interp !== "bezier" || !from.out) return;
-  const start = from.value as number;
-  const change = (to.value as number) - start;
-  const [x1, y1] = from.out;
-  const [x2, y2] = to.in ?? [1, 1];
-  for (let step = 1; step < 8; step += 1) {
-    const value = start + change * bezierProgress(x1, y1, x2, y2, step / 8);
-    range.min = Math.min(range.min, value);
-    range.max = Math.max(range.max, value);
-  }
-}
-
-/** The range of numbers keys cover. Undefined when they are not numbers. */
-export function curveRangeOf(animation: Animation): CurveRange | undefined {
-  const known = ranges.get(animation);
-  if (known) return known;
-  const { keys } = animation;
-  if (!keys.every(({ value }) => typeof value === "number")) return undefined;
-  const range = { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY };
-  keys.forEach((key, index) => {
-    range.min = Math.min(range.min, key.value as number);
-    range.max = Math.max(range.max, key.value as number);
-    const next = keys[index + 1];
-    if (next) rangeBetween(key, next, range);
-  });
-  ranges.set(animation, range);
-  return range;
 }

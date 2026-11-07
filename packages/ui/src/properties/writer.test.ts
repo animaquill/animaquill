@@ -341,3 +341,73 @@ describe("while people try things out", () => {
     expect(store.canUndo).toBe(true);
   });
 });
+
+describe("automatic handles", () => {
+  /** Keys at 0, 1 and 2 seconds, the one in the middle with handles the editor works out. */
+  async function automatic(trying: boolean) {
+    const setting = await setup({ trying });
+    const keys = [
+      { time: "0", value: 0, interp: "bezier" as const, out: [0.3, 0.3] as [number, number] },
+      {
+        time: "1",
+        value: 10,
+        interp: "bezier" as const,
+        tangent: "auto" as const,
+        out: [0.333333, 0.333333] as [number, number],
+        in: [0.666667, 0.666667] as [number, number],
+      },
+      { time: "2", value: 20 },
+    ];
+    setting.store.execute({
+      type: "property.edit",
+      params: {
+        timeline: "main",
+        edits: [{ owner, path: "transform.x", op: "set", value: { keys } }],
+      },
+    });
+    return setting;
+  }
+
+  const middle = (value: unknown) =>
+    (value as { keys: { out?: number[]; in?: number[] }[] } | undefined)?.keys[1];
+
+  it("follow what moves around them, on the way and in the same step", async () => {
+    for (const trying of [false, true]) {
+      const { writer, shown, value, store, trials } = await automatic(trying);
+      writer.preview([write(40, "2")]);
+      const previewed = middle(shown("transform.x"));
+      // The rise after the key is three times the one before it: it leaves steeper than a line.
+      expect(previewed?.out?.[1]).toBeLessThan(0.333333);
+      expect(previewed?.in?.[1]).toBeLessThan(0.666667);
+      writer.commit([write(40, "2")]);
+      const after = trying ? trials.getValues().get("c")?.get("transform.x") : value("transform.x");
+      expect(middle(after)).toEqual(previewed);
+      if (trying) {
+        trials.undo();
+        expect(trials.getValues().get("c")?.get("transform.x")).toBeUndefined();
+      } else {
+        store.undo();
+        expect(middle(value("transform.x"))?.out).toEqual([0.333333, 0.333333]);
+      }
+    }
+  });
+
+  it("leave everything else as it is", async () => {
+    const { writer, value } = await setup();
+    const key = (time: string, number: number): PropertyEdit => ({
+      owner,
+      path: "transform.x",
+      op: "setKey",
+      time,
+      value: number,
+    });
+    writer.commit([key("0", 0), key("2", 20)]);
+    writer.commit([write(5, "0"), write(15, "2")]);
+    expect(value("transform.x")).toEqual({
+      keys: [
+        { time: "0", value: 5 },
+        { time: "2", value: 15 },
+      ],
+    });
+  });
+});

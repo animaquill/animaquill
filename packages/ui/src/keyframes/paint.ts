@@ -1,17 +1,18 @@
-import { channelOf, sample, type Channel } from "@animaquill/core";
+import { SHAPE, channelOf, sample, type Channel } from "@animaquill/core";
 import type { Animation, Key, PropertySpec } from "@animaquill/schema";
 import { formatNumber } from "../properties/scrub.ts";
 import { RULER_HEIGHT } from "../timeline/editor.ts";
 import { forEachBetween, type ClipBox } from "../timeline/model.ts";
 import { paintRuler } from "../timeline/ruler.ts";
 import { StagePainter, readTheme, type Theme } from "../timeline/stage-painter.ts";
-import type { KeyArea } from "./area.ts";
+import type { KeyArea, ShownHandle } from "./area.ts";
+import { liftKey, withinSpec } from "./gestures.ts";
 import type { Lane } from "./lanes.ts";
+import { yIn, type ValueScale } from "./scale.ts";
 import {
   KEY_EASED,
   KEY_HOLD,
   animationIn,
-  curveRangeOf,
   firstFrom,
   indexAt,
   keyTableOf,
@@ -22,15 +23,18 @@ import type { KeyframesView } from "./view.ts";
 /** Half the size of a key, and of a mark in a summary. */
 const KEY_RADIUS = 5;
 const SUMMARY_RADIUS = 4;
+const HANDLE_RADIUS = 3;
 const TAU = Math.PI * 2;
 /** Keys closer than this are one mark. */
 const MIN_MARK_GAP = 1;
+/** Where a curve is worked out point by point, as far apart as this. */
 const CURVE_STEP = 2;
-const CURVE_PADDING = 6;
-const CURVE_KEY_RADIUS = 2.5;
-/** A value that does not change still needs a line in the middle. */
-const FLAT_RANGE = 1;
-const LABEL_MARGIN = 4;
+/** Keys closer than this are drawn as one line from the lowest to the highest of them. */
+const DENSE_GAP = 0.75;
+const CURVE_WIDTH = 1.5;
+/** Where the highest and the lowest value of a row made taller are written. */
+const VALUE_LABEL_MARGIN = 4;
+const VALUE_LABEL_OFFSET = 7;
 const MIN_SEGMENT_LABEL = 24;
 const TRIMMED_ALPHA = 0.4;
 const GHOST_ALPHA = 0.35;
@@ -86,6 +90,96 @@ interface Band {
   readonly to: number;
 }
 
+/** How the clock of a clip is on screen, and its values in a lane. */
+interface Place {
+  x(clock: number): number;
+  clockAt(x: number): number;
+  y(value: number): number;
+}
+
+/**
+ * The curve of a number from one side of the screen to the other, the way it is worked out: lines,
+ * steps for what holds, and the beziers themselves. Keys closer than a pixel are a line from the
+ * lowest to the highest of them, so that thousands of them cost what a few do.
+ */
+function traceCurve(path: Path2D, channel: Channel, place: Place, left: number, right: number) {
+  if (channel.kind === "still") {
+    const y = place.y(channel.value as number);
+    path.moveTo(left, y);
+    path.lineTo(right, y);
+    return;
+  }
+  const { times, shapes, handles, before, after } = channel;
+  const values = channel.values as Float64Array;
+  const last = times.length - 1;
+  const xOf = (index: number) => place.x(times[index] as number);
+  const valueOf = (index: number) => values[index] as number;
+  let started = false;
+  const to = (x: number, y: number) => {
+    if (started) path.lineTo(x, y);
+    else path.moveTo(x, y);
+    started = true;
+  };
+  const sampled = (from: number, until: number) => {
+    for (let x = from; x < until; x += CURVE_STEP) {
+      to(x, place.y(sample(channel, place.clockAt(x)) as number));
+    }
+    to(until, place.y(sample(channel, place.clockAt(until)) as number));
+  };
+  const firstX = xOf(0);
+  if (left < firstX) {
+    if (before === "hold") to(left, place.y(valueOf(0)));
+    else sampled(left, Math.min(firstX, right));
+  }
+  let index = Math.max(firstFrom(times, place.clockAt(left)) - 1, 0);
+  const end = Math.min(firstFrom(times, place.clockAt(right)), last);
+  to(xOf(index), place.y(valueOf(index)));
+  while (index < end) {
+    const x0 = xOf(index);
+    const x1 = xOf(index + 1);
+    if (x1 - x0 < DENSE_GAP) {
+      let next = index + 1;
+      let low = Math.min(valueOf(index), valueOf(next));
+      let high = Math.max(valueOf(index), valueOf(next));
+      while (next < end && xOf(next + 1) - x0 < 1) {
+        next += 1;
+        low = Math.min(low, valueOf(next));
+        high = Math.max(high, valueOf(next));
+      }
+      to(x0, place.y(low));
+      to(x0, place.y(high));
+      to(xOf(next), place.y(valueOf(next)));
+      index = next;
+      continue;
+    }
+    const from = valueOf(index);
+    const into = valueOf(index + 1);
+    const shape = shapes[index];
+    if (shape === SHAPE.hold) {
+      to(x1, place.y(from));
+      to(x1, place.y(into));
+    } else if (shape === SHAPE.bezier) {
+      const change = into - from;
+      const at = index * 4;
+      const width = x1 - x0;
+      path.bezierCurveTo(
+        x0 + (handles[at] as number) * width,
+        place.y(from + (handles[at + 1] as number) * change),
+        x0 + (handles[at + 2] as number) * width,
+        place.y(from + (handles[at + 3] as number) * change),
+        x1,
+        place.y(into),
+      );
+    } else to(x1, place.y(into));
+    index += 1;
+  }
+  const lastX = xOf(last);
+  if (right > lastX) {
+    if (after === "hold") to(right, place.y(valueOf(last)));
+    else sampled(Math.max(lastX, left), right);
+  }
+}
+
 /** Draws lanes wherever they are. It shows what the area says, and only what is on screen. */
 export class LanePainter {
   readonly #area: KeyArea;
@@ -110,6 +204,8 @@ export class LanePainter {
       this.#content(context, theme, lane, { ...band, y });
       this.#keys(theme, marks, lane, { ...band, y });
     }
+    // Handles reach over other rows, and the keys they belong to are on top of them.
+    this.#handles(context, theme);
     marks.fill(context);
   }
 
@@ -158,22 +254,27 @@ export class LanePainter {
     context.fillRect(0, sharp(y + height) - 1, width, 1);
   }
 
-  /** What is in a lane apart from its keys. */
+  /** What is in a lane apart from its keys: the curve of a number, or the values of what holds. */
   #content(context: CanvasRenderingContext2D, theme: Theme, lane: Lane, band: Band): void {
     const { node, box } = lane;
     if (node.kind !== "property" || !box) return;
     const stored = this.#area.keyframes.shownValue(box.clip, node.spec.path);
-    const value = stored ?? node.spec.default;
-    const animation = animationIn(value);
-    if (node.rows[0]?.band === "segments" && animation) {
+    const animation = animationIn(stored ?? node.spec.default);
+    if (!animation) return;
+    const [shape] = node.rows;
+    if (shape?.band === "segments") {
       this.#segments(context, theme, lane, node.spec, box, animation, band);
+      return;
     }
-    if (!lane.open) return;
-    const channel = value === undefined ? undefined : channelOf(value, node.spec.type);
-    if (channel) this.#curve(context, theme, lane, node.spec, box, channel, animation, band);
+    if (shape?.curve !== "value") return;
+    const scale = this.#area.scaleOf(lane, box);
+    const channel = channelOf(animation, node.spec.type);
+    if (!scale || !channel) return;
+    if (lane.tall) this.#valueAxis(context, theme, node.spec, box, scale, band);
+    this.#curve(context, theme, lane, box, animation, channel, scale, band);
   }
 
-  /** What holds its value from one key to the next shows that value. */
+  /** What holds its value from one key to the next shows that value, as tall as its row is. */
   #segments(
     context: CanvasRenderingContext2D,
     theme: Theme,
@@ -187,7 +288,7 @@ export class LanePainter {
     const alpha = context.globalAlpha;
     const colors = [theme.picture, theme.sound, theme.caption];
     const top = y + 3;
-    const height = lane.keyHeight - 7;
+    const height = lane.height - 7;
     const { seconds } = keyTableOf(animation);
     const toClock = box.offset - box.start;
     const first = Math.max(firstFrom(seconds, from + toClock) - 1, 0);
@@ -215,74 +316,80 @@ export class LanePainter {
     }
   }
 
+  /**
+   * The row of a number is its curve: keys at the height of their values, and between them what
+   * the value does on the way. It goes as far as the clip and its keys do, fainter outside the clip.
+   */
   #curve(
     context: CanvasRenderingContext2D,
     theme: Theme,
     lane: Lane,
-    spec: PropertySpec,
     box: ClipBox,
+    animation: Animation,
     channel: Channel,
-    animation: Animation | undefined,
+    scale: ValueScale,
     { y, from, to }: Band,
   ): void {
     const area = this.#area;
-    const top = y + lane.keyHeight;
-    const height = lane.height - lane.keyHeight - 1;
-    const left = Math.max(area.xAt(box.start), 0);
-    const right = Math.min(area.xAt(box.end), area.width);
-    if (right <= left) return;
-    const range = animation ? curveRangeOf(animation) : undefined;
-    const still = channel.kind === "still" ? sample(channel, 0) : undefined;
-    const middle = typeof still === "number" ? still : 0;
-    const min = range?.min ?? middle - FLAT_RANGE;
-    const max = range?.max ?? middle + FLAT_RANGE;
-    const spread = max > min ? max - min : FLAT_RANGE;
-    const low = max > min ? min : min - FLAT_RANGE / 2;
-    const room = height - CURVE_PADDING * 2;
-    const yOf = (value: number) => top + CURVE_PADDING + room * (1 - (value - low) / spread);
-
+    const toClock = box.offset - box.start;
+    const { seconds } = keyTableOf(animation);
+    const firstKey = (seconds[0] ?? 0) - toClock;
+    const lastKey = (seconds.at(-1) ?? 0) - toClock;
+    const left = Math.max(Math.min(box.start, firstKey), from);
+    const right = Math.min(Math.max(box.end, lastKey), to);
+    if (!(right > left)) return;
+    const place: Place = {
+      x: (clock) => area.xAt(clock - toClock),
+      clockAt: (x) => area.timeAt(x) + toClock,
+      y: (value) => y + yIn(scale, value),
+    };
+    const path = new Path2D();
+    traceCurve(path, channel, place, area.xAt(left), area.xAt(right));
+    const height = lane.height - 1;
     context.save();
     context.beginPath();
-    context.rect(0, top, area.width, height);
+    context.rect(0, y, area.width, height);
     context.clip();
-    context.fillStyle = theme.line;
-    context.fillRect(left, Math.round(yOf(low + spread)), right - left, 1);
-    context.fillRect(left, Math.round(yOf(low)), right - left, 1);
-
-    context.beginPath();
-    let started = false;
-    for (let x = left; x <= right; x += CURVE_STEP) {
-      const value = sample(channel, area.timeAt(x) - box.start + box.offset);
-      if (typeof value !== "number") continue;
-      if (started) context.lineTo(x, yOf(value));
-      else context.moveTo(x, yOf(value));
-      started = true;
-    }
     context.strokeStyle = theme.curve;
-    context.lineWidth = 1.5;
-    context.stroke();
+    context.lineWidth = CURVE_WIDTH;
+    context.lineJoin = "round";
+    const alpha = context.globalAlpha;
+    context.globalAlpha = alpha * TRIMMED_ALPHA;
+    context.stroke(path);
+    const inside = area.xAt(box.start);
+    context.beginPath();
+    context.rect(inside, y, area.xAt(box.end) - inside, height);
+    context.clip();
+    context.globalAlpha = alpha;
+    context.stroke(path);
+    context.restore();
+  }
 
-    if (animation) {
-      const { seconds } = keyTableOf(animation);
-      const toClock = box.offset - box.start;
-      context.fillStyle = theme.curve;
-      context.beginPath();
-      for (let index = firstFrom(seconds, from + toClock); index < seconds.length; index += 1) {
-        const moment = (seconds[index] as number) - toClock;
-        if (moment > to) break;
-        const { value } = animation.keys[index] as Key;
-        if (typeof value !== "number") continue;
-        const x = area.xAt(moment);
-        context.moveTo(x + CURVE_KEY_RADIUS, yOf(value));
-        context.arc(x, yOf(value), CURVE_KEY_RADIUS, 0, TAU);
-      }
-      context.fill();
-    }
-
+  /**
+   * A row made taller reads like the side of a graph: faint lines at the highest and the lowest
+   * value it has room for, with those values next to them.
+   */
+  #valueAxis(
+    context: CanvasRenderingContext2D,
+    theme: Theme,
+    spec: PropertySpec,
+    box: ClipBox,
+    scale: ValueScale,
+    { y }: Band,
+  ): void {
+    const area = this.#area;
+    const top = Math.round(y + yIn(scale, scale.high));
+    const bottom = Math.round(y + yIn(scale, scale.low));
+    context.save();
+    context.fillStyle = theme.line;
+    context.fillRect(0, top, area.width, 1);
+    context.fillRect(0, bottom, area.width, 1);
     context.fillStyle = theme.label;
-    const labelX = left + LABEL_MARGIN;
-    context.fillText(formatNumber(low + spread, spec), labelX, yOf(low + spread) + 8);
-    context.fillText(formatNumber(low, spec), labelX, yOf(low) - 8);
+    context.font = `11px ${theme.font}`;
+    context.textBaseline = "middle";
+    const x = Math.max(area.xAt(box.start), 0) + VALUE_LABEL_MARGIN;
+    context.fillText(formatNumber(scale.high, spec), x, top + VALUE_LABEL_OFFSET);
+    context.fillText(formatNumber(scale.low, spec), x, bottom - VALUE_LABEL_OFFSET);
     context.restore();
   }
 
@@ -318,55 +425,138 @@ export class LanePainter {
     const isSummary = node.kind !== "property";
     const radius = isSummary ? SUMMARY_RADIUS : KEY_RADIUS;
     const color = isSummary ? theme.keySummary : theme.key;
-    const middle = y + lane.keyHeight / 2;
+    const middle = y + lane.height / 2;
     const { seconds, marks: shapes } = table;
     const toClock = box.offset - box.start;
     const selected = keyframes.selectedSeconds(lane, box);
     const tried = keyframes.triedSeconds(lane, box);
-    const shift = keyframes.preview?.shift;
+    const { preview } = keyframes;
+    const shift = preview?.shift;
     const canMove = keyframes.canMove(box.id);
+    const scale = area.scaleOf(lane, box);
+    const numbers = scale ? table.numbers : undefined;
+    const spec = node.kind === "property" ? node.spec : undefined;
+    const lift = spec && preview?.lift?.get(liftKey(box.id, spec.path));
+    const yOf = (index: number) =>
+      numbers && scale ? y + yIn(scale, numbers[index] as number) : middle;
     const reach = (KEY_RADIUS * 2) / pixelsPerSecond + Math.abs(shift ?? 0);
     const first = firstFrom(seconds, from + toClock - reach);
     const clockEnd = to + toClock + reach;
-    const firstX = area.xAt((seconds[first] ?? 0) - toClock);
-    const lastIndex = Math.min(firstFrom(seconds, clockEnd), seconds.length - 1);
-    const lastX = area.xAt((seconds[lastIndex] ?? 0) - toClock);
-    // What holds its value has a band for that, with the value written on it.
-    if (lastIndex > first && !(node.kind === "property" && node.rows[0]?.band === "segments")) {
-      const line = marks.in(color, 0.45);
-      const left = Math.max(firstX, 0);
-      line.rect(left, middle - 0.5, Math.min(lastX, width) - left, 1);
+    // A summary joins its keys. A row of a number has its curve, and what holds has its values.
+    if (isSummary) {
+      const lastIndex = Math.min(firstFrom(seconds, clockEnd), seconds.length - 1);
+      if (lastIndex > first) {
+        const firstX = area.xAt((seconds[first] ?? 0) - toClock);
+        const lastX = area.xAt((seconds[lastIndex] ?? 0) - toClock);
+        const line = marks.in(color, 0.45);
+        const left = Math.max(firstX, 0);
+        line.rect(left, middle - 0.5, Math.min(lastX, width) - left, 1);
+      }
     }
 
     let previousX = Number.NEGATIVE_INFINITY;
+    let previousY = Number.NEGATIVE_INFINITY;
     for (let index = first; index < seconds.length; index += 1) {
       const clock = seconds[index] as number;
       if (clock > clockEnd) break;
       const moment = clock - toClock;
       const x = area.xAt(moment);
+      const keyY = yOf(index);
       const isSelected = selected !== undefined && indexAt(selected, clock) >= 0;
       const isTried = tried !== undefined && indexAt(tried, clock) >= 0;
-      if (x - previousX < MIN_MARK_GAP && !isSelected && !isTried) {
-        // A pixel can hold thousands of keys when zoomed out, and one of them says it all.
-        const next = firstFrom(seconds, area.timeAt(previousX + MIN_MARK_GAP) + toClock);
-        if (next > index + 1) index = next - 1;
+      // A pixel can hold thousands of keys when zoomed out, and one of them says it all. On a
+      // curve one says it for as far up and down as it covers.
+      const isHidden =
+        x - previousX < MIN_MARK_GAP && (!numbers || Math.abs(keyY - previousY) < KEY_RADIUS);
+      if (isHidden && !isSelected && !isTried) {
+        if (!numbers) {
+          const next = firstFrom(seconds, area.timeAt(previousX + MIN_MARK_GAP) + toClock);
+          if (next > index + 1) index = next - 1;
+        }
         continue;
       }
       previousX = x;
+      previousY = keyY;
       const mark = area.markIn(lane, shapes[index] as number);
       const isTrimmed = moment < box.start || moment >= box.end;
       const alpha = isTrimmed ? TRIMMED_ALPHA : 1;
-      if (isSelected && shift !== undefined && canMove) {
-        traceKey(marks.in(color, GHOST_ALPHA), mark, x, middle, radius);
-        traceKey(marks.in(theme.selected), mark, x + shift * pixelsPerSecond, middle, radius);
+      const moving = isSelected && canMove && (shift !== undefined || lift !== undefined);
+      if (moving) {
+        const lifted =
+          lift !== undefined && numbers && scale && spec
+            ? y + yIn(scale, withinSpec(spec, (numbers[index] as number) + lift))
+            : keyY;
+        traceKey(marks.in(color, GHOST_ALPHA), mark, x, keyY, radius);
+        traceKey(
+          marks.in(theme.selected),
+          mark,
+          x + (shift ?? 0) * pixelsPerSecond,
+          lifted,
+          radius,
+        );
       } else if (isSelected) {
-        traceKey(marks.in(theme.selected, alpha), mark, x, middle, radius);
+        traceKey(marks.in(theme.selected, alpha), mark, x, keyY, radius);
       } else if (isTried) {
-        traceKey(marks.in(theme.keyTried, alpha), mark, x, middle, radius);
+        traceKey(marks.in(theme.keyTried, alpha), mark, x, keyY, radius);
       } else {
-        traceKey(marks.in(color, alpha), mark, x, middle, radius);
+        traceKey(marks.in(color, alpha), mark, x, keyY, radius);
       }
     }
+  }
+
+  /**
+   * The handles of the selected keys: a line from the key and a dot at its end. One that stopped at
+   * what a key can hold shows that, with a dashed line to where the pointer is.
+   */
+  #handles(context: CanvasRenderingContext2D, theme: Theme): void {
+    const area = this.#area;
+    const handles = area.visibleHandles();
+    if (handles.length === 0) return;
+    const { keyframes } = area;
+    const hint = keyframes.isPreviewOf(area) ? keyframes.preview?.handle : undefined;
+    const isHinted = (handle: ShownHandle) =>
+      hint?.clamped === true &&
+      handle.box.id === hint.clip &&
+      handle.path === hint.path &&
+      handle.time === hint.time &&
+      handle.side === hint.side;
+    const lines = new Path2D();
+    const ends = new Marks();
+    const dots = ends.in(theme.handle);
+    let stopped: ShownHandle | undefined;
+    for (const handle of handles) {
+      if (isHinted(handle)) {
+        stopped = handle;
+        continue;
+      }
+      lines.moveTo(handle.keyX, handle.keyY);
+      lines.lineTo(handle.x, handle.y);
+      dots.moveTo(handle.x + HANDLE_RADIUS, handle.y);
+      dots.arc(handle.x, handle.y, HANDLE_RADIUS, 0, TAU);
+    }
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = theme.handle;
+    context.stroke(lines);
+    ends.fill(context);
+    if (stopped && hint) {
+      context.strokeStyle = theme.warning;
+      context.fillStyle = theme.warning;
+      context.beginPath();
+      context.moveTo(stopped.keyX, stopped.keyY);
+      context.lineTo(stopped.x, stopped.y);
+      context.stroke();
+      context.setLineDash([3, 3]);
+      context.beginPath();
+      context.moveTo(stopped.x, stopped.y);
+      context.lineTo(hint.x, hint.y);
+      context.stroke();
+      context.setLineDash([]);
+      context.beginPath();
+      context.arc(stopped.x, stopped.y, HANDLE_RADIUS + 1, 0, TAU);
+      context.fill();
+    }
+    context.restore();
   }
 }
 

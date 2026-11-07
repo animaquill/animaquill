@@ -1,6 +1,7 @@
-import { orderedTracks, type PropertyEdit } from "@animaquill/core";
+import { orderedTracks, secondsOf, type PropertyEdit } from "@animaquill/core";
 import { formatTime, parseTime, type Animation } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
+import { writeEdit } from "../properties/inspect.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { RULER_HEIGHT, TimelineEditor } from "../timeline/editor.ts";
@@ -17,7 +18,14 @@ import { registerTimelineActions } from "../timeline/actions.ts";
 import { ProjectSession } from "../workbench/session.ts";
 import { registerKeyframeActions } from "./actions.ts";
 import { KeyframeEditor } from "./editor.ts";
-import { LANE_HEIGHT, type Lane } from "./lanes.ts";
+import {
+  DEFAULT_TALL_HEIGHT,
+  LANE_HEIGHT,
+  MAX_TALL_HEIGHT,
+  MIN_TALL_HEIGHT,
+  type Lane,
+} from "./lanes.ts";
+import type { ShownHandle } from "./area.ts";
 import { KeySelection, type KeyRef } from "./selection.ts";
 
 const WIDTH = 1000;
@@ -344,7 +352,7 @@ describe("what the list shows", () => {
     keyframes.setRange("keyed");
     keyframes.togglePin("a");
     keyframes.toggleOpen("a");
-    keyframes.setCurveHeight("a/transform.x", 150);
+    keyframes.setTallHeight("a", "transform.x", 150);
     panel.zoomAround(100, 3);
     panel.rowsTaller();
     const seen = panel.pixelsPerSecond;
@@ -355,7 +363,8 @@ describe("what the list shows", () => {
     const again = first.reopen();
     expect(again.getSnapshot()).toMatchObject({ range: "keyed" });
     expect(again.getSnapshot().pinned.has("a")).toBe(true);
-    expect(again.curveHeightOf("a/transform.x")).toBe(150);
+    expect(again.tallHeightOf("a", "transform.x")).toBe(150);
+    expect(again.isTall("a", "transform.x")).toBe(true);
     again.panel.setViewport(WIDTH, HEIGHT);
     expect(again.panel.lanes.find(({ id }) => id === "a")?.open).toBe(true);
     expect(again.panel.pixelsPerSecond).toBe(seen);
@@ -373,7 +382,7 @@ describe("what the list shows", () => {
     keys("b", X, 1);
     keyframes.toggleOpen("b");
     keyframes.togglePin("b");
-    keyframes.setCurveHeight("b/transform.x", 120);
+    keyframes.setTallHeight("b", "transform.x", 120);
     const box = timeline.model?.boxes.get("b");
     if (!box) throw new Error("no clip");
     keyframes.inTimeline.toggle(box);
@@ -980,40 +989,534 @@ describe("what else can be done to keys", () => {
   });
 });
 
-describe("a row with its curve", () => {
-  it("opening it makes the lane taller, and pulling its edge changes that", async () => {
+describe("a row made taller", () => {
+  it("goes taller with its button and back, and keeps its height for the next time", async () => {
+    const { addClip, keys, open, lane, keyframes } = await setup();
+    addClip("a", 0, 8);
+    keys("a", X, 1, 2);
+    open("a", "position");
+    const id = laneOf("a", X);
+    expect(lane(id).height).toBe(LANE_HEIGHT);
+    expect(lane(id).tall).toBe(false);
+    keyframes.toggleTall("a", X);
+    expect(lane(id).height).toBe(DEFAULT_TALL_HEIGHT);
+    expect(lane(id).tall).toBe(true);
+    expect(lane(id).keyHeight).toBe(LANE_HEIGHT);
+    keyframes.setTallHeight("a", X, 200);
+    keyframes.toggleTall("a", X);
+    expect(lane(id).height).toBe(LANE_HEIGHT);
+    keyframes.toggleTall("a", X);
+    expect(lane(id).height).toBe(200);
+  });
+
+  it("is pulled to another height by its bottom edge, and Escape takes that back", async () => {
     const { addClip, keys, open, lane, keyframes, panel } = await setup();
     addClip("a", 0, 8);
     keys("a", X, 1, 2);
     open("a", "position");
     const id = laneOf("a", X);
-    const closed = lane(id).height;
-    keyframes.toggleOpen(id);
-    const opened = lane(id).height;
-    expect(opened).toBeGreaterThan(closed);
-    const y = panel.screenY(lane(id).top) + opened - 2;
+    // Only a row that was made taller has an edge to pull.
+    const plainEdge = panel.screenY(lane(id).top) + LANE_HEIGHT - 2;
+    expect(panel.hover({ x: 100, y: plainEdge, shift: false, alt: false, mod: false })).not.toBe(
+      "ns-resize",
+    );
+    keyframes.toggleTall("a", X);
+    const tall = lane(id).height;
+    const y = panel.screenY(lane(id).top) + tall - 2;
     const edge = { x: 100, y, shift: false, alt: false, mod: false };
     expect(panel.hover(edge)).toBe("ns-resize");
     panel.press(edge);
     panel.drag({ ...edge, y: y + 40 });
-    expect(lane(id).height).toBe(opened + 40);
+    expect(lane(id).height).toBe(tall + 40);
     panel.cancelDrag();
-    expect(lane(id).height).toBe(opened);
+    expect(lane(id).height).toBe(tall);
     panel.press(edge);
     panel.drag({ ...edge, y: y + 1000 });
     panel.release({ ...edge, y: y + 1000 });
-    const tallest = lane(id).height;
-    expect(tallest).toBeLessThan(opened + 1000);
-    expect(keyframes.curveHeightOf(id) + LANE_HEIGHT).toBe(tallest);
+    expect(lane(id).height).toBe(MAX_TALL_HEIGHT);
+    expect(keyframes.tallHeightOf("a", X)).toBe(MAX_TALL_HEIGHT);
+    panel.press({ ...edge, y: panel.screenY(lane(id).top) + MAX_TALL_HEIGHT - 2 });
+    panel.release({ ...edge, y: -1000 });
+    expect(lane(id).height).toBe(MIN_TALL_HEIGHT);
   });
 
-  it("what comes below moves down", async () => {
-    const { addClip, open, lane, keyframes } = await setup();
+  it("moves what comes below down, and is the same row under a clip on the timeline", async () => {
+    const { addClip, open, lane, keyframes, timeline } = await setup();
     addClip("a", 0, 8);
     open("a", "position");
     const before = lane(laneOf("a", Y)).top;
-    keyframes.toggleOpen(laneOf("a", X));
-    expect(lane(laneOf("a", Y)).top).toBeGreaterThan(before);
+    keyframes.toggleTall("a", X);
+    expect(lane(laneOf("a", Y)).top).toBe(before - LANE_HEIGHT + DEFAULT_TALL_HEIGHT);
+    const box = timeline.model?.boxes.get("a");
+    if (!box) throw new Error("no clip");
+    // What is open in the tab is open there as well.
+    keyframes.inTimeline.toggle(box);
+    const under = keyframes.inTimeline.lanes.find(({ id }) => id === laneOf("a", X));
+    expect(under?.height).toBe(DEFAULT_TALL_HEIGHT);
+  });
+
+  it("stays taller after a reload, by clip and property, and forgets what came before", async () => {
+    const memory = memoryWindow();
+    const first = await setup({ memory });
+    first.addClip("a", 0, 8);
+    first.keys("a", X, 1, 2);
+    first.keyframes.toggleTall("a", X);
+    first.keyframes.setTallHeight("a", X, 160);
+    first.keyframes.toggleTall("a", Y);
+    first.keyframes.toggleTall("a", Y);
+    first.keyframes.flush();
+    const key = `keyframes.${first.store.getState().manifest.id}`;
+    const saved = JSON.parse(first.memory.read(key) as string) as Record<string, unknown>;
+    expect(saved["tall"]).toEqual([
+      ["a", X, 160, true],
+      ["a", Y, DEFAULT_TALL_HEIGHT, false],
+    ]);
+    const again = first.reopen();
+    expect(again.isTall("a", X)).toBe(true);
+    expect(again.tallHeightOf("a", X)).toBe(160);
+    expect(again.isTall("a", Y)).toBe(false);
+    // What came before rows were their curves, and what makes no sense, is left out.
+    memory.write(
+      key,
+      JSON.stringify({
+        curves: [["a/transform.x", 150]],
+        tall: [["a", X, "tall", true], ["a"], 5, ["a", Y, 1e9, true], ["gone", X, 100, true]],
+      }),
+    );
+    const after = first.reopen();
+    expect(after.isTall("a", X)).toBe(false);
+    expect(after.isTall("a", Y)).toBe(true);
+    expect(after.tallHeightOf("a", Y)).toBe(MAX_TALL_HEIGHT);
+    after.flush();
+    expect(memory.read(key)).not.toContain("gone");
+    expect(memory.read(key)).not.toContain("curves");
+  });
+
+  it("goes along with rows that are taller as a whole, and is never shorter than them", async () => {
+    const { addClip, keys, open, lane, keyframes, panel } = await setup();
+    addClip("a", 0, 8);
+    keys("a", X, 1, 2);
+    open("a", "position");
+    keyframes.toggleTall("a", X);
+    keyframes.setTallHeight("a", X, MIN_TALL_HEIGHT);
+    for (let step = 0; step < 10; step += 1) panel.rowsTaller();
+    expect(lane(laneOf("a", X)).height).toBe(lane(laneOf("a", Y)).height);
+    for (let step = 0; step < 10; step += 1) panel.rowsShorter();
+    expect(lane(laneOf("a", X)).height).toBe(MIN_TALL_HEIGHT);
+  });
+});
+
+describe("a row of a number is its curve", () => {
+  async function curve({ trying = true } = {}) {
+    const setting = await setup({ trying });
+    const { addClip, edit, open, keyframes } = setting;
+    addClip("a", 0, 8);
+    edit(
+      { owner: { clip: "a" }, path: X, op: "setKey", time: "1", value: 0 },
+      { owner: { clip: "a" }, path: X, op: "setKey", time: "3", value: 300 },
+    );
+    open("a", "position");
+    keyframes.toggleTall("a", X);
+    return setting;
+  }
+
+  const pointer = (x: number, y: number, extra: Partial<Pointer> = {}): Pointer => ({
+    x,
+    y,
+    shift: false,
+    alt: false,
+    mod: false,
+    ...extra,
+  });
+
+  /** Where a key is on screen, as the list for people who cannot see it says. */
+  function keyOn(panel: KeyframeEditor["panel"], id: string, seconds: number): Pointer {
+    const found = panel
+      .visibleKeys(200)
+      .find(({ lane, seconds: at }) => lane.id === id && Math.abs(at - seconds) < 1e-6);
+    if (!found) throw new Error(`no key at ${seconds}`);
+    return pointer(found.x, found.y);
+  }
+
+  const valuesOf = (keyframes: KeyframeEditor, timeline: TimelineEditor, path: string) => {
+    const box = timeline.model?.boxes.get("a");
+    if (!box) throw new Error("no clip");
+    const value = keyframes.shown(box.clip).properties?.[path] as Animation | undefined;
+    return value?.keys ?? [];
+  };
+
+  it("has keys at the height of their values, higher up for more, and one value in the middle", async () => {
+    const { panel, lane, keyframes, timeline, edit } = await curve();
+    const id = laneOf("a", X);
+    const top = panel.screenY(lane(id).top);
+    const low = keyOn(panel, id, 1);
+    const high = keyOn(panel, id, 3);
+    expect(high.y).toBeLessThan(low.y);
+    expect(low.y).toBeCloseTo(top + DEFAULT_TALL_HEIGHT - 12, 6);
+    expect(high.y).toBeCloseTo(top + 12, 6);
+    // Summaries keep their keys in the middle.
+    const position = keyOn(panel, "a/group:position", 3);
+    expect(position.y).toBe(panel.screenY(lane("a/group:position").top) + LANE_HEIGHT / 2);
+    // One key, or all of them the same, sit in the middle.
+    edit({ owner: { clip: "a" }, path: Y, op: "setKey", time: "2", value: 40 });
+    const single = keyOn(panel, laneOf("a", Y), 2);
+    expect(single.y).toBe(panel.screenY(lane(laneOf("a", Y)).top) + LANE_HEIGHT / 2);
+    expect(valuesOf(keyframes, timeline, Y)).toHaveLength(1);
+  });
+
+  it("a key goes up and down for its value, in one step, and Shift keeps it to one way", async () => {
+    const { panel, keyframes, timeline, trials } = await curve();
+    const id = laneOf("a", X);
+    const from = keyOn(panel, id, 3);
+    // Up and down the time stays, wherever the mouse goes a little to the side.
+    panel.press(from);
+    panel.drag({ ...from, y: from.y + 20 });
+    panel.drag({ ...from, x: from.x + 2, y: from.y + 48 });
+    expect(keyframes.preview?.lift?.get(`a ${X}`)).toBeLessThan(0);
+    panel.release({ ...from, x: from.x + 2, y: from.y + 48 });
+    const [, moved] = valuesOf(keyframes, timeline, X);
+    expect(moved?.time).toBe("3");
+    // A third of the way down the room for values, and a pixel's worth of digits.
+    expect(moved?.value).toBeCloseTo(150, -1);
+    expect(String(moved?.value)).toMatch(/^\d+$/);
+    expect(trials.getSnapshot().count).toBe(1);
+    trials.undo();
+    expect(valuesOf(keyframes, timeline, X)[1]?.value).toBe(300);
+    // With Shift it goes the way it went furthest, and only that way.
+    panel.press(from);
+    panel.drag({ ...from, x: from.x + 100, y: from.y + 30, shift: true });
+    panel.release({ ...from, x: from.x + 100, y: from.y + 30, shift: true });
+    const [, along] = valuesOf(keyframes, timeline, X);
+    expect(along?.value).toBe(300);
+    expect(secondsOf(along?.time ?? "0")).toBeGreaterThan(3);
+    trials.undo();
+    panel.press(from);
+    panel.drag({ ...from, x: from.x + 30, y: from.y + 48, shift: true });
+    panel.release({ ...from, x: from.x + 30, y: from.y + 48, shift: true });
+    const [, down] = valuesOf(keyframes, timeline, X);
+    expect(down?.time).toBe("3");
+    expect(down?.value).toBeLessThan(300);
+  });
+
+  it("a little up or down is no change, and values stay within what the property takes", async () => {
+    const { panel, keyframes, timeline, trials, edit, open } = await curve();
+    const id = laneOf("a", X);
+    const from = keyOn(panel, id, 1);
+    panel.press(from);
+    panel.drag({ ...from, x: from.x + 40, y: from.y + 4 });
+    panel.release({ ...from, x: from.x + 40, y: from.y + 4 });
+    expect(valuesOf(keyframes, timeline, X)[0]?.value).toBe(0);
+    trials.undo();
+    edit(
+      { owner: { clip: "a" }, path: "opacity", op: "setKey", time: "1", value: 0.5 },
+      { owner: { clip: "a" }, path: "opacity", op: "setKey", time: "2", value: 0.8 },
+    );
+    open("a");
+    keyframes.toggleTall("a", "opacity");
+    // Far past the top, it goes as far as an opacity can.
+    const key = keyOn(panel, laneOf("a", "opacity"), 1);
+    panel.press(key);
+    panel.drag({ ...key, y: key.y - 500 });
+    panel.release({ ...key, y: key.y - 500 });
+    expect(valuesOf(keyframes, timeline, "opacity")[0]?.value).toBe(1);
+    const other = keyOn(panel, laneOf("a", "opacity"), 2);
+    panel.press(other);
+    panel.drag({ ...other, y: other.y + 900 });
+    panel.release({ ...other, y: other.y + 900 });
+    expect(valuesOf(keyframes, timeline, "opacity")[1]?.value).toBe(0);
+  });
+
+  it("keys of several rows go up as far as the mouse does in each of them", async () => {
+    const { panel, keyframes, timeline, edit, click } = await curve();
+    edit(
+      { owner: { clip: "a" }, path: Y, op: "setKey", time: "1", value: 0 },
+      { owner: { clip: "a" }, path: Y, op: "setKey", time: "3", value: 3 },
+    );
+    keyframes.toggleTall("a", Y);
+    const x = keyOn(panel, laneOf("a", X), 1);
+    const y = keyOn(panel, laneOf("a", Y), 1);
+    click(x);
+    click({ ...y, mod: true });
+    panel.press(x);
+    panel.drag({ ...x, y: x.y - 30 });
+    panel.release({ ...x, y: x.y - 30 });
+    const moved = valuesOf(keyframes, timeline, X)[0]?.value as number;
+    const along = valuesOf(keyframes, timeline, Y)[0]?.value as number;
+    expect(moved / 300).toBeCloseTo(along / 3, 1);
+    expect(moved).toBeGreaterThan(0);
+  });
+
+  it("a row does not shrink under the mouse while a key goes, and fits again after", async () => {
+    const { panel, keyframes, timeline } = await curve();
+    const id = laneOf("a", X);
+    const from = keyOn(panel, id, 3);
+    const low = keyOn(panel, id, 1).y;
+    const box = panel.lanes.find((one) => one.id === id)?.box;
+    if (!box) throw new Error("no clip");
+    const spec = { path: X, type: "number" } as const;
+    const range = () =>
+      keyframes.rangeOf("a", X, keyframes.shownValue(box.clip, X) as Animation, spec);
+    panel.press(from);
+    panel.drag({ ...from, y: from.y + 60 });
+    // The key is lower already, and what the row covered when it started still counts.
+    expect(valuesOf(keyframes, timeline, X)[1]?.value).toBe(300);
+    expect((keyframes.shownValue(box.clip, X) as Animation).keys[1]?.value).toBeLessThan(300);
+    expect(range()?.max).toBe(300);
+    expect(keyOn(panel, id, 1).y).toBe(low);
+    panel.release({ ...from, y: from.y + 60 });
+    expect(range()?.max).toBeLessThan(300);
+  });
+});
+
+describe("handles", () => {
+  /** Keys at 1, 2 and 3 seconds, the one in the middle selected, by default on a straight line. */
+  async function selectedKey({ last = 200 } = {}) {
+    const setting = await setup();
+    const { addClip, edit, open, keyframes, panel } = setting;
+    addClip("a", 0, 8);
+    edit(
+      { owner: { clip: "a" }, path: X, op: "setKey", time: "1", value: 0 },
+      { owner: { clip: "a" }, path: X, op: "setKey", time: "2", value: 100 },
+      { owner: { clip: "a" }, path: X, op: "setKey", time: "3", value: last },
+    );
+    open("a", "position");
+    keyframes.toggleTall("a", X);
+    keyframes.select(KeySelection.of([{ clip: "a", path: X, time: "2" }]));
+    const handles = () => panel.visibleHandles();
+    const handle = (side: "in" | "out") => {
+      const found = handles().find((one) => one.side === side);
+      if (!found) throw new Error(`no ${side} handle`);
+      return { x: found.x, y: found.y, shift: false, alt: false, mod: false };
+    };
+    const keysNow = () => {
+      const box = setting.timeline.model?.boxes.get("a");
+      if (!box) throw new Error("no clip");
+      return (keyframes.shown(box.clip).properties?.[X] as Animation | undefined)?.keys ?? [];
+    };
+    return { ...setting, handles, handle, keysNow };
+  }
+
+  it("show on either side of a selected key, a third of the way, and only on that key", async () => {
+    const { handles, keyframes, panel } = await selectedKey();
+    const shown = handles();
+    expect(shown.map(({ side, time }) => `${side} ${time}`)).toEqual(["in 2", "out 2"]);
+    const [arrival, leaving] = shown as [ShownHandle, ShownHandle];
+    expect(arrival.x).toBeCloseTo(panel.xAt(2 - 1 / 3), 6);
+    expect(leaving.x).toBeCloseTo(panel.xAt(2 + 1 / 3), 6);
+    keyframes.select(KeySelection.of([]));
+    expect(handles()).toEqual([]);
+  });
+
+  it("a drag bends the curve while it goes, and letting go is one step", async () => {
+    // A corner, which stays one.
+    const { panel, handle, keysNow, writer, trials, store } = await selectedKey({ last: 300 });
+    const { revision } = store;
+    const from = handle("out");
+    expect(panel.hover(from)).toBe("pointer");
+    panel.press(from);
+    panel.drag({ ...from, y: from.y - 20 });
+    panel.drag({ ...from, x: from.x - 10, y: from.y - 40 });
+    const shown = writer.getPreviewed().get("a")?.get(X) as Animation;
+    expect(shown.keys[1]?.interp).toBe("bezier");
+    expect(keysNow()[1]?.interp).toBeUndefined();
+    panel.release({ ...from, x: from.x - 10, y: from.y - 40 });
+    const keys = keysNow();
+    expect(keys[1]).toMatchObject({ interp: "bezier", tangent: "broken" });
+    // A corner stays a corner: the handle that comes in is where it was.
+    expect(keys[1]?.in).toBeUndefined();
+    expect(keys[1]?.out?.[0]).toBeLessThan(1 / 3);
+    expect(keys[1]?.out?.[1]).toBeGreaterThan(1 / 3);
+    expect(store.revision).toBe(revision);
+    expect(trials.getSnapshot().count).toBe(1);
+    trials.undo();
+    expect(keysNow()[1]).toEqual({ time: "2", value: 100 });
+  });
+
+  it("Alt moves only one side, Ctrl both on a line, and Escape leaves no trace", async () => {
+    const { panel, handle, keysNow, trials, keyframes, writer } = await selectedKey();
+    // These keys go through in a straight line, so the key is smooth, and stays so.
+    const out = handle("out");
+    panel.press(out);
+    panel.drag({ ...out, y: out.y - 30 });
+    panel.release({ ...out, y: out.y - 30 });
+    expect(keysNow()[1]?.tangent).toBe("aligned");
+    expect(keysNow()[1]?.in).toBeDefined();
+    trials.undo();
+    panel.press(out);
+    panel.drag({ ...out, y: out.y - 30, alt: true });
+    panel.release({ ...out, y: out.y - 30, alt: true });
+    expect(keysNow()[1]?.tangent).toBe("broken");
+    expect(keysNow()[1]?.in).toBeUndefined();
+    trials.undo();
+    // A corner, which Ctrl puts on a line.
+    keyframes.select(KeySelection.of([{ clip: "a", path: X, time: "2" }]));
+    const back = handle("in");
+    panel.press(back);
+    panel.drag({ ...back, y: back.y + 30, mod: true });
+    panel.cancelDrag();
+    expect(writer.getPreviewed().get("a")?.has(X) ?? false).toBe(false);
+    expect(keyframes.preview).toBeUndefined();
+    panel.press(back);
+    panel.drag({ ...back, y: back.y + 30, mod: true });
+    panel.release({ ...back, y: back.y + 30, mod: true });
+    expect(keysNow()[1]?.tangent).toBe("aligned");
+    expect(keysNow()[1]?.out).toBeDefined();
+    expect(trials.getSnapshot().count).toBe(1);
+  });
+
+  it("stop at what a key can hold, and say so while the mouse goes further", async () => {
+    const { panel, handle, keysNow, keyframes } = await selectedKey();
+    const out = handle("out");
+    panel.press(out);
+    panel.drag({ ...out, x: out.x + 2000, alt: true });
+    expect(keyframes.preview?.handle).toMatchObject({ side: "out", clamped: true });
+    panel.release({ ...out, x: out.x + 2000, alt: true });
+    expect(keysNow()[1]?.out?.[0]).toBe(1);
+    expect(keyframes.preview).toBeUndefined();
+  });
+
+  it("are not there for what only holds, nor while comparing", async () => {
+    const { handles, keyframes, keysNow, edit, trials } = await selectedKey();
+    edit({
+      owner: { clip: "a" },
+      path: X,
+      op: "setInterp",
+      times: ["1", "2"],
+      ease: { interp: "hold" },
+    });
+    expect(keysNow()[1]?.interp).toBe("hold");
+    expect(handles()).toEqual([]);
+    edit({
+      owner: { clip: "a" },
+      path: X,
+      op: "setInterp",
+      times: ["1", "2"],
+      ease: { interp: "linear" },
+    });
+    expect(handles()).toHaveLength(2);
+    // Something tried, to compare with what is saved.
+    keyframes.setTangent("broken");
+    trials.toggleCompare();
+    expect(trials.getSnapshot().comparing).toBe(true);
+    expect(handles()).toEqual([]);
+  });
+
+  it("say how a key changes them, and automatic ones follow what moves around them", async () => {
+    const { keyframes, keysNow, panel, at } = await selectedKey();
+    expect(keyframes.selectedTangent).toBe("aligned");
+    keyframes.setTangent("auto");
+    expect(keyframes.selectedTangent).toBe("auto");
+    const smooth = keysNow()[1];
+    expect(smooth).toMatchObject({ interp: "bezier", tangent: "auto" });
+    // The key after it moves, and the handles of the automatic one follow.
+    keyframes.select(KeySelection.of([{ clip: "a", path: X, time: "3" }]));
+    const from = at(3, laneOf("a", X));
+    const key = panel
+      .visibleKeys(50)
+      .find(({ seconds, lane }) => lane.id === laneOf("a", X) && Math.abs(seconds - 3) < 1e-6);
+    if (!key) throw new Error("no key");
+    panel.press({ ...from, y: key.y });
+    panel.drag({ ...from, y: key.y + 60 });
+    panel.release({ ...from, y: key.y + 60 });
+    const after = keysNow()[1];
+    expect(after?.tangent).toBe("auto");
+    expect(after?.out).not.toEqual(smooth?.out);
+    keyframes.select(KeySelection.of([{ clip: "a", path: X, time: "2" }]));
+    keyframes.setTangent("broken");
+    expect(keysNow()[1]?.tangent).toBe("broken");
+    expect(keysNow()[1]?.out).toEqual(after?.out);
+  });
+});
+
+describe("rows of what only holds", () => {
+  async function stepped() {
+    const setting = await setup();
+    const { addClip, open, keyframes } = setting;
+    addClip("a", 0, 8, {
+      properties: {
+        "param.visible": {
+          keys: [
+            { time: "0", value: true },
+            { time: "2", value: false },
+          ],
+        },
+        blend: {
+          keys: [
+            { time: "0", value: "normal" },
+            { time: "2", value: "screen" },
+          ],
+        },
+      },
+    });
+    keyframes.setRange("all");
+    open("a");
+    keyframes.toggleOpen("a/object:orphans");
+    return setting;
+  }
+
+  it("have keys in the middle, as tall as the row is, and nothing to ease or to steer", async () => {
+    const { panel, lane, keyframes, click, at } = await stepped();
+    const id = "a/object:orphans/param.visible";
+    keyframes.toggleTall("a", "param.visible");
+    expect(lane(id).height).toBe(DEFAULT_TALL_HEIGHT);
+    const key = panel.visibleKeys(50).find((one) => one.lane.id === id);
+    expect(key?.y).toBe(panel.screenY(lane(id).top) + DEFAULT_TALL_HEIGHT / 2);
+    click({ ...at(2, id), y: key?.y ?? 0 });
+    expect(keyframes.selection.size).toBe(1);
+    expect(keyframes.canEase).toBe(false);
+    expect(panel.visibleHandles()).toEqual([]);
+    keyframes.setEase({ interp: "bezier", out: [0.42, 0], in: [0.58, 1] });
+    keyframes.setTangent("auto");
+    const box = panel.lanes.find((one) => one.id === id)?.box;
+    const value = box && (keyframes.shown(box.clip).properties?.["param.visible"] as Animation);
+    expect(value?.keys.every((one) => one.interp === undefined && one.tangent === undefined)).toBe(
+      true,
+    );
+  });
+
+  it("keys there go along the time, and not up or down", async () => {
+    const { panel, keyframes, at, trials, lane } = await stepped();
+    const id = "a/object:orphans/blend";
+    keyframes.toggleTall("a", "blend");
+    const from = { ...at(2, id), y: panel.screenY(lane(id).top) + DEFAULT_TALL_HEIGHT / 2 };
+    panel.press(from);
+    panel.drag({ ...from, x: panel.xAt(3), y: from.y - 40 });
+    expect(keyframes.preview?.lift).toBeUndefined();
+    panel.release({ ...from, x: panel.xAt(3), y: from.y - 40 });
+    const box = panel.lanes.find((one) => one.id === id)?.box;
+    const value = box && (keyframes.shown(box.clip).properties?.["blend"] as Animation);
+    expect(value?.keys.map(({ time, value: v }) => `${time} ${String(v)}`)).toEqual([
+      "0 normal",
+      "3 screen",
+    ]);
+    expect(trials.getSnapshot().count).toBe(1);
+  });
+
+  it("a value written in the row is a key at the playhead, as for a number", async () => {
+    const { keyframes, timeline, writer, panel } = await stepped();
+    timeline.seek(30);
+    const lane = panel.lanes.find((one) => one.id === "a/object:orphans/param.visible");
+    if (!lane?.box || lane.node.kind !== "property") throw new Error("no row");
+    const inspected = keyframes.inspect(lane.box, lane.node.spec);
+    if (!inspected) throw new Error("nothing to inspect");
+    expect(inspected.row.value).toBe(true);
+    writer.commit([writeEdit("a", inspected.row, inspected.time, false)]);
+    const box = timeline.model?.boxes.get("a");
+    const value = box && (keyframes.shown(box.clip).properties?.["param.visible"] as Animation);
+    expect(value?.keys.map(({ time, value: v }) => `${time} ${String(v)}`)).toEqual([
+      "0 true",
+      "1 false",
+      "2 false",
+    ]);
+    const choice = panel.lanes.find((one) => one.id === "a/object:orphans/blend");
+    if (!choice?.box || choice.node.kind !== "property") throw new Error("no row");
+    const now = keyframes.inspect(choice.box, choice.node.spec);
+    if (!now) throw new Error("nothing to inspect");
+    writer.commit([writeEdit("a", now.row, now.time, "multiply")]);
+    const blend = keyframes.shown(choice.box.clip).properties?.["blend"] as Animation | undefined;
+    const afterBox = timeline.model?.boxes.get("a");
+    const shown = afterBox && (keyframes.shown(afterBox.clip).properties?.["blend"] as Animation);
+    expect((shown ?? blend)?.keys.map(({ time }) => time)).toEqual(["0", "1", "2"]);
   });
 });
 

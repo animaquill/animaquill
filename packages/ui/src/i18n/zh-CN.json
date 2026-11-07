@@ -519,6 +519,8 @@
     "addKey": "添加关键帧",
     "removeKey": "删除关键帧",
     "reset": "恢复默认",
+    "on": "开",
+    "off": "关",
     "help": {
       "previousKey": "把播放头移到这个片段里的上一个关键帧。",
       "nextKey": "把播放头移到这个片段里的下一个关键帧。",
@@ -1011,8 +1013,10 @@
     "off": "关",
     "open": "展开 {{name}}",
     "close": "收起 {{name}}",
-    "showCurve": "显示 {{name}} 的曲线",
-    "hideCurve": "收起 {{name}} 的曲线",
+    "tall": "加高 {{name}} 这一行",
+    "untall": "恢复 {{name}} 这一行的高度",
+    "tallHelp": "单独加高这一行，方便编辑曲线。加高后拖动行的下边缘调高度，这个高度会记住，下次加高还是它。",
+    "resizeRow": "拖动调整 {{name}} 这一行的高度",
     "pin": "钉住 {{name}}",
     "unpin": "取消钉住 {{name}}",
     "pinHelp": "钉住后不管播放头在哪都一直列出，可以同时看几个对象。",
@@ -1022,7 +1026,14 @@
     "interp": "插值",
     "interpHelp": "选中的关键帧到下一个关键帧怎么变化。",
     "interpNeedsKeys": "先选中关键帧。",
+    "interpNeedsNumbers": "开关、枚举和文字只能保持，没有插值和手柄。",
     "interpMore": "插值…",
+    "handleHint": "选中关键帧后拖动两侧的手柄调整曲线。按住 Alt 只调这一侧，按住 Ctrl 两侧保持在一条线上。",
+    "tangent": {
+      "auto": "自动手柄",
+      "aligned": "对齐手柄",
+      "broken": "断开手柄"
+    },
     "ease": {
       "linear": "线性",
       "hold": "保持",

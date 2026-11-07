@@ -121,6 +121,34 @@ describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
     keyframes.setRange("all");
     timed("looking for a name", () => keyframes.setQuery("transform.x"), 5000);
     expect(panel.lanes.length).toBeGreaterThan(CLIPS * 2);
+
+    // Rows of numbers draw their curves and handles from what is on screen only, also with every
+    // key of them selected: close enough that keys have room for handles, and one row taller.
+    panel.selectAll();
+    expect(keyframes.selection.size).toBe(CLIPS * KEYS);
+    panel.zoomAround(0, 600);
+    const row = panel.lanes.find(({ node }) => node.kind === "property");
+    if (!row?.box || row.node.kind !== "property") throw new Error("no row");
+    keyframes.toggleTall(row.box.id, row.node.spec.path);
+    let handles = 0;
+    timed(
+      "handles and keys of what shows, 200 times while scrolling down",
+      () => {
+        for (let step = 0; step < 200; step += 1) {
+          panel.setScroll(0, step * 4);
+          handles = Math.max(handles, panel.visibleHandles().length);
+          panel.visibleKeys(200);
+        }
+      },
+      2000,
+    );
+    expect(handles).toBeGreaterThan(0);
+    // Further on, none of the rows on screen have keys on screen.
+    panel.setScroll(panel.pixelsPerSecond * 3000, 0);
+    timed("handles with nothing on screen", () => panel.visibleHandles(), 50);
+    expect(panel.visibleHandles()).toEqual([]);
+    keyframes.toggleTall(row.box.id, row.node.spec.path);
+    panel.zoomToFit();
     keyframes.setQuery("");
 
     timed("selecting everything", () => panel.selectAll(), 5000);

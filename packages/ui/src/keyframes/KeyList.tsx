@@ -1,15 +1,17 @@
+import { secondsOf } from "@animaquill/core";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { formatTimecode } from "../timeline/frames.ts";
 import timelineStyles from "../timeline/TimelinePanel.module.css";
-import type { KeyArea, VisibleKey } from "./area.ts";
+import type { KeyArea, ShownHandle, VisibleKey } from "./area.ts";
 import { KEY_EASED, KEY_HOLD } from "./tables.ts";
 
 /** The list for screen readers follows the view a moment later, not with every frame of a drag. */
 const KEY_LIST_DELAY_MS = 80;
 const KEY_LIST_LIMIT = 200;
 const KEY_SIZE = 12;
+const HANDLE_SIZE = 8;
 
 const MARK_NAMES: Readonly<Record<number, string>> = {
   [KEY_EASED]: "eased",
@@ -22,6 +24,7 @@ export function KeyList({ area }: { area: KeyArea }) {
   const { timeline } = useWorkbench();
   const { t } = useTranslation();
   const [keys, setKeys] = useState<readonly VisibleKey[]>([]);
+  const [handles, setHandles] = useState<readonly ShownHandle[]>([]);
   const { model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
 
   useEffect(() => {
@@ -30,6 +33,7 @@ export function KeyList({ area }: { area: KeyArea }) {
     const update = () => {
       shown = area.whatIsDrawn;
       setKeys(area.visibleKeys(KEY_LIST_LIMIT));
+      setHandles(area.visibleHandles());
     };
     const later = () => {
       // While playing nothing here moves, and frames of a busy page come slower than this waits.
@@ -72,6 +76,26 @@ export function KeyList({ area }: { area: KeyArea }) {
             top: y - KEY_SIZE / 2,
             width: KEY_SIZE,
             height: KEY_SIZE,
+          }}
+        />
+      ))}
+      {/* Handles are for the mouse. They are here to say where they are, for tests and tools. */}
+      {handles.map(({ id, lane, box, time, side, x, y }) => (
+        <div
+          key={id}
+          className={timelineStyles.clipItem}
+          aria-hidden="true"
+          data-handle={side}
+          data-of={keyframes.labelOf(lane)}
+          data-time={formatTimecode(
+            Math.round((box.start + secondsOf(time) - box.offset) * model.rate.fps),
+            model.rate,
+          )}
+          style={{
+            left: x - HANDLE_SIZE / 2,
+            top: y - HANDLE_SIZE / 2,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
           }}
         />
       ))}

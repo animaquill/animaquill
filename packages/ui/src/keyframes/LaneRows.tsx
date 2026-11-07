@@ -4,11 +4,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Diamond,
+  FoldVertical,
   Pin,
   PinOff,
   TriangleAlert,
+  UnfoldVertical,
 } from "lucide-react";
-import { memo, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { memo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
@@ -100,7 +102,7 @@ function ValueControl(props: PropertyControlsProps) {
   const readOnly = blocked !== undefined;
   const Control = CONTROLS[node.spec.type] ?? PlainValue;
   /** What a change writes, for the moment it happens. Its key can be somewhere else by then. */
-  const edit = (value: number | string) => {
+  const edit = (value: number | string | boolean) => {
     const now = area.keyframes.inspect(box, node.spec) ?? inspected;
     return writeEdit(box.id, now.row, now.time, value);
   };
@@ -222,6 +224,60 @@ function Pinning({ area, lane, label }: { area: KeyArea; lane: Lane; label: stri
   );
 }
 
+/** Where a row made taller is pulled to another height, at its bottom edge. */
+function TallEdge({ area, box, node, label, height }: PropertyControlsProps & { height: number }) {
+  const { t } = useTranslation();
+  const start = useRef<{ readonly y: number; readonly height: number } | undefined>(undefined);
+  const { keyframes } = area;
+  const { path } = node.spec;
+  return (
+    <div
+      className={styles.tallEdge}
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label={t("keyframes.resizeRow", { name: label })}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        // From the height it shows, which rows that are taller as a whole can make more.
+        start.current = { y: event.clientY, height };
+      }}
+      onPointerMove={(event) => {
+        const from = start.current;
+        if (from) keyframes.setTallHeight(box.id, path, from.height + event.clientY - from.y);
+      }}
+      onPointerUp={() => {
+        start.current = undefined;
+      }}
+      onPointerCancel={() => {
+        start.current = undefined;
+      }}
+    />
+  );
+}
+
+/** Makes one row taller, and back. */
+function TallButton({ area, box, node, label }: PropertyControlsProps) {
+  const { t } = useTranslation();
+  const { keyframes } = area;
+  const { path } = node.spec;
+  const tall = useSyncExternalStore(keyframes.subscribeView, () => keyframes.isTall(box.id, path));
+  const name = t(tall ? "keyframes.untall" : "keyframes.tall", { name: label });
+  return (
+    <Tip name={name} usage={t("keyframes.tallHelp")}>
+      <button
+        type="button"
+        className={styles.chevron}
+        aria-label={name}
+        aria-pressed={tall}
+        data-tall={tall || undefined}
+        onClick={() => keyframes.toggleTall(box.id, path)}
+      >
+        {tall ? <FoldVertical size={12} /> : <UnfoldVertical size={12} />}
+      </button>
+    </Tip>
+  );
+}
+
 interface LaneRowProps {
   readonly area: KeyArea;
   readonly lane: Lane;
@@ -242,9 +298,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
     keyframes.subscribeView,
     () => isProperty && box !== undefined && keyframes.isTried(box.id, node.spec.path),
   );
-  const chevronName = isProperty
-    ? t(open ? "keyframes.hideCurve" : "keyframes.showCurve", { name: label })
-    : t(open ? "keyframes.close" : "keyframes.open", { name: label });
+  const chevronName = t(open ? "keyframes.close" : "keyframes.open", { name: label });
 
   const selectKeys = (event: MouseEvent) => {
     area.selectLane(lane, event.shiftKey || event.ctrlKey || event.metaKey);
@@ -259,6 +313,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
       {...(canOpen ? { "aria-expanded": open } : {})}
       data-kind={node.kind}
       data-tried={tried || undefined}
+      data-tall={lane.tall || undefined}
       style={{ top: lane.top, height: lane.height }}
       onContextMenu={(event) => {
         if (!tried) return;
@@ -280,6 +335,8 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
           >
             {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </button>
+        ) : node.kind === "property" && box ? (
+          <TallButton area={area} box={box} node={node} label={label} />
         ) : (
           <span className={styles.noChevron} />
         )}
@@ -297,6 +354,9 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
           <Pinning area={area} lane={lane} label={label} />
         )}
       </div>
+      {lane.tall && node.kind === "property" && box && (
+        <TallEdge area={area} box={box} node={node} label={label} height={lane.height} />
+      )}
       {menu && box && node.kind === "property" && (
         <PopupMenu
           label={label}

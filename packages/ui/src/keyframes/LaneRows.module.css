@@ -57,6 +57,37 @@
   background: var(--aq-bg-hover);
 }
 
+/* What makes a row taller is quiet until the row is, as in the tree of VS Code. */
+.chevron[aria-pressed] {
+  color: var(--aq-timeline-tick);
+}
+
+.lane:hover .chevron[aria-pressed],
+.chevron[aria-pressed]:focus-visible,
+.chevron[data-tall] {
+  color: var(--aq-text-muted);
+}
+
+.chevron[aria-pressed]:hover {
+  color: var(--aq-text-strong);
+}
+
+/* The bottom edge of a row made taller, which pulls it to another height. */
+.tallEdge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 5px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.tallEdge:hover,
+.tallEdge:active {
+  background: var(--aq-accent);
+}
+
 .name {
   flex: 1;
   min-width: 24px;
@@ -83,7 +114,8 @@
 }
 
 .value input,
-.value select {
+.value select,
+.value button {
   height: 20px;
 }
 

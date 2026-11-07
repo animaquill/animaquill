@@ -197,6 +197,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
           lane.top === other.top &&
           lane.height === other.height &&
           lane.keyHeight === other.keyHeight &&
+          lane.tall === other.tall &&
           lane.open === other.open
         );
       });

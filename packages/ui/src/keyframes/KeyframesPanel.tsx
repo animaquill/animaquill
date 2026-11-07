@@ -33,6 +33,12 @@ function Toolbar({ view }: { view: KeyframesView }) {
   const { snapping } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const [anchor, setAnchor] = useState<DOMRect>();
   const hasKeys = selection.size > 0;
+  const canEase = hasKeys && keyframes.canEase;
+  const interpUsage = !hasKeys
+    ? t("keyframes.interpNeedsKeys")
+    : canEase
+      ? t("keyframes.interpHelp")
+      : t("keyframes.interpNeedsNumbers");
 
   return (
     <div className={timelineStyles.toolbarArea}>
@@ -69,10 +75,10 @@ function Toolbar({ view }: { view: KeyframesView }) {
         <div className={timelineStyles.zone}>
           <ToolButton
             name={t("keyframes.interp")}
-            usage={hasKeys ? t("keyframes.interpHelp") : t("keyframes.interpNeedsKeys")}
+            usage={interpUsage}
             icon={Spline}
             text={t("keyframes.interp")}
-            unavailable={!hasKeys}
+            unavailable={!canEase}
             onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
           />
         </div>
@@ -210,6 +216,13 @@ function List({ view }: { view: KeyframesView }) {
         }}
         onPointerCancel={() => {
           finger.current = undefined;
+        }}
+        // Focus scrolls a list that only moves by its transform: the view goes there instead.
+        onScroll={(event) => {
+          const by = event.currentTarget.scrollTop;
+          if (by === 0) return;
+          event.currentTarget.scrollTop = 0;
+          view.setScroll(view.scrollX, view.scrollY + by);
         }}
       >
         <div ref={rows} className={styles.rows}>

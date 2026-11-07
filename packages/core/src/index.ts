@@ -1,5 +1,8 @@
 export { COMMANDS, type CommandDefinition } from "./commands.ts";
 export {
+  MAX_SPLIT_Y,
+  MIN_SPLIT_Y,
+  SHAPE,
   bezierProgress,
   canMix,
   compileChannel,
@@ -9,7 +12,9 @@ export {
   type Channel,
   type Channels,
   type CurveChannel,
+  type Handles,
 } from "./curve.ts";
+export { AUTO_REACH, hasAutoTangents, withAutoTangents } from "./tangents.ts";
 export { CommandError, Draft, type ClipFact } from "./draft.ts";
 export { naturalSizeOf, objectsOf, valueWithout } from "./objects.ts";
 export { KeyEase, PropertyEdit, applyEdit, firstKeyFrom, type ValueEdit } from "./property-edit.ts";

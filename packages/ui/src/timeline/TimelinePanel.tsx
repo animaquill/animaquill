@@ -505,7 +505,16 @@ function TrackHeaders({
           }}
         />
       </div>
-      <div className={styles.headerList}>
+      <div
+        className={styles.headerList}
+        // Focus scrolls a list that only moves by its transform: the view goes there instead.
+        onScroll={(event) => {
+          const by = event.currentTarget.scrollTop;
+          if (by === 0) return;
+          event.currentTarget.scrollTop = 0;
+          editor.setScroll(editor.scrollX, editor.scrollY + by);
+        }}
+      >
         <div ref={list}>
           {model.rows.map((row) => (
             <Fragment key={row.id}>
