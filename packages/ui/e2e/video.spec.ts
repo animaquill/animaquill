@@ -373,6 +373,27 @@ test.describe("a video", () => {
     expect(facts.frames).toBe(30);
   });
 
+  test("has all the pixels of the format whatever the preview draws at", async ({ page }) => {
+    const quality = async (name: string) => {
+      await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
+      await page.getByRole("radio", { name: new RegExp(`^${name}`) }).click();
+    };
+    await open(page, projectFolder(2, [movingSquare(2)]));
+    await quality("1/4");
+    await expect(content(page, "preview").getByRole("button", { name: "预览画质" })).toHaveText(
+      "画质 1/4",
+    );
+    await startExport(page);
+    await exported(page);
+    const file = (await savedFile(page)) as Buffer;
+    expect(await factsOf(file)).toMatchObject({ width: WIDTH, height: HEIGHT, frames: 60 });
+    // A still is at full resolution too, and the frame is the same as it.
+    const still = await stillAt(page, "0:01/00");
+    expect([still.readUInt32BE(16), still.readUInt32BE(20)]).toEqual([WIDTH, HEIGHT]);
+    // Drawn at a quarter and made larger, the edges of the square are soft: about 42 dB, against 70.
+    expect((await compare(page, file, 30, still)).psnr).toBeGreaterThan(55);
+  });
+
   test("goes to the downloads where there is no dialog for saving", async ({ page }) => {
     await chooseFolder(page, projectFolder(1, [movingSquare(1)]));
     await expect(tab(page, "preview")).toBeVisible();
@@ -592,6 +613,9 @@ test.describe("a video with a scene", () => {
   test.skip(!canCapture, "needs a browser that can capture");
 
   test("has each frame of the scene, as a still of it has", async ({ page }) => {
+    // Opening, exporting and two stills each wait for what they need. Alone that takes 15 seconds,
+    // next to other browsers 25 and more.
+    test.setTimeout(60_000);
     await installSavePicker(page);
     await page.reload();
     const folder = sceneFolder({ a: { "index.html": SLIDE } }, [{ duration: "2" }], FORMAT);

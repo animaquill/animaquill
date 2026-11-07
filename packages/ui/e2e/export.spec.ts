@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Download, Frame, Page } from "@playwright/test";
 import { field, placeImage, red, typeInto } from "./property-helpers.ts";
+import { needsDevPage } from "./support.ts";
 import {
   canCapture,
   content,
@@ -210,6 +211,25 @@ test.describe("a frame with pictures", () => {
     expect(await differenceFromPreview(page, png)).toBeLessThanOrEqual(2);
   });
 
+  test("has all the pixels of the output whatever the preview draws at", async ({ page }) => {
+    const quality = async (name: string) => {
+      await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
+      await page.getByRole("radio", { name: new RegExp(`^${name}`) }).click();
+    };
+    await placeVideo(page);
+    await goTo(page, "0:01/00");
+    await quality("1/4");
+    await expect(content(page, "preview").getByRole("button", { name: "预览画质" })).toHaveText(
+      "画质 1/4",
+    );
+    await expect.poll(async () => close(await colorInPreview(page, 100, 50), BLACK)).toBe(false);
+    const png = await exportFrame(page);
+    expect(sizeOf(png)).toEqual({ width: WIDTH, height: HEIGHT });
+    // The same as the preview at full quality, pixel for pixel, and not a picture made larger.
+    await quality("全分辨率");
+    await expect.poll(() => differenceFromPreview(page, png)).toBeLessThanOrEqual(2);
+  });
+
   test("waits for a file that takes long, and draws nothing until then", async ({ page }) => {
     await placeImage(page);
     await expect.poll(async () => close(await colorInPreview(page), RED)).toBe(true);
@@ -389,7 +409,8 @@ test.describe("a frame with a scene", () => {
     });
   });
 
-  test("does not exist as a placeholder", async ({ page }) => {
+  test("does not exist as a placeholder", async ({ page, devPage }) => {
+    test.skip(!devPage, needsDevPage("?sceneStage=plain, where a scene stays a placeholder"));
     await page.goto("/?sceneStage=plain");
     await openScene(page, SLIDE);
     const downloads = noDownload(page);
