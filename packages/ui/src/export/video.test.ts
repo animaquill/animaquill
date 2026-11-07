@@ -74,9 +74,23 @@ class FakeCompositor {
   /** What the next encoder says about decoding, for the first chunk it gives. */
   description = [1, 2, 3];
   starts = 0;
+  /**
+   * Chunks come as messages do, a little later than the frame was taken, and still in order: what
+   * an encoder gave for one frame comes with the answer to whatever it is asked next.
+   */
+  late = false;
+  readonly #inFlight: {
+    readonly chunk: EncodedChunk;
+    readonly to: (chunk: EncodedChunk) => void;
+  }[] = [];
   #first = true;
 
+  #arrive() {
+    for (const { chunk, to } of this.#inFlight.splice(0)) to(chunk);
+  }
+
   async startEncoding(config: VideoEncoderConfig, onChunk: (chunk: EncodedChunk) => void) {
+    this.#arrive();
     this.starts += 1;
     this.#first = true;
     this.queued = [];
@@ -89,6 +103,7 @@ class FakeCompositor {
   /** As if the page went away at this frame: it never gets further. */
   crashAt: number | undefined;
   async encodeFrame(frame: FrameToEncode) {
+    this.#arrive();
     if (this.hold) await this.hold;
     if (this.crashAt === frame.index) await new Promise(() => {});
     if (this.failAt?.index === frame.index) throw new StillFailed(this.failAt.failure);
@@ -117,15 +132,23 @@ class FakeCompositor {
   }
   #emit() {
     const chunk = this.queued.shift();
-    if (chunk) this.onChunk?.(chunk);
+    if (!chunk) return;
+    const { onChunk } = this;
+    if (!this.late) {
+      onChunk?.(chunk);
+      return;
+    }
+    this.#inFlight.push({ chunk, to: (each: EncodedChunk) => onChunk?.(each) });
   }
   flushes = 0;
   async flushEncoding() {
     while (this.queued.length > 0) this.#emit();
+    this.#arrive();
     this.flushes += 1;
   }
   async finishEncoding() {
     while (this.queued.length > 0) this.#emit();
+    this.#arrive();
     this.finished = true;
   }
   dispose() {
@@ -1165,6 +1188,18 @@ describe("an export that stopped halfway", () => {
     expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
     const description = next.writer.configs[0]?.description as Uint8Array | undefined;
     expect(description && [...description]).toEqual([7, 7, 7]);
+  });
+
+  it("starts over cleanly when what the old encoder still gave comes after it found out", async () => {
+    const { next } = await crashed();
+    next.compositor.description = [7, 7, 7];
+    next.compositor.late = true;
+    const { offering } = await offered(next, "continue");
+    await offering;
+    expect(next.said()).toContain("export.resume.encoderChanged");
+    expect(next.said().join()).not.toContain("export.video.wrongOutput");
+    const times = next.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
   });
 
   it("can be given up, and leaves nothing", async () => {

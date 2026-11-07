@@ -883,6 +883,11 @@ export class VideoExport {
     const asked = new Set<number>();
     /** The first frames of a new encoder showed that it does not go on with what was there. */
     let startedOver = false;
+    /**
+     * An encoder is on its way out. What it still gives comes before the next one has started, and
+     * belongs to frames that are asked for again: counting it would put them in the file twice.
+     */
+    let replacing = false;
     const fps = plan.scenes.fps.num / plan.scenes.fps.den;
     const video = new PieceWriter(exports, id, "video", resumed?.videoPieces ?? 0);
     const sound = new PieceWriter(exports, id, "sound");
@@ -931,6 +936,7 @@ export class VideoExport {
       const frameMicros = Math.round((1e6 * plan.scenes.fps.den) / plan.scenes.fps.num);
       const prefix = used.config.codec.slice(0, 4);
       const onChunk = (chunk: EncodedChunk) => {
+        if (replacing) return;
         // What comes out of the sandbox is checked like anything that comes from outside.
         const problem = problemWith(chunk, asked, prefix);
         if (problem) {
@@ -1026,6 +1032,7 @@ export class VideoExport {
             encoderStart = index;
             restartAt = index;
             used = await this.#startEncoder(current, used, onChunk, signal);
+            replacing = false;
           }
           for (; index < total; index += 1) {
             if (writeFailed) throw writeFailed;
@@ -1064,6 +1071,7 @@ export class VideoExport {
           break;
         } catch (error) {
           if (signal.aborted) throw error;
+          replacing = true;
           if (error instanceof ResumeFailed && !startedOver && videoChunks === encoderStart) {
             // A new encoder that encodes another way: what was there cannot go on with this.
             notifications.push(t("export.resume.encoderChanged"));
