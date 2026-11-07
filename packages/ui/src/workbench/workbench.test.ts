@@ -1,4 +1,4 @@
-import { ProjectStore } from "@animaquill/core";
+import { ProjectStore, aiTask } from "@animaquill/core";
 import type { FolderAccess, Host } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -166,13 +166,95 @@ describe("changes that do not go through", () => {
     expect(notices(workbench)).toEqual(["notice.commandFailed"]);
   });
 
-  it("says so when undo cannot do anything", async () => {
+  it("says why undo cannot do anything", async () => {
     const { workbench } = setup();
     await create(workbench, "一");
     workbench.session.store?.execute({ type: "project.rename", params: { name: "二" } });
     lock(workbench);
     workbench.actions.get("edit.undo")?.run();
-    expect(notices(workbench)).toEqual(["notice.undoFailed"]);
+    expect(notices(workbench)).toEqual(["notice.commandFailed"]);
+  });
+
+  describe("when somebody else changed what undo is about", () => {
+    const AI = { origin: aiTask("task") };
+    const rename = (store: ProjectStore | undefined, name: string, options = {}) =>
+      store?.execute({ type: "project.rename", params: { name } }, options);
+    const firstTrack = (store: ProjectStore | undefined) =>
+      Object.values(store?.getState().timelines["main"]?.tracks ?? {})[0];
+    const setTrack = (store: ProjectStore | undefined, name: string, options = {}) => {
+      const params = { timeline: "main", track: firstTrack(store)?.id, changes: { name } };
+      return store?.execute({ type: "track.update", params }, options);
+    };
+
+    it("says the step was skipped, and leaves the one before it for the next press", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      setTrack(store, "我的轨道");
+      rename(store, "二");
+      rename(store, "三", AI);
+      const undo = workbench.actions.get("edit.undo");
+      undo?.run();
+      expect(notices(workbench)).toEqual(["notice.undoBlocked"]);
+      expect(nameOf(workbench)).toBe("三");
+      expect(firstTrack(store)?.name).toBe("我的轨道");
+      undo?.run();
+      expect(notices(workbench)).toEqual(["notice.undoBlocked"]);
+      expect(firstTrack(store)?.name).not.toBe("我的轨道");
+    });
+
+    it("says so on the way forward as well", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      rename(store, "二");
+      store?.undo();
+      rename(store, "三", AI);
+      workbench.actions.get("edit.redo")?.run();
+      expect(notices(workbench)).toEqual(["notice.undoBlocked"]);
+      expect(nameOf(workbench)).toBe("三");
+    });
+
+    it("says so when part of a step stayed", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      const track = firstTrack(store)?.id;
+      store?.executeBatch([
+        { type: "project.rename", params: { name: "二" } },
+        { type: "track.update", params: { timeline: "main", track, changes: { name: "轨道" } } },
+      ]);
+      rename(store, "三", AI);
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual(["notice.undoPartly"]);
+      expect(nameOf(workbench)).toBe("三");
+    });
+
+    it("says nothing when all of it went back", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      rename(workbench.session.store, "二");
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual([]);
+      expect(nameOf(workbench)).toBe("一");
+    });
+
+    it("goes through the same message as any other change while updates are missing", async () => {
+      const { workbench } = setup();
+      await create(workbench, "一");
+      const { store } = workbench.session;
+      rename(store, "二");
+      const other = ProjectStore.fromUpdates([(store as ProjectStore).encodeState()]).store;
+      const updates: Uint8Array[] = [];
+      other?.onLocalUpdate((update) => updates.push(update));
+      rename(other, "三");
+      rename(other, "四");
+      store?.applyUpdates([updates[1] as Uint8Array]);
+      workbench.actions.get("edit.undo")?.run();
+      expect(notices(workbench)).toEqual(["notice.commandFailed"]);
+      store?.applyUpdates(updates);
+      expect(store?.canUndo).toBe(true);
+    });
   });
 });
 

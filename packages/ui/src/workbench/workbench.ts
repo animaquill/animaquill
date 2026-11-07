@@ -6,6 +6,7 @@ import {
   clipStart,
   projectFrameRate,
   type ProjectStore,
+  type UndoResult,
 } from "@animaquill/core";
 import { toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
@@ -106,6 +107,7 @@ export class Workbench {
         unsupported: (name) => this.notifications.push(t("notice.mediaUnsupported", { name })),
         tooLarge: (name) => this.notifications.push(t("notice.mediaTooLarge", { name })),
         saveFailed: (name) => this.notifications.push(t("notice.mediaSaveFailed", { name })),
+        commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       },
       compositorUrl,
     );
@@ -401,9 +403,17 @@ export class Workbench {
     });
   }
 
-  #stepThroughHistory(step: (store: ProjectStore) => boolean): void {
+  #stepThroughHistory(step: (store: ProjectStore) => UndoResult): void {
     const { store } = this.session;
-    if (store && !step(store)) this.notifications.push(this.t("notice.undoFailed"));
+    if (!store) return;
+    const result = step(store);
+    if (result.ok) {
+      if (result.kept.length > 0) this.notifications.push(this.t("notice.undoPartly"));
+    } else if (result.error.code === "undo-blocked") {
+      this.notifications.push(this.t("notice.undoBlocked"));
+    } else {
+      this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
+    }
   }
 
   #registerEditActions(): void {

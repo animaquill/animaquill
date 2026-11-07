@@ -28,6 +28,7 @@ async function setup() {
     unsupported: vi.fn<(name: string) => void>(),
     tooLarge: vi.fn<(name: string) => void>(),
     saveFailed: vi.fn<(name: string) => void>(),
+    commandFailed: vi.fn<(message: string) => void>(),
   };
   const library = new MediaLibrary(session, projects, messages, "");
   await session.create("我的项目");
@@ -44,7 +45,7 @@ async function setup() {
       },
     });
   const assets = () => Object.keys(store.getState().assets ?? {});
-  return { projects, session, library, messages, id, knowFile, assets };
+  return { projects, session, store, library, messages, id, knowFile, assets };
 }
 
 beforeEach(() => {
@@ -99,6 +100,14 @@ describe("a file the project knows but this browser does not have", () => {
     projects.failing = true;
     expect(await library.importFiles([CONTENT])).toEqual([]);
     expect(messages.saveFailed).toHaveBeenCalledWith("封面.png");
+  });
+
+  it("says why when the project does not take it", async () => {
+    const { library, messages, store } = await setup();
+    const lock = { tags: [{ name: "定稿", locked: true }] };
+    store.execute({ type: "project.setTags", params: lock });
+    expect(await library.importFiles([CONTENT])).toEqual([]);
+    expect(messages.commandFailed).toHaveBeenCalledOnce();
   });
 
   it("is left alone when it is here, and nothing has to look again", async () => {

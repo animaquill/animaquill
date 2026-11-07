@@ -5,6 +5,8 @@ import {
   toSeconds,
   type Project,
 } from "@animaquill/schema";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
@@ -18,6 +20,7 @@ import {
   mergeUpdates,
   type CommandResult,
   type ExecuteOptions,
+  type UndoResult,
 } from "./store.ts";
 
 const MAIN = "timelines/main/timeline.json";
@@ -473,19 +476,19 @@ describe("undo", () => {
     const store = open();
     success(setProperty(store, "param.size", 80));
     success(setProperty(store, "param.size", 90));
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(property(store, "param.size")).toBe(80);
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(property(store, "param.size")).toBe(64);
-    expect(store.redo()).toBe(true);
+    expect(store.redo().ok).toBe(true);
     expect(property(store, "param.size")).toBe(80);
   });
 
   it("has nothing to do on a fresh project", () => {
     const store = open();
     expect(store.canUndo).toBe(false);
-    expect(store.undo()).toBe(false);
-    expect(store.redo()).toBe(false);
+    expect(store.undo().ok).toBe(false);
+    expect(store.redo().ok).toBe(false);
   });
 
   it("does not take back loading the project", () => {
@@ -653,7 +656,7 @@ describe("undoing an AI task", () => {
     success(setProperty(store, "param.size", 80, { origin: AI }));
     success(moveClip(store, "1", { origin: AI }));
     success(store.execute({ type: "project.rename", params: { name: "AI 改的" } }, { origin: AI }));
-    expect(store.undoTask("task-1")).toBe(true);
+    expect(store.undoTask("task-1").ok).toBe(true);
     expect(property(store, "param.size")).toBe(64);
     expect(clip(store)?.start).toBe("0");
     expect(store.getState().manifest.name).toBe("原子是什么");
@@ -689,12 +692,12 @@ describe("undoing an AI task", () => {
     const store = open();
     success(setProperty(store, "param.size", 80, { origin: AI }));
     store.undoTask("task-1");
-    expect(store.redoTask("task-1")).toBe(true);
+    expect(store.redoTask("task-1").ok).toBe(true);
     expect(property(store, "param.size")).toBe(80);
   });
 
   it("does nothing for a task it does not know", () => {
-    expect(open().undoTask("nobody")).toBe(false);
+    expect(open().undoTask("nobody").ok).toBe(false);
   });
 });
 
@@ -817,7 +820,7 @@ describe("a locked project", () => {
         params: { tags: [{ name: "已发布", locked: true }] },
       }),
     );
-    expect(store.undo()).toBe(false);
+    expect(store.undo().ok).toBe(false);
     expect(property(store, "param.size")).toBe(80);
   });
 
@@ -2081,7 +2084,7 @@ describe("two people at once", () => {
     success(setProperty(b, "param.size", 80));
     sync(a, b);
     expect(a.canUndo).toBe(false);
-    expect(a.undo()).toBe(false);
+    expect(a.undo().ok).toBe(false);
     expect(property(a, "param.size")).toBe(80);
   });
 });
@@ -2381,10 +2384,10 @@ describe("two devices writing different properties", () => {
     success(edit(a, "c", { path: "opacity", op: "set", value: 0.5 }));
     success(edit(b, "c", { path: "transform.x", op: "set", value: 1 }));
     sync(a, b);
-    expect(a.undo()).toBe(true);
+    expect(a.undo().ok).toBe(true);
     sync(a, b);
     expect(clip(b, "c")?.properties).toEqual({ "transform.x": 1 });
-    expect(b.undo()).toBe(true);
+    expect(b.undo().ok).toBe(true);
     sync(a, b);
     expect(clip(a, "c")?.properties).toBeUndefined();
     expect(clip(b, "c")?.properties).toBeUndefined();
@@ -2517,7 +2520,7 @@ describe("two devices writing different properties", () => {
     expect(clip(a, "c")).not.toHaveProperty("properties");
     const { store: opened } = ProjectStore.fromUpdates([a.encodeState()]);
     expect(clip(opened as ProjectStore, "c")).not.toHaveProperty("properties");
-    expect(a.undo()).toBe(true);
+    expect(a.undo().ok).toBe(true);
     expect(clip(a, "c")?.properties).toEqual({ opacity: 0.5, "transform.x": 1 });
   });
 
@@ -2597,9 +2600,9 @@ describe("a document from when properties had a map of their own", () => {
   it("undoes and redoes like anywhere else", () => {
     const store = written();
     success(edit(store, "c", { path: "opacity", op: "set", value: 0.25 }));
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(property(store, "opacity", "c")).toBe(0.5);
-    expect(store.redo()).toBe(true);
+    expect(store.redo().ok).toBe(true);
     expect(property(store, "opacity", "c")).toBe(0.25);
   });
 
@@ -2716,7 +2719,7 @@ describe("taking several steps back in a row", () => {
     setKey(store, "0");
     setKey(store, "1", { origin: AI });
     setKey(store, "2");
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(keys(store)).toEqual(["0", "1"]);
     store.undo();
     expect(keys(store)).toEqual(["0", "1"]);
@@ -2735,14 +2738,17 @@ describe("taking several steps back in a row", () => {
     expect(keys(a)).toEqual(["0", "1"]);
   });
 
-  it("goes on with other properties past that place", () => {
+  it("goes on with other properties when asked again, not by itself", () => {
     const store = freshProject();
     success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
     setKey(store, "0");
     setKey(store, "1", { origin: AI });
     setKey(store, "2");
     store.undo();
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(false);
+    expect(property(store, "opacity", "c")).toBe(0.5);
+    expect(keys(store)).toEqual(["0", "1"]);
+    expect(store.undo().ok).toBe(true);
     expect(property(store, "opacity", "c")).toBeUndefined();
     expect(keys(store)).toEqual(["0", "1"]);
   });
@@ -2753,7 +2759,7 @@ describe("taking several steps back in a row", () => {
     setKey(store, "1", { origin: AI });
     setKey(store, "2");
     store.undo();
-    expect(store.undoTask("task-1")).toBe(true);
+    expect(store.undoTask("task-1").ok).toBe(true);
     expect(keys(store)).toEqual(["0"]);
   });
 
@@ -2761,8 +2767,8 @@ describe("taking several steps back in a row", () => {
     const store = freshProject();
     setKey(store, "0");
     setKey(store, "1", { origin: AI });
-    expect(store.undoTask("task-1")).toBe(true);
-    expect(store.undo()).toBe(true);
+    expect(store.undoTask("task-1").ok).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(keys(store)).toBeUndefined();
   });
 
@@ -2770,7 +2776,7 @@ describe("taking several steps back in a row", () => {
     const store = freshProject();
     setKey(store, "1", { origin: AI });
     setKey(store, "2");
-    expect(store.undoTask("task-1")).toBe(false);
+    expect(store.undoTask("task-1").ok).toBe(false);
     expect(keys(store)).toEqual(["1", "2"]);
   });
 
@@ -2779,7 +2785,7 @@ describe("taking several steps back in a row", () => {
     setKey(store, "0");
     store.undo();
     setKey(store, "1", { origin: AI });
-    expect(store.redo()).toBe(false);
+    expect(store.redo().ok).toBe(false);
     expect(keys(store)).toEqual(["1"]);
   });
 
@@ -2790,7 +2796,7 @@ describe("taking several steps back in a row", () => {
     setKey(store, "2");
     store.undo();
     store.undoTask("task-1");
-    expect(store.redo()).toBe(false);
+    expect(store.redo().ok).toBe(false);
     expect(keys(store)).toEqual(["0"]);
   });
 
@@ -2802,7 +2808,7 @@ describe("taking several steps back in a row", () => {
     sync(a, b);
     success(edit(b, "c", { path: "opacity", op: "set", value: 0.5 }));
     sync(a, b);
-    expect(a.redo()).toBe(true);
+    expect(a.redo().ok).toBe(true);
     expect(keys(a)).toEqual(["0"]);
   });
 
@@ -2842,10 +2848,1354 @@ describe("taking several steps back in a row", () => {
       },
     ];
     success(store.executeBatch(calls));
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(clip(store, "e")).toBeUndefined();
-    expect(store.redo()).toBe(true);
+    expect(store.redo().ok).toBe(true);
     expect(property(store, "opacity", "e")).toBe(0.5);
+  });
+});
+
+/** Another window, with a client id to decide who wins: at the same time, the higher one does. */
+function windowOf(store: ProjectStore, clientID: number): ProjectStore {
+  const doc = new Y.Doc();
+  doc.clientID = clientID;
+  Y.applyUpdate(doc, Y.encodeStateAsUpdate(store.doc), "sync");
+  return new ProjectStore(doc);
+}
+
+function blocked(result: UndoResult) {
+  if (result.ok) throw new Error("expected this to stay as it is");
+  expect(result.error.code).toBe("undo-blocked");
+  return result.error;
+}
+
+function taken(result: UndoResult) {
+  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  return result;
+}
+
+const opacity = (store: ProjectStore, id = "c") => property(store, "opacity", id);
+const setOpacity = (store: ProjectStore, value: number, options: ExecuteOptions = {}, id = "c") =>
+  success(edit(store, id, { path: "opacity", op: "set", value }, options));
+const clearOpacity = (store: ProjectStore, options: ExecuteOptions = {}) =>
+  success(edit(store, "c", { path: "opacity", op: "clear" }, options));
+const moveTo = (store: ProjectStore, id: string, start: string, options: ExecuteOptions = {}) =>
+  success(
+    store.execute(
+      { type: "clip.move", params: { timeline: "main", clips: [{ clip: id, start }] } },
+      options,
+    ),
+  );
+
+describe("taking back a write the document no longer holds", () => {
+  it("leaves the same value written by somebody else over an older step", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5);
+    setOpacity(store, 0.8);
+    setOpacity(store, 0.5, { origin: AI });
+    blocked(store.undo());
+    expect(opacity(store)).toBe(0.5);
+    blocked(store.undo());
+    expect(opacity(store)).toBe(0.5);
+    blocked(store.undo());
+    expect(opacity(store)).toBe(0.5);
+  });
+
+  it("does the same for a value that was switched back and forth", () => {
+    const store = freshProject();
+    const hide = (hidden: boolean, options: ExecuteOptions = {}) =>
+      success(
+        store.execute(
+          { type: "clip.update", params: { timeline: "main", clip: "c", changes: { hidden } } },
+          options,
+        ),
+      );
+    hide(true);
+    hide(false);
+    hide(true, { origin: AI });
+    blocked(store.undo());
+    blocked(store.undo());
+    expect(clip(store, "c")?.hidden).toBe(true);
+  });
+
+  it("does not bring back what somebody else also took away", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    clearOpacity(store);
+    setOpacity(store, 0.9, { origin: AI });
+    clearOpacity(store, { origin: AI });
+    blocked(store.undo());
+    expect(opacity(store)).toBeUndefined();
+  });
+
+  it("does not let an AI task take back what a person wrote with the same value", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2, { origin: AI });
+    setOpacity(store, 0.8, { origin: AI });
+    setOpacity(store, 0.2);
+    blocked(store.undoTask("task-1"));
+    expect(opacity(store)).toBe(0.2);
+  });
+
+  it("does not take back an AI task from the same value on another device", () => {
+    const a = freshProject();
+    setOpacity(a, 0.2, { origin: AI });
+    const b = twin(a);
+    setOpacity(b, 0.5);
+    sync(a, b);
+    setOpacity(b, 0.2);
+    sync(a, b);
+    blocked(a.undoTask("task-1"));
+    expect(opacity(a)).toBe(0.2);
+  });
+
+  describe.each([
+    ["the first", 2, 1],
+    ["the second", 1, 2],
+  ])("two windows writing the same value at once, %s one winning", (_, first, second) => {
+    const setUp = () => {
+      const base = freshProject();
+      setOpacity(base, 1);
+      const a = windowOf(base, first);
+      const b = windowOf(base, second);
+      setOpacity(a, 0.5);
+      setOpacity(b, 0.5);
+      sync(a, b);
+      return first > second ? { winner: a, loser: b } : { winner: b, loser: a };
+    };
+
+    it("takes back the write the document holds", () => {
+      const { winner, loser } = setUp();
+      taken(winner.undo());
+      sync(winner, loser);
+      expect(opacity(winner)).toBe(1);
+      expect(opacity(loser)).toBe(1);
+    });
+
+    it("does not take back the other one, before or after", () => {
+      const { winner, loser } = setUp();
+      blocked(loser.undo());
+      expect(opacity(loser)).toBe(0.5);
+      taken(winner.undo());
+      sync(winner, loser);
+      expect(opacity(loser)).toBe(1);
+      expect(loser.canUndo).toBe(false);
+    });
+
+    it("does not go on from the undo of the other one", () => {
+      const { winner, loser } = setUp();
+      taken(winner.undo());
+      sync(winner, loser);
+      blocked(loser.undo());
+      expect(opacity(loser)).toBe(1);
+    });
+  });
+
+  it("does not mistake a clip that came back for the one it wrote to", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const remove = { type: "clip.remove", params: { timeline: "main", clips: ["c"] } };
+    moveTo(a, "c", "1");
+    sync(a, b);
+    success(b.execute(remove));
+    sync(a, b);
+    taken(b.undo());
+    sync(a, b);
+    expect(clip(a, "c")?.start).toBe("1");
+    blocked(a.undo());
+    expect(clip(a, "c")?.start).toBe("1");
+  });
+
+  it("does not write into a clip that is gone, when there is no write of it left to see", () => {
+    const a = freshProject();
+    const b = twin(a);
+    setOpacity(a, 0.5);
+    a.undo();
+    sync(a, b);
+    success(b.execute({ type: "clip.remove", params: { timeline: "main", clips: ["c"] } }));
+    sync(a, b);
+    blocked(a.redo());
+    expect(clip(a, "c")).toBeUndefined();
+  });
+
+  it("does not redo into a clip that was replaced, with the same content", () => {
+    const a = freshProject();
+    const b = twin(a);
+    setOpacity(a, 0.5);
+    a.undo();
+    sync(a, b);
+    const remove = { type: "clip.remove", params: { timeline: "main", clips: ["c"] } };
+    success(b.execute(remove));
+    taken(b.undo());
+    sync(a, b);
+    blocked(a.redo());
+    expect(opacity(a)).toBeUndefined();
+  });
+
+  it("sees the text of a file like anything else", () => {
+    const a = ProjectStore.create(createProject({ name: "文件" }), { "code/a.js": "一" });
+    const b = twin(a);
+    const save = (store: ProjectStore, text: string) =>
+      success(store.importFile("code/a.js", text));
+    save(a, "二");
+    sync(a, b);
+    save(b, "三");
+    save(b, "二");
+    sync(a, b);
+    blocked(a.undo());
+    expect(a.getState().files["code/a.js"]).toBe("二");
+  });
+});
+
+describe("whose a value is after it was put back", () => {
+  it("is whoever wrote it before: the path goes back to the AI task", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5, { origin: AI });
+    setOpacity(store, 0.8);
+    taken(store.undo());
+    expect(opacity(store)).toBe(0.5);
+    blocked(store.undo());
+    expect(opacity(store)).toBe(0.5);
+    taken(store.undoTask("task-1"));
+    expect(opacity(store)).toBe(0.2);
+  });
+
+  it("is the person again once the task took back its own", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5, { origin: AI });
+    taken(store.undoTask("task-1"));
+    taken(store.undo());
+    expect(opacity(store)).toBeUndefined();
+  });
+
+  it("is the step again after a redo", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5);
+    taken(store.undo());
+    taken(store.redo());
+    taken(store.undo());
+    taken(store.undo());
+    expect(opacity(store)).toBeUndefined();
+    taken(store.redo());
+    taken(store.redo());
+    expect(opacity(store)).toBe(0.5);
+  });
+
+  it("is the task again after a redo of the task", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2, { origin: AI });
+    setOpacity(store, 0.4, { origin: AI });
+    taken(store.undoTask("task-1"));
+    expect(opacity(store)).toBeUndefined();
+    taken(store.redoTask("task-1"));
+    expect(opacity(store)).toBe(0.4);
+    taken(store.undoTask("task-1"));
+    expect(opacity(store)).toBeUndefined();
+  });
+
+  it("is nobody's to take when it was there from the start", () => {
+    const store = freshProject();
+    const other = twin(store);
+    setOpacity(other, 0.5);
+    taken(other.undo());
+    expect(opacity(other)).toBeUndefined();
+    expect(other.canUndo).toBe(false);
+  });
+
+  it("is no write of somebody else in the window that took it back", () => {
+    const store = freshProject();
+    moveTo(store, "c", "1");
+    moveTo(store, "d", "11");
+    moveTo(store, "c", "2");
+    taken(store.undo());
+    taken(store.undo());
+    taken(store.undo());
+    expect(clip(store, "c")?.start).toBe("0");
+    expect(clip(store, "d")?.start).toBe("10");
+  });
+
+  it("is a write from elsewhere in any other window", () => {
+    const a = freshProject();
+    const b = twin(a);
+    setOpacity(a, 0.2);
+    sync(a, b);
+    setOpacity(b, 0.5);
+    sync(a, b);
+    taken(b.undo());
+    sync(a, b);
+    expect(opacity(a)).toBe(0.2);
+    blocked(a.undo());
+    expect(opacity(a)).toBe(0.2);
+  });
+
+  it("keeps a clip that was taken away and put back as it was", () => {
+    const store = freshProject();
+    setOpacity(store, 0.5, { origin: AI });
+    moveTo(store, "c", "1");
+    success(store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["c"] } }));
+    taken(store.undo());
+    taken(store.undo());
+    expect(clip(store, "c")?.start).toBe("0");
+    taken(store.undoTask("task-1"));
+    expect(opacity(store)).toBeUndefined();
+  });
+
+  it("does not depend on what is left of old writes in the document", () => {
+    const store = freshProject();
+    for (let value = 1; value <= 20; value++) setOpacity(store, value / 100);
+    for (let value = 19; value >= 1; value--) {
+      taken(store.undo());
+      expect(opacity(store)).toBe(value / 100);
+    }
+  });
+});
+
+describe("a step that cannot go back", () => {
+  it("is all that happens: the one before it waits to be asked for", () => {
+    const store = freshProject();
+    moveTo(store, "d", "11");
+    moveTo(store, "c", "1");
+    moveTo(store, "c", "2", { origin: AI });
+    blocked(store.undo());
+    expect(clip(store, "c")?.start).toBe("2");
+    expect(clip(store, "d")?.start).toBe("11");
+    taken(store.undo());
+    expect(clip(store, "c")?.start).toBe("2");
+    expect(clip(store, "d")?.start).toBe("10");
+  });
+
+  it("says what stayed", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5, { origin: AI });
+    expect(blocked(store.undo()).conflicts).toEqual([
+      ["timelines", "main", "clips", "c", "properties", "opacity"],
+    ]);
+  });
+
+  it("is gone from the list, and writes nothing", () => {
+    const store = freshProject();
+    setOpacity(store, 0.2);
+    setOpacity(store, 0.5, { origin: AI });
+    const { revision } = store;
+    const before = store.getState();
+    blocked(store.undo());
+    expect(store.revision).toBe(revision);
+    expect(store.getState()).toBe(before);
+    expect(store.canRedo).toBe(false);
+  });
+
+  it("does not slide on the way forward either", () => {
+    const store = freshProject();
+    moveTo(store, "d", "11");
+    moveTo(store, "c", "1");
+    store.undo();
+    store.undo();
+    success(
+      store.execute({ type: "project.rename", params: { name: "另一个名字" } }, { origin: AI }),
+    );
+    moveTo(store, "d", "12", { origin: AI });
+    blocked(store.redo());
+    expect(clip(store, "c")?.start).toBe("0");
+    expect(clip(store, "d")?.start).toBe("12");
+    taken(store.redo());
+    expect(clip(store, "c")?.start).toBe("1");
+  });
+
+  it("does not slide for an AI task", () => {
+    const store = freshProject();
+    moveTo(store, "d", "11", { origin: AI });
+    moveTo(store, "c", "1", { origin: AI });
+    taken(store.undoTask("task-1"));
+    moveTo(store, "c", "2");
+    moveTo(store, "d", "12");
+    blocked(store.redoTask("task-1"));
+    expect(clip(store, "c")?.start).toBe("2");
+    expect(clip(store, "d")?.start).toBe("12");
+  });
+
+  it("is about the whole change: what can go back of a change does", () => {
+    const store = freshProject();
+    const both = [
+      { owner: { clip: "c" }, path: "opacity", op: "set", value: 0.5 },
+      { owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 },
+    ];
+    success(store.execute({ type: "property.edit", params: { timeline: "main", edits: both } }));
+    setOpacity(store, 0.7, { origin: AI }, "d");
+    expect(taken(store.undo()).kept).toEqual([
+      ["timelines", "main", "clips", "d", "properties", "opacity"],
+    ]);
+    expect(opacity(store, "c")).toBeUndefined();
+    expect(opacity(store, "d")).toBe(0.7);
+    taken(store.redo());
+    expect(opacity(store, "c")).toBe(0.5);
+  });
+
+  it("keeps nothing when all of it went back", () => {
+    const store = freshProject();
+    setOpacity(store, 0.5);
+    expect(taken(store.undo()).kept).toEqual([]);
+  });
+
+  it("names a path once, however often the change wrote there", () => {
+    const store = freshProject();
+    const twice = [0.5, 0.6].map((value) => ({
+      type: "clip.setProperty",
+      params: { timeline: "main", clip: "c", path: "opacity", value },
+    }));
+    success(store.executeBatch(twice));
+    setOpacity(store, 0.7, { origin: AI });
+    expect(blocked(store.undo()).conflicts).toHaveLength(1);
+  });
+
+  it("has nothing to say on a project without a history", () => {
+    const store = freshProject();
+    expect(twin(store).undo()).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: "nothing-to-undo" }),
+    });
+    expect(twin(store).redo()).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: "nothing-to-undo" }),
+    });
+    expect(store.undoTask("nobody").ok).toBe(false);
+    expect(store.redoTask("nobody").ok).toBe(false);
+  });
+
+  it("is told apart from a locked project, which keeps its history", () => {
+    const store = freshProject();
+    setOpacity(store, 0.5, { origin: AI });
+    const lock = { tags: [{ name: "定稿", locked: true }] };
+    success(store.execute({ type: "project.setTags", params: lock }));
+    const code = (result: UndoResult) => (result.ok ? undefined : result.error.code);
+    expect(code(store.undo())).toBe("project-locked");
+    expect(code(store.redo())).toBe("project-locked");
+    expect(code(store.undoTask("task-1"))).toBe("project-locked");
+    expect(code(store.redoTask("task-1"))).toBe("project-locked");
+    success(store.execute({ type: "project.setTags", params: { tags: [] } }));
+    taken(store.undoTask("task-1"));
+    expect(opacity(store)).toBeUndefined();
+    taken(store.undo());
+    expect(store.getState().manifest.tags).toEqual(lock.tags);
+  });
+});
+
+describe("a level taken back one entry at a time", () => {
+  const withoutProperties = (store: ProjectStore) => {
+    const file = JSON.parse(store.exportFiles().files.get(MAIN) as string);
+    for (const track of file.tracks) for (const item of track.clips) delete item.properties;
+    return JSON.stringify(file);
+  };
+  const withProperties = (store: ProjectStore, properties: object) => {
+    const file = JSON.parse(store.exportFiles().files.get(MAIN) as string);
+    for (const track of file.tracks) {
+      for (const item of track.clips) if (item.id === "c") item.properties = properties;
+    }
+    return JSON.stringify(file);
+  };
+
+  it("brings back what a file took away, next to what somebody added since", () => {
+    const store = freshProject();
+    setOpacity(store, 0.5);
+    success(edit(store, "c", { path: "transform.x", op: "set", value: 3 }));
+    success(store.importFile(MAIN, withoutProperties(store)));
+    expect(clip(store, "c")).not.toHaveProperty("properties");
+    success(edit(store, "c", { path: "transform.y", op: "set", value: 7 }, { origin: AI }));
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(clip(store, "c")?.properties).toEqual({
+      opacity: 0.5,
+      "transform.x": 3,
+      "transform.y": 7,
+    });
+  });
+
+  it("takes away what a file added, except what somebody changed since", () => {
+    const store = freshProject();
+    success(store.importFile(MAIN, withProperties(store, { opacity: 0.5, "transform.x": 1 })));
+    success(edit(store, "c", { path: "transform.x", op: "set", value: 2 }, { origin: AI }));
+    success(edit(store, "c", { path: "transform.y", op: "set", value: 7 }, { origin: AI }));
+    taken(store.undo());
+    expect(clip(store, "c")?.properties).toEqual({ "transform.x": 2, "transform.y": 7 });
+  });
+
+  it("does the same for assets", () => {
+    const store = freshProject();
+    const asset = (id: string) => ({ kind: "image", path: `assets/${id}.png`, storage: "local" });
+    const assets = { one: asset("one"), two: asset("two") };
+    success(store.importFile("assets.json", JSON.stringify({ assets })));
+    const changed = { ...asset("two"), hash: "sha256-b" };
+    const next = JSON.stringify({ assets: { ...assets, two: changed } });
+    success(store.importFile("assets.json", next, { origin: AI }));
+    taken(store.undo());
+    expect(store.getState().assets).toEqual({ two: changed });
+  });
+
+  it("does the same for notes", () => {
+    const store = freshProject();
+    const note = (id: string, text: string) => ({
+      id,
+      status: "pending",
+      text,
+      timeline: "main",
+      time: "1",
+      createdAt: "2026-11-06T00:00:00Z",
+    });
+    const write = (notes: object[], options?: ExecuteOptions) =>
+      success(store.importFile("notes.json", JSON.stringify({ notes }), options));
+    write([note("a", "一"), note("b", "二")]);
+    write([note("a", "一"), note("b", "别人改的")], { origin: AI });
+    taken(store.undo());
+    expect(Object.keys(store.getState().notes ?? {})).toEqual(["b"]);
+  });
+
+  it("merges with what another window does to the same level", () => {
+    const a = freshProject();
+    const b = twin(a);
+    success(a.importFile(MAIN, withProperties(a, { opacity: 0.5 })));
+    success(edit(b, "c", { path: "transform.x", op: "set", value: 2 }));
+    sync(a, b);
+    taken(a.undo());
+    sync(a, b);
+    expect(clip(b, "c")?.properties).toEqual({ "transform.x": 2 });
+  });
+});
+
+describe("taking back what something else came to depend on", () => {
+  const image = { kind: "image", path: "assets/p.png", storage: "local" };
+  const addAsset = (store: ProjectStore, options: ExecuteOptions = {}) =>
+    success(store.execute({ type: "asset.add", params: { id: "pic", asset: image } }, options));
+  const videoTrack = (store: ProjectStore) =>
+    Object.values(timeline(store).tracks).find(({ kind }) => kind === "video")?.id as string;
+  const addClip = (
+    store: ProjectStore,
+    id: string,
+    source: object,
+    options: ExecuteOptions = {},
+    track = videoTrack(store),
+  ) =>
+    success(
+      store.execute(
+        {
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track,
+            clip: { id, start: "8", duration: "1", source },
+          },
+        },
+        options,
+      ),
+    );
+  const picture = { kind: "image", media: { asset: "pic" } };
+  const rewrite = <T>(
+    store: ProjectStore,
+    file: string,
+    change: (document: T) => void,
+    options: ExecuteOptions = {},
+  ) => {
+    const document = JSON.parse(store.exportFiles().files.get(file) as string) as T;
+    change(document);
+    return success(store.importFile(file, JSON.stringify(document), options));
+  };
+
+  it("keeps an asset a person started to use", () => {
+    const store = freshProject();
+    addAsset(store, { origin: AI });
+    addClip(store, "e", picture);
+    blocked(store.undoTask("task-1"));
+    expect(store.getState().assets?.["pic"]).toBeDefined();
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("keeps an asset an AI task started to use", () => {
+    const store = freshProject();
+    addAsset(store);
+    addClip(store, "e", picture, { origin: AI });
+    blocked(store.undo());
+    expect(store.getState().assets?.["pic"]).toBeDefined();
+  });
+
+  it("lets go of the asset once nothing uses it", () => {
+    const store = freshProject();
+    addAsset(store, { origin: AI });
+    addClip(store, "e", picture);
+    taken(store.undo());
+    taken(store.undoTask("task-1"));
+    expect(store.getState().assets).toBeUndefined();
+  });
+
+  it("takes back an asset together with what used it", () => {
+    const store = freshProject();
+    addAsset(store, { origin: AI });
+    addClip(store, "e", picture, { origin: AI });
+    taken(store.undoTask("task-1"));
+    expect(store.getState().assets).toBeUndefined();
+    expect(clip(store, "e")).toBeUndefined();
+    taken(store.redoTask("task-1"));
+    expect(clip(store, "e")?.source).toEqual(picture);
+    expect(store.getState().assets?.["pic"]).toEqual(image);
+  });
+
+  it("keeps a track with clips on it", () => {
+    const store = freshProject();
+    const { results } = success(
+      store.execute(
+        { type: "track.add", params: { timeline: "main", kind: "video" } },
+        { origin: AI },
+      ),
+    );
+    const { id } = results[0] as { id: string };
+    addClip(store, "e", { kind: "color", color: "#000000" }, {}, id);
+    blocked(store.undoTask("task-1"));
+    expect(timeline(store).tracks[id]).toBeDefined();
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("takes back a track together with its clips, whichever comes first", () => {
+    const store = freshProject();
+    const color = { kind: "color", color: "#000000" };
+    success(
+      store.executeBatch([
+        { type: "track.add", params: { timeline: "main", kind: "video", id: "k" } },
+        {
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: "k",
+            clip: { id: "e", start: "0", duration: "1", source: color },
+          },
+        },
+      ]),
+    );
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(timeline(store).tracks["k"]).toBeUndefined();
+    expect(taken(store.redo()).kept).toEqual([]);
+    expect(clip(store, "e")?.track).toBe("k");
+  });
+
+  it("brings back a track with its clips and transitions, in any order", () => {
+    const store = open();
+    const before = store.getState();
+    const track = clip(store)?.track;
+    success(store.execute({ type: "track.remove", params: { timeline: "main", track } }));
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+    expect(taken(store.redo()).kept).toEqual([]);
+    expect(timeline(store).transitions["tr_1"]).toBeUndefined();
+  });
+
+  it("does not bring back a clip on a track that is gone", () => {
+    const store = freshProject();
+    const { results } = success(
+      store.execute({ type: "track.add", params: { timeline: "main", kind: "video" } }),
+    );
+    const { id } = results[0] as { id: string };
+    addClip(store, "e", { kind: "color", color: "#000000" }, {}, id);
+    store.undo();
+    success(
+      store.execute(
+        { type: "track.remove", params: { timeline: "main", track: id } },
+        { origin: AI },
+      ),
+    );
+    blocked(store.redo());
+    expect(clip(store, "e")).toBeUndefined();
+  });
+
+  it("does not bring back a clip whose asset is gone", () => {
+    const store = freshProject();
+    addAsset(store, { origin: AI });
+    addClip(store, "e", picture);
+    store.undo();
+    success(store.execute({ type: "asset.remove", params: { asset: "pic" } }, { origin: AI }));
+    blocked(store.redo());
+    expect(clip(store, "e")).toBeUndefined();
+  });
+
+  it("does not bring back a removed clip whose asset is gone", () => {
+    const store = freshProject();
+    addAsset(store);
+    addClip(store, "e", picture);
+    success(store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["e"] } }));
+    success(store.execute({ type: "asset.remove", params: { asset: "pic" } }, { origin: AI }));
+    blocked(store.undo());
+    expect(clip(store, "e")).toBeUndefined();
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("does not move a clip back to a track that is gone", () => {
+    const store = freshProject();
+    const { results } = success(
+      store.execute({ type: "track.add", params: { timeline: "main", kind: "video" } }),
+    );
+    const { id } = results[0] as { id: string };
+    const home = videoTrack(store);
+    addClip(store, "e", { kind: "color", color: "#000000" }, {}, id);
+    success(
+      store.execute({
+        type: "clip.move",
+        params: { timeline: "main", clips: [{ clip: "e", track: home }] },
+      }),
+    );
+    success(
+      store.execute(
+        { type: "track.remove", params: { timeline: "main", track: id } },
+        { origin: AI },
+      ),
+    );
+    blocked(store.undo());
+    expect(clip(store, "e")?.track).toBe(home);
+  });
+
+  it("does not change a source back to what is gone", () => {
+    const store = freshProject();
+    addAsset(store);
+    addClip(store, "e", picture);
+    const color = { kind: "color", color: "#000000" };
+    success(
+      store.execute({
+        type: "clip.update",
+        params: { timeline: "main", clip: "e", changes: { source: color } },
+      }),
+    );
+    success(store.execute({ type: "asset.remove", params: { asset: "pic" } }, { origin: AI }));
+    blocked(store.undo());
+    expect(clip(store, "e")?.source).toEqual(color);
+  });
+
+  it("does not put a clip on a track of the wrong kind, which would cost the whole timeline", () => {
+    const store = freshProject();
+    const audio = Object.values(timeline(store).tracks).find(({ kind }) => kind === "audio")?.id;
+    const nested = { kind: "timeline", timeline: "main" };
+    addClip(store, "e", { kind: "color", color: "#000000" });
+    success(
+      store.execute({
+        type: "clip.update",
+        params: { timeline: "main", clip: "e", changes: { source: nested } },
+      }),
+    );
+    success(
+      store.execute(
+        {
+          type: "clip.move",
+          params: { timeline: "main", clips: [{ clip: "e", track: audio }] },
+        },
+        { origin: AI },
+      ),
+    );
+    blocked(store.undo());
+    expect(clip(store, "e")?.source).toEqual(nested);
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("keeps a clip a transition goes from", () => {
+    const store = freshProject();
+    addClip(store, "e", { kind: "color", color: "#000000" });
+    const home = clip(store, "e")?.track;
+    rewrite(
+      store,
+      MAIN,
+      (file: { tracks: { id: string; transitions?: object[] }[] }) => {
+        const track = file.tracks.find(({ id }) => id === home);
+        if (track) track.transitions = [{ id: "t", type: "dissolve", from: "e", duration: "1" }];
+      },
+      { origin: AI },
+    );
+    blocked(store.undo());
+    expect(clip(store, "e")).toBeDefined();
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("keeps a track when what is on it has to stay", () => {
+    const store = freshProject();
+    const home = clip(store, "c")?.track;
+    success(
+      store.execute(
+        { type: "track.add", params: { timeline: "main", kind: "video", id: "k" } },
+        { origin: AI },
+      ),
+    );
+    addClip(store, "e", { kind: "color", color: "#000000" }, { origin: AI }, "k");
+    rewrite(store, MAIN, (file: { tracks: { id: string; transitions?: object[] }[] }) => {
+      const track = file.tracks.find(({ id }) => id === home);
+      if (track) track.transitions = [{ id: "t", type: "dissolve", from: "e", duration: "1" }];
+    });
+    blocked(store.undoTask("task-1"));
+    expect(clip(store, "e")?.track).toBe("k");
+    expect(timeline(store).tracks["k"]).toBeDefined();
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("keeps the last section, without which no timeline can be saved", () => {
+    const store = freshProject();
+    const [first] = Object.keys(timeline(store).sections);
+    success(
+      store.execute({ type: "section.add", params: { timeline: "main", id: "s", duration: "2" } }),
+    );
+    success(
+      store.execute(
+        { type: "section.remove", params: { timeline: "main", section: first } },
+        { origin: AI },
+      ),
+    );
+    blocked(store.undo());
+    expect(Object.keys(timeline(store).sections)).toEqual(["s"]);
+    expect(store.exportFiles().files.has(MAIN)).toBe(true);
+  });
+
+  it("keeps a scene a clip uses", () => {
+    const store = freshProject();
+    const scene = { name: "场景", entry: "index.html", runtime: 1 };
+    success(store.importFile("scenes/s/scene.json", JSON.stringify(scene), { origin: AI }));
+    addClip(store, "e", { kind: "scene", scene: "s" });
+    blocked(store.undoTask("task-1"));
+    expect(store.getState().scenes["s"]).toBeDefined();
+  });
+
+  it("keeps a sound a clip uses", () => {
+    const store = freshProject();
+    const audio = Object.values(timeline(store).tracks).find(({ kind }) => kind === "audio")?.id;
+    const sound = { name: "声音", entry: "main.js", runtime: 1 };
+    success(store.importFile("sounds/s/sound.json", JSON.stringify(sound), { origin: AI }));
+    addClip(store, "e", { kind: "sound", sound: "s" }, {}, audio);
+    blocked(store.undoTask("task-1"));
+    expect(store.getState().sounds["s"]).toBeDefined();
+  });
+
+  it("keeps an asset that a version shows instead of something else", () => {
+    const store = open();
+    const file = "timelines/main/overrides/language.en.json";
+    addAsset(store, { origin: AI });
+    rewrite(store, file, ({ clips }: { clips: Record<string, { source?: object }> }) => {
+      for (const changes of Object.values(clips)) {
+        if (changes.source) changes.source = { value: { kind: "audio", media: { asset: "pic" } } };
+      }
+    });
+    blocked(store.undoTask("task-1"));
+    expect(store.getState().assets?.["pic"]).toBeDefined();
+  });
+
+  describe("that was already broken", () => {
+    const without = (id: string) => (document: { assets: Record<string, unknown> }) => {
+      delete document.assets[id];
+    };
+
+    it("does not stop what has nothing to do with it", () => {
+      const store = freshProject();
+      addAsset(store);
+      addClip(store, "e", picture);
+      const { results } = success(
+        store.execute({ type: "track.add", params: { timeline: "main", kind: "video" } }),
+      );
+      const { id } = results[0] as { id: string };
+      const home = clip(store, "e")?.track;
+      success(
+        store.execute(
+          { type: "clip.move", params: { timeline: "main", clips: [{ clip: "e", track: id }] } },
+          { origin: AI },
+        ),
+      );
+      rewrite(store, "assets.json", without("pic"));
+      taken(store.undoTask("task-1"));
+      expect(clip(store, "e")?.track).toBe(home);
+    });
+
+    it("goes back and forth as often as people like", () => {
+      const store = open();
+      const before = store.getState();
+      rewrite(store, "assets.json", without("studio-loop"));
+      const after = store.getState();
+      taken(store.undo());
+      expect(store.getState()).toEqual(before);
+      taken(store.redo());
+      expect(store.getState()).toEqual(after);
+      taken(store.undo());
+      expect(store.getState()).toEqual(before);
+    });
+
+    it("can go back to how it was after somebody repaired it", () => {
+      const store = open();
+      const { assets } = store.getState();
+      rewrite(store, "assets.json", without("studio-loop"));
+      const broken = store.getState();
+      const asset = assets?.["studio-loop"];
+      success(store.execute({ type: "asset.add", params: { id: "studio-loop", asset } }));
+      expect(store.getState()).not.toEqual(broken);
+      taken(store.undo());
+      expect(store.getState()).toEqual(broken);
+    });
+
+    it("does not take in new things that would break", () => {
+      const store = freshProject();
+      addAsset(store, { origin: AI });
+      addClip(store, "e", picture, { origin: AI });
+      rewrite(store, "assets.json", without("pic"));
+      taken(store.undo());
+      const later = { ...picture };
+      success(
+        store.execute(
+          {
+            type: "clip.add",
+            params: {
+              timeline: "main",
+              track: videoTrack(store),
+              clip: { id: "f", start: "9", duration: "1", source: later },
+            },
+          },
+          { origin: aiTask("another") },
+        ),
+      );
+      blocked(store.redo());
+      expect(store.getState().assets?.["pic"]).toBeDefined();
+    });
+  });
+});
+
+describe("while an update is missing", () => {
+  /** A window that got the second of two updates: the field is gone, the new value is waiting. */
+  function torn() {
+    const a = freshProject();
+    const doc = new Y.Doc();
+    doc.clientID = a.doc.clientID + 1;
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(a.doc), "sync");
+    const b = new ProjectStore(doc);
+    const updates: Uint8Array[] = [];
+    a.onLocalUpdate((update) => updates.push(update));
+    success(
+      a.execute({
+        type: "clip.update",
+        params: { timeline: "main", clip: "d", changes: { name: "新名字" } },
+      }),
+    );
+    moveTo(a, "c", "2");
+    b.applyUpdates([updates[1] as Uint8Array]);
+    return { a, b, updates };
+  }
+
+  const code = (result: CommandResult | UndoResult) => (result.ok ? undefined : result.error.code);
+
+  it("has a window with a hole in it, which is why this matters", () => {
+    const { b } = torn();
+    expect(b.isMissingUpdates).toBe(true);
+    expect(clip(b, "c")?.start).toBeUndefined();
+  });
+
+  it("takes no commands, and says why", () => {
+    const { b } = torn();
+    const { revision } = b;
+    const result = b.execute({
+      type: "clip.move",
+      params: { timeline: "main", clips: [{ clip: "c", start: "30" }] },
+    });
+    expect(code(result)).toBe("missing-updates");
+    expect(failure(result).message).toContain("刷新");
+    expect(b.revision).toBe(revision);
+    expect(b.canUndo).toBe(false);
+  });
+
+  it("takes no batches, files or trial runs", () => {
+    const { b } = torn();
+    const rename = { type: "project.rename", params: { name: "不会改" } };
+    expect(code(b.executeBatch([rename]))).toBe("missing-updates");
+    expect(code(b.execute(rename, { dryRun: true }))).toBe("missing-updates");
+    expect(code(b.importFile("code/a.js", "x"))).toBe("missing-updates");
+    expect(b.getState().manifest.name).toBe("并发");
+  });
+
+  it("does not touch what is on the lists, and goes on with them afterwards", () => {
+    const { a, b, updates } = torn();
+    void a;
+    const other = freshProject();
+    void other;
+    b.applyUpdates(updates);
+    setOpacity(b, 0.5);
+    setOpacity(b, 0.7);
+    b.undo();
+    setOpacity(b, 0.6, { origin: AI });
+    const next: Uint8Array[] = [];
+    a.onLocalUpdate((update) => next.push(update));
+    success(a.execute({ type: "project.rename", params: { name: "一" } }));
+    success(a.execute({ type: "project.rename", params: { name: "二" } }));
+    b.applyUpdates([next[1] as Uint8Array]);
+    expect(code(b.undo())).toBe("missing-updates");
+    expect(code(b.redo())).toBe("missing-updates");
+    expect(code(b.undoTask("task-1"))).toBe("missing-updates");
+    expect(code(b.redoTask("task-1"))).toBe("missing-updates");
+    b.applyUpdates(next);
+    taken(b.undoTask("task-1"));
+    expect(opacity(b)).toBe(0.5);
+    taken(b.undo());
+    expect(opacity(b)).toBeUndefined();
+  });
+
+  it("leaves no lasting damage once the update arrives", () => {
+    const { a, b, updates } = torn();
+    moveTo(a, "d", "11");
+    const refused = b.execute({
+      type: "clip.move",
+      params: { timeline: "main", clips: [{ clip: "c", start: "30" }] },
+    });
+    expect(refused.ok).toBe(false);
+    b.applyUpdates(updates);
+    expect(b.isMissingUpdates).toBe(false);
+    expect(clip(b, "c")?.start).toBe("2");
+    expect(code(b.undo())).toBe("nothing-to-undo");
+    sync(a, b);
+    expect(clip(a, "c")?.start).toBe("2");
+    expect(a.exportFiles().files.has(MAIN)).toBe(true);
+    expect(buildRenderPlan(b.getState(), "main")).toBeDefined();
+    moveTo(b, "d", "40");
+    const { store: reopened } = ProjectStore.fromUpdates([a.mergeWith([b.encodeState()])]);
+    expect(clip(reopened as ProjectStore, "c")?.start).toBe("2");
+  });
+
+  it("takes changes again after everything there is was read, with or without the update", () => {
+    const { b, updates } = torn();
+    b.catchUp([]);
+    expect(b.isMissingUpdates).toBe(true);
+    success(b.execute({ type: "project.rename", params: { name: "还能用" } }));
+    expect(b.getState().manifest.name).toBe("还能用");
+    b.catchUp(updates);
+    expect(b.isMissingUpdates).toBe(false);
+  });
+
+  it("waits again when more arrives after that", () => {
+    const { b } = torn();
+    b.catchUp([]);
+    b.applyUpdates([new Uint8Array([0, 0])]);
+    expect(code(b.execute({ type: "project.rename", params: { name: "不会改" } }))).toBe(
+      "missing-updates",
+    );
+  });
+
+  it("is no reason to wait when nothing arrived", () => {
+    const { b } = torn();
+    b.catchUp([]);
+    b.applyUpdates([]);
+    success(b.execute({ type: "project.rename", params: { name: "还能用" } }));
+  });
+
+  it("does not lock people out of a project with a damaged log", () => {
+    const { a, updates } = torn();
+    const { store, damaged } = ProjectStore.fromUpdates([
+      freshProject().encodeState(),
+      updates[1] as Uint8Array,
+    ]);
+    expect(damaged).toBe(0);
+    void a;
+    expect(store?.isMissingUpdates).toBe(true);
+    success(
+      (store as ProjectStore).execute({ type: "project.rename", params: { name: "还能用" } }),
+    );
+  });
+
+  it("does not take a log for lost when shortening it", () => {
+    const { b, updates } = torn();
+    b.mergeWith([]);
+    expect(b.isMissingUpdates).toBe(true);
+    success(b.execute({ type: "project.rename", params: { name: "还能用" } }));
+    b.mergeWith(updates);
+    expect(b.isMissingUpdates).toBe(false);
+  });
+
+  it("notices a missing delete as well", () => {
+    const a = freshProject();
+    const b = twin(a);
+    const updates: Uint8Array[] = [];
+    a.onLocalUpdate((update) => updates.push(update));
+    success(
+      a.execute({
+        type: "marker.add",
+        params: { timeline: "main", marker: { id: "m", time: "1" } },
+      }),
+    );
+    success(a.execute({ type: "marker.remove", params: { timeline: "main", marker: "m" } }));
+    b.applyUpdates([updates[1] as Uint8Array]);
+    expect(b.isMissingUpdates).toBe(true);
+    expect(code(b.execute({ type: "project.rename", params: { name: "不会改" } }))).toBe(
+      "missing-updates",
+    );
+    b.applyUpdates([updates[0] as Uint8Array]);
+    success(b.execute({ type: "project.rename", params: { name: "改了" } }));
+  });
+});
+
+describe("a version file for a timeline that is not there", () => {
+  const file = "timelines/nope/overrides/language.en.json";
+  const text = JSON.stringify({ scope: { language: "en" } });
+
+  it("is refused, and says why", () => {
+    const store = open();
+    const before = store.getState();
+    const error = failure(store.importFile(file, text));
+    expect(error.code).toBe("invalid-file");
+    expect(error.problems).toEqual([
+      expect.objectContaining({ severity: "error", code: "timeline-missing", file }),
+    ]);
+    expect(store.getState()).toBe(before);
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("does not get far enough to look at what is in it", () => {
+    const store = open();
+    const error = failure(store.importFile(file, "not json"));
+    expect(error.problems).toHaveLength(1);
+    expect(error.problems?.[0]?.code).not.toBe("timeline-missing");
+  });
+
+  it("is fine for a timeline that is there", () => {
+    const store = open();
+    success(
+      store.importFile(
+        "timelines/main/overrides/language.fr.json",
+        JSON.stringify({ scope: { language: "fr" } }),
+      ),
+    );
+    expect(timeline(store).overrides["language.fr"]).toEqual({ scope: { language: "fr" } });
+  });
+
+  it("does not take a name every object has for a timeline", () => {
+    const store = open();
+    const error = failure(store.importFile("timelines/constructor/overrides/a.json", text));
+    expect(error.problems?.[0]?.code).toBe("timeline-missing");
+  });
+});
+
+describe("a real document from when assets, notes and properties had maps of their own", () => {
+  /**
+   * Saved by the code of that time, not made with today's code: this is what people have. The
+   * example project plus real work on it: more properties in maps that were there, a first map, a
+   * map that was emptied again, an asset that came and one that went, a note, a track with
+   * properties, and versions with maps inside of maps. Never change these two files.
+   */
+  const folder = new URL("../fixtures/before-flat-levels/", import.meta.url);
+  const update = () =>
+    Uint8Array.from(Buffer.from(readFileSync(new URL("document.txt", folder), "utf8"), "base64"));
+  const saved = () => {
+    const { store, damaged } = ProjectStore.fromUpdates([update()]);
+    if (!store || damaged > 0) throw new Error("the sample did not open");
+    return store;
+  };
+  const SEEN_BACK_THEN = JSON.parse(readFileSync(new URL("state.json", folder), "utf8"));
+  const reopened = (store: ProjectStore) =>
+    ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
+  const rewrite = (store: ProjectStore, path: string, change: (document: never) => void) => {
+    const document = JSON.parse(store.exportFiles().files.get(path) as string);
+    change(document as never);
+    return success(store.importFile(path, JSON.stringify(document)));
+  };
+  const VERSION = "timelines/main/overrides/language.en.json";
+  const voiceTrack = (store: ProjectStore) =>
+    timeline(store).tracks["track_voice"] as { readonly properties?: object };
+
+  it("is still what was saved back then", () => {
+    const digest = (name: string) =>
+      createHash("sha256")
+        .update(readFileSync(new URL(name, folder)))
+        .digest("hex");
+    expect(digest("document.txt")).toBe(
+      "74bc890c02b037442652889fbac9aed318cdaff93690a63f43aff888fb02b610",
+    );
+    expect(digest("state.json")).toBe(
+      "d6937ab3adb15823869473ecaa8e99355cb0275c17b008e5d63d76fada6dcf2d",
+    );
+  });
+
+  it("really has them", () => {
+    const root = saved().doc.getMap<Y.Map<unknown>>("project");
+    const main = (root.get("timelines") as Y.Map<Y.Map<Y.Map<Y.Map<unknown>>>>).get("main");
+    expect(root.get("assets")).toBeInstanceOf(Y.Map);
+    expect(root.get("notes")).toBeInstanceOf(Y.Map);
+    expect(main?.get("tracks")?.get("track_voice")?.get("properties")).toBeInstanceOf(Y.Map);
+    expect(main?.get("clips")?.get("clip_interview")?.get("properties")).toBeInstanceOf(Y.Map);
+    const version = main?.get("overrides")?.get("language.en") as Y.Map<Y.Map<Y.Map<unknown>>>;
+    const changes = version.get("clips")?.get("clip_interview") as Y.Map<unknown>;
+    expect(changes.get("properties")).toBeInstanceOf(Y.Map);
+  });
+
+  it("writes next to them, where two windows cannot get in each other's way", () => {
+    const store = saved();
+    setProperty(store, "opacity", 0.1, {}, "clip_interview");
+    const asset = { kind: "image", path: "assets/n.png", storage: "local" };
+    success(store.execute({ type: "asset.add", params: { id: "new", asset } }));
+    rewrite(store, "notes.json", (document: { notes: { id: string; text: string }[] }) => {
+      for (const note of document.notes) if (note.id === "note_later") note.text = "看过了";
+    });
+    rewrite(store, MAIN, (document: { tracks: { id: string; properties?: object }[] }) => {
+      const track = document.tracks.find(({ id }) => id === "track_voice");
+      if (track) track.properties = { ...track.properties, "audio.volume": -6 };
+    });
+    type Level = Y.Map<unknown>;
+    const root = store.doc.getMap<unknown>("project");
+    const main = (root.get("timelines") as Y.Map<Y.Map<Y.Map<Level>>>).get("main");
+    const video = main?.get("clips")?.get("clip_interview") as Level;
+    const voice = main?.get("tracks")?.get("track_voice") as Level;
+    expect(video.get("properties/opacity")).toBe(0.1);
+    expect((video.get("properties") as Level).has("opacity")).toBe(false);
+    expect(voice.get("properties/audio.volume")).toBe(-6);
+    expect((voice.get("properties") as Level).has("audio.volume")).toBe(false);
+    expect(root.get("assets/new")).toEqual(asset);
+    expect((root.get("assets") as Level).has("new")).toBe(false);
+    expect(root.get("notes/note_later")).toMatchObject({ text: "看过了" });
+    expect((root.get("notes") as Level).has("note_later")).toBe(false);
+  });
+
+  it("reads as it read back then", () => {
+    expect(saved().getState()).toEqual(SEEN_BACK_THEN);
+  });
+
+  it("writes valid files, which read the same", () => {
+    const { files, problems } = saved().exportFiles();
+    expect(problems).toEqual([]);
+    const { store } = ProjectStore.open(files);
+    expect((store as ProjectStore).exportFiles().files).toEqual(files);
+  });
+
+  it("takes changes to properties in a map, and keeps the others next to them", () => {
+    const store = saved();
+    const before = clip(store, "clip_interview")?.properties;
+    setProperty(store, "opacity", 0.1, {}, "clip_interview");
+    setProperty(store, "transform.y", 8, {}, "clip_interview");
+    expect(clip(reopened(store), "clip_interview")?.properties).toEqual({
+      ...before,
+      opacity: 0.1,
+      "transform.y": 8,
+    });
+  });
+
+  it("takes them away for good, also the last one of a map", () => {
+    const store = saved();
+    for (const path of Object.keys(clip(store, "clip_card")?.properties ?? {})) {
+      success(edit(store, "clip_card", { path, op: "clear" }));
+    }
+    expect(clip(store, "clip_card")).not.toHaveProperty("properties");
+    expect(clip(reopened(store), "clip_card")).not.toHaveProperty("properties");
+  });
+
+  it("writes into a map that was emptied", () => {
+    const store = saved();
+    setProperty(store, "opacity", 0.1, {}, "clip_hit");
+    expect(clip(reopened(store), "clip_hit")?.properties).toEqual({ opacity: 0.1 });
+  });
+
+  it("undoes and redoes all of that exactly", () => {
+    const store = saved();
+    const steps: (() => unknown)[] = [
+      () => setProperty(store, "opacity", 0.1, {}, "clip_interview"),
+      () => edit(store, "clip_card", { path: "opacity", op: "clear" }),
+      () => store.execute({ type: "asset.remove", params: { asset: "later" } }),
+      () =>
+        rewrite(store, "notes.json", (document: { notes: unknown[] }) => {
+          document.notes.pop();
+        }),
+      () =>
+        rewrite(store, MAIN, (document: { tracks: { id: string; properties?: object }[] }) => {
+          delete document.tracks.find(({ id }) => id === "track_voice")?.properties;
+        }),
+      () =>
+        rewrite(store, VERSION, (document: { clips: Record<string, { properties?: object }> }) => {
+          delete (document.clips["clip_interview"] as { properties?: object }).properties;
+        }),
+    ];
+    const states = [store.getState()];
+    for (const step of steps) {
+      step();
+      states.push(store.getState());
+    }
+    expect(new Set(states).size).toBe(steps.length + 1);
+    for (const state of states.toReversed().slice(1)) {
+      taken(store.undo());
+      expect(store.getState()).toEqual(state);
+    }
+    expect(store.getState()).toEqual(SEEN_BACK_THEN);
+    for (const state of states.slice(1)) {
+      taken(store.redo());
+      expect(store.getState()).toEqual(state);
+    }
+    expect(reopened(store).getState()).toEqual(store.getState());
+  });
+
+  it("takes changes to assets", () => {
+    const store = saved();
+    const asset = { kind: "image", path: "assets/n.png", storage: "local" };
+    success(store.execute({ type: "asset.add", params: { id: "new", asset } }));
+    success(store.execute({ type: "asset.remove", params: { asset: "later" } }));
+    const { assets } = reopened(store).getState();
+    expect(assets?.["new"]).toEqual(asset);
+    expect(assets?.["later"]).toBeUndefined();
+    expect(Object.keys(assets ?? {})).toHaveLength(Object.keys(SEEN_BACK_THEN.assets).length);
+  });
+
+  it("does not bring back what went away from a map", () => {
+    expect(saved().getState().assets?.["gone"]).toBeUndefined();
+  });
+
+  it("takes changes to notes", () => {
+    const store = saved();
+    rewrite(store, "notes.json", (document: { notes: { id: string; text: string }[] }) => {
+      for (const note of document.notes) if (note.id === "note_later") note.text = "看过了";
+    });
+    expect(reopened(store).getState().notes?.["note_later"]?.text).toBe("看过了");
+    expect(Object.keys(reopened(store).getState().notes ?? {})).toHaveLength(
+      Object.keys(SEEN_BACK_THEN.notes).length,
+    );
+  });
+
+  it("takes changes to what a track has", () => {
+    const store = saved();
+    rewrite(store, MAIN, (document: { tracks: { id: string; properties?: object }[] }) => {
+      const track = document.tracks.find(({ id }) => id === "track_voice");
+      if (track) track.properties = { ...track.properties, "audio.volume": -6 };
+    });
+    expect(voiceTrack(reopened(store)).properties).toEqual({
+      ...voiceTrack(saved()).properties,
+      "audio.volume": -6,
+    });
+  });
+
+  it("takes changes to what a version changes", () => {
+    const store = saved();
+    type Version = { clips: Record<string, { properties: Record<string, object> }> };
+    rewrite(store, VERSION, (document: Version) => {
+      const changes = document.clips["clip_interview"] as Version["clips"][string];
+      changes.properties["transform.x"] = { value: 1 };
+    });
+    const { clips } = timeline(reopened(store)).overrides["language.en"] ?? {};
+    expect(clips?.["clip_interview"]?.properties).toEqual({
+      opacity: { value: 0.6, base: 0.75 },
+      "transform.x": { value: 1 },
+    });
+  });
+
+  it("merges what two windows write at the same time, into a map or next to it", () => {
+    const a = saved();
+    const b = twin(a);
+    setProperty(a, "transform.y", 1, {}, "clip_interview");
+    setProperty(b, "transform.scale", 2, {}, "clip_interview");
+    const asset = { kind: "image", path: "assets/n.png", storage: "local" };
+    success(a.execute({ type: "asset.add", params: { id: "from-a", asset } }));
+    success(b.execute({ type: "asset.add", params: { id: "from-b", asset } }));
+    sync(a, b);
+    expect(a.getState()).toEqual(b.getState());
+    expect(clip(a, "clip_interview")?.properties).toMatchObject({
+      "transform.y": 1,
+      "transform.scale": 2,
+    });
+    expect(a.getState().assets).toMatchObject({ "from-a": asset, "from-b": asset });
+    expect(reopened(a).getState()).toEqual(a.getState());
+  });
+
+  it("knows what is the same write there too", () => {
+    const store = saved();
+    setProperty(store, "opacity", 0.1, {}, "clip_interview");
+    setProperty(store, "opacity", 0.2, { origin: AI }, "clip_interview");
+    setProperty(store, "opacity", 0.1, { origin: AI }, "clip_interview");
+    blocked(store.undo());
+    expect(property(store, "opacity", "clip_interview")).toBe(0.1);
   });
 });
 

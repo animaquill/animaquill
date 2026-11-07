@@ -34,6 +34,7 @@ export interface MediaMessages {
   unsupported(name: string): void;
   tooLarge(name: string): void;
   saveFailed(name: string): void;
+  commandFailed(message: string): void;
 }
 
 async function hashOf(file: Blob): Promise<string> {
@@ -270,7 +271,9 @@ export class MediaLibrary {
       info: infoOf(facts),
     };
     const result = store.execute({ type: "asset.add", params: { id, asset } });
-    return result.ok ? id : undefined;
+    if (result.ok) return id;
+    this.#messages.commandFailed(result.error.message);
+    return undefined;
   }
 
   /**

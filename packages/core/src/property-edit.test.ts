@@ -200,11 +200,11 @@ describe("the property.edit command", () => {
       { owner: { clip: "d" }, path: "transform.y", op: "set", value: 5 },
     );
     expect(value("opacity")).toMatchObject({ keys: [{ time: "0" }, { time: "1" }] });
-    expect(store.undo()).toBe(true);
+    expect(store.undo().ok).toBe(true);
     expect(value("transform.x")).toBeUndefined();
     expect(value("opacity")).toBeUndefined();
     expect(value("transform.y", "d")).toBeUndefined();
-    expect(store.redo()).toBe(true);
+    expect(store.redo().ok).toBe(true);
     expect(value("transform.x")).toBe(10);
     expect(value("transform.y", "d")).toBe(5);
     expect(value("opacity")).toMatchObject({ keys: [{ time: "0" }, { time: "1" }] });

@@ -570,6 +570,126 @@ describe("two windows on one project", () => {
     expect(other.session.store?.isMissingUpdates).toBe(false);
   });
 
+  describe("while one went missing", () => {
+    /** Two windows, the other one with a hole: the first rename never reached it. */
+    async function missing() {
+      const { session, library } = setup();
+      await session.create("新项目");
+      const id = idOf(session);
+      const other = setup(library);
+      await other.session.open(id);
+      const listeners = new Set(library.listeners.get(id));
+      library.listeners.get(id)?.clear();
+      rename(session, "这一条丢了");
+      await settled(session);
+      for (const listener of listeners) library.listeners.get(id)?.add(listener);
+      return { session, other, library, id };
+    }
+
+    it("take no changes until the log was read", async () => {
+      const { session, other, library } = await missing();
+      const refused: unknown[] = [];
+      library.duringLoad = () => {
+        library.duringLoad = undefined;
+        refused.push(rename(other.session, "不会改"));
+      };
+      rename(session, "下一条");
+      await settled(session);
+      await settled(other.session);
+      expect(refused).toEqual([
+        { ok: false, error: expect.objectContaining({ code: "missing-updates" }) },
+      ]);
+      expect(rename(other.session, "现在可以了")).toMatchObject({ ok: true });
+    });
+
+    it("go on with what there is when the log does not have it either", async () => {
+      const { session, other, library, id } = await missing();
+      library.updates.get(id)?.splice(1, 1);
+      rename(session, "下一条");
+      await settled(session);
+      await settled(other.session);
+      expect(other.session.store?.isMissingUpdates).toBe(true);
+      expect(rename(other.session, "还能用")).toMatchObject({ ok: true });
+    });
+
+    it("keep reading when something else came in while reading", async () => {
+      const { session, other, library, id } = await missing();
+      const log = library.updates.get(id) as Uint8Array[];
+      const lost = log.splice(1, 1);
+      rename(session, "下一条");
+      const refused: unknown[] = [];
+      library.duringLoad = () => {
+        library.duringLoad = () => {
+          library.duringLoad = undefined;
+          refused.push(rename(other.session, "不会改"));
+        };
+        log.splice(1, 0, ...lost);
+        for (const listener of library.listeners.get(id) ?? []) listener(log.at(-1) as Uint8Array);
+      };
+      await settled(session);
+      await settled(other.session);
+      expect(refused).toEqual([
+        { ok: false, error: expect.objectContaining({ code: "missing-updates" }) },
+      ]);
+      expect(other.session.store?.isMissingUpdates).toBe(false);
+      expect(nameOf(other.session)).toBe("下一条");
+    });
+
+    it("keep taking no changes when the log cannot be read", async () => {
+      const { session, other, library } = await missing();
+      library.duringLoad = () => {
+        library.duringLoad = undefined;
+        throw new Error("blocked");
+      };
+      rename(session, "下一条");
+      await settled(session);
+      await settled(other.session);
+      expect(rename(other.session, "不会改")).toMatchObject({ ok: false });
+      rename(session, "再下一条");
+      await settled(session);
+      await settled(other.session);
+      expect(nameOf(other.session)).toBe("再下一条");
+      expect(rename(other.session, "现在可以了")).toMatchObject({ ok: true });
+    });
+  });
+
+  it("do not stand in the way of a project with a hole in its log", async () => {
+    const { session, library } = setup();
+    await session.create("新项目");
+    const id = idOf(session);
+    rename(session, "一");
+    await settled(session);
+    rename(session, "二");
+    await settled(session);
+    await session.close();
+    library.updates.get(id)?.splice(1, 1);
+    expect(await session.open(id)).toBe(true);
+    expect(session.store?.isMissingUpdates).toBe(true);
+    expect(rename(session, "三")).toMatchObject({ ok: true });
+  });
+
+  it("are read again when one that came in while opening needs something else", async () => {
+    const { session, library } = setup();
+    await session.create("新项目");
+    const id = idOf(session);
+    rename(session, "一");
+    await settled(session);
+    rename(session, "二");
+    await settled(session);
+    const log = library.updates.get(id) as Uint8Array[];
+    const later = log.splice(1);
+    library.duringLoad = () => {
+      library.duringLoad = undefined;
+      log.push(...later);
+      for (const listener of library.listeners.get(id) ?? []) listener(later[1] as Uint8Array);
+    };
+    const other = setup(library);
+    await other.session.open(id);
+    await settled(other.session);
+    expect(other.session.store?.isMissingUpdates).toBe(false);
+    expect(nameOf(other.session)).toBe("二");
+  });
+
   it("do not save each other's changes a second time", async () => {
     const { session, library } = setup();
     await session.create("新项目");

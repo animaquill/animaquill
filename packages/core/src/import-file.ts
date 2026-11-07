@@ -168,11 +168,15 @@ export function planFileImport(draft: Draft, path: string, text: string): readon
   } else if (overrides) {
     const [, owner = "", name = ""] = overrides;
     const value = parsed(path, text, Overrides, problems);
-    if (value) {
-      const known = entryOf(entryOf(draft.state.timelines, owner)?.overrides, name);
-      checkOverrideKeys(path, value, known, problems);
-      draft.replace(["timelines", owner, "overrides", name], value);
+    if (!value) return problems;
+    const target = entryOf(draft.state.timelines, owner);
+    if (!target) {
+      const message = `没有这条时间轴：${owner}`;
+      problems.push({ severity: "error", code: "timeline-missing", file: path, path: "", message });
+      return problems;
     }
+    checkOverrideKeys(path, value, entryOf(target.overrides, name), problems);
+    draft.replace(["timelines", owner, "overrides", name], value);
   } else if (scene) {
     const value = parsed(path, text, SceneManifest, problems);
     if (value) draft.replace(["scenes", scene], value);

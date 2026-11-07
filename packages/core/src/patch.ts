@@ -20,24 +20,40 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (!isPlainObject(a) || !isPlainObject(b)) return false;
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
-  return keys.every((key) => key in b && deepEqual(a[key], b[key]));
+  return keys.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
 }
 
-/** The patches that turn one value at a path into another, as fine-grained as the document is. */
+/** The patches that turn what is in one object into what is in the other. */
+function diffEntries(path: Path, before: Plain, after: Plain): Patch[] {
+  const patches: Patch[] = [];
+  for (const key of Object.keys(before)) {
+    if (!Object.hasOwn(after, key)) patches.push({ op: "delete", path: [...path, key] });
+  }
+  for (const [key, value] of Object.entries(after)) {
+    const known = Object.hasOwn(before, key) ? before[key] : undefined;
+    patches.push(...diff([...path, key], known, value));
+  }
+  return patches;
+}
+
+/**
+ * The patches that turn one value at a path into another, as fine-grained as the document is. A flat
+ * level has nothing of its own to change, so it always comes down to its entries.
+ */
 export function diff(path: Path, before: unknown, after: unknown): Patch[] {
   if (deepEqual(before, after)) return [];
+  if (isFlat(path)) {
+    return diffEntries(
+      path,
+      isPlainObject(before) ? before : {},
+      isPlainObject(after) ? after : {},
+    );
+  }
   if (after === undefined) return [{ op: "delete", path }];
   if (!isContainer(path) || !isPlainObject(before) || !isPlainObject(after)) {
     return [{ op: "set", path, value: after }];
   }
-  const patches: Patch[] = [];
-  for (const key of Object.keys(before)) {
-    if (!(key in after)) patches.push({ op: "delete", path: [...path, key] });
-  }
-  for (const [key, value] of Object.entries(after)) {
-    patches.push(...diff([...path, key], before[key], value));
-  }
-  return patches;
+  return diffEntries(path, before, after);
 }
 
 export function getIn(root: unknown, path: Path): unknown {
@@ -75,6 +91,8 @@ export function settledPatch(patch: Patch): Patch {
  */
 export class Mutator<T extends object> {
   readonly #owned = new WeakSet<object>();
+  /** How many entries a level has left. Counting them for each one that goes takes too long. */
+  readonly #entries = new WeakMap<object, number>();
   #root: T;
 
   constructor(root: T) {
@@ -108,16 +126,26 @@ export class Mutator<T extends object> {
 
   set(path: Path, value: unknown): void {
     const key = path.at(-1);
-    if (key !== undefined) this.#parent(path)[key] = value;
+    if (key === undefined) return;
+    const parent = this.#parent(path);
+    const left = this.#entries.get(parent);
+    if (left !== undefined && !Object.hasOwn(parent, key)) this.#entries.set(parent, left + 1);
+    parent[key] = value;
   }
 
   delete(path: Path): void {
     const key = path.at(-1);
     if (key === undefined || getIn(this.#root, path) === undefined) return;
     const parent = this.#parent(path);
-    delete parent[key];
     const level = path.slice(0, -1);
-    if (isFlat(level) && Object.keys(parent).length === 0) this.delete(level);
+    if (!isFlat(level)) {
+      delete parent[key];
+      return;
+    }
+    const left = (this.#entries.get(parent) ?? Object.keys(parent).length) - 1;
+    delete parent[key];
+    this.#entries.set(parent, left);
+    if (left === 0) this.delete(level);
   }
 
   apply(patch: Patch): void {

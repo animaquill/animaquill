@@ -1,6 +1,7 @@
 import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import { Draft } from "./draft.ts";
+import { Draft, type Step } from "./draft.ts";
+import { getIn } from "./patch.ts";
 import { ProjectStore } from "./store.ts";
 
 const clipPath = ["timelines", "main", "clips", "c"];
@@ -37,30 +38,121 @@ describe("planning a change", () => {
   it("takes a value the way the document will hold it", () => {
     const plan = draft();
     plan.set(["timelines", "main", "clips", "e"], { id: "e", name: undefined, properties: {} });
-    expect(plan.steps[0]?.patch).toMatchObject({ op: "set", value: { id: "e" } });
-    expect(plan.steps[0]?.after).toEqual({ id: "e" });
+    expect(plan.steps[0]?.patch).toEqual({
+      op: "set",
+      path: ["timelines", "main", "clips", "e"],
+      value: { id: "e" },
+    });
   });
 
-  it("remembers what each step left, also when a path is written twice", () => {
-    const plan = draft();
-    plan.set([...clipPath, "name"], "一");
-    plan.set([...clipPath, "name"], "二");
-    plan.delete([...clipPath, "name"]);
-    expect(plan.steps.map(({ after }) => after)).toEqual(["一", "二", undefined]);
+  it("writes a level one entry at a time, because that is how it is taken back", () => {
+    const plan = draft({ opacity: 0.5, "transform.x": 1 });
+    plan.set([...clipPath, "properties"], { opacity: 0.25, "transform.y": 2 });
+    expect(plan.steps.map(({ patch }) => [patch.op, patch.path.at(-1)])).toEqual([
+      ["delete", "transform.x"],
+      ["set", "opacity"],
+      ["set", "transform.y"],
+    ]);
   });
 
-  it("knows the owner of a level that has no entries yet", () => {
-    const plan = draft();
-    expect(plan.hasParent([...clipPath, "properties", "opacity"])).toBe(true);
-    expect(plan.hasParent(["timelines", "main", "clips", "e", "properties", "opacity"])).toBe(
-      false,
-    );
-    expect(plan.hasParent(["assets", "a"])).toBe(true);
+  it("takes a level away one entry at a time", () => {
+    const plan = draft({ opacity: 0.5, "transform.x": 1 });
+    plan.delete([...clipPath, "properties"]);
+    expect(plan.steps.map(({ patch }) => [patch.op, patch.path.at(-1)])).toEqual([
+      ["delete", "opacity"],
+      ["delete", "transform.x"],
+    ]);
+    expect(getIn(plan.state, [...clipPath, "properties"])).toBeUndefined();
+  });
+
+  it("finds the same when a level is replaced", () => {
+    const plan = draft({ opacity: 0.5 });
+    plan.replace([...clipPath, "properties"], {});
+    expect(plan.steps.map(({ patch }) => patch.path.at(-1))).toEqual(["opacity"]);
   });
 
   it("the last entry takes its level along", () => {
     const plan = draft({ opacity: 0.5 });
     plan.delete([...clipPath, "properties", "opacity"]);
     expect(plan.state.timelines["main"]?.clips["c"]).not.toHaveProperty("properties");
+  });
+});
+
+describe("taking a step back", () => {
+  const name = [...clipPath, "name"];
+
+  /** Plans on top of an earlier plan, as a second change would. */
+  const next = (plan: Draft, origin = "user") => new Draft(plan.state, origin, plan.written);
+
+  it("puts back what it replaced", () => {
+    const first = draft();
+    first.set(name, "一");
+    const [step] = first.steps;
+    const second = next(first);
+    expect(second.takeBack(step as Step)).toBe(true);
+    expect(getIn(second.state, name)).toBeUndefined();
+  });
+
+  it("does not happen once somebody else wrote there, also with the same value", () => {
+    const first = draft();
+    first.set(name, "一");
+    const [step] = first.steps;
+    const second = next(first, "ai:other");
+    second.set(name, "一");
+    const third = next(second);
+    expect(third.takeBack(step as Step)).toBe(false);
+    expect(third.steps).toEqual([]);
+    expect(getIn(third.state, name)).toBe("一");
+  });
+
+  it("hands the path back to what it replaced", () => {
+    const first = draft();
+    first.set(name, "一");
+    const second = next(first);
+    second.set(name, "二");
+    const [one] = first.steps;
+    const [two] = second.steps;
+    const third = next(second);
+    expect(third.takeBack(one as Step)).toBe(false);
+    expect(third.takeBack(two as Step)).toBe(true);
+    expect(third.takeBack(one as Step)).toBe(true);
+    expect(getIn(third.state, name)).toBeUndefined();
+  });
+
+  it("can be done again with what it leaves", () => {
+    const first = draft();
+    first.set(name, "一");
+    const second = next(first);
+    second.takeBack(first.steps[0] as Step);
+    const third = next(second);
+    expect(third.takeBack(second.steps[0] as Step)).toBe(true);
+    expect(getIn(third.state, name)).toBe("一");
+    const fourth = next(third);
+    expect(fourth.takeBack(third.steps[0] as Step)).toBe(true);
+    expect(getIn(fourth.state, name)).toBeUndefined();
+  });
+
+  it("cannot be done again in something that was replaced in the meantime", () => {
+    const first = draft();
+    first.set(name, "一");
+    const second = next(first);
+    second.takeBack(first.steps[0] as Step);
+    const third = next(second, "ai:other");
+    third.delete(clipPath);
+    const fourth = next(third);
+    expect(fourth.takeBack(second.steps[0] as Step)).toBe(false);
+    expect(getIn(fourth.state, clipPath)).toBeUndefined();
+  });
+
+  it("leaves what is above it as it found it", () => {
+    const first = draft();
+    first.set(["timelines", "main", "clips", "e"], { id: "e" });
+    const second = next(first);
+    second.set(["timelines", "main", "clips", "e", "name"], "一");
+    const third = next(second);
+    expect(third.takeBack(first.steps[0] as Step)).toBe(false);
+    expect(third.takeBack(second.steps[0] as Step)).toBe(true);
+    expect(third.takeBack(first.steps[0] as Step)).toBe(true);
+    expect(getIn(third.state, ["timelines", "main", "clips", "e"])).toBeUndefined();
   });
 });

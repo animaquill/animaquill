@@ -1,6 +1,7 @@
 *.md
 pnpm-lock.yaml
 packages/schema/fixtures
+packages/core/fixtures
 packages/schema/json-schema
 dist
 test-results

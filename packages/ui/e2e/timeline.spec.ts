@@ -688,6 +688,30 @@ test.describe("several windows", () => {
     await expect(timecode(other)).toHaveText("0:00/00");
   });
 
+  test("keep what the other one changed, and say so when undo cannot go on", async ({ page }) => {
+    await addColor(page);
+    const first = clips(page).first();
+    const other = await secondWindow(page);
+    await expect(clips(other)).toHaveCount(1);
+    await settle(other);
+    await settle(page);
+    const [x, y] = await middleOf(first);
+    await drag(page, [x, y], [x + 80, y]);
+    const moved = await labelOf(first);
+    await expect(clips(other).first()).toHaveAttribute("aria-label", moved);
+    await settle(other);
+    const [otherX, otherY] = await middleOf(clips(other).first());
+    await drag(other, [otherX, otherY], [otherX + 80, otherY]);
+    const movedAgain = await labelOf(clips(other).first());
+    await expect(first).toHaveAttribute("aria-label", movedAgain);
+
+    await page.keyboard.press("Control+z");
+    await expect(page.getByRole("status").getByText("这一步之后别人改过，已跳过")).toBeVisible();
+    await expect(first).toHaveAttribute("aria-label", movedAgain);
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(1);
+  });
+
   test("do not lose a selection to a change elsewhere", async ({ page }) => {
     await addColor(page, 2);
     const other = await secondWindow(page);

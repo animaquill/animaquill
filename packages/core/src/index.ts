@@ -74,6 +74,7 @@ export {
   type CommandResult,
   type ExecuteOptions,
   type HistoryEntry,
+  type UndoResult,
   type Origin,
 } from "./store.ts";
 export type { Path } from "./structure.ts";

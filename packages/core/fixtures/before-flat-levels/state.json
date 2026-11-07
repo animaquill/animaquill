@@ -1,0 +1,926 @@
+{
+  "manifest": {
+    "formatVersion": 1,
+    "id": "atoms-demo",
+    "name": "原子是什么",
+    "description": "一条用到格式每种能力的示例项目。",
+    "languages": [
+      {
+        "id": "zh-CN",
+        "name": "中文",
+        "font": "思源黑体"
+      },
+      {
+        "id": "en",
+        "name": "English"
+      }
+    ],
+    "formats": [
+      {
+        "id": "landscape",
+        "name": "YouTube 横屏",
+        "width": 1920,
+        "height": 1080,
+        "fps": "30"
+      },
+      {
+        "id": "vertical",
+        "name": "抖音竖屏",
+        "width": 1080,
+        "height": 1920,
+        "fps": "30000/1001",
+        "safeArea": {
+          "top": 0.1,
+          "right": 0.15,
+          "bottom": 0.2,
+          "left": 0
+        }
+      }
+    ],
+    "timelines": [
+      "main",
+      "highlight"
+    ],
+    "fonts": [
+      {
+        "family": "思源黑体",
+        "asset": "font-sans",
+        "weight": 700
+      }
+    ],
+    "cover": {
+      "timeline": "main",
+      "time": "2.5"
+    },
+    "credits": [
+      {
+        "role": "音乐",
+        "name": "示例作者"
+      }
+    ]
+  },
+  "assets": {
+    "font-sans": {
+      "kind": "font",
+      "path": "assets/fonts/sans.woff2",
+      "storage": "git",
+      "license": "OFL-1.1"
+    },
+    "interview": {
+      "name": "采访",
+      "kind": "video",
+      "path": "assets/interview.mp4",
+      "storage": "lfs",
+      "hash": "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=",
+      "size": 48211200,
+      "info": {
+        "duration": "12.5",
+        "width": 1920,
+        "height": 1080,
+        "fps": "30000/1001"
+      }
+    },
+    "logo": {
+      "kind": "image",
+      "path": "assets/logo.svg",
+      "storage": "git",
+      "credit": "示例作者"
+    },
+    "narration-en": {
+      "kind": "audio",
+      "path": "assets/voice/en.flac",
+      "storage": "lfs",
+      "info": {
+        "duration": "26",
+        "sampleRate": 48000,
+        "channels": 1
+      }
+    },
+    "narration-zh": {
+      "kind": "audio",
+      "path": "assets/voice/zh.flac",
+      "storage": "lfs",
+      "info": {
+        "duration": "20",
+        "sampleRate": 48000,
+        "channels": 1
+      }
+    },
+    "raw-footage": {
+      "kind": "video",
+      "path": "assets/raw.mov",
+      "storage": "local"
+    },
+    "studio-loop": {
+      "kind": "audio",
+      "path": "assets/loop.wav",
+      "storage": "remote",
+      "url": "https://storage.example.com/loop.wav"
+    },
+    "later": {
+      "kind": "image",
+      "path": "assets/later.png",
+      "storage": "local",
+      "hash": "sha256-later"
+    }
+  },
+  "libraries": {
+    "libraries": [
+      {
+        "id": "lib_7f3a",
+        "type": "assets",
+        "source": "https://github.com/example/brand-assets.git",
+        "track": "main",
+        "priority": 1
+      },
+      {
+        "id": "lib_91c0",
+        "type": "experience",
+        "source": "https://github.com/example/notes.git",
+        "track": "main",
+        "followLatest": true
+      }
+    ]
+  },
+  "lock": {
+    "libraries": {
+      "lib_7f3a": {
+        "commit": "a1b2c3d",
+        "integrity": "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU="
+      }
+    }
+  },
+  "notes": {
+    "note_1": {
+      "id": "note_1",
+      "status": "pending",
+      "text": "字再大一点，放到画面上方",
+      "timeline": "main",
+      "time": "1.5",
+      "language": "en",
+      "format": "vertical",
+      "targets": [
+        {
+          "clip": "clip_title",
+          "path": "param.size",
+          "name": "标题文字"
+        }
+      ],
+      "marks": [
+        {
+          "type": "area",
+          "x": 0.2,
+          "y": 0.1,
+          "width": 0.6,
+          "height": 0.2
+        },
+        {
+          "type": "arrow",
+          "from": [
+            0.5,
+            0.5
+          ],
+          "to": [
+            0.5,
+            0.2
+          ]
+        }
+      ],
+      "changes": [
+        {
+          "path": "param.size",
+          "from": 64,
+          "to": 96
+        }
+      ],
+      "createdAt": "2026-11-05T10:00:00.000Z"
+    },
+    "note_later": {
+      "id": "note_later",
+      "status": "pending",
+      "text": "再看一下",
+      "timeline": "main",
+      "time": "2",
+      "createdAt": "2026-11-01T00:00:00Z"
+    }
+  },
+  "scenes": {
+    "title": {
+      "name": "标题卡",
+      "description": "带编号的章节标题",
+      "entry": "index.html",
+      "runtime": 1,
+      "params": [
+        {
+          "id": "title",
+          "name": "标题",
+          "type": "text"
+        },
+        {
+          "id": "size",
+          "name": "字号",
+          "type": "number",
+          "default": 64,
+          "min": 12,
+          "max": 200
+        },
+        {
+          "id": "accent",
+          "name": "强调色",
+          "type": "color",
+          "default": "#ffc371"
+        },
+        {
+          "id": "style",
+          "name": "样式",
+          "type": "choice",
+          "default": "plain",
+          "options": [
+            "plain",
+            "outlined"
+          ]
+        }
+      ],
+      "presets": [
+        {
+          "name": "大标题",
+          "values": {
+            "size": 96,
+            "style": "outlined"
+          }
+        }
+      ]
+    }
+  },
+  "sounds": {
+    "impacts": {
+      "name": "打击音效",
+      "entry": "main.js",
+      "runtime": 1,
+      "outputs": [
+        "hit",
+        "whoosh"
+      ]
+    }
+  },
+  "locales": {
+    "en": {
+      "intro.title": {
+        "text": "What is an atom",
+        "base": "原子是什么"
+      },
+      "subtitle.one": {
+        "text": "All matter is made of atoms",
+        "base": "一切物质都由原子组成"
+      }
+    },
+    "zh-CN": {
+      "intro.title": {
+        "text": "原子是什么",
+        "note": "片头大标题"
+      },
+      "subtitle.one": {
+        "text": "一切物质都由原子组成"
+      }
+    }
+  },
+  "timelines": {
+    "main": {
+      "name": "主线",
+      "background": "#101418",
+      "beatGrid": {
+        "segments": [
+          {
+            "start": "0",
+            "bpm": 120,
+            "meter": [
+              4,
+              4
+            ]
+          },
+          {
+            "start": "16",
+            "bpm": 90,
+            "meter": [
+              3,
+              4
+            ],
+            "downbeat": "16.5"
+          }
+        ]
+      },
+      "mix": {
+        "buses": [
+          {
+            "id": "bus_music",
+            "name": "音乐总线",
+            "properties": {
+              "audio.volume": -6
+            }
+          },
+          {
+            "id": "bus_room",
+            "name": "房间混响",
+            "effects": [
+              {
+                "id": "fx_room",
+                "type": "reverb",
+                "properties": {
+                  "mix": 0.3,
+                  "seconds": 1.8,
+                  "seed": 3
+                }
+              }
+            ],
+            "output": "bus_music"
+          }
+        ],
+        "master": {
+          "effects": [
+            {
+              "id": "fx_limit",
+              "type": "limiter",
+              "properties": {
+                "ceiling": -1,
+                "release": 0.1
+              }
+            }
+          ]
+        }
+      },
+      "sections": {
+        "section_intro": {
+          "id": "section_intro",
+          "name": "片头",
+          "duration": "5",
+          "order": 0
+        },
+        "section_body": {
+          "id": "section_body",
+          "name": "讲解",
+          "duration": "20",
+          "order": 1
+        },
+        "section_end": {
+          "id": "section_end",
+          "name": "结尾",
+          "duration": "5.005",
+          "order": 2
+        }
+      },
+      "tracks": {
+        "track_video": {
+          "id": "track_video",
+          "name": "画面",
+          "kind": "video",
+          "order": 0
+        },
+        "track_overlay": {
+          "id": "track_overlay",
+          "name": "叠加",
+          "locked": true,
+          "group": "画面组",
+          "kind": "video",
+          "hidden": false,
+          "order": 1
+        },
+        "track_voice": {
+          "id": "track_voice",
+          "name": "配音",
+          "kind": "audio",
+          "role": "voice",
+          "properties": {
+            "audio.volume": -1,
+            "audio.pan": 0.25
+          },
+          "order": 2
+        },
+        "track_music": {
+          "id": "track_music",
+          "name": "音乐",
+          "kind": "audio",
+          "role": "music",
+          "muted": false,
+          "solo": false,
+          "effects": [
+            {
+              "id": "fx_duck",
+              "type": "duck",
+              "properties": {
+                "amount": 0.75,
+                "attack": 0.02,
+                "release": 0.3,
+                "track": "track_voice"
+              }
+            }
+          ],
+          "sends": [
+            {
+              "bus": "bus_room",
+              "properties": {
+                "audio.volume": -12
+              }
+            }
+          ],
+          "output": "bus_music",
+          "order": 3
+        },
+        "track_captions": {
+          "id": "track_captions",
+          "name": "字幕",
+          "kind": "caption",
+          "order": 4
+        }
+      },
+      "clips": {
+        "clip_title": {
+          "id": "clip_title",
+          "name": "标题",
+          "start": "0",
+          "duration": "5",
+          "source": {
+            "kind": "scene",
+            "scene": "title"
+          },
+          "fadeOut": "0.5",
+          "sectionFit": "stretch",
+          "properties": {
+            "opacity": {
+              "keys": [
+                {
+                  "time": "0",
+                  "value": 0,
+                  "interp": "bezier",
+                  "out": [
+                    0.42,
+                    0
+                  ]
+                },
+                {
+                  "time": "1/3",
+                  "value": 1,
+                  "in": [
+                    0.58,
+                    1
+                  ],
+                  "tangent": "aligned"
+                },
+                {
+                  "time": "4",
+                  "value": 1,
+                  "interp": "hold"
+                }
+              ],
+              "after": "hold"
+            },
+            "param.accent": "#ffc371",
+            "param.size": 64,
+            "param.title": {
+              "string": "intro.title"
+            },
+            "transform.x": {
+              "keys": [
+                {
+                  "time": "0",
+                  "value": 0,
+                  "interp": "spring",
+                  "spring": {
+                    "stiffness": 180,
+                    "damping": 12
+                  }
+                },
+                {
+                  "time": "2",
+                  "value": 192,
+                  "interp": "preset",
+                  "preset": "back-out"
+                },
+                {
+                  "time": "3",
+                  "value": 0
+                }
+              ],
+              "before": "hold",
+              "after": "pingpong",
+              "modifiers": [
+                {
+                  "type": "noise",
+                  "amount": 19.2,
+                  "frequency": 3,
+                  "seed": 7
+                }
+              ]
+            }
+          },
+          "track": "track_video"
+        },
+        "clip_interview": {
+          "id": "clip_interview",
+          "name": "采访",
+          "start": "5",
+          "duration": "12.5",
+          "source": {
+            "kind": "video",
+            "media": {
+              "asset": "interview"
+            }
+          },
+          "offset": "1.5",
+          "link": "link_interview",
+          "sectionFit": "hold",
+          "properties": {
+            "crop.left": 0.1,
+            "fit": "cover",
+            "time.speed": {
+              "keys": [
+                {
+                  "time": "0",
+                  "value": 1
+                },
+                {
+                  "time": "6",
+                  "value": 0.5
+                }
+              ]
+            },
+            "opacity": 0.75,
+            "transform.x": 12
+          },
+          "effects": [
+            {
+              "id": "fx_blur",
+              "type": "blur",
+              "properties": {
+                "radius": {
+                  "keys": [
+                    {
+                      "time": "0",
+                      "value": 0
+                    },
+                    {
+                      "time": "1",
+                      "value": 12
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": "fx_grade",
+              "type": "plugin.film-grade",
+              "enabled": false,
+              "properties": {
+                "strength": 0.4
+              }
+            }
+          ],
+          "track": "track_video"
+        },
+        "clip_logo": {
+          "id": "clip_logo",
+          "start": "17.5",
+          "duration": "7.5",
+          "source": {
+            "kind": "image",
+            "media": {
+              "library": "lib_7f3a",
+              "path": "assets/logo.png"
+            }
+          },
+          "properties": {
+            "blend": "screen",
+            "transform.width": 192,
+            "transform.x": 768,
+            "transform.y": -432
+          },
+          "track": "track_video"
+        },
+        "clip_card": {
+          "id": "clip_card",
+          "start": "25",
+          "duration": "5.005",
+          "source": {
+            "kind": "scene",
+            "library": "lib_7f3a",
+            "resource": "title-card"
+          },
+          "track": "track_video",
+          "properties": {
+            "opacity": 0.5,
+            "transform.rotation": 15
+          }
+        },
+        "clip_lottie": {
+          "id": "clip_lottie",
+          "start": "6",
+          "duration": "4",
+          "source": {
+            "kind": "plugin.lottie",
+            "loops": 3,
+            "src": {
+              "asset": "logo"
+            }
+          },
+          "loop": true,
+          "track": "track_overlay"
+        },
+        "clip_idea": {
+          "id": "clip_idea",
+          "name": "样片：换个开场",
+          "start": "10",
+          "duration": "2",
+          "source": {
+            "kind": "color",
+            "color": "#000000"
+          },
+          "hidden": true,
+          "draft": true,
+          "track": "track_overlay"
+        },
+        "clip_voice": {
+          "id": "clip_voice",
+          "start": "0",
+          "duration": "20",
+          "source": {
+            "kind": "audio",
+            "media": {
+              "asset": "narration-zh"
+            }
+          },
+          "properties": {
+            "audio.volume": -3
+          },
+          "track": "track_voice"
+        },
+        "clip_interview_audio": {
+          "id": "clip_interview_audio",
+          "start": "20",
+          "duration": "5",
+          "source": {
+            "kind": "audio",
+            "media": {
+              "asset": "studio-loop"
+            }
+          },
+          "fadeIn": "0.2",
+          "fadeOut": "0.2",
+          "link": "link_interview",
+          "properties": {
+            "audio.pan": -0.2,
+            "audio.pitch": 2,
+            "audio.preservePitch": true
+          },
+          "track": "track_voice"
+        },
+        "clip_hit": {
+          "id": "clip_hit",
+          "start": "5",
+          "duration": "1",
+          "source": {
+            "kind": "sound",
+            "sound": "impacts",
+            "output": "hit"
+          },
+          "sectionFit": "span",
+          "track": "track_music"
+        },
+        "clip_bed": {
+          "id": "clip_bed",
+          "start": "6",
+          "duration": "24",
+          "source": {
+            "kind": "audio",
+            "media": {
+              "library": "lib_7f3a",
+              "path": "music/bed.flac"
+            }
+          },
+          "loop": true,
+          "properties": {
+            "audio.volume": {
+              "keys": [
+                {
+                  "time": "0",
+                  "value": -12
+                },
+                {
+                  "time": "20",
+                  "value": -30
+                }
+              ]
+            }
+          },
+          "track": "track_music"
+        },
+        "clip_line": {
+          "id": "clip_line",
+          "start": "5",
+          "duration": "3",
+          "source": {
+            "kind": "caption",
+            "text": {
+              "string": "subtitle.one"
+            },
+            "words": [
+              {
+                "text": "一切",
+                "time": "0"
+              },
+              {
+                "text": "物质",
+                "time": "0.8"
+              }
+            ]
+          },
+          "properties": {
+            "caption.size": 48
+          },
+          "track": "track_captions"
+        }
+      },
+      "transitions": {
+        "tr_1": {
+          "id": "tr_1",
+          "type": "dissolve",
+          "from": "clip_title",
+          "to": "clip_interview",
+          "duration": "0.5",
+          "track": "track_video"
+        },
+        "tr_2": {
+          "id": "tr_2",
+          "type": "plugin.wipe-star",
+          "to": "clip_card",
+          "duration": "1/3",
+          "properties": {
+            "softness": 0.2
+          },
+          "track": "track_video"
+        }
+      },
+      "markers": {
+        "marker_hook": {
+          "id": "marker_hook",
+          "time": "0.342",
+          "name": "钩子",
+          "note": "第一句话抓住观众",
+          "color": "#ff6b8a"
+        },
+        "marker_turn": {
+          "id": "marker_turn",
+          "time": "5",
+          "name": "转折",
+          "duration": "2"
+        }
+      },
+      "overrides": {
+        "format.vertical": {
+          "scope": {
+            "format": "vertical"
+          },
+          "clips": {
+            "clip_interview": {
+              "properties": {
+                "crop.left": {
+                  "value": {
+                    "keys": [
+                      {
+                        "time": "0",
+                        "value": 0.2
+                      },
+                      {
+                        "time": "5",
+                        "value": 0.3
+                      }
+                    ]
+                  },
+                  "base": 0.1
+                },
+                "fit": {
+                  "value": "contain",
+                  "base": "cover"
+                }
+              }
+            },
+            "clip_title": {
+              "properties": {
+                "param.size": {
+                  "value": 48,
+                  "base": 64
+                }
+              }
+            }
+          }
+        },
+        "language.en": {
+          "scope": {
+            "language": "en"
+          },
+          "sections": {
+            "section_body": {
+              "duration": {
+                "value": "26",
+                "base": "20"
+              }
+            }
+          },
+          "clips": {
+            "clip_voice": {
+              "duration": {
+                "value": "26",
+                "base": "20"
+              },
+              "source": {
+                "value": {
+                  "kind": "audio",
+                  "media": {
+                    "asset": "narration-en"
+                  }
+                },
+                "base": {
+                  "kind": "audio",
+                  "media": {
+                    "asset": "narration-zh"
+                  }
+                }
+              }
+            },
+            "clip_interview": {
+              "properties": {
+                "opacity": {
+                  "value": 0.6,
+                  "base": 0.75
+                }
+              }
+            }
+          }
+        },
+        "version.en.vertical": {
+          "scope": {
+            "language": "en",
+            "format": "vertical"
+          },
+          "clips": {
+            "clip_logo": {
+              "start": {
+                "value": "16"
+              },
+              "offset": {
+                "value": "0.5"
+              },
+              "hidden": {
+                "value": true
+              }
+            },
+            "clip_title": {
+              "properties": {
+                "param.size": {
+                  "value": 40,
+                  "base": 64
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "highlight": {
+      "name": "60 秒精华",
+      "sections": {
+        "section_all": {
+          "id": "section_all",
+          "duration": "8",
+          "order": 0
+        }
+      },
+      "tracks": {
+        "track_v": {
+          "id": "track_v",
+          "kind": "video",
+          "order": 0
+        }
+      },
+      "clips": {
+        "clip_nested": {
+          "id": "clip_nested",
+          "start": "0",
+          "duration": "8",
+          "source": {
+            "kind": "timeline",
+            "timeline": "main"
+          },
+          "offset": "2",
+          "track": "track_v"
+        }
+      },
+      "transitions": {},
+      "markers": {},
+      "overrides": {}
+    }
+  },
+  "files": {
+    "code/animate.js": "export const ease = (t) => t * t * (3 - 2 * t);\n",
+    "scenes/title/index.html": "<!doctype html>\n<html lang=\"zh-CN\">\n<head><meta charset=\"utf-8\" /></head>\n<body><h1 id=\"title\"></h1></body>\n</html>\n",
+    "sounds/impacts/main.js": "// Makes the sound of an impact from a seed, the same way every time.\nexport const sample = () => 0;\n"
+  }
+}

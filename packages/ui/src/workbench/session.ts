@@ -46,6 +46,7 @@ export class ProjectSession {
   #unsaved: Uint8Array[] = [];
   #retry: ReturnType<typeof setTimeout> | undefined;
   #catchingUp = false;
+  #readAgain = false;
 
   constructor(projects: ProjectLibrary, address: ProjectAddress, messages: SessionMessages) {
     this.#projects = projects;
@@ -165,6 +166,7 @@ export class ProjectSession {
     this.#address.write(id);
     this.#snapshot = { store, save: "saved" };
     this.#emitter.emit();
+    this.#catchUp(store, log);
     if (updates.length >= COMPACT_AFTER) {
       this.#enqueue(() => log.compact((all) => store.mergeWith(all)));
     }
@@ -222,14 +224,32 @@ export class ProjectSession {
     if (recovered) this.#messages.saveRecovered();
   }
 
-  /** Should a change from another window have gone missing, the log still has it. */
   #receive(store: ProjectStore, log: ProjectLog, update: Uint8Array): void {
     store.applyUpdates([update]);
-    if (!store.isMissingUpdates || this.#catchingUp) return;
+    this.#catchUp(store, log);
+  }
+
+  /**
+   * Should a change from another window have gone missing, the log still has it. Until the log was
+   * read the project takes no changes. What arrives in the meantime can need something that was
+   * written after reading, so reading goes on until nothing else came in.
+   */
+  #catchUp(store: ProjectStore, log: ProjectLog): void {
+    if (!store.isMissingUpdates) return;
+    this.#readAgain = true;
+    if (this.#catchingUp) return;
     this.#catchingUp = true;
     this.#enqueue(async () => {
       try {
-        store.applyUpdates(await log.load());
+        for (;;) {
+          this.#readAgain = false;
+          const updates = await log.load();
+          if (!this.#readAgain) {
+            store.catchUp(updates);
+            break;
+          }
+          store.applyUpdates(updates);
+        }
       } finally {
         this.#catchingUp = false;
       }
