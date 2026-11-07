@@ -448,6 +448,10 @@ test.describe("an export under way", () => {
     await open(page, projectFolder(20, [movingSquare(20)]));
     await startExport(page);
     await expect(exportStatus(page)).toBeVisible();
+    // It is what goes on now, which is on the right of the status bar.
+    const bar = await page.locator("footer").boundingBox();
+    const status = await exportStatus(page).boundingBox();
+    expect(status && bar && status.x > bar.x + bar.width / 2).toBe(true);
     // The square goes, while the export goes on.
     await clickClip(page, 0);
     await page.keyboard.press("Delete");
