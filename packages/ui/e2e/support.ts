@@ -129,8 +129,12 @@ export const test = base.extend<{
         await page.addInitScript((choice) => {
           if (window !== window.top) return;
           const key = "animaquill.previewQuality";
-          if (localStorage.getItem(key) === null) {
-            localStorage.setItem(key, JSON.stringify({ version: 1, choice }));
+          try {
+            if (localStorage.getItem(key) === null) {
+              localStorage.setItem(key, JSON.stringify({ version: 1, choice }));
+            }
+          } catch {
+            // A page in a sandbox of its own, like a scene opened directly, has no storage at all.
           }
         }, quality);
       }
