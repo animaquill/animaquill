@@ -202,6 +202,12 @@ function rowOf(spec: PropertySpec, place: Place, look: TrialLook | undefined): P
   };
 }
 
+function blockedAt({ model, clip, moment }: Place, comparing: boolean | undefined) {
+  if (comparing) return "comparing";
+  if (model.rowOfClip.get(clip.id)?.track.locked) return "locked";
+  return shows(clip, moment) ? undefined : "outside";
+}
+
 function inspectClip(
   state: ProjectState,
   model: TimelineModel,
@@ -211,20 +217,41 @@ function inspectClip(
 ): Inspection {
   const clip = look?.apply(box.clip) ?? box.clip;
   const place = placeOf(state, model, clip, frame);
-  let blocked: Blocked | undefined;
-  if (comparing) blocked = "comparing";
-  else if (model.rowOfClip.get(clip.id)?.track.locked) blocked = "locked";
-  else if (!shows(clip, place.moment)) blocked = "outside";
   return {
     kind: "clip",
     box,
-    blocked,
+    blocked: blockedAt(place, comparing),
     time: formatTime(place.clock),
     firstFrame: place.firstFrame,
     objects: objectsOf(clip).map((object) => ({
       object,
       rows: object.properties.map((spec) => rowOf(spec, place, look)),
     })),
+  };
+}
+
+/** One property of a clip at the playhead, as a control needs it. */
+export interface InspectedProperty {
+  readonly row: PropertyRow;
+  readonly blocked: Blocked | undefined;
+  /** The clock of the clip at the playhead, exactly, as keys write it. */
+  readonly time: string;
+}
+
+export function inspectProperty(
+  state: ProjectState,
+  model: TimelineModel,
+  box: ClipBox,
+  spec: PropertySpec,
+  frame: number,
+  { look, comparing }: TrialView = {},
+): InspectedProperty {
+  const clip = look?.apply(box.clip) ?? box.clip;
+  const place = placeOf(state, model, clip, frame);
+  return {
+    row: rowOf(spec, place, look),
+    blocked: blockedAt(place, comparing),
+    time: formatTime(place.clock),
   };
 }
 

@@ -16,6 +16,8 @@ import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
+import { registerKeyframeActions } from "../keyframes/actions.ts";
+import { KeyframeEditor } from "../keyframes/editor.ts";
 import { MediaLibrary } from "../media/library.ts";
 import { MadeSounds, SoundMaker } from "../media/sounds.ts";
 import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
@@ -78,6 +80,7 @@ export class Workbench {
   readonly timeline: TimelineEditor;
   readonly trials: TrialSession;
   readonly properties: PropertyWriter;
+  readonly keyframes: KeyframeEditor;
   readonly input: InputMode;
   readonly media: MediaLibrary;
   readonly sounds: MadeSounds;
@@ -234,13 +237,27 @@ export class Workbench {
     this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
     });
+    this.keyframes = new KeyframeEditor(
+      this.session,
+      this.timeline,
+      this.trials,
+      this.properties,
+      host.windowMemory,
+      host.settings,
+      t,
+      {
+        pasteTooEarly: () => this.notifications.push(t("notice.keysPasteTooEarly")),
+        pasteNowhere: () => this.notifications.push(t("notice.keysPasteNowhere")),
+      },
+    );
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
     this.#registerCodeActions();
     this.#registerEditActions();
     this.#registerViewActions();
     this.#registerHelpActions();
-    registerTimelineActions(this.actions, this.timeline);
+    registerTimelineActions(this.actions, this.timeline, this.keyframes.inTimeline);
+    registerKeyframeActions(this.actions, this.keyframes, this.timeline);
   }
 
   #clipName(clip: string): string {
@@ -391,6 +408,7 @@ export class Workbench {
       this.keybindings.load(),
       this.palette.load(),
       this.timeline.load(),
+      this.keyframes.load(),
       this.input.load(),
       this.trials.load(),
     ]);

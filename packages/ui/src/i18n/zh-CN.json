@@ -219,7 +219,9 @@
     "trialDropped": "上次的试改有些已经不合法了，这些没有恢复。",
     "trialReadFailed": "上次的试改读不出来，记录没有动，稍后再试。这期间的试改还存不到这个浏览器。",
     "trialKeepFailed": "试改无法存到这个浏览器，刷新或关闭页面后会丢失。可以先保存。",
-    "trialKeepRecovered": "试改又能存到这个浏览器了。"
+    "trialKeepRecovered": "试改又能存到这个浏览器了。",
+    "keysPasteTooEarly": "这里放不下：关键帧会落到片段时钟开始之前。把播放头往后移一些再粘贴。",
+    "keysPasteNowhere": "这些关键帧没有地方放：片段不在了，或者轨道锁定了。"
   },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
@@ -271,8 +273,7 @@
       "hint": "片段、轨道和播放头。"
     },
     "keyframes": {
-      "title": "关键帧",
-      "hint": "关键帧和动画曲线。"
+      "title": "关键帧"
     },
     "music": {
       "title": "音乐",
@@ -459,7 +460,8 @@
       "rowsTaller": "增加轨道高度",
       "rowsShorter": "降低轨道高度",
       "toggleMultiSelecting": "切换多选",
-      "play": "播放或暂停"
+      "play": "播放或暂停",
+      "toggleProperties": "展开或收起片段的属性"
     },
     "color": "纯色片段",
     "scene": "场景",
@@ -526,7 +528,9 @@
     "apply": "应用",
     "rateHint": "标尺和片段落点按它走。导出时每个画幅可以用自己的帧率。",
     "axes": "轨道\\时间",
-    "timeFormat": "格式：(小时):分:秒/帧，小时为 0 时省略。"
+    "timeFormat": "格式：(小时):分:秒/帧，小时为 0 时省略。",
+    "openProperties": "展开属性",
+    "closeProperties": "收起属性"
   },
   "input": {
     "label": "输入方式",
@@ -772,6 +776,80 @@
       "missing": "素材的文件不在文件夹里：{{name}}",
       "damaged": "素材的文件和项目记录的内容不一样，没有导入：{{name}}",
       "skipped": "项目用不上这个文件，没有带进来：{{name}}"
+    }
+  },
+  "keyframes": {
+    "command": "关键帧：{{action}}",
+    "list": "属性列表",
+    "keys": "关键帧",
+    "resizeList": "调整属性列表的宽度",
+    "search": "搜索属性",
+    "rangeLabel": "列出的范围",
+    "range": {
+      "here": "当前位置",
+      "all": "全部",
+      "keyed": "有关键帧"
+    },
+    "rangeHelp": {
+      "here": "只列播放头所在位置的内容。播放时列表不动，停下才更新。",
+      "all": "列出时间轴上所有能打关键帧的内容。",
+      "keyed": "只列已经有关键帧的属性。"
+    },
+    "empty": {
+      "here": "播放头这里没有能打关键帧的内容。",
+      "all": "时间轴上还没有能打关键帧的内容。",
+      "keyed": "还没有关键帧。",
+      "search": "没有找到这个属性。"
+    },
+    "orphans": "未连接",
+    "on": "开",
+    "off": "关",
+    "open": "展开 {{name}}",
+    "close": "收起 {{name}}",
+    "showCurve": "显示 {{name}} 的曲线",
+    "hideCurve": "收起 {{name}} 的曲线",
+    "pin": "钉住 {{name}}",
+    "unpin": "取消钉住 {{name}}",
+    "pinHelp": "钉住后不管播放头在哪都一直列出，可以同时看几个对象。",
+    "toolbar": "关键帧工具",
+    "link": "和时间轴同步",
+    "linkHelp": "打开时缩放和滚动跟着时间轴走，关掉后这里可以单独放大。",
+    "interp": "插值",
+    "interpHelp": "选中的关键帧到下一个关键帧怎么变化。",
+    "interpNeedsKeys": "先选中关键帧。",
+    "interpMore": "插值…",
+    "ease": {
+      "linear": "线性",
+      "hold": "保持",
+      "easeIn": "缓入",
+      "easeOut": "缓出",
+      "easeInOut": "缓入缓出",
+      "overshoot": "回弹"
+    },
+    "keyLabel": "{{name}}，{{time}}",
+    "selectRow": "选中这一行",
+    "selectColumn": "选中这一时刻的整列",
+    "source": {
+      "label": "值的来源",
+      "keys": "关键帧",
+      "value": "普通值",
+      "default": "默认值",
+      "override": "差异",
+      "trial": "试改"
+    },
+    "action": {
+      "delete": "删除关键帧",
+      "selectAll": "全选关键帧",
+      "copy": "复制关键帧",
+      "paste": "粘贴关键帧到播放头",
+      "toggleSnapping": "吸附",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "zoomToFit": "显示全部",
+      "previousFrame": "上一帧或前移一帧",
+      "nextFrame": "下一帧或后移一帧",
+      "backFiveFrames": "后退 5 帧或前移 5 帧",
+      "forwardFiveFrames": "前进 5 帧或后移 5 帧"
     }
   }
 }

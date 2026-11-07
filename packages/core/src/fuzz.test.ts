@@ -1,19 +1,25 @@
 import {
+  Animation as AnimationSchema,
+  add,
   compare,
   createProject,
+  formatTime,
   isAnimation,
   parseTime,
   readProject,
+  type Animation,
+  type Key,
+  type PropertyValue,
   type Rational,
 } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
-import { sample } from "./curve.ts";
+import { compileChannel, sample } from "./curve.ts";
 import type { ProjectState } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { buildRenderPlan } from "./render-plan.ts";
-import type { PropertyEdit } from "./property-edit.ts";
+import { applyEdit, type KeyEase, type PropertyEdit } from "./property-edit.ts";
 import { ProjectStore, USER, aiTask, type CommandCall } from "./store.ts";
 import { Trial } from "./trial.ts";
 import { clockOf } from "./view.ts";
@@ -55,16 +61,41 @@ function sync(a: ProjectStore, b: ProjectStore): void {
   Y.applyUpdate(a.doc, Y.encodeStateAsUpdate(b.doc, Y.encodeStateVector(a.doc)), "sync");
 }
 
+const MOMENTS = ["0", "1/3", "1", "2.5", "7/3"];
+const EASES: readonly KeyEase[] = [
+  { interp: "linear" },
+  { interp: "hold" },
+  { interp: "bezier", out: [0.42, 0] },
+  { interp: "bezier", out: [0.42, 0], in: [0.58, 1] },
+];
+const HOLD = { interp: "hold" } as const;
+
 /** Few moments and few properties, so that edits land on each other's keys all the time. */
 function randomEdit(clip: string, random: ReturnType<typeof randomFrom>): object {
   const owner = { clip };
   const path = random.pick(["opacity", "transform.x", "transform.rotation"]) as string;
-  const time = random.pick(["0", "1/3", "1", "2.5", "7/3"]) as string;
+  const moment = () => random.pick(MOMENTS) as string;
+  const time = moment();
   const value = random.int(100) / 100;
   const edits = [
     { owner, path, op: "write", time, value },
+    { owner, path, op: "write", time, value },
+    { owner, path, op: "setKey", time, value },
     { owner, path, op: "setKey", time, value },
     { owner, path, op: "removeKey", time },
+    { owner, path, op: "moveKey", moves: [{ from: time, to: moment() }] },
+    {
+      owner,
+      path,
+      op: "moveKey",
+      moves: [
+        { from: moment(), to: time },
+        { from: time, to: "3" },
+      ],
+    },
+    { owner, path, op: "setInterp", times: [time, moment()], ease: random.pick(EASES) },
+    { owner, path, op: "setInterp", times: [time], ease: random.pick(EASES) },
+    { owner, path, op: "putKeys", keys: [{ time, value, interp: "hold" }] },
     { owner, path, op: "set", value },
     { owner, path, op: "clear" },
   ];
@@ -818,6 +849,121 @@ const historyOf = (store: ProjectStore, trial: Trial) => ({
 const randomClipOf = (store: ProjectStore, random: ReturnType<typeof randomFrom>) =>
   random.pick(Object.keys(store.getState().timelines["main"]?.clips ?? {})) ?? "none";
 
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys that move, seed %i", (seed) => {
+  const moments = (count: number, random: Random) =>
+    Array.from({ length: count }, () => `${random.int(40)}/${1 + random.int(4)}`);
+
+  const randomKeys = (random: Random): Animation => {
+    const seen = new Set<string>();
+    const keys: Key[] = [];
+    for (const time of moments(2 + random.int(10), random)) {
+      const canonical = formatTime(parseTime(time));
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      keys.push({ time: canonical, value: keys.length, ...(random.chance(0.3) ? HOLD : {}) });
+    }
+    return {
+      keys: keys.toSorted((a, b) => compare(parseTime(a.time), parseTime(b.time))),
+    };
+  };
+
+  it("leaves them in order, each moment once, and each key with what it had", () => {
+    const random = randomFrom(seed);
+    for (let round = 0; round < 500; round += 1) {
+      const before = randomKeys(random);
+      const chosen = before.keys.filter(() => random.chance(0.4));
+      if (chosen.length === 0) continue;
+      const by = parseTime(`${random.int(20) - 10}/${1 + random.int(3)}`);
+      const moves = chosen.map(({ time }) => ({
+        from: time,
+        to: formatTime(add(parseTime(time), by)),
+      }));
+      if (moves.some(({ to }) => to.startsWith("-"))) continue;
+      const after = applyEdit(before, { op: "moveKey", moves }) as Animation;
+      expect(AnimationSchema.safeParse(after).success).toBe(true);
+
+      // What moved is there, by value, and what it landed on is what went.
+      const landed = new Set(moves.map(({ to }) => to));
+      const stayed = before.keys.filter((key) => !chosen.includes(key) && !landed.has(key.time));
+      expect(after.keys).toHaveLength(chosen.length + stayed.length);
+      for (const [index, key] of chosen.entries()) {
+        const moved = after.keys.find(({ time }) => time === moves[index]?.to);
+        expect(moved).toEqual({ ...key, time: moves[index]?.to });
+      }
+      for (const key of stayed) expect(after.keys).toContain(key);
+
+      // All of it by the same time and back again comes to the same, as nothing got replaced.
+      if (chosen.length !== before.keys.length) continue;
+      const back = moves.map(({ from, to }) => ({ from: to, to: from }));
+      expect(applyEdit(after, { op: "moveKey", moves: back })).toEqual(before);
+    }
+  });
+
+  it("how keys go on stays valid, whatever order it gets set in", () => {
+    const random = randomFrom(seed);
+    for (let round = 0; round < 500; round += 1) {
+      let value: PropertyValue = randomKeys(random);
+      for (let step = 0; step < 6; step += 1) {
+        const { keys } = value as Animation;
+        const times = keys.filter(() => random.chance(0.5)).map(({ time }) => time);
+        if (times.length === 0) continue;
+        const ease = random.pick(EASES) as KeyEase;
+        value = applyEdit(value, { op: "setInterp", times, ease }) as PropertyValue;
+        expect(AnimationSchema.safeParse(value).success).toBe(true);
+        for (const time of times) {
+          const key = (value as Animation).keys.find((one) => one.time === time);
+          expect(key?.interp ?? "linear").toBe(ease.interp);
+        }
+      }
+    }
+  });
+
+  /** A stretch with a bezier from 0 to 100, and what it becomes with a key at what it shows there. */
+  const withKeyOn = (x1: number, x2: number, random: Random) => {
+    const before: Animation = {
+      keys: [
+        { time: "0", value: 0, interp: "bezier", out: [x1, random.int(300) / 100 - 1] },
+        { time: "4", value: 100, in: [x2, random.int(300) / 100 - 1] },
+      ],
+    };
+    const channel = compileChannel(before, "number");
+    if (!channel) throw new Error("no channel");
+    const time = (0.1 + random.int(380) / 100).toFixed(2);
+    const value = sample(channel, Number(time)) as number;
+    const after = applyEdit(before, { op: "write", time, value }) as Animation;
+    return { channel, after, time, value };
+  };
+
+  it("a key that goes in with the value that was there leaves a curve as it was", () => {
+    const random = randomFrom(seed);
+    for (let round = 0; round < 300; round += 1) {
+      const { channel, after } = withKeyOn(
+        random.int(60) / 100,
+        0.4 + random.int(60) / 100,
+        random,
+      );
+      const split = compileChannel(after, "number");
+      if (!split) throw new Error("no channel");
+      for (const clock of [0.2, 1, 1.9, 2.1, 3, 3.8]) {
+        expect(sample(split, clock)).toBeCloseTo(sample(channel, clock) as number, 1);
+      }
+    }
+  });
+
+  it("stays something that can be written, where handles reach very far", () => {
+    const random = randomFrom(seed);
+    for (let round = 0; round < 300; round += 1) {
+      const { after, time, value } = withKeyOn(
+        random.int(101) / 100,
+        random.int(101) / 100,
+        random,
+      );
+      expect(AnimationSchema.safeParse(after).success).toBe(true);
+      expect(after.keys.find((key) => key.time === time)?.value).toBe(value);
+    }
+  });
+});
+
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", (seed) => {
   it("saving comes to the same as writing right away, whatever happens to the clips", () => {
     const random = randomFrom(seed);
@@ -922,9 +1068,14 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", (seed) => 
       const time = String(random.int(9));
       const value = random.int(100) / 100;
       const owner = { clip };
+      const to = String(random.int(9));
       const edits: PropertyEdit[] = [
         { owner, path, op: "setKey", time, value },
+        { owner, path, op: "setKey", time, value },
         { owner, path, op: "write", time, value },
+        { owner, path, op: "moveKey", moves: [{ from: time, to }] },
+        { owner, path, op: "setInterp", times: [time], ease: { interp: "hold" } },
+        { owner, path, op: "putKeys", keys: [{ time, value, interp: "hold" }] },
         { owner, path, op: "set", value },
         { owner, path, op: "clear" },
       ];

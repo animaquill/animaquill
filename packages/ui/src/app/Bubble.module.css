@@ -32,6 +32,15 @@
   content: "";
 }
 
+.bubble[data-side="below"]::after {
+  top: -5px;
+  bottom: auto;
+  border-top: 1px solid var(--aq-border);
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 1px solid var(--aq-border);
+}
+
 .title {
   margin: 0;
   color: var(--aq-text-strong);

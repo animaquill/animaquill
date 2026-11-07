@@ -1,4 +1,3 @@
-import type { TimelineEditor } from "./editor.ts";
 import type { Pointer } from "./gestures.ts";
 
 /** A finger moves a little even when it means to stay. */
@@ -9,6 +8,30 @@ const MIN_GLIDE = 0.15;
 const MAX_GLIDE = 3;
 const GLIDE_DECAY = 0.95;
 const FRAME_MS = 16;
+
+/**
+ * What a finger starts by landing somewhere. `grab` is right away, like on the ruler. `selected`
+ * becomes a drag as soon as it moves. `plain` moves the view, or becomes a tap or a long press.
+ */
+export type TouchStart = "grab" | "selected" | "plain";
+
+/** What fingers work on. */
+export interface TouchTarget {
+  /** Something a drag shows, which a second finger should not take away. */
+  readonly preview: unknown;
+  readonly scrollX: number;
+  readonly scrollY: number;
+  press(pointer: Pointer): void;
+  drag(pointer: Pointer): void;
+  release(pointer: Pointer): void;
+  cancelDrag(): boolean;
+  setScroll(x: number, y: number): void;
+  zoomAround(x: number, factor: number): void;
+  zoomRowsAround(y: number, factor: number): void;
+  touchAt(pointer: Pointer): TouchStart;
+  /** A long press selects what is there. */
+  hold(pointer: Pointer): void;
+}
 
 export interface TouchEnvironment {
   /** Timers, so that tests decide when time passes. */
@@ -48,7 +71,7 @@ const pointerAt = ({ x, y }: Finger): Pointer => ({ x, y, shift: false, alt: fal
  * stay as they are: this is only about the gestures.
  */
 export class TouchController {
-  readonly #editor: TimelineEditor;
+  readonly #editor: TouchTarget;
   readonly #environment: TouchEnvironment;
   readonly #fingers = new Map<number, Finger>();
   #mode: Mode = "over";
@@ -62,7 +85,7 @@ export class TouchController {
   #onSelected = false;
   #pinch: { spread: number; center: Finger; axis: "x" | "y" } | undefined;
 
-  constructor(editor: TimelineEditor, environment: TouchEnvironment) {
+  constructor(editor: TouchTarget, environment: TouchEnvironment) {
     this.#editor = editor;
     this.#environment = environment;
   }
@@ -130,16 +153,9 @@ export class TouchController {
   #firstFinger(finger: Finger): void {
     this.#start = { ...finger };
     const pointer = pointerAt(finger);
-    const hit = this.#editor.hitAt(pointer);
-    const { selection, tool } = this.#editor.getSnapshot();
-    // A locked clip goes nowhere, so a finger on one moves the view, as next to it.
-    this.#onSelected =
-      hit.kind === "clip" &&
-      !hit.row.track.locked &&
-      selection.has(hit.box.id) &&
-      tool === "select";
-    const onEdge = this.#onSelected && hit.kind === "clip" && hit.edge !== undefined;
-    if (hit.kind === "ruler" || hit.kind === "end" || onEdge) {
+    const start = this.#editor.touchAt(pointer);
+    this.#onSelected = start === "selected";
+    if (start === "grab") {
       this.#mode = "editing";
       this.#editor.press(pointer);
       return;
@@ -150,12 +166,7 @@ export class TouchController {
 
   #longPress(): void {
     if (this.#mode !== "waiting") return;
-    const hit = this.#editor.hitAt(pointerAt(this.#start));
-    const { selection, multiSelecting } = this.#editor.getSnapshot();
-    if (hit.kind === "clip" && !selection.has(hit.box.id)) {
-      if (multiSelecting) this.#editor.addToSelection(hit.box.id);
-      else this.#editor.selectOnly(hit.box.id);
-    }
+    this.#editor.hold(pointerAt(this.#start));
     this.#mode = "held";
     this.#environment.held();
   }

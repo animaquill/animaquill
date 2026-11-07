@@ -28,6 +28,7 @@ import { readSetting } from "../workbench/settings.ts";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
 import { sceneTemplate } from "./scene-template.ts";
 import { soundTemplate } from "./sound-template.ts";
+import type { TouchStart, TouchTarget } from "./touch.ts";
 import {
   EndGesture,
   MarqueeGesture,
@@ -46,6 +47,7 @@ import {
   type Preview,
 } from "./gestures.ts";
 import {
+  NO_ROOM_BELOW,
   buildModel,
   clipAt,
   firstEndingAfter,
@@ -53,11 +55,17 @@ import {
   isInsideClip,
   rowAt,
   type ClipBox,
+  type RoomBelow,
   type Row,
   type TimelineModel,
 } from "./model.ts";
 
 export const RULER_HEIGHT = 28;
+/** The button on a clip for what shows under its track. It stays with the name of the clip. */
+export const EXPANDER_SIZE = 14;
+const EXPANDER_INSET = 6;
+const EXPANDER_MIN_WIDTH = 32;
+const EXPANDER_HEIGHT = 24;
 /** How far the pointer can be from an edge and still grab it. Short clips keep some middle. */
 const EDGE_REACH = 7;
 /** A fingertip covers more than a mouse pointer. */
@@ -89,6 +97,12 @@ const MAX_HEADER_WIDTH = 360;
 /** Colours that tell clips apart while they are only placeholders. */
 const NEW_CLIP_COLORS = ["#3f6fb5", "#3f9a7a", "#b57a3f", "#8f5fb5", "#b5536a", "#5f8fa8"];
 
+/** Where that button is, or undefined when there is no room for it. */
+export function expanderBox(left: number, width: number): number | undefined {
+  const x = Math.max(left, 0) + EXPANDER_INSET;
+  return x + EXPANDER_SIZE <= left + width && width >= EXPANDER_MIN_WIDTH ? x : undefined;
+}
+
 export type Tool = "select" | "razor";
 
 /** Where something dragged here goes. */
@@ -106,8 +120,27 @@ export type Hit =
       readonly row: Row;
       readonly box: ClipBox;
       readonly edge?: "start" | "end";
+      /** On the button for what shows under the track. */
+      readonly expander?: boolean;
     }
   | { readonly kind: "empty" };
+
+/** What shows under the clips of a track. It lives in the room `setRoomBelow` asks for. */
+export interface RowExtras {
+  /** Starts what a press means there. Undefined means that it is not about this. */
+  press(pointer: Pointer): Gesture | undefined;
+  /** The cursor there, or undefined when the pointer is somewhere else. */
+  hover(pointer: Pointer): string | undefined;
+  /** What a finger starts there, or undefined when it is somewhere else. */
+  touchAt(pointer: Pointer): TouchStart | undefined;
+  /** A long press there. Says whether it was. */
+  hold(pointer: Pointer): boolean;
+  setTouchInput(on: boolean): void;
+  /** Whether a clip has something to show there. */
+  canOpen(box: ClipBox): boolean;
+  isOpen(box: ClipBox): boolean;
+  toggle(box: ClipBox): void;
+}
 
 /** What React shows. The view changes far more often and goes through `subscribeView`. */
 export interface TimelineSnapshot {
@@ -157,6 +190,14 @@ interface RememberedView {
   readonly frame: number;
 }
 
+/** The range of zoom levels of a timeline, in pixels per second. */
+export function zoomRange(width: number, duration: number, fps: number): readonly [number, number] {
+  const shortest = Math.max(duration, 1 / fps);
+  const low = (Math.max(width, 1) * MIN_ZOOM_SHARE) / shortest;
+  const high = fps * MAX_PIXELS_PER_FRAME;
+  return [Math.min(low, high), high];
+}
+
 function parseRemembered(text: string | undefined): RememberedView | undefined {
   if (text === undefined) return undefined;
   try {
@@ -198,7 +239,7 @@ function parsePreferences(value: unknown): SavedPreferences | undefined {
   };
 }
 
-const clamp = (value: number, low: number, high: number) =>
+export const clamp = (value: number, low: number, high: number): number =>
   Math.min(Math.max(value, low), Math.max(low, high));
 
 const sameView = (a: ViewPlace, b: ViewPlace) =>
@@ -211,7 +252,7 @@ const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
  * The timeline of this window: what it shows, what is selected and what the mouse is doing. None of
  * it is part of the project. Changes to the project go through commands, once a drag has ended.
  */
-export class TimelineEditor {
+export class TimelineEditor implements TouchTarget {
   readonly #session: ProjectSession;
   readonly #memory: WindowMemory;
   readonly #settings: SettingsStore;
@@ -250,6 +291,8 @@ export class TimelineEditor {
   #width = 0;
   #height = 0;
   #rememberTimer: ReturnType<typeof setTimeout> | undefined;
+  #extras: RowExtras | undefined;
+  #roomBelow = NO_ROOM_BELOW;
 
   constructor(
     session: ProjectSession,
@@ -325,6 +368,31 @@ export class TimelineEditor {
 
   get preview(): Preview | undefined {
     return this.#preview;
+  }
+
+  /** What shows under the clips of tracks. */
+  get extras(): RowExtras | undefined {
+    return this.#extras;
+  }
+
+  setExtras(extras: RowExtras): void {
+    this.#extras = extras;
+  }
+
+  /** Makes room under tracks. Nothing happens to clips: this is only about where rows are. */
+  setRoomBelow(room: RoomBelow): void {
+    const same =
+      room.size === this.#roomBelow.size &&
+      [...room].every(([track, height]) => this.#roomBelow.get(track) === height);
+    if (same) return;
+    this.#roomBelow = room;
+    this.#refresh();
+    this.#clampScroll();
+  }
+
+  /** Something drawn on the timeline changed that this does not know about. */
+  redraw(): void {
+    this.#viewEmitter.emit();
   }
 
   get hovered(): Hit {
@@ -465,6 +533,7 @@ export class TimelineEditor {
   /** Fingers need more room to find an edge, and the rest stays the same. */
   setTouchInput(on: boolean): void {
     this.#edgeReach = on ? TOUCH_EDGE_REACH : EDGE_REACH;
+    this.#extras?.setTouchInput(on);
   }
 
   /** The zoom level from 0 for all of the timeline to 1 for single frames, for a slider. */
@@ -482,11 +551,7 @@ export class TimelineEditor {
 
   #zoomRange(): readonly [number, number] {
     const { model } = this;
-    const fps = model?.rate.fps ?? 30;
-    const duration = Math.max(model?.duration ?? 1, 1 / fps);
-    const low = (Math.max(this.#width, 1) * MIN_ZOOM_SHARE) / duration;
-    const high = fps * MAX_PIXELS_PER_FRAME;
-    return [Math.min(low, high), high];
+    return zoomRange(this.#width, model?.duration ?? 1, model?.rate.fps ?? 30);
   }
 
   #limitZoom(value: number): number {
@@ -611,8 +676,9 @@ export class TimelineEditor {
       current?.id === id &&
       current.state === timeline &&
       current.fps === fps &&
-      current.rowScale === this.#rowScale;
-    return same ? current : buildModel(id, timeline, fps, this.#rowScale);
+      current.rowScale === this.#rowScale &&
+      current.roomBelow === this.#roomBelow;
+    return same ? current : buildModel(id, timeline, fps, this.#rowScale, this.#roomBelow);
   }
 
   /** Runs commands as one change. Failing is rare, because the interface checks first. */
@@ -1323,14 +1389,34 @@ export class TimelineEditor {
     const reach = Math.min(this.#edgeReach, ((box.end - box.start) * this.#pixelsPerSecond) / 3);
     const fromStart = x - this.xAt(box.start);
     const fromEnd = this.xAt(box.end) - x;
+    if (this.#onExpander(box, row, x, y)) return { kind: "clip", row, box, expander: true };
     if (row.track.locked || this.#snapshot.tool !== "select") return { kind: "clip", row, box };
     if (fromStart <= reach) return { kind: "clip", row, box, edge: "start" };
     if (fromEnd <= reach) return { kind: "clip", row, box, edge: "end" };
     return { kind: "clip", row, box };
   }
 
+  /** Whether a clip shows the button for what is under its track. */
+  showsExpander(box: ClipBox): boolean {
+    const extras = this.#extras;
+    if (!extras?.canOpen(box) || this.#snapshot.tool !== "select") return false;
+    return this.#snapshot.selection.has(box.id) || extras.isOpen(box);
+  }
+
+  #onExpander(box: ClipBox, row: Row, x: number, y: number): boolean {
+    const left = this.xAt(box.start);
+    const at = expanderBox(left, this.xAt(box.end) - left);
+    const inside = at !== undefined && x >= at && x < at + EXPANDER_SIZE;
+    return inside && this.laneAt(y) - row.top <= EXPANDER_HEIGHT && this.showsExpander(box);
+  }
+
   /** What the pointer is over, and how it should look. */
   hover(pointer: Pointer): string {
+    const below = this.#extras?.hover(pointer);
+    if (below !== undefined) {
+      if (this.#hovered.kind !== "empty") this.leave();
+      return below;
+    }
     const hit = this.hitAt(pointer);
     const before = this.#hovered;
     this.#hovered = hit;
@@ -1360,6 +1446,7 @@ export class TimelineEditor {
     if (hit.kind === "end") return "ew-resize";
     if (hit.kind === "ruler") return "pointer";
     if (hit.kind !== "clip") return "default";
+    if (hit.expander) return "pointer";
     if (this.#snapshot.tool === "razor") return "crosshair";
     return hit.edge ? "ew-resize" : "default";
   }
@@ -1368,11 +1455,42 @@ export class TimelineEditor {
     return this.#gesture !== undefined;
   }
 
+  /** The cursor while dragging. */
+  get dragCursor(): string {
+    return this.#preview?.copying ? "copy" : "";
+  }
+
+  /** What a finger starts by landing here. A locked clip goes nowhere, so that moves the view. */
+  touchAt(pointer: Pointer): TouchStart {
+    const below = this.#extras?.touchAt(pointer);
+    if (below) return below;
+    const hit = this.hitAt(pointer);
+    const { selection, tool } = this.#snapshot;
+    const selected =
+      hit.kind === "clip" &&
+      !hit.row.track.locked &&
+      selection.has(hit.box.id) &&
+      tool === "select";
+    if (hit.kind === "ruler" || hit.kind === "end" || (selected && hit.edge)) return "grab";
+    return selected ? "selected" : "plain";
+  }
+
+  hold(pointer: Pointer): void {
+    if (this.#extras?.hold(pointer)) return;
+    const hit = this.hitAt(pointer);
+    const { selection, multiSelecting } = this.#snapshot;
+    if (hit.kind !== "clip" || selection.has(hit.box.id)) return;
+    if (multiSelecting) this.addToSelection(hit.box.id);
+    else this.selectOnly(hit.box.id);
+  }
+
   press(pointer: Pointer): void {
     const { model } = this;
     if (!model) return;
     // Whatever was going on, its mouse button is up by now and something got in the way of saying so.
     this.#cancelGesture();
+    this.#gesture = this.#extras?.press(pointer);
+    if (this.#gesture) return;
     const hit = this.hitAt(pointer);
     const host = this.#host;
     if (hit.kind === "ruler") {
@@ -1420,7 +1538,8 @@ export class TimelineEditor {
     const selected = new Set(adding ? [...selection, ...own] : own);
     // What a press on a selected clip means shows when it ends: it may be the start of a drag.
     const onClick = () => {
-      if (adding && wasSelected) {
+      if (hit.expander) this.#extras?.toggle(box);
+      else if (adding && wasSelected) {
         this.#select(new Set([...selection].filter((id) => !own.has(id))));
       } else this.#select(selected);
     };

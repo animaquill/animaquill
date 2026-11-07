@@ -29,6 +29,7 @@ import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel.tsx";
+import { KeyframesPanel } from "../keyframes/KeyframesPanel.tsx";
 import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
@@ -57,6 +58,7 @@ function planned(
     | "problems"
     | "properties"
     | "settings"
+    | "keyframes"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -153,7 +155,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "bottom",
     component: TimelinePanel,
   },
-  planned("keyframes", "bottom", Diamond),
+  {
+    type: "keyframes",
+    title: (t) => t("panel.keyframes.title"),
+    icon: Diamond,
+    area: "bottom",
+    component: KeyframesPanel,
+  },
   planned("differences", "bottom", Diff),
   {
     type: "problems",

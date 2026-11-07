@@ -1,12 +1,10 @@
 import type { PropertyEdit } from "@animaquill/core";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
-import type { TFunction } from "i18next";
-import type { PropertySpec, ValueType } from "@animaquill/schema";
-import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu } from "../app/Menu.tsx";
-import { Tip } from "../app/Tip.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
+import { CONTROLS, PlainValue, RowButton } from "./controls.tsx";
 import {
   inspect,
   keyEdit,
@@ -15,111 +13,10 @@ import {
   type Inspection,
   type PropertyRow,
 } from "./inspect.ts";
-import { NumberField } from "./NumberField.tsx";
+import { groupOf, nameOf, textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
 
 type ClipInspection = Extract<Inspection, { kind: "clip" }>;
-
-/** Built-in properties find their names by path. What comes from a project brings its own. */
-const textOf = (t: TFunction, key: string, fallback: string): string =>
-  (t as unknown as (key: string, options: { defaultValue: string }) => string)(key, {
-    defaultValue: fallback,
-  });
-
-const nameOf = (t: TFunction, spec: PropertySpec) =>
-  spec.name ?? textOf(t, `property.name.${spec.path}`, spec.path);
-
-const groupOf = (t: TFunction, group: string) => textOf(t, `property.group.${group}`, group);
-
-/** What a kind of value shows up as. All of them can read and write, none knows about a path. */
-interface ControlProps {
-  readonly row: PropertyRow;
-  readonly label: string;
-  readonly readOnly: boolean;
-  readonly onPreview: (value: number) => void;
-  readonly onCommit: (value: number | string) => void;
-  readonly onCancel: () => void;
-}
-
-function NumberControl({ row, label, readOnly, onPreview, onCommit, onCancel }: ControlProps) {
-  const { t } = useTranslation();
-  return (
-    <NumberField
-      label={label}
-      spec={row.spec}
-      value={typeof row.value === "number" ? row.value : 0}
-      automatic={row.automatic}
-      placeholder={t("property.automatic")}
-      animated={row.animated}
-      tried={row.tried}
-      readOnly={readOnly}
-      onPreview={onPreview}
-      onCommit={onCommit}
-      onCancel={onCancel}
-    />
-  );
-}
-
-function ChoiceControl({ row, label, readOnly, onCommit }: ControlProps) {
-  const { t } = useTranslation();
-  const { spec, value } = row;
-  return (
-    <select
-      className={styles.choice}
-      aria-label={label}
-      disabled={readOnly}
-      data-tried={row.tried || undefined}
-      value={String(value)}
-      onChange={(event) => onCommit(event.target.value)}
-    >
-      {spec.options?.map((option) => (
-        <option key={option} value={option}>
-          {textOf(t, `property.choice.${spec.path}.${option}`, option)}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function PlainValue({ row }: ControlProps) {
-  return <span className={styles.plain}>{String(row.value ?? "")}</span>;
-}
-
-/** A value is shown by its type, so a new property needs no new control. */
-const CONTROLS: Partial<Record<ValueType, ComponentType<ControlProps>>> = {
-  number: NumberControl,
-  angle: NumberControl,
-  choice: ChoiceControl,
-};
-
-interface RowButtonProps {
-  readonly name: string;
-  readonly usage: string;
-  readonly unavailable: boolean;
-  readonly pressed?: boolean;
-  readonly onClick: () => void;
-  readonly children: ReactNode;
-}
-
-function RowButton({ name, usage, unavailable, pressed, onClick, children }: RowButtonProps) {
-  return (
-    <Tip name={name} usage={usage}>
-      <button
-        type="button"
-        className={styles.rowButton}
-        aria-label={name}
-        // Not `disabled`: a disabled button gets no mouse events, and it still has to explain itself.
-        {...(unavailable ? { "aria-disabled": true } : {})}
-        {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
-        onClick={() => {
-          if (!unavailable) onClick();
-        }}
-      >
-        {children}
-      </button>
-    </Tip>
-  );
-}
 
 interface RowProps {
   readonly inspection: ClipInspection;

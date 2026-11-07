@@ -83,35 +83,23 @@ export const VALUE_TYPES: Readonly<Record<ValueType, TypeRule>> = {
 export const clampToUnit = (value: number): number => Math.min(Math.max(value, 0), 1);
 
 /** As in CSS: x1, y1, x2, y2. */
-type Handles = readonly [number, number, number, number];
+export type Handles = readonly [number, number, number, number];
 
 /**
- * How far along a CSS `cubic-bezier` is when a share of the time has passed. Handles stay within 0
- * and 1 in x, so there is one answer. Newton finds it in a few steps, unless the curve is flat right
- * there. Halving always finds it.
+ * How far along the curve of a CSS `cubic-bezier` a share of the time is. Handles stay within 0 and 1
+ * in x, so there is one answer. Newton finds it in a few steps, unless the curve is flat right there.
+ * Halving always finds it.
  */
-export function bezierProgress(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  time: number,
-): number {
-  if (time <= 0) return 0;
-  if (time >= 1) return 1;
+function parameterAt(x1: number, x2: number, time: number): number {
   const cx = 3 * x1;
   const bx = 3 * (x2 - x1) - cx;
   const ax = 1 - cx - bx;
-  const cy = 3 * y1;
-  const by = 3 * (y2 - y1) - cy;
-  const ay = 1 - cy - by;
   const xAt = (s: number) => ((ax * s + bx) * s + cx) * s;
-  const yAt = (s: number) => ((ay * s + by) * s + cy) * s;
 
   let s = time;
   for (let step = 0; step < 8; step += 1) {
     const miss = xAt(s) - time;
-    if (Math.abs(miss) < 1e-10) return yAt(s);
+    if (Math.abs(miss) < 1e-10) return s;
     const slope = (3 * ax * s + 2 * bx) * s + cx;
     if (Math.abs(slope) < 1e-7) break;
     s -= miss / slope;
@@ -125,7 +113,64 @@ export function bezierProgress(
     else high = s;
     s = (low + high) / 2;
   }
-  return yAt(s);
+  return s;
+}
+
+/** How far along a CSS `cubic-bezier` is when a share of the time has passed. */
+export function bezierProgress(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  time: number,
+): number {
+  if (time <= 0) return 0;
+  if (time >= 1) return 1;
+  const cy = 3 * y1;
+  const by = 3 * (y2 - y1) - cy;
+  const ay = 1 - cy - by;
+  const s = parameterAt(x1, x2, time);
+  return ((ay * s + by) * s + cy) * s;
+}
+
+const between = (from: number, to: number, share: number) => from + (to - from) * share;
+
+/** What is left of a handle once rounded: more digits than anyone can see, and none of the noise. */
+const rounded = (value: number) => Number(value.toFixed(6));
+
+/**
+ * One `cubic-bezier` as two that make up the same curve, for a key that goes in between. Undefined
+ * where the curve stands at 0 or 1, because a part that does not get anywhere has no handles. Handles
+ * that reach very far in x can leave a part with a handle outside of 0 and 1, which cannot be written:
+ * that one stops at the edge, and the two come close instead of being the same.
+ */
+export function splitBezier(
+  [x1, y1, x2, y2]: Handles,
+  time: number,
+): { readonly before: Handles; readonly after: Handles } | undefined {
+  if (time <= 0 || time >= 1) return undefined;
+  const s = parameterAt(x1, x2, time);
+  const ax = between(0, x1, s);
+  const ay = between(0, y1, s);
+  const bx = between(x1, x2, s);
+  const by = between(y1, y2, s);
+  const cx = between(x2, 1, s);
+  const cy = between(y2, 1, s);
+  const dx = between(ax, bx, s);
+  const dy = between(ay, by, s);
+  const ex = between(bx, cx, s);
+  const ey = between(by, cy, s);
+  const px = between(dx, ex, s);
+  const py = between(dy, ey, s);
+  if (Math.abs(py) < 1e-9 || Math.abs(1 - py) < 1e-9) return undefined;
+  const firstX = (x: number) => rounded(clampToUnit(x / px));
+  const firstY = (y: number) => rounded(y / py);
+  const lastX = (x: number) => rounded(clampToUnit((x - px) / (1 - px)));
+  const lastY = (y: number) => rounded((y - py) / (1 - py));
+  return {
+    before: [firstX(ax), firstY(ay), firstX(dx), firstY(dy)],
+    after: [lastX(ex), lastY(ey), lastX(cx), lastY(cy)],
+  };
 }
 
 /**
@@ -146,7 +191,7 @@ function slopeAtEnd(x1: number, y1: number, x2: number, y2: number): number {
 }
 
 /** Decimals are the common case, and thousands of keys go through here at once. */
-function secondsOf(time: string): number {
+export function secondsOf(time: string): number {
   if (!TIME_PATTERN.test(time)) return Number.NaN;
   return time.includes("/") ? toSeconds(parseTime(time)) : Number(time);
 }
@@ -155,6 +200,9 @@ function shapeOf(key: Key, mixes: boolean): number {
   if (!mixes || key.interp === "hold") return HOLD;
   return key.interp === "bezier" && key.out ? BEZIER : LINEAR;
 }
+
+/** Whether values of a type change gradually from one key to the next. */
+export const canMix = (type: ValueType): boolean => VALUE_TYPES[type].mix !== undefined;
 
 /** Keys are checked when they get written. These are the things that would break the search. */
 function timesOf(keys: readonly Key[]): Float64Array | undefined {

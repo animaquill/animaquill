@@ -42,6 +42,9 @@
   --aq-timeline-outside: #0000006b;
   --aq-timeline-end: #8a8a8a;
   --aq-timeline-marquee: #2aaaff;
+  --aq-timeline-key: #9fb2c6;
+  --aq-timeline-key-summary: #6f7d8b;
+  --aq-timeline-curve: #2aaaff;
 }
 
 *,

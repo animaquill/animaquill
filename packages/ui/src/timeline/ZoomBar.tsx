@@ -18,13 +18,16 @@ export type Edge = "start" | "end";
 interface ZoomBarProps {
   readonly axis: "x" | "y";
   readonly label: string;
-  readonly handleLabel: string;
-  readonly handleUsage: string;
+  readonly handleLabel?: string;
+  readonly handleUsage?: string;
   readonly subscribe: (listener: () => void) => () => void;
   readonly read: () => BarState;
   readonly scrollTo: (offset: number) => void;
-  /** Starts dragging a handle. The result takes how much longer the thumb is than at the start. */
-  readonly beginZoom: (edge: Edge) => (ratio: number) => void;
+  /**
+   * Starts dragging a handle. The result takes how much longer the thumb is than at the start.
+   * Without it there are no handles, and this is an ordinary scrollbar.
+   */
+  readonly beginZoom?: (edge: Edge) => (ratio: number) => void;
 }
 
 type Drag =
@@ -43,6 +46,7 @@ export function ZoomBar(props: ZoomBarProps) {
   const bar = useRef<HTMLDivElement>(null);
   const thumb = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | undefined>(undefined);
+  const shown = useRef<BarState | undefined>(undefined);
 
   const lengthOf = (element: HTMLElement) =>
     axis === "x" ? element.clientWidth : element.clientHeight;
@@ -61,10 +65,15 @@ export function ZoomBar(props: ZoomBarProps) {
     const show = () => {
       const element = thumb.current;
       if (!element) return;
+      // This runs with every frame of playing, and asking for a size makes the browser do its layout.
+      const state = read();
+      const { content, view, offset } = state;
+      const before = shown.current;
+      if (before?.content === content && before.view === view && before.offset === offset) return;
+      shown.current = state;
       const { size, start } = measure();
       element.style[axis === "x" ? "width" : "height"] = `${size}px`;
       element.style.transform = axis === "x" ? `translateX(${start}px)` : `translateY(${start}px)`;
-      const { content, view, offset } = read();
       const share = content > view ? Math.round((offset / (content - view)) * 100) : 0;
       bar.current?.setAttribute("aria-valuenow", String(share));
     };
@@ -74,7 +83,7 @@ export function ZoomBar(props: ZoomBarProps) {
 
   /** A fingertip is wider than the handles. They look the same, but reach further. */
   const nearHandle = (event: PointerEvent<HTMLDivElement>, at: number): Edge | undefined => {
-    if (event.pointerType !== "touch") return undefined;
+    if (event.pointerType !== "touch" || !beginZoom) return undefined;
     const { size, start } = measure();
     const box = event.currentTarget.getBoundingClientRect();
     const inBar = at - (axis === "x" ? box.left : box.top);
@@ -90,7 +99,7 @@ export function ZoomBar(props: ZoomBarProps) {
     const target = event.target as HTMLElement;
     const from = place(event);
     const edge = (target.dataset["handle"] as Edge | undefined) ?? nearHandle(event, from);
-    if (edge) {
+    if (edge && beginZoom) {
       drag.current = { kind: "zoom", from, edge, length: measure().size, zoom: beginZoom(edge) };
       return;
     }
@@ -121,11 +130,12 @@ export function ZoomBar(props: ZoomBarProps) {
     drag.current = undefined;
   };
 
-  const handle = (edge: Edge) => (
-    <Tip name={handleLabel} usage={handleUsage}>
-      <div className={styles.handle} data-handle={edge} />
-    </Tip>
-  );
+  const handle = (edge: Edge) =>
+    beginZoom && (
+      <Tip name={handleLabel ?? ""} usage={handleUsage ?? ""}>
+        <div className={styles.handle} data-handle={edge} />
+      </Tip>
+    );
 
   return (
     <div

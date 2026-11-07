@@ -1,0 +1,148 @@
+import type { PropertyEdit } from "@animaquill/core";
+import { describe, expect, it, vi } from "vitest";
+import { TrialSession } from "../properties/trial.ts";
+import { PropertyWriter } from "../properties/writer.ts";
+import { TimelineEditor } from "../timeline/editor.ts";
+import {
+  MemoryLibrary,
+  MemoryTrials,
+  memoryAddress,
+  memoryWindow,
+} from "../workbench/memory-library.ts";
+import { ProjectSession } from "../workbench/session.ts";
+import { KeyframeEditor } from "./editor.ts";
+
+const CLIPS = 5000;
+const KEYS = 5;
+
+const keysOf = (first: number) => ({
+  keys: Array.from({ length: KEYS }, (_, index) => ({
+    time: String(index / KEYS),
+    value: first + index,
+  })),
+});
+
+async function big() {
+  const session = new ProjectSession(new MemoryLibrary(), memoryAddress(), {
+    createFailed: vi.fn(),
+    notFound: vi.fn(),
+    openFailed: vi.fn(),
+    tooNew: vi.fn(),
+    damaged: vi.fn(),
+    saveFailed: vi.fn(),
+    saveRecovered: vi.fn(),
+  });
+  await session.create("大项目");
+  const store = session.store;
+  if (!store) throw new Error("no project");
+  // Going through 5000 commands is not what is being measured.
+  const path = "timelines/main/timeline.json";
+  const file = JSON.parse(store.exportFiles().files.get(path) as string) as {
+    tracks: { kind: string; clips: unknown[] }[];
+    sections: { duration: string }[];
+  };
+  const track = file.tracks.find(({ kind }) => kind === "video");
+  const section = file.sections[0];
+  if (!track || !section) throw new Error("no room for clips");
+  section.duration = String(CLIPS);
+  track.clips = Array.from({ length: CLIPS }, (_, index) => ({
+    id: `c${index}`,
+    start: String(index),
+    duration: "1",
+    source: { kind: "color", color: "#336699" },
+    properties: { "transform.x": keysOf(index), "transform.y": keysOf(-index) },
+  }));
+  const imported = store.importFile(path, JSON.stringify(file));
+  if (!imported.ok) throw new Error(imported.error.message);
+  const settings = {
+    load: async () => undefined,
+    save: async () => {},
+    listen: () => () => {},
+  };
+  const memory = memoryWindow();
+  const timeline = new TimelineEditor(session, memory, settings, { commandFailed: vi.fn() });
+  timeline.setViewport(1000, 400);
+  const trials = new TrialSession(session, timeline, new MemoryTrials(), settings, {
+    commandFailed: vi.fn(),
+    overwrote: vi.fn(),
+    discarded: vi.fn(),
+    setAside: vi.fn(),
+    back: vi.fn(),
+    asideDropped: vi.fn(),
+    unsure: vi.fn(),
+    restored: vi.fn(),
+    dropped: vi.fn(),
+    readFailed: vi.fn(),
+    keepFailed: vi.fn(),
+    keepRecovered: vi.fn(),
+  });
+  await trials.settle();
+  const writer = new PropertyWriter(session, timeline, trials, { commandFailed: vi.fn() });
+  const t = ((key: string, options?: { defaultValue?: string }) =>
+    options?.defaultValue ?? key) as never;
+  const keyframes = new KeyframeEditor(session, timeline, trials, writer, memory, settings, t, {
+    pasteTooEarly: vi.fn(),
+    pasteNowhere: vi.fn(),
+  });
+  keyframes.panel.setViewport(1000, 600);
+  return { store, timeline, keyframes, writer, trials };
+}
+
+/**
+ * Limits are many times what it takes, so that a busy machine does not fail this. Going through all
+ * clips for each clip takes minutes, and that is what this is here to catch.
+ */
+const timed = (name: string, run: () => void, limit: number) => {
+  const started = performance.now();
+  run();
+  expect(performance.now() - started, name).toBeLessThan(limit);
+};
+
+/** The numbers of the browser test need a browser. This is what does not. */
+describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
+  it("lists and works on all of it without stopping", async () => {
+    const { keyframes, timeline, trials } = await big();
+    const { panel } = keyframes;
+    timed("listing all clips", () => keyframes.setRange("all"), 4000);
+    expect(panel.lanes.length).toBeGreaterThan(CLIPS);
+    timed("again, with the same clips", () => keyframes.setRange("here"), 1000);
+    timed(
+      "100 frames of moving the playhead by hand",
+      () => {
+        for (let frame = 0; frame < 100; frame += 1) timeline.seek(3000 + frame * 30);
+      },
+      2000,
+    );
+    timed("only what has keys", () => keyframes.setRange("keyed"), 5000);
+    keyframes.setRange("all");
+    timed("looking for a name", () => keyframes.setQuery("transform.x"), 5000);
+    expect(panel.lanes.length).toBeGreaterThan(CLIPS * 2);
+    keyframes.setQuery("");
+
+    timed("selecting everything", () => panel.selectAll(), 5000);
+    expect(keyframes.selection.size).toBe(CLIPS * KEYS * 2);
+    timed("copying all of it", () => keyframes.copySelected(), 5000);
+    timed("nudging all of it", () => keyframes.nudge(1), 30_000);
+    expect(trials.getSnapshot().count).toBe(CLIPS * 2);
+    timed("taking that back", () => trials.undo(), 10_000);
+  });
+
+  it("a key among thousands moves without going through the rest", async () => {
+    const { store, keyframes, writer } = await big();
+    const owner = { clip: "c0" };
+    const keys = Array.from({ length: 20_000 }, (_, index) => ({
+      time: String(index / 10 + 10),
+      value: index,
+    }));
+    const edit: PropertyEdit = { owner, path: "transform.rotation", op: "set", value: { keys } };
+    store.execute({ type: "property.edit", params: { timeline: "main", edits: [edit] } });
+    const moves = [{ from: "10", to: "10.05" }];
+    timed(
+      "one key of 20000 in a preview",
+      () => writer.preview([{ owner, path: "transform.rotation", op: "moveKey", moves }]),
+      1000,
+    );
+    expect(keyframes.selection.size).toBe(0);
+    writer.cancel();
+  });
+});

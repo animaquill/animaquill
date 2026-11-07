@@ -17,12 +17,19 @@ const ROW_HEIGHTS: Readonly<Record<TrackState["kind"], number>> = {
   audio: 44,
 };
 
+/** How much room tracks need under their clips. */
+export type RoomBelow = ReadonlyMap<string, number>;
+
+export const NO_ROOM_BELOW: RoomBelow = new Map();
+
 /** A clip as the timeline draws it. Times are floats: fine for drawing, not for saving. */
 export interface ClipBox {
   readonly id: string;
   readonly clip: ClipState;
   readonly start: number;
   readonly end: number;
+  /** What the clock of the clip reads at its start. */
+  readonly offset: number;
 }
 
 /** A track as the timeline shows it. */
@@ -34,6 +41,8 @@ export interface Row {
   /** Distance from the top of the first row. */
   readonly top: number;
   readonly height: number;
+  /** Room under the clips for what belongs to them, which is not part of the row itself. */
+  readonly below: number;
   /** In time order. */
   readonly clips: readonly ClipBox[];
   /** The latest end so far at each clip. Clips can overlap after a merge, so ends are not sorted. */
@@ -53,6 +62,8 @@ export interface TimelineModel {
   readonly fps: string;
   /** How tall rows are shown, 1 being the normal height. */
   readonly rowScale: number;
+  /** What `below` of each row comes from, by track. */
+  readonly roomBelow: RoomBelow;
   readonly rate: FrameRate;
   /** Top to bottom. */
   readonly rows: readonly Row[];
@@ -75,7 +86,8 @@ function boxOf(clip: ClipState): ClipBox {
   let box = boxes.get(clip);
   if (!box) {
     const start = secondsOf(clip.start);
-    box = { id: clip.id, clip, start, end: start + secondsOf(clip.duration) };
+    const offset = clip.offset === undefined ? 0 : secondsOf(clip.offset);
+    box = { id: clip.id, clip, start, end: start + secondsOf(clip.duration), offset };
     boxes.set(clip, box);
   }
   return box;
@@ -117,6 +129,7 @@ export function buildModel(
   state: TimelineState,
   fps: string,
   rowScale = 1,
+  roomBelow: RoomBelow = NO_ROOM_BELOW,
 ): TimelineModel {
   const clipsByTrack = new Map<string, ClipBox[]>();
   const all = new Map<string, ClipBox>();
@@ -136,18 +149,20 @@ export function buildModel(
     const clips = (clipsByTrack.get(track.id) ?? []).toSorted(inTimeOrder);
     const height = Math.round(ROW_HEIGHTS[track.kind] * rowScale);
     const gone = !state.tracks[track.id];
+    const below = roomBelow.get(track.id) ?? 0;
     const row: Row = {
       id: track.id,
       track,
       number,
       top,
       height,
+      below,
       clips,
       reach: reachOf(clips),
       gone,
     };
     for (const box of clips) rowOfClip.set(box.id, row);
-    top += height;
+    top += height + below;
     return row;
   });
 
@@ -156,6 +171,7 @@ export function buildModel(
     state,
     fps,
     rowScale,
+    roomBelow,
     rate: frameRate(fps),
     rows,
     duration: toSeconds(timelineLength(state)),

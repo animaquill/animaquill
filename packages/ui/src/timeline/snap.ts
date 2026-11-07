@@ -40,8 +40,10 @@ export function snapPointsOf(
   model: TimelineModel,
   frame: number,
   except: ReadonlySet<string>,
+  more: readonly SnapPoint[] = [],
 ): SnapPoints {
   const points: SnapPoint[] = [
+    ...more,
     { seconds: 0, exact: () => ZERO },
     { seconds: model.duration, exact: () => timelineLength(model.state) },
     { seconds: frameSeconds(frame, model.rate), exact: () => frameTime(frame, model.rate) },

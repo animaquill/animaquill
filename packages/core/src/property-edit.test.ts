@@ -1,8 +1,9 @@
-import { createProject, type Animation, type PropertyValue } from "@animaquill/schema";
+import { Animation, createProject, type Key, type PropertyValue } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
+import { compileChannel, sample } from "./curve.ts";
 import { CommandError } from "./draft.ts";
 import { orderedTracks } from "./model.ts";
-import { applyEdit } from "./property-edit.ts";
+import { applyEdit, type KeyEase } from "./property-edit.ts";
 import { ProjectStore, aiTask } from "./store.ts";
 
 const keyed: Animation = {
@@ -11,6 +12,13 @@ const keyed: Animation = {
     { time: "2", value: 20, in: [0.58, 1], interp: "hold" },
   ],
   after: "loop",
+};
+
+const straight: Animation = {
+  keys: [
+    { time: "0", value: 0 },
+    { time: "2", value: 20 },
+  ],
 };
 
 describe("applying an edit", () => {
@@ -24,7 +32,7 @@ describe("applying an edit", () => {
     });
 
     it("writes a key with keys, between the ones that are there", () => {
-      const after = write(keyed, "1") as Animation;
+      const after = write(straight, "1") as Animation;
       expect(after.keys.map(({ time }) => time)).toEqual(["0", "1", "2"]);
       expect(after.keys[1]).toEqual({ time: "1", value: 5 });
     });
@@ -36,10 +44,47 @@ describe("applying an edit", () => {
     });
 
     it("a new key is linear and has no handles", () => {
-      const key = (write(keyed, "1") as Animation).keys[1];
-      expect(key?.interp).toBeUndefined();
-      expect(key?.out).toBeUndefined();
-      expect(key?.in).toBeUndefined();
+      const key = (write(straight, "1") as Animation).keys[1];
+      expect(key).toEqual({ time: "1", value: 5 });
+    });
+
+    it("keeps a bezier as it looks when a key goes in with the value that was there", () => {
+      const eased: Animation = {
+        keys: [
+          { time: "0", value: 0, interp: "bezier", out: [0.42, 0] },
+          { time: "2", value: 100, in: [0.58, 1] },
+        ],
+      };
+      const before = compileChannel(eased, "number");
+      if (!before) throw new Error("no channel");
+      const middle = sample(before, 0.5) as number;
+      const after = applyEdit(eased, { op: "write", time: "0.5", value: middle });
+      const channel = compileChannel(after, "number");
+      if (!channel) throw new Error("no channel");
+      for (const clock of [0.1, 0.3, 0.5, 0.7, 1, 1.3, 1.7, 1.95]) {
+        expect(sample(channel, clock)).toBeCloseTo(sample(before, clock) as number, 3);
+      }
+      expect((after as Animation).keys).toHaveLength(3);
+    });
+
+    it("leaves a bezier that stands still around the key alone, and writes a linear key", () => {
+      const flat: Animation = {
+        keys: [
+          { time: "0", value: 0, interp: "bezier", out: [0.5, 0] },
+          { time: "1", value: 1, in: [1, 0] },
+        ],
+      };
+      // The handles lie on the line of no progress for most of the way: nothing is left to scale.
+      const after = applyEdit(flat, { op: "setKey", time: "0.0000001", value: 0 }) as Animation;
+      expect(after.keys[1]).toEqual({ time: "0.0000001", value: 0 });
+    });
+
+    it("keeps moments on a curve that only has a handle on one side", () => {
+      const after = write(keyed, "1") as Animation;
+      expect(after.keys[0]?.interp).toBe("bezier");
+      expect(after.keys[1]?.interp).toBe("bezier");
+      expect(after.keys[2]?.in).toBeDefined();
+      expect(Animation.safeParse(after).success).toBe(true);
     });
 
     it("changes only the value of a key that is there", () => {
@@ -100,6 +145,166 @@ describe("applying an edit", () => {
         interp: "bezier",
         out: [0.42, 0],
       });
+    });
+  });
+
+  describe("moveKey", () => {
+    const three: Animation = {
+      keys: [
+        { time: "1", value: 10, interp: "hold" },
+        { time: "2", value: 20, interp: "bezier", out: [0.2, 0.3], in: [0.4, 0.5] },
+        { time: "3", value: 30, in: [0.6, 0.7] },
+      ],
+      before: "loop",
+    };
+    const move = (value: PropertyValue | undefined, ...moves: [string, string][]) =>
+      applyEdit(value, { op: "moveKey", moves: moves.map(([from, to]) => ({ from, to })) });
+    const times = (value: PropertyValue | undefined) =>
+      (value as Animation).keys.map(({ time }) => time);
+
+    it("takes everything of a key along, and leaves the rest", () => {
+      const after = move(three, ["2", "2.5"]) as Animation;
+      expect(after.keys[1]).toEqual({ ...three.keys[1], time: "2.5" });
+      expect(after.keys[0]).toBe(three.keys[0]);
+      expect(after.before).toBe("loop");
+    });
+
+    it("keeps keys in order when one passes another", () => {
+      expect(times(move(three, ["1", "2.5"]))).toEqual(["2", "2.5", "3"]);
+      expect(times(move(three, ["3", "0"]))).toEqual(["0", "1", "2"]);
+    });
+
+    it("moves keys together, so that one can go where another leaves", () => {
+      expect(times(move(three, ["1", "2"], ["2", "3"], ["3", "4"]))).toEqual(["2", "3", "4"]);
+      const after = move(three, ["3", "4"], ["2", "3"], ["1", "2"]) as Animation;
+      expect(after.keys.map(({ value }) => value)).toEqual([10, 20, 30]);
+    });
+
+    it("what lands on a key that stays replaces it", () => {
+      const after = move(three, ["1", "2"]) as Animation;
+      expect(times(after)).toEqual(["2", "3"]);
+      expect(after.keys[0]).toEqual({ time: "2", value: 10, interp: "hold" });
+    });
+
+    it("knows moments in another spelling", () => {
+      const thirds: Animation = {
+        keys: [
+          { time: "1/3", value: 1 },
+          { time: "2/3", value: 2 },
+        ],
+      };
+      expect(
+        times(applyEdit(thirds, { op: "moveKey", moves: [{ from: "2/6", to: "0.5" }] })),
+      ).toEqual(["0.5", "2/3"]);
+    });
+
+    it("fails for a key that is not there, and on a plain value", () => {
+      expect(() => move(three, ["1.5", "2"])).toThrow(CommandError);
+      expect(() => move(5, ["0", "1"])).toThrow(CommandError);
+      expect(() => move(undefined, ["0", "1"])).toThrow(CommandError);
+    });
+
+    it("does not let two keys end up in one place or one key go twice", () => {
+      expect(() => move(three, ["1", "5"], ["2", "5"])).toThrow(CommandError);
+      expect(() => move(three, ["1", "5"], ["1", "6"])).toThrow(CommandError);
+    });
+
+    it("leaves the value it got as it is", () => {
+      const before = structuredClone(three);
+      move(three, ["1", "2"]);
+      expect(three).toEqual(before);
+    });
+  });
+
+  describe("setInterp", () => {
+    const ease = (value: PropertyValue | undefined, times: string[], to: KeyEase) =>
+      applyEdit(value, { op: "setInterp", times, ease: to }) as Animation;
+    const handles: KeyEase = { interp: "bezier", out: [0.42, 0], in: [0.58, 1] };
+
+    it("a bezier leaves this key and arrives at the next one", () => {
+      const after = ease(straight, ["0"], handles);
+      expect(after.keys[0]).toEqual({ time: "0", value: 0, interp: "bezier", out: [0.42, 0] });
+      expect(after.keys[1]).toEqual({ time: "2", value: 20, in: [0.58, 1] });
+    });
+
+    it("the last key has nowhere to arrive", () => {
+      const after = ease(straight, ["2"], handles);
+      expect(after.keys[1]).toEqual({ time: "2", value: 20, interp: "bezier", out: [0.42, 0] });
+    });
+
+    it("hold and linear leave no handles behind", () => {
+      const held = ease(ease(straight, ["0"], handles), ["0"], { interp: "hold" });
+      expect(held.keys).toEqual([
+        { time: "0", value: 0, interp: "hold" },
+        { time: "2", value: 20 },
+      ]);
+      const linear = ease(keyed, ["0"], { interp: "linear" });
+      expect(linear.keys[0]).toEqual({ time: "0", value: 0 });
+      expect(linear.keys[1]).toEqual({ time: "2", value: 20, interp: "hold" });
+    });
+
+    it("how a key arrives stays, which is about the key before", () => {
+      const after = ease(keyed, ["2"], { interp: "linear" });
+      expect(after.keys[1]).toEqual({ time: "2", value: 20, in: [0.58, 1] });
+    });
+
+    it("takes what a spring or a preset said along when it stops being one", () => {
+      const preset: Animation = {
+        keys: [
+          { time: "0", value: 0, interp: "preset", preset: "bounce" },
+          { time: "1", value: 1, interp: "spring", spring: { stiffness: 1, damping: 1 } },
+        ],
+      };
+      const after = ease(preset, ["0", "1"], { interp: "hold" });
+      expect(after.keys).toEqual([
+        { time: "0", value: 0, interp: "hold" },
+        { time: "1", value: 1, interp: "hold" },
+      ]);
+    });
+
+    it("does several keys at once, each one with the stretch it starts", () => {
+      const three: Animation = {
+        keys: [
+          { time: "0", value: 0 },
+          { time: "1", value: 1 },
+          { time: "2", value: 2 },
+        ],
+      };
+      const after = ease(three, ["1", "0"], handles);
+      expect(after.keys[1]).toMatchObject({ interp: "bezier", out: [0.42, 0], in: [0.58, 1] });
+      expect(after.keys[2]).toMatchObject({ in: [0.58, 1] });
+      expect(Animation.safeParse(after).success).toBe(true);
+    });
+
+    it("fails for a key that is not there", () => {
+      expect(() => ease(straight, ["1"], { interp: "hold" })).toThrow(CommandError);
+      expect(() => ease(3, ["0"], { interp: "hold" })).toThrow(CommandError);
+    });
+  });
+
+  describe("putKeys", () => {
+    const put = (value: PropertyValue | undefined, ...keys: Key[]) =>
+      applyEdit(value, { op: "putKeys", keys }) as Animation;
+
+    it("starts keys on a plain value and on none", () => {
+      const key = { time: "1", value: 4, interp: "hold" } as const;
+      expect(put(5, key)).toEqual({ keys: [key] });
+      expect(put(undefined, key)).toEqual({ keys: [key] });
+    });
+
+    it("takes the place of what is at those moments, and keeps the rest", () => {
+      const after = put(straight, { time: "1", value: 4 }, { time: "2", value: 5, interp: "hold" });
+      expect(after.keys).toEqual([
+        { time: "0", value: 0 },
+        { time: "1", value: 4 },
+        { time: "2", value: 5, interp: "hold" },
+      ]);
+    });
+
+    it("does not take the same moment twice", () => {
+      expect(() => put(straight, { time: "1", value: 4 }, { time: "2/2", value: 5 })).toThrow(
+        CommandError,
+      );
     });
   });
 
@@ -222,6 +427,48 @@ describe("the property.edit command", () => {
     store.undo();
     store.undo();
     expect(value("transform.x")).toEqual(keys);
+  });
+
+  it("moves keys and changes how they go on in one step, and undo brings it all back", () => {
+    const { store, edit, value, owner } = setup();
+    const x = { owner, path: "transform.x" };
+    edit({ ...x, op: "setKey", time: "0", value: 1 }, { ...x, op: "setKey", time: "2", value: 2 });
+    const keys = value("transform.x");
+    edit(
+      { ...x, op: "moveKey", moves: [{ from: "2", to: "3" }] },
+      { ...x, op: "setInterp", times: ["0"], ease: { interp: "hold" } },
+    );
+    expect(value("transform.x")).toEqual({
+      keys: [
+        { time: "0", value: 1, interp: "hold" },
+        { time: "3", value: 2 },
+      ],
+    });
+    store.undo();
+    expect(value("transform.x")).toEqual(keys);
+  });
+
+  it("refuses to move a key before the clock starts, and to write a handle that goes back", () => {
+    const { store, edit, value, owner } = setup();
+    const x = { owner, path: "transform.x" };
+    edit({ ...x, op: "setKey", time: "1", value: 1 });
+    const before = value("transform.x");
+    const run = (change: object) =>
+      store.execute({ type: "property.edit", params: { timeline: "main", edits: [change] } });
+    expect(run({ ...x, op: "moveKey", moves: [{ from: "1", to: "-1" }] }).ok).toBe(false);
+    const ease = { interp: "bezier", out: [1.5, 0] };
+    expect(run({ ...x, op: "setInterp", times: ["1"], ease }).ok).toBe(false);
+    expect(run({ ...x, op: "setInterp", times: ["1"], ease: { interp: "bezier" } }).ok).toBe(false);
+    expect(value("transform.x")).toEqual(before);
+  });
+
+  it("checks the values of keys that get put in", () => {
+    const { store, owner } = setup();
+    const keys = [{ time: "0", value: 3 }];
+    const edits = [{ owner, path: "opacity", op: "putKeys", keys }];
+    expect(store.execute({ type: "property.edit", params: { timeline: "main", edits } }).ok).toBe(
+      false,
+    );
   });
 
   it("each edit sees the one before it", () => {

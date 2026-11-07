@@ -60,6 +60,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     if (document.visibilityState !== "hidden") return;
     void workbench.layout.flush();
     workbench.timeline.flush();
+    workbench.keyframes.flush();
   };
   document.addEventListener("visibilitychange", save);
 

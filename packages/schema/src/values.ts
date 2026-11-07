@@ -23,7 +23,7 @@ export const Value = z.union([
 ]);
 
 /** As in CSS: time has to go forwards, so x stays within the segment, and y can overshoot. */
-const Handle = z.tuple([z.number().min(0).max(1), z.number()]);
+export const Handle = z.tuple([z.number().min(0).max(1), z.number()]);
 
 /** How a value changes from one key to the next. Times are on the clock of the clip: see `offset`. */
 export const Key = z

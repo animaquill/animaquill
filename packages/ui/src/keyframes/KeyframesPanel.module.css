@@ -1,0 +1,68 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  overflow: hidden;
+  background: var(--aq-bg-panel);
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.corner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 4px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.search {
+  flex: 1;
+  min-width: 40px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--aq-accent);
+}
+
+.ranges {
+  display: flex;
+  flex: none;
+  background: var(--aq-bg-input);
+  border-radius: 2px;
+}
+
+.range {
+  padding: 1px 6px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.range:hover {
+  color: var(--aq-text-strong);
+}
+
+.range[aria-checked="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.rows {
+  position: relative;
+  will-change: transform;
+}

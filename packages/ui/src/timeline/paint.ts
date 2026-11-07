@@ -1,10 +1,9 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
-import { clipOffset, type ClipState } from "@animaquill/core";
-import { toSeconds } from "@animaquill/schema";
-import { RULER_HEIGHT, type TimelineEditor } from "./editor.ts";
-import { formatTimecode } from "./frames.ts";
+import type { ClipState } from "@animaquill/core";
+import { EXPANDER_SIZE, RULER_HEIGHT, expanderBox, type TimelineEditor } from "./editor.ts";
 import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "./model.ts";
-import { rulerSteps } from "./ruler.ts";
+import { paintRuler } from "./ruler.ts";
+import { StagePainter, readTheme, type Theme } from "./stage-painter.ts";
 
 const ROW_INSET = 2;
 const CLIP_RADIUS = 3;
@@ -16,53 +15,6 @@ const END_HANDLE = 6;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
 
-/** Canvas cannot read CSS variables, so the colours come over once. */
-interface Theme {
-  readonly font: string;
-  readonly background: string;
-  readonly lane: string;
-  readonly laneLocked: string;
-  readonly line: string;
-  readonly ruler: string;
-  readonly tick: string;
-  readonly label: string;
-  readonly picture: string;
-  readonly sound: string;
-  readonly caption: string;
-  readonly selected: string;
-  readonly snap: string;
-  readonly covered: string;
-  readonly outside: string;
-  readonly end: string;
-  readonly marquee: string;
-  readonly failed: string;
-}
-
-function readTheme(element: Element): Theme {
-  const style = getComputedStyle(element);
-  const color = (name: string) => style.getPropertyValue(`--aq-timeline-${name}`).trim();
-  return {
-    font: style.getPropertyValue("--aq-font"),
-    background: color("background"),
-    lane: color("lane"),
-    laneLocked: color("lane-locked"),
-    line: color("line"),
-    ruler: color("ruler"),
-    tick: color("tick"),
-    label: color("label"),
-    picture: color("picture"),
-    sound: color("sound"),
-    caption: color("caption"),
-    selected: color("selected"),
-    snap: color("snap"),
-    covered: color("covered"),
-    outside: color("outside"),
-    end: color("end"),
-    marquee: color("marquee"),
-    failed: style.getPropertyValue("--aq-danger").trim(),
-  };
-}
-
 /** Dark text on light colours, light text on dark ones. */
 function readableOn(color: string): string {
   const value = Number.parseInt(color.slice(1, 7), 16);
@@ -71,6 +23,13 @@ function readableOn(color: string): string {
 }
 
 export type ClipLabel = (box: ClipBox) => string;
+
+/** Draws over the lanes, in the area under the ruler. */
+export type BelowPainter = (
+  context: CanvasRenderingContext2D,
+  theme: Theme,
+  sharp: (value: number) => number,
+) => void;
 
 interface ClipLook {
   readonly row: Row;
@@ -93,18 +52,16 @@ interface ClipStrip {
   readonly duration: number;
 }
 
-export class TimelinePainter {
-  readonly #canvas: HTMLCanvasElement;
-  readonly #context: CanvasRenderingContext2D;
+export class TimelinePainter extends StagePainter {
   readonly #editor: TimelineEditor;
   readonly #labelOf: ClipLabel;
   readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
   readonly #stripOf: (clip: ClipState) => ClipStrip | undefined;
   readonly #hasFailed: (clip: ClipState) => boolean;
+  /** Draws what is under the clips of a track, over the rest. */
+  readonly #below: BelowPainter | undefined;
   /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
   #theme!: Theme;
-  #ratio = 1;
-  #pending: number | undefined;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -113,58 +70,24 @@ export class TimelinePainter {
     peaksOf: (clip: ClipState) => Uint8Array | undefined,
     stripOf: (clip: ClipState) => ClipStrip | undefined,
     hasFailed: (clip: ClipState) => boolean,
+    below?: BelowPainter,
   ) {
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("No 2D context");
-    this.#canvas = canvas;
-    this.#context = context;
+    super(canvas);
     this.#editor = editor;
     this.#labelOf = labelOf;
     this.#peaksOf = peaksOf;
     this.#stripOf = stripOf;
     this.#hasFailed = hasFailed;
-    // The browser can drop what a canvas holds, for example after a problem with the graphics card.
-    canvas.addEventListener("contextrestored", () => this.invalidate());
+    this.#below = below;
   }
 
-  /** Sizes are in CSS pixels. The canvas itself has as many pixels as the screen shows. */
-  resize(width: number, height: number, ratio: number): void {
-    this.#ratio = ratio;
-    this.#canvas.width = Math.round(width * ratio);
-    this.#canvas.height = Math.round(height * ratio);
-    this.#canvas.style.width = `${width}px`;
-    this.#canvas.style.height = `${height}px`;
-  }
-
-  invalidate(): void {
-    this.#pending ??= requestAnimationFrame(() => {
-      this.#pending = undefined;
-      this.#paint();
-    });
-  }
-
-  paintNow(): void {
-    this.dispose();
-    this.#pending = undefined;
-    this.#paint();
-  }
-
-  dispose(): void {
-    if (this.#pending !== undefined) cancelAnimationFrame(this.#pending);
-  }
-
-  /** Lines stay sharp when they sit on the pixels of the screen. */
-  #sharp(value: number): number {
-    return Math.round(value * this.#ratio) / this.#ratio;
-  }
-
-  #paint(): void {
+  protected paint(): void {
     const { model, width, height, pixelsPerSecond } = this.#editor;
     // Behind another tab there is nothing to paint on, and no scale to work out positions with.
-    if (width === 0 || height === 0 || pixelsPerSecond === 0 || !this.#canvas.isConnected) return;
-    this.#theme ??= readTheme(this.#canvas);
-    const context = this.#context;
-    context.setTransform(this.#ratio, 0, 0, this.#ratio, 0, 0);
+    if (width === 0 || height === 0 || pixelsPerSecond === 0 || !this.canvas.isConnected) return;
+    this.#theme ??= readTheme(this.canvas);
+    const { context, ratio } = this;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.fillStyle = this.#theme.background;
     context.fillRect(0, 0, width, height);
     if (!model) return;
@@ -178,6 +101,7 @@ export class TimelinePainter {
     this.#paintLanes(model);
     this.#paintClips(model);
     this.#paintPreview();
+    this.#below?.(context, this.#theme, (value) => this.sharp(value));
     this.#paintOutside();
     this.#paintMarquee();
     context.restore();
@@ -192,14 +116,14 @@ export class TimelinePainter {
 
   #paintLanes(model: TimelineModel): void {
     const { width, height } = this.#editor;
-    const context = this.#context;
+    const { context } = this;
     for (const row of model.rows) {
       const top = this.#rowTop(row);
       if (top + row.height < RULER_HEIGHT || top > height) continue;
       context.fillStyle = row.track.locked ? this.#theme.laneLocked : this.#theme.lane;
       context.fillRect(0, top, width, row.height);
       context.fillStyle = this.#theme.line;
-      context.fillRect(0, this.#sharp(top + row.height) - 1, width, 1);
+      context.fillRect(0, this.sharp(top + row.height) - 1, width, 1);
     }
   }
 
@@ -217,7 +141,7 @@ export class TimelinePainter {
       forEachBetween(row, from, to, (box) => {
         const isMoved = moved?.has(box.id) === true;
         const edge = hovered.kind === "clip" && hovered.box === box ? hovered.edge : undefined;
-        this.#context.globalAlpha = isMoved || cut.has(box.id) ? 0.35 : 1;
+        this.context.globalAlpha = isMoved || cut.has(box.id) ? 0.35 : 1;
         this.#paintClip(box, {
           row,
           start: box.start,
@@ -225,7 +149,7 @@ export class TimelinePainter {
           selected: !isMoved && selection.has(box.id),
           edge,
         });
-        this.#context.globalAlpha = 1;
+        this.context.globalAlpha = 1;
       });
     }
   }
@@ -234,7 +158,7 @@ export class TimelinePainter {
     const editor = this.#editor;
     const { model, preview } = editor;
     if (!model || !preview) return;
-    const context = this.#context;
+    const { context } = this;
     const first = editor.timeAt(0);
     const last = editor.timeAt(editor.width);
     for (const [id, { row, start, end }] of preview.clips ?? []) {
@@ -257,13 +181,13 @@ export class TimelinePainter {
 
   #paintClip(box: ClipBox, look: ClipLook): void {
     const editor = this.#editor;
-    const context = this.#context;
+    const { context } = this;
     const { row } = look;
     const top = this.#rowTop(row) + ROW_INSET;
     const height = row.height - ROW_INSET * 2 - 1;
-    const left = this.#sharp(editor.xAt(look.start));
-    const right = this.#sharp(editor.xAt(look.end));
-    const width = Math.max(right - left, 1 / this.#ratio);
+    const left = this.sharp(editor.xAt(look.start));
+    const right = this.sharp(editor.xAt(look.end));
+    const width = Math.max(right - left, 1 / this.ratio);
     const fill = this.#fillOf(box);
     const { track } = row;
     const hidden = track.kind === "audio" ? track.muted === true : track.hidden === true;
@@ -285,7 +209,12 @@ export class TimelinePainter {
     if (box.clip.source.kind === "audio" || box.clip.source.kind === "sound") {
       this.#paintWaveform(box, look, { left, right, top, height }, fill);
     }
-    if (width >= LABEL_MIN_WIDTH) this.#paintLabel(box, left, top, width, height, fill);
+    const expander = editor.showsExpander(box) ? expanderBox(left, width) : undefined;
+    if (width >= LABEL_MIN_WIDTH) {
+      const room = expander === undefined ? 0 : EXPANDER_SIZE;
+      this.#paintLabel(box, left, top, width, height, fill, room);
+    }
+    if (expander !== undefined) this.#paintExpander(box, expander, top, fill);
     // Too narrow for words it should still show, and on any clip it stays out of the way.
     if (this.#hasFailed(box.clip)) {
       context.fillStyle = this.#theme.failed;
@@ -322,12 +251,12 @@ export class TimelinePainter {
     const strip = this.#stripOf(box.clip);
     if (!strip || strip.duration <= 0) return;
     const editor = this.#editor;
-    const context = this.#context;
+    const { context } = this;
     const { image, count, duration } = strip;
     const frameWidth = image.width / count;
     const tile = Math.max((area.height * frameWidth) / image.height, 8);
     const moved = look.end - look.start === box.end - box.start ? look.start - box.start : 0;
-    const offset = toSeconds(clipOffset(box.clip));
+    const { offset } = box;
 
     context.save();
     context.beginPath();
@@ -361,10 +290,10 @@ export class TimelinePainter {
     const peaks = this.#peaksOf(box.clip);
     if (!peaks) return;
     const editor = this.#editor;
-    const context = this.#context;
+    const { context } = this;
     // A clip that moves takes its sound along. An edge that moves uncovers what is there.
     const moved = look.end - look.start === box.end - box.start ? look.start - box.start : 0;
-    const offset = toSeconds(clipOffset(box.clip));
+    const { offset } = box;
     const slotAt = (x: number) =>
       Math.floor((offset + editor.timeAt(x) - moved - box.start) * PEAKS_PER_SECOND);
     const middle = area.top + area.height / 2;
@@ -396,6 +325,33 @@ export class TimelinePainter {
     return sound ? this.#theme.sound : this.#theme.picture;
   }
 
+  /** Says whether what belongs to a clip shows under its track. It stays with the name. */
+  #paintExpander(box: ClipBox, x: number, top: number, fill: string): void {
+    const { context } = this;
+    const open = this.#editor.extras?.isOpen(box) === true;
+    const middle = x + EXPANDER_SIZE / 2;
+    const y = top + 12;
+    context.save();
+    if (box.clip.source.kind === "video" && this.#stripOf(box.clip) !== undefined) {
+      context.fillStyle = "#000000a6";
+      context.fillRect(x, y - 8, EXPANDER_SIZE, 16);
+      context.fillStyle = "#ffffff";
+    } else context.fillStyle = readableOn(fill);
+    context.beginPath();
+    if (open) {
+      context.moveTo(middle - 4, y - 2);
+      context.lineTo(middle + 4, y - 2);
+      context.lineTo(middle, y + 3);
+    } else {
+      context.moveTo(middle - 2, y - 4);
+      context.lineTo(middle + 3, y);
+      context.lineTo(middle - 2, y + 4);
+    }
+    context.closePath();
+    context.fill();
+    context.restore();
+  }
+
   /** The name stays in view while a long clip scrolls past. */
   #paintLabel(
     box: ClipBox,
@@ -404,13 +360,14 @@ export class TimelinePainter {
     width: number,
     height: number,
     fill: string,
+    room: number,
   ): void {
-    const context = this.#context;
+    const { context } = this;
     context.save();
     context.beginPath();
     context.rect(left, top, width, height);
     context.clip();
-    const x = Math.max(left, 0) + LABEL_PADDING;
+    const x = Math.max(left, 0) + LABEL_PADDING + room;
     const y = top + Math.min(height / 2, 12);
     const label = this.#labelOf(box);
     // Over pictures no single colour stays readable.
@@ -427,8 +384,8 @@ export class TimelinePainter {
 
   #paintOutside(): void {
     const editor = this.#editor;
-    const context = this.#context;
-    const end = this.#sharp(editor.xAt(editor.visibleDuration));
+    const { context } = this;
+    const end = this.sharp(editor.xAt(editor.visibleDuration));
     if (end >= editor.width) return;
     context.fillStyle = this.#theme.outside;
     context.fillRect(Math.max(end, 0), RULER_HEIGHT, editor.width, editor.height);
@@ -438,7 +395,7 @@ export class TimelinePainter {
     const editor = this.#editor;
     const marquee = editor.preview?.marquee;
     if (!marquee) return;
-    const context = this.#context;
+    const { context } = this;
     const left = editor.xAt(marquee.from);
     const width = editor.xAt(marquee.to) - left;
     const top = RULER_HEIGHT - editor.scrollY + marquee.top;
@@ -454,29 +411,13 @@ export class TimelinePainter {
 
   #paintRuler(model: TimelineModel): void {
     const editor = this.#editor;
-    const context = this.#context;
-    const { rate } = model;
-    context.fillStyle = this.#theme.ruler;
-    context.fillRect(0, 0, editor.width, RULER_HEIGHT);
-    context.fillStyle = this.#theme.line;
-    context.fillRect(0, RULER_HEIGHT - 1, editor.width, 1);
+    const { context } = this;
+    const theme = this.#theme;
+    const look = { ...theme, background: theme.ruler };
+    paintRuler(context, editor, model.rate, RULER_HEIGHT, look, (value) => this.sharp(value));
 
-    const { major, minor } = rulerSteps(editor.pixelsPerSecond / rate.fps, rate.nominal);
-    const firstFrame = Math.max(editor.timeAt(0) * rate.fps, 0);
-    const lastFrame = editor.timeAt(editor.width) * rate.fps;
-    context.fillStyle = this.#theme.tick;
-    for (let frame = Math.floor(firstFrame / minor) * minor; frame <= lastFrame; frame += minor) {
-      const x = this.#sharp(editor.xAt(frame / rate.fps));
-      const length = frame % major === 0 ? 10 : 5;
-      context.fillRect(x, RULER_HEIGHT - 1 - length, 1, length);
-    }
-    context.fillStyle = this.#theme.label;
-    for (let frame = Math.floor(firstFrame / major) * major; frame <= lastFrame; frame += major) {
-      context.fillText(formatTimecode(frame, rate), editor.xAt(frame / rate.fps) + 4, 10);
-    }
-
-    const end = this.#sharp(editor.xAt(editor.visibleDuration));
-    context.fillStyle = this.#theme.end;
+    const end = this.sharp(editor.xAt(editor.visibleDuration));
+    context.fillStyle = theme.end;
     context.beginPath();
     context.moveTo(end - END_HANDLE, RULER_HEIGHT - 1);
     context.lineTo(end, RULER_HEIGHT - 1 - END_HANDLE * 1.5);
@@ -488,14 +429,14 @@ export class TimelinePainter {
   /** Lines across everything, for what is happening right now. */
   #paintLines(): void {
     const editor = this.#editor;
-    const context = this.#context;
+    const { context } = this;
     context.fillStyle = this.#theme.end;
-    const end = this.#sharp(editor.xAt(editor.visibleDuration));
+    const end = this.sharp(editor.xAt(editor.visibleDuration));
     if (end >= 0 && end <= editor.width) context.fillRect(end, RULER_HEIGHT, 1, editor.height);
     context.fillStyle = this.#theme.snap;
     for (const moment of [editor.preview?.snap, editor.razorAt]) {
       if (moment === undefined) continue;
-      context.fillRect(this.#sharp(editor.xAt(moment)), 0, 1, editor.height);
+      context.fillRect(this.sharp(editor.xAt(moment)), 0, 1, editor.height);
     }
   }
 }

@@ -1,0 +1,32 @@
+.presets {
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  gap: 4px;
+}
+
+.preset {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 4px 2px;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.preset:hover {
+  background: var(--aq-bg-hover);
+}
+
+.preset[aria-checked="true"] {
+  color: var(--aq-text-strong);
+  border-color: var(--aq-accent);
+}
+
+.curve {
+  color: var(--aq-match);
+  overflow: visible;
+}

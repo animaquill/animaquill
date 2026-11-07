@@ -49,6 +49,7 @@ export {
 } from "./timeline.ts";
 export {
   Animation,
+  Handle,
   Key,
   KnownProperties,
   MediaRef,

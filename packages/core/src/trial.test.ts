@@ -2,7 +2,7 @@ import { createProject } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { orderedTracks } from "./model.ts";
-import type { PropertyEdit } from "./property-edit.ts";
+import type { KeyEase, PropertyEdit } from "./property-edit.ts";
 import { ProjectStore, aiTask, type CommandCall } from "./store.ts";
 import { Trial, type TrialNotice } from "./trial.ts";
 
@@ -423,6 +423,106 @@ describe("undo and redo", () => {
     let steps = 0;
     while (trial.undo()) steps += 1;
     expect(steps).toBe(200);
+  });
+});
+
+describe("keys that move and ease", () => {
+  const x = { owner, path: "transform.x" };
+  const start = (trial: Trial, run: (call: CommandCall) => unknown) => {
+    run(set(twoKeys));
+    expect(trial.count).toBe(0);
+  };
+
+  it("moving keys only reaches what is tried, and goes back and forward as one step", () => {
+    const { run, trial, saved, tried } = setup();
+    start(trial, run);
+    const moves = [
+      { from: "0", to: "1" },
+      { from: "2", to: "3" },
+    ];
+    expect(trial.write([{ ...x, op: "moveKey", moves }]).ok).toBe(true);
+    expect(tried("transform.x")).toEqual({
+      keys: [
+        { time: "1", value: 0 },
+        { time: "3", value: 2 },
+      ],
+    });
+    expect(saved("transform.x")).toEqual(twoKeys);
+    expect(trial.undo()).toBe(true);
+    expect(trial.count).toBe(0);
+    expect(trial.canUndo).toBe(false);
+    expect(trial.redo()).toBe(true);
+    expect(tried("transform.x")).toMatchObject({ keys: [{ time: "1" }, { time: "3" }] });
+  });
+
+  it("how keys go on works the same way, and saving is one step of the project", () => {
+    const { run, store, trial, saved, tried } = setup();
+    start(trial, run);
+    const ease: KeyEase = { interp: "bezier", out: [0.42, 0], in: [0.58, 1] };
+    expect(trial.write([{ ...x, op: "setInterp", times: ["0"], ease }]).ok).toBe(true);
+    expect(tried("transform.x")).toEqual({
+      keys: [
+        { time: "0", value: 0, interp: "bezier", out: [0.42, 0] },
+        { time: "2", value: 2, in: [0.58, 1] },
+      ],
+    });
+    expect(trial.write([{ ...x, op: "moveKey", moves: [{ from: "2", to: "4" }] }]).ok).toBe(true);
+    expect(trial.save().ok).toBe(true);
+    expect(saved("transform.x")).toEqual({
+      keys: [
+        { time: "0", value: 0, interp: "bezier", out: [0.42, 0] },
+        { time: "4", value: 2, in: [0.58, 1] },
+      ],
+    });
+    store.undo();
+    expect(saved("transform.x")).toEqual(twoKeys);
+  });
+
+  it("refuses what a command would refuse, and keeps what was there", () => {
+    const { run, trial, tried } = setup();
+    start(trial, run);
+    const gone = trial.write([{ ...x, op: "moveKey", moves: [{ from: "7", to: "8" }] }]);
+    expect(gone.ok).toBe(false);
+    const twice = trial.write([
+      {
+        ...x,
+        op: "moveKey",
+        moves: [
+          { from: "0", to: "5" },
+          { from: "2", to: "5" },
+        ],
+      },
+    ]);
+    expect(twice.ok).toBe(false);
+    expect(tried("transform.x")).toBeUndefined();
+    expect(trial.canUndo).toBe(false);
+  });
+
+  it("moving keys that end up where they were counts as nothing", () => {
+    const { run, trial } = setup();
+    start(trial, run);
+    trial.write([{ ...x, op: "moveKey", moves: [{ from: "2", to: "3" }] }]);
+    trial.write([{ ...x, op: "moveKey", moves: [{ from: "3", to: "2" }] }]);
+    expect(trial.count).toBe(0);
+  });
+
+  it("keys put in with their easing come out when it is saved", () => {
+    const { run, trial, saved } = setup();
+    start(trial, run);
+    const keys = [{ time: "5", value: 7, interp: "hold" as const }];
+    expect(trial.write([{ ...x, op: "putKeys", keys }]).ok).toBe(true);
+    expect(trial.save().ok).toBe(true);
+    expect(saved("transform.x")).toMatchObject({
+      keys: [{ time: "0" }, { time: "2" }, { time: "5", value: 7, interp: "hold" }],
+    });
+  });
+
+  it("the keys of a clip that moves its clock take what is tried with them", () => {
+    const { run, trial, tried } = setup();
+    start(trial, run);
+    trial.write([{ ...x, op: "moveKey", moves: [{ from: "2", to: "3" }] }]);
+    run({ type: "clip.trim", params: { timeline: "main", clip: "c", start: "1" } });
+    expect(tried("transform.x")).toMatchObject({ keys: [{ time: "1" }, { time: "4" }] });
   });
 });
 

@@ -6,7 +6,7 @@ const GAP = 8;
 const MARGIN = 6;
 
 interface BubbleProps {
-  /** The status bar item it belongs to. */
+  /** What it belongs to. */
   readonly anchor: DOMRect;
   readonly title: string;
   readonly onClose: () => void;
@@ -28,11 +28,15 @@ export function Bubble({ anchor, title, onClose, children }: BubbleProps) {
   useLayoutEffect(() => {
     const element = root.current;
     if (!element) return;
-    const { width } = element.getBoundingClientRect();
+    const { width, height } = element.getBoundingClientRect();
     const middle = anchor.left + anchor.width / 2;
     const left = Math.min(Math.max(middle - width / 2, MARGIN), innerWidth - width - MARGIN);
     element.style.left = `${left}px`;
-    element.style.bottom = `${innerHeight - anchor.top + GAP}px`;
+    // Above what it belongs to, unless the window ends there.
+    const fitsAbove = anchor.top - GAP - height >= MARGIN;
+    element.style.bottom = fitsAbove ? `${innerHeight - anchor.top + GAP}px` : "auto";
+    element.style.top = fitsAbove ? "auto" : `${anchor.bottom + GAP}px`;
+    element.dataset["side"] = fitsAbove ? "above" : "below";
     element.style.setProperty("--arrow", `${middle - left}px`);
   }, [anchor]);
 

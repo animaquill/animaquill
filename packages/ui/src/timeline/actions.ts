@@ -4,10 +4,38 @@ import type { TimelineEditor } from "./editor.ts";
 
 export type TimelineAction = keyof typeof zhCN.timeline.action;
 
+/** Keys that show under the clips. While some are selected, what people do is about those. */
+export interface LaneKeys {
+  readonly hasSelection: boolean;
+  /** Whether any of what is selected can change. */
+  readonly canChangeSelection: boolean;
+  readonly hasClipboard: boolean;
+  nudge(frames: number): void;
+  deleteSelected(): void;
+  copySelected(): void;
+  forgetClipboard(): void;
+  paste(): void;
+}
+
 /** Keys as people know them from Premiere. Everything can be changed in the list of shortcuts. */
-export function registerTimelineActions(actions: ActionRegistry, editor: TimelineEditor): void {
+export function registerTimelineActions(
+  actions: ActionRegistry,
+  editor: TimelineEditor,
+  keys: LaneKeys,
+): void {
   const hasTimeline = () => editor.model !== undefined;
+  const hasKeys = () => keys.hasSelection;
   const hasSelection = () => editor.getSnapshot().selection.size > 0;
+  const toggleProperties = () => {
+    const { extras, model } = editor;
+    const { selection } = editor.getSnapshot();
+    const boxes = [...selection].flatMap((id) => {
+      const box = model?.boxes.get(id);
+      return box && extras?.canOpen(box) ? [box] : [];
+    });
+    const closing = boxes.some((box) => extras?.isOpen(box));
+    for (const box of boxes) if (extras?.isOpen(box) === closing) extras.toggle(box);
+  };
 
   const add = (
     id: TimelineAction,
@@ -44,28 +72,50 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
     enabled: () => editor.canSplit,
     group: "edit",
   });
-  add("delete", () => editor.deleteSelection(), {
-    keys: ["delete", "backspace"],
-    enabled: () => editor.canChangeSelection,
-    group: "edit",
-  });
+  add(
+    "delete",
+    () => {
+      if (keys.canChangeSelection) keys.deleteSelected();
+      else editor.deleteSelection();
+    },
+    {
+      keys: ["delete", "backspace"],
+      enabled: () => keys.canChangeSelection || editor.canChangeSelection,
+      group: "edit",
+    },
+  );
   add("selectAll", () => editor.selectAll(), { keys: ["mod+a"], group: "edit" });
-  const whileSelected = () => hasTimeline() && hasSelection();
-  add("copy", () => editor.copySelection(), {
-    keys: ["mod+c"],
-    enabled: whileSelected,
-    group: "clipboard",
-  });
+  add("toggleProperties", toggleProperties, { keys: ["u"], enabled: hasSelection, group: "edit" });
+  const whileSelected = () => hasTimeline() && (hasSelection() || hasKeys());
+  add(
+    "copy",
+    () => {
+      if (hasKeys()) {
+        keys.copySelected();
+        return;
+      }
+      keys.forgetClipboard();
+      editor.copySelection();
+    },
+    { keys: ["mod+c"], enabled: whileSelected, group: "clipboard" },
+  );
   add("cut", () => editor.cutSelection(), {
     keys: ["mod+x"],
     enabled: () => editor.canChangeSelection,
     group: "clipboard",
   });
-  add("paste", () => editor.paste(), {
-    keys: ["mod+v"],
-    enabled: () => hasTimeline() && editor.hasClipboard,
-    group: "clipboard",
-  });
+  add(
+    "paste",
+    () => {
+      if (keys.hasClipboard) keys.paste();
+      else editor.paste();
+    },
+    {
+      keys: ["mod+v"],
+      enabled: () => hasTimeline() && (editor.hasClipboard || keys.hasClipboard),
+      group: "clipboard",
+    },
+  );
 
   add("toolSelect", () => editor.setTool("select"), {
     keys: ["v"],
@@ -114,10 +164,15 @@ export function registerTimelineActions(actions: ActionRegistry, editor: Timelin
       enabled: hasTimeline,
     });
   }
-  add("previousFrame", () => editor.stepFrames(-1), { keys: ["left"], repeats: true });
-  add("nextFrame", () => editor.stepFrames(1), { keys: ["right"], repeats: true });
-  add("backFiveFrames", () => editor.stepFrames(-5), { keys: ["shift+left"], repeats: true });
-  add("forwardFiveFrames", () => editor.stepFrames(5), { keys: ["shift+right"], repeats: true });
+  // Selected keys move by frames. Without any, the playhead does.
+  const step = (frames: number) => () => {
+    if (keys.canChangeSelection) keys.nudge(frames);
+    else editor.stepFrames(frames);
+  };
+  add("previousFrame", step(-1), { keys: ["left"], repeats: true });
+  add("nextFrame", step(1), { keys: ["right"], repeats: true });
+  add("backFiveFrames", step(-5), { keys: ["shift+left"], repeats: true });
+  add("forwardFiveFrames", step(5), { keys: ["shift+right"], repeats: true });
   add("previousEdit", () => editor.jumpToEdit(-1), { keys: ["up"], repeats: true });
   add("nextEdit", () => editor.jumpToEdit(1), { keys: ["down"], repeats: true });
   add("start", () => editor.seekToStart(), { keys: ["home"] });

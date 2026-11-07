@@ -17,6 +17,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -31,6 +32,10 @@ import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
+import { KeyList } from "../keyframes/KeyList.tsx";
+import { useKeyPopups } from "../keyframes/KeyPopups.tsx";
+import { LaneRows } from "../keyframes/LaneRows.tsx";
+import { LanePainter, paintMarquee, paintSnapLine } from "../keyframes/paint.ts";
 import { ASSET_DRAG_TYPE, SCENE_DRAG_TYPE, SOUND_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
 import type zhCN from "../i18n/zh-CN.json";
 import type { TimelineAction } from "./actions.ts";
@@ -39,15 +44,11 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
-import { TouchController } from "./touch.ts";
-import { WheelInterpreter } from "./wheel.ts";
 import styles from "./TimelinePanel.module.css";
 import { ZoomBar } from "./ZoomBar.tsx";
 
-/** How close to the edge a drag has to be to scroll, and how fast it gets, in pixels per second. */
-const SCROLL_ZONE = 32;
-const SCROLL_SPEED = 900;
 /** The list for screen readers follows the view a moment later, not with every frame of a drag. */
 const CLIP_LIST_DELAY_MS = 80;
 const CLIP_LIST_LIMIT = 200;
@@ -90,17 +91,6 @@ function useTrackName() {
   const { t } = useTranslation();
   return ({ track, number, gone }: Row) =>
     gone ? t("timeline.goneTrack") : (track.name ?? t(`timeline.track.${track.kind}`, { number }));
-}
-
-function pointerOf(event: MouseEvent | PointerEvent, stage: HTMLElement): Pointer {
-  const box = stage.getBoundingClientRect();
-  return {
-    x: event.clientX - box.left,
-    y: event.clientY - box.top,
-    shift: event.shiftKey,
-    alt: event.altKey,
-    mod: event.ctrlKey || event.metaKey,
-  };
 }
 
 function Toolbar({ editor }: { editor: TimelineEditor }) {
@@ -455,6 +445,7 @@ function TrackHeaders({
   showMenu: ShowMenu;
 }) {
   const { t } = useTranslation();
+  const { keyframes } = useWorkbench();
   const { headerWidth } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
   const list = useRef<HTMLDivElement>(null);
   const [dropLine, setDropLine] = useState<number>();
@@ -517,14 +508,12 @@ function TrackHeaders({
       <div className={styles.headerList}>
         <div ref={list}>
           {model.rows.map((row) => (
-            <TrackHeader
-              key={row.id}
-              editor={editor}
-              row={row}
-              showMenu={showMenu}
-              onReorder={setDropLine}
-            />
+            <Fragment key={row.id}>
+              <TrackHeader editor={editor} row={row} showMenu={showMenu} onReorder={setDropLine} />
+              {row.below > 0 && <div style={{ height: row.below }} />}
+            </Fragment>
           ))}
+          <LaneRows area={keyframes.inTimeline} />
           {dropLine !== undefined && <div className={styles.dropLine} style={{ top: dropLine }} />}
         </div>
       </div>
@@ -595,201 +584,54 @@ function Surface({
   showMenu: ShowMenu;
 }) {
   const { t } = useTranslation();
-  const { input, media, sounds } = useWorkbench();
+  const { input, media, keyframes, sounds } = useWorkbench();
   const labelOf = useClipLabel();
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const playhead = useRef<HTMLDivElement>(null);
-  const lastPointer = useRef<Pointer | undefined>(undefined);
-  const scrolling = useRef<number | undefined>(undefined);
   const labels = useRef(labelOf);
-  const touch = useRef<TouchController | undefined>(undefined);
-  const menuAt = useRef<(pointer: Pointer) => void>(() => {});
+  const lanes = keyframes.inTimeline;
+  const popups = useKeyPopups(lanes);
 
   useLayoutEffect(() => {
     labels.current = labelOf;
   });
 
-  useLayoutEffect(() => {
-    touch.current = new TouchController(editor, {
-      later(run, milliseconds) {
-        const timer = setTimeout(run, milliseconds);
-        return () => clearTimeout(timer);
+  const events = useStage(
+    editor,
+    { stage, canvas, playhead },
+    {
+      paint: (element) => {
+        const painter = new LanePainter(lanes, keyframes.labelOfValue);
+        return new TimelinePainter(
+          element,
+          editor,
+          (box) => labels.current(box),
+          (clip) => media.peaksOf(clip),
+          (clip) => media.stripOfClip(clip),
+          (clip) => sounds.stateOf(clip)?.state === "failed",
+          (context, theme, sharp) => {
+            painter.paint(context, theme, sharp);
+            paintMarquee(context, lanes, theme);
+            paintSnapLine(context, lanes, theme, sharp);
+          },
+        );
       },
-      nextFrame(run) {
-        const frame = requestAnimationFrame(run);
-        return () => cancelAnimationFrame(frame);
+      repaintOn: (listener) => {
+        const stopMedia = media.subscribe(listener);
+        const stopSounds = sounds.subscribe(listener);
+        return () => {
+          stopMedia();
+          stopSounds();
+        };
       },
-      now: () => performance.now(),
-      openMenu: (pointer) => menuAt.current(pointer),
-      held: () => navigator.vibrate?.(10),
-    });
-  }, [editor]);
-
-  useLayoutEffect(() => {
-    const stageElement = stage.current;
-    // The wheel works over the track headers too.
-    const bodyElement = stageElement?.closest(`.${styles.body as string}`);
-    const canvasElement = canvas.current;
-    const playheadElement = playhead.current;
-    if (!bodyElement || !stageElement || !canvasElement || !playheadElement) return;
-
-    const painter = new TimelinePainter(
-      canvasElement,
-      editor,
-      (box) => labels.current(box),
-      (clip) => media.peaksOf(clip),
-      (clip) => media.stripOfClip(clip),
-      (clip) => sounds.stateOf(clip)?.state === "failed",
-    );
-    const stopMedia = media.subscribe(() => painter.invalidate());
-    const stopSounds = sounds.subscribe(() => painter.invalidate());
-
-    const show = () => {
-      const { model: current } = editor;
-      if (current) {
-        const x = editor.xAt(editor.frame / current.rate.fps);
-        const seen = x >= -1 && x <= editor.width;
-        playheadElement.style.visibility = seen ? "visible" : "hidden";
-        playheadElement.style.transform = `translateX(${Math.round(x)}px)`;
-        playheadElement.classList.toggle(styles.snapped as string, editor.isSnappedToPlayhead);
-        playheadElement.setAttribute("aria-valuenow", String(editor.frame));
-        playheadElement.setAttribute("aria-valuetext", formatTimecode(editor.frame, current.rate));
-      }
-      painter.invalidate();
-    };
-
-    const measure = () => {
-      const width = stageElement.clientWidth;
-      const height = stageElement.clientHeight;
-      painter.resize(width, height, devicePixelRatio);
-      editor.setViewport(width, height);
-      show();
-      // Resizing wipes the canvas, and this runs after the frame's chance to draw: waiting for the
-      // next one would show an empty panel for a moment, over and over while dragging a divider.
-      painter.paintNow();
-    };
-
-    const wheel = new WheelInterpreter();
-    const onWheel = (event: Event) => {
-      if (!(event instanceof WheelEvent)) return;
-      event.preventDefault();
-      const { wheelDeltaX, wheelDeltaY } = event as WheelEvent & {
-        wheelDeltaX: number;
-        wheelDeltaY: number;
-      };
-      const action = wheel.read(
-        {
-          deltaX: event.deltaX,
-          deltaY: event.deltaY,
-          lines: event.deltaMode === WheelEvent.DOM_DELTA_LINE,
-          wheelDelta: wheelDeltaY || wheelDeltaX,
-          ctrl: event.ctrlKey || event.metaKey,
-          alt: event.altKey,
-          shift: event.shiftKey,
-          time: event.timeStamp,
-        },
-        input.wheelDevice,
-      );
-      if (wheel.device) input.notice(wheel.device);
-      const box = stageElement.getBoundingClientRect();
-      if (action.kind === "zoom") editor.zoomAround(event.clientX - box.left, action.factor);
-      else if (action.kind === "zoomRows") {
-        editor.zoomRowsAround(event.clientY - box.top, action.factor);
-      } else editor.setScroll(editor.scrollX + action.dx, editor.scrollY + action.dy);
-    };
-
-    const stopView = editor.subscribeView(show);
-    const observer = new ResizeObserver(measure);
-    observer.observe(stageElement);
-    measure();
-    bodyElement.addEventListener("wheel", onWheel, { passive: false });
-
-    // The ratio changes when the window moves to another screen, or with the browser's zoom. The
-    // query is about one value, so every change needs a new one.
-    let stopRatio = () => {};
-    const watchRatio = () => {
-      stopRatio();
-      const query = matchMedia(`(resolution: ${devicePixelRatio}dppx)`);
-      const onChange = () => {
-        measure();
-        watchRatio();
-      };
-      query.addEventListener("change", onChange);
-      stopRatio = () => query.removeEventListener("change", onChange);
-    };
-    watchRatio();
-
-    return () => {
-      // The mouse button can come up after this panel is gone, and nobody here would hear of it.
-      editor.cancelDrag();
-      stopRatio();
-      bodyElement.removeEventListener("wheel", onWheel);
-      observer.disconnect();
-      stopView();
-      stopMedia();
-      stopSounds();
-      painter.dispose();
-    };
-  }, [editor, input, media, sounds]);
-
-  /** Dragging near an edge keeps going, also when the mouse does not move. */
-  const scrollWhileNearEdge = (now: number, before = now) => {
-    scrolling.current = undefined;
-    const pointer = lastPointer.current;
-    if (!pointer || !editor.isDragging) return;
-    const seconds = (now - before) / 1000;
-    const speed = (distance: number) =>
-      Math.max(0, Math.min(1, distance / SCROLL_ZONE)) * SCROLL_SPEED * seconds;
-    const dx = speed(pointer.x - (editor.width - SCROLL_ZONE)) - speed(SCROLL_ZONE - pointer.x);
-    const dy =
-      speed(pointer.y - (editor.height - SCROLL_ZONE)) -
-      speed(SCROLL_ZONE + RULER_HEIGHT - pointer.y);
-    if (dx !== 0 || dy !== 0) editor.scrollDuringDrag(pointer, dx, dy);
-    scrolling.current = requestAnimationFrame((next) => scrollWhileNearEdge(next, now));
-  };
-
-  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const { currentTarget } = event;
-    currentTarget.focus({ preventScroll: true });
-    currentTarget.setPointerCapture(event.pointerId);
-    lastPointer.current = pointerOf(event, currentTarget);
-    input.noticePointer(event.pointerType);
-    const isTouch = input.isTouch(event.pointerType);
-    editor.setTouchInput(isTouch);
-    if (isTouch) touch.current?.down(event.pointerId, lastPointer.current.x, lastPointer.current.y);
-    else editor.press(lastPointer.current);
-    scrolling.current ??= requestAnimationFrame((now) => scrollWhileNearEdge(now));
-  };
-
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    const { currentTarget } = event;
-    const pointer = pointerOf(event, currentTarget);
-    currentTarget.title = pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : "";
-    lastPointer.current = pointer;
-    if (input.isTouch(event.pointerType)) {
-      touch.current?.move(event.pointerId, pointer.x, pointer.y);
-      scrolling.current ??= requestAnimationFrame((now) => scrollWhileNearEdge(now));
-      return;
-    }
-    // The button came up somewhere we could not see it, for example in another window.
-    if (editor.isDragging && event.buttons === 0) editor.cancelDrag();
-    else if (editor.isDragging) {
-      editor.drag(pointer);
-      currentTarget.style.cursor = editor.preview?.copying ? "copy" : "";
-    } else currentTarget.style.cursor = editor.hover(pointer);
-  };
-
-  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (input.isTouch(event.pointerType)) touch.current?.up(event.pointerId);
-    else if (event.button === 0) editor.release(pointerOf(event, event.currentTarget));
-  };
-
-  const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
-    if (input.isTouch(event.pointerType)) touch.current?.cancel(event.pointerId);
-    else editor.cancelDrag();
-  };
+      // The wheel works over the track headers too.
+      wheelArea: (element) => element.closest(`.${styles.body as string}`),
+      openMenu: (pointer) => {
+        if (stage.current) openMenu(pointer, stage.current.getBoundingClientRect());
+      },
+    },
+  );
 
   const carriesMedia = (event: DragEvent) =>
     event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
@@ -840,6 +682,7 @@ function Surface({
   };
 
   const openMenu = (pointer: Pointer, box: DOMRect) => {
+    if (popups.open(pointer, box)) return;
     const hit = editor.hitAt(pointer);
     const x = pointer.x + box.left;
     const y = pointer.y + box.top;
@@ -851,6 +694,19 @@ function Surface({
         run,
         disabled,
       });
+      const { extras } = editor;
+      const properties =
+        extras?.canOpen(hit.box) === true
+          ? [
+              {
+                id: "properties",
+                label: t(
+                  extras.isOpen(hit.box) ? "timeline.closeProperties" : "timeline.openProperties",
+                ),
+                run: () => extras.toggle(hit.box),
+              },
+            ]
+          : [];
       showMenu({
         x,
         y,
@@ -861,6 +717,7 @@ function Surface({
             item("cut", () => editor.cutSelection()),
             item("paste", () => editor.paste(), !editor.hasClipboard),
           ],
+          ...(properties.length > 0 ? [properties] : []),
           [
             item("split", () => editor.splitAtPlayhead(), !editor.canSplit),
             item("delete", () => editor.deleteSelection()),
@@ -905,13 +762,7 @@ function Surface({
     }
   };
 
-  useLayoutEffect(() => {
-    menuAt.current = (pointer) => {
-      if (stage.current) openMenu(pointer, stage.current.getBoundingClientRect());
-    };
-  });
-
-  const lanes = () => editor.height - RULER_HEIGHT;
+  const lanesHeight = () => editor.height - RULER_HEIGHT;
 
   return (
     <div className={styles.surface}>
@@ -921,14 +772,8 @@ function Surface({
         tabIndex={0}
         role="group"
         aria-label={t("panel.timeline.title")}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-        onLostPointerCapture={(event) => {
-          if (!input.isTouch(event.pointerType)) editor.cancelDrag();
-        }}
-        onPointerLeave={() => editor.leave()}
+        {...events}
+        onDoubleClick={(event) => popups.doubleClick(pointerOf(event, event.currentTarget))}
         onContextMenu={onContextMenu}
         onDragOver={onDragOver}
         onDragLeave={() => editor.showDrop(undefined)}
@@ -936,6 +781,7 @@ function Surface({
       >
         <canvas ref={canvas} className={styles.canvas} />
         <ClipList editor={editor} />
+        <KeyList area={lanes} />
         {model.boxes.size === 0 && <p className={styles.hint}>{t("timeline.emptyHint")}</p>}
         <div
           ref={playhead}
@@ -957,7 +803,7 @@ function Surface({
           subscribe={editor.subscribeView}
           read={() => ({
             content: editor.contentHeight - RULER_HEIGHT,
-            view: lanes(),
+            view: lanesHeight(),
             offset: editor.scrollY,
           })}
           scrollTo={(offset) => editor.setScroll(editor.scrollX, offset)}
@@ -986,12 +832,13 @@ function Surface({
           return (ratio) => editor.zoomAround(x, start / ratio / editor.pixelsPerSecond);
         }}
       />
+      {popups.element}
     </div>
   );
 }
 
 export function TimelinePanel() {
-  const { timeline: editor } = useWorkbench();
+  const { timeline: editor, keyframes } = useWorkbench();
   const { t } = useTranslation();
   const { model } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
   const [popup, setPopup] = useState<PopupState>();
@@ -1001,7 +848,9 @@ export function TimelinePanel() {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // A menu opened from here is part of this panel for React, but it has its own Escape.
     if (event.key !== "Escape" || !event.currentTarget.contains(event.target as Node)) return;
-    if (!editor.cancelDrag() && !editor.cancelCut()) editor.clearSelection();
+    if (editor.cancelDrag() || editor.cancelCut()) return;
+    if (keyframes.selection.size > 0) keyframes.clearSelection();
+    else editor.clearSelection();
   };
 
   return (

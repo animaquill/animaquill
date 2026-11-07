@@ -107,14 +107,18 @@ const TOUCHING = 1e-9;
 const MAX_JUMPS = 500;
 
 /** Where something ends up: on a frame, or exactly on what it snapped to. */
-interface Landing {
+export interface Landing {
   readonly seconds: number;
   exact(): Rational;
   /** Where to show that it snapped. */
   readonly line?: number;
 }
 
-function landOn(host: GestureHost, seconds: number, point: SnapPoint | undefined): Landing {
+export function landOn(
+  host: Pick<GestureHost, "model">,
+  seconds: number,
+  point: SnapPoint | undefined,
+): Landing {
   if (point) return { seconds: point.seconds, exact: () => point.exact(), line: point.seconds };
   const { rate } = host.model;
   const frame = frameAt(seconds, rate);
@@ -123,7 +127,7 @@ function landOn(host: GestureHost, seconds: number, point: SnapPoint | undefined
 
 const lineOf = ({ line }: Landing) => (line === undefined ? {} : { snap: line });
 
-const hasMoved = (press: Pointer, pointer: Pointer) =>
+export const hasMoved = (press: Pointer, pointer: Pointer): boolean =>
   Math.hypot(pointer.x - press.x, pointer.y - press.y) >= DRAG_THRESHOLD;
 
 /** A clip at a place it could go to. */
@@ -637,13 +641,16 @@ export class MarqueeGesture implements Gesture {
   }
 }
 
+/** What it takes to move the playhead by hand. */
+export type ScrubHost = Pick<GestureHost, "model" | "frame" | "timeAt" | "snapDistance" | "seek">;
+
 /** Moves the playhead. It goes through every frame, unless asked to stick to edits. */
 export class ScrubGesture implements Gesture {
-  readonly #host: GestureHost;
+  readonly #host: ScrubHost;
   readonly #points: SnapPoints;
   readonly #before: number;
 
-  constructor(host: GestureHost, press: Pointer) {
+  constructor(host: ScrubHost, press: Pointer) {
     this.#host = host;
     this.#before = host.frame;
     this.#points = snapPointsOf(host.model, host.frame, new Set());

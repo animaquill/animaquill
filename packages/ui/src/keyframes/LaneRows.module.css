@@ -1,0 +1,185 @@
+.lane {
+  position: absolute;
+  right: 0;
+  left: 0;
+  overflow: hidden;
+  font-size: 12px;
+  background: var(--aq-bg-panel);
+  border-bottom: 1px solid var(--aq-border);
+  container-type: inline-size;
+}
+
+.lane[data-kind="track"] {
+  color: var(--aq-text-strong);
+  font-weight: 600;
+  background: var(--aq-bg-chrome);
+}
+
+/* Like the mark for a changed line next to the code in VS Code. */
+.lane[data-tried]::before {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 2px;
+  background: var(--aq-trial);
+  content: "";
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+.chevron,
+.noChevron {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 18px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+}
+
+.chevron {
+  cursor: pointer;
+}
+
+.chevron:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.name {
+  flex: 1;
+  min-width: 24px;
+  padding: 0 2px;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: none;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.name:hover {
+  color: var(--aq-text-strong);
+}
+
+.value {
+  flex: none;
+  width: 68px;
+}
+
+.value input,
+.value select {
+  height: 20px;
+}
+
+.value[data-readonly] input,
+.value[data-readonly] select {
+  color: var(--aq-text-muted);
+  background: transparent;
+  cursor: default;
+}
+
+.value[data-readonly] input:hover,
+.value[data-readonly] select:hover {
+  border-color: transparent;
+}
+
+.elsewhere {
+  display: inline-flex;
+  flex: none;
+  color: var(--aq-warning);
+}
+
+.source {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 3px;
+  border: 1px solid var(--aq-text-muted);
+  border-radius: 50%;
+}
+
+.source[data-source="keys"] {
+  background: var(--aq-match);
+  border-color: var(--aq-match);
+}
+
+.source[data-source="value"] {
+  background: var(--aq-text-muted);
+}
+
+.source[data-source="override"] {
+  background: var(--aq-warning);
+  border-color: var(--aq-warning);
+  border-radius: 0;
+}
+
+.source[data-source="trial"] {
+  background: var(--aq-trial);
+  border-color: var(--aq-trial);
+}
+
+.buttons {
+  display: flex;
+  flex: none;
+}
+
+.buttons button {
+  width: 18px;
+}
+
+.keyed {
+  color: var(--aq-match);
+}
+
+.lane[data-tried] .keyed {
+  color: var(--aq-trial);
+}
+
+.pin {
+  flex: none;
+  opacity: 0;
+}
+
+.pin button {
+  width: 20px;
+}
+
+.lane:hover .pin,
+.pin:focus-within,
+.pin[data-pinned] {
+  opacity: 1;
+}
+
+/* Under a narrow track header the value comes first, and what goes around it gives way. */
+@container (max-width: 230px) {
+  .source {
+    display: none;
+  }
+
+  .buttons > :first-child,
+  .buttons > :last-child {
+    display: none;
+  }
+}
+
+@container (max-width: 150px) {
+  .value {
+    width: 50px;
+  }
+}

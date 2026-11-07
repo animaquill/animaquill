@@ -1,15 +1,41 @@
 export { COMMANDS, type CommandDefinition } from "./commands.ts";
 export {
+  bezierProgress,
+  canMix,
   compileChannel,
   numberAt,
   sample,
+  secondsOf,
   type Channel,
   type Channels,
   type CurveChannel,
 } from "./curve.ts";
 export { CommandError, Draft, type ClipFact } from "./draft.ts";
 export { naturalSizeOf, objectsOf, valueWithout } from "./objects.ts";
-export { PropertyEdit, applyEdit, firstKeyFrom, type ValueEdit } from "./property-edit.ts";
+export { KeyEase, PropertyEdit, applyEdit, firstKeyFrom, type ValueEdit } from "./property-edit.ts";
+export {
+  clipIsHere,
+  clipNodeOf,
+  hasOrphans,
+  listedClip,
+  listedTrack,
+  objectForest,
+  objectIsHere,
+  pathsBelow,
+  propertyTree,
+  rowsOf,
+  type ClipChild,
+  type ClipNode,
+  type GroupNode,
+  type ListFilter,
+  type ListRange,
+  type ObjectForest,
+  type ObjectNode,
+  type PropertyNode,
+  type RowShape,
+  type TrackNode,
+  type TreeNode,
+} from "./property-tree.ts";
 export {
   buildAudioPlan,
   buildRenderPlan,
