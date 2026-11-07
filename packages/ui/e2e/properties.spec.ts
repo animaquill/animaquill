@@ -26,7 +26,7 @@ import {
   typeInto,
   type Color,
 } from "./property-helpers.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, findCompositor, tab, test } from "./support.ts";
 
 test.use({ trying: false });
 
@@ -120,16 +120,23 @@ test("survives a reload with its keys", async ({ page }) => {
 });
 
 test("a drag shows on the way, and is one step to undo", async ({ page }) => {
-  await addColor(page);
-  await compositor(page).evaluate(() => {
+  // It listens before the clip comes, and the clip has to be there first: a message on its way
+  // can arrive after a listener that comes later, and that would look like one sent during the drag.
+  await (
+    await compositor(page)
+  ).evaluate(() => {
     const state = window as unknown as { messages: string[] };
     state.messages = [];
-    addEventListener("message", ({ data }: MessageEvent<{ type: string }>) => {
-      state.messages.push(data.type);
+    addEventListener("message", ({ data }: MessageEvent<{ type: string; plan?: RenderPlan }>) => {
+      state.messages.push(data.plan ? `plan:${data.plan.layers.length}` : data.type);
     });
   });
-  const messages = () =>
-    compositor(page).evaluate(() => (window as unknown as { messages: string[] }).messages);
+  const messages = async () =>
+    (await compositor(page)).evaluate(() => (window as unknown as { messages: string[] }).messages);
+  const plans = async () => (await messages()).filter((type) => type.startsWith("plan"));
+  await addColor(page);
+  await expect.poll(async () => (await plans()).at(-1)).toBe("plan:1");
+  const before = (await plans()).length;
   const x = field(page, "位置 X");
 
   await dragField(page, x, 60);
@@ -137,11 +144,9 @@ test("a drag shows on the way, and is one step to undo", async ({ page }) => {
   await expect
     .poll(async () => (await messages()).filter((type) => type === "channels").length)
     .toBeGreaterThan(2);
-  expect((await messages()).filter((type) => type === "plan")).toEqual([]);
+  expect(await plans()).toHaveLength(before);
   await page.mouse.up();
-  await expect
-    .poll(async () => (await messages()).filter((type) => type === "plan").length)
-    .toBe(1);
+  await expect.poll(async () => (await plans()).length).toBe(before + 1);
   const landed = await x.inputValue();
   expect(Number(landed)).toBeGreaterThan(40);
 
@@ -393,7 +398,7 @@ interface Square {
 const compositorListens = (page: Page) =>
   expect
     .poll(async () => {
-      const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
+      const frame = await findCompositor(page);
       return frame?.evaluate(() => document.querySelector("canvas") !== null);
     })
     .toBe(true);
@@ -413,7 +418,9 @@ async function showPlan(page: Page, plan: RenderPlan, seconds = 1) {
     { plan, seconds },
   );
   await expect
-    .poll(() => compositor(page).evaluate(() => document.querySelector("canvas")?.width))
+    .poll(async () =>
+      (await compositor(page)).evaluate(() => document.querySelector("canvas")?.width),
+    )
     .toBe(plan.width);
 }
 
@@ -496,7 +503,7 @@ for (const [width, height, { side }] of SQUARE) {
     });
     await showPlan(page, plan());
     await expect
-      .poll(() => redAcross(compositor(page)))
+      .poll(async () => redAcross(await compositor(page)))
       .toEqual({
         wide: side,
         tall: side,
@@ -570,7 +577,7 @@ for (const fit of ["contain", "cover"] as const) {
       const scaleBy = fit === "cover" ? "max" : "min";
       // The picture has to be decoded first, and until then it is not there at all.
       await expect
-        .poll(() => distanceFromBefore(compositor(page), image, scaleBy))
+        .poll(async () => distanceFromBefore(await compositor(page), image, scaleBy))
         .toBeLessThanOrEqual(2);
     });
   }

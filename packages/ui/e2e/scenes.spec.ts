@@ -287,7 +287,9 @@ test.describe("a scene from the start", () => {
     }) => {
       await openScene(page, SLIDE);
       await expect.poll(() => squareIsAt(page, 0)).toBe(true);
-      const shown = await compositor(page).evaluate(() =>
+      const shown = await (
+        await compositor(page)
+      ).evaluate(() =>
         [...document.querySelectorAll("iframe")].map((frame) => {
           const { left, top, width, height } = frame.getBoundingClientRect();
           return { left, top, width, height, right: innerWidth, bottom: innerHeight };
@@ -329,7 +331,7 @@ test.describe("a scene from the start", () => {
       await openScene(page, text);
       await expect
         .poll(async () =>
-          compositor(page).evaluate(() => {
+          (await compositor(page)).evaluate(() => {
             const canvas = document.querySelector("canvas");
             const row = canvas?.getContext("2d")?.getImageData(0, 120, 1000, 1).data ?? [];
             let edges = 0;
@@ -594,10 +596,10 @@ test.describe("a scene the editor did not answer for at first", () => {
     await createProject(page);
     const newScene = content(page, "timeline").getByRole("button", { name: "新建场景" });
     await expect(newScene).toBeVisible();
-    await expect.poll(() => findCompositor(page) !== undefined).toBe(true);
+    await expect.poll(async () => (await findCompositor(page)) !== undefined).toBe(true);
     await page.waitForTimeout(1000);
     // The compositor is busy while the scene comes and goes, so that it asks when it is gone.
-    void findCompositor(page)
+    void (await findCompositor(page))
       ?.evaluate(() => {
         const until = performance.now() + 3000;
         while (performance.now() < until);
@@ -708,8 +710,8 @@ test.describe("a new scene", () => {
     test.skip(!canCapture, "needs a browser that can capture");
 
     /** The picture is not the same as a moment ago. */
-    const fingerprint = (page: Page) =>
-      compositor(page).evaluate(() => {
+    const fingerprint = async (page: Page) =>
+      (await compositor(page)).evaluate(() => {
         const canvas = document.querySelector("canvas");
         const { data } = canvas?.getContext("2d")?.getImageData(0, 0, 1920, 1080) ?? { data: [] };
         let sum = 0;

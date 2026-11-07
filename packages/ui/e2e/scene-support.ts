@@ -8,7 +8,7 @@ import {
   type SceneManifest,
 } from "@animaquill/schema";
 import type { Frame, Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { compositor, content, expect, findCompositor, tab, test } from "./support.ts";
 
 /** Whether the browser of this run can capture. The one that comes with Playwright cannot yet. */
 export const canCapture = Boolean(process.env["AQ_CHROME"]);
@@ -90,15 +90,7 @@ export async function importFolder(page: Page, folder: string): Promise<void> {
 export const openScene = (page: Page, html: string, clip: SceneClip = {}) =>
   importFolder(page, projectFolder({ a: { "index.html": html } }, [clip]));
 
-/** There is none for a moment while a project opens, or when a new one takes over. */
-export const findCompositor = (page: Page): Frame | undefined =>
-  page.frames().find((candidate) => candidate.url().includes("compositor.html"));
-
-export const compositor = (page: Page): Frame => {
-  const frame = findCompositor(page);
-  if (!frame) throw new Error("No compositor");
-  return frame;
-};
+export { compositor, findCompositor };
 
 /** The frames scenes run in, right now. */
 export const sceneFrames = (page: Page): readonly Frame[] =>
@@ -111,7 +103,7 @@ const NO_COLOR: Color = [-999, -999, -999, -999];
 
 /** The color of a pixel of the picture. Reading it is for tests: nothing in the product does. */
 export const colorAt = async (page: Page, x: number, y: number): Promise<Color> => {
-  const read = findCompositor(page)?.evaluate(
+  const read = (await findCompositor(page))?.evaluate(
     ([left = 0, top = 0]) => {
       const canvas = document.querySelector("canvas");
       const data = canvas?.getContext("2d")?.getImageData(left, top, 1, 1).data;

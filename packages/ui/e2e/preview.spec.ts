@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Frame, Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { compositor, content, expect, findCompositor, tab, test } from "./support.ts";
 
 const video = {
   name: "红色.webm",
@@ -12,7 +12,7 @@ const items = (page: Page) => content(page, "assets").getByRole("listitem");
 
 /** The colour in the middle of the picture. */
 async function middle(page: Page): Promise<readonly number[]> {
-  const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
+  const frame = await findCompositor(page);
   if (!frame) return [];
   return frame.evaluate(() => {
     const canvas = document.querySelector("canvas");
@@ -131,12 +131,6 @@ test("finds frames going forwards and backwards in a video", async ({ page }) =>
   await expect.poll(() => isRed(page)).toBe(true);
 });
 
-const compositor = (page: Page) => {
-  const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
-  if (!frame) throw new Error("No compositor");
-  return frame;
-};
-
 /** Sends the compositor jumps from the editor's side, faster than any hand. */
 const jumpTo = (page: Page, places: readonly number[]) =>
   content(page, "preview")
@@ -184,7 +178,7 @@ test("a jump gets past a decode that is still going to the last place", async ({
   await expect(items(page).first().locator("canvas")).toBeVisible();
   await goTo(page, "0:01/15");
   await expect.poll(() => isBlue(page)).toBe(true);
-  const frame = compositor(page);
+  const frame = await compositor(page);
   // From now on the decoder takes forever, like a 4K video feels. Only leaving can help.
   await frame.evaluate(() => {
     const { VideoDecoder: Real } = window;
@@ -233,7 +227,7 @@ test("the picture keeps up while dragging backwards over a slow decoder", async 
   await expect(items(page).first().locator("canvas")).toBeVisible();
   await goTo(page, "0:01/25");
   await expect.poll(() => isBlue(page)).toBe(true);
-  const frame = compositor(page);
+  const frame = await compositor(page);
   await slowDecoder(frame, 100, 0);
   await frame.evaluate(() => {
     const state = window as unknown as { pictures: number };
@@ -265,7 +259,7 @@ test("jumping leaves no decoded frame open", async ({ page }) => {
   await importAndPlace(page, redBlue);
   await expect(items(page).first().locator("canvas")).toBeVisible();
   await expect.poll(() => isRed(page)).toBe(true);
-  const frame = compositor(page);
+  const frame = await compositor(page);
   await frame.evaluate(() => {
     const state = window as unknown as { openFrames: number };
     state.openFrames = 0;
@@ -308,15 +302,17 @@ test("jumping leaves no decoded frame open", async ({ page }) => {
 test("time going on while playing is not a jump, and moving the playhead is", async ({ page }) => {
   await importAndPlace(page, redBlue);
   await expect.poll(() => isRed(page)).toBe(true);
-  await compositor(page).evaluate(() => {
+  await (
+    await compositor(page)
+  ).evaluate(() => {
     const state = window as unknown as { seeks: boolean[] };
     state.seeks = [];
     addEventListener("message", ({ data }: MessageEvent<{ type: string; jump: boolean }>) => {
       if (data.type === "seek") state.seeks.push(data.jump);
     });
   });
-  const seeks = () =>
-    compositor(page).evaluate(() => (window as unknown as { seeks: boolean[] }).seeks);
+  const seeks = async () =>
+    (await compositor(page)).evaluate(() => (window as unknown as { seeks: boolean[] }).seeks);
   await button(page, "播放").click();
   await expect.poll(async () => (await seeks()).length).toBeGreaterThan(10);
   await button(page, "暂停").click();
@@ -353,7 +349,7 @@ test("the picture changes while playing", async ({ page }) => {
   await items(page).first().dblclick();
   await expect(content(page, "timeline").getByRole("option")).toHaveCount(3);
   await expect.poll(() => isRed(page)).toBe(true);
-  const frame = compositor(page);
+  const frame = await compositor(page);
   await watchForBlue(frame);
   await button(page, "播放").click();
   await expect

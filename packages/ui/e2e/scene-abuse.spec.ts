@@ -72,7 +72,8 @@ async function expectEditorWorks(page: Page): Promise<void> {
 
 /** The compositor is there, and it did not go through anything strange. */
 const expectCompositorWorks = async (page: Page) => {
-  const seen = await compositor(page).evaluate(() => document.querySelector("canvas") !== null);
+  const frame = await compositor(page);
+  const seen = await frame.evaluate(() => document.querySelector("canvas") !== null);
   expect(seen).toBe(true);
 };
 
@@ -179,11 +180,13 @@ test.describe("a compositor that never comes up", () => {
     await start(page);
     await importFolder(page, projectFolder({ a: { "index.html": FINE } }, [{}]));
     await expect(notice(page, "预览起不来")).toBeVisible({ timeout: 45000 });
-    expect(findCompositor(page)).toBeUndefined();
+    expect(await findCompositor(page)).toBeUndefined();
     await expectEditorWorks(page);
     await page.unroute("**/compositor.html");
     await content(page, "preview").getByRole("button", { name: "刷新页面" }).click();
-    await expect.poll(() => findCompositor(page) !== undefined, { timeout: 20000 }).toBe(true);
+    await expect
+      .poll(async () => (await findCompositor(page)) !== undefined, { timeout: 20000 })
+      .toBe(true);
     await expect(notice(page, "预览起不来")).toHaveCount(0);
     await expect.poll(() => sceneFrames(page).length, { timeout: 20000 }).toBe(1);
     problems.splice(0);
@@ -293,9 +296,9 @@ test.describe("a page inside a scene", () => {
     await openOne(page, html);
     await ran(page, "sent");
     await page.waitForTimeout(500);
-    const reads = await compositor(page).evaluate(
-      () => (window as unknown as { strangers: { reads: number } }).strangers.reads,
-    );
+    const reads = await (
+      await compositor(page)
+    ).evaluate(() => (window as unknown as { strangers: { reads: number } }).strangers.reads);
     expect(reads).toBe(0);
     problems.splice(0);
   });
@@ -403,8 +406,8 @@ test.describe("a scene that hangs", () => {
 test.describe("a compositor that hangs", () => {
   test.setTimeout(120000);
 
-  const hang = (page: Page) =>
-    void compositor(page)
+  const hang = async (page: Page) =>
+    void (await compositor(page))
       .evaluate(() => {
         for (;;);
       })
@@ -412,10 +415,12 @@ test.describe("a compositor that hangs", () => {
 
   test("gets a new frame by itself, and people hear about it", async ({ page, problems }) => {
     await openOne(page, FINE);
-    const before = compositor(page);
-    hang(page);
+    const before = await compositor(page);
+    await hang(page);
     await expect(page.getByText("预览没有响应，已经重新启动")).toBeVisible({ timeout: 15000 });
-    await expect.poll(() => [undefined, before].includes(findCompositor(page))).toBe(false);
+    await expect
+      .poll(async () => [undefined, before].includes(await findCompositor(page)))
+      .toBe(false);
     await expect.poll(() => sceneFrames(page).length, { timeout: 10000 }).toBe(1);
     await expectEditorWorks(page);
     problems.splice(0);
@@ -427,18 +432,18 @@ test.describe("a compositor that hangs", () => {
       await expect.poll(() => sceneFrames(page).length, { timeout: 15000 }).toBe(1);
       await expect
         .poll(
-          () =>
-            findCompositor(page)
+          async () =>
+            (await findCompositor(page))
               ?.evaluate(() => document.querySelector("canvas") !== null)
               .catch(() => false),
           { timeout: 15000 },
         )
         .toBe(true);
-      hang(page);
+      await hang(page);
       if (round < 2) await page.waitForTimeout(9000);
     }
     await expect(notice(page, "预览一直没有响应")).toBeVisible({ timeout: 15000 });
-    expect(findCompositor(page)).toBeUndefined();
+    expect(await findCompositor(page)).toBeUndefined();
     expect(sceneFrames(page)).toHaveLength(0);
     await expectEditorWorks(page);
     await content(page, "preview").getByRole("button", { name: "不运行场景，重新启动" }).click();
@@ -622,13 +627,14 @@ test.describe("what a scene says", () => {
       })
       .toBe(1);
     const url = page.url();
-    const compositorUrl = compositor(page).url();
+    const shown = await compositor(page);
+    const compositorUrl = shown.url();
     for (const frame of sceneFrames(page)) {
       await frame.evaluate(() => (window as unknown as { attack?: () => unknown }).attack?.());
     }
     await page.waitForTimeout(800);
     expect(page.url()).toBe(url);
-    expect(compositor(page).url()).toBe(compositorUrl);
+    expect(shown.url()).toBe(compositorUrl);
     expect(victim.url()).toContain("/scene.html");
     await expectAlive(victim);
     await expectEditorWorks(page);

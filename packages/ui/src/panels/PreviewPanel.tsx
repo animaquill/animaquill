@@ -78,6 +78,8 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
       ref={picture}
       className={styles.picture}
       title={t("panel.preview.title")}
+      // Thumbnails and sounds have compositors of their own, at the same address: this is the one.
+      data-compositor="preview"
       // No same-origin: what runs there has no way into the editor.
       sandbox="allow-scripts"
       tabIndex={-1}

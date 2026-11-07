@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, expect, test as base, type Page } from "@playwright/test";
+import { chromium, expect, test as base, type Frame, type Page } from "@playwright/test";
 
 export { expect };
 
@@ -9,6 +9,31 @@ export const tab = (page: Page, type: string) => page.locator(`[data-tab="${type
 export const content = (page: Page, type: string) => page.locator(`[data-panel="${type}"]`);
 export const group = (page: Page, type: string) =>
   page.locator(".dv-groupview").filter({ has: tab(page, type) });
+
+/**
+ * The compositor of the preview, once it has loaded. Thumbnails and sounds have compositors of
+ * their own, at the same address, so the address does not say which one it is: the element does.
+ * There is none for a moment while a project opens, after a reload, or when a new one takes over.
+ */
+export async function findCompositor(page: Page): Promise<Frame | undefined> {
+  const element = await page.$('iframe[data-compositor="preview"]');
+  if (!element) return undefined;
+  const frame = await element.contentFrame().catch(() => null);
+  await element.dispose().catch(() => {});
+  // Until it has loaded it is an empty page, where nothing a test reads is.
+  return frame?.url().includes("compositor") ? frame : undefined;
+}
+
+/** Waits for the compositor of the preview, which takes a moment, as said above. */
+export async function compositor(page: Page): Promise<Frame> {
+  let found: Frame | undefined;
+  await expect
+    .poll(async () => (found = await findCompositor(page)) !== undefined, {
+      message: "No compositor",
+    })
+    .toBe(true);
+  return found as Frame;
+}
 
 /** Creates a project the way people do. */
 export async function createProject(page: Page, name = "测试项目") {

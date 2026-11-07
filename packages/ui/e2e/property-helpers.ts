@@ -1,6 +1,6 @@
 import { crc32, deflateSync } from "node:zlib";
-import type { Frame, Locator, Page } from "@playwright/test";
-import { content, expect, tab } from "./support.ts";
+import type { Locator, Page } from "@playwright/test";
+import { compositor, content, expect, findCompositor, tab } from "./support.ts";
 
 export type Color = readonly [red: number, green: number, blue: number];
 
@@ -111,21 +111,22 @@ export async function dragField(page: Page, locator: Locator, pixels: number, st
   await page.mouse.move(x + pixels, y, { steps });
 }
 
-export const compositor = (page: Page): Frame => {
-  const frame = page.frames().find((candidate) => candidate.url().includes("compositor"));
-  if (!frame) throw new Error("No compositor");
-  return frame;
-};
+export { compositor, findCompositor };
 
-/** The color of a pixel of the picture, in pixels of the picture. */
-export const colorAt = (page: Page, x: number, y: number): Promise<readonly number[]> =>
-  compositor(page).evaluate(
+/**
+ * The color of a pixel of the picture, in pixels of the picture. None while there is no picture
+ * yet, so that polling goes on until there is.
+ */
+export const colorAt = async (page: Page, x: number, y: number): Promise<readonly number[]> => {
+  const read = (await findCompositor(page))?.evaluate(
     ([left = 0, top = 0]) => [
       ...(document.querySelector("canvas")?.getContext("2d")?.getImageData(left, top, 1, 1).data ??
         []),
     ],
     [x, y],
   );
+  return (await read?.catch(() => undefined)) ?? [];
+};
 
 /** Slack for what scaling and blending do to a color. */
 export const near = (found: readonly number[], wanted: Color, within = 2) =>
