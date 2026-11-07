@@ -770,3 +770,33 @@ test.describe("a scene from a folder", () => {
     await expect(clips(page)).toHaveCount(1);
   });
 });
+
+test.describe("a scene at a lower quality of the preview", () => {
+  test.use({ withProject: false });
+
+  const ratioOf = (frame: Frame | undefined) =>
+    frame
+      ?.evaluate(() => [
+        getComputedStyle(document.documentElement).getPropertyValue("--aq-pixel-ratio"),
+        innerWidth,
+      ])
+      .catch(() => undefined);
+
+  test("captures onto fewer pixels, laid out for the same box", async ({ page }) => {
+    await page.goto(canCapture ? "/" : "/?sceneStage=plain");
+    await openScene(page, SLIDE);
+    await expect.poll(() => ratioOf(sceneFrames(page)[0])).toEqual(["1", 1920]);
+    await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
+    await page.getByRole("radio", { name: /^1\/4/ }).click();
+    // A canvas of another size takes another page, and the one before goes once that is ready.
+    await expect
+      .poll(async () => Promise.all(sceneFrames(page).map(ratioOf)), { timeout: 10_000 })
+      .toEqual([["0.25", 1920]]);
+    if (!canCapture) return;
+    // Where the square is at the start, in a quarter of the pixels: the picture is as large as before.
+    await expect
+      .poll(async () => distance(await colorAt(page, 50 / 4, 540 / 4), WHITE))
+      .toBeLessThan(8);
+    expect(distance(await colorAt(page, 200 / 4, 540 / 4), BLACK)).toBeLessThan(8);
+  });
+});

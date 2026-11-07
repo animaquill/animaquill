@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Frame, Page } from "@playwright/test";
-import { compositor, content, expect, findCompositor, tab, test } from "./support.ts";
+import { compositor, content, expect, findCompositor, group, tab, test } from "./support.ts";
 
 const video = {
   name: "红色.webm",
@@ -421,4 +421,88 @@ test("frames appear with the preview tab closed", async ({ page }) => {
   await expect(tab(page, "preview")).toHaveCount(0);
   await importAndPlace(page, redBlue);
   await expect(items(page).first().locator("canvas")).toBeVisible();
+});
+
+test("the status bar says how many frames the preview really shows", async ({ page }) => {
+  await importAndPlace(page, redBlue);
+  await items(page).first().dblclick();
+  await items(page).first().dblclick();
+  await expect(content(page, "timeline").getByRole("option")).toHaveCount(3);
+  const status = page.getByRole("contentinfo").getByLabel(/^预览实际帧率/);
+  await expect(status).toHaveText("预览 —");
+  await button(page, "播放").click();
+  // A number only comes from frames that reached the canvas, so a preview that draws nothing shows 0.
+  await expect(status).toHaveText(/^预览 [1-9]\d* 帧$/, { timeout: 5000 });
+  await status.hover();
+  await expect(
+    page.getByText(/^最近 1 秒实际画出 \d+ 帧，项目帧率 30 帧，丢了 \d+ 帧。$/),
+  ).toBeVisible();
+  await button(page, "暂停").click();
+  await expect(status).toHaveText("预览 —");
+  // Without a preview there is nothing to count.
+  await group(page, "preview").locator('button[aria-label="关闭 预览"]').click();
+  await expect(tab(page, "preview")).toHaveCount(0);
+  await expect(status).toHaveCount(0);
+});
+
+test.describe("the quality of the preview", () => {
+  const canvasSize = async (page: Page) =>
+    (await compositor(page)).evaluate(() => {
+      const canvas = document.querySelector("canvas");
+      const room = canvas?.getBoundingClientRect();
+      return {
+        width: canvas?.width ?? 0,
+        height: canvas?.height ?? 0,
+        // How large it is on the screen, which takes the picture at full quality.
+        shown: Math.round(Math.min(room?.width ?? 0, ((room?.height ?? 0) * 16) / 9)),
+      };
+    });
+
+  async function choose(page: Page, name: string) {
+    await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
+    await page.getByRole("radio", { name: new RegExp(`^${name}`) }).click();
+  }
+
+  test("draws on fewer pixels, says so, and stays that way after a reload", async ({ page }) => {
+    await putVideoOnTimeline(page);
+    await expect.poll(() => isRed(page)).toBe(true);
+    const full = await canvasSize(page);
+    expect(full).toMatchObject({ width: 1920, height: 1080 });
+    const status = page.getByRole("contentinfo").getByLabel(/^预览分辨率/);
+    await expect(status).toHaveText("1920×1080");
+
+    await choose(page, "1/2");
+    await expect.poll(() => canvasSize(page)).toEqual({ ...full, width: 960, height: 540 });
+    await expect.poll(() => isRed(page)).toBe(true);
+    await expect(status).toHaveText("960×540");
+    await status.hover();
+    await expect(page.getByText(/导出始终是全分辨率 1920×1080/)).toBeVisible();
+    await expect(content(page, "preview").getByRole("button", { name: "预览画质" })).toHaveText(
+      "画质 1/2",
+    );
+
+    await page.reload();
+    await expect.poll(() => isRed(page)).toBe(true);
+    expect(await canvasSize(page)).toEqual({ ...full, width: 960, height: 540 });
+    await expect(status).toHaveText("960×540");
+
+    await choose(page, "全分辨率");
+    await expect.poll(() => canvasSize(page)).toEqual(full);
+    await expect(status).toHaveText("1920×1080");
+  });
+
+  test.describe("left to the editor", () => {
+    test.use({ quality: "auto" });
+
+    test("is automatic, and says that decoding videos does not get any faster", async ({
+      page,
+    }) => {
+      await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
+      await expect(page.getByText(/视频解码的还是原片/)).toBeVisible();
+      await expect(page.getByRole("radio", { name: /^自动（现在 全分辨率）/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+  });
 });

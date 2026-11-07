@@ -635,6 +635,36 @@
     }
   },
   "preview": {
+    "quality": {
+      "label": "预览画质",
+      "usage": "只影响预览，导出始终是全分辨率。降低画质让合成和 HTML 场景画得更快，但视频还是按原片解码，大视频解码慢造成的卡顿降低画质解决不了。",
+      "auto": "自动",
+      "full": "全分辨率",
+      "half": "1/2",
+      "quarter": "1/4",
+      "button": "画质 {{choice}}",
+      "autoNow": "自动（现在 {{scale}}）",
+      "about": {
+        "auto": "优先保证帧率：跟不上时降低分辨率，跟得上以后再升回去。",
+        "full": "和导出一样清晰。",
+        "half": "像素是全分辨率的 1/4，画得更快，画面稍模糊。",
+        "quarter": "像素是全分辨率的 1/16，画得最快，画面明显模糊。"
+      },
+      "decodeNote": "视频解码的还是原片，4K 视频解码跟不上时，降低画质帮不上忙。",
+      "status": "{{width}}×{{height}}",
+      "statusName": "预览分辨率",
+      "statusLabel": "预览分辨率：{{width}}×{{height}}",
+      "statusUsage": "预览现在画的分辨率，画质是{{choice}}。导出始终是全分辨率 {{fullWidth}}×{{fullHeight}}。点击修改画质。"
+    },
+    "frameRate": {
+      "name": "预览实际帧率",
+      "value": "预览 {{painted}} 帧",
+      "idle": "预览 —",
+      "label": "预览实际帧率：{{value}}",
+      "paused": "播放时显示预览最近 1 秒实际画出的帧数，用来和项目帧率比较。",
+      "waiting": "正在统计最近 1 秒实际画出的帧数。",
+      "playing": "最近 1 秒实际画出 {{painted}} 帧，项目帧率 {{fps}} 帧，丢了 {{dropped}} 帧。"
+    },
     "restarted": "预览没有响应，已经重新启动。",
     "stopped": "预览一直没有响应，已经停下。刷新页面可以恢复。",
     "unreachable": "预览起不来。刷新页面可以恢复，还是不行就过两分钟再刷新。",

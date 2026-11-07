@@ -2,6 +2,8 @@ import { Circle, CircleAlert, CircleX, TriangleAlert } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
+import { FrameRateStatus as PreviewFrameRateStatus } from "../preview/FrameRateStatus.tsx";
+import { ResolutionStatus } from "../preview/Quality.tsx";
 import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
@@ -136,6 +138,8 @@ export function StatusBar() {
       <RecordingStatus />
       {project && <TimeStatus />}
       {project && <FrameRateStatus />}
+      {project && <ResolutionStatus />}
+      {project && <PreviewFrameRateStatus />}
       <InputSwitch />
     </footer>
   );

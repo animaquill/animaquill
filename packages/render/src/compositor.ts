@@ -36,6 +36,8 @@ interface Picture {
 }
 
 const TIMINGS_EVERY_MS = 500;
+/** Often enough that the editor can count the last second without waiting for the next word. */
+const PAINTED_EVERY_MS = 250;
 
 interface VideoFile {
   readonly sink: VideoSampleSink;
@@ -55,7 +57,19 @@ Object.assign(document.body.style, {
   justifyContent: "center",
   overflow: "hidden",
 });
-Object.assign(canvas.style, { maxWidth: "100%", maxHeight: "100%", display: "block" });
+// As large as it would be at full quality, which is never more than there is room for. A picture
+// with fewer pixels gets stretched into the same place.
+Object.assign(canvas.style, {
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+  display: "block",
+});
+
+/** How much room the picture takes, in pixels of the page, whatever it is drawn at. */
+function sizeOnScreen({ width, height }: { readonly width: number; readonly height: number }) {
+  Object.assign(canvas.style, { maxWidth: `${width}px`, maxHeight: `${height}px` });
+}
 document.body.append(canvas);
 
 const send = (message: FromCompositor, transfer: Transferable[] = []) =>
@@ -89,6 +103,10 @@ let jumpsInFrame = 0;
 let frameGivenUp = false;
 /** Frames given up since the last one that was drawn. */
 let abandoned = 0;
+/** When frames of a new place on the timeline reached the canvas, since the editor last heard. */
+let paintedAt: number[] = [];
+/** The place the last of them showed. Drawing a place again is not another frame of it. */
+let lastPainted: number | undefined;
 
 function fileOf(id: string): Blob | undefined {
   const file = files.get(id);
@@ -292,9 +310,9 @@ function paint(
 }
 
 /** Everything is decoded first, so that a frame appears whole and never half drawn. */
-async function drawFrame(seconds: number): Promise<void> {
+async function drawFrame(seconds: number): Promise<boolean> {
   const shown = plan;
-  if (!shown) return;
+  if (!shown) return false;
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
   const askedAt = performance.now();
@@ -307,7 +325,9 @@ async function drawFrame(seconds: number): Promise<void> {
   try {
     const failed = results.find((result) => result.status === "rejected");
     if (failed) throw failed.reason;
-    if (!frameGivenUp) paintAll(shown, showing, pictures, seconds);
+    if (frameGivenUp) return false;
+    paintAll(shown, showing, pictures, seconds);
+    return true;
   } finally {
     for (const picture of pictures) picture?.close();
   }
@@ -348,7 +368,10 @@ async function refresh(): Promise<void> {
     decodeMsInFrame = 0;
     const wasGettingReady = gettingReady;
     try {
-      await drawFrame(seconds);
+      if ((await drawFrame(seconds)) && seconds !== lastPainted) {
+        lastPainted = seconds;
+        paintedAt.push(performance.now());
+      }
     } catch (error) {
       console.warn("A frame could not be drawn", error);
     }
@@ -459,6 +482,7 @@ addEventListener("message", (event: MessageEvent<ToCompositor>) => {
   }
   if (data.type === "plan") {
     plan = data.plan;
+    sizeOnScreen(data.full ?? data.plan);
     settledPlan = data.settled ?? data.plan;
   } else if (data.type === "channels") {
     if (plan) plan = withChannels(plan, data.layer, data);
@@ -482,5 +506,13 @@ setInterval(() => {
   send({ type: "frames", frames: timings });
   timings = [];
 }, TIMINGS_EVERY_MS);
+
+setInterval(() => {
+  if (paintedAt.length === 0) return;
+  // Each side has a clock of its own, so this says how long ago, and the editor counts back from when it heard.
+  const now = performance.now();
+  send({ type: "painted", ago: paintedAt.map((at) => now - at) });
+  paintedAt = [];
+}, PAINTED_EVERY_MS);
 
 send({ type: "ready" });

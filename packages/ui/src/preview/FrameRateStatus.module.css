@@ -1,0 +1,10 @@
+.item {
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.item[data-short] {
+  color: var(--aq-warning);
+}

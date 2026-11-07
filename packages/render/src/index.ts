@@ -89,6 +89,11 @@ export type ToCompositor =
       readonly plan: RenderPlan;
       /** The project without what `plan` has on top of it, if it has anything. */
       readonly settled?: RenderPlan;
+      /**
+       * The pixels of the picture at full quality, when `plan` has fewer to make the preview
+       * faster. It still takes up as much room on the screen.
+       */
+      readonly full?: { readonly width: number; readonly height: number };
     }
   /** Changes one layer on the spot, for what is not in the project yet. A new plan ends it. */
   | {
@@ -173,4 +178,9 @@ export type FromCompositor =
   | { readonly type: "origin-retired"; readonly origin: string }
   | { readonly type: "pong"; readonly nonce: number }
   | { readonly type: "frames"; readonly frames: readonly FrameTiming[] }
+  /**
+   * New places on the timeline that reached the canvas, as how many milliseconds before this message
+   * each one did. Comes always, not only while recording, and only when there were any.
+   */
+  | { readonly type: "painted"; readonly ago: readonly number[] }
   | { readonly type: "strip"; readonly request: number; readonly image: ImageBitmap | undefined };

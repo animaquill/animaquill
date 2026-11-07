@@ -24,6 +24,8 @@ import type { PreviewedValues, PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { sceneContent } from "./content.ts";
 import { ForeignMessages } from "./foreign.ts";
+import type { FrameRateFeed, PreviewFrameRate } from "./frame-rate.ts";
+import { scaledSize, type PreviewQuality } from "./quality.ts";
 import { KeyboardKeeper } from "./keyboard.ts";
 import type { PreviewStatus } from "./status.ts";
 import { CompositorWatch } from "./watch.ts";
@@ -78,6 +80,14 @@ function withShown(plan: RenderPlan, shown: PreviewedValues): RenderPlan {
   return { ...plan, layers };
 }
 
+/**
+ * A plan drawn on fewer pixels. The world and every box in it stay as they are, so pictures, videos
+ * and the canvases scenes capture into all get smaller along with it.
+ */
+function atScale(plan: RenderPlan, scale: number): RenderPlan {
+  return scale === 1 ? plan : { ...plan, ...scaledSize(plan.width, plan.height, scale) };
+}
+
 /** Which state of its scene each clip shows. */
 function revisionsOf({ layers }: RenderPlan): ReadonlyMap<string, string> {
   const revisions = new Map<string, string>();
@@ -104,6 +114,10 @@ export class PreviewLink {
   readonly #foreign: ForeignMessages;
   readonly #keyboard: KeyboardKeeper;
   readonly #watch: CompositorWatch;
+  readonly #painted: FrameRateFeed;
+  readonly #quality: PreviewQuality;
+  /** What the last plan was drawn at. */
+  #scale: number | undefined;
   #ready = false;
   #recording = false;
   #plan: RenderPlan | undefined;
@@ -125,6 +139,8 @@ export class PreviewLink {
     media: MediaLibrary,
     status: PreviewStatus,
     setup: SceneSetup,
+    frameRate: PreviewFrameRate,
+    quality: PreviewQuality,
   ) {
     this.#frame = frame;
     this.#timeline = timeline;
@@ -146,6 +162,8 @@ export class PreviewLink {
       (nonce) => this.#send({ type: "ping", nonce }),
       (phase) => status.hung(phase),
     );
+    this.#painted = frameRate.attach();
+    this.#quality = quality;
     addEventListener("message", this.#onMessage);
     const stopStore = store.subscribe(this.#sendPlan);
     const stopView = timeline.subscribeView(this.#sendTime);
@@ -158,9 +176,13 @@ export class PreviewLink {
       this.#sendScenesWith(hash);
     });
     const stopProperties = properties.subscribe(this.#sendPreview);
+    const stopQuality = quality.subscribe(this.#sendPlan);
     this.#stop = () => {
       this.#keyboard.dispose();
       this.#watch.dispose();
+      this.#painted.dispose();
+      stopQuality();
+      quality.noteSize(undefined);
       stopProperties();
       stopStore();
       stopView();
@@ -199,6 +221,7 @@ export class PreviewLink {
       this.#ready = true;
       this.#plan = undefined;
       this.#planned = undefined;
+      this.#scale = undefined;
       this.#lastSeconds = undefined;
       this.#playingSince = undefined;
       this.#recording = false;
@@ -238,6 +261,8 @@ export class PreviewLink {
         };
         this.#diagnostics.noteFrame(ms, facts, slow);
       }
+    } else if (data.type === "painted") {
+      this.#painted.painted(data.ago);
     } else if (data.type === "needs") {
       void this.#sendFile(data.id);
     } else if (data.type === "cannot-decode") {
@@ -263,15 +288,25 @@ export class PreviewLink {
     const state = this.#store.getState();
     this.#planned = state;
     const plan = buildRenderPlan(state, model.id);
-    if (!plan || (this.#plan && samePlan(plan, this.#plan))) return;
+    const { scale } = this.#quality.getSnapshot();
+    if (!plan || (this.#plan && samePlan(plan, this.#plan) && scale === this.#scale)) return;
     this.#plan = plan;
+    this.#scale = scale;
     this.#layers = new Map(plan.layers.map((layer) => [layer.id, layer]));
     this.#status.noteRevisions(revisionsOf(plan));
     // A new plan replaces everything. What is shown on top of it goes along, because the compositor
     // starts to draw as soon as it gets a plan, and the picture must not jump back in between.
     this.#shown = this.#properties.getPreviewed();
     const shown = withShown(plan, this.#shown);
-    this.#send({ type: "plan", plan: shown, ...(shown !== plan && { settled: plan }) });
+    const full = { width: plan.width, height: plan.height };
+    const scaled = atScale(plan, scale);
+    this.#send({
+      type: "plan",
+      plan: shown === plan ? scaled : atScale(shown, scale),
+      ...(shown !== plan && { settled: scaled }),
+      full,
+    });
+    this.#quality.noteSize({ shown: { width: scaled.width, height: scaled.height }, full });
   };
 
   /** Only what changed crosses over, because this happens with every move of a drag. */

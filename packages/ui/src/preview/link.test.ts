@@ -9,6 +9,8 @@ import type { PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { PreviewLink } from "./link.ts";
+import { PreviewFrameRate } from "./frame-rate.ts";
+import { PreviewQuality } from "./quality.ts";
 import { PreviewStatus, type PreviewMessages } from "./status.ts";
 
 type Listener = (event: { data: unknown; source: unknown }) => void;
@@ -103,6 +105,13 @@ function setup(
     clock.frame = to;
     for (const listener of view) listener();
   };
+  const frameRate = new PreviewFrameRate(timeline);
+  const settings = {
+    load: () => Promise.resolve(undefined),
+    save: () => Promise.resolve(),
+    listen: () => () => {},
+  };
+  const quality = new PreviewQuality(settings, frameRate);
   const status = new PreviewStatus({
     problem: () => {},
     stopped: () => {},
@@ -127,6 +136,8 @@ function setup(
     } as unknown as MediaLibrary,
     status,
     { origins: ["https://scene.example"], compositor: "https://box.example", run: true },
+    frameRate,
+    quality,
   );
   links.push(link);
   const hello = () => {
@@ -153,6 +164,7 @@ function setup(
     clock,
     tick,
     status,
+    quality,
     contentWindow,
     fromCompositor,
   };
@@ -254,6 +266,53 @@ describe("the plan", () => {
     expect(ofType("plan").at(-1)?.plan.layers[0]?.channels["opacity"]).toMatchObject({
       value: 0.5,
     });
+  });
+});
+
+describe("the quality of the preview", () => {
+  it("draws the same world on fewer pixels, and says how large it would be", () => {
+    const { hello, quality, ofType } = setup();
+    hello();
+    const full = ofType("plan")[0]?.plan;
+    if (!full) throw new Error("no plan");
+    expect(quality.getSnapshot().size).toEqual({
+      shown: { width: full.width, height: full.height },
+      full: { width: full.width, height: full.height },
+    });
+    quality.choose("half");
+    const half = ofType("plan")[1];
+    expect(half?.plan).toEqual({
+      ...full,
+      width: Math.round(full.width / 2),
+      height: Math.round(full.height / 2),
+    });
+    // The stage is the world, and that does not change: scenes capture onto fewer pixels for it.
+    expect(half?.plan.stage).toEqual(full.stage);
+    expect(half?.full).toEqual({ width: full.width, height: full.height });
+    expect(quality.getSnapshot().size?.shown).toEqual({
+      width: half?.plan.width,
+      height: half?.plan.height,
+    });
+    quality.choose("half");
+    expect(ofType("plan")).toHaveLength(2);
+  });
+
+  it("keeps what is being tried out on top of a smaller plan", () => {
+    const { hello, preview, quality, ofType } = setup();
+    hello();
+    preview(showing({ opacity: 0.25 }));
+    quality.choose("quarter");
+    const sent = ofType("plan").at(-1);
+    expect(sent?.plan.layers[0]?.channels["opacity"]).toMatchObject({ value: 0.25 });
+    expect(sent?.settled?.layers[0]?.channels["opacity"]).toMatchObject({ value: 0.5 });
+    expect(sent?.settled?.width).toBe(sent?.plan.width);
+  });
+
+  it("is nothing to show once the preview is gone", () => {
+    const { hello, link, quality } = setup();
+    hello();
+    link.dispose();
+    expect(quality.getSnapshot().size).toBeUndefined();
   });
 });
 

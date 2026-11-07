@@ -65,10 +65,16 @@ export const test = base.extend<{
   withProject: boolean;
   onDisk: boolean;
   trying: boolean;
+  quality: "auto" | "full";
 }>({
   withProject: [true, { option: true }],
   /** Off for what is about controls and the project, where every change is written right away. */
   trying: [true, { option: true }],
+  /**
+   * Full by default: the automatic quality follows how fast the machine is, and a test that reads
+   * pixels must not depend on that. Only a first value: what a test chooses stays through a reload.
+   */
+  quality: ["full", { option: true }],
   /**
    * Keeps what the browser saves on the disk, as for people. Normally a test runs in something like
    * a private window, with IndexedDB in memory and little room in it.
@@ -91,7 +97,7 @@ export const test = base.extend<{
     rmSync(folder, { recursive: true, force: true });
   },
   problems: [
-    async ({ page, withProject, trying }, use) => {
+    async ({ page, withProject, trying, quality }, use) => {
       const problems: string[] = [];
       page.on("pageerror", (error) => problems.push(error.message));
       page.on("console", (message) => {
@@ -111,6 +117,15 @@ export const test = base.extend<{
           if (window !== window.top) return;
           localStorage.setItem("animaquill.trial", '{"version":1,"enabled":false}');
         });
+      }
+      if (quality !== "auto") {
+        await page.addInitScript((choice) => {
+          if (window !== window.top) return;
+          const key = "animaquill.previewQuality";
+          if (localStorage.getItem(key) === null) {
+            localStorage.setItem(key, JSON.stringify({ version: 1, choice }));
+          }
+        }, quality);
       }
       await page.goto("/");
       if (withProject) await createProject(page);

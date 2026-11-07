@@ -5,6 +5,7 @@ import { Tip } from "../app/Tip.tsx";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { PreviewLink } from "../preview/link.ts";
 import { PreviewNotices } from "../preview/PreviewNotices.tsx";
+import { QualityButton } from "../preview/Quality.tsx";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
@@ -17,7 +18,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
   const workbench = useWorkbench();
   const { timeline, properties, projects, media, compositorUrl, notifications, diagnostics } =
     workbench;
-  const { preview, sceneOrigins, sceneStage } = workbench;
+  const { preview, sceneOrigins, sceneStage, frameRate, previewQuality } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const { runScenes } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
@@ -48,6 +49,8 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
         run: runScenes,
         ...(sceneStage && { stage: sceneStage }),
       },
+      frameRate,
+      previewQuality,
     );
     onLink(link);
     // The compositor says hello once it has loaded, so the link has to listen first.
@@ -59,10 +62,12 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
   }, [
     compositorUrl,
     diagnostics,
+    frameRate,
     media,
     notifications,
     onLink,
     preview,
+    previewQuality,
     projects,
     properties,
     runScenes,
@@ -145,6 +150,7 @@ export function PreviewPanel() {
             </span>
           </Tip>
         )}
+        <QualityButton />
       </div>
     </div>
   );

@@ -22,6 +22,8 @@ import { MediaLibrary } from "../media/library.ts";
 import { MadeSounds, SoundMaker } from "../media/sounds.ts";
 import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
 import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts";
+import { PreviewFrameRate } from "../preview/frame-rate.ts";
+import { PreviewQuality } from "../preview/quality.ts";
 import { PreviewStatus } from "../preview/status.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
@@ -94,6 +96,10 @@ export class Workbench {
   readonly sceneOrigins: readonly string[];
   readonly sceneStage: "plain" | undefined;
   readonly preview: PreviewStatus;
+  /** How many frames the preview really shows while it plays. */
+  readonly frameRate: PreviewFrameRate;
+  /** How sharp the preview is drawn. Never what gets exported. */
+  readonly previewQuality: PreviewQuality;
   readonly problems = new ProblemList();
   readonly code: CodeDocuments;
   readonly files: FileActions;
@@ -220,6 +226,8 @@ export class Workbench {
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),
     });
+    this.frameRate = new PreviewFrameRate(this.timeline);
+    this.previewQuality = new PreviewQuality(host.settings, this.frameRate);
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
@@ -413,6 +421,7 @@ export class Workbench {
       this.timeline.load(),
       this.keyframes.load(),
       this.input.load(),
+      this.previewQuality.load(),
       this.trials.load(),
     ]);
     await this.session.restore();
