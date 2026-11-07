@@ -54,6 +54,131 @@
     "cancel": "取消",
     "close": "关闭"
   },
+  "export": {
+    "resume": {
+      "title": "有一个没完成的导出",
+      "message": "“{{file}}”导到了第 {{frame}} / {{total}} 帧（{{percent}}%）。继续的话从那里接着导出，已经导好的部分不用重做。",
+      "continue": "继续导出",
+      "discard": "放弃",
+      "discarded": "没完成的导出已经放弃。",
+      "emptyLeft": "“{{file}}”是一个空文件，可以删掉。",
+      "changedTitle": "项目在这次导出之后改过了",
+      "changed": "接着导出的话，前后两部分会是不同的内容。可以用现在的内容重新导出，或者放弃。",
+      "again": "用现在的内容重新导出",
+      "goneTitle": "保存的位置不能用了",
+      "gone": "“{{file}}”不在了。可以另选一个位置，导好的部分还在。",
+      "denied": "浏览器不让写“{{file}}”。可以另选一个位置，导好的部分还在。",
+      "chooseAgain": "另选位置",
+      "encoderChanged": "这个浏览器现在编码的方式和之前不一样，接不上，视频从头重新导出。",
+      "cannotEncode": "这个浏览器现在不能按之前的设置编码，导出从头重做。",
+      "elsewhere": "这个导出正在另一个窗口里进行。",
+      "writing": "正在写入文件 {{percent}}%",
+      "noKeeping": "这个浏览器不能记住选好的文件。刷新或者崩溃以后，继续导出的视频会放在浏览器的下载里。"
+    },
+    "window": {
+      "title": "AnimaQuill 导出",
+      "note": "可以切到别的标签页，导出会接着走。关掉这个小窗会暂停导出。",
+      "frames": "第 {{done}} / {{total}} 帧",
+      "inWindow": "导出会放进一个小窗，切到别的标签页也会接着走。",
+      "noWindow": "这个浏览器不能开小窗。导出期间请让这个页面留在前台：切到别的标签页时导出会停下，切回来接着走。",
+      "askTitle": "在小窗里导出？",
+      "ask": "放进小窗以后，切到别的标签页导出也会接着走。留在这个页面的话，导出期间请让它留在前台。",
+      "open": "开小窗导出",
+      "stay": "留在这个页面",
+      "paused": "导出的小窗关掉了，导出已暂停，写好的部分还在。点状态栏的“继续导出”接着导出。",
+      "resume": "继续导出",
+      "pausedStatus": "视频导出已暂停 {{percent}}%",
+      "resumeFailed": "接着导出时编码器的设置和之前不一样，这个文件不能接着写。"
+    },
+    "video": {
+      "action": "导出视频…",
+      "title": "导出视频",
+      "start": "导出",
+      "format": "画幅",
+      "formatOption": "{{name}}（{{width}}×{{height}}，{{fps}} 帧）",
+      "range": "范围",
+      "ranges": {
+        "all": "整条时间轴（{{from}} 到 {{to}}）",
+        "selection": "选中的片段（{{from}} 到 {{to}}）"
+      },
+      "quality": "码率",
+      "qualities": {
+        "small": "较小",
+        "standard": "标准",
+        "high": "较高"
+      },
+      "bitrates": "码率按画幅大小和帧率算。{{width}}×{{height}}、{{fps}} 帧时，较小约 {{small}} Mbps，标准约 {{standard}} Mbps，较高约 {{high}} Mbps。",
+      "codec": {
+        "avc": "用 H.264 编码，存成 MP4。",
+        "vp9": "这个浏览器不能用 H.264 编码，改用 VP9，存成 WebM。有的播放器和网站不认 WebM。",
+        "av1": "这个浏览器不能用 H.264 和 VP9 编码，改用 AV1，存成 WebM。有的播放器和网站不认 WebM。"
+      },
+      "acceleration": {
+        "hardware": "用显卡编码。",
+        "software": "这个浏览器不能用显卡编码，改用处理器，会慢一些。"
+      },
+      "encoded": {
+        "hardware": "{{codec}}，显卡编码",
+        "software": "{{codec}}，处理器编码"
+      },
+      "encodedWithSound": "{{picture}}，声音 {{sound}}",
+      "codecName": {
+        "aac": "AAC",
+        "opus": "Opus",
+        "avc": "H.264",
+        "vp9": "VP9",
+        "av1": "AV1"
+      },
+      "sound": {
+        "none": "时间轴上没有能听到的声音，视频不带音轨。",
+        "cannot": "这个浏览器不能编码声音，视频不带音轨。",
+        "aac": "声音用 AAC 编码。",
+        "opusInMp4": "这个浏览器不能编码 AAC，声音改用 Opus，仍然存成 MP4。有的播放器和剪辑软件（比如老版本的 QuickTime）放不出这种声音。",
+        "opus": "声音用 Opus 编码。"
+      },
+      "noCaptions": "字幕不会烧进视频。",
+      "snapshot": "导出用的是现在的内容。导出期间可以继续预览和编辑，改动不会进这次导出。",
+      "kind": {
+        "mp4": "MP4 视频",
+        "webm": "WebM 视频"
+      },
+      "file": "{{name}}-{{format}}.{{extension}}",
+      "busy": "已经有一个视频在导出，等它完成或者取消后再开始新的。",
+      "running": "正在导出视频 {{percent}}%",
+      "remaining": "约剩 {{time}}",
+      "runningAbout": "正在导出“{{file}}”：第 {{done}} / {{total}} 帧。",
+      "stopping": "正在停下来",
+      "cancel": "取消导出",
+      "done": "已导出“{{file}}”（{{how}}）。",
+      "doneDownload": "已导出“{{file}}”（{{how}}），在浏览器的下载里。",
+      "cancelled": "视频导出已取消，没有留下文件。",
+      "leftBehind": "“{{file}}”没能删掉，里面的内容不完整，请手动删除。",
+      "failed": "视频没有导出",
+      "failedAt": "第 {{frame}} 帧（{{at}}）出了问题，已经跳到这一帧。{{reason}}",
+      "writeFailed": "“{{file}}”写不进去：{{error}}",
+      "cannotEncode": "这个浏览器不能编码视频。请用 Chrome 或 Edge 的新版本。",
+      "cannotEncodeFormat": "这个浏览器不能按这个画幅和码率编码，可以换一档码率再试。",
+      "empty": "这个范围里没有可以导出的帧。",
+      "noFile": "没能新建文件。"
+    },
+    "frameAction": "导出当前帧",
+    "frameRunning": "正在导出当前帧",
+    "frameStopping": "正在停下来。",
+    "frameFile": "{{name}}-第{{frame}}帧.png",
+    "frameDone": "已导出“{{file}}”。",
+    "frameCancelled": "导出已取消。",
+    "frameFailed": "当前帧没有导出",
+    "failure": {
+      "missingFile": "“{{name}}”的素材文件不在这台设备上。",
+      "cannotDecode": "“{{name}}”的素材读不出来，这个文件可能坏了，或者这个浏览器不支持它的格式。",
+      "sceneFrame": "“{{name}}”没有给出第 {{wanted}} 帧的画面。",
+      "sceneClosed": "“{{name}}”没有运行起来。",
+      "sceneOff": "场景没有运行。先在预览里重新运行场景，再导出。",
+      "sceneUnsupported": "这个浏览器不能捕获场景，有场景的画面不能导出。请用 Chrome 或 Edge 157 以上的版本。",
+      "compositor": "负责出图的页面没有响应。可以再试一次。",
+      "other": "画面没有做出来：{{message}}"
+    }
+  },
   "transfer": {
     "exportAction": "导出项目文件夹",
     "importAction": "导入项目文件夹",

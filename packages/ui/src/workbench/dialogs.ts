@@ -32,6 +32,26 @@ export interface DialogChoice {
   readonly kind?: "primary" | "danger";
 }
 
+/** Choices to make before something starts, one list each. */
+export interface FormOptions {
+  readonly title: string;
+  readonly fields: readonly FormField[];
+  /** What people should know first, one line each. */
+  readonly notes?: readonly string[];
+  readonly confirm: string;
+}
+
+export interface FormField {
+  readonly id: string;
+  readonly label: string;
+  readonly options: readonly { readonly id: string; readonly label: string }[];
+  /** The id of the option chosen at first. */
+  readonly value: string;
+}
+
+/** The id of the option chosen in each field, by field. */
+export type FormAnswer = Readonly<Record<string, string>>;
+
 export interface DialogDetail {
   readonly title: string;
   readonly items: readonly string[];
@@ -75,14 +95,17 @@ export type DialogRequest =
   | ({ readonly kind: "prompt"; readonly id: number } & PromptOptions)
   | ({ readonly kind: "confirm"; readonly id: number } & ConfirmOptions)
   | ({ readonly kind: "choice"; readonly id: number } & ChoiceOptions)
+  | ({ readonly kind: "form"; readonly id: number } & FormOptions)
   | ProgressRequest;
+
+type DialogValue = string | boolean | FormAnswer | undefined;
 
 /** Asks one thing at a time and answers with a promise. */
 export class Dialogs {
   readonly #emitter = new Emitter();
   #nextId = 1;
   #current: DialogRequest | undefined;
-  #answer: ((value: string | boolean | undefined) => void) | undefined;
+  #answer: ((value: DialogValue) => void) | undefined;
 
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): DialogRequest | undefined => this.#current;
@@ -102,6 +125,13 @@ export class Dialogs {
   choose(options: ChoiceOptions): Promise<string | undefined> {
     return this.#ask({ kind: "choice", id: this.#nextId++, ...options }) as Promise<
       string | undefined
+    >;
+  }
+
+  /** Resolves to what was chosen, or to undefined when cancelled. */
+  form(options: FormOptions): Promise<FormAnswer | undefined> {
+    return this.#ask({ kind: "form", id: this.#nextId++, ...options }) as Promise<
+      FormAnswer | undefined
     >;
   }
 
@@ -136,7 +166,7 @@ export class Dialogs {
     };
   }
 
-  answer(value: string | boolean | undefined): void {
+  answer(value: DialogValue): void {
     const answer = this.#answer;
     this.#current = undefined;
     this.#answer = undefined;
@@ -144,7 +174,7 @@ export class Dialogs {
     answer?.(value);
   }
 
-  #ask(request: DialogRequest): Promise<string | boolean | undefined> {
+  #ask(request: DialogRequest): Promise<DialogValue> {
     this.answer(undefined);
     return new Promise((resolve) => {
       this.#current = request;

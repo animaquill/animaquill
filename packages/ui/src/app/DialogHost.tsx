@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { DialogRequest, ProgressRequest } from "../workbench/dialogs.ts";
+import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/dialogs.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./DialogHost.module.css";
 
@@ -44,7 +44,84 @@ function Progress({ request }: { request: ProgressRequest }) {
   );
 }
 
-type QuestionRequest = Exclude<DialogRequest, ProgressRequest>;
+type FormRequest = Extract<DialogRequest, { kind: "form" }>;
+type QuestionRequest = Exclude<DialogRequest, ProgressRequest | FormRequest>;
+
+/** Choices before something starts. A list each, because there are few options and no typing. */
+function Form({ request }: { request: FormRequest }) {
+  const { dialogs } = useWorkbench();
+  const { t } = useTranslation();
+  const [values, setValues] = useState<FormAnswer>(() =>
+    Object.fromEntries(request.fields.map(({ id, value }) => [id, value])),
+  );
+  const dialog = useRef<HTMLDialogElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    confirm.current?.focus();
+    return () => element?.close();
+  }, []);
+
+  const dismiss = () => dialogs.answer(undefined);
+  const { title, fields, notes = [] } = request;
+  return (
+    <dialog
+      ref={dialog}
+      className={styles.wide}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        dismiss();
+      }}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) dismiss();
+      }}
+    >
+      <div className={styles.content}>
+        <h2>{title}</h2>
+        <div className={styles.fields}>
+          {fields.map(({ id, label, options }) => (
+            <label key={id} className={styles.field}>
+              <span>{label}</span>
+              <select
+                value={values[id]}
+                onChange={(event) => setValues({ ...values, [id]: event.target.value })}
+              >
+                {options.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+        {notes.length > 0 && (
+          <ul className={styles.notes}>
+            {notes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        )}
+        <div className={styles.buttons}>
+          <button type="button" onClick={dismiss}>
+            {t("dialog.cancel")}
+          </button>
+          <button
+            ref={confirm}
+            type="button"
+            className={styles.primary}
+            onClick={() => dialogs.answer(values)}
+          >
+            {request.confirm}
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
 
 /** The browser's own dialog: it keeps the focus inside and hands it back afterwards. */
 function Dialog({ request }: { request: QuestionRequest }) {
@@ -158,5 +235,6 @@ export function DialogHost() {
   const request = useSyncExternalStore(dialogs.subscribe, dialogs.getSnapshot);
   if (!request) return null;
   if (request.kind === "progress") return <Progress key={request.id} request={request} />;
+  if (request.kind === "form") return <Form key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }

@@ -6,8 +6,16 @@ import type {
   SoundFailureReason,
   SoundLoad,
 } from "@animaquill/scene";
+import type { StillFailure } from "./still.ts";
 
 export { layerWith, type LayerChanges } from "./plan.ts";
+export { failureOf, StillFailed, type StillFailure } from "./still.ts";
+
+/**
+ * How many pixels of a corner of the compositor scenes share. A scene that has no pixel of its own on
+ * the screen does not get drawn, so a compositor that is not for looking at keeps this much showing.
+ */
+export const SCENE_CORNER = 16;
 
 export interface FrameTiming {
   /** Where on the timeline. */
@@ -103,6 +111,8 @@ export type ToCompositor =
       readonly fit?: RenderLayer["fit"];
     }
   | { readonly type: "file"; readonly id: string; readonly file: Blob }
+  /** What it asked for with `needs` is not there, so that waiting for it is over. */
+  | { readonly type: "no-file"; readonly id: string }
   /** A jump is somebody moving the playhead, as opposed to time carrying it along while playing. */
   | { readonly type: "seek"; readonly seconds: number; readonly jump: boolean }
   /**
@@ -137,6 +147,24 @@ export type ToCompositor =
   | { readonly type: "ping"; readonly nonce: number }
   /** Timing costs little, but nothing should run that nobody asked for. */
   | { readonly type: "record"; readonly on: boolean }
+  /**
+   * This compositor is for an export. Comes before anything else. From here on it draws what `still`
+   * asks for and nothing by itself, so nothing else touches the picture or the decoders.
+   */
+  | { readonly type: "exporting" }
+  /** A picture of this moment of the plan with everything in it, or a reason why there is none. */
+  | { readonly type: "still"; readonly request: number; readonly seconds: number }
+  /** Starts the encoder of an export. There is one, and it gets the frames that follow. */
+  | { readonly type: "encode-start"; readonly request: number; readonly config: VideoEncoderConfig }
+  /** Draws a moment the way `still` does, and encodes it. */
+  | ({ readonly type: "encode-frame"; readonly request: number } & FrameToEncode)
+  /** Everything there is to encode has been asked for. Answered once all of it came out. */
+  | { readonly type: "encode-end"; readonly request: number }
+  /**
+   * Everything asked for so far comes out, and the encoder goes on with the next frame, which has to
+   * be a key frame. That is where an export can go on from after a crash.
+   */
+  | { readonly type: "encode-flush"; readonly request: number }
   /** Asks for evenly spread frames of a video, side by side in one image. */
   | {
       readonly type: "strip";
@@ -148,6 +176,7 @@ export type ToCompositor =
 
 /** From the compositor to the editor. */
 export type FromCompositor =
+  /** Comes with a port, which reaches it from anywhere, see `compositor.ts`. */
   | { readonly type: "ready" }
   /** It needs this file. Nothing leaves the sandbox on its own, and nothing comes in by itself. */
   | { readonly type: "needs"; readonly id: string }
@@ -190,4 +219,31 @@ export type FromCompositor =
    * each one did. Comes always, not only while recording, and only when there were any.
    */
   | { readonly type: "painted"; readonly ago: readonly number[] }
-  | { readonly type: "strip"; readonly request: number; readonly image: ImageBitmap | undefined };
+  | { readonly type: "strip"; readonly request: number; readonly image: ImageBitmap | undefined }
+  | { readonly type: "still"; readonly request: number; readonly image: ImageBitmap }
+  | { readonly type: "still"; readonly request: number; readonly failure: StillFailure }
+  /** What came of an `encode-` message. */
+  | { readonly type: "encode-answer"; readonly request: number; readonly failure?: StillFailure }
+  /** A frame came out of the encoder. They come in the order to decode them in. */
+  | ({ readonly type: "encoded" } & EncodedChunk);
+
+/** One frame of an export. Times of the file are in microseconds, as WebCodecs has them. */
+export interface FrameToEncode {
+  readonly index: number;
+  /** Where on the timeline. */
+  readonly seconds: number;
+  readonly timestamp: number;
+  readonly duration: number;
+  readonly keyFrame: boolean;
+}
+
+/** What an encoder gave, as it can cross to another page. */
+export interface EncodedChunk {
+  readonly data: ArrayBuffer;
+  readonly key: boolean;
+  /** Microseconds. */
+  readonly timestamp: number;
+  readonly duration: number;
+  /** Comes with the first one, and whenever the encoder changes how to decode. */
+  readonly decoderConfig?: VideoDecoderConfig;
+}

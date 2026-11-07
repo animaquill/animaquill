@@ -100,3 +100,52 @@
   margin-right: 4px;
   color: var(--aq-timeline-playhead);
 }
+
+.export {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--aq-text);
+}
+
+.exportBar {
+  width: 80px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 2px;
+  accent-color: var(--aq-accent);
+}
+
+.exportBar::-webkit-progress-bar {
+  background: var(--aq-bg-input);
+}
+
+.exportBar::-webkit-progress-value {
+  background: var(--aq-accent);
+}
+
+.exportCancel {
+  display: flex;
+  padding: 2px;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.exportCancel:hover {
+  background: var(--aq-bg-hover, #ffffff1a);
+}
+
+.exportResume {
+  padding: 1px 8px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-accent);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}

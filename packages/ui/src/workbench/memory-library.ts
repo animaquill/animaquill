@@ -1,11 +1,14 @@
 import { isMadeFile } from "@animaquill/host";
 import type {
+  ExportPiece,
+  ExportStore,
   IncomingProject,
   MediaStore,
   ProjectAddress,
   ProjectLibrary,
   ProjectLog,
   ProjectSummary,
+  SavedExport,
   TrialPlace,
   TrialStore,
   WindowMemory,
@@ -207,5 +210,72 @@ export class MemoryLibrary implements ProjectLibrary {
     this.updates.delete(id);
     this.instances.delete(id);
     this.#removeFiles(id);
+  }
+}
+
+/** For tests: what exports keep, in memory, as it would be on the disk. */
+export class MemoryExports implements ExportStore {
+  readonly saved = new Map<string, SavedExport>();
+  /** By export, then by track, then by number. */
+  readonly kept = new Map<string, Map<string, Map<number, ExportPiece>>>();
+  readonly claimed = new Set<string>();
+  failing = false;
+  /** Only pieces cannot be kept, as when the disk is full of them. */
+  failingPieces = false;
+
+  async list(project: string): Promise<readonly SavedExport[]> {
+    return [...this.saved.values()]
+      .filter((saved) => saved.project === project)
+      .map((saved) => structuredClone(saved));
+  }
+
+  async save(saved: SavedExport): Promise<void> {
+    if (this.failing) throw new Error("quota");
+    this.saved.set(saved.id, structuredClone(saved));
+  }
+
+  #track(id: string, track: string): Map<number, ExportPiece> {
+    let tracks = this.kept.get(id);
+    if (!tracks) {
+      tracks = new Map();
+      this.kept.set(id, tracks);
+    }
+    let pieces = tracks.get(track);
+    if (!pieces) {
+      pieces = new Map();
+      tracks.set(track, pieces);
+    }
+    return pieces;
+  }
+
+  async addPiece(id: string, track: string, piece: ExportPiece): Promise<void> {
+    if (this.failing || this.failingPieces) throw new Error("quota");
+    this.#track(id, track).set(piece.seq, piece);
+  }
+
+  async *pieces(id: string, track: string): AsyncGenerator<ExportPiece> {
+    const pieces = [...this.#track(id, track).values()].toSorted((a, b) => a.seq - b.seq);
+    yield* pieces;
+  }
+
+  async dropPieces(id: string, track: string, from: number): Promise<void> {
+    const pieces = this.#track(id, track);
+    for (const seq of pieces.keys()) if (seq >= from) pieces.delete(seq);
+  }
+
+  async remove(id: string): Promise<void> {
+    this.saved.delete(id);
+    this.kept.delete(id);
+  }
+
+  /** Pieces of a track, as many as there are. */
+  count(id: string, track: string): number {
+    return this.kept.get(id)?.get(track)?.size ?? 0;
+  }
+
+  async claim(id: string): Promise<(() => void) | undefined> {
+    if (this.claimed.has(id)) return undefined;
+    this.claimed.add(id);
+    return () => this.claimed.delete(id);
   }
 }

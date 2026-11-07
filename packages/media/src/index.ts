@@ -1,6 +1,15 @@
 import { ALL_FORMATS, BlobSource, Input } from "mediabunny";
 
 export { formatHash, hashFile, isSameHash, type HashOptions } from "./hash.ts";
+export {
+  containerOf,
+  VideoFileWriter,
+  type ByteSink,
+  type EncodedFrame,
+  type SoundCodecName,
+  type VideoCodecName,
+  type VideoFileOptions,
+} from "./video-file.ts";
 
 /** What a file contains, as far as the project cares. */
 export interface MediaFacts {

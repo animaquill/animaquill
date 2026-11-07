@@ -12,6 +12,51 @@ export interface Host {
   readonly trials: TrialStore;
   /** Where code that people typed and did not save waits, so that a crash does not take it. */
   readonly drafts: DraftStore;
+  /** Where an export keeps what it has done, so that a reload or a crash costs only a little. */
+  readonly exports: ExportStore;
+}
+
+/** An export that stopped before it was finished, and can go on from where it got. */
+export interface SavedExport {
+  readonly id: string;
+  readonly project: string;
+  /** Milliseconds since 1970. */
+  readonly savedAt: number;
+  /** Where the finished file goes, as `GrowingFile.target` had it. */
+  readonly target: unknown;
+  /** What the editor needs to go on. The host keeps it as it is. */
+  readonly state: unknown;
+}
+
+/** Encoded media of an export, a piece at a time, as the editor wrote it. */
+export interface ExportPiece {
+  /** From 0, in the order they were written. */
+  readonly seq: number;
+  readonly data: Blob;
+  /** What is in it, which only the editor reads. */
+  readonly index: unknown;
+}
+
+/**
+ * What an export has done. It is kept on this device only, and goes away when the export is
+ * finished or given up. The pieces are on the disk as soon as `addPiece` resolves, so that whatever
+ * happens to the page then, they are there for the next one.
+ */
+export interface ExportStore {
+  list(project: string): Promise<readonly SavedExport[]>;
+  save(saved: SavedExport): Promise<void>;
+  addPiece(id: string, track: string, piece: ExportPiece): Promise<void>;
+  /** The pieces of a track in order, a few at a time, so that they never all are in memory. */
+  pieces(id: string, track: string): AsyncIterable<ExportPiece>;
+  /** Takes away the pieces of a track from this one on. */
+  dropPieces(id: string, track: string, from: number): Promise<void>;
+  /** The export and all its pieces. */
+  remove(id: string): Promise<void>;
+  /**
+   * Makes sure that no other window works on an export at the same time. Resolves to how to let go,
+   * or to undefined when another window has it. A window that goes away lets go by itself.
+   */
+  claim(id: string): Promise<(() => void) | undefined>;
 }
 
 /** Receives what people chose to send: how the editor runs, or what went wrong in it. */
@@ -219,6 +264,35 @@ export interface TargetFolder {
   abandon(): Promise<void>;
 }
 
+/** What kind of file a new one is, for the dialog that asks where it goes. */
+export interface FileKind {
+  /** For people, such as "MP4 video". */
+  readonly description: string;
+  readonly mime: string;
+  /** Without the dot. */
+  readonly extension: string;
+}
+
+/**
+ * A new file that gets written piece by piece, anywhere in it, so that it never has to be in memory
+ * as a whole. Nothing of it counts until `finish`: a file that stops halfway is not a file.
+ */
+export interface GrowingFile {
+  /** To tell people where it went. */
+  readonly name: string;
+  /** A place people chose, or their downloads, where it only arrives once it is finished. */
+  readonly kind: "file" | "download";
+  /**
+   * How to get to it again from another page, see `FolderAccess.reopen`. A browser that cannot keep
+   * a file people chose has a download here instead.
+   */
+  readonly target: unknown;
+  write(data: Uint8Array<ArrayBuffer>, position: number): Promise<void>;
+  finish(): Promise<void>;
+  /** Takes back what was written. Rejects when something had to stay, such as an empty file. */
+  abandon(): Promise<void>;
+}
+
 /** How people get to folders. Both ask them, so both need to run right after they did something. */
 export interface FolderAccess {
   /**
@@ -233,4 +307,17 @@ export interface FolderAccess {
    * is there stays as it is. Resolves to undefined when they changed their minds.
    */
   chooseTarget(name: string): Promise<TargetFolder | undefined>;
+  /** Gives people a finished file, the way downloads go here. The name can be anything. */
+  saveFile(file: Blob, name: string): void;
+  /**
+   * Asks where a new file with about this name should go, for one that is too large to hold. It has
+   * to run right after people did something. Resolves to undefined when they changed their minds.
+   */
+  chooseFile(name: string, kind: FileKind): Promise<GrowingFile | undefined>;
+  /**
+   * A file from `chooseFile` again, after a reload, to write it from the start. The browser may ask
+   * whether that is all right, which has to run right after people did something. "gone" when it
+   * is not there any more, "denied" when it may not be written.
+   */
+  reopen(target: unknown, kind: FileKind): Promise<GrowingFile | "gone" | "denied">;
 }

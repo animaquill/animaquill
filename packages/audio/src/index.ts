@@ -3,6 +3,18 @@ import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
 
 export { computePeaks, PEAKS_PER_SECOND } from "./peaks.ts";
 export { wavOf } from "./wav.ts";
+export {
+  MIX_CHANNELS,
+  MIX_PIECE_SECONDS,
+  MIX_SAMPLE_RATE,
+  placementsIn,
+  SoundFailed,
+  SoundMixer,
+  type MixContext,
+  type MixerOptions,
+  type Placement,
+  type SoundSource,
+} from "./mix.ts";
 
 /** How far ahead sound gets decoded and scheduled. It bridges a busy moment, and costs memory. */
 const LEAD_SECONDS = 1;

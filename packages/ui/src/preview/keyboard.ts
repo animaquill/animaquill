@@ -13,21 +13,31 @@ const NO_ANSWER_MS = 30;
 export class KeyboardKeeper {
   readonly #frame: HTMLIFrameElement;
   readonly #ask: (request: number) => void;
+  /** The page of the frame, which can be a window of its own. */
+  readonly #document: Document;
+  /** The window of that page, when it is not this one. */
+  readonly #view: Window | undefined;
   #lastRequest = 0;
   /** What the keyboard goes back to, if it was anywhere. */
   #focused: HTMLElement | undefined;
   #answered: (() => void) | undefined;
 
-  constructor(frame: HTMLIFrameElement, ask: (request: number) => void) {
+  constructor(
+    frame: HTMLIFrameElement,
+    ask: (request: number) => void,
+    page: Document = frame.ownerDocument ?? document,
+  ) {
     this.#frame = frame;
     this.#ask = ask;
-    document.addEventListener("focusin", this.#onFocusIn);
-    addEventListener("blur", this.#onBlur);
+    this.#document = page;
+    this.#view = page.defaultView ?? undefined;
+    page.addEventListener("focusin", this.#onFocusIn);
+    (this.#view ?? globalThis).addEventListener("blur", this.#onBlur);
   }
 
   dispose(): void {
-    document.removeEventListener("focusin", this.#onFocusIn);
-    removeEventListener("blur", this.#onBlur);
+    this.#document.removeEventListener("focusin", this.#onFocusIn);
+    (this.#view ?? globalThis).removeEventListener("blur", this.#onBlur);
   }
 
   /** The compositor has looked at who it was. */
@@ -40,13 +50,13 @@ export class KeyboardKeeper {
   };
 
   #onBlur = (): void => {
-    if (document.activeElement !== this.#frame || this.#answered) return;
+    if (this.#document.activeElement !== this.#frame || this.#answered) return;
     this.#lastRequest += 1;
     const takeBack = () => {
       if (!this.#answered) return;
       this.#answered = undefined;
       clearTimeout(timer);
-      window.focus();
+      (this.#view ?? window).focus();
       if (this.#focused?.isConnected) this.#focused.focus();
       else this.#frame.blur();
     };

@@ -51,6 +51,41 @@
   margin-bottom: 12px;
 }
 
+.fields {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--aq-text);
+}
+
+.field select {
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.notes {
+  margin: 0 0 12px;
+  padding: 0 0 0 16px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.notes li + li {
+  margin-top: 4px;
+}
+
 .content .list h3 {
   margin: 0 0 4px;
   color: var(--aq-text);

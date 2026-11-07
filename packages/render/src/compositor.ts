@@ -20,7 +20,8 @@ import { withChannels } from "./plan.ts";
 import { placeholderPicture } from "./placeholder.ts";
 import { SceneLayers } from "./scenes.ts";
 import { SoundJobs } from "./sounds.ts";
-import type { FrameTiming, FromCompositor, ToCompositor } from "./index.ts";
+import { failureOf, FileArrivals, stillPictures, StillFailed } from "./still.ts";
+import type { FrameTiming, FrameToEncode, FromCompositor, ToCompositor } from "./index.ts";
 
 /**
  * The compositor. It runs in a sandbox on a site of its own, where it can decode, draw and later
@@ -103,6 +104,7 @@ let plan: RenderPlan | undefined;
 /** The plan without what somebody is only trying out. A scene does not start over for that. */
 let settledPlan: RenderPlan | undefined;
 const files = new Map<string, Blob>();
+const arrivals = new FileArrivals();
 const images = new Map<string, Promise<ImageBitmap | undefined>>();
 const videos = new Map<string, Promise<VideoFile | undefined>>();
 const asked = new Set<string>();
@@ -113,6 +115,10 @@ const cursors = new Map<
 >();
 
 let wanted = 0;
+/** This one only draws what `still` asks for. */
+let exporting = false;
+/** One at a time: they draw on the same canvas and read the same videos. */
+let stills: Promise<void> = Promise.resolve();
 let gettingReady = false;
 let recording = false;
 let coldInFrame = 0;
@@ -377,6 +383,7 @@ function paintAll(
 
 /** One frame at a time. When time runs ahead of it, frames in between are skipped. */
 async function refresh(): Promise<void> {
+  if (exporting) return;
   if (drawing) {
     drawAgain = true;
     return;
@@ -432,6 +439,187 @@ async function refresh(): Promise<void> {
   drawing = false;
 }
 
+/** The same painting as the preview, after waiting for everything that the preview goes without. */
+async function paintStill(seconds: number): Promise<void> {
+  const shown = plan;
+  if (!shown) throw new StillFailed({ reason: "failed", message: "No plan" });
+  wanted = seconds;
+  scenes.follow(settledPlan, seconds);
+  const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
+  await closeCursorsExcept(showing);
+  const pictures = await stillPictures<Picture>(showing, seconds, {
+    file(id) {
+      const file = fileOf(id);
+      return file ? Promise.resolve(file) : arrivals.wait(id);
+    },
+    image: async (_, id, file) => {
+      const bitmap = await imageOf(id, file);
+      return bitmap && imagePicture(bitmap);
+    },
+    video: async (layer, id, file) => {
+      const cursor = await cursorOf(layer, id, file);
+      const sample = await cursor?.at(clockOf(layer, seconds));
+      return sample && videoPicture(sample);
+    },
+    scene: async ({ id }) => {
+      const held = await scenes.exactPicture(id);
+      return imagePicture(held.image, held.release);
+    },
+  });
+  try {
+    paintAll(shown, showing, pictures, seconds);
+  } finally {
+    for (const picture of pictures) picture?.close();
+  }
+}
+
+async function makeStill(seconds: number): Promise<ImageBitmap> {
+  await paintStill(seconds);
+  return createImageBitmap(canvas);
+}
+
+async function answerStill(request: number, seconds: number): Promise<void> {
+  try {
+    const image = await makeStill(seconds);
+    send({ type: "still", request, image }, [image]);
+  } catch (error) {
+    console.warn("No still", error);
+    send({ type: "still", request, failure: failureOf(error) });
+  }
+}
+
+const notExporting = () => {
+  throw new StillFailed({ reason: "failed", message: "Not a compositor for exports" });
+};
+
+/** Frames waiting in the encoder. More only take memory, and the encoder works through them anyway. */
+const ENCODER_QUEUE = 4;
+
+interface Encoding {
+  readonly encoder: VideoEncoder;
+  /** What the encoder said went wrong. It says so once, and nothing after that works. */
+  failed: unknown;
+}
+
+let encoding: Encoding | undefined;
+
+/** Bytes of their own, whatever they were part of. */
+function copyOf(bytes: AllowSharedBufferSource): ArrayBuffer {
+  const view = ArrayBuffer.isView(bytes)
+    ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    : new Uint8Array(bytes);
+  return view.slice().buffer;
+}
+
+/** What the encoder says about decoding, as it can cross: it may come as objects of this page. */
+function decoderConfigOf(
+  meta: EncodedVideoChunkMetadata | undefined,
+): VideoDecoderConfig | undefined {
+  const config = meta?.decoderConfig;
+  if (!config) return undefined;
+  const { description, colorSpace } = config;
+  const copied = description && copyOf(description);
+  const space =
+    colorSpace && ("toJSON" in colorSpace ? (colorSpace as VideoColorSpace).toJSON() : colorSpace);
+  return {
+    codec: config.codec,
+    ...(config.codedWidth !== undefined && { codedWidth: config.codedWidth }),
+    ...(config.codedHeight !== undefined && { codedHeight: config.codedHeight }),
+    ...(copied && { description: copied }),
+    ...(space && { colorSpace: space }),
+  };
+}
+
+function startEncoding(config: VideoEncoderConfig): void {
+  encoding?.encoder.close();
+  const current: Encoding = {
+    failed: undefined,
+    encoder: new VideoEncoder({
+      output(chunk, meta) {
+        const data = new ArrayBuffer(chunk.byteLength);
+        chunk.copyTo(data);
+        const decoderConfig = decoderConfigOf(meta);
+        const encoded = {
+          type: "encoded" as const,
+          data,
+          key: chunk.type === "key",
+          timestamp: chunk.timestamp,
+          duration: chunk.duration ?? 0,
+          ...(decoderConfig && { decoderConfig }),
+        };
+        send(encoded, [data]);
+      },
+      error(error) {
+        current.failed ??= error;
+      },
+    }),
+  };
+  encoding = current;
+  current.encoder.configure(config);
+}
+
+const encoderOf = (): Encoding => {
+  if (!encoding) throw new StillFailed({ reason: "failed", message: "No encoder" });
+  if (encoding.failed !== undefined) throw encoding.failed;
+  return encoding;
+};
+
+/** Until the encoder has room. It says so with an event, which it may not send while it fails. */
+async function roomInEncoder(current: Encoding): Promise<void> {
+  const { encoder } = current;
+  while (encoder.encodeQueueSize > ENCODER_QUEUE && current.failed === undefined) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 50);
+      encoder.addEventListener(
+        "dequeue",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+  }
+  if (current.failed !== undefined) throw current.failed;
+}
+
+async function encodeFrame({ seconds, timestamp, duration, keyFrame }: FrameToEncode) {
+  const current = encoderOf();
+  await paintStill(seconds);
+  const frame = new VideoFrame(canvas, { timestamp, duration });
+  try {
+    current.encoder.encode(frame, { keyFrame });
+  } finally {
+    frame.close();
+  }
+  await roomInEncoder(current);
+}
+
+async function flushEncoding(): Promise<void> {
+  const current = encoderOf();
+  await current.encoder.flush();
+  if (current.failed !== undefined) throw current.failed;
+}
+
+async function finishEncoding(): Promise<void> {
+  const current = encoderOf();
+  encoding = undefined;
+  // Everything it has comes out before this is over, so the answer comes after all of it.
+  await current.encoder.flush();
+  current.encoder.close();
+  if (current.failed !== undefined) throw current.failed;
+}
+
+async function answerEncoding(request: number, work: () => Promise<void> | void): Promise<void> {
+  try {
+    await work();
+    send({ type: "encode-answer", request });
+  } catch (error) {
+    console.warn("Not encoded", error);
+    send({ type: "encode-answer", request, failure: failureOf(error) });
+  }
+}
+
 async function makeStrip(file: Blob, count: number, height: number) {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   try {
@@ -484,7 +672,19 @@ const sounds = new SoundJobs({
 addEventListener("message", (event: MessageEvent<ToCompositor>) => {
   // A scene can write here too, and only reading `data` builds a message: that comes after this.
   if (event.source !== parent) return;
-  const { data } = event;
+  handle(event.data);
+});
+
+/**
+ * The line from whoever hears `ready`, which is the page this is in. A window of its own is not
+ * the page that writes to it: what the editor writes there comes from the editor, which this page
+ * cannot tell from a stranger. What comes through this port can only come from whoever got it.
+ */
+const line = new MessageChannel();
+line.port1.addEventListener("message", (event: MessageEvent<ToCompositor>) => handle(event.data));
+line.port1.start();
+
+function handle(data: ToCompositor): void {
   if (data.type === "ping") {
     send({ type: "pong", nonce: data.nonce });
     return;
@@ -504,6 +704,38 @@ addEventListener("message", (event: MessageEvent<ToCompositor>) => {
     recording = data.on;
     return;
   }
+  if (data.type === "exporting") {
+    exporting = true;
+    return;
+  }
+  if (data.type === "still") {
+    stills = stills.then(() => answerStill(data.request, data.seconds));
+    return;
+  }
+  if (
+    data.type === "encode-start" ||
+    data.type === "encode-frame" ||
+    data.type === "encode-flush" ||
+    data.type === "encode-end"
+  ) {
+    const { request } = data;
+    const work =
+      data.type === "encode-start"
+        ? () => startEncoding(data.config)
+        : data.type === "encode-frame"
+          ? () => encodeFrame(data)
+          : data.type === "encode-flush"
+            ? flushEncoding
+            : finishEncoding;
+    stills = stills.then(() => answerEncoding(request, exporting ? work : notExporting));
+    return;
+  }
+  if (data.type === "no-file") {
+    // Somebody may bring it back, so that the next one gets to ask again.
+    asked.delete(data.id);
+    arrivals.settle(data.id, undefined);
+    return;
+  }
   if (data.type === "plan") {
     plan = data.plan;
     sizeOnScreen(data.full ?? data.plan);
@@ -516,14 +748,19 @@ addEventListener("message", (event: MessageEvent<ToCompositor>) => {
       jumps += 1;
       patience.jumped();
     }
-  } else files.set(data.id, data.file);
+  } else {
+    files.set(data.id, data.file);
+    arrivals.settle(data.id, data.file);
+  }
+  // It goes where `still` says, and a scene at the start of the plan is not worth opening for nothing.
+  if (exporting) return;
   try {
     scenes.follow(settledPlan, wanted);
   } finally {
     // Whatever went wrong with a scene, the rest of the picture goes on.
     void refresh();
   }
-});
+}
 
 setInterval(() => {
   if (timings.length === 0) return;
@@ -539,4 +776,4 @@ setInterval(() => {
   paintedAt = [];
 }, PAINTED_EVERY_MS);
 
-send({ type: "ready" });
+send({ type: "ready" }, [line.port2]);

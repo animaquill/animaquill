@@ -362,6 +362,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.2.1
         version: 6.2.1(vite@8.3.6(@types/node@26.0.0))
+      mediabunny:
+        specifier: 1.65.2
+        version: 1.65.2
       typescript:
         specifier: 7.0.2
         version: 7.0.2

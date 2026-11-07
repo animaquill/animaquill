@@ -532,6 +532,15 @@ describe("browsers that cannot give out folders", () => {
     await folder.finish();
     expect(saveFile).toHaveBeenCalledExactlyOnceWith(expect.any(Blob), "我的_项目.zip");
   });
+
+  it("gives people a file by any name, and it stays that kind of file", () => {
+    const { access, saveFile } = setup();
+    const file = new Blob(["a"]);
+    access.saveFile(file, "我的/项目-第3帧.png");
+    expect(saveFile).toHaveBeenCalledExactlyOnceWith(file, "我的_项目-第3帧.png");
+    access.saveFile(file, `${"长".repeat(500)}.png`);
+    expect(saveFile.mock.lastCall?.[1]).toMatch(/长\.png$/u);
+  });
 });
 
 describe("the name of a folder", () => {

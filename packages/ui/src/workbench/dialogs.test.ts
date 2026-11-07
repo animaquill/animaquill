@@ -96,3 +96,42 @@ describe("a dialog for something that takes a while", () => {
     expect(await answer).toBe(false);
   });
 });
+
+describe("a dialog with choices to make", () => {
+  const form = {
+    title: "导出视频",
+    fields: [
+      {
+        id: "quality",
+        label: "码率",
+        value: "standard",
+        options: [
+          { id: "standard", label: "标准" },
+          { id: "high", label: "较高" },
+        ],
+      },
+    ],
+    notes: ["没有声音"],
+    confirm: "导出",
+  };
+
+  it("shows the fields and what to know", () => {
+    const dialogs = new Dialogs();
+    void dialogs.form(form);
+    expect(dialogs.getSnapshot()).toMatchObject({ kind: "form", ...form });
+  });
+
+  it("resolves to what was chosen, by field", async () => {
+    const dialogs = new Dialogs();
+    const asking = dialogs.form(form);
+    dialogs.answer({ quality: "high" });
+    await expect(asking).resolves.toEqual({ quality: "high" });
+  });
+
+  it("resolves to nothing when cancelled", async () => {
+    const dialogs = new Dialogs();
+    const asking = dialogs.form(form);
+    dialogs.answer(undefined);
+    await expect(asking).resolves.toBeUndefined();
+  });
+});

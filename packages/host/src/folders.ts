@@ -1,3 +1,4 @@
+import { growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
 import type { FolderAccess, SourceFolder, TargetFolder, WriteOptions } from "./index.ts";
 import { FALLBACK_NAME, folderNameFor, partsOf } from "./paths.ts";
 import { zipTarget } from "./zip.ts";
@@ -25,6 +26,16 @@ export interface FolderAccessOptions {
   /** Lets people choose a folder to read. Resolves to its files, or undefined if cancelled. */
   readonly chooseFiles: () => Promise<readonly File[] | undefined>;
   readonly saveFile: (file: Blob, name: string) => void;
+  /** Missing in browsers that cannot give out files to write. */
+  readonly savePicker?: () => SaveFilePicker | undefined;
+  /** The private folder of the site, for a file that goes to the downloads once it is finished. */
+  readonly scratch?: () => Promise<FileSystemDirectoryHandle>;
+}
+
+/** A file name for anything: what is after the dot is what opens it, and it stays. */
+export function fileNameFor(name: string): string {
+  const [, stem = name, extension = ""] = /^(.*)(\.[^.]*)$/su.exec(name) ?? [];
+  return `${folderNameFor(stem)}${extension}`;
 }
 
 const isNamed = (error: unknown, ...names: readonly string[]) =>
@@ -172,7 +183,7 @@ function directoryTarget(
 
 /** How people get to folders, in the ways that do not lose anything without saying so. */
 export function createFolderAccess(options: FolderAccessOptions): FolderAccess {
-  const { picker, chooseFiles, saveFile } = options;
+  const { picker, chooseFiles, saveFile, savePicker, scratch } = options;
 
   return {
     asksToUpload: true,
@@ -200,6 +211,13 @@ export function createFolderAccess(options: FolderAccessOptions): FolderAccess {
       const free = await nameFor(parent, wanted);
       return directoryTarget(parent, await parent.getDirectoryHandle(free, { create: true }));
     },
+    saveFile(file, name) {
+      saveFile(file, fileNameFor(name));
+    },
+    chooseFile: (name, kind) =>
+      growingFile(fileNameFor(name), kind, { picker: savePicker?.(), scratch, saveFile }),
+    reopen: (target, kind) =>
+      reopenTarget(target, kind, { picker: savePicker?.(), scratch, saveFile }),
   };
 }
 
@@ -235,4 +253,7 @@ export const browserFolders = (): FolderAccess =>
       ),
     chooseFiles: chooseFilesWithInput,
     saveFile: saveWithLink,
+    savePicker: () =>
+      (globalThis as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker?.bind(globalThis),
+    scratch: () => navigator.storage.getDirectory(),
   });

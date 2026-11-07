@@ -3,13 +3,22 @@ import type { FolderAccess, Host } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryTarget, memorySource } from "../transfer/memory-folder.ts";
-import { MemoryLibrary, MemoryTrials, memoryAddress, memoryWindow } from "./memory-library.ts";
+import {
+  MemoryExports,
+  MemoryLibrary,
+  MemoryTrials,
+  memoryAddress,
+  memoryWindow,
+} from "./memory-library.ts";
 import { Workbench } from "./workbench.ts";
 import { workspaces } from "./workspaces.ts";
 
 const noFolders: FolderAccess = {
   chooseSource: async () => undefined,
   chooseTarget: async () => undefined,
+  saveFile: () => {},
+  chooseFile: async () => undefined,
+  reopen: async () => "gone" as const,
 };
 
 function setup(folders = noFolders) {
@@ -29,6 +38,7 @@ function setup(folders = noFolders) {
     folders,
     trials,
     drafts,
+    exports: new MemoryExports(),
   };
   const workbench = new Workbench({
     host,
@@ -464,11 +474,112 @@ describe("what is set aside", () => {
   });
 });
 
+describe("exporting a frame", () => {
+  it("needs a project, and is in the file menu", async () => {
+    const { workbench } = setup();
+    const action = workbench.actions.get("project.exportFrame");
+    expect(action?.enabled?.()).toBe(false);
+    await create(workbench, "我的项目");
+    expect(action?.enabled?.()).toBe(true);
+    const ids = workbench.actions
+      .menu("file")
+      .flat()
+      .map(({ id }) => id);
+    expect(ids).toContain("project.exportFrame");
+  });
+
+  it("goes straight on with nothing being tried", async () => {
+    const { workbench } = setup();
+    await create(workbench, "我的项目");
+    const made = vi.spyOn(workbench.stills, "run").mockResolvedValue();
+    await workbench.exportFrame();
+    expect(made).toHaveBeenCalledOnce();
+  });
+
+  it("asks first with something being tried, and cancelling goes no further", async () => {
+    const { workbench } = await trying();
+    const made = vi.spyOn(workbench.stills, "run").mockResolvedValue();
+    const exporting = workbench.exportFrame();
+    expect(await dialogOf(workbench)).toMatchObject({
+      kind: "choice",
+      message: "trial.exportMessage",
+    });
+    workbench.dialogs.answer(undefined);
+    await exporting;
+    expect(made).not.toHaveBeenCalled();
+  });
+
+  it("leaves what is tried out of it when people say so, and it stays", async () => {
+    const { workbench, saved } = await trying();
+    const made = vi.spyOn(workbench.stills, "run").mockResolvedValue();
+    const exporting = workbench.exportFrame();
+    await dialogOf(workbench);
+    workbench.dialogs.answer("saved");
+    await exporting;
+    expect(made).toHaveBeenCalledOnce();
+    expect(saved()).toBeUndefined();
+    expect(countOf(workbench)).toBe(1);
+  });
+
+  it("saves first when people say so, so that the frame has it", async () => {
+    const { workbench, saved } = await trying();
+    let then: unknown;
+    vi.spyOn(workbench.stills, "run").mockImplementation(async () => {
+      then = saved();
+    });
+    const exporting = workbench.exportFrame();
+    await dialogOf(workbench);
+    workbench.dialogs.answer("save");
+    await exporting;
+    expect(then).toBe(10);
+  });
+});
+
+describe("exporting a video", () => {
+  it("needs a project, and is in the file menu", async () => {
+    const { workbench } = setup();
+    const action = workbench.actions.get("project.exportVideo");
+    expect(action?.enabled?.()).toBe(false);
+    await create(workbench, "我的项目");
+    expect(action?.enabled?.()).toBe(true);
+    expect(
+      workbench.actions
+        .menu("file")
+        .flat()
+        .map(({ id }) => id),
+    ).toContain("project.exportVideo");
+  });
+
+  it("asks first with something being tried, like any export", async () => {
+    const { workbench } = await trying();
+    const started = vi.spyOn(workbench.videos, "start").mockResolvedValue();
+    const exporting = workbench.exportVideo();
+    expect(await dialogOf(workbench)).toMatchObject({ message: "trial.exportMessage" });
+    workbench.dialogs.answer(undefined);
+    await exporting;
+    expect(started).not.toHaveBeenCalled();
+  });
+
+  it("goes on with what is saved when people say so", async () => {
+    const { workbench, saved } = await trying();
+    const started = vi.spyOn(workbench.videos, "start").mockResolvedValue();
+    const exporting = workbench.exportVideo();
+    await dialogOf(workbench);
+    workbench.dialogs.answer("saved");
+    await exporting;
+    expect(started).toHaveBeenCalledOnce();
+    expect(saved()).toBeUndefined();
+  });
+});
+
 describe("exporting with something being tried", () => {
   const target = (): FolderAccess => {
     const access = {
       chooseSource: async () => undefined,
       chooseTarget: vi.fn(async () => undefined),
+      saveFile: vi.fn(),
+      chooseFile: async () => undefined,
+      reopen: async () => "gone" as const,
     };
     return access;
   };

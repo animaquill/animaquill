@@ -48,6 +48,9 @@ function setup(library = new MemoryLibrary()) {
   const folders: FolderAccess = {
     chooseSource: async () => chosen(next.source),
     chooseTarget: async () => chosen(next.target),
+    saveFile: () => {},
+    chooseFile: async () => undefined,
+    reopen: async () => "gone" as const,
   };
   const transfer = new ProjectTransfer({
     folders,
@@ -570,7 +573,13 @@ describe("progress", () => {
     let answer: (folder: undefined) => void = () => {};
     const chooseTarget = vi.fn(() => new Promise<undefined>((resolve) => (answer = resolve)));
     const transfer = new ProjectTransfer({
-      folders: { chooseTarget, chooseSource: chooseTarget },
+      folders: {
+        chooseTarget,
+        chooseSource: chooseTarget,
+        saveFile: () => {},
+        chooseFile: async () => undefined,
+        reopen: async () => "gone" as const,
+      },
       projects: window.library,
       session: window.session,
       dialogs: window.dialogs,
@@ -798,6 +807,9 @@ describe("a browser that asks whether a folder may be uploaded", () => {
         ...(asksToUpload === undefined ? {} : { asksToUpload }),
         chooseSource,
         chooseTarget: async () => undefined,
+        saveFile: () => {},
+        chooseFile: async () => undefined,
+        reopen: async () => "gone" as const,
       },
       projects: window.library,
       session: window.session,
@@ -837,6 +849,9 @@ describe("a browser that asks whether a folder may be uploaded", () => {
         asksToUpload: true,
         chooseSource: () => Promise.reject(new DOMException("denied", "NotAllowedError")),
         chooseTarget: async () => undefined,
+        saveFile: () => {},
+        chooseFile: async () => undefined,
+        reopen: async () => "gone" as const,
       },
       projects: window.library,
       session: window.session,

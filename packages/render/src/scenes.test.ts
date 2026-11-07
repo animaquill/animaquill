@@ -12,10 +12,12 @@ import {
   frameOf,
   HeldPicture,
   MAX_SCENE_FRAME,
+  PICTURE_GRACE_MS,
   SceneLayers,
   viewOf,
   type Host,
 } from "./scenes.ts";
+import { StillFailed, type StillFailure } from "./still.ts";
 
 class FakeHost implements Host {
   readonly options: SceneHostOptions;
@@ -30,6 +32,8 @@ class FakeHost implements Host {
   pauses = 0;
   evicted: unknown[] = [];
   focusChecks = 0;
+  /** What every seek answers. */
+  reaching: Promise<boolean> = Promise.resolve(true);
 
   constructor(options: SceneHostOptions) {
     this.options = options;
@@ -52,7 +56,7 @@ class FakeHost implements Host {
   seek(frame: number): Promise<boolean> {
     if (FakeHost.failSeeks) throw new RangeError(`No frame ${frame}`);
     this.seeks.push(frame);
-    return Promise.resolve(true);
+    return this.reaching;
   }
 
   play(base: { frame: number; at: number; rate: number }): void {
@@ -148,6 +152,7 @@ function setup(setupMessage: Partial<Extract<ToCompositor, { type: "setup" }>> =
   const sent: FromCompositor[] = [];
   const redraw = vi.fn();
   const timers: (() => void)[] = [];
+  const graces: { readonly run: () => void; readonly ms: number }[] = [];
   const scenes = new SceneLayers({
     mount: {} as HTMLElement,
     runtime: () => new Blob(["code"]),
@@ -161,6 +166,11 @@ function setup(setupMessage: Partial<Extract<ToCompositor, { type: "setup" }>> =
     linger: (run) => {
       timers.push(run);
       return () => timers.splice(timers.indexOf(run), 1);
+    },
+    grace: (run, ms) => {
+      const grace = { run, ms };
+      graces.push(grace);
+      return () => graces.splice(graces.indexOf(grace), 1);
     },
   });
   scenes.handle({
@@ -176,7 +186,7 @@ function setup(setupMessage: Partial<Extract<ToCompositor, { type: "setup" }>> =
     );
   const lastStatus = (id = "a"): SceneStatus | undefined => statuses(id).at(-1);
   const asked = () => sent.filter(({ type }) => type === "needs-scene");
-  return { scenes, hosts, sent, redraw, timers, statuses, lastStatus, asked };
+  return { scenes, hosts, sent, redraw, timers, graces, statuses, lastStatus, asked };
 }
 
 /** A scene that is showing at 12 seconds, with its content there. */
@@ -1082,7 +1092,7 @@ describe("what comes from the editor", () => {
 describe("a held picture", () => {
   it("closes when it was replaced and nobody holds it", () => {
     const image = new FakeImage();
-    const picture = new HeldPicture(image as unknown as ImageBitmap);
+    const picture = new HeldPicture(image as unknown as ImageBitmap, 0);
     picture.hold();
     picture.hold();
     picture.replace();
@@ -1090,5 +1100,192 @@ describe("a held picture", () => {
     expect(image.closed).toBe(false);
     picture.release();
     expect(image.closed).toBe(true);
+  });
+});
+
+describe("the picture of one frame", () => {
+  /** At 12 seconds a clip that starts at 10 is two seconds in, at 30 frames a second. */
+  const FRAME = 60;
+
+  const reasonFor = (picture: Promise<HeldPicture>): Promise<StillFailure> =>
+    picture.then(
+      () => {
+        throw new Error("There was a picture");
+      },
+      (error: unknown) => (error as StillFailed).failure,
+    );
+
+  const settled = async (work: Promise<unknown>) => {
+    let done = false;
+    const mark = () => {
+      done = true;
+    };
+    work.then(mark, mark);
+    await Promise.resolve();
+    await Promise.resolve();
+    return done;
+  };
+
+  it("is what the scene has, if that is the frame", async () => {
+    const { scenes, hosts } = showing();
+    const image = hosts[0]?.picture(FRAME);
+    const picture = await scenes.exactPicture("a");
+    expect(picture.frame).toBe(FRAME);
+    expect(picture.image).toBe(image);
+  });
+
+  it("waits for the frame, and whatever comes before it does not count", async () => {
+    const { scenes, hosts } = showing();
+    hosts[0]?.picture(0);
+    const picture = scenes.exactPicture("a");
+    hosts[0]?.picture(FRAME - 1);
+    hosts[0]?.picture(FRAME + 1);
+    expect(await settled(picture)).toBe(false);
+    const image = hosts[0]?.picture(FRAME);
+    expect((await picture).image).toBe(image);
+  });
+
+  it("stays usable after a newer picture came, until it is let go of", async () => {
+    const { scenes, hosts } = showing();
+    const image = hosts[0]?.picture(FRAME);
+    const picture = await scenes.exactPicture("a");
+    hosts[0]?.picture(FRAME + 1);
+    expect(image?.closed).toBe(false);
+    picture.release();
+    expect(image?.closed).toBe(true);
+  });
+
+  it("does not exist for a scene that stopped, and says why", async () => {
+    const { scenes, hosts } = showing();
+    const picture = reasonFor(scenes.exactPicture("a"));
+    hosts[0]?.fail({ reason: "failed", message: "boom", retrying: false });
+    expect(await picture).toMatchObject({
+      reason: "scene",
+      layer: "a",
+      status: { state: "stopped", reason: "failed", message: "boom" },
+    });
+  });
+
+  it("does not exist for a scene that stopped before anybody asked", async () => {
+    const { scenes, hosts } = showing();
+    hosts[0]?.fail({ reason: "stuck", retrying: false });
+    expect(await reasonFor(scenes.exactPicture("a"))).toMatchObject({
+      reason: "scene",
+      status: { state: "stopped", reason: "stuck" },
+    });
+  });
+
+  it("is not the picture the scene had before it stopped", async () => {
+    const { scenes, hosts } = showing();
+    hosts[0]?.picture(FRAME - 1);
+    hosts[0]?.fail({ reason: "stuck", retrying: false });
+    expect((await reasonFor(scenes.exactPicture("a"))).reason).toBe("scene");
+  });
+
+  it("goes on waiting while a scene that hung starts over", async () => {
+    const { scenes, hosts } = showing();
+    const picture = scenes.exactPicture("a");
+    hosts[0]?.fail({ reason: "silent", retrying: true });
+    expect(await settled(picture)).toBe(false);
+    const image = hosts[0]?.picture(FRAME);
+    expect((await picture).image).toBe(image);
+  });
+
+  it("does not exist in a browser that cannot capture", async () => {
+    const { scenes, hosts } = showing();
+    const picture = reasonFor(scenes.exactPicture("a"));
+    hosts[0]?.say("unsupported");
+    expect(await picture).toMatchObject({ reason: "scene", status: { state: "unsupported" } });
+  });
+
+  it("does not exist as a placeholder", async () => {
+    const { scenes } = showing({ stage: "plain" });
+    expect(await reasonFor(scenes.exactPicture("a"))).toMatchObject({
+      reason: "scene",
+      status: { state: "unsupported" },
+    });
+  });
+
+  it("does not exist while scenes are off, or for a newer editor", async () => {
+    const off = showing({ run: false });
+    expect(await reasonFor(off.scenes.exactPicture("a"))).toMatchObject({
+      status: { state: "off" },
+    });
+    const { scenes } = setup();
+    scenes.follow(planOf(layer("a", { source: source({ runtime: 999 }) })), 12);
+    expect(await reasonFor(scenes.exactPicture("a"))).toMatchObject({
+      status: { state: "too-new" },
+    });
+  });
+
+  it("does not exist for a clip that is not there", async () => {
+    const { scenes } = showing();
+    expect(await reasonFor(scenes.exactPicture("b"))).toEqual({
+      reason: "scene",
+      layer: "b",
+      status: { state: "closed" },
+    });
+  });
+
+  it("ends with the clip going away", async () => {
+    const { scenes, timers } = showing();
+    const picture = reasonFor(scenes.exactPicture("a"));
+    scenes.follow(planOf(), 12);
+    timers[0]?.();
+    expect(await picture).toMatchObject({ reason: "scene", status: { state: "closed" } });
+  });
+
+  describe("when the scene says it got there", () => {
+    it("gives the picture a moment, and then gives up, with both frames", async () => {
+      const { scenes, hosts, graces } = showing();
+      hosts[0]?.picture(FRAME - 1);
+      const picture = reasonFor(scenes.exactPicture("a"));
+      await vi.waitFor(() => expect(graces).toHaveLength(1));
+      expect(graces[0]?.ms).toBe(PICTURE_GRACE_MS);
+      graces[0]?.run();
+      expect(await picture).toEqual({
+        reason: "scene-frame",
+        layer: "a",
+        wanted: FRAME,
+        got: FRAME - 1,
+      });
+    });
+
+    it("gives up the same way without any picture at all", async () => {
+      const { scenes, graces } = showing();
+      const picture = reasonFor(scenes.exactPicture("a"));
+      await vi.waitFor(() => expect(graces).toHaveLength(1));
+      graces[0]?.run();
+      expect(await picture).toEqual({ reason: "scene-frame", layer: "a", wanted: FRAME });
+    });
+
+    it("takes the picture when that comes in time", async () => {
+      const { scenes, hosts, graces } = showing();
+      const picture = scenes.exactPicture("a");
+      await vi.waitFor(() => expect(graces).toHaveLength(1));
+      const image = hosts[0]?.picture(FRAME);
+      expect((await picture).image).toBe(image);
+      expect(graces).toHaveLength(0);
+    });
+  });
+
+  it("has all the time it takes on the way to the frame", async () => {
+    const { scenes, hosts, graces } = setup();
+    const plan = planOf(layer("a"));
+    scenes.follow(plan, 12);
+    const reaching = Promise.withResolvers<boolean>();
+    scenes.handle(CONTENT);
+    // The seek that started it went out with the fake host, so it takes another one.
+    const host = hosts[0] as FakeHost;
+    host.reaching = reaching.promise;
+    scenes.follow(plan, 13);
+    const picture = scenes.exactPicture("a");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(graces).toHaveLength(0);
+    reaching.resolve(true);
+    await vi.waitFor(() => expect(graces).toHaveLength(1));
+    const image = host.picture(90);
+    expect((await picture).image).toBe(image);
   });
 });

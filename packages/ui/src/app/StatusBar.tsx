@@ -1,9 +1,10 @@
-import { Circle, CircleAlert, CircleX, TriangleAlert } from "lucide-react";
+import { Circle, CircleAlert, CircleX, TriangleAlert, X } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
 import { PreviewStatus } from "../preview/Quality.tsx";
 import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
+import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import styles from "./StatusBar.module.css";
@@ -60,6 +61,55 @@ function InputSwitch() {
         </Bubble>
       )}
     </>
+  );
+}
+
+/** An export goes on while people work, so this is where they see it and can stop it. */
+function VideoExportStatus() {
+  const { videos } = useWorkbench();
+  const { t } = useTranslation();
+  const job = useSyncExternalStore(videos.subscribe, videos.getSnapshot);
+  if (!job) return null;
+  const { name, done, total, remainingMs, stopping, paused } = job;
+  const percent = total > 0 ? Math.floor((done / total) * 100) : 0;
+  const about = t("export.video.runningAbout", {
+    file: name,
+    done,
+    total,
+    interpolation: { escapeValue: false },
+  });
+  return (
+    <span className={styles.export} role="status" aria-label={about}>
+      <progress className={styles.exportBar} value={done} max={Math.max(total, 1)} />
+      <span>
+        {stopping
+          ? t("export.video.stopping")
+          : paused
+            ? t("export.window.pausedStatus", { percent })
+            : t("export.video.running", { percent }) +
+              (remainingMs === undefined
+                ? ""
+                : ` · ${t("export.video.remaining", { time: duration(remainingMs) })}`)}
+      </span>
+      {paused && !stopping && (
+        // The browser only opens the window of the export for a press of a button.
+        <button type="button" className={styles.exportResume} onClick={() => videos.resume()}>
+          {t("export.window.resume")}
+        </button>
+      )}
+      {!stopping && (
+        <Tip name={t("export.video.cancel")} usage={about}>
+          <button
+            type="button"
+            className={styles.exportCancel}
+            aria-label={t("export.video.cancel")}
+            onClick={() => videos.cancel()}
+          >
+            <X size={12} />
+          </button>
+        </Tip>
+      )}
+    </span>
   );
 }
 
@@ -153,6 +203,7 @@ export function StatusBar() {
       )}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
+      <VideoExportStatus />
       <RecordingStatus />
       {project && <TimeStatus />}
       {project && <PreviewStatus />}

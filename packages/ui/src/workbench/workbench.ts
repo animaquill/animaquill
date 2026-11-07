@@ -20,6 +20,8 @@ import { namesIn } from "../diagnostics/privacy.ts";
 import { DiagnosticsRecorder, deviceFacts } from "../diagnostics/recorder.ts";
 import { registerKeyframeActions } from "../keyframes/actions.ts";
 import { KeyframeEditor } from "../keyframes/editor.ts";
+import { StillExport } from "../export/still.ts";
+import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
 import { MadeSounds, SoundMaker } from "../media/sounds.ts";
 import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
@@ -89,6 +91,8 @@ export class Workbench {
   readonly media: MediaLibrary;
   readonly sounds: MadeSounds;
   readonly transfer: ProjectTransfer;
+  readonly stills: StillExport;
+  readonly videos: VideoExport;
   readonly diagnostics: DiagnosticsRecorder;
   /** Errors of the editor while this page is open, and whether people want to report them. */
   readonly errors: ErrorReports;
@@ -252,6 +256,34 @@ export class Workbench {
     });
     this.frameRate = new PreviewFrameRate(this.timeline);
     this.previewQuality = new PreviewQuality(host.settings, this.frameRate);
+    this.stills = new StillExport({
+      session: this.session,
+      timeline: this.timeline,
+      projects: host.projects,
+      folders: host.folders,
+      preview: this.preview,
+      dialogs: this.dialogs,
+      notifications: this.notifications,
+      t,
+      compositorUrl,
+      sceneOrigins: this.sceneOrigins,
+      sceneStage: this.sceneStage,
+    });
+    this.videos = new VideoExport({
+      session: this.session,
+      timeline: this.timeline,
+      projects: host.projects,
+      folders: host.folders,
+      settings: host.settings,
+      exports: host.exports,
+      preview: this.preview,
+      dialogs: this.dialogs,
+      notifications: this.notifications,
+      t,
+      compositorUrl,
+      sceneOrigins: this.sceneOrigins,
+      sceneStage: this.sceneStage,
+    });
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
@@ -716,26 +748,37 @@ export class Workbench {
   }
 
   /** An export is what is saved, which is not what people have been looking at while trying. */
-  async exportProject(): Promise<void> {
+  async #readyToExport(): Promise<boolean> {
     const { t } = this;
     const { count } = this.trials.getSnapshot();
-    if (count > 0) {
-      const answer = await this.dialogs.choose({
-        title: t("trial.exportTitle", { count }),
-        message: t("trial.exportMessage"),
-        choices: [
-          { id: "saved", label: t("trial.exportSaved") },
-          { id: "save", label: t("trial.exportWithTrial"), kind: "primary" },
-        ],
-      });
-      if (answer === undefined || (answer === "save" && !this.trials.save())) return;
-    }
+    if (count === 0) return true;
+    const answer = await this.dialogs.choose({
+      title: t("trial.exportTitle", { count }),
+      message: t("trial.exportMessage"),
+      choices: [
+        { id: "saved", label: t("trial.exportSaved") },
+        { id: "save", label: t("trial.exportWithTrial"), kind: "primary" },
+      ],
+    });
+    return answer !== undefined && (answer !== "save" || this.trials.save());
+  }
+
+  async exportProject(): Promise<void> {
+    if (!(await this.#readyToExport())) return;
     this.diagnostics.mark("export", { step: "start" });
     try {
       await this.transfer.exportProject();
     } finally {
       this.diagnostics.mark("export", { step: "end" });
     }
+  }
+
+  async exportFrame(): Promise<void> {
+    if (await this.#readyToExport()) await this.stills.run();
+  }
+
+  async exportVideo(): Promise<void> {
+    if (await this.#readyToExport()) await this.videos.start();
   }
 
   /** Resolves to false when people would rather stay with what they are trying out. */
@@ -847,6 +890,20 @@ export class Workbench {
       title: (t) => t("transfer.exportAction"),
       run: () => void this.exportProject(),
       menu: { name: "file", group: "folder" },
+      enabled: isOpen,
+    });
+    this.actions.register({
+      id: "project.exportVideo",
+      title: (t) => t("export.video.action"),
+      run: () => void this.exportVideo(),
+      menu: { name: "file", group: "export" },
+      enabled: isOpen,
+    });
+    this.actions.register({
+      id: "project.exportFrame",
+      title: (t) => t("export.frameAction"),
+      run: () => void this.exportFrame(),
+      menu: { name: "file", group: "export" },
       enabled: isOpen,
     });
   }

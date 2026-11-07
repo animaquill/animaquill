@@ -12,7 +12,15 @@ import {
   type TimeBase,
 } from "@animaquill/scene";
 import { comesUpAfter, showsAt } from "./cursor.ts";
-import type { FromCompositor, PlayBase, SceneSetup, SceneStatus, ToCompositor } from "./index.ts";
+import {
+  SCENE_CORNER,
+  type FromCompositor,
+  type PlayBase,
+  type SceneSetup,
+  type SceneStatus,
+  type ToCompositor,
+} from "./index.ts";
+import { StillFailed } from "./still.ts";
 
 /** A moment that is this close to a frame is that frame: seconds are floats, frames are not. */
 const FRAME_TOLERANCE = 1e-6;
@@ -20,17 +28,18 @@ const FRAME_TOLERANCE = 1e-6;
 /** Going over a clip and back again should not cost a new process each way. */
 const LINGER_MS = 3000;
 
-/**
- * Frames of scenes have to show at least a pixel on the screen, or the browser stops running them.
- * They go on a diagonal in the corner, so that none of them covers the pixel of another.
- */
-const CORNER_SLOTS = 16;
-
 /** How long a frame of the screen takes at most, on this page, when it is on the screen at all. */
 const SCREEN_FRAME_MS = 250;
 
 /** How far ahead of the sound a playing scene can get, see `#stayIfAhead`. */
 const PAUSE_SLACK_MS = 500;
+/**
+ * How long the picture of a frame may come after the scene said it got there. It comes before that,
+ * unless the capture failed or has to wait for a screen, and that wait does not count.
+ */
+export const PICTURE_GRACE_MS = 5000;
+
+const GRACE_STEP_MS = 250;
 
 /** What a canvas can have. A clip box can be anything, and a scene is not worth losing the tab. */
 const MAX_PICTURE_SIDE = 8192;
@@ -67,16 +76,21 @@ export interface SceneLayersOptions {
   readonly redraw: () => void;
   readonly makeHost?: (options: SceneHostOptions) => Host;
   readonly linger?: (run: () => void, ms: number) => () => void;
+  /** Runs something after a while of the page being on the screen. */
+  readonly grace?: (run: () => void, ms: number) => () => void;
 }
 
 /** One picture of a scene, which stays usable for as long as somebody holds on to it. */
 export class HeldPicture {
   readonly image: ImageBitmap;
+  /** The frame of the scene this is a picture of. */
+  readonly frame: number;
   #holders = 0;
   #replaced = false;
 
-  constructor(image: ImageBitmap) {
+  constructor(image: ImageBitmap, frame: number) {
     this.image = image;
+    this.frame = frame;
   }
 
   hold(): this {
@@ -114,6 +128,14 @@ interface Run {
   frame: number | undefined;
 }
 
+/** Somebody who only takes the picture of one frame. */
+interface ExactWait {
+  readonly frame: number;
+  readonly got: (picture: HeldPicture) => void;
+  readonly failed: (reason: StillFailed) => void;
+  stopGrace: (() => void) | undefined;
+}
+
 /** A clip with a scene. It can have two runs: the new one takes over when it has a picture. */
 interface Entry {
   layer: RenderLayer;
@@ -122,6 +144,9 @@ interface Entry {
   picture: HeldPicture | undefined;
   status: SceneStatus;
   stopLingering: (() => void) | undefined;
+  /** The frame the scene last said it got to, as long as nothing else was asked since. */
+  reached: number | undefined;
+  exact: ExactWait | undefined;
 }
 
 /** What failed for good, which stays out until it changes or somebody asks, wherever people go. */
@@ -135,6 +160,19 @@ const isScene = (layer: RenderLayer): layer is RenderLayer & { source: SceneSour
 
 const contentKey = ({ scene, revision }: Pick<SceneSource, "scene" | "revision">) =>
   `${scene}\n${revision}`;
+
+/** A page behind another tab gets no paint, and that is no reason to give up on a scene. */
+function whileOnScreen(run: () => void, ms: number): () => void {
+  let left = ms;
+  const timer = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    left -= GRACE_STEP_MS;
+    if (left > 0) return;
+    clearInterval(timer);
+    run();
+  }, GRACE_STEP_MS);
+  return () => clearInterval(timer);
+}
 
 /**
  * Runs something if this page is on the screen right now. Behind another tab nothing gets painted,
@@ -287,13 +325,71 @@ export class SceneLayers {
     return this.#entries.get(layer)?.picture?.hold();
   }
 
+  /**
+   * The picture of the frame the time says, and of no other, to hold on to until it has been drawn.
+   * What a scene last had can be any frame, which is fine for a preview that moves on anyway. This
+   * waits, and rejects with `StillFailed` when the scene is not going to get there. A scene that
+   * hangs gets started again by its host, and this goes on waiting for that one.
+   */
+  exactPicture(layer: string): Promise<HeldPicture> {
+    const entry = this.#entries.get(layer);
+    const plan = this.#plan;
+    if (!entry || !plan) {
+      const status: SceneStatus = { state: "closed" };
+      return Promise.reject(new StillFailed({ reason: "scene", layer, status }));
+    }
+    const frame = this.#frameFor(entry.layer, plan);
+    if (entry.picture?.frame === frame) return Promise.resolve(entry.picture.hold());
+    if (this.#isOut(entry)) return Promise.reject(this.#notRunning(entry));
+    return new Promise((got, failed) => {
+      this.#endExact(entry, this.#notRunning(entry));
+      entry.exact = { frame, got, failed, stopGrace: undefined };
+      this.#expectPicture(entry);
+    });
+  }
+
   /** Whether a layer has no picture and is not going to get one for now. */
   showsPlaceholder(layer: string): boolean {
     const entry = this.#entries.get(layer);
-    if (!entry || entry.picture) return false;
-    const { state } = entry.status;
+    return entry !== undefined && !entry.picture && this.#isOut(entry);
+  }
+
+  #isOut({ status: { state } }: Entry): boolean {
     const blocked = state === "unsupported" || state === "too-new" || state === "off";
     return blocked || state === "stopped" || this.#setup?.stage === "plain";
+  }
+
+  #notRunning({ layer: { id }, status }: Entry): StillFailed {
+    const out =
+      this.#setup?.stage === "plain" ? { ...status, state: "unsupported" as const } : status;
+    return new StillFailed({ reason: "scene", layer: id, status: out });
+  }
+
+  #endExact(entry: Entry, reason: StillFailed): void {
+    const wait = entry.exact;
+    entry.exact = undefined;
+    wait?.stopGrace?.();
+    wait?.failed(reason);
+  }
+
+  /** The scene is on the frame, so that its picture should be here or nearly here. */
+  #expectPicture(entry: Entry): void {
+    const wait = entry.exact;
+    if (!wait || wait.stopGrace || entry.reached !== wait.frame) return;
+    const grace = this.#options.grace ?? whileOnScreen;
+    wait.stopGrace = grace(() => {
+      const { id } = entry.layer;
+      const got = entry.picture?.frame;
+      this.#endExact(
+        entry,
+        new StillFailed({
+          reason: "scene-frame",
+          layer: id,
+          wanted: wait.frame,
+          ...(got !== undefined && { got }),
+        }),
+      );
+    }, PICTURE_GRACE_MS);
   }
 
   /** Something in here took the keyboard, and only a host can tell whose it was. */
@@ -321,6 +417,7 @@ export class SceneLayers {
     if (state === status.state && reason === status.reason && message === status.message) return;
     entry.status = status;
     this.#options.send({ type: "scene-status", layer: entry.layer.id, status });
+    if (this.#isOut(entry)) this.#endExact(entry, this.#notRunning(entry));
   }
 
   /** Which layers need a scene now: those on the picture, and those that are about to be. */
@@ -362,6 +459,8 @@ export class SceneLayers {
     entry.current?.host.close();
     entry.next?.host.close();
     entry.picture?.replace();
+    entry.status = { state: "closed" };
+    this.#endExact(entry, this.#notRunning(entry));
     this.#entries.delete(entry.layer.id);
     this.#options.send({
       type: "scene-status",
@@ -421,6 +520,8 @@ export class SceneLayers {
       picture: undefined,
       status: { state: "opening" },
       stopLingering: undefined,
+      reached: undefined,
+      exact: undefined,
     };
     this.#entries.set(layer.id, entry);
     this.#options.send({ type: "scene-status", layer: layer.id, status: entry.status });
@@ -492,12 +593,12 @@ export class SceneLayers {
   }
 
   #place(frame: HTMLIFrameElement, { width, height }: SceneView): void {
-    const slot = this.#nextSlot % CORNER_SLOTS;
+    const slot = this.#nextSlot % SCENE_CORNER;
     this.#nextSlot += 1;
     Object.assign(frame.style, {
       position: "fixed",
       left: `calc(100vw - ${slot + 1}px)`,
-      top: `calc(100vh - ${CORNER_SLOTS - slot}px)`,
+      top: `calc(100vh - ${SCENE_CORNER - slot}px)`,
       width: `${width}px`,
       height: `${height}px`,
       border: "0",
@@ -530,8 +631,8 @@ export class SceneLayers {
       onState: (state) => run && this.#onState(entry, run, state),
       onProblem: (problem) => run && this.#onProblem(entry, run, source.revision, problem),
       onFailure: (failure) => run && this.#onFailure(entry, run, failure),
-      onPicture: ({ image }) => {
-        if (run) this.#onPicture(entry, run, new HeldPicture(image));
+      onPicture: ({ frame, image }) => {
+        if (run) this.#onPicture(entry, run, new HeldPicture(image, frame));
         else image.close();
       },
     };
@@ -552,9 +653,7 @@ export class SceneLayers {
   /** Time only goes forwards by itself, so getting somewhere else always takes a seek first. */
   #startMoving(entry: Entry, run: Run, plan: RenderPlan): void {
     const { layer } = entry;
-    const frame = this.#frameFor(layer, plan);
-    run.frame = frame;
-    void run.host.seek(frame);
+    this.#goTo(entry, run, this.#frameFor(layer, plan));
     if (!this.#base) return;
     run.frame = undefined;
     run.host.play(baseFor(layer, plan, this.#base));
@@ -568,10 +667,20 @@ export class SceneLayers {
   #seek(entry: Entry, plan: RenderPlan): void {
     const frame = this.#frameFor(entry.layer, plan);
     for (const run of [entry.current, entry.next]) {
-      if (!run || run.frame === frame) continue;
-      run.frame = frame;
-      void run.host.seek(frame);
+      if (run && run.frame !== frame) this.#goTo(entry, run, frame);
     }
+  }
+
+  #goTo(entry: Entry, run: Run, frame: number): Promise<boolean> {
+    run.frame = frame;
+    entry.reached = undefined;
+    return run.host.seek(frame).then((reached) => {
+      if (reached && run.frame === frame) {
+        entry.reached = frame;
+        this.#expectPicture(entry);
+      }
+      return reached;
+    });
   }
 
   #play(base: PlayBase): void {
@@ -679,6 +788,12 @@ export class SceneLayers {
     entry.picture?.replace();
     entry.picture = picture;
     if (entry.status.state !== "ready") this.#setStatus(entry, { state: "ready" });
+    const wait = entry.exact;
+    if (wait?.frame === picture.frame) {
+      entry.exact = undefined;
+      wait.stopGrace?.();
+      wait.got(picture.hold());
+    }
     this.#options.redraw();
   }
 
@@ -718,7 +833,7 @@ export class SceneLayers {
 
   #confirm(entry: Entry, run: Run): void {
     if (run.frame === undefined) return;
-    void run.host.seek(run.frame).then((reached) => {
+    void this.#goTo(entry, run, run.frame).then((reached) => {
       if (reached && entry.status.state === "retrying") this.#setStatus(entry, { state: "ready" });
     });
   }

@@ -25,12 +25,16 @@ export class CompositorWatch {
   readonly #ping: (nonce: number) => void;
   readonly #silent: (phase: ScenePhase) => void;
   readonly #timer: ReturnType<typeof setInterval>;
+  /** The page the compositor is in, which can be a window of its own, on the screen or not. */
+  readonly #page: () => Document;
 
   constructor(
     ping: (nonce: number) => void,
     silent: (phase: ScenePhase) => void,
     rules: WatchdogRules = COMPOSITOR_RULES,
+    page: () => Document = () => document,
   ) {
+    this.#page = page;
     this.#dog = new Watchdog(performance.now(), rules);
     this.#ping = ping;
     this.#silent = silent;
@@ -51,7 +55,8 @@ export class CompositorWatch {
   }
 
   #check = (): void => {
-    const verdict = this.#dog.check(performance.now(), document.visibilityState === "visible");
+    const visible = this.#page().visibilityState === "visible";
+    const verdict = this.#dog.check(performance.now(), visible);
     if (verdict === "silent" || verdict === "stuck") {
       this.dispose();
       this.#silent(this.#dog.phase);

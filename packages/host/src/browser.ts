@@ -1,3 +1,4 @@
+import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
 import { isMadeFile } from "./index.ts";
 import type {
@@ -643,7 +644,14 @@ export function createBrowserHost(
   const projects = connector(() => openDatabase(database()));
   const trials = createPlaces(TRIALS, projects, database, locks, windowMemory);
   const drafts = createPlaces(DRAFTS, projects, database, locks, windowMemory);
-  const forget = (project: string) => Promise.all([trials.forget(project), drafts.forget(project)]);
+  const exports = createExportStore(database, locks);
+  // What an export kept of a project that is gone would only take room on the disk.
+  const forget = async (project: string) => {
+    await Promise.all([trials.forget(project), drafts.forget(project)]);
+    for (const saved of await exports.list(project).catch(() => [])) {
+      await exports.remove(saved.id).catch(() => {});
+    }
+  };
   return {
     settings,
     projects: createLibrary(projects, locks, forget),
@@ -652,5 +660,6 @@ export function createBrowserHost(
     folders: browserFolders(),
     trials: trials.store,
     drafts: drafts.store,
+    exports,
   };
 }

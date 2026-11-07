@@ -22,6 +22,8 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     baseURL: "http://localhost:5173",
     viewport: { width: 1440, height: 900 },
+    // With a window, on a virtual screen, a page behind another tab is hidden as for people.
+    headless: !process.env["AQ_HEADED"],
     launchOptions: {
       // Headless browsers hide scrollbars, and people's browsers do not.
       ignoreDefaultArgs: ["--hide-scrollbars"],
