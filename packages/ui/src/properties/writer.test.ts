@@ -50,14 +50,18 @@ async function setup({ trying = false } = {}) {
   });
   await trials.load();
   await trials.settle();
-  const writer = new PropertyWriter(session, timeline, trials, { commandFailed });
+  const comparingMessage = vi.fn();
+  const writer = new PropertyWriter(session, timeline, trials, {
+    commandFailed,
+    comparing: comparingMessage,
+  });
   const state = () => store.getState().timelines["main"];
   const track = orderedTracks(state() as never).find(({ kind }) => kind === "video")?.id;
   const clip = { id: "c", start: "0", duration: "5", source: { kind: "color", color: "#ff0000" } };
   store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
   const value = (path: string) => state()?.clips["c"]?.properties?.[path];
   const shown = (path: string) => writer.getPreviewed().get("c")?.get(path);
-  return { store, writer, trials, commandFailed, value, shown, track };
+  return { store, writer, trials, commandFailed, comparingMessage, value, shown, track };
 }
 
 const owner = { clip: "c" };
@@ -374,6 +378,8 @@ describe("automatic handles", () => {
   it("follow what moves around them, on the way and in the same step", async () => {
     for (const trying of [false, true]) {
       const { writer, shown, value, store, trials } = await automatic(trying);
+      const saved = JSON.stringify(value("transform.x"));
+      const steps = store.history.length;
       writer.preview([write(40, "2")]);
       const previewed = middle(shown("transform.x"));
       // The rise after the key is three times the one before it: it leaves steeper than a line.
@@ -382,14 +388,32 @@ describe("automatic handles", () => {
       writer.commit([write(40, "2")]);
       const after = trying ? trials.getValues().get("c")?.get("transform.x") : value("transform.x");
       expect(middle(after)).toEqual(previewed);
+      expect((after as { keys: { value: number }[] }).keys[2]?.value).toBe(40);
       if (trying) {
+        expect(trials.getSnapshot().count).toBe(1);
         trials.undo();
         expect(trials.getValues().get("c")?.get("transform.x")).toBeUndefined();
+        expect(trials.canUndo).toBe(false);
       } else {
+        // One step: one undo takes the value and the handles back together.
+        expect(store.history.length).toBe(steps + 1);
         store.undo();
-        expect(middle(value("transform.x"))?.out).toEqual([0.333333, 0.333333]);
+        expect(JSON.stringify(value("transform.x"))).toBe(saved);
       }
     }
+  });
+
+  it("are not written while people compare with what is saved, nor is anything else", async () => {
+    const { writer, trials, store, comparingMessage } = await automatic(true);
+    writer.commit([write(5, "1")]);
+    const tried = JSON.stringify(trials.getValues().get("c")?.get("transform.x"));
+    trials.toggleCompare();
+    const { revision } = store;
+    expect(writer.commit([write(30, "2")])).toBe(false);
+    expect(comparingMessage).toHaveBeenCalledTimes(1);
+    trials.toggleCompare();
+    expect(JSON.stringify(trials.getValues().get("c")?.get("transform.x"))).toBe(tried);
+    expect(store.revision).toBe(revision);
   });
 
   it("leave everything else as it is", async () => {

@@ -127,6 +127,8 @@ export abstract class KeyArea {
   readonly keyframes: KeyframeEditor;
   /** How far a key can be from the pointer. */
   #reach = KEY_REACH;
+  /** The property rows here, by clip and path, for finding them again while a drag goes on. */
+  readonly #rows = new WeakMap<readonly Lane[], ReadonlyMap<string, Lane>>();
 
   constructor(keyframes: KeyframeEditor) {
     this.keyframes = keyframes;
@@ -319,6 +321,11 @@ export abstract class KeyArea {
       : { kind: "lane", lane, seconds: this.timeAt(pointer.x) };
   }
 
+  /** Whether a handle is at a place, which can be over something that is not a row of keys. */
+  isOnHandle(pointer: Pointer): boolean {
+    return pointer.y >= RULER_HEIGHT && this.#handleNear(pointer) !== undefined;
+  }
+
   #handleNear(pointer: Pointer): ShownHandle | undefined {
     let best: ShownHandle | undefined;
     let distance = this.#reach;
@@ -343,31 +350,63 @@ export abstract class KeyArea {
     if (hit.kind === "handle") return this.#pressHandle(hit.handle, pointer);
     if (hit.kind === "edge" && hit.lane.node.kind === "property" && hit.lane.box) {
       const { box, node } = hit.lane;
-      const resize = (height: number) =>
-        this.keyframes.setTallHeight(box.id, node.spec.path, height);
-      return new TallHeightGesture(resize, hit.lane.height, pointer);
+      const { keyframes } = this;
+      const { path } = node.spec;
+      const kept = keyframes.tallHeightOf(box.id, path);
+      const resize = (height: number) => keyframes.setTallHeight(box.id, path, height);
+      return new TallHeightGesture(resize, () => resize(kept), hit.lane.height, pointer);
     }
     return new KeyMarqueeGesture(this.#host, pointer);
   }
 
-  #pressHandle({ lane, box, path, index, side }: ShownHandle, pointer: Pointer): Gesture {
-    const { keyframes } = this;
-    const animation = animationIn(keyframes.shownValue(box.clip, path)) as Animation;
-    const scale = this.scaleOf(lane, box) as ValueScale;
-    const toClock = box.offset - box.start;
-    const { top } = lane;
+  #rowOf(clip: string, path: string): Lane | undefined {
+    const { lanes } = this;
+    let rows = this.#rows.get(lanes);
+    if (!rows) {
+      const found = new Map<string, Lane>();
+      for (const lane of lanes) {
+        if (lane.node.kind === "property" && lane.box) {
+          found.set(liftKey(lane.box.id, lane.node.spec.path), lane);
+        }
+      }
+      this.#rows.set(lanes, (rows = found));
+    }
+    return rows.get(liftKey(clip, path));
+  }
+
+  /** Where values are in the row of a property as it is now, with where that row is on screen. */
+  #curveOf(clip: string, path: string) {
+    const row = this.#rowOf(clip, path);
+    const box = row?.box;
+    const scale = row && box ? this.scaleOf(row, box) : undefined;
+    return row && box && scale ? { row, box, scale } : undefined;
+  }
+
+  #pressHandle({ box, path, time, side }: ShownHandle, pointer: Pointer): Gesture {
     const grab = {
       clip: box.id,
       path,
-      keys: animation.keys,
-      index,
+      time,
       side,
-      pointAt: (at: Pointer): CurvePoint => ({
-        t: this.timeAt(at.x) + toClock,
-        v: valueIn(scale, at.y - this.screenY(top)),
-      }),
+      // As the row is now: it grows to take in the curve, and the view can scroll meanwhile.
+      pointAt: (at: Pointer): CurvePoint | undefined => {
+        const curve = this.#curveOf(box.id, path);
+        if (!curve) return undefined;
+        const { row, box: now, scale } = curve;
+        return {
+          t: this.timeAt(at.x) + now.offset - now.start,
+          v: valueIn(scale, at.y - this.screenY(row.top)),
+        };
+      },
     };
     return new HandleGesture(this.#host, grab, pointer);
+  }
+
+  /** The keys of a property as they are, without what a drag shows on top of them. */
+  #keysOf(clip: string, path: string): readonly Key[] | undefined {
+    const box = this.keyframes.model?.boxes.get(clip);
+    const properties = box && effectiveProperties(this.keyframes.shown(box.clip));
+    return properties && animationIn(entryOf(properties, path))?.keys;
   }
 
   #grabbed({ box, clock, keys }: KeySpot): Grabbed {
@@ -398,33 +437,19 @@ export abstract class KeyArea {
   }
 
   /**
-   * The selected numbers that go up and down with a key of a number that is dragged. Each one goes
-   * as far as the mouse does in its own row, so what a pixel is worth comes from there. Keys of rows
-   * that are not here only move along the time.
+   * The selected numbers that go up and down with a key that is dragged. That is only in rows made
+   * taller, which are there for working on values: in a row of the usual height a few pixels are a
+   * lot of a value, and keys there get dragged along the time. Each one goes as far as the mouse
+   * does in its own row, and keys of other rows only go along the time.
    */
   #lifted({ lane, box }: KeySpot): readonly LiftedChannel[] {
-    if (!this.scaleOf(lane, box)) return [];
-    const { keyframes } = this;
-    const rows = new Map<string, Lane>();
-    for (const one of this.lanes) {
-      if (one.node.kind === "property" && one.box)
-        rows.set(liftKey(one.box.id, one.node.spec.path), one);
-    }
-    return keyframes.movingChannels().flatMap(({ clip, path, times }): LiftedChannel[] => {
-      const row = rows.get(liftKey(clip, path));
-      const rowBox = row?.box;
-      const scale = row && rowBox ? this.scaleOf(row, rowBox) : undefined;
-      if (!row || !rowBox || !scale || row.node.kind !== "property") return [];
-      const animation = animationIn(
-        entryOf(effectiveProperties(keyframes.shown(rowBox.clip)), path),
-      );
-      const wanted = new Set(times);
-      const keys = new Map<string, Key>();
-      for (const key of animation?.keys ?? []) {
-        if (wanted.has(key.time) && typeof key.value === "number") keys.set(key.time, key);
-      }
-      const { spec } = row.node;
-      return keys.size > 0 ? [{ clip, path, spec, perPixel: perPixel(scale), keys }] : [];
+    if (!lane.tall || !this.scaleOf(lane, box)) return [];
+    return this.keyframes.movingChannels().flatMap(({ clip, path, times }): LiftedChannel[] => {
+      const curve = this.#curveOf(clip, path);
+      if (!curve?.row.tall || curve.row.node.kind !== "property") return [];
+      const now = new Map((this.#keysOf(clip, path) ?? []).map((key) => [key.time, key]));
+      const numbers = times.filter((time) => typeof now.get(time)?.value === "number");
+      return numbers.length > 0 ? [{ clip, path, spec: curve.row.node.spec, times: numbers }] : [];
     });
   }
 
@@ -523,6 +548,12 @@ export abstract class KeyArea {
       commit: (edits, selection) => keyframes.commitMove(edits, selection),
       holdRanges: (rows) => keyframes.holdRanges(rows),
       releaseRanges: () => keyframes.releaseRanges(),
+      keysOf: (clip, path) => this.#keysOf(clip, path),
+      perPixel: (clip, path) => {
+        const curve = this.#curveOf(clip, path);
+        return curve && perPixel(curve.scale);
+      },
+      gone: () => keyframes.tellGone(),
     };
   }
 

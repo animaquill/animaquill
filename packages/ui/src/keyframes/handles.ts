@@ -29,9 +29,8 @@ const LINE_OUT: Share = [AUTO_REACH, AUTO_REACH];
 const LINE_IN: Share = [1 - AUTO_REACH, 1 - AUTO_REACH];
 /** What a key arrives with when it does not say. */
 const ARRIVAL: Share = [1, 1];
-/** A dragged handle is good to a pixel of a long stretch. Handles worked out keep more. */
-const DRAGGED_DIGITS = 4;
-const WORKED_DIGITS = 6;
+/** Handles keep a millionth of their stretch, which is a pixel of a very long one. */
+const DIGITS = 6;
 /** Directions this close count as one line. */
 const ALIGNED_SINE = 0.01;
 const TINY = 1e-12;
@@ -159,13 +158,27 @@ function setShare(
   const start = now(from);
   const end = now(from + 1);
   const wasBezier = isBezier(start);
-  const lineOut = LINE_OUT.map((value) => fixed(value, WORKED_DIGITS)) as [number, number];
-  const lineIn = LINE_IN.map((value) => fixed(value, WORKED_DIGITS)) as [number, number];
-  const out = side === "out" ? [...share] : wasBezier ? start.out : lineOut;
-  changed.set(from, { ...(wasBezier ? start : plain(start)), interp: "bezier", out } as Key);
+  const lineOut = LINE_OUT.map((value) => fixed(value, DIGITS)) as [number, number];
+  const lineIn = LINE_IN.map((value) => fixed(value, DIGITS)) as [number, number];
+  // What steers the start of a stretch that was a bezier already stays as it is, unwritten.
+  if (side === "out" || !wasBezier) {
+    const out = side === "out" ? [...share] : lineOut;
+    changed.set(from, { ...(wasBezier ? start : plain(start)), interp: "bezier", out } as Key);
+  }
   if (side === "in") changed.set(from + 1, { ...end, in: [...share] as [number, number] });
   else if (!wasBezier) changed.set(from + 1, { ...end, in: lineIn });
 }
+
+/** Whether the stretch a handle steers does not change, which leaves it no other way than flat. */
+function isFlat(keys: readonly Key[], index: number, side: HandleSide): boolean {
+  const stretch = stretchOf(keys, index, side);
+  if (!stretch) return false;
+  const change = valueOf(keys[stretch.to] as Key) - valueOf(keys[stretch.from] as Key);
+  return Math.abs(change) < TINY;
+}
+
+/** Flat, the way a curve goes on along a stretch that does not change. */
+const LEVEL: CurvePoint = { t: 1, v: 0 };
 
 /**
  * Where the handle on one side goes for the curve to leave its key in a direction, given as the way
@@ -192,17 +205,17 @@ function shareAlong(
   if (Math.abs(change) < TINY) return undefined;
   const vertical = Math.abs(direction.t) < TINY;
   if (side === "out") {
-    const x = fixed(vertical ? 0 : share[0] > TINY ? share[0] : AUTO_REACH, WORKED_DIGITS);
+    const x = fixed(vertical ? 0 : share[0] > TINY ? share[0] : AUTO_REACH, DIGITS);
     const reach = vertical
       ? Math.sign(direction.v) * Math.abs(change) * AUTO_REACH
       : (x * length * direction.v) / direction.t;
-    return [x, fixed(clamp(reach / change, MIN_SPLIT_Y, MAX_SPLIT_Y), WORKED_DIGITS)];
+    return [x, fixed(clamp(reach / change, MIN_SPLIT_Y, MAX_SPLIT_Y), DIGITS)];
   }
-  const x = fixed(vertical ? 1 : share[0] < 1 - TINY ? share[0] : 1 - AUTO_REACH, WORKED_DIGITS);
+  const x = fixed(vertical ? 1 : share[0] < 1 - TINY ? share[0] : 1 - AUTO_REACH, DIGITS);
   const reach = vertical
     ? -Math.sign(direction.v) * Math.abs(change) * AUTO_REACH
     : ((x - 1) * length * direction.v) / direction.t;
-  return [x, fixed(clamp((change + reach) / change, MIN_SPLIT_Y, MAX_SPLIT_Y), WORKED_DIGITS)];
+  return [x, fixed(clamp((change + reach) / change, MIN_SPLIT_Y, MAX_SPLIT_Y), DIGITS)];
 }
 
 export interface HandleDrag {
@@ -233,14 +246,20 @@ export function dragHandle({ keys, index, side, to, mode }: HandleDrag): Dragged
   const end = keys[stretch.to] as Key;
   const length = timeOf(end) - timeOf(start);
   const change = valueOf(end) - valueOf(start);
+  const other: HandleSide = side === "out" ? "in" : "out";
+  // On a line with a stretch on the other side that does not change, the handle is flat too.
+  const level = mode === "aligned" && isFlat(keys, index, other);
   const wantedX = (to.t - timeOf(start)) / length;
+  const wantedY = (to.v - valueOf(start)) / change;
+  const flatY = side === "out" ? 0 : 1;
   // A stretch that does not change cannot bend: its handles only move along it.
-  const wantedY = Math.abs(change) < TINY ? current[1] : (to.v - valueOf(start)) / change;
+  const y = Math.abs(change) < TINY ? current[1] : level ? flatY : wantedY;
   const x = clamp(wantedX, 0, 1);
-  const y = clamp(wantedY, MIN_SPLIT_Y, MAX_SPLIT_Y);
-  const clamped = Math.abs(x - wantedX) > 1e-9 || Math.abs(y - wantedY) > 1e-9;
+  const within = clamp(y, MIN_SPLIT_Y, MAX_SPLIT_Y);
+  const clamped =
+    Math.abs(x - wantedX) > 1e-9 || (Math.abs(change) >= TINY && Math.abs(within - wantedY) > 1e-9);
   const changed: ChangedKeys = new Map();
-  setShare(keys, changed, index, side, [fixed(x, DRAGGED_DIGITS), fixed(y, DRAGGED_DIGITS)]);
+  setShare(keys, changed, index, side, [fixed(x, DIGITS), fixed(within, DIGITS)]);
   if (mode === "aligned") {
     const key = keyIn(keys, changed, index);
     const now = [...keys];
@@ -248,8 +267,9 @@ export function dragHandle({ keys, index, side, to, mode }: HandleDrag): Dragged
     const point = handlePoint(now, index, side) as CurvePoint;
     // The way the curve goes on, which the handle that comes in points away from.
     const sign = side === "out" ? 1 : -1;
-    const direction = { t: (point.t - timeOf(key)) * sign, v: (point.v - valueOf(key)) * sign };
-    const other: HandleSide = side === "out" ? "in" : "out";
+    const direction = isFlat(keys, index, side)
+      ? LEVEL
+      : { t: (point.t - timeOf(key)) * sign, v: (point.v - valueOf(key)) * sign };
     const moved = Math.hypot(direction.t / length, direction.v / (Math.abs(change) || 1)) > TINY;
     const share = moved ? shareAlong(keys, changed, index, other, direction) : undefined;
     if (share) setShare(keys, changed, index, other, share);
@@ -285,16 +305,21 @@ function alignAt(keys: readonly Key[], changed: ChangedKeys, index: number): voi
     t = (last.t - first.t) / units.t;
     v = (last.v - first.v) / units.v;
   }
-  const direction = { t: t * units.t, v: v * units.v };
+  // Next to a stretch that does not change, the only line through the key is flat.
+  const level = isFlat(current, index, "in") || isFlat(current, index, "out");
+  const direction = level ? LEVEL : { t: t * units.t, v: v * units.v };
   for (const side of ["in", "out"] as const) {
     const share = shareAlong(keys, changed, index, side, direction);
-    if (share) setShare(keys, changed, index, side, share);
+    const now = shareOf(current, index, side);
+    const same = share && now && share[0] === now[0] && share[1] === now[1];
+    if (share && !same) setShare(keys, changed, index, side, share);
   }
 }
 
 /**
  * What saying how keys change their handles does: aligned puts both on one line, automatic works
- * them out and makes what leaves the key a bezier, and broken only says so.
+ * them out, and broken only says so. None of it changes how keys go on: a key that holds or goes
+ * straight keeps doing that, and `tangent` is about its handles when it is a bezier.
  */
 export function withTangent(
   keys: readonly Key[],
@@ -305,18 +330,8 @@ export function withTangent(
   for (const index of indices) {
     if (!keys[index] || typeof keys[index]?.value !== "number") continue;
     if (mode === "aligned") alignAt(keys, changed, index);
-    if (mode === "auto") {
-      const key = keyIn(keys, changed, index);
-      const next = keys[index + 1];
-      if (next && typeof next.value === "number" && !isBezier(key)) {
-        setShare(keys, changed, index, "out", LINE_OUT);
-      }
-      const before = keys[index - 1];
-      if (before && keyIn(keys, changed, index - 1).interp !== "hold" && !isBezier(before)) {
-        setShare(keys, changed, index, "in", LINE_IN);
-      }
-    }
-    changed.set(index, { ...keyIn(keys, changed, index), tangent: mode });
+    const key = keyIn(keys, changed, index);
+    if (key.tangent !== mode || changed.has(index)) changed.set(index, { ...key, tangent: mode });
   }
   if (mode !== "auto") return changed;
   const current = [...keys];

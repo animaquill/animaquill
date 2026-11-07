@@ -78,7 +78,10 @@ async function big() {
     keepRecovered: vi.fn(),
   });
   await trials.settle();
-  const writer = new PropertyWriter(session, timeline, trials, { commandFailed: vi.fn() });
+  const writer = new PropertyWriter(session, timeline, trials, {
+    commandFailed: vi.fn(),
+    comparing: vi.fn(),
+  });
   const t = ((key: string, options?: { defaultValue?: string }) =>
     options?.defaultValue ?? key) as never;
   const keyframes = new KeyframeEditor(session, timeline, trials, writer, memory, settings, t, {
@@ -87,6 +90,7 @@ async function big() {
     comparing: vi.fn(),
     locked: vi.fn(),
     notShown: vi.fn(),
+    gone: vi.fn(),
   });
   keyframes.panel.setViewport(1000, 600);
   return { store, timeline, keyframes, writer, trials };

@@ -224,10 +224,15 @@ function Pinning({ area, lane, label }: { area: KeyArea; lane: Lane; label: stri
   );
 }
 
+/** Moving less than this from where the edge was pressed is a click, as on the timeline. */
+const EDGE_CLICK = 4;
+
 /** Where a row made taller is pulled to another height, at its bottom edge. */
 function TallEdge({ area, box, node, label, height }: PropertyControlsProps & { height: number }) {
   const { t } = useTranslation();
-  const start = useRef<{ readonly y: number; readonly height: number } | undefined>(undefined);
+  const start = useRef<{ readonly y: number; readonly height: number; moved: boolean } | undefined>(
+    undefined,
+  );
   const { keyframes } = area;
   const { path } = node.spec;
   return (
@@ -239,11 +244,15 @@ function TallEdge({ area, box, node, label, height }: PropertyControlsProps & { 
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
         // From the height it shows, which rows that are taller as a whole can make more.
-        start.current = { y: event.clientY, height };
+        start.current = { y: event.clientY, height, moved: false };
       }}
       onPointerMove={(event) => {
         const from = start.current;
-        if (from) keyframes.setTallHeight(box.id, path, from.height + event.clientY - from.y);
+        const by = from ? event.clientY - from.y : 0;
+        // A click, or a hand that shakes a little, leaves the height it keeps as it is.
+        if (!from || (!from.moved && Math.abs(by) < EDGE_CLICK)) return;
+        from.moved = true;
+        keyframes.setTallHeight(box.id, path, from.height + by);
       }}
       onPointerUp={() => {
         start.current = undefined;

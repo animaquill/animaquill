@@ -303,6 +303,7 @@ export class Workbench {
     });
     this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      comparing: () => this.notifications.push(t("notice.comparing")),
     });
     this.keyframes = new KeyframeEditor(
       this.session,
@@ -318,6 +319,7 @@ export class Workbench {
         comparing: () => this.notifications.push(t("notice.keysComparing")),
         locked: () => this.notifications.push(t("notice.keysLocked")),
         notShown: () => this.notifications.push(t("notice.keysNotShown")),
+        gone: () => this.notifications.push(t("notice.keysGone")),
       },
     );
     this.#keepTrail();

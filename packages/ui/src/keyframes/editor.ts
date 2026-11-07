@@ -85,6 +85,8 @@ export interface KeyframeMessages {
   locked(): void;
   /** None of the selected keys show where people asked for something to happen to them. */
   notShown(): void;
+  /** What a drag of keys or a handle was about went away meanwhile: an undo, or another window. */
+  gone(): void;
 }
 
 /** Which clips a place shows keys of. Without one, it is all of them. */
@@ -857,6 +859,11 @@ export class KeyframeEditor {
     this.select(NO_KEYS);
   }
 
+  /** A drag stopped because what it was about went away. */
+  tellGone(): void {
+    this.#messages.gone();
+  }
+
   showPreview(preview: KeyPreview | undefined, area: KeyArea): void {
     this.#preview = preview;
     this.#previewArea = preview ? area : undefined;
@@ -972,14 +979,31 @@ export class KeyframeEditor {
     return [...found][0];
   }
 
+  /**
+   * Gives the selected keys a way of going on. A bezier is the preset all through, so automatic keys
+   * at either end of it are not worked out any more: they say that their handles are broken now.
+   */
   setEase(ease: KeyEase): void {
-    const edits = this.#gradualChannels().map(({ clip, path, times }): PropertyEdit => ({
-      owner: { clip },
-      path,
-      op: "setInterp",
-      times: [...times],
-      ease,
-    }));
+    const edits = this.#gradualChannels().flatMap(({ clip, path, times }): PropertyEdit[] => {
+      const interp: PropertyEdit = {
+        owner: { clip },
+        path,
+        op: "setInterp",
+        times: [...times],
+        ease,
+      };
+      const selected =
+        ease.interp === "bezier" ? this.#selectedIndices(clip, path, times) : undefined;
+      const broken = new Map<number, Key>();
+      for (const index of selected?.indices ?? []) {
+        for (const at of [index, index + 1]) {
+          const key = selected?.keys[at];
+          if (key?.tangent === "auto") broken.set(at, { ...key, tangent: "broken" });
+        }
+      }
+      if (broken.size === 0) return [interp];
+      return [{ owner: { clip }, path, op: "putKeys", keys: [...broken.values()] }, interp];
+    });
     if (edits.length > 0) this.#writer.commit(edits);
   }
 

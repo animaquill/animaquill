@@ -18,6 +18,8 @@ export type { PreviewedValues } from "./trial.ts";
 
 export interface PropertyWriterMessages {
   commandFailed(message: string): void;
+  /** Nothing gets written while people compare with what is saved. */
+  comparing(): void;
 }
 
 const NOTHING: PreviewedValues = new Map();
@@ -166,6 +168,13 @@ export class PropertyWriter {
    * same thing and the old value does not flash up in between.
    */
   commit(edits: readonly PropertyEdit[]): boolean {
+    // What people see then is what is saved, which an edit would go on top of. Controls know that,
+    // and this is for whatever comes along that does not.
+    if (this.#trials.getSnapshot().comparing) {
+      this.#messages.comparing();
+      this.cancel();
+      return false;
+    }
     const all = [...edits, ...this.#autoEdits(edits)];
     const done = this.#trials.takesEdits ? this.#trials.write(all) : this.#writeNow(all);
     this.cancel();

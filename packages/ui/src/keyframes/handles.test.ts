@@ -178,17 +178,77 @@ describe("how a key changes its handles", () => {
     expect(tangentOf(unsaid, 1)).toBe("aligned");
   });
 
-  it("automatic works them out, also where the key held", () => {
+  it("automatic works out what is a bezier, and leaves how keys go on as it is", () => {
     const holding: Key[] = [
       { time: "0", value: 0 },
       { time: "1", value: 10, interp: "hold" },
       { time: "3", value: 30 },
     ];
-    const keys = applied(holding, withTangent(holding, [1], "auto"));
+    const kept = applied(holding, withTangent(holding, [1], "auto"));
+    expect(kept).toEqual([holding[0], { ...holding[1], tangent: "auto" }, holding[2]]);
+    const curved: Key[] = [
+      { time: "0", value: 0, interp: "bezier", out: [0.5, 0.5] },
+      { time: "1", value: 10, interp: "bezier", out: [0.9, 0.1] },
+      { time: "3", value: 30 },
+    ];
+    const keys = applied(curved, withTangent(curved, [1], "auto"));
     expect(keys[1]).toMatchObject({ tangent: "auto", interp: "bezier" });
-    expect(keys[0]?.interp).toBe("bezier");
     expect(slopeOf(keys, 1, "in")).toBeCloseTo(slopeOf(keys, 1, "out"), 3);
     expect(slopeOf(keys, 1, "out")).toBeGreaterThan(0);
+    expect(keys[0]).toEqual(curved[0]);
+  });
+
+  it("aligned next to a stretch that does not change is flat on both sides, and stays so", () => {
+    const flat: Key[] = [
+      { time: "0", value: 0 },
+      { time: "1", value: 10 },
+      { time: "2", value: 10 },
+    ];
+    const keys = applied(flat, withTangent(flat, [1], "aligned"));
+    expect(slopeOf(keys, 1, "in")).toBeCloseTo(0, 9);
+    expect(slopeOf(keys, 1, "out")).toBeCloseTo(0, 9);
+    expect(
+      tangentOf(
+        keys.map(({ tangent: _tangent, ...rest }) => rest),
+        1,
+      ),
+    ).toBe("aligned");
+    // Once it is so, saying it again changes nothing.
+    const again = withTangent(keys, [1], "aligned");
+    expect(applied(keys, again)).toEqual(keys);
+  });
+
+  it("aligned next to a stretch that does not change keeps a dragged handle flat, and says so", () => {
+    const flat: Key[] = [
+      { time: "0", value: 0 },
+      { time: "1", value: 10, tangent: "aligned" },
+      { time: "2", value: 10 },
+    ];
+    const { keys, clamped } = drag(flat, 1, "in", { t: 0.7, v: 4 }, "aligned");
+    expect(clamped).toBe(true);
+    expect(slopeOf(keys, 1, "in")).toBeCloseTo(0, 9);
+    expect(keys[1]?.in?.[0]).toBeCloseTo(0.7, 9);
+  });
+
+  it("a stretch that was a bezier already keeps its start as it is", () => {
+    const curved: Key[] = [
+      { time: "0", value: 0, interp: "bezier", out: [0.2, 0.1] },
+      { time: "1", value: 10 },
+      { time: "3", value: 30 },
+    ];
+    const dragged = dragHandle({
+      keys: curved,
+      index: 1,
+      side: "in",
+      to: { t: 0.5, v: 5 },
+      mode: "broken",
+    });
+    expect([...(dragged?.changed.keys() ?? [])]).toEqual([1]);
+  });
+
+  it("goes to a millionth of its stretch, as a handle that is worked out", () => {
+    const { keys } = drag(line, 0, "out", { t: 0.1234567, v: 1.2345678 });
+    expect(keys[0]?.out).toEqual([0.123457, 0.123457]);
   });
 
   it("broken only says so", () => {

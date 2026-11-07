@@ -212,8 +212,13 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
 
   /* The mouse, for as far as it is about lanes. */
 
+  /**
+   * Whether a place is about keys: a row of them, or a handle of a selected key, which can reach
+   * up over the row of a clip and is on top of it.
+   */
   #isOnLanes(pointer: Pointer): boolean {
-    return pointer.y >= RULER_HEIGHT && laneAt(this.#lanes, this.laneY(pointer.y)) !== undefined;
+    if (pointer.y < RULER_HEIGHT) return false;
+    return laneAt(this.#lanes, this.laneY(pointer.y)) !== undefined || this.isOnHandle(pointer);
   }
 
   press(pointer: Pointer): Gesture | undefined {

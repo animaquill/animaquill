@@ -1,4 +1,4 @@
-import { secondsOf, type PropertyEdit } from "@animaquill/core";
+import { firstKeyFrom, secondsOf, type PropertyEdit } from "@animaquill/core";
 import {
   ZERO,
   add,
@@ -37,7 +37,7 @@ const FREE_STEPS_PER_SECOND = 1000;
 const MAX_KEYS_IN_PICTURE = 2000;
 /**
  * Up and down this far from where a key was, its value stays: a key that is dragged along the time
- * moves a little up and down as well, and in a row of the usual height that is a lot of a value.
+ * moves a little up and down as well. This is about the hand, not about snapping, so it is always so.
  */
 const VALUE_STICK = 6;
 /** Enough for anything a person means, and it keeps float noise out of project files. */
@@ -74,15 +74,13 @@ export interface MovingChannel {
   readonly times: readonly string[];
 }
 
-/** The selected keys of a number that go up and down with the mouse. */
+/** The selected keys of a number that go up and down with the mouse, in a row made taller. */
 export interface LiftedChannel {
   readonly clip: string;
   readonly path: string;
   readonly spec: PropertySpec;
-  /** What a pixel up is worth in the row it is in, as it was when the drag started. */
-  readonly perPixel: number;
-  /** The keys that go, as they were, by time. */
-  readonly keys: ReadonlyMap<string, Key>;
+  /** The keys that go, by time. What they are is read again with every step of the drag. */
+  readonly times: readonly string[];
 }
 
 /** What gestures on keys need from where they happen. */
@@ -108,6 +106,31 @@ export interface KeyGestureHost {
   /** Keeps rows from shrinking under the mouse while it drags in them, and lets go of that. */
   holdRanges(rows: readonly { readonly clip: string; readonly path: string }[]): void;
   releaseRanges(): void;
+  /**
+   * The keys of a property as they are now, without what a drag shows on top of them. A drag works
+   * from these with every step, so that what changes elsewhere meanwhile stays.
+   */
+  keysOf(clip: string, path: string): readonly Key[] | undefined;
+  /** What a pixel up is worth in the row of a property here right now. */
+  perPixel(clip: string, path: string): number | undefined;
+  /** What a drag was about went away while it went on: the drag stops, and says so. */
+  gone(): void;
+}
+
+const byTime = new WeakMap<readonly Key[], ReadonlyMap<string, Key>>();
+
+/** Keys by their time, as they are written. */
+function keysByTime(keys: readonly Key[] | undefined): ReadonlyMap<string, Key> {
+  if (!keys) return new Map();
+  let found = byTime.get(keys);
+  if (!found) byTime.set(keys, (found = new Map(keys.map((key) => [key.time, key]))));
+  return found;
+}
+
+/** Where a key of a time is among keys, or -1. */
+export function indexOfTime(keys: readonly Key[], time: string): number {
+  const index = firstKeyFrom(keys, parseTime(time));
+  return keys[index]?.time === time ? index : -1;
 }
 
 /** A value within what its property can hold, as far as it says. */
@@ -129,25 +152,31 @@ export const liftKey = (clip: string, path: string) => `${clip} ${path}`;
 
 /**
  * The edits of keys that go along the time and up and down: they move, and then the numbers among
- * them get their new values, keeping how they go on.
+ * them get their new values, keeping all else about them as it is now. Undefined when one of the
+ * keys that go up or down is not there any more.
  */
 export function liftEdits(
   channels: readonly MovingChannel[],
   by: Rational,
   lifted: readonly LiftedChannel[],
   lift: ReadonlyMap<string, number>,
-): readonly PropertyEdit[] {
+  keysOf: (clip: string, path: string) => readonly Key[] | undefined,
+): readonly PropertyEdit[] | undefined {
   const moving = compare(by, ZERO) === 0 ? [] : moveEdits(channels, by);
-  const valued = lifted.flatMap(({ clip, path, spec, keys }): PropertyEdit[] => {
+  const valued: PropertyEdit[] = [];
+  for (const { clip, path, spec, times } of lifted) {
     const up = lift.get(liftKey(clip, path)) ?? 0;
-    if (up === 0) return [];
-    const placed = [...keys.values()].map((key) => ({
-      ...key,
-      time: formatTime(add(parseTime(key.time), by)),
-      value: Number(withinSpec(spec, (key.value as number) + up).toFixed(KEPT_DIGITS)),
-    }));
-    return [{ owner: { clip }, path, op: "putKeys", keys: placed }];
-  });
+    if (up === 0) continue;
+    const now = keysByTime(keysOf(clip, path));
+    const placed: Key[] = [];
+    for (const time of times) {
+      const key = now.get(time);
+      if (!key || typeof key.value !== "number") return undefined;
+      const value = Number(withinSpec(spec, key.value + up).toFixed(KEPT_DIGITS));
+      placed.push({ ...key, time: formatTime(add(parseTime(time), by)), value });
+    }
+    valued.push({ owner: { clip }, path, op: "putKeys", keys: placed });
+  }
   return [...moving, ...valued];
 }
 
@@ -221,7 +250,10 @@ export class KeyMoveGesture implements Gesture {
   /** Going further back than this takes the earliest key before its clock starts. */
   readonly #lowest: Rational;
   readonly #onClick: () => void;
+  /** Where the press was in the rows, which scroll by themselves near an edge. */
+  readonly #pressRowY: number;
   #dragging = false;
+  #gone = false;
   #landing: Landing | undefined;
   #lift: ReadonlyMap<string, number> = new Map();
 
@@ -237,6 +269,7 @@ export class KeyMoveGesture implements Gesture {
     this.#press = press;
     this.#onClick = onClick;
     this.#lifted = lifted;
+    this.#pressRowY = host.laneAt(press.y);
     this.#grabTime = host.timeAt(press.x);
     this.#channels = host.moving();
     this.#points = snapPointsOf(host.model, host.frame, new Set(), host.snapTargets());
@@ -246,19 +279,19 @@ export class KeyMoveGesture implements Gesture {
   }
 
   move(pointer: Pointer): void {
-    if (!this.#dragging && !hasMoved(this.#press, pointer)) return;
+    if (this.#gone || (!this.#dragging && !hasMoved(this.#press, pointer))) return;
     if (!this.#dragging) this.#host.holdRanges(this.#lifted);
     this.#dragging = true;
     // Shift keeps it to the way it went furthest: only along the time, or only up and down.
     const across = Math.abs(pointer.x - this.#press.x);
-    const down = pointer.y - this.#press.y;
+    const down = this.#host.laneAt(pointer.y) - this.#pressRowY;
     const along = !pointer.shift || across >= Math.abs(down);
     const landing = along ? this.#land(pointer) : this.#stay();
-    const stick = this.#host.snapDistance(pointer) > 0 ? VALUE_STICK : 0;
-    const pixels = (pointer.shift && along) || Math.abs(down) < stick ? 0 : -down;
+    const pixels = (pointer.shift && along) || Math.abs(down) < VALUE_STICK ? 0 : -down;
     const lift = new Map<string, number>();
-    for (const { clip, path, perPixel } of this.#lifted) {
-      const up = liftBy(perPixel, pixels);
+    for (const { clip, path } of this.#lifted) {
+      // As the row is now, which grows to take in a value that goes past it.
+      const up = liftBy(this.#host.perPixel(clip, path) ?? 0, pixels);
       if (up !== 0) lift.set(liftKey(clip, path), up);
     }
     const shift = landing.seconds - this.#grabbed.seconds;
@@ -266,15 +299,50 @@ export class KeyMoveGesture implements Gesture {
     const sameLift = sameValues(lift, this.#lift);
     this.#landing = landing;
     this.#lift = lift;
+    if (!this.#inPicture || (previous?.seconds === landing.seconds && sameLift)) {
+      this.#show(shift, lift, landing);
+      return;
+    }
+    const by = this.#by(landing);
+    const edits = this.#edits(by, lift);
+    if (!edits) return;
+    this.#show(shift, lift, landing);
+    if (compare(by, ZERO) === 0 && lift.size === 0) this.#host.cancelPreview();
+    else this.#host.preview(edits);
+  }
+
+  #show(shift: number, lift: ReadonlyMap<string, number>, landing: Landing): void {
     this.#host.show({
       shift,
       ...(lift.size > 0 ? { lift } : {}),
       ...(landing.line === undefined ? {} : { snap: landing.line }),
     });
-    if (!this.#inPicture || (previous?.seconds === landing.seconds && sameLift)) return;
-    const by = this.#by(landing);
-    if (compare(by, ZERO) === 0 && lift.size === 0) this.#host.cancelPreview();
-    else this.#host.preview(liftEdits(this.#channels, by, this.#lifted, lift));
+  }
+
+  /** What the drag comes to from the keys as they are now, or nothing after it stopped for that. */
+  #edits(by: Rational, lift: ReadonlyMap<string, number>): readonly PropertyEdit[] | undefined {
+    const keysOf = (clip: string, path: string) => this.#host.keysOf(clip, path);
+    const edits = liftEdits(this.#channels, by, this.#lifted, lift, keysOf);
+    if (edits) return edits;
+    this.#stop();
+    return undefined;
+  }
+
+  /** Some of what was dragged is not there any more, because of an undo or another window. */
+  #stop(): void {
+    this.#gone = true;
+    this.#host.cancelPreview();
+    this.#host.show(undefined);
+    this.#host.releaseRanges();
+    this.#host.gone();
+  }
+
+  /** Whether every key that moves is still there. Commands would say so too, less clearly. */
+  #allThere(): boolean {
+    return this.#channels.every(({ clip, path, times }) => {
+      const now = keysByTime(this.#host.keysOf(clip, path));
+      return times.every((time) => now.has(time));
+    });
   }
 
   #by(landing: Landing): Rational {
@@ -308,11 +376,13 @@ export class KeyMoveGesture implements Gesture {
   }
 
   end(pointer: Pointer): void {
+    if (this.#gone) return;
     if (!this.#dragging) {
       this.#onClick();
       return;
     }
     this.move(pointer);
+    if (this.#gone) return;
     this.#commit();
     this.#host.show(undefined);
     this.#host.releaseRanges();
@@ -326,8 +396,13 @@ export class KeyMoveGesture implements Gesture {
       this.#host.cancelPreview();
       return;
     }
+    if (!this.#allThere()) {
+      this.#stop();
+      return;
+    }
+    const edits = this.#edits(by, lift);
+    if (!edits) return;
     const moved = KeySelection.of(movedSelection(this.#host.selection, this.#channels, by));
-    const edits = liftEdits(this.#channels, by, this.#lifted, lift);
     if (!this.#host.commit(edits, moved)) this.#host.cancelPreview();
   }
 
@@ -403,12 +478,14 @@ const sameValues = (a: ReadonlyMap<string, number>, b: ReadonlyMap<string, numbe
 export interface HandleGrab {
   readonly clip: string;
   readonly path: string;
-  /** The keys of the property when the drag started. */
-  readonly keys: readonly Key[];
-  readonly index: number;
+  /** The key whose handle it is, by its time, which stays what it is whatever else changes. */
+  readonly time: string;
   readonly side: HandleSide;
-  /** Where the pointer is on the clock of the clip and in the units of the property. */
-  pointAt(pointer: Pointer): CurvePoint;
+  /**
+   * Where the pointer is on the clock of the clip and in the units of the property, as the row is
+   * now: it grows, and the view scrolls. Undefined when the row is not there to say.
+   */
+  pointAt(pointer: Pointer): CurvePoint | undefined;
 }
 
 /**
@@ -423,30 +500,49 @@ export class HandleGesture implements Gesture {
   readonly #press: Pointer;
   readonly #usual: "aligned" | "broken";
   #dragging = false;
+  #gone = false;
   #changed: ChangedKeys | undefined;
 
   constructor(host: KeyGestureHost, grab: HandleGrab, press: Pointer) {
     this.#host = host;
     this.#grab = grab;
     this.#press = press;
-    const mode = tangentOf(grab.keys, grab.index);
+    const keys = host.keysOf(grab.clip, grab.path) ?? [];
+    const index = indexOfTime(keys, grab.time);
+    const mode = index < 0 ? "broken" : tangentOf(keys, index);
     // Dragging an automatic handle is saying where it goes, as in Blender: it stays on a line.
     this.#usual = mode === "broken" ? "broken" : "aligned";
   }
 
   move(pointer: Pointer): void {
-    if (!this.#dragging && !hasMoved(this.#press, pointer)) return;
+    if (this.#gone || (!this.#dragging && !hasMoved(this.#press, pointer))) return;
     if (!this.#dragging) this.#host.holdRanges([this.#grab]);
     this.#dragging = true;
-    const { clip, path, keys, index, side } = this.#grab;
+    const { clip, path, time, side } = this.#grab;
+    // From the keys as they are now, so that only what the handle steers changes.
+    const keys = this.#host.keysOf(clip, path);
+    const index = keys ? indexOfTime(keys, time) : -1;
+    const to = this.#grab.pointAt(pointer);
     const mode = pointer.alt ? "broken" : pointer.mod ? "aligned" : this.#usual;
-    const dragged = dragHandle({ keys, index, side, to: this.#grab.pointAt(pointer), mode });
-    if (!dragged) return;
+    const dragged = keys && index >= 0 && to && dragHandle({ keys, index, side, to, mode });
+    if (!dragged) {
+      this.#stop();
+      return;
+    }
     this.#changed = dragged.changed;
-    const time = (keys[index] as Key).time;
     const { clamped } = dragged;
     this.#host.show({ handle: { clip, path, time, side, clamped, x: pointer.x, y: pointer.y } });
     this.#host.preview(this.#edits(dragged.changed));
+  }
+
+  /** The key, or what the handle steers, is not there any more: an undo, or another window. */
+  #stop(): void {
+    this.#gone = true;
+    this.#changed = undefined;
+    this.#host.cancelPreview();
+    this.#host.show(undefined);
+    this.#host.releaseRanges();
+    this.#host.gone();
   }
 
   #edits(changed: ChangedKeys): readonly PropertyEdit[] {
@@ -455,7 +551,9 @@ export class HandleGesture implements Gesture {
   }
 
   end(pointer: Pointer): void {
+    if (this.#gone) return;
     if (this.#dragging) this.move(pointer);
+    if (this.#gone) return;
     const changed = this.#changed;
     if (changed && !this.#host.commit(this.#edits(changed), this.#host.selection)) {
       this.#host.cancelPreview();
@@ -475,20 +573,28 @@ export class HandleGesture implements Gesture {
   }
 }
 
-/** Pulls the bottom of a row that was made taller. */
+/**
+ * Pulls the bottom of a row that was made taller, from the height it shows. Only a drag changes the
+ * height it keeps: a click does nothing, and Escape puts back what it kept before.
+ */
 export class TallHeightGesture implements Gesture {
   readonly #resize: (height: number) => void;
-  readonly #before: number;
-  readonly #fromY: number;
+  readonly #restore: () => void;
+  readonly #from: number;
+  readonly #press: Pointer;
+  #moved = false;
 
-  constructor(resize: (height: number) => void, before: number, press: Pointer) {
+  constructor(resize: (height: number) => void, restore: () => void, from: number, press: Pointer) {
     this.#resize = resize;
-    this.#before = before;
-    this.#fromY = press.y;
+    this.#restore = restore;
+    this.#from = from;
+    this.#press = press;
   }
 
   move(pointer: Pointer): void {
-    this.#resize(this.#before + pointer.y - this.#fromY);
+    if (!this.#moved && !hasMoved(this.#press, pointer)) return;
+    this.#moved = true;
+    this.#resize(this.#from + pointer.y - this.#press.y);
   }
 
   end(pointer: Pointer): void {
@@ -496,6 +602,6 @@ export class TallHeightGesture implements Gesture {
   }
 
   cancel(): void {
-    this.#resize(this.#before);
+    if (this.#moved) this.#restore();
   }
 }
