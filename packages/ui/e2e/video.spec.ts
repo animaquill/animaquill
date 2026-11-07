@@ -443,6 +443,8 @@ test.describe("an export under way", () => {
   test("leaves the preview and the project to people, and takes what was there", async ({
     page,
   }) => {
+    // Twenty seconds of video, which next to other browsers takes longer than that.
+    test.setTimeout(90_000);
     await open(page, projectFolder(20, [movingSquare(20)]));
     await startExport(page);
     await expect(exportStatus(page)).toBeVisible();
@@ -1441,7 +1443,7 @@ test("goes over to the processor with every frame when the graphics card took a 
   expect((await factsOf((await savedFile(page)) as Buffer)).frames).toBe(60);
 });
 
-test("giving up an old export leaves the video people made to the same place since", async ({
+test("trying again in the same way replaces the old export, and leaves the file the new one makes", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -1459,26 +1461,18 @@ test("giving up an old export leaves the video people made to the same place sin
   await offer(page).getByRole("button", { name: "取消" }).click();
   await expect(dialog(page)).toContainText("导出视频");
   await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
-  await exported(page);
+  // The old one went for the new one, and the empty file they share stayed for it.
+  await expect(page.getByRole("status").getByText("已经换成这一次的")).toBeVisible();
+  await exported(page, 150_000);
   const finished = (await savedFile(page)) as Buffer;
-  console.log(
-    "finished file:",
-    finished.length,
-    "bytes,",
-    (await factsOf(finished)).frames,
-    "frames",
-  );
   expect((await factsOf(finished)).frames).toBe(1200);
-  // The next time the project opens, the old one is offered again, and people give it up.
+  expect(await keptExports(page)).toEqual({ exports: 0, pieces: 0 });
+  // Nothing is left to ask about the next time.
   await page.reload();
-  await offer(page).getByRole("button", { name: "放弃" }).click();
-  await expect(page.getByRole("status").getByText("没完成的导出已经放弃")).toBeVisible();
-  const after = await savedFile(page);
-  console.log(
-    "after giving up the old export:",
-    after === undefined ? "the file is gone" : `${after.length} bytes`,
-  );
-  expect(after).toBeDefined();
+  await expect(tab(page, "preview")).toBeVisible();
+  await page.waitForTimeout(2000);
+  await expect(offer(page)).toHaveCount(0);
+  expect((await savedFile(page))?.length).toBe(finished.length);
 });
 
 test.describe("a slide show", () => {
