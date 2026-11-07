@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./curve": "./src/curve.ts",
     "./view": "./src/view.ts",
-    "./registration": "./src/registration.ts"
+    "./registration": "./src/registration.ts",
+    "./handles": "./src/handles.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"

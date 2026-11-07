@@ -1,10 +1,13 @@
+import { readHandles, type ReadHandles } from "@animaquill/core/handles";
 import { REGISTRATION_LIMITS } from "@animaquill/core/registration";
+import { MESSAGE_RULES, weightOf } from "../budget.ts";
 import { startCapture, type Capture } from "./capture.ts";
 import { loadProject, type LoadedProject } from "../loader/project.ts";
 import { pathOfVirtual } from "../loader/paths.ts";
 import { RUNTIME_VERSION, type FromScene, type SceneLoad, type ToScene } from "../protocol.ts";
 import { AnimationClock } from "./animations.ts";
 import { ClipValues, CodeObjects, SceneParams } from "./content.ts";
+import { ObjectPlaces } from "./places.ts";
 import { PageElements } from "./elements.ts";
 import { RegistrationSender } from "./registering.ts";
 import { SceneClock } from "./clock.ts";
@@ -182,11 +185,80 @@ const seconds = () => clock.now / 1000;
 const values = new ClipValues(scene.values);
 const objects = new CodeObjects(values, seconds, () => registering.changed());
 const params = new SceneParams(scene.params, values, seconds, misused, () => registering.changed());
+const places = new ObjectPlaces();
 const elements = new PageElements(
   values,
   (code, target) => problems.report({ kind: "api", code, ...(target !== undefined && { target }) }),
   REGISTRATION_LIMITS.elements,
 );
+
+/** Handles go again after a change, but not more often than this. */
+const HANDLES_EVERY_MS = 40;
+/** What the handles of a scene may cost the page they go to, also while somebody drags all the time. */
+const HANDLES_BYTES_PER_SECOND = 256 * 1024;
+/** What one message takes, less what the message itself weighs. */
+const HANDLES_BYTES = MESSAGE_RULES.maxMessageBytes - 1024;
+/** Somebody looks at the handles: the clip is selected, and nothing plays. */
+let handlesWanted = false;
+let playing = false;
+let handlesTimer: number | undefined;
+let handlesSent = Number.NEGATIVE_INFINITY;
+let handlesEvery = HANDLES_EVERY_MS;
+/** What went last, so that the same goes only once. */
+let handlesText: string | undefined;
+
+/** What objects say about where they are may have changed. */
+function handlesChanged(): void {
+  if (!handlesWanted || playing || !ready || handlesTimer !== undefined) return;
+  const wait = Math.max(handlesEvery - (real.now() - handlesSent), 0);
+  handlesTimer = real.setTimeout(sendHandles, wait);
+}
+
+/**
+ * Says where the objects of the code are and what can be grabbed of them, on this frame. What does
+ * not make sense stays out, as the editor would leave it out anyway, and people hear about it here,
+ * where they can do something about it. What does not fit in a message stays out as well.
+ */
+function sendHandles(): void {
+  handlesTimer = undefined;
+  if (!handlesWanted || playing) return;
+  const said = places.at(seconds(), (error) => problems.thrown("error", error));
+  let read: ReadHandles;
+  try {
+    // What code returned can still run code of its own while it is read, a getter for one.
+    read = readHandles(said, objects.descriptors());
+  } catch (error) {
+    problems.thrown("error", error);
+    return;
+  }
+  for (const { code, target } of read.problems) {
+    problems.report({ kind: "api", code, ...(target !== undefined && { target }) });
+  }
+  const message = (count: number) => ({
+    type: "handles" as const,
+    frame: clock.frame,
+    handles: read.objects.slice(0, count),
+  });
+  let fits = read.objects.length;
+  let weight = weightOf(message(fits), HANDLES_BYTES);
+  if (weight > HANDLES_BYTES) {
+    let low = 0;
+    while (low < fits) {
+      const middle = (low + fits + 1) >> 1;
+      if (weightOf(message(middle), HANDLES_BYTES) > HANDLES_BYTES) fits = middle - 1;
+      else low = middle;
+    }
+    weight = weightOf(message(fits), HANDLES_BYTES);
+    problems.report({ kind: "api", code: "handles-too-many", target: "bytes" });
+  }
+  const sent = message(fits);
+  const text = JSON.stringify(sent);
+  if (text === handlesText) return;
+  handlesText = text;
+  handlesSent = real.now();
+  handlesEvery = Math.max(HANDLES_EVERY_MS, (weight / HANDLES_BYTES_PER_SECOND) * 1000);
+  send(sent);
+}
 
 const frameCallbacks = new Set<(seconds: number) => void>();
 
@@ -258,6 +330,7 @@ const transport = new Transport(clock, {
     }
     objects.firstFrameRan();
     registering.framesRan();
+    handlesChanged();
     await contentReady(true);
     await capture?.take(clock.frame);
   },
@@ -283,13 +356,17 @@ function onMessage(event: MessageEvent<ToScene>): void {
   const { data } = event;
   switch (data.type) {
     case "seek":
+      playing = false;
       if (ready) transport.seek(data.request, data.frame);
       break;
     case "play":
+      playing = data.base.rate > 0;
       if (ready) transport.play(data.base);
       break;
     case "pause":
+      playing = false;
       transport.pause();
+      handlesChanged();
       break;
     case "channels": {
       const changed = values.change(data.channels);
@@ -297,8 +374,15 @@ function onMessage(event: MessageEvent<ToScene>): void {
       params.changed(changed);
       // Nothing else would show it while the scene stands still.
       if (ready) transport.refresh();
+      handlesChanged();
       break;
     }
+    case "handles":
+      handlesWanted = data.on === true;
+      // Somebody new looks, who has not heard anything yet.
+      handlesText = undefined;
+      handlesChanged();
+      break;
     case "ping":
       send({ type: "pong", nonce: data.nonce });
       break;
@@ -346,7 +430,13 @@ function installApi(project: LoadedProject): void {
       view: Object.freeze({ width, height, pixelRatio, format, language }),
       asset,
       frame,
-      object: (id: unknown, options: unknown) => objects.register(id, options, misused),
+      object: (id: unknown, options: unknown) => {
+        const object = objects.register(id, options, misused);
+        places.note(object, options);
+        // New functions can say something else about where it is.
+        handlesChanged();
+        return object;
+      },
       param: (id: unknown, at?: unknown) => params.read(id, at),
     }),
     enumerable: true,
@@ -472,6 +562,7 @@ async function main(): Promise<void> {
   params.loaded();
   elements.scan(() => registering.changed());
   send({ type: "ready", width: innerWidth, height: innerHeight });
+  handlesChanged();
 }
 
 // Nothing can be drawn when this fails, so the compositor needs to hear it in so many words.

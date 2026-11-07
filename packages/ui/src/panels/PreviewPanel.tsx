@@ -6,6 +6,7 @@ import { useSession, useWorkbench } from "../app/context.ts";
 import { PreviewLink } from "../preview/link.ts";
 import { PreviewNotices } from "../preview/PreviewNotices.tsx";
 import { QualityButton } from "../preview/Quality.tsx";
+import { PreviewOverlay } from "../overlay/PreviewOverlay.tsx";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
@@ -19,6 +20,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
   const { timeline, properties, projects, media, compositorUrl, notifications, diagnostics } =
     workbench;
   const { preview, sceneOrigins, sceneStage, frameRate, previewQuality, registrations } = workbench;
+  const { sceneHandles } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const { runScenes } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
@@ -52,6 +54,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
       frameRate,
       previewQuality,
       registrations,
+      sceneHandles,
     );
     onLink(link);
     // The compositor says hello once it has loaded, so the link has to listen first.
@@ -73,6 +76,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
     properties,
     registrations,
     runScenes,
+    sceneHandles,
     sceneOrigins,
     sceneStage,
     store,
@@ -111,7 +115,10 @@ export function PreviewPanel() {
       <div className={styles.stage}>
         {/* One that hangs goes on taking a whole core, for as long as its frame is there. */}
         {compositor !== "stopped" && compositor !== "unreachable" && (
-          <Compositor key={generation} onLink={onLink} />
+          <>
+            <Compositor key={generation} onLink={onLink} />
+            <PreviewOverlay />
+          </>
         )}
         <PreviewNotices onRetry={(layer) => link.current?.retryScene(layer)} />
         {count > 0 && (

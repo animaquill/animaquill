@@ -5,6 +5,7 @@ import type { ProjectLibrary } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
+import { SceneHandles } from "../overlay/scene-handles.ts";
 import { SceneRegistrations } from "../properties/registrations.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
@@ -42,7 +43,8 @@ function setup(
   {
     files = new Map<string, Blob>(),
     registrations,
-  }: { files?: Map<string, Blob>; registrations?: SceneRegistrations } = {},
+    handles,
+  }: { files?: Map<string, Blob>; registrations?: SceneRegistrations; handles?: SceneHandles } = {},
 ) {
   const restored: ((hash: string) => void)[] = [];
   const store = ProjectStore.create(createProject({ name: "预览" }));
@@ -143,6 +145,7 @@ function setup(
     frameRate,
     quality,
     registrations,
+    handles,
   );
   links.push(link);
   const hello = () => {
@@ -807,5 +810,43 @@ describe("what a scene works out itself", () => {
     expect(found()?.complete).toBe(true);
     fromCompositor({ type: "scene-objects-unsure", layer: "sc", revision: "r9" });
     expect(found()?.complete).toBe(false);
+  });
+});
+
+describe("where the objects of a scene are", () => {
+  it("is asked of the clip that wants it, once the compositor is there, and only when that changes", () => {
+    const handles = new SceneHandles();
+    handles.want("c");
+    const { hello, ofType } = setup(undefined, { handles });
+    expect(ofType("handles")).toEqual([]);
+    hello();
+    expect(ofType("handles")).toEqual([{ type: "handles", layer: "c" }]);
+    handles.want("c");
+    handles.want(undefined);
+    expect(ofType("handles")).toEqual([
+      { type: "handles", layer: "c" },
+      { type: "handles", layer: null },
+    ]);
+    // A compositor that loaded again knows nothing.
+    handles.want("c");
+    hello();
+    expect(ofType("handles").at(-1)).toEqual({ type: "handles", layer: "c" });
+    expect(ofType("handles")).toHaveLength(4);
+  });
+
+  it("goes where the handles are kept, as raw as it came", () => {
+    const handles = new SceneHandles();
+    handles.want("c");
+    const { hello, fromCompositor } = setup(undefined, { handles });
+    hello();
+    const raw = [{ object: "arm", handles: [] }];
+    fromCompositor({ type: "scene-handles", layer: "c", revision: "r1", frame: 4, handles: raw });
+    const registration = {
+      objects: [{ id: "arm", properties: [] }],
+      elements: [],
+      complete: true,
+    };
+    expect(handles.of("c", "r1", 4, registration)).toEqual([]);
+    expect(handles.getVersion()).toBe(1);
   });
 });

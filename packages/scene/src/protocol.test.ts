@@ -17,6 +17,7 @@ describe("readFromScene", () => {
     [{ type: "pong", nonce: 9 }],
     [{ type: "objects", registration: '{"objects":[],"elements":[],"complete":true}' }],
     [{ type: "objects-unsure" }],
+    [{ type: "handles", frame: 3, handles: [{ object: "arm" }] }],
   ])("takes %j", (message) => {
     expect(readFromScene(message)).toEqual(message);
   });
@@ -26,6 +27,15 @@ describe("readFromScene", () => {
     { type: "objects", registration: { objects: [], elements: [] } },
     { type: "objects", registration: " ".repeat(REGISTRATION_LIMITS.text + 1) },
   ])("takes no registration that is no text of a size that it can have, as in %j", (message) => {
+    expect(readFromScene(message)).toBeUndefined();
+  });
+
+  it.each([
+    { type: "handles", frame: 3 },
+    { type: "handles", frame: 3, handles: { object: "arm" } },
+    { type: "handles", frame: -1, handles: [] },
+    { type: "handles", frame: 0.5, handles: [] },
+  ])("takes no handles without a list and a frame, as in %j", (message) => {
     expect(readFromScene(message)).toBeUndefined();
   });
 

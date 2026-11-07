@@ -5,10 +5,18 @@ import {
   boxOf,
   clockOf,
   fitIn,
+  invert,
   layerMatrix,
+  matrixOf,
   multiply,
   opacityAt,
+  pictureIn,
+  sceneMatrix,
+  sceneViewOf,
+  showsAt,
   stageOf,
+  transformAt,
+  transformPoint,
   viewMatrix,
   type Matrix,
   type Size,
@@ -334,5 +342,135 @@ describe("how much of a layer shows", () => {
   it("stays between nothing and all of it when a curve overshoots, or Canvas ignores it", () => {
     expect(opacityAt(transformed({ opacity: 1.4 }), 0)).toBe(1);
     expect(opacityAt(transformed({ opacity: -0.2 }), 0)).toBe(0);
+  });
+});
+
+describe("the way back", () => {
+  it.each([
+    ["a move", [1, 0, 0, 1, 30, -40]],
+    ["a scale and a move", [2.5, 0, 0, 2.5, 960, 540]],
+    ["a turn, a scale and a move", [0.3, 1.2, -1.2, 0.3, -7, 11]],
+    ["a stretch", [0.5, 0, 0, 3, 1, 2]],
+  ] as const)("undoes %s", (_, matrix) => {
+    const back = invert(matrix) as Matrix;
+    for (const place of [
+      { x: 0, y: 0 },
+      { x: 123.5, y: -77 },
+      { x: -1e4, y: 3e3 },
+    ]) {
+      const there = transformPoint(back, transformPoint(matrix, place));
+      expect(there.x).toBeCloseTo(place.x, 6);
+      expect(there.y).toBeCloseTo(place.y, 6);
+    }
+    expect(multiply(matrix, back).map((n) => Number(n.toFixed(9)))).toEqual([1, 0, 0, 1, 0, 0]);
+  });
+
+  it("is not there for what squeezes everything onto a point or a line", () => {
+    expect(invert([0, 0, 0, 0, 5, 5])).toBeUndefined();
+    expect(invert([1, 2, 2, 4, 0, 0])).toBeUndefined();
+    expect(invert([Number.NaN, 0, 0, 1, 0, 0])).toBeUndefined();
+  });
+});
+
+describe("the transform of a layer", () => {
+  it("has the defaults of the format where nothing is written", () => {
+    expect(transformAt(layer(), 0)).toEqual({
+      x: 0,
+      y: 0,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      scale: 1,
+      rotation: 0,
+    });
+  });
+
+  it("makes the same matrix the compositor draws with", () => {
+    const values = {
+      "transform.x": 10,
+      "transform.y": 20,
+      "transform.scale": 1.5,
+      "transform.rotation": 33,
+      "transform.anchorX": 0.2,
+      "transform.anchorY": 0.9,
+    };
+    const box = { width: 300, height: 120 };
+    const clip = transformed(values);
+    expect(matrixOf(transformAt(clip, 0), box)).toEqual(layerMatrix(clip, 0, box));
+  });
+});
+
+describe("a scene in its box", () => {
+  it("lays itself out in its box where its clip starts", () => {
+    const width = compileChannel(
+      {
+        keys: [
+          { time: "0", value: 400 },
+          { time: "2", value: 800 },
+        ],
+      },
+      "number",
+    ) as Channel;
+    const clip = layer({
+      start: 5,
+      channels: { "transform.width": width, "transform.height": still(300) },
+    });
+    expect(sceneViewOf(clip, { width: 1920, height: 1080 })).toEqual({ width: 400, height: 300 });
+  });
+
+  it("gets some room also from a box of nothing", () => {
+    const clip = transformed({ "transform.width": 0, "transform.height": 0 });
+    expect(sceneViewOf(clip, { width: 1920, height: 1080 })).toEqual({ width: 1, height: 1 });
+  });
+
+  it("has its origin in the middle of its box, a unit for a pixel of its page", () => {
+    const matrix = sceneMatrix({ width: 1920, height: 1080 }, { width: 1920, height: 1080 });
+    expect(transformPoint(matrix, { x: 0, y: 0 })).toEqual({ x: 960, y: 540 });
+    expect(transformPoint(matrix, { x: -960, y: -540 })).toEqual({ x: 0, y: 0 });
+  });
+
+  it("stretches with a box that grew after it was laid out", () => {
+    const matrix = sceneMatrix({ width: 400, height: 300 }, { width: 800, height: 300 });
+    expect(transformPoint(matrix, { x: 100, y: 50 })).toEqual({ x: 600, y: 200 });
+  });
+});
+
+describe("what part of a box has a picture", () => {
+  const box = { width: 1920, height: 1080 };
+
+  it("is all of it for what fills its box", () => {
+    const whole = { x: 0, y: 0, width: 1920, height: 1080 };
+    expect(pictureIn("cover", { width: 100, height: 100 }, box)).toEqual(whole);
+    expect(pictureIn("fixed", { width: 100, height: 100 }, box)).toEqual(whole);
+    expect(pictureIn("contain", undefined, box)).toEqual(whole);
+  });
+
+  it("leaves out the bars of what is contained", () => {
+    expect(pictureIn("contain", { width: 100, height: 100 }, box)).toEqual({
+      x: 420,
+      y: 0,
+      width: 1080,
+      height: 1080,
+    });
+    const tall = pictureIn("contain", { width: 3840, height: 1080 }, box);
+    expect(tall.x).toBeCloseTo(0, 9);
+    expect(tall.y).toBeCloseTo(270, 9);
+    expect(tall.width).toBeCloseTo(1920, 9);
+    expect(tall.height).toBeCloseTo(540, 9);
+  });
+});
+
+describe("whether a layer shows", () => {
+  const clip = layer({ start: 1, end: 2 });
+
+  it("is from its start up to its end, which belongs to what comes next", () => {
+    expect(showsAt(clip, 0.99)).toBe(false);
+    expect(showsAt(clip, 1)).toBe(true);
+    expect(showsAt(clip, 1.5)).toBe(true);
+    expect(showsAt(clip, 2)).toBe(false);
+  });
+
+  it("counts a moment that lands a little off as the frame it is on", () => {
+    expect(showsAt(clip, 1 - 1e-9)).toBe(true);
+    expect(showsAt(clip, 2 - 1e-9)).toBe(false);
   });
 });

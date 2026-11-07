@@ -1,14 +1,13 @@
 import type { RenderLayer } from "@animaquill/core";
-import { TIME_TOLERANCE } from "@animaquill/core/view";
+import { TIME_TOLERANCE, showsAt } from "@animaquill/core/view";
+
+export { showsAt };
 
 /** Longer than any file takes to open, short enough to hold only the next clip or two. */
 export const GET_READY_SECONDS = 1.5;
 
 /** A jump this far ahead is cheaper by starting over at a keyframe than by decoding the way there. */
 const MAX_WALK_SECONDS = 2;
-
-export const showsAt = ({ start, end }: RenderLayer, seconds: number): boolean =>
-  seconds >= start - TIME_TOLERANCE && seconds < end - TIME_TOLERANCE;
 
 export const comesUpAfter = ({ start }: RenderLayer, seconds: number): boolean =>
   start - TIME_TOLERANCE > seconds && start - seconds <= GET_READY_SECONDS;

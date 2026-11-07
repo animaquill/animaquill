@@ -1,5 +1,10 @@
 import type { RenderLayer, RenderPlan, SceneSource } from "@animaquill/core";
-import { boxOf, clockOf } from "@animaquill/core/view";
+import {
+  MAX_SCENE_FRAME,
+  clockOf,
+  sceneFrameOf as frameOf,
+  sceneViewOf,
+} from "@animaquill/core/view";
 import {
   OriginPool,
   RUNTIME_VERSION,
@@ -22,8 +27,7 @@ import {
 } from "./index.ts";
 import { StillFailed } from "./still.ts";
 
-/** A moment that is this close to a frame is that frame: seconds are floats, frames are not. */
-const FRAME_TOLERANCE = 1e-6;
+export { MAX_SCENE_FRAME, frameOf };
 
 /** Going over a clip and back again should not cost a new process each way. */
 const LINGER_MS = 3000;
@@ -47,7 +51,7 @@ const MAX_PICTURE_SIDE = 8192;
 /** What this takes care of. */
 type SceneMessage = Extract<
   ToCompositor,
-  { type: "setup" | "scene-files" | "scene-retry" | "evict" | "play" | "pause" }
+  { type: "setup" | "scene-files" | "scene-retry" | "evict" | "play" | "pause" | "handles" }
 >;
 
 /** What this needs of a scene. */
@@ -59,6 +63,7 @@ export type Host = Pick<
   | "play"
   | "pause"
   | "channels"
+  | "handles"
   | "evict"
   | "focusTaken"
   | "state"
@@ -193,24 +198,12 @@ function whenOnScreen(run: () => void): void {
 }
 
 /**
- * The last frame a scene can be on, years into it. A clip can say anything about its clock, and
- * what is not a safe integer cannot even be asked for.
- */
-export const MAX_SCENE_FRAME = 2 ** 31 - 1;
-
-/**
  * Code that does not parse never ran, so what a new state of a scene shows without it says nothing
  * about what somebody wrote. It is the moment to stay with the picture that worked. Code that ran
  * and threw is different: it may be most of what people want to see.
  */
 const isNotCode = ({ kind, message }: SceneProblem) =>
   kind === "error" && message !== undefined && /\bSyntaxError\b/.test(message);
-
-/** What frame a scene is on when the clock of its clip reads this. */
-export function frameOf(clock: number, { num, den }: RenderPlan["scenes"]["fps"]): number {
-  const frame = Math.floor((clock * num) / den + FRAME_TOLERANCE);
-  return Number.isNaN(frame) ? 0 : Math.min(Math.max(frame, 0), MAX_SCENE_FRAME);
-}
 
 /** Whether a clip gets to a moment of its scene that no scene can get to, by its offset or rate. */
 export function isOutOfReach(
@@ -223,9 +216,7 @@ export function isOutOfReach(
 
 /** One unit of the world is one CSS pixel, and the picture has the pixels of the output. */
 export function viewOf(layer: RenderLayer, plan: RenderPlan): SceneView {
-  const box = boxOf(layer, layer.start, undefined, plan.stage);
-  const width = Math.max(box.width, 1);
-  const height = Math.max(box.height, 1);
+  const { width, height } = sceneViewOf(layer, plan.stage);
   const wanted = plan.width / plan.stage.width;
   const pixelRatio = Math.min(wanted, MAX_PICTURE_SIDE / Math.max(width, height));
   return {
@@ -274,6 +265,8 @@ export class SceneLayers {
     { readonly plan: RenderPlan; readonly layers: Map<string, RenderLayer> } | undefined;
   #seconds = 0;
   #base: PlayBase | undefined;
+  /** The layer whose scene says where the objects of its code are. */
+  #handlesFor: string | undefined;
   /** False once a page said that this browser cannot capture. */
   #canCapture = true;
   #nextSlot = 0;
@@ -310,6 +303,14 @@ export class SceneLayers {
         return true;
       case "pause":
         this.#pause();
+        return true;
+      case "handles":
+        this.#handlesFor = message.layer ?? undefined;
+        for (const entry of this.#entries.values()) {
+          const on = entry.layer.id === this.#handlesFor;
+          entry.current?.host.handles(on);
+          entry.next?.host.handles(on);
+        }
         return true;
       default:
         return false;
@@ -712,11 +713,19 @@ export class SceneLayers {
         const { id } = entry.layer;
         this.#options.send({ type: "scene-objects-unsure", layer: id, revision: source.revision });
       },
+      onHandles: (frame, handles) => {
+        const { id } = entry.layer;
+        // Only the clip that asked, which may have stopped asking on the way.
+        if (id !== this.#handlesFor) return;
+        const { revision } = source;
+        this.#options.send({ type: "scene-handles", layer: id, revision, frame, handles });
+      },
     };
     const host = (this.#options.makeHost ?? ((all) => new SceneHost(all)))(options);
     const started: Run = { key, host, frame: undefined, sent: new Map() };
     run = started;
     try {
+      if (layer.id === this.#handlesFor) host.handles(true);
       void host.open();
       this.#startMoving(entry, started, plan);
     } catch (error) {

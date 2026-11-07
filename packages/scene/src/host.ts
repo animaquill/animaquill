@@ -112,6 +112,11 @@ export interface SceneHostOptions {
   readonly onObjects?: (registration: string) => void;
   /** What it registered before is not all there is any more. */
   readonly onObjectsUnsure?: () => void;
+  /**
+   * Where the objects of its code are and what can be grabbed of them, on a frame, while it was asked
+   * to say so: see `handles`. Nothing but a list was checked: it is for `readHandles`.
+   */
+  readonly onHandles?: (frame: number, handles: unknown) => void;
   /** An origin not to start on: where the scene this one replaces runs, which may be stuck. */
   readonly avoid?: string;
   readonly rules?: WatchdogRules;
@@ -174,6 +179,8 @@ export class SceneHost {
   #wanted: number | undefined;
   #base: TimeBase | undefined;
   readonly #channels = new Map<string, Readonly<Record<string, unknown>>>();
+  /** Whether it says where the objects of its code are. A new frame gets told as well. */
+  #handles = false;
   readonly #pending: PendingSeek[] = [];
   readonly #problems = new Set<string>();
   #replays: TokenBucket;
@@ -290,6 +297,17 @@ export class SceneHost {
     this.#channels.set(layer, merged);
     this.#send(this.#current, { type: "channels", layer, channels });
     this.#send(this.#next, { type: "channels", layer, channels });
+  }
+
+  /**
+   * Asks it to say where the objects of its code are, from now on, whenever that changes while it
+   * stands still, or to stop. Only for the clip that somebody has selected.
+   */
+  handles(on: boolean): void {
+    if (on === this.#handles) return;
+    this.#handles = on;
+    this.#send(this.#current, { type: "handles", on });
+    this.#send(this.#next, { type: "handles", on });
   }
 
   /** All that the clips hold for the scene, for a frame that starts. */
@@ -465,6 +483,12 @@ export class SceneHost {
       case "objects-unsure":
         this.#options.onObjectsUnsure?.();
         break;
+      case "handles":
+        // What is not on the picture yet has nothing to grab.
+        if (frame === this.#current && this.#handles) {
+          this.#options.onHandles?.(message.frame, message.handles);
+        }
+        break;
       case "pong":
         frame.dog.answered(message.nonce);
         break;
@@ -536,6 +560,7 @@ export class SceneHost {
     for (const [layer, channels] of this.#channels) {
       this.#send(frame, { type: "channels", layer, channels });
     }
+    if (this.#handles) this.#send(frame, { type: "handles", on: true });
     if (frame === this.#current) {
       this.#setState("ready");
       this.#opened?.resolve();

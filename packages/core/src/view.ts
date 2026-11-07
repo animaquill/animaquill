@@ -21,6 +21,11 @@ export interface Rect extends Size {
   readonly y: number;
 }
 
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
 /** As in Canvas: x′ = a·x + c·y + e, and y′ = b·x + d·y + f. */
 export type Matrix = readonly [a: number, b: number, c: number, d: number, e: number, f: number];
 
@@ -73,12 +78,57 @@ export const multiply = (first: Matrix, second: Matrix): Matrix => {
   ];
 };
 
+/** Where a point ends up. */
+export const transformPoint = ([a, b, c, d, e, f]: Matrix, { x, y }: Point): Point => ({
+  x: a * x + c * y + e,
+  y: b * x + d * y + f,
+});
+
+/**
+ * The way back: from where something is shown to where it is, as for a pointer on the picture.
+ * Undefined for what squeezes everything onto a line or a point, like a scale of 0, which nothing
+ * can undo.
+ */
+export function invert([a, b, c, d, e, f]: Matrix): Matrix | undefined {
+  const determinant = a * d - b * c;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) return undefined;
+  return [
+    d / determinant,
+    -b / determinant,
+    -c / determinant,
+    a / determinant,
+    (c * f - d * e) / determinant,
+    (b * e - a * f) / determinant,
+  ];
+}
+
 /**
  * Moments this close are the same moment. Times are floats, and `1/30 + 5/30` is a little less than
  * `6/30`: without this a clip that starts on a frame would start one frame late, and a video would
  * show the frame before the right one.
  */
 export const TIME_TOLERANCE = 1e-6;
+
+/** Whether a layer is in the picture at a moment. Its end belongs to what comes after it. */
+export const showsAt = (
+  { start, end }: Pick<RenderLayer, "start" | "end">,
+  seconds: number,
+): boolean => seconds >= start - TIME_TOLERANCE && seconds < end - TIME_TOLERANCE;
+
+/**
+ * The last frame a scene can be on, years into it. A clip can say anything about its clock, and
+ * what is not a safe integer cannot even be asked for.
+ */
+export const MAX_SCENE_FRAME = 2 ** 31 - 1;
+
+/** What frame a scene is on when the clock of its clip reads this. */
+export function sceneFrameOf(
+  clock: number,
+  { num, den }: { readonly num: number; readonly den: number },
+): number {
+  const frame = Math.floor((clock * num) / den + TIME_TOLERANCE);
+  return Number.isNaN(frame) ? 0 : Math.min(Math.max(frame, 0), MAX_SCENE_FRAME);
+}
 
 /** What the clock of a clip reads at a moment on the timeline. */
 export const clockOf = (layer: Pick<RenderLayer, "offset" | "start">, time: number): number =>
@@ -133,22 +183,85 @@ export function boxOf(
   };
 }
 
-/**
- * From the clip box to the world: take off the anchor, scale, turn, and put it at x and y. The order
- * is part of the format. The box runs from 0, 0 to its size.
- */
-export function layerMatrix(layer: RenderLayer, time: number, box: Size): Matrix {
+/** What puts a clip box in the world, at one moment. */
+export interface Transform {
+  /** Where the anchor is, in world units. */
+  readonly x: number;
+  readonly y: number;
+  /** Which point of the box the anchor is, as shares of it. */
+  readonly anchorX: number;
+  readonly anchorY: number;
+  readonly scale: number;
+  /** Degrees, clockwise. */
+  readonly rotation: number;
+}
+
+/** The transform of a layer at a moment on the timeline. */
+export function transformAt(
+  layer: Pick<RenderLayer, "channels" | "offset" | "start">,
+  time: number,
+): Transform {
   const { channels } = layer;
   const clock = clockOf(layer, time);
-  const x = numberAt(channels["transform.x"], clock, DEFAULTS.x);
-  const y = numberAt(channels["transform.y"], clock, DEFAULTS.y);
-  const anchorX = numberAt(channels["transform.anchorX"], clock, DEFAULTS.anchorX) * box.width;
-  const anchorY = numberAt(channels["transform.anchorY"], clock, DEFAULTS.anchorY) * box.height;
-  const scale = numberAt(channels["transform.scale"], clock, DEFAULTS.scale);
-  const turn = radians(numberAt(channels["transform.rotation"], clock, DEFAULTS.rotation));
+  return {
+    x: numberAt(channels["transform.x"], clock, DEFAULTS.x),
+    y: numberAt(channels["transform.y"], clock, DEFAULTS.y),
+    anchorX: numberAt(channels["transform.anchorX"], clock, DEFAULTS.anchorX),
+    anchorY: numberAt(channels["transform.anchorY"], clock, DEFAULTS.anchorY),
+    scale: numberAt(channels["transform.scale"], clock, DEFAULTS.scale),
+    rotation: numberAt(channels["transform.rotation"], clock, DEFAULTS.rotation),
+  };
+}
+
+/**
+ * From a clip box to the world: take off the anchor, scale, turn, and put it at x and y. The order
+ * is part of the format. The box runs from 0, 0 to its size.
+ */
+export function matrixOf(transform: Transform, box: Size): Matrix {
+  const { x, y, scale } = transform;
+  const anchorX = transform.anchorX * box.width;
+  const anchorY = transform.anchorY * box.height;
+  const turn = radians(transform.rotation);
   const a = Math.cos(turn) * scale;
   const b = Math.sin(turn) * scale;
   return [a, b, -b, a, x - (a * anchorX - b * anchorY), y - (b * anchorX + a * anchorY)];
+}
+
+/** From the clip box of a layer to the world, at a moment: see `matrixOf`. */
+export function layerMatrix(layer: RenderLayer, time: number, box: Size): Matrix {
+  return matrixOf(transformAt(layer, time), box);
+}
+
+/**
+ * The size a scene lays itself out in: its clip box where its clip starts. A scene is a page, which
+ * needs some room to be one.
+ */
+export function sceneViewOf(
+  layer: Pick<RenderLayer, "fit" | "channels" | "offset" | "start">,
+  stage: Size,
+): Size {
+  const box = boxOf(layer, layer.start, undefined, stage);
+  return { width: Math.max(box.width, 1), height: Math.max(box.height, 1) };
+}
+
+/**
+ * From the coordinates of a scene to its clip box. A scene has its origin in the middle of its box,
+ * and a unit of it is a CSS pixel of its page, which a box of another size than the one it was laid
+ * out for stretches along with the picture.
+ */
+export function sceneMatrix(view: Size, box: Size): Matrix {
+  return [box.width / view.width, 0, 0, box.height / view.height, box.width / 2, box.height / 2];
+}
+
+/**
+ * What part of its box a picture covers, in units of the box. Contained media leaves bars on two
+ * sides, everything else fills its box.
+ */
+export function pictureIn(fit: RenderLayer["fit"], natural: Size | undefined, box: Size): Rect {
+  const whole = { x: 0, y: 0, width: box.width, height: box.height };
+  if (fit !== "contain" || !natural || natural.width <= 0 || natural.height <= 0) return whole;
+  const [scale, , , , x, y] = fitIn(fit, natural, box).matrix;
+  return { x, y, width: natural.width * scale, height: natural.height * scale };
 }
 
 /**

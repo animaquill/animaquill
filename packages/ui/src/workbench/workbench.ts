@@ -22,6 +22,8 @@ import { DiagnosticsRecorder, deviceFacts } from "../diagnostics/recorder.ts";
 import { registerKeyframeActions } from "../keyframes/actions.ts";
 import { connectionsFor, type Connection } from "../keyframes/connect.ts";
 import { KeyframeEditor } from "../keyframes/editor.ts";
+import { OverlayEditor } from "../overlay/editor.ts";
+import { SceneHandles } from "../overlay/scene-handles.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -93,6 +95,10 @@ export class Workbench {
   readonly trials: TrialSession;
   readonly properties: PropertyWriter;
   readonly keyframes: KeyframeEditor;
+  /** What scenes say about where the objects of their code are, for the handles on the picture. */
+  readonly sceneHandles = new SceneHandles();
+  /** The handles on the picture of the preview. */
+  readonly overlay: OverlayEditor;
   readonly input: InputMode;
   readonly media: MediaLibrary;
   readonly sounds: MadeSounds;
@@ -334,6 +340,16 @@ export class Workbench {
       },
       this.registrations,
     );
+    this.overlay = new OverlayEditor({
+      session: this.session,
+      timeline: this.timeline,
+      properties: this.properties,
+      trials: this.trials,
+      quality: this.previewQuality,
+      handles: this.sceneHandles,
+      registrations: this.registrations,
+      describe: this.keyframes.describe,
+    });
     this.#keepTrail();
     this.#keepPropertyProblems();
     for (const panel of panels) this.panels.register(panel);

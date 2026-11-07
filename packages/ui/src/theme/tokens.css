@@ -46,6 +46,13 @@
   --aq-timeline-key-summary: #6f7d8b;
   --aq-timeline-curve: #2aaaff;
   --aq-timeline-handle: #c8c8c8;
+
+  /* What the preview draws over the picture: it has to stand out on any picture. */
+  --aq-overlay-line: #2aaaff;
+  --aq-overlay-fill: #ffffff;
+  --aq-overlay-halo: #000000a6;
+  --aq-overlay-path: #ffb44a;
+  --aq-overlay-muted: #c8c8c8b3;
 }
 
 *,

@@ -143,6 +143,11 @@ export type ToCompositor =
     }
   /** Somebody wants to give a scene that stopped another chance. */
   | { readonly type: "scene-retry"; readonly layer: string }
+  /**
+   * The clip whose scene says where the objects of its code are, from now on, while it stands
+   * still, see `scene-handles`. One at a time, null for none.
+   */
+  | { readonly type: "handles"; readonly layer: string | null }
   /** Runs the code of a sound, which comes back as `sound-done` or `sound-failed`. */
   | { readonly type: "sound-make"; readonly request: number; readonly load: SoundLoad }
   /** Nobody needs that sound any more. */
@@ -213,6 +218,17 @@ export type FromCompositor =
     }
   /** What the scene of a layer registered before is not all there is any more. */
   | { readonly type: "scene-objects-unsure"; readonly layer: string; readonly revision: string }
+  /**
+   * Where the objects of the code of a scene are and what can be grabbed of them, on a frame of the
+   * scene, in the state it came from. Only ever data: the editor reads it with `readHandles`.
+   */
+  | {
+      readonly type: "scene-handles";
+      readonly layer: string;
+      readonly revision: string;
+      readonly frame: number;
+      readonly handles: unknown;
+    }
   /** What came out of the code of a sound. Only ever data, and checked again on arrival. */
   | {
       readonly type: "sound-done";

@@ -1,0 +1,25 @@
+/* Right over the frame of the compositor, which takes up all of the stage. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.canvas {
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+.list {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.list li {
+  position: absolute;
+}

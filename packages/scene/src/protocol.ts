@@ -194,6 +194,11 @@ export type ToScene =
       readonly layer: string;
       readonly channels: Readonly<Record<string, unknown>>;
     }
+  /**
+   * Say where the objects of the code are and what can be grabbed of them, whenever that changes
+   * while the scene stands still, or stop doing that. Answered by `handles`.
+   */
+  | { readonly type: "handles"; readonly on: boolean }
   | { readonly type: "ping"; readonly nonce: number };
 
 /** Something a scene wants people to know about, with what it knows of the place. */
@@ -259,6 +264,11 @@ export type FromScene =
    * than it could. It says so without saying all of it again.
    */
   | { readonly type: "objects-unsure" }
+  /**
+   * What the `handles` and `bounds` of the objects of its code said on a frame, by object. Only ever
+   * data, which the editor reads with `readHandles`.
+   */
+  | { readonly type: "handles"; readonly frame: number; readonly handles: unknown }
   | { readonly type: "pong"; readonly nonce: number };
 
 /** Whether a message is about what a scene registered, which is the one that can be large. */
@@ -373,6 +383,13 @@ export function readFromScene(data: unknown): Exclude<FromScene, { type: "frame"
     }
     case "objects-unsure":
       return { type: "objects-unsure" };
+    case "handles": {
+      const frame = count(message.frame);
+      const { handles } = message;
+      return frame === undefined || !Array.isArray(handles)
+        ? undefined
+        : { type: "handles", frame, handles };
+    }
     case "pong": {
       const nonce = count(message.nonce);
       return nonce === undefined ? undefined : { type: "pong", nonce };

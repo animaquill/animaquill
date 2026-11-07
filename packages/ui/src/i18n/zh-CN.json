@@ -793,6 +793,13 @@
         "external-url": "场景不能联网，这个地址被挡住了：{{target}}",
         "focus": "场景不能拿走键盘焦点",
         "frameset": "不支持 frameset",
+        "handle-bind": "手柄 {{target}} 的 bind 要写成这个对象自己的数字或角度属性",
+        "handle-bounds": "对象 {{target}} 的 bounds 要写成 [x, y, 宽, 高]，宽和高不能是负数",
+        "handle-id": "手柄 {{target}} 的 id 不能用：只能用英文字母、数字、下划线和连字符，同一个对象里不能重复",
+        "handle-kind": "手柄 {{target}} 的 kind 不对或者还不支持。现在能用 move、rotate、scale，和只显示的 line、polyline、circle",
+        "handle-object": "{{target}} 没有用 aq.object 登记，它的手柄不能用",
+        "handle-point": "{{target}} 的手柄里有位置或大小不是数字，或者离画面太远",
+        "handles-too-many": "手柄太多（{{target}}），后面的没有显示",
         "import-map-scopes": "import map 的 scopes 不起作用",
         "missing-asset": "这个素材场景拿不到：{{target}}",
         "missing-entry": "入口文件不在：{{file}}",
@@ -884,6 +891,34 @@
       "replay": "“{{name}}”不断要求重来，已经被移除。",
       "silent": "“{{name}}”卡死了，已经停止运行。",
       "stuck": "“{{name}}”走不到这一帧，已经停止运行。"
+    }
+  },
+  "overlay": {
+    "label": "预览画面上的手柄",
+    "list": "画面上的手柄",
+    "box": "片段框",
+    "grip": {
+      "scale": {
+        "nw": "缩放（左上）",
+        "n": "缩放（上）",
+        "ne": "缩放（右上）",
+        "e": "缩放（右）",
+        "se": "缩放（右下）",
+        "s": "缩放（下）",
+        "sw": "缩放（左下）",
+        "w": "缩放（左）"
+      },
+      "rotate": "旋转",
+      "anchor": "锚点",
+      "key": "位置关键帧 {{time}}",
+      "object": "{{object}} 的手柄 {{handle}}"
+    },
+    "usage": {
+      "scale": "拖动以锚点为中心缩放，宽高比保持不变",
+      "rotate": "拖动绕锚点旋转，按住 Shift 每次转 15°",
+      "anchor": "拖动改变旋转和缩放的中心，画面不动。靠近角、边的中点和中心时吸住，按住 Alt 不吸",
+      "key": "拖动改这个关键帧的位置，按住 Shift 只沿一个方向",
+      "object": "拖动改代码对象的属性。按住 Shift：移动只沿一个方向，旋转每次转 15°，缩放两个方向一起"
     }
   },
   "diagnostics": {

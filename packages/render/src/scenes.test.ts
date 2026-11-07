@@ -82,6 +82,13 @@ class FakeHost implements Host {
     this.focusChecks += 1;
   }
 
+  /** Whether it was asked to say where its objects are, in order. */
+  asked: boolean[] = [];
+
+  handles(on: boolean): void {
+    this.asked.push(on);
+  }
+
   /** It got as far as running. */
   ready(): void {
     this.state = "ready";
@@ -237,6 +244,43 @@ describe("origins that may hold on to what hung", () => {
     expect(hosts).toHaveLength(1);
     expect(hosts[0]?.opened).toBe(1);
     expect(scenes.showsPlaceholder("a")).toBe(true);
+  });
+});
+
+describe("where the objects of a scene are", () => {
+  it("is only asked of the clip that wants it, and stops being asked when it does not", () => {
+    const { scenes, hosts } = setup();
+    scenes.follow(planOf(layer("a"), layer("b")), 12);
+    scenes.handle(CONTENT);
+    scenes.handle({ type: "handles", layer: "b" });
+    expect(hosts.map(({ asked }) => asked)).toEqual([[false], [true]]);
+    scenes.handle({ type: "handles", layer: null });
+    expect(hosts[1]?.asked).toEqual([true, false]);
+  });
+
+  it("is asked of a scene that starts after the clip wanted it", () => {
+    const { scenes, hosts } = setup();
+    scenes.handle({ type: "handles", layer: "a" });
+    scenes.follow(planOf(layer("a")), 12);
+    scenes.handle(CONTENT);
+    expect(hosts[0]?.asked).toEqual([true]);
+  });
+
+  it("goes to the editor with the clip and the state it is of, as long as that clip wants it", () => {
+    const { scenes, hosts, sent } = showing();
+    scenes.handle({ type: "handles", layer: "a" });
+    hosts[0]?.options.onHandles?.(60, [{ object: "arm" }]);
+    expect(sent).toContainEqual({
+      type: "scene-handles",
+      layer: "a",
+      revision: "r1",
+      frame: 60,
+      handles: [{ object: "arm" }],
+    });
+    scenes.handle({ type: "handles", layer: null });
+    const before = sent.length;
+    hosts[0]?.options.onHandles?.(61, []);
+    expect(sent).toHaveLength(before);
   });
 });
 

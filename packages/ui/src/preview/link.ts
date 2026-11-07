@@ -22,6 +22,7 @@ import {
 import { BUILT_IN_PROPERTIES, type PropertyValue } from "@animaquill/schema";
 import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
 import type { MediaLibrary } from "../media/library.ts";
+import type { SceneHandles } from "../overlay/scene-handles.ts";
 import type { SceneRegistrations } from "../properties/registrations.ts";
 import type { PreviewedValues, PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
@@ -80,7 +81,7 @@ function changesOf(
 }
 
 /** A plan with something on top of it, for the compositor to start from. */
-function withShown(plan: RenderPlan, shown: PreviewedValues): RenderPlan {
+export function withShown(plan: RenderPlan, shown: PreviewedValues): RenderPlan {
   if (shown.size === 0) return plan;
   const layers = plan.layers.map((layer) => {
     const changes = changesOf(layer, undefined, shown.get(layer.id));
@@ -128,6 +129,9 @@ export class PreviewLink {
   readonly #registrations: SceneRegistrations | undefined;
   /** What the scene of each layer registered last, to say later that it is not sure any more. */
   readonly #registered = new Map<string, { readonly revision: string; readonly params: string }>();
+  readonly #handles: SceneHandles | undefined;
+  /** Which clip was last asked to say where its objects are. */
+  #handlesFor: string | undefined;
   /** What the last plan was drawn at. */
   #scale: number | undefined;
   #ready = false;
@@ -154,8 +158,10 @@ export class PreviewLink {
     frameRate: PreviewFrameRate,
     quality: PreviewQuality,
     registrations?: SceneRegistrations,
+    handles?: SceneHandles,
   ) {
     this.#registrations = registrations;
+    this.#handles = handles;
     this.#frame = frame;
     this.#timeline = timeline;
     this.#properties = properties;
@@ -191,7 +197,9 @@ export class PreviewLink {
     });
     const stopProperties = properties.subscribe(this.#sendPreview);
     const stopQuality = quality.subscribe(this.#sendPlan);
+    const stopHandles = handles?.subscribeWanted(this.#sendHandles);
     this.#stop = () => {
+      stopHandles?.();
       this.#keyboard.dispose();
       this.#watch.dispose();
       this.#painted.dispose();
@@ -239,11 +247,13 @@ export class PreviewLink {
       this.#lastSeconds = undefined;
       this.#playingSince = undefined;
       this.#recording = false;
+      this.#handlesFor = undefined;
       this.#watch.ready();
       this.#status.forgetScenes();
       this.#send({ type: "setup", ...this.#setup, retired: this.#status.retiredOrigins });
       this.#sendAll();
       this.#sendRecording();
+      this.#sendHandles();
     } else if (data.type === "pong") {
       this.#watch.pong(data.nonce);
       this.#status.worked();
@@ -259,6 +269,8 @@ export class PreviewLink {
       if (shown?.kind === "scene" && shown.revision === data.revision) {
         this.#status.noteProblem(data.layer, data.revision, data.problem);
       }
+    } else if (data.type === "scene-handles") {
+      this.#handles?.note(data.layer, data.revision, data.frame, data.handles);
     } else if (data.type === "scene-objects") {
       // What any state of a scene registered is true of that state, also one on its way out.
       const params = this.#registrations?.note(data.revision, data.registration);
@@ -299,6 +311,14 @@ export class PreviewLink {
     if (!this.#ready || on === this.#recording) return;
     this.#recording = on;
     this.#send({ type: "record", on });
+  };
+
+  /** Only the scene of one clip says where its objects are, and only while somebody looks. */
+  #sendHandles = (): void => {
+    const wanted = this.#handles?.wanted;
+    if (!this.#ready || wanted === this.#handlesFor) return;
+    this.#handlesFor = wanted;
+    this.#send({ type: "handles", layer: wanted ?? null });
   };
 
   #sendAll = (): void => {
