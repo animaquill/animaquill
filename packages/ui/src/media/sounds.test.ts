@@ -567,3 +567,89 @@ describe("clips", () => {
     expect(make().stateOf(clip())).toBeUndefined();
   });
 });
+
+describe("a sound an export waits for", () => {
+  it("comes from the state the export has, even when the code changed since", async () => {
+    const { make, runs, addSound, addClip, clip, store, execute, media } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    await settle();
+    const state = store.getState();
+    const made = madeSoundOf(state, clip());
+    if (!made) throw new Error("No sound");
+    execute("file.write", { path: "sounds/s/sound.js", text: "// 新" });
+    await settle();
+    expect(runs[0]?.cancel).toHaveBeenCalled();
+    const waiting = sounds.whenMade(made, state);
+    runs[1]?.finish(silence());
+    await settle();
+    expect(await runs[2]?.load.files.get("sounds/s/sound.js")?.text()).toBe(CODE);
+    runs[2]?.finish(silence());
+    expect(await waiting).toEqual({ state: "ready" });
+    expect(await media.get(made.file)).toBeDefined();
+  });
+
+  it("that is there already is not made again", async () => {
+    const { make, runs, addSound, addClip, clip, store } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    await settle();
+    runs[0]?.finish(silence());
+    await settle();
+    const made = madeSoundOf(store.getState(), clip());
+    if (!made) throw new Error("No sound");
+    expect(await sounds.whenMade(made, store.getState())).toEqual({ state: "ready" });
+    expect(runs).toHaveLength(1);
+  });
+
+  it("says why it did not come about", async () => {
+    const { make, runs, addSound, addClip, clip, store } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    await settle();
+    const made = madeSoundOf(store.getState(), clip());
+    if (!made) throw new Error("No sound");
+    const waiting = sounds.whenMade(made, store.getState());
+    runs[0]?.finish({ ok: false, reason: "time" });
+    expect(await waiting).toEqual({ state: "failed", reason: "time" });
+  });
+
+  it("stops being made when the export stops waiting and nobody else needs it", async () => {
+    const { make, runs, addSound, addClip, clip, store, execute } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    await settle();
+    const state = store.getState();
+    const made = madeSoundOf(state, clip());
+    if (!made) throw new Error("No sound");
+    execute("clip.remove", { timeline: "main", clips: ["c"] });
+    await settle();
+    const stop = new AbortController();
+    const waiting = sounds.whenMade(made, state, stop.signal);
+    await settle();
+    expect(runs).toHaveLength(2);
+    const stopped = expect(waiting).rejects.toThrow("Stopped");
+    stop.abort(new Error("Stopped"));
+    await stopped;
+    await settle();
+    expect(runs[1]?.cancel).toHaveBeenCalled();
+  });
+
+  it("of another project does not get made here", async () => {
+    const { make, addSound, addClip, clip, store, runs } = await setup();
+    addSound();
+    addClip();
+    const sounds = make();
+    const state = store.getState();
+    const made = madeSoundOf(state, clip());
+    if (!made) throw new Error("No sound");
+    const other = { ...state, manifest: { ...state.manifest, id: "别的" } };
+    expect(await sounds.whenMade(made, other)).toEqual({ state: "failed", reason: "error" });
+    await settle();
+    expect(runs).toHaveLength(1);
+  });
+});

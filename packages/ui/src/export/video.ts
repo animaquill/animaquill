@@ -1,12 +1,14 @@
-import { SoundFailed, SoundMixer } from "@animaquill/audio";
+import { readSound, SoundFailed, SoundMixer, type SoundSource } from "@animaquill/audio";
 import {
   buildAudioPlan,
   buildRenderPlan,
+  madeSoundsOf,
   timelineLength,
   type AudioPlan,
   type ProjectState,
   type ProjectStore,
   type RenderPlan,
+  type SoundLayer,
 } from "@animaquill/core";
 import type {
   ExportStore,
@@ -23,13 +25,7 @@ import {
   type EncodedFrame,
   type VideoFileOptions,
 } from "@animaquill/media";
-import {
-  failureOf,
-  StillFailed,
-  type EncodedChunk,
-  type FrameToEncode,
-  type StillFailure,
-} from "@animaquill/render";
+import { failureOf, StillFailed, type EncodedChunk, type FrameToEncode } from "@animaquill/render";
 import { toSeconds } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { formatTimecode } from "../timeline/frames.ts";
@@ -37,6 +33,7 @@ import type { TimelineEditor } from "../timeline/editor.ts";
 import type { Dialogs, FormField } from "../workbench/dialogs.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
+import type { MadeSounds, SoundFailure } from "../media/sounds.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import {
   browserSupport,
@@ -72,7 +69,7 @@ import {
   type SoundSupportCheck,
 } from "./sound.ts";
 import { PieceWriter, writeTracks } from "./pieces.ts";
-import { describeFailure } from "./words.ts";
+import { describeFailure, type ExportFailure } from "./words.ts";
 
 /** An export that nobody went on with for this long is not going to be. */
 const KEEP_UNFINISHED_MS = 30 * 24 * 60 * 60 * 1000;
@@ -125,7 +122,9 @@ export interface VideoExportOptions extends ExportSite {
   readonly writer?: (sink: ByteSink, options: VideoFileOptions) => Promise<VideoWriter>;
   readonly soundSupport?: SoundSupportCheck;
   readonly soundEncoder?: MakeAudioEncoder;
-  readonly mixer?: (plan: AudioPlan) => PieceMixer;
+  /** Where sounds made by code come from. */
+  readonly sounds: Pick<MadeSounds, "whenMade">;
+  readonly mixer?: (plan: AudioPlan, source: SoundSource) => PieceMixer;
   /** How much room the browser has for what an export keeps. */
   readonly storage?: () => Promise<StorageEstimate | undefined>;
   /** Where the compositor goes, when not into a window of its own made here. */
@@ -207,19 +206,33 @@ export interface VideoJob {
   readonly writing?: boolean;
   /** The sound catches up, after a reload, this much of the way. */
   readonly catchingUp?: number;
+  /** Code makes a sound that comes next, and the picture waits for it. */
+  readonly makingSound?: boolean;
 }
 
 /** A moment of the timeline that did not make it into the video. */
 class FrameFailed extends Error {
   readonly index: number;
   readonly seconds: number;
-  readonly failure: StillFailure;
+  readonly failure: ExportFailure;
 
-  constructor(index: number, seconds: number, failure: StillFailure) {
+  constructor(index: number, seconds: number, failure: ExportFailure) {
     super(`Frame ${index}: ${failure.reason}`);
     this.index = index;
     this.seconds = seconds;
     this.failure = failure;
+  }
+}
+
+/** Code did not make a sound that the export needs, and without it the file would sound wrong. */
+class SoundNotMade extends Error {
+  readonly sound: SoundLayer;
+  readonly why: SoundFailure;
+
+  constructor(sound: SoundLayer, why: SoundFailure) {
+    super(`Sound ${sound.id} not made: ${why}`);
+    this.sound = sound;
+    this.why = why;
   }
 }
 
@@ -943,9 +956,24 @@ export class VideoExport {
       if (saved.sound) {
         const audioPlan = buildAudioPlan(state, timelineId);
         const media = this.#options.projects.media(state.manifest.id);
+        const made = new Map(madeSoundsOf(state, timelineId).map((each) => [each.file, each]));
+        // A sound made by code is a file like any other once it is there, made from this state.
+        const source: SoundSource = async (layer) => {
+          const wanted = layer.made && made.get(layer.file);
+          if (!wanted) return undefined;
+          this.#makingSound(true);
+          const outcome = await untilAborted(
+            this.#options.sounds.whenMade(wanted, state, signal),
+            signal,
+          ).finally(() => this.#makingSound(false));
+          if (outcome.state === "failed") throw new SoundNotMade(layer, outcome.reason);
+          const wav = await media.get(layer.file).catch(() => undefined);
+          if (!wav) throw new SoundFailed(layer, "missing-file");
+          return (from, to) => readSound(wav, from, to);
+        };
         const mixer =
-          this.#options.mixer?.(audioPlan) ??
-          new SoundMixer(audioPlan, { fileOf: (hash) => media.get(hash) });
+          this.#options.mixer?.(audioPlan, source) ??
+          new SoundMixer(audioPlan, { fileOf: (hash) => media.get(hash), source });
         soundTrack = new SoundTrackEncoder(
           mixer,
           range,
@@ -971,11 +999,14 @@ export class VideoExport {
           await untilAborted(track.until(goal), signal);
           this.#catchingUp(undefined, 0);
         } catch (error) {
-          if (!(error instanceof SoundFailed)) throw error;
-          const { sound: failed, reason } = error;
+          if (!(error instanceof SoundFailed || error instanceof SoundNotMade)) throw error;
+          const failed = error.sound;
           const at = Math.max(failed.start, range.from);
           const where = Math.floor((at - range.from) * fps + FRAME_TOLERANCE);
-          const failure = { reason, layer: failed.id, file: failed.file };
+          const failure: ExportFailure =
+            error instanceof SoundNotMade
+              ? { reason: "sound-not-made", layer: failed.id, why: error.why }
+              : { reason: error.reason, layer: failed.id, file: failed.file };
           throw new FrameFailed(where, at, failure);
         }
       };
@@ -1127,6 +1158,16 @@ export class VideoExport {
   }
 
   /** How far the sound has got, while it has a way to go before the picture can go on. */
+  #makingSound(on: boolean): void {
+    const job = this.#job;
+    if (!job || (job.makingSound ?? false) === on) return;
+    if (on) this.#set({ ...job, makingSound: true });
+    else {
+      const { makingSound: _, ...rest } = job;
+      this.#set(rest);
+    }
+  }
+
   #catchingUp(done: number | undefined, total: number): void {
     const job = this.#job;
     if (!job) return;

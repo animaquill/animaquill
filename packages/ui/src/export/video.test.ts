@@ -318,6 +318,7 @@ function setup(
     soundEncoder,
     windows,
     exports,
+    sounds: { whenMade: async () => ({ state: "ready" }) },
     mixer: () => ({
       mix: async (from: number, frames: number) => {
         mixed.push({ from, frames });
@@ -695,6 +696,66 @@ describe("the sound of a video", () => {
     // What it got to stays, for after what went wrong is put right.
     expect(context.file.abandoned).toBe(false);
     expect(context.exports.saved.size).toBe(1);
+  });
+});
+
+describe("a sound that code makes", () => {
+  /** A sound clip at one second, for a second. */
+  function addMadeSound(store: ProjectStore) {
+    const audio = orderedTracks(store.getState().timelines["main"] as never).find(
+      ({ kind }) => kind === "audio",
+    )?.id;
+    const sound = { name: "铃", entry: "sound.js", runtime: 1 };
+    const code = "aq.sound(({ frames }) => new Float32Array(frames));";
+    store.execute({ type: "sound.add", params: { id: "s", sound, files: { "sound.js": code } } });
+    const clip = {
+      id: "bell",
+      start: "1",
+      duration: "1",
+      source: { kind: "sound", sound: "s" },
+      properties: { "param.duration": 1 },
+    };
+    const placed = store.execute({
+      type: "clip.add",
+      params: { timeline: "main", track: audio, clip },
+    });
+    if (!placed.ok) throw new Error(placed.error.message);
+  }
+
+  it("is waited for, with the export saying so, and stops it where it does not come", async () => {
+    const asked: string[] = [];
+    const made = Promise.withResolvers<{ state: "failed"; reason: "time" }>();
+    const context = setup({
+      sounds: {
+        whenMade: (sound, state) => {
+          asked.push(`${sound.sound}@${state.manifest.name}`);
+          return made.promise;
+        },
+      },
+      mixer: (plan, source) => ({
+        mix: async (_: number, frames: number) => {
+          for (const sound of plan.sounds) await source(sound);
+          return {
+            length: frames,
+            numberOfChannels: 2,
+            getChannelData: () => new Float32Array(frames),
+          } as unknown as AudioBuffer;
+        },
+      }),
+    });
+    addMadeSound(context.store);
+    const bell = context.store.getState().timelines["main"]?.clips["bell"];
+    (context.timeline.model.boxes as Map<string, unknown>).set("bell", { id: "bell", clip: bell });
+    const running = context.videos.start();
+    await answer(context);
+    await vi.waitFor(() => expect(context.videos.getSnapshot()?.makingSound).toBe(true));
+    expect(asked).toEqual(["s@片子"]);
+    made.resolve({ state: "failed", reason: "time" });
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("sound.failed.time");
+    expect(shown.message).toContain("铃");
+    expect(shown.message).toContain('"frame":31');
   });
 });
 

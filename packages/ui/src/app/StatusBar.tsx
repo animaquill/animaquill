@@ -70,7 +70,8 @@ function VideoExportStatus() {
   const { t } = useTranslation();
   const job = useSyncExternalStore(videos.subscribe, videos.getSnapshot);
   if (!job) return null;
-  const { name, done, total, remainingMs, stopping, paused, catchingUp, writing } = job;
+  const { name, done, total, remainingMs, stopping, paused, catchingUp, writing, makingSound } =
+    job;
   const percent = total > 0 ? Math.floor((done / total) * 100) : 0;
   const about = t("export.video.runningAbout", {
     file: name,
@@ -86,14 +87,16 @@ function VideoExportStatus() {
           ? t("export.video.stopping")
           : writing
             ? t("export.video.writing")
-            : catchingUp !== undefined
-              ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
-              : paused
-                ? t("export.window.pausedStatus", { percent })
-                : t("export.video.running", { percent }) +
-                  (remainingMs === undefined
-                    ? ""
-                    : ` · ${t("export.video.remaining", { time: duration(remainingMs) })}`)}
+            : makingSound
+              ? t("export.video.makingSound")
+              : catchingUp !== undefined
+                ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
+                : paused
+                  ? t("export.window.pausedStatus", { percent })
+                  : t("export.video.running", { percent }) +
+                    (remainingMs === undefined
+                      ? ""
+                      : ` · ${t("export.video.remaining", { time: duration(remainingMs) })}`)}
       </span>
       {paused && !stopping && (
         // The browser only opens the window of the export for a press of a button.

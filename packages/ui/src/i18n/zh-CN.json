@@ -162,6 +162,7 @@
       "runningAbout": "正在导出“{{file}}”：第 {{done}} / {{total}} 帧。",
       "stopping": "正在停下来",
       "writing": "正在把视频写进文件",
+      "makingSound": "正在生成要用到的声音",
       "cancel": "取消导出",
       "done": "已导出“{{file}}”（{{how}}）。",
       "doneDownload": "已导出“{{file}}”（{{how}}），在浏览器的下载里。",

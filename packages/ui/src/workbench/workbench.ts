@@ -276,6 +276,7 @@ export class Workbench {
       folders: host.folders,
       settings: host.settings,
       exports: host.exports,
+      sounds: this.sounds,
       preview: this.preview,
       dialogs: this.dialogs,
       notifications: this.notifications,

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createProject, writeProject } from "@animaquill/schema";
+import { createProject, writeProject, type SoundManifest } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from "mediabunny";
 import { png } from "./property-helpers.ts";
@@ -58,9 +58,19 @@ function projectFolder(
   files: Readonly<Record<string, Buffer>> = {},
   assets: Record<string, unknown> = {},
   sound: readonly { readonly muted?: boolean; readonly clips: readonly Clip[] }[] = [],
+  /** Sounds that code makes, by id: what is in their `sound.js`. */
+  codes: Readonly<Record<string, string>> = {},
 ): string {
-  const project = createProject({ name: "视频项目", format: FORMAT });
+  const manifests = Object.keys(codes).map((id): [string, SoundManifest] => [
+    id,
+    { name: `声音 ${id}`, entry: "sound.js", runtime: 1 },
+  ]);
+  const project = {
+    ...createProject({ name: "视频项目", format: FORMAT }),
+    sounds: new Map(manifests),
+  };
   const written = writeProject(project);
+  for (const [id, code] of Object.entries(codes)) written.set(`sounds/${id}/sound.js`, code);
   const path = "timelines/main/timeline.json";
   const timeline = JSON.parse(written.get(path) as string) as {
     sections: { duration: string }[];
@@ -103,10 +113,12 @@ const installSavePicker = (page: Page) =>
     Object.assign(window, { showSaveFilePicker: pick });
   });
 
-async function open(page: Page, folder: string): Promise<void> {
+async function open(page: Page, folder: string, code = false): Promise<void> {
   await installSavePicker(page);
   await page.reload();
   await chooseFolder(page, folder);
+  // A project with code says so first.
+  if (code) await openAnyway(page);
   await expect(tab(page, "preview")).toBeVisible();
 }
 
@@ -822,6 +834,75 @@ test.describe("the sound of a video", () => {
     // Nothing of the muted track, which is louder and higher.
     expect(decibels(before.rms)).toBeLessThan(-60);
     expect(decibels(after.rms)).toBeLessThan(-60);
+  });
+});
+
+test.describe("the sound of a video with a sound that code makes", () => {
+  test("waits for the sound, and has it in its place", async ({ page }) => {
+    test.setTimeout(120_000);
+    // It takes a while, so that the export gets there first and has to wait.
+    const sine = `aq.sound(async ({ frames, sampleRate }) => {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const samples = new Float32Array(frames);
+      for (let at = 0; at < frames; at += 1) {
+        samples[at] = 0.5 * Math.sin((2 * Math.PI * 440 * at) / sampleRate);
+      }
+      return samples;
+    });`;
+    const made = {
+      id: "bell",
+      start: "1",
+      duration: "2",
+      source: { kind: "sound", sound: "s" },
+      properties: { "param.duration": 2 },
+    };
+    await open(
+      page,
+      projectFolder(4, [movingSquare(4)], {}, {}, [{ clips: [made] }], { s: sine }),
+      true,
+    );
+    await startExport(page);
+    const status = page.getByRole("contentinfo").getByRole("status");
+    await expect(status.filter({ hasText: "正在生成要用到的声音" })).toBeVisible();
+    await exported(page, 90_000);
+    const file = (await savedFile(page)) as Buffer;
+    const video = await factsOf(file);
+    const sound = await soundOf(page, file);
+    if (!sound) throw new Error("No sound");
+    const { rate, samples } = sound;
+    const heard = audible(samples, rate);
+    const tone = measure(samples, rate, 1.2, 2.8);
+    console.log(
+      `made sound ${sound.codec}: heard ${heard.first.toFixed(4)} to ${heard.last.toFixed(4)} s, ` +
+        `${tone.hz.toFixed(1)} Hz, ${decibels(tone.rms).toFixed(2)} dBFS`,
+    );
+    expect(Math.abs(sound.duration - video.duration)).toBeLessThan(0.025);
+    expect(Math.abs(heard.first - 1)).toBeLessThan(0.01);
+    expect(Math.abs(heard.last - 3)).toBeLessThan(0.01);
+    expect(Math.abs(tone.hz - 440)).toBeLessThan(2);
+    expect(Math.abs(decibels(tone.rms) - decibels(0.5 / Math.SQRT2))).toBeLessThan(0.5);
+  });
+
+  test("stops with what went wrong when the code does not make it", async ({ page, problems }) => {
+    test.setTimeout(120_000);
+    const made = {
+      id: "bell",
+      start: "1",
+      duration: "2",
+      source: { kind: "sound", sound: "s" },
+      properties: { "param.duration": 2 },
+    };
+    const broken = `aq.sound(() => { throw new Error("坏了"); });`;
+    await open(
+      page,
+      projectFolder(4, [movingSquare(4)], {}, {}, [{ clips: [made] }], { s: broken }),
+      true,
+    );
+    await startExport(page);
+    await expect(dialog(page)).toContainText("“声音 s”运行失败", { timeout: 90_000 });
+    await expect(dialog(page)).toContainText("第 31 帧");
+    // The code threw, which is what this is about.
+    problems.splice(0);
   });
 });
 
