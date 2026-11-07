@@ -1,8 +1,12 @@
-import { expect, test } from "./support.ts";
+import { expect, needsDevPage, test } from "./support.ts";
 
 test.use({ withProject: false });
 
-test("mixing a long MP3 piece by piece only looks for the place once", async ({ page }) => {
+test("mixing a long MP3 piece by piece only looks for the place once", async ({
+  page,
+  devPage,
+}) => {
+  test.skip(!devPage, needsDevPage("window.aqAudio"));
   test.setTimeout(240_000);
   const timings = await page.evaluate(async () => {
     // An hour of silent MPEG-1 Layer III frames, 128 kbit/s, 44.1 kHz, stereo, without a Xing frame.
@@ -13,11 +17,11 @@ test("mixing a long MP3 piece by piece only looks for the place once", async ({ 
       bytes.set([0xff, 0xfb, 0x90, 0x00], index * FRAME);
     }
     const file = new Blob([bytes], { type: "audio/mpeg" });
-    // The module as the development server has it, to mix without an editor around it.
-    const path = "/@fs/work/oss/packages/audio/src/index.ts";
-    const audio = (await import(
-      /* @vite-ignore */ path
-    )) as typeof import("../../audio/src/index.ts");
+    // The module as the development page has it, to mix without an editor around it.
+    const { aqAudio } = window as unknown as {
+      aqAudio: () => Promise<typeof import("../../audio/src/index.ts")>;
+    };
+    const audio = await aqAudio();
     const sound = { id: "music", file: "music", start: 0, end: 3600, offset: 0, gain: 1 };
     const mixer = new audio.SoundMixer({ sounds: [sound] }, { fileOf: async () => file });
     const out: { at: number; ms: number; longestTaskMs: number }[] = [];

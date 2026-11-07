@@ -71,8 +71,9 @@ export const test = base.extend<{
   withProject: [true, { option: true }],
   /**
    * Whether this is the development page, which has things for tests that the site does not:
-   * `window.aqExecute`, `?soundLimit=` and `?sceneStage=plain`, see `dev/main.tsx`, and the version
-   * `dev`. `scripts/e2e-prod` turns this off, and what needs them skips itself, see `needsDevPage`.
+   * `window.aqExecute`, `window.aqAudio`, `?soundLimit=` and `?sceneStage=plain`, see
+   * `dev/main.tsx`, and the version `dev`. `scripts/e2e-prod` turns this off, and what needs them
+   * skips itself, see `needsDevPage`.
    */
   devPage: [true, { option: true }],
   /** Off for what is about controls and the project, where every change is written right away. */

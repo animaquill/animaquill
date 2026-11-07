@@ -86,6 +86,10 @@ if (root)
     ...(soundLimit !== null && { soundLimitMs: Number(soundLimit) }),
     panels: [crashTest, frameTest],
     onWorkbench: (workbench) => {
-      Object.assign(window, { aqExecute: (call: never) => workbench.session.store?.execute(call) });
+      Object.assign(window, {
+        aqExecute: (call: never) => workbench.session.store?.execute(call),
+        // For measuring the mix on its own, without an editor around it.
+        aqAudio: () => import("@animaquill/audio"),
+      });
     },
   });
