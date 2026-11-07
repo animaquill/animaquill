@@ -24,6 +24,12 @@ async function boxOf(locator: Locator) {
 /** The time a clip is at, as people can read it. */
 const labelOf = async (locator: Locator) => (await locator.getAttribute("aria-label")) ?? "";
 
+/** The list follows a moment after a change, so what it says right away can still be the old. */
+async function labelAfter(locator: Locator, before: string) {
+  await expect(locator).not.toHaveAttribute("aria-label", before);
+  return labelOf(locator);
+}
+
 const expectLabel = (locator: Locator, text: RegExp | string) =>
   expect(locator).toHaveAttribute("aria-label", text);
 
@@ -707,18 +713,21 @@ test.describe("several windows", () => {
     await settle(other);
     await settle(page);
     const [x, y] = await middleOf(first);
+    const start = await labelOf(first);
     await drag(page, [x, y], [x + 80, y]);
-    const moved = await labelOf(first);
+    const moved = await labelAfter(first, start);
     await expect(clips(other).first()).toHaveAttribute("aria-label", moved);
     await settle(other);
     const [otherX, otherY] = await middleOf(clips(other).first());
     await drag(other, [otherX, otherY], [otherX + 80, otherY]);
-    const movedAgain = await labelOf(clips(other).first());
+    const movedAgain = await labelAfter(clips(other).first(), moved);
     await expect(first).toHaveAttribute("aria-label", movedAgain);
 
     await page.keyboard.press("Control+z");
     await expect(page.getByRole("status").getByText("这一步之后别人改过，已跳过")).toBeVisible();
+    await settle(page);
     await expect(first).toHaveAttribute("aria-label", movedAgain);
+    await expect(clips(other).first()).toHaveAttribute("aria-label", movedAgain);
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(1);
   });

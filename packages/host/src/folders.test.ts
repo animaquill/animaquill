@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isRefusedByChrome } from "./chrome-names.ts";
 import { createFolderAccess, sourceFromFiles, type FolderAccessOptions } from "./folders.ts";
 import type { SourceFolder, TargetFolder } from "./index.ts";
@@ -46,6 +46,8 @@ class FakeFolder {
   readonly entries = new Map<string, FakeFolder | FakeFile>();
   /** Stands for rules of a later browser, which nobody knows yet. */
   refuses: (name: string) => boolean = isRefusedByChrome;
+  /** How many more times removing fails, as long as the browser holds on to a file in there. */
+  inUse = 0;
 
   constructor(name: string) {
     this.name = name;
@@ -81,6 +83,10 @@ class FakeFolder {
     this.#check(name);
     const entry = this.entries.get(name);
     if (!entry) throw notFound();
+    if (this.inUse > 0) {
+      this.inUse -= 1;
+      throw new DOMException("in use", "NoModificationAllowedError");
+    }
     if (entry instanceof FakeFolder && entry.entries.size > 0 && !recursive) {
       throw new DOMException("not empty", "InvalidModificationError");
     }
@@ -278,6 +284,50 @@ describe("writing a folder", () => {
     await folder.abandon();
     expect(disk.at("我的项目")).toBeUndefined();
     expect(textOf(disk.at("别的文件夹/a.txt"))).toBe("留着");
+  });
+
+  describe("taking it back while the browser holds on to a file", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("waits until it has let go", async () => {
+      const { access, disk } = setup();
+      const folder = await target(access);
+      await folder.write("a.txt", new Blob(["x"]));
+      disk.inUse = 3;
+      const abandoned = folder.abandon();
+      await vi.runAllTimersAsync();
+      await abandoned;
+      expect(disk.at("我的项目")).toBeUndefined();
+    });
+
+    it("gives up on a file that stays in use, and leaves the folder", async () => {
+      const { access, disk } = setup();
+      const folder = await target(access);
+      await folder.write("a.txt", new Blob(["x"]));
+      disk.inUse = Number.POSITIVE_INFINITY;
+      const abandoned = expect(folder.abandon()).rejects.toMatchObject({
+        name: "NoModificationAllowedError",
+      });
+      await vi.runAllTimersAsync();
+      await abandoned;
+      expect(textOf(disk.at("我的项目/a.txt"))).toBe("x");
+    });
+
+    it("does not wait for what time will not change", async () => {
+      const { access, disk } = setup();
+      const folder = await target(access);
+      const remove = vi
+        .spyOn(disk, "removeEntry")
+        .mockRejectedValue(new DOMException("gone", "NotFoundError"));
+      await expect(folder.abandon()).rejects.toMatchObject({ name: "NotFoundError" });
+      expect(remove).toHaveBeenCalledTimes(1);
+    });
   });
 
   it.each([

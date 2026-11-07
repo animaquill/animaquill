@@ -62,6 +62,8 @@ declare global {
     refusedNames: readonly string[];
     /** Folders cannot be removed. */
     stuck: boolean;
+    /** How many more times that goes for a folder, as for a moment after stopping a write. */
+    inUse: number | undefined;
     sounds: number;
     /** A folder on the disk. */
     real: FileSystemDirectoryHandle;
@@ -98,6 +100,10 @@ const installFolders = (page: Page) =>
     const { removeEntry, getFileHandle } = FileSystemDirectoryHandle.prototype;
     FileSystemDirectoryHandle.prototype.removeEntry = async function remove(...args) {
       if (window.stuck) throw new DOMException("in use", "NoModificationAllowedError");
+      if (window.inUse) {
+        window.inUse -= 1;
+        throw new DOMException("in use", "NoModificationAllowedError");
+      }
       await removeEntry.apply(this, args);
     };
     FileSystemDirectoryHandle.prototype.getFileHandle = async function get(name, options) {
@@ -847,6 +853,23 @@ test.describe("an export that does not get to the end", () => {
 
     await expect(page.getByText("导出已取消。")).toBeVisible();
     await expect(dialog(page)).toHaveCount(0);
+    expect(await folderNames(page, "chosen")).toEqual([]);
+  });
+
+  test("leaves nothing when the browser takes a moment to let go of the file", async ({ page }) => {
+    await page.evaluate(() => {
+      window.holdFile = "assets.json";
+      window.inUse = 2;
+    });
+    await startExport(page);
+    const progress = dialog(page);
+    await expect.poll(() => page.evaluate(() => window.release !== undefined)).toBe(true);
+    await progress.getByRole("button", { name: "取消" }).click();
+    await page.evaluate(() => window.release?.());
+
+    await expect(page.getByText("导出已取消。")).toBeVisible();
+    await expect(dialog(page)).toHaveCount(0);
+    expect(await page.evaluate(() => window.inUse)).toBe(0);
     expect(await folderNames(page, "chosen")).toEqual([]);
   });
 

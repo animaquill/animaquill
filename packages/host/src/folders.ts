@@ -8,6 +8,11 @@ const PICKER_ID = "animaquill-projects";
 const TOOL_FOLDERS = new Set([".git", ".animaquill", "node_modules"]);
 /** A folder asked for by a name that is taken gets a number, within reason. */
 const MAX_NUMBER = 1000;
+/**
+ * Stopping a write ends before the browser has let go of the file, and until then the folder
+ * around it cannot be removed. That is over in moments. What takes longer is not the browser.
+ */
+const REMOVE_WAITS_MS = [50, 100, 200, 400, 800];
 
 type DirectoryPicker = (options: {
   readonly id: string;
@@ -122,6 +127,21 @@ async function writeFile(
   }
 }
 
+async function removeFolder(parent: FileSystemDirectoryHandle, name: string): Promise<void> {
+  for (const wait of REMOVE_WAITS_MS) {
+    try {
+      await parent.removeEntry(name, { recursive: true });
+      return;
+    } catch (error) {
+      if (!isNamed(error, "NoModificationAllowedError")) throw error;
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, wait);
+    });
+  }
+  await parent.removeEntry(name, { recursive: true });
+}
+
 function directoryTarget(
   parent: FileSystemDirectoryHandle,
   root: FileSystemDirectoryHandle,
@@ -145,7 +165,7 @@ function directoryTarget(
     },
     async finish() {},
     async abandon() {
-      await parent.removeEntry(name, { recursive: true });
+      await removeFolder(parent, name);
     },
   };
 }
