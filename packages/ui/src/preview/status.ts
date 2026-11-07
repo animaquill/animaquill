@@ -28,14 +28,18 @@ export interface PreviewSnapshot {
 }
 
 export interface PreviewMessages {
-  /** Something was wrong with what a scene did. `last` says that more of these will not be told. */
-  problem(clip: string, problem: SceneProblem, last: boolean): void;
+  /**
+   * Something was wrong with what a scene did, in this state of it. `first` says that nobody heard
+   * of this state having problems yet, which is all that is worth interrupting people for.
+   */
+  problem(clip: string, revision: string, problem: SceneProblem, first: boolean): void;
+  /** How a scene that stopped for good is doing now, or undefined when it no longer is. */
+  stopped(clip: string, status: SceneStatus | undefined): void;
+  /** The state of the project the scenes are in now, by clip. Older problems are over. */
+  revisions(revisions: ReadonlyMap<string, string>): void;
   /** The preview hung and starts again by itself. */
   restarted(): void;
 }
-
-/** Past this a scene has said what it had to say. */
-const MAX_PROBLEMS_TOLD = 3;
 
 /** Nobody needs to hear about scenes that are fine. */
 const isWorthSaying = ({ state }: SceneStatus) => state !== "ready" && state !== "closed";
@@ -47,8 +51,8 @@ const isWorthSaying = ({ state }: SceneStatus) => state !== "ready" && state !==
 export class PreviewStatus {
   readonly #emitter = new Emitter();
   readonly #messages: PreviewMessages;
-  /** How many problems people heard of, by clip. It starts over with every new start of a scene. */
-  readonly #told = new Map<string, number>();
+  /** The state of each clip people heard of problems in. A new start of a scene starts it over. */
+  readonly #told = new Map<string, string>();
   /** Where scenes must not run any more, which only ends with this page. */
   readonly #retired = new Set<string>();
   #strikes = new Strikes(WATCHDOG_RULES.strikes, WATCHDOG_RULES.forgiveAfterMs);
@@ -97,6 +101,7 @@ export class PreviewStatus {
 
   noteScene(clip: string, status: SceneStatus): void {
     if (status.state === "opening") this.#told.delete(clip);
+    this.#messages.stopped(clip, status.state === "stopped" ? status : undefined);
     const scenes = new Map(this.#snapshot.scenes);
     if (isWorthSaying(status)) scenes.set(clip, status);
     else if (!scenes.delete(clip)) return;
@@ -117,10 +122,14 @@ export class PreviewStatus {
     this.#retired.add(origin);
   }
 
-  noteProblem(clip: string, problem: SceneProblem): void {
-    const told = (this.#told.get(clip) ?? 0) + 1;
-    this.#told.set(clip, told);
-    if (told <= MAX_PROBLEMS_TOLD)
-      this.#messages.problem(clip, problem, told === MAX_PROBLEMS_TOLD);
+  noteProblem(clip: string, revision: string, problem: SceneProblem): void {
+    const first = this.#told.get(clip) !== revision;
+    this.#told.set(clip, revision);
+    this.#messages.problem(clip, revision, problem, first);
+  }
+
+  /** A new plan. Nothing else says that a scene changed: it takes over without opening again. */
+  noteRevisions(revisions: ReadonlyMap<string, string>): void {
+    this.#messages.revisions(revisions);
   }
 }

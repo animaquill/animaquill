@@ -15,6 +15,7 @@ const noFolders: FolderAccess = {
 function setup(folders = noFolders) {
   const library = new MemoryLibrary();
   const trials = new MemoryTrials();
+  const drafts = new MemoryTrials();
   const values = new Map<string, unknown>();
   const host: Host = {
     projects: library,
@@ -27,6 +28,7 @@ function setup(folders = noFolders) {
     },
     folders,
     trials,
+    drafts,
   };
   const workbench = new Workbench({
     host,
@@ -37,7 +39,7 @@ function setup(folders = noFolders) {
     workspaces,
     compositorUrl: "",
   });
-  return { workbench, library, trials };
+  return { workbench, library, trials, drafts };
 }
 
 const nameOf = (workbench: Workbench) => workbench.session.store?.getState().manifest.name;
@@ -804,6 +806,174 @@ describe("changes that do not go through", () => {
       store?.applyUpdates(updates);
       expect(store?.canUndo).toBe(true);
     });
+  });
+});
+
+describe("code", () => {
+  const PATH = "code/a.js";
+
+  async function withCode() {
+    const context = setup();
+    const { workbench } = context;
+    await create(workbench, "项目");
+    const store = workbench.session.store as ProjectStore;
+    store.execute({ type: "file.write", params: { path: PATH, text: "one" } });
+    workbench.code.open(PATH);
+    workbench.code.edit(PATH, "mine");
+    return { ...context, store };
+  }
+
+  it("stays with unsaved code when people want that", async () => {
+    const { workbench } = await withCode();
+    const closing = workbench.closeProject();
+    expect((await dialogOf(workbench))?.title).toBe("code.leaveTitle");
+    workbench.dialogs.answer(undefined);
+    await closing;
+    expect(workbench.session.store).toBeDefined();
+    expect(workbench.code.hasUnsaved).toBe(true);
+  });
+
+  it("saves unsaved code on the way out", async () => {
+    const { workbench, store } = await withCode();
+    const closing = workbench.closeProject();
+    await dialogOf(workbench);
+    workbench.dialogs.answer("save");
+    await closing;
+    expect(workbench.session.store).toBeUndefined();
+    expect(store.exportFiles().files.get(PATH)).toBe("mine");
+  });
+
+  it("stays when code cannot be saved on the way out", async () => {
+    const { workbench, store } = await withCode();
+    vi.spyOn(store, "execute").mockReturnValue({
+      ok: false,
+      error: { code: "track-locked", message: "锁定了" },
+    });
+    const closing = workbench.closeProject();
+    await dialogOf(workbench);
+    workbench.dialogs.answer("save");
+    await closing;
+    expect(workbench.session.store).toBeDefined();
+    expect(workbench.code.getSnapshot().documents[0]?.text).toBe("mine");
+  });
+
+  it("drops unsaved code on the way out when people say so, also on the device", async () => {
+    const { workbench, store, drafts } = await withCode();
+    const id = store.getState().manifest.id;
+    await workbench.drafts.settle();
+    expect([...(drafts.kept.get(id)?.values() ?? [])]).toHaveLength(1);
+    const closing = workbench.closeProject();
+    await dialogOf(workbench);
+    workbench.dialogs.answer("discard");
+    await closing;
+    await workbench.drafts.settle();
+    expect(workbench.session.store).toBeUndefined();
+    expect(store.exportFiles().files.get(PATH)).toBe("one");
+    expect([...(drafts.kept.get(id)?.values() ?? [])]).toEqual([]);
+  });
+
+  it("saves the file with the key that saves in the code panel, and only there", async () => {
+    const { workbench, store } = await withCode();
+    run(workbench, "project.save");
+    expect(store.exportFiles().files.get(PATH)).toBe("one");
+    run(workbench, "code.save");
+    await vi.waitFor(() => expect(store.exportFiles().files.get(PATH)).toBe("mine"));
+  });
+});
+
+describe("problems", () => {
+  const problem = { kind: "error", message: "oops", frame: 0 } as const;
+
+  async function opened() {
+    const context = setup();
+    await create(context.workbench, "项目");
+    return context;
+  }
+
+  it("all go on the list, and only the first one of a state of a scene is told", async () => {
+    const { workbench } = await opened();
+    const { preview, problems } = workbench;
+    preview.noteProblem("c", "1", problem);
+    preview.noteProblem("c", "1", { ...problem, line: 2 });
+    preview.noteProblem("c", "1", { ...problem, line: 3 });
+    expect(problems.getSnapshot().errors).toBe(3);
+    expect(notices(workbench)).toHaveLength(1);
+    preview.noteProblem("c", "2", problem);
+    expect(notices(workbench)).toHaveLength(2);
+  });
+
+  it("are not told while the list is on the screen", async () => {
+    const { workbench } = await opened();
+    vi.spyOn(workbench.layout, "getSnapshot").mockReturnValue({
+      workspace: "edit",
+      visible: new Set(["problems"]),
+      active: undefined,
+    });
+    workbench.preview.noteProblem("c", "1", problem);
+    expect(workbench.problems.getSnapshot().errors).toBe(1);
+    expect(notices(workbench)).toEqual([]);
+  });
+
+  it("say where they are in a column of their own", async () => {
+    const { workbench } = await opened();
+    const place = { file: "scenes/a/a.js", line: 3, column: 7 };
+    workbench.preview.noteProblem("c", "1", { ...problem, ...place });
+    expect(workbench.problems.getSnapshot().problems[0]).toMatchObject({
+      ...place,
+      text: "scene.problems.error",
+    });
+  });
+
+  it("go when the scene gets a new state", async () => {
+    const { workbench } = await opened();
+    workbench.preview.noteProblem("c", "1", problem);
+    workbench.preview.noteRevisions(new Map([["c", "2"]]));
+    expect(workbench.problems.getSnapshot().problems).toEqual([]);
+  });
+
+  it("include scenes that stopped, until they run again", async () => {
+    const { workbench } = await opened();
+    workbench.preview.noteScene("c", { state: "stopped", reason: "silent" });
+    expect(workbench.problems.getSnapshot().errors).toBe(1);
+    workbench.preview.noteScene("c", { state: "ready" });
+    expect(workbench.problems.getSnapshot().errors).toBe(0);
+  });
+
+  it("stay with their project", async () => {
+    const { workbench } = await opened();
+    workbench.preview.noteProblem("c", "1", problem);
+    await workbench.closeProject();
+    expect(workbench.problems.getSnapshot().problems).toEqual([]);
+  });
+
+  it("lead to the file and line", async () => {
+    const { workbench } = await opened();
+    const store = workbench.session.store as ProjectStore;
+    store.execute({ type: "file.write", params: { path: "code/a.js", text: "one" } });
+    const listed = { id: "", severity: "error", text: "", origin: "", file: "code/a.js", line: 4 };
+    workbench.goToProblem(listed as never);
+    expect(workbench.code.getSnapshot().reveal).toMatchObject({ path: "code/a.js", line: 4 });
+  });
+
+  it("say so when the file is not there to go to", async () => {
+    const { workbench } = await opened();
+    const listed = { id: "", severity: "error", text: "", origin: "", file: "assets.json" };
+    workbench.goToProblem(listed as never);
+    expect(notices(workbench)).toEqual(["problems.notInProject"]);
+    expect(workbench.code.getSnapshot().documents).toEqual([]);
+  });
+
+  it("of an import stay on the list after its dialog", async () => {
+    const store = ProjectStore.create(createProject({ name: "文件夹里的项目" }));
+    const files = store.exportFiles().files;
+    files.set("notes/left.txt", "这个文件项目用不上");
+    const source = memorySource("文件夹", files);
+    const { workbench } = setup({ ...noFolders, chooseSource: async () => source });
+    const importing = workbench.importProject();
+    await vi.waitFor(() => expect(workbench.problems.getSnapshot().imported).toBe(true));
+    workbench.dialogs.answer(true);
+    await importing;
+    expect(workbench.problems.getSnapshot().warnings).toBeGreaterThan(0);
   });
 });
 

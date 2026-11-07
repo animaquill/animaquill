@@ -78,6 +78,15 @@ function withShown(plan: RenderPlan, shown: PreviewedValues): RenderPlan {
   return { ...plan, layers };
 }
 
+/** Which state of its scene each clip shows. */
+function revisionsOf({ layers }: RenderPlan): ReadonlyMap<string, string> {
+  const revisions = new Map<string, string>();
+  for (const { id, source } of layers) {
+    if (source.kind === "scene") revisions.set(id, source.revision);
+  }
+  return revisions;
+}
+
 /**
  * The line to the compositor in its sandbox. The sandbox has no network and no storage, so the plan,
  * the time and the files all go through here.
@@ -208,7 +217,11 @@ export class PreviewLink {
     } else if (data.type === "scene-status") {
       this.#status.noteScene(data.layer, data.status);
     } else if (data.type === "scene-problem") {
-      this.#status.noteProblem(data.layer, data.problem);
+      // What is on its way out has no say any more: it would only come back after a fix.
+      const shown = this.#layers.get(data.layer)?.source;
+      if (shown?.kind === "scene" && shown.revision === data.revision) {
+        this.#status.noteProblem(data.layer, data.revision, data.problem);
+      }
     } else if (data.type === "origin-retired") {
       this.#status.noteRetired(data.origin);
     } else if (data.type === "frames") {
@@ -253,6 +266,7 @@ export class PreviewLink {
     if (!plan || (this.#plan && samePlan(plan, this.#plan))) return;
     this.#plan = plan;
     this.#layers = new Map(plan.layers.map((layer) => [layer.id, layer]));
+    this.#status.noteRevisions(revisionsOf(plan));
     // A new plan replaces everything. What is shown on top of it goes along, because the compositor
     // starts to draw as soon as it gets a plan, and the picture must not jump back in between.
     this.#shown = this.#properties.getPreviewed();

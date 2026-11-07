@@ -22,6 +22,9 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { CodePanel } from "../code/CodePanel.tsx";
+import { FilesPanel } from "../code/FilesPanel.tsx";
+import { ProblemsPanel } from "../problems/ProblemsPanel.tsx";
 import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
@@ -44,11 +47,14 @@ function planned(
   type: Exclude<
     Type,
     | "unknown"
+    | "code"
+    | "files"
     | "keybindings"
     | "timeline"
     | "preview"
     | "assets"
     | "performance"
+    | "problems"
     | "properties"
     | "settings"
   >,
@@ -78,7 +84,15 @@ function planned(
 }
 
 export const builtinPanels: readonly PanelDefinition[] = [
-  planned("files", "left", Files, { activity: true, keys: ["mod+shift+e"] }),
+  {
+    type: "files",
+    title: (t) => t("panel.files.title"),
+    icon: Files,
+    area: "left",
+    component: FilesPanel,
+    activity: true,
+    keys: ["mod+shift+e"],
+  },
   {
     type: "assets",
     title: (t) => t("panel.assets.title"),
@@ -97,7 +111,15 @@ export const builtinPanels: readonly PanelDefinition[] = [
     component: PreviewPanel,
     keepAlive: true,
   },
-  planned("code", "center", CodeXml, { keepAlive: true }),
+  {
+    type: "code",
+    title: (t) => t("panel.code.title"),
+    icon: CodeXml,
+    area: "center",
+    component: CodePanel,
+    keepAlive: true,
+    beside: "preview",
+  },
   planned("music", "center", Music),
   planned("recording", "center", Mic),
   planned("versions", "center", Grid3x3),
@@ -133,7 +155,14 @@ export const builtinPanels: readonly PanelDefinition[] = [
   },
   planned("keyframes", "bottom", Diamond),
   planned("differences", "bottom", Diff),
-  planned("problems", "bottom", TriangleAlert, { keys: ["mod+shift+m"] }),
+  {
+    type: "problems",
+    title: (t) => t("panel.problems.title"),
+    icon: TriangleAlert,
+    area: "bottom",
+    component: ProblemsPanel,
+    keys: ["mod+shift+m"],
+  },
   planned("terminal", "bottom", SquareTerminal, { keepAlive: true, keys: ["mod+`"] }),
   planned("cache", "bottom", HardDrive),
   {

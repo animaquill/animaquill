@@ -3,14 +3,9 @@ import { useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
 import type { SceneStatus } from "@animaquill/render";
-import type zhCN from "../i18n/zh-CN.json";
 import type { TimelineEditor } from "../timeline/editor.ts";
-import { sceneClipName } from "./problems.ts";
+import { describeStatus, sceneClipName } from "./problems.ts";
 import styles from "./PreviewNotices.module.css";
-
-type StoppedScene = keyof typeof zhCN.preview.stoppedScene;
-
-const RUNTIME_FAILURES = new Set(["missing-entry", "runtime-load", "frame-out-of-range"]);
 
 function Notice({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
   return (
@@ -39,18 +34,7 @@ export function PreviewNotices({ onRetry }: { onRetry: (clip: string) => void })
   );
   const nameOf = useClipName(timeline);
 
-  const words = (clip: string, { state, reason, message = "" }: SceneStatus) => {
-    const name = nameOf(clip);
-    if (state === "too-new") return t("preview.tooNew", { name });
-    if (state === "retrying") return t("preview.retrying", { name });
-    // What a scene says about itself can be a code of the runtime, which has words of its own.
-    const said = reason === "failed" && RUNTIME_FAILURES.has(message) ? message : reason;
-    return t(`preview.stoppedScene.${(said ?? "silent") as StoppedScene}`, {
-      name,
-      message,
-      interpolation: { escapeValue: false },
-    });
-  };
+  const words = (clip: string, status: SceneStatus) => describeStatus(t, nameOf(clip), status);
 
   const all = [...scenes];
   const unsupported = all.some(([, { state }]) => state === "unsupported");

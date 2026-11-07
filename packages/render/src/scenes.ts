@@ -155,6 +155,14 @@ function whenOnScreen(run: () => void): void {
  */
 export const MAX_SCENE_FRAME = 2 ** 31 - 1;
 
+/**
+ * Code that does not parse never ran, so what a new state of a scene shows without it says nothing
+ * about what somebody wrote. It is the moment to stay with the picture that worked. Code that ran
+ * and threw is different: it may be most of what people want to see.
+ */
+const isNotCode = ({ kind, message }: SceneProblem) =>
+  kind === "error" && message !== undefined && /\bSyntaxError\b/.test(message);
+
 /** What frame a scene is on when the clock of its clip reads this. */
 export function frameOf(clock: number, { num, den }: RenderPlan["scenes"]["fps"]): number {
   const frame = Math.floor((clock * num) / den + FRAME_TOLERANCE);
@@ -309,8 +317,8 @@ export class SceneLayers {
   }
 
   #setStatus(entry: Entry, status: SceneStatus): void {
-    const { state, reason } = entry.status;
-    if (state === status.state && reason === status.reason) return;
+    const { state, reason, message } = entry.status;
+    if (state === status.state && reason === status.reason && message === status.message) return;
     entry.status = status;
     this.#options.send({ type: "scene-status", layer: entry.layer.id, status });
   }
@@ -520,7 +528,7 @@ export class SceneLayers {
       ...(avoid !== undefined && { avoid }),
       place: (frame) => this.#place(frame, view),
       onState: (state) => run && this.#onState(entry, run, state),
-      onProblem: (problem) => this.#onProblem(entry, problem),
+      onProblem: (problem) => run && this.#onProblem(entry, run, source.revision, problem),
       onFailure: (failure) => run && this.#onFailure(entry, run, failure),
       onPicture: ({ image }) => {
         if (run) this.#onPicture(entry, run, new HeldPicture(image));
@@ -626,11 +634,22 @@ export class SceneLayers {
     }
   }
 
-  #onProblem(entry: Entry, problem: SceneProblem): void {
-    const tell = () =>
-      this.#options.send({ type: "scene-problem", layer: entry.layer.id, problem });
+  #onProblem(entry: Entry, run: Run, revision: string, problem: SceneProblem): void {
+    const { id } = entry.layer;
+    const tell = () => this.#options.send({ type: "scene-problem", layer: id, revision, problem });
     if (problem.code === "capture-timeout") whenOnScreen(tell);
     else tell();
+    if (run === entry.next && isNotCode(problem)) {
+      const { message = "" } = problem;
+      run.host.close();
+      this.#onFailure(entry, run, {
+        reason: "failed",
+        phase: "loading",
+        frame: 0,
+        retrying: false,
+        message,
+      });
+    }
   }
 
   #onState(entry: Entry, run: Run, state: SceneHostState): void {

@@ -9,7 +9,7 @@ import type { PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { PreviewLink } from "./link.ts";
-import { PreviewStatus } from "./status.ts";
+import { PreviewStatus, type PreviewMessages } from "./status.ts";
 
 type Listener = (event: { data: unknown; source: unknown }) => void;
 
@@ -103,7 +103,12 @@ function setup(
     clock.frame = to;
     for (const listener of view) listener();
   };
-  const status = new PreviewStatus({ problem: () => {}, restarted: () => {} });
+  const status = new PreviewStatus({
+    problem: () => {},
+    stopped: () => {},
+    revisions: () => {},
+    restarted: () => {},
+  });
   const link = new PreviewLink(
     frame,
     timeline,
@@ -160,6 +165,74 @@ const set = (clip: string, path: string, value: unknown) => ({
 
 const showing = (values: Record<string, unknown>) =>
   new Map([["c", new Map(Object.entries(values))]]);
+
+describe("problems of a scene", () => {
+  /** A scene on the timeline, with what the compositor gets to hear. */
+  function withScene() {
+    const context = setup();
+    const noted = vi.fn<PreviewMessages["problem"]>();
+    const kept: ReadonlyMap<string, string>[] = [];
+    const { status, run, hello, ofType, fromCompositor } = context;
+    vi.spyOn(status, "noteProblem").mockImplementation((clip, revision, problem) =>
+      noted(clip, revision, problem, true),
+    );
+    vi.spyOn(status, "noteRevisions").mockImplementation((revisions) => kept.push(revisions));
+    run({
+      type: "scene.add",
+      params: {
+        id: "s",
+        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        files: { "index.html": "one" },
+      },
+    });
+    context.clip("sc", { start: "5", source: { kind: "scene", scene: "s" } });
+    hello();
+    const current = () => {
+      const { source } =
+        ofType("plan")
+          .at(-1)
+          ?.plan.layers.find(({ id }) => id === "sc") ?? {};
+      return (source as { revision: string }).revision;
+    };
+    const say = (revision: string) =>
+      fromCompositor({
+        type: "scene-problem",
+        layer: "sc",
+        revision,
+        problem: { kind: "error", message: "oops", frame: 0 },
+      });
+    return { ...context, noted, kept, current, say };
+  }
+
+  it("get through from what the plan shows", () => {
+    const { noted, current, say } = withScene();
+    say(current());
+    expect(noted).toHaveBeenCalledOnce();
+  });
+
+  it("stay out from a state of the scene that is on its way out", () => {
+    const { noted, current, run, say } = withScene();
+    const old = current();
+    run({ type: "file.write", params: { path: "scenes/s/index.html", text: "two" } });
+    say(old);
+    expect(noted).not.toHaveBeenCalled();
+    say(current());
+    expect(noted).toHaveBeenCalledOnce();
+  });
+
+  it("stay out from a clip that is gone", () => {
+    const { noted, fromCompositor, current } = withScene();
+    const problem = { kind: "error", message: "oops", frame: 0 } as const;
+    fromCompositor({ type: "scene-problem", layer: "nope", revision: current(), problem });
+    expect(noted).not.toHaveBeenCalled();
+  });
+
+  it("say which states are current with every new plan", () => {
+    const { kept, current, run } = withScene();
+    run({ type: "file.write", params: { path: "scenes/s/index.html", text: "two" } });
+    expect(kept.at(-1)).toEqual(new Map([["sc", current()]]));
+  });
+});
 
 describe("the plan", () => {
   it("goes over once, and again only when something changed", () => {

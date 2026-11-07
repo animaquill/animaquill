@@ -1,11 +1,18 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { SCENE_PAGE_PATH, scenePage, scenePolicyHeader } from "@animaquill/scene";
 import { sceneRuntime } from "@animaquill/scene/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from "vite";
 
 const EDITOR = "http://localhost:5173";
+
+/** Where the files of Monaco are, which is outside of this workspace in a clone with a parent. */
+const monaco = resolve(
+  dirname(createRequire(import.meta.url).resolve("monaco-editor/editor/editor.api.js")),
+  "../../..",
+);
 
 /**
  * The page scenes run on, with the same policy as on a real site. The other sites have none here, so
@@ -33,6 +40,26 @@ function scenePageOnEveryHost(): Plugin {
 export default defineConfig({
   root: "dev",
   plugins: [react(), sceneRuntime({ minify: false }), scenePageOnEveryHost()],
+  // Found only once a file opens, which would make the server reload every page it serves.
+  optimizeDeps: {
+    include: [
+      "monaco-editor/nls/lang/zh-cn.js",
+      "monaco-editor/editor/editor.api.js",
+      "monaco-editor/internal/common/workers.js",
+      "monaco-editor/languages/definitions/css/register.js",
+      "monaco-editor/languages/definitions/html/register.js",
+      "monaco-editor/languages/definitions/javascript/register.js",
+      "monaco-editor/language/css/monaco.contribution.js",
+      "monaco-editor/language/html/monaco.contribution.js",
+      "monaco-editor/languages/features/typescript/register.js",
+    ],
+  },
   // The compositor runs in a sandbox with no origin of its own, so its modules need CORS.
-  server: { host: "0.0.0.0", port: 5173, strictPort: true, cors: true },
+  server: {
+    host: "0.0.0.0",
+    port: 5173,
+    strictPort: true,
+    cors: true,
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), monaco] },
+  },
 });

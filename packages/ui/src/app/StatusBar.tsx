@@ -1,4 +1,4 @@
-import { Circle, CircleAlert } from "lucide-react";
+import { Circle, CircleAlert, CircleX, TriangleAlert } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
@@ -78,6 +78,28 @@ function RecordingStatus() {
   );
 }
 
+/** How many problems there are, and the way to them. */
+function ProblemsStatus() {
+  const { layout, problems } = useWorkbench();
+  const { t } = useTranslation();
+  const { errors, warnings } = useSyncExternalStore(problems.subscribe, problems.getSnapshot);
+  return (
+    <button
+      type="button"
+      className={styles.name}
+      aria-label={t("problems.status", { errors, warnings })}
+      onClick={() => layout.openPanel("problems")}
+    >
+      <span className={styles.counts}>
+        <CircleX size={12} />
+        {errors}
+        <TriangleAlert size={12} />
+        {warnings}
+      </span>
+    </button>
+  );
+}
+
 export function StatusBar() {
   const workbench = useWorkbench();
   const { store, save } = useSession();
@@ -109,6 +131,7 @@ export function StatusBar() {
           {saveText}
         </span>
       )}
+      {project && <ProblemsStatus />}
       <span className={styles.spacer} />
       <RecordingStatus />
       {project && <TimeStatus />}

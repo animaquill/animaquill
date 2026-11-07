@@ -10,6 +10,8 @@ export interface Host {
   readonly folders: FolderAccess;
   /** Where what people are trying out waits until they save it or give up on it. */
   readonly trials: TrialStore;
+  /** Where code that people typed and did not save waits, so that a crash does not take it. */
+  readonly drafts: DraftStore;
 }
 
 /** Receives what people chose to send about how the editor runs. */
@@ -58,24 +60,29 @@ export interface SettingsStore {
  * What is being tried out on projects, kept on this device only. It is not part of a project: it is
  * there so that a reload or a crash costs nothing, and the host keeps whatever it gets as it is.
  */
-export interface TrialStore {
+/** Something a window keeps on a project for itself until it is done with it. */
+export interface WindowPlaces {
   /**
    * Gets a window a place of its own on a project, since two windows try out different things. A
    * window that was reloaded or crashed finds the place it had. Other places that no window has any
    * more go to the next window that needs one, the most recent one first. Rejects when the host
    * cannot keep anything.
    */
-  open(project: string): Promise<TrialPlace>;
+  open(project: string): Promise<WindowPlace>;
 }
 
-export interface TrialPlace {
+export interface WindowPlace {
   /** Resolves to undefined when nothing is kept here. */
   load(): Promise<unknown>;
   /** Replaces what is kept. Undefined leaves nothing. Rejects when it could not be kept. */
-  save(trial: unknown): Promise<void>;
+  save(kept: unknown): Promise<void>;
   /** Lets go of the place. What is kept stays, for the next window. */
   close(): void;
 }
+
+export type TrialStore = WindowPlaces;
+export type TrialPlace = WindowPlace;
+export type DraftStore = WindowPlaces;
 
 export interface ProjectSummary {
   readonly id: string;

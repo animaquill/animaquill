@@ -1,14 +1,15 @@
 import type { SceneProblem } from "@animaquill/scene";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PreviewStatus } from "./status.ts";
+import { PreviewStatus, type PreviewMessages } from "./status.ts";
 
 function setup() {
-  const problem = vi.fn<(clip: string, problem: SceneProblem, last: boolean) => void>();
+  const problem = vi.fn<PreviewMessages["problem"]>();
+  const stopped = vi.fn<PreviewMessages["stopped"]>();
   const restarted = vi.fn();
-  const status = new PreviewStatus({ problem, restarted });
+  const status = new PreviewStatus({ problem, stopped, revisions: () => {}, restarted });
   const emitted = vi.fn();
   status.subscribe(emitted);
-  return { status, problem, restarted, emitted };
+  return { status, problem, stopped, restarted, emitted };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -127,21 +128,41 @@ describe("how scenes are doing", () => {
     expect(emitted).not.toHaveBeenCalled();
   });
 
-  it("passes on problems, up to a limit, and says when that is reached", () => {
+  const said: SceneProblem = { kind: "error", message: "oops", frame: 1 };
+  const firsts = (problem: ReturnType<typeof setup>["problem"]) =>
+    problem.mock.calls.map(([, , , first]) => first);
+
+  it("passes on all problems, and says which one is the first of a state of a scene", () => {
     const { status, problem } = setup();
-    const said: SceneProblem = { kind: "error", message: "oops", frame: 1 };
-    for (let count = 0; count < 5; count += 1) status.noteProblem("a", said);
-    expect(problem.mock.calls.map(([, , last]) => last)).toEqual([false, false, true]);
+    for (let count = 0; count < 3; count += 1) status.noteProblem("a", "1", said);
+    expect(firsts(problem)).toEqual([true, false, false]);
+  });
+
+  it("counts a new state of a scene as new, which no opening says", () => {
+    const { status, problem } = setup();
+    status.noteProblem("a", "1", said);
+    status.noteProblem("a", "2", said);
+    expect(firsts(problem)).toEqual([true, true]);
   });
 
   it("keeps count by clip, and starts over when a scene starts over", () => {
     const { status, problem } = setup();
-    const said: SceneProblem = { kind: "error", message: "oops", frame: 1 };
-    for (let count = 0; count < 5; count += 1) status.noteProblem("a", said);
-    status.noteProblem("b", said);
-    expect(problem).toHaveBeenCalledTimes(4);
+    status.noteProblem("a", "1", said);
+    status.noteProblem("b", "1", said);
+    status.noteProblem("a", "1", said);
     status.noteScene("a", { state: "opening" });
-    status.noteProblem("a", said);
-    expect(problem).toHaveBeenCalledTimes(5);
+    status.noteProblem("a", "1", said);
+    expect(firsts(problem)).toEqual([true, true, false, true]);
+  });
+
+  it("says which scenes stopped, and when that is over", () => {
+    const { status, stopped } = setup();
+    const failed = { state: "stopped", reason: "silent" } as const;
+    status.noteScene("a", failed);
+    status.noteScene("a", { state: "ready" });
+    expect(stopped.mock.calls).toEqual([
+      ["a", failed],
+      ["a", undefined],
+    ]);
   });
 });

@@ -8,8 +8,8 @@ import type {
   ProjectLog,
   ProjectSummary,
   SettingsStore,
-  TrialPlace,
-  TrialStore,
+  WindowPlace,
+  WindowPlaces,
   WindowMemory,
 } from "./index.ts";
 
@@ -22,12 +22,21 @@ const MEDIA = "media";
 const BY_PROJECT = "project";
 const PROJECT_PARAM = "project";
 /**
- * What is being tried gets a database of its own. It comes and goes, and a new version of the main
- * database would lock out every page that is still open, for something that is not even a project.
+ * What is being tried gets a database of its own, and so does code that is not saved. They come and
+ * go, and a new version of the main database would lock out every page that is still open, for
+ * something that is not even a project. For the same reason each has one of its own.
  */
-const TRIAL_DATABASE = "animaquill-trials";
-const TRIAL_DATABASE_VERSION = 1;
-const TRIALS = "trials";
+const PLACE_DATABASE_VERSION = 1;
+
+/** What a window keeps for itself, by what it calls it, and what its database is called. */
+interface PlaceKind {
+  /** Also the name of its store, with an "s", and part of the names of its locks and memory. */
+  readonly name: string;
+  readonly database: string;
+}
+
+const TRIALS: PlaceKind = { name: "trial", database: "animaquill-trials" };
+const DRAFTS: PlaceKind = { name: "draft", database: "animaquill-drafts" };
 /** Without locks all windows share one place, which is the best that can be done. */
 const ONLY_PLACE = "only";
 /** A page that goes away holds on to its locks for a moment. */
@@ -51,13 +60,14 @@ interface UpdateRecord {
   readonly update: Uint8Array;
 }
 
-interface TrialRecord {
+interface PlaceRecord {
   readonly project: string;
   readonly place: string;
   /** Which project with this id it belongs to: see ProjectRecord. */
   readonly instance: string | undefined;
   /** Milliseconds since 1970. */
   readonly savedAt: number;
+  /** What is kept. The name is from when there were only trials, and records have it. */
   readonly trial: unknown;
 }
 
@@ -105,11 +115,13 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return resultOf(request);
 }
 
-function openTrialDatabase(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(TRIAL_DATABASE, TRIAL_DATABASE_VERSION);
+function openPlaceDatabase(factory: IDBFactory, { name, database }: PlaceKind) {
+  const request = factory.open(database, PLACE_DATABASE_VERSION);
   request.addEventListener("upgradeneeded", () => {
-    const trials = request.result.createObjectStore(TRIALS, { keyPath: [BY_PROJECT, "place"] });
-    trials.createIndex(BY_PROJECT, BY_PROJECT);
+    const places = request.result.createObjectStore(`${name}s`, {
+      keyPath: [BY_PROJECT, "place"],
+    });
+    places.createIndex(BY_PROJECT, BY_PROJECT);
   });
   return resultOf(request);
 }
@@ -263,7 +275,7 @@ const hold = (locks: LockManager, name: string) =>
 function createLibrary(
   database: () => Promise<IDBDatabase>,
   lockManager: () => LockManager | undefined,
-  forgetTrials: (project: string) => Promise<void>,
+  forgetPlaces: (project: string) => Promise<unknown>,
 ): ProjectLibrary {
   const incomingLock = (id: string) => `${PREFIX}incoming.${id}`;
   const allStores = [UPDATES, PROJECTS, MEDIA];
@@ -383,23 +395,26 @@ function createLibrary(
       removeFrom(transaction, id);
       await committed(transaction);
       // The project is gone either way, and what stays behind gets swept up later.
-      await forgetTrials(id).catch((error: unknown) => {
-        console.warn("What was being tried on a project that is gone stays for now", error);
+      await forgetPlaces(id).catch((error: unknown) => {
+        console.warn("What windows kept of a project that is gone stays for now", error);
       });
     },
   };
   return library;
 }
 
-function createTrials(
+/** A place for each window on each project, for one kind of thing that windows keep. */
+function createPlaces(
+  kind: PlaceKind,
   projects: () => Promise<IDBDatabase>,
   factory: () => IDBFactory,
   lockManager: () => LockManager | undefined,
   memory: WindowMemory,
 ) {
-  const database = connector(() => openTrialDatabase(factory()));
-  const placeLock = (project: string, place: string) => `${PREFIX}trial.${project}.${place}`;
-  const memoryKey = (project: string) => `trial.${project}`;
+  const database = connector(() => openPlaceDatabase(factory(), kind));
+  const storeName = `${kind.name}s`;
+  const placeLock = (project: string, place: string) => `${PREFIX}${kind.name}.${project}.${place}`;
+  const memoryKey = (project: string) => `${kind.name}.${project}`;
   let isSwept = false;
 
   const projectOf = async (project: string) => {
@@ -409,9 +424,9 @@ function createTrials(
 
   /** Places with something in them on this project, the most recent first. */
   const keptPlaces = async (project: string, instance: string | undefined) => {
-    const transaction = (await database()).transaction(TRIALS);
-    const index = transaction.objectStore(TRIALS).index(BY_PROJECT);
-    const records = await resultOf<TrialRecord[]>(index.getAll(project));
+    const transaction = (await database()).transaction(storeName);
+    const index = transaction.objectStore(storeName).index(BY_PROJECT);
+    const records = await resultOf<PlaceRecord[]>(index.getAll(project));
     return records
       .filter((record) => record.instance === instance)
       .toSorted((a, b) => b.savedAt - a.savedAt)
@@ -419,13 +434,13 @@ function createTrials(
   };
 
   /** Takes away what belongs to a project that is gone, for all of it or for one. */
-  const remove = async (isGone: (record: TrialRecord) => boolean) => {
-    const transaction = (await database()).transaction(TRIALS, "readwrite");
-    const trials = transaction.objectStore(TRIALS);
-    const read = trials.getAll();
+  const remove = async (isGone: (record: PlaceRecord) => boolean) => {
+    const transaction = (await database()).transaction(storeName, "readwrite");
+    const kept = transaction.objectStore(storeName);
+    const read = kept.getAll();
     read.addEventListener("success", () => {
-      for (const record of read.result as TrialRecord[]) {
-        if (isGone(record)) trials.delete([record.project, record.place]);
+      for (const record of read.result as PlaceRecord[]) {
+        if (isGone(record)) kept.delete([record.project, record.place]);
       }
     });
     await committed(transaction);
@@ -470,27 +485,27 @@ function createTrials(
     place: string,
     instance: string | undefined,
     release: () => void,
-  ): TrialPlace => {
+  ): WindowPlace => {
     memory.write(memoryKey(project), place);
     return {
       async load() {
-        const transaction = (await database()).transaction(TRIALS);
-        const request = transaction.objectStore(TRIALS).get([project, place]);
-        const record = await resultOf<TrialRecord | undefined>(request);
+        const transaction = (await database()).transaction(storeName);
+        const request = transaction.objectStore(storeName).get([project, place]);
+        const record = await resultOf<PlaceRecord | undefined>(request);
         return record?.instance === instance ? record?.trial : undefined;
       },
       async save(trial) {
         // This starts right here, with nothing to wait for: the page may be on its way out. Asking
         // whether the project is still there first would cost that, and sweeping takes care of it.
         // "strict" for the same reason as a project: what people tried should survive a power cut.
-        const transaction = (await database()).transaction(TRIALS, "readwrite", {
+        const transaction = (await database()).transaction(storeName, "readwrite", {
           durability: "strict",
         });
-        const trials = transaction.objectStore(TRIALS);
-        if (trial === undefined) trials.delete([project, place]);
+        const kept = transaction.objectStore(storeName);
+        if (trial === undefined) kept.delete([project, place]);
         else {
-          const record: TrialRecord = { project, place, instance, savedAt: Date.now(), trial };
-          trials.put(record);
+          const record: PlaceRecord = { project, place, instance, savedAt: Date.now(), trial };
+          kept.put(record);
         }
         await committed(transaction);
       },
@@ -498,7 +513,7 @@ function createTrials(
     };
   };
 
-  const store: TrialStore = {
+  const store: WindowPlaces = {
     async open(project) {
       void sweep().catch((error: unknown) => {
         console.warn("Could not clean up after projects that are gone", error);
@@ -594,13 +609,16 @@ export function createBrowserHost(
   };
   const windowMemory = createWindowMemory(windowStorage);
   const projects = connector(() => openDatabase(database()));
-  const trials = createTrials(projects, database, locks, windowMemory);
+  const trials = createPlaces(TRIALS, projects, database, locks, windowMemory);
+  const drafts = createPlaces(DRAFTS, projects, database, locks, windowMemory);
+  const forget = (project: string) => Promise.all([trials.forget(project), drafts.forget(project)]);
   return {
     settings,
-    projects: createLibrary(projects, locks, trials.forget),
+    projects: createLibrary(projects, locks, forget),
     address,
     windowMemory,
     folders: browserFolders(),
     trials: trials.store,
+    drafts: drafts.store,
   };
 }

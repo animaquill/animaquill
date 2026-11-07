@@ -28,7 +28,12 @@ export const workspaces: readonly WorkspaceDefinition[] = [
     layout: column(
       [
         58,
-        row([18, tabs("files", "assets")], [57, tabs("preview", "code")], [25, tabs("properties")]),
+        row(
+          [16, tabs("files", "assets")],
+          [32, tabs("preview")],
+          [32, tabs("code")],
+          [20, tabs("properties")],
+        ),
       ],
       [42, row([50, tabs("timeline")], [50, tabs("keyframes")])],
     ),

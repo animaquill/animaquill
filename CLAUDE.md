@@ -27,6 +27,8 @@
 - 设置是所有窗口共享的，只放偏好，不放这个窗口正在做什么。窗口显示哪个项目由 `Host.address` 决定，其他窗口自己的状态放 `Host.windowMemory`。整份写回的设置要用 `listen` 跟上其他窗口的改动。
 - 宿主只提供存储，接口在 `packages/host`，不要让它依赖 Yjs。保存的逻辑在 `packages/ui/src/workbench/session.ts`，切换项目走 `Workbench`，它会先处理没保存的改动。
 - 对话框用 `Workbench.dialogs`，不要自己写弹窗。
+- Monaco 只在 `packages/ui/src/code/monaco.ts` 里使用，这个文件只能用 `import()` 加载，静态引用它就进了首屏。打开的文件和规则都在不碰 DOM 的 `CodeDocuments` 里：代码改动保存时才走 `file.write`，不走试改。文件在别处变了，没改动就跟上，有改动就提示，用户没说之前不动。改路径要走 `CodeDocuments.moving`，否则看起来是文件没了。没保存的代码由 `CodeDrafts` 存到 `Host.drafts`（浏览器版是单独的 `animaquill-drafts` 数据库，和试改一样一个窗口一个位置，写入用 `workbench/keeper.ts` 的 `PlaceKeeper`）。找回时只回到选项卡里，不写项目，文件变了或没了按冲突处理，所以项目照常能打开。
+- 问题都进 `ProblemList`，每个来源只管自己的那部分：场景的问题跟着场景的 `revision` 走，新版本一接管就清掉旧的。通知只说一个版本的第一个问题，问题选项卡开着时不说。
 - 动作的按键只属于一个选项卡时写 `scope`。
 - 时间轴在 `packages/ui/src/timeline`。缩放、播放头、选中是窗口的状态，不进项目。手势只改预览，松手才执行命令，一次拖动是一步撤销。手势和规则写在不碰 DOM 的 `TimelineEditor` 里，用单元测试盯住。
 - 锁定轨道的片段可以点选（看属性、复制），框选和全选不选它。选中不等于能改：改片段的操作要走 `TimelineEditor` 的 `#changeable`，不要直接用选中集合。

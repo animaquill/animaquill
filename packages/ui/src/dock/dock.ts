@@ -7,7 +7,7 @@ import type {
 } from "dockview-react";
 import type { TFunction } from "i18next";
 import type { Dock, LayoutNode } from "../workbench/layout.ts";
-import type { PanelArea, PanelRegistry } from "../workbench/panels.ts";
+import type { PanelArea, PanelDefinition, PanelRegistry } from "../workbench/panels.ts";
 import { PANEL_COMPONENT, toDockviewState, type PanelParams } from "./toDockview.ts";
 
 const SIDE_WIDTH = 280;
@@ -65,6 +65,11 @@ export function createDock(api: DockviewApi, panels: PanelRegistry, t: TFunction
     }
   };
 
+  const besideOf = ({ beside }: PanelDefinition): Partial<AddPanelOptions> | undefined => {
+    const panel = beside === undefined ? undefined : api.getPanel(beside);
+    return panel && { position: { referenceGroup: panel.group, direction: "right" } };
+  };
+
   return {
     arrange(layout: LayoutNode) {
       api.fromJSON(toDockviewState(layout, api.width, api.height, facts), REUSE_PANELS);
@@ -90,7 +95,7 @@ export function createDock(api: DockviewApi, panels: PanelRegistry, t: TFunction
         component: PANEL_COMPONENT,
         params: { type } satisfies PanelParams,
         ...(definition.keepAlive ? { renderer: "always" as const } : {}),
-        ...placement(definition.area),
+        ...(besideOf(definition) ?? placement(definition.area)),
       });
     },
     items: () => api.panels.map((panel) => ({ type: typeOf(panel), visible: panel.api.isVisible })),

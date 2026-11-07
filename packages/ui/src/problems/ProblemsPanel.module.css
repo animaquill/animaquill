@@ -1,0 +1,116 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 16px;
+  color: var(--aq-text-muted);
+}
+
+.toolbar {
+  flex: none;
+  padding: 4px 8px;
+}
+
+.toolbar button {
+  padding: 2px 8px;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.groups {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0 8px;
+  overflow: auto;
+  list-style: none;
+}
+
+.groups ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--aq-text-strong);
+}
+
+.count {
+  min-width: 18px;
+  padding: 0 5px;
+  color: var(--aq-text);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  background: var(--aq-bg-input);
+  border-radius: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 22px;
+  padding: 2px 8px 2px 28px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.row:disabled {
+  color: var(--aq-text);
+  cursor: default;
+}
+
+.row:not(:disabled):hover {
+  background: var(--aq-bg-hover);
+}
+
+.icon {
+  flex: none;
+  color: var(--aq-warning);
+}
+
+.row[data-severity="error"] .icon {
+  color: var(--aq-danger);
+}
+
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.origin,
+.where {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}

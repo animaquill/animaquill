@@ -5,10 +5,11 @@ import {
   type TrialChanges,
   type TrialNotice,
 } from "@animaquill/core";
-import type { SettingsStore, TrialPlace, TrialStore } from "@animaquill/host";
+import type { SettingsStore, TrialStore } from "@animaquill/host";
 import type { PropertyValue } from "@animaquill/schema";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { Emitter } from "../workbench/emitter.ts";
+import { PlaceKeeper } from "../workbench/keeper.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 
@@ -53,8 +54,6 @@ export interface TrialMessages {
 
 const SETTINGS_KEY = "trial";
 const SETTINGS_VERSION = 1;
-/** How long to wait before trying again when reading or writing failed and nothing else happens. */
-const RETRY_AFTER_MS = 5000;
 const NOTHING: PreviewedValues = new Map();
 const NO_CHANGES: TrialChanges = new Map();
 
@@ -62,150 +61,6 @@ function parseSaved(value: unknown): boolean | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { version, enabled } = value as { version?: unknown; enabled?: unknown };
   return version === SETTINGS_VERSION && typeof enabled === "boolean" ? enabled : undefined;
-}
-
-/**
- * Brings back what was kept and puts what is being tried on the device as soon as it changes, one
- * write at a time. Nothing gets written before what was kept has been read: that would replace it.
- */
-class TrialKeeper {
-  readonly #trial: Trial;
-  readonly #open: () => Promise<TrialPlace>;
-  readonly #messages: TrialMessages;
-  readonly #onRead: (kept: unknown) => void;
-  #place: TrialPlace | undefined;
-  #working: Promise<void> | undefined;
-  #hasRead = false;
-  /** What is here is not on the device yet. */
-  #isBehind = false;
-  #isPaused = false;
-  /** This window has left: what was kept is for the next one. */
-  #hasLeft = false;
-  #isClosed = false;
-  #retry: ReturnType<typeof setTimeout> | undefined;
-  /** Saying it once is enough, until it works again. */
-  failed = false;
-
-  constructor(
-    trial: Trial,
-    open: () => Promise<TrialPlace>,
-    messages: TrialMessages,
-    onRead: (kept: unknown) => void,
-  ) {
-    this.#trial = trial;
-    this.#open = open;
-    this.#messages = messages;
-    this.#onRead = onRead;
-    this.#start();
-  }
-
-  keep(): void {
-    this.#isBehind = true;
-    this.#start();
-  }
-
-  /** Whether something is still on its way to the device. */
-  get isBusy(): boolean {
-    return this.#working !== undefined || this.#isBehind;
-  }
-
-  /** Nothing gets written from here on, which leaves what is on the device as it is. */
-  pause(): void {
-    this.#isPaused = true;
-  }
-
-  resume(): void {
-    if (!this.#isPaused) return;
-    this.#isPaused = false;
-    if (this.#isBehind) this.#start();
-  }
-
-  #start(): void {
-    if (this.#isPaused || this.#isClosed) return;
-    this.#working ??= this.#work().finally(() => {
-      this.#working = undefined;
-    });
-  }
-
-  /** Says it once, and keeps trying: whatever it was can pass while the project is open. */
-  #fail(what: string, error: unknown, tell: () => void): void {
-    if (!this.failed) {
-      console.warn(what, error);
-      tell();
-    }
-    this.failed = true;
-    clearTimeout(this.#retry);
-    this.#retry = setTimeout(() => this.#start(), RETRY_AFTER_MS);
-  }
-
-  async #getPlace(): Promise<TrialPlace | undefined> {
-    try {
-      this.#place ??= await this.#open();
-    } catch (error) {
-      this.#fail("There is no place for what is being tried", error, () => {
-        this.#messages.keepFailed();
-      });
-    }
-    return this.#place;
-  }
-
-  async #read(place: TrialPlace): Promise<void> {
-    try {
-      const kept = await place.load();
-      if (this.#hasLeft) return;
-      this.#hasRead = true;
-      // Only writing can say that it works again.
-      this.#isBehind ||= this.failed;
-      this.#onRead(kept);
-    } catch (error) {
-      this.#fail("What was being tried could not be read", error, () => {
-        this.#messages.readFailed();
-      });
-    }
-  }
-
-  async #write(place: TrialPlace): Promise<void> {
-    while (this.#isBehind && !this.#isPaused) {
-      this.#isBehind = false;
-      try {
-        await place.save(this.#trial.toStored());
-        if (this.failed) this.#messages.keepRecovered();
-        this.failed = false;
-      } catch (error) {
-        this.#isBehind = true;
-        this.#fail("What is being tried could not be kept", error, () => {
-          this.#messages.keepFailed();
-        });
-        return;
-      }
-    }
-  }
-
-  async #work(): Promise<void> {
-    const place = await this.#getPlace();
-    if (!place) return;
-    if (!this.#hasRead) await this.#read(place);
-    if (this.#hasRead) await this.#write(place);
-  }
-
-  /**
-   * Resolves to whether all of it is on the device, which is worth another try: the disk may have
-   * room again by now, and nobody should be told otherwise on the way out.
-   */
-  async settled(): Promise<boolean> {
-    if (this.failed) this.#start();
-    while (this.#working) await this.#working;
-    return !this.failed;
-  }
-
-  /** Writes what is left, and only then lets go of the place: the next window finds it all there. */
-  async close(): Promise<void> {
-    this.#hasLeft = true;
-    await this.settled();
-    this.#isClosed = true;
-    clearTimeout(this.#retry);
-    this.#place?.close();
-  }
 }
 
 /**
@@ -228,7 +83,7 @@ export class TrialSession {
   };
   #store: ProjectStore | undefined;
   #trial: Trial | undefined;
-  #keeper: TrialKeeper | undefined;
+  #keeper: PlaceKeeper | undefined;
   /** What the values for the picture were made from. */
   #changes = NO_CHANGES;
   /** What was put on the device the last time. */
@@ -395,14 +250,19 @@ export class TrialSession {
     this.#trial = trial;
     trial.subscribe(() => this.#update());
     trial.onNotice((notice) => this.#tell(notice));
-    const keeper = new TrialKeeper(trial, open, this.#messages, (kept) => {
-      const { restored, dropped, stale, unreadable } = trial.restore(kept);
-      if (restored > 0) this.#messages.restored(restored);
-      if (dropped > 0 || unreadable) this.#messages.dropped(dropped);
-      // Saying this again every time the project opens would help nobody, and what is of no use
-      // would come back later on, after the project moved on from it.
-      if (dropped > 0 || unreadable || stale > 0) keeper.keep();
-    });
+    const keeper = new PlaceKeeper(
+      () => trial.toStored(),
+      open,
+      this.#messages,
+      (kept) => {
+        const { restored, dropped, stale, unreadable } = trial.restore(kept);
+        if (restored > 0) this.#messages.restored(restored);
+        if (dropped > 0 || unreadable) this.#messages.dropped(dropped);
+        // Saying this again every time the project opens would help nobody, and what is of no use
+        // would come back later on, after the project moved on from it.
+        if (dropped > 0 || unreadable || stale > 0) keeper.keep();
+      },
+    );
     this.#keeper = keeper;
     return trial;
   }

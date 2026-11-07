@@ -230,7 +230,7 @@
     },
     "files": {
       "title": "文件",
-      "hint": "项目里的场景、时间轴和素材文件。"
+      "hint": "项目里的场景和共用代码。"
     },
     "assets": {
       "title": "素材库",
@@ -557,7 +557,6 @@
   "scene": {
     "newName": "场景 {{number}}",
     "problem": "“{{name}}”：{{text}}",
-    "tooManyProblems": "“{{name}}”还有更多问题，这里不再一一提示。",
     "problems": {
       "error": "代码出错：{{message}}",
       "errorAt": "代码出错：{{message}}（{{file}} 第 {{line}} 行）",
@@ -674,5 +673,70 @@
     "copy": "复制编号",
     "showReport": "查看报告全部内容",
     "sendFailed": "发送失败，报告还在，可以重试或者保存成文件。"
+  },
+  "files": {
+    "scenes": "场景",
+    "sounds": "声音",
+    "shared": "共用代码",
+    "newFile": "新建文件",
+    "newFileTitle": "新建文件（放在 {{folder}} 里，名字里可以带文件夹）",
+    "create": "创建",
+    "exists": "已经有这个文件了：{{path}}",
+    "renameAction": "改名",
+    "renameTitle": "给“{{name}}”改名",
+    "rename": "改名",
+    "removeAction": "删除",
+    "removeTitle": "删除“{{name}}”？",
+    "removeWarning": "可以用撤销找回来。",
+    "removeFolderWarning": "里面的 {{count}} 个文件会一起删除。可以用撤销找回来。",
+    "remove": "删除",
+    "setEntry": "设为入口文件",
+    "entry": "入口文件",
+    "entryUsage": "场景从这个文件开始运行"
+  },
+  "code": {
+    "empty": "在文件选项卡里选一个文件，就能在这里改它。",
+    "loading": "正在加载代码编辑器",
+    "loadFailed": "代码编辑器没有加载出来。改过的内容还在，检查网络后重试。",
+    "unsavedName": "● {{name}}",
+    "closeFile": "关闭 {{name}}",
+    "saveFile": "保存当前文件",
+    "conflictChanged": "这个文件在别处改了。你的改动还在这里，保存前可以决定留哪一边。",
+    "conflictRemoved": "这个文件在别处删掉了。你的改动还在这里，保存会把文件重新建出来。",
+    "keepMine": "留下我的，继续改",
+    "takeTheirs": "换成别处的版本",
+    "closeRemoved": "放弃改动，关闭",
+    "closedRemoved": "这个文件已经不在项目里，选项卡关了：{{path}}",
+    "unsavedTitle": "“{{path}}”有没保存的改动",
+    "unsavedMessage": "不保存的话，这些改动会丢掉。",
+    "leaveTitle": "有 {{count}} 个文件没保存",
+    "discard": "不保存",
+    "save": "保存",
+    "saveAll": "全部保存",
+    "overwriteTitle": "“{{path}}”在别处改过了",
+    "overwriteMessage": "保存会盖掉别处的改动。换成别处的版本后，可以在编辑器里用撤销找回你的内容。",
+    "overwrite": "盖掉别处的改动",
+    "draftsRestored": "找回了 {{count}} 个没保存的文件，在代码选项卡里。保存后才会进项目。",
+    "draftsDropped": "有 {{count}} 份没保存的代码读不懂，没有找回。",
+    "draftsReadFailed": "上次没保存的代码读不出来，会再试。",
+    "draftsKeepFailed": "没保存的代码存不到这台设备上，刷新或崩溃会丢。保存之后就没事了。",
+    "draftsKeepRecovered": "没保存的代码又能存到这台设备上了。"
+  },
+  "problems": {
+    "none": "没有发现问题",
+    "noFile": "其他",
+    "position": "第 {{line}} 行，第 {{column}} 列",
+    "status": "问题：{{errors}} 个错误，{{warnings}} 个警告",
+    "notInProject": "这个文件不在项目的代码里：{{file}}",
+    "clearImport": "清除导入时的问题",
+    "origin": {
+      "editor": "代码编辑器",
+      "import": "导入"
+    },
+    "import": {
+      "missing": "素材的文件不在文件夹里：{{name}}",
+      "damaged": "素材的文件和项目记录的内容不一样，没有导入：{{name}}",
+      "skipped": "项目用不上这个文件，没有带进来：{{name}}"
+    }
   }
 }

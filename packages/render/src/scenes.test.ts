@@ -717,6 +717,82 @@ describe("a project that changed", () => {
     expect(sent.length).toBe(count);
   });
 
+  describe("with code that does not parse", () => {
+    const parse: SceneProblem = {
+      kind: "error",
+      message: "SyntaxError: Unexpected token '}'",
+      file: "scenes/s/a.js",
+      line: 2,
+      frame: 0,
+    };
+
+    it("stays with the picture that worked, and says why", () => {
+      const { scenes, hosts, lastStatus, sent } = changed();
+      const before = scenes.pictureOf("a");
+      before?.release();
+      hosts[1]?.options.onProblem?.(parse);
+      expect(hosts[1]?.closed).toBe(true);
+      expect(hosts[0]?.closed).toBe(false);
+      expect(scenes.pictureOf("a")?.image).toBe(before?.image);
+      expect(lastStatus()).toMatchObject({ state: "stopped", message: parse.message });
+      expect(sent).toContainEqual({
+        type: "scene-problem",
+        layer: "a",
+        revision: "r2",
+        problem: parse,
+      });
+    });
+
+    it("does not run it again and again as time goes by", () => {
+      const { scenes, hosts } = changed();
+      hosts[1]?.options.onProblem?.(parse);
+      scenes.follow(newer(), 13);
+      expect(hosts).toHaveLength(2);
+    });
+
+    it("gives the next try a chance", () => {
+      const { scenes, hosts } = changed();
+      hosts[1]?.options.onProblem?.(parse);
+      const fixed = planOf(layer("a", { source: source({ revision: "r3" }) }));
+      scenes.follow(fixed, 12);
+      scenes.handle({ ...CONTENT, revision: "r3" });
+      const image = hosts[2]?.picture(60);
+      expect(hosts[0]?.closed).toBe(true);
+      expect(scenes.pictureOf("a")?.image).toBe(image);
+    });
+
+    it("says what is wrong now, also when something else was wrong before", () => {
+      const { scenes, hosts, lastStatus } = changed();
+      hosts[1]?.options.onProblem?.(parse);
+      const again = planOf(layer("a", { source: source({ revision: "r3" }) }));
+      scenes.follow(again, 12);
+      scenes.handle({ ...CONTENT, revision: "r3" });
+      hosts[2]?.options.onProblem?.({ ...parse, message: "SyntaxError: something else" });
+      expect(lastStatus()).toMatchObject({ message: "SyntaxError: something else" });
+    });
+
+    it("takes over from code that ran and threw, which may be most of what people want", () => {
+      const { hosts } = changed();
+      hosts[1]?.options.onProblem?.({ kind: "error", message: "TypeError: x", frame: 0 });
+      hosts[1]?.picture(60);
+      expect(hosts[0]?.closed).toBe(true);
+    });
+
+    it("has nothing to fall back on the first time, so the scene runs as far as it can", () => {
+      const { hosts, lastStatus } = showing();
+      hosts[0]?.options.onProblem?.(parse);
+      expect(hosts[0]?.closed).toBe(false);
+      expect(lastStatus()?.state).not.toBe("stopped");
+    });
+
+    it("leaves a scene alone that already took over", () => {
+      const { hosts } = changed();
+      hosts[1]?.picture(60);
+      hosts[1]?.options.onProblem?.(parse);
+      expect(hosts[1]?.closed).toBe(false);
+    });
+  });
+
   it("an update of an update that failed gets its chance", () => {
     const { scenes, hosts } = changed();
     hosts[1]?.fail({ reason: "failed" });
@@ -800,7 +876,7 @@ describe("a scene that fails", () => {
 
   describe("about a picture that did not get painted", () => {
     const problem: SceneProblem = { kind: "api", code: "capture-timeout", frame: 3 };
-    const told = { type: "scene-problem", layer: "a", problem };
+    const told = { type: "scene-problem", layer: "a", revision: "r1", problem };
 
     /** A page that gets frames of the screen when somebody says so. */
     function screen() {
@@ -840,7 +916,7 @@ describe("a scene that fails", () => {
     const { hosts, sent } = showing();
     const problem: SceneProblem = { kind: "error", message: "oops", frame: 3 };
     hosts[0]?.options.onProblem?.(problem);
-    expect(sent).toContainEqual({ type: "scene-problem", layer: "a", problem });
+    expect(sent).toContainEqual({ type: "scene-problem", layer: "a", revision: "r1", problem });
   });
 });
 

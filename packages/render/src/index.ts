@@ -138,7 +138,13 @@ export type FromCompositor =
   /** It needs this scene, in this state. */
   | { readonly type: "needs-scene"; readonly scene: string; readonly revision: string }
   | { readonly type: "scene-status"; readonly layer: string; readonly status: SceneStatus }
-  | { readonly type: "scene-problem"; readonly layer: string; readonly problem: SceneProblem }
+  /** With the state of the scene it came from: a newer one may have nothing wrong with it. */
+  | {
+      readonly type: "scene-problem";
+      readonly layer: string;
+      readonly revision: string;
+      readonly problem: SceneProblem;
+    }
   /** It looked at who took the keyboard. */
   | { readonly type: "focus-checked"; readonly request: number }
   /** Scenes must stay away from there, also in the next compositor. */

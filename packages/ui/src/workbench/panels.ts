@@ -18,6 +18,11 @@ export interface PanelDefinition {
   readonly keys?: readonly KeyCombo[];
   /** Keep the content in place while the tab is hidden or dragged. An iframe would reload otherwise. */
   readonly keepAlive?: boolean;
+  /**
+   * Opens next to this panel instead of in its place, when that is what the two are for. Code on
+   * top of the preview would hide the one thing people want to see change.
+   */
+  readonly beside?: string;
 }
 
 export class PanelRegistry {

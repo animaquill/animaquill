@@ -1,6 +1,8 @@
 import { entryOf, type ClipState, type ProjectState } from "@animaquill/core";
+import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
 import type { TFunction } from "i18next";
+import type zhCN from "../i18n/zh-CN.json";
 
 /** What people call a clip with a scene: what they named it, or else what the scene is called. */
 export function sceneClipName(
@@ -38,5 +40,26 @@ export function describeProblem(t: TFunction, problem: SceneProblem): string {
   return t(`scene.problems.codes.${code}`, {
     ...fields,
     defaultValue: t("scene.problems.other", fields),
+  });
+}
+
+type StoppedScene = keyof typeof zhCN.preview.stoppedScene;
+
+const RUNTIME_FAILURES = new Set(["missing-entry", "runtime-load", "frame-out-of-range"]);
+
+/** What people should know about a scene that does not run. */
+export function describeStatus(
+  t: TFunction,
+  name: string,
+  { state, reason, message = "" }: SceneStatus,
+): string {
+  if (state === "too-new") return t("preview.tooNew", { name });
+  if (state === "retrying") return t("preview.retrying", { name });
+  // What a scene says about itself can be a code of the runtime, which has words of its own.
+  const said = reason === "failed" && RUNTIME_FAILURES.has(message) ? message : reason;
+  return t(`preview.stoppedScene.${(said ?? "silent") as StoppedScene}`, {
+    name,
+    message,
+    interpolation: { escapeValue: false },
   });
 }

@@ -8,17 +8,23 @@ import {
   type ProjectStore,
   type UndoResult,
 } from "@animaquill/core";
+import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
 import { toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
+import { CodeDocuments, type CodePlace } from "../code/documents.ts";
+import { CodeDrafts } from "../code/drafts.ts";
+import { FileActions } from "../code/files.ts";
 import { DiagnosticsRecorder, type DiagnosticsReport } from "../diagnostics/recorder.ts";
 import { MediaLibrary } from "../media/library.ts";
-import { describeProblem, sceneClipName } from "../preview/problems.ts";
+import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
+import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts";
 import { PreviewStatus } from "../preview/status.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
+import type { ImportReport } from "../transfer/import.ts";
 import { ProjectTransfer } from "../transfer/transfer.ts";
 import { ActionRegistry } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
@@ -81,6 +87,10 @@ export class Workbench {
   readonly sceneOrigins: readonly string[];
   readonly sceneStage: "plain" | undefined;
   readonly preview: PreviewStatus;
+  readonly problems = new ProblemList();
+  readonly code: CodeDocuments;
+  readonly files: FileActions;
+  readonly drafts: CodeDrafts;
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -94,7 +104,10 @@ export class Workbench {
     this.sceneOrigins = options.sceneOrigins ?? [];
     this.sceneStage = options.sceneStage;
     this.preview = new PreviewStatus({
-      problem: (clip, problem, last) => this.#noteSceneProblem(clip, problem, last),
+      problem: (clip, revision, problem, first) =>
+        this.#noteSceneProblem(clip, revision, problem, first),
+      stopped: (clip, status) => this.#noteStoppedScene(clip, status),
+      revisions: (revisions) => this.problems.keepRevisions(revisions),
       restarted: () => this.notifications.push(t("preview.restarted")),
     });
     this.layout = new LayoutController(host.settings, host.windowMemory, workspaces, {
@@ -116,6 +129,37 @@ export class Workbench {
       saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
       saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
     });
+    let open = this.session.store;
+    this.session.subscribe(() => {
+      if (this.session.store !== open) this.problems.clear();
+      open = this.session.store;
+    });
+    this.code = new CodeDocuments(
+      this.session,
+      {
+        commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+        closedRemoved: (path) => this.notifications.push(t("code.closedRemoved", { path })),
+      },
+      {
+        unsaved: (path) => this.#askAboutUnsaved(path),
+        overwrite: (path) => this.#askAboutOverwriting(path),
+      },
+    );
+    this.drafts = new CodeDrafts(this.session, this.code, host.drafts, {
+      restored: (count) => this.notifications.push(t("code.draftsRestored", { count })),
+      dropped: (count) => this.notifications.push(t("code.draftsDropped", { count })),
+      readFailed: () => this.notifications.push(t("code.draftsReadFailed")),
+      keepFailed: () => this.notifications.push(t("code.draftsKeepFailed")),
+      keepRecovered: () => this.notifications.push(t("code.draftsKeepRecovered")),
+    });
+    this.files = new FileActions(
+      this.session,
+      this.code,
+      (path, edit) => this.#showFile(path, edit),
+      this.dialogs,
+      this.notifications,
+      t,
+    );
     this.input = new InputMode(host.settings);
     this.media = new MediaLibrary(
       this.session,
@@ -159,20 +203,143 @@ export class Workbench {
     });
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
+    this.#registerCodeActions();
     this.#registerEditActions();
     this.#registerViewActions();
     this.#registerHelpActions();
     registerTimelineActions(this.actions, this.timeline);
   }
 
-  /** Until there is a list of problems to go to, people get to read them here. */
-  #noteSceneProblem(clip: string, problem: SceneProblem, last: boolean): void {
+  #clipName(clip: string): string {
     const box = this.timeline.model?.boxes.get(clip);
-    const name = sceneClipName(box?.clip, this.session.store?.getState(), this.t);
-    const words = { name, interpolation: { escapeValue: false } };
-    const text = describeProblem(this.t, problem);
-    this.notifications.push(this.t("scene.problem", { ...words, text }));
-    if (last) this.notifications.push(this.t("scene.tooManyProblems", words));
+    return sceneClipName(box?.clip, this.session.store?.getState(), this.t);
+  }
+
+  /**
+   * It goes on the list, which has room for all of it. Only the first one of a state of a scene is
+   * worth interrupting people for, and not while they are looking at the list.
+   */
+  #noteSceneProblem(clip: string, revision: string, problem: SceneProblem, first: boolean): void {
+    const { t } = this;
+    const name = this.#clipName(clip);
+    const { line, ...withoutLine } = problem;
+    const { file, column } = problem;
+    this.problems.noteScene(clip, revision, {
+      severity: severityOf(problem),
+      // The list says where it is by itself.
+      text: describeProblem(t, withoutLine),
+      ...(file !== undefined && { file }),
+      ...(line !== undefined && { line }),
+      ...(column !== undefined && { column }),
+      origin: name,
+    });
+    if (!first || this.layout.getSnapshot().visible.has("problems")) return;
+    const text = describeProblem(t, problem);
+    const words = { name, text, interpolation: { escapeValue: false } };
+    this.notifications.push(t("scene.problem", words));
+  }
+
+  #noteStoppedScene(clip: string, status: SceneStatus | undefined): void {
+    if (!status) {
+      this.problems.noteStopped(clip, undefined);
+      return;
+    }
+    const origin = this.#clipName(clip);
+    const text = describeStatus(this.t, origin, status);
+    this.problems.noteStopped(clip, { severity: "error", text, origin });
+  }
+
+  /** Goes to where a problem is, if the project has that file. */
+  goToProblem({ file, line, column }: ListedProblem): void {
+    if (file === undefined) return;
+    const place = line === undefined ? undefined : { line, ...(column && { column }) };
+    if (!this.showCode(file, place)) {
+      this.notifications.push(this.t("problems.notInProject", { file }));
+    }
+  }
+
+  /**
+   * From the list of files. Keys go by the panel in use, so a file that only gets shown leaves the
+   * list in use, for going on with it. A new file is there to be written in.
+   */
+  #showFile(path: string, edit: boolean): void {
+    this.showCode(path, edit ? { line: 1 } : undefined);
+    if (!edit && this.layout.getSnapshot().visible.has("files")) this.layout.openPanel("files");
+  }
+
+  /** Resolves to whether the project has that file. */
+  showCode(path: string, place?: CodePlace): boolean {
+    const opened = this.code.open(path, place);
+    if (opened) this.layout.openPanel("code");
+    return opened;
+  }
+
+  /** An import says all of this once. The list is where it can still be found afterwards. */
+  #noteImport({ missing, damaged, skipped, lost, warnings }: ImportReport): void {
+    const { t } = this;
+    const origin = t("problems.origin.import");
+    const said = (kind: "missing" | "damaged" | "skipped", names: readonly string[]) =>
+      names.map((name) => ({
+        severity: "warning" as const,
+        text: t(`problems.import.${kind}`, { name, interpolation: { escapeValue: false } }),
+        origin,
+      }));
+    this.problems.noteImport([
+      ...lost.map((text) => ({ severity: "warning" as const, text, origin })),
+      ...said("missing", missing),
+      ...said("damaged", damaged),
+      ...said("skipped", skipped),
+      ...warnings.map(({ severity, message, file, path }) => ({
+        severity,
+        text: message,
+        file,
+        ...(path && { place: path }),
+        origin,
+      })),
+    ]);
+  }
+
+  #askAboutUnsaved(path: string): Promise<"save" | "discard" | undefined> {
+    const { t } = this;
+    return this.dialogs.choose({
+      title: t("code.unsavedTitle", { path }),
+      message: t("code.unsavedMessage"),
+      choices: [
+        { id: "discard", label: t("code.discard"), kind: "danger" },
+        { id: "save", label: t("code.save"), kind: "primary" },
+      ],
+    }) as Promise<"save" | "discard" | undefined>;
+  }
+
+  #askAboutOverwriting(path: string): Promise<"overwrite" | "theirs" | undefined> {
+    const { t } = this;
+    return this.dialogs.choose({
+      title: t("code.overwriteTitle", { path }),
+      message: t("code.overwriteMessage"),
+      choices: [
+        { id: "theirs", label: t("code.takeTheirs") },
+        { id: "overwrite", label: t("code.overwrite"), kind: "danger" },
+      ],
+    }) as Promise<"overwrite" | "theirs" | undefined>;
+  }
+
+  /** Resolves to false when people would rather stay with what they typed. */
+  async #settleCode(): Promise<boolean> {
+    const count = this.code.unsaved.length;
+    if (count === 0) return true;
+    const { t } = this;
+    const answer = await this.dialogs.choose({
+      title: t("code.leaveTitle", { count }),
+      message: t("code.unsavedMessage"),
+      choices: [
+        { id: "discard", label: t("code.discard"), kind: "danger" },
+        { id: "save", label: t("code.saveAll"), kind: "primary" },
+      ],
+    });
+    if (answer === undefined) return false;
+    if (answer === "save") return this.code.saveAll();
+    this.code.discardAll();
+    return true;
   }
 
   async load(): Promise<void> {
@@ -212,6 +379,7 @@ export class Workbench {
     if (!report) return;
     await this.transfer.warnAboutCode(report);
     await this.openProject(report.id);
+    if (this.session.store?.getState().manifest.id === report.id) this.#noteImport(report);
     await this.transfer.announceImport(report);
   }
 
@@ -422,6 +590,7 @@ export class Workbench {
   /** Resolves to false when people would rather stay with what could not be saved. */
   async #leaveProject(): Promise<boolean> {
     if (!this.session.store) return true;
+    if (!(await this.#settleCode())) return false;
     if (!(await this.#settleTrial())) return false;
     if (!(await this.session.trySave())) {
       const { t } = this;
@@ -494,6 +663,34 @@ export class Workbench {
       run: () => void this.exportProject(),
       menu: { name: "file", group: "folder" },
       enabled: isOpen,
+    });
+  }
+
+  #registerCodeActions(): void {
+    const hasSelection = () => this.files.getSnapshot().selected !== undefined;
+    this.actions.register({
+      id: "code.save",
+      title: (t) => t("code.saveFile"),
+      run: () => void this.code.save(),
+      keys: ["mod+s"],
+      scope: "code",
+      enabled: () => this.code.getSnapshot().active !== undefined,
+    });
+    this.actions.register({
+      id: "files.rename",
+      title: (t) => t("files.renameAction"),
+      run: () => void this.files.rename(),
+      keys: ["f2"],
+      scope: "files",
+      enabled: hasSelection,
+    });
+    this.actions.register({
+      id: "files.remove",
+      title: (t) => t("files.removeAction"),
+      run: () => void this.files.remove(),
+      keys: ["delete"],
+      scope: "files",
+      enabled: hasSelection,
     });
   }
 
