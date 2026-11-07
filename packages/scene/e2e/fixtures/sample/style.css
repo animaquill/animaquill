@@ -1,0 +1,81 @@
+@import "theme.css";
+
+@font-face {
+  font-family: "Tiny Test";
+  src: url(fonts/tiny.ttf) format("truetype");
+}
+
+:root {
+  --accent: rgb(10, 132, 255);
+}
+html {
+  font-size: 20px;
+}
+body {
+  margin: 0;
+  background: rgb(16, 32, 58);
+  color: #fff;
+}
+.hero {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+.title {
+  position: absolute;
+  left: 80px;
+  top: 60px;
+  margin: 0;
+  font:
+    700 72px "Tiny Test",
+    sans-serif;
+}
+.plain {
+  position: absolute;
+  left: 80px;
+  top: 160px;
+  margin: 0;
+  font: 700 72px sans-serif;
+}
+#png,
+#svg,
+#srcset,
+.css-bg,
+.in-page,
+#in-attribute {
+  position: absolute;
+  top: 280px;
+  width: 64px;
+  height: 64px;
+}
+#svg {
+  left: 100px;
+}
+#srcset {
+  left: 200px;
+}
+.css-bg {
+  left: 300px;
+  background: url("images/bg.png");
+}
+.in-page {
+  left: 400px;
+}
+#in-attribute {
+  left: 500px;
+}
+.spinner {
+  position: absolute;
+  left: 600px;
+  top: 280px;
+  width: 64px;
+  height: 64px;
+  background: var(--accent);
+  animation: spin 4s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

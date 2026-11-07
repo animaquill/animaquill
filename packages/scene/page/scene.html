@@ -1,0 +1,43 @@
+<!doctype html>
+<html data-editors="[]">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scene</title>
+    <script>
+      // A fixed page: it never changes, and what runs on it arrives as a message from the compositor.
+      // That is why it is the same for every project and every version of the runtime.
+      (() => {
+        // Only the editor of this deployment gets a scene. Everybody else gets an empty page.
+        const editors = JSON.parse(document.documentElement.dataset.editors);
+        const ancestors = location.ancestorOrigins;
+        if (ancestors && !editors.includes([...ancestors].at(-1))) return;
+
+        const say = (message) => parent.postMessage(message, "*");
+        const listen = (event) => {
+          // Any frame on the page can reach this one, and a message only gets built when read.
+          if (event.source !== parent) return;
+          const { data } = event;
+          if (data?.type !== "boot") return;
+          removeEventListener("message", listen);
+          window.aqBoot = data;
+          const script = document.createElement("script");
+          // Blob URLs only work in the document that made them.
+          script.src = URL.createObjectURL(data.code);
+          script.onerror = () => say({ type: "failed", message: "runtime-load" });
+          document.head.append(script);
+        };
+        // A browser that does not say who is around this page cannot tell the editor from anybody
+        // else. Nothing starts here then, and it counts as one that cannot capture.
+        if (ancestors) addEventListener("message", listen);
+        addEventListener("load", () => {
+          const capture =
+            Boolean(ancestors) &&
+            typeof CanvasRenderingContext2D === "function" &&
+            "drawElementImage" in CanvasRenderingContext2D.prototype;
+          say({ type: "hello", runtime: 1, capture });
+        });
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "name": "@animaquill/scene",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./vite": "./src/vite.ts",
+    "./page": "./page/scene.html"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@csstools/css-tokenizer": "4.0.2",
+    "es-module-lexer": "3.0.4",
+    "parse5": "8.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

@@ -15,6 +15,7 @@
     "**/node_modules/**",
     "**/test-results/**",
     "**/playwright-report/**",
-    "packages/schema/fixtures/**"
+    "packages/schema/fixtures/**",
+    "packages/scene/e2e/fixtures/**"
   ]
 }

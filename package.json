@@ -20,7 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "e2e": "pnpm --filter @animaquill/ui e2e",
+    "e2e": "pnpm --filter @animaquill/ui --filter @animaquill/scene --workspace-concurrency=1 e2e",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   }
 }

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" class="root-class">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sample scene</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      .in-page {
+        background-image: url(images/bg.png);
+      }
+    </style>
+    <script src="scripts/classic.js"></script>
+    <script>
+      window.probe = window.probe || {};
+      window.probe.inlineHeadScript = true;
+      window.probe.bodyInHead = String(document.body);
+    </script>
+    <script type="module" src="main.js"></script>
+    <script type="module">
+      import { add } from "./scripts/util.js";
+      window.probe.inlineModule = add(1, 2) === 3;
+    </script>
+  </head>
+  <body class="dark">
+    <script>
+      window.probe.firstInBody = {
+        parent: document.body.parentElement.tagName,
+        bodyIsItself: document.currentScript.parentElement === document.body,
+        queried: document.querySelector("body") === document.body,
+        width: innerWidth,
+      };
+    </script>
+    <div id="hero" class="hero">
+      <h1 id="title" class="title">AAAA</h1>
+      <p id="plain" class="plain">AAAA</p>
+      <img id="png" src="images/logo.png" alt="" />
+      <img id="srcset" srcset="images/logo.png 1x, images/tile.svg 2x" alt="" />
+      <img id="svg" src="images/tile.svg" alt="" />
+      <div id="css-bg" class="css-bg"></div>
+      <div id="in-page" class="in-page"></div>
+      <div id="in-attribute" style="background-image: url(&quot;images/bg.png&quot;)"></div>
+      <div id="spinner" class="spinner"></div>
+    </div>
+    <script>
+      window.probe.lastInBody = {
+        heroParent: document.getElementById("hero").parentElement === document.body,
+        rootSize: getComputedStyle(document.documentElement).getPropertyValue("--aq-width").trim(),
+      };
+    </script>
+  </body>
+</html>
