@@ -10,18 +10,31 @@ export const content = (page: Page, type: string) => page.locator(`[data-panel="
 export const group = (page: Page, type: string) =>
   page.locator(".dv-groupview").filter({ has: tab(page, type) });
 
+const previews = new WeakMap<Page, Frame>();
+
 /**
  * The compositor of the preview, once it has loaded. Thumbnails and sounds have compositors of
  * their own, at the same address, so the address does not say which one it is: the element does.
  * There is none for a moment while a project opens, after a reload, or when a new one takes over.
  */
 export async function findCompositor(page: Page): Promise<Frame | undefined> {
+  // Tests read the picture over and over while it moves, so finding it again has to cost nothing.
+  // A frame stays the same while its element does, and goes away with it.
+  let frame = previews.get(page);
+  if (!frame || frame.isDetached()) {
+    frame = await previewFrame(page);
+    if (frame) previews.set(page, frame);
+  }
+  // Until it has loaded it is an empty page, where nothing a test reads is.
+  return frame?.url().includes("compositor") ? frame : undefined;
+}
+
+async function previewFrame(page: Page): Promise<Frame | undefined> {
   const element = await page.$('iframe[data-compositor="preview"]');
   if (!element) return undefined;
   const frame = await element.contentFrame().catch(() => null);
   await element.dispose().catch(() => {});
-  // Until it has loaded it is an empty page, where nothing a test reads is.
-  return frame?.url().includes("compositor") ? frame : undefined;
+  return frame ?? undefined;
 }
 
 /** Waits for the compositor of the preview, which takes a moment, as said above. */
