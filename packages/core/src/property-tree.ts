@@ -13,6 +13,7 @@ import {
   type Value,
   type ValueType,
 } from "@animaquill/schema";
+import { componentsOf } from "./components.ts";
 import { sample } from "./curve.ts";
 import {
   clipEnd,
@@ -80,12 +81,12 @@ const SHAPES: Readonly<Record<ValueType, Shape>> = {
 /**
  * The rows of a property. The first one stands for all of it. A vector also has a row for each part,
  * which is a view of the same channel: its keys are the keys of the vector, and its curve is that of
- * the one number.
+ * the one number. Parts are called what the description says, or else x, y, z and w.
  */
 export function rowsOf(spec: PropertySpec): readonly RowShape[] {
   const shape = SHAPES[spec.type];
   const whole: RowShape = { path: spec.path, ...shape };
-  const parts = (spec.components ?? []).map((name, index): RowShape => ({
+  const parts = componentsOf(spec).map((name, index): RowShape => ({
     path: spec.path,
     ...GRADUAL,
     component: { index, name },

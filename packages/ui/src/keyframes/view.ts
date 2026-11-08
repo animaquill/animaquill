@@ -191,6 +191,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
       lanes.every((lane, index) => {
         const other = this.#lanes[index] as Lane;
         return (
+          lane.id === other.id &&
           lane.node === other.node &&
           lane.row === other.row &&
           lane.box === other.box &&

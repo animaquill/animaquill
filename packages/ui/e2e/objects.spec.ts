@@ -410,3 +410,109 @@ test("a registration that keeps changing does not take the scene away", async ({
   await goTo(page, "0:15/00");
   await expect.poll(async () => Number(await said(page, "frames"))).toBeGreaterThan(frames);
 });
+
+/** A ball that a code object moves, by a position that is one vector, and that says where. */
+const ball = `<!doctype html>
+<style>body { margin: 0; background: #000 } .ball { position: absolute; width: 60px;
+  height: 60px; border-radius: 50%; background: #fff }</style>
+<div class="ball"></div>
+<script>
+  const ball = aq.object("ball", {
+    name: "球",
+    properties: { pos: { type: "vec2", name: "中心", unit: "world", default: [0, 0] } },
+  });
+  const element = document.querySelector(".ball");
+  aq.frame((seconds) => {
+    const [x, y] = ball.at(seconds).pos;
+    element.style.translate = x + "px " + y + "px";
+    document.body.dataset.pos = x + "," + y;
+  });
+</script>`;
+
+test("a vector opens up into its parts, each with its curve, which share their keys", async ({
+  page,
+}) => {
+  // Room for the rows of both parts, made taller, under what the clip has.
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await openForScenes(page);
+  const keys = {
+    keys: [
+      { time: "1", value: [0, 100] },
+      { time: "3", value: [200, 50] },
+    ],
+  };
+  await openArm(page, { properties: { "object.ball.pos": keys } }, ball);
+  await animate(page);
+  await open(page, "场景");
+  await open(page, "球");
+  await open(page, "中心");
+  const keyOf = (name: string) =>
+    panel(page).getByRole("option", { name: new RegExp(`^${name}，`) });
+  const partValue = (name: string) => row(page, name).getByRole("spinbutton");
+  await expect(keyOf("中心 X")).toHaveCount(2);
+  await expect(keyOf("中心 Y")).toHaveCount(2);
+  for (const name of ["中心 X", "中心 Y"]) {
+    await panel(page)
+      .getByRole("button", { name: `加高 ${name} 这一行`, exact: true })
+      .click();
+  }
+  const middleOf = async (key: Locator) => {
+    const box = await key.boundingBox();
+    if (!box) throw new Error("not on screen");
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+  const heights = async (name: string) =>
+    Promise.all((await keyOf(name).all()).map(async (key) => (await middleOf(key)).y));
+  // X goes up from 0 to 200, and Y goes down from 100 to 50.
+  await expect
+    .poll(async () => {
+      const [a = 0, b = 0] = await heights("中心 X");
+      return a - b;
+    })
+    .toBeGreaterThan(40);
+  await expect
+    .poll(async () => {
+      const [a = 0, b = 0] = await heights("中心 Y");
+      return b - a;
+    })
+    .toBeGreaterThan(40);
+
+  await goTo(page, "0:03/00");
+  await expect(partValue("中心 X")).toHaveValue("200");
+  await expect(partValue("中心 Y")).toHaveValue("50");
+  await expect.poll(() => said(page, "pos")).toBe("200,50");
+
+  // Up and down in the row of Y is Y alone.
+  const drag = async (key: Locator, x: number, y: number) => {
+    const from = await middleOf(key);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + x / 2, from.y + y / 2, { steps: 4 });
+    await page.mouse.move(from.x + x, from.y + y, { steps: 4 });
+    await page.mouse.up();
+  };
+  await drag(keyOf("中心 Y").nth(1), 0, -40);
+  await expect.poll(async () => Number(await partValue("中心 Y").inputValue())).toBeGreaterThan(50);
+  await expect(partValue("中心 X")).toHaveValue("200");
+  await expect.poll(() => said(page, "pos")).toMatch(/^200,/);
+  await expect.poll(() => said(page, "pos")).not.toBe("200,50");
+  await page.keyboard.press("Control+z");
+  await expect(partValue("中心 Y")).toHaveValue("50");
+  await expect.poll(() => said(page, "pos")).toBe("200,50");
+
+  // Along the time it is the key of the vector, in all of its rows.
+  const timeOf = async (key: Locator) => (await key.getAttribute("aria-label"))?.split("，").at(-1);
+  const before = await timeOf(keyOf("中心 X").nth(1));
+  await drag(keyOf("中心 X").nth(1), 60, 0);
+  await expect.poll(() => timeOf(keyOf("中心 X").nth(1))).not.toBe(before);
+  const after = await timeOf(keyOf("中心 X").nth(1));
+  await expect.poll(() => timeOf(keyOf("中心 Y").nth(1))).toBe(after);
+  await expect.poll(() => timeOf(keyOf("中心").nth(1))).toBe(after);
+  // Both numbers went along: at 3 seconds now the ball is on its way.
+  await expect.poll(() => said(page, "pos")).not.toBe("200,50");
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => timeOf(keyOf("中心 Y").nth(1))).toBe(before);
+  await expect.poll(() => said(page, "pos")).toBe("200,50");
+  await page.keyboard.press("Control+Shift+z");
+  await expect.poll(() => timeOf(keyOf("中心 Y").nth(1))).toBe(after);
+});

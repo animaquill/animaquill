@@ -1,7 +1,14 @@
-import { clipNodeOf, orderedTracks, secondsOf, type PropertyEdit } from "@animaquill/core";
+import {
+  clipNodeOf,
+  orderedTracks,
+  sceneSourceOf,
+  secondsOf,
+  type PropertyEdit,
+} from "@animaquill/core";
 import { formatTime, parseTime, type Animation } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { writeEdit } from "../properties/inspect.ts";
+import { SceneRegistrations } from "../properties/registrations.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { RULER_HEIGHT, TimelineEditor } from "../timeline/editor.ts";
@@ -34,7 +41,11 @@ const HEIGHT = 600;
 const t = ((key: string, options?: { defaultValue?: string }) =>
   options?.defaultValue ?? key) as never;
 
-async function setup({ trying = true, memory = memoryWindow() } = {}) {
+async function setup({
+  trying = true,
+  memory = memoryWindow(),
+  registrations = undefined as SceneRegistrations | undefined,
+} = {}) {
   const session = new ProjectSession(new MemoryLibrary(), memoryAddress(), {
     createFailed: vi.fn(),
     notFound: vi.fn(),
@@ -83,14 +94,17 @@ async function setup({ trying = true, memory = memoryWindow() } = {}) {
   const notShown = vi.fn();
   const gone = vi.fn();
   const open = () =>
-    new KeyframeEditor(session, timeline, trials, writer, memory, settings, t, {
-      pasteTooEarly,
-      pasteNowhere,
-      comparing,
-      locked,
-      notShown,
-      gone,
-    });
+    new KeyframeEditor(
+      session,
+      timeline,
+      trials,
+      writer,
+      memory,
+      settings,
+      t,
+      { pasteTooEarly, pasteNowhere, comparing, locked, notShown, gone },
+      registrations,
+    );
   const keyframes = open();
   const { panel } = keyframes;
   panel.setViewport(WIDTH, HEIGHT);
@@ -2574,5 +2588,179 @@ describe("spelling", () => {
     drag(at(1 / 3, laneOf("a", X)), { ...at(1 / 3, laneOf("a", X)), x: panel.xAt(1) });
     expect(shownTimes("a", X)).toEqual(["1"]);
     expect(formatTime(parseTime("2/6"))).toBe("1/3");
+  });
+});
+
+describe("parts of a vector", () => {
+  const P = "object.ball.pos";
+  const whole = laneOf("c", P);
+  const part = (index: number) => `${whole}#${index}`;
+
+  /** A scene with a ball at [0, 100] at 1 second and at [200, 50] at 3, all of it open. */
+  async function vector() {
+    const registrations = new SceneRegistrations();
+    const setting = await setup({ trying: false, registrations });
+    const { store, addClip, edit, keyframes, panel, timeline } = setting;
+    const added = store.execute({
+      type: "scene.add",
+      params: {
+        id: "s",
+        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        files: { "index.html": "<p>场景</p>" },
+      },
+    });
+    if (!added.ok) throw new Error(added.error.message);
+    addClip("c", 0, 8, { source: { kind: "scene", scene: "s" } });
+    const revision = sceneSourceOf(store.getState(), "s")?.revision as string;
+    registrations.note(revision, {
+      objects: [
+        {
+          id: "ball",
+          name: "球",
+          properties: [{ path: "pos", name: "位置", type: "vec2", unit: "world", default: [0, 0] }],
+        },
+      ],
+      elements: [],
+      complete: true,
+    });
+    edit(
+      { owner: { clip: "c" }, path: P, op: "setKey", time: "1", value: [0, 100] },
+      { owner: { clip: "c" }, path: P, op: "setKey", time: "3", value: [200, 50] },
+    );
+    for (let opening = true; opening;) {
+      const closed = panel.lanes.find((lane) => lane.canOpen && !lane.open);
+      if (closed) panel.toggleLane(closed);
+      opening = closed !== undefined;
+    }
+    const key = (lane: string, seconds: number, extra: Partial<Pointer> = {}): Pointer => {
+      const found = panel
+        .visibleKeys(50)
+        .find(({ lane: one, seconds: at }) => one.id === lane && Math.abs(at - seconds) < 1e-6);
+      if (!found) throw new Error(`no key at ${seconds} in ${lane}`);
+      return { x: found.x, y: found.y, shift: false, alt: false, mod: false, ...extra };
+    };
+    const keysNow = () => {
+      const box = timeline.model?.boxes.get("c");
+      if (!box) throw new Error("no clip");
+      return (keyframes.shown(box.clip).properties?.[P] as Animation | undefined)?.keys ?? [];
+    };
+    const values = () => keysNow().map(({ time, value }) => [time, value]);
+    return { ...setting, key, keysNow, values };
+  }
+
+  it("has a row for each part under the row of the vector, which has no curve of its own", async () => {
+    const { panel, keyframes, lane } = await vector();
+    const ids = panel.lanes.map(({ id }) => id);
+    expect(ids.slice(ids.indexOf(whole))).toEqual([whole, part(0), part(1)]);
+    expect([part(0), part(1)].map((id) => keyframes.nameOfLane(lane(id)))).toEqual(["X", "Y"]);
+    expect(keyframes.labelOf(lane(part(1)))).toBe("位置 Y");
+    expect(lane(part(1)).depth).toBe(lane(whole).depth + 1);
+    const box = lane(whole).box as NonNullable<Lane["box"]>;
+    expect(panel.scaleOf(lane(whole), box)).toBeUndefined();
+    expect(panel.scaleOf(lane(part(0)), box)).toMatchObject({ low: 0, high: 200 });
+    expect(panel.scaleOf(lane(part(1)), box)).toMatchObject({ low: 50, high: 100 });
+    // The keys are the keys of the vector, in all three rows.
+    for (const id of [whole, part(0), part(1)]) {
+      const times = panel
+        .visibleKeys(50)
+        .filter(({ lane: one }) => one.id === id)
+        .map(({ seconds }) => seconds);
+      expect(times).toEqual([1, 3]);
+    }
+    keyframes.toggleOpen(whole);
+    expect(panel.lanes.map(({ id }) => id)).not.toContain(part(0));
+  });
+
+  it("draws each part at the height of its own number", async () => {
+    const { keyframes, key } = await vector();
+    keyframes.toggleTall("c", P, 0);
+    keyframes.toggleTall("c", P, 1);
+    expect(keyframes.isTall("c", P, 1)).toBe(true);
+    expect(keyframes.isTall("c", P)).toBe(false);
+    // X goes up from 0 to 200, and Y down from 100 to 50.
+    expect(key(part(0), 3).y).toBeLessThan(key(part(0), 1).y - 40);
+    expect(key(part(1), 3).y).toBeGreaterThan(key(part(1), 1).y + 40);
+  });
+
+  it("moves the key of the whole vector along the time, from the row of a part", async () => {
+    const { panel, key, drag, values, store } = await vector();
+    const from = key(part(1), 1);
+    drag(from, { ...from, x: panel.xAt(2) });
+    expect(values()).toEqual([
+      ["2", [0, 100]],
+      ["3", [200, 50]],
+    ]);
+    store.undo();
+    expect(values()).toEqual([
+      ["1", [0, 100]],
+      ["3", [200, 50]],
+    ]);
+    store.redo();
+    expect(values()[0]).toEqual(["2", [0, 100]]);
+  });
+
+  it("changes only its own number when it goes up and down in a row made taller", async () => {
+    const { keyframes, key, drag, values, store } = await vector();
+    keyframes.toggleTall("c", P, 1);
+    const from = key(part(1), 3);
+    drag(from, { ...from, y: from.y - 30 });
+    const [, moved] = values();
+    if (!moved) throw new Error("no key");
+    expect(moved[0]).toBe("3");
+    const [x, y] = moved[1] as number[];
+    expect(x).toBe(200);
+    expect(y).toBeGreaterThan(50);
+    store.undo();
+    expect(values()[1]).toEqual(["3", [200, 50]]);
+  });
+
+  it("bends the handles of the vector with a handle in the row of a part", async () => {
+    const { panel, keyframes, keysNow, values, store } = await vector();
+    keyframes.toggleTall("c", P, 0);
+    keyframes.toggleTall("c", P, 1);
+    keyframes.select(KeySelection.of([{ clip: "c", path: P, time: "1" }]));
+    const leaving = (id: string) => {
+      const found = panel
+        .visibleHandles()
+        .find(({ lane: one, side }) => one.id === id && side === "out");
+      if (!found) throw new Error(`no handle in ${id}`);
+      return found;
+    };
+    // Shown on the curve of each part, a third of the way along it.
+    expect(leaving(part(0)).component).toBe(0);
+    expect(leaving(part(1)).x).toBeCloseTo(panel.xAt(1 + 2 / 3), 6);
+    const before = leaving(part(0)).y;
+    const from = {
+      x: leaving(part(1)).x,
+      y: leaving(part(1)).y,
+      shift: false,
+      alt: false,
+      mod: false,
+    };
+    panel.press(from);
+    panel.drag({ ...from, y: from.y + 20 });
+    panel.release({ ...from, y: from.y + 20 });
+    const [first] = keysNow();
+    expect(first).toMatchObject({ interp: "bezier", value: [0, 100] });
+    // A handle is a share of the way to the next key: the same for both parts, so X bends too.
+    expect(first?.out?.[1]).not.toBeCloseTo(1 / 3, 3);
+    expect(leaving(part(0)).y).not.toBeCloseTo(before, 0);
+    expect(values().map(([, value]) => value)).toEqual([
+      [0, 100],
+      [200, 50],
+    ]);
+    store.undo();
+    expect(keysNow()[0]?.interp).toBeUndefined();
+  });
+
+  it("remembers rows of parts made taller, apart from each other", async () => {
+    const first = await vector();
+    first.keyframes.toggleTall("c", P, 1);
+    first.keyframes.setTallHeight("c", P, 200, 1);
+    first.keyframes.flush();
+    const again = first.reopen();
+    expect(again.isTall("c", P, 1)).toBe(true);
+    expect(again.tallHeightOf("c", P, 1)).toBe(200);
+    expect(again.isTall("c", P, 0)).toBe(false);
   });
 });

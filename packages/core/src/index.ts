@@ -1,5 +1,13 @@
 export { COMMANDS, type CommandDefinition } from "./commands.ts";
 export {
+  componentKeys,
+  componentOf,
+  componentSpecOf,
+  componentsOf,
+  keyWithComponent,
+  withComponent,
+} from "./components.ts";
+export {
   MAX_SPLIT_Y,
   MIN_SPLIT_Y,
   SHAPE,

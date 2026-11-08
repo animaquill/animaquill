@@ -1,4 +1,4 @@
-import type { PropertyNode } from "@animaquill/core";
+import { componentOf, componentSpecOf, withComponent, type PropertyNode } from "@animaquill/core";
 import type { Value } from "@animaquill/schema";
 import {
   ChevronDown,
@@ -70,6 +70,14 @@ interface PropertyControlsProps {
   readonly box: ClipBox;
   readonly node: PropertyNode;
   readonly label: string;
+  /** The part of a vector the row is about. Its keys are those of the vector. */
+  readonly component?: number | undefined;
+}
+
+/** What a control shows of one part of a vector: a number in the units of the vector. */
+function partRowOf(row: PropertyRow, component: number): PropertyRow {
+  const value = row.value === undefined ? undefined : componentOf(row.value, component);
+  return { ...row, spec: componentSpecOf(row.spec), value: value as number | undefined };
 }
 
 /**
@@ -88,8 +96,12 @@ function useInspected(
   return read();
 }
 
+/**
+ * The value of a row. A part of a vector is a number of its own, and changing it writes the vector
+ * with that one number changed, the way the properties tab does it.
+ */
 function ValueControl(props: PropertyControlsProps) {
-  const { area, box, node, label } = props;
+  const { area, box, node, label, component } = props;
   const { properties } = useWorkbench();
   const inspected = useInspected(props, ({ row, blocked }) => [
     row.value,
@@ -100,17 +112,23 @@ function ValueControl(props: PropertyControlsProps) {
   ]);
   if (!inspected) return null;
   const { row, blocked } = inspected;
-  const readOnly = blocked !== undefined;
-  const Control = CONTROLS[node.spec.type] ?? PlainValue;
+  const shown = component === undefined ? row : partRowOf(row, component);
+  const readOnly = blocked !== undefined || shown.value === undefined;
+  const Control =
+    (component === undefined ? CONTROLS[node.spec.type] : CONTROLS.number) ?? PlainValue;
   /** What a change writes, for the moment it happens. Its key can be somewhere else by then. */
   const edit = (value: Value) => {
     const now = area.keyframes.inspect(box, node.spec) ?? inspected;
-    return writeEdit(box.id, now.row, now.time, value);
+    const whole =
+      component === undefined || now.row.value === undefined
+        ? value
+        : withComponent(now.row.value, component, value as number);
+    return writeEdit(box.id, now.row, now.time, whole);
   };
   return (
     <span className={styles.value} data-readonly={readOnly || undefined}>
       <Control
-        row={row}
+        row={shown}
         label={label}
         readOnly={readOnly}
         // As it reads on its band.
@@ -229,7 +247,14 @@ function Pinning({ area, lane, label }: { area: KeyArea; lane: Lane; label: stri
 const EDGE_CLICK = 4;
 
 /** Where a row made taller is pulled to another height, at its bottom edge. */
-function TallEdge({ area, box, node, label, height }: PropertyControlsProps & { height: number }) {
+function TallEdge({
+  area,
+  box,
+  node,
+  label,
+  component,
+  height,
+}: PropertyControlsProps & { height: number }) {
   const { t } = useTranslation();
   const start = useRef<{ readonly y: number; readonly height: number; moved: boolean } | undefined>(
     undefined,
@@ -253,7 +278,7 @@ function TallEdge({ area, box, node, label, height }: PropertyControlsProps & { 
         // A click, or a hand that shakes a little, leaves the height it keeps as it is.
         if (!from || (!from.moved && Math.abs(by) < EDGE_CLICK)) return;
         from.moved = true;
-        keyframes.setTallHeight(box.id, path, from.height + by);
+        keyframes.setTallHeight(box.id, path, from.height + by, component);
       }}
       onPointerUp={() => {
         start.current = undefined;
@@ -266,11 +291,13 @@ function TallEdge({ area, box, node, label, height }: PropertyControlsProps & { 
 }
 
 /** Makes one row taller, and back. */
-function TallButton({ area, box, node, label }: PropertyControlsProps) {
+function TallButton({ area, box, node, label, component }: PropertyControlsProps) {
   const { t } = useTranslation();
   const { keyframes } = area;
   const { path } = node.spec;
-  const tall = useSyncExternalStore(keyframes.subscribeView, () => keyframes.isTall(box.id, path));
+  const tall = useSyncExternalStore(keyframes.subscribeView, () =>
+    keyframes.isTall(box.id, path, component),
+  );
   const name = t(tall ? "keyframes.untall" : "keyframes.tall", { name: label });
   return (
     <Tip name={name} usage={t("keyframes.tallHelp")}>
@@ -280,7 +307,7 @@ function TallButton({ area, box, node, label }: PropertyControlsProps) {
         aria-label={name}
         aria-pressed={tall}
         data-tall={tall || undefined}
-        onClick={() => keyframes.toggleTall(box.id, path)}
+        onClick={() => keyframes.toggleTall(box.id, path, component)}
       >
         {tall ? <FoldVertical size={12} /> : <UnfoldVertical size={12} />}
       </button>
@@ -301,10 +328,11 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
   const workbench = useWorkbench();
   const { trials, properties } = workbench;
   const [menu, setMenu] = useState<{ readonly x: number; readonly y: number }>();
-  const { node, open, canOpen, row, box } = lane;
+  const { node, open, canOpen, box } = lane;
   const isProperty = node.kind === "property";
-  const name = keyframes.nameOfNode(node, row);
+  const name = keyframes.nameOfLane(lane);
   const label = keyframes.labelOf(lane);
+  const component = lane.component?.index;
   const tried = useSyncExternalStore(
     keyframes.subscribeView,
     () => isProperty && box !== undefined && keyframes.isTried(box.id, node.spec.path),
@@ -350,7 +378,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
             {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </button>
         ) : node.kind === "property" && box ? (
-          <TallButton area={area} box={box} node={node} label={label} />
+          <TallButton area={area} box={box} node={node} label={label} component={component} />
         ) : (
           <span className={styles.noChevron} />
         )}
@@ -359,7 +387,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
         </button>
         {node.kind === "property" && box && (
           <>
-            <ValueControl area={area} box={box} node={node} label={label} />
+            <ValueControl area={area} box={box} node={node} label={label} component={component} />
             <ValueMarks area={area} box={box} node={node} label={label} />
             <KeyButtons area={area} box={box} node={node} label={label} />
           </>
@@ -369,7 +397,14 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
         )}
       </div>
       {lane.tall && node.kind === "property" && box && (
-        <TallEdge area={area} box={box} node={node} label={label} height={lane.height} />
+        <TallEdge
+          area={area}
+          box={box}
+          node={node}
+          label={label}
+          component={component}
+          height={lane.height}
+        />
       )}
       {menu && box && node.kind === "property" && (
         <PopupMenu

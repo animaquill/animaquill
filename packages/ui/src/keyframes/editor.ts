@@ -5,6 +5,7 @@ import {
   clipNodeOf,
   clipOffset,
   clipStart,
+  componentOf,
   effectiveProperties,
   entryOf,
   firstKeyFrom,
@@ -41,7 +42,7 @@ import {
 } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { inspectProperty, type InspectedProperty } from "../properties/inspect.ts";
-import { groupOf, nameOf, textOf } from "../properties/names.ts";
+import { groupOf, nameOf, partNameOf, textOf } from "../properties/names.ts";
 import { ClipDescriptions, SceneRegistrations } from "../properties/registrations.ts";
 import type { TrialSession } from "../properties/trial.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
@@ -117,8 +118,11 @@ interface CopiedKey {
   readonly key: Key;
 }
 
-/** A row made taller, by clip and path: how tall, and whether it is right now. */
-type TallRow = readonly [clip: string, path: string, height: number, on: boolean];
+/**
+ * A row made taller, by clip and path, and for a part of a vector which part: how tall, and whether
+ * it is right now.
+ */
+type TallRow = readonly [clip: string, path: string, height: number, on: boolean, part?: number];
 
 interface RememberedState {
   readonly range?: ListRange;
@@ -164,21 +168,34 @@ function tallRowsIn(value: unknown): readonly TallRow[] {
       typeof item[0] === "string" &&
       typeof item[1] === "string" &&
       Number.isFinite(item[2]) &&
-      typeof item[3] === "boolean",
+      typeof item[3] === "boolean" &&
+      (item[4] === undefined || (Number.isInteger(item[4]) && item[4] >= 0)),
   );
 }
 
 const clampTall = (height: number) =>
   Math.min(Math.max(Math.round(height), MIN_TALL_HEIGHT), MAX_TALL_HEIGHT);
 
-/** A row of one property of one clip, which is what a row made taller is about. */
-const rowKey = (clip: string, path: string) => `${clip} ${path}`;
+/**
+ * A row of one property of one clip, which is what a row made taller is about. The parts of a vector
+ * have rows of their own.
+ */
+const rowKey = (clip: string, path: string, component?: number) =>
+  component === undefined ? `${clip} ${path}` : `${clip} ${path} ${component}`;
 
 interface TallState {
   readonly clip: string;
   readonly path: string;
+  readonly component: number | undefined;
   readonly height: number;
   readonly on: boolean;
+}
+
+/** A row of a property, or of a part of a vector, of a clip. */
+export interface ValueRow {
+  readonly clip: string;
+  readonly path: string;
+  readonly component?: number | undefined;
 }
 
 function parseWidth(value: unknown): number | undefined {
@@ -370,9 +387,10 @@ export class KeyframeEditor {
     const there = (ids: readonly string[]) => ids.filter((id) => this.#isThere(id));
     for (const id of there(stringsIn(remembered.toggled))) this.#toggled.add(id);
     // What came before rows were curves themselves, such as `curves`, is not read at all.
-    for (const [clip, path, height, on] of tallRowsIn(remembered.tall)) {
+    for (const [clip, path, height, on, component] of tallRowsIn(remembered.tall)) {
       if (!this.#isThere(clip)) continue;
-      this.#tall.set(rowKey(clip, path), { clip, path, height: clampTall(height), on });
+      const tall = { clip, path, component, height: clampTall(height), on };
+      this.#tall.set(rowKey(clip, path, component), tall);
     }
     this.inTimeline.openAll(there(stringsIn(remembered.open)));
     this.panel.adoptView(remembered.view, remembered.rows);
@@ -627,10 +645,19 @@ export class KeyframeEditor {
     }
   }
 
-  /** What people call a lane. A group tells its X and Y from those of other groups. */
-  labelOf({ node, row, group }: Lane): string {
+  /** What a lane shows as its name: a part of a vector goes by the name of the part. */
+  nameOfLane({ node, row, component }: Lane): string {
+    return component ? partNameOf(component.name) : this.nameOfNode(node, row);
+  }
+
+  /**
+   * What people call a lane. A group tells its X and Y from those of other groups, and a vector
+   * tells its own X and Y apart from those of other vectors.
+   */
+  labelOf({ node, row, group, component }: Lane): string {
     const name = this.nameOfNode(node, row);
-    return group === undefined ? name : `${groupOf(this.#t, group)} ${name}`;
+    const whole = group === undefined ? name : `${groupOf(this.#t, group)} ${name}`;
+    return component ? `${whole} ${partNameOf(component.name)}` : whole;
   }
 
   isOpen(node: TreeNode): boolean {
@@ -641,10 +668,12 @@ export class KeyframeEditor {
 
   readonly #rules: LaneRules = {
     isOpen: (node) => this.isOpen(node),
-    tallHeight: (node: PropertyNode) =>
-      this.isTall(node.clip, node.spec.path)
-        ? this.tallHeightOf(node.clip, node.spec.path)
-        : undefined,
+    tallHeight: (node: PropertyNode, component?: number) => {
+      const { clip, spec } = node;
+      return this.isTall(clip, spec.path, component)
+        ? this.tallHeightOf(clip, spec.path, component)
+        : undefined;
+    },
   };
 
   get laneRules(): LaneRules {
@@ -653,45 +682,60 @@ export class KeyframeEditor {
 
   /* Rows made taller. */
 
-  isTall(clip: string, path: string): boolean {
-    return this.#tall.get(rowKey(clip, path))?.on === true;
+  /** Whether the row of a property, or of a part of a vector, is taller right now. */
+  isTall(clip: string, path: string, component?: number): boolean {
+    return this.#tall.get(rowKey(clip, path, component))?.on === true;
   }
 
   /** How tall a row is when it is made taller: as it was last time, or the usual. */
-  tallHeightOf(clip: string, path: string): number {
-    return this.#tall.get(rowKey(clip, path))?.height ?? DEFAULT_TALL_HEIGHT;
+  tallHeightOf(clip: string, path: string, component?: number): number {
+    return this.#tall.get(rowKey(clip, path, component))?.height ?? DEFAULT_TALL_HEIGHT;
   }
 
   /** Makes a row taller, or back to what the other rows are. Either way it keeps its height. */
-  toggleTall(clip: string, path: string): void {
-    const on = !this.isTall(clip, path);
-    this.#tall.set(rowKey(clip, path), { clip, path, height: this.tallHeightOf(clip, path), on });
+  toggleTall(clip: string, path: string, component?: number): void {
+    const on = !this.isTall(clip, path, component);
+    const height = this.tallHeightOf(clip, path, component);
+    this.#tall.set(rowKey(clip, path, component), { clip, path, component, height, on });
     this.#relist();
     this.#rememberSoon();
   }
 
   /** While its edge is pulled. It stays taller, at that height, also for the next time. */
-  setTallHeight(clip: string, path: string, height: number): void {
+  setTallHeight(clip: string, path: string, height: number, component?: number): void {
     const limited = clampTall(height);
-    if (this.isTall(clip, path) && limited === this.tallHeightOf(clip, path)) return;
-    this.#tall.set(rowKey(clip, path), { clip, path, height: limited, on: true });
+    const same = limited === this.tallHeightOf(clip, path, component);
+    if (this.isTall(clip, path, component) && same) return;
+    const tall = { clip, path, component, height: limited, on: true };
+    this.#tall.set(rowKey(clip, path, component), tall);
     this.#relist();
     this.#rememberSoon();
   }
 
   /* What rows of numbers cover. */
 
-  /** What a row of a number covers, and what it covered when a drag started. */
+  /**
+   * What a row of a number covers, and what it covered when a drag started. A part of a vector is
+   * a number of its own, in the row of that part.
+   */
   rangeOf(
     clip: string,
     path: string,
     value: PropertyValue,
     spec: PropertySpec,
+    component?: number,
   ): ValueRange | undefined {
     // Only a number has a curve that goes up and down. A color or a list changes another way.
-    const channel = isNumeric(spec.type) ? channelOf(value, spec.type) : undefined;
+    const part = component === undefined ? undefined : componentOf(value, component);
+    const numeric = component === undefined && isNumeric(spec.type);
+    const channel =
+      part !== undefined
+        ? channelOf(part, "number")
+        : numeric
+          ? channelOf(value, spec.type)
+          : undefined;
     const range = channel && rangeOfChannel(channel);
-    return range && unionOf(range, this.#heldRanges.get(rowKey(clip, path)));
+    return range && unionOf(range, this.#heldRanges.get(rowKey(clip, path, component)));
   }
 
   /** Something that changes when what rows cover is held or let go, for drawing again. */
@@ -700,14 +744,15 @@ export class KeyframeEditor {
   }
 
   /** Keeps rows from shrinking while a drag goes on in them. */
-  holdRanges(rows: readonly { readonly clip: string; readonly path: string }[]): void {
+  holdRanges(rows: readonly ValueRow[]): void {
     const held = new Map<string, ValueRange>();
-    for (const { clip, path } of rows) {
+    for (const { clip, path, component } of rows) {
       const box = this.model?.boxes.get(clip);
       const spec = box && this.specOf(clip, path);
       const value = box && this.shownValue(box.clip, path);
-      const range = spec && value !== undefined ? this.rangeOf(clip, path, value, spec) : undefined;
-      if (range) held.set(rowKey(clip, path), range);
+      const range =
+        spec && value !== undefined ? this.rangeOf(clip, path, value, spec, component) : undefined;
+      if (range) held.set(rowKey(clip, path, component), range);
     }
     this.#heldRanges = held;
   }
@@ -1212,8 +1257,14 @@ export class KeyframeEditor {
       range,
       toggled: there(this.#toggled),
       pinned: there(pinned),
-      tall: [...this.#tall.values()].flatMap(({ clip, path, height, on }): TallRow[] =>
-        this.#isThere(clip) ? [[clip, path, height, on]] : [],
+      tall: [...this.#tall.values()].flatMap(({ clip, path, component, height, on }): TallRow[] =>
+        this.#isThere(clip)
+          ? [
+              component === undefined
+                ? [clip, path, height, on]
+                : [clip, path, height, on, component],
+            ]
+          : [],
       ),
       open: there(this.inTimeline.opened),
       ...(view ? { view } : {}),

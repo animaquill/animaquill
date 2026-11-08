@@ -1,4 +1,5 @@
-import { VECTOR_COMPONENTS, type Value, type ValueType } from "@animaquill/schema";
+import { componentSpecOf, componentsOf, withComponent } from "@animaquill/core";
+import type { Value, ValueType } from "@animaquill/schema";
 import {
   useEffect,
   useLayoutEffect,
@@ -10,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Tip } from "../app/Tip.tsx";
 import type { PropertyRow } from "./inspect.ts";
-import { textOf } from "./names.ts";
+import { partNameOf, textOf } from "./names.ts";
 import { NumberField } from "./NumberField.tsx";
 import styles from "./PropertiesPanel.module.css";
 
@@ -132,21 +133,21 @@ function ColorControl({ row, label, readOnly, onPreview, onCommit }: ControlProp
 
 /**
  * A vector is one value with a number for each of its parts, so changing one part writes all of
- * them, with the others as they are.
+ * them, with the others as they are. The parts are called as in the keyframe editor, and they are
+ * numbers in the units of the vector there too.
  */
 function VectorControl({ row, label, readOnly, onPreview, onCommit, onCancel }: ControlProps) {
   const { t } = useTranslation();
   const { spec } = row;
   const values = Array.isArray(row.value) ? row.value : [];
-  const names = spec.components ?? VECTOR_COMPONENTS.slice(0, values.length);
-  const withPart = (index: number, part: number) => values.map((v, i) => (i === index ? part : v));
-  const partSpec = { path: spec.path, type: "number" as const };
+  const withPart = (index: number, part: number) => withComponent(values, index, part);
+  const partSpec = componentSpecOf(spec);
   return (
     <span className={styles.vector}>
-      {names.map((name, index) => (
+      {componentsOf(spec).map((name, index) => (
         <NumberField
           key={name}
-          label={`${label} ${name}`}
+          label={`${label} ${partNameOf(name)}`}
           spec={partSpec}
           value={values[index] ?? 0}
           automatic={row.automatic}

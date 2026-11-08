@@ -1,10 +1,13 @@
 import {
+  componentSpecOf,
   pathsBelow,
   type ClipNode,
   type PropertyNode,
+  type RowShape,
   type TrackNode,
   type TreeNode,
 } from "@animaquill/core";
+import type { PropertySpec } from "@animaquill/schema";
 import type { ClipBox, Row, TimelineModel } from "../timeline/model.ts";
 
 /** One row of keys: the height of a control, so that values and keys line up. */
@@ -14,10 +17,18 @@ export const DEFAULT_TALL_HEIGHT = 120;
 export const MIN_TALL_HEIGHT = 40;
 export const MAX_TALL_HEIGHT = 480;
 
+/** Which part of a vector a row is about. */
+export type LanePart = NonNullable<RowShape["component"]>;
+
 /** One row of the list of what has keys, with where it is. */
 export interface Lane {
   readonly id: string;
   readonly node: TreeNode;
+  /**
+   * The part of a vector this row is about, under the row of the vector. It is a view of the same
+   * channel: the same keys, and the curve of that one number.
+   */
+  readonly component?: LanePart;
   /** How far it is in, for showing that it belongs to what is above it. */
   readonly depth: number;
   /** The distance from the top of the first lane. */
@@ -45,12 +56,32 @@ export interface Lane {
 /** What is open is up to the view. */
 export interface LaneRules {
   isOpen(node: TreeNode): boolean;
-  /** How tall a row is that was made taller on its own. Undefined for one that is not. */
-  tallHeight(node: PropertyNode): number | undefined;
+  /**
+   * How tall a row is that was made taller on its own: a property, or a part of a vector. Undefined
+   * for one that is not.
+   */
+  tallHeight(node: PropertyNode, component?: number): number | undefined;
 }
 
-/** A property is a row of its own: what it shows is in the row. */
-const canOpen = (node: TreeNode) => node.kind !== "property" && node.children.length > 0;
+/** The rows of the parts of a vector, which is all that a property has under it. */
+const partsOf = (node: PropertyNode): readonly LanePart[] =>
+  node.rows.flatMap(({ component }) => (component ? [component] : []));
+
+/** A property is a row of its own: what it shows is in the row. A vector has its parts under it. */
+const canOpen = (node: TreeNode) =>
+  node.kind === "property" ? partsOf(node).length > 0 : node.children.length > 0;
+
+/**
+ * What the values of a lane are: those of its property, or for a part of a vector a number in the
+ * same units. Undefined for what is not a property.
+ */
+export function specOfLane({ node, component }: Lane): PropertySpec | undefined {
+  if (node.kind !== "property") return undefined;
+  return component ? componentSpecOf(node.spec) : node.spec;
+}
+
+/** The id of the row of a part of a vector, next to the id of the vector. */
+export const partLaneId = (node: PropertyNode, index: number): string => `${node.id}#${index}`;
 
 interface Placing {
   readonly lanes: Lane[];
@@ -71,7 +102,9 @@ function place(
 ): void {
   const { rules, lanes } = placing;
   const open = rules.isOpen(node) && canOpen(node);
-  const tall = node.kind === "property" ? rules.tallHeight(node) : undefined;
+  const parts = node.kind === "property" ? partsOf(node) : [];
+  // A vector stands for all of its parts, and the curves are in their rows.
+  const tall = node.kind === "property" && parts.length === 0 ? rules.tallHeight(node) : undefined;
   const height = Math.max(tall ?? 0, placing.keyHeight);
   lanes.push({
     id: node.id,
@@ -89,7 +122,12 @@ function place(
     listed,
   });
   placing.top += height;
-  if (!open || node.kind === "property") return;
+  if (!open) return;
+  if (node.kind === "property") {
+    for (const component of parts)
+      placePart(placing, node, component, depth + 1, box, listed, group);
+    return;
+  }
   for (const child of node.children) {
     const clipBox = child.kind === "clip" ? placing.model.boxes.get(child.clip) : box;
     if (clipBox) {
@@ -104,6 +142,37 @@ function place(
       );
     }
   }
+}
+
+/** The row of a part of a vector, which has the keys of the vector and the curve of the part. */
+function placePart(
+  placing: Placing,
+  node: PropertyNode,
+  component: LanePart,
+  depth: number,
+  box: ClipBox | undefined,
+  listed: ReadonlyMap<string, readonly string[]>,
+  group: string | undefined,
+): void {
+  const tall = placing.rules.tallHeight(node, component.index);
+  const height = Math.max(tall ?? 0, placing.keyHeight);
+  placing.lanes.push({
+    id: partLaneId(node, component.index),
+    node,
+    component,
+    depth,
+    top: placing.top,
+    height,
+    keyHeight: placing.keyHeight,
+    tall: tall !== undefined,
+    group,
+    open: false,
+    canOpen: false,
+    row: placing.row,
+    box,
+    listed,
+  });
+  placing.top += height;
 }
 
 /** The lanes of some tracks, one under the other, from a height on. */

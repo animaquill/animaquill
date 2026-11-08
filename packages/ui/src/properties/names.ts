@@ -18,3 +18,6 @@ export const nameOf = (t: TFunction, spec: PropertySpec) =>
  */
 export const groupOf = (t: TFunction, group: string) =>
   /^[A-Za-z][A-Za-z0-9]*$/.test(group) ? textOf(t, `property.group.${group}`, group) : group;
+
+/** What a part of a vector is called: as code names it, and the usual x, y, z and w in capitals. */
+export const partNameOf = (name: string) => (/^[xyzw]$/.test(name) ? name.toUpperCase() : name);

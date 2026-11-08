@@ -1,4 +1,4 @@
-import { SHAPE, channelOf, sample, type Channel } from "@animaquill/core";
+import { SHAPE, channelOf, componentOf, sample, type Channel } from "@animaquill/core";
 import type { Animation, Key, PropertySpec } from "@animaquill/schema";
 import { formatNumber } from "../properties/scrub.ts";
 import { RULER_HEIGHT } from "../timeline/editor.ts";
@@ -7,7 +7,7 @@ import { paintRuler } from "../timeline/ruler.ts";
 import { StagePainter, readTheme, type Theme } from "../timeline/stage-painter.ts";
 import type { KeyArea, ShownHandle } from "./area.ts";
 import { liftKey, withinSpec } from "./gestures.ts";
-import type { Lane } from "./lanes.ts";
+import { specOfLane, type Lane } from "./lanes.ts";
 import { yIn, type ValueScale } from "./scale.ts";
 import {
   KEY_EASED,
@@ -257,14 +257,18 @@ export class LanePainter {
     context.fillRect(0, sharp(y + height) - 1, width, 1);
   }
 
-  /** What is in a lane apart from its keys: the curve of a number, or the values of what holds. */
+  /**
+   * What is in a lane apart from its keys: the curve of a number, or the values of what holds. A
+   * part of a vector has the curve of its number, and the vector itself only its keys.
+   */
   #content(context: CanvasRenderingContext2D, theme: Theme, lane: Lane, band: Band): void {
-    const { node, box } = lane;
-    if (node.kind !== "property" || !box) return;
-    const stored = this.#area.keyframes.shownValue(box.clip, node.spec.path);
-    const animation = animationIn(stored ?? node.spec.default);
+    const { node, box, component } = lane;
+    const spec = specOfLane(lane);
+    if (node.kind !== "property" || !box || !spec) return;
+    const stored = this.#area.keyframes.shownValue(box.clip, node.spec.path) ?? node.spec.default;
+    const animation = animationIn(component ? componentOf(stored, component.index) : stored);
     if (!animation) return;
-    const [shape] = node.rows;
+    const shape = node.rows[component ? component.index + 1 : 0];
     if (shape?.band === "segments") {
       this.#segments(context, theme, lane, node.spec, box, animation, band);
       return;
@@ -275,9 +279,9 @@ export class LanePainter {
     }
     if (shape?.curve !== "value") return;
     const scale = this.#area.scaleOf(lane, box);
-    const channel = channelOf(animation, node.spec.type);
+    const channel = channelOf(animation, spec.type);
     if (!scale || !channel) return;
-    if (lane.tall) this.#valueAxis(context, theme, node.spec, box, scale, band);
+    if (lane.tall) this.#valueAxis(context, theme, spec, box, scale, band);
     this.#curve(context, theme, lane, box, animation, channel, scale, band);
   }
 
@@ -473,8 +477,8 @@ export class LanePainter {
     const canMove = keyframes.canMove(box.id);
     const scale = area.scaleOf(lane, box);
     const numbers = scale ? table.numbers : undefined;
-    const spec = node.kind === "property" ? node.spec : undefined;
-    const lift = spec && preview?.lift?.get(liftKey(box.id, spec.path));
+    const spec = specOfLane(lane);
+    const lift = spec && preview?.lift?.get(liftKey(box.id, spec.path, lane.component?.index));
     const yOf = (index: number) =>
       numbers && scale ? y + yIn(scale, numbers[index] as number) : middle;
     const reach = (KEY_RADIUS * 2) / pixelsPerSecond + Math.abs(shift ?? 0);
@@ -556,6 +560,7 @@ export class LanePainter {
       hint?.clamped === true &&
       handle.box.id === hint.clip &&
       handle.path === hint.path &&
+      handle.component === hint.component &&
       handle.time === hint.time &&
       handle.side === hint.side;
     const lines = new Path2D();

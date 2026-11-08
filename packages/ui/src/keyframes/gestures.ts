@@ -1,4 +1,12 @@
-import { firstKeyFrom, secondsOf, type PropertyEdit } from "@animaquill/core";
+import {
+  componentKeys,
+  componentOf,
+  firstKeyFrom,
+  keyWithComponent,
+  secondsOf,
+  withComponent,
+  type PropertyEdit,
+} from "@animaquill/core";
 import {
   ZERO,
   add,
@@ -22,6 +30,7 @@ import {
 } from "../timeline/gestures.ts";
 import type { TimelineModel } from "../timeline/model.ts";
 import { snapPointsOf, type SnapPoint, type SnapPoints } from "../timeline/snap.ts";
+import type { ValueRow } from "./editor.ts";
 import {
   dragHandle,
   tangentOf,
@@ -47,6 +56,8 @@ const KEPT_DIGITS = 6;
 export interface HandleHint {
   readonly clip: string;
   readonly path: string;
+  /** The part of a vector whose row it is in. */
+  readonly component?: number;
   readonly time: string;
   readonly side: HandleSide;
   readonly clamped: boolean;
@@ -59,7 +70,7 @@ export interface HandleHint {
 export interface KeyPreview {
   /** How far the selected keys go, in seconds. */
   readonly shift?: number;
-  /** How far the selected numbers go up, in their own units, by `clip path`. */
+  /** How far the selected numbers go up, in their own units, by `liftKey`. */
   readonly lift?: ReadonlyMap<string, number>;
   /** Where something snapped, for the line that shows it. */
   readonly snap?: number;
@@ -74,10 +85,15 @@ export interface MovingChannel {
   readonly times: readonly string[];
 }
 
-/** The selected keys of a number that go up and down with the mouse, in a row made taller. */
+/**
+ * The selected keys of a number that go up and down with the mouse, in a row made taller. For a
+ * vector it is one part of it, and the others stay.
+ */
 export interface LiftedChannel {
   readonly clip: string;
   readonly path: string;
+  readonly component?: number;
+  /** What the number is: for a part of a vector, a number in the units of the vector. */
   readonly spec: PropertySpec;
   /** The keys that go, by time. What they are is read again with every step of the drag. */
   readonly times: readonly string[];
@@ -104,15 +120,15 @@ export interface KeyGestureHost {
   /** Writes them as one step, with what is selected afterwards. */
   commit(edits: readonly PropertyEdit[], selection: KeySelection): boolean;
   /** Keeps rows from shrinking under the mouse while it drags in them, and lets go of that. */
-  holdRanges(rows: readonly { readonly clip: string; readonly path: string }[]): void;
+  holdRanges(rows: readonly ValueRow[]): void;
   releaseRanges(): void;
   /**
    * The keys of a property as they are now, without what a drag shows on top of them. A drag works
    * from these with every step, so that what changes elsewhere meanwhile stays.
    */
   keysOf(clip: string, path: string): readonly Key[] | undefined;
-  /** What a pixel up is worth in the row of a property here right now. */
-  perPixel(clip: string, path: string): number | undefined;
+  /** What a pixel up is worth in the row of a property, or of a part of a vector, right now. */
+  perPixel(row: ValueRow): number | undefined;
   /** What a drag was about went away while it went on: the drag stops, and says so. */
   gone(): void;
 }
@@ -147,8 +163,9 @@ function liftBy(perPixel: number, pixels: number): number {
   return Number((Math.round((pixels * perPixel) / step) * step).toFixed(KEPT_DIGITS));
 }
 
-/** Where `lift` of a preview has what one property goes up by. */
-export const liftKey = (clip: string, path: string) => `${clip} ${path}`;
+/** Where `lift` of a preview has what one property, or one part of a vector, goes up by. */
+export const liftKey = (clip: string, path: string, component?: number) =>
+  component === undefined ? `${clip} ${path}` : `${clip} ${path} ${component}`;
 
 /**
  * The edits of keys that go along the time and up and down: they move, and then the numbers among
@@ -164,15 +181,18 @@ export function liftEdits(
 ): readonly PropertyEdit[] | undefined {
   const moving = compare(by, ZERO) === 0 ? [] : moveEdits(channels, by);
   const valued: PropertyEdit[] = [];
-  for (const { clip, path, spec, times } of lifted) {
-    const up = lift.get(liftKey(clip, path)) ?? 0;
+  for (const { clip, path, component, spec, times } of lifted) {
+    const up = lift.get(liftKey(clip, path, component)) ?? 0;
     if (up === 0) continue;
     const now = keysByTime(keysOf(clip, path));
     const placed: Key[] = [];
     for (const time of times) {
       const key = now.get(time);
-      if (!key || typeof key.value !== "number") return undefined;
-      const value = Number(withinSpec(spec, key.value + up).toFixed(KEPT_DIGITS));
+      const number = component === undefined ? key?.value : componentOf(key?.value, component);
+      if (!key || typeof number !== "number") return undefined;
+      const raised = Number(withinSpec(spec, number + up).toFixed(KEPT_DIGITS));
+      // A part of a vector changes that one number of it.
+      const value = component === undefined ? raised : withComponent(key.value, component, raised);
       placed.push({ ...key, time: formatTime(add(parseTime(time), by)), value });
     }
     valued.push({ owner: { clip }, path, op: "putKeys", keys: placed });
@@ -289,10 +309,10 @@ export class KeyMoveGesture implements Gesture {
     const landing = along ? this.#land(pointer) : this.#stay();
     const pixels = (pointer.shift && along) || Math.abs(down) < VALUE_STICK ? 0 : -down;
     const lift = new Map<string, number>();
-    for (const { clip, path } of this.#lifted) {
+    for (const row of this.#lifted) {
       // As the row is now, which grows to take in a value that goes past it.
-      const up = liftBy(this.#host.perPixel(clip, path) ?? 0, pixels);
-      if (up !== 0) lift.set(liftKey(clip, path), up);
+      const up = liftBy(this.#host.perPixel(row) ?? 0, pixels);
+      if (up !== 0) lift.set(liftKey(row.clip, row.path, row.component), up);
     }
     const shift = landing.seconds - this.#grabbed.seconds;
     const previous = this.#landing;
@@ -474,10 +494,15 @@ export class KeyMarqueeGesture implements Gesture {
 const sameValues = (a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>) =>
   a.size === b.size && [...a].every(([key, value]) => b.get(key) === value);
 
-/** What a handle drag needs to know about the row it is in. */
+/**
+ * What a handle drag needs to know about the row it is in. In the row of a part of a vector it is
+ * on the curve of that part, and what it changes are the handles of the vector: a handle is a share
+ * of the way from one key to the next, the same for every part, so all of them bend with it.
+ */
 export interface HandleGrab {
   readonly clip: string;
   readonly path: string;
+  readonly component?: number | undefined;
   /** The key whose handle it is, by its time, which stays what it is whatever else changes. */
   readonly time: string;
   readonly side: HandleSide;
@@ -507,20 +532,27 @@ export class HandleGesture implements Gesture {
     this.#host = host;
     this.#grab = grab;
     this.#press = press;
-    const keys = host.keysOf(grab.clip, grab.path) ?? [];
+    const keys = this.#keys() ?? [];
     const index = indexOfTime(keys, grab.time);
     const mode = index < 0 ? "broken" : tangentOf(keys, index);
     // Dragging an automatic handle is saying where it goes, as in Blender: it stays on a line.
     this.#usual = mode === "broken" ? "broken" : "aligned";
   }
 
+  /** The keys of the curve the handle is on, as they are now. */
+  #keys(): readonly Key[] | undefined {
+    const { clip, path, component } = this.#grab;
+    const keys = this.#host.keysOf(clip, path);
+    return keys && component !== undefined ? componentKeys(keys, component) : keys;
+  }
+
   move(pointer: Pointer): void {
     if (this.#gone || (!this.#dragging && !hasMoved(this.#press, pointer))) return;
     if (!this.#dragging) this.#host.holdRanges([this.#grab]);
     this.#dragging = true;
-    const { clip, path, time, side } = this.#grab;
+    const { clip, path, component, time, side } = this.#grab;
     // From the keys as they are now, so that only what the handle steers changes.
-    const keys = this.#host.keysOf(clip, path);
+    const keys = this.#keys();
     const index = keys ? indexOfTime(keys, time) : -1;
     const to = this.#grab.pointAt(pointer);
     const mode = pointer.alt ? "broken" : pointer.mod ? "aligned" : this.#usual;
@@ -529,10 +561,32 @@ export class HandleGesture implements Gesture {
       this.#stop();
       return;
     }
-    this.#changed = dragged.changed;
+    const changed = this.#ofVector(dragged.changed);
+    if (!changed) {
+      this.#stop();
+      return;
+    }
+    this.#changed = changed;
     const { clamped } = dragged;
-    this.#host.show({ handle: { clip, path, time, side, clamped, x: pointer.x, y: pointer.y } });
-    this.#host.preview(this.#edits(dragged.changed));
+    const part = component === undefined ? {} : { component };
+    const { x, y } = pointer;
+    this.#host.show({ handle: { clip, path, ...part, time, side, clamped, x, y } });
+    this.#host.preview(this.#edits(changed));
+  }
+
+  /** What changed about the keys of a part, as keys of the vector, with its numbers as they are. */
+  #ofVector(changed: ChangedKeys): ChangedKeys | undefined {
+    const { clip, path, component } = this.#grab;
+    if (component === undefined) return changed;
+    const keys = this.#host.keysOf(clip, path);
+    if (!keys) return undefined;
+    const whole: ChangedKeys = new Map();
+    for (const [index, key] of changed) {
+      const vector = keys[index];
+      if (!vector) return undefined;
+      whole.set(index, keyWithComponent(vector, key, component));
+    }
+    return whole;
   }
 
   /** The key, or what the handle steers, is not there any more: an undo, or another window. */
