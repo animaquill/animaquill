@@ -1,4 +1,4 @@
-import { ProjectStore, buildAudioPlan, buildRenderPlan, objectsOf } from "@animaquill/core";
+import { ProjectStore, USER, buildAudioPlan, buildRenderPlan, objectsOf } from "@animaquill/core";
 import type { FolderAccess, SourceFolder, TargetFolder } from "@animaquill/host";
 import { hashFile } from "@animaquill/media";
 import {
@@ -329,7 +329,7 @@ describe("exporting", () => {
     const window = setup();
     await window.session.create("我的项目");
     const svg = "<svg/>";
-    window.session.store?.importFile("scenes/s/logo.svg", svg);
+    window.session.store?.importFile("scenes/s/logo.svg", svg, { origin: USER });
     const asset = {
       kind: "image",
       path: "scenes/s/logo.svg",
@@ -345,7 +345,7 @@ describe("exporting", () => {
   it("does say so when what is at the path of an asset is something else", async () => {
     const window = await projectWithFiles();
     const path = "scenes/s/logo.svg";
-    window.session.store?.importFile(path, "<svg>改过</svg>");
+    window.session.store?.importFile(path, "<svg>改过</svg>", { origin: USER });
     await addAsset(window, "logo", new Uint8Array([1, 2, 3]), { path });
     const { target, notice } = await exportTo(window);
     expect(notice.title).toBe("导出完成，但有内容没有带上");
@@ -356,7 +356,7 @@ describe("exporting", () => {
   it("does not call an asset without a known file the same as what is at its path", async () => {
     const window = setup();
     await window.session.create("我的项目");
-    window.session.store?.importFile("scenes/s/logo.svg", "<svg/>");
+    window.session.store?.importFile("scenes/s/logo.svg", "<svg/>", { origin: USER });
     const asset = { kind: "image", path: "scenes/s/logo.svg", storage: "local" };
     window.session.store?.execute({ type: "asset.add", params: { id: "logo", asset } });
     const { notice } = await exportTo(window);
@@ -365,8 +365,8 @@ describe("exporting", () => {
 
   it("leaves out what a folder cannot have, says so and goes on", async () => {
     const window = await projectWithFiles();
-    window.session.store?.importFile("code/aux.js", "export {};");
-    window.session.store?.importFile("code/ok.js", "export {};");
+    window.session.store?.importFile("code/aux.js", "export {};", { origin: USER });
+    window.session.store?.importFile("code/ok.js", "export {};", { origin: USER });
     const target = new MemoryTarget();
     target.refuses = (path) => path === "code/aux.js" || path === "assets/video.bin";
     const { notice } = await exportTo(window, target);
@@ -382,7 +382,7 @@ describe("exporting", () => {
 
   it("does not let a path a zip file cannot have stop the export", async () => {
     const window = await projectWithFiles();
-    window.session.store?.importFile("code/a\\b.js", "export {};");
+    window.session.store?.importFile("code/a\\b.js", "export {};", { origin: USER });
     const save = vi.fn<(file: Blob, name: string) => void>();
     window.next.target = zipTarget("我的项目", save);
     const exporting = window.transfer.exportProject();
@@ -1061,8 +1061,8 @@ describe("scene files", () => {
   it("say so at the export already when they are too large to come back", async () => {
     const window = setup();
     await window.session.create("我的项目");
-    window.session.store?.importFile("code/huge.js", "x".repeat(33 * 1024 ** 2));
-    window.session.store?.importFile("code/small.js", "x");
+    window.session.store?.importFile("code/huge.js", "x".repeat(33 * 1024 ** 2), { origin: USER });
+    window.session.store?.importFile("code/small.js", "x", { origin: USER });
     const { target, notice } = await exportTo(window);
 
     expect(notice.title).toBe("导出完成");

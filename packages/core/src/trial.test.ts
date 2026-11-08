@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { orderedTracks } from "./model.ts";
 import type { KeyEase, PropertyEdit } from "./property-edit.ts";
-import { ProjectStore, aiTask, type CommandCall } from "./store.ts";
+import { ProjectStore, USER, aiTask, type CommandCall } from "./store.ts";
 import { Trial, type TrialNotice } from "./trial.ts";
 
 function setup() {
@@ -2042,7 +2042,7 @@ describe("a file that changed outside of the editor", () => {
   it("counts as what another window sends: a cut takes what is tried to both parts", () => {
     const { store, trial, tried, heard } = setup();
     trial.write([key]);
-    expect(store.importFile(path, cutInFile(store)).ok).toBe(true);
+    expect(store.importFile(path, cutInFile(store), { origin: USER }).ok).toBe(true);
     expect(tried("transform.x", "piece")).toEqual({ keys: [{ time: "1", value: 7 }] });
     expect(heard).toEqual([]);
   });
@@ -2054,7 +2054,7 @@ describe("a file that changed outside of the editor", () => {
     const [clip] = file.tracks[0].clips;
     clip.start = "1";
     clip.duration = "7";
-    expect(store.importFile(path, JSON.stringify(file)).ok).toBe(true);
+    expect(store.importFile(path, JSON.stringify(file), { origin: USER }).ok).toBe(true);
     expect(tried("transform.x")).toEqual({ keys: [{ time: "1", value: 7 }] });
     expect(heard).toEqual([{ kind: "unsure" }]);
   });
@@ -2135,7 +2135,7 @@ describe("what the project says about a change", () => {
     const file = JSON.parse(store.exportFiles().files.get(path) as string);
     file.tracks[0].clips[0].start = "3";
     store.subscribe(() => seen.push(store.change?.facts));
-    expect(store.importFile(path, JSON.stringify(file)).ok).toBe(true);
+    expect(store.importFile(path, JSON.stringify(file), { origin: USER }).ok).toBe(true);
     store.undo();
     store.redo();
     expect(seen).toEqual([undefined, undefined, undefined]);

@@ -22,16 +22,24 @@ import {
   entryOf,
   orderedSections,
   orderedTracks,
+  stateToProject,
   timelineToState,
   type ProjectState,
   type TimelineState,
   type TrackState,
 } from "./model.ts";
-import { Mutator, deepEqual, type Patch } from "./patch.ts";
-import { touchesLockedTrack } from "./references.ts";
+import { USER } from "./origin.ts";
+import { Mutator, deepEqual, getIn, type Patch } from "./patch.ts";
+import {
+  danglingAt,
+  librariesChanged,
+  touchesLockedTrack,
+  usedOnLockedTracks,
+} from "./references.ts";
 import type { Path } from "./structure.ts";
 
-const isUser = (origin: string) => !origin.startsWith("ai:");
+/** Only the person at the editor is one: an AI task, a tool or anything else is not. */
+const isUser = (origin: string) => origin === USER;
 
 /** Whether a file holds code that belongs to the project, kept as text. */
 export const isSourceFile = (path: string): boolean =>
@@ -127,6 +135,13 @@ export interface FileImport {
   readonly kept: readonly Path[];
   /** The same for people and AI: a warning for each thing that stays, which says why. */
   readonly held: readonly Problem[];
+  /** What the file did that people should know about: the locks a person's file took off. */
+  readonly notices: readonly Problem[];
+  /**
+   * What the rest of the file would break without what stays: a clip left on a track that is gone,
+   * a document that cannot be written. Nothing of the file gets in then either.
+   */
+  readonly broken: readonly Problem[];
 }
 
 /**
@@ -140,16 +155,160 @@ export interface FileImport {
  * from what the file itself does to locks, see `locksOf`.
  */
 export function planFileImport(draft: Draft, path: string, text: string): FileImport {
-  const planned = new Draft(draft.state, draft.origin);
+  const before = draft.state;
+  const planned = new Draft(before, draft.origin);
   const problems = planDocument(planned, path, text);
-  if (problems.length > 0) return { problems, kept: [], held: [] };
-  const locks = locksOf(draft.state, planned.state, draft.origin);
+  if (problems.length > 0) return { problems, kept: [], held: [], notices: [], broken: [] };
+  const locks = locksOf(before, planned.state, draft.origin);
   const kept: Patch[] = [];
-  for (const patch of inLockOrder(planned.steps.map((step) => step.patch))) {
+  for (const each of inLockOrder(planned.steps.map((step) => step.patch))) {
+    const { patch, held } = withLockedLibraries(locks, each);
+    kept.push(...held);
+    if (patch === undefined) continue;
     if (isHeld(locks, patch, draft.origin)) kept.push(patch);
-    else draft.apply(patch);
+    else draft.repeat(patch);
   }
-  return { problems, kept: kept.map((patch) => patch.path), held: heldIn(locks, path, kept) };
+  const paths = planned.steps.map((step) => step.patch.path);
+  return {
+    problems,
+    kept: kept.map((patch) => patch.path),
+    held: heldIn(locks, path, kept),
+    notices: unlockedIn(before, locks, path),
+    broken: kept.length > 0 ? brokenWithout(before, planned.state, draft.state, path, paths) : [],
+  };
+}
+
+/**
+ * A file of the libraries is one value, but each library in it is a thing of its own: what locked
+ * tracks use of one stays as it is, and the others change. Returns what to write instead, nothing
+ * when that is all of it, and what stays, each as a patch of its own to say so.
+ */
+function withLockedLibraries(
+  locks: ProjectState,
+  patch: Patch,
+): { readonly patch: Patch | undefined; readonly held: readonly Patch[] } {
+  const [root] = patch.path;
+  if ((root !== "lock" && root !== "libraries") || patch.path.length !== 1 || patch.op !== "set") {
+    return { patch, held: [] };
+  }
+  const { libraries: used } = usedOnLockedTracks(locks);
+  const before = getIn(locks, patch.path);
+  const staying = librariesChanged(root, before, patch.value).filter((id) => used.has(id));
+  if (staying.length === 0) return { patch, held: [] };
+  const held = staying.map((id): Patch => ({
+    op: "set",
+    path: [root, "libraries", id],
+    value: id,
+  }));
+  const value =
+    root === "lock"
+      ? lockKeeping(before, patch.value, staying)
+      : listKeeping(before, patch.value, staying);
+  return { patch: deepEqual(value, before) ? undefined : { ...patch, value }, held };
+}
+
+type LockFile = { readonly libraries?: Readonly<Record<string, unknown>> };
+type LibraryList = { readonly libraries?: readonly { readonly id: string }[] };
+
+function lockKeeping(before: unknown, after: unknown, staying: readonly string[]): unknown {
+  const was = (before as LockFile | undefined)?.libraries ?? {};
+  const libraries: Record<string, unknown> = { ...(after as LockFile).libraries };
+  for (const id of staying) {
+    if (Object.hasOwn(was, id)) libraries[id] = was[id];
+    else delete libraries[id];
+  }
+  return { ...(after as object), libraries };
+}
+
+function listKeeping(before: unknown, after: unknown, staying: readonly string[]): unknown {
+  const was = new Map(((before as LibraryList | undefined)?.libraries ?? []).map((l) => [l.id, l]));
+  const now = (after as LibraryList).libraries ?? [];
+  const libraries = now.flatMap((library) => {
+    if (!staying.includes(library.id)) return [library];
+    const kept = was.get(library.id);
+    return kept ? [kept] : [];
+  });
+  for (const id of staying) {
+    const kept = was.get(id);
+    if (kept && !now.some((library) => library.id === id)) libraries.push(kept);
+  }
+  return { ...(after as object), libraries };
+}
+
+/** The locks a person's file took off, which nobody should miss. */
+function unlockedIn(before: ProjectState, locks: ProjectState, file: string): readonly Problem[] {
+  if (locks === before) return [];
+  return Object.entries(before.timelines).flatMap(([id, timeline]) =>
+    Object.values(timeline.tracks).flatMap((track): Problem[] => {
+      const open = entryOf(entryOf(locks.timelines, id)?.tracks, track.id)?.locked !== true;
+      if (track.locked !== true || !open) return [];
+      const message = `这个文件解开了轨道“${track.name ?? track.id}”的锁`;
+      return [{ severity: "warning", code: "track-unlocked", file, path: track.id, message }];
+    }),
+  );
+}
+
+const OF_ANOTHER_KIND = " of another kind";
+
+/** Says in words what a link from `danglingAt` comes to. */
+function linkInWords(link: string): string {
+  const [from = "", rest = ""] = link.split(" -> ");
+  const isOfAnotherKind = rest.endsWith(OF_ANOTHER_KIND);
+  const to = isOfAnotherKind ? rest.slice(0, -OF_ANOTHER_KIND.length) : rest;
+  const named = (path: string) => {
+    const parts = path.split("/");
+    const what = { clips: "片段", transitions: "转场", tracks: "轨道" }[parts.at(-2) ?? ""];
+    return what ? `${what}“${parts.at(-1)}”` : `“${path}”`;
+  };
+  if (to === "its kind") return `${named(from)}会带着它这一种轨道没有的设置`;
+  if (to.includes("/tracks/")) {
+    const where = isOfAnotherKind ? "放不下它的" : "已经没有的";
+    return `${named(from)}会留在${where}${named(to)}上`;
+  }
+  return `${named(from)}会指向已经没有的${named(to)}`;
+}
+
+/**
+ * What the rest of a file would break without what stays on locked tracks, that neither the project
+ * before it nor the whole file would: something left pointing at nothing, such as a clip on a track
+ * that the file takes away while the clip stays, or a document that cannot be written any more,
+ * such as a track that cannot hold what stays on it.
+ */
+function brokenWithout(
+  before: ProjectState,
+  whole: ProjectState,
+  partly: ProjectState,
+  file: string,
+  paths: readonly Path[],
+): readonly Problem[] {
+  const broken: Problem[] = [];
+  const linksIn = (state: ProjectState) =>
+    new Set(paths.flatMap((path) => danglingAt(state, path)));
+  const links = linksIn(partly);
+  if (links.size > 0) {
+    const known = new Set([...linksIn(before), ...linksIn(whole)]);
+    for (const link of links) {
+      if (known.has(link)) continue;
+      broken.push({
+        severity: "error",
+        code: "needs-locked-part",
+        file,
+        message: linkInWords(link),
+      });
+    }
+  }
+  const invalid = stateToProject(partly).problems;
+  if (invalid.length > 0) {
+    const filesIn = (state: ProjectState) =>
+      new Set(stateToProject(state).problems.map((problem) => problem.file));
+    const known = new Set([...filesIn(before), ...filesIn(whole)]);
+    for (const problem of invalid) {
+      if (known.has(problem.file)) continue;
+      const message = `这个文件会不再合格式：${problem.message}`;
+      broken.push({ ...problem, code: "needs-locked-part", message });
+    }
+  }
+  return broken;
 }
 
 const isLockPatch = ({ path }: Patch) =>
@@ -238,6 +397,16 @@ function whyHeld(
 ): { readonly about: string; readonly where?: string; readonly message: string } {
   const [root, id = "", level, item = "", field] = patch.path;
   const [folder = "", name = ""] = id.split("/");
+  if (root === "assets") {
+    const asset = entryOf(locks.assets, id);
+    const message = `素材“${asset?.name ?? id}”在锁定的轨道上使用，文件里对它的改动没有生效`;
+    return { about: `asset ${id}`, where: `assets.${id}`, message };
+  }
+  if (root === "lock" || root === "libraries") {
+    const library = patch.path[2] ?? "";
+    const message = `库“${library}”在锁定的轨道上使用，文件里对它的改动没有生效`;
+    return { about: `library ${library}`, where: `libraries.${library}`, message };
+  }
   if (root === "files" && folder === "code") {
     const message = "锁定的轨道上有场景或声音，共用代码不能改，文件里的改动没有生效";
     return { about: "code", message };
@@ -273,7 +442,7 @@ function whyHeld(
     case "tracks": {
       const message =
         field === "locked"
-          ? `${locked(item)}，AI 不能用文件解锁，要解锁请用命令，或者请用户解锁`
+          ? `${locked(item)}，只有用户自己改的文件能解锁，要解锁请用命令，或者请用户解锁`
           : `${locked(item)}，文件里对这条轨道的改动没有生效`;
       return { about: `track ${item}`, where: item, message };
     }

@@ -22,6 +22,19 @@ const flat = (tree: Tree = {}): Tree => {
   return tree;
 };
 
+/**
+ * A flat level that is there of its own, also without anything in it: the strings of a language,
+ * whose file means something when it is empty too. Its key in the map above, without anything
+ * after it, says that it is there. Documents from before this have a map under that key, which says
+ * the same. Each value in it can only make it be there, never take it away: two people never fight
+ * over it, and it only goes when somebody takes it away as a whole.
+ */
+const STANDING = new WeakSet<Tree>();
+const standing = (tree: Tree = {}): Tree => {
+  STANDING.add(tree);
+  return flat(tree);
+};
+
 const properties = flat();
 const withProperties: Tree = { properties };
 
@@ -44,8 +57,8 @@ const CONTAINERS: Tree = {
   scenes: fields,
   sounds: fields,
   files: fields,
-  /** The strings of a language, each on its own: a language has none until the first comes. */
-  locales: { [ANY]: flat() },
+  /** The strings of a language, each on its own. The language is there with its file, see `standing`. */
+  locales: { [ANY]: standing() },
   timelines: {
     [ANY]: {
       sections: { [ANY]: fields },
@@ -76,6 +89,18 @@ export const isFlat = (path: Path): boolean => {
   const node = nodeAt(path);
   return node !== undefined && FLAT.has(node);
 };
+
+/** Whether this flat level is there also when it is empty. See `standing`. */
+export const isStanding = (path: Path): boolean => {
+  const node = nodeAt(path);
+  return node !== undefined && STANDING.has(node);
+};
+
+/**
+ * Where it is written down who wrote that a standing level is there. Not the level itself: that it is
+ * there says nothing about who wrote what is in it.
+ */
+export const writePathOf = (path: Path): Path => (isStanding(path) ? [...path, ""] : path);
 
 const SEPARATOR = "/";
 

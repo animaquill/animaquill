@@ -1,6 +1,7 @@
-import { canHold } from "@animaquill/schema";
+import { Track, canHold } from "@animaquill/schema";
 import { entryOf, type ClipState, type ProjectState, type TimelineState } from "./model.ts";
-import { getIn, type Patch } from "./patch.ts";
+import { deepEqual, getIn, type Patch } from "./patch.ts";
+import { codeOfAsksFor } from "./scene-plan.ts";
 import type { Path } from "./structure.ts";
 
 const NONE: readonly string[] = [];
@@ -153,6 +154,24 @@ function usersOfClip(id: string, timeline: TimelineState, path: Path): readonly 
     .map((transition) => link(`timelines/${id}/transitions/${transition.id}`, path));
 }
 
+/**
+ * What a track that is there is not fit for: clips on it of a kind it cannot hold, or fields that
+ * its kind has no place for. Changing what a track is and what is on it apart can leave it like that.
+ */
+function unfitTrack(id: string, timeline: TimelineState, item: string): readonly string[] {
+  const track = entryOf(timeline.tracks, item);
+  if (!track) return NONE;
+  const home = ["timelines", id, "tracks", item];
+  const clips = Object.values(timeline.clips).flatMap((clip) =>
+    clip.track === item && !canHold(track.kind, clip.source.kind)
+      ? [`${link(`timelines/${id}/clips/${clip.id}`, home)} of another kind`]
+      : [],
+  );
+  const { order: _order, ...fields } = track;
+  const fits = Track.safeParse({ ...fields, clips: [] }).success;
+  return fits ? clips : [...clips, `${home.join("/")} -> its kind`];
+}
+
 /** What is wrong around a path inside of a timeline. */
 function danglingInTimeline(state: ProjectState, path: Path): readonly string[] {
   const [, id = "", level, item = "", field] = path;
@@ -160,6 +179,7 @@ function danglingInTimeline(state: ProjectState, path: Path): readonly string[] 
   if (!timeline) return NONE;
   switch (level) {
     case "tracks":
+      if (path.length > 4) return unfitTrack(id, timeline, item);
       return path.length === 4 && !entryOf(timeline.tracks, item)
         ? usersOfTrack(id, timeline, path)
         : NONE;
@@ -281,14 +301,108 @@ function reachesLockedCode(state: ProjectState, path: Path): boolean {
   return CODE_ROOTS.includes(folder ?? "") && isOnLockedTrack(state, [folder as string, name]);
 }
 
+/** What locked tracks show or play from elsewhere: assets and libraries, by id. */
+interface LockedUses {
+  readonly assets: ReadonlySet<string>;
+  readonly libraries: ReadonlySet<string>;
+}
+
+const usesByTimelines = new WeakMap<ProjectState["timelines"], LockedUses>();
+
+/** Every asset and library a value names, however deep: media, the source of a plugin, a parameter. */
+function collectNames(value: unknown, assets: Set<string>, libraries: Set<string>): void {
+  if (typeof value !== "object" || value === null) return;
+  const { asset, library } = value as { readonly asset?: unknown; readonly library?: unknown };
+  if (typeof asset === "string") assets.add(asset);
+  if (typeof library === "string") libraries.add(library);
+  for (const inner of Object.values(value)) collectNames(inner, assets, libraries);
+}
+
 /**
- * Whether a change reaches what is on a locked track: what is there now, or what would end up there.
- * The track itself stays open, or nobody could take the lock off. It only cannot go away, or become
- * another kind of track: the kind says what it can hold, and what is on it would no longer fit.
+ * The assets and libraries that locked tracks use: what is on them names, and what versions change
+ * about it. Names that are no asset or library are in there too, which only keeps more as it is.
+ */
+export function usedOnLockedTracks(state: ProjectState): LockedUses {
+  const known = usesByTimelines.get(state.timelines);
+  if (known) return known;
+  const assets = new Set<string>();
+  const libraries = new Set<string>();
+  for (const timeline of Object.values(state.timelines)) {
+    const closed = Object.values(timeline.tracks).filter(({ locked }) => locked);
+    if (closed.length === 0) continue;
+    const ids = new Set(closed.map(({ id }) => id));
+    collectNames(closed, assets, libraries);
+    for (const clip of Object.values(timeline.clips)) {
+      if (!ids.has(clip.track)) continue;
+      collectNames(clip, assets, libraries);
+      for (const { clips } of Object.values(timeline.overrides)) {
+        collectNames(entryOf(clips, clip.id), assets, libraries);
+      }
+    }
+  }
+  const uses = { assets, libraries };
+  usesByTimelines.set(state.timelines, uses);
+  return uses;
+}
+
+/** Whether a locked track shows or plays an asset, also through the code it runs. */
+function isAssetOnLockedTrack(state: ProjectState, asset: string): boolean {
+  if (usedOnLockedTracks(state).assets.has(asset)) return true;
+  return [...runningOnLockedTracks(state)].some((owner) => codeOfAsksFor(state, owner, asset));
+}
+
+/** What says who made an asset, and nothing about what it is. */
+const DESCRIPTIONS = ["name", "license", "credit"];
+
+const contentOf = (asset: unknown) =>
+  typeof asset === "object" && asset !== null
+    ? Object.fromEntries(Object.entries(asset).filter(([key]) => !DESCRIPTIONS.includes(key)))
+    : asset;
+
+/** Which libraries a new libraries.json or libraries.lock.json changes, by id. */
+export function librariesChanged(root: string, before: unknown, after: unknown): readonly string[] {
+  const entries = (value: unknown): ReadonlyMap<string, unknown> => {
+    const { libraries } = (value ?? {}) as { readonly libraries?: unknown };
+    if (root === "lock") return new Map(Object.entries((libraries ?? {}) as object));
+    const list = Array.isArray(libraries) ? (libraries as readonly { readonly id?: string }[]) : [];
+    return new Map(list.map((entry) => [String(entry.id), entry]));
+  };
+  const was = entries(before);
+  const now = entries(after);
+  return [...new Set([...was.keys(), ...now.keys()])].filter(
+    (id) => !deepEqual(was.get(id), now.get(id)),
+  );
+}
+
+/**
+ * Whether a change reaches what a locked track takes from assets or libraries: an asset that goes,
+ * comes, or becomes another file, or what a library stands for. What only describes an asset is free.
+ */
+function reachesLockedMedia(state: ProjectState, patch: Patch): boolean {
+  const [root, id = ""] = patch.path;
+  const value = patch.op === "set" ? patch.value : undefined;
+  if (root === "assets" && patch.path.length === 2) {
+    const changes = !deepEqual(contentOf(getIn(state, patch.path)), contentOf(value));
+    return changes && isAssetOnLockedTrack(state, id);
+  }
+  if ((root === "lock" || root === "libraries") && patch.path.length === 1) {
+    const { libraries } = usedOnLockedTracks(state);
+    return librariesChanged(root, getIn(state, patch.path), value).some((library) =>
+      libraries.has(library),
+    );
+  }
+  return false;
+}
+
+/**
+ * Whether a change reaches what is on a locked track: what is there now, or what would end up there,
+ * also the code it runs and the assets and libraries it uses. The track itself stays open, or nobody
+ * could take the lock off. It only cannot go away, or become another kind of track: the kind says
+ * what it can hold, and what is on it would no longer fit.
  */
 export function touchesLockedTrack(state: ProjectState, patch: Patch): boolean {
   const { path } = patch;
-  if (reachesLockedCode(state, path)) return true;
+  if (reachesLockedCode(state, path) || reachesLockedMedia(state, patch)) return true;
   const [root, id = "", level, item = "", field] = path;
   const timeline = root === "timelines" ? entryOf(state.timelines, id) : undefined;
   if (!timeline) return false;

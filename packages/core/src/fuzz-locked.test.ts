@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { Track, canHold } from "@animaquill/schema";
+import { afterAll, describe, expect, it } from "vitest";
 import { FUZZ, openUnlocked, randomCommand, randomFrom, type Random } from "./fuzz-support.ts";
 import type { ProjectState } from "./model.ts";
 import { ProjectStore, USER, aiTask, type ImportResult, type Origin } from "./store.ts";
@@ -46,16 +47,120 @@ const codeOf = (state: ProjectState, tracks: readonly string[]) => {
   };
 };
 
+/** Every asset a value names, however deep. */
+const assetsNamedIn = (value: unknown, into: Set<string>): Set<string> => {
+  if (typeof value !== "object" || value === null) return into;
+  const { asset } = value as { readonly asset?: unknown };
+  if (typeof asset === "string") into.add(asset);
+  for (const inner of Object.values(value)) assetsNamedIn(inner, into);
+  return into;
+};
+
+/** What these tracks show of assets, also in versions, which stays as it is too. */
+const assetsShown = (state: ProjectState, shown: ReadonlySet<string>) =>
+  Object.fromEntries(
+    [...shown].map((id) => {
+      const {
+        name: _name,
+        license: _license,
+        credit: _credit,
+        ...content
+      } = (state.assets?.[id] ?? {}) as Record<string, unknown>;
+      return [id, content];
+    }),
+  );
+
+/** What nothing should ever come to: a clip or a transition on a track that is gone, or does not fit. */
+function brokenIn(state: ProjectState): readonly string[] {
+  const main = state.timelines["main"];
+  if (!main) return [];
+  const clips = Object.values(main.clips).flatMap(({ id, track, source }) => {
+    const home = main.tracks[track];
+    if (!home) return [`${id} is on ${track}, which is gone`];
+    return canHold(home.kind, source.kind) ? [] : [`${id} does not fit on ${track}`];
+  });
+  const transitions = Object.values(main.transitions).flatMap(({ id, track }) =>
+    main.tracks[track] ? [] : [`${id} is on ${track}, which is gone`],
+  );
+  const tracks = Object.values(main.tracks).flatMap(({ order: _order, ...track }) =>
+    Track.safeParse({ ...track, clips: [] }).success ? [] : [`${track.id} is not what its kind is`],
+  );
+  return [...clips, ...transitions, ...tracks];
+}
+
+/** Another track that can hold a clip, often a locked one: that is where a file runs into a lock. */
+function homeFor(tracks: readonly any[], clip: any, random: Random, but?: unknown): any {
+  const fits = tracks.filter((track) => track !== but && canHold(track.kind, clip.source.kind));
+  const locked = fits.filter((track) => track.locked);
+  return random.pick(locked.length > 0 && random.chance(0.6) ? locked : fits);
+}
+
+const VIDEO_ONLY = ["hidden"];
+const AUDIO_ONLY = ["role", "muted", "solo", "properties", "effects", "sends", "output"];
+
+/**
+ * Makes a track of a file another kind, the way the file stays valid: what it cannot hold goes onto
+ * another track that can, also a locked one, or goes away.
+ */
+function changeKind(tracks: any[], track: any, random: Random): void {
+  const kinds = ["video", "audio", "caption"].filter((kind) => kind !== track.kind);
+  const kind = random.pick(kinds) as string;
+  for (const key of kind === "audio" ? VIDEO_ONLY : AUDIO_ONLY) delete track[key];
+  if (kind === "caption") delete track.transitions;
+  track.kind = kind;
+  for (const clip of track.clips) {
+    if (canHold(kind, clip.source.kind)) continue;
+    track.clips = track.clips.filter((item: any) => item !== clip);
+    const other = homeFor(tracks, clip, random, track);
+    if (other && random.chance(0.7))
+      other.clips.push({ ...clip, start: String(80 + random.int(20)) });
+  }
+  for (const transition of track.transitions ?? []) {
+    const stays = (id: string | undefined) =>
+      id === undefined || track.clips.some((clip: any) => clip.id === id);
+    if (!stays(transition.from)) delete transition.from;
+    if (!stays(transition.to)) delete transition.to;
+  }
+  track.transitions = track.transitions?.filter(
+    (transition: any) => transition.from ?? transition.to,
+  );
+  if (track.transitions?.length === 0) delete track.transitions;
+}
+
 /**
  * A file somebody changed outside of the editor: random changes to random clips, wherever they
- * are, also locks that go or come. What is valid is what comes in, apart from what is locked.
+ * are, also locks that go or come, tracks that go or become another kind, and assets. What is
+ * valid is what comes in, apart from what is locked.
  */
 function randomFile(store: ProjectStore, random: Random): readonly [string, string] {
   const files = store.exportFiles().files;
-  const roll = random.int(10);
+  const roll = random.int(12);
+  if (roll >= 10) {
+    const document = JSON.parse(files.get("assets.json") ?? `{ "assets": {} }`);
+    for (const id of Object.keys(document.assets)) {
+      if (!random.chance(0.3)) continue;
+      const change = random.int(3);
+      if (change === 0) delete document.assets[id];
+      else if (change === 1) document.assets[id].path = `assets/n${random.int(9)}.png`;
+      else document.assets[id].credit = `c${random.int(9)}`;
+    }
+    return ["assets.json", JSON.stringify(document)];
+  }
   if (roll < 6) {
     const document = JSON.parse(files.get(MAIN) as string);
-    const tracks = document.tracks as any[];
+    let tracks = document.tracks as any[];
+    if (random.chance(0.2) && tracks.length > 1) {
+      const gone = random.pick(tracks);
+      tracks = tracks.filter((track) => track !== gone);
+      document.tracks = tracks;
+      // What was on it goes elsewhere, or with it.
+      for (const clip of gone.clips) {
+        const other = homeFor(tracks, clip, random);
+        if (other && random.chance(0.6))
+          other.clips.push({ ...clip, start: String(80 + random.int(20)) });
+      }
+    }
+    if (random.chance(0.2)) changeKind(tracks, random.pick(tracks), random);
     for (const track of tracks) {
       if (random.chance(0.15)) {
         if (track.locked) delete track.locked;
@@ -105,6 +210,12 @@ function randomFile(store: ProjectStore, random: Random): readonly [string, stri
   return [path ?? "code/x.js", `// ${random.int(1000)}`];
 }
 
+/** Files that came in as nothing, because the rest would break without what stays: over all seeds. */
+let refusedWhole = 0;
+afterAll(() => {
+  expect(refusedWhole).toBeGreaterThan(0);
+});
+
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   "taking back around locked tracks, seed %i",
   FUZZ,
@@ -115,7 +226,15 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
       let held = 0;
       let lockedCode = 0;
       let heldFiles = 0;
+      /** Whatever happens, the project stays whole and can be written. */
+      const stillWhole = (round: number, always: boolean) => {
+        expect(brokenIn(store.getState()), `round ${round}`).toEqual([]);
+        if (always || round % 20 === 0) {
+          expect(store.exportFiles().problems, `round ${round}`).toEqual([]);
+        }
+      };
       for (let round = 0; round < 2000; round++) {
+        if (round > 0) stillWhole(round, false);
         const task = `t${random.int(3)}`;
         const roll = random.int(100);
         const before = store.getState();
@@ -141,12 +260,21 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           if (result.ok ? result.kept.length > 0 : result.error.code === "track-locked") {
             heldFiles += 1;
           }
+          if (
+            !result.ok &&
+            result.error.problems?.some(({ code }) => code === "needs-locked-part")
+          ) {
+            refusedWhole += 1;
+          }
           // A lock only goes when a person's file takes it off, and then the track is theirs.
           if (origin !== USER)
             expect(lockedIn(after)).toEqual(expect.arrayContaining(lockedIn(before)));
           const still = lockedIn(before).filter((id) => lockedIn(after).includes(id));
           expect(contentOf(after, still)).toEqual(contentOf(before, still));
           expect(codeOf(after, still)).toEqual(codeOf(before, still));
+          const shown = assetsNamedIn(contentOf(before, still), new Set());
+          expect(assetsShown(after, shown)).toEqual(assetsShown(before, shown));
+          stillWhole(round, true);
           continue;
         }
         const result =

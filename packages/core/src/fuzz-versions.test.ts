@@ -150,8 +150,17 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
         if (roll < 12) store.undo();
         else if (roll < 18) store.redo();
         else if (roll < 22) store.undoTask(`t${random.int(2)}`);
-        else writeOwn(store, OWN[side] as Own, random, pickOrigin(random));
+        else if (roll < 28) {
+          // A language whose strings all go at once, which stays there without any.
+          const language = random.pick(LANGUAGES) as string;
+          const empty = JSON.stringify({ strings: {} });
+          store.importFile(`locales/${language}.json`, empty, { origin: pickOrigin(random) });
+        } else writeOwn(store, OWN[side] as Own, random, pickOrigin(random));
         if (random.chance(0.15)) sync(a, b);
+        // What every change leaves is what reading the document again gives.
+        if (round % 10 === 0) {
+          expect(deepEqual(new ProjectStore(store.doc).getState(), store.getState())).toBe(true);
+        }
 
         if (round % 25 === 0) {
           const { files, problems } = store.exportFiles();

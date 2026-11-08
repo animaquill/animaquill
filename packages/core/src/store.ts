@@ -10,16 +10,21 @@ import { COMMANDS, type CommandDefinition } from "./commands.ts";
 import { CommandError, Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
+import { NOBODY, USER, aiTask, type Origin } from "./origin.ts";
 import { Mutator, getIn, type Patch } from "./patch.ts";
 import { danglingAt, touchesLockedTrack } from "./references.ts";
-import { flatKey, flatParts, isContainer, isFlat, type Path } from "./structure.ts";
+import {
+  flatKey,
+  flatParts,
+  isContainer,
+  isFlat,
+  isStanding,
+  writePathOf,
+  type Path,
+} from "./structure.ts";
 import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
 
-/** Who a change comes from. Every change in the document carries this. */
-export type Origin = string;
-
-export const USER: Origin = "user";
-export const aiTask = (task: string): Origin => `ai:${task}`;
+export { USER, aiTask, type Origin };
 
 const LOAD = "load";
 const REMOTE = "remote";
@@ -41,6 +46,14 @@ export interface ExecuteOptions {
   readonly baseRevision?: number;
   /** Runs every check and writes nothing. */
   readonly dryRun?: boolean;
+}
+
+/**
+ * How a file comes in. There is no default for who wrote it: a file can come from anyone, and only
+ * `USER`, the person at the editor, can do what only a person can, such as taking a lock off.
+ */
+export interface ImportOptions extends ExecuteOptions {
+  readonly origin: Origin;
 }
 
 interface CommitOptions extends ExecuteOptions {
@@ -196,6 +209,7 @@ function fill(map: Y.Map<unknown>, path: Path, value: object): void {
 /** Puts what flat levels hold in the map above them, one value at a time. */
 function fillFlat(map: Y.Map<unknown>, parts: Path, path: Path, value: unknown): void {
   if (typeof value !== "object" || value === null) return;
+  if (isStanding(path)) map.set(flatKey(parts), {});
   for (const [key, item] of Object.entries(value)) {
     if (item === undefined) continue;
     const child = [...path, key];
@@ -262,9 +276,11 @@ function readFlatAll(map: Y.Map<unknown>, path: Path): Tree {
   const tree: Tree = {};
   // Maps of an older document first: what has a key of its own is newer.
   map.forEach((item, key) => {
-    if (key === UNSAFE_KEY || !(item instanceof Y.Map) || !isFlat([...path, key])) return;
-    const inner = readFlatAll(item as Y.Map<unknown>, [...path, key]);
-    if (Object.keys(inner).length > 0) tree[key] = inner;
+    const level = [...path, key];
+    if (key === UNSAFE_KEY || !isFlat(level) || flatParts(path, key)) return;
+    const inner = item instanceof Y.Map ? readFlatAll(item as Y.Map<unknown>, level) : {};
+    // A standing level is there with its key, whatever is in it. See `standing` in structure.ts.
+    if (Object.keys(inner).length > 0 || isStanding(level)) tree[key] = inner;
   });
   map.forEach((item, key) => {
     const parts = flatParts(path, key);
@@ -347,6 +363,18 @@ function applyAll(doc: Y.Doc, updates: readonly Uint8Array[], origin: string): n
     }
   }
   return damaged;
+}
+
+/**
+ * Whether a document of the project could no longer be written after a change, that could before.
+ * It reads the whole project, so it is only for what can come apart: part of a change going back,
+ * where what stays can be what the rest needs, such as the kind of a track for its other fields.
+ */
+function breaksDocuments(before: ProjectState, after: ProjectState): boolean {
+  const invalid = stateToProject(after).problems;
+  if (invalid.length === 0) return false;
+  const known = new Set(stateToProject(before).problems.map(({ file }) => file));
+  return invalid.some(({ file }) => !known.has(file));
 }
 
 /** Combines updates into one, without opening the project. All of them have to be intact. */
@@ -553,14 +581,17 @@ export class ProjectStore {
 
   /**
    * Takes in a file that changed outside of the editor. See planFileImport. What it would change on
-   * a locked track stays as it is, and the result says what. When that is all it would change,
-   * nothing happens, and the result is a failure that says the same.
+   * a locked track stays as it is, and the result says what. Nothing of it comes in when that is all
+   * it would change, or when the rest would break something without it: the result is a failure
+   * that says why. Who wrote the file has to be said, see `ImportOptions`.
    */
-  importFile(path: string, text: string, options: ExecuteOptions = {}): ImportResult {
-    const origin = options.origin ?? USER;
+  importFile(path: string, text: string, options: ImportOptions): ImportResult {
+    // Code that does not say who wrote the file gets nothing that only a person can do.
+    const origin = (options as ImportOptions | undefined)?.origin ?? NOBODY;
+    const given = { ...options, origin };
     let kept: readonly Path[] = [];
-    let held: readonly Problem[] = [];
-    const result = this.#commit(["file.import"], origin, options, (draft) => {
+    let told: readonly Problem[] = [];
+    const result = this.#commit(["file.import"], origin, given, (draft) => {
       this.#assertUnlocked(draft);
       draft.knowsOnlyOutcome();
       const planned = planFileImport(draft, path, text);
@@ -568,19 +599,27 @@ export class ProjectStore {
         const message = "文件不符合项目格式，没有导入";
         throw new ImportRejected({ code: "invalid-file", message, problems: planned.problems });
       }
-      ({ kept, held } = planned);
-      if (kept.length > 0 && draft.steps.length === 0) {
-        throw new ImportRejected({
+      ({ kept } = planned);
+      const refused = (message: string, problems: readonly Problem[]) =>
+        new ImportRejected({
           code: "track-locked",
-          message: "文件里的改动都在锁定的轨道上，没有生效",
+          message,
           conflicts: kept,
           obstacle: "locked",
-          problems: held,
+          problems,
         });
+      if (planned.broken.length > 0) {
+        const message =
+          "文件里有些改动在锁定的轨道上，只导入其余的部分会让项目出错，整个文件没有导入";
+        throw refused(message, [...planned.held, ...planned.broken]);
       }
+      if (kept.length > 0 && draft.steps.length === 0) {
+        throw refused("文件里的改动都在锁定的轨道上，没有生效", planned.held);
+      }
+      told = [...planned.held, ...planned.notices];
       return [];
     });
-    return result.ok ? { ...result, kept, problems: held } : result;
+    return result.ok ? { ...result, kept, problems: told } : result;
   }
 
   get canUndo(): boolean {
@@ -847,7 +886,14 @@ export class ProjectStore {
           (link) => !known.has(link) && !already.includes(link),
         );
       });
-      if (dangling.length === 0) return { back: new Set(back), obstacle };
+      if (dangling.length === 0) {
+        // What stays can be what the rest needs to be a valid document: then nothing goes back.
+        const isPartly = back.length < steps.length;
+        if (isPartly && breaksDocuments(this.#state, draft.state)) {
+          return { back: new Set<Step>(), obstacle };
+        }
+        return { back: new Set(back), obstacle };
+      }
       for (const step of dangling) stuck.add(step);
     }
   }
@@ -929,6 +975,17 @@ export class ProjectStore {
     const map = this.#mapAt(path.slice(0, depth));
     const parts = path.slice(depth);
     const key = flatKey(parts);
+    if (isStanding(path)) {
+      // Only that it is there. The map of an older document says the same, together with what is in it.
+      const old = map.get(key);
+      const isOld = old instanceof Y.Map;
+      if (patch.op !== "delete") {
+        if (!isOld) map.set(key, {});
+      } else if (!isOld || (old as Y.Map<unknown>).size === 0) {
+        map.delete(key);
+      }
+      return;
+    }
     switch (patch.op) {
       case "delete":
         map.delete(key);
@@ -945,6 +1002,26 @@ export class ProjectStore {
     }
     // From now on this value lives under a key of its own.
     forgetOld(map, parts);
+  }
+
+  /**
+   * A standing level stays without its last entry while the document says it is there, and goes
+   * when it does not. See `standing` in structure.ts.
+   */
+  #leaveStanding(mutator: Mutator<ProjectState>, path: Path): void {
+    for (let length = path.length - 1; length > 0; length--) {
+      const level = path.slice(0, length);
+      if (!isFlat(level)) return;
+      if (!isStanding(level)) continue;
+      const left = getIn(mutator.root, level);
+      if (typeof left !== "object" || left === null || Object.keys(left).length > 0) return;
+      const depth = mapDepth(level);
+      let map: unknown = this.#root;
+      for (const key of level.slice(0, depth)) map = (map as Y.Map<unknown> | undefined)?.get(key);
+      const isThere = map instanceof Y.Map && map.has(flatKey(level.slice(depth)));
+      if (!isThere) mutator.delete(level);
+      return;
+    }
   }
 
   #markWrite(path: Path, write: Write, removed: boolean): void {
@@ -977,14 +1054,18 @@ export class ProjectStore {
         continue;
       }
       const target = event.target as Y.Map<unknown>;
-      event.changes.keys.forEach((_, key) => {
+      event.changes.keys.forEach((change, key) => {
         const { path, value } = readChange(this.#root, target, base, key);
         if (path.includes(UNSAFE_KEY)) return;
         const removed = value === undefined;
         if (removed) mutator.delete(path);
         else mutator.set(path, value);
-        remember(path);
-        if (!isLoad) this.#markWrite(path, write, removed || isContainer(path));
+        if (removed) this.#leaveStanding(mutator, path);
+        // That a standing level is there is written down apart from what is in it.
+        const isOld = change.oldValue instanceof Y.Map || target.get(key) instanceof Y.Map;
+        const where = isStanding(path) && !isOld ? writePathOf(path) : path;
+        remember(where);
+        if (!isLoad) this.#markWrite(where, write, removed || isContainer(where));
       });
     }
 

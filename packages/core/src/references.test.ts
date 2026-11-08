@@ -345,12 +345,76 @@ describe("what reaches a locked track", () => {
     expect(touchesLockedTrack(open, { op: "delete", path: path() })).toBe(false);
   });
 
+  it("is an asset that a clip on it shows, unless it only says who made it", () => {
+    const state = setUp();
+    const asset = (value?: object): Patch =>
+      value === undefined
+        ? { op: "delete", path: ["assets", "a"] }
+        : { op: "set", path: ["assets", "a"], value };
+    expect(touchesLockedTrack(state, asset())).toBe(true);
+    expect(touchesLockedTrack(state, asset({ ...ASSET, path: "assets/b.png" }))).toBe(true);
+    expect(touchesLockedTrack(state, asset({ ...ASSET, hash: "sha256-b" }))).toBe(true);
+    expect(touchesLockedTrack(state, asset({ ...ASSET, name: "图", credit: "某人" }))).toBe(false);
+    expect(touchesLockedTrack(state, { op: "delete", path: ["assets", "b"] })).toBe(false);
+    // With nothing on the locked track that shows it, the asset is free.
+    const { state: open } = project();
+    expect(touchesLockedTrack(open, asset())).toBe(false);
+  });
+
+  it("is what a version shows there, or what the code there asks for", () => {
+    const state = setUp();
+    const main = state.timelines["main"] as TimelineState;
+    const source = { value: { kind: "image", media: { asset: "b" } } };
+    const versions = { v: { clips: { c: { source } } } };
+    const assets = { a: ASSET, b: { ...ASSET, path: "assets/b.png" } };
+    const withVersion = {
+      ...state,
+      assets,
+      timelines: { main: { ...main, overrides: versions } },
+    } as unknown as ProjectState;
+    expect(touchesLockedTrack(withVersion, { op: "delete", path: ["assets", "b"] })).toBe(true);
+    const scene = { name: "场景", entry: "index.html", runtime: 1 };
+    const showing = { ...main.clips["c"], source: { kind: "scene", scene: "s" } };
+    const withScene = {
+      ...state,
+      assets,
+      scenes: { s: scene },
+      files: { "scenes/s/index.html": `<script>aq.asset("b")</script>` },
+      timelines: { main: { ...main, clips: { ...main.clips, c: showing } } },
+    } as unknown as ProjectState;
+    expect(touchesLockedTrack(withScene, { op: "delete", path: ["assets", "b"] })).toBe(true);
+    expect(touchesLockedTrack(withScene, { op: "delete", path: ["assets", "a"] })).toBe(false);
+  });
+
+  it("is a library that a clip on it takes something from", () => {
+    const state = setUp();
+    const main = state.timelines["main"] as TimelineState;
+    const fromLibrary = {
+      ...main.clips["c"],
+      source: { kind: "image", media: { library: "lib", path: "logo.png" } },
+    };
+    const pinned = { commit: "aaaaaaa", integrity: "sha256-a" };
+    const withLibrary = {
+      ...state,
+      lock: { libraries: { lib: pinned } },
+      timelines: { main: { ...main, clips: { ...main.clips, c: fromLibrary } } },
+    } as unknown as ProjectState;
+    const lock = (libraries: object): Patch => ({
+      op: "set",
+      path: ["lock"],
+      value: { libraries },
+    });
+    const other = { commit: "bbbbbbb", integrity: "sha256-b" };
+    expect(touchesLockedTrack(withLibrary, lock({ lib: other }))).toBe(true);
+    expect(touchesLockedTrack(withLibrary, lock({}))).toBe(true);
+    expect(touchesLockedTrack(withLibrary, lock({ lib: pinned, more: other }))).toBe(false);
+  });
+
   it("is nothing elsewhere", () => {
     const state = setUp();
     expect(touchesLockedTrack(state, { op: "set", path: ["manifest", "name"], value: "x" })).toBe(
       false,
     );
-    expect(touchesLockedTrack(state, { op: "delete", path: ["assets", "a"] })).toBe(false);
     expect(
       touchesLockedTrack(state, { op: "delete", path: ["timelines", "none", "clips", "c"] }),
     ).toBe(false);

@@ -98,10 +98,18 @@ describe("planning a change", () => {
     expect(getIn(plan.state, version)).toEqual({ scope: { language: "fr" } });
   });
 
-  it("writes the strings of a language one at a time", () => {
+  it("writes the strings of a language one at a time, after the language itself", () => {
     const plan = draft();
     plan.set(["locales", "fr"], { "intro.title": { text: "Atome" }, empty: undefined });
-    expect(plan.steps.map(({ patch }) => patch.path)).toEqual([["locales", "fr", "intro.title"]]);
+    expect(plan.steps.map(({ patch }) => patch)).toEqual([
+      { op: "set", path: ["locales", "fr"], value: {} },
+      { op: "set", path: ["locales", "fr", "intro.title"], value: { text: "Atome" } },
+    ]);
+    plan.delete(["locales", "fr", "intro.title"]);
+    expect(getIn(plan.state, ["locales", "fr"])).toEqual({});
+    plan.delete(["locales", "fr"]);
+    expect(plan.steps.at(-1)?.patch).toEqual({ op: "delete", path: ["locales", "fr"] });
+    expect(getIn(plan.state, ["locales"])).toEqual({});
   });
 });
 

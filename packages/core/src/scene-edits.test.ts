@@ -764,7 +764,11 @@ describe("a scene on a locked track", () => {
       scope: { format: "landscape" },
       clips: { c: { source: { value: scene } } },
     };
-    ok(store.importFile("timelines/main/overrides/format.landscape.json", JSON.stringify(version)));
+    ok(
+      store.importFile("timelines/main/overrides/format.landscape.json", JSON.stringify(version), {
+        origin: USER,
+      }),
+    );
     lock();
     expect(code(run("file.write", { path: "scenes/title/a.js", text: "1" }))).toBe("track-locked");
   });

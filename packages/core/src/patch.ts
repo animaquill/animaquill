@@ -1,4 +1,4 @@
-import { isContainer, isFlat, type Path } from "./structure.ts";
+import { isContainer, isFlat, isStanding, type Path } from "./structure.ts";
 
 /** One change to a project. A command turns into a list of these, which also records what it did. */
 export type Patch =
@@ -38,11 +38,15 @@ function diffEntries(path: Path, before: Plain, after: Plain): Patch[] {
 
 /**
  * The patches that turn one value at a path into another, as fine-grained as the document is. A flat
- * level has nothing of its own to change, so it always comes down to its entries.
+ * level has nothing of its own to change, so it always comes down to its entries, apart from a
+ * standing one that comes or goes: that is a patch of its own, which `Draft` takes apart.
  */
 export function diff(path: Path, before: unknown, after: unknown): Patch[] {
   if (deepEqual(before, after)) return [];
   if (isFlat(path)) {
+    if (isStanding(path) && (before === undefined) !== (after === undefined)) {
+      return [after === undefined ? { op: "delete", path } : { op: "set", path, value: after }];
+    }
     return diffEntries(
       path,
       isPlainObject(before) ? before : {},
@@ -67,7 +71,8 @@ export function getIn(root: unknown, path: Path): unknown {
 
 /**
  * A value the way the document will hold it, which is also how it comes back: nothing is undefined,
- * and a level without entries that has no map of its own is not there at all.
+ * and a level without entries that has no map of its own is not there at all, unless it is one that
+ * stands on its own.
  */
 export function settled(path: Path, value: unknown): unknown {
   if (!isContainer(path) || !isPlainObject(value)) return value;
@@ -75,7 +80,8 @@ export function settled(path: Path, value: unknown): unknown {
     const inner = settled([...path, key], item);
     return inner === undefined ? [] : [[key, inner] as const];
   });
-  return entries.length === 0 && isFlat(path) ? undefined : Object.fromEntries(entries);
+  const isGone = entries.length === 0 && isFlat(path) && !isStanding(path);
+  return isGone ? undefined : Object.fromEntries(entries);
 }
 
 /** A change the way the document will hold it. */
@@ -145,7 +151,8 @@ export class Mutator<T extends object> {
     const left = (this.#entries.get(parent) ?? Object.keys(parent).length) - 1;
     delete parent[key];
     this.#entries.set(parent, left);
-    if (left === 0) this.delete(level);
+    // A standing level stays without its last entry. Whether it is still there is for the document.
+    if (left === 0 && !isStanding(level)) this.delete(level);
   }
 
   apply(patch: Patch): void {

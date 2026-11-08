@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { factsTakenBack, type ClipFact } from "./draft.ts";
 import { orderedTracks } from "./model.ts";
 import { convertedValue, inverseOf, movesOf } from "./rename.ts";
-import { ProjectStore } from "./store.ts";
+import { ProjectStore, USER } from "./store.ts";
 
 const keys = (...values: number[]) => ({
   keys: values.map((value, index) => ({ time: String(index), value })),
@@ -192,6 +192,7 @@ describe("a rename in the versions of a timeline", () => {
     const written = store.importFile(
       "timelines/main/overrides/format.vertical.json",
       JSON.stringify(file),
+      { origin: USER },
     );
     expect(written.ok).toBe(true);
     expect(rename({ owner, from: "object.a.*", to: "object.b.*", scale: 10 }).ok).toBe(true);

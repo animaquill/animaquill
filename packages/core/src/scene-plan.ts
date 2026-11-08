@@ -220,6 +220,21 @@ export function codeUsingAsset(state: ProjectState, asset: string): string | und
   return undefined;
 }
 
+/**
+ * Whether the code of a scene or a sound, by `scenes/<id>` or `sounds/<id>`, asks for an asset: one
+ * of its files names it, also the shared code, or one of its parameters starts out with it.
+ */
+export function codeOfAsksFor(state: ProjectState, owner: string, asset: string): boolean {
+  const [root, id = ""] = owner.split("/");
+  const paths = root === "sounds" ? soundFilesOf(state, id) : sceneFilesOf(state, id);
+  const files = indexOf(state.files);
+  if (paths.some((path) => files.factsOf(path).assets.includes(asset))) return true;
+  const manifest = root === "sounds" ? entryOf(state.sounds, id) : entryOf(state.scenes, id);
+  const startsWithIt = (param: NonNullable<SceneManifest["params"]>[number]) =>
+    param.type === "asset" && assetIdOf(param.default) === asset;
+  return manifest?.params?.some(startsWithIt) === true;
+}
+
 const sources = new Map<string, SceneSource>();
 
 /** What a compositor has to know to show a scene, or undefined when there is no such scene. */

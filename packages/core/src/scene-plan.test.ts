@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { orderedTracks } from "./model.ts";
 import { buildRenderPlan, samePlan, type RenderLayer } from "./render-plan.ts";
 import { hashOfText, sceneFilesOf, sceneSourceOf, type SceneSource } from "./scene-plan.ts";
-import { ProjectStore } from "./store.ts";
+import { ProjectStore, USER } from "./store.ts";
 
 const manifest: SceneManifest = { name: "标题", entry: "index.html", runtime: 1 };
 
@@ -75,6 +75,7 @@ describe("a scene in the render plan", () => {
     store.importFile(
       "timelines/main/timeline.json",
       store.exportFiles().files.get("timelines/main/timeline.json") as string,
+      { origin: USER },
     );
     expect(plan().layers).toEqual([]);
   });

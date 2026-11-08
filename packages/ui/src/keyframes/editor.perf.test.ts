@@ -1,4 +1,4 @@
-import type { PropertyEdit } from "@animaquill/core";
+import { USER, type PropertyEdit } from "@animaquill/core";
 import { describe, expect, it, vi } from "vitest";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
@@ -53,7 +53,7 @@ async function big() {
     source: { kind: "color", color: "#336699" },
     properties: { "transform.x": keysOf(index), "transform.y": keysOf(-index) },
   }));
-  const imported = store.importFile(path, JSON.stringify(file));
+  const imported = store.importFile(path, JSON.stringify(file), { origin: USER });
   if (!imported.ok) throw new Error(imported.error.message);
   const settings = {
     load: async () => undefined,

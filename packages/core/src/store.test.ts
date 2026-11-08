@@ -872,7 +872,9 @@ describe("a locked project", () => {
     expect(failure(setProperty(store, "param.size", 80, { origin: AI })).code).toBe(
       "project-locked",
     );
-    expect(failure(store.importFile("scenes/title/index.html", "x")).code).toBe("project-locked");
+    expect(failure(store.importFile("scenes/title/index.html", "x", { origin: USER })).code).toBe(
+      "project-locked",
+    );
   });
 
   it("does not let undo get around it", () => {
@@ -1699,6 +1701,7 @@ describe("editing clips on the timeline", () => {
               },
             },
           }),
+          { origin: USER },
         ),
       );
       success(trim(store, "pic", { start: "4.5" }));
@@ -1876,6 +1879,7 @@ describe("editing clips on the timeline", () => {
             scope: main?.overrides[version]?.scope,
             clips: { clip_card: { hidden: { value: true }, offset: { value: "1" } } },
           }),
+          { origin: USER },
         ),
       );
       const right = split(store, "clip_card", "26");
@@ -2100,8 +2104,8 @@ describe("two people at once", () => {
     const b = twin(a);
     const path = "code/animate.js";
     const text = a.getState().files[path] as string;
-    success(a.importFile(path, `// 开头\n${text}`));
-    success(b.importFile(path, `${text}// 结尾\n`));
+    success(a.importFile(path, `// 开头\n${text}`, { origin: USER }));
+    success(b.importFile(path, `${text}// 结尾\n`, { origin: USER }));
     sync(a, b);
     expect(a.getState().files[path]).toBe(`// 开头\n${text}// 结尾\n`);
     expect(b.getState().files[path]).toBe(a.getState().files[path]);
@@ -2130,7 +2134,7 @@ describe("files changed outside of the editor", () => {
     const text = change(store, MAIN, (document) => {
       document.tracks[0].clips[0].properties["param.size"] = 80;
     });
-    const result = success(store.importFile(MAIN, text));
+    const result = success(store.importFile(MAIN, text, { origin: USER }));
     expect(result.patches).toEqual([
       {
         op: "set",
@@ -2143,7 +2147,9 @@ describe("files changed outside of the editor", () => {
 
   it("change nothing when the file is the same", () => {
     const store = open();
-    const result = success(store.importFile(MAIN, store.exportFiles().files.get(MAIN) as string));
+    const result = success(
+      store.importFile(MAIN, store.exportFiles().files.get(MAIN) as string, { origin: USER }),
+    );
     expect(result.patches).toEqual([]);
   });
 
@@ -2159,7 +2165,7 @@ describe("files changed outside of the editor", () => {
   });
 
   it("are refused when the text is no JSON", () => {
-    expect(failure(open().importFile(MAIN, "{oops")).code).toBe("invalid-file");
+    expect(failure(open().importFile(MAIN, "{oops", { origin: USER })).code).toBe("invalid-file");
   });
 
   it("can be undone like any command", () => {
@@ -2172,6 +2178,7 @@ describe("files changed outside of the editor", () => {
           document.tracks[0].clips.pop();
           document.name = "别的名字";
         }),
+        { origin: USER },
       ),
     );
     store.undo();
@@ -2215,7 +2222,7 @@ describe("files changed outside of the editor", () => {
       }),
     );
     const text = store.exportFiles().files.get(MAIN) as string;
-    const result = success(store.importFile(MAIN, text));
+    const result = success(store.importFile(MAIN, text, { origin: USER }));
     expect(result.patches).toEqual([]);
     expect(first).toBeDefined();
   });
@@ -2228,6 +2235,7 @@ describe("files changed outside of the editor", () => {
         change(store, MAIN, (document) => {
           document.tracks.reverse();
         }),
+        { origin: USER },
       ),
     );
     expect(orderedTracks(timeline(store))[0]?.id).toBe("track_captions");
@@ -2239,7 +2247,9 @@ describe("files changed outside of the editor", () => {
     expect(paths.length).toBeGreaterThan(10);
     for (const path of paths) {
       expect(
-        success(store.importFile(path, store.exportFiles().files.get(path) as string)).patches,
+        success(
+          store.importFile(path, store.exportFiles().files.get(path) as string, { origin: USER }),
+        ).patches,
         path,
       ).toEqual([]);
     }
@@ -2251,11 +2261,15 @@ describe("files changed outside of the editor", () => {
       scope: { format: "landscape" },
       clips: { clip_title: { hidden: { value: true } } },
     });
-    success(store.importFile("timelines/main/overrides/format.landscape.json", overrides));
+    success(
+      store.importFile("timelines/main/overrides/format.landscape.json", overrides, {
+        origin: USER,
+      }),
+    );
     expect(timeline(store).overrides["format.landscape"]).toBeDefined();
     const scene = JSON.stringify({ name: "新场景", entry: "index.html", runtime: 1 });
-    success(store.importFile("scenes/new/scene.json", scene));
-    success(store.importFile("scenes/new/index.html", "<p>新</p>"));
+    success(store.importFile("scenes/new/scene.json", scene, { origin: USER }));
+    success(store.importFile("scenes/new/index.html", "<p>新</p>", { origin: USER }));
     expect(store.exportFiles().files.get("scenes/new/index.html")).toBe("<p>新</p>");
     expect(store.exportFiles().files.has("scenes/new/scene.json")).toBe(true);
   });
@@ -2264,7 +2278,7 @@ describe("files changed outside of the editor", () => {
     const store = open();
     const path = "code/animate.js";
     const before = store.getState().files[path] as string;
-    success(store.importFile(path, `${before}// 新的一行\n`));
+    success(store.importFile(path, `${before}// 新的一行\n`, { origin: USER }));
     expect(store.getState().files[path]).toBe(`${before}// 新的一行\n`);
     store.undo();
     expect(store.getState().files[path]).toBe(before);
@@ -2273,14 +2287,14 @@ describe("files changed outside of the editor", () => {
   it("handle text with emoji at the edges of a change", () => {
     const store = open();
     const path = "code/animate.js";
-    success(store.importFile(path, "😀😀"));
-    success(store.importFile(path, "😀😁"));
+    success(store.importFile(path, "😀😀", { origin: USER }));
+    success(store.importFile(path, "😀😁", { origin: USER }));
     expect(store.getState().files[path]).toBe("😀😁");
   });
 
   it("ignore files the project does not keep", () => {
     const store = open();
-    const result = success(store.importFile("AGENTS.md", "别的内容"));
+    const result = success(store.importFile("AGENTS.md", "别的内容", { origin: USER }));
     expect(result.patches).toEqual([]);
   });
 
@@ -2289,7 +2303,9 @@ describe("files changed outside of the editor", () => {
     const text = change(store, "animaquill.json", (document) => {
       document.formatVersion = 2;
     });
-    expect(failure(store.importFile("animaquill.json", text)).code).toBe("format-mismatch");
+    expect(failure(store.importFile("animaquill.json", text, { origin: USER })).code).toBe(
+      "format-mismatch",
+    );
   });
 });
 
@@ -2476,8 +2492,8 @@ describe("two devices writing different properties", () => {
       for (const track of file.tracks) if (track.kind === "audio") track.properties = properties;
       return JSON.stringify(file);
     };
-    success(a.importFile(MAIN, withProperties(a, { "audio.volume": -6 })));
-    success(b.importFile(MAIN, withProperties(b, { "audio.pan": 0.5 })));
+    success(a.importFile(MAIN, withProperties(a, { "audio.volume": -6 }), { origin: USER }));
+    success(b.importFile(MAIN, withProperties(b, { "audio.pan": 0.5 }), { origin: USER }));
     sync(a, b);
     const audio = Object.values(timeline(a).tracks).find(({ kind }) => kind === "audio");
     expect(audio).toMatchObject({ properties: { "audio.volume": -6, "audio.pan": 0.5 } });
@@ -2506,8 +2522,8 @@ describe("two devices writing different properties", () => {
       const notes = [{ id, status: "pending", text, timeline: "main", time: "1", createdAt }];
       return JSON.stringify({ notes });
     };
-    success(a.importFile("notes.json", note("one")));
-    success(b.importFile("notes.json", note("two")));
+    success(a.importFile("notes.json", note("one"), { origin: USER }));
+    success(b.importFile("notes.json", note("two"), { origin: USER }));
     sync(a, b);
     expect(Object.keys(a.getState().notes ?? {}).toSorted()).toEqual(["one", "two"]);
   });
@@ -2545,7 +2561,7 @@ describe("two devices writing different properties", () => {
       tracks: { clips: { properties?: object }[] }[];
     };
     for (const track of file.tracks) for (const item of track.clips) delete item.properties;
-    success(a.importFile(MAIN, JSON.stringify(file)));
+    success(a.importFile(MAIN, JSON.stringify(file), { origin: USER }));
     expect(clip(a, "c")).not.toHaveProperty("properties");
     const { store: opened } = ProjectStore.fromUpdates([a.encodeState()]);
     expect(clip(opened as ProjectStore, "c")).not.toHaveProperty("properties");
@@ -2572,7 +2588,7 @@ function rewriteFile(
   const text = store.exportFiles().files.get(path);
   const document = text === undefined ? {} : JSON.parse(text);
   change(document);
-  return store.importFile(path, JSON.stringify(document), options);
+  return store.importFile(path, JSON.stringify(document), { origin: USER, ...options });
 }
 
 describe("two devices writing what versions and translations change", () => {
@@ -2647,30 +2663,44 @@ describe("two devices writing what versions and translations change", () => {
     expect(a.getState()).toEqual(b.getState());
   });
 
-  it("keeps both when two devices start the same version, whoever wins", () => {
-    for (let round = 0; round < 6; round += 1) {
-      const a = open();
-      const b = twin(a);
-      success(
-        rewriteFile(a, FRENCH, (document) => {
-          document.scope = { language: "fr" };
-          document.clips = { clip_title: { properties: { "param.size": { value: 56 } } } };
-        }),
-      );
-      success(
-        rewriteFile(b, FRENCH, (document) => {
-          document.scope = { language: "fr" };
-          document.sections = { section_body: { duration: { value: "24", base: "20" } } };
-        }),
-      );
-      if (round % 2 === 0) sync(a, b);
-      else sync(b, a);
-      for (const store of [a, b]) {
-        expect(version(store, "language.fr")).toEqual({
-          scope: { language: "fr" },
-          sections: { section_body: { duration: { value: "24", base: "20" } } },
-          clips: { clip_title: { properties: { "param.size": { value: 56 } } } },
-        });
+  it("keeps what both write when two devices start the same version, and one scope for both", () => {
+    const one = { language: "fr" };
+    const other = { language: "fr", format: "vertical" };
+    for (const [first, second] of [
+      [1, 2],
+      [2, 1],
+    ] as const) {
+      for (const aFirst of [true, false]) {
+        const base = open();
+        const a = windowOf(base, first);
+        const b = windowOf(base, second);
+        success(
+          rewriteFile(a, FRENCH, (document) => {
+            document.scope = one;
+            document.clips = { clip_title: { properties: { "param.size": { value: 56 } } } };
+          }),
+        );
+        success(
+          rewriteFile(b, FRENCH, (document) => {
+            document.scope = other;
+            document.sections = { section_body: { duration: { value: "24", base: "20" } } };
+          }),
+        );
+        if (aFirst) sync(a, b);
+        else sync(b, a);
+        // Yjs keeps one of two values written at once, the same one everywhere: the one written by
+        // the higher client id, whoever syncs first.
+        const scope = first > second ? one : other;
+        for (const store of [a, b]) {
+          expect(version(store, "language.fr")).toEqual({
+            scope,
+            sections: { section_body: { duration: { value: "24", base: "20" } } },
+            clips: { clip_title: { properties: { "param.size": { value: 56 } } } },
+          });
+          expect(ProjectStore.fromUpdates([store.encodeState()]).store?.getState()).toEqual(
+            store.getState(),
+          );
+        }
       }
     }
   });
@@ -2791,7 +2821,8 @@ describe("two devices writing what versions and translations change", () => {
       value: 56,
     });
     const locales = root.get("locales") as Y.Map<unknown>;
-    expect(locales.has("fr")).toBe(false);
+    // Only that the language is there sits under its own name, as no map.
+    expect(locales.get("fr")).toEqual({});
     expect(locales.get("fr/intro/title")).toEqual({ text: "Qu'est-ce qu'un atome" });
     const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
     expect(opened?.getState()).toEqual(store.getState());
@@ -2809,6 +2840,120 @@ describe("two devices writing what versions and translations change", () => {
     expect(version(store, "format.vertical")).toEqual({ scope: { format: "vertical" } });
     expect(store.undo().ok).toBe(true);
     expect(store.getState()).toEqual(before);
+  });
+});
+
+describe("a language without strings, and a version without changes", () => {
+  const FRENCH = "locales/fr.json";
+  const EMPTY = JSON.stringify({ strings: {} });
+  const withFrench = () => {
+    const files = loadFixture("v1");
+    const manifest = JSON.parse(files.get("animaquill.json") as string);
+    delete manifest.tags;
+    manifest.languages.push({ id: "fr", name: "Français" });
+    files.set("animaquill.json", JSON.stringify(manifest));
+    return files;
+  };
+  const reopened = (store: ProjectStore) =>
+    ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
+  const missing = (files: ReadonlyMap<string, string>) =>
+    readProject(files)
+      .problems.filter(({ file, code }) => file === FRENCH && code === "translation-missing")
+      .map(({ path }) => path);
+
+  it("keeps the file of a language that has none yet, which says that all of them are missing", () => {
+    const files = withFrench();
+    files.set(FRENCH, EMPTY);
+    expect(missing(files)).toEqual(["intro.title", "subtitle.one"]);
+    const store = openFiles(files);
+    for (const each of [store, reopened(store)]) {
+      expect(each.getState().locales["fr"]).toEqual({});
+      const exported = each.exportFiles().files;
+      expect(JSON.parse(exported.get(FRENCH) as string)).toEqual({ strings: {} });
+      expect(missing(exported)).toEqual(["intro.title", "subtitle.one"]);
+    }
+  });
+
+  it("keeps a language that comes in without strings, or loses its last one", () => {
+    const store = openFiles(withFrench());
+    success(store.importFile(FRENCH, EMPTY, { origin: USER }));
+    expect(store.getState().locales["fr"]).toEqual({});
+    const one = JSON.stringify({ strings: { "intro.title": { text: "Atome" } } });
+    success(store.importFile(FRENCH, one, { origin: USER }));
+    success(store.importFile(FRENCH, EMPTY, { origin: AI }));
+    for (const each of [store, reopened(store)]) {
+      expect(each.getState().locales["fr"]).toEqual({});
+      expect(JSON.parse(each.exportFiles().files.get(FRENCH) as string)).toEqual({ strings: {} });
+    }
+    taken(store.undoTask("task-1"));
+    expect(store.getState().locales["fr"]).toEqual({ "intro.title": { text: "Atome" } });
+    taken(store.undo());
+    taken(store.undo());
+    expect(store.getState().locales).not.toHaveProperty("fr");
+    taken(store.redo());
+    expect(store.getState().locales["fr"]).toEqual({});
+  });
+
+  it("keeps it when two devices start it at once, one of them without strings", () => {
+    for (const [first, second] of [
+      [1, 2],
+      [2, 1],
+    ] as const) {
+      const base = openFiles(withFrench());
+      const a = windowOf(base, first);
+      const b = windowOf(base, second);
+      success(a.importFile(FRENCH, EMPTY, { origin: USER }));
+      const one = JSON.stringify({ strings: { "intro.title": { text: "Atome" } } });
+      success(b.importFile(FRENCH, one, { origin: USER }));
+      sync(a, b);
+      for (const each of [a, b]) {
+        expect(each.getState().locales["fr"]).toEqual({ "intro.title": { text: "Atome" } });
+        expect(reopened(each).getState()).toEqual(each.getState());
+      }
+      // The one that started it empty takes that back, which only goes when its write is the one
+      // there. Either way the other one's string keeps it.
+      a.undo();
+      sync(a, b);
+      expect(b.getState().locales["fr"]).toEqual({ "intro.title": { text: "Atome" } });
+      // Its last string goes with a file that says the language is there without any.
+      success(b.importFile(FRENCH, EMPTY, { origin: USER }));
+      sync(a, b);
+      for (const each of [a, b]) {
+        expect(each.getState().locales["fr"]).toEqual({});
+        expect(reopened(each).getState()).toEqual(each.getState());
+      }
+    }
+  });
+
+  it("goes as a whole when what made it is taken back, also on the other device", () => {
+    const a = openFiles(withFrench());
+    const b = twin(a);
+    success(a.importFile(FRENCH, EMPTY, { origin: USER }));
+    sync(a, b);
+    expect(b.getState().locales["fr"]).toEqual({});
+    taken(a.undo());
+    sync(a, b);
+    for (const each of [a, b]) {
+      expect(each.getState().locales).not.toHaveProperty("fr");
+      expect(reopened(each).getState()).toEqual(each.getState());
+    }
+  });
+
+  it("keeps a version that changes nothing yet, also after its last change goes", () => {
+    const store = open();
+    const path = "timelines/main/overrides/language.fr.json";
+    const scope = JSON.stringify({ scope: { language: "fr" } });
+    success(store.importFile(path, scope, { origin: USER }));
+    const change = { clips: { clip_title: { hidden: { value: true } } } };
+    const changed = JSON.stringify({ scope: { language: "fr" }, ...change });
+    success(store.importFile(path, changed, { origin: USER }));
+    success(store.importFile(path, scope, { origin: USER }));
+    for (const each of [store, reopened(store)]) {
+      expect(timeline(each).overrides["language.fr"]).toEqual({ scope: { language: "fr" } });
+      expect(JSON.parse(each.exportFiles().files.get(path) as string)).toEqual({
+        scope: { language: "fr" },
+      });
+    }
   });
 });
 
@@ -2863,7 +3008,7 @@ describe("a document from when properties had a map of their own", () => {
       tracks: { clips: { properties?: object }[] }[];
     };
     for (const track of file.tracks) for (const item of track.clips) delete item.properties;
-    success(store.importFile(MAIN, JSON.stringify(file)));
+    success(store.importFile(MAIN, JSON.stringify(file), { origin: USER }));
     expect(clip(store, "c")).not.toHaveProperty("properties");
     const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
     expect(clip(opened as ProjectStore, "c")).not.toHaveProperty("properties");
@@ -3316,7 +3461,7 @@ describe("taking back a write the document no longer holds", () => {
     const a = ProjectStore.create(createProject({ name: "文件" }), { "code/a.js": "一" });
     const b = twin(a);
     const save = (store: ProjectStore, text: string) =>
-      success(store.importFile("code/a.js", text));
+      success(store.importFile("code/a.js", text, { origin: USER }));
     save(a, "二");
     sync(a, b);
     save(b, "三");
@@ -3703,7 +3848,7 @@ describe("taking back what is on a locked track", () => {
     const file = "timelines/main/overrides/language.en.json";
     const document = JSON.parse(store.exportFiles().files.get(file) as string);
     document.clips["clip_title"] = { hidden: { value: true } };
-    success(store.importFile(file, JSON.stringify(document)));
+    success(store.importFile(file, JSON.stringify(document), { origin: USER }));
     lockTrack(store, clip(store)?.track, true, { origin: AI });
     blocked(store.undo());
     expect(timeline(store).overrides["language.en"]?.clips?.["clip_title"]).toBeDefined();
@@ -3742,7 +3887,7 @@ describe("taking back what is on a locked track", () => {
       if (each.id === track) each.locked = true;
       for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
     }
-    const imported = store.importFile(MAIN, JSON.stringify(document));
+    const imported = store.importFile(MAIN, JSON.stringify(document), { origin: USER });
     expect(imported).toMatchObject({ ok: true, kept: [], problems: [] });
     expect(opacity(store)).toBe(0.5);
     expect(timeline(store).tracks[track]?.locked).toBe(true);
@@ -3760,7 +3905,7 @@ describe("taking back what is on a locked track", () => {
     for (const each of document.tracks) {
       for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
     }
-    success(store.importFile(MAIN, JSON.stringify(document)));
+    success(store.importFile(MAIN, JSON.stringify(document), { origin: USER }));
     lockTrack(store, trackOf(store), true, { origin: AI });
     blocked(store.undo());
     expect(opacity(store)).toBe(0.5);
@@ -4020,6 +4165,7 @@ describe("a file that would change what is on a locked track", () => {
             clip_logo: { hidden: { value: true } },
           },
         }),
+        { origin: USER },
       ),
     );
     expect(timeline(store).overrides["format.square"]).toEqual({
@@ -4032,7 +4178,9 @@ describe("a file that would change what is on a locked track", () => {
   it("does not change the code that a locked track runs", () => {
     const store = open();
     lock(store, "track_video");
-    const scene = refused(store.importFile("scenes/title/index.html", "<p>改过</p>"));
+    const scene = refused(
+      store.importFile("scenes/title/index.html", "<p>改过</p>", { origin: USER }),
+    );
     expect(scene.problems?.[0]?.message).toBe("“标题卡”在锁定的轨道上使用，文件里的改动没有生效");
     const manifest = refused(
       rewriteFile(store, "scenes/title/scene.json", (document) => {
@@ -4040,7 +4188,7 @@ describe("a file that would change what is on a locked track", () => {
       }),
     );
     expect(manifest.code).toBe("track-locked");
-    const shared = refused(store.importFile("code/animate.js", "export {};"));
+    const shared = refused(store.importFile("code/animate.js", "export {};", { origin: USER }));
     expect(shared.problems?.[0]?.message).toBe(
       "锁定的轨道上有场景或声音，共用代码不能改，文件里的改动没有生效",
     );
@@ -4048,7 +4196,7 @@ describe("a file that would change what is on a locked track", () => {
     expect(store.getState().scenes["title"]?.name).toBe("标题卡");
   });
 
-  it("lets a person's file take the lock off and change what is there in one go", () => {
+  it("lets a person's file take the lock off and change what is there in one go, and says so", () => {
     const store = open();
     const before = store.getState();
     const result = imported(
@@ -4057,7 +4205,16 @@ describe("a file that would change what is on a locked track", () => {
         clipIn(document, "clip_idea").name = "改过";
       }),
     );
-    expect(result).toMatchObject({ kept: [], problems: [] });
+    expect(result.kept).toEqual([]);
+    expect(result.problems).toEqual([
+      {
+        severity: "warning",
+        code: "track-unlocked",
+        file: MAIN,
+        path: LOCKED,
+        message: "这个文件解开了轨道“叠加”的锁",
+      },
+    ]);
     expect(timeline(store).tracks[LOCKED]?.locked).toBeUndefined();
     expect(clip(store, "clip_idea")?.name).toBe("改过");
     expect(taken(store.undo()).kept).toEqual([]);
@@ -4085,7 +4242,7 @@ describe("a file that would change what is on a locked track", () => {
       expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
       expect(timeline(store).name).toBe(`AI 改的 ${String(unlocked)}`);
       expect(result.problems.map(({ message }) => message)).toEqual([
-        "轨道“叠加”已锁定，AI 不能用文件解锁，要解锁请用命令，或者请用户解锁",
+        "轨道“叠加”已锁定，只有用户自己改的文件能解锁，要解锁请用命令，或者请用户解锁",
         "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
       ]);
     }
@@ -4163,7 +4320,9 @@ describe("a file that would change what is on a locked track", () => {
       sections: [{ id: "s", duration: "5" }],
       tracks: [{ id: "t", kind: "video", locked: true, clips: [] }],
     };
-    imported(store.importFile("timelines/other/timeline.json", JSON.stringify(document)));
+    imported(
+      store.importFile("timelines/other/timeline.json", JSON.stringify(document), { origin: USER }),
+    );
     expect(store.getState().timelines["other"]?.tracks["t"]?.locked).toBe(true);
     expect(taken(store.undo()).kept).toEqual([]);
     expect(store.getState()).toEqual(before);
@@ -4208,6 +4367,238 @@ describe("a file that would change what is on a locked track", () => {
     expect(property(store, "param.size")).toBe(80);
     expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
   });
+
+  /** A valid file: the picture track goes, and what was on it goes onto the locked one. */
+  const intoLocked = (document: any, video: (track: any) => void) => {
+    const from = trackIn(document, "track_video");
+    const overlay = trackIn(document, LOCKED);
+    overlay.clips.push(
+      ...from.clips.map((item: any) => ({ ...item, start: `${40 + Number(item.start)}` })),
+    );
+    overlay.transitions = from.transitions;
+    from.clips = [];
+    delete from.transitions;
+    video(from);
+  };
+
+  it.each([USER, AI])(
+    "takes in nothing when the rest would leave clips on a track that is gone, from %s",
+    (origin) => {
+      const store = open();
+      const before = store.getState();
+      const error = refused(
+        rewriteFile(
+          store,
+          MAIN,
+          (document) =>
+            intoLocked(document, (video) => {
+              document.tracks = document.tracks.filter((track: any) => track !== video);
+            }),
+          { origin },
+        ),
+      );
+      expect(error.code).toBe("track-locked");
+      expect(error.message).toBe(
+        "文件里有些改动在锁定的轨道上，只导入其余的部分会让项目出错，整个文件没有导入",
+      );
+      const broken = error.problems?.filter(({ severity }) => severity === "error") ?? [];
+      expect(broken.map(({ code }) => code)).toContain("needs-locked-part");
+      expect(broken.map(({ message }) => message)).toContain(
+        "片段“clip_title”会留在已经没有的轨道“track_video”上",
+      );
+      expect(error.problems?.some(({ code }) => code === "track-locked")).toBe(true);
+      expect(store.getState()).toBe(before);
+      expect(store.canUndo).toBe(false);
+    },
+  );
+
+  it("takes in nothing when the rest would leave a track that cannot hold what stays on it", () => {
+    const store = open();
+    const before = store.getState();
+    const error = refused(
+      rewriteFile(store, MAIN, (document) =>
+        intoLocked(document, (video) => {
+          video.kind = "audio";
+          delete video.hidden;
+        }),
+      ),
+    );
+    const broken = error.problems?.filter(({ severity }) => severity === "error") ?? [];
+    expect(broken.map(({ message }) => message)).toContain(
+      "片段“clip_title”会留在放不下它的轨道“track_video”上",
+    );
+    expect(
+      broken.some(({ file, message }) => file === MAIN && message.includes("不再合格式")),
+    ).toBe(true);
+    expect(store.getState()).toBe(before);
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("takes in the rest as it is when what stays breaks nothing", () => {
+    const store = open();
+    const result = imported(
+      rewriteFile(store, MAIN, (document) =>
+        intoLocked(document, (video) => {
+          video.name = "空的画面";
+        }),
+      ),
+    );
+    expect(result.kept.length).toBeGreaterThan(0);
+    expect(timeline(store).tracks["track_video"]?.name).toBe("空的画面");
+    expect(clip(store, "clip_title")?.track).toBe("track_video");
+    expect(store.exportFiles().problems).toEqual([]);
+  });
+
+  it("does not change or take away an asset that a locked track shows, and changes the others", () => {
+    const store = open();
+    const result = imported(
+      rewriteFile(
+        store,
+        "assets.json",
+        (document) => {
+          // The lottie on 叠加 shows logo.
+          document.assets.logo.path = "assets/other.svg";
+          document.assets["raw-footage"].path = "assets/raw2.mov";
+        },
+        { origin: AI },
+      ),
+    );
+    expect(store.getState().assets?.["logo"]?.path).toBe("assets/logo.svg");
+    expect(store.getState().assets?.["raw-footage"]?.path).toBe("assets/raw2.mov");
+    expect(result.problems).toEqual([
+      {
+        severity: "warning",
+        code: "track-locked",
+        file: "assets.json",
+        path: "assets.logo",
+        message: "素材“logo”在锁定的轨道上使用，文件里对它的改动没有生效",
+      },
+    ]);
+    const gone = refused(
+      rewriteFile(store, "assets.json", (document) => {
+        delete document.assets.logo;
+      }),
+    );
+    expect(gone.problems?.[0]?.path).toBe("assets.logo");
+    expect(store.getState().assets?.["logo"]).toBeDefined();
+    imported(
+      rewriteFile(store, "assets.json", (document) => {
+        document.assets.logo.credit = "某人";
+      }),
+    );
+    expect(store.getState().assets?.["logo"]?.credit).toBe("某人");
+  });
+
+  it("does not take back a change to an asset that a locked track shows by now", () => {
+    const store = open();
+    imported(
+      rewriteFile(store, "assets.json", (document) => {
+        document.assets.interview.path = "assets/interview2.mp4";
+      }),
+    );
+    lock(store, "track_video", { origin: AI });
+    expect(blocked(store.undo()).obstacle).toBe("locked");
+    expect(store.getState().assets?.["interview"]?.path).toBe("assets/interview2.mp4");
+  });
+
+  it("does not change a library that a locked track takes from, and changes the others", () => {
+    const store = open();
+    lock(store, "track_video");
+    const pinned = store.getState().lock?.libraries["lib_7f3a"];
+    const newer = { commit: "b2c3d4e", integrity: "sha256-newer" };
+    const result = imported(
+      rewriteFile(
+        store,
+        "libraries.lock.json",
+        (document) => {
+          document.libraries.lib_7f3a = newer;
+          document.libraries.lib_91c0 = newer;
+        },
+        { origin: AI },
+      ),
+    );
+    expect(store.getState().lock?.libraries).toEqual({ lib_7f3a: pinned, lib_91c0: newer });
+    expect(result.kept).toEqual([["lock", "libraries", "lib_7f3a"]]);
+    expect(result.problems.map(({ message }) => message)).toEqual([
+      "库“lib_7f3a”在锁定的轨道上使用，文件里对它的改动没有生效",
+    ]);
+    const declared = refused(
+      rewriteFile(store, "libraries.json", (document) => {
+        document.libraries[0].source = "https://github.com/example/other.git";
+      }),
+    );
+    expect(declared.problems?.[0]?.path).toBe("libraries.lib_7f3a");
+    imported(
+      rewriteFile(store, "libraries.json", (document) => {
+        document.libraries[1].track = "next";
+      }),
+    );
+    expect(store.getState().libraries?.libraries.map(({ id, track }) => [id, track])).toEqual([
+      ["lib_7f3a", "main"],
+      ["lib_91c0", "next"],
+    ]);
+  });
+
+  it("does not take back only the part of a file that leaves a track not fit for its kind", () => {
+    const store = open();
+    // The voice track becomes a picture track: what only sound has goes, and so do its clips.
+    imported(
+      rewriteFile(store, MAIN, (document) => {
+        const voice = trackIn(document, "track_voice");
+        for (const key of ["role", "properties", "effects", "sends", "output"]) delete voice[key];
+        voice.kind = "video";
+        voice.clips = [];
+      }),
+    );
+    const before = store.getState();
+    lock(store, "track_voice", { origin: AI });
+    // Its kind and its clips stay with the lock, so the rest of it cannot go back either.
+    expect(blocked(store.undo()).obstacle).toBe("locked");
+    expect(timeline(store).tracks["track_voice"]).toMatchObject({ kind: "video" });
+    expect(timeline(store).tracks["track_voice"]).not.toHaveProperty("role");
+    expect(store.exportFiles().problems).toEqual([]);
+    expect(timeline(store).clips).toEqual(before.timelines["main"]?.clips);
+  });
+
+  it("counts only the person at the editor as a person, and nothing without a name", () => {
+    for (const origin of ["mcp", "other"]) {
+      const store = open();
+      const result = imported(
+        rewriteFile(
+          store,
+          MAIN,
+          (document) => {
+            delete trackIn(document, LOCKED).locked;
+            clipIn(document, "clip_idea").name = "改过";
+            document.name = "改了名字";
+          },
+          { origin },
+        ),
+      );
+      expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
+      expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
+      expect(result.problems.map(({ code }) => code)).toEqual(["track-locked", "track-locked"]);
+      const tags = failure(
+        rewriteFile(
+          store,
+          "animaquill.json",
+          (document) => {
+            document.tags = [{ name: "改过" }];
+          },
+          { origin },
+        ),
+      );
+      expect(tags.code).toBe("user-only");
+    }
+    const store = open();
+    const text = store.exportFiles().files.get(MAIN) as string;
+    const unlocked = JSON.parse(text);
+    delete trackIn(unlocked, LOCKED).locked;
+    // @ts-expect-error Who wrote a file has to be said.
+    const nobody = store.importFile(MAIN, JSON.stringify(unlocked));
+    expect(refused(nobody).code).toBe("track-locked");
+    expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
+  });
 });
 
 describe("an asset that only a version uses", () => {
@@ -4230,7 +4621,7 @@ describe("an asset that only a version uses", () => {
     const store = open();
     const document = JSON.parse(store.exportFiles().files.get(file) as string);
     for (const changes of Object.values<{ source?: object }>(document.clips)) delete changes.source;
-    success(store.importFile(file, JSON.stringify(document)));
+    success(store.importFile(file, JSON.stringify(document), { origin: USER }));
     success(store.execute({ type: "asset.remove", params: { asset: "narration-en" } }));
     expect(store.getState().assets?.["narration-en"]).toBeUndefined();
   });
@@ -4254,7 +4645,7 @@ describe("a level taken back one entry at a time", () => {
     const store = freshProject();
     setOpacity(store, 0.5);
     success(edit(store, "c", { path: "transform.x", op: "set", value: 3 }));
-    success(store.importFile(MAIN, withoutProperties(store)));
+    success(store.importFile(MAIN, withoutProperties(store), { origin: USER }));
     expect(clip(store, "c")).not.toHaveProperty("properties");
     success(edit(store, "c", { path: "transform.y", op: "set", value: 7 }, { origin: AI }));
     expect(taken(store.undo()).kept).toEqual([]);
@@ -4267,7 +4658,11 @@ describe("a level taken back one entry at a time", () => {
 
   it("takes away what a file added, except what somebody changed since", () => {
     const store = freshProject();
-    success(store.importFile(MAIN, withProperties(store, { opacity: 0.5, "transform.x": 1 })));
+    success(
+      store.importFile(MAIN, withProperties(store, { opacity: 0.5, "transform.x": 1 }), {
+        origin: USER,
+      }),
+    );
     success(edit(store, "c", { path: "transform.x", op: "set", value: 2 }, { origin: AI }));
     success(edit(store, "c", { path: "transform.y", op: "set", value: 7 }, { origin: AI }));
     taken(store.undo());
@@ -4278,7 +4673,7 @@ describe("a level taken back one entry at a time", () => {
     const store = freshProject();
     const asset = (id: string) => ({ kind: "image", path: `assets/${id}.png`, storage: "local" });
     const assets = { one: asset("one"), two: asset("two") };
-    success(store.importFile("assets.json", JSON.stringify({ assets })));
+    success(store.importFile("assets.json", JSON.stringify({ assets }), { origin: USER }));
     const changed = { ...asset("two"), hash: "sha256-b" };
     const next = JSON.stringify({ assets: { ...assets, two: changed } });
     success(store.importFile("assets.json", next, { origin: AI }));
@@ -4296,8 +4691,10 @@ describe("a level taken back one entry at a time", () => {
       time: "1",
       createdAt: "2026-11-06T00:00:00Z",
     });
-    const write = (notes: object[], options?: ExecuteOptions) =>
-      success(store.importFile("notes.json", JSON.stringify({ notes }), options));
+    const write = (notes: object[], options: ExecuteOptions = {}) =>
+      success(
+        store.importFile("notes.json", JSON.stringify({ notes }), { origin: USER, ...options }),
+      );
     write([note("a", "一"), note("b", "二")]);
     write([note("a", "一"), note("b", "别人改的")], { origin: AI });
     taken(store.undo());
@@ -4307,7 +4704,7 @@ describe("a level taken back one entry at a time", () => {
   it("merges with what another window does to the same level", () => {
     const a = freshProject();
     const b = twin(a);
-    success(a.importFile(MAIN, withProperties(a, { opacity: 0.5 })));
+    success(a.importFile(MAIN, withProperties(a, { opacity: 0.5 }), { origin: USER }));
     success(edit(b, "c", { path: "transform.x", op: "set", value: 2 }));
     sync(a, b);
     taken(a.undo());
@@ -4351,7 +4748,7 @@ describe("taking back what something else came to depend on", () => {
   ) => {
     const document = JSON.parse(store.exportFiles().files.get(file) as string) as T;
     change(document);
-    return success(store.importFile(file, JSON.stringify(document), options));
+    return success(store.importFile(file, JSON.stringify(document), { origin: USER, ...options }));
   };
 
   it("keeps an asset a person started to use", () => {
@@ -4836,7 +5233,7 @@ describe("while an update is missing", () => {
     const rename = { type: "project.rename", params: { name: "不会改" } };
     expect(code(b.executeBatch([rename]))).toBe("missing-updates");
     expect(code(b.execute(rename, { dryRun: true }))).toBe("missing-updates");
-    expect(code(b.importFile("code/a.js", "x"))).toBe("missing-updates");
+    expect(code(b.importFile("code/a.js", "x", { origin: USER }))).toBe("missing-updates");
     expect(b.getState().manifest.name).toBe("并发");
   });
 
@@ -4965,7 +5362,7 @@ describe("a version file for a timeline that is not there", () => {
   it("is refused, and says why", () => {
     const store = open();
     const before = store.getState();
-    const error = failure(store.importFile(file, text));
+    const error = failure(store.importFile(file, text, { origin: USER }));
     expect(error.code).toBe("invalid-file");
     expect(error.problems).toEqual([
       expect.objectContaining({ severity: "error", code: "timeline-missing", file }),
@@ -4976,7 +5373,7 @@ describe("a version file for a timeline that is not there", () => {
 
   it("does not get far enough to look at what is in it", () => {
     const store = open();
-    const error = failure(store.importFile(file, "not json"));
+    const error = failure(store.importFile(file, "not json", { origin: USER }));
     expect(error.problems).toHaveLength(1);
     expect(error.problems?.[0]?.code).not.toBe("timeline-missing");
   });
@@ -4987,6 +5384,7 @@ describe("a version file for a timeline that is not there", () => {
       store.importFile(
         "timelines/main/overrides/language.fr.json",
         JSON.stringify({ scope: { language: "fr" } }),
+        { origin: USER },
       ),
     );
     expect(timeline(store).overrides["language.fr"]).toEqual({ scope: { language: "fr" } });
@@ -4994,7 +5392,9 @@ describe("a version file for a timeline that is not there", () => {
 
   it("does not take a name every object has for a timeline", () => {
     const store = open();
-    const error = failure(store.importFile("timelines/constructor/overrides/a.json", text));
+    const error = failure(
+      store.importFile("timelines/constructor/overrides/a.json", text, { origin: USER }),
+    );
     expect(error.problems?.[0]?.code).toBe("timeline-missing");
   });
 });
@@ -5020,7 +5420,7 @@ describe("a real document from when assets, notes and properties had maps of the
   const rewrite = (store: ProjectStore, path: string, change: (document: never) => void) => {
     const document = JSON.parse(store.exportFiles().files.get(path) as string);
     change(document as never);
-    return success(store.importFile(path, JSON.stringify(document)));
+    return success(store.importFile(path, JSON.stringify(document), { origin: USER }));
   };
   const VERSION = "timelines/main/overrides/language.en.json";
   const voiceTrack = (store: ProjectStore) =>
@@ -5250,11 +5650,13 @@ describe("a real document from when versions and translations had maps of their 
     return store;
   };
   const SEEN_BACK_THEN = JSON.parse(readFileSync(new URL("state.json", folder), "utf8"));
-  /** A map that was emptied showed as a level without anything. That is the same as none. */
+  /**
+   * The sections of a version that were emptied showed as a level without anything, which is the
+   * same as none. A language without strings stays: its file says something, see `standing`.
+   */
   const READS_NOW = (() => {
     const state = structuredClone(SEEN_BACK_THEN);
     delete state.timelines.main.overrides["language.fr"].sections;
-    delete state.locales.de;
     return state;
   })();
   const reopened = (store: ProjectStore) =>
@@ -5302,17 +5704,17 @@ describe("a real document from when versions and translations had maps of their 
     expect(locales.get("de")?.size).toBe(0);
   });
 
-  it("reads as it read back then, apart from emptied levels, which are the same as none", () => {
+  it("reads as it read back then, apart from emptied sections, which are the same as none", () => {
     expect(SEEN_BACK_THEN.timelines.main.overrides["language.fr"].sections).toEqual({});
-    expect(SEEN_BACK_THEN.locales.de).toEqual({});
     expect(saved().getState()).toEqual(READS_NOW);
+    expect(saved().getState().locales["de"]).toEqual({});
   });
 
   it("writes valid files, which read the same", () => {
     const { files, problems } = saved().exportFiles();
     expect(problems).toEqual([]);
     expect(files.has("timelines/main/overrides/language.fr.json")).toBe(true);
-    expect(files.has("locales/de.json")).toBe(false);
+    expect(JSON.parse(files.get("locales/de.json") as string)).toEqual({ strings: {} });
     const { store } = ProjectStore.open(files);
     expect((store as ProjectStore).exportFiles().files).toEqual(files);
   });
@@ -5388,7 +5790,8 @@ describe("a real document from when versions and translations had maps of their 
       expect(version(state, "version.en.vertical")).toEqual({
         scope: { language: "en", format: "vertical" },
       });
-      expect(state.getState().locales).not.toHaveProperty("fr");
+      // A language stays without its strings: its file says it is there.
+      expect(state.getState().locales["fr"]).toEqual({});
     }
   });
 
@@ -5795,7 +6198,7 @@ describe("clearing a property", () => {
       const file = JSON.parse(fileOf(store)) as { tracks: { clips: { properties?: object }[] }[] };
       for (const track of file.tracks) for (const item of track.clips) item.properties = {};
       const { revision } = store;
-      success(store.importFile(MAIN, JSON.stringify(file)));
+      success(store.importFile(MAIN, JSON.stringify(file), { origin: USER }));
       expect(store.revision).toBe(revision);
       expect(store.canUndo).toBe(true);
       expect(clip(store, "c")).not.toHaveProperty("properties");
@@ -5861,7 +6264,7 @@ describe("keys on what cannot have any", () => {
     };
     for (const track of file.tracks)
       for (const item of track.clips) item.properties = { fit: keyed };
-    const error = failure(store.importFile(MAIN, JSON.stringify(file)));
+    const error = failure(store.importFile(MAIN, JSON.stringify(file), { origin: USER }));
     expect(error.code).toBe("invalid-file");
     expect(error.problems?.map(({ code }) => code)).toContain("not-animatable");
     expect(property(store, "fit", "c")).toBeUndefined();
@@ -5876,7 +6279,7 @@ describe("keys on what cannot have any", () => {
     const [first] = Object.values(file.clips);
     if (!first) throw new Error("no clip");
     first.properties = { ...first.properties, fit: { value: keyed, base: "cover" } };
-    const error = failure(store.importFile(path, JSON.stringify(file)));
+    const error = failure(store.importFile(path, JSON.stringify(file), { origin: USER }));
     expect(error.problems?.map(({ code }) => code)).toContain("not-animatable");
   });
 
@@ -5885,7 +6288,7 @@ describe("keys on what cannot have any", () => {
     const { store } = ProjectStore.open(files);
     const title = main.tracks.flatMap(({ clips }) => clips).find(({ id }) => id === "clip_logo");
     Object.assign(title as object, { name: "新名字" });
-    success((store as ProjectStore).importFile(MAIN, JSON.stringify(main)));
+    success((store as ProjectStore).importFile(MAIN, JSON.stringify(main), { origin: USER }));
     expect(clip(store as ProjectStore, "clip_logo")?.name).toBe("新名字");
     expect(property(store as ProjectStore, "fit", "clip_logo")).toEqual(keyed);
   });

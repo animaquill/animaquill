@@ -2,7 +2,7 @@ import { ZERO, formatTime, parseTime, subtract } from "@animaquill/schema";
 import type { ProjectState } from "./model.ts";
 import { Mutator, diff, getIn, settled, settledPatch, type Patch } from "./patch.ts";
 import { touchesLockedTrack } from "./references.ts";
-import { isFlat, type Path } from "./structure.ts";
+import { isFlat, isStanding, writePathOf, type Path } from "./structure.ts";
 import { UNWRITTEN, WriteTree, sameWrites, type WriteId, type Written } from "./write-tree.ts";
 
 /** Why a command did not happen. Commands throw it, callers get it as a result. */
@@ -157,22 +157,45 @@ export class Draft {
    * when something else left the same value. Returns whether it went. See `Written`.
    */
   takeBack({ patch, inverse, replaced, left, pastLock }: Step): boolean {
-    if (!sameWrites(this.#writes.at(patch.path), left)) return false;
+    if (!sameWrites(this.#writes.at(writePathOf(patch.path)), left)) return false;
     this.#record(inverse, replaced, pastLock);
     return true;
   }
 
   #record(patch: Patch, left: Written, pastLock: boolean): void {
     const { path } = patch;
+    const standing = isStanding(path);
     const before = getIn(this.state, path);
     let inverse: Patch;
-    if (before === undefined) inverse = { op: "delete", path };
+    // That a standing level is there is all such a step is about: see `#stand`.
+    if (standing)
+      inverse = before === undefined ? { op: "delete", path } : { op: "set", path, value: {} };
+    else if (before === undefined) inverse = { op: "delete", path };
     else if (patch.op === "text") inverse = { op: "text", path, value: before as string };
     else inverse = { op: "set", path, value: before };
-    const replaced = this.#writes.at(path);
-    this.#mutator.apply(patch);
-    this.#writes.put(path, left);
+    const where = writePathOf(path);
+    const replaced = this.#writes.at(where);
+    if (standing) this.#stand(patch);
+    else this.#mutator.apply(patch);
+    this.#writes.put(where, left);
     this.#steps.push({ patch, inverse, replaced, left, pastLock });
+  }
+
+  /**
+   * That a standing level is there makes it be there, without changing what is in it. When it is no
+   * longer there, what is in it still keeps it, as it does in the document.
+   */
+  #stand({ op, path }: Patch): void {
+    const current = getIn(this.state, path);
+    if (op !== "delete") {
+      if (current === undefined) this.#mutator.set(path, {});
+    } else if (
+      typeof current === "object" &&
+      current !== null &&
+      Object.keys(current).length === 0
+    ) {
+      this.#mutator.delete(path);
+    }
   }
 
   set(path: Path, value: unknown): void {
@@ -190,6 +213,37 @@ export class Draft {
   /** Makes a path hold this value, changing no more than what is different. */
   replace(path: Path, value: unknown): void {
     const wanted = settled(path, value);
+    if (isStanding(path)) {
+      this.#replaceStanding(path, wanted);
+      return;
+    }
     for (const patch of diff(path, getIn(this.state, path), wanted)) this.apply(patch);
+  }
+
+  /**
+   * A standing level comes before what is in it, and goes after it. One that stays without anything
+   * in it says so too: it can be there only because of what was in it, after somebody else took it
+   * away at the same time as something came in.
+   */
+  #replaceStanding(path: Path, wanted: unknown): void {
+    const current = getIn(this.state, path);
+    const entries = (value: unknown) => (typeof value === "object" && value !== null ? value : {});
+    const isEmpty = Object.keys(entries(wanted)).length === 0;
+    if (wanted !== undefined && (current === undefined || isEmpty))
+      this.repeat({ op: "set", path, value: {} });
+    for (const patch of diff(path, entries(current), entries(wanted))) this.apply(patch);
+    if (current !== undefined && wanted === undefined) this.repeat({ op: "delete", path });
+  }
+
+  /**
+   * Writes what another draft planned, as it planned it. The same as `apply`, apart from that a
+   * standing level being there or not is a step of its own, see `#stand`.
+   */
+  repeat(patch: Patch): void {
+    if (!isStanding(patch.path)) {
+      this.apply(patch);
+      return;
+    }
+    this.#record(patch, { by: this.#write }, touchesLockedTrack(this.state, patch));
   }
 }
