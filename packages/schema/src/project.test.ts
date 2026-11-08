@@ -25,6 +25,14 @@ const codes = (files: Map<string, string>) =>
 
 const MAIN = "timelines/main/timeline.json";
 
+/**
+ * What the example has that this editor does not do yet: the format has it, so the example shows
+ * it, and the project says that it does nothing so far.
+ */
+const NOT_YET = new Set(["transition-unsupported", "transition-missing"]);
+const unexpected = (problems: readonly { readonly code: string }[]) =>
+  problems.filter(({ code }) => !NOT_YET.has(code));
+
 function reverseKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(reverseKeys);
   if (typeof value !== "object" || value === null) return value;
@@ -36,9 +44,14 @@ function reverseKeys(value: unknown): unknown {
 }
 
 describe("the example project", () => {
-  it("is valid and has no problems", () => {
+  it("is valid, and only says what this editor does not do yet", () => {
     const { project, problems } = readProject(fixture());
-    expect(problems).toEqual([]);
+    expect(problems.map(({ severity, code, path }) => [severity, code, path])).toEqual([
+      ["warning", "transition-unsupported", "tracks.0.joins.0"],
+      ["warning", "transition-missing", "tracks.0.joins.1"],
+      ["warning", "transition-unsupported", "tracks.2.clips.1.enter"],
+      ["warning", "transition-unsupported", "tracks.2.clips.1.exit"],
+    ]);
     expect(project?.manifest.name).toBe("原子是什么");
     expect(project?.timelines.get("main")?.overrides.size).toBe(3);
   });
@@ -84,7 +97,7 @@ describe("the example project", () => {
   it("puts everything that has no order of its own into a fixed order", () => {
     const files = withChange(MAIN, (document) => {
       document.markers = document.markers.toReversed();
-      document.tracks[0].transitions = document.tracks[0].transitions.toReversed();
+      document.tracks[0].joins = document.tracks[0].joins.toReversed();
     });
     const { project } = readProject(files);
     const original = fixture();
@@ -374,11 +387,83 @@ describe("rules inside a timeline", () => {
     });
   });
 
-  it("refuses a transition that connects nothing", () => {
+  it("refuses a join without both of its sides", () => {
     invalid((document) => {
-      delete document.tracks[0].transitions[0].from;
-      delete document.tracks[0].transitions[0].to;
+      delete document.tracks[0].joins[0].from;
     });
+    invalid((document) => {
+      delete document.tracks[0].joins[0].to;
+    });
+  });
+
+  it("refuses a transition that does not say what it is, or says it twice", () => {
+    invalid((document) => {
+      delete document.tracks[0].clips[0].enter.type;
+    });
+    invalid((document) => {
+      document.tracks[0].clips[0].enter.transition = "ink";
+    });
+    invalid((document) => {
+      document.tracks[0].clips[0].enter = { library: "lib_7f3a", duration: "1" };
+    });
+    invalid((document) => {
+      document.tracks[0].joins[1].type = "fade";
+    });
+  });
+
+  it("refuses transitions of no time, a speed curve that runs back, and joins on captions", () => {
+    invalid((document) => {
+      document.tracks[0].clips[0].enter.duration = "0";
+    });
+    invalid((document) => {
+      document.tracks[0].clips[3].exit.curve = [1.2, 0, 0.58, 1];
+    });
+    invalid((document) => {
+      document.tracks[0].clips[3].exit.curve = [0.42, 0, 0.58];
+    });
+    invalid((document) => {
+      document.tracks[4].joins = [];
+    });
+  });
+
+  it("takes a speed curve that overshoots", () => {
+    const files = withChange(MAIN, (document) => {
+      document.tracks[0].clips[3].exit.curve = [0.3, -0.5, 0.7, 1.6];
+    });
+    expect(unexpected(readProject(files).problems)).toEqual([]);
+  });
+});
+
+describe("what the format had before 2026-11-08", () => {
+  /** The example as it was then: fades on clips, and transitions on tracks. */
+  const before = () =>
+    withChange(MAIN, (document) => {
+      document.tracks[0].clips[0].fadeOut = "0.5";
+      document.tracks[2].clips[1].fadeIn = "0.2";
+      document.tracks[2].clips[1].fadeOut = "zero";
+      document.tracks[0].transitions = [
+        { id: "tr_1", type: "dissolve", from: "clip_title", to: "clip_interview", duration: "1" },
+      ];
+      document.tracks[2].transitions = [{ id: "tr_2", type: "fade", duration: "1/3" }];
+    });
+
+  it("is left out without a word, and the project opens", () => {
+    const { project, problems } = readProject(before());
+    expect(project).toBeDefined();
+    expect(unexpected(problems)).toEqual([]);
+    const clip = project?.timelines.get("main")?.document?.tracks[0]?.clips[0];
+    expect(clip).not.toHaveProperty("fadeOut");
+    expect(project?.timelines.get("main")?.document?.tracks[0]).not.toHaveProperty("transitions");
+  });
+
+  it("is not written back", () => {
+    const { project } = readProject(before());
+    expect(writeProject(project as never).get(MAIN)).toBe(fixture().get(MAIN));
+  });
+
+  it("is no part of the published JSON Schema", () => {
+    const text = JSON.stringify(jsonSchemas()["timeline"]);
+    for (const field of ["fadeIn", "fadeOut", "transitions"]) expect(text).not.toContain(field);
   });
 });
 
@@ -425,16 +510,8 @@ describe("ids that come twice", () => {
   it.each<[string, string, Change]>([
     ["notes", "notes.json", (d: any) => (d.notes = [note("a"), note("b"), note("a")])],
     ["markers", MAIN, (d: any) => (d.markers[1].id = d.markers[0].id)],
-    [
-      "transitions on a track",
-      MAIN,
-      (d: any) => (d.tracks[0].transitions[1].id = d.tracks[0].transitions[0].id),
-    ],
-    [
-      "transitions on two tracks",
-      MAIN,
-      (d: any) => (d.tracks[1].transitions = [{ ...d.tracks[0].transitions[0] }]),
-    ],
+    ["joins on a track", MAIN, (d: any) => (d.tracks[0].joins[1].id = d.tracks[0].joins[0].id)],
+    ["joins on two tracks", MAIN, (d: any) => (d.tracks[1].joins = [{ ...d.tracks[0].joins[0] }])],
   ])("are refused for %s, which a project keeps by id", (_, path, change) => {
     const { problems } = readProject(withChange(path, change));
     const problem = problems.find(({ severity }) => severity === "error");
@@ -445,15 +522,15 @@ describe("ids that come twice", () => {
 
   it("are fine between things of different kinds", () => {
     const files = withChange(MAIN, (d: any) => {
-      d.markers[0].id = d.tracks[0].transitions[0].id;
+      d.markers[0].id = d.tracks[0].joins[0].id;
     });
-    expect(codes(files)).toEqual([]);
+    expect(unexpected(readProject(files).problems)).toEqual([]);
   });
 
   it("do not stop a project written by this editor", () => {
     const { project } = readProject(fixture());
     const again = writeProject(project as never);
-    expect(readProject(again).problems).toEqual([]);
+    expect(unexpected(readProject(again).problems)).toEqual([]);
   });
 });
 
@@ -513,7 +590,6 @@ describe("problems that do not stop a project from opening", () => {
     ["param-unknown", MAIN, (d: any) => (d.tracks[0].clips[0].properties["param.gone"] = 1)],
     ["scene-runtime-too-new", "scenes/title/scene.json", (d: any) => (d.runtime = 2)],
     ["bus-missing", MAIN, (d: any) => (d.tracks[3].output = "gone")],
-    ["transition-clip-missing", MAIN, (d: any) => (d.tracks[0].transitions[0].from = "gone")],
     ["clip-overlap", MAIN, (d: any) => (d.tracks[0].clips[1].start = "4")],
     [
       "override-orphan",
@@ -597,6 +673,110 @@ describe("problems that do not stop a project from opening", () => {
       delete document.strings["intro.title"].base;
     });
     expect(codes(files)).not.toContain("translation-stale");
+  });
+});
+
+describe("transitions that do not do what they say", () => {
+  const reported: [string, string, Change][] = [
+    ["join-detached", "tracks.0.joins.0", (d) => (d.tracks[0].joins[0].from = "gone")],
+    ["join-detached", "tracks.0.joins.0", (d) => (d.tracks[0].joins[0].to = "clip_title")],
+    ["join-detached", "tracks.0.joins.0", (d) => (d.tracks[0].joins[0].to = "clip_logo")],
+    [
+      "join-duplicate",
+      "tracks.0.joins.1",
+      (d) => d.tracks[0].joins.push({ ...d.tracks[0].joins[0], id: "join_0" }),
+    ],
+    [
+      "transition-missing",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter.type = "melt"),
+    ],
+    [
+      "transition-missing",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter.type = "plugin.star"),
+    ],
+    [
+      "transition-missing",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter.type = "fade-linear"),
+    ],
+    [
+      "transition-missing",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter.variant = "left"),
+    ],
+    [
+      "transition-missing",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter.type = "dip"),
+    ],
+    [
+      "transition-missing",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter = { transition: "ink", duration: "1" }),
+    ],
+    ["library-missing", "tracks.0.joins.1", (d) => (d.tracks[0].joins[1].library = "gone")],
+    [
+      "transition-unsupported",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter = { type: "wipe", variant: "left", duration: "1" }),
+    ],
+    [
+      "transition-too-long",
+      "tracks.0.clips.0.enter",
+      (d) => (d.tracks[0].clips[0].enter.duration = "6"),
+    ],
+    ["transition-overlap", "tracks.2.clips.1", (d) => (d.tracks[2].clips[1].exit.duration = "4.9")],
+    [
+      "transition-shadowed",
+      "tracks.0.clips.1.enter",
+      (d) => (d.tracks[0].clips[1].enter = { type: "fade", duration: "1" }),
+    ],
+  ];
+
+  it.each(reported)("reports %s at %s", (code, path, change) => {
+    const { project, problems } = readProject(withChange(MAIN, change));
+    expect(project).toBeDefined();
+    const found = problems.filter((problem) => problem.code === code && problem.path === path);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.severity).toBe("warning");
+    expect(found[0]?.file).toBe(MAIN);
+  });
+
+  it("are all fine in the example, apart from what this editor does not do yet", () => {
+    const at = (problems: readonly { readonly path?: string }[]) =>
+      problems.filter(
+        ({ path }) => path?.includes("clips.0.enter") || path?.endsWith("clips.3.exit"),
+      );
+    expect(at(readProject(fixture()).problems)).toEqual([]);
+  });
+
+  it("say what to write instead, and what happens until then", () => {
+    const messages = (change: Change) =>
+      readProject(withChange(MAIN, change))
+        .problems.filter(({ path }) => path === "tracks.0.clips.0.enter")
+        .map(({ message }) => message);
+    expect(messages((d) => (d.tracks[0].clips[0].enter.type = "dip"))).toEqual([
+      "转场 dip 要写 variant，可以是：black、white，预览按淡入淡出显示，导出会停在这里",
+    ]);
+    expect(messages((d) => (d.tracks[0].clips[0].enter.type = "fade-linear"))).toEqual([
+      "转场 fade-linear 不能用在画面上，预览按淡入淡出显示，导出会停在这里",
+    ]);
+    expect(messages((d) => (d.tracks[0].clips[0].enter.duration = "6"))).toEqual([
+      "入转场比片段长，只用到片段的长度",
+    ]);
+  });
+
+  it("go by exact times, where 0.1 and 0.2 make 0.3", () => {
+    const files = withChange(MAIN, (d) => {
+      const [title, interview] = d.tracks[0].clips;
+      Object.assign(title, { start: "0.1", duration: "0.2", enter: undefined });
+      Object.assign(interview, { start: "0.3", duration: "17.2" });
+    });
+    expect(0.1 + 0.2).not.toBe(0.3);
+    const problems = readProject(files).problems.filter(({ code }) => code.startsWith("join"));
+    expect(problems).toEqual([]);
   });
 });
 

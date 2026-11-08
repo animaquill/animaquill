@@ -356,11 +356,11 @@ function danglingIn(state: ProjectState): readonly string[] {
         wrong.push(`${clip.id} uses ${media.asset}`);
       if (scene && !state.scenes[scene]) wrong.push(`${clip.id} shows ${scene}`);
     }
-    for (const transition of Object.values(timeline.transitions)) {
-      for (const clip of [transition.from, transition.to]) {
-        if (clip && !timeline.clips[clip]) wrong.push(`${transition.id} goes to ${clip}`);
+    for (const [id, join] of Object.entries(timeline.joins ?? {})) {
+      for (const clip of [join.from, join.to]) {
+        if (clip && !timeline.clips[clip]) wrong.push(`${id} goes to ${clip}`);
       }
-      if (!timeline.tracks[transition.track]) wrong.push(`${transition.id} is on a lost track`);
+      if (join.track && !timeline.tracks[join.track]) wrong.push(`${id} is on a lost track`);
     }
   }
   for (const [id, { entry }] of Object.entries(state.scenes)) {

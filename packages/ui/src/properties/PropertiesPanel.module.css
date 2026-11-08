@@ -81,16 +81,107 @@
   padding: 6px 4px 10px 10px;
 }
 
-.fades {
-  display: grid;
+.transition {
+  display: flex;
   flex: none;
-  gap: 1px;
-  padding: 6px 4px 6px 10px;
-  border-bottom: 1px solid var(--aq-border);
+  flex-direction: column;
 }
 
-.fades .objectName {
-  margin-top: 0;
+.transitionHint,
+.transitionInvalid {
+  margin: 0 0 4px;
+  padding-left: 84px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.transitionInvalid {
+  color: var(--aq-danger);
+}
+
+.presets {
+  display: flex;
+  grid-column: 3 / 5;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.preset {
+  height: 22px;
+  padding: 0 6px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.preset:hover {
+  border-color: var(--aq-timeline-tick);
+}
+
+.preset[aria-pressed="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.preset:disabled {
+  color: var(--aq-text-muted);
+  cursor: default;
+}
+
+.preset:disabled:hover {
+  border-color: transparent;
+}
+
+.curveRow {
+  padding: 4px 0 0 84px;
+}
+
+.curveRow .transitionHint {
+  margin-top: 4px;
+  padding-left: 0;
+}
+
+.curve {
+  display: block;
+  width: 140px;
+  height: 140px;
+  touch-action: none;
+}
+
+.curveFrame {
+  fill: var(--aq-bg-input);
+  stroke: var(--aq-border);
+  stroke-width: 1;
+}
+
+.curveLine {
+  fill: none;
+  stroke: var(--aq-timeline-curve);
+  stroke-width: 1.5;
+}
+
+.curveHandleLine {
+  stroke: var(--aq-timeline-handle);
+  stroke-width: 1;
+}
+
+.curveHandle {
+  fill: var(--aq-timeline-handle);
+  cursor: grab;
+}
+
+.curveHandle:hover,
+.curveHandle:focus-visible,
+.curveHandle[data-dragging] {
+  fill: var(--aq-timeline-curve);
+  outline: none;
+}
+
+.curve[data-readonly] .curveHandle {
+  cursor: default;
 }
 
 .rows[data-readonly] .number,

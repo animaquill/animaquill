@@ -9,7 +9,6 @@ const layer = (id: string, channels: RenderLayer["channels"]): RenderLayer => ({
   offset: 0,
   source: { kind: "color", color: "#000000" },
   fit: "contain",
-  fades: { in: 0, out: 0 },
   channels,
 });
 

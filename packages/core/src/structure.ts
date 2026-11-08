@@ -64,12 +64,38 @@ const CONTAINERS: Tree = {
       sections: { [ANY]: fields },
       tracks: { [ANY]: withProperties },
       clips: { [ANY]: withProperties },
-      transitions: { [ANY]: fields },
+      /**
+       * Documents from before joins have no map for them, and two people who both made the first
+       * one would lose what is in one of the two. So joins sit flat in the map of their timeline,
+       * each field on its own: `joins/<id>/from`, `to`, `track`, and `transition` for all the rest.
+       */
+      joins: flat({ [ANY]: flat() }),
       markers: { [ANY]: fields },
       overrides: { [ANY]: version },
     },
   },
 };
+
+/**
+ * What documents can still have that is no part of a project any more: the fades of clips and the
+ * transitions of a timeline, from before transitions came as they are now (2026-11-08). They stay
+ * in the document, where a page that is still open from before goes on writing them, and nothing
+ * reads them. Everything under one of these is gone as well.
+ */
+const RETIRED: Tree = {
+  timelines: { [ANY]: { transitions: {}, clips: { [ANY]: { fadeIn: {}, fadeOut: {} } } } },
+};
+
+/** Whether this path is about something that a project no longer has. See `RETIRED`. */
+export function isRetired(path: Path): boolean {
+  let node: Tree | undefined = RETIRED;
+  for (const key of path) {
+    node = Object.hasOwn(node, key) ? node[key] : node[ANY];
+    if (!node) return false;
+    if (Object.keys(node).length === 0) return true;
+  }
+  return false;
+}
 
 function nodeAt(path: Path): Tree | undefined {
   let node: Tree | undefined = CONTAINERS;

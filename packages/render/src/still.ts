@@ -1,5 +1,5 @@
 import type { RenderLayer } from "@animaquill/core";
-import { opacityAt } from "@animaquill/core/view";
+import { missingTransitionAt, shownAt } from "@animaquill/core/view";
 import type { SceneStatus } from "./index.ts";
 
 /** Why there is no picture of a moment. There is never a picture with something missing in it. */
@@ -9,6 +9,11 @@ export type StillFailure =
   | { readonly reason: "cannot-decode"; readonly layer: string; readonly file: string }
   /** The scene of this clip is not running, and what is left of it is a placeholder. */
   | { readonly reason: "scene"; readonly layer: string; readonly status: SceneStatus }
+  /**
+   * A transition of this clip that this editor cannot do yet, or does not know. The preview shows a
+   * fade there, and a picture that goes out into the world does not get something else.
+   */
+  | { readonly reason: "transition"; readonly layer: string }
   /** The scene says it got to the frame, and its picture of that frame never came. */
   | {
       readonly reason: "scene-frame";
@@ -78,8 +83,11 @@ async function pictureFor<Picture extends { close(): void }>(
   sources: StillSources<Picture>,
 ): Promise<Picture | undefined> {
   const { source } = layer;
+  if (missingTransitionAt(layer, seconds)) {
+    throw new StillFailed({ reason: "transition", layer: layer.id });
+  }
   // Nothing of it reaches the picture, so nothing about it can be wrong with the picture.
-  if (source.kind === "color" || opacityAt(layer, seconds) <= 0) return undefined;
+  if (source.kind === "color" || shownAt(layer, seconds) <= 0) return undefined;
   if (source.kind === "scene") return sources.scene(layer);
   const { file: id } = source;
   const file = await sources.file(id);

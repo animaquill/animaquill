@@ -1,6 +1,6 @@
 import { BUILT_IN_PROPERTIES } from "@animaquill/schema/properties";
-import { clampToUnit, numberAt, type Channel } from "./curve.ts";
-import type { RenderLayer, RenderPlan } from "./render-plan.ts";
+import { bezierProgress, clampToUnit, numberAt, type Channel } from "./curve.ts";
+import type { PlannedTransition, RenderLayer, RenderPlan } from "./render-plan.ts";
 
 /**
  * How the world ends up on the picture. The editor page and the compositor both work with these, so
@@ -284,11 +284,56 @@ export function fitIn(fit: RenderLayer["fit"], natural: Size, box: Size): Fitted
   return { source, matrix };
 }
 
-/** How much of a layer shows: its opacity, and its fades on top of that. Canvas ignores too much. */
+/** How much of a layer shows by its opacity. Canvas ignores too much. Transitions come after it. */
 export function opacityAt(layer: RenderLayer, time: number): number {
-  const { fades, start, end } = layer;
   const opacity = numberAt(layer.channels["opacity"], clockOf(layer, time), DEFAULTS.opacity);
-  const fadeIn = fades.in > 0 ? clampToUnit((time - start) / fades.in) : 1;
-  const fadeOut = fades.out > 0 ? clampToUnit((end - time) / fades.out) : 1;
-  return clampToUnit(opacity) * fadeIn * fadeOut;
+  return clampToUnit(opacity);
+}
+
+/**
+ * How far a transition has got at a moment: its speed curve over its time, from 0 before it to 1
+ * after it. Without a curve that is the share of its time that has passed. A curve that goes past
+ * 0 and 1 stops there, which only a transition that may overshoot does not do.
+ */
+export function progressAt(transition: PlannedTransition, time: number): number {
+  const { start, duration, curve } = transition;
+  if (!(duration > 0)) return time < start ? 0 : 1;
+  const share = clampToUnit((time - start) / duration);
+  return curve ? clampToUnit(bezierProgress(...curve, share)) : share;
+}
+
+/** What is left of a transition at a moment: 1 − progress, as a fade out has always worked it out. */
+function leftAt(transition: PlannedTransition, time: number): number {
+  const { end, duration, curve } = transition;
+  if (curve || !(duration > 0)) return 1 - progressAt(transition, time);
+  return clampToUnit((end - time) / duration);
+}
+
+/**
+ * How much of a layer shows at a moment: its opacity, times the progress of a fade in and times what
+ * is left of a fade out. Fades are all there is so far, and what this editor cannot do yet shows as
+ * one. Where both are at once, the exit fades what the enter made, which comes to the same as one
+ * after the other. Multiplied in this order, it is to the last bit what fades always were.
+ */
+export function shownAt(layer: RenderLayer, time: number): number {
+  let shown = opacityAt(layer, time);
+  if (layer.enter) shown *= progressAt(layer.enter, time);
+  if (layer.exit) shown *= leftAt(layer.exit, time);
+  return shown;
+}
+
+/**
+ * A transition of a layer at a moment that this editor cannot do. An export stops there, instead of
+ * putting a fade in the file where the project says something else.
+ */
+export function missingTransitionAt(
+  layer: Pick<RenderLayer, "enter" | "exit">,
+  time: number,
+): PlannedTransition | undefined {
+  return [layer.enter, layer.exit].find(
+    (transition) =>
+      transition?.missing === true &&
+      time >= transition.start - TIME_TOLERANCE &&
+      time < transition.end - TIME_TOLERANCE,
+  );
 }

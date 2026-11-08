@@ -8,6 +8,7 @@ import {
   toSeconds,
   type Rational,
   type SoundManifest,
+  type Transition,
 } from "@animaquill/schema";
 import {
   clipEnd,
@@ -31,18 +32,17 @@ import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
 import {
   EndGesture,
-  FadeGesture,
   MarqueeGesture,
   MoveGesture,
   RazorGesture,
   ScrubGesture,
+  TransitionGesture,
   TrimGesture,
   copiesOf,
   cutAt,
-  fadeCall,
   freeShift,
+  transitionCall,
   type ClipCopy,
-  type FadeSide,
   type Gesture,
   type GestureHost,
   type Placed,
@@ -52,14 +52,15 @@ import {
 import {
   NO_ROOM_BELOW,
   buildModel,
-  canFade,
+  canHaveTransitions,
   clipAt,
-  fadesOf,
+  edgesOf,
   firstEndingAfter,
   forEachBetween,
   isInsideClip,
   rowAt,
   type ClipBox,
+  type Edge,
   type RoomBelow,
   type Row,
   type TimelineModel,
@@ -75,8 +76,13 @@ const EXPANDER_HEIGHT = 24;
 const EDGE_REACH = 7;
 /** A fingertip covers more than a mouse pointer. */
 const TOUCH_EDGE_REACH = 16;
-/** How far down from the top of a track the handles of fades reach: the height they show at. */
-const FADE_HANDLE_REACH = 10;
+/**
+ * How far down from the top of a clip its transitions at the edges are, as blocks with their
+ * names. Below it the clip is the clip.
+ */
+export const TRANSITION_BAND = 16;
+/** How far down the handles of transitions reach: the height they show at, as fades had them. */
+const HANDLE_REACH = 10;
 const SNAP_REACH = 8;
 /**
  * Room after the end of the timeline, as a share of its length: clips need somewhere to go. Not in
@@ -132,8 +138,10 @@ export type Hit =
       readonly row: Row;
       readonly box: ClipBox;
       readonly edge?: "start" | "end";
-      /** On the handle at a top corner that says how long the clip fades in or out. */
-      readonly fade?: FadeSide;
+      /** On the handle at a top corner, where the transition at that edge ends, or would start. */
+      readonly handle?: Edge;
+      /** On the block of the transition at that edge. */
+      readonly transition?: Edge;
       /** On the button for what shows under the track. */
       readonly expander?: boolean;
     }
@@ -158,10 +166,18 @@ export interface RowExtras {
   toggle(box: ClipBox): void;
 }
 
+/** A transition at an edge of a clip, which is what people select instead of clips. */
+export interface TransitionChoice {
+  readonly clip: string;
+  readonly edge: Edge;
+}
+
 /** What React shows. The view changes far more often and goes through `subscribeView`. */
 export interface TimelineSnapshot {
   readonly model: TimelineModel | undefined;
   readonly selection: ReadonlySet<string>;
+  /** Selected instead of clips. Like them it is no part of the project. */
+  readonly transition: TransitionChoice | undefined;
   readonly tool: Tool;
   readonly snapping: boolean;
   /** Whether a drop covers other clips. Off, clips go to the nearest free place. */
@@ -280,6 +296,7 @@ export class TimelineEditor implements TouchTarget {
   #snapshot: TimelineSnapshot = {
     model: undefined,
     selection: new Set(),
+    transition: undefined,
     tool: "select",
     snapping: true,
     overwriting: false,
@@ -661,7 +678,12 @@ export class TimelineEditor implements TouchTarget {
     this.#scrollX = remembered?.scrollX ?? 0;
     this.#scrollY = remembered?.scrollY ?? 0;
     this.#frame = remembered?.frame ?? 0;
-    this.#snapshot = { ...this.#snapshot, selection: new Set(), cut: new Set() };
+    this.#snapshot = {
+      ...this.#snapshot,
+      selection: new Set(),
+      transition: undefined,
+      cut: new Set(),
+    };
     this.#clipboard = [];
     this.#beforeFit = undefined;
     this.pause();
@@ -681,10 +703,14 @@ export class TimelineEditor implements TouchTarget {
     const selection = new Set(this.#present(this.#snapshot.selection, model));
     const same = sameSet(selection, this.#snapshot.selection);
     const cut = new Set(this.#changeable(this.#snapshot.cut, model));
+    const chosen = this.#snapshot.transition;
+    // A transition that went, or whose clip went, is no longer something to look at.
+    const there = chosen && model?.boxes.get(chosen.clip)?.clip[chosen.edge] !== undefined;
     this.#snapshot = {
       ...this.#snapshot,
       model,
       selection: same ? this.#snapshot.selection : selection,
+      transition: there ? chosen : undefined,
       cut: sameSet(cut, this.#snapshot.cut) ? this.#snapshot.cut : cut,
     };
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
@@ -776,7 +802,9 @@ export class TimelineEditor implements TouchTarget {
 
   /** Whether there is anything in the selection that can be cut or deleted. */
   get canChangeSelection(): boolean {
-    return this.#changeable(this.#snapshot.selection, this.model).length > 0;
+    const { selection, transition } = this.#snapshot;
+    if (transition) return this.#changeable([transition.clip], this.model).length > 0;
+    return this.#changeable(selection, this.model).length > 0;
   }
 
   #select(wanted: ReadonlySet<string>): void {
@@ -787,8 +815,22 @@ export class TimelineEditor implements TouchTarget {
   #setSelection(wanted: ReadonlySet<string>): void {
     // A drag can hold on to a clip that is gone by now.
     const selection = new Set(this.#present(wanted, this.model));
-    if (sameSet(selection, this.#snapshot.selection)) return;
-    this.#snapshot = { ...this.#snapshot, selection };
+    const { transition } = this.#snapshot;
+    if (sameSet(selection, this.#snapshot.selection) && !transition) return;
+    this.#snapshot = { ...this.#snapshot, selection, transition: undefined };
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
+  }
+
+  /**
+   * Selects the transition at an edge of a clip, instead of clips: the properties tab shows what it
+   * is then, and Delete takes it away. One on a locked track can be looked at too.
+   */
+  selectTransition(clip: string, edge: Edge): void {
+    if (this.model?.boxes.get(clip)?.clip[edge] === undefined) return;
+    const { transition, selection } = this.#snapshot;
+    if (transition?.clip === clip && transition.edge === edge && selection.size === 0) return;
+    this.#snapshot = { ...this.#snapshot, selection: new Set(), transition: { clip, edge } };
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -904,6 +946,11 @@ export class TimelineEditor implements TouchTarget {
 
   deleteSelection(): void {
     const { model } = this;
+    const { transition } = this.#snapshot;
+    if (transition) {
+      this.setTransition(transition.clip, transition.edge, null);
+      return;
+    }
     const clips = this.#changeable(this.#snapshot.selection, model);
     if (!model || clips.length === 0) return;
     this.#run([{ type: "clip.remove", params: { timeline: model.id, clips } }]);
@@ -1437,45 +1484,74 @@ export class TimelineEditor implements TouchTarget {
     const fromStart = x - this.xAt(box.start);
     const fromEnd = this.xAt(box.end) - x;
     if (this.#onExpander(box, row, x, y)) return { kind: "clip", row, box, expander: true };
-    if (row.track.locked || this.#snapshot.tool !== "select") return { kind: "clip", row, box };
-    const fade = this.#fadeAt(box, row, x, y);
-    if (fade) return { kind: "clip", row, box, fade };
+    const inBand = this.laneAt(y) - row.top < TRANSITION_BAND;
+    const block = inBand ? this.#transitionAt(box, x) : undefined;
+    if (row.track.locked || this.#snapshot.tool !== "select") {
+      // A transition can be looked at wherever it is, also on a locked track.
+      const look = this.#snapshot.tool === "select" ? block : undefined;
+      return look ? { kind: "clip", row, box, transition: look } : { kind: "clip", row, box };
+    }
+    const handle =
+      this.laneAt(y) - row.top < HANDLE_REACH ? this.#handleAt(box, row, x) : undefined;
+    if (handle) return { kind: "clip", row, box, handle };
     if (fromStart <= reach) return { kind: "clip", row, box, edge: "start" };
     if (fromEnd <= reach) return { kind: "clip", row, box, edge: "end" };
+    if (block) return { kind: "clip", row, box, transition: block };
     return { kind: "clip", row, box };
   }
 
   /**
-   * Which fade handle is under the pointer: they are at the top of a clip, where each fade ends, as
-   * in most video editors. Over the trim edges, which still have the rest of the height.
+   * Which handle of a transition is under the pointer: they are at the top of a clip, where each
+   * transition ends, or in the corners without one, as the handles of fades are in most video
+   * editors. Over the trim edges, which still have the rest of the height.
    */
-  #fadeAt(box: ClipBox, row: Row, x: number, y: number): FadeSide | undefined {
-    if (!canFade(row.track) || this.laneAt(y) - row.top >= FADE_HANDLE_REACH) return undefined;
-    const fades = fadesOf(box.clip);
+  #handleAt(box: ClipBox, row: Row, x: number): Edge | undefined {
+    if (!canHaveTransitions(row.track)) return undefined;
+    const edges = edgesOf(box.clip);
     const reach = this.#edgeReach;
-    const fromIn = Math.abs(x - this.xAt(box.start + fades.in));
-    const fromOut = Math.abs(x - this.xAt(box.end - fades.out));
-    if (fromIn > reach && fromOut > reach) return undefined;
-    return fromIn <= fromOut ? "in" : "out";
+    const fromEnter = Math.abs(x - this.xAt(box.start + edges.enter));
+    const fromExit = Math.abs(x - this.xAt(box.end - edges.exit));
+    if (fromEnter > reach && fromExit > reach) return undefined;
+    return fromEnter <= fromExit ? "enter" : "exit";
   }
 
-  /** Whether clips of a row show the handles of their fades: only where they can be dragged. */
-  showsFadeHandles(row: Row): boolean {
-    return canFade(row.track) && row.track.locked !== true && this.#snapshot.tool === "select";
+  /** Which block of a transition is under the pointer, at the top of a clip. */
+  #transitionAt(box: ClipBox, x: number): Edge | undefined {
+    const seconds = this.timeAt(x);
+    const edges = edgesOf(box.clip);
+    // The one at the end is drawn over the one at the start, where they overlap.
+    if (edges.exit > 0 && seconds >= box.end - edges.exit) return "exit";
+    if (edges.enter > 0 && seconds <= box.start + edges.enter) return "enter";
+    return undefined;
+  }
+
+  /** Whether clips of a row show the handles of their transitions: only where they can be dragged. */
+  showsTransitionHandles(row: Row): boolean {
+    const { track } = row;
+    return canHaveTransitions(track) && track.locked !== true && this.#snapshot.tool === "select";
   }
 
   /**
-   * Says how long a clip fades in or out, in one step, as the handles on the timeline do. It goes
-   * as far as the other fade lets it. Says whether anything changed.
+   * Says how long the transition at an edge of a clip is, in one step, as the handles on the
+   * timeline do: a new one is a fade. It goes as far as the transition at the other edge lets it.
+   * Says whether anything changed.
    */
-  setFade(clip: string, side: FadeSide, length: Rational): boolean {
+  setTransitionLength(clip: string, edge: Edge, length: Rational): boolean {
     const { model } = this;
     const [id] = this.#changeable([clip], model);
     const box = id === undefined ? undefined : model?.boxes.get(id);
-    const row = model?.rowOfClip.get(clip);
-    if (!model || !box || !row || !canFade(row.track)) return false;
-    const call = fadeCall(model.id, box.clip, side, length);
+    if (!model || !box) return false;
+    const call = transitionCall(model.id, box.clip, edge, length);
     return call !== undefined && this.#run([call]);
+  }
+
+  /** Puts a transition at an edge of a clip, or takes it away with null, in one step. */
+  setTransition(clip: string, edge: Edge, transition: Transition | null): boolean {
+    const { model } = this;
+    const [id] = this.#changeable([clip], model);
+    if (!model || id === undefined) return false;
+    const params = { timeline: model.id, clip: id, [edge]: transition };
+    return this.#run([{ type: "clip.setTransition", params }]);
   }
 
   /** Whether a clip shows the button for what is under its track. */
@@ -1515,7 +1591,10 @@ export class TimelineEditor implements TouchTarget {
       hit.kind !== before.kind ||
       (hit.kind === "clip" &&
         before.kind === "clip" &&
-        (hit.box !== before.box || hit.edge !== before.edge || hit.fade !== before.fade));
+        (hit.box !== before.box ||
+          hit.edge !== before.edge ||
+          hit.handle !== before.handle ||
+          hit.transition !== before.transition));
     if (changed || razorAt !== this.#razorAt) {
       this.#razorAt = razorAt;
       this.#viewEmitter.emit();
@@ -1535,7 +1614,7 @@ export class TimelineEditor implements TouchTarget {
     if (hit.kind !== "clip") return "default";
     if (hit.expander) return "pointer";
     if (this.#snapshot.tool === "razor") return "crosshair";
-    if (hit.fade) return "col-resize";
+    if (hit.handle) return "col-resize";
     return hit.edge ? "ew-resize" : "default";
   }
 
@@ -1559,7 +1638,7 @@ export class TimelineEditor implements TouchTarget {
       !hit.row.track.locked &&
       selection.has(hit.box.id) &&
       tool === "select";
-    if (hit.kind === "ruler" || hit.kind === "end" || (selected && (hit.edge || hit.fade))) {
+    if (hit.kind === "ruler" || hit.kind === "end" || (selected && (hit.edge || hit.handle))) {
       return "grab";
     }
     return selected ? "selected" : "plain";
@@ -1611,14 +1690,19 @@ export class TimelineEditor implements TouchTarget {
   }
 
   #pressClip(hit: Extract<Hit, { kind: "clip" }>, pointer: Pointer): void {
-    const { box, row, edge, fade } = hit;
+    const { box, row, edge, handle, transition } = hit;
     if (this.#snapshot.tool === "razor") {
       this.#gesture = new RazorGesture(this.#host, row, pointer);
       return;
     }
-    if (fade) {
-      this.#select(this.#withLinked(new Set([box.id])));
-      this.#gesture = new FadeGesture(this.#host, box, fade, pointer);
+    if (handle) {
+      this.#gesture = new TransitionGesture(this.#host, box, handle, pointer);
+      return;
+    }
+    if (transition) {
+      // A click selects it. What a drag from there does is what it does from anywhere else.
+      const onClick = () => this.selectTransition(box.id, transition);
+      this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
       return;
     }
     if (edge) {
@@ -1713,6 +1797,7 @@ export class TimelineEditor implements TouchTarget {
         return state && sourceLength(state, clip);
       },
       select: (clips) => this.#select(this.#withLinked(clips)),
+      selectTransition: (clip, edge) => this.selectTransition(clip, edge),
       seek: (frame) => this.seek(frame),
       run: (calls) => this.#run(calls),
     };

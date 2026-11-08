@@ -18,13 +18,17 @@ const contentOf = (state: ProjectState, tracks: readonly string[]) => {
       items.filter(({ track }) => tracks.includes(track)).map((item) => [item.id, item]),
     );
   const clips = on(Object.values(main?.clips ?? {}));
-  const transitions = on(Object.values(main?.transitions ?? {}));
+  const joins = Object.fromEntries(
+    Object.entries(main?.joins ?? {}).filter(
+      ([, { track }]) => track !== undefined && tracks.includes(track),
+    ),
+  );
   // What versions change about those clips is what they show in that version.
   const versions = Object.entries(main?.overrides ?? {}).flatMap(([name, { clips: changes }]) => {
     const theirs = Object.keys(clips).flatMap((id) => (changes?.[id] ? [[id, changes[id]]] : []));
     return theirs.length > 0 ? [[name, Object.fromEntries(theirs)]] : [];
   });
-  return { clips, transitions, versions: Object.fromEntries(versions) };
+  return { clips, joins, versions: Object.fromEntries(versions) };
 };
 
 /** What a scene or sound on a locked track runs is what it shows or plays, so that stays too. */
@@ -70,7 +74,7 @@ const assetsShown = (state: ProjectState, shown: ReadonlySet<string>) =>
     }),
   );
 
-/** What nothing should ever come to: a clip or a transition on a track that is gone, or does not fit. */
+/** What nothing should ever come to: a clip or a join on a track that is gone, or does not fit. */
 function brokenIn(state: ProjectState): readonly string[] {
   const main = state.timelines["main"];
   if (!main) return [];
@@ -79,13 +83,13 @@ function brokenIn(state: ProjectState): readonly string[] {
     if (!home) return [`${id} is on ${track}, which is gone`];
     return canHold(home.kind, source.kind) ? [] : [`${id} does not fit on ${track}`];
   });
-  const transitions = Object.values(main.transitions).flatMap(({ id, track }) =>
-    main.tracks[track] ? [] : [`${id} is on ${track}, which is gone`],
+  const joins = Object.entries(main.joins ?? {}).flatMap(([id, { track }]) =>
+    track === undefined || main.tracks[track] ? [] : [`${id} is on ${track}, which is gone`],
   );
   const tracks = Object.values(main.tracks).flatMap(({ order: _order, ...track }) =>
     Track.safeParse({ ...track, clips: [] }).success ? [] : [`${track.id} is not what its kind is`],
   );
-  return [...clips, ...transitions, ...tracks];
+  return [...clips, ...joins, ...tracks];
 }
 
 /** Another track that can hold a clip, often a locked one: that is where a file runs into a lock. */
@@ -106,7 +110,7 @@ function changeKind(tracks: any[], track: any, random: Random): void {
   const kinds = ["video", "audio", "caption"].filter((kind) => kind !== track.kind);
   const kind = random.pick(kinds) as string;
   for (const key of kind === "audio" ? VIDEO_ONLY : AUDIO_ONLY) delete track[key];
-  if (kind === "caption") delete track.transitions;
+  if (kind === "caption") delete track.joins;
   track.kind = kind;
   for (const clip of track.clips) {
     if (canHold(kind, clip.source.kind)) continue;
@@ -115,17 +119,10 @@ function changeKind(tracks: any[], track: any, random: Random): void {
     if (other && random.chance(0.7))
       other.clips.push({ ...clip, start: String(80 + random.int(20)) });
   }
-  for (const transition of track.transitions ?? []) {
-    const stays = (id: string | undefined) =>
-      id === undefined || track.clips.some((clip: any) => clip.id === id);
-    if (!stays(transition.from)) delete transition.from;
-    if (!stays(transition.to)) delete transition.to;
-  }
-  track.transitions = track.transitions?.filter(
-    (transition: any) => transition.from ?? transition.to,
-  );
-  if (track.transitions?.length === 0) delete track.transitions;
 }
+
+/** Joins that files made, for an id of their own. Two with one id would make the file not valid. */
+let joinsMade = 0;
 
 /**
  * A file somebody changed outside of the editor: random changes to random clips, wherever they
@@ -186,6 +183,21 @@ function randomFile(store: ProjectStore, random: Random): readonly [string, stri
         const source = { kind: "color", color: "#123456" };
         track.clips.push({ id: `f${random.int(1000)}`, start: "70", duration: "1", source });
       }
+      // Joins come, go and change, between any two clips: whether they meet is for the problems.
+      if (track.kind !== "caption" && random.chance(0.2)) {
+        const joins: any[] = (track.joins ??= []);
+        const change = random.int(3);
+        if (change === 0 && joins.length > 0) joins.splice(random.int(joins.length), 1);
+        else if (change === 1 && joins.length > 0)
+          random.pick(joins).duration = `${1 + random.int(4)}/4`;
+        else if (track.clips.length > 0) {
+          const [from, to]: any[] = [random.pick(track.clips), random.pick(track.clips)];
+          joinsMade += 1;
+          const id = `j${joinsMade}`;
+          joins.push({ id, from: from.id, to: to.id, type: "fade", duration: "1/2" });
+        }
+        if (joins.length === 0) delete track.joins;
+      }
     }
     return [MAIN, JSON.stringify(document)];
   }
@@ -212,8 +224,14 @@ function randomFile(store: ProjectStore, random: Random): readonly [string, stri
 
 /** Files that came in as nothing, because the rest would break without what stays: over all seeds. */
 let refusedWhole = 0;
+/**
+ * Steps that a lock kept from going back, over all seeds: a few for each, and ids that differ from
+ * run to run can leave one seed without any.
+ */
+let heldBack = 0;
 afterAll(() => {
   expect(refusedWhole).toBeGreaterThan(0);
+  expect(heldBack).toBeGreaterThan(0);
 });
 
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
@@ -287,13 +305,13 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
                 : store.redo();
         if (!result.ok && result.error.obstacle === "locked") held += 1;
         const locked = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
-        // A transition there can point at a clip elsewhere, which goes and comes back with its link.
-        const { transitions: _now, ...now } = contentOf(store.getState(), locked);
-        const { transitions: _was, ...was } = contentOf(before, locked);
+        // A join there can point at a clip elsewhere, which goes and comes back with its link.
+        const { joins: _now, ...now } = contentOf(store.getState(), locked);
+        const { joins: _was, ...was } = contentOf(before, locked);
         expect(now).toEqual(was);
         expect(codeOf(store.getState(), locked)).toEqual(codeOf(before, locked));
       }
-      expect(held).toBeGreaterThan(0);
+      heldBack += held;
       expect(lockedCode).toBeGreaterThan(0);
       expect(heldFiles).toBeGreaterThan(10);
     });

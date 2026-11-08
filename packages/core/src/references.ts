@@ -99,22 +99,19 @@ function danglingFromClip(
   ];
 }
 
-function danglingFromTransition(
-  id: string,
-  timeline: TimelineState,
-  transitionId: string,
-): readonly string[] {
-  const transition = entryOf(timeline.transitions, transitionId);
-  if (!transition) return NONE;
-  const from = `timelines/${id}/transitions/${transitionId}`;
-  const clips = [transition.from, transition.to].flatMap((clip) =>
+/** The clips and the track a join names. Only some of a join can be there, see `JoinState`. */
+function danglingFromJoin(id: string, timeline: TimelineState, joinId: string): readonly string[] {
+  const join = entryOf(timeline.joins, joinId);
+  if (!join) return NONE;
+  const from = `timelines/${id}/joins/${joinId}`;
+  const clips = [join.from, join.to].flatMap((clip) =>
     clip === undefined || entryOf(timeline.clips, clip)
       ? []
       : [link(from, ["timelines", id, "clips", clip])],
   );
-  return entryOf(timeline.tracks, transition.track)
+  return join.track === undefined || entryOf(timeline.tracks, join.track)
     ? clips
-    : [...clips, link(from, ["timelines", id, "tracks", transition.track])];
+    : [...clips, link(from, ["timelines", id, "tracks", join.track])];
 }
 
 function danglingFromOverride(
@@ -140,18 +137,18 @@ function usersOfTrack(id: string, timeline: TimelineState, path: Path): readonly
     ...Object.values(timeline.clips)
       .filter((clip) => clip.track === track)
       .map((clip) => link(`timelines/${id}/clips/${clip.id}`, path)),
-    ...Object.values(timeline.transitions)
-      .filter((transition) => transition.track === track)
-      .map((transition) => link(`timelines/${id}/transitions/${transition.id}`, path)),
+    ...Object.entries(timeline.joins ?? {})
+      .filter(([, join]) => join.track === track)
+      .map(([join]) => link(`timelines/${id}/joins/${join}`, path)),
   ];
 }
 
 /** What goes from or to a clip that is gone. */
 function usersOfClip(id: string, timeline: TimelineState, path: Path): readonly string[] {
   const clip = path.at(-1);
-  return Object.values(timeline.transitions)
-    .filter((transition) => transition.from === clip || transition.to === clip)
-    .map((transition) => link(`timelines/${id}/transitions/${transition.id}`, path));
+  return Object.entries(timeline.joins ?? {})
+    .filter(([, join]) => join.from === clip || join.to === clip)
+    .map(([join]) => link(`timelines/${id}/joins/${join}`, path));
 }
 
 /**
@@ -192,8 +189,8 @@ function danglingInTimeline(state: ProjectState, path: Path): readonly string[] 
         ? danglingFromClip(state, id, timeline, clip)
         : NONE;
     }
-    case "transitions":
-      return danglingFromTransition(id, timeline, item);
+    case "joins":
+      return danglingFromJoin(id, timeline, item);
     case "overrides":
       return path.length <= 6 || path[6] === "source"
         ? danglingFromOverride(state, id, timeline, item, path[5])
@@ -211,9 +208,7 @@ function danglingFromTimeline(
 ): readonly string[] {
   return [
     ...Object.values(timeline.clips).flatMap((clip) => danglingFromClip(state, id, timeline, clip)),
-    ...Object.keys(timeline.transitions).flatMap((transition) =>
-      danglingFromTransition(id, timeline, transition),
-    ),
+    ...Object.keys(timeline.joins ?? {}).flatMap((join) => danglingFromJoin(id, timeline, join)),
     ...Object.keys(timeline.overrides).flatMap((name) =>
       danglingFromOverride(state, id, timeline, name, undefined),
     ),
@@ -235,7 +230,7 @@ function danglingFile(state: ProjectState, path: Path): readonly string[] {
 
 /**
  * What points at nothing because of what is at a path now, or is no longer there: a clip whose track
- * or asset is gone, a transition without its clips, a timeline without sections, or a scene without
+ * or asset is gone, a join without its clips, a timeline without sections, or a scene without
  * a file of it. Commands do not do this, but a file and two people at once can. Taking a change back
  * has to look, because it puts back an older state while the rest of the project moved on.
  */
@@ -339,6 +334,9 @@ export function usedOnLockedTracks(state: ProjectState): LockedUses {
         collectNames(entryOf(clips, clip.id), assets, libraries);
       }
     }
+    for (const join of Object.values(timeline.joins ?? {})) {
+      if (join.track !== undefined && ids.has(join.track)) collectNames(join, assets, libraries);
+    }
   }
   const uses = { assets, libraries };
   usesByTimelines.set(state.timelines, uses);
@@ -420,8 +418,8 @@ export function touchesLockedTrack(state: ProjectState, patch: Patch): boolean {
       return (path.length === 4 || (path.length === 5 && field === "kind")) && isLocked(item);
     case "clips":
       return isLocked(entryOf(timeline.clips, item)?.track) || isLocked(coming());
-    case "transitions":
-      return isLocked(entryOf(timeline.transitions, item)?.track) || isLocked(coming());
+    case "joins":
+      return isLocked(entryOf(timeline.joins, item)?.track) || isLocked(coming());
     case "overrides":
       return field === "clips" && isLocked(entryOf(timeline.clips, path[5] ?? "")?.track);
     default:

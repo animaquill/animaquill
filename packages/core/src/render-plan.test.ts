@@ -140,14 +140,97 @@ describe("a layer of the render plan", () => {
     expect(layer().fit).toBe("contain");
   });
 
-  it("has fades in seconds, also the ones that are no decimal", () => {
-    const { layer } = withClip({ fadeIn: "1/2", fadeOut: "1/3" });
-    expect(layer().fades.in).toBe(0.5);
-    expect(layer().fades.out).toBeCloseTo(1 / 3, 12);
+  it("has its enter and exit in seconds, also the ones that are no decimal", () => {
+    const enter = { type: "fade", duration: "1/2" };
+    const exit = { type: "fade", duration: "1/3", curve: [0.42, 0, 1, 1] };
+    const { layer } = withClip({ start: "1", duration: "2", enter, exit });
+    const how = { kind: "built-in", type: "fade" };
+    expect(layer().enter).toEqual({ how, start: 1, end: 1.5, duration: 0.5 });
+    expect(layer().exit).toEqual({
+      how,
+      start: 3 - 1 / 3,
+      end: 3,
+      duration: 1 / 3,
+      curve: [0.42, 0, 1, 1],
+    });
   });
 
-  it("has no fades without any", () => {
-    expect(withClip({}).layer().fades).toEqual({ in: 0, out: 0 });
+  it("has no transitions without any", () => {
+    const { layer } = withClip({});
+    expect(layer()).not.toHaveProperty("enter");
+    expect(layer()).not.toHaveProperty("exit");
+  });
+
+  it("makes a transition no longer than its clip, and a fade of what this editor cannot do", () => {
+    const { layer, store } = withClip({ start: "1", duration: "2" });
+    const state = store.getState();
+    const clip = state.timelines["main"]?.clips["c"] as ClipState;
+    const hand = (changes: Partial<ClipState>) =>
+      ({
+        ...state,
+        timelines: {
+          ...state.timelines,
+          main: { ...state.timelines["main"], clips: { c: { ...clip, ...changes } } },
+        },
+      }) as ProjectState;
+    const planned = (changes: Partial<ClipState>) =>
+      buildRenderPlan(hand(changes), "main")?.layers[0];
+    const enter = planned({ enter: { type: "fade", duration: "5" } })?.enter;
+    expect(enter).toMatchObject({ start: 1, end: 3, duration: 2 });
+    expect(enter).not.toHaveProperty("missing");
+    const wipe = planned({ exit: { type: "wipe", variant: "left", duration: "1" } })?.exit;
+    expect(wipe).toMatchObject({
+      how: { kind: "built-in", type: "fade" },
+      start: 2,
+      missing: true,
+    });
+    const typo = planned({ exit: { type: "fdae", duration: "1" } })?.exit;
+    expect(typo).toMatchObject({ how: { type: "fade" }, missing: true });
+    expect(layer()).not.toHaveProperty("enter");
+  });
+
+  it("leaves out the end of a clip where a join is, while joins are not drawn yet", () => {
+    const { store, lower } = withClip({
+      start: "1",
+      duration: "2",
+      exit: { type: "fade", duration: "1" },
+    });
+    const state = store.getState();
+    const main = state.timelines["main"];
+    if (!main) throw new Error("no timeline");
+    const next = {
+      id: "d",
+      start: "3",
+      duration: "2",
+      source: red.source,
+      track: lower,
+      enter: { type: "fade", duration: "1" },
+    };
+    const join = { track: lower, from: "c", to: "d", transition: { type: "fade", duration: "1" } };
+    const joined = (joins: object, hidden = false) =>
+      buildRenderPlan(
+        {
+          ...state,
+          timelines: {
+            main: {
+              ...main,
+              clips: { ...main.clips, d: { ...next, ...(hidden && { hidden }) } },
+              joins,
+            },
+          },
+        } as ProjectState,
+        "main",
+      )?.layers;
+    const [before, after] = joined({ j: join }) ?? [];
+    expect(before).not.toHaveProperty("exit");
+    expect(after).not.toHaveProperty("enter");
+    // A join somewhere else, or with a side that does not show, is as if it were not there.
+    const [apart] = joined({ j: { ...join, to: "gone" } }) ?? [];
+    expect(apart?.exit).toBeDefined();
+    const [alone] = joined({ j: join }, true) ?? [];
+    expect(alone?.exit).toBeDefined();
+    const [partly] = joined({ j: { from: "c", to: "d", track: lower } }) ?? [];
+    expect(partly?.exit).toBeDefined();
   });
 
   it("shows keys in the same place on the timeline after cutting and trimming", () => {

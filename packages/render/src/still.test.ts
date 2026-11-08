@@ -23,7 +23,6 @@ const layer = (id: string, source: RenderLayer["source"], changes = {}): RenderL
   offset: 0,
   source,
   fit: "contain",
-  fades: { in: 0, out: 0 },
   channels: {},
   ...changes,
 });
@@ -175,10 +174,28 @@ describe("what a still is made of", () => {
   });
 
   it("does not depend on what cannot be seen at this moment", async () => {
-    const hidden = { ...image("gone"), fades: { in: 1, out: 0 } };
+    const enter = {
+      how: { kind: "built-in", type: "fade" },
+      start: 0,
+      end: 1,
+      duration: 1,
+    } as const;
+    const hidden = { ...image("gone"), enter };
     const file = vi.fn(async () => undefined);
     await expect(stillPictures([hidden], 0, sources({ file }))).resolves.toEqual([undefined]);
     expect(file).not.toHaveBeenCalled();
+  });
+
+  it("is not there where a transition is that this editor cannot do, instead of a fade", async () => {
+    const how = { kind: "built-in", type: "fade" } as const;
+    const exit = { how, start: 8, end: 10, duration: 2, missing: true } as const;
+    const wiping = layer("wiping", { kind: "color", color: "#ff0000" }, { exit });
+    await expect(stillPictures([wiping], 7.9, sources())).resolves.toEqual([undefined]);
+    const failure = await failureFrom(stillPictures([wiping], 8, sources()));
+    expect(failure).toEqual({ reason: "transition", layer: "wiping" });
+    const { missing: _missing, ...fade } = exit;
+    const fine = layer("fading", { kind: "color", color: "#ff0000" }, { exit: fade });
+    await expect(stillPictures([fine], 9, sources())).resolves.toEqual([undefined]);
   });
 });
 

@@ -254,6 +254,34 @@ export function randomCommand(
       type: "clip.update",
       params: { timeline, clip, changes: { name: `n${random.int(9)}` } },
     }),
+    () => ({
+      type: "clip.update",
+      params: { timeline, clip, changes: { duration: random.pick(["1/3", "1", "3"]) } },
+    }),
+    // What comes in and goes out of clips, which trimming, cutting and removing take along.
+    () => ({
+      type: "clip.setTransition",
+      params: {
+        timeline,
+        clip,
+        [random.chance(0.5) ? "enter" : "exit"]: random.chance(0.2)
+          ? null
+          : {
+              type: "fade",
+              duration: random.pick(["1/3", "0.5", "1", "2"]),
+              ...(random.chance(0.5) && { curve: [0.42, 0, 0.58, 1] }),
+            },
+      },
+    }),
+    () => ({
+      type: "clip.setTransition",
+      params: {
+        timeline,
+        clip,
+        enter: { type: "fade", duration: "1/3" },
+        exit: { type: "fade", duration: "1/3" },
+      },
+    }),
     () => ({ type: "clip.remove", params: { timeline, clips: [clip] } }),
     () => ({
       type: "clip.add",

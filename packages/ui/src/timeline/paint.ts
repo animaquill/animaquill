@@ -1,12 +1,14 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
-import type { ClipState } from "@animaquill/core";
-import { EXPANDER_SIZE, RULER_HEIGHT, type TimelineEditor } from "./editor.ts";
-import type { FadeSide } from "./gestures.ts";
+import { bezierProgress, type ClipState } from "@animaquill/core";
+import type { Transition } from "@animaquill/schema";
+import { EXPANDER_SIZE, RULER_HEIGHT, TRANSITION_BAND, type TimelineEditor } from "./editor.ts";
 import {
-  canFade,
-  fadesOf,
+  EDGES,
+  edgeWorks,
+  edgesOf,
   forEachBetween,
   type ClipBox,
+  type Edge,
   type Row,
   type TimelineModel,
 } from "./model.ts";
@@ -19,10 +21,16 @@ const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
 const LABEL_PLATE_PADDING = 3;
 const EDGE_HANDLE = 6;
-const FADE_HANDLE = 8;
+const TRANSITION_HANDLE = 8;
 /** Over what fades, darker the less of the clip shows, as the line says. */
 const FADE_SHADE = "#00000066";
 const FADE_LINE = "#ffffffd9";
+const BLOCK_FILL = "#000000a6";
+const BLOCK_HOVERED = "#000000d0";
+const BLOCK_LINE = "#ffffff59";
+const BLOCK_LABEL_MIN_WIDTH = 24;
+/** Points along a speed curve, enough for it to look smooth at the size of a clip. */
+const CURVE_STEPS = 24;
 const END_HANDLE = 6;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
@@ -35,6 +43,9 @@ function readableOn(color: string): string {
 }
 
 export type ClipLabel = (box: ClipBox) => string;
+
+/** What people call a transition at an edge of a clip. */
+export type TransitionLabel = (transition: Transition, edge: Edge, row: Row) => string;
 
 /** Draws over the lanes, in the area under the ruler. */
 export type BelowPainter = (
@@ -49,10 +60,12 @@ interface ClipLook {
   readonly end: number;
   readonly selected: boolean;
   readonly edge?: "start" | "end" | undefined;
-  /** The pointer is over the clip, which shows the handles of its fades. */
+  /** The pointer is over the clip, which shows the handles of its transitions. */
   readonly hovered?: boolean;
-  /** The handle of a fade under the pointer. */
-  readonly fade?: FadeSide | undefined;
+  /** The handle of a transition under the pointer. */
+  readonly handle?: Edge | undefined;
+  /** The block of a transition under the pointer. */
+  readonly transition?: Edge | undefined;
 }
 
 /**
@@ -71,6 +84,7 @@ interface ClipStrip {
 export class TimelinePainter extends StagePainter {
   readonly #editor: TimelineEditor;
   readonly #labelOf: ClipLabel;
+  readonly #transitionLabelOf: TransitionLabel;
   readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
   readonly #stripOf: (clip: ClipState) => ClipStrip | undefined;
   readonly #hasFailed: (clip: ClipState) => boolean;
@@ -86,11 +100,13 @@ export class TimelinePainter extends StagePainter {
     peaksOf: (clip: ClipState) => Uint8Array | undefined,
     stripOf: (clip: ClipState) => ClipStrip | undefined,
     hasFailed: (clip: ClipState) => boolean,
+    transitionLabelOf: TransitionLabel,
     below?: BelowPainter,
   ) {
     super(canvas);
     this.#editor = editor;
     this.#labelOf = labelOf;
+    this.#transitionLabelOf = transitionLabelOf;
     this.#peaksOf = peaksOf;
     this.#stripOf = stripOf;
     this.#hasFailed = hasFailed;
@@ -165,7 +181,8 @@ export class TimelinePainter extends StagePainter {
           selected: !isMoved && selection.has(box.id),
           edge: over?.edge,
           hovered: over !== undefined && !isMoved,
-          fade: over?.fade,
+          handle: over?.handle,
+          transition: over?.transition,
         });
         this.context.globalAlpha = 1;
       });
@@ -228,11 +245,14 @@ export class TimelinePainter extends StagePainter {
       this.#paintWaveform(box, look, { left, right, top, height }, fill);
     }
     const expander = editor.showsExpander(box) ? editor.expanderAt(left, width) : undefined;
+    const edges = this.#edgesOf(box);
     if (width >= LABEL_MIN_WIDTH) {
-      const room = expander === undefined ? 0 : EXPANDER_SIZE;
+      // The name of the clip starts after what comes in, which has a name of its own.
+      const entering = edges.enter > 0 ? editor.xAt(look.start + edges.enter) - left : 0;
+      const room = Math.max(expander === undefined ? 0 : EXPANDER_SIZE, entering);
       this.#paintLabel(box, left, top, width, height, fill, room);
     }
-    if (canFade(track)) this.#paintFades(box, look, { left, right, top, height, width });
+    this.#paintTransitions(box, look, edges, { left, right, top, height, width });
     if (expander !== undefined) this.#paintExpander(box, expander, top, fill);
     // Too narrow for words it should still show, and on any clip it stays out of the way.
     if (this.#hasFailed(box.clip)) {
@@ -245,7 +265,10 @@ export class TimelinePainter extends StagePainter {
       const x = look.edge === "start" ? left : right - EDGE_HANDLE;
       context.fillRect(x, top, EDGE_HANDLE, height);
     }
-    if (look.selected || look.hovered) this.#paintFadeHandles(box, look, left, right, top);
+    const chosen = editor.getSnapshot().transition?.clip === box.id;
+    if (look.selected || look.hovered || chosen) {
+      this.#paintTransitionHandles(look, edges, left, right, top);
+    }
     if (look.selected) {
       context.strokeStyle = this.#theme.selected;
       context.lineWidth = 1.5;
@@ -256,20 +279,23 @@ export class TimelinePainter extends StagePainter {
     context.globalAlpha = alpha;
   }
 
-  /** How long the clip fades in and out, while a handle is dragged as well. */
-  #fadesOf(box: ClipBox): { readonly in: number; readonly out: number } {
-    const dragged = this.#editor.preview?.fade;
-    return dragged?.clip === box.id ? dragged : fadesOf(box.clip);
+  /** How long the transitions at the edges of a clip are, while a handle is dragged as well. */
+  #edgesOf(box: ClipBox): Readonly<Record<Edge, number>> {
+    const dragged = this.#editor.preview?.transition;
+    const edges = edgesOf(box.clip);
+    return dragged?.clip === box.id ? { ...edges, [dragged.edge]: dragged.seconds } : edges;
   }
 
   /**
-   * A line from the bottom at the edge of the clip to the top where it fades all the way in, and
-   * from the top where it starts to fade out to the bottom at the other edge, with what does not
-   * show shaded, as in most video editors.
+   * The transitions at the edges of a clip: a block at the top with its name, as long as it is.
+   * Under a fade, what does not show is shaded, as far as the line says, which goes the way its
+   * speed curve does, as the fades of most video editors look. One that does not do what it says
+   * is drawn as a warning.
    */
-  #paintFades(
+  #paintTransitions(
     box: ClipBox,
     look: ClipLook,
+    edges: Readonly<Record<Edge, number>>,
     area: {
       readonly left: number;
       readonly right: number;
@@ -278,63 +304,126 @@ export class TimelinePainter extends StagePainter {
       readonly width: number;
     },
   ): void {
-    const fades = this.#fadesOf(box);
-    if (fades.in <= 0 && fades.out <= 0) return;
+    if (edges.enter <= 0 && edges.exit <= 0) return;
     const editor = this.#editor;
     const { context } = this;
     const { left, right, top, height, width } = area;
-    const bottom = top + height;
-    const inX = Math.min(editor.xAt(look.start + fades.in), right);
-    const outX = Math.max(editor.xAt(look.end - fades.out), left);
+    const { model } = editor;
+    const chosen = editor.getSnapshot().transition;
     context.save();
     context.beginPath();
     context.roundRect(left, top, width, height, CLIP_RADIUS);
     context.clip();
+    for (const edge of EDGES) {
+      const seconds = edges[edge];
+      if (seconds <= 0) continue;
+      const transition = box.clip[edge] ?? { type: "fade", duration: String(seconds) };
+      const [from, to] =
+        edge === "enter"
+          ? [left, Math.min(editor.xAt(look.start + seconds), right)]
+          : [Math.max(editor.xAt(look.end - seconds), left), right];
+      if (transition.type === "fade") {
+        this.#paintFade(edge, transition, { from, to, top, bottom: top + height });
+      }
+      const works = !box.clip[edge] || (model !== undefined && edgeWorks(model, box, edge));
+      const isChosen = chosen?.clip === box.id && chosen.edge === edge;
+      this.#paintBlock({
+        from,
+        to,
+        top,
+        label: this.#transitionLabelOf(transition, edge, look.row),
+        hovered: look.transition === edge,
+        chosen: isChosen,
+        works,
+      });
+    }
+    context.restore();
+  }
+
+  /** The line of a fade, from nothing at the edge of the clip to all of it, along its speed curve. */
+  #paintFade(
+    edge: Edge,
+    transition: Transition,
+    { from, to, top, bottom }: { from: number; to: number; top: number; bottom: number },
+  ): void {
+    const { context } = this;
+    const curve = transition.curve;
+    const points: [number, number][] = [];
+    for (let step = 0; step <= CURVE_STEPS; step++) {
+      const share = step / CURVE_STEPS;
+      const progress = curve ? Math.min(Math.max(bezierProgress(...curve, share), 0), 1) : share;
+      const shown = edge === "enter" ? progress : 1 - progress;
+      points.push([from + (to - from) * share, bottom - (bottom - top) * shown]);
+    }
     context.fillStyle = FADE_SHADE;
     context.beginPath();
-    if (fades.in > 0) {
-      context.moveTo(left, bottom);
-      context.lineTo(left, top);
-      context.lineTo(inX, top);
-      context.closePath();
-    }
-    if (fades.out > 0) {
-      context.moveTo(right, bottom);
-      context.lineTo(right, top);
-      context.lineTo(outX, top);
-      context.closePath();
-    }
+    context.moveTo(from, top);
+    for (const [x, y] of points) context.lineTo(x, y);
+    context.lineTo(to, top);
+    context.closePath();
     context.fill();
     context.strokeStyle = FADE_LINE;
     context.lineWidth = 1;
     context.beginPath();
-    if (fades.in > 0) {
-      context.moveTo(left, bottom);
-      context.lineTo(inX, top);
-    }
-    if (fades.out > 0) {
-      context.moveTo(outX, top);
-      context.lineTo(right, bottom);
-    }
+    points.forEach(([x, y], index) => (index === 0 ? context.moveTo(x, y) : context.lineTo(x, y)));
     context.stroke();
+  }
+
+  /** The block of a transition at the top of its clip, with its name where that fits. */
+  #paintBlock(block: {
+    readonly from: number;
+    readonly to: number;
+    readonly top: number;
+    readonly label: string;
+    readonly hovered: boolean;
+    readonly chosen: boolean;
+    readonly works: boolean;
+  }): void {
+    const { context } = this;
+    const { from, to, top, label, hovered, chosen, works } = block;
+    const width = Math.max(to - from, 1);
+    context.fillStyle = hovered ? BLOCK_HOVERED : BLOCK_FILL;
+    context.fillRect(from, top, width, TRANSITION_BAND);
+    context.lineWidth = chosen ? 1.5 : 1;
+    context.strokeStyle = chosen ? this.#theme.selected : works ? BLOCK_LINE : this.#theme.warning;
+    context.setLineDash(works || chosen ? [] : [3, 2]);
+    context.strokeRect(from + 0.5, top + 0.5, width - 1, TRANSITION_BAND - 1);
+    context.setLineDash([]);
+    if (width < BLOCK_LABEL_MIN_WIDTH) return;
+    context.save();
+    context.beginPath();
+    context.rect(from, top, width, TRANSITION_BAND);
+    context.clip();
+    context.fillStyle = works ? "#ffffff" : this.#theme.warning;
+    context.fillText(label, from + LABEL_PLATE_PADDING + 2, top + TRANSITION_BAND / 2);
     context.restore();
   }
 
-  /** The handles at the top corners, where each fade ends. They stay inside the clip. */
-  #paintFadeHandles(box: ClipBox, look: ClipLook, left: number, right: number, top: number): void {
+  /** The handles at the top corners, where each transition ends. They stay inside the clip. */
+  #paintTransitionHandles(
+    look: ClipLook,
+    edges: Readonly<Record<Edge, number>>,
+    left: number,
+    right: number,
+    top: number,
+  ): void {
     const editor = this.#editor;
-    if (!editor.showsFadeHandles(look.row) || right - left < FADE_HANDLE * 2) return;
+    if (!editor.showsTransitionHandles(look.row) || right - left < TRANSITION_HANDLE * 2) return;
     const { context } = this;
-    const fades = this.#fadesOf(box);
-    const at = { in: look.start + fades.in, out: look.end - fades.out };
-    for (const side of ["in", "out"] as const) {
-      const middle = editor.xAt(at[side]);
-      const x = Math.min(Math.max(middle - FADE_HANDLE / 2, left), right - FADE_HANDLE);
-      context.fillStyle = look.fade === side ? this.#theme.selected : "#ffffff";
+    const at = { enter: look.start + edges.enter, exit: look.end - edges.exit };
+    for (const edge of EDGES) {
+      const middle = editor.xAt(at[edge]);
+      const x = Math.min(Math.max(middle - TRANSITION_HANDLE / 2, left), right - TRANSITION_HANDLE);
+      context.fillStyle = look.handle === edge ? this.#theme.selected : "#ffffff";
       context.strokeStyle = "#000000b3";
       context.lineWidth = 1;
-      context.fillRect(this.sharp(x), top + 1, FADE_HANDLE, FADE_HANDLE);
-      context.strokeRect(this.sharp(x) + 0.5, top + 1.5, FADE_HANDLE - 1, FADE_HANDLE - 1);
+      context.fillRect(this.sharp(x), top + 1, TRANSITION_HANDLE, TRANSITION_HANDLE);
+      context.strokeRect(
+        this.sharp(x) + 0.5,
+        top + 1.5,
+        TRANSITION_HANDLE - 1,
+        TRANSITION_HANDLE - 1,
+      );
     }
   }
 

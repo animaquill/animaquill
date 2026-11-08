@@ -15,6 +15,7 @@ import {
   isAnimation,
   parseTime,
   type Clip,
+  type Join,
   type MediaRef,
   type Problem,
   type Project,
@@ -28,15 +29,14 @@ import type { z } from "zod";
 type Note = Notes["notes"][number];
 type Section = Timeline["sections"][number];
 type Marker = NonNullable<Timeline["markers"]>[number];
-type Transition = NonNullable<Extract<Track, { kind: "video" }>["transitions"]>[number];
 
 /** A section in the live model. Sections have an order, a map of them does not. */
 export type SectionState = Section & { readonly order: number };
 
 type OmitFromEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-/** A track without its content. Clips point at their track instead. */
-export type TrackState = OmitFromEach<Track, "clips" | "transitions"> & { readonly order: number };
+/** A track without its content. Clips and joins point at their track instead. */
+export type TrackState = OmitFromEach<Track, "clips" | "joins"> & { readonly order: number };
 
 /**
  * A clip in the live model. Clips sit next to each other and name their track, so moving a clip to
@@ -44,7 +44,25 @@ export type TrackState = OmitFromEach<Track, "clips" | "transitions"> & { readon
  */
 export type ClipState = Clip & { readonly track: string };
 
-export type TransitionState = Transition & { readonly track: string };
+/**
+ * What a join is, apart from where it is: which transition, how long, how it goes, and where around
+ * the cut. One value, so that two people who each pick another one at the same time never end up
+ * with half of each, such as a `type` and a `library`.
+ */
+export type JoinTransition = Omit<Join, "id" | "from" | "to">;
+
+/**
+ * A join in the live model, by its id. Its track and its sides are fields of their own, like those
+ * of a clip, so that cutting a clip and changing the join at the same time both stay. They sit flat
+ * in their timeline (see structure.ts), and two people at once can leave a join with only some of
+ * them: that is no join, and it stays out of the files until it is whole again.
+ */
+export interface JoinState {
+  readonly track?: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly transition?: JoinTransition;
+}
 
 export interface TimelineState {
   readonly name: string;
@@ -54,7 +72,8 @@ export interface TimelineState {
   readonly sections: Readonly<Record<string, SectionState>>;
   readonly tracks: Readonly<Record<string, TrackState>>;
   readonly clips: Readonly<Record<string, ClipState>>;
-  readonly transitions: Readonly<Record<string, TransitionState>>;
+  /** Not there without any. */
+  readonly joins?: Readonly<Record<string, JoinState>>;
   readonly markers: Readonly<Record<string, Marker>>;
   readonly overrides: Readonly<Record<string, Overrides>>;
 }
@@ -92,15 +111,15 @@ export function timelineToState(
 ): TimelineState {
   const tracks: Record<string, TrackState> = {};
   const clips: Record<string, ClipState> = {};
-  const transitions: Record<string, TransitionState> = {};
+  const joins: Record<string, JoinState> = {};
   timeline.tracks.forEach((track, order) => {
     const { clips: trackClips, ...rest } = track;
-    const { transitions: links, ...head } = rest as typeof rest & {
-      transitions?: readonly Transition[];
-    };
+    const { joins: trackJoins, ...head } = rest as typeof rest & { joins?: readonly Join[] };
     tracks[track.id] = { ...head, order };
     for (const clip of trackClips) clips[clip.id] = { ...clip, track: track.id };
-    for (const link of links ?? []) transitions[link.id] = { ...link, track: track.id };
+    for (const { id, from, to, ...transition } of trackJoins ?? []) {
+      joins[id] = { track: track.id, from, to, transition };
+    }
   });
   const { name, background, beatGrid, mix } = timeline;
   return {
@@ -113,7 +132,7 @@ export function timelineToState(
     ),
     tracks,
     clips,
-    transitions,
+    ...(Object.keys(joins).length > 0 ? { joins } : {}),
     markers: byId(timeline.markers),
     overrides: Object.fromEntries(overrides),
   };
@@ -233,7 +252,7 @@ const FALLBACK_SECTION = { id: "section-recovered", duration: "1" };
 export function stateToTimeline(state: TimelineState): unknown {
   const tracks = orderedTracks(state).map((head) => {
     const { order: _order, ...track } = head;
-    return { ...track, clips: [] as ClipState[], transitions: [] as TransitionState[] };
+    return { ...track, clips: [] as ClipState[], joins: [] as Join[] };
   });
   const find = (id: string) => tracks.find((track) => track.id === id);
 
@@ -245,18 +264,17 @@ export function stateToTimeline(state: TimelineState): unknown {
         id: `recovered-${kind}`,
         kind,
         clips: [],
-        transitions: [],
+        joins: [],
       } as unknown as (typeof tracks)[number];
       tracks.push(track);
     }
     const { track: _track, ...rest } = clip;
     track.clips.push(rest as ClipState);
   }
-  for (const transition of Object.values(state.transitions)) {
-    const { track: owner, ...rest } = transition;
-    // Two people can each remove the clip on one side. Nothing is left to go from or to.
-    if (rest.from === undefined && rest.to === undefined) continue;
-    find(owner)?.transitions.push(rest as TransitionState);
+  for (const [id, { track: owner, from, to, transition }] of Object.entries(state.joins ?? {})) {
+    // Only some of a join is no join. A join on a track that is gone has nowhere to be.
+    if (owner === undefined || from === undefined || to === undefined || !transition) continue;
+    find(owner)?.joins.push({ id, from, to, ...transition });
   }
 
   const sections = orderedSections(state).map(({ order: _order, ...section }) => section);
@@ -268,8 +286,8 @@ export function stateToTimeline(state: TimelineState): unknown {
     sections: sections.length > 0 ? sections : [FALLBACK_SECTION],
     ...(markers.length > 0 ? { markers } : {}),
     ...(beatGrid === undefined ? {} : { beatGrid }),
-    tracks: tracks.map(({ transitions, ...track }) =>
-      track.kind === "caption" || transitions.length === 0 ? track : { ...track, transitions },
+    tracks: tracks.map(({ joins, ...track }) =>
+      track.kind === "caption" || joins.length === 0 ? track : { ...track, joins },
     ),
     ...(mix === undefined ? {} : { mix }),
   };

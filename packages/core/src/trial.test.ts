@@ -1305,6 +1305,24 @@ describe("other structural changes", () => {
     expect(heard).toEqual([]);
   });
 
+  it("has nothing to do with the transitions of a clip, which are no properties", () => {
+    const { store, run, trial, tried, heard, main } = setup();
+    trial.write([{ owner, path: "transform.x", op: "setKey", time: "1", value: 7 }]);
+    const fade = (duration: string) => ({ type: "fade", duration });
+    const transition = (changes: object) =>
+      run({ type: "clip.setTransition", params: { timeline: "main", clip: "c", ...changes } });
+    transition({ enter: fade("1"), exit: fade("2") });
+    run({ type: "clip.trim", params: { timeline: "main", clip: "c", end: "4.5" } });
+    expect(main()?.clips["c"]?.exit).toEqual(fade("1.5"));
+    transition({ enter: null });
+    store.undo();
+    store.undo();
+    expect(main()?.clips["c"]?.exit).toEqual(fade("2"));
+    expect(tried("transform.x")).toEqual({ keys: [{ time: "1", value: 7 }] });
+    expect(trial.count).toBe(1);
+    expect(heard).toEqual([]);
+  });
+
   it("does not take moving a clip and giving it another length for that", () => {
     const { run, trial, tried } = setup();
     trial.write([{ owner, path: "transform.x", op: "setKey", time: "1", value: 7 }]);

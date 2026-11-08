@@ -15,7 +15,6 @@ import {
   naturalSizeOf,
   objectPath,
   objectsOf,
-  opacityAt,
   paramTextOf,
   placementOf,
   sample,
@@ -23,6 +22,7 @@ import {
   sceneMatrix,
   sceneViewOf,
   showsAt,
+  shownAt,
   transformPoint,
   type ClipDescription,
   type ClipState,
@@ -571,7 +571,7 @@ export class OverlayEditor {
     // Handles are for one clip with a picture, as the properties tab is, wherever the others are.
     const pictures = frame.plan.layers.filter(({ id }) => selection.has(id)).length;
     const bodies = placed
-      .filter(({ layer }) => selection.has(layer.id) || opacityAt(layer, frame.seconds) > 0)
+      .filter(({ layer }) => selection.has(layer.id) || shownAt(layer, frame.seconds) > 0)
       .map(({ layer, corners }) => ({ clip: layer.id, corners }))
       .toReversed();
     const marks: Mark[] = [];

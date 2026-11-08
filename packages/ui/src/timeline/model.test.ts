@@ -21,7 +21,6 @@ function timeline(clips: readonly ClipState[], extra: Partial<TimelineState> = {
       c1: { id: "c1", kind: "caption", order: 3 },
     },
     clips: Object.fromEntries(clips.map((item) => [item.id, item])),
-    transitions: {},
     markers: {},
     overrides: {},
     ...extra,

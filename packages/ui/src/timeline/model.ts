@@ -1,6 +1,7 @@
 import {
   clipEnd,
   clipStart,
+  joinedEdges,
   orderedTracks,
   timelineLength,
   trackKindFor,
@@ -8,7 +9,16 @@ import {
   type TimelineState,
   type TrackState,
 } from "@animaquill/core";
-import { compare, parseTime, toSeconds, type Rational } from "@animaquill/schema";
+import {
+  compare,
+  findTransition,
+  isSupported,
+  mediaOfTrack,
+  parseTime,
+  toSeconds,
+  type Rational,
+  type Transition,
+} from "@animaquill/schema";
 import { frameRate, type FrameRate } from "./frames.ts";
 
 const ROW_HEIGHTS: Readonly<Record<TrackState["kind"], number>> = {
@@ -17,28 +27,49 @@ const ROW_HEIGHTS: Readonly<Record<TrackState["kind"], number>> = {
   audio: 44,
 };
 
-/**
- * Whether clips on a track can fade in and out. The picture does that with `fadeIn` and `fadeOut`,
- * and what the sound plays has no fades yet, so sound tracks leave them out.
- */
-export const canFade = (track: TrackState): boolean => track.kind === "video";
+/** The transitions at the start and the end of a clip, by the field that holds each. */
+export type Edge = "enter" | "exit";
 
-/** A length of a fade in seconds. What is no length, or not readable, is no fade. */
-function fadeSeconds(time: string | undefined): number {
-  if (time === undefined) return 0;
+export const EDGES: readonly Edge[] = ["enter", "exit"];
+
+/**
+ * Whether people can put transitions on the clips of a track. Only the picture does them so far:
+ * sound and captions get theirs later. What a file gave them still shows, and can be taken away.
+ */
+export const canHaveTransitions = (track: TrackState): boolean => track.kind === "video";
+
+/** How long a transition is in seconds, as it shows: never longer than its clip. */
+function secondsOfEdge(transition: Transition | undefined, clip: ClipState): number {
+  if (transition === undefined) return 0;
   try {
-    const seconds = toSeconds(parseTime(time));
+    const seconds = Math.min(
+      toSeconds(parseTime(transition.duration)),
+      toSeconds(parseTime(clip.duration)),
+    );
     return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
   } catch {
     return 0;
   }
 }
 
-/** How long a clip fades in and out, in seconds, for drawing and finding the handles. */
-export const fadesOf = (clip: ClipState): { readonly in: number; readonly out: number } => ({
-  in: fadeSeconds(clip.fadeIn),
-  out: fadeSeconds(clip.fadeOut),
+/** How long the transitions at the edges of a clip are, in seconds, for drawing and finding them. */
+export const edgesOf = (clip: ClipState): Readonly<Record<Edge, number>> => ({
+  enter: secondsOfEdge(clip.enter, clip),
+  exit: secondsOfEdge(clip.exit, clip),
 });
+
+/**
+ * Whether the transition at an edge of a clip does what it says. One that this editor cannot do yet,
+ * or that a join wins over, stays as it is and shows that it does not.
+ */
+export function edgeWorks(model: TimelineModel, box: ClipBox, edge: Edge): boolean {
+  const transition = box.clip[edge];
+  const track = model.rowOfClip.get(box.id)?.track;
+  if (!transition || !track || track.kind === "caption") return false;
+  if (model.joined.has(`${box.id} ${edge}`)) return false;
+  const media = mediaOfTrack(track.kind);
+  return isSupported(findTransition(transition, media, edge), media, edge);
+}
 
 /** How much room tracks need under their clips. */
 export type RoomBelow = ReadonlyMap<string, number>;
@@ -97,6 +128,8 @@ export interface TimelineModel {
   readonly rowOfClip: ReadonlyMap<string, Row>;
   /** Clips that belong together, like the picture and the sound of a video. */
   readonly links: ReadonlyMap<string, readonly string[]>;
+  /** The edges of clips that a join wins over, as `<clip> enter` and `<clip> exit`. */
+  readonly joined: ReadonlySet<string>;
 }
 
 const secondsOf = (time: string) =>
@@ -202,6 +235,7 @@ export function buildModel(
     boxes: all,
     rowOfClip,
     links,
+    joined: joinedEdges(state),
   };
 }
 

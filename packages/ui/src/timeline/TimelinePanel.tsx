@@ -28,6 +28,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from "react";
+import { mediaOfTrack } from "@animaquill/schema";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
@@ -44,6 +45,7 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
 import styles from "./TimelinePanel.module.css";
@@ -619,6 +621,8 @@ function Surface({
           (clip) => media.peaksOf(clip),
           (clip) => media.stripOfClip(clip),
           (clip) => sounds.stateOf(clip)?.state === "failed",
+          (transition, edge, row) =>
+            transitionName(t, transition, edge, mediaOfTrack(row.track.kind)),
           (context, theme, sharp) => {
             painter.paint(context, theme, sharp);
             paintMarquee(context, lanes, theme);
@@ -695,7 +699,24 @@ function Surface({
     const hit = editor.hitAt(pointer);
     const x = pointer.x + box.left;
     const y = pointer.y + box.top;
-    if (hit.kind === "clip" && !hit.row.track.locked) {
+    if (hit.kind === "clip" && hit.transition && !hit.row.track.locked) {
+      const { transition } = hit;
+      editor.selectTransition(hit.box.id, transition);
+      showMenu({
+        x,
+        y,
+        label: t("timeline.clips"),
+        groups: [
+          [
+            {
+              id: "deleteTransition",
+              label: t("transition.delete"),
+              run: () => editor.setTransition(hit.box.id, transition, null),
+            },
+          ],
+        ],
+      });
+    } else if (hit.kind === "clip" && !hit.row.track.locked) {
       if (!editor.getSnapshot().selection.has(hit.box.id)) editor.selectOnly(hit.box.id);
       const item = (id: TimelineAction, run: () => void, disabled = false) => ({
         id,

@@ -1,7 +1,20 @@
 import type { Project, Problem } from "./project.ts";
 import { cannotHaveKeys } from "./properties.ts";
-import { add, compare, parseTime } from "./time.ts";
-import type { ClipSource, Timeline, Track } from "./timeline.ts";
+import { add, compare, parseTime, type Rational } from "./time.ts";
+import type { Clip, ClipSource, Join, Timeline, Track } from "./timeline.ts";
+import {
+  TRANSITION_USE_NAMES,
+  describeMissing,
+  describeUnsupported,
+  edgeLength,
+  findTransition,
+  isSupported,
+  mediaOfTrack,
+  placeJoins,
+  type TransitionMedia,
+  type TransitionRef,
+  type TransitionUse,
+} from "./transitions.ts";
 import type { MediaRef, Properties, PropertyValue } from "./values.ts";
 import { CURRENT_SCENE_RUNTIME } from "./version.ts";
 
@@ -60,6 +73,113 @@ function checkCycles(project: Project, problems: Problem[]): void {
     state.set(id, "done");
   };
   for (const id of project.timelines.keys()) if (!state.has(id)) visit(id);
+}
+
+/** What a transition that this editor cannot do comes to, there. */
+function insteadOf(media: TransitionMedia, use: TransitionUse): string {
+  if (media === "sound") return "，暂时没有效果";
+  return use === "join" ? "，剪切点照常硬切" : "，预览按淡入淡出显示，导出会停在这里";
+}
+
+/**
+ * What a transition is, as far as this editor can tell, and whether it does it. Captions are not
+ * drawn yet, so what this editor cannot do with theirs is nothing to say yet either.
+ */
+function checkImplementation(
+  ref: TransitionRef,
+  track: Track,
+  use: TransitionUse,
+  report: (code: string, message: string) => void,
+  libraries: ReadonlySet<string>,
+): void {
+  const media = mediaOfTrack(track.kind);
+  const found = findTransition(ref, media, use);
+  const instead = insteadOf(media, use);
+  if (found.kind === "missing") {
+    const { why } = found;
+    if (why.reason === "library" && !libraries.has(why.library)) {
+      report("library-missing", `没有关联这个库：${why.library}`);
+    } else {
+      report("transition-missing", `${describeMissing(why)}${instead}`);
+    }
+  } else if (track.kind !== "caption" && !isSupported(found, media, use)) {
+    report("transition-unsupported", `${describeUnsupported(found.type, media, use)}${instead}`);
+  }
+}
+
+const JOIN_PROBLEMS = {
+  missing: (clip: string) => `衔接转场的片段不在这条轨道上：${clip}`,
+  same: (clip: string) => `衔接转场的两边是同一个片段：${clip}`,
+  apart: (from: string, to: string) => `衔接转场的两个片段不相邻：${from} 的结尾不是 ${to} 的开头`,
+} as const;
+
+/**
+ * What the transitions of a track come to, where that is not what they say. They stay as they are:
+ * people or AI fix them or take them away, the editor does not.
+ */
+function checkTransitions(
+  track: Track,
+  trackPath: string,
+  file: string,
+  problems: Problem[],
+  libraries: ReadonlySet<string>,
+): void {
+  const clips = new Map<string, Clip>(track.clips.map((clip) => [clip.id, clip]));
+  const joins: readonly Join[] = track.kind === "caption" ? [] : (track.joins ?? []);
+  const joinPaths = new Map(joins.map((join, index) => [join.id, `${trackPath}.joins.${index}`]));
+  const places = placeJoins(new Map(joins.map((join) => [join.id, join])), (id) => clips.get(id));
+  /** Which edges of clips have a join that does what it says, by clip. */
+  const joined = { enter: new Map<string, string>(), exit: new Map<string, string>() };
+  for (const join of joins) {
+    const path = joinPaths.get(join.id) as string;
+    const report = (code: string, message: string) =>
+      problems.push(warning(code, file, path, message));
+    const place = places.get(join.id);
+    if (place?.kind === "cut") {
+      joined.exit.set(join.from, join.id);
+      joined.enter.set(join.to, join.id);
+    } else if (place?.kind === "taken") {
+      report("join-duplicate", `这个剪切点已经有衔接转场 ${place.by}，这个不生效`);
+    } else if (place?.kind === "missing") {
+      report("join-detached", JOIN_PROBLEMS.missing(place.clip));
+    } else if (place?.kind === "same") {
+      report("join-detached", JOIN_PROBLEMS.same(join.from));
+    } else {
+      report("join-detached", JOIN_PROBLEMS.apart(join.from, join.to));
+    }
+    checkImplementation(join, track, "join", report, libraries);
+  }
+
+  track.clips.forEach((clip, index) => {
+    const path = `${trackPath}.clips.${index}`;
+    const length = parseTime(clip.duration);
+    const lengths: Rational[] = [];
+    for (const use of ["enter", "exit"] as const) {
+      const transition = clip[use];
+      if (!transition) continue;
+      const where = `${path}.${use}`;
+      const report = (code: string, message: string) =>
+        problems.push(warning(code, file, where, message));
+      const join = joined[use].get(clip.id);
+      if (join !== undefined) {
+        const end = use === "enter" ? "开头" : "结尾";
+        const name = TRANSITION_USE_NAMES[use];
+        report("transition-shadowed", `片段的${end}有衔接转场 ${join}，${name}不生效`);
+        continue;
+      }
+      checkImplementation(transition, track, use, report, libraries);
+      const duration = parseTime(transition.duration);
+      if (compare(duration, length) > 0) {
+        report("transition-too-long", `${TRANSITION_USE_NAMES[use]}比片段长，只用到片段的长度`);
+      }
+      lengths.push(edgeLength(duration, length));
+    }
+    const [first, second] = lengths;
+    if (first && second && compare(add(first, second), length) > 0) {
+      const message = "入转场和出转场加起来比片段长，重叠的地方先算入转场，再算出转场";
+      problems.push(warning("transition-overlap", file, path, message));
+    }
+  });
 }
 
 /** Finds what points at nothing. These are warnings: a project still opens with something missing. */
@@ -212,7 +332,6 @@ export function checkProject(project: Project): Problem[] {
     document.tracks.forEach((track, trackIndex) => {
       const trackPath = `tracks.${trackIndex}`;
       checkOverlaps(track, trackIndex, file);
-      const onTrack = new Set(track.clips.map((clip) => clip.id));
       track.clips.forEach((clip, clipIndex) => {
         clips.add(clip.id);
         const path = `${trackPath}.clips.${clipIndex}`;
@@ -250,21 +369,7 @@ export function checkProject(project: Project): Problem[] {
           }
         }
       });
-      if (track.kind === "caption") return;
-      track.transitions?.forEach((transition, index) => {
-        for (const side of [transition.from, transition.to]) {
-          if (side && !onTrack.has(side)) {
-            problems.push(
-              warning(
-                "transition-clip-missing",
-                file,
-                `${trackPath}.transitions.${index}`,
-                `转场指向的片段不在这条轨道上：${side}`,
-              ),
-            );
-          }
-        }
-      });
+      checkTransitions(track, trackPath, file, problems, libraries);
       if (track.kind !== "audio") return;
       const targets = [track.output, ...(track.sends ?? []).map((send) => send.bus)];
       for (const target of targets) {

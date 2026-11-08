@@ -18,6 +18,7 @@ import {
   flatParts,
   isContainer,
   isFlat,
+  isRetired,
   isStanding,
   writePathOf,
   type Path,
@@ -299,7 +300,7 @@ function toState(path: Path, value: unknown): unknown {
   const state: Tree = {};
   map.forEach((item, key) => {
     const child = [...path, key];
-    if (key !== UNSAFE_KEY && !isFlat(child) && !flatParts(path, key)) {
+    if (key !== UNSAFE_KEY && !isFlat(child) && !flatParts(path, key) && !isRetired(child)) {
       state[key] = toState(child, item);
     }
   });
@@ -1056,7 +1057,7 @@ export class ProjectStore {
       const target = event.target as Y.Map<unknown>;
       event.changes.keys.forEach((change, key) => {
         const { path, value } = readChange(this.#root, target, base, key);
-        if (path.includes(UNSAFE_KEY)) return;
+        if (path.includes(UNSAFE_KEY) || isRetired(path)) return;
         const removed = value === undefined;
         if (removed) mutator.delete(path);
         else mutator.set(path, value);

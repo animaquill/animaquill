@@ -13,10 +13,11 @@ import {
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
 import {
   clipAt,
-  fadesOf,
+  edgesOf,
   forEachBetween,
   isInsideClip,
   type ClipBox,
+  type Edge,
   type Row,
   type TimelineModel,
 } from "./model.ts";
@@ -64,8 +65,8 @@ export interface Preview {
   readonly end?: number;
   /** Clips stay where they are, and what `clips` shows are copies. */
   readonly copying?: boolean;
-  /** How long a clip fades in and out while a handle of it is dragged, in seconds. */
-  readonly fade?: { readonly clip: string; readonly in: number; readonly out: number };
+  /** How long a transition at an edge of a clip is while its handle is dragged, in seconds. */
+  readonly transition?: { readonly clip: string; readonly edge: Edge; readonly seconds: number };
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */
@@ -98,6 +99,8 @@ export interface GestureHost {
   sourceLength(clip: ClipState): Rational | undefined;
   setPreview(preview: Preview | undefined): void;
   select(clips: ReadonlySet<string>): void;
+  /** Selects the transition at an edge of a clip, instead of clips. */
+  selectTransition(clip: string, edge: Edge): void;
   seek(frame: number): void;
   run(calls: readonly CommandCall[]): boolean;
 }
@@ -583,72 +586,70 @@ export class TrimGesture implements Gesture {
   }
 }
 
-export type FadeSide = "in" | "out";
+const OTHER_EDGE: Readonly<Record<Edge, Edge>> = { enter: "exit", exit: "enter" };
 
-const FADE_FIELDS = { in: "fadeIn", out: "fadeOut" } as const;
-
-/** A fade as it is saved, exactly. What cannot be read counts as none, as it does for the picture. */
-function exactFade(time: string | undefined): Rational {
-  if (time === undefined) return ZERO;
+/** How long a transition is, exactly. What cannot be read counts as none, as it does in the picture. */
+function exactLength(clip: ClipState, edge: Edge): Rational {
+  const transition = clip[edge];
+  if (transition === undefined) return ZERO;
   try {
-    const length = parseTime(time);
+    const length = parseTime(transition.duration);
     return compare(length, ZERO) > 0 ? length : ZERO;
   } catch {
     return ZERO;
   }
 }
 
-/** How long a clip can fade on one side: all of it, apart from what the other side fades. */
-export function longestFade(clip: ClipState, side: FadeSide): Rational {
-  const other = exactFade(side === "in" ? clip.fadeOut : clip.fadeIn);
+/** How long the transition at an edge of a clip can be: all of it, apart from the other edge. */
+export function longestTransition(clip: ClipState, edge: Edge): Rational {
+  const other = exactLength(clip, OTHER_EDGE[edge]);
   const room = subtract(parseTime(clip.duration), other);
   return compare(room, ZERO) > 0 ? room : ZERO;
 }
 
 /**
- * What changes how long a clip fades on one side, or nothing when it stays as it is. A fade of
- * nothing is no fade, and it goes from the clip as well.
+ * What makes the transition at an edge of a clip this long, or nothing when it stays as it is. One
+ * that is not there yet is a fade. A transition of no time is none, and goes from the clip.
  */
-export function fadeCall(
+export function transitionCall(
   timeline: string,
   clip: ClipState,
-  side: FadeSide,
+  edge: Edge,
   length: Rational,
 ): CommandCall | undefined {
-  const field = FADE_FIELDS[side];
-  const longest = longestFade(clip, side);
+  const longest = longestTransition(clip, edge);
   const limited =
     compare(length, ZERO) < 0 ? ZERO : compare(length, longest) > 0 ? longest : length;
-  const current = clip[field];
+  const current = clip[edge];
+  const params = { timeline, clip: clip.id };
   if (compare(limited, ZERO) === 0) {
     if (current === undefined) return undefined;
-    return {
-      type: "clip.update",
-      params: { timeline, clip: clip.id, changes: {}, clear: [field] },
-    };
+    return { type: "clip.setTransition", params: { ...params, [edge]: null } };
   }
-  if (current !== undefined && compare(limited, exactFade(current)) === 0) return undefined;
-  const changes = { [field]: formatTime(limited) };
-  return { type: "clip.update", params: { timeline, clip: clip.id, changes } };
+  if (current !== undefined && compare(limited, exactLength(clip, edge)) === 0) return undefined;
+  const duration = formatTime(limited);
+  const transition = current ? { ...current, duration } : { type: "fade", duration };
+  return { type: "clip.setTransition", params: { ...params, [edge]: transition } };
 }
 
 /**
- * Drags the handle at a top corner of a clip, which says how long the clip fades in or out, as in
- * most video editors. It goes by frames, or to what it snaps to, and never past the other fade.
+ * Drags the handle at a top corner of a clip, where its transition at that edge ends, as with the
+ * fades of most video editors: without a transition there yet, it pulls a fade out of the corner. It
+ * goes by frames, or to what it snaps to, and never past the transition at the other edge.
  */
-export class FadeGesture implements Gesture {
+export class TransitionGesture implements Gesture {
   readonly #host: GestureHost;
   readonly #box: ClipBox;
-  readonly #side: FadeSide;
+  readonly #edge: Edge;
   readonly #press: Pointer;
   readonly #grabTime: number;
   readonly #points: SnapPoints;
   #length: Landing | undefined;
 
-  constructor(host: GestureHost, box: ClipBox, side: FadeSide, press: Pointer) {
+  constructor(host: GestureHost, box: ClipBox, edge: Edge, press: Pointer) {
     this.#host = host;
     this.#box = box;
-    this.#side = side;
+    this.#edge = edge;
     this.#press = press;
     this.#grabTime = host.timeAt(press.x);
     this.#points = snapPointsOf(host.model, host.frame, new Set([box.id]));
@@ -657,31 +658,29 @@ export class FadeGesture implements Gesture {
   move(pointer: Pointer): void {
     if (!this.#length && !hasMoved(this.#press, pointer)) return;
     const { clip, start, end } = this.#box;
-    const fades = fadesOf(clip);
-    const fadeIn = this.#side === "in";
-    const handle = fadeIn ? start + fades.in : end - fades.out;
+    const edges = edgesOf(clip);
+    const entering = this.#edge === "enter";
+    const handle = entering ? start + edges.enter : end - edges.exit;
     const wanted = handle + this.#host.timeAt(pointer.x) - this.#grabTime;
     const point = this.#points.nearest(wanted, this.#host.snapDistance(pointer));
     const length = point
       ? this.#snapped(point)
-      : this.#onFrames(fadeIn ? wanted - start : end - wanted);
+      : this.#onFrames(entering ? wanted - start : end - wanted);
     this.#length = this.#limited(length);
-    const shown = this.#length.seconds;
-    const fade = {
-      clip: this.#box.id,
-      in: fadeIn ? shown : fades.in,
-      out: fadeIn ? fades.out : shown,
-    };
+    const transition = { clip: this.#box.id, edge: this.#edge, seconds: this.#length.seconds };
     const line = this.#length.line === undefined ? {} : { snap: this.#length.line };
-    this.#host.setPreview({ fade, ...line });
+    this.#host.setPreview({ transition, ...line });
   }
 
   end(pointer: Pointer): void {
     this.move(pointer);
     const length = this.#length;
     if (length) {
-      const call = fadeCall(this.#host.model.id, this.#box.clip, this.#side, length.exact());
-      if (call) this.#host.run([call]);
+      const { model } = this.#host;
+      const call = transitionCall(model.id, this.#box.clip, this.#edge, length.exact());
+      if (call && this.#host.run([call]) && compare(length.exact(), ZERO) > 0) {
+        this.#host.selectTransition(this.#box.id, this.#edge);
+      }
     }
     this.#host.setPreview(undefined);
   }
@@ -703,7 +702,7 @@ export class FadeGesture implements Gesture {
 
   #snapped(point: SnapPoint): Landing {
     const { clip, start, end } = this.#box;
-    return this.#side === "in"
+    return this.#edge === "enter"
       ? {
           seconds: point.seconds - start,
           exact: () => subtract(point.exact(), clipStart(clip)),
@@ -717,7 +716,7 @@ export class FadeGesture implements Gesture {
   }
 
   #limited(length: Landing): Landing {
-    const longest = longestFade(this.#box.clip, this.#side);
+    const longest = longestTransition(this.#box.clip, this.#edge);
     if (length.seconds <= 0) return { seconds: 0, exact: () => ZERO };
     if (length.seconds >= toSeconds(longest))
       return { seconds: toSeconds(longest), exact: () => longest };

@@ -27,10 +27,13 @@ const exportStatus = (page: Page) =>
 
 interface Clip {
   readonly id: string;
+  readonly name?: string;
   readonly start: string;
   readonly duration: string;
   readonly source: Record<string, unknown>;
   readonly properties?: Record<string, unknown>;
+  readonly enter?: Record<string, unknown>;
+  readonly exit?: Record<string, unknown>;
 }
 
 /** A red square that goes from left to right, so that where it is says which frame it is. */
@@ -518,6 +521,74 @@ test.describe("an export under way", () => {
     await page.getByRole("button", { name: /^移除：/u }).click();
     await expect.poll(async () => (await keptExports(page)).exports).toBe(0);
     await expect.poll(() => savedFile(page)).toBeUndefined();
+  });
+});
+
+/** The color of a pixel of a still, as the browser reads the file. */
+const pixelOfStill = (page: Page, still: Buffer, x: number, y: number) =>
+  page.evaluate(
+    async ({ base64, x: left, y: top }) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const image = await createImageBitmap(new Blob([bytes]));
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext("2d");
+      context?.drawImage(image, 0, 0);
+      return [...(context?.getImageData(left, top, 1, 1).data ?? [])].slice(0, 3);
+    },
+    { base64: still.toString("base64"), x, y },
+  );
+
+test.describe("a video with transitions", () => {
+  /** Red that fades in over a second, and out over half of one, slowly at first. */
+  const fading: Clip = {
+    id: "fading",
+    start: "0",
+    duration: "2",
+    source: { kind: "color", color: "#ff0000" },
+    enter: { type: "fade", duration: "1" },
+    exit: { type: "fade", duration: "0.5", curve: [0.42, 0, 1, 1] },
+  };
+
+  test("fades in and out frame by frame as a still of the same moment does", async ({ page }) => {
+    await open(page, projectFolder(2, [fading]));
+    await startExport(page);
+    await exported(page);
+    const file = (await savedFile(page)) as Buffer;
+    for (const [index, time, red] of [
+      [0, "0:00/00", 0],
+      [15, "0:00/15", 128],
+      [29, "0:00/29", 247],
+      [45, "0:01/15", 255],
+      // A third of the way into an ease in, which has done about a quarter of its work by then.
+      [52, "0:01/22", 184],
+    ] as const) {
+      const still = await stillAt(page, time);
+      expect(Math.abs(((await pixelOfStill(page, still, 320, 180))[0] ?? 0) - red)).toBeLessThan(3);
+      const { psnr } = await compare(page, file, index, still);
+      console.log(`frame ${index}: ${psnr.toFixed(1)} dB`);
+      expect(psnr).toBeGreaterThan(35);
+    }
+  });
+
+  test("stops where a transition is that this editor cannot do, and goes there", async ({
+    page,
+  }) => {
+    const wiping = {
+      ...fading,
+      id: "wiping",
+      name: "擦入的红色",
+      enter: { type: "wipe", variant: "left", duration: "1" },
+    };
+    await open(page, projectFolder(2, [wiping]));
+    // Opening it says so first, with what will happen.
+    await expect(dialog(page)).toContainText("这一版的编辑器还不能显示转场 wipe");
+    await dialog(page).getByRole("button", { name: "关闭" }).click();
+    await startExport(page);
+    await expect(dialog(page)).toContainText("视频没有导出", { timeout: 60_000 });
+    await expect(dialog(page)).toContainText("第 1 帧（0:00/00）");
+    await expect(dialog(page)).toContainText("“擦入的红色”的转场这一版的编辑器还不能显示");
+    await dialog(page).getByRole("button", { name: "关闭" }).click();
+    await expect(content(page, "timeline").getByRole("option", { selected: true })).toHaveCount(1);
   });
 });
 

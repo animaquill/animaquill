@@ -35,12 +35,14 @@ export {
   type ValueType,
 } from "./properties.ts";
 export * from "./time.ts";
+export * from "./transitions.ts";
 export {
   BeatGrid,
   Bus,
   Clip,
   ClipSource,
   Effect,
+  Join,
   Marker,
   Mix,
   Overrides,

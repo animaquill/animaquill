@@ -12,10 +12,17 @@ import {
   Rate,
   Time,
   Track,
+  Transition,
+  ZERO,
   add,
   canHold,
   cannotHaveKeys,
   compare,
+  describeMissing,
+  describeUnsupported,
+  findTransition,
+  isSupported,
+  mediaOfTrack,
   newId,
   parseTime,
   subtract,
@@ -26,12 +33,15 @@ import {
   clearSpans,
   clipPath,
   extendToFit,
+  fitTransitions,
+  joinPath,
   removeClips,
   spanOf,
   splitClip,
   timelineOf,
   timelinePath,
   trimClip,
+  type Edge,
   type Span,
 } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
@@ -43,6 +53,7 @@ import {
   orderedSections,
   orderedTracks,
   sourceLength,
+  trackKindFor,
   type ClipState,
   type TimelineState,
   type TrackState,
@@ -138,6 +149,38 @@ function checkCode(state: Draft["state"], { source }: { readonly source: ClipSou
   if (source.kind === "sound" && source.sound !== undefined) {
     const sound = source.sound as string;
     if (!entryOf(state.sounds, sound)) fail("not-found", `没有这个声音：${sound}`);
+  }
+}
+
+const EDGES: readonly Edge[] = ["enter", "exit"];
+
+/**
+ * Transitions at the start and the end of a clip have to be ones that this editor does, there, so
+ * that nothing does something else than it says. Together they fit in the clip: a hand-written file
+ * can do otherwise, and that has rules of its own (see the project format), but nothing here does.
+ */
+function checkTransitions(
+  kind: Track["kind"],
+  clip: Pick<ClipState, "duration" | Edge>,
+  edges: readonly Edge[] = EDGES,
+): void {
+  const media = mediaOfTrack(kind);
+  let total = ZERO;
+  for (const edge of EDGES) {
+    const transition = clip[edge];
+    if (transition === undefined) continue;
+    total = add(total, parseTime(transition.duration));
+    if (!edges.includes(edge)) continue;
+    const found = findTransition(transition, media, edge);
+    if (found.kind === "missing") return fail("transition-missing", describeMissing(found.why));
+    // Captions do not get drawn yet, and neither would what they come in and go out with.
+    if (kind === "caption" || !isSupported(found, media, edge)) {
+      const words = kind === "caption" ? "这一版的编辑器还不能显示字幕的转场" : undefined;
+      fail("transition-unsupported", words ?? describeUnsupported(found.type, media, edge));
+    }
+  }
+  if (compare(total, parseTime(clip.duration)) > 0) {
+    fail("transition-too-long", "入转场和出转场加起来比片段长");
   }
 }
 
@@ -338,17 +381,7 @@ function moveProperties(
 
 const ClipFields = Clip.omit({ id: true });
 const ClipInput = ClipFields.extend({ id: Id.optional() });
-const ClearableField = z.enum([
-  "name",
-  "offset",
-  "loop",
-  "fadeIn",
-  "fadeOut",
-  "hidden",
-  "draft",
-  "link",
-  "sectionFit",
-]);
+const ClearableField = z.enum(["name", "offset", "loop", "hidden", "draft", "link", "sectionFit"]);
 
 const TrackChanges = z
   .strictObject({
@@ -524,10 +557,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
     for (const clip of Object.values(target.clips)) {
       if (clip.track === track) draft.delete(clipPath(timeline, clip.id));
     }
-    for (const transition of Object.values(target.transitions)) {
-      if (transition.track === track) {
-        draft.delete([...timelinePath(timeline), "transitions", transition.id]);
-      }
+    for (const [id, join] of Object.entries(target.joins ?? {})) {
+      if (join.track === track) draft.delete(joinPath(timeline, id));
     }
     draft.delete(trackPath(timeline, track));
   }),
@@ -547,8 +578,10 @@ export const COMMANDS: readonly CommandDefinition[] = [
     }),
     (draft, { timeline, track, clip, overlap, movedFrom }) => {
       const target = timelineOf(draft, timeline);
-      checkFits(editableTrack(target, track), clip);
+      const home = editableTrack(target, track);
+      checkFits(home, clip);
       checkCode(draft.state, clip);
+      checkTransitions(home.kind, clip);
       const id = clip.id ?? newId("clip");
       if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
@@ -577,12 +610,18 @@ export const COMMANDS: readonly CommandDefinition[] = [
     },
   ),
 
+  /** Transitions at the edges of a clip have a command of their own, `clip.setTransition`. */
   define(
     "clip.update",
     z.strictObject({
       timeline: Id,
       clip: Id,
-      changes: ClipFields.omit({ properties: true, effects: true }).partial(),
+      changes: ClipFields.omit({
+        properties: true,
+        effects: true,
+        enter: true,
+        exit: true,
+      }).partial(),
       clear: z.array(ClearableField).optional(),
     }),
     (draft, { timeline, clip, changes, clear }) => {
@@ -599,7 +638,52 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const moves = changes.start !== undefined || changes.duration !== undefined;
       if (moves) assertFree(target, current.track, [spanOf(updated)], new Set([clip]));
       draft.replace(clipPath(timeline, clip), next);
+      if (changes.duration !== undefined) {
+        const path = clipPath(timeline, clip);
+        fitTransitions(draft, path, updated, parseTime(updated.duration), "end");
+      }
       if (moves) extendToFit(draft, timeline, clipEnd(updated));
+    },
+  ),
+
+  /**
+   * Puts a transition at the start or the end of a clip, or takes it away with null, such as a fade
+   * in. What is left out stays as it is. Transitions are about the clip, not properties that change
+   * over time, so this is never something that people try first.
+   */
+  define(
+    "clip.setTransition",
+    z
+      .strictObject({
+        timeline: Id,
+        clip: Id,
+        enter: Transition.nullable().optional(),
+        exit: Transition.nullable().optional(),
+      })
+      .refine(({ enter, exit }) => enter !== undefined || exit !== undefined, "要写 enter 或 exit"),
+    (draft, params) => {
+      const { timeline, clip } = params;
+      const target = timelineOf(draft, timeline);
+      const current = editableClip(target, clip);
+      const kind = entryOf(target.tracks, current.track)?.kind ?? trackKindFor(current);
+      const next: Record<string, unknown> = { ...current };
+      const setting: Edge[] = [];
+      for (const edge of EDGES) {
+        const wanted = params[edge];
+        if (wanted === null) delete next[edge];
+        else if (wanted !== undefined) {
+          next[edge] = wanted;
+          setting.push(edge);
+        }
+      }
+      // Taking one away always works: that is the way out of what a file did.
+      if (setting.length > 0) checkTransitions(kind, next as ClipState, setting);
+      for (const edge of EDGES) {
+        const path = [...clipPath(timeline, clip), edge];
+        if (deepEqual(current[edge], next[edge])) continue;
+        if (next[edge] === undefined) draft.delete(path);
+        else draft.set(path, next[edge]);
+      }
     },
   ),
 

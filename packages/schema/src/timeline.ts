@@ -88,6 +88,45 @@ const PluginSource = z
 
 export const ClipSource = z.union([KnownSource, PluginSource]);
 
+/** x within 0 and 1, y anything: past 0 and 1 is a transition that overshoots. */
+const share = z.number().min(0).max(1);
+
+/** How a transition gets along over its time, as in CSS `cubic-bezier()`. */
+const SpeedCurve = z.tuple([share, z.number(), share, z.number()]);
+
+/** What a transition is, how long it takes and how it gets along. See transitions.ts. */
+const transitionFields = {
+  /** One that comes with the editor, or with a plugin, which has a dot. */
+  type: ExtensionName.optional(),
+  /** One of the project, in transitions/<id>/. */
+  transition: Id.optional(),
+  /** One of a library. */
+  library: Id.optional(),
+  resource: Id.optional(),
+  /** Which one of its kinds, for one that has kinds. */
+  variant: Id.optional(),
+  duration: Duration,
+  /** Without it the speed is even. */
+  curve: SpeedCurve.optional(),
+};
+
+const hasOneReference = (transition: {
+  readonly type?: string | undefined;
+  readonly transition?: string | undefined;
+  readonly library?: string | undefined;
+  readonly resource?: string | undefined;
+}) => {
+  const { type, transition: own, library, resource } = transition;
+  const fromLibrary = library !== undefined && resource !== undefined;
+  const named = [type !== undefined, own !== undefined, fromLibrary].filter(Boolean).length;
+  return named === 1 && (library === undefined) === (resource === undefined);
+};
+
+const ONE_REFERENCE = "转场要写 type、transition，或者同时写 library 和 resource";
+
+/** At the start or the end of a clip, from nothing to the clip or from the clip to nothing. */
+export const Transition = z.strictObject(transitionFields).refine(hasOneReference, ONE_REFERENCE);
+
 /** What a clip does when a section gets longer, for example because English takes more time. */
 const SectionFit = z.enum(["stretch", "hold", "span"]);
 
@@ -104,8 +143,10 @@ export const Clip = z.strictObject({
    */
   offset: Time.optional(),
   loop: z.boolean().optional(),
-  fadeIn: Time.optional(),
-  fadeOut: Time.optional(),
+  /** From nothing to the clip, from its start on. */
+  enter: Transition.optional(),
+  /** From the clip to nothing, up to its end. */
+  exit: Transition.optional(),
   /** Left out of this version, or of the master when a version shows it. */
   hidden: z.boolean().optional(),
   /** A sketch to look at an idea. Never part of an export. */
@@ -117,21 +158,37 @@ export const Clip = z.strictObject({
   effects: z.array(Effect).optional(),
 });
 
-export const Transition = z
+/**
+ * What the format had once and has no more. A file that still has it opens without it: the format
+ * was not out yet, so this is no migration and no new version. See the project format.
+ */
+function without(fields: readonly string[]) {
+  return (value: unknown): unknown => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+    if (!fields.some((field) => Object.hasOwn(value, field))) return value;
+    const rest: Record<string, unknown> = { ...value };
+    for (const field of fields) delete rest[field];
+    return rest;
+  };
+}
+
+const Clips = z
+  .array(z.preprocess(without(["fadeIn", "fadeOut"]), Clip))
+  .overwrite((clips) => sortByTime(clips, (clip) => clip.start));
+
+/** On the cut between two clips that follow each other on its track, from the first to the second. */
+export const Join = z
   .strictObject({
     id: Id,
-    type: ExtensionName,
-    /** The clip that goes. Left out when a clip fades in from nothing. */
-    from: Id.optional(),
-    /** The clip that comes. Left out when a clip fades out to nothing. */
-    to: Id.optional(),
-    duration: Duration,
-    properties: Properties.optional(),
+    from: Id,
+    to: Id,
+    ...transitionFields,
+    /** Where it is around the cut. Without it, half before and half after. */
+    align: z.enum(["center", "before", "after"]).optional(),
   })
-  .refine((transition) => transition.from ?? transition.to, "转场至少要有 from 或 to");
+  .refine(hasOneReference, ONE_REFERENCE);
 
-const Clips = z.array(Clip).overwrite((clips) => sortByTime(clips, (clip) => clip.start));
-const Transitions = z.array(Transition).overwrite(sortById);
+const Joins = z.array(Join).overwrite(sortById);
 
 const trackBase = {
   id: Id,
@@ -147,7 +204,7 @@ const VideoTrack = z.strictObject({
   kind: z.literal("video"),
   hidden: z.boolean().optional(),
   clips: Clips,
-  transitions: Transitions.optional(),
+  joins: Joins.optional(),
 });
 
 const AudioTrack = z.strictObject({
@@ -158,7 +215,7 @@ const AudioTrack = z.strictObject({
   muted: z.boolean().optional(),
   solo: z.boolean().optional(),
   clips: Clips,
-  transitions: Transitions.optional(),
+  joins: Joins.optional(),
   properties: KnownProperties.optional(),
   effects: z.array(Effect).optional(),
   sends: z.array(Send).optional(),
@@ -242,7 +299,7 @@ export const Timeline = z
       .optional(),
     beatGrid: BeatGrid.optional(),
     /** The first track is at the back of the picture. */
-    tracks: z.array(Track),
+    tracks: z.array(z.preprocess(without(["transitions"]), Track)),
     mix: Mix.optional(),
   })
   .superRefine((timeline, context) => {
@@ -255,12 +312,12 @@ export const Timeline = z
     };
     timeline.sections.forEach((section, index) => claim(section.id, ["sections", index, "id"]));
     checkUnique(timeline.markers ?? [], context, (index) => ["markers", index, "id"]);
-    const transitions = new Set<string>();
+    const joins = new Set<string>();
     timeline.tracks.forEach((track, trackIndex) => {
       claim(track.id, ["tracks", trackIndex, "id"]);
       if (track.kind !== "caption") {
-        const path = (index: number) => ["tracks", trackIndex, "transitions", index, "id"];
-        checkUnique(track.transitions ?? [], context, path, transitions);
+        const path = (index: number) => ["tracks", trackIndex, "joins", index, "id"];
+        checkUnique(track.joins ?? [], context, path, joins);
       }
       track.clips.forEach((clip, clipIndex) => {
         const path = ["tracks", trackIndex, "clips", clipIndex];
@@ -316,6 +373,8 @@ export const Overrides = z
 
 export type ClipSource = z.output<typeof ClipSource>;
 export type Clip = z.output<typeof Clip>;
+export type Transition = z.output<typeof Transition>;
+export type Join = z.output<typeof Join>;
 export type Track = z.output<typeof Track>;
 export type Timeline = z.output<typeof Timeline>;
 export type Overrides = z.output<typeof Overrides>;

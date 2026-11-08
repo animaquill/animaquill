@@ -10,7 +10,7 @@ import {
   fitIn,
   layerMatrix,
   multiply,
-  opacityAt,
+  shownAt,
   viewMatrix,
   type Matrix,
 } from "@animaquill/core/view";
@@ -355,7 +355,8 @@ function paint(
   stage: RenderPlan["stage"],
 ): void {
   const { source } = layer;
-  const opacity = opacityAt(layer, seconds);
+  // The enter and exit of a layer are fades so far, which draw it with less opacity.
+  const opacity = shownAt(layer, seconds);
   if (opacity <= 0 || (source.kind !== "color" && !picture)) return;
   // A scene is laid out for its box, so its picture says nothing about what that box is.
   const box = boxOf(layer, seconds, source.kind === "scene" ? undefined : picture, stage);

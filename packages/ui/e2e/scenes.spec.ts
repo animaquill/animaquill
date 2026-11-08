@@ -188,7 +188,6 @@ test.describe("a scene from the start", () => {
           end: 10,
           offset: 0,
           fit: "fixed",
-          fades: { in: 0, out: 0 },
           channels: {},
           source: {
             kind: "scene",

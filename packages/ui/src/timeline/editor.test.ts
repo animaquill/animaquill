@@ -1103,8 +1103,8 @@ describe("moving", () => {
   });
 });
 
-describe("fades", () => {
-  /** Near the top of a track, where the handles of fades are. */
+describe("transitions at the edges of clips", () => {
+  /** Near the top of a track, where the blocks of transitions and their handles are. */
   const near = (editor: TimelineEditor, pointer: Pointer, track: string, by = 0): Pointer => {
     const row = editor.model?.rows.find(({ id }) => id === track);
     if (!row) throw new Error("no row");
@@ -1113,82 +1113,148 @@ describe("fades", () => {
   const seconds = (time: string | undefined) =>
     time === undefined ? 0 : toSeconds(parseTime(time));
   const exactly = (length: number) => parseTime(String(length));
+  const fade = (duration: string) => ({ type: "fade", duration });
+  const clicker = (editor: TimelineEditor) => (pointer: Pointer) => {
+    editor.press(pointer);
+    editor.release(pointer);
+  };
 
-  it("have handles at the top corners where each fade ends, and the edges keep the rest", async () => {
+  it("have handles at the top corners where each ends, and the edges keep the rest", async () => {
     const { editor, addClip, at, video } = await setup();
-    addClip("a", 2, 4, video, { fadeOut: "1" });
-    const fadeAt = (pointer: Pointer) => {
+    addClip("a", 2, 4, video, { exit: fade("1") });
+    const handleAt = (pointer: Pointer) => {
       const found = editor.hitAt(pointer);
-      return found.kind === "clip" ? found.fade : "none";
+      return found.kind === "clip" ? found.handle : "none";
     };
-    expect(fadeAt(near(editor, at(2), video, 2))).toBe("in");
-    expect(fadeAt(near(editor, at(5), video))).toBe("out");
-    expect(fadeAt(near(editor, at(6), video, -2))).toBeUndefined();
-    expect(fadeAt(at(2))).toBeUndefined();
+    expect(handleAt(near(editor, at(2), video, 2))).toBe("enter");
+    expect(handleAt(near(editor, at(5), video))).toBe("exit");
+    expect(handleAt(near(editor, at(6), video, -2))).toBeUndefined();
+    expect(handleAt(at(2))).toBeUndefined();
     expect(editor.hover(near(editor, at(2), video, 2))).toBe("col-resize");
     const lower = editor.hitAt({ ...at(2), x: at(2).x + 2 });
     expect(lower.kind === "clip" && lower.edge).toBe("start");
+    const block = editor.hitAt(near(editor, at(5.5), video));
+    expect(block.kind === "clip" && block.transition).toBe("exit");
   });
 
-  it("go as far as a handle is dragged, by frames, in one step of undo", async () => {
+  it("pull a fade out of a corner, by frames, in one step of undo, and select it", async () => {
     const { editor, store, addClip, at, clip, drag, selection, video } = await setup();
     addClip("a", 2, 4);
     const from = near(editor, at(2), video, 1);
     editor.press(from);
     editor.drag(near(editor, at(2.5), video));
     editor.drag(near(editor, at(3), video));
-    expect(editor.preview?.fade).toEqual({ clip: "a", in: 1, out: 0 });
-    expect(clip("a").fadeIn).toBeUndefined();
+    expect(editor.preview?.transition).toEqual({ clip: "a", edge: "enter", seconds: 1 });
+    expect(clip("a").enter).toBeUndefined();
     editor.release(near(editor, at(3), video));
     expect(editor.preview).toBeUndefined();
-    expect(seconds(clip("a").fadeIn)).toBe(1);
-    expect(selection()).toEqual(["a"]);
+    expect(clip("a").enter).toEqual(fade("1"));
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "enter" });
+    expect(selection()).toEqual([]);
     drag(near(editor, at(6), video, -1), near(editor, at(4.5), video));
-    expect(seconds(clip("a").fadeOut)).toBe(1.5);
+    expect(seconds(clip("a").exit?.duration)).toBe(1.5);
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "exit" });
     store.undo();
-    expect(clip("a").fadeOut).toBeUndefined();
-    expect(seconds(clip("a").fadeIn)).toBe(1);
+    expect(clip("a").exit).toBeUndefined();
+    expect(seconds(clip("a").enter?.duration)).toBe(1);
     store.undo();
-    expect(clip("a").fadeIn).toBeUndefined();
+    expect(clip("a").enter).toBeUndefined();
+    expect(editor.getSnapshot().transition).toBeUndefined();
   });
 
-  it("stop at the other fade, and back at the edge there is no fade", async () => {
+  it("keep how they go when their handle is dragged", async () => {
     const { editor, addClip, at, clip, drag, video } = await setup();
-    addClip("a", 2, 4, video, { fadeOut: "3" });
-    drag(near(editor, at(2), video, 1), near(editor, at(5.5), video));
-    expect(seconds(clip("a").fadeIn)).toBe(1);
-    drag(near(editor, at(3), video), near(editor, at(1), video));
-    expect(clip("a").fadeIn).toBeUndefined();
-    expect(clip("a").fadeOut).toBe("3");
+    const curve = [0.42, 0, 0.58, 1];
+    addClip("a", 2, 4, video, { enter: { ...fade("1"), curve } });
+    drag(near(editor, at(3), video), near(editor, at(3.5), video));
+    expect(clip("a").enter).toEqual({ ...fade("1.5"), curve });
   });
 
-  it("are not offered on a locked track, nor on sound, which has no fades", async () => {
-    const { editor, addClip, at, clip, video, audio } = await setup();
+  it("stop at the other one, and back at the edge there is none", async () => {
+    const { editor, addClip, at, clip, drag, video } = await setup();
+    addClip("a", 2, 4, video, { exit: fade("3") });
+    drag(near(editor, at(2), video, 1), near(editor, at(5.5), video));
+    expect(seconds(clip("a").enter?.duration)).toBe(1);
+    drag(near(editor, at(3), video), near(editor, at(1), video));
+    expect(clip("a").enter).toBeUndefined();
+    expect(clip("a").exit).toEqual(fade("3"));
+  });
+
+  it("are not offered on a locked track, nor on sound, which has none yet", async () => {
+    const { editor, addClip, at, clip, video, audio, commandFailed } = await setup();
     addClip("a", 2, 4);
     addClip("s", 2, 4, audio);
     const top = near(editor, at(2), audio, 2);
     const onSound = editor.hitAt(top);
-    expect(onSound.kind === "clip" && onSound.fade).toBeUndefined();
-    expect(editor.setFade("s", "in", exactly(1))).toBe(false);
-    expect(clip("s").fadeIn).toBeUndefined();
+    expect(onSound.kind === "clip" && onSound.handle).toBeUndefined();
+    expect(editor.setTransitionLength("s", "enter", exactly(1))).toBe(false);
+    expect(commandFailed).toHaveBeenCalledWith("这一版的编辑器还不能播放声音的入转场");
+    expect(clip("s").enter).toBeUndefined();
     editor.updateTrack(video, { locked: true });
     const locked = editor.hitAt(near(editor, at(2), video, 2));
-    expect(locked.kind === "clip" && locked.fade).toBeUndefined();
-    expect(editor.setFade("a", "in", exactly(1))).toBe(false);
-    expect(clip("a").fadeIn).toBeUndefined();
+    expect(locked.kind === "clip" && locked.handle).toBeUndefined();
+    expect(editor.setTransitionLength("a", "enter", exactly(1))).toBe(false);
+    expect(clip("a").enter).toBeUndefined();
   });
 
-  it("can be said in numbers, as far as the other fade lets them go", async () => {
+  it("can be said in numbers, as far as the other one lets them go", async () => {
     const { editor, store, addClip, clip } = await setup();
-    addClip("a", 2, 4, undefined, { fadeIn: "1" });
-    expect(editor.setFade("a", "out", exactly(9))).toBe(true);
-    expect(clip("a").fadeOut).toBe("3");
+    addClip("a", 2, 4, undefined, { enter: fade("1") });
+    expect(editor.setTransitionLength("a", "exit", exactly(9))).toBe(true);
+    expect(clip("a").exit).toEqual(fade("3"));
     // The same again changes nothing, and leaves nothing to undo.
-    expect(editor.setFade("a", "out", exactly(3))).toBe(false);
-    expect(editor.setFade("a", "in", exactly(0))).toBe(true);
-    expect(clip("a").fadeIn).toBeUndefined();
+    expect(editor.setTransitionLength("a", "exit", exactly(3))).toBe(false);
+    expect(editor.setTransitionLength("a", "enter", exactly(0))).toBe(true);
+    expect(clip("a").enter).toBeUndefined();
     store.undo();
-    expect(clip("a").fadeIn).toBe("1");
+    expect(clip("a").enter).toEqual(fade("1"));
+  });
+
+  it("are selected with a click on their block, instead of clips, and Delete takes one away", async () => {
+    const { editor, store, addClip, at, clip, selection, video } = await setup();
+    const click = clicker(editor);
+    addClip("a", 2, 4, video, { enter: fade("1"), exit: fade("1") });
+    click(at(4));
+    expect(selection()).toEqual(["a"]);
+    click(near(editor, at(2.4), video));
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "enter" });
+    expect(selection()).toEqual([]);
+    expect(editor.canChangeSelection).toBe(true);
+    editor.deleteSelection();
+    expect(clip("a").enter).toBeUndefined();
+    expect(clip("a").exit).toEqual(fade("1"));
+    expect(clip("a")).toBeDefined();
+    expect(editor.getSnapshot().transition).toBeUndefined();
+    store.undo();
+    expect(clip("a").enter).toEqual(fade("1"));
+    click(near(editor, at(5.6), video));
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "exit" });
+    click(at(4));
+    expect(editor.getSnapshot().transition).toBeUndefined();
+    expect(selection()).toEqual(["a"]);
+  });
+
+  it("on a locked track can be looked at, not changed", async () => {
+    const { editor, addClip, at, clip, video } = await setup();
+    const click = clicker(editor);
+    addClip("a", 2, 4, video, { enter: fade("1") });
+    editor.updateTrack(video, { locked: true });
+    click(near(editor, at(2.5), video));
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "enter" });
+    expect(editor.canChangeSelection).toBe(false);
+    editor.deleteSelection();
+    expect(clip("a").enter).toEqual(fade("1"));
+  });
+
+  it("are no longer selected once their clip is gone", async () => {
+    const { editor, store, addClip } = await setup();
+    addClip("a", 2, 4, undefined, { enter: fade("1") });
+    editor.selectTransition("a", "enter");
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "enter" });
+    store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["a"] } });
+    expect(editor.getSnapshot().transition).toBeUndefined();
+    editor.selectTransition("a", "exit");
+    expect(editor.getSnapshot().transition).toBeUndefined();
   });
 });
 

@@ -11,6 +11,7 @@ import {
   type Overrides,
   type PropertyValue,
   type Rational,
+  type Transition,
 } from "@animaquill/schema";
 import { fail, type Draft } from "./draft.ts";
 import {
@@ -37,6 +38,7 @@ export interface Span {
 
 export const timelinePath = (timeline: string) => ["timelines", timeline];
 export const clipPath = (timeline: string, clip: string) => ["timelines", timeline, "clips", clip];
+export const joinPath = (timeline: string, join: string) => ["timelines", timeline, "joins", join];
 
 export function timelineOf(draft: Draft, id: string): TimelineState {
   return entryOf(draft.state.timelines, id) ?? fail("not-found", `没有这条时间轴：${id}`);
@@ -96,19 +98,14 @@ export function assertFree(
   if (first) fail("overlap", `这里已经有片段了：${first.clip.name ?? first.clip.id}`);
 }
 
-/** Takes clips away, and with them the side of a transition that was theirs. */
+/** Takes clips away, and the joins they are a side of: a join goes between two clips or nowhere. */
 export function removeClips(draft: Draft, timeline: string, clips: readonly string[]): void {
   const removed = new Set(clips);
-  const { transitions } = timelineOf(draft, timeline);
+  const { joins } = timelineOf(draft, timeline);
   for (const id of clips) draft.delete(clipPath(timeline, id));
-  for (const transition of Object.values(transitions)) {
-    const path = [...timelinePath(timeline), "transitions", transition.id];
-    const from = transition.from && removed.has(transition.from);
-    const to = transition.to && removed.has(transition.to);
-    if (!from && !to) continue;
-    const keepsSide = (!from && transition.from) || (!to && transition.to);
-    if (!keepsSide) draft.delete(path);
-    else draft.delete([...path, from ? "from" : "to"]);
+  for (const [id, { from, to }] of Object.entries(joins ?? {})) {
+    const isSide = (clip: string | undefined) => clip !== undefined && removed.has(clip);
+    if (isSide(from) || isSide(to)) draft.delete(joinPath(timeline, id));
   }
 }
 
@@ -225,11 +222,11 @@ function setOffset(draft: Draft, timeline: string, clip: ClipState, offset: Rati
   else if (clip.offset !== undefined) draft.delete(path);
 }
 
-/** A fade as it is saved, or undefined when there is none or it cannot be read. */
-function fadeLength(time: string | undefined): Rational | undefined {
-  if (time === undefined) return undefined;
+/** How long a transition is, or undefined when there is none or its length cannot be read. */
+function lengthOf(transition: Transition | undefined): Rational | undefined {
+  if (transition === undefined) return undefined;
   try {
-    return parseTime(time);
+    return parseTime(transition.duration);
   } catch {
     return undefined;
   }
@@ -237,42 +234,45 @@ function fadeLength(time: string | undefined): Rational | undefined {
 
 const atMost = (value: Rational, limit: Rational) => (compare(value, limit) > 0 ? limit : value);
 
+/** The transitions at the start and the end of a clip, by the field that holds each. */
+export type Edge = "enter" | "exit";
+
 /**
- * Shortens the fades of a clip that got too short for them, as video editors do: first the fade at
- * the edge that moved, then the other one, so that what is left of the clip fades as it did. A fade
- * of nothing goes. What fits, or cannot be read, stays as it is.
+ * Shortens the transitions at the edges of a clip that got too short for them, as video editors
+ * do: first the one at the edge that moved, then the other one, so that what is left of the clip
+ * goes in and out as it did. A transition of no time goes. What fits, or cannot be read, stays as
+ * it is. Only the length changes: each is one value, which this writes as a whole.
  */
-function fitFades(
+export function fitTransitions(
   draft: Draft,
   path: readonly string[],
-  clip: Pick<ClipState, "fadeIn" | "fadeOut">,
+  clip: Pick<ClipState, Edge>,
   duration: Rational,
   moved: "start" | "end",
 ): void {
-  const fadeIn = fadeLength(clip.fadeIn);
-  const fadeOut = fadeLength(clip.fadeOut);
-  if (!fadeIn && !fadeOut) return;
-  const total = add(fadeIn ?? ZERO, fadeOut ?? ZERO);
+  const enter = lengthOf(clip.enter);
+  const exit = lengthOf(clip.exit);
+  if (!enter && !exit) return;
+  const total = add(enter ?? ZERO, exit ?? ZERO);
   if (compare(total, duration) <= 0) return;
-  type Field = "fadeIn" | "fadeOut";
-  const [near, far]: [Field, Field] =
-    moved === "start" ? ["fadeIn", "fadeOut"] : ["fadeOut", "fadeIn"];
-  const lengths: Record<Field, Rational> = { fadeIn: fadeIn ?? ZERO, fadeOut: fadeOut ?? ZERO };
+  const [near, far]: [Edge, Edge] = moved === "start" ? ["enter", "exit"] : ["exit", "enter"];
+  const lengths: Record<Edge, Rational> = { enter: enter ?? ZERO, exit: exit ?? ZERO };
   const kept = atMost(lengths[far], duration);
   const shortened = { [far]: kept, [near]: atMost(lengths[near], subtract(duration, kept)) };
-  for (const field of [near, far]) {
-    if (clip[field] === undefined) continue;
-    const length = shortened[field] as Rational;
-    if (compare(length, lengths[field]) === 0) continue;
-    if (compare(length, ZERO) <= 0) draft.delete([...path, field]);
-    else draft.set([...path, field], formatTime(length));
+  for (const edge of [near, far]) {
+    const transition = clip[edge];
+    if (transition === undefined) continue;
+    const length = shortened[edge] as Rational;
+    if (compare(length, lengths[edge]) === 0) continue;
+    if (compare(length, ZERO) <= 0) draft.delete([...path, edge]);
+    else draft.set([...path, edge], { ...transition, duration: formatTime(length) });
   }
 }
 
 /**
  * Moves the edges of a clip. Its content stays where it is on the timeline, and so do keys: they are
- * on the clock of the clip, which only has to read differently at the new first frame. Fades that
- * no longer fit get shorter, see `fitFades`.
+ * on the clock of the clip, which only has to read differently at the new first frame. Transitions
+ * at its edges go along with them, and get shorter when they no longer fit: see `fitTransitions`.
  */
 export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: Span): void {
   const path = clipPath(timeline, clip.id);
@@ -292,13 +292,14 @@ export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: 
   const length = subtract(span.to, span.from);
   const duration = formatTime(length);
   if (duration !== clip.duration) draft.set([...path, "duration"], duration);
-  fitFades(draft, path, clip, length, compare(moved, ZERO) !== 0 ? "start" : "end");
+  fitTransitions(draft, path, clip, length, compare(moved, ZERO) !== 0 ? "start" : "end");
 }
 
 /**
  * Cuts one clip in two, and returns the id of the part after the cut. Both parts keep all keys: on
  * the clock of the clip they are in the same place as before, so nothing has to be calculated. The
- * part before keeps the fade in and the part after the fade out, each as long as the part can take.
+ * part before keeps the transition at the start and the part after the one at the end, each as long
+ * as the part can take, and a join from the clip goes from the part after the cut.
  */
 export function splitClip(
   draft: Draft,
@@ -308,7 +309,7 @@ export function splitClip(
   rightId: string,
   rightLink?: string,
 ): void {
-  const { fadeIn: _fadeIn, offset: _offset, ...rest } = clip;
+  const { enter: _enter, offset: _offset, ...rest } = clip;
   const offset = add(clipOffset(clip), subtract(at, clipStart(clip)));
   const rightLength = subtract(clipEnd(clip), at);
   draft.note({ kind: "cut", clip: clip.id, piece: rightId });
@@ -320,7 +321,7 @@ export function splitClip(
     offset: formatTime(offset),
     ...(rightLink === undefined ? {} : { link: rightLink }),
   });
-  fitFades(draft, clipPath(timeline, rightId), rest, rightLength, "start");
+  fitTransitions(draft, clipPath(timeline, rightId), rest, rightLength, "start");
   // What a version changes goes for both parts, apart from where they are.
   forEachOverride(draft, timeline, clip.id, (changes, _path, version) => {
     const { start: _start, duration: _duration, offset: _changed, ...shared } = changes;
@@ -331,14 +332,11 @@ export function splitClip(
   const path = clipPath(timeline, clip.id);
   const leftLength = subtract(at, clipStart(clip));
   draft.set([...path, "duration"], formatTime(leftLength));
-  if (clip.fadeOut !== undefined) draft.delete([...path, "fadeOut"]);
-  const { fadeOut: _fadeOut, ...left } = clip;
-  fitFades(draft, path, left, leftLength, "end");
-  for (const transition of Object.values(timelineOf(draft, timeline).transitions)) {
-    if (transition.from === clip.id) {
-      const transitionPath = [...timelinePath(timeline), "transitions", transition.id];
-      draft.set([...transitionPath, "from"], rightId);
-    }
+  if (clip.exit !== undefined) draft.delete([...path, "exit"]);
+  const { exit: _exit, ...left } = clip;
+  fitTransitions(draft, path, left, leftLength, "end");
+  for (const [id, join] of Object.entries(timelineOf(draft, timeline).joins ?? {})) {
+    if (join.from === clip.id) draft.set([...joinPath(timeline, id), "from"], rightId);
   }
 }
 

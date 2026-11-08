@@ -25,7 +25,6 @@ const layer = (
   offset: 0,
   source,
   fit: "contain",
-  fades: { in: 0, out: 0 },
   channels: Object.fromEntries(
     Object.entries(values).map(([path, value]): [string, Channel] => [
       path,

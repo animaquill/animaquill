@@ -8,12 +8,15 @@ import {
   invert,
   layerMatrix,
   matrixOf,
+  missingTransitionAt,
   multiply,
   opacityAt,
   pictureIn,
+  progressAt,
   sceneMatrix,
   sceneViewOf,
   showsAt,
+  shownAt,
   stageOf,
   transformAt,
   transformPoint,
@@ -33,7 +36,6 @@ const layer = (extra: Partial<RenderLayer> = {}): RenderLayer => ({
   offset: 0,
   source: color,
   fit: "contain",
-  fades: { in: 0, out: 0 },
   channels: {},
   ...extra,
 });
@@ -306,37 +308,129 @@ describe("a 200 by 200 square", () => {
 });
 
 describe("how much of a layer shows", () => {
-  const fading = (fades: RenderLayer["fades"], extra?: Partial<RenderLayer>) =>
-    layer({ start: 10, end: 20, fades, ...extra });
+  const FADE = { kind: "built-in", type: "fade" } as const;
+  /** Fades in and out of a layer from 10 to 20, as long as these, as the plan has them. */
+  const fading = (
+    fades: { readonly in: number; readonly out: number },
+    extra?: Partial<RenderLayer>,
+  ) =>
+    layer({
+      start: 10,
+      end: 20,
+      ...(fades.in > 0 && {
+        enter: { how: FADE, start: 10, end: 10 + fades.in, duration: fades.in },
+      }),
+      ...(fades.out > 0 && {
+        exit: { how: FADE, start: 20 - fades.out, end: 20, duration: fades.out },
+      }),
+      ...extra,
+    });
 
   it("is its opacity", () => {
     expect(opacityAt(transformed({ opacity: 0.25 }), 5)).toBe(0.25);
+    expect(shownAt(transformed({ opacity: 0.25 }), 5)).toBe(0.25);
   });
 
   it("is everything without one", () => {
-    expect(opacityAt(layer(), 5)).toBe(1);
+    expect(shownAt(layer(), 5)).toBe(1);
   });
 
   it("fades in from the start of the clip", () => {
     const clip = fading({ in: 2, out: 0 });
-    expect(opacityAt(clip, 10)).toBe(0);
-    expect(opacityAt(clip, 11)).toBeCloseTo(0.5, 9);
-    expect(opacityAt(clip, 12)).toBe(1);
-    expect(opacityAt(clip, 15)).toBe(1);
+    expect(shownAt(clip, 10)).toBe(0);
+    expect(shownAt(clip, 11)).toBeCloseTo(0.5, 9);
+    expect(shownAt(clip, 12)).toBe(1);
+    expect(shownAt(clip, 15)).toBe(1);
+    // The opacity itself has nothing to do with the fade.
+    expect(opacityAt(clip, 11)).toBe(1);
   });
 
   it("fades out towards its end", () => {
     const clip = fading({ in: 0, out: 2 });
-    expect(opacityAt(clip, 15)).toBe(1);
-    expect(opacityAt(clip, 18)).toBe(1);
-    expect(opacityAt(clip, 19)).toBeCloseTo(0.5, 9);
-    expect(opacityAt(clip, 20)).toBe(0);
+    expect(shownAt(clip, 15)).toBe(1);
+    expect(shownAt(clip, 18)).toBe(1);
+    expect(shownAt(clip, 19)).toBeCloseTo(0.5, 9);
+    expect(shownAt(clip, 20)).toBe(0);
   });
 
   it("multiplies its opacity with the fades, and the fades with each other", () => {
     const channels = { opacity: still(0.5) };
-    expect(opacityAt(fading({ in: 2, out: 0 }, { channels }), 11)).toBeCloseTo(0.25, 9);
-    expect(opacityAt(fading({ in: 10, out: 10 }), 15)).toBeCloseTo(0.25, 9);
+    expect(shownAt(fading({ in: 2, out: 0 }, { channels }), 11)).toBeCloseTo(0.25, 9);
+    expect(shownAt(fading({ in: 10, out: 10 }), 15)).toBeCloseTo(0.25, 9);
+  });
+
+  it("is what fades always were, to the last bit", () => {
+    /** How fades worked before they were transitions, as it was written then. */
+    const before = (
+      start: number,
+      end: number,
+      fades: { readonly in: number; readonly out: number },
+      opacity: number,
+      time: number,
+    ) => {
+      const fadeIn = fades.in > 0 ? Math.min(Math.max((time - start) / fades.in, 0), 1) : 1;
+      const fadeOut = fades.out > 0 ? Math.min(Math.max((end - time) / fades.out, 0), 1) : 1;
+      return Math.min(Math.max(opacity, 0), 1) * fadeIn * fadeOut;
+    };
+    let seed = 7;
+    const random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 2 ** 32;
+    };
+    for (let round = 0; round < 2000; round++) {
+      const start = Math.floor(random() * 600) / 30 + 0.1;
+      const end = start + 1 / 3 + Math.floor(random() * 300) / 30;
+      const fades = { in: random() < 0.3 ? 0 : 0.1 + random() * 4, out: random() * 4 };
+      const opacity = random() * 1.2;
+      const time = start + (end - start) * random();
+      const shown = layer({
+        start,
+        end,
+        channels: { opacity: still(opacity) },
+        ...(fades.in > 0 && {
+          enter: { how: FADE, start, end: start + fades.in, duration: fades.in },
+        }),
+        ...(fades.out > 0 && {
+          exit: { how: FADE, start: end - fades.out, end, duration: fades.out },
+        }),
+      });
+      expect(shownAt(shown, time)).toBe(before(start, end, fades, opacity, time));
+    }
+  });
+
+  it("goes by the speed curve of a transition, from 0 to 1 over its time", () => {
+    const easeIn = [0.42, 0, 1, 1] as const;
+    const enter = { how: FADE, start: 10, end: 12, duration: 2, curve: easeIn };
+    expect(progressAt(enter, 9)).toBe(0);
+    expect(progressAt(enter, 10)).toBe(0);
+    expect(progressAt(enter, 11)).toBeCloseTo(0.315, 3);
+    expect(progressAt(enter, 12)).toBe(1);
+    expect(progressAt(enter, 13)).toBe(1);
+    const exit = { how: FADE, start: 18, end: 20, duration: 2, curve: easeIn };
+    expect(shownAt(layer({ start: 10, end: 20, exit }), 19)).toBeCloseTo(1 - 0.315, 3);
+  });
+
+  it("does not overshoot a fade, whatever the curve says", () => {
+    const enter = {
+      how: FADE,
+      start: 0,
+      end: 1,
+      duration: 1,
+      curve: [0.3, -0.8, 0.7, 1.8] as const,
+    };
+    for (let time = 0; time <= 1; time += 0.05) {
+      expect(progressAt(enter, time)).toBeGreaterThanOrEqual(0);
+      expect(progressAt(enter, time)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("knows a transition that this editor cannot do, while it goes on", () => {
+    const exit = { how: FADE, start: 18, end: 20, duration: 2, missing: true as const };
+    const shown = layer({ start: 10, end: 20, exit });
+    expect(missingTransitionAt(shown, 17)).toBeUndefined();
+    expect(missingTransitionAt(shown, 18)).toBe(exit);
+    expect(missingTransitionAt(shown, 19.99)).toBe(exit);
+    expect(missingTransitionAt(layer({ start: 10, end: 20 }), 19)).toBeUndefined();
   });
 
   it("stays between nothing and all of it when a curve overshoots, or Canvas ignores it", () => {

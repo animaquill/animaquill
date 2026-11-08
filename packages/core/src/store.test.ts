@@ -12,7 +12,13 @@ import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { COMMANDS } from "./commands.ts";
 import { buildAudioPlan, buildRenderPlan } from "./render-plan.ts";
-import { orderedSections, orderedTracks, projectFrameRate, timelineLength } from "./model.ts";
+import {
+  orderedSections,
+  orderedTracks,
+  projectFrameRate,
+  timelineLength,
+  type ClipState,
+} from "./model.ts";
 import {
   ProjectStore,
   USER,
@@ -942,21 +948,14 @@ describe("clips and tracks", () => {
     expect(failure(result).code).toBe("id-taken");
   });
 
-  it("removes a clip and repairs its transitions", () => {
+  it("removes a clip and the joins it is a side of, which need both", () => {
     const store = open();
     success(
       store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["clip_title"] } }),
     );
-    const transition = timeline(store).transitions["tr_1"];
-    expect(transition?.from).toBeUndefined();
-    expect(transition?.to).toBe("clip_interview");
-    success(
-      store.execute({
-        type: "clip.remove",
-        params: { timeline: "main", clips: ["clip_interview"] },
-      }),
-    );
-    expect(timeline(store).transitions["tr_1"]).toBeUndefined();
+    expect(timeline(store).joins?.["join_1"]).toBeUndefined();
+    expect(timeline(store).joins?.["join_2"]).toBeDefined();
+    expect(store.exportFiles().problems).toEqual([]);
   });
 
   it("updates and clears fields of a clip", () => {
@@ -968,13 +967,13 @@ describe("clips and tracks", () => {
           timeline: "main",
           clip: "clip_title",
           changes: { name: "新名字", duration: "4" },
-          clear: ["fadeOut"],
+          clear: ["sectionFit"],
         },
       }),
     );
     expect(clip(store)?.name).toBe("新名字");
     expect(clip(store)?.duration).toBe("4");
-    expect(clip(store)?.fadeOut).toBeUndefined();
+    expect(clip(store)?.sectionFit).toBeUndefined();
   });
 
   it("writes times in their canonical form", () => {
@@ -1023,7 +1022,7 @@ describe("clips and tracks", () => {
     );
     expect(timeline(store).tracks["track_video"]).toBeUndefined();
     expect(clip(store)).toBeUndefined();
-    expect(timeline(store).transitions["tr_1"]).toBeUndefined();
+    expect(timeline(store)).not.toHaveProperty("joins");
     expect(store.exportFiles().problems).toEqual([]);
   });
 
@@ -1758,22 +1757,22 @@ describe("editing clips on the timeline", () => {
       expect(property(store, "opacity", right)).toEqual(opacity);
     });
 
-    it("keeps the fades on the outside", () => {
-      const { store } = withClips([
-        { id: "a", start: "0", duration: "6", fadeIn: "1", fadeOut: "2" },
-      ]);
+    it("keeps the transitions on the outside", () => {
+      const enter = { type: "fade", duration: "1" };
+      const exit = { type: "fade", duration: "2" };
+      const { store } = withClips([{ id: "a", start: "0", duration: "6", enter, exit }]);
       const right = split(store, "a", "3");
-      expect(clip(store, "a")?.fadeIn).toBe("1");
-      expect(clip(store, "a")?.fadeOut).toBeUndefined();
-      expect(clip(store, right)?.fadeIn).toBeUndefined();
-      expect(clip(store, right)?.fadeOut).toBe("2");
+      expect(clip(store, "a")?.enter).toEqual(enter);
+      expect(clip(store, "a")?.exit).toBeUndefined();
+      expect(clip(store, right)?.enter).toBeUndefined();
+      expect(clip(store, right)?.exit).toEqual(exit);
     });
 
-    it("hands a transition out of the clip to the part after the cut", () => {
+    it("hands a join out of the clip to the part after the cut", () => {
       const store = open();
       const right = split(store, "clip_title", "2");
-      expect(timeline(store).transitions["tr_1"]?.from).toBe(right);
-      expect(timeline(store).transitions["tr_1"]?.to).toBe("clip_interview");
+      expect(timeline(store).joins?.["join_1"]?.from).toBe(right);
+      expect(timeline(store).joins?.["join_1"]?.to).toBe("clip_interview");
     });
 
     it("cuts linked clips along, and the parts after the cut stay linked to each other", () => {
@@ -3831,7 +3830,7 @@ describe("taking back what is on a locked track", () => {
     expect(timeline(store).tracks["k"]).toBeDefined();
   });
 
-  it("does not change a transition on it", () => {
+  it("does not change a join on it", () => {
     const store = open();
     const track = clip(store)?.track;
     success(
@@ -3840,7 +3839,7 @@ describe("taking back what is on a locked track", () => {
     lockTrack(store, track, true, { origin: AI });
     blocked(store.undo());
     expect(clip(store)).toBeUndefined();
-    expect(timeline(store).transitions["tr_1"]?.from).toBeUndefined();
+    expect(timeline(store).joins?.["join_1"]).toBeUndefined();
   });
 
   it("does not change what a version changes about a clip on it", () => {
@@ -4120,18 +4119,30 @@ describe("a file that would change what is on a locked track", () => {
     ]);
   });
 
-  it("does not change a transition there", () => {
+  it("does not change a join there", () => {
     const store = open();
     lock(store, "track_video");
     const error = refused(
       rewriteFile(store, MAIN, (document) => {
-        trackIn(document, "track_video").transitions[0].duration = "1";
+        trackIn(document, "track_video").joins[0].duration = "0.5";
       }),
     );
     expect(error.problems?.map(({ message }) => message)).toEqual([
-      "轨道“画面”已锁定，文件里对转场“tr_1”的改动没有生效",
+      "轨道“画面”已锁定，文件里对衔接转场“join_1”的改动没有生效",
     ]);
-    expect(timeline(store).transitions["tr_1"]?.duration).toBe("0.5");
+    expect(timeline(store).joins?.["join_1"]?.transition?.duration).toBe("1");
+  });
+
+  it("does not change what comes in or goes out on a clip there", () => {
+    const store = open();
+    lock(store, "track_video");
+    const error = refused(
+      rewriteFile(store, MAIN, (document) => {
+        delete trackIn(document, "track_video").clips[0].enter;
+      }),
+    );
+    expect(error.code).toBe("track-locked");
+    expect(clip(store)?.enter).toEqual({ type: "fade", duration: "0.5" });
   });
 
   it("does not change what a version changes about a clip there, in a version or a new one", () => {
@@ -4826,7 +4837,7 @@ describe("taking back what something else came to depend on", () => {
     expect(clip(store, "e")?.track).toBe("k");
   });
 
-  it("brings back a track with its clips and transitions, in any order", () => {
+  it("brings back a track with its clips and joins, in any order", () => {
     const store = open();
     const before = store.getState();
     const track = clip(store)?.track;
@@ -4834,7 +4845,7 @@ describe("taking back what something else came to depend on", () => {
     expect(taken(store.undo()).kept).toEqual([]);
     expect(store.getState()).toEqual(before);
     expect(taken(store.redo()).kept).toEqual([]);
-    expect(timeline(store).transitions["tr_1"]).toBeUndefined();
+    expect(timeline(store).joins?.["join_1"]).toBeUndefined();
   });
 
   it("does not bring back a clip on a track that is gone", () => {
@@ -4941,16 +4952,17 @@ describe("taking back what something else came to depend on", () => {
     expect(store.exportFiles().problems).toEqual([]);
   });
 
-  it("keeps a clip a transition goes from", () => {
+  it("keeps a clip a join goes from", () => {
     const store = freshProject();
     addClip(store, "e", { kind: "color", color: "#000000" });
     const home = clip(store, "e")?.track;
     rewrite(
       store,
       MAIN,
-      (file: { tracks: { id: string; transitions?: object[] }[] }) => {
+      (file: { tracks: { id: string; joins?: object[] }[] }) => {
         const track = file.tracks.find(({ id }) => id === home);
-        if (track) track.transitions = [{ id: "t", type: "dissolve", from: "e", duration: "1" }];
+        const join = { id: "t", from: "e", to: "c", type: "fade", duration: "1" };
+        if (track) track.joins = [join];
       },
       { origin: AI },
     );
@@ -4969,9 +4981,9 @@ describe("taking back what something else came to depend on", () => {
       ),
     );
     addClip(store, "e", { kind: "color", color: "#000000" }, { origin: AI }, "k");
-    rewrite(store, MAIN, (file: { tracks: { id: string; transitions?: object[] }[] }) => {
+    rewrite(store, MAIN, (file: { tracks: { id: string; joins?: object[] }[] }) => {
       const track = file.tracks.find(({ id }) => id === home);
-      if (track) track.transitions = [{ id: "t", type: "dissolve", from: "e", duration: "1" }];
+      if (track) track.joins = [{ id: "t", from: "e", to: "c", type: "fade", duration: "1" }];
     });
     blocked(store.undoTask("task-1"));
     expect(clip(store, "e")?.track).toBe("k");
@@ -5399,6 +5411,22 @@ describe("a version file for a timeline that is not there", () => {
   });
 });
 
+/**
+ * What a state from before transitions reads as now: the fades of clips and the transitions of
+ * timelines are no part of a project any more, see `isRetired`.
+ */
+function withoutRetired(state: any): any {
+  const now = structuredClone(state);
+  for (const each of Object.values(now.timelines) as any[]) {
+    delete each.transitions;
+    for (const piece of Object.values(each.clips) as any[]) {
+      delete piece.fadeIn;
+      delete piece.fadeOut;
+    }
+  }
+  return now;
+}
+
 describe("a real document from when assets, notes and properties had maps of their own", () => {
   /**
    * Saved by the code of that time, not made with today's code: this is what people have. The
@@ -5414,7 +5442,9 @@ describe("a real document from when assets, notes and properties had maps of the
     if (!store || damaged > 0) throw new Error("the sample did not open");
     return store;
   };
-  const SEEN_BACK_THEN = JSON.parse(readFileSync(new URL("state.json", folder), "utf8"));
+  const SEEN_BACK_THEN = withoutRetired(
+    JSON.parse(readFileSync(new URL("state.json", folder), "utf8")),
+  );
   const reopened = (store: ProjectStore) =>
     ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
   const rewrite = (store: ProjectStore, path: string, change: (document: never) => void) => {
@@ -5480,6 +5510,43 @@ describe("a real document from when assets, notes and properties had maps of the
 
   it("reads as it read back then", () => {
     expect(saved().getState()).toEqual(SEEN_BACK_THEN);
+  });
+
+  it("keeps the fades and transitions of back then in the document, and reads nothing of them", () => {
+    const store = saved();
+    type Level = Y.Map<unknown>;
+    const root = store.doc.getMap<unknown>("project");
+    const main = (root.get("timelines") as Y.Map<Level>).get("main") as Level;
+    const title = (main.get("clips") as Y.Map<Level>).get("clip_title") as Level;
+    expect(main.get("transitions")).toBeInstanceOf(Y.Map);
+    expect(title.get("fadeOut")).toBe("0.5");
+    expect(timeline(store)).not.toHaveProperty("transitions");
+    expect(timeline(store)).not.toHaveProperty("joins");
+    expect(clip(store, "clip_title")).not.toHaveProperty("fadeOut");
+
+    // A clip of back then can be changed, copied and cut, and every file stays valid.
+    const changes = { name: "改过" };
+    const params = { timeline: "main", clip: "clip_title", changes };
+    success(store.execute({ type: "clip.update", params }));
+    const { track, ...copy } = clip(store, "clip_title") as ClipState;
+    const pasted = { ...copy, id: "pasted", start: "40" };
+    success(store.execute({ type: "clip.add", params: { timeline: "main", track, clip: pasted } }));
+    const at = { timeline: "main", clip: "clip_title", at: "2" };
+    success(store.execute({ type: "clip.split", params: at }));
+    const enter = { type: "fade", duration: "1" };
+    const set = { timeline: "main", clip: "clip_title", enter };
+    success(store.execute({ type: "clip.setTransition", params: set }));
+    const { files, problems } = store.exportFiles();
+    expect(problems).toEqual([]);
+    expect(files.get(MAIN)).not.toMatch(/fadeIn|fadeOut|"transitions"/);
+    expect(readProject(files).problems.filter(({ severity }) => severity === "error")).toEqual([]);
+
+    // What a page from back then that is still open goes on writing changes nothing here.
+    const before = store.getState();
+    title.set("fadeIn", "1");
+    (main.get("transitions") as Level).set("tr_9", new Y.Map());
+    expect(store.getState()).toBe(before);
+    expect(new ProjectStore(store.doc).getState()).toEqual(before);
   });
 
   it("writes valid files, which read the same", () => {
@@ -5655,7 +5722,7 @@ describe("a real document from when versions and translations had maps of their 
    * same as none. A language without strings stays: its file says something, see `standing`.
    */
   const READS_NOW = (() => {
-    const state = structuredClone(SEEN_BACK_THEN);
+    const state = withoutRetired(SEEN_BACK_THEN);
     delete state.timelines.main.overrides["language.fr"].sections;
     return state;
   })();
@@ -6325,7 +6392,6 @@ describe("a project saved before positions became world coordinates", () => {
         offset: 0,
         source: { kind: "color", color: "#ff0000" },
         fit: "contain",
-        fades: { in: 0, out: 0 },
         channels: {},
       },
       {
@@ -6335,7 +6401,6 @@ describe("a project saved before positions became world coordinates", () => {
         offset: 1,
         source: { kind: "video", file: "sha256-aa" },
         fit: "cover",
-        fades: { in: 0, out: 0 },
         channels: { opacity: { kind: "still", value: 0.5 } },
       },
     ]);

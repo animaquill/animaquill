@@ -568,7 +568,6 @@ for (const fit of ["contain", "cover"] as const) {
             offset: 0,
             source: { kind: "image", file: "wide" },
             fit,
-            fades: { in: 0, out: 0 },
             channels: {},
           },
         ],
@@ -755,33 +754,22 @@ test("a key that is not on a frame any more can be reached and removed", async (
   await expect(x).toHaveValue("300");
 });
 
-test("fades a clip with the fields and with the handles on the timeline, each a step", async ({
+test("pulls a fade out of the corner of a clip, which the properties tab sets, each a step", async ({
   page,
 }) => {
   await addColor(page);
-  const fadeIn = field(page, "淡入");
-  const fadeOut = field(page, "淡出");
-  await expect(fadeIn).toHaveValue("0s");
-  await expect(fadeOut).toHaveValue("0s");
   let full: readonly number[] = [];
   await expect.poll(async () => (full = await colorAt(page, 100, 100)).length).toBe(4);
   const [red = 0, green = 0, blue = 0] = full;
-  // A second into a fade of two seconds, half of the clip shows over black.
-  await typeInto(fadeIn, "2");
-  await expect(fadeIn).toHaveValue("2s");
   const half: Color = [red / 2, green / 2, blue / 2];
-  await expectColor(page, 100, 100, half, 3);
-  await page.keyboard.press("Control+z");
-  await expect(fadeIn).toHaveValue("0s");
-  await expectColor(page, 100, 100, [red, green, blue], 3);
 
-  // The handle at the top right corner of the clip pulls the fade out in.
+  // The handle at the top left corner of the clip pulls a fade in out of it, as it did fades.
   await tab(page, "timeline").click();
   const clip = clips(page).first();
   const box = await clip.boundingBox();
   if (!box) throw new Error("no clip on screen");
   const top = box.y + 4;
-  await page.mouse.move(box.x + box.width - 2, top);
+  await page.mouse.move(box.x + 2, top);
   await expect(content(page, "timeline").getByRole("group", { name: "时间轴" })).toHaveCSS(
     "cursor",
     "col-resize",
@@ -789,20 +777,67 @@ test("fades a clip with the fields and with the handles on the timeline, each a 
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2, top, { steps: 8 });
   await page.mouse.up();
+
+  // What it made is selected, and the properties tab shows what a transition has, and no more.
   await tab(page, "properties").click();
-  await expect.poll(async () => Number.parseFloat(await fadeOut.inputValue())).toBeGreaterThan(1);
+  const transition = panel(page).getByRole("region", { name: "淡入" });
+  await expect(transition).toBeVisible();
+  await expect(transition).toContainText("的入转场");
+  await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
+  const duration = transition.getByRole("textbox", { name: "时长" });
+  // A second into a fade of two seconds, half of the clip shows over black.
+  await typeInto(duration, "2");
+  await expect(duration).toHaveValue("0:02/00");
+  await expectColor(page, 100, 100, half, 3);
+
+  // An ease in starts slowly: at half of its time it is about a third of the way.
+  const linear = transition.getByRole("button", { name: "匀速" });
+  const easeIn = transition.getByRole("button", { name: "缓入", exact: true });
+  await expect(linear).toHaveAttribute("aria-pressed", "true");
+  await easeIn.click();
+  await expect(easeIn).toHaveAttribute("aria-pressed", "true");
+  await expectColor(page, 100, 100, [red * 0.315, green * 0.315, blue * 0.315], 4);
   await page.keyboard.press("Control+z");
-  await expect(fadeOut).toHaveValue("0s");
+  await expect(linear).toHaveAttribute("aria-pressed", "true");
+  await expectColor(page, 100, 100, half, 3);
+
+  // A handle of the curve, dragged and let go, is one more step.
+  const handle = transition.getByRole("slider", { name: "开始的手柄" });
+  const place = await handle.boundingBox();
+  if (!place) throw new Error("no handle");
+  const curve = await transition.getByRole("group", { name: "速度曲线" }).boundingBox();
+  if (!curve) throw new Error("no curve");
+  await page.mouse.move(place.x + place.width / 2, place.y + place.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(curve.x + curve.width * 0.9, curve.y + curve.height * 0.9, { steps: 6 });
+  await expect(linear).toHaveAttribute("aria-pressed", "true");
+  await page.mouse.up();
+  await expect(linear).toHaveAttribute("aria-pressed", "false");
+  const slower = await colorAt(page, 100, 100);
+  expect((slower[0] ?? 0) + (slower[1] ?? 0) + (slower[2] ?? 0)).toBeLessThan(
+    (red + green + blue) / 2,
+  );
+  await page.keyboard.press("Control+z");
+  await expect(linear).toHaveAttribute("aria-pressed", "true");
+
+  // Delete on the timeline takes the transition away, and leaves the clip.
+  await tab(page, "timeline").click();
+  await content(page, "timeline").getByRole("group", { name: "时间轴" }).focus();
+  await page.keyboard.press("Delete");
+  await expectColor(page, 100, 100, [red, green, blue], 3);
+  await expect(clips(page)).toHaveCount(1);
+  await page.keyboard.press("Control+z");
+  await expectColor(page, 100, 100, half, 3);
 });
 
-test("a clip fades in and out, on top of its opacity", async ({ page }) => {
+test("a clip fades in and out, on top of its opacity, as it always did", async ({ page }) => {
   const { add, plan } = projectIn(1920, 1080);
   add({
     id: "fading",
     start: "1",
     duration: "4",
-    fadeIn: "2",
-    fadeOut: "1",
+    enter: { type: "fade", duration: "2" },
+    exit: { type: "fade", duration: "1" },
     source: { kind: "color", color: "#ff0000" },
     properties: { opacity: 0.5 },
   });

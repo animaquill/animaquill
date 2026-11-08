@@ -27,7 +27,6 @@ const clip = (file: string): RenderPlan["layers"][number] => ({
   offset: 0,
   source: { kind: "image", file },
   fit: "contain",
-  fades: { in: 0, out: 0 },
   channels: {},
 });
 

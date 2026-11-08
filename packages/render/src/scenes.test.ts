@@ -139,7 +139,6 @@ const layer = (id: string, extra: Partial<RenderLayer> = {}): RenderLayer => ({
   offset: 0,
   source: source(),
   fit: "fixed",
-  fades: { in: 0, out: 0 },
   channels: {},
   ...extra,
 });

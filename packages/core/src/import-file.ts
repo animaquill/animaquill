@@ -161,11 +161,13 @@ export function planFileImport(draft: Draft, path: string, text: string): FileIm
   if (problems.length > 0) return { problems, kept: [], held: [], notices: [], broken: [] };
   const locks = locksOf(before, planned.state, draft.origin);
   const kept: Patch[] = [];
-  for (const each of inLockOrder(planned.steps.map((step) => step.patch))) {
+  const patches = inLockOrder(planned.steps.map((step) => step.patch));
+  const joins = heldJoins(locks, patches, draft.origin);
+  for (const each of patches) {
     const { patch, held } = withLockedLibraries(locks, each);
     kept.push(...held);
     if (patch === undefined) continue;
-    if (isHeld(locks, patch, draft.origin)) kept.push(patch);
+    if (isHeld(locks, patch, draft.origin) || joins.has(joinOf(patch))) kept.push(patch);
     else draft.repeat(patch);
   }
   const paths = planned.steps.map((step) => step.patch.path);
@@ -176,6 +178,32 @@ export function planFileImport(draft: Draft, path: string, text: string): FileIm
     notices: unlockedIn(before, locks, path),
     broken: kept.length > 0 ? brokenWithout(before, planned.state, draft.state, path, paths) : [],
   };
+}
+
+/** The join a change is about, as `<timeline> <join>`, or nothing for anything else. */
+const joinOf = ({ path }: Patch): string | undefined => {
+  const [root, timeline, level, join] = path;
+  return root === "timelines" && level === "joins" && join !== undefined
+    ? `${timeline} ${join}`
+    : undefined;
+};
+
+/**
+ * The joins a file changes on locked tracks. A join comes as one field at a time, which one by one
+ * would let some of a new one in next to a lock, or move one there partly: all of it stays instead.
+ */
+function heldJoins(
+  locks: ProjectState,
+  patches: readonly Patch[],
+  origin: string,
+): ReadonlySet<string | undefined> {
+  const held = new Set<string | undefined>();
+  for (const patch of patches) {
+    const join = joinOf(patch);
+    if (join !== undefined && isHeld(locks, patch, origin)) held.add(join);
+  }
+  held.delete(undefined);
+  return held;
 }
 
 /**
@@ -257,7 +285,7 @@ function linkInWords(link: string): string {
   const to = isOfAnotherKind ? rest.slice(0, -OF_ANOTHER_KIND.length) : rest;
   const named = (path: string) => {
     const parts = path.split("/");
-    const what = { clips: "片段", transitions: "转场", tracks: "轨道" }[parts.at(-2) ?? ""];
+    const what = { clips: "片段", joins: "衔接转场", tracks: "轨道" }[parts.at(-2) ?? ""];
     return what ? `${what}“${parts.at(-1)}”` : `“${path}”`;
   };
   if (to === "its kind") return `${named(from)}会带着它这一种轨道没有的设置`;
@@ -422,7 +450,7 @@ function whyHeld(
     track !== undefined && entryOf(timeline?.tracks, track)?.locked === true ? track : undefined;
   const nameOf = (track: string | undefined) =>
     (track === undefined ? undefined : entryOf(timeline?.tracks, track)?.name) ?? track;
-  // What would end up on a locked track: a new clip or transition, or one that moves there.
+  // What would end up on a locked track: a new clip or join, or one that moves there.
   const whole = patch.op === "set" && patch.path.length === 4 ? patch.value : undefined;
   const coming = (whole as { readonly track?: string } | undefined)?.track;
   const onto = field === "track" && patch.op === "set" ? (patch.value as string) : undefined;
@@ -434,10 +462,10 @@ function whyHeld(
       const message = `${locked(clip?.track)}，文件里对片段“${clip?.name ?? item}”的改动没有生效`;
       return { about: `clip ${item}`, where: item, message };
     }
-    case "transitions": {
-      const transition = entryOf(timeline?.transitions, item);
-      const message = `${locked(transition?.track)}，文件里对转场“${item}”的改动没有生效`;
-      return { about: `transition ${item}`, where: item, message };
+    case "joins": {
+      const join = entryOf(timeline?.joins, item);
+      const message = `${locked(join?.track)}，文件里对衔接转场“${item}”的改动没有生效`;
+      return { about: `join ${item}`, where: item, message };
     }
     case "tracks": {
       const message =

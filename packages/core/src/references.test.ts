@@ -2,7 +2,7 @@ import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import type { ProjectState, TimelineState } from "./model.ts";
 import type { Patch } from "./patch.ts";
-import { danglingAt, isInUse, touchesLockedTrack } from "./references.ts";
+import { danglingAt, isInUse, touchesLockedTrack, usedOnLockedTracks } from "./references.ts";
 import { ProjectStore } from "./store.ts";
 
 const ASSET = { kind: "image", path: "assets/a.png", storage: "local", hash: "sha256-a" };
@@ -137,20 +137,11 @@ describe("what points at nothing", () => {
     expect(danglingAt(state, CLIP)).toEqual([]);
   });
 
-  it("is a transition without its clips or track", () => {
-    const transition = {
-      id: "t",
-      type: "core.fade",
-      from: "c",
-      to: "e",
-      duration: "1",
-      track: "k",
-    };
-    const { state, track } = project(() => ({
-      transitions: { t: transition } as unknown as TimelineState["transitions"],
-    }));
-    const path = ["timelines", "main", "transitions", "t"];
-    const from = "timelines/main/transitions/t";
+  it("is a join without its clips or track", () => {
+    const join = { from: "c", to: "e", track: "k", transition: { type: "fade", duration: "1" } };
+    const { state, track } = project(() => ({ joins: { t: join } }));
+    const path = ["timelines", "main", "joins", "t"];
+    const from = "timelines/main/joins/t";
     expect(danglingAt(state, path)).toEqual([
       `${from} -> timelines/main/clips/e`,
       `${from} -> timelines/main/tracks/k`,
@@ -165,9 +156,13 @@ describe("what points at nothing", () => {
     expect(danglingAt(state, ["timelines", "main", "tracks", track])).toEqual([]);
   });
 
-  it("is nothing for a transition that is gone", () => {
+  it("is nothing for a join that is gone, and nothing about what only part of one has", () => {
     const { state } = project();
-    expect(danglingAt(state, ["timelines", "main", "transitions", "t"])).toEqual([]);
+    expect(danglingAt(state, ["timelines", "main", "joins", "t"])).toEqual([]);
+    const { state: part } = project(() => ({
+      joins: { t: { transition: { type: "fade", duration: "1" } } },
+    }));
+    expect(danglingAt(part, ["timelines", "main", "joins", "t", "transition"])).toEqual([]);
   });
 
   it("is a timeline without sections", () => {
@@ -257,7 +252,7 @@ describe("what counts as in use", () => {
 describe("what reaches a locked track", () => {
   const LOCKED = "k";
   const OPEN = "m";
-  const transition = { id: "t", type: "dissolve", duration: "1", track: LOCKED };
+  const join = { track: LOCKED, from: "c", to: "d", transition: { type: "fade", duration: "1" } };
   const setUp = () => {
     const { state, timeline, track } = project(({ tracks }) => {
       const [first] = Object.values(tracks);
@@ -266,7 +261,7 @@ describe("what reaches a locked track", () => {
           [LOCKED]: { ...first, id: LOCKED, locked: true },
           [OPEN]: { ...first, id: OPEN },
         },
-        transitions: { t: transition, u: { ...transition, id: "u", track: OPEN } },
+        joins: { t: join, u: { ...join, track: OPEN } },
       } as unknown as Partial<TimelineState>;
     });
     void timeline;
@@ -310,13 +305,26 @@ describe("what reaches a locked track", () => {
     expect(touchesLockedTrack(state, setting(LOCKED, "clips", "d", "name"))).toBe(false);
   });
 
-  it("is a transition on it, or one that would end up on it", () => {
+  it("is a join on it, or one that would end up on it, field by field", () => {
     const state = setUp();
-    expect(touchesLockedTrack(state, deleting("transitions", "t"))).toBe(true);
-    expect(touchesLockedTrack(state, deleting("transitions", "t", "from"))).toBe(true);
-    expect(touchesLockedTrack(state, deleting("transitions", "u"))).toBe(false);
-    expect(touchesLockedTrack(state, setting({ track: LOCKED }, "transitions", "w"))).toBe(true);
-    expect(touchesLockedTrack(state, setting({ track: OPEN }, "transitions", "w"))).toBe(false);
+    expect(touchesLockedTrack(state, deleting("joins", "t", "from"))).toBe(true);
+    expect(touchesLockedTrack(state, setting({}, "joins", "t", "transition"))).toBe(true);
+    expect(touchesLockedTrack(state, deleting("joins", "u", "from"))).toBe(false);
+    expect(touchesLockedTrack(state, setting(LOCKED, "joins", "w", "track"))).toBe(true);
+    expect(touchesLockedTrack(state, setting(LOCKED, "joins", "u", "track"))).toBe(true);
+    expect(touchesLockedTrack(state, setting(OPEN, "joins", "w", "track"))).toBe(false);
+  });
+
+  it("is a library that a join on it uses", () => {
+    const fromLibrary = { library: "lib_x", resource: "ink", duration: "1" };
+    const state = setUp();
+    const main = state.timelines["main"] as TimelineState;
+    const joins = { ...main.joins, t: { ...join, transition: fromLibrary } };
+    const used = { ...state, timelines: { main: { ...main, joins } } } as ProjectState;
+    expect(usedOnLockedTracks(used).libraries).toContain("lib_x");
+    const open = { ...main.joins, u: { ...join, track: OPEN, transition: fromLibrary } };
+    const unused = { ...state, timelines: { main: { ...main, joins: open } } } as ProjectState;
+    expect(usedOnLockedTracks(unused).libraries).not.toContain("lib_x");
   });
 
   it("is the track going away, not what is written on it", () => {

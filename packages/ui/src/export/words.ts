@@ -56,6 +56,7 @@ export function describeFailure(
   if (failure.reason === "scene-frame") {
     return t("export.failure.sceneFrame", { name, wanted: failure.wanted, ...plain });
   }
+  if (failure.reason === "transition") return t("export.failure.transition", { name, ...plain });
   const { status } = failure;
   if (status.state === "unsupported") return t("export.failure.sceneUnsupported");
   if (status.state === "off") return t("export.failure.sceneOff");

@@ -1,12 +1,20 @@
 import {
   CLIP_VISUAL,
+  add,
+  edgeLength,
+  findTransition,
   isAnimation,
+  isSupported,
   parseTime,
+  placeJoins,
+  subtract,
   toSeconds,
   type Animation,
   type Asset,
+  type JoinSides,
   type MediaRef,
   type PropertyValue,
+  type SpeedCurve,
   type Value,
   type ValueType,
 } from "@animaquill/schema";
@@ -18,6 +26,7 @@ import {
   entryOf,
   orderedTracks,
   type ClipState,
+  type TimelineState,
   type TrackState,
 } from "./model.ts";
 import type { ProjectState } from "./model.ts";
@@ -55,6 +64,33 @@ export type LayerSource =
   | { readonly kind: "video"; readonly file: string }
   | SceneSource;
 
+/** What draws a transition. Only the built-in ones so far. */
+export interface TransitionImplementation {
+  readonly kind: "built-in";
+  readonly type: string;
+  readonly variant?: string;
+}
+
+/** A transition ready to be drawn: what draws it, and when. */
+export interface PlannedTransition {
+  readonly how: TransitionImplementation;
+  /** Seconds on the timeline, already no longer than it fits. Its progress goes from 0 to 1 here. */
+  readonly start: number;
+  readonly end: number;
+  /**
+   * Seconds from the exact length, which is what progress goes by: `end − start` of two floats can
+   * be a little off, and a fade has always been worked out from its exact length.
+   */
+  readonly duration: number;
+  /** Without it the speed is even. */
+  readonly curve?: SpeedCurve;
+  /**
+   * It stands in for a transition that this editor cannot do, as a fade. An export stops there, so
+   * that no file says something else than the project.
+   */
+  readonly missing?: true;
+}
+
 export interface RenderLayer {
   readonly id: string;
   /** Seconds on the timeline. */
@@ -65,8 +101,9 @@ export interface RenderLayer {
   readonly source: LayerSource;
   /** How the clip box comes about and how the media goes in it. See boxOf. */
   readonly fit: "contain" | "cover" | "fixed";
-  /** Seconds. */
-  readonly fades: { readonly in: number; readonly out: number };
+  /** From nothing to the clip at its start, and from the clip to nothing at its end. */
+  readonly enter?: PlannedTransition;
+  readonly exit?: PlannedTransition;
   /** What changes over time, on the clock of the clip: `transform.*` and `opacity`. */
   readonly channels: Channels;
   /**
@@ -177,8 +214,68 @@ function sourceOf(clip: ClipState, asset: Asset | undefined): LayerSource | unde
   return asset?.hash === undefined ? undefined : { kind: source.kind, file: asset.hash };
 }
 
-const secondsOf = (time: string | undefined) =>
-  time === undefined ? 0 : toSeconds(parseTime(time));
+const FADE: TransitionImplementation = { kind: "built-in", type: "fade" };
+
+type Edge = "enter" | "exit";
+
+/**
+ * A transition at the start or the end of a clip, ready to draw. One that this editor cannot do
+ * shows as a fade, and says so. It is never longer than the clip.
+ */
+function plannedEdge(clip: ClipState, edge: Edge): PlannedTransition | undefined {
+  const transition = clip[edge];
+  if (!transition) return undefined;
+  const length = edgeLength(parseTime(transition.duration), parseTime(clip.duration));
+  const [start, end] =
+    edge === "enter"
+      ? [clipStart(clip), add(clipStart(clip), length)]
+      : [subtract(clipEnd(clip), length), clipEnd(clip)];
+  const found = findTransition(transition, "picture", edge);
+  const isDone = found.kind === "built-in" && isSupported(found, "picture", edge);
+  const how: TransitionImplementation =
+    found.kind === "built-in" && isDone
+      ? {
+          kind: "built-in",
+          type: found.type,
+          ...(found.variant === undefined ? {} : { variant: found.variant }),
+        }
+      : FADE;
+  return {
+    how,
+    start: toSeconds(start),
+    end: toSeconds(end),
+    duration: toSeconds(length),
+    ...(transition.curve && { curve: transition.curve }),
+    ...(isDone ? {} : { missing: true as const }),
+  };
+}
+
+/**
+ * The edges of clips where a join is, as `<clip> enter` and `<clip> exit`: a join wins over the
+ * transition at either of its ends. Only one between two clips that show counts, see `placeJoins`.
+ * Joins are not drawn yet, so for now such a cut is a cut and nothing else.
+ */
+export function joinedEdges(timeline: TimelineState): ReadonlySet<string> {
+  const joined = new Set<string>();
+  const byTrack = new Map<string, Map<string, JoinSides>>();
+  for (const [id, { track, from, to, transition }] of Object.entries(timeline.joins ?? {})) {
+    if (track === undefined || from === undefined || to === undefined || !transition) continue;
+    const joins = byTrack.get(track) ?? new Map<string, JoinSides>();
+    byTrack.set(track, joins.set(id, { from, to }));
+  }
+  for (const [track, joins] of byTrack) {
+    const clipOf = (id: string) => {
+      const clip = entryOf(timeline.clips, id);
+      return clip?.track === track && !clip.hidden ? clip : undefined;
+    };
+    for (const [id, place] of placeJoins(joins, clipOf)) {
+      if (place.kind !== "cut") continue;
+      const { from, to } = joins.get(id) as JoinSides;
+      joined.add(`${from} exit`).add(`${to} enter`);
+    }
+  }
+  return joined;
+}
 
 const NO_CONTENT: Readonly<Record<string, PropertyValue>> = {};
 
@@ -197,6 +294,8 @@ interface BuiltLayer {
   readonly asset: Asset | undefined;
   readonly scene: SceneSource | undefined;
   readonly properties: Properties;
+  /** Which of its edges a join has. */
+  readonly joined: string;
   readonly layer: RenderLayer | undefined;
 }
 
@@ -210,14 +309,25 @@ function layerOf(
   state: ProjectState,
   clip: ClipState,
   version: Version | undefined,
+  joins: ReadonlySet<string>,
 ): RenderLayer | undefined {
   const asset = assetOf(state, clip);
   const scene = sceneOf(state, clip);
   const properties = effectiveProperties(clip, version);
+  const enters = !joins.has(`${clip.id} enter`);
+  const exits = !joins.has(`${clip.id} exit`);
+  const joined = `${enters ? "" : "enter"} ${exits ? "" : "exit"}`;
   const known = built.get(clip);
-  if (known?.asset === asset && known?.scene === scene && known?.properties === properties) {
+  if (
+    known?.asset === asset &&
+    known?.scene === scene &&
+    known?.properties === properties &&
+    known?.joined === joined
+  ) {
     return known?.layer;
   }
+  const enter = enters ? plannedEdge(clip, "enter") : undefined;
+  const exit = exits ? plannedEdge(clip, "exit") : undefined;
   const source = scene ?? sourceOf(clip, asset);
   const layer: RenderLayer | undefined = source && {
     id: clip.id,
@@ -227,11 +337,12 @@ function layerOf(
     source,
     // A scene is laid out for its box, so there is nothing to keep in proportion.
     fit: scene ? "fixed" : fitOf(properties),
-    fades: { in: secondsOf(clip.fadeIn), out: secondsOf(clip.fadeOut) },
+    ...(enter && { enter }),
+    ...(exit && { exit }),
     channels: channelsOf(properties),
     ...(scene && { content: contentOf(properties) }),
   };
-  built.set(clip, { asset, scene, properties, layer });
+  built.set(clip, { asset, scene, properties, joined, layer });
   return layer;
 }
 
@@ -255,9 +366,10 @@ export function buildRenderPlan(
   const { n, d } = parseTime(format.fps);
   const tracks = orderedTracks(timeline).filter((track) => track.kind === "video" && !track.hidden);
   const lanes = new Map(tracks.map(({ id }) => [id, [] as RenderLayer[]]));
+  const joined = joinedEdges(timeline);
   for (const clip of Object.values(timeline.clips)) {
     const lane = lanes.get(clip.track);
-    const layer = lane && !clip.hidden ? layerOf(state, clip, version) : undefined;
+    const layer = lane && !clip.hidden ? layerOf(state, clip, version, joined) : undefined;
     if (layer) lane?.push(layer);
   }
   return {
