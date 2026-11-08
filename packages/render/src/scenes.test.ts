@@ -151,6 +151,7 @@ const planOf = (...layers: RenderLayer[]): RenderPlan => ({
   background: "#000000",
   scenes: { format: "f", language: "zh-CN", fps: { num: 30, den: 1 } },
   layers,
+  joins: [],
 });
 
 const CONTENT: Extract<ToCompositor, { type: "scene-files" }> = {
@@ -535,6 +536,43 @@ describe("following the time", () => {
     scenes.handle({ type: "play", seconds: 12, at: 2000, rate: 1, jump: true });
     expect(hosts[0]?.plays.length).toBeGreaterThan(before);
     expect(hosts[0]?.plays.at(-1)).toMatchObject({ frame: 60, at: 2000 });
+  });
+});
+
+describe("a scene that a join has show past its clip", () => {
+  /** Shown from eight seconds on, two before its clip, and two after its end. */
+  const joined = (extra: Partial<RenderLayer> = {}) =>
+    layer("a", { shows: { from: 8, to: 22 }, ...extra });
+
+  it("runs from then on, on the first frame until its clock reads zero", () => {
+    const { scenes, hosts } = setup();
+    scenes.follow(planOf(joined()), 8.5);
+    scenes.handle(CONTENT);
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]?.seeks).toEqual([0]);
+  });
+
+  it("goes on after its end on its own clock", () => {
+    const { scenes, hosts } = setup();
+    const plan = planOf(joined());
+    scenes.follow(plan, 21);
+    scenes.handle(CONTENT);
+    expect(hosts[0]?.seeks).toEqual([330]);
+    scenes.follow(plan, 23);
+    expect(hosts[0]?.seeks).toEqual([330, 360]);
+  });
+
+  it("is made ready before it shows, by when it shows first", () => {
+    const { scenes, hosts } = setup();
+    scenes.handle(CONTENT);
+    scenes.follow(planOf(joined()), 7);
+    expect(hosts).toHaveLength(1);
+  });
+
+  it("waits for the first frame of its clock while time goes on by itself", () => {
+    const base = baseFor(joined(), planOf(), { seconds: 8, at: 1000, rate: 1, jump: false });
+    // It shows from 8 seconds on, and its clock reads zero at 10: its first frame until then.
+    expect(base).toMatchObject({ frame: 0, at: 3000 });
   });
 });
 

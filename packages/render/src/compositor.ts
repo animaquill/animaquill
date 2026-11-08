@@ -5,16 +5,18 @@ import soundCode from "virtual:animaquill-sound-runtime";
 import { ALL_FORMATS, BlobSource, Input, VideoSampleSink, type VideoSample } from "mediabunny";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
 import {
+  TIME_TOLERANCE,
   boxOf,
-  clockOf,
   fitIn,
   layerMatrix,
   multiply,
-  shownAt,
+  transformPoint,
   viewMatrix,
   type Matrix,
 } from "@animaquill/core/view";
-import { comesUpAfter, readingAt, showsAt, VideoCursor } from "./cursor.ts";
+import { Composer, type Context2D } from "./compose.ts";
+import { comesUpAfter, fileTimeOf, readingAt, showsAt, VideoCursor } from "./cursor.ts";
+import type { Corners } from "./transitions/code.ts";
 import { GiveUpTimer } from "./patience.ts";
 import { withChannels } from "./plan.ts";
 import { placeholderPicture } from "./placeholder.ts";
@@ -32,7 +34,7 @@ interface Picture {
   readonly width: number;
   readonly height: number;
   /** Draws a part of it, in its pixels, on the same pixels of whatever the matrix says. */
-  draw(x: number, y: number, width: number, height: number): void;
+  draw(target: Context2D, x: number, y: number, width: number, height: number): void;
   close(): void;
 }
 
@@ -206,8 +208,8 @@ async function cursorOf(
 const imagePicture = (bitmap: ImageBitmap | OffscreenCanvas, close = () => {}): Picture => ({
   width: bitmap.width,
   height: bitmap.height,
-  draw(x, y, width, height) {
-    draw.drawImage(bitmap, x, y, width, height, x, y, width, height);
+  draw(target, x, y, width, height) {
+    target.drawImage(bitmap, x, y, width, height, x, y, width, height);
   },
   close,
 });
@@ -220,11 +222,11 @@ const imagePicture = (bitmap: ImageBitmap | OffscreenCanvas, close = () => {}): 
 const videoPicture = (sample: VideoSample): Picture => ({
   width: sample.displayWidth,
   height: sample.displayHeight,
-  draw(x, y, width, height) {
+  draw(target, x, y, width, height) {
     if (sample.rotation !== 0 || sample.flip) {
-      sample.draw(draw, x, y, width, height, x, y, width, height);
+      sample.draw(target, x, y, width, height, x, y, width, height);
     } else {
-      draw.drawImage(sample.toCanvasImageSource(), x, y, width, height, x, y, width, height);
+      target.drawImage(sample.toCanvasImageSource(), x, y, width, height, x, y, width, height);
     }
   },
   close() {},
@@ -253,7 +255,7 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
     frameGivenUp = true;
     return undefined;
   }
-  const sample = await cursor?.at(clockOf(layer, seconds));
+  const sample = await cursor?.at(fileTimeOf(layer, seconds));
   if (cursor?.takeCold()) coldInFrame += 1;
   return sample && videoPicture(sample);
 }
@@ -277,7 +279,8 @@ async function getReady(seconds: number): Promise<void> {
       continue;
     }
     const cursor = await cursorOf(layer, source.file, file);
-    await cursor?.at(layer.offset);
+    const reading = readingAt(layer, seconds);
+    if (reading !== undefined) await cursor?.at(reading);
     cursor?.takeCold();
   }
 }
@@ -346,34 +349,60 @@ const patience = new GiveUpTimer(
 /** Canvas ignores a matrix it cannot use and would draw with the one before. */
 const canUse = (matrix: Matrix) => matrix.every((number) => Number.isFinite(number));
 
-/** Colors and pictures are one kind of thing here: a box in the world, with something in it. */
+/** Where a clip box is on the picture, by its corners in pixels. */
+function cornersOf(toPicture: Matrix, box: { width: number; height: number }): Corners {
+  const at = (x: number, y: number) => transformPoint(toPicture, { x, y });
+  return [at(0, 0), at(box.width, 0), at(box.width, box.height), at(0, box.height)];
+}
+
+/**
+ * Colors and pictures are one kind of thing here: a box in the world, with something in it. Says
+ * where the box ended up on the picture, for transitions that want to know.
+ */
 function paint(
+  target: Context2D,
   layer: RenderLayer,
   picture: Picture | undefined,
   view: Matrix,
   seconds: number,
   stage: RenderPlan["stage"],
-): void {
+  opacity: number,
+  operation: GlobalCompositeOperation = "source-over",
+): Corners | undefined {
   const { source } = layer;
-  // The enter and exit of a layer are fades so far, which draw it with less opacity.
-  const opacity = shownAt(layer, seconds);
-  if (opacity <= 0 || (source.kind !== "color" && !picture)) return;
+  if (opacity <= 0 || (source.kind !== "color" && !picture)) return undefined;
   // A scene is laid out for its box, so its picture says nothing about what that box is.
   const box = boxOf(layer, seconds, source.kind === "scene" ? undefined : picture, stage);
-  if (box.width <= 0 || box.height <= 0) return;
+  if (box.width <= 0 || box.height <= 0) return undefined;
   const toPicture = multiply(view, layerMatrix(layer, seconds, box));
-  draw.globalAlpha = opacity;
+  target.globalCompositeOperation = operation;
+  target.globalAlpha = Math.min(opacity, 1);
   if (picture) {
     const { source: part, matrix } = fitIn(layer.fit, picture, box);
     const fromMedia = multiply(toPicture, matrix);
-    if (!canUse(fromMedia)) return;
-    draw.setTransform(...fromMedia);
-    picture.draw(part.x, part.y, part.width, part.height);
+    if (!canUse(fromMedia)) return undefined;
+    target.setTransform(...fromMedia);
+    picture.draw(target, part.x, part.y, part.width, part.height);
   } else if (source.kind === "color" && canUse(toPicture)) {
-    draw.setTransform(...toPicture);
-    draw.fillStyle = source.color;
-    draw.fillRect(0, 0, box.width, box.height);
+    target.setTransform(...toPicture);
+    target.fillStyle = source.color;
+    target.fillRect(0, 0, box.width, box.height);
   }
+  target.globalAlpha = 1;
+  target.globalCompositeOperation = "source-over";
+  return canUse(toPicture) ? cornersOf(toPicture, box) : undefined;
+}
+
+/** Draws transitions, which takes pictures of their own for the layers they are about. */
+const composer = new Composer();
+
+/** A transition at this moment that this editor cannot do, which a picture that goes out must not have. */
+function missingJoinAt(shown: RenderPlan, seconds: number): string | undefined {
+  const join = shown.joins.find(
+    ({ missing, start, end }) =>
+      missing === true && seconds >= start - TIME_TOLERANCE && seconds < end - TIME_TOLERANCE,
+  );
+  return join?.from;
 }
 
 /** Everything is decoded first, so that a frame appears whole and never half drawn. */
@@ -411,12 +440,14 @@ function paintAll(
   if (canvas.height !== shown.height) canvas.height = shown.height;
   draw.resetTransform();
   draw.globalAlpha = 1;
+  draw.globalCompositeOperation = "source-over";
   draw.fillStyle = shown.background;
   draw.fillRect(0, 0, canvas.width, canvas.height);
   const view = viewMatrix(shown, seconds);
-  showing.forEach((layer, index) => {
-    paint(layer, pictures[index], view, seconds, shown.stage);
-  });
+  const pictureOfLayer = new Map(showing.map((layer, index) => [layer, pictures[index]]));
+  composer.compose(draw, shown, showing, seconds, (target, layer, opacity, operation) =>
+    paint(target, layer, pictureOfLayer.get(layer), view, seconds, shown.stage, opacity, operation),
+  );
 }
 
 /** One frame at a time. When time runs ahead of it, frames in between are skipped. */
@@ -486,6 +517,8 @@ async function paintStill(seconds: number): Promise<void> {
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept(showing);
   releaseFilesExcept(showing);
+  const missing = missingJoinAt(shown, seconds);
+  if (missing !== undefined) throw new StillFailed({ reason: "transition", layer: missing });
   const pictures = await stillPictures<Picture>(showing, seconds, {
     file(id) {
       const file = fileOf(id);
@@ -497,7 +530,7 @@ async function paintStill(seconds: number): Promise<void> {
     },
     video: async (layer, id, file) => {
       const cursor = await cursorOf(layer, id, file);
-      const sample = await cursor?.at(clockOf(layer, seconds));
+      const sample = await cursor?.at(fileTimeOf(layer, seconds));
       return sample && videoPicture(sample);
     },
     scene: async ({ id }) => {

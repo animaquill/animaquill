@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { parseTime } from "./time.ts";
+import { formatTime, parseTime } from "./time.ts";
 import {
   BUILT_IN_TRANSITIONS,
   SUPPORTED_TRANSITIONS,
   findTransition,
   isSupported,
+  joinParts,
   placeJoins,
+  variantsOf,
   type ClipTimes,
   type JoinSides,
+  type TransitionSpec,
 } from "./transitions.ts";
 
 describe("what a transition is", () => {
@@ -46,18 +49,45 @@ describe("what a transition is", () => {
     expect(findTransition({ type: "toString" }, "sound", "enter").kind).toBe("missing");
   });
 
-  it("is only done here for the picture at the start and the end of clips, so far", () => {
-    const fade = findTransition({ type: "fade" }, "picture", "enter");
-    expect(isSupported(fade, "picture", "enter")).toBe(true);
-    expect(isSupported(fade, "picture", "exit")).toBe(true);
-    expect(isSupported(fade, "picture", "join")).toBe(false);
+  it("is done here for every picture that comes with the editor, and for no sound so far", () => {
+    for (const type of Object.keys(BUILT_IN_TRANSITIONS.picture)) {
+      for (const use of ["enter", "exit", "join"] as const) {
+        const spec = BUILT_IN_TRANSITIONS.picture[type];
+        const variant = spec?.variants ? Object.keys(spec.variants)[0] : undefined;
+        const found = findTransition({ type, variant }, "picture", use);
+        expect(isSupported(found, "picture", use), `${type} ${use}`).toBe(true);
+      }
+    }
+    const fade = findTransition({ type: "fade" }, "sound", "enter");
     expect(isSupported(fade, "sound", "enter")).toBe(false);
-    const wipe = findTransition({ type: "wipe", variant: "left" }, "picture", "enter");
-    expect(isSupported(wipe, "picture", "enter")).toBe(false);
     expect(Object.keys(SUPPORTED_TRANSITIONS.picture)).toEqual(["enter", "exit", "join"]);
   });
 
-  it("comes with every name of the design, and their default lengths", () => {
+  it("gives its code the values of the transition, with those of the variant over them", () => {
+    const wipe = findTransition({ type: "wipe", variant: "up" }, "picture", "join");
+    expect(wipe.kind === "built-in" && wipe.values).toEqual({ softness: 0.02, direction: [0, -1] });
+    const dip = findTransition({ type: "dip", variant: "white" }, "picture", "enter");
+    expect(dip.kind === "built-in" && dip.values).toEqual({ color: "#ffffff" });
+    expect(findTransition({ type: "fade" }, "picture", "exit")).toMatchObject({ values: {} });
+    // A variant is looked up by its own name, never one that every object has.
+    expect(findTransition({ type: "wipe", variant: "toString" }, "picture", "join").kind).toBe(
+      "missing",
+    );
+  });
+
+  it("comes with every name of the design, their kinds and their default lengths", () => {
+    expect(variantsOf(BUILT_IN_TRANSITIONS.picture["dip"] as TransitionSpec)).toEqual([
+      "black",
+      "white",
+    ]);
+    for (const type of ["wipe", "push"]) {
+      expect(variantsOf(BUILT_IN_TRANSITIONS.picture[type] as TransitionSpec)).toEqual([
+        "left",
+        "right",
+        "up",
+        "down",
+      ]);
+    }
     expect(Object.keys(BUILT_IN_TRANSITIONS.picture)).toEqual(["fade", "dip", "wipe", "push"]);
     expect(Object.keys(BUILT_IN_TRANSITIONS.sound)).toEqual(["fade", "fade-linear"]);
     expect(BUILT_IN_TRANSITIONS.picture["fade"]?.duration).toBe("0.5");
@@ -127,5 +157,17 @@ describe("where joins are", () => {
       x: { kind: "hidden", clip: "hidden" },
       y: { kind: "cut", at: parseTime("0.3") },
     });
+  });
+});
+
+describe("the parts of a join", () => {
+  it("are half before the cut and half after it, or all on one side, exactly", () => {
+    const parts = (duration: string, align?: "center" | "before" | "after") =>
+      joinParts(parseTime(duration), align).map(formatTime);
+    expect(parts("1")).toEqual(["0.5", "0.5"]);
+    expect(parts("1/3", "center")).toEqual(["1/6", "1/6"]);
+    expect(parts("1001/30000")).toEqual(["1001/60000", "1001/60000"]);
+    expect(parts("0.8", "before")).toEqual(["0.8", "0"]);
+    expect(parts("0.8", "after")).toEqual(["0", "0.8"]);
   });
 });

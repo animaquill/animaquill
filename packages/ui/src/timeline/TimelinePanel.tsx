@@ -28,7 +28,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from "react";
-import { mediaOfTrack } from "@animaquill/schema";
+import { JOIN_ALIGNS, mediaOfTrack } from "@animaquill/schema";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
@@ -45,6 +45,7 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { replacementItems } from "./transition-menu.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
@@ -621,8 +622,8 @@ function Surface({
           (clip) => media.peaksOf(clip),
           (clip) => media.stripOfClip(clip),
           (clip) => sounds.stateOf(clip)?.state === "failed",
-          (transition, edge, row) =>
-            transitionName(t, transition, edge, mediaOfTrack(row.track.kind)),
+          (transition, use, row) =>
+            transitionName(t, transition, use, mediaOfTrack(row.track.kind)),
           (context, theme, sharp) => {
             painter.paint(context, theme, sharp);
             paintMarquee(context, lanes, theme);
@@ -699,14 +700,56 @@ function Surface({
     const hit = editor.hitAt(pointer);
     const x = pointer.x + box.left;
     const y = pointer.y + box.top;
-    if (hit.kind === "clip" && hit.transition && !hit.row.track.locked) {
-      const { transition } = hit;
-      editor.selectTransition(hit.box.id, transition);
+    if (hit.kind === "join") {
+      const { join, row } = hit;
+      editor.selectJoin(join.id);
+      if (row.track.locked) return;
+      const current = join.join.transition;
+      const align = current.align ?? "center";
+      // What it can be instead, where it is around the cut, and taking it away.
+      const instead =
+        row.track.kind === "video"
+          ? replacementItems(t, "join", current, ({ type, variant }) =>
+              editor.updateJoin(join.id, { type, variant: variant ?? null }),
+            )
+          : [];
       showMenu({
         x,
         y,
-        label: t("timeline.clips"),
+        label: t("transition.uses.join"),
         groups: [
+          ...instead,
+          JOIN_ALIGNS.map((place) => ({
+            id: `align-${place}`,
+            label: t(`transition.align.${place}`),
+            selected: align === place,
+            run: () => editor.updateJoin(join.id, { align: place }),
+          })),
+          [
+            {
+              id: "deleteJoin",
+              label: t("transition.delete"),
+              run: () => editor.removeJoin(join.id),
+            },
+          ],
+        ],
+      });
+    } else if (hit.kind === "clip" && hit.transition && !hit.row.track.locked) {
+      const { transition } = hit;
+      editor.selectTransition(hit.box.id, transition);
+      const current = hit.box.clip[transition];
+      const instead =
+        hit.row.track.kind === "video" && current
+          ? replacementItems(t, transition, current, ({ type, variant }) =>
+              editor.replaceTransition(hit.box.id, transition, type, variant),
+            )
+          : [];
+      showMenu({
+        x,
+        y,
+        label: t(`transition.uses.${transition}`),
+        groups: [
+          ...instead,
           [
             {
               id: "deleteTransition",
@@ -737,6 +780,39 @@ function Surface({
               },
             ]
           : [];
+      // A cut between two clips takes a join, and the edges of a clip what comes in and goes out.
+      const seam = editor.seamAt(pointer);
+      const joined = (edge: "enter" | "exit") =>
+        editor.model?.joined.has(`${hit.box.id} ${edge}`) === true;
+      const transitions =
+        hit.row.track.kind === "video"
+          ? [
+              ...(seam
+                ? [
+                    {
+                      id: "addJoin",
+                      label: t("transition.addJoin"),
+                      run: () => editor.addJoin(seam.from.id, seam.to.id),
+                      disabled:
+                        editor.model?.joined.has(`${seam.from.id} exit`) === true ||
+                        editor.model?.joined.has(`${seam.to.id} enter`) === true,
+                    },
+                  ]
+                : []),
+              {
+                id: "addEnter",
+                label: t("transition.addEnter"),
+                run: () => editor.addEdgeTransition(hit.box.id, "enter"),
+                disabled: hit.box.clip.enter !== undefined || joined("enter"),
+              },
+              {
+                id: "addExit",
+                label: t("transition.addExit"),
+                run: () => editor.addEdgeTransition(hit.box.id, "exit"),
+                disabled: hit.box.clip.exit !== undefined || joined("exit"),
+              },
+            ]
+          : [];
       showMenu({
         x,
         y,
@@ -747,6 +823,7 @@ function Surface({
             item("cut", () => editor.cutSelection()),
             item("paste", () => editor.paste(), !editor.hasClipboard),
           ],
+          ...(transitions.length > 0 ? [transitions] : []),
           ...(properties.length > 0 ? [properties] : []),
           [
             item("split", () => editor.splitAtPlayhead(), !editor.canSplit),

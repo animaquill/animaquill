@@ -63,6 +63,8 @@ function projectFolder(
   sound: readonly { readonly muted?: boolean; readonly clips: readonly Clip[] }[] = [],
   /** Sounds that code makes, by id: what is in their `sound.js`. */
   codes: Readonly<Record<string, string>> = {},
+  /** Joins between the clips of the first track. */
+  joins: readonly Record<string, unknown>[] = [],
 ): string {
   const manifests = Object.keys(codes).map((id): [string, SoundManifest] => [
     id,
@@ -84,6 +86,7 @@ function projectFolder(
     duration: String(seconds),
   }));
   (timeline.tracks[0] as { clips: unknown[] }).clips = [...clips];
+  if (joins.length > 0) Object.assign(timeline.tracks[0] as object, { joins });
   sound.forEach(({ muted, clips: heard }, index) => {
     const track = { id: `sound${index}`, kind: "audio", clips: heard, ...(muted && { muted }) };
     if (index === 0)
@@ -570,23 +573,68 @@ test.describe("a video with transitions", () => {
     }
   });
 
+  test("goes across a cut frame by frame as a still of the same moment does", async ({ page }) => {
+    const red: Clip = {
+      id: "red",
+      start: "0",
+      duration: "1",
+      source: { kind: "color", color: "#ff0000" },
+      // Comes in from the left, which is more than a fade, before the join.
+      enter: { type: "push", variant: "right", duration: "0.4" },
+    };
+    const green: Clip = {
+      id: "green",
+      start: "1",
+      duration: "1",
+      source: { kind: "color", color: "#00ff00" },
+    };
+    const wipe = {
+      id: "j",
+      from: "red",
+      to: "green",
+      type: "wipe",
+      variant: "right",
+      duration: "1",
+    };
+    await open(page, projectFolder(2, [red, green], {}, {}, [], {}, [wipe]));
+    await startExport(page);
+    await exported(page);
+    const file = (await savedFile(page)) as Buffer;
+    // Half way into the wipe, which goes to the right: the green has come in on the left half.
+    for (const [index, time] of [
+      [6, "0:00/06"],
+      [15, "0:00/15"],
+      [22, "0:00/22"],
+      [30, "0:01/00"],
+      [44, "0:01/14"],
+    ] as const) {
+      const still = await stillAt(page, time);
+      const { psnr } = await compare(page, file, index, still, [0, 255, 0]);
+      console.log(`frame ${index}: ${psnr.toFixed(1)} dB`);
+      expect(psnr).toBeGreaterThan(35);
+    }
+    const middle = await stillAt(page, "0:01/00");
+    expect(await pixelOfStill(page, middle, WIDTH / 4, HEIGHT / 2)).toEqual([0, 255, 0]);
+    expect(await pixelOfStill(page, middle, (WIDTH * 3) / 4, HEIGHT / 2)).toEqual([255, 0, 0]);
+  });
+
   test("stops where a transition is that this editor cannot do, and goes there", async ({
     page,
   }) => {
-    const wiping = {
+    const starry = {
       ...fading,
-      id: "wiping",
-      name: "擦入的红色",
-      enter: { type: "wipe", variant: "left", duration: "1" },
+      id: "starry",
+      name: "星形入场的红色",
+      enter: { type: "plugin.star", duration: "1" },
     };
-    await open(page, projectFolder(2, [wiping]));
+    await open(page, projectFolder(2, [starry]));
     // Opening it says so first, with what will happen.
-    await expect(dialog(page)).toContainText("这一版的编辑器还不能显示转场 wipe");
+    await expect(dialog(page)).toContainText("没有安装提供这个转场的插件：plugin.star");
     await dialog(page).getByRole("button", { name: "关闭" }).click();
     await startExport(page);
     await expect(dialog(page)).toContainText("视频没有导出", { timeout: 60_000 });
     await expect(dialog(page)).toContainText("第 1 帧（0:00/00）");
-    await expect(dialog(page)).toContainText("“擦入的红色”的转场这一版的编辑器还不能显示");
+    await expect(dialog(page)).toContainText("“星形入场的红色”的转场这一版的编辑器还不能显示");
     await dialog(page).getByRole("button", { name: "关闭" }).click();
     await expect(content(page, "timeline").getByRole("option", { selected: true })).toHaveCount(1);
   });

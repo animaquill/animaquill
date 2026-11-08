@@ -1,4 +1,12 @@
-import { clipEnd, clipOffset, clipStart, type ClipState, type CommandCall } from "@animaquill/core";
+import {
+  clipEnd,
+  clipOffset,
+  clipStart,
+  longestJoin,
+  takenAt,
+  type ClipState,
+  type CommandCall,
+} from "@animaquill/core";
 import {
   ZERO,
   add,
@@ -6,6 +14,7 @@ import {
   formatTime,
   newId,
   parseTime,
+  rational,
   subtract,
   toSeconds,
   type Rational,
@@ -18,6 +27,7 @@ import {
   isInsideClip,
   type ClipBox,
   type Edge,
+  type JoinBox,
   type Row,
   type TimelineModel,
 } from "./model.ts";
@@ -67,6 +77,8 @@ export interface Preview {
   readonly copying?: boolean;
   /** How long a transition at an edge of a clip is while its handle is dragged, in seconds. */
   readonly transition?: { readonly clip: string; readonly edge: Edge; readonly seconds: number };
+  /** Where a join is while an edge of it is dragged, in seconds. */
+  readonly join?: { readonly id: string; readonly start: number; readonly end: number };
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */
@@ -101,6 +113,8 @@ export interface GestureHost {
   select(clips: ReadonlySet<string>): void;
   /** Selects the transition at an edge of a clip, instead of clips. */
   selectTransition(clip: string, edge: Edge): void;
+  /** Selects a join, instead of clips. */
+  selectJoin(join: string): void;
   seek(frame: number): void;
   run(calls: readonly CommandCall[]): boolean;
 }
@@ -311,7 +325,11 @@ export class MoveGesture implements Gesture {
       const track = this.#targetRow(row).id;
       return { type: "clip.add", params: { timeline, track, clip, ...this.#overlap() } };
     });
-    if (this.#host.run(calls)) this.#host.select(new Set(copies.map(({ id }) => id)));
+    const originals = this.#moving.map(({ box }) => box.id);
+    const joins = copiedJoins(this.#host.model, originals, copies);
+    if (this.#host.run([...calls, ...joins])) {
+      this.#host.select(new Set(copies.map(({ id }) => id)));
+    }
   }
 
   cancel(): void {
@@ -600,10 +618,22 @@ function exactLength(clip: ClipState, edge: Edge): Rational {
   }
 }
 
-/** How long the transition at an edge of a clip can be: all of it, apart from the other edge. */
-export function longestTransition(clip: ClipState, edge: Edge): Rational {
-  const other = exactLength(clip, OTHER_EDGE[edge]);
-  const room = subtract(parseTime(clip.duration), other);
+/**
+ * How long the transition at an edge of a clip can be: all of it, apart from the other edge, which
+ * a join takes instead of the transition there where one is.
+ */
+export function longestTransition(
+  clip: ClipState,
+  edge: Edge,
+  model?: Pick<TimelineModel, "ends">,
+): Rational {
+  const otherEdge = OTHER_EDGE[edge];
+  const other = model
+    ? takenAt(model.ends, clip, otherEdge === "enter" ? "start" : "end")
+    : exactLength(clip, otherEdge);
+  const raw = exactLength(clip, otherEdge);
+  const taken = compare(other, raw) > 0 ? other : raw;
+  const room = subtract(parseTime(clip.duration), taken);
   return compare(room, ZERO) > 0 ? room : ZERO;
 }
 
@@ -616,8 +646,9 @@ export function transitionCall(
   clip: ClipState,
   edge: Edge,
   length: Rational,
+  model?: Pick<TimelineModel, "ends">,
 ): CommandCall | undefined {
-  const longest = longestTransition(clip, edge);
+  const longest = longestTransition(clip, edge, model);
   const limited =
     compare(length, ZERO) < 0 ? ZERO : compare(length, longest) > 0 ? longest : length;
   const current = clip[edge];
@@ -677,7 +708,7 @@ export class TransitionGesture implements Gesture {
     const length = this.#length;
     if (length) {
       const { model } = this.#host;
-      const call = transitionCall(model.id, this.#box.clip, this.#edge, length.exact());
+      const call = transitionCall(model.id, this.#box.clip, this.#edge, length.exact(), model);
       if (call && this.#host.run([call]) && compare(length.exact(), ZERO) > 0) {
         this.#host.selectTransition(this.#box.id, this.#edge);
       }
@@ -716,11 +747,116 @@ export class TransitionGesture implements Gesture {
   }
 
   #limited(length: Landing): Landing {
-    const longest = longestTransition(this.#box.clip, this.#edge);
+    const longest = longestTransition(this.#box.clip, this.#edge, this.#host.model);
     if (length.seconds <= 0) return { seconds: 0, exact: () => ZERO };
     if (length.seconds >= toSeconds(longest))
       return { seconds: toSeconds(longest), exact: () => longest };
     return length;
+  }
+}
+
+/**
+ * Drags an edge of a join, which changes how long it is. In the middle of its cut both edges go,
+ * so that it stays in the middle; otherwise the edge away from the cut goes. It goes by frames, or
+ * to what it snaps to, and never past what the clips leave room for. Dragged to nothing, it goes.
+ */
+export class JoinGesture implements Gesture {
+  readonly #host: GestureHost;
+  readonly #join: JoinBox;
+  readonly #edge: "start" | "end";
+  readonly #press: Pointer;
+  readonly #grabTime: number;
+  readonly #points: SnapPoints;
+  /** How long the part on the side of the edge is: half of it in the middle of the cut. */
+  #part: Landing | undefined;
+
+  constructor(host: GestureHost, join: JoinBox, edge: "start" | "end", press: Pointer) {
+    this.#host = host;
+    this.#join = join;
+    this.#edge = edge;
+    this.#press = press;
+    this.#grabTime = host.timeAt(press.x);
+    this.#points = snapPointsOf(host.model, host.frame, new Set());
+  }
+
+  get #centered(): boolean {
+    const { align } = this.#join.join.transition;
+    return align !== "before" && align !== "after";
+  }
+
+  move(pointer: Pointer): void {
+    if (!this.#part && !hasMoved(this.#press, pointer)) return;
+    const { at, start, end } = this.#join;
+    const before = this.#edge === "start";
+    const wanted = (before ? start : end) + this.#host.timeAt(pointer.x) - this.#grabTime;
+    const point = this.#points.nearest(wanted, this.#host.snapDistance(pointer));
+    const cut = () => clipStart(this.#join.to.clip);
+    const part: Landing = point
+      ? {
+          seconds: before ? at - point.seconds : point.seconds - at,
+          exact: () => (before ? subtract(cut(), point.exact()) : subtract(point.exact(), cut())),
+          line: point.seconds,
+        }
+      : this.#onFrames(before ? at - wanted : wanted - at);
+    this.#part = this.#limited(part);
+    const seconds = this.#part.seconds;
+    const shown = this.#centered
+      ? { start: at - seconds, end: at + seconds }
+      : before
+        ? { start: at - seconds, end: at }
+        : { start: at, end: at + seconds };
+    const line = this.#part.line === undefined ? {} : { snap: this.#part.line };
+    this.#host.setPreview({ join: { id: this.#join.id, ...shown }, ...line });
+  }
+
+  end(pointer: Pointer): void {
+    this.move(pointer);
+    this.#commit();
+    this.#host.setPreview(undefined);
+  }
+
+  #commit(): void {
+    const part = this.#part;
+    if (!part) return;
+    const exact = part.exact();
+    const length = this.#centered ? add(exact, exact) : exact;
+    const { model } = this.#host;
+    const { id } = this.#join;
+    if (compare(length, ZERO) <= 0) {
+      this.#host.run([{ type: "join.remove", params: { timeline: model.id, joins: [id] } }]);
+      return;
+    }
+    if (formatTime(length) === this.#join.join.transition.duration) return;
+    const changes = { duration: formatTime(length) };
+    if (
+      this.#host.run([{ type: "join.update", params: { timeline: model.id, join: id, changes } }])
+    ) {
+      this.#host.selectJoin(id);
+    }
+  }
+
+  cancel(): void {
+    this.#host.setPreview(undefined);
+  }
+
+  isStale(model: TimelineModel): boolean {
+    return !model.joins.has(this.#join.id);
+  }
+
+  /** A whole number of frames from the cut, which is what people see in the preview. */
+  #onFrames(seconds: number): Landing {
+    const { rate } = this.#host.model;
+    const frames = Math.max(Math.round(seconds * rate.fps), 0);
+    return { seconds: frameSeconds(frames, rate), exact: () => frameTime(frames, rate) };
+  }
+
+  #limited(part: Landing): Landing {
+    const { from, to, join } = this.#join;
+    const longest = longestJoin(this.#host.model.ends, from.clip, to.clip, join.transition.align);
+    const most = this.#centered ? rational(longest.n, longest.d * 2n) : longest;
+    if (part.seconds <= 0) return { seconds: 0, exact: () => ZERO };
+    if (part.seconds >= toSeconds(most)) return { seconds: toSeconds(most), exact: () => most };
+    return part;
   }
 }
 
@@ -929,6 +1065,26 @@ export class EndGesture implements Gesture {
 }
 
 export type ClipCopy = Omit<ClipState, "track">;
+
+/**
+ * The joins between clips that get copied together, for their copies, which keep where they are
+ * to each other: each goes along with a new id, as long as this editor does it. Others stay.
+ */
+export function copiedJoins(
+  model: TimelineModel,
+  clips: readonly string[],
+  copies: readonly { readonly id: string }[],
+): readonly CommandCall[] {
+  const copyOf = new Map(clips.map((id, index) => [id, copies[index]?.id]));
+  return [...model.joins.values()].flatMap(({ join, trouble }) => {
+    const from = copyOf.get(join.from);
+    const to = copyOf.get(join.to);
+    if (from === undefined || to === undefined || trouble !== undefined) return [];
+    const { align, ...transition } = join.transition;
+    const params = { timeline: model.id, from, to, ...transition, align: align ?? "center" };
+    return [{ type: "join.add", params }];
+  });
+}
 
 /** Clips as new clips. Copies that were linked stay linked to each other, not to the originals. */
 export function copiesOf(clips: readonly ClipState[]): readonly ClipCopy[] {

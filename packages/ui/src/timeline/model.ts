@@ -2,12 +2,19 @@ import {
   clipEnd,
   clipStart,
   joinedEdges,
+  joinedEndsOf,
   orderedTracks,
+  partsOf,
+  placedJoins,
+  stillDuring,
   timelineLength,
   trackKindFor,
   type ClipState,
+  type JoinedEnds,
+  type ProjectState,
   type TimelineState,
   type TrackState,
+  type WholeJoin,
 } from "@animaquill/core";
 import {
   compare,
@@ -71,6 +78,34 @@ export function edgeWorks(model: TimelineModel, box: ClipBox, edge: Edge): boole
   return isSupported(findTransition(transition, media, edge), media, edge);
 }
 
+/** Why a join on a cut does not do what it says. */
+export type JoinTrouble =
+  /** A side is hidden, which is done on purpose: it is as if the join were not there. */
+  | "hidden"
+  /** Another one on the same cut comes first by id. */
+  | "taken"
+  /** This editor cannot do it, and the preview shows a dissolve instead. */
+  | "missing"
+  /** Joins of sound do nothing yet. */
+  | "sound";
+
+/** A join on the cut between two clips that follow each other, as the timeline draws it. */
+export interface JoinBox {
+  readonly id: string;
+  readonly join: WholeJoin;
+  readonly from: ClipBox;
+  readonly to: ClipBox;
+  /** The cut, in seconds. */
+  readonly at: number;
+  /** Seconds on the timeline that it takes, as the picture has it: each part fits its clip. */
+  readonly start: number;
+  readonly end: number;
+  /** Why it does not do what it says, when it does not. */
+  readonly trouble?: JoinTrouble;
+  /** Where a side shows a frame that stands still, because its file has nothing more there. */
+  readonly still: readonly { readonly from: number; readonly to: number }[];
+}
+
 /** How much room tracks need under their clips. */
 export type RoomBelow = ReadonlyMap<string, number>;
 
@@ -99,6 +134,8 @@ export interface Row {
   readonly below: number;
   /** In time order. */
   readonly clips: readonly ClipBox[];
+  /** The joins on cuts between its clips, in time order. */
+  readonly joins: readonly JoinBox[];
   /** The latest end so far at each clip. Clips can overlap after a merge, so ends are not sorted. */
   readonly reach: Float64Array;
   /**
@@ -130,6 +167,12 @@ export interface TimelineModel {
   readonly links: ReadonlyMap<string, readonly string[]>;
   /** The edges of clips that a join wins over, as `<clip> enter` and `<clip> exit`. */
   readonly joined: ReadonlySet<string>;
+  /** What the joins in effect take of the clips at their ends, for how long transitions can be. */
+  readonly ends: JoinedEnds;
+  /** Joins on cuts, by id. */
+  readonly joins: ReadonlyMap<string, JoinBox>;
+  /** The files of the project, which say how much of them is past the ends of clips. */
+  readonly assets: ProjectState["assets"];
 }
 
 const secondsOf = (time: string) =>
@@ -180,12 +223,64 @@ function displayOrder(state: TimelineState): readonly (readonly [TrackState, num
   return [...ofKind("caption").toReversed(), ...ofKind("video").toReversed(), ...ofKind("audio")];
 }
 
+/** The joins of a timeline that are on cuts, by track, with the clip boxes on their sides. */
+function joinBoxes(
+  state: TimelineState,
+  project: ProjectState | undefined,
+  boxOfClip: ReadonlyMap<string, ClipBox>,
+): ReadonlyMap<string, readonly JoinBox[]> {
+  const byTrack = new Map<string, JoinBox[]>();
+  for (const [id, { join, place }] of placedJoins(state)) {
+    if (place.kind !== "cut" && place.kind !== "hidden" && place.kind !== "taken") continue;
+    const from = boxOfClip.get(join.from);
+    const to = boxOfClip.get(join.to);
+    if (!from || !to || compare(clipEnd(from.clip), clipStart(to.clip)) !== 0) continue;
+    const effect = {
+      id,
+      track: join.track,
+      from: from.clip,
+      to: to.clip,
+      transition: join.transition,
+    };
+    const cut = clipStart(to.clip);
+    const [before, after] = partsOf(effect);
+    const media = mediaOfTrack(state.tracks[join.track]?.kind ?? "video");
+    const found = findTransition(join.transition, media, "join");
+    const trouble: JoinTrouble | undefined =
+      place.kind === "hidden" || place.kind === "taken"
+        ? place.kind
+        : media === "sound"
+          ? "sound"
+          : isSupported(found, media, "join")
+            ? undefined
+            : "missing";
+    const still =
+      project && trouble === undefined ? stillDuring(project, { ...effect, at: cut }) : [];
+    const at = toSeconds(cut);
+    const box: JoinBox = {
+      id,
+      join,
+      from,
+      to,
+      at,
+      start: at - toSeconds(before),
+      end: at + toSeconds(after),
+      ...(trouble && { trouble }),
+      still,
+    };
+    const list = byTrack.get(join.track) ?? [];
+    byTrack.set(join.track, [...list, box]);
+  }
+  return byTrack;
+}
+
 export function buildModel(
   id: string,
   state: TimelineState,
   fps: string,
   rowScale = 1,
   roomBelow: RoomBelow = NO_ROOM_BELOW,
+  project?: ProjectState,
 ): TimelineModel {
   const clipsByTrack = new Map<string, ClipBox[]>();
   const all = new Map<string, ClipBox>();
@@ -201,11 +296,15 @@ export function buildModel(
 
   let top = 0;
   const rowOfClip = new Map<string, Row>();
+  const joinsByTrack = joinBoxes(state, project, all);
+  const joins = new Map<string, JoinBox>();
   const rows = displayOrder(state).map(([track, number]) => {
     const clips = (clipsByTrack.get(track.id) ?? []).toSorted(inTimeOrder);
     const height = Math.round(ROW_HEIGHTS[track.kind] * rowScale);
     const gone = !state.tracks[track.id];
     const below = roomBelow.get(track.id) ?? 0;
+    const onTrack = (joinsByTrack.get(track.id) ?? []).toSorted((a, b) => a.start - b.start);
+    for (const join of onTrack) joins.set(join.id, join);
     const row: Row = {
       id: track.id,
       track,
@@ -214,6 +313,7 @@ export function buildModel(
       height,
       below,
       clips,
+      joins: onTrack,
       reach: reachOf(clips),
       gone,
     };
@@ -236,7 +336,20 @@ export function buildModel(
     rowOfClip,
     links,
     joined: joinedEdges(state),
+    ends: joinedEndsOf(state),
+    joins,
+    assets: project?.assets,
   };
+}
+
+/** The join on a row under a moment, the one in effect first where two are on one cut. */
+export function joinAt(row: Row, seconds: number): JoinBox | undefined {
+  let found: JoinBox | undefined;
+  for (const join of row.joins) {
+    if (seconds < join.start || seconds > join.end) continue;
+    if (!found || (found.trouble !== undefined && join.trouble === undefined)) found = join;
+  }
+  return found;
 }
 
 /** Whether a moment is strictly inside a clip, which is what it takes to cut there. */

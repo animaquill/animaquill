@@ -866,7 +866,7 @@ describe("an export that does not finish", () => {
     expect(context.writer.finished).toBe(false);
   });
 
-  it("stops where a join is, which this editor does not draw yet, and takes people there", async () => {
+  it("stops where a join is that this editor cannot do, and takes people there", async () => {
     const context = setup();
     const { store } = context;
     const main = store.getState().timelines["main"];
@@ -881,7 +881,7 @@ describe("an export that does not finish", () => {
     const path = "timelines/main/timeline.json";
     const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
     const video = timeline.tracks.find(({ kind }: { kind: string }) => kind === "video");
-    video.joins = [{ id: "j", from: "c", to: "d", type: "fade", duration: "1" }];
+    video.joins = [{ id: "j", from: "c", to: "d", library: "lib", resource: "ink", duration: "1" }];
     expect(store.importFile(path, JSON.stringify(timeline), { origin: USER }).ok).toBe(true);
     const running = context.videos.start();
     await answer(context);

@@ -18,6 +18,7 @@ const plan = (layers: RenderPlan["layers"] = []): RenderPlan => ({
   background: "#000000",
   scenes: { format: "f", language: "zh-CN", fps: { num: 30, den: 1 } },
   layers,
+  joins: [],
 });
 
 const clip = (file: string): RenderPlan["layers"][number] => ({

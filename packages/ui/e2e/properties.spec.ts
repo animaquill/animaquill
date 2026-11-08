@@ -571,6 +571,7 @@ for (const fit of ["contain", "cover"] as const) {
             channels: {},
           },
         ],
+        joins: [],
       };
       await showPlan(page, plan);
       const image = wide.toString("base64");

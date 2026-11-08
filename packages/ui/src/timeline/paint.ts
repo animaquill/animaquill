@@ -1,7 +1,13 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
 import { bezierProgress, type ClipState } from "@animaquill/core";
-import type { Transition } from "@animaquill/schema";
-import { EXPANDER_SIZE, RULER_HEIGHT, TRANSITION_BAND, type TimelineEditor } from "./editor.ts";
+import type { Transition, TransitionRef, TransitionUse } from "@animaquill/schema";
+import {
+  EXPANDER_SIZE,
+  RULER_HEIGHT,
+  TRANSITION_BAND,
+  isJoinChoice,
+  type TimelineEditor,
+} from "./editor.ts";
 import {
   EDGES,
   edgeWorks,
@@ -9,6 +15,7 @@ import {
   forEachBetween,
   type ClipBox,
   type Edge,
+  type JoinBox,
   type Row,
   type TimelineModel,
 } from "./model.ts";
@@ -29,6 +36,10 @@ const BLOCK_FILL = "#000000a6";
 const BLOCK_HOVERED = "#000000d0";
 const BLOCK_LINE = "#ffffff59";
 const BLOCK_LABEL_MIN_WIDTH = 24;
+/** Stripes over where a frame stands still, as far apart as this. */
+const STILL_STRIPES = 5;
+const STILL_LINE = "#ffffffa6";
+const CUT_LINE = "#ffffff80";
 /** Points along a speed curve, enough for it to look smooth at the size of a clip. */
 const CURVE_STEPS = 24;
 const END_HANDLE = 6;
@@ -44,8 +55,8 @@ function readableOn(color: string): string {
 
 export type ClipLabel = (box: ClipBox) => string;
 
-/** What people call a transition at an edge of a clip. */
-export type TransitionLabel = (transition: Transition, edge: Edge, row: Row) => string;
+/** What people call a transition, where it is. */
+export type TransitionLabel = (transition: TransitionRef, use: TransitionUse, row: Row) => string;
 
 /** Draws over the lanes, in the area under the ruler. */
 export type BelowPainter = (
@@ -132,6 +143,7 @@ export class TimelinePainter extends StagePainter {
     context.clip();
     this.#paintLanes(model);
     this.#paintClips(model);
+    this.#paintJoins(model);
     this.#paintPreview();
     this.#below?.(context, this.#theme, (value) => this.sharp(value));
     this.#paintOutside();
@@ -247,8 +259,12 @@ export class TimelinePainter extends StagePainter {
     const expander = editor.showsExpander(box) ? editor.expanderAt(left, width) : undefined;
     const edges = this.#edgesOf(box);
     if (width >= LABEL_MIN_WIDTH) {
-      // The name of the clip starts after what comes in, which has a name of its own.
-      const entering = edges.enter > 0 ? editor.xAt(look.start + edges.enter) - left : 0;
+      // The name of the clip starts after what comes in, which has a name of its own, and so does
+      // a join at its start, where the clip has not moved.
+      const join =
+        look.start === box.start ? row.joins.find(({ to }) => to.id === box.id) : undefined;
+      const intoClip = Math.max(edges.enter, join ? join.end - box.start : 0);
+      const entering = intoClip > 0 ? editor.xAt(look.start + intoClip) - left : 0;
       const room = Math.max(expander === undefined ? 0 : EXPANDER_SIZE, entering);
       this.#paintLabel(box, left, top, width, height, fill, room);
     }
@@ -265,7 +281,8 @@ export class TimelinePainter extends StagePainter {
       const x = look.edge === "start" ? left : right - EDGE_HANDLE;
       context.fillRect(x, top, EDGE_HANDLE, height);
     }
-    const chosen = editor.getSnapshot().transition?.clip === box.id;
+    const choice = editor.getSnapshot().transition;
+    const chosen = choice !== undefined && !isJoinChoice(choice) && choice.clip === box.id;
     if (look.selected || look.hovered || chosen) {
       this.#paintTransitionHandles(look, edges, left, right, top);
     }
@@ -326,7 +343,11 @@ export class TimelinePainter extends StagePainter {
         this.#paintFade(edge, transition, { from, to, top, bottom: top + height });
       }
       const works = !box.clip[edge] || (model !== undefined && edgeWorks(model, box, edge));
-      const isChosen = chosen?.clip === box.id && chosen.edge === edge;
+      const isChosen =
+        chosen !== undefined &&
+        !isJoinChoice(chosen) &&
+        chosen.clip === box.id &&
+        chosen.edge === edge;
       this.#paintBlock({
         from,
         to,
@@ -338,6 +359,87 @@ export class TimelinePainter extends StagePainter {
       });
     }
     context.restore();
+  }
+
+  /**
+   * The joins of each row, as blocks across their cuts with their names, over the clips on both
+   * sides. Where a side stands still on a frame, stripes say so. One that does not do what it says
+   * is drawn as a warning. While its clips are dragged somewhere else, it waits for where they land.
+   */
+  #paintJoins(model: TimelineModel): void {
+    const editor = this.#editor;
+    const { context } = this;
+    const moved = editor.preview?.clips;
+    const dragged = editor.preview?.join;
+    const choice = editor.getSnapshot().transition;
+    const { hovered } = editor;
+    const first = editor.timeAt(0);
+    const last = editor.timeAt(editor.width);
+    for (const row of model.rows) {
+      const top = this.#rowTop(row) + ROW_INSET;
+      if (top + row.height < RULER_HEIGHT || top > editor.height || row.joins.length === 0)
+        continue;
+      for (const join of row.joins) {
+        if (moved?.has(join.from.id) || moved?.has(join.to.id)) continue;
+        const span = dragged?.id === join.id ? dragged : join;
+        if (span.end < first || span.start > last) continue;
+        const left = editor.xAt(span.start);
+        const right = Math.max(editor.xAt(span.end), left + 1);
+        const isChosen = isJoinChoice(choice) && choice.join === join.id;
+        const isHovered = hovered.kind === "join" && hovered.join.id === join.id;
+        this.#paintBlock({
+          from: left,
+          to: right,
+          top,
+          label: this.#transitionLabelOf(join.join.transition, "join", row),
+          hovered: isHovered,
+          chosen: isChosen,
+          works: join.trouble === undefined,
+          under: () => {
+            this.#paintStill(join, span, top);
+            context.fillStyle = CUT_LINE;
+            context.fillRect(this.sharp(editor.xAt(join.at)), top, 1, TRANSITION_BAND);
+          },
+        });
+        if (isChosen && !row.track.locked) this.#paintJoinHandles(join, left, right, top);
+      }
+    }
+  }
+
+  /** Stripes where a side of a join shows a frame that stands still. */
+  #paintStill(join: JoinBox, span: { start: number; end: number }, top: number): void {
+    const editor = this.#editor;
+    const { context } = this;
+    for (const still of join.still) {
+      const from = editor.xAt(Math.max(still.from, span.start));
+      const to = editor.xAt(Math.min(still.to, span.end));
+      if (to <= from) continue;
+      context.save();
+      context.beginPath();
+      context.rect(from, top, to - from, TRANSITION_BAND);
+      context.clip();
+      context.strokeStyle = STILL_LINE;
+      context.lineWidth = 1;
+      context.beginPath();
+      for (let x = from - TRANSITION_BAND; x < to; x += STILL_STRIPES) {
+        context.moveTo(x, top + TRANSITION_BAND);
+        context.lineTo(x + TRANSITION_BAND, top);
+      }
+      context.stroke();
+      context.restore();
+    }
+  }
+
+  /** The edges of a selected join that change how long it is. */
+  #paintJoinHandles(join: JoinBox, left: number, right: number, top: number): void {
+    const { context } = this;
+    const align = join.join.transition.align ?? "center";
+    const at = [...(align === "after" ? [] : [left]), ...(align === "before" ? [] : [right])];
+    for (const middle of at) {
+      const x = this.sharp(middle - TRANSITION_HANDLE / 4);
+      context.fillStyle = this.#theme.selected;
+      context.fillRect(x, top, TRANSITION_HANDLE / 2, TRANSITION_BAND);
+    }
   }
 
   /** The line of a fade, from nothing at the edge of the clip to all of it, along its speed curve. */
@@ -369,7 +471,10 @@ export class TimelinePainter extends StagePainter {
     context.stroke();
   }
 
-  /** The block of a transition at the top of its clip, with its name where that fits. */
+  /**
+   * The block of a transition at the top of its clip, with its name where that fits. What else is
+   * on it goes in between: over its background, under its outline and its name.
+   */
   #paintBlock(block: {
     readonly from: number;
     readonly to: number;
@@ -378,12 +483,21 @@ export class TimelinePainter extends StagePainter {
     readonly hovered: boolean;
     readonly chosen: boolean;
     readonly works: boolean;
+    readonly under?: () => void;
   }): void {
     const { context } = this;
-    const { from, to, top, label, hovered, chosen, works } = block;
+    const { from, to, top, label, hovered, chosen, works, under } = block;
     const width = Math.max(to - from, 1);
     context.fillStyle = hovered ? BLOCK_HOVERED : BLOCK_FILL;
     context.fillRect(from, top, width, TRANSITION_BAND);
+    if (under) {
+      context.save();
+      context.beginPath();
+      context.rect(from, top, width, TRANSITION_BAND);
+      context.clip();
+      under();
+      context.restore();
+    }
     context.lineWidth = chosen ? 1.5 : 1;
     context.strokeStyle = chosen ? this.#theme.selected : works ? BLOCK_LINE : this.#theme.warning;
     context.setLineDash(works || chosen ? [] : [3, 2]);

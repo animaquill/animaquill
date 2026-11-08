@@ -192,7 +192,6 @@ describe("setting the transitions of a clip", () => {
     ["transition-missing", { enter: fade("1", { type: "fade-linear" }) }],
     ["transition-missing", { enter: { transition: "ink", duration: "1" } }],
     ["transition-missing", { enter: { library: "lib", resource: "ink", duration: "1" } }],
-    ["transition-unsupported", { enter: fade("1", { type: "wipe", variant: "left" }) }],
     ["invalid-params", { enter: fade("0") }],
     ["invalid-params", { enter: fade("1", { curve: [1.5, 0, 0.5, 1] }) }],
     ["invalid-params", { enter: fade("1", { curve: [0.5, 10.5, 0.5, 1] }) }],
@@ -227,18 +226,23 @@ describe("setting the transitions of a clip", () => {
   });
 
   it("always takes one away, and changes the length and speed of one that a file left", () => {
-    const wipe = { type: "wipe", variant: "left", duration: "1" };
-    const { clipOf, set } = withClip({ start: "0", duration: "4", enter: wipe, exit: fade("1") });
+    const star = { type: "plugin.star", duration: "1" };
+    const { clipOf, set } = withClip({ start: "0", duration: "4", enter: star, exit: fade("1") });
     success(set({ exit: fade("2") }));
     expect(clipOf()?.exit).toEqual(fade("2"));
-    // It stays what it is, which this editor cannot do yet: the problems and exports say so.
-    success(set({ enter: { ...wipe, duration: "2", curve: [0.42, 0, 1, 1] } }));
-    expect(clipOf()?.enter).toEqual({ ...wipe, duration: "2", curve: [0.42, 0, 1, 1] });
+    // It stays what it is, which this editor cannot do: the problems and exports say so.
+    success(set({ enter: { ...star, duration: "2", curve: [0.42, 0, 1, 1] } }));
+    expect(clipOf()?.enter).toEqual({ ...star, duration: "2", curve: [0.42, 0, 1, 1] });
     // What it is cannot become something else that this editor cannot do.
-    const pushing = { ...wipe, type: "push" };
-    expect(failure(set({ enter: pushing })).code).toBe("transition-unsupported");
-    expect(failure(set({ enter: { ...wipe, variant: "up" } })).code).toBe("transition-unsupported");
-    expect(failure(set({ exit: wipe })).code).toBe("transition-unsupported");
+    expect(failure(set({ enter: { ...star, type: "plugin.moon" } })).code).toBe(
+      "transition-missing",
+    );
+    expect(failure(set({ enter: { ...star, variant: "up" } })).code).toBe("transition-missing");
+    expect(failure(set({ exit: star })).code).toBe("transition-missing");
+    // Every picture that comes with the editor can come instead, such as pushing in from the left.
+    const push = { type: "push", variant: "right", duration: "1" };
+    success(set({ enter: push }));
+    expect(clipOf()?.enter).toEqual(push);
     success(set({ enter: null }));
     expect(clipOf()).not.toHaveProperty("enter");
     success(set({ exit: null }));
@@ -734,7 +738,7 @@ describe("what an export stops at", () => {
     expect(notDone()).toEqual([]);
   });
 
-  it("is a transition of a picture that shows as a fade, a join and a transition of sound", () => {
+  it("is a transition of a picture that shows as a fade, and a transition of sound", () => {
     const { store, notDone } = project((video, audio) => {
       video.clips.push(
         {
@@ -742,14 +746,17 @@ describe("what an export stops at", () => {
           start: "0",
           duration: "2",
           source: color,
-          enter: { type: "wipe", variant: "up", duration: "1/2" },
+          enter: { type: "plugin.star", duration: "1/2" },
         },
         { id: "b", start: "2", duration: "2", source: color },
         { id: "c", start: "4", duration: "2", source: color },
+        { id: "d", start: "6", duration: "2", source: color },
       );
       video.joins = [
-        { id: "j1", from: "a", to: "b", type: "fade", duration: "1" },
-        { id: "j2", from: "b", to: "c", type: "fade", duration: "1", align: "before" },
+        { id: "j1", from: "a", to: "b", library: "lib", resource: "ink", duration: "1" },
+        { id: "j2", from: "b", to: "c", type: "plugin.melt", duration: "1", align: "before" },
+        // What comes with the editor is done: a wipe, which a join is now too.
+        { id: "j3", from: "c", to: "d", type: "wipe", variant: "up", duration: "1" },
       ];
       withTone(audio);
     });

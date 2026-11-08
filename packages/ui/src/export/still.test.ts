@@ -190,8 +190,8 @@ describe("exporting the frame at the playhead", () => {
   });
 });
 
-describe("a frame where a join is", () => {
-  it("is not made, because this editor does not draw joins yet, and it says why", async () => {
+describe("a frame where a join is that this editor cannot do", () => {
+  it("is not made, because the preview shows a dissolve instead, and it says why", async () => {
     const context = setup();
     const { store } = context;
     const path = "timelines/main/timeline.json";
@@ -204,7 +204,15 @@ describe("a frame where a join is", () => {
       duration: "4",
       source: { kind: "color", color: "#00ff00" },
     });
-    video.joins = [{ id: "j", from: "c", to: "d", type: "fade", duration: "1", align: "after" }];
+    const join = {
+      id: "j",
+      from: "c",
+      to: "d",
+      type: "plugin.star",
+      duration: "1",
+      align: "after",
+    };
+    video.joins = [join];
     expect(store.importFile(path, JSON.stringify(timeline), { origin: USER }).ok).toBe(true);
     // The playhead is at frame 45, a second and a half: within the join, which starts at one.
     const running = context.stills.run();

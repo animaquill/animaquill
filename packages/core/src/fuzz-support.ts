@@ -2,6 +2,7 @@
  * What the random tests share, `fuzz*.test.ts`. They are in several files so that they run at the
  * same time: in one, they took longer than all the other unit tests together.
  */
+import { add, compare, parseTime } from "@animaquill/schema";
 import { onTestFinished, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
@@ -139,6 +140,16 @@ export function randomCommand(
     Object.keys(main?.clips[id]?.properties ?? {}).some((path) => path.startsWith("object.arm")),
   );
   const armed = (random.chance(0.8) ? random.pick(withArm) : undefined) ?? clip;
+  const join = random.pick(Object.keys(main?.joins ?? {})) ?? "none";
+  /** The clip that starts where another ends, on its track: where a join can go. */
+  const nextOf = (id: string) => {
+    const before = main?.clips[id];
+    if (!before) return undefined;
+    const end = add(parseTime(before.start), parseTime(before.duration));
+    return Object.values(main?.clips ?? {}).find(
+      (other) => other.track === before.track && compare(parseTime(other.start), end) === 0,
+    )?.id;
+  };
   const calls: (() => CommandCall)[] = [
     () => rename([{ owner: { clip: armed }, from: `${from}.*`, to: `${to}.*` }]),
     () =>
@@ -300,6 +311,33 @@ export function randomCommand(
       },
     }),
     () => ({ type: "clip.remove", params: { timeline, clips: [clip] } }),
+    // Joins: on the cut after a clip, which there often is in the example, changed and taken away.
+    () => ({
+      type: "join.add",
+      params: {
+        timeline,
+        from: clip,
+        to: nextOf(clip) ?? clip,
+        ...randomTransition(random),
+        ...(random.chance(0.5) && { duration: random.pick(["1/3", "0.5", "1", "3"]) }),
+        ...(random.chance(0.3) && { align: random.pick(["center", "before", "after"]) }),
+      },
+    }),
+    () => ({
+      type: "join.update",
+      params: {
+        timeline,
+        join,
+        changes: random.pick([
+          { duration: random.pick(["1/4", "0.5", "1", "2"]) },
+          randomTransition(random),
+          { align: random.pick(["center", "before", "after"]) },
+          { curve: [0.42, 0, 0.58, 1] },
+          { curve: null, align: null },
+        ]),
+      },
+    }),
+    () => ({ type: "join.remove", params: { timeline, joins: [join] } }),
     () => ({
       type: "clip.add",
       params: {
@@ -320,6 +358,19 @@ export function randomCommand(
     () => ({ type: "project.rename", params: { name: `name ${random.int(9)}` } }),
   ];
   return (random.pick(calls) as () => CommandCall)();
+}
+
+/** What a join or a transition is, picked from what comes with the editor and what does not. */
+export function randomTransition(random: Random): Record<string, string> {
+  return (
+    random.pick([
+      { type: "fade" },
+      { type: "dip", variant: random.pick(["black", "white"]) as string },
+      { type: "wipe", variant: random.pick(["left", "up"]) as string },
+      { type: "push", variant: random.pick(["right", "down"]) as string },
+      { type: "plugin.star" },
+    ]) ?? { type: "fade" }
+  );
 }
 
 /** Many rounds each, which takes seconds on a busy machine, with every file at the same time. */

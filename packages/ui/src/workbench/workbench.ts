@@ -267,6 +267,7 @@ export class Workbench {
     });
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      joinsRemoved: (count) => this.notifications.push(t("timeline.joinsRemoved", { count })),
       sceneName: (number) => t("scene.newName", { number }),
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),

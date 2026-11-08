@@ -38,6 +38,20 @@ const contentOf = (state: ProjectState, tracks: readonly string[]) => {
   return { clips, joins, versions: Object.fromEntries(versions) };
 };
 
+/** The joins on locked tracks between two clips that are there. */
+const joinsKept = (state: ProjectState, tracks: readonly string[]) => {
+  const { clips, joins } = contentOf(state, tracks);
+  return Object.fromEntries(
+    Object.entries(joins).filter(
+      ([, { from, to }]) =>
+        from !== undefined &&
+        to !== undefined &&
+        Object.hasOwn(clips, from) &&
+        Object.hasOwn(clips, to),
+    ),
+  );
+};
+
 /** What a scene or sound on a locked track runs is what it shows or plays, so that stays too. */
 const codeOf = (state: ProjectState, tracks: readonly string[]) => {
   const content = Object.values(contentOf(state, tracks).clips);
@@ -250,6 +264,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
       let held = 0;
       let lockedCode = 0;
       let heldFiles = 0;
+      let lockedJoins = 0;
       /** Whatever happens, the project stays whole and can be written. */
       const stillWhole = (round: number, always: boolean) => {
         expect(brokenIn(store.getState()), `round ${round}`).toEqual([]);
@@ -271,10 +286,17 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
         }
         const origin: Origin = random.chance(0.5) ? aiTask(task) : USER;
         if (roll < 60) {
-          store.execute(randomCommand(store, random), { origin });
+          const call = randomCommand(store, random);
+          const result = store.execute(call, { origin });
           const still = lockedIn(before).filter((id) => lockedIn(store.getState()).includes(id));
           if (codeOf(before, still).files.length > 0) lockedCode += 1;
           expect(codeOf(store.getState(), still)).toEqual(codeOf(before, still));
+          // No command changes a join on a locked track between its clips there, also by moving
+          // something else.
+          expect(joinsKept(store.getState(), still), call.type).toEqual(joinsKept(before, still));
+          if (call.type.startsWith("join.") && !result.ok && result.error.code === "track-locked") {
+            lockedJoins += 1;
+          }
           continue;
         }
         if (roll < 70) {
@@ -320,6 +342,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
       expect(held).toBeGreaterThan(0);
       expect(lockedCode).toBeGreaterThan(0);
       expect(heldFiles).toBeGreaterThan(10);
+      expect(lockedJoins).toBeGreaterThan(0);
     });
   },
 );

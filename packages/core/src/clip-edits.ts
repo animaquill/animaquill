@@ -4,6 +4,7 @@ import {
   compare,
   formatTime,
   isAnimation,
+  joinParts,
   newId,
   parseTime,
   subtract,
@@ -14,6 +15,7 @@ import {
   type Transition,
 } from "@animaquill/schema";
 import { fail, type Draft } from "./draft.ts";
+import { placedJoins, wholeJoin, type WholeJoin } from "./joins.ts";
 import {
   clipEnd,
   clipOffset,
@@ -237,21 +239,56 @@ const atMost = (value: Rational, limit: Rational) => (compare(value, limit) > 0 
 /** The transitions at the start and the end of a clip, by the field that holds each. */
 export type Edge = "enter" | "exit";
 
+/** Joins at the edges of a clip that stay there through a change, by the edge they win over. */
+export type JoinedEdges = Partial<Record<Edge, WholeJoin>>;
+
+/** How much of a clip a join takes, as it says, before anything gets shorter to fit. */
+function partIn(join: WholeJoin, clip: string): Rational {
+  const [before, after] = joinParts(parseTime(join.transition.duration), join.transition.align);
+  return join.from === clip ? before : after;
+}
+
+/**
+ * Makes a join take no more of a clip than this, where it is around its cut: a join in the middle
+ * gets shorter on both sides, so that it stays in the middle. One of no time goes.
+ */
+function shortenJoin(
+  draft: Draft,
+  timeline: string,
+  join: WholeJoin,
+  clip: string,
+  length: Rational,
+): void {
+  if (compare(partIn(join, clip), length) <= 0) return;
+  const { align } = join.transition;
+  const wanted = align === "before" || align === "after" ? length : add(length, length);
+  const path = joinPath(timeline, join.id);
+  if (compare(wanted, ZERO) <= 0) draft.delete(path);
+  else draft.set([...path, "transition"], { ...join.transition, duration: formatTime(wanted) });
+}
+
 /**
  * Shortens the transitions at the edges of a clip that got too short for them, as video editors
  * do: first the one at the edge that moved, then the other one, so that what is left of the clip
  * goes in and out as it did. A transition of no time goes. What fits, or cannot be read, stays as
- * it is. Only the length changes: each is one value, which this writes as a whole.
+ * it is. Only the length changes: each is one value, which this writes as a whole. A join that
+ * stays at an edge takes it instead of the transition of the clip there, and gets shorter the same
+ * way: that transition does nothing while the join is there, so it stays as it is.
  */
 export function fitTransitions(
   draft: Draft,
-  path: readonly string[],
-  clip: Pick<ClipState, Edge>,
+  timeline: string,
+  clip: Pick<ClipState, "id" | Edge>,
   duration: Rational,
   moved: "start" | "end",
+  joined: JoinedEdges = {},
 ): void {
-  const enter = lengthOf(clip.enter);
-  const exit = lengthOf(clip.exit);
+  const lengthAt = (edge: Edge) => {
+    const join = joined[edge];
+    return join ? partIn(join, clip.id) : lengthOf(clip[edge]);
+  };
+  const enter = lengthAt("enter");
+  const exit = lengthAt("exit");
   if (!enter && !exit) return;
   const total = add(enter ?? ZERO, exit ?? ZERO);
   if (compare(total, duration) <= 0) return;
@@ -259,26 +296,48 @@ export function fitTransitions(
   const lengths: Record<Edge, Rational> = { enter: enter ?? ZERO, exit: exit ?? ZERO };
   const kept = atMost(lengths[far], duration);
   const shortened = { [far]: kept, [near]: atMost(lengths[near], subtract(duration, kept)) };
+  const path = clipPath(timeline, clip.id);
   for (const edge of [near, far]) {
-    const transition = clip[edge];
-    if (transition === undefined) continue;
     const length = shortened[edge] as Rational;
     if (compare(length, lengths[edge]) === 0) continue;
+    const join = joined[edge];
+    if (join) {
+      shortenJoin(draft, timeline, join, clip.id, length);
+      continue;
+    }
+    const transition = clip[edge];
+    if (transition === undefined) continue;
     if (compare(length, ZERO) <= 0) draft.delete([...path, edge]);
     else draft.set([...path, edge], { ...transition, duration: formatTime(length) });
   }
+}
+
+/** The joins in effect at the edges of a clip, by the edge they win over. */
+function joinsAtEdgesOf(timeline: TimelineState, clip: string): JoinedEdges {
+  const joined: { enter?: WholeJoin; exit?: WholeJoin } = {};
+  for (const { join, place } of placedJoins(timeline).values()) {
+    if (place.kind !== "cut") continue;
+    if (join.to === clip) joined.enter = join;
+    if (join.from === clip) joined.exit = join;
+  }
+  return joined;
 }
 
 /**
  * Moves the edges of a clip. Its content stays where it is on the timeline, and so do keys: they are
  * on the clock of the clip, which only has to read differently at the new first frame. Transitions
  * at its edges go along with them, and get shorter when they no longer fit: see `fitTransitions`.
+ * A join at an edge that moves no longer has its two clips next to each other, see `followJoins`.
  */
 export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: Span): void {
   const path = clipPath(timeline, clip.id);
   const moved = subtract(span.from, clipStart(clip));
+  const { enter, exit } = joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
+  const startStays = compare(moved, ZERO) === 0;
+  const endStays = compare(span.to, clipEnd(clip)) === 0;
+  const joined = { ...(startStays && enter && { enter }), ...(endStays && exit && { exit }) };
   // Only what changes gets written. Somebody else can move this clip while its end is trimmed.
-  if (compare(moved, ZERO) !== 0) {
+  if (!startStays) {
     const offset = add(clipOffset(clip), moved);
     if (compare(offset, ZERO) >= 0) {
       setOffset(draft, timeline, clip, offset);
@@ -292,7 +351,60 @@ export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: 
   const length = subtract(span.to, span.from);
   const duration = formatTime(length);
   if (duration !== clip.duration) draft.set([...path, "duration"], duration);
-  fitTransitions(draft, path, clip, length, compare(moved, ZERO) !== 0 ? "start" : "end");
+  fitTransitions(draft, timeline, clip, length, startStays ? "end" : "start", joined);
+}
+
+/** Whether two clips are one after the other on a track, exactly. */
+const nextTo = (from: ClipState | undefined, to: ClipState | undefined, track?: string) =>
+  from !== undefined &&
+  to !== undefined &&
+  from.id !== to.id &&
+  from.track === to.track &&
+  (track === undefined || from.track === track) &&
+  compare(clipEnd(from), clipStart(to)) === 0;
+
+/**
+ * The joins whose clips are next to each other on their track, by id, before a change that can take
+ * them apart: what `followJoins` looks at afterwards. A hidden side makes no difference to that.
+ */
+export function joinsTogether(timeline: TimelineState): readonly string[] {
+  const together: string[] = [];
+  for (const [id, state] of Object.entries(timeline.joins ?? {})) {
+    const join = wholeJoin(id, state);
+    const sides = join && [entryOf(timeline.clips, join.from), entryOf(timeline.clips, join.to)];
+    if (join && sides && nextTo(sides[0], sides[1], join.track)) together.push(id);
+  }
+  return together;
+}
+
+/**
+ * What a change did to joins whose clips were next to each other: a join goes along while both of
+ * them still are, also to another track, and goes in the same step when they no longer are. That
+ * can be taken back as a whole. Joins that two windows or a file left between clips that are apart
+ * are not about this: they stay as they are, doing nothing, until somebody fixes them. Says which
+ * joins went.
+ */
+export function followJoins(
+  draft: Draft,
+  timeline: string,
+  together: readonly string[],
+): readonly string[] {
+  const gone: string[] = [];
+  for (const id of together) {
+    const now = timelineOf(draft, timeline);
+    // One that went along with a clip of it is no matter.
+    const join = wholeJoin(id, entryOf(now.joins, id));
+    if (!join) continue;
+    const from = entryOf(now.clips, join.from);
+    const to = entryOf(now.clips, join.to);
+    if (from && nextTo(from, to)) {
+      if (from.track !== join.track) draft.set([...joinPath(timeline, id), "track"], from.track);
+      continue;
+    }
+    draft.delete(joinPath(timeline, id));
+    gone.push(id);
+  }
+  return gone;
 }
 
 /**
@@ -309,6 +421,7 @@ export function splitClip(
   rightId: string,
   rightLink?: string,
 ): void {
+  const { enter, exit } = joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
   const { enter: _enter, offset: _offset, ...rest } = clip;
   const offset = add(clipOffset(clip), subtract(at, clipStart(clip)));
   const rightLength = subtract(clipEnd(clip), at);
@@ -321,7 +434,12 @@ export function splitClip(
     offset: formatTime(offset),
     ...(rightLink === undefined ? {} : { link: rightLink }),
   });
-  fitTransitions(draft, clipPath(timeline, rightId), rest, rightLength, "start");
+  for (const [id, join] of Object.entries(timelineOf(draft, timeline).joins ?? {})) {
+    if (join.from === clip.id) draft.set([...joinPath(timeline, id), "from"], rightId);
+  }
+  const right = { ...rest, id: rightId };
+  const leaving = exit && { exit: { ...exit, from: rightId } };
+  fitTransitions(draft, timeline, right, rightLength, "start", leaving);
   // What a version changes goes for both parts, apart from where they are.
   forEachOverride(draft, timeline, clip.id, (changes, _path, version) => {
     const { start: _start, duration: _duration, offset: _changed, ...shared } = changes;
@@ -334,10 +452,7 @@ export function splitClip(
   draft.set([...path, "duration"], formatTime(leftLength));
   if (clip.exit !== undefined) draft.delete([...path, "exit"]);
   const { exit: _exit, ...left } = clip;
-  fitTransitions(draft, path, left, leftLength, "end");
-  for (const [id, join] of Object.entries(timelineOf(draft, timeline).joins ?? {})) {
-    if (join.from === clip.id) draft.set([...joinPath(timeline, id), "from"], rightId);
-  }
+  fitTransitions(draft, timeline, left, leftLength, "end", enter && { enter });
 }
 
 /** Takes away the part of a clip under a span. What comes after a cut is not looked at again. */

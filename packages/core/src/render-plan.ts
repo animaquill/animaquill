@@ -1,30 +1,27 @@
 import {
   CLIP_VISUAL,
-  ZERO,
   add,
-  divide,
   edgeLength,
   findTransition,
   isAnimation,
   isSupported,
   parseTime,
-  placeJoins,
-  rational,
   subtract,
   toSeconds,
   type Animation,
   type Asset,
-  type JoinSides,
   type MediaRef,
   type PropertyValue,
-  type Rational,
   type SpeedCurve,
   type TransitionMedia,
+  type TransitionRef,
   type TransitionUse,
+  type TransitionValues,
   type Value,
   type ValueType,
 } from "@animaquill/schema";
 import { compileChannel, type Channel, type Channels } from "./curve.ts";
+import { joinSpan, joinsInEffect, spanOfJoin, type JoinInEffect } from "./joins.ts";
 import {
   clipEnd,
   clipOffset,
@@ -32,7 +29,7 @@ import {
   entryOf,
   orderedTracks,
   type ClipState,
-  type JoinTransition,
+  type JoinState,
   type TimelineState,
   type TrackState,
 } from "./model.ts";
@@ -54,8 +51,13 @@ export interface RenderPlan {
   readonly background: string;
   /** What scenes get told about the version they are shown in. */
   readonly scenes: SceneContext;
-  /** Back to front. */
+  /**
+   * Back to front, track by track: the layers of a track are next to each other, in time order. A
+   * later one is in front of an earlier one.
+   */
   readonly layers: readonly RenderLayer[];
+  /** Transitions on the cuts between layers of a track, from the one before to the one after. */
+  readonly joins: readonly RenderJoin[];
 }
 
 export interface SceneContext {
@@ -76,6 +78,11 @@ export interface TransitionImplementation {
   readonly kind: "built-in";
   readonly type: string;
   readonly variant?: string;
+  /**
+   * What its code gets as it is: those of the transition, with those of the variant over them.
+   * Without it, none.
+   */
+  readonly values?: TransitionValues;
 }
 
 /** A transition ready to be drawn: what draws it, and when. */
@@ -91,11 +98,26 @@ export interface PlannedTransition {
   readonly duration: number;
   /** Without it the speed is even. */
   readonly curve?: SpeedCurve;
+  /** Its speed curve goes past 0 and 1 as it is, see `progressAt`. */
+  readonly overshoot?: true;
   /**
    * It stands in for a transition that this editor cannot do, as a fade. An export stops there, so
    * that no file says something else than the project.
    */
   readonly missing?: true;
+}
+
+/**
+ * A transition on the cut between two layers of a track, ready to be drawn: from the one before to
+ * the one after, which show past their clips for it, see `RenderLayer.shows`. A side that is not in
+ * the plan, because it has nothing to draw, is nothing there.
+ */
+export interface RenderJoin extends PlannedTransition {
+  readonly id: string;
+  readonly track: string;
+  /** Layers, by id. */
+  readonly from: string;
+  readonly to: string;
 }
 
 export interface RenderLayer {
@@ -111,6 +133,11 @@ export interface RenderLayer {
   /** From nothing to the clip at its start, and from the clip to nothing at its end. */
   readonly enter?: PlannedTransition;
   readonly exit?: PlannedTransition;
+  /**
+   * Seconds on the timeline that it shows, where a join has it go on after its end or start before
+   * its start: it does that on its own clock, see the project format. Without it, its own.
+   */
+  readonly shows?: { readonly from: number; readonly to: number };
   /** What changes over time, on the clock of the clip: `transform.*` and `opacity`. */
   readonly channels: Channels;
   /**
@@ -227,9 +254,26 @@ type Edge = "enter" | "exit";
 const EDGES: readonly Edge[] = ["enter", "exit"];
 
 /**
- * A transition at the start or the end of a clip, ready to draw. One that this editor cannot do
- * shows as a fade, and says so. It is never longer than the clip.
+ * What draws a transition, there. One that this editor cannot do is drawn as a fade, and says so:
+ * see `PlannedTransition.missing`.
  */
+function implementationOf(
+  transition: TransitionRef,
+  use: TransitionUse,
+): Pick<PlannedTransition, "how" | "overshoot" | "missing"> {
+  const found = findTransition(transition, "picture", use);
+  if (found.kind !== "built-in" || !isSupported(found, "picture", use)) {
+    return { how: FADE, missing: true };
+  }
+  const { type, variant, values, spec } = found;
+  const given = Object.keys(values).length > 0 ? { values } : {};
+  return {
+    how: { kind: "built-in", type, ...(variant === undefined ? {} : { variant }), ...given },
+    ...(spec.overshoot && { overshoot: true as const }),
+  };
+}
+
+/** A transition at the start or the end of a clip, ready to draw. It is never longer than the clip. */
 function plannedEdge(clip: ClipState, edge: Edge): PlannedTransition | undefined {
   const transition = clip[edge];
   if (!transition) return undefined;
@@ -238,94 +282,30 @@ function plannedEdge(clip: ClipState, edge: Edge): PlannedTransition | undefined
     edge === "enter"
       ? [clipStart(clip), add(clipStart(clip), length)]
       : [subtract(clipEnd(clip), length), clipEnd(clip)];
-  const found = findTransition(transition, "picture", edge);
-  const isDone = found.kind === "built-in" && isSupported(found, "picture", edge);
-  const how: TransitionImplementation =
-    found.kind === "built-in" && isDone
-      ? {
-          kind: "built-in",
-          type: found.type,
-          ...(found.variant === undefined ? {} : { variant: found.variant }),
-        }
-      : FADE;
   return {
-    how,
+    ...implementationOf(transition, edge),
     start: toSeconds(start),
     end: toSeconds(end),
     duration: toSeconds(length),
     ...(transition.curve && { curve: transition.curve }),
-    ...(isDone ? {} : { missing: true as const }),
   };
 }
 
-/** A join that does what it says: on the cut between its two clips, which both show. */
-export interface JoinInEffect {
-  readonly id: string;
-  readonly track: string;
-  readonly from: ClipState;
-  readonly to: ClipState;
-  readonly transition: JoinTransition;
-  /** The cut, exactly. */
-  readonly at: Rational;
-}
-
-/**
- * The joins of a timeline that do something, by `placeJoins`, as the problems of a file have them
- * too: a join whose sides are apart, or one of them hidden, does nothing.
- */
-export function joinsInEffect(timeline: TimelineState): readonly JoinInEffect[] {
-  const byTrack = new Map<string, Map<string, JoinSides>>();
-  for (const [id, { track, from, to, transition }] of Object.entries(timeline.joins ?? {})) {
-    if (track === undefined || from === undefined || to === undefined || !transition) continue;
-    const joins = byTrack.get(track) ?? new Map<string, JoinSides>();
-    byTrack.set(track, joins.set(id, { from, to }));
-  }
-  const found: JoinInEffect[] = [];
-  for (const [track, joins] of byTrack) {
-    const clipOf = (id: string) => {
-      const clip = entryOf(timeline.clips, id);
-      return clip?.track === track ? clip : undefined;
-    };
-    for (const [id, place] of placeJoins(joins, clipOf)) {
-      if (place.kind !== "cut") continue;
-      const { from, to } = joins.get(id) as JoinSides;
-      const transition = timeline.joins?.[id]?.transition as JoinTransition;
-      const sides = { from: clipOf(from) as ClipState, to: clipOf(to) as ClipState };
-      found.push({ id, track, ...sides, transition, at: place.at });
-    }
-  }
-  return found;
-}
-
-/**
- * The edges of clips where a join is, as `<clip> enter` and `<clip> exit`: a join wins over the
- * transition at either of its ends. Joins are not drawn yet, so for now such a cut is a cut and
- * nothing else, and an export stops there (see `transitionsNotDone`).
- */
-export function joinedEdges(timeline: TimelineState): ReadonlySet<string> {
-  const joined = new Set<string>();
-  for (const { from, to } of joinsInEffect(timeline)) {
-    joined.add(`${from.id} exit`).add(`${to.id} enter`);
-  }
-  return joined;
-}
-
-/**
- * Seconds on the timeline that a join takes, around its cut as `align` says: half before and half
- * after, all before or all after. Each part stays within the clip on its side.
- */
-export function joinSpan({ from, to, transition, at }: JoinInEffect): readonly [number, number] {
-  const length = parseTime(transition.duration);
-  const half = divide(length, rational(2n));
-  const [before, after] =
-    transition.align === "before"
-      ? [length, ZERO]
-      : transition.align === "after"
-        ? [ZERO, length]
-        : [half, half];
-  const start = subtract(at, edgeLength(before, parseTime(from.duration)));
-  const end = add(at, edgeLength(after, parseTime(to.duration)));
-  return [toSeconds(start), toSeconds(end)];
+/** A join ready to draw, at its cut, as long as the clips on its sides let it be. */
+function plannedJoin(join: JoinInEffect): RenderJoin {
+  const { transition } = join;
+  const { from, to } = spanOfJoin(join);
+  return {
+    id: join.id,
+    track: join.track,
+    from: join.from.id,
+    to: join.to.id,
+    ...implementationOf(transition, "join"),
+    start: toSeconds(from),
+    end: toSeconds(to),
+    duration: toSeconds(subtract(to, from)),
+    ...(transition.curve && { curve: transition.curve }),
+  };
 }
 
 /** A transition that this editor does not do yet, and where it is. */
@@ -341,18 +321,17 @@ export interface TransitionNotDone {
 
 /**
  * Where a file of a timeline would show or sound otherwise than the project says, earliest first.
- * Enter and exit transitions of pictures that this editor cannot do show as fades, joins are not
- * drawn yet, and no transition of sound is heard yet. An export stops at the first of them, instead
- * of a file with a fade, a hard cut or a sound that goes on where the project says something else.
- * Only what the file gets counts: what does not show in the plan, or is not heard, is no matter.
+ * Transitions of pictures that this editor cannot do show as fades, and no transition of sound is
+ * heard yet. An export stops at the first of them, instead of a file with a fade or a sound that
+ * goes on where the project says something else. Only what the file gets counts: what does not
+ * show in the plan, or is not heard, is no matter.
  */
 export function transitionsNotDone(
   timeline: TimelineState,
-  plan: Pick<RenderPlan, "layers">,
+  plan: Pick<RenderPlan, "layers" | "joins">,
   audio: AudioPlan | undefined,
 ): readonly TransitionNotDone[] {
   const found: TransitionNotDone[] = [];
-  const drawn = new Set(plan.layers.map(({ id }) => id));
   const heard = new Set(audio?.sounds.map(({ id }) => id));
   for (const layer of plan.layers) {
     for (const use of EDGES) {
@@ -362,14 +341,15 @@ export function transitionsNotDone(
       found.push({ clip: layer.id, use, media: "picture", start, end });
     }
   }
+  for (const { from, missing, start, end } of plan.joins) {
+    if (missing) found.push({ clip: from, use: "join", media: "picture", start, end });
+  }
   const joined = new Set<string>();
   for (const join of joinsInEffect(timeline)) {
     joined.add(`${join.from.id} exit`).add(`${join.to.id} enter`);
-    const both = (set: ReadonlySet<string>) => set.has(join.from.id) && set.has(join.to.id);
-    const media = both(drawn) ? "picture" : both(heard) ? "sound" : undefined;
-    if (media === undefined) continue;
+    if (!heard.has(join.from.id) || !heard.has(join.to.id)) continue;
     const [start, end] = joinSpan(join);
-    found.push({ clip: join.from.id, use: "join", media, start, end });
+    found.push({ clip: join.from.id, use: "join", media: "sound", start, end });
   }
   for (const id of heard) {
     const clip = entryOf(timeline.clips, id);
@@ -404,12 +384,23 @@ interface BuiltLayer {
   readonly asset: Asset | undefined;
   readonly scene: SceneSource | undefined;
   readonly properties: Properties;
-  /** Which of its edges a join has. */
+  /** Which of its edges a join has, and how far it shows past them for that. */
   readonly joined: string;
   readonly layer: RenderLayer | undefined;
 }
 
 const built = new WeakMap<ClipState, BuiltLayer>();
+
+/** What joins do to a clip: which of its edges they win over, and where it shows then. */
+interface Joined {
+  readonly enter: boolean;
+  readonly exit: boolean;
+  /** Seconds on the timeline, past its own ends. */
+  readonly from?: number;
+  readonly to?: number;
+}
+
+const NOT_JOINED: Joined = { enter: false, exit: false };
 
 /**
  * Clips that did not change keep their identity, so they keep their layer. That is what makes a
@@ -419,14 +410,12 @@ function layerOf(
   state: ProjectState,
   clip: ClipState,
   version: Version | undefined,
-  joins: ReadonlySet<string>,
+  joins: Joined,
 ): RenderLayer | undefined {
   const asset = assetOf(state, clip);
   const scene = sceneOf(state, clip);
   const properties = effectiveProperties(clip, version);
-  const enters = !joins.has(`${clip.id} enter`);
-  const exits = !joins.has(`${clip.id} exit`);
-  const joined = `${enters ? "" : "enter"} ${exits ? "" : "exit"}`;
+  const joined = `${joins.enter} ${joins.exit} ${joins.from} ${joins.to}`;
   const known = built.get(clip);
   if (
     known?.asset === asset &&
@@ -436,24 +425,69 @@ function layerOf(
   ) {
     return known?.layer;
   }
-  const enter = enters ? plannedEdge(clip, "enter") : undefined;
-  const exit = exits ? plannedEdge(clip, "exit") : undefined;
+  const enter = joins.enter ? undefined : plannedEdge(clip, "enter");
+  const exit = joins.exit ? undefined : plannedEdge(clip, "exit");
   const source = scene ?? sourceOf(clip, asset);
+  const start = toSeconds(clipStart(clip));
+  const end = toSeconds(clipEnd(clip));
+  const shows = joins.from !== undefined || joins.to !== undefined;
   const layer: RenderLayer | undefined = source && {
     id: clip.id,
-    start: toSeconds(clipStart(clip)),
-    end: toSeconds(clipEnd(clip)),
+    start,
+    end,
     offset: toSeconds(clipOffset(clip)),
     source,
     // A scene is laid out for its box, so there is nothing to keep in proportion.
     fit: scene ? "fixed" : fitOf(properties),
     ...(enter && { enter }),
     ...(exit && { exit }),
+    ...(shows && { shows: { from: joins.from ?? start, to: joins.to ?? end } }),
     channels: channelsOf(properties),
     ...(scene && { content: contentOf(properties) }),
   };
   built.set(clip, { asset, scene, properties, joined, layer });
   return layer;
+}
+
+/** What the joins of the drawn tracks do to their clips, by clip. */
+function joinedClips(joins: readonly RenderJoin[]): ReadonlyMap<string, Joined> {
+  const joined = new Map<string, Joined>();
+  for (const join of joins) {
+    const before = joined.get(join.from) ?? NOT_JOINED;
+    // The clip before the cut goes on for what is after it, the one after starts early.
+    joined.set(join.from, { ...before, exit: true, to: join.end });
+    const after = joined.get(join.to) ?? NOT_JOINED;
+    joined.set(join.to, { ...after, enter: true, from: join.start });
+  }
+  return joined;
+}
+
+/** A plan keeps the joins it had while they stay the same, so that it stays the same plan. */
+const plannedJoins = new WeakMap<object, RenderJoin>();
+
+function joinOf(join: JoinInEffect, state: JoinState): RenderJoin {
+  const planned = plannedJoin(join);
+  const known = plannedJoins.get(state);
+  if (known && sameJoin(known, planned)) return known;
+  plannedJoins.set(state, planned);
+  return planned;
+}
+
+function sameJoin(a: RenderJoin, b: RenderJoin): boolean {
+  return (
+    a.id === b.id &&
+    a.track === b.track &&
+    a.from === b.from &&
+    a.to === b.to &&
+    a.start === b.start &&
+    a.end === b.end &&
+    a.duration === b.duration &&
+    a.missing === b.missing &&
+    a.overshoot === b.overshoot &&
+    a.how.type === b.how.type &&
+    a.how.variant === b.how.variant &&
+    JSON.stringify(a.curve) === JSON.stringify(b.curve)
+  );
 }
 
 /** The format of a version: the first one, unless the version says otherwise. */
@@ -476,12 +510,21 @@ export function buildRenderPlan(
   const { n, d } = parseTime(format.fps);
   const tracks = orderedTracks(timeline).filter((track) => track.kind === "video" && !track.hidden);
   const lanes = new Map(tracks.map(({ id }) => [id, [] as RenderLayer[]]));
-  const joined = joinedEdges(timeline);
+  const effective = joinsInEffect(timeline).filter(({ track }) => lanes.has(track));
+  const planned = effective.map((join) => joinOf(join, timeline.joins?.[join.id] as JoinState));
+  const joined = joinedClips(planned);
   for (const clip of Object.values(timeline.clips)) {
     const lane = lanes.get(clip.track);
-    const layer = lane && !clip.hidden ? layerOf(state, clip, version, joined) : undefined;
+    const joins = joined.get(clip.id) ?? NOT_JOINED;
+    const layer = lane && !clip.hidden ? layerOf(state, clip, version, joins) : undefined;
     if (layer) lane?.push(layer);
   }
+  const layers = [...lanes.values()].flatMap((lane) => lane.toSorted((a, b) => a.start - b.start));
+  // A join with nothing on either side draws nothing, which is no matter for anybody.
+  const drawn = new Set(layers.map(({ id }) => id));
+  const joins = planned
+    .filter(({ from, to }) => drawn.has(from) || drawn.has(to))
+    .toSorted((a, b) => a.start - b.start || a.id.localeCompare(b.id));
   return {
     width: format.width,
     height: format.height,
@@ -493,7 +536,8 @@ export function buildRenderPlan(
       language: state.manifest.languages[0]?.id ?? "",
       fps: { num: Number(n), den: Number(d) },
     },
-    layers: [...lanes.values()].flatMap((lane) => lane.toSorted((a, b) => a.start - b.start)),
+    layers,
+    joins,
   };
 }
 
@@ -509,7 +553,9 @@ export function samePlan(a: RenderPlan, b: RenderPlan): boolean {
     a.scenes.fps.num === b.scenes.fps.num &&
     a.scenes.fps.den === b.scenes.fps.den &&
     a.layers.length === b.layers.length &&
-    a.layers.every((layer, index) => layer === b.layers[index])
+    a.layers.every((layer, index) => layer === b.layers[index]) &&
+    a.joins.length === b.joins.length &&
+    a.joins.every((join, index) => join === b.joins[index])
   );
 }
 

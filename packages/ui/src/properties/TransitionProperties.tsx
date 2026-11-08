@@ -1,8 +1,14 @@
 import {
   BUILT_IN_TRANSITIONS,
+  JOIN_ALIGNS,
+  formatTime,
   mediaOfTrack,
+  parseTime,
+  type JoinAlign,
   type SpeedCurve,
   type Transition,
+  type TransitionRef,
+  type TransitionUse,
 } from "@animaquill/schema";
 import {
   useRef,
@@ -10,11 +16,13 @@ import {
   useSyncExternalStore,
   type FocusEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useWorkbench } from "../app/context.ts";
-import type { TransitionChoice } from "../timeline/editor.ts";
+import { isJoinChoice, type TransitionChoice } from "../timeline/editor.ts";
 import {
   formatTimecode,
   frameContaining,
@@ -23,7 +31,15 @@ import {
   type FrameRate,
 } from "../timeline/frames.ts";
 import { longestTransition } from "../timeline/gestures.ts";
-import { edgeWorks, edgesOf, type ClipBox, type TimelineModel } from "../timeline/model.ts";
+import {
+  edgeWorks,
+  edgesOf,
+  type ClipBox,
+  type Edge,
+  type JoinBox,
+  type TimelineModel,
+} from "../timeline/model.ts";
+import { replacementItems } from "../timeline/transition-menu.ts";
 import { transitionName } from "../timeline/transition-names.ts";
 import { textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
@@ -41,12 +57,57 @@ const leave = (element: HTMLElement) =>
   element.closest<HTMLElement>("[tabindex]")?.focus({ preventScroll: true });
 
 /** Why a transition does not do what it says, for people to know, or nothing when it does. */
-function whyNot(model: TimelineModel, box: ClipBox, choice: TransitionChoice) {
-  if (edgeWorks(model, box, choice.edge)) return undefined;
+function whyNot(model: TimelineModel, box: ClipBox, edge: Edge) {
+  if (edgeWorks(model, box, edge)) return undefined;
   const kind = model.rowOfClip.get(box.id)?.track.kind;
   if (kind === "caption") return "caption" as const;
-  if (model.joined.has(`${box.id} ${choice.edge}`)) return "joined" as const;
+  if (model.joined.has(`${box.id} ${edge}`)) return "joined" as const;
   return kind === "audio" ? ("sound" as const) : ("unsupported" as const);
+}
+
+/** Whether a speed curve goes past 0 and 1 as it is for a transition, see `progressAt`. */
+function overshoots(transition: TransitionRef, media: "picture" | "sound"): boolean {
+  const { type } = transition;
+  const own = BUILT_IN_TRANSITIONS[media];
+  return type !== undefined && Object.hasOwn(own, type) && own[type]?.overshoot === true;
+}
+
+/**
+ * The button that puts another transition in the place of one, with what comes with the editor in
+ * a menu. What it is stays as it is otherwise: how long it takes, and how it goes.
+ */
+function ReplaceButton(props: {
+  readonly use: TransitionUse;
+  readonly current: TransitionRef;
+  readonly disabled: boolean;
+  readonly onPick: (type: string, variant: string | undefined) => void;
+}) {
+  const { use, current, disabled, onPick } = props;
+  const { t } = useTranslation();
+  const [menu, setMenu] = useState<{ x: number; y: number }>();
+  const open = (event: MouseEvent<HTMLButtonElement>) => {
+    const { left, bottom } = event.currentTarget.getBoundingClientRect();
+    setMenu({ x: left, y: bottom + 2 });
+  };
+  const groups: readonly (readonly MenuItem[])[] = replacementItems(t, use, current, (choice) =>
+    onPick(choice.type, choice.variant),
+  );
+  return (
+    <>
+      <button type="button" className={styles.hintButton} disabled={disabled} onClick={open}>
+        {t("transition.replace")}
+      </button>
+      {menu && (
+        <PopupMenu
+          x={menu.x}
+          y={menu.y}
+          label={t("transition.replace")}
+          groups={groups}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
+    </>
+  );
 }
 
 /**
@@ -238,36 +299,84 @@ function CurveEditor(props: {
   );
 }
 
+/** The presets of the speed of a transition, and its curve with its two handles. */
+function SpeedRows(props: {
+  readonly curve: SpeedCurve | undefined;
+  readonly overshoot: boolean;
+  readonly readOnly: boolean;
+  readonly onCommit: (curve: SpeedCurve | undefined) => void;
+}) {
+  const { curve, overshoot, readOnly, onCommit } = props;
+  const { t } = useTranslation();
+  const preset = presetOf(curve);
+  return (
+    <>
+      <div className={styles.row} role="group" aria-label={t("transition.speed")}>
+        <span className={styles.name}>{t("transition.speed")}</span>
+        <div className={styles.presets}>
+          {SPEED_PRESET_IDS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={styles.preset}
+              aria-pressed={preset === id}
+              disabled={readOnly}
+              onClick={() => {
+                if (preset !== id) onCommit(curveOfPreset(id));
+              }}
+            >
+              {t(`transition.presets.${id}`)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={styles.curveRow}>
+        <CurveEditor curve={curve} overshoot={overshoot} readOnly={readOnly} onCommit={onCommit} />
+        <p className={styles.transitionHint}>{t("transition.curveHint")}</p>
+      </div>
+    </>
+  );
+}
+
+/** The curve as a transition writes it: four plain numbers, or none for an even speed. */
+const writtenAs = (curve: SpeedCurve | undefined): [number, number, number, number] | undefined =>
+  curve ? [curve[0], curve[1], curve[2], curve[3]] : undefined;
+
 /**
- * What a selected transition is: how long it takes and how it gets along, which is all people set.
- * It has no keys, and a change is a step right away, as with trimming: nothing to try first.
+ * What a selected transition is: how long it takes and how it gets along, which is all people set,
+ * and what it is, which can be another one that comes with the editor. It has no keys, and a change
+ * is a step right away, as with trimming: nothing to try first.
  */
 export function TransitionProperties({ choice }: { choice: TransitionChoice }) {
+  return isJoinChoice(choice) ? (
+    <JoinProperties join={choice.join} />
+  ) : (
+    <EdgeProperties clip={choice.clip} edge={choice.edge} />
+  );
+}
+
+function EdgeProperties({ clip, edge }: { readonly clip: string; readonly edge: Edge }) {
   const { timeline } = useWorkbench();
   const { t } = useTranslation();
   const { model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
-  const box = model?.boxes.get(choice.clip);
-  const row = model?.rowOfClip.get(choice.clip);
-  const transition = box?.clip[choice.edge];
+  const box = model?.boxes.get(clip);
+  const row = model?.rowOfClip.get(clip);
+  const transition = box?.clip[edge];
   if (!model || !box || !row || !transition) return null;
   const { rate } = model;
-  const { edge } = choice;
   const media = mediaOfTrack(row.track.kind);
   const name = transitionName(t, transition, edge, media);
   const clipName =
     box.clip.name ?? textOf(t, `timeline.kind.${box.clip.source.kind}`, box.clip.source.kind);
   const readOnly = row.track.locked === true;
-  const why = whyNot(model, box, choice);
+  const why = whyNot(model, box, edge);
   const frames = Math.round(edgesOf(box.clip)[edge] * rate.fps);
-  const longest = frameContaining(longestTransition(box.clip, edge), rate);
-  const { type } = transition;
-  const own = BUILT_IN_TRANSITIONS[media];
-  const overshoot = type !== undefined && Object.hasOwn(own, type) && own[type]?.overshoot === true;
-  const preset = presetOf(transition.curve);
+  const longest = frameContaining(longestTransition(box.clip, edge, model), rate);
   const change = (next: Transition) => timeline.setTransition(box.id, edge, next);
   const withCurve = (curve: SpeedCurve | undefined): Transition => {
     const { curve: _curve, ...rest } = transition;
-    return curve ? { ...rest, curve: [curve[0], curve[1], curve[2], curve[3]] } : rest;
+    const written = writtenAs(curve);
+    return written ? { ...rest, curve: written } : rest;
   };
   return (
     <section className={styles.transition} aria-label={name}>
@@ -287,6 +396,17 @@ export function TransitionProperties({ choice }: { choice: TransitionChoice }) {
           <span>{t(`transition.why.${why}`)}</span>
         </div>
       )}
+      {media === "picture" && (
+        <div className={styles.hint}>
+          <span>{t("transition.replaceHint")}</span>
+          <ReplaceButton
+            use={edge}
+            current={transition}
+            disabled={readOnly}
+            onPick={(type, variant) => timeline.replaceTransition(box.id, edge, type, variant)}
+          />
+        </div>
+      )}
       <div className={styles.rows}>
         <DurationField
           label={t("transition.duration")}
@@ -296,34 +416,113 @@ export function TransitionProperties({ choice }: { choice: TransitionChoice }) {
           readOnly={readOnly}
           onCommit={(wanted) => timeline.setTransitionLength(box.id, edge, frameTime(wanted, rate))}
         />
-        <div className={styles.row} role="group" aria-label={t("transition.speed")}>
-          <span className={styles.name}>{t("transition.speed")}</span>
+        <SpeedRows
+          curve={transition.curve}
+          overshoot={overshoots(transition, media)}
+          readOnly={readOnly}
+          onCommit={(curve) => change(withCurve(curve))}
+        />
+      </div>
+    </section>
+  );
+}
+
+/** The clip on a side of a join, as people call it. */
+const clipNameOf = (t: ReturnType<typeof useTranslation>["t"], { clip }: ClipBox) =>
+  clip.name ?? textOf(t, `timeline.kind.${clip.source.kind}`, clip.source.kind);
+
+/**
+ * A selected join: what it is, how long it takes, how it gets along, and where it is around its
+ * cut. It goes as long as the clips on both sides leave room for.
+ */
+function JoinProperties({ join: id }: { readonly join: string }) {
+  const { timeline } = useWorkbench();
+  const { t } = useTranslation();
+  const { model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
+  const join: JoinBox | undefined = model?.joins.get(id);
+  const row = join && model?.rowOfClip.get(join.from.id);
+  if (!model || !join || !row) return null;
+  const { rate } = model;
+  const { transition } = join.join;
+  const media = mediaOfTrack(row.track.kind);
+  const name = transitionName(t, transition, "join", media);
+  const readOnly = row.track.locked === true;
+  const align: JoinAlign = transition.align ?? "center";
+  const frames = frameContaining(parseTime(transition.duration), rate);
+  const longest = frameContaining(timeline.longestJoin(join), rate);
+  const update = (changes: Readonly<Record<string, unknown>>) => timeline.updateJoin(id, changes);
+  const sides = { from: clipNameOf(t, join.from), to: clipNameOf(t, join.to) };
+  return (
+    <section className={styles.transition} aria-label={name}>
+      <header className={styles.header}>
+        <span className={styles.title}>{name}</span>
+        <span className={styles.kind}>{t("transition.between", sides)}</span>
+      </header>
+      {readOnly && (
+        <div className={styles.hint} role="status">
+          <span>{t("transition.locked")}</span>
+        </div>
+      )}
+      {join.trouble && (
+        <div className={styles.hint} role="status">
+          <span>{t(`transition.why.join.${join.trouble}`)}</span>
+        </div>
+      )}
+      {join.still.length > 0 && (
+        <div className={styles.hint} role="status">
+          <span>{t("transition.still")}</span>
+        </div>
+      )}
+      {media === "picture" && (
+        <div className={styles.hint}>
+          <span>{t("transition.replaceHint")}</span>
+          <ReplaceButton
+            use="join"
+            current={transition}
+            disabled={readOnly}
+            onPick={(type, variant) =>
+              update({ type, ...(variant === undefined ? { variant: null } : { variant }) })
+            }
+          />
+        </div>
+      )}
+      <div className={styles.rows}>
+        <DurationField
+          label={t("transition.duration")}
+          frames={frames}
+          longest={longest}
+          rate={rate}
+          readOnly={readOnly}
+          onCommit={(wanted) => {
+            if (wanted <= 0) timeline.removeJoin(id);
+            else update({ duration: formatTime(frameTime(wanted, rate)) });
+          }}
+        />
+        <div className={styles.row} role="group" aria-label={t("transition.position")}>
+          <span className={styles.name}>{t("transition.position")}</span>
           <div className={styles.presets}>
-            {SPEED_PRESET_IDS.map((id) => (
+            {JOIN_ALIGNS.map((place) => (
               <button
-                key={id}
+                key={place}
                 type="button"
                 className={styles.preset}
-                aria-pressed={preset === id}
+                aria-pressed={align === place}
                 disabled={readOnly}
                 onClick={() => {
-                  if (preset !== id) change(withCurve(curveOfPreset(id)));
+                  if (align !== place) update({ align: place });
                 }}
               >
-                {t(`transition.presets.${id}`)}
+                {t(`transition.align.${place}`)}
               </button>
             ))}
           </div>
         </div>
-        <div className={styles.curveRow}>
-          <CurveEditor
-            curve={transition.curve}
-            overshoot={overshoot}
-            readOnly={readOnly}
-            onCommit={(curve) => change(withCurve(curve))}
-          />
-          <p className={styles.transitionHint}>{t("transition.curveHint")}</p>
-        </div>
+        <SpeedRows
+          curve={transition.curve}
+          overshoot={overshoots(transition, media)}
+          readOnly={readOnly}
+          onCommit={(curve) => update({ curve: writtenAs(curve) ?? null })}
+        />
       </div>
     </section>
   );

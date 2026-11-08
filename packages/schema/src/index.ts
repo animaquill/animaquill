@@ -52,6 +52,8 @@ export {
   Timeline,
   Track,
   Transition,
+  TransitionCurve,
+  TransitionShape,
   canHold,
 } from "./timeline.ts";
 export {

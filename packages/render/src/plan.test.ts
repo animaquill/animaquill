@@ -24,6 +24,7 @@ const plan: RenderPlan = {
   scenes: { format: "f", language: "zh-CN", fps: { num: 30, den: 1 } },
   background: "#000000",
   layers: [layer("a", { "transform.x": x, "transform.y": y }), layer("b", { "transform.x": x })],
+  joins: [],
 };
 
 describe("new curves on a layer", () => {

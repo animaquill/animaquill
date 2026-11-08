@@ -31,6 +31,7 @@
 - Monaco 只在 `packages/ui/src/code/monaco.ts` 里使用，这个文件只能用 `import()` 加载，静态引用它就进了首屏。加载走 `code/load.ts`，它先单独加载界面文字：构建后 Monaco 的共享代码是单独的 chunk，比 `monaco.ts` 里的 import 先运行，文字放在那里编辑器就是英文，开发服务器上看不出来。打开的文件和规则都在不碰 DOM 的 `CodeDocuments` 里：代码改动保存时才走 `file.write`，不走试改。文件在别处变了，没改动就跟上，有改动就提示，用户没说之前不动。改路径要走 `CodeDocuments.moving`，否则看起来是文件没了。没保存的代码由 `CodeDrafts` 存到 `Host.drafts`（浏览器版是单独的 `animaquill-drafts` 数据库，和试改一样一个窗口一个位置，写入用 `workbench/keeper.ts` 的 `PlaceKeeper`）。找回时只回到选项卡里，不写项目，文件变了或没了按冲突处理，所以项目照常能打开。
 - 问题都进 `ProblemList`，每个来源只管自己的那部分：场景的问题跟着场景的 `revision` 走，新版本一接管就清掉旧的。通知只说一个版本的第一个问题，问题选项卡开着时不说。
 - 动作的按键只属于一个选项卡时写 `scope`。
+- 转场由合成器的 `render/src/compose.ts` 画：没有转场的图层照旧直接画；内置转场的代码在 `render/src/transitions`，写法和第三方代码一样（`aq.render`，拿到两边的画面和进度），在合成器里直接调用。淡入淡出和叠化有不经过代码的快路，结果要和按代码算的一致，改的时候两条路都要测。衔接转场让两边的图层在片段外多显示一段（`RenderLayer.shows`），视频、场景、预加载都要按这个范围算，不要只看片段的开头结尾。
 - 时间轴在 `packages/ui/src/timeline`。缩放、播放头、选中是窗口的状态，不进项目。手势只改预览，松手才执行命令，一次拖动是一步撤销。手势和规则写在不碰 DOM 的 `TimelineEditor` 里，用单元测试盯住。
 - 锁定轨道的片段可以点选（看属性、复制），框选和全选不选它。选中不等于能改：改片段的操作要走 `TimelineEditor` 的 `#changeable`，不要直接用选中集合。
 - 控件改属性和关键帧都走 `PropertyWriter`，不要自己执行 `property.edit`：默认先进试改（`core/trial.ts` 的 `Trial`，界面这层是 `properties/trial.ts` 的 `TrialSession`）。试改是窗口自己的，不进 Yjs，别的窗口和 AI 看不到，保存时合成一条命令。预览拿 `PropertyWriter.getPreviewed`，新的渲染计划带着它发，不要发完计划再补，否则合成器会先画一帧旧值。
@@ -49,6 +50,7 @@
 - 命令要经得起一次处理几千个片段：不要在循环里再扫一遍全部片段，先按轨道排序。
 - 浮点时间只用来画和找位置。切不切、有没有空位这类判断用精确时间，否则片段边缘会判断错。
 - 判断属性是不是动画用 `isAnimation`：数组也有 `keys`。
+- 会挪动片段边缘的命令（移动、修剪、改时长、覆盖着放下）开头用 `joinsTogether` 记下首尾相接的衔接转场，最后用 `followJoins`：两边还相接就跟着走（包括换轨道），分开了就同一步删掉，结果里写 `joinsRemoved`。文件导入和多人同时改造成的分开不删，留给问题列表。衔接转场在哪里生效、各占两边多少，都用 `core/src/joins.ts`，不要自己算。
 
 ## 项目格式
 

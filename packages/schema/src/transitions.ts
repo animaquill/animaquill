@@ -1,4 +1,13 @@
-import { add, compare, parseTime, type Rational } from "./time.ts";
+import {
+  ZERO,
+  add,
+  compare,
+  multiply,
+  parseTime,
+  rational,
+  subtract,
+  type Rational,
+} from "./time.ts";
 
 /**
  * Transitions, apart from how files write them (see timeline.ts). A transition goes from one side
@@ -32,6 +41,15 @@ export const SPEED_PRESETS: Readonly<Record<"easeIn" | "easeOut" | "easeInOut", 
   easeInOut: [0.42, 0, 0.58, 1],
 };
 
+/** Values that the code of a transition gets as they are, as a description has them. */
+export type TransitionValues = Readonly<Record<string, unknown>>;
+
+/** A kind of a transition, which is another transition to people: such as which way a wipe goes. */
+export interface TransitionVariant {
+  /** What its code gets on top of the values of the transition, which they win over. */
+  readonly values?: TransitionValues;
+}
+
 /** What a transition that comes with the editor is, as a description says it for any other. */
 export interface TransitionSpec {
   readonly uses: readonly TransitionUse[];
@@ -39,24 +57,45 @@ export interface TransitionSpec {
   readonly duration: string;
   /** A speed curve that goes past 0 and 1 is used as it is. Otherwise it stops there. */
   readonly overshoot?: boolean;
-  /** The kinds of it there are. One of them has to be picked. */
-  readonly variants?: readonly string[];
+  /** What its code gets as it is, whatever kind of it there is. */
+  readonly values?: TransitionValues;
+  /** The kinds of it there are, by name, in the order people see them. One has to be picked. */
+  readonly variants?: Readonly<Record<string, TransitionVariant>>;
 }
 
-const DIRECTIONS = ["left", "right", "up", "down"];
+/** Which way something goes on the picture, as x and y, with y down as on the screen. */
+const DIRECTIONS: Readonly<Record<string, TransitionVariant>> = {
+  left: { values: { direction: [-1, 0] } },
+  right: { values: { direction: [1, 0] } },
+  up: { values: { direction: [0, -1] } },
+  down: { values: { direction: [0, 1] } },
+};
 
 /**
  * The transitions that come with the editor, by what they change and by name, which is what projects
- * keep. What each of them looks like is part of the format, see the project format. Their names
- * come from the interface texts, by type, variant and use.
+ * keep. What each of them looks like is part of the format, see the project format, and their code
+ * gets the values here. Their names come from the interface texts, by type, variant and use.
  */
 export const BUILT_IN_TRANSITIONS: Readonly<
   Record<TransitionMedia, Readonly<Record<string, TransitionSpec>>>
 > = {
   picture: {
     fade: { uses: TRANSITION_USES, duration: "0.5" },
-    dip: { uses: TRANSITION_USES, duration: "0.5", variants: ["black", "white"] },
-    wipe: { uses: TRANSITION_USES, duration: "0.5", variants: DIRECTIONS },
+    dip: {
+      uses: TRANSITION_USES,
+      duration: "0.5",
+      variants: {
+        black: { values: { color: "#000000" } },
+        white: { values: { color: "#ffffff" } },
+      },
+    },
+    /** The soft edge is a share of the short side of the picture. */
+    wipe: {
+      uses: TRANSITION_USES,
+      duration: "0.5",
+      values: { softness: 0.02 },
+      variants: DIRECTIONS,
+    },
     push: { uses: TRANSITION_USES, duration: "0.5", variants: DIRECTIONS, overshoot: true },
   },
   sound: {
@@ -65,6 +104,13 @@ export const BUILT_IN_TRANSITIONS: Readonly<
   },
 };
 
+/** The kinds of a transition, in the order people see them. */
+export const variantsOf = (spec: TransitionSpec): readonly string[] =>
+  Object.keys(spec.variants ?? {});
+
+/** Every picture transition that comes with the editor. */
+const PICTURES = ["fade", "dip", "wipe", "push"];
+
 /**
  * What this editor does so far. The format has the rest already, so that a project can have it: it
  * stays as it is, and the problems of the project say that it does nothing yet.
@@ -72,7 +118,7 @@ export const BUILT_IN_TRANSITIONS: Readonly<
 export const SUPPORTED_TRANSITIONS: Readonly<
   Record<TransitionMedia, Readonly<Record<TransitionUse, readonly string[]>>>
 > = {
-  picture: { enter: ["fade"], exit: ["fade"], join: [] },
+  picture: { enter: PICTURES, exit: PICTURES, join: PICTURES },
   sound: { enter: [], exit: [], join: [] },
 };
 
@@ -111,6 +157,8 @@ export type TransitionFound =
       readonly type: string;
       readonly variant?: string;
       readonly spec: TransitionSpec;
+      /** What its code gets: the values of the transition, with those of the variant over them. */
+      readonly values: TransitionValues;
     }
   | { readonly kind: "missing"; readonly why: TransitionMissing };
 
@@ -142,11 +190,13 @@ export function findTransition(
   }
   if (!spec.uses.includes(use)) return missing({ reason: "use", type, use });
   const { variants } = spec;
-  if (variant === undefined && variants) return missing({ reason: "no-variant", type, variants });
-  if (variant !== undefined && !variants?.includes(variant)) {
-    return missing({ reason: "variant", type, variant });
+  if (variant === undefined && variants) {
+    return missing({ reason: "no-variant", type, variants: variantsOf(spec) });
   }
-  return { kind: "built-in", type, ...(variant === undefined ? {} : { variant }), spec };
+  if (variant === undefined) return { kind: "built-in", type, spec, values: spec.values ?? {} };
+  const chosen = variants && Object.hasOwn(variants, variant) ? variants[variant] : undefined;
+  if (!chosen) return missing({ reason: "variant", type, variant });
+  return { kind: "built-in", type, variant, spec, values: { ...spec.values, ...chosen.values } };
 }
 
 /** Whether this editor shows or plays what was found, there. See `SUPPORTED_TRANSITIONS`. */
@@ -194,8 +244,7 @@ export function describeUnsupported(
   use: TransitionUse,
 ): string {
   if (media === "sound") return `这一版的编辑器还不能播放声音的${TRANSITION_USE_NAMES[use]}`;
-  if (use === "join") return "这一版的编辑器还不能显示衔接转场";
-  return `这一版的编辑器还不能显示转场 ${type}`;
+  return `这一版的编辑器还不能显示${TRANSITION_USE_NAMES[use]} ${type}`;
 }
 
 /** What a track holds, for its transitions. Captions are pictures too, once they get drawn. */
@@ -209,6 +258,28 @@ export const mediaOfTrack = (kind: string): TransitionMedia =>
  */
 export function edgeLength(duration: Rational, clipDuration: Rational): Rational {
   return compare(duration, clipDuration) > 0 ? clipDuration : duration;
+}
+
+/** Where a join is around its cut: half before and half after it, all before, or all after. */
+export type JoinAlign = "center" | "before" | "after";
+
+export const JOIN_ALIGNS: readonly JoinAlign[] = ["center", "before", "after"];
+
+const HALF = rational(1n, 2n);
+
+/**
+ * How much of a join is before its cut and how much after, as it says: the clip before the cut shows
+ * on during what is after it, and the clip after the cut shows before it starts. A part that the
+ * clip on its side is too short for gets shorter, see `JoinInEffect`.
+ */
+export function joinParts(
+  duration: Rational,
+  align: JoinAlign | undefined,
+): readonly [before: Rational, after: Rational] {
+  if (align === "before") return [duration, ZERO];
+  if (align === "after") return [ZERO, duration];
+  const half = multiply(duration, HALF);
+  return [half, subtract(duration, half)];
 }
 
 /** Where a join is. */

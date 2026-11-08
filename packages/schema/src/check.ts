@@ -9,6 +9,7 @@ import {
   edgeLength,
   findTransition,
   isSupported,
+  joinParts,
   mediaOfTrack,
   placeJoins,
   type TransitionMedia,
@@ -75,10 +76,12 @@ function checkCycles(project: Project, problems: Problem[]): void {
   for (const id of project.timelines.keys()) if (!state.has(id)) visit(id);
 }
 
-/** What a transition that this editor cannot do comes to, there. */
+/** What a transition that this editor cannot do comes to, there: a fade, which a join is too. */
 function insteadOf(media: TransitionMedia, use: TransitionUse): string {
   if (media === "sound") return "，暂时没有效果";
-  return use === "join" ? "，剪切点照常硬切" : "，预览按淡入淡出显示，导出会停在这里";
+  return use === "join"
+    ? "，预览按叠化显示，导出会停在这里"
+    : "，预览按淡入淡出显示，导出会停在这里";
 }
 
 /**
@@ -128,16 +131,27 @@ function checkTransitions(
   const joins: readonly Join[] = track.kind === "caption" ? [] : (track.joins ?? []);
   const joinPaths = new Map(joins.map((join, index) => [join.id, `${trackPath}.joins.${index}`]));
   const places = placeJoins(new Map(joins.map((join) => [join.id, join])), (id) => clips.get(id));
-  /** Which edges of clips have a join that does what it says, by clip. */
-  const joined = { enter: new Map<string, string>(), exit: new Map<string, string>() };
+  /** Which edges of clips have a join that does what it says, by clip, and how much it takes. */
+  const joined = {
+    enter: new Map<string, { readonly id: string; readonly length: Rational }>(),
+    exit: new Map<string, { readonly id: string; readonly length: Rational }>(),
+  };
   for (const join of joins) {
     const path = joinPaths.get(join.id) as string;
     const report = (code: string, message: string) =>
       problems.push(warning(code, file, path, message));
     const place = places.get(join.id);
     if (place?.kind === "cut") {
-      joined.exit.set(join.from, join.id);
-      joined.enter.set(join.to, join.id);
+      const [before, after] = joinParts(parseTime(join.duration), join.align);
+      const from = clips.get(join.from) as Clip;
+      const to = clips.get(join.to) as Clip;
+      const fromLength = parseTime(from.duration);
+      const toLength = parseTime(to.duration);
+      if (compare(before, fromLength) > 0 || compare(after, toLength) > 0) {
+        report("transition-too-long", "衔接转场比两边的片段放得下的长，只用到放得下的长度");
+      }
+      joined.exit.set(join.from, { id: join.id, length: edgeLength(before, fromLength) });
+      joined.enter.set(join.to, { id: join.id, length: edgeLength(after, toLength) });
     } else if (place?.kind === "taken") {
       report("join-duplicate", `这个剪切点已经有衔接转场 ${place.by}，这个不生效`);
     } else if (place?.kind === "hidden") {
@@ -156,17 +170,22 @@ function checkTransitions(
     const path = `${trackPath}.clips.${index}`;
     const length = parseTime(clip.duration);
     const lengths: Rational[] = [];
+    let withJoin = false;
     for (const use of ["enter", "exit"] as const) {
+      const join = joined[use].get(clip.id);
+      if (join !== undefined) {
+        lengths.push(join.length);
+        withJoin = true;
+      }
       const transition = clip[use];
       if (!transition) continue;
       const where = `${path}.${use}`;
       const report = (code: string, message: string) =>
         problems.push(warning(code, file, where, message));
-      const join = joined[use].get(clip.id);
       if (join !== undefined) {
         const end = use === "enter" ? "开头" : "结尾";
         const name = TRANSITION_USE_NAMES[use];
-        report("transition-shadowed", `片段的${end}有衔接转场 ${join}，${name}不生效`);
+        report("transition-shadowed", `片段的${end}有衔接转场 ${join.id}，${name}不生效`);
         continue;
       }
       checkImplementation(transition, track, use, report, libraries);
@@ -178,7 +197,9 @@ function checkTransitions(
     }
     const [first, second] = lengths;
     if (first && second && compare(add(first, second), length) > 0) {
-      const message = "入转场和出转场加起来比片段长，重叠的地方先算入转场，再算出转场";
+      const message = withJoin
+        ? "片段两头的转场加起来比片段长，重叠的地方按开始的先后依次算"
+        : "入转场和出转场加起来比片段长，重叠的地方先算入转场，再算出转场";
       problems.push(warning("transition-overlap", file, path, message));
     }
   });

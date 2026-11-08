@@ -1,6 +1,6 @@
-import { createProject, readProject, writeProject } from "@animaquill/schema";
+import { compare, createProject, parseTime, readProject, writeProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import { FUZZ, randomFrom, seedIds, sync, type Random } from "./fuzz-support.ts";
+import { FUZZ, randomFrom, randomTransition, seedIds, sync, type Random } from "./fuzz-support.ts";
 import { deepEqual } from "./patch.ts";
 import { buildRenderPlan } from "./render-plan.ts";
 import { ProjectStore, USER, aiTask, type CommandCall } from "./store.ts";
@@ -102,11 +102,46 @@ function step(store: ProjectStore, random: Random): void {
     duration: random.pick(LENGTHS),
     ...(random.chance(0.5) && { curve: [0.42, 0, 0.58, 1] }),
   });
+  const joins = Object.keys(main?.joins ?? {}).toSorted();
+  const join = random.pick(joins) ?? "none";
+  // The clip that starts where the picked one ends: a cut, where a join can go.
+  const next = Object.values(main?.clips ?? {}).find(
+    (other) =>
+      state !== undefined &&
+      other.track === state.track &&
+      compare(parseTime(other.start), parseTime(addTimes(state.start, state.duration))) === 0,
+  );
   const commands: (() => CommandCall)[] = [
     () => ({
       type: "clip.setTransition",
       params: { timeline, clip, [edge]: random.chance(0.25) ? null : transition() },
     }),
+    () => ({
+      type: "join.add",
+      params: {
+        timeline,
+        from: clip,
+        to: next?.id ?? random.pick(clips) ?? clip,
+        ...randomTransition(random),
+        ...(random.chance(0.5) && { duration: random.pick(LENGTHS) }),
+        ...(random.chance(0.3) && { align: random.pick(["center", "before", "after"]) }),
+      },
+    }),
+    () => ({
+      type: "join.update",
+      params: {
+        timeline,
+        join,
+        changes: random.pick([
+          { duration: random.pick(LENGTHS) },
+          randomTransition(random),
+          { align: random.pick(["center", "before", "after"]) },
+          { curve: [0.42, 0, 0.58, 1] },
+          { curve: null },
+        ]),
+      },
+    }),
+    () => ({ type: "join.remove", params: { timeline, joins: [join] } }),
     () => {
       const at = state ? addTimes(state.start, partOf(state.duration, 2 + random.int(2))) : "0";
       return { type: "clip.split", params: { timeline, clip, at } };
@@ -179,7 +214,15 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])("two windows and joins, seed %i",
         expect(problems, `round ${round}`).toEqual([]);
         const errors = readProject(files).problems.filter(({ severity }) => severity === "error");
         expect(errors, `round ${round}`).toEqual([]);
-        expect(buildRenderPlan(store.getState(), "main")).toBeDefined();
+        const plan = buildRenderPlan(store.getState(), "main");
+        expect(plan).toBeDefined();
+        // The clips of a join show for all of it, on both sides of the cut.
+        for (const { from, to, start, end } of plan?.joins ?? []) {
+          const layers = plan?.layers ?? [];
+          const shows = (id: string) => layers.find((layer) => layer.id === id)?.shows;
+          expect(shows(from)?.to, `round ${round}`).toBe(end);
+          expect(shows(to)?.from, `round ${round}`).toBe(start);
+        }
       }
     }
     sync(a, b);

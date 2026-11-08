@@ -38,7 +38,8 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
       return () => {};
     },
   };
-  const editor = new TimelineEditor(session, memory, settings, { commandFailed });
+  const joinsRemoved = vi.fn<(count: number) => void>();
+  const editor = new TimelineEditor(session, memory, settings, { commandFailed, joinsRemoved });
   await editor.load();
   if (sized) editor.setViewport(WIDTH, HEIGHT);
 
@@ -107,6 +108,7 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
     video,
     audio,
     commandFailed,
+    joinsRemoved,
     memory,
     saved,
     settings,
@@ -1270,7 +1272,9 @@ describe("transitions at the edges of clips", () => {
     editor.release(inBlock);
     stop();
     expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "enter" });
-    expect(seen.every((choice) => choice?.clip === "a")).toBe(true);
+    expect(
+      seen.every((choice) => choice !== undefined && "clip" in choice && choice.clip === "a"),
+    ).toBe(true);
   });
 
   it("cannot be cut or copied: Delete takes one away, and copies go with clips", async () => {
@@ -1331,6 +1335,178 @@ describe("transitions at the edges of clips", () => {
     expect(editor.getSnapshot().transition).toBeUndefined();
     editor.selectTransition("a", "exit");
     expect(editor.getSnapshot().transition).toBeUndefined();
+  });
+});
+
+describe("joins", () => {
+  /** Near the top of a track, where the blocks of transitions are. */
+  const top = (editor: TimelineEditor, pointer: Pointer, track: string, by = 0): Pointer => {
+    const row = editor.model?.rows.find(({ id }) => id === track);
+    if (!row) throw new Error("no row");
+    return { ...pointer, x: pointer.x + by, y: RULER_HEIGHT - editor.scrollY + row.top + 4 };
+  };
+
+  /** Clips a and b one after the other, and c after a gap. */
+  async function joined() {
+    const context = await setup();
+    const { addClip, video } = context;
+    addClip("a", 2, 3, video);
+    addClip("b", 5, 3, video);
+    addClip("c", 9, 1, video);
+    return context;
+  }
+
+  it("go on the cut between two clips from its menu, in one step, and get selected", async () => {
+    const { editor, at, store, main } = await joined();
+    // Where the two clips meet, and nowhere else.
+    expect(editor.seamAt(at(5))).toMatchObject({ from: { id: "a" }, to: { id: "b" } });
+    expect(editor.seamAt(at(4.98))).toMatchObject({ from: { id: "a" }, to: { id: "b" } });
+    expect(editor.seamAt(at(3.5))).toBeUndefined();
+    expect(editor.seamAt(at(8))).toBeUndefined();
+    expect(editor.addJoin("a", "b")).toBe(true);
+    const [id] = Object.keys(main().joins ?? {});
+    expect(main().joins?.[id as string]?.transition).toEqual({ type: "fade", duration: "0.5" });
+    expect(editor.getSnapshot().transition).toEqual({ join: id });
+    store.undo();
+    expect(main()).not.toHaveProperty("joins");
+    expect(editor.getSnapshot().transition).toBeUndefined();
+  });
+
+  it("are blocks across their cut: a click selects one, its edges change how long it is", async () => {
+    const { editor, at, video, store, main } = await joined();
+    store.execute({
+      type: "join.add",
+      params: { timeline: "main", id: "j", from: "a", to: "b", type: "fade", duration: "1" },
+    });
+    const hit = editor.hitAt(top(editor, at(5.2), video));
+    expect(hit.kind === "join" && hit.join.id).toBe("j");
+    expect(hit.kind === "join" && hit.edge).toBeUndefined();
+    // Below the block the clips are as they were.
+    expect(editor.hitAt(at(5.2)).kind).toBe("clip");
+    editor.press(top(editor, at(5.2), video));
+    editor.release(top(editor, at(5.2), video));
+    expect(editor.getSnapshot().transition).toEqual({ join: "j" });
+    const edge = editor.hitAt(top(editor, at(5.5), video));
+    expect(edge.kind === "join" && edge.edge).toBe("end");
+    expect(editor.hover(top(editor, at(5.5), video))).toBe("col-resize");
+    // In the middle of its cut, both edges go: a second to the right is two seconds long.
+    editor.press(top(editor, at(5.5), video));
+    editor.drag(top(editor, at(5.8), video));
+    editor.drag(top(editor, at(6), video));
+    expect(editor.preview?.join).toEqual({ id: "j", start: 4, end: 6 });
+    expect(main().joins?.["j"]?.transition?.duration).toBe("1");
+    editor.release(top(editor, at(6), video));
+    expect(main().joins?.["j"]?.transition?.duration).toBe("2");
+    store.undo();
+    expect(main().joins?.["j"]?.transition?.duration).toBe("1");
+  });
+
+  it("go no further than the clips on their sides leave room for, and go when made nothing", async () => {
+    const { editor, at, video, main } = await joined();
+    editor.addJoin("a", "b");
+    const id = Object.keys(main().joins ?? {})[0] as string;
+    editor.press(top(editor, at(5.25), video));
+    editor.drag(top(editor, at(7), video));
+    editor.drag(top(editor, at(9.5), video));
+    // Half of it after the cut, and three seconds of b: six seconds at most.
+    expect(editor.preview?.join).toEqual({ id, start: 2, end: 8 });
+    editor.release(top(editor, at(9.5), video));
+    expect(main().joins?.[id]?.transition?.duration).toBe("6");
+    editor.press(top(editor, at(8), video));
+    editor.drag(top(editor, at(6), video));
+    editor.drag(top(editor, at(4), video));
+    editor.release(top(editor, at(4), video));
+    expect(main()).not.toHaveProperty("joins");
+  });
+
+  it("are taken away with Delete, and changed to another one in one step", async () => {
+    const { editor, main, store } = await joined();
+    editor.addJoin("a", "b");
+    const id = Object.keys(main().joins ?? {})[0] as string;
+    expect(editor.updateJoin(id, { type: "push", variant: "left" })).toBe(true);
+    expect(main().joins?.[id]?.transition).toEqual({
+      type: "push",
+      variant: "left",
+      duration: "0.5",
+    });
+    expect(editor.updateJoin(id, { type: "fade", variant: null })).toBe(true);
+    expect(main().joins?.[id]?.transition).toEqual({ type: "fade", duration: "0.5" });
+    expect(editor.canChangeSelection).toBe(true);
+    editor.deleteSelection();
+    expect(main()).not.toHaveProperty("joins");
+    store.undo();
+    expect(main().joins?.[id]).toBeDefined();
+  });
+
+  it("go when a clip of them moves away, which people hear about, and come back with undo", async () => {
+    const { editor, at, store, main, drag, joinsRemoved } = await joined();
+    editor.addJoin("a", "b");
+    drag(at(6.5), at(7.5));
+    expect(main().clips["b"]?.start).toBe("6");
+    expect(main()).not.toHaveProperty("joins");
+    expect(joinsRemoved).toHaveBeenCalledWith(1);
+    store.undo();
+    expect(Object.keys(main().joins ?? {})).toHaveLength(1);
+    expect(main().clips["b"]?.start).toBe("5");
+  });
+
+  it("come along with copies of both of their clips, with ids of their own", async () => {
+    const { editor, main, store, at, video } = await joined();
+    store.execute({
+      type: "join.add",
+      params: { timeline: "main", id: "j", from: "a", to: "b", type: "wipe", variant: "up" },
+    });
+    editor.selectOnly("a");
+    editor.addToSelection("b");
+    editor.copySelection();
+    // At the end of the timeline, which is where the playhead goes no further.
+    editor.seekToEnd();
+    editor.paste();
+    const joins = Object.entries(main().joins ?? {});
+    expect(joins).toHaveLength(2);
+    const [, copy] = joins.find(([id]) => id !== "j") ?? [];
+    expect(copy?.transition).toEqual({ type: "wipe", variant: "up", duration: "0.5" });
+    expect(copy?.from).not.toBe("a");
+    expect(main().clips[copy?.from as string]?.start).toBe("10");
+    expect(main().clips[copy?.to as string]?.start).toBe("13");
+    store.undo();
+    expect(Object.keys(main().joins ?? {})).toEqual(["j"]);
+    // A copy of one of them goes without it.
+    editor.selectOnly("b");
+    editor.copySelection();
+    editor.paste();
+    expect(Object.keys(main().joins ?? {})).toEqual(["j"]);
+    void at;
+    void video;
+  });
+
+  it("put another transition at an edge of a clip in place of the one there", async () => {
+    const { editor, main, addClip, video } = await setup();
+    addClip("a", 2, 4, video, { enter: { type: "fade", duration: "1", curve: [0.42, 0, 1, 1] } });
+    expect(editor.replaceTransition("a", "enter", "push", "right")).toBe(true);
+    expect(main().clips["a"]?.enter).toEqual({
+      type: "push",
+      variant: "right",
+      duration: "1",
+      curve: [0.42, 0, 1, 1],
+    });
+    expect(editor.addEdgeTransition("a", "exit")).toBe(true);
+    expect(main().clips["a"]?.exit).toEqual({ type: "fade", duration: "0.5" });
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "exit" });
+    expect(editor.addEdgeTransition("a", "exit")).toBe(false);
+  });
+
+  it("leave the handles of the edges of their clips to themselves", async () => {
+    const { editor, at, video, store } = await joined();
+    store.execute({
+      type: "join.add",
+      params: { timeline: "main", id: "j", from: "a", to: "b", type: "fade", duration: "0.2" },
+    });
+    // At the cut, a press on the top changes the join, not what the clips have at their edges.
+    const hit = editor.hitAt(top(editor, at(5), video, 1));
+    expect(hit.kind).toBe("join");
+    const corner = editor.hitAt(top(editor, at(2), video, 1));
+    expect(corner.kind === "clip" && corner.handle).toBe("enter");
   });
 });
 

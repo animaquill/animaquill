@@ -53,7 +53,6 @@ describe("the example project", () => {
   it("is valid, and only says what this editor does not do yet", () => {
     const { project, problems } = readProject(fixture());
     expect(problems.map(({ severity, code, path }) => [severity, code, path])).toEqual([
-      ["warning", "transition-unsupported", "tracks.0.joins.0"],
       ["warning", "transition-missing", "tracks.0.joins.1"],
       ["warning", "transition-unsupported", "tracks.2.clips.1.enter"],
       ["warning", "transition-unsupported", "tracks.2.clips.1.exit"],
@@ -743,15 +742,23 @@ describe("transitions that do not do what they say", () => {
     ["library-missing", "tracks.0.joins.1", (d) => (d.tracks[0].joins[1].library = "gone")],
     [
       "transition-unsupported",
-      "tracks.0.clips.0.enter",
-      (d) => (d.tracks[0].clips[0].enter = { type: "wipe", variant: "left", duration: "1" }),
+      "tracks.2.clips.0.enter",
+      (d) => (d.tracks[2].clips[0].enter = { type: "fade", duration: "1" }),
     ],
     [
       "transition-too-long",
       "tracks.0.clips.0.enter",
       (d) => (d.tracks[0].clips[0].enter.duration = "6"),
     ],
+    // Half of it before the cut, which is more than the five seconds of the title.
+    ["transition-too-long", "tracks.0.joins.0", (d) => (d.tracks[0].joins[0].duration = "11")],
     ["transition-overlap", "tracks.2.clips.1", (d) => (d.tracks[2].clips[1].exit.duration = "4.9")],
+    // What comes in, and half of the join at the end: 4.6 and 0.5 of the five seconds.
+    [
+      "transition-overlap",
+      "tracks.0.clips.0",
+      (d) => (d.tracks[0].clips[0].enter.duration = "4.6"),
+    ],
     [
       "transition-shadowed",
       "tracks.0.clips.1.enter",

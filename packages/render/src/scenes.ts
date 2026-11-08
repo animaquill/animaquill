@@ -2,6 +2,7 @@ import type { RenderLayer, RenderPlan, SceneSource } from "@animaquill/core";
 import {
   MAX_SCENE_FRAME,
   clockOf,
+  rangeOf,
   sceneFrameOf as frameOf,
   sceneViewOf,
 } from "@animaquill/core/view";
@@ -210,7 +211,7 @@ export function isOutOfReach(
   layer: RenderLayer,
   { num, den }: RenderPlan["scenes"]["fps"],
 ): boolean {
-  const last = (clockOf(layer, layer.end) * num) / den;
+  const last = (clockOf(layer, rangeOf(layer).end) * num) / den;
   return !(last <= MAX_SCENE_FRAME);
 }
 
@@ -232,8 +233,9 @@ export function viewOf(layer: RenderLayer, plan: RenderPlan): SceneView {
 export function baseFor(layer: RenderLayer, plan: RenderPlan, base: PlayBase): TimeBase {
   const { fps } = plan.scenes;
   const { rate } = base;
-  // It waits for its clip, and the frames of a clip start on the first one of the clip.
-  const from = Math.max(base.seconds, layer.start);
+  // It waits for its clip, and the frames of a clip start on the first one of the clip, which can
+  // be earlier for a join. Before its clock reads zero it stays on its first frame.
+  const from = Math.max(base.seconds, rangeOf(layer).start);
   const at = base.at + ((from - base.seconds) * 1000) / (rate || 1);
   const exact = (clockOf(layer, from) * fps.num) / fps.den;
   const frame = frameOf(clockOf(layer, from), fps);
@@ -747,7 +749,8 @@ export class SceneLayers {
   }
 
   #frameFor(layer: RenderLayer, plan: RenderPlan): number {
-    const seconds = Math.min(Math.max(this.#seconds, layer.start), layer.end);
+    const { start, end } = rangeOf(layer);
+    const seconds = Math.min(Math.max(this.#seconds, start), end);
     return frameOf(clockOf(layer, seconds), plan.scenes.fps);
   }
 

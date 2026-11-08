@@ -11,7 +11,7 @@ import {
   sortByTime,
   sortKeys,
 } from "./basics.ts";
-import { SPEED_CURVE_REACH } from "./transitions.ts";
+import { JOIN_ALIGNS, SPEED_CURVE_REACH } from "./transitions.ts";
 import {
   KnownProperties,
   MediaRef,
@@ -99,7 +99,7 @@ const share = z.number().min(0).max(1);
 const reach = z.number().min(-SPEED_CURVE_REACH).max(SPEED_CURVE_REACH);
 
 /** How a transition gets along over its time, as in CSS `cubic-bezier()`. */
-const SpeedCurve = z.tuple([share, reach, share, reach]);
+export const TransitionCurve = z.tuple([share, reach, share, reach]);
 
 /** What a transition is, how long it takes and how it gets along. See transitions.ts. */
 const transitionFields = {
@@ -114,8 +114,14 @@ const transitionFields = {
   variant: Id.optional(),
   duration: Duration,
   /** Without it the speed is even. */
-  curve: SpeedCurve.optional(),
+  curve: TransitionCurve.optional(),
 };
+
+/**
+ * The fields of a transition, each checked on its own: what commands take apart and put together
+ * again. A whole one also names one thing that it is, see `Transition`.
+ */
+export const TransitionShape = z.strictObject(transitionFields);
 
 const hasOneReference = (transition: {
   readonly type?: string | undefined;
@@ -217,7 +223,7 @@ export const Join = z
     to: Id,
     ...transitionFields,
     /** Where it is around the cut. Without it, half before and half after. */
-    align: z.enum(["center", "before", "after"]).optional(),
+    align: z.enum(JOIN_ALIGNS).optional(),
   })
   .refine(hasOneReference, ONE_REFERENCE);
 

@@ -115,6 +115,20 @@ export const showsAt = (
   seconds: number,
 ): boolean => seconds >= start - TIME_TOLERANCE && seconds < end - TIME_TOLERANCE;
 
+/** Where a layer is in the picture: its clip, and what a join has it show past that. */
+export const rangeOf = ({
+  start,
+  end,
+  shows,
+}: Pick<RenderLayer, "start" | "end" | "shows">): Pick<RenderLayer, "start" | "end"> =>
+  shows ? { start: Math.min(shows.from, start), end: Math.max(shows.to, end) } : { start, end };
+
+/** Whether a layer is in the picture at a moment, also past its clip for a join. */
+export const isShownAt = (
+  layer: Pick<RenderLayer, "start" | "end" | "shows">,
+  seconds: number,
+): boolean => showsAt(rangeOf(layer), seconds);
+
 /**
  * The last frame a scene can be on, years into it. A clip can say anything about its clock, and
  * what is not a safe integer cannot even be asked for.
@@ -295,15 +309,26 @@ export function opacityAt(layer: RenderLayer, time: number): number {
  * after it. Without a curve that is the share of its time that has passed. A curve that goes past
  * 0 and 1 stops there, which only a transition that may overshoot does not do.
  */
-export function progressAt(transition: PlannedTransition, time: number): number {
+export function progressAt(
+  transition: Pick<PlannedTransition, "start" | "duration" | "curve" | "overshoot">,
+  time: number,
+): number {
   const { start, duration, curve } = transition;
   if (!(duration > 0)) return time < start ? 0 : 1;
   const share = clampToUnit((time - start) / duration);
   if (!curve) return share;
   // The format keeps curves in reach, but what comes out of one is never anything but a number.
   const curved = bezierProgress(...curve, share);
-  return Number.isFinite(curved) ? clampToUnit(curved) : share;
+  if (!Number.isFinite(curved)) return share;
+  return transition.overshoot ? curved : clampToUnit(curved);
 }
+
+/**
+ * Whether a transition at an edge of a layer is a fade, which is the picture of the layer times
+ * its progress: the compositor draws that with less opacity, and what it cannot do is one too.
+ */
+export const isFade = (transition: Pick<PlannedTransition, "how">): boolean =>
+  transition.how.type === "fade";
 
 /** What is left of a transition at a moment: 1 − progress, as a fade out has always worked it out. */
 function leftAt(transition: PlannedTransition, time: number): number {
@@ -314,16 +339,21 @@ function leftAt(transition: PlannedTransition, time: number): number {
 
 /**
  * How much of a layer shows at a moment: its opacity, times the progress of a fade in and times what
- * is left of a fade out. Fades are all there is so far, and what this editor cannot do yet shows as
- * one. Where both are at once, the exit fades what the enter made, which comes to the same as one
- * after the other. Multiplied in this order, it is to the last bit what fades always were.
+ * is left of a fade out. What this editor cannot do shows as a fade. Any other transition at an edge
+ * gets the picture of the layer to work on, which this is the opacity of. Where both are fades at
+ * once, the exit fades what the enter made, which comes to the same as one after the other.
+ * Multiplied in this order, it is to the last bit what fades always were.
  */
 export function shownAt(layer: RenderLayer, time: number): number {
   let shown = opacityAt(layer, time);
-  if (layer.enter) shown *= progressAt(layer.enter, time);
-  if (layer.exit) shown *= leftAt(layer.exit, time);
+  if (layer.enter && isFade(layer.enter)) shown *= progressAt(layer.enter, time);
+  if (layer.exit && isFade(layer.exit)) shown *= leftAt(layer.exit, time);
   return shown;
 }
+
+/** What is left of a fade out at a moment, for a picture that something else made first. */
+export const fadeLeftAt = (transition: PlannedTransition, time: number): number =>
+  leftAt(transition, time);
 
 /**
  * A transition of a layer at a moment that this editor cannot do. An export stops there, instead of

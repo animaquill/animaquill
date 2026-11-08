@@ -27,6 +27,8 @@ export interface StageEditor extends TouchTarget {
   setViewport(width: number, height: number): void;
   xAt(seconds: number): number;
   hover(pointer: Pointer): string;
+  /** What to tell about what is under the pointer, as a key of the interface texts. */
+  titleAt?(pointer: Pointer): string | undefined;
   leave(): void;
   scrollDuringDrag(pointer: Pointer, dx: number, dy: number): void;
   setTouchInput(on: boolean): void;
@@ -236,7 +238,9 @@ export function useStage(
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const { currentTarget } = event;
     const pointer = pointerOf(event, currentTarget);
-    currentTarget.title = pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : "";
+    const about = editor.titleAt?.(pointer);
+    currentTarget.title =
+      pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : about ? t(about as never) : "";
     lastPointer.current = pointer;
     if (input.isTouch(event.pointerType)) {
       touch.current?.move(event.pointerId, pointer.x, pointer.y);

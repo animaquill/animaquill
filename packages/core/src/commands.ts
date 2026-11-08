@@ -34,7 +34,9 @@ import {
   clipPath,
   extendToFit,
   fitTransitions,
+  followJoins,
   joinPath,
+  joinsTogether,
   removeClips,
   spanOf,
   splitClip,
@@ -42,9 +44,12 @@ import {
   timelinePath,
   trimClip,
   type Edge,
+  type JoinedEdges,
   type Span,
 } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
+import { JoinAdd, JoinRemove, JoinUpdate, addJoin, removeJoins, updateJoin } from "./join-edits.ts";
+import { joinedEndsOf, placedJoins, takenAt, type JoinedEnds } from "./joins.ts";
 import {
   clipEnd,
   clipOffset,
@@ -125,6 +130,13 @@ function editableClip(timeline: TimelineState, id: string): ClipState {
   return clip;
 }
 
+/**
+ * What a command says about the joins it took away because their clips are no longer next to each
+ * other, so that people hear of it: nothing when it took none.
+ */
+const apart = (joins: readonly string[]) =>
+  joins.length > 0 ? { joinsRemoved: joins } : undefined;
+
 function checkClip(clip: ClipState): void {
   const { track: _track, ...rest } = clip;
   const result = Clip.safeParse(rest);
@@ -161,6 +173,10 @@ const edgesLength = (clip: Pick<ClipState, Edge>) =>
     return transition ? add(total, parseTime(transition.duration)) : total;
   }, ZERO);
 
+/** The same, with what a join takes where one wins over the transition of the clip. */
+const takenLength = (joined: JoinedEnds, clip: ClipState) =>
+  add(takenAt(joined, clip, "start"), takenAt(joined, clip, "end"));
+
 /** Whether two transitions are the same one, whatever their length and speed. */
 function sameTransition(a: Transition | undefined, b: Transition): boolean {
   if (a === undefined) return false;
@@ -179,9 +195,10 @@ function sameTransition(a: Transition | undefined, b: Transition): boolean {
  */
 function checkTransitions(
   kind: Track["kind"],
-  current: Pick<ClipState, Edge>,
-  next: Pick<ClipState, "duration" | Edge>,
+  current: ClipState,
+  next: ClipState,
   edges: readonly Edge[],
+  joined: JoinedEnds,
 ): void {
   const media = mediaOfTrack(kind);
   for (const edge of edges) {
@@ -198,6 +215,14 @@ function checkTransitions(
   const total = edgesLength(next);
   if (compare(total, parseTime(next.duration)) > 0 && compare(total, edgesLength(current)) > 0) {
     fail("transition-too-long", "入转场和出转场加起来比片段长");
+  }
+  // A join at the other end takes its part of the clip, which no transition may run into.
+  const taken = takenLength(joined, next);
+  if (
+    compare(taken, parseTime(next.duration)) > 0 &&
+    compare(taken, takenLength(joined, current)) > 0
+  ) {
+    fail("transition-too-long", "这个转场和片段另一头的衔接转场加起来比片段长");
   }
 }
 
@@ -602,11 +627,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
       if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
       const added = { ...clip, id, track };
+      const together = joinsTogether(target);
       makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
       draft.set(clipPath(timeline, id), added);
       // A copy brings its transitions as they are, also ones that this editor cannot do yet, which
       // the problems and exports then tell about. What does not fit any more gets shorter.
-      fitTransitions(draft, clipPath(timeline, id), added, parseTime(added.duration), "end");
+      fitTransitions(draft, timeline, added, parseTime(added.duration), "end");
       extendToFit(draft, timeline, clipEnd(added));
       if (movedFrom !== undefined) {
         if (!draft.wentAway(clipPath(timeline, movedFrom))) {
@@ -614,7 +640,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
         }
         draft.note({ kind: "moved", from: movedFrom, to: id });
       }
-      return { id };
+      return { id, ...apart(followJoins(draft, timeline, together)) };
     },
     { userOnlyParams: ["movedFrom"] },
   ),
@@ -656,12 +682,25 @@ export const COMMANDS: readonly CommandDefinition[] = [
       // Clips can overlap after a merge, and that should not stop people from renaming one.
       const moves = changes.start !== undefined || changes.duration !== undefined;
       if (moves) assertFree(target, current.track, [spanOf(updated)], new Set([clip]));
+      const together = moves ? joinsTogether(target) : [];
+      // A join at the start stays where the start stays.
+      const stays: JoinedEdges = {};
+      if (
+        changes.start === undefined ||
+        compare(parseTime(changes.start), clipStart(current)) === 0
+      ) {
+        const join = [...placedJoins(target).values()].find(
+          ({ join: { to }, place }) => to === clip && place.kind === "cut",
+        );
+        if (join) stays.enter = join.join;
+      }
       draft.replace(clipPath(timeline, clip), next);
       if (changes.duration !== undefined) {
-        const path = clipPath(timeline, clip);
-        fitTransitions(draft, path, updated, parseTime(updated.duration), "end");
+        fitTransitions(draft, timeline, updated, parseTime(updated.duration), "end", stays);
       }
-      if (moves) extendToFit(draft, timeline, clipEnd(updated));
+      if (!moves) return undefined;
+      extendToFit(draft, timeline, clipEnd(updated));
+      return apart(followJoins(draft, timeline, together));
     },
   ),
 
@@ -696,7 +735,9 @@ export const COMMANDS: readonly CommandDefinition[] = [
         }
       }
       // Taking one away always works: that is the way out of what a file did.
-      if (setting.length > 0) checkTransitions(kind, current, next as ClipState, setting);
+      if (setting.length > 0) {
+        checkTransitions(kind, current, next as ClipState, setting, joinedEndsOf(target));
+      }
       for (const edge of EDGES) {
         const path = [...clipPath(timeline, clip), edge];
         if (deepEqual(current[edge], next[edge])) continue;
@@ -705,6 +746,11 @@ export const COMMANDS: readonly CommandDefinition[] = [
       }
     },
   ),
+
+  /** Puts a join on the cut between two clips, see join-edits.ts. */
+  define("join.add", JoinAdd, addJoin),
+  define("join.update", JoinUpdate, updateJoin),
+  define("join.remove", JoinRemove, removeJoins),
 
   /** Several clips move in one step, because the place one of them leaves is free for another. */
   define(
@@ -727,6 +773,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
         return { moved, span: spanOf(moved) };
       });
 
+      const together = joinsTogether(target);
       const byTrack = new Map<string, typeof landed>();
       for (const item of landed) {
         const onTrack = byTrack.get(item.moved.track);
@@ -753,6 +800,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       }
       const last = landed.reduce((a, b) => (compare(a.span.to, b.span.to) >= 0 ? a : b));
       extendToFit(draft, timeline, last.span.to);
+      return apart(followJoins(draft, timeline, together));
     },
   ),
 
@@ -774,8 +822,10 @@ export const COMMANDS: readonly CommandDefinition[] = [
         fail("source-end", `已经到内容的结尾了：${current.name ?? current.id}`);
       }
       assertFree(target, current.track, [span], new Set([clip]));
+      const together = joinsTogether(target);
       trimClip(draft, timeline, current, span);
       extendToFit(draft, timeline, span.to);
+      return apart(followJoins(draft, timeline, together));
     },
   ),
 

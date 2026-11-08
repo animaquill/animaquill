@@ -993,7 +993,12 @@ describe("clips and tracks", () => {
         params: { timeline: "main", clips: [{ clip: "clip_logo", track: "free" }] },
       }),
     );
-    expect(result.patches).toHaveLength(1);
+    const ofClips = result.patches.filter(({ path }) => path[2] === "clips");
+    expect(ofClips.map(({ path }) => path.join("/"))).toEqual([
+      "timelines/main/clips/clip_logo/track",
+    ]);
+    // The join from it to the clip after it went, because the two are no longer next to each other.
+    expect(result.results).toEqual([{ joinsRemoved: ["join_2"] }]);
   });
 
   it("sets and clears a property", () => {

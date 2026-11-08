@@ -1,4 +1,5 @@
 import {
+  ZERO,
   add,
   compare,
   formatTime,
@@ -13,6 +14,7 @@ import {
 import {
   clipEnd,
   clipStart,
+  longestJoin,
   orderedSections,
   projectFrameRate,
   sourceLength,
@@ -32,6 +34,7 @@ import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
 import {
   EndGesture,
+  JoinGesture,
   MarqueeGesture,
   MoveGesture,
   RazorGesture,
@@ -39,9 +42,11 @@ import {
   TransitionGesture,
   TransitionPressGesture,
   TrimGesture,
+  copiedJoins,
   copiesOf,
   cutAt,
   freeShift,
+  longestTransition,
   transitionCall,
   type ClipCopy,
   type Gesture,
@@ -59,9 +64,11 @@ import {
   firstEndingAfter,
   forEachBetween,
   isInsideClip,
+  joinAt,
   rowAt,
   type ClipBox,
   type Edge,
+  type JoinBox,
   type RoomBelow,
   type Row,
   type TimelineModel,
@@ -102,6 +109,8 @@ const MIN_ROW_SCALE = 0.6;
 const MAX_ROW_SCALE = 3;
 const ROW_SCALE_STEP = 1.25;
 const END_HANDLE_REACH = 7;
+/** How long a transition is that people put on from a menu, before they make it longer. */
+const DEFAULT_TRANSITION_SECONDS = 0.5;
 const REMEMBER_DELAY_MS = 300;
 const NEW_CLIP_SECONDS = 5;
 export const DEFAULT_HEADER_WIDTH = 148;
@@ -146,6 +155,13 @@ export type Hit =
       /** On the button for what shows under the track. */
       readonly expander?: boolean;
     }
+  | {
+      readonly kind: "join";
+      readonly row: Row;
+      readonly join: JoinBox;
+      /** On an edge of its block, which changes how long it is. */
+      readonly edge?: "start" | "end";
+    }
   | { readonly kind: "empty" };
 
 /** What shows under the clips of a track. It lives in the room `setRoomBelow` asks for. */
@@ -167,11 +183,17 @@ export interface RowExtras {
   toggle(box: ClipBox): void;
 }
 
-/** A transition at an edge of a clip, which is what people select instead of clips. */
-export interface TransitionChoice {
-  readonly clip: string;
-  readonly edge: Edge;
-}
+/**
+ * A transition, which is what people select instead of clips: at an edge of a clip, or a join on
+ * the cut between two.
+ */
+export type TransitionChoice =
+  { readonly clip: string; readonly edge: Edge } | { readonly join: string };
+
+/** Whether a choice is of a join. */
+export const isJoinChoice = (
+  choice: TransitionChoice | undefined,
+): choice is { readonly join: string } => choice !== undefined && "join" in choice;
 
 /** What React shows. The view changes far more often and goes through `subscribeView`. */
 export interface TimelineSnapshot {
@@ -203,6 +225,8 @@ export interface VisibleClip {
 
 export interface TimelineMessages {
   commandFailed(message: string): void;
+  /** Joins went because their clips are no longer next to each other: undo brings them back. */
+  joinsRemoved?(count: number): void;
   /** What a new scene is called. */
   sceneName?(number: number): string;
   /** What a new sound is called, and the words for what it has to be told. */
@@ -706,7 +730,11 @@ export class TimelineEditor implements TouchTarget {
     const cut = new Set(this.#changeable(this.#snapshot.cut, model));
     const chosen = this.#snapshot.transition;
     // A transition that went, or whose clip went, is no longer something to look at.
-    const there = chosen && model?.boxes.get(chosen.clip)?.clip[chosen.edge] !== undefined;
+    const there =
+      chosen &&
+      (isJoinChoice(chosen)
+        ? model?.joins.has(chosen.join) === true
+        : model?.boxes.get(chosen.clip)?.clip[chosen.edge] !== undefined);
     this.#snapshot = {
       ...this.#snapshot,
       model,
@@ -731,19 +759,32 @@ export class TimelineEditor implements TouchTarget {
     const same =
       current?.id === id &&
       current.state === timeline &&
+      current.assets === state.assets &&
       current.fps === fps &&
       current.rowScale === this.#rowScale &&
       current.roomBelow === this.#roomBelow;
-    return same ? current : buildModel(id, timeline, fps, this.#rowScale, this.#roomBelow);
+    return same ? current : buildModel(id, timeline, fps, this.#rowScale, this.#roomBelow, state);
   }
 
-  /** Runs commands as one change. Failing is rare, because the interface checks first. */
+  /**
+   * Runs commands as one change. Failing is rare, because the interface checks first. Joins that
+   * went because their clips got taken apart are something people should hear about.
+   */
   #run(calls: readonly CommandCall[]): boolean {
     const store = this.#store;
     if (!store) return false;
     const result = store.executeBatch(calls);
-    if (!result.ok) this.#messages.commandFailed(result.error.message);
-    return result.ok;
+    if (!result.ok) {
+      this.#messages.commandFailed(result.error.message);
+      return false;
+    }
+    const removed = result.results.flatMap((outcome) => {
+      const joins = (outcome as { readonly joinsRemoved?: readonly string[] } | undefined)
+        ?.joinsRemoved;
+      return joins ?? [];
+    });
+    if (removed.length > 0) this.#messages.joinsRemoved?.(removed.length);
+    return true;
   }
 
   /* Tools and the selection. */
@@ -804,6 +845,10 @@ export class TimelineEditor implements TouchTarget {
   /** Whether there is anything in the selection that can be deleted. A transition can be. */
   get canChangeSelection(): boolean {
     const { selection, transition } = this.#snapshot;
+    if (isJoinChoice(transition)) {
+      const join = this.model?.joins.get(transition.join);
+      return join !== undefined && this.model?.state.tracks[join.join.track]?.locked !== true;
+    }
     if (transition) return this.#changeable([transition.clip], this.model).length > 0;
     return this.#changeable(selection, this.model).length > 0;
   }
@@ -835,8 +880,19 @@ export class TimelineEditor implements TouchTarget {
   selectTransition(clip: string, edge: Edge): void {
     if (this.model?.boxes.get(clip)?.clip[edge] === undefined) return;
     const { transition, selection } = this.#snapshot;
-    if (transition?.clip === clip && transition.edge === edge && selection.size === 0) return;
+    const same = transition && !isJoinChoice(transition) && transition.clip === clip;
+    if (same && transition.edge === edge && selection.size === 0) return;
     this.#snapshot = { ...this.#snapshot, selection: new Set(), transition: { clip, edge } };
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
+  }
+
+  /** Selects a join, instead of clips, as `selectTransition` does for the edges of a clip. */
+  selectJoin(join: string): void {
+    if (!this.model?.joins.has(join)) return;
+    const { transition, selection } = this.#snapshot;
+    if (isJoinChoice(transition) && transition.join === join && selection.size === 0) return;
+    this.#snapshot = { ...this.#snapshot, selection: new Set(), transition: { join } };
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -953,6 +1009,10 @@ export class TimelineEditor implements TouchTarget {
   deleteSelection(): void {
     const { model } = this;
     const { transition } = this.#snapshot;
+    if (isJoinChoice(transition)) {
+      this.removeJoin(transition.join);
+      return;
+    }
     if (transition) {
       this.setTransition(transition.clip, transition.edge, null);
       return;
@@ -1065,7 +1125,10 @@ export class TimelineEditor implements TouchTarget {
       cut.size > 0
         ? [{ type: "clip.remove", params: { timeline: model.id, clips: [...cut] } }]
         : [];
-    if (!this.#run([...removal, ...trackCalls, ...calls])) return;
+    // Joins between what was copied come along, which is how cutting and pasting moves them too.
+    const originals = this.#clipboard.map(({ id }) => id);
+    const joins = copiedJoins(model, originals, copies);
+    if (!this.#run([...removal, ...trackCalls, ...calls, ...joins])) return;
     this.#setCut(new Set());
     this.#select(new Set(copies.map(({ id }) => id)));
   }
@@ -1484,13 +1547,15 @@ export class TimelineEditor implements TouchTarget {
     const row = rowAt(model, this.laneAt(y));
     if (!row) return { kind: "empty" };
     const seconds = this.timeAt(x);
+    const inBand = this.laneAt(y) - row.top < TRANSITION_BAND;
+    const join = inBand && this.#snapshot.tool === "select" ? this.#joinAt(row, x) : undefined;
+    if (join) return join;
     const box = clipAt(row, seconds);
     if (!box) return { kind: "lane", row, seconds };
     const reach = Math.min(this.#edgeReach, ((box.end - box.start) * this.#pixelsPerSecond) / 3);
     const fromStart = x - this.xAt(box.start);
     const fromEnd = this.xAt(box.end) - x;
     if (this.#onExpander(box, row, x, y)) return { kind: "clip", row, box, expander: true };
-    const inBand = this.laneAt(y) - row.top < TRANSITION_BAND;
     const block = inBand ? this.#transitionAt(box, x) : undefined;
     if (row.track.locked || this.#snapshot.tool !== "select") {
       // A transition can be looked at wherever it is, also on a locked track.
@@ -1515,10 +1580,57 @@ export class TimelineEditor implements TouchTarget {
     if (!canHaveTransitions(row.track)) return undefined;
     const edges = edgesOf(box.clip);
     const reach = this.#edgeReach;
-    const fromEnter = Math.abs(x - this.xAt(box.start + edges.enter));
-    const fromExit = Math.abs(x - this.xAt(box.end - edges.exit));
+    // Where a join is, its own edges are what change it.
+    const joined = (edge: Edge) => this.model?.joined.has(`${box.id} ${edge}`) === true;
+    const fromEnter = joined("enter") ? Infinity : Math.abs(x - this.xAt(box.start + edges.enter));
+    const fromExit = joined("exit") ? Infinity : Math.abs(x - this.xAt(box.end - edges.exit));
     if (fromEnter > reach && fromExit > reach) return undefined;
     return fromEnter <= fromExit ? "enter" : "exit";
+  }
+
+  /**
+   * The join under the pointer, at the top of the clips of a row, and which of its edges when it is
+   * on one that can be dragged: in the middle of its cut both can, otherwise the one away from it.
+   */
+  #joinAt(row: Row, x: number): Extract<Hit, { kind: "join" }> | undefined {
+    const join = joinAt(row, this.timeAt(x));
+    if (!join) return undefined;
+    const align = join.join.transition.align ?? "center";
+    const reach = this.#edgeReach;
+    const near = (seconds: number) => Math.abs(x - this.xAt(seconds)) <= reach;
+    const changeable = !row.track.locked && join.trouble === undefined;
+    if (changeable && align !== "after" && near(join.start))
+      return { kind: "join", row, join, edge: "start" };
+    if (changeable && align !== "before" && near(join.end))
+      return { kind: "join", row, join, edge: "end" };
+    return { kind: "join", row, join };
+  }
+
+  /**
+   * The cut under the pointer between two clips that follow each other on a track, where a join
+   * can go. Nothing on a locked track, or where clips are apart.
+   */
+  seamAt({
+    x,
+    y,
+  }: Pointer): { readonly row: Row; readonly from: ClipBox; readonly to: ClipBox } | undefined {
+    const { model } = this;
+    const row = model && rowAt(model, this.laneAt(y));
+    if (!row || row.gone || row.track.locked || !canHaveTransitions(row.track)) return undefined;
+    const box = clipAt(row, this.timeAt(x));
+    if (!box) return undefined;
+    const index = row.clips.indexOf(box);
+    const reach = Math.max(this.#edgeReach, 1);
+    const touching = (from: ClipBox | undefined, to: ClipBox | undefined) =>
+      from && to && compare(clipEnd(from.clip), clipStart(to.clip)) === 0
+        ? { row, from, to }
+        : undefined;
+    if (Math.abs(x - this.xAt(box.start)) <= reach) {
+      const seam = touching(row.clips[index - 1], box);
+      if (seam) return seam;
+    }
+    if (Math.abs(x - this.xAt(box.end)) <= reach) return touching(box, row.clips[index + 1]);
+    return undefined;
   }
 
   /** Which block of a transition is under the pointer, at the top of a clip. */
@@ -1547,7 +1659,7 @@ export class TimelineEditor implements TouchTarget {
     const [id] = this.#changeable([clip], model);
     const box = id === undefined ? undefined : model?.boxes.get(id);
     if (!model || !box) return false;
-    const call = transitionCall(model.id, box.clip, edge, length);
+    const call = transitionCall(model.id, box.clip, edge, length, model);
     return call !== undefined && this.#run([call]);
   }
 
@@ -1558,6 +1670,79 @@ export class TimelineEditor implements TouchTarget {
     if (!model || id === undefined) return false;
     const params = { timeline: model.id, clip: id, [edge]: transition };
     return this.#run([{ type: "clip.setTransition", params }]);
+  }
+
+  /**
+   * Puts a fade at an edge of a clip as long as such a fade is when it comes, or as long as there is
+   * room for, and selects it: what it is can be changed after that.
+   */
+  addEdgeTransition(clip: string, edge: Edge): boolean {
+    const { model } = this;
+    const [id] = this.#changeable([clip], model);
+    const box = id === undefined ? undefined : model?.boxes.get(id);
+    if (!model || !box || box.clip[edge]) return false;
+    const longest = longestTransition(box.clip, edge, model);
+    const wanted = frameTime(frameAt(DEFAULT_TRANSITION_SECONDS, model.rate), model.rate);
+    const length = compare(wanted, longest) > 0 ? longest : wanted;
+    const call = transitionCall(model.id, box.clip, edge, length, model);
+    if (!call || !this.#run([call])) return false;
+    this.selectTransition(box.id, edge);
+    return true;
+  }
+
+  /** Changes what the transition at an edge of a clip is, keeping how long it takes and how it goes. */
+  replaceTransition(clip: string, edge: Edge, type: string, variant?: string): boolean {
+    const current = this.model?.boxes.get(clip)?.clip[edge];
+    if (!current) return false;
+    const { curve, duration } = current;
+    const next = {
+      type,
+      ...(variant === undefined ? {} : { variant }),
+      duration,
+      ...(curve && { curve }),
+    };
+    return this.setTransition(clip, edge, next as Transition);
+  }
+
+  /**
+   * Puts a join on the cut between two clips, in one step, and selects it. Where it goes around the
+   * cut is up to the clips, see `join.add`, and so is how long it can be.
+   */
+  addJoin(from: string, to: string, type = "fade", variant?: string): boolean {
+    const { model } = this;
+    if (!model) return false;
+    const id = newId("join");
+    const params = {
+      timeline: model.id,
+      id,
+      from,
+      to,
+      type,
+      ...(variant === undefined ? {} : { variant }),
+    };
+    if (!this.#run([{ type: "join.add", params }])) return false;
+    this.selectJoin(id);
+    return true;
+  }
+
+  /** Changes a join in one step, see `join.update`. */
+  updateJoin(join: string, changes: Readonly<Record<string, unknown>>): boolean {
+    const { model } = this;
+    if (!model) return false;
+    return this.#run([{ type: "join.update", params: { timeline: model.id, join, changes } }]);
+  }
+
+  /** Takes a join away, in one step. */
+  removeJoin(join: string): boolean {
+    const { model } = this;
+    if (!model) return false;
+    return this.#run([{ type: "join.remove", params: { timeline: model.id, joins: [join] } }]);
+  }
+
+  /** How long a join can be where it is around its cut, see `longestJoin`. */
+  longestJoin(join: JoinBox, align = join.join.transition.align): Rational {
+    const { model } = this;
+    return model ? longestJoin(model.ends, join.from.clip, join.to.clip, align) : ZERO;
   }
 
   /** Whether a clip shows the button for what is under its track. */
@@ -1595,6 +1780,9 @@ export class TimelineEditor implements TouchTarget {
         : undefined;
     const changed =
       hit.kind !== before.kind ||
+      (hit.kind === "join" &&
+        before.kind === "join" &&
+        (hit.join !== before.join || hit.edge !== before.edge)) ||
       (hit.kind === "clip" &&
         before.kind === "clip" &&
         (hit.box !== before.box ||
@@ -1608,6 +1796,22 @@ export class TimelineEditor implements TouchTarget {
     return this.#cursorFor(hit);
   }
 
+  /**
+   * What to tell about what is under the pointer, as a key of the interface texts: why a join does
+   * not do what it says, or that a side of it stands still on a frame there. Nothing otherwise.
+   */
+  titleAt(pointer: Pointer): string | undefined {
+    if (pointer.y < RULER_HEIGHT) return undefined;
+    const hit = this.hitAt(pointer);
+    if (hit.kind !== "join") return undefined;
+    const { join } = hit;
+    if (join.trouble) return `transition.why.join.${join.trouble}`;
+    const seconds = this.timeAt(pointer.x);
+    const still = join.still.find(({ from, to }) => seconds >= from && seconds <= to);
+    if (!still) return undefined;
+    return still.to <= join.at ? "transition.stillBefore" : "transition.stillAfter";
+  }
+
   leave(): void {
     this.#hovered = { kind: "empty" };
     this.#razorAt = undefined;
@@ -1617,6 +1821,7 @@ export class TimelineEditor implements TouchTarget {
   #cursorFor(hit: Hit): string {
     if (hit.kind === "end") return "ew-resize";
     if (hit.kind === "ruler") return "pointer";
+    if (hit.kind === "join") return hit.edge ? "col-resize" : "default";
     if (hit.kind !== "clip") return "default";
     if (hit.expander) return "pointer";
     if (this.#snapshot.tool === "razor") return "crosshair";
@@ -1639,10 +1844,19 @@ export class TimelineEditor implements TouchTarget {
     if (below) return below;
     const hit = this.hitAt(pointer);
     const { selection, tool, transition } = this.#snapshot;
+    // A finger takes the edge of a join that is selected, and otherwise it scrolls past.
+    if (hit.kind === "join") {
+      const chosen = isJoinChoice(transition) && transition.join === hit.join.id;
+      return chosen && hit.edge ? "grab" : "plain";
+    }
     const usable = hit.kind === "clip" && !hit.row.track.locked && tool === "select";
     const selected = usable && selection.has(hit.box.id);
     // The handles show while a transition of the clip is selected too, and then a finger takes them.
-    const chosen = usable && transition?.clip === hit.box.id;
+    const chosen =
+      usable &&
+      transition !== undefined &&
+      !isJoinChoice(transition) &&
+      transition.clip === hit.box.id;
     const handle = hit.kind === "clip" && hit.handle !== undefined;
     if (
       hit.kind === "ruler" ||
@@ -1682,9 +1896,34 @@ export class TimelineEditor implements TouchTarget {
       this.#gesture = new EndGesture(host, { id: last.id, start }, pointer);
     } else if (hit.kind === "clip") {
       this.#pressClip(hit, pointer);
+    } else if (hit.kind === "join") {
+      this.#pressJoin(hit, pointer);
     } else {
       this.#gesture = new MarqueeGesture(host, pointer);
     }
+  }
+
+  /**
+   * A press on a join: its edge changes how long it is, a click selects it, and a drag from it is
+   * what it is from the clip under it, as on any other transition.
+   */
+  #pressJoin(hit: Extract<Hit, { kind: "join" }>, pointer: Pointer): void {
+    const { join, row, edge } = hit;
+    if (edge) {
+      this.#gesture = new JoinGesture(this.#host, join, edge, pointer);
+      return;
+    }
+    const onClick = () => this.selectJoin(join.id);
+    const box = clipAt(row, this.timeAt(pointer.x));
+    if (row.track.locked || !box) {
+      this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
+      return;
+    }
+    const drag = () => {
+      if (!this.#snapshot.selection.has(box.id)) this.#select(this.#withLinked(new Set([box.id])));
+      return new MoveGesture(this.#host, box, row, pointer, onClick);
+    };
+    this.#gesture = new TransitionPressGesture(pointer, drag, onClick);
   }
 
   /** Clips that belong together get selected together. */
@@ -1818,6 +2057,7 @@ export class TimelineEditor implements TouchTarget {
       },
       select: (clips) => this.#select(this.#withLinked(clips)),
       selectTransition: (clip, edge) => this.selectTransition(clip, edge),
+      selectJoin: (join) => this.selectJoin(join),
       seek: (frame) => this.seek(frame),
       run: (calls) => this.#run(calls),
     };

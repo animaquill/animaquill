@@ -1,7 +1,8 @@
 import type { RenderLayer } from "@animaquill/core";
-import { TIME_TOLERANCE, showsAt } from "@animaquill/core/view";
+import { TIME_TOLERANCE, clockOf, isShownAt, rangeOf } from "@animaquill/core/view";
 
-export { showsAt };
+/** Whether a layer is in the picture at a moment, also where a join has it show past its clip. */
+export { isShownAt as showsAt };
 
 /** Longer than any file takes to open, short enough to hold only the next clip or two. */
 export const GET_READY_SECONDS = 1.5;
@@ -9,13 +10,24 @@ export const GET_READY_SECONDS = 1.5;
 /** A jump this far ahead is cheaper by starting over at a keyframe than by decoding the way there. */
 const MAX_WALK_SECONDS = 2;
 
-export const comesUpAfter = ({ start }: RenderLayer, seconds: number): boolean =>
-  start - TIME_TOLERANCE > seconds && start - seconds <= GET_READY_SECONDS;
+/** Whether a layer comes into the picture soon, also early for a join. */
+export function comesUpAfter(layer: RenderLayer, seconds: number): boolean {
+  const { start } = rangeOf(layer);
+  return start - TIME_TOLERANCE > seconds && start - seconds <= GET_READY_SECONDS;
+}
+
+/**
+ * Where in its file a video is at a moment on the timeline: on its own clock, also past its clip for
+ * a join, where it stays on its first frame before the file starts. After the last frame there is
+ * nothing more to read, so the last one stays.
+ */
+export const fileTimeOf = (layer: RenderLayer, seconds: number): number =>
+  Math.max(clockOf(layer, seconds), 0);
 
 /** Where in its file a clip gets read when the playhead is at a moment, if at all. */
 export function readingAt(layer: RenderLayer, seconds: number): number | undefined {
-  if (showsAt(layer, seconds)) return layer.offset + seconds - layer.start;
-  return comesUpAfter(layer, seconds) ? layer.offset : undefined;
+  if (isShownAt(layer, seconds)) return fileTimeOf(layer, seconds);
+  return comesUpAfter(layer, seconds) ? fileTimeOf(layer, rangeOf(layer).start) : undefined;
 }
 
 export interface TimedFrame {
