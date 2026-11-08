@@ -13,7 +13,7 @@ import {
 import { stringifyDocument } from "./json.ts";
 import { checkProject } from "./check.ts";
 import { CURRENT_FORMAT_VERSION } from "./version.ts";
-import { Overrides, Timeline } from "./timeline.ts";
+import { Overrides, Timeline, retiredFieldOf } from "./timeline.ts";
 
 /** The content of a project folder: paths relative to its root, with the text of each file. */
 export type ProjectFiles = ReadonlyMap<string, string>;
@@ -125,6 +125,25 @@ function formatVersionOf(files: ProjectFiles): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Says that a timeline file still has fades the way they were before transitions, which reading
+ * drops without a word. Opening a project stays quiet about it; importing files says it, once for
+ * each file, so that whoever brought the file in knows why its fades are gone.
+ */
+export function retiredFadesIn(file: string, text: string): Problem | undefined {
+  if (!/^timelines\/[^/]+\/timeline\.json$/.test(file)) return undefined;
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const path = retiredFieldOf(json);
+  if (path === undefined) return undefined;
+  const message = "旧的淡入淡出写法已不支持，被忽略";
+  return { severity: "warning", code: "fades-retired", file, path, message };
 }
 
 /** Reads a project. One broken file costs that file, not the whole project. */

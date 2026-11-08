@@ -73,6 +73,7 @@ describe("where joins are", () => {
     c: { start: "0.3", duration: "1" },
     d: { start: "0.3", duration: "2" },
     far: { start: "5", duration: "1" },
+    hidden: { start: "0.3", duration: "1", hidden: true },
   };
   const place = (joins: Readonly<Record<string, JoinSides>>) =>
     Object.fromEntries(
@@ -118,6 +119,13 @@ describe("where joins are", () => {
     expect(place({ x: { from: "b", to: "far" }, y: { from: "b", to: "c" } })).toMatchObject({
       x: { kind: "apart" },
       y: { kind: "cut" },
+    });
+  });
+
+  it("does nothing while a side is hidden, and leaves the cut to another one", () => {
+    expect(place({ x: { from: "b", to: "hidden" }, y: { from: "b", to: "c" } })).toEqual({
+      x: { kind: "hidden", clip: "hidden" },
+      y: { kind: "cut", at: parseTime("0.3") },
     });
   });
 });

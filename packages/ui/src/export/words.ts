@@ -1,14 +1,34 @@
-import { entryOf, type ClipState, type ProjectState } from "@animaquill/core";
+import {
+  entryOf,
+  type ClipState,
+  type ProjectState,
+  type TransitionNotDone,
+} from "@animaquill/core";
 import type { StillFailure } from "@animaquill/render";
 import type { TFunction } from "i18next";
 import type { SoundFailure } from "../media/sounds.ts";
 import { describeStatus, sceneClipName } from "../preview/problems.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 
-/** Why a moment did not make it into the file: a picture, or a sound that code did not make. */
+/**
+ * Why a moment did not make it into the file: a picture, a sound that code did not make, or a
+ * transition that this editor does not do yet, which would come out otherwise than it says.
+ */
 export type ExportFailure =
   | StillFailure
-  | { readonly reason: "sound-not-made"; readonly layer: string; readonly why: SoundFailure };
+  | { readonly reason: "sound-not-made"; readonly layer: string; readonly why: SoundFailure }
+  | ({ readonly reason: "not-done"; readonly layer: string } & Pick<
+      TransitionNotDone,
+      "use" | "media"
+    >);
+
+/** The failure for a transition that this editor does not do yet. See `transitionsNotDone`. */
+export const notDoneFailure = ({ clip, use, media }: TransitionNotDone): ExportFailure => ({
+  reason: "not-done",
+  layer: clip,
+  use,
+  media,
+});
 
 /** What people call what a failure is about. */
 function nameOf(
@@ -57,6 +77,11 @@ export function describeFailure(
     return t("export.failure.sceneFrame", { name, wanted: failure.wanted, ...plain });
   }
   if (failure.reason === "transition") return t("export.failure.transition", { name, ...plain });
+  if (failure.reason === "not-done") {
+    if (failure.media === "sound") return t("export.failure.soundTransition", { name, ...plain });
+    const key = failure.use === "join" ? "export.failure.join" : "export.failure.transition";
+    return t(key, { name, ...plain });
+  }
   const { status } = failure;
   if (status.state === "unsupported") return t("export.failure.sceneUnsupported");
   if (status.state === "off") return t("export.failure.sceneOff");

@@ -4,7 +4,9 @@ import type { SettingsStore } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-library.ts";
 import { ProjectSession } from "../workbench/session.ts";
-import { RULER_HEIGHT, TimelineEditor } from "./editor.ts";
+import { ActionRegistry } from "../workbench/actions.ts";
+import { registerTimelineActions } from "./actions.ts";
+import { RULER_HEIGHT, TimelineEditor, type TransitionChoice } from "./editor.ts";
 import { frameAt } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import { sceneTemplate } from "./scene-template.ts";
@@ -1232,6 +1234,80 @@ describe("transitions at the edges of clips", () => {
     click(at(4));
     expect(editor.getSnapshot().transition).toBeUndefined();
     expect(selection()).toEqual(["a"]);
+  });
+
+  it("move their clip when dragged by their block, and a copy of it with the key held", async () => {
+    const { editor, addClip, at, clip, drag, main, video, selection } = await setup();
+    addClip("a", 2, 4, video, { enter: fade("2") });
+    const block = (time: number) => near(editor, at(time), video, 0);
+    // Below the reach of the handles, in the band of the block.
+    const inBlock = (time: number) => ({ ...block(time), y: block(time).y + 9 });
+    expect(editor.hitAt(inBlock(3))).toMatchObject({ kind: "clip", transition: "enter" });
+    editor.selectTransition("a", "enter");
+    editor.press(inBlock(3));
+    editor.drag({ ...inBlock(4), x: (inBlock(3).x + inBlock(5).x) / 2 });
+    expect(editor.preview?.marquee).toBeUndefined();
+    editor.drag(inBlock(5));
+    editor.release(inBlock(5));
+    expect(clip("a").start).toBe("4");
+    expect(clip("a").enter).toEqual(fade("2"));
+    expect(selection()).toEqual(["a"]);
+    drag(inBlock(5), { ...inBlock(9), mod: true });
+    expect(clip("a").start).toBe("4");
+    const copies = Object.values(main().clips).filter(({ id }) => id !== "a");
+    expect(copies.map(({ start, enter }) => [start, enter])).toEqual([["8", fade("2")]]);
+  });
+
+  it("are chosen with a click on their block without the clip coming in between", async () => {
+    const { editor, addClip, at, video } = await setup();
+    addClip("a", 2, 4, video, { enter: fade("2") });
+    const point = near(editor, at(3), video, 0);
+    const inBlock = { ...point, y: point.y + 9 };
+    editor.selectTransition("a", "enter");
+    const seen: (TransitionChoice | undefined)[] = [];
+    const stop = editor.subscribe(() => seen.push(editor.getSnapshot().transition));
+    editor.press(inBlock);
+    editor.release(inBlock);
+    stop();
+    expect(editor.getSnapshot().transition).toEqual({ clip: "a", edge: "enter" });
+    expect(seen.every((choice) => choice?.clip === "a")).toBe(true);
+  });
+
+  it("cannot be cut or copied: Delete takes one away, and copies go with clips", async () => {
+    const { editor, addClip, video } = await setup();
+    addClip("a", 2, 4, video, { enter: fade("1") });
+    const actions = new ActionRegistry();
+    const noKeys = {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    };
+    registerTimelineActions(actions, editor, noKeys);
+    const enabled = (id: string) => actions.get(`timeline.${id}`)?.enabled?.() !== false;
+    editor.selectTransition("a", "enter");
+    expect(editor.canChangeSelection).toBe(true);
+    expect(editor.canCut).toBe(false);
+    expect([enabled("cut"), enabled("copy"), enabled("delete")]).toEqual([false, false, true]);
+    editor.selectOnly("a");
+    expect(editor.canCut).toBe(true);
+    expect([enabled("cut"), enabled("copy"), enabled("delete")]).toEqual([true, true, true]);
+  });
+
+  it("keep their handles for a finger once a pulled fade is what is selected", async () => {
+    const { editor, addClip, at, video } = await setup();
+    addClip("a", 2, 4, video, { enter: fade("1") });
+    const handle = near(editor, at(3), video);
+    editor.selectOnly("a");
+    expect(editor.touchAt(handle)).toBe("grab");
+    editor.selectTransition("a", "enter");
+    expect(editor.touchAt(handle)).toBe("grab");
+    // The middle of the clip is still for scrolling, as long as the clip itself is not selected.
+    expect(editor.touchAt(at(4))).toBe("plain");
   });
 
   it("on a locked track can be looked at, not changed", async () => {

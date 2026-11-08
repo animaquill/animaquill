@@ -19,6 +19,9 @@ export type TransitionMedia = "picture" | "sound";
 /** How a transition gets along over its time, as in CSS `cubic-bezier()`: x1, y1, x2, y2. */
 export type SpeedCurve = readonly [x1: number, y1: number, x2: number, y2: number];
 
+/** How far up and down the y of a speed curve goes, either way. Its x is within 0 and 1. */
+export const SPEED_CURVE_REACH = 10;
+
 /**
  * What the speed buttons put in, with the curves of CSS of the same names. Projects keep the
  * numbers, so a preset that changes later leaves them as they are. No curve is an even speed.
@@ -214,6 +217,11 @@ export type JoinPlace =
   | { readonly kind: "cut"; readonly at: Rational }
   /** A side is not on the track. */
   | { readonly kind: "missing"; readonly clip: string }
+  /**
+   * A side is hidden, and then the join does nothing, as if it were not there: a clip that is only
+   * in some versions is hidden in the master, and the master gets no transition from it.
+   */
+  | { readonly kind: "hidden"; readonly clip: string }
   /** Both sides are one clip. */
   | { readonly kind: "same" }
   /** The first clip does not end where the second one starts. */
@@ -221,10 +229,11 @@ export type JoinPlace =
   /** Another join is on the same cut, and it comes first by id. */
   | { readonly kind: "taken"; readonly by: string };
 
-/** The times of a clip, as files and the live project both keep them. */
+/** The times of a clip, as files and the live project both keep them, and whether it shows. */
 export interface ClipTimes {
   readonly start: string;
   readonly duration: string;
+  readonly hidden?: boolean | undefined;
 }
 
 /** The two sides of a join. */
@@ -235,8 +244,9 @@ export interface JoinSides {
 
 /**
  * Where the joins of a track are, by id. A join only does something on the cut between its two
- * clips. Two people and hand-written files can leave one elsewhere, and then it stays, doing
- * nothing, until somebody fixes it. Of two on one cut, the first by id is the one.
+ * clips, while both show. Two people and hand-written files can leave one elsewhere, and then it
+ * stays, doing nothing, until somebody fixes it. Of two on one cut, the first by id is the one. The
+ * problems of a project, its picture and the timeline all go by this, so they never disagree.
  */
 export function placeJoins(
   joins: ReadonlyMap<string, JoinSides>,
@@ -250,6 +260,10 @@ export function placeJoins(
     const after = clipOf(to);
     if (!before || !after) {
       places.set(id, { kind: "missing", clip: before ? to : from });
+      continue;
+    }
+    if (before.hidden === true || after.hidden === true) {
+      places.set(id, { kind: "hidden", clip: before.hidden === true ? from : to });
       continue;
     }
     if (from === to) {

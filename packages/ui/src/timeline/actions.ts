@@ -106,7 +106,7 @@ export function registerTimelineActions(
     },
     {
       keys: ["mod+x"],
-      enabled: () => hasKeys() || editor.canChangeSelection,
+      enabled: () => hasKeys() || editor.canCut,
       group: "clipboard",
     },
   );

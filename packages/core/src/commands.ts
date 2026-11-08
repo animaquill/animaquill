@@ -154,23 +154,39 @@ function checkCode(state: Draft["state"], { source }: { readonly source: ClipSou
 
 const EDGES: readonly Edge[] = ["enter", "exit"];
 
+/** How long the transitions at the edges of a clip are together. */
+const edgesLength = (clip: Pick<ClipState, Edge>) =>
+  EDGES.reduce((total, edge) => {
+    const transition = clip[edge];
+    return transition ? add(total, parseTime(transition.duration)) : total;
+  }, ZERO);
+
+/** Whether two transitions are the same one, whatever their length and speed. */
+function sameTransition(a: Transition | undefined, b: Transition): boolean {
+  if (a === undefined) return false;
+  const { duration: _a, curve: _curveA, ...one } = a;
+  const { duration: _b, curve: _curveB, ...other } = b;
+  return deepEqual(one, other);
+}
+
 /**
- * Transitions at the start and the end of a clip have to be ones that this editor does, there, so
- * that nothing does something else than it says. Together they fit in the clip: a hand-written file
- * can do otherwise, and that has rules of its own (see the project format), but nothing here does.
+ * What `clip.setTransition` puts at the edges of a clip, against what was there. A transition that
+ * comes there has to be one that this editor does, so that nothing does something else than it
+ * says. One that is there already can always get another length or speed: files, copies and two
+ * windows at once can leave what commands never make, and that has rules of its own (see the
+ * project format). The two can be longer than the clip only where they were already, and then
+ * never longer than before.
  */
 function checkTransitions(
   kind: Track["kind"],
-  clip: Pick<ClipState, "duration" | Edge>,
-  edges: readonly Edge[] = EDGES,
+  current: Pick<ClipState, Edge>,
+  next: Pick<ClipState, "duration" | Edge>,
+  edges: readonly Edge[],
 ): void {
   const media = mediaOfTrack(kind);
-  let total = ZERO;
-  for (const edge of EDGES) {
-    const transition = clip[edge];
-    if (transition === undefined) continue;
-    total = add(total, parseTime(transition.duration));
-    if (!edges.includes(edge)) continue;
+  for (const edge of edges) {
+    const transition = next[edge];
+    if (transition === undefined || sameTransition(current[edge], transition)) continue;
     const found = findTransition(transition, media, edge);
     if (found.kind === "missing") return fail("transition-missing", describeMissing(found.why));
     // Captions do not get drawn yet, and neither would what they come in and go out with.
@@ -179,7 +195,8 @@ function checkTransitions(
       fail("transition-unsupported", words ?? describeUnsupported(found.type, media, edge));
     }
   }
-  if (compare(total, parseTime(clip.duration)) > 0) {
+  const total = edgesLength(next);
+  if (compare(total, parseTime(next.duration)) > 0 && compare(total, edgesLength(current)) > 0) {
     fail("transition-too-long", "入转场和出转场加起来比片段长");
   }
 }
@@ -581,13 +598,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const home = editableTrack(target, track);
       checkFits(home, clip);
       checkCode(draft.state, clip);
-      checkTransitions(home.kind, clip);
       const id = clip.id ?? newId("clip");
       if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
       const added = { ...clip, id, track };
       makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
       draft.set(clipPath(timeline, id), added);
+      // A copy brings its transitions as they are, also ones that this editor cannot do yet, which
+      // the problems and exports then tell about. What does not fit any more gets shorter.
+      fitTransitions(draft, clipPath(timeline, id), added, parseTime(added.duration), "end");
       extendToFit(draft, timeline, clipEnd(added));
       if (movedFrom !== undefined) {
         if (!draft.wentAway(clipPath(timeline, movedFrom))) {
@@ -677,7 +696,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
         }
       }
       // Taking one away always works: that is the way out of what a file did.
-      if (setting.length > 0) checkTransitions(kind, next as ClipState, setting);
+      if (setting.length > 0) checkTransitions(kind, current, next as ClipState, setting);
       for (const edge of EDGES) {
         const path = [...clipPath(timeline, clip), edge];
         if (deepEqual(current[edge], next[edge])) continue;

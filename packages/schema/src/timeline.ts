@@ -11,6 +11,7 @@ import {
   sortByTime,
   sortKeys,
 } from "./basics.ts";
+import { SPEED_CURVE_REACH } from "./transitions.ts";
 import {
   KnownProperties,
   MediaRef,
@@ -88,11 +89,17 @@ const PluginSource = z
 
 export const ClipSource = z.union([KnownSource, PluginSource]);
 
-/** x within 0 and 1, y anything: past 0 and 1 is a transition that overshoots. */
+/** x within 0 and 1. */
 const share = z.number().min(0).max(1);
 
+/**
+ * y within −10 and 10: past 0 and 1 is a transition that overshoots, and that far is more than any
+ * overshoot that people would want. Without a limit a number like 1e308 makes the progress NaN.
+ */
+const reach = z.number().min(-SPEED_CURVE_REACH).max(SPEED_CURVE_REACH);
+
 /** How a transition gets along over its time, as in CSS `cubic-bezier()`. */
-const SpeedCurve = z.tuple([share, z.number(), share, z.number()]);
+const SpeedCurve = z.tuple([share, reach, share, reach]);
 
 /** What a transition is, how long it takes and how it gets along. See transitions.ts. */
 const transitionFields = {
@@ -162,6 +169,32 @@ export const Clip = z.strictObject({
  * What the format had once and has no more. A file that still has it opens without it: the format
  * was not out yet, so this is no migration and no new version. See the project format.
  */
+/** What clips and tracks had before transitions. */
+const RETIRED_CLIP_FIELDS = ["fadeIn", "fadeOut"];
+const RETIRED_TRACK_FIELDS = ["transitions"];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Where a timeline file, as JSON, still has fades the way they were before transitions, which
+ * reading it drops: the first place, as a path in the file, or nothing when there is none.
+ */
+export function retiredFieldOf(file: unknown): string | undefined {
+  if (!isRecord(file) || !Array.isArray(file["tracks"])) return undefined;
+  for (const [index, track] of file["tracks"].entries()) {
+    if (!isRecord(track)) continue;
+    const field = RETIRED_TRACK_FIELDS.find((name) => Object.hasOwn(track, name));
+    if (field) return `tracks.${index}.${field}`;
+    const clips = Array.isArray(track["clips"]) ? track["clips"] : [];
+    for (const [at, clip] of clips.entries()) {
+      const old = isRecord(clip) && RETIRED_CLIP_FIELDS.find((name) => Object.hasOwn(clip, name));
+      if (old) return `tracks.${index}.clips.${at}.${old}`;
+    }
+  }
+  return undefined;
+}
+
 function without(fields: readonly string[]) {
   return (value: unknown): unknown => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
@@ -173,7 +206,7 @@ function without(fields: readonly string[]) {
 }
 
 const Clips = z
-  .array(z.preprocess(without(["fadeIn", "fadeOut"]), Clip))
+  .array(z.preprocess(without(RETIRED_CLIP_FIELDS), Clip))
   .overwrite((clips) => sortByTime(clips, (clip) => clip.start));
 
 /** On the cut between two clips that follow each other on its track, from the first to the second. */
@@ -299,7 +332,7 @@ export const Timeline = z
       .optional(),
     beatGrid: BeatGrid.optional(),
     /** The first track is at the back of the picture. */
-    tracks: z.array(z.preprocess(without(["transitions"]), Track)),
+    tracks: z.array(z.preprocess(without(RETIRED_TRACK_FIELDS), Track)),
     mix: Mix.optional(),
   })
   .superRefine((timeline, context) => {

@@ -13,6 +13,7 @@ import {
   cannotHaveKeys,
   documentSchema,
   parseDocument,
+  retiredFadesIn,
   type Problem,
   type PropertyValue,
 } from "@animaquill/schema";
@@ -175,7 +176,7 @@ export function planFileImport(draft: Draft, path: string, text: string): FileIm
     problems,
     kept: kept.map((patch) => patch.path),
     held: heldIn(locks, path, kept),
-    notices: unlockedIn(before, locks, path),
+    notices: [...unlockedIn(before, locks, path), ...[retiredFadesIn(path, text) ?? []].flat()],
     broken: kept.length > 0 ? brokenWithout(before, planned.state, draft.state, path, paths) : [],
   };
 }

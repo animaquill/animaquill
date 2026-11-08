@@ -1,6 +1,13 @@
 import { Track, canHold } from "@animaquill/schema";
 import { afterAll, describe, expect, it } from "vitest";
-import { FUZZ, openUnlocked, randomCommand, randomFrom, type Random } from "./fuzz-support.ts";
+import {
+  FUZZ,
+  openUnlocked,
+  randomCommand,
+  randomFrom,
+  seedIds,
+  type Random,
+} from "./fuzz-support.ts";
 import type { ProjectState } from "./model.ts";
 import { ProjectStore, USER, aiTask, type ImportResult, type Origin } from "./store.ts";
 
@@ -121,7 +128,10 @@ function changeKind(tracks: any[], track: any, random: Random): void {
   }
 }
 
-/** Joins that files made, for an id of their own. Two with one id would make the file not valid. */
+/**
+ * Joins that files made, for an id of their own: two with one id would make the file not valid.
+ * Each seed counts from the start, so that a seed does the same whichever ran before it.
+ */
 let joinsMade = 0;
 
 /**
@@ -224,14 +234,8 @@ function randomFile(store: ProjectStore, random: Random): readonly [string, stri
 
 /** Files that came in as nothing, because the rest would break without what stays: over all seeds. */
 let refusedWhole = 0;
-/**
- * Steps that a lock kept from going back, over all seeds: a few for each, and ids that differ from
- * run to run can leave one seed without any.
- */
-let heldBack = 0;
 afterAll(() => {
   expect(refusedWhole).toBeGreaterThan(0);
-  expect(heldBack).toBeGreaterThan(0);
 });
 
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
@@ -240,6 +244,8 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   (seed) => {
     it("leaves what is on them as it is, for everyone", () => {
       const random = randomFrom(seed);
+      seedIds(seed);
+      joinsMade = 0;
       const store = openUnlocked();
       let held = 0;
       let lockedCode = 0;
@@ -311,7 +317,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
         expect(now).toEqual(was);
         expect(codeOf(store.getState(), locked)).toEqual(codeOf(before, locked));
       }
-      heldBack += held;
+      expect(held).toBeGreaterThan(0);
       expect(lockedCode).toBeGreaterThan(0);
       expect(heldFiles).toBeGreaterThan(10);
     });

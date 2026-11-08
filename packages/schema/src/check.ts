@@ -140,6 +140,8 @@ function checkTransitions(
       joined.enter.set(join.to, join.id);
     } else if (place?.kind === "taken") {
       report("join-duplicate", `这个剪切点已经有衔接转场 ${place.by}，这个不生效`);
+    } else if (place?.kind === "hidden") {
+      // Hiding a clip is something people do on purpose, so this is no problem, only no join.
     } else if (place?.kind === "missing") {
       report("join-detached", JOIN_PROBLEMS.missing(place.clip));
     } else if (place?.kind === "same") {

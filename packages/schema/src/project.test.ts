@@ -3,7 +3,13 @@ import { createProject } from "./create.ts";
 import { loadFixture } from "../scripts/fixture.ts";
 import { jsonSchemas } from "./json-schema.ts";
 import { stringifyDocument } from "./json.ts";
-import { documentSchema, parseDocument, readProject, writeProject } from "./project.ts";
+import {
+  documentSchema,
+  parseDocument,
+  readProject,
+  retiredFadesIn,
+  writeProject,
+} from "./project.ts";
 import { Timeline } from "./timeline.ts";
 import { CURRENT_FORMAT_VERSION } from "./version.ts";
 
@@ -464,6 +470,24 @@ describe("what the format had before 2026-11-08", () => {
   it("is no part of the published JSON Schema", () => {
     const text = JSON.stringify(jsonSchemas()["timeline"]);
     for (const field of ["fadeIn", "fadeOut", "transitions"]) expect(text).not.toContain(field);
+  });
+
+  it("is said once for a file that comes in, which imports tell", () => {
+    const text = before().get(MAIN) as string;
+    expect(retiredFadesIn(MAIN, text)).toEqual({
+      severity: "warning",
+      code: "fades-retired",
+      file: MAIN,
+      path: "tracks.0.transitions",
+      message: "旧的淡入淡出写法已不支持，被忽略",
+    });
+    const onlyFades = withChange(MAIN, (document) => {
+      document.tracks[2].clips[1].fadeIn = "0.2";
+    }).get(MAIN) as string;
+    expect(retiredFadesIn(MAIN, onlyFades)?.path).toBe("tracks.2.clips.1.fadeIn");
+    expect(retiredFadesIn(MAIN, fixture().get(MAIN) as string)).toBeUndefined();
+    expect(retiredFadesIn("timelines/main/overrides/language.en.json", text)).toBeUndefined();
+    expect(retiredFadesIn(MAIN, "{ oops")).toBeUndefined();
   });
 });
 

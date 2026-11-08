@@ -37,6 +37,7 @@ import {
   RazorGesture,
   ScrubGesture,
   TransitionGesture,
+  TransitionPressGesture,
   TrimGesture,
   copiesOf,
   cutAt,
@@ -800,11 +801,16 @@ export class TimelineEditor implements TouchTarget {
     );
   }
 
-  /** Whether there is anything in the selection that can be cut or deleted. */
+  /** Whether there is anything in the selection that can be deleted. A transition can be. */
   get canChangeSelection(): boolean {
     const { selection, transition } = this.#snapshot;
     if (transition) return this.#changeable([transition.clip], this.model).length > 0;
     return this.#changeable(selection, this.model).length > 0;
+  }
+
+  /** Whether there are clips in the selection that can be cut. A transition goes with its clip. */
+  get canCut(): boolean {
+    return this.#changeable(this.#snapshot.selection, this.model).length > 0;
   }
 
   #select(wanted: ReadonlySet<string>): void {
@@ -1632,13 +1638,18 @@ export class TimelineEditor implements TouchTarget {
     const below = this.#extras?.touchAt(pointer);
     if (below) return below;
     const hit = this.hitAt(pointer);
-    const { selection, tool } = this.#snapshot;
-    const selected =
-      hit.kind === "clip" &&
-      !hit.row.track.locked &&
-      selection.has(hit.box.id) &&
-      tool === "select";
-    if (hit.kind === "ruler" || hit.kind === "end" || (selected && (hit.edge || hit.handle))) {
+    const { selection, tool, transition } = this.#snapshot;
+    const usable = hit.kind === "clip" && !hit.row.track.locked && tool === "select";
+    const selected = usable && selection.has(hit.box.id);
+    // The handles show while a transition of the clip is selected too, and then a finger takes them.
+    const chosen = usable && transition?.clip === hit.box.id;
+    const handle = hit.kind === "clip" && hit.handle !== undefined;
+    if (
+      hit.kind === "ruler" ||
+      hit.kind === "end" ||
+      (selected && hit.kind === "clip" && hit.edge) ||
+      ((selected || chosen) && handle)
+    ) {
       return "grab";
     }
     return selected ? "selected" : "plain";
@@ -1700,9 +1711,18 @@ export class TimelineEditor implements TouchTarget {
       return;
     }
     if (transition) {
-      // A click selects it. What a drag from there does is what it does from anywhere else.
       const onClick = () => this.selectTransition(box.id, transition);
-      this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
+      // A locked clip can be looked at, but nothing moves it: a drag from there is a drag from nowhere.
+      if (row.track.locked) {
+        this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
+        return;
+      }
+      const drag = () => {
+        if (!this.#snapshot.selection.has(box.id))
+          this.#select(this.#withLinked(new Set([box.id])));
+        return new MoveGesture(this.#host, box, row, pointer, onClick);
+      };
+      this.#gesture = new TransitionPressGesture(pointer, drag, onClick);
       return;
     }
     if (edge) {

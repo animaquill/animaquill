@@ -1,4 +1,10 @@
-import { buildRenderPlan, type ProjectState } from "@animaquill/core";
+import {
+  buildRenderPlan,
+  entryOf,
+  showsAt,
+  transitionsNotDone,
+  type ProjectState,
+} from "@animaquill/core";
 import type { FolderAccess, ProjectLibrary } from "@animaquill/host";
 import { failureOf, StillFailed } from "@animaquill/render";
 import type { TFunction } from "i18next";
@@ -12,7 +18,7 @@ import {
   exportCompositorOptions,
   type ExportCompositorOptions,
 } from "./compositor.ts";
-import { describeFailure } from "./words.ts";
+import { describeFailure, notDoneFailure, type ExportFailure } from "./words.ts";
 
 export interface StillExportOptions {
   readonly session: ProjectSession;
@@ -70,6 +76,15 @@ export class StillExport {
     const state = store.getState();
     const plan = buildRenderPlan(state, model.id);
     if (!plan) return;
+    const seconds = frame / model.rate.fps;
+    // A picture is no sound: only what shows otherwise than the project says stops it.
+    const shown = entryOf(state.timelines, model.id);
+    const notDone = shown ? transitionsNotDone(shown, plan, undefined) : [];
+    const otherwise = notDone.find((span) => showsAt(span, seconds));
+    if (otherwise) {
+      await this.#say(notDoneFailure(otherwise), state);
+      return;
+    }
     const progress = dialogs.progress({
       title: t("export.frameRunning"),
       cancel: t("dialog.cancel"),
@@ -80,7 +95,7 @@ export class StillExport {
     let failure: unknown;
     try {
       compositor = this.#open(state, plan);
-      const image = await untilAborted(compositor.still(frame / model.rate.fps), signal);
+      const image = await untilAborted(compositor.still(seconds), signal);
       const file = await (this.#options.encode ?? encodeStill)(image);
       signal.throwIfAborted();
       const name = t("export.frameFile", {
@@ -108,11 +123,15 @@ export class StillExport {
   }
 
   async #tell(error: unknown, state: ProjectState): Promise<void> {
-    const { dialogs, t } = this.#options;
     if (!(error instanceof StillFailed)) console.warn("No still", error);
+    await this.#say(failureOf(error), state);
+  }
+
+  async #say(failure: ExportFailure, state: ProjectState): Promise<void> {
+    const { dialogs, t } = this.#options;
     await dialogs.confirm({
       title: t("export.frameFailed"),
-      message: describeFailure(this.#options.t, failureOf(error), state, this.#options.timeline),
+      message: describeFailure(t, failure, state, this.#options.timeline),
       confirm: t("dialog.close"),
       noticeOnly: true,
     });

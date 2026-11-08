@@ -2,6 +2,7 @@
  * What the random tests share, `fuzz*.test.ts`. They are in several files so that they run at the
  * same time: in one, they took longer than all the other unit tests together.
  */
+import { onTestFinished, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import type { KeyEase } from "./property-edit.ts";
@@ -9,6 +10,22 @@ import { ProjectStore, type CommandCall } from "./store.ts";
 
 /** Small and repeatable: a failure can be reproduced from its seed. */
 export type Random = ReturnType<typeof randomFrom>;
+
+/**
+ * New ids from a seed instead of from chance, until the test is over: `newId` takes its bytes from
+ * `crypto.getRandomValues`, and ids that differ from run to run make a seed do something else each
+ * time, because what gets picked goes by sorted ids.
+ */
+export function seedIds(seed: number): void {
+  const random = randomFrom(seed);
+  vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation((array) => {
+    if (array instanceof Uint8Array) array.forEach((_, index) => (array[index] = random.int(256)));
+    return array;
+  });
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+}
 
 export function randomFrom(seed: number) {
   let state = seed;

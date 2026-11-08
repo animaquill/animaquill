@@ -110,8 +110,12 @@ export {
   firstValue,
   fitOf,
   joinedEdges,
+  joinsInEffect,
+  joinSpan,
   samePlan,
+  transitionsNotDone,
   type AudioPlan,
+  type JoinInEffect,
   type LayerSource,
   type PlannedTransition,
   type RenderLayer,
@@ -119,6 +123,7 @@ export {
   type SceneContext,
   type SoundLayer,
   type TransitionImplementation,
+  type TransitionNotDone,
   type Version,
 } from "./render-plan.ts";
 export { MAX_SOURCE_BYTES } from "./scene-edits.ts";

@@ -647,6 +647,29 @@ describe("what a project has no place for", () => {
 });
 
 describe("problems of a folder", () => {
+  it("say that fades written the way they were before transitions are left out", async () => {
+    const reading = await read(
+      projectFiles((texts) => {
+        const timeline = JSON.parse(texts.get("timelines/main/timeline.json") as string);
+        const source = { kind: "color", color: "#ff0000" };
+        timeline.tracks[0].clips = [{ id: "c", start: "0", duration: "1", source, fadeOut: "1" }];
+        texts.set("timelines/main/timeline.json", JSON.stringify(timeline));
+      }),
+    );
+    expect(reading.warnings).toEqual([
+      {
+        severity: "warning",
+        code: "fades-retired",
+        file: "timelines/main/timeline.json",
+        path: "tracks.0.clips.0.fadeOut",
+        message: "旧的淡入淡出写法已不支持，被忽略",
+      },
+    ]);
+    expect(reading.project.timelines.get("main")?.document?.tracks[0]?.clips[0]).not.toHaveProperty(
+      "fadeOut",
+    );
+  });
+
   it("are told apart from what the format says", async () => {
     const reading = await read(
       projectFiles((texts) => {

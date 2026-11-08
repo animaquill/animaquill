@@ -299,7 +299,10 @@ export function progressAt(transition: PlannedTransition, time: number): number 
   const { start, duration, curve } = transition;
   if (!(duration > 0)) return time < start ? 0 : 1;
   const share = clampToUnit((time - start) / duration);
-  return curve ? clampToUnit(bezierProgress(...curve, share)) : share;
+  if (!curve) return share;
+  // The format keeps curves in reach, but what comes out of one is never anything but a number.
+  const curved = bezierProgress(...curve, share);
+  return Number.isFinite(curved) ? clampToUnit(curved) : share;
 }
 
 /** What is left of a transition at a moment: 1 − progress, as a fade out has always worked it out. */

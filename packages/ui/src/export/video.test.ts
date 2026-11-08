@@ -1,4 +1,4 @@
-import { ProjectStore, orderedTracks } from "@animaquill/core";
+import { ProjectStore, USER, orderedTracks } from "@animaquill/core";
 import type { FolderAccess, GrowingFile, ProjectLibrary, SettingsStore } from "@animaquill/host";
 import type { EncodedFrame, VideoFileOptions } from "@animaquill/media";
 import {
@@ -864,6 +864,61 @@ describe("an export that does not finish", () => {
     expect(stateOf(kept)?.queue).toMatchObject({ status: "failed" });
     expect(stateOf(kept)?.queue?.failure).toContain("export.failure.missingFile");
     expect(context.writer.finished).toBe(false);
+  });
+
+  it("stops where a join is, which this editor does not draw yet, and takes people there", async () => {
+    const context = setup();
+    const { store } = context;
+    const main = store.getState().timelines["main"];
+    const track = orderedTracks(main as never).find(({ kind }) => kind === "video")?.id;
+    const next = {
+      id: "d",
+      start: "2",
+      duration: "1",
+      source: { kind: "color", color: "#00ff00" },
+    };
+    store.execute({ type: "clip.add", params: { timeline: "main", track, clip: next } });
+    const path = "timelines/main/timeline.json";
+    const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
+    const video = timeline.tracks.find(({ kind }: { kind: string }) => kind === "video");
+    video.joins = [{ id: "j", from: "c", to: "d", type: "fade", duration: "1" }];
+    expect(store.importFile(path, JSON.stringify(timeline), { origin: USER }).ok).toBe(true);
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.title).toBe("export.video.failed");
+    expect(shown.message).toContain("export.failure.join");
+    // Half of it is before the cut at two seconds.
+    expect(shown.message).toContain('"frame":46');
+    expect(context.timeline.seek).toHaveBeenCalledWith(45);
+    expect(context.timeline.selectOnly).toHaveBeenCalledWith("c");
+    expect(context.compositor.frames).toHaveLength(45);
+  });
+
+  it("stops where a transition of sound is, which this editor does not play yet", async () => {
+    const silence = () => ({
+      mix: async (_: number, frames: number) =>
+        ({
+          length: frames,
+          numberOfChannels: 2,
+          getChannelData: () => new Float32Array(frames),
+        }) as unknown as AudioBuffer,
+    });
+    const context = setup({ mixer: silence }, 2, true);
+    const { store } = context;
+    const path = "timelines/main/timeline.json";
+    const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
+    const audio = timeline.tracks.find(({ kind }: { kind: string }) => kind === "audio");
+    audio.clips[0].exit = { type: "fade", duration: "1/2" };
+    expect(store.importFile(path, JSON.stringify(timeline), { origin: USER }).ok).toBe(true);
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(shown.message).toContain("export.failure.soundTransition");
+    expect(shown.message).toContain('"frame":46');
+    expect(context.compositor.frames).toHaveLength(45);
   });
 
   it("stops when the file does not take what it gets", async () => {

@@ -1,4 +1,4 @@
-import { ProjectStore, orderedTracks, type RenderPlan } from "@animaquill/core";
+import { ProjectStore, USER, orderedTracks, type RenderPlan } from "@animaquill/core";
 import type { FolderAccess, ProjectLibrary } from "@animaquill/host";
 import { StillFailed, type StillFailure } from "@animaquill/render";
 import { createProject } from "@animaquill/schema";
@@ -187,6 +187,33 @@ describe("exporting the frame at the playhead", () => {
     await context.stills.run();
     expect(context.opened).toEqual([]);
     expect(context.dialogs.getSnapshot()).toBeUndefined();
+  });
+});
+
+describe("a frame where a join is", () => {
+  it("is not made, because this editor does not draw joins yet, and it says why", async () => {
+    const context = setup();
+    const { store } = context;
+    const path = "timelines/main/timeline.json";
+    const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
+    const video = timeline.tracks.find(({ kind }: { kind: string }) => kind === "video");
+    video.clips[0].duration = "1";
+    video.clips.push({
+      id: "d",
+      start: "1",
+      duration: "4",
+      source: { kind: "color", color: "#00ff00" },
+    });
+    video.joins = [{ id: "j", from: "c", to: "d", type: "fade", duration: "1", align: "after" }];
+    expect(store.importFile(path, JSON.stringify(timeline), { origin: USER }).ok).toBe(true);
+    // The playhead is at frame 45, a second and a half: within the join, which starts at one.
+    const running = context.stills.run();
+    const notice = await noticeOf(context);
+    context.dialogs.answer(true);
+    await running;
+    expect(notice.message).toContain("export.failure.join");
+    expect(context.opened).toEqual([]);
+    expect(context.saveFile).not.toHaveBeenCalled();
   });
 });
 

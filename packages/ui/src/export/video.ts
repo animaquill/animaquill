@@ -2,8 +2,11 @@ import { readSound, SoundFailed, SoundMixer, type SoundSource } from "@animaquil
 import {
   buildAudioPlan,
   buildRenderPlan,
+  entryOf,
   madeSoundsOf,
+  showsAt,
   timelineLength,
+  transitionsNotDone,
   type AudioPlan,
   type ProjectState,
   type ProjectStore,
@@ -79,7 +82,7 @@ import {
   type SavedQueue,
   type SavedStatus,
 } from "./queue.ts";
-import { describeFailure, type ExportFailure } from "./words.ts";
+import { describeFailure, notDoneFailure, type ExportFailure } from "./words.ts";
 
 /** An export that nobody went on with for this long is not going to be. */
 const KEEP_UNFINISHED_MS = 30 * 24 * 60 * 60 * 1000;
@@ -1599,6 +1602,10 @@ export class VideoExport {
     const { range } = saved;
     const frames = framesOf(range, plan.scenes.fps);
     const { total } = frames;
+    // The file says what the project says, or the export stops where it would not.
+    const timeline = entryOf(state.timelines, timelineId);
+    const heard = saved.sound ? buildAudioPlan(state, timelineId) : undefined;
+    const notDone = timeline ? transitionsNotDone(timeline, plan, heard) : [];
     const controller = new AbortController();
     const { signal } = controller;
     this.#controller = controller;
@@ -1905,6 +1912,8 @@ export class VideoExport {
             }
             const planned = frames.at(index);
             const frame = index === restartAt ? { ...planned, keyFrame: true } : planned;
+            const otherwise = notDone.find((span) => showsAt(span, frame.seconds));
+            if (otherwise) throw new FrameFailed(index, frame.seconds, notDoneFailure(otherwise));
             await hear(frame.timestamp / 1e6 + SOUND_LEAD_SECONDS);
             asked.add(frame.timestamp);
             await untilAborted(current.encodeFrame(frame), signal).catch((error: unknown) => {

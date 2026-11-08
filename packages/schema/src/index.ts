@@ -10,6 +10,7 @@ export {
   documentSchema,
   parseDocument,
   readProject,
+  retiredFadesIn,
   writeProject,
   type ParsedDocument,
   type Problem,

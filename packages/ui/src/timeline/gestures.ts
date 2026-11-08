@@ -730,6 +730,44 @@ export class TransitionGesture implements Gesture {
  * that a click means something for, and the selection stays until it is clear which of the two it
  * is.
  */
+/**
+ * A press on the block of a transition. A click selects the transition, and a drag is what it is
+ * from anywhere else on the clip: the clip moves, or a copy of it. The clip only gets selected once
+ * the drag starts, so that a click goes straight from the transition to the transition.
+ */
+export class TransitionPressGesture implements Gesture {
+  readonly reachesRows = true;
+  readonly #press: Pointer;
+  readonly #drag: () => Gesture;
+  readonly #onClick: () => void;
+  #moving: Gesture | undefined;
+
+  constructor(press: Pointer, drag: () => Gesture, onClick: () => void) {
+    this.#press = press;
+    this.#drag = drag;
+    this.#onClick = onClick;
+  }
+
+  move(pointer: Pointer): void {
+    if (!this.#moving && !hasMoved(this.#press, pointer)) return;
+    this.#moving ??= this.#drag();
+    this.#moving.move(pointer);
+  }
+
+  end(pointer: Pointer): void {
+    if (this.#moving) this.#moving.end(pointer);
+    else this.#onClick();
+  }
+
+  cancel(): void {
+    this.#moving?.cancel();
+  }
+
+  isStale(model: TimelineModel): boolean {
+    return this.#moving?.isStale?.(model) ?? false;
+  }
+}
+
 export class MarqueeGesture implements Gesture {
   readonly reachesRows = true;
   readonly #host: GestureHost;

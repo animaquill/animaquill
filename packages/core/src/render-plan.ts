@@ -1,12 +1,15 @@
 import {
   CLIP_VISUAL,
+  ZERO,
   add,
+  divide,
   edgeLength,
   findTransition,
   isAnimation,
   isSupported,
   parseTime,
   placeJoins,
+  rational,
   subtract,
   toSeconds,
   type Animation,
@@ -14,7 +17,10 @@ import {
   type JoinSides,
   type MediaRef,
   type PropertyValue,
+  type Rational,
   type SpeedCurve,
+  type TransitionMedia,
+  type TransitionUse,
   type Value,
   type ValueType,
 } from "@animaquill/schema";
@@ -26,6 +32,7 @@ import {
   entryOf,
   orderedTracks,
   type ClipState,
+  type JoinTransition,
   type TimelineState,
   type TrackState,
 } from "./model.ts";
@@ -217,6 +224,7 @@ function sourceOf(clip: ClipState, asset: Asset | undefined): LayerSource | unde
 const FADE: TransitionImplementation = { kind: "built-in", type: "fade" };
 
 type Edge = "enter" | "exit";
+const EDGES: readonly Edge[] = ["enter", "exit"];
 
 /**
  * A transition at the start or the end of a clip, ready to draw. One that this editor cannot do
@@ -250,31 +258,133 @@ function plannedEdge(clip: ClipState, edge: Edge): PlannedTransition | undefined
   };
 }
 
+/** A join that does what it says: on the cut between its two clips, which both show. */
+export interface JoinInEffect {
+  readonly id: string;
+  readonly track: string;
+  readonly from: ClipState;
+  readonly to: ClipState;
+  readonly transition: JoinTransition;
+  /** The cut, exactly. */
+  readonly at: Rational;
+}
+
 /**
- * The edges of clips where a join is, as `<clip> enter` and `<clip> exit`: a join wins over the
- * transition at either of its ends. Only one between two clips that show counts, see `placeJoins`.
- * Joins are not drawn yet, so for now such a cut is a cut and nothing else.
+ * The joins of a timeline that do something, by `placeJoins`, as the problems of a file have them
+ * too: a join whose sides are apart, or one of them hidden, does nothing.
  */
-export function joinedEdges(timeline: TimelineState): ReadonlySet<string> {
-  const joined = new Set<string>();
+export function joinsInEffect(timeline: TimelineState): readonly JoinInEffect[] {
   const byTrack = new Map<string, Map<string, JoinSides>>();
   for (const [id, { track, from, to, transition }] of Object.entries(timeline.joins ?? {})) {
     if (track === undefined || from === undefined || to === undefined || !transition) continue;
     const joins = byTrack.get(track) ?? new Map<string, JoinSides>();
     byTrack.set(track, joins.set(id, { from, to }));
   }
+  const found: JoinInEffect[] = [];
   for (const [track, joins] of byTrack) {
     const clipOf = (id: string) => {
       const clip = entryOf(timeline.clips, id);
-      return clip?.track === track && !clip.hidden ? clip : undefined;
+      return clip?.track === track ? clip : undefined;
     };
     for (const [id, place] of placeJoins(joins, clipOf)) {
       if (place.kind !== "cut") continue;
       const { from, to } = joins.get(id) as JoinSides;
-      joined.add(`${from} exit`).add(`${to} enter`);
+      const transition = timeline.joins?.[id]?.transition as JoinTransition;
+      const sides = { from: clipOf(from) as ClipState, to: clipOf(to) as ClipState };
+      found.push({ id, track, ...sides, transition, at: place.at });
     }
   }
+  return found;
+}
+
+/**
+ * The edges of clips where a join is, as `<clip> enter` and `<clip> exit`: a join wins over the
+ * transition at either of its ends. Joins are not drawn yet, so for now such a cut is a cut and
+ * nothing else, and an export stops there (see `transitionsNotDone`).
+ */
+export function joinedEdges(timeline: TimelineState): ReadonlySet<string> {
+  const joined = new Set<string>();
+  for (const { from, to } of joinsInEffect(timeline)) {
+    joined.add(`${from.id} exit`).add(`${to.id} enter`);
+  }
   return joined;
+}
+
+/**
+ * Seconds on the timeline that a join takes, around its cut as `align` says: half before and half
+ * after, all before or all after. Each part stays within the clip on its side.
+ */
+export function joinSpan({ from, to, transition, at }: JoinInEffect): readonly [number, number] {
+  const length = parseTime(transition.duration);
+  const half = divide(length, rational(2n));
+  const [before, after] =
+    transition.align === "before"
+      ? [length, ZERO]
+      : transition.align === "after"
+        ? [ZERO, length]
+        : [half, half];
+  const start = subtract(at, edgeLength(before, parseTime(from.duration)));
+  const end = add(at, edgeLength(after, parseTime(to.duration)));
+  return [toSeconds(start), toSeconds(end)];
+}
+
+/** A transition that this editor does not do yet, and where it is. */
+export interface TransitionNotDone {
+  /** The clip that it is at, and for a join the clip before it. */
+  readonly clip: string;
+  readonly use: TransitionUse;
+  readonly media: TransitionMedia;
+  /** Seconds on the timeline. */
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * Where a file of a timeline would show or sound otherwise than the project says, earliest first.
+ * Enter and exit transitions of pictures that this editor cannot do show as fades, joins are not
+ * drawn yet, and no transition of sound is heard yet. An export stops at the first of them, instead
+ * of a file with a fade, a hard cut or a sound that goes on where the project says something else.
+ * Only what the file gets counts: what does not show in the plan, or is not heard, is no matter.
+ */
+export function transitionsNotDone(
+  timeline: TimelineState,
+  plan: Pick<RenderPlan, "layers">,
+  audio: AudioPlan | undefined,
+): readonly TransitionNotDone[] {
+  const found: TransitionNotDone[] = [];
+  const drawn = new Set(plan.layers.map(({ id }) => id));
+  const heard = new Set(audio?.sounds.map(({ id }) => id));
+  for (const layer of plan.layers) {
+    for (const use of EDGES) {
+      const transition = layer[use];
+      if (!transition?.missing) continue;
+      const { start, end } = transition;
+      found.push({ clip: layer.id, use, media: "picture", start, end });
+    }
+  }
+  const joined = new Set<string>();
+  for (const join of joinsInEffect(timeline)) {
+    joined.add(`${join.from.id} exit`).add(`${join.to.id} enter`);
+    const both = (set: ReadonlySet<string>) => set.has(join.from.id) && set.has(join.to.id);
+    const media = both(drawn) ? "picture" : both(heard) ? "sound" : undefined;
+    if (media === undefined) continue;
+    const [start, end] = joinSpan(join);
+    found.push({ clip: join.from.id, use: "join", media, start, end });
+  }
+  for (const id of heard) {
+    const clip = entryOf(timeline.clips, id);
+    for (const use of EDGES) {
+      const transition = clip?.[use];
+      if (!clip || !transition || joined.has(`${id} ${use}`)) continue;
+      const length = edgeLength(parseTime(transition.duration), parseTime(clip.duration));
+      const [start, end] =
+        use === "enter"
+          ? [clipStart(clip), add(clipStart(clip), length)]
+          : [subtract(clipEnd(clip), length), clipEnd(clip)];
+      found.push({ clip: id, use, media: "sound", start: toSeconds(start), end: toSeconds(end) });
+    }
+  }
+  return found.toSorted((a, b) => a.start - b.start || a.clip.localeCompare(b.clip));
 }
 
 const NO_CONTENT: Readonly<Record<string, PropertyValue>> = {};

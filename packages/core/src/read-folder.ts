@@ -3,6 +3,7 @@ import {
   createTimeline,
   documentSchema,
   readProject,
+  retiredFadesIn,
   stringifyDocument,
   writeProject,
   type Problem,
@@ -280,7 +281,9 @@ function readUsablePart(
         part: partOf(file, project),
         problems: reasons,
       }));
-      return { project, warnings: problems, lost: documents };
+      // An import says what reading drops without a word, which opening a project does not.
+      const retired = [...texts].flatMap(([file, text]) => retiredFadesIn(file, text) ?? []);
+      return { project, warnings: [...problems, ...retired], lost: documents };
     }
 
     let changed = false;
