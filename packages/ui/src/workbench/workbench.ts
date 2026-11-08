@@ -854,6 +854,11 @@ export class Workbench {
       // What its exports kept goes with it, which only happens once this window lets go of them.
       await this.videos.letGoOfProject(project.id);
       await this.session.remove(project.id);
+      // What another window is at stays with it, which people should know.
+      const left = (await this.videos.unfinished()).filter((each) => each.project === project.id);
+      if (left.length > 0) {
+        this.notifications.push(t("export.queue.leftElsewhere", { count: left.length }));
+      }
       return true;
     } catch (error) {
       console.warn("Project could not be removed", error);

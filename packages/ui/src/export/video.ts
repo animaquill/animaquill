@@ -256,6 +256,15 @@ interface Held {
   fresh?: Omit<Job, "place"> | undefined;
   /** The export that this one is to take the place of. */
   replaces?: Replacing | undefined;
+  /** Where it goes, and as what, to open the file again right after a press. */
+  target?: unknown;
+  kind?: FileKind | undefined;
+  /** The file opened again right after people pressed, for when its turn comes. */
+  opened?: Promise<GrowingFile | "gone" | "denied" | "taken"> | undefined;
+  /** Stops it while it gets ready to go on, before there is an export under way to stop. */
+  preparing?: AbortController | undefined;
+  /** People just pressed for it to go, and it goes right away: the browser may ask questions. */
+  pressed?: boolean | undefined;
 }
 
 /** People paused the export, and it got to a place to go on from. */
@@ -442,11 +451,15 @@ export class VideoExport {
   #onPauseAsked: (() => void) | undefined;
   /** How fast the export that runs goes, without what it waits for. */
   #pace: Pace | undefined;
+  /** The run under way, which what it waits for belongs to. */
+  #runNow: object | undefined;
   /**
    * What is being written of each export, one write after the other: a change of its place in line
    * reads what is kept and writes it back, and must not undo a place to go on from written meanwhile.
    */
   readonly #writes = new Map<string, Promise<unknown>>();
+  /** Exports whose records went: nothing writes them back. Ids are never used again. */
+  readonly #removed = new Set<string>();
 
   constructor(options: VideoExportOptions) {
     this.#options = options;
@@ -543,6 +556,8 @@ export class VideoExport {
   goOn(id: string): void {
     const entry = this.#queue.get(id);
     if (!entry || entry.status === "running" || entry.status === "done") return;
+    this.#letBe(id);
+    this.#openNow(id);
     this.#queue.update(id, {
       status: "waiting",
       restored: undefined,
@@ -551,6 +566,26 @@ export class VideoExport {
     });
     void this.#saveStatus(id, "waiting");
     if (!this.#busy) void this.#pump();
+  }
+
+  /** People go on with this one after all: no new export takes its place without asking again. */
+  #letBe(id: string): void {
+    for (const other of this.#held.values()) {
+      if (other.replaces?.saved.id === id) other.replaces = undefined;
+    }
+  }
+
+  /**
+   * The press people just made is used now for what takes one: being let to write its file again.
+   * By its turn, when another one runs first, the press is long over.
+   */
+  #openNow(id: string): void {
+    const held = this.#held.get(id);
+    if (!held) return;
+    // Right away, it goes while the press still counts, and may ask people questions.
+    if (!this.#isRunning() && !this.#busy) held.pressed = true;
+    if (held.fresh || held.target === undefined || !held.kind) return;
+    held.opened = this.#options.folders.reopen(held.target, held.kind).catch(() => "gone" as const);
   }
 
   /** Same as going on: from where it was kept. What went wrong should be put right by then. */
@@ -566,6 +601,8 @@ export class VideoExport {
         entry.status === "interrupted" ||
         (entry.status === "waiting" && entry.restored);
       if (!stopped) continue;
+      this.#letBe(entry.id);
+      this.#openNow(entry.id);
       this.#queue.update(entry.id, {
         status: "waiting",
         restored: undefined,
@@ -591,6 +628,9 @@ export class VideoExport {
       this.#queue.remove(id);
       return;
     }
+    // One that gets ready to go on, which may wait for the browser to ask about its file, stops
+    // there: it does not go on once that is answered.
+    this.#held.get(id)?.preparing?.abort();
     const saved = await this.#savedOf(id);
     if (saved) {
       if (await this.#dropEntry(saved, true)) this.#sayEmptyLeft(saved);
@@ -617,6 +657,7 @@ export class VideoExport {
   async letGoOfProject(project: string): Promise<void> {
     for (const entry of this.#queue.getSnapshot()) {
       if (entry.project !== project) continue;
+      this.#held.get(entry.id)?.preparing?.abort();
       if (entry.id === this.#job?.id) {
         this.cancel();
         // Until it cleaned up after itself: what comes after it in line may go on meanwhile.
@@ -698,8 +739,8 @@ export class VideoExport {
       release();
       return false;
     }
-    this.#held.set(saved.id, { release });
-    const { progress, queue } = saved.state as SavedState;
+    const { progress, queue, plan } = saved.state as SavedState;
+    this.#held.set(saved.id, { release, target: saved.target, kind: plan.kind });
     this.#queue.put({
       id: saved.id,
       project: saved.project,
@@ -739,9 +780,18 @@ export class VideoExport {
     return now;
   }
 
+  /** What an export kept goes, after whatever was being written of it, and is never written again. */
+  async #removeKept(id: string): Promise<void> {
+    this.#removed.add(id);
+    await this.#inTurn(id, () => this.#options.exports.remove(id)).catch((error: unknown) =>
+      console.warn("An export stays", error),
+    );
+  }
+
   /** Keeps where an export is in line, next to what it did. Losing that costs little. */
   #saveStatus(id: string, status: SavedStatus, failure?: string): Promise<void> {
     return this.#inTurn(id, async () => {
+      if (this.#removed.has(id)) return;
       const saved = await this.#savedOf(id);
       if (!saved) return;
       const state = saved.state as SavedState;
@@ -816,6 +866,8 @@ export class VideoExport {
           }
         }
         this.#queue.update(saved.id, { status: "waiting", restored: undefined });
+        const held = this.#held.get(saved.id);
+        if (held) held.pressed = true;
         this.#busy = false;
         await this.#pump();
         return true;
@@ -876,8 +928,8 @@ export class VideoExport {
    * may go, which takes a press of a button just before. Resolves to whether an empty file stays.
    */
   async #drop(saved: SavedExport, ask: boolean): Promise<boolean> {
-    const { exports, folders } = this.#options;
-    await this.#inTurn(saved.id, () => exports.remove(saved.id)).catch(() => {});
+    const { folders } = this.#options;
+    await this.#removeKept(saved.id);
     const others = await this.#othersThan(saved.id);
     if (!others) return true;
     return folders.dropTarget(saved.target, others, ask).catch(() => true);
@@ -919,21 +971,33 @@ export class VideoExport {
    * are of. Once when the editor starts, so that it is gone whether the project is opened or not.
    */
   async cleanUp(): Promise<void> {
-    const { exports } = this.#options;
+    const { exports, notifications, t } = this.#options;
     await this.#restored;
+    const left: string[] = [];
     for (const saved of await exports.all().catch(() => [])) {
       if (!isExpired(saved)) continue;
       if (this.#held.has(saved.id)) {
-        if (saved.id !== this.#job?.id) await this.#dropEntry(saved, false);
+        if (saved.id === this.#job?.id) continue;
+        if (await this.#dropEntry(saved, false)) left.push(nameOfTarget(saved.target));
         continue;
       }
       const release = await exports.claim(saved.id);
       if (!release) continue;
       try {
-        await this.#drop(saved, false);
+        if (await this.#drop(saved, false)) left.push(nameOfTarget(saved.target));
       } finally {
         release();
       }
+    }
+    // Without people pressing something, the browser may not let a page take a file away.
+    if (left.length > 0) {
+      notifications.push(
+        t("export.queue.oldEmptyLeft", {
+          files: left.join("、"),
+          count: left.length,
+          interpolation: { escapeValue: false },
+        }),
+      );
     }
   }
 
@@ -943,7 +1007,12 @@ export class VideoExport {
    * people pressed a button just now, which the browser wants before it lets a page write a file
    * again: without it, it waits for one.
    */
-  async #goOn(saved: SavedExport, held: Held, pressed: boolean): Promise<void> {
+  async #goOn(
+    saved: SavedExport,
+    held: Held,
+    pressed: boolean,
+    stopped: AbortSignal,
+  ): Promise<void> {
     const { dialogs, folders, t, notifications } = this.#options;
     const state = saved.state as SavedState;
     let plan = state.plan;
@@ -956,15 +1025,30 @@ export class VideoExport {
         : undefined;
     const before = held.state ?? store?.getState();
     if (!before) return;
+    /** It cannot go on as it is, which no press of a button changes. */
+    const fail = (reason: string) => {
+      this.#queue.update(saved.id, { status: "failed", failure: reason });
+      void this.#saveStatus(saved.id, "failed", reason);
+      this.#tell(t("export.video.failed"), reason);
+    };
+    /**
+     * It waits for people: the browser only lets a page write the file again right after a press,
+     * and a question nobody is there to answer would hold up everything after it in line.
+     */
+    const waitForPress = (why: "needsPress" | "needsAnswer") => {
+      this.#queue.update(saved.id, { status: "paused", needsPress: true });
+      void this.#saveStatus(saved.id, "paused");
+      notifications.push(t(`export.queue.${why}`, { file: name, ...plain }));
+    };
     this.#busy = true;
     try {
       // The file first: the browser asks about it right after the button, which it takes for that.
-      let file = await folders.reopen(saved.target, plan.kind).catch(() => "gone" as const);
-      if (file === "denied" && !pressed) {
-        // Asking now would be asking for nothing: the browser only asks right after a press.
-        this.#queue.update(saved.id, { status: "paused", needsPress: true });
-        void this.#saveStatus(saved.id, "paused");
-        notifications.push(t("export.queue.needsPress", { file: name, ...plain }));
+      const opening = held.opened ?? folders.reopen(saved.target, plan.kind);
+      held.opened = undefined;
+      let file = await opening.catch(() => "gone" as const);
+      if (stopped.aborted) return;
+      if (typeof file === "string" && !pressed) {
+        waitForPress(file === "denied" ? "needsPress" : "needsAnswer");
         return;
       }
       if (typeof file === "string") {
@@ -979,13 +1063,14 @@ export class VideoExport {
             { id: "choose", label: t("export.resume.chooseAgain"), kind: "primary" },
           ],
         });
+        if (stopped.aborted) return;
         if (answer === "discard") {
           await this.#discard(saved);
           return;
         }
         if (answer !== "choose") return;
         const chosen = await folders.chooseFile(name, plan.kind).catch(() => undefined);
-        if (!chosen) return;
+        if (stopped.aborted || !chosen) return;
         file = chosen;
       }
       // The way what is kept was encoded, which the processor may have taken over.
@@ -993,24 +1078,28 @@ export class VideoExport {
         progress?.acceleration === "software" ? inSoftware(plan.encoding) : plan.encoding;
       if (!(await (this.#options.support ?? browserSupport)(keptWay.config))) {
         const encoding = await this.#encodingFor(before, plan);
+        if (stopped.aborted) return;
         // The file was asked for as one kind, and the other kind would not open as that.
         if (!encoding || containerOf(encoding.codec) !== containerOf(plan.encoding.codec)) {
-          await this.#notice(t("export.video.failed"), t("export.video.cannotEncode"));
+          fail(t("export.video.cannotEncode"));
           return;
         }
         notifications.push(t("export.resume.cannotEncode"));
         plan = { ...plan, encoding };
         progress = undefined;
       }
-      const place = await this.#placeHere();
-      if (!place) return;
       // What the video is drawn from, and what it is checked against, at the same moment. The project
       // as this page had it when the export started is that already.
       let now = before;
       if (!held.state && store) {
         now = store.getState();
         const snapshot = await snapshotOfFiles(store.exportFiles().files);
+        if (stopped.aborted) return;
         if (snapshot !== plan.snapshot) {
+          if (!pressed) {
+            waitForPress("needsAnswer");
+            return;
+          }
           const answer = await dialogs.choose({
             title: t("export.resume.changedTitle"),
             message: t("export.resume.changed"),
@@ -1019,13 +1108,14 @@ export class VideoExport {
               { id: "again", label: t("export.resume.again"), kind: "primary" },
             ],
           });
+          if (stopped.aborted) return;
           if (answer !== "again") {
             if (answer === "discard") await this.#discard(saved);
             return;
           }
           const again = this.#planAgain(now, plan);
           if (!again) {
-            await this.#notice(t("export.video.failed"), t("export.resume.planGone"));
+            fail(t("export.resume.planGone"));
             return;
           }
           plan = { ...again, snapshot };
@@ -1033,14 +1123,42 @@ export class VideoExport {
           // It changed again while people were asked. Then this is a new snapshot again.
           if (store.getState() !== now) return;
         }
-        // From now on this page knows what it is of, also when the project changes or closes.
-        held.state = now;
       }
+      const place = await this.#placeHere();
+      if (stopped.aborted || !place) return;
+      // From now on this page knows what it is of, also when the project changes or closes.
+      held.state = now;
       this.#busy = false;
       await this.#run({ id: saved.id, plan, progress, state: now, file, place }, held);
     } finally {
       this.#busy = false;
     }
+  }
+
+  /**
+   * Asks whether a new export still takes the place of one that got further since people said so.
+   * It does not hold up the export: the question waits for whatever is asked now.
+   */
+  #askReplace(old: SavedExport): void {
+    const { dialogs, notifications, t } = this.#options;
+    const { progress } = old.state as SavedState;
+    void this.#quiet().then(async () => {
+      const answer = await dialogs.choose({
+        title: t("export.queue.replaceTitle"),
+        message: t("export.queue.replaceChanged", {
+          file: nameOfTarget(old.target),
+          frame: progress.frame,
+          interpolation: { escapeValue: false },
+        }),
+        choices: [{ id: "replace", label: t("export.queue.replace"), kind: "danger" }],
+      });
+      const entry = this.#queue.get(old.id);
+      if (answer !== "replace" || !entry || entry.status === "running") return;
+      const now = await this.#savedOf(old.id);
+      if (!now) return;
+      if (await this.#dropEntry(now, true)) this.#sayEmptyLeft(now);
+      notifications.push(t("export.resume.replaced"));
+    });
   }
 
   /** An encoding for the format of a plan, the way the plan wanted it, in this browser. */
@@ -1098,15 +1216,23 @@ export class VideoExport {
    */
   async forget(id: string): Promise<boolean> {
     const { exports } = this.#options;
+    const { notifications, t } = this.#options;
     if (this.#held.has(id)) {
-      if (id === this.#job?.id) return false;
+      if (id === this.#job?.id) {
+        notifications.push(t("export.queue.clearRunning"));
+        return false;
+      }
+      this.#held.get(id)?.preparing?.abort();
       const saved = await this.#savedOf(id);
       if (!saved) this.#forgetEntry(id);
       else if (await this.#dropEntry(saved, true)) this.#sayEmptyLeft(saved);
       return true;
     }
     const release = await exports.claim(id);
-    if (!release) return false;
+    if (!release) {
+      notifications.push(t("export.resume.elsewhere"));
+      return false;
+    }
     try {
       const saved = await this.#savedOf(id);
       if (!saved) return true;
@@ -1160,6 +1286,8 @@ export class VideoExport {
       release,
       state: job.state,
       fresh,
+      target: job.file.target,
+      kind: job.plan.kind,
       ...(replacing && { replaces: replacing }),
     });
     const order = this.#queue.nextOrder();
@@ -1242,13 +1370,17 @@ export class VideoExport {
       this.#queue.remove(id);
       return;
     }
-    const pressed = isPressed();
+    const pressed = held.pressed === true || isPressed();
+    held.pressed = undefined;
     this.#queue.update(id, { status: "running", needsPress: undefined, failure: undefined });
+    const preparing = new AbortController();
+    held.preparing = preparing;
     try {
       const { fresh } = held;
       if (fresh) {
         held.fresh = undefined;
         const place = await this.#placeHere();
+        if (preparing.signal.aborted) return;
         if (!place) {
           // People did not want it to go now. It waits for them, with what it was asked to do.
           held.fresh = fresh;
@@ -1263,8 +1395,9 @@ export class VideoExport {
         this.#forgetEntry(id);
         return;
       }
-      await this.#goOn(saved, held, pressed);
+      await this.#goOn(saved, held, pressed, preparing.signal);
     } finally {
+      held.preparing = undefined;
       // It went back to where it was, as when people went back from a question about it.
       if (this.#queue.get(id)?.status === "running") {
         const back = entry.status === "waiting" ? "paused" : entry.status;
@@ -1473,6 +1606,9 @@ export class VideoExport {
     const resumed = job.progress;
     const order = this.#queue.get(id)?.order ?? this.#queue.nextOrder();
     this.#pace = new Pace(performance.now(), resumed?.frame ?? 0);
+    /** This run of it: what an earlier one still says when it is over goes nowhere. */
+    const run = {};
+    this.#runNow = run;
     this.#set({
       id,
       name: file.name,
@@ -1506,14 +1642,14 @@ export class VideoExport {
           // Only a read that takes a while gets said, or the status would flicker with every file.
           readingSaid ??= setTimeout(() => {
             readingSaid = undefined;
-            if (reading > 0) this.#flag("readingMedia", true);
+            if (reading > 0) this.#flag(run, "readingMedia", true);
           }, READING_SAID_AFTER_MS);
           return base.media(hash).finally(() => {
             reading -= 1;
             if (reading > 0) return;
             clearTimeout(readingSaid);
             readingSaid = undefined;
-            this.#flag("readingMedia", false);
+            this.#flag(run, "readingMedia", false);
           });
         },
       };
@@ -1522,12 +1658,12 @@ export class VideoExport {
     /** A page that is not on the screen may not get drawn, and then the export waits for it. */
     const watchHidden = (where: ExportWindow) => {
       const page = where.document;
-      const update = () => this.#flag("hidden", page.visibilityState === "hidden");
+      const update = () => this.#flag(run, "hidden", page.visibilityState === "hidden");
       page.addEventListener?.("visibilitychange", update);
       update();
       return () => {
         page.removeEventListener?.("visibilitychange", update);
-        this.#flag("hidden", false);
+        this.#flag(run, "hidden", false);
       };
     };
     let unwatch = watchHidden(place);
@@ -1574,8 +1710,17 @@ export class VideoExport {
       const old = held.replaces;
       if (!old) return;
       held.replaces = undefined;
-      if (await this.#dropEntry(old.saved, false)) this.#sayEmptyLeft(old.saved);
-      notifications.push(t("export.resume.replaced"));
+      const now = await this.#savedOf(old.saved.id);
+      if (!now) return;
+      const before = (old.saved.state as SavedState).progress;
+      const after = (now.state as SavedState).progress;
+      if (before.frame === after.frame && before.videoPieces === after.videoPieces) {
+        if (await this.#dropEntry(now, false)) this.#sayEmptyLeft(now);
+        notifications.push(t("export.resume.replaced"));
+        return;
+      }
+      // It got further since people said this one takes its place: that was not what they saw.
+      this.#askReplace(now);
     };
     /** How many of the bytes are of the picture, which can go back to the last place kept. */
     let videoBytes = 0;
@@ -1590,7 +1735,7 @@ export class VideoExport {
       acceleration: used.acceleration,
       total,
     };
-    const keepState = (queue: SavedQueue) =>
+    const keepState = (queue: SavedQueue, progress = keptProgress) =>
       this.#keep(
         id,
         state.manifest.id,
@@ -1599,7 +1744,7 @@ export class VideoExport {
           target = { kind: "download", name: file.name };
           return target;
         },
-        { plan: saved, progress: keptProgress, queue },
+        { plan: saved, progress, queue },
       );
     const checkpoint = async (frame: number) => {
       const progress: SavedProgress = {
@@ -1610,8 +1755,10 @@ export class VideoExport {
         acceleration: used.acceleration,
         total,
       };
+      await keepState({ status: "running", order }, progress);
+      // Only what is on the disk counts as kept: a place that did not get there is not one.
       keptProgress = progress;
-      await keepState({ status: "running", order });
+      held.target = target;
       kept = { frame, videoPieces: video.nextSeq, videoBytes, decoding };
       this.#queue.update(id, { done: frame, total });
     };
@@ -1669,11 +1816,11 @@ export class VideoExport {
         const source: SoundSource = async (layer) => {
           const wanted = layer.made && made.get(layer.file);
           if (!wanted) return undefined;
-          this.#flag("makingSound", true);
+          this.#flag(run, "makingSound", true);
           const outcome = await untilAborted(
             this.#options.sounds.whenMade(wanted, state, signal),
             signal,
-          ).finally(() => this.#flag("makingSound", false));
+          ).finally(() => this.#flag(run, "makingSound", false));
           if (outcome.state === "failed") throw new SoundNotMade(layer, outcome.reason);
           const wav = await media.get(layer.file).catch(() => undefined);
           if (!wav) throw new SoundFailed(layer, "missing-file");
@@ -1702,11 +1849,11 @@ export class VideoExport {
           const goal = Math.min(seconds, range.to - range.from);
           // After a reload the sound starts over, which takes a while: people should see that.
           while (goal - track.seconds > CATCH_UP_SECONDS) {
-            this.#catchingUp(track.seconds, goal);
+            this.#catchingUp(run, track.seconds, goal);
             await untilAborted(track.until(track.seconds + CATCH_UP_SECONDS), signal);
           }
           await untilAborted(track.until(goal), signal);
-          this.#catchingUp(undefined, 0);
+          this.#catchingUp(run, undefined, 0);
         } catch (error) {
           if (!(error instanceof SoundFailed || error instanceof SoundNotMade)) throw error;
           const failed = error.sound;
@@ -1783,6 +1930,8 @@ export class VideoExport {
             // A new encoder that encodes another way: what was there cannot go on with this.
             notifications.push(t("export.resume.encoderChanged"));
             await untilAborted(written, signal);
+            // Once the pieces go, what was kept before is no place to go on from any more.
+            keptProgress = { frame: 0, videoPieces: 0, bytes: 0, total };
             await exports.dropPieces(id, "video", 0);
             video.rewind(0);
             changed = false;
@@ -1843,9 +1992,7 @@ export class VideoExport {
       await dropReplaced();
       compositor?.dispose();
       await this.#writeFile(id, file, saved, fps, decoding, soundDecoding, signal);
-      await this.#inTurn(id, () => exports.remove(id)).catch((error: unknown) =>
-        console.warn("An export stays", error),
-      );
+      await this.#removeKept(id);
       this.#queue.update(id, { status: "done", done: total, total });
       this.#held.get(id)?.release();
       this.#held.delete(id);
@@ -1866,7 +2013,7 @@ export class VideoExport {
       this.#set(undefined);
       if (signal.aborted) {
         // People said stop: nothing of it stays.
-        await this.#inTurn(id, () => exports.remove(id)).catch(() => {});
+        await this.#removeKept(id);
         const cleaned = await this.#abandon(file, id);
         this.#forgetEntry(id);
         await this.#stopped(error, true, cleaned, file, state, range);
@@ -1891,7 +2038,7 @@ export class VideoExport {
       } else if (isGone(error)) {
         // Somebody cleared what it kept while it ran: there is nothing to go on from. What a last
         // place to go on from wrote again goes too.
-        await this.#inTurn(id, () => exports.remove(id)).catch(() => {});
+        await this.#removeKept(id);
         const cleaned = await this.#abandon(file, id);
         this.#forgetEntry(id);
         await this.#stopped(error, false, cleaned, file, state, range, false);
@@ -1900,6 +2047,8 @@ export class VideoExport {
         // what went wrong is put right, a retry goes on from there. Without one it starts over,
         // with the same choices and the same file.
         const reason = this.#reasonOf(error, file, state, range);
+        // The one this was to take the place of stays as it is: this one is no better now.
+        held.replaces = undefined;
         const failed = await keepState({ status: "failed", order, failure: reason }).then(
           () => true,
           () => false,
@@ -1915,9 +2064,20 @@ export class VideoExport {
             reason,
             keptProgress.frame > 0 ? "export.video.kept" : "export.video.retry",
           );
+        } else if (keptProgress.frame > 0) {
+          // Not even that can be kept, as when the storage of the browser is full. The last place
+          // to go on from is on the disk as it was, and stays: here it is failed, and after a
+          // reload it is one that stopped with the page, which goes on from there just the same.
+          this.#queue.update(id, {
+            status: "failed",
+            failure: reason,
+            done: keptProgress.frame,
+            total,
+          });
+          this.#sayFailed(reason, "export.video.kept");
         } else {
-          // Not even that can be kept, as when the storage of the browser is full: nothing stays.
-          await this.#inTurn(id, () => exports.remove(id)).catch(() => {});
+          // Nothing to go on from, and nothing that says it failed: nothing stays.
+          await this.#removeKept(id);
           const cleaned = await this.#abandon(file, id);
           this.#forgetEntry(id);
           await this.#stopped(error, false, cleaned, file, state, range, false);
@@ -1932,12 +2092,14 @@ export class VideoExport {
       this.#pauseAsked = false;
       this.#controller = undefined;
       this.#pace = undefined;
+      this.#runNow = undefined;
       this.#set(undefined);
     }
   }
 
   /** What the export waits for, or not any more. Waiting does not count for how long it takes. */
-  #flag(name: "makingSound" | "readingMedia" | "hidden", on: boolean): void {
+  #flag(run: object, name: "makingSound" | "readingMedia" | "hidden", on: boolean): void {
+    if (this.#runNow !== run) return;
     this.#pace?.wait(name, on, performance.now());
     const job = this.#job;
     if (!job || (job[name] ?? false) === on) return;
@@ -1948,7 +2110,8 @@ export class VideoExport {
     }
   }
 
-  #catchingUp(done: number | undefined, total: number): void {
+  #catchingUp(run: object, done: number | undefined, total: number): void {
+    if (this.#runNow !== run) return;
     this.#pace?.wait("catchingUp", done !== undefined, performance.now());
     const job = this.#job;
     if (!job) return;
@@ -1975,6 +2138,10 @@ export class VideoExport {
   ): Promise<void> {
     const { exports, notifications, t } = this.#options;
     await this.#inTurn(id, async () => {
+      // Writing it again would bring back what people, or a window, took away.
+      if (this.#removed.has(id)) {
+        throw new DOMException("The export is not kept any more", "NotFoundError");
+      }
       const saved = { id, project, savedAt: Date.now(), state };
       try {
         await exports.save({ ...saved, target });

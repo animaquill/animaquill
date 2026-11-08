@@ -2423,7 +2423,15 @@ describe("the line of exports", () => {
 
     it("waits for a press when the browser does not let it write the file without one", async () => {
       const { next } = await reloaded();
-      next.reopen.mockResolvedValueOnce(next.file).mockResolvedValueOnce("denied");
+      // As a browser does it: writing the file again takes a press of a button just before.
+      const activation = { isActive: true };
+      vi.stubGlobal("navigator", { userActivation: activation });
+      // The press was for the first one, and is over before the second one's turn comes.
+      next.reopen.mockImplementation(async () => {
+        const pressed = activation.isActive;
+        activation.isActive = false;
+        return pressed ? next.file : "denied";
+      });
       next.dialogs.answer("continue");
       await vi.waitFor(() =>
         expect(next.videos.queue.getSnapshot().map(({ status }) => status)).toEqual([
@@ -2435,7 +2443,9 @@ describe("the line of exports", () => {
       expect(next.said().join()).toContain("export.queue.needsPress");
       // No question that would go nowhere without a press.
       expect(next.dialogs.getSnapshot()).toBeUndefined();
+      activation.isActive = true;
       next.videos.goOn(next.videos.queue.getSnapshot()[1]?.id ?? "");
+      activation.isActive = false;
       await vi.waitFor(() => expect(next.videos.queue.getSnapshot()[1]?.status).toBe("done"));
     });
   });
@@ -2467,5 +2477,392 @@ describe("the line of exports", () => {
       await running;
       expect(statuses(context)).toEqual(["done"]);
     });
+  });
+});
+
+describe("an export in line, where it could go wrong", () => {
+  const statuses = (context: Context) =>
+    context.videos.queue.getSnapshot().map(({ status }) => status);
+  const missing = (index: number) =>
+    ({ index, failure: { reason: "missing-file", layer: "c", file: "a" } }) as const;
+
+  it("keeps what it got to when the disk is full and not even the failure can be kept", async () => {
+    const context = setup({}, 20);
+    context.compositor.lag = 2;
+    context.compositor.chunkBytes = 256 * 1024;
+    const save = context.exports.save.bind(context.exports);
+    const addPiece = context.exports.addPiece.bind(context.exports);
+    let full = false;
+    context.exports.addPiece = async (id, track, piece) => {
+      if (full) throw new DOMException("full", "QuotaExceededError");
+      return addPiece(id, track, piece);
+    };
+    context.exports.save = async (saved) => {
+      if (full) throw new DOMException("full", "QuotaExceededError");
+      return save(saved);
+    };
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    let id = "";
+    let pieces = 0;
+    context.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 320 && !id) {
+        const [kept] = await context.exports.all();
+        id = kept?.id ?? "";
+        pieces = context.exports.count(id, "video");
+        full = true;
+      }
+      return encode(frame);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    const shown = await notice(context);
+    await running;
+    expect(pieces).toBeGreaterThan(0);
+    expect(shown.message).toContain("export.storage.full");
+    expect(shown.message).toContain("export.video.kept");
+    // The rule from before: what got to a place to go on from stays when it fails.
+    expect(context.exports.saved.size).toBe(1);
+    expect(stateOf(context.exports.saved.get(id))?.progress.frame).toBe(300);
+    expect(context.exports.count(id, "video")).toBe(pieces);
+    expect(context.file.abandoned).toBe(false);
+    expect(context.videos.queue.getSnapshot()).toMatchObject([{ status: "failed", done: 300 }]);
+    // Once there is room again, it goes on from there.
+    full = false;
+    context.videos.retry(id);
+    await vi.waitFor(() => expect(statuses(context)).toEqual(["done"]));
+    const times = context.writer.frames.map(({ timestamp }) => Math.round(timestamp * 30));
+    expect(times).toEqual(Array.from({ length: 600 }, (_, index) => index));
+  });
+
+  it("does not go on with one that was removed while it got ready to go on", async () => {
+    const context = setup({}, 20);
+    context.compositor.lag = 2;
+    context.compositor.failAt = missing(340);
+    const running = context.videos.start();
+    await answer(context);
+    await notice(context);
+    await running;
+    const [entry] = context.videos.queue.getSnapshot();
+    const id = entry?.id ?? "";
+    context.compositor.failAt = undefined;
+    const gate = Promise.withResolvers<void>();
+    // As while the browser asks people whether the page may write the file again.
+    context.reopen.mockImplementationOnce(async () => {
+      await gate.promise;
+      return context.file;
+    });
+    const compositors = context.opened.length;
+    context.videos.retry(id);
+    await vi.waitFor(() => expect(context.reopen).toHaveBeenCalled());
+    // The row says it runs, and its button for stopping is pressed: no export is live yet.
+    context.videos.cancel(id);
+    await vi.waitFor(() => expect(context.videos.queue.getSnapshot()).toEqual([]));
+    expect(context.exports.saved.size).toBe(0);
+    gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(context.writer.frames).toHaveLength(0);
+    expect(context.file.finished).toBe(false);
+    expect(context.exports.saved.size).toBe(0);
+    expect(context.videos.getSnapshot()).toBeUndefined();
+    // It stopped where it was, without starting anything or saying anything more.
+    expect(context.opened).toHaveLength(compositors);
+    expect(context.dialogs.getSnapshot()).toBeUndefined();
+  });
+
+  it("uses the press for the file when one that needs it goes on while another runs", async () => {
+    const first = setup({}, 20);
+    first.compositor.crashAt = 360;
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(360));
+    const second = first.videos.start();
+    await answer(first);
+    await second;
+    first.exports.claimed.clear();
+    const next = setup({}, 20, false, first);
+    const activation = { isActive: true };
+    vi.stubGlobal("navigator", { userActivation: activation });
+    // A press counts for the first question the browser asks after it.
+    next.reopen.mockImplementation(async () => {
+      const pressed = activation.isActive;
+      activation.isActive = false;
+      return pressed ? next.file : "denied";
+    });
+    const offering = next.videos.offerResume();
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
+    next.dialogs.answer("continue");
+    await offering;
+    const waiting = next.videos.queue.getSnapshot().find(({ needsPress }) => needsPress);
+    expect(waiting).toBeDefined();
+    // A new one, which runs for a while.
+    const encode = next.compositor.encodeFrame.bind(next.compositor);
+    const gate = Promise.withResolvers<void>();
+    let reached = false;
+    next.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 10 && !reached) {
+        reached = true;
+        await gate.promise;
+      }
+      return encode(frame);
+    };
+    const third = next.videos.start();
+    await answer(next);
+    await vi.waitFor(() => expect(reached).toBe(true));
+    // People press 继续, as the notice told them, and the press is over a moment later.
+    activation.isActive = true;
+    next.videos.goOn(waiting?.id ?? "");
+    activation.isActive = false;
+    gate.resolve();
+    await third;
+    await vi.waitFor(() =>
+      expect(next.videos.queue.getSnapshot().find(({ id }) => id === waiting?.id)?.status).toBe(
+        "done",
+      ),
+    );
+  });
+
+  it("does not throw away what one that was retried got to, for one that was to replace it", async () => {
+    const context = setup({}, 40);
+    context.compositor.lag = 2;
+    context.compositor.failAt = missing(400);
+    const running = context.videos.start();
+    await answer(context);
+    await notice(context);
+    await running;
+    const [old] = context.videos.queue.getSnapshot();
+    const oldId = old?.id ?? "";
+    // People start another export: the one that failed is offered first, and they start anew.
+    context.compositor.failAt = missing(20);
+    const again = context.videos.start();
+    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+    context.dialogs.answer("new");
+    await answer(context);
+    await notice(context);
+    await again;
+    const newer = context.videos.queue.getSnapshot().find(({ id }) => id !== oldId);
+    // People retry the old one after all, which gets further, and fails again.
+    context.compositor.failAt = missing(700);
+    context.videos.retry(oldId);
+    await notice(context);
+    await vi.waitFor(() => expect(context.videos.getSnapshot()).toBeUndefined());
+    // And the new one, which now gets past a place to go on from.
+    context.compositor.failAt = missing(1000);
+    context.videos.retry(newer?.id ?? "");
+    await notice(context);
+    await vi.waitFor(() => expect(context.videos.getSnapshot()).toBeUndefined());
+    expect(context.exports.saved.has(oldId)).toBe(true);
+    expect(stateOf(context.exports.saved.get(oldId))?.progress.frame).toBe(600);
+    expect(context.said()).not.toContain("export.resume.replaced");
+  });
+
+  it("says what the export that runs waits for, not what the one before it waited for", async () => {
+    const reads = new Map<string, PromiseWithResolvers<Blob | undefined>>();
+    const context = setup({
+      projects: {
+        media: () => ({
+          get: (hash: string) => {
+            const read = Promise.withResolvers<Blob | undefined>();
+            reads.set(hash, read);
+            return read.promise;
+          },
+        }),
+      } as unknown as ProjectLibrary,
+    });
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    let runs = 0;
+    const gate = Promise.withResolvers<void>();
+    let reached = false;
+    context.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 3 && !reached) {
+        reached = true;
+        await gate.promise;
+      }
+      if (frame.index === 5) {
+        runs += 1;
+        const options = context.opened.at(-1);
+        if (runs === 1) {
+          // The first asks for a big file, and fails before it is there.
+          void options?.media("first-big");
+          throw new StillFailed({ reason: "missing-file", layer: "c", file: "a" });
+        }
+        if (runs === 2) await options?.media("second-big");
+      }
+      return encode(frame);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    await vi.waitFor(() => expect(reached).toBe(true));
+    const second = context.videos.start();
+    await answer(context);
+    await second;
+    gate.resolve();
+    await notice(context);
+    await vi.waitFor(() => expect(context.videos.getSnapshot()?.readingMedia).toBe(true), {
+      timeout: 2000,
+    });
+    // The file of the first comes, long after it stopped.
+    reads.get("first-big")?.resolve(new Blob(["x"]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(context.videos.getSnapshot()?.readingMedia).toBe(true);
+    reads.get("second-big")?.resolve(new Blob(["x"]));
+    await running;
+  });
+
+  it("says where a pause that could not be kept as one goes on from after a reload", async () => {
+    const context = setup({}, 20);
+    const save = context.exports.save.bind(context.exports);
+    context.exports.save = async (saved) => {
+      if (stateOf(saved)?.queue?.status === "paused")
+        throw new DOMException("full", "QuotaExceededError");
+      return save(saved);
+    };
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    context.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 100) context.videos.pause();
+      return encode(frame);
+    };
+    const running = context.videos.start();
+    await answer(context);
+    await running;
+    const said = context.said().at(-1) ?? "";
+    expect(said).toContain("export.queue.pausedNotKept");
+    expect(said).toContain('"frame":300');
+    expect(statuses(context)).toEqual(["paused"]);
+  });
+
+  it("fails where it cannot go on at all, instead of waiting as if paused", async () => {
+    const context = setup({}, 20);
+    context.compositor.failAt = missing(340);
+    const running = context.videos.start();
+    await answer(context);
+    await notice(context);
+    await running;
+    const [entry] = context.videos.queue.getSnapshot();
+    // The browser cannot encode the way it did any more, and no other way fits the file.
+    let supported = true;
+    const support = vi.fn(async () => supported);
+    const changed = setup({ support }, 20, false, {
+      store: context.store,
+      exports: context.exports,
+    });
+    context.exports.claimed.clear();
+    supported = false;
+    await changed.videos.offerResume();
+    expect(changed.dialogs.getSnapshot()).toBeUndefined();
+    changed.videos.retry(entry?.id ?? "");
+    await notice(changed);
+    await vi.waitFor(() =>
+      expect(changed.videos.queue.getSnapshot()).toMatchObject([{ status: "failed" }]),
+    );
+    expect(changed.videos.queue.getSnapshot()[0]?.failure).toContain("export.video.cannotEncode");
+  });
+
+  it("goes on with the next one while one waits for an answer, and asks once people press", async () => {
+    const first = setup({}, 20);
+    first.compositor.crashAt = 360;
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(360));
+    const second = first.videos.start();
+    await answer(first);
+    await second;
+    const third = first.videos.start();
+    await answer(first);
+    await third;
+    first.exports.claimed.clear();
+    const next = setup({}, 20, false, first);
+    // The file of the second is gone: when its turn comes, and when people go on with it.
+    next.reopen.mockImplementation(async () =>
+      [2, 4].includes(next.reopen.mock.calls.length) ? "gone" : next.file,
+    );
+    const offering = next.videos.offerResume();
+    await vi.waitFor(() => expect(next.dialogs.getSnapshot()?.kind).toBe("choice"));
+    const [, gone] = next.videos.queue.getSnapshot();
+    next.dialogs.answer("continue");
+    await offering;
+    // The second needs an answer about its file, which nobody is there to give: the third goes.
+    expect(next.videos.queue.getSnapshot().map(({ status }) => status)).toEqual([
+      "done",
+      "paused",
+      "done",
+    ]);
+    expect(next.videos.queue.getSnapshot()[1]?.needsPress).toBe(true);
+    next.videos.goOn(gone?.id ?? "");
+    await vi.waitFor(() =>
+      expect(next.dialogs.getSnapshot()).toMatchObject({ title: "export.resume.goneTitle" }),
+    );
+    next.dialogs.answer("choose");
+    await vi.waitFor(() => expect(next.videos.queue.getSnapshot()[1]?.status).toBe("done"));
+  });
+
+  it("says so when another window has the one people want to clear", async () => {
+    const first = setup({}, 20);
+    first.compositor.crashAt = 360;
+    void first.videos.start();
+    await answer(first);
+    await vi.waitFor(() => expect(first.compositor.frames).toHaveLength(360));
+    const other = setup({}, 20, false, first);
+    const [kept] = await other.exports.all();
+    expect(await other.videos.forget(kept?.id ?? "")).toBe(false);
+    expect(other.said()).toContain("export.resume.elsewhere");
+  });
+
+  it("says so when old ones leave empty files that it may not take away", async () => {
+    const context = setup({}, 20);
+    context.compositor.failAt = missing(400);
+    const running = context.videos.start();
+    await answer(context);
+    await notice(context);
+    await running;
+    const [saved] = await context.exports.all();
+    if (!saved) throw new Error("Nothing kept");
+    await context.exports.save({ ...saved, savedAt: Date.now() - 31 * 86_400_000 });
+    // The browser would ask whether the file may go, which nothing is there to answer.
+    context.dropTarget.mockResolvedValue(true);
+    await context.videos.cleanUp();
+    expect(await context.exports.all()).toEqual([]);
+    expect(context.said().join()).toContain("export.queue.oldEmptyLeft");
+  });
+
+  it("asks again before it takes the place of one that got further since people said so", async () => {
+    const context = setup({}, 20);
+    context.compositor.failAt = missing(400);
+    const running = context.videos.start();
+    await answer(context);
+    await notice(context);
+    await running;
+    const [old] = await context.exports.all();
+    if (!old) throw new Error("Nothing kept");
+    context.compositor.failAt = undefined;
+    const encode = context.compositor.encodeFrame.bind(context.compositor);
+    const gate = Promise.withResolvers<void>();
+    let reached = false;
+    context.compositor.encodeFrame = async (frame) => {
+      if (frame.index === 10 && !reached) {
+        reached = true;
+        await gate.promise;
+      }
+      return encode(frame);
+    };
+    const again = context.videos.start();
+    await vi.waitFor(() => expect(context.dialogs.getSnapshot()?.kind).toBe("choice"));
+    context.dialogs.answer("new");
+    await answer(context);
+    await vi.waitFor(() => expect(reached).toBe(true));
+    // Meanwhile the old one got further, as if it had gone on somewhere.
+    const state = stateOf(old);
+    if (!state) throw new Error("Nothing kept");
+    await context.exports.save({
+      ...old,
+      state: { ...state, progress: { ...state.progress, frame: 500, videoPieces: 9 } },
+    });
+    gate.resolve();
+    await vi.waitFor(() =>
+      expect(context.dialogs.getSnapshot()).toMatchObject({ title: "export.queue.replaceTitle" }),
+    );
+    context.dialogs.answer(undefined);
+    await again;
+    expect(context.exports.saved.has(old.id)).toBe(true);
+    expect(context.said()).not.toContain("export.resume.replaced");
   });
 });
