@@ -3,6 +3,7 @@ import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
 import { dropTarget } from "./growing.ts";
 import { isMadeFile } from "./index.ts";
+import { browserLocalFolders } from "./local-folders.ts";
 import type {
   Host,
   IncomingProject,
@@ -667,12 +668,14 @@ export function createBrowserHost(
       ).catch(() => {});
     }
   };
+  const localFolders = browserLocalFolders(database);
   return {
     settings,
     projects: createLibrary(projects, locks, forget),
     address,
     windowMemory,
     folders: browserFolders(),
+    ...(localFolders && { localFolders }),
     trials: trials.store,
     drafts: drafts.store,
     exports,

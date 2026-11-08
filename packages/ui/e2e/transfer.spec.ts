@@ -6,7 +6,7 @@ import { readFolder as readInNode } from "@animaquill/core";
 import { diskFolder } from "@animaquill/core/disk-folder";
 import { writeProject } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
-import { isRefusedByChrome } from "../../host/src/chrome-names.ts";
+import { chromeRefuses } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
 import { content, createProject, expect, tab, test } from "./support.ts";
 
@@ -675,6 +675,11 @@ test.describe("names on a real disk", () => {
     "name.",
     "a.b",
     "😀".repeat(100),
+    "conin$",
+    "conout$",
+    "conin$.txt",
+    "a~b.txt",
+    "第1~3集正片完整版",
   ];
 
   let folder: string;
@@ -687,7 +692,9 @@ test.describe("names on a real disk", () => {
   test("are what the unit tests think they are", async ({ page }) => {
     const answers = await answersFor(page, names);
     const refused = names.filter((_, index) => answers[index] === "TypeError");
-    expect(refused).toEqual(names.filter(isRefusedByChrome));
+    // Short names such as "第1~3集" are only refused on Windows, see chromeRefuses.
+    const here = process.platform === "win32" ? ["everywhere", "windows"] : ["everywhere"];
+    expect(refused).toEqual(names.filter((name) => here.includes(chromeRefuses(name) ?? "")));
   });
 
   test("work for every project", async ({ page }) => {

@@ -1,3 +1,13 @@
+export { chromeRefuses, isRefusedByChrome } from "./chrome-names.ts";
+export {
+  MAX_NAME_LENGTH,
+  MAX_PATH_LENGTH,
+  isSafeName,
+  isSafePath,
+  newNameFor,
+  sameNameKey,
+} from "./paths.ts";
+
 /** What the editor needs from the place it runs in: a browser, the desktop app or the platform. */
 export interface Host {
   readonly settings: SettingsStore;
@@ -8,6 +18,11 @@ export interface Host {
   readonly diagnostics?: DiagnosticsSink;
   /** The way to folders outside of the host, which is how projects get in and out. */
   readonly folders: FolderAccess;
+  /**
+   * Folders on this computer that the editor reads and writes as people work, such as the folder of
+   * a project. Missing where the browser does not let a page write to folders.
+   */
+  readonly localFolders?: LocalFolders;
   /** Where what people are trying out waits until they save it or give up on it. */
   readonly trials: TrialStore;
   /** Where code that people typed and did not save waits, so that a crash does not take it. */
@@ -356,4 +371,296 @@ export interface FolderAccess {
    * downloads, so that what an export keeps there takes twice the room.
    */
   readonly savesInBrowser: boolean;
+}
+
+/**
+ * Folders on this computer that the editor reads and writes as people work, such as the folder of a
+ * project. Choosing and dropping get a folder, and the records remember the folders for next time.
+ */
+export interface LocalFolders {
+  /**
+   * Asks people for a folder that the editor may read and write. It has to run right after they did
+   * something. Resolves to undefined when they changed their minds, and also when the browser did not
+   * let them have that folder, such as their documents themselves: the browser says why itself.
+   */
+  choose(): Promise<LocalFolder | undefined>;
+  /**
+   * Folders and files that people dropped. It has to run in the `drop` event before anything there
+   * waits, because the browser takes away what was dropped right after. They can be read. To write a
+   * folder that was dropped, ask first, see `LocalFolder.requestAccess`, which is best done right
+   * away: dropping counts as people doing something, but not for long.
+   */
+  dropped(transfer: DataTransfer): Promise<readonly LocalEntry[]>;
+  /** The folders that were opened in this browser, in a database of their own. */
+  readonly records: FolderRecords;
+}
+
+/** Something on this computer that people dropped. */
+export type LocalEntry =
+  | { readonly kind: "folder"; readonly folder: LocalFolder }
+  | { readonly kind: "file"; readonly file: LocalFile };
+
+/** A file on this computer that people dropped. */
+export interface LocalFile {
+  readonly name: string;
+  /** What is in it now. Rejects with a `FolderError` when it cannot be read. */
+  read(): Promise<File>;
+}
+
+/** What a file can hold. Text is written as UTF-8. */
+export type FileContent = Blob | Uint8Array<ArrayBuffer> | string;
+
+/** Enough of a file on a disk to tell that it changed. A `File` is one. */
+export interface FileStat {
+  /** Bytes. */
+  readonly size: number;
+  /** Milliseconds since 1970, as the system has it. */
+  readonly lastModified: number;
+}
+
+/** How a folder is, as far as the editor goes. */
+export type FolderStatus =
+  /** It can be read and written. */
+  | "ready"
+  /**
+   * The browser has to ask people first, see `LocalFolder.requestAccess`: after the browser was
+   * closed, for example, or for a folder that was dropped, which comes only to be read.
+   */
+  | "ask"
+  /** The browser does not let the editor at it at all, for example because of a policy. */
+  | "blocked"
+  /**
+   * It is not where it was: moved, renamed or removed. A folder only knows its place, so whatever
+   * comes to that place later is what it then has.
+   */
+  | "gone";
+
+/** What people said when the browser asked them whether the editor may write a folder. */
+export type AccessAnswer =
+  | "granted"
+  /** They said no, or closed the question. The two cannot be told apart. */
+  | "refused"
+  /** The browser only asks right after people did something: ask again from a button. */
+  | "needs-activation";
+
+/** Why something could not be done in a folder on this computer, see `FolderError`. */
+export type FolderFailure =
+  /** The path leads out of the folder, or the browser does not allow a name in it. */
+  | "refused"
+  /** No file is at the path. */
+  | "missing"
+  /** The folder itself is not where it was any more: moved, renamed or removed. */
+  | "gone"
+  /** The browser does not let the editor at the folder, until people allow it again. */
+  | "denied"
+  /** Something is in the way: a file at a new path, or a file where a folder has to be. */
+  | "exists"
+  /** Another writer in this browser has the file, maybe in another window. */
+  | "busy"
+  /** The disk is full, or the browser does not let the site have more room. */
+  | "full"
+  /**
+   * The folder is there and the file could not be made in it: most likely the whole path is too
+   * long for the system. Windows allows 260 characters, wherever the folder is.
+   */
+  | "too-long"
+  /** The file is not what it was said to be, or changed while it was read or just after writing. */
+  | "changed"
+  /** The file is no UTF-8 text. */
+  | "not-text"
+  /** Anything else, such as another program that holds on to the file. */
+  | "failed";
+
+/** Something could not be done in a folder on this computer. `reason` says why. */
+export class FolderError extends Error {
+  override readonly name = "FolderError";
+  readonly reason: FolderFailure;
+  /** From the top of the folder, "" for the folder itself. */
+  readonly path: string;
+
+  constructor(reason: FolderFailure, path: string, options?: { readonly cause?: unknown }) {
+    super(`${reason}: ${path === "" ? "the folder" : path}`, options);
+    this.reason = reason;
+    this.path = path;
+  }
+}
+
+export interface LocalWriteOptions {
+  /** Stops the write. The file stays as it was, and this rejects with the reason of the signal. */
+  readonly signal?: AbortSignal;
+  /** How much of this file got written so far, in bytes. */
+  readonly onProgress?: (bytes: number) => void;
+  /**
+   * Writes only when the file is still the way it was seen, so that a change from somewhere else
+   * does not get lost, and rejects with "changed" otherwise. "absent" when there should be no file.
+   */
+  readonly expected?: FileStat | "absent";
+}
+
+export interface WriteAllOptions {
+  /** Stops writing. Files that were written stay written. */
+  readonly signal?: AbortSignal;
+  /** How many files are written at the same time. */
+  readonly concurrency?: number;
+  /** How many of the files are written so far, out of how many. */
+  readonly onProgress?: (written: number, total: number) => void;
+  /** Each file as soon as it is in place. */
+  readonly onWritten?: (path: string, file: File) => void;
+}
+
+/**
+ * A folder on this computer that people chose or dropped. Paths are from its top, with forward
+ * slashes. What fails rejects with a `FolderError`, which says why.
+ *
+ * Use one of these for one folder: it knows what it wrote itself, and nothing else does. Other
+ * programs can change the folder at any time, also a file just as the editor writes it, which
+ * nothing in a browser can stop. That is why a write can say what it expects to replace.
+ */
+export interface LocalFolder {
+  /** Its name. Where it is on the disk is more than a page gets to know. */
+  readonly name: string;
+  /** Whether the editor can read and write it now. */
+  status(): Promise<FolderStatus>;
+  /**
+   * Asks people to let the editor read and write the folder, unless it may already. The browser
+   * only asks right after people did something, such as a click, or dropping the folder.
+   */
+  requestAccess(): Promise<AccessAnswer>;
+  /** Whether this is the same folder as another one, at the same place. One that moved is not. */
+  isSame(other: LocalFolder): Promise<boolean>;
+  /**
+   * Where something that was dropped is in this folder, "" for the folder itself, or undefined when
+   * it is somewhere else.
+   */
+  pathOf(entry: LocalEntry): Promise<string | undefined>;
+  /**
+   * Every file in it, apart from what belongs to tools, such as .git. Chrome does not show names it
+   * does not allow, see `chromeRefuses`: those files stay as they are, but this leaves them out.
+   */
+  list(): AsyncIterable<string>;
+  /**
+   * A file as it is now. Once it changes, also because the editor wrote it, reading this one fails
+   * with a "NotReadableError": get it again then.
+   */
+  file(path: string): Promise<File>;
+  /** What is in a file now. */
+  read(path: string): Promise<Uint8Array<ArrayBuffer>>;
+  /** The text in a file now. Rejects with "not-text" when it is no UTF-8. */
+  readText(path: string): Promise<string>;
+  /**
+   * Replaces a file, or makes it, and the folders on the way. The browser writes next to it first
+   * and puts that in place once all of it is there, so that nobody ever sees half a file, and the
+   * file stays as it was when anything stops this. A file is written by one writer at a time in
+   * this browser, the others get "busy". Resolves to the file as it was written.
+   */
+  write(path: string, content: FileContent, options?: LocalWriteOptions): Promise<File>;
+  /**
+   * Writes many files, some at the same time, because each one costs about a tenth of a second on
+   * Windows, however small it is. Rejects with the first failure, once the files on their way are
+   * done. The order of the files is up to whoever writes: write what others refer to first.
+   */
+  writeAll(
+    files: Iterable<{ readonly path: string; readonly content: FileContent }>,
+    options?: WriteAllOptions,
+  ): Promise<void>;
+  /**
+   * Takes away a file, and the folders on the way that are left empty, apart from this one. A file
+   * that is not there is fine. Folders are not taken away with what is in them.
+   */
+  remove(path: string): Promise<void>;
+  /**
+   * Moves or renames a file. Rejects with "exists" when something is at the new path, which the
+   * browser would replace without a word. Where the browser cannot move a file, this writes it at
+   * the new path and then takes away the old one. Folders cannot be moved.
+   */
+  move(from: string, to: string): Promise<void>;
+  /**
+   * Takes away the temporary files that writing these files left behind. A write that stops because
+   * the browser went away leaves one next to the file on Linux and maybe a Mac, as
+   * "<name>.crswap" or "<name>.<number>.crswap", and the browser does not clean them up. One that a
+   * write in this browser is using stays. Only call this when no other window writes the folder.
+   * Resolves to the paths of what was taken away.
+   */
+  removeLeftovers(paths: Iterable<string>): Promise<readonly string[]>;
+  /** Tells what changes in the folder, see `FolderWatch`. */
+  watch(options: WatchOptions): FolderWatch;
+}
+
+export interface WatchOptions {
+  /**
+   * Whether a file matters, or what is in a folder. Only what matters gets looked at: projects can be
+   * in large folders, such as a repository.
+   */
+  readonly includes: (path: string, kind: "file" | "folder") => boolean;
+  /** Files to look at besides what is in folders that matter, such as the assets of a project. */
+  readonly files?: () => Iterable<string>;
+  /**
+   * What changed since the last time, once nothing changed for a moment: other programs often change
+   * several files at once. What this folder wrote itself does not show up. The next changes wait
+   * until what this returns is done.
+   */
+  readonly onChange: (changes: readonly FolderChange[]) => void | Promise<void>;
+  /**
+   * The folder cannot be looked at. "gone" ends the watch: start another one once the folder is
+   * back. After "denied" the watch looks again when the window comes to the front again.
+   */
+  readonly onProblem?: (error: FolderError) => void;
+}
+
+/** A file that changed. */
+export interface FolderChange {
+  readonly path: string;
+  /** What is there now, or undefined when the file is gone. */
+  readonly file: File | undefined;
+}
+
+/**
+ * Tells what changes in a folder, made by whatever program. The browser tells about changes where it
+ * can, but not always all of them: on Linux it misses some, and other browsers tell nothing. So the
+ * folder gets looked at again when the window comes to the front, and whenever what the browser
+ * says does not add up. What changed is told by what files are like now, not by what was said.
+ */
+export interface FolderWatch {
+  /**
+   * Resolves once the watch knows how the folder is. What changes from then on gets told, so read
+   * what the folder holds after this, not before. Rejects when the folder cannot be looked at, and
+   * the watch is over then.
+   */
+  readonly ready: Promise<void>;
+  /** Looks at everything that matters again, and tells what changed. */
+  rescan(): Promise<void>;
+  /** Tells what changed so far right away, without waiting for a quiet moment. */
+  flush(): Promise<void>;
+  stop(): void;
+}
+
+/** A folder that was opened in this browser. */
+export interface FolderRecord {
+  /**
+   * The number this browser knows the folder by, and what keeps what belongs to it. Not the id of the
+   * project: copies of a folder have the same one.
+   */
+  readonly id: string;
+  readonly folder: LocalFolder;
+  /** The id of the project in it, the last time it was looked at. */
+  readonly project: string;
+  /** What the project is called, for people to recognise it. */
+  readonly name: string;
+  /** Milliseconds since 1970. */
+  readonly openedAt: number;
+}
+
+/** The folders that were opened in this browser. */
+export interface FolderRecords {
+  /** The most recently opened first. */
+  list(): Promise<readonly FolderRecord[]>;
+  get(id: string): Promise<FolderRecord | undefined>;
+  /** Keeps a record, in place of the one with the same id. */
+  put(record: FolderRecord): Promise<void>;
+  /** Takes a folder off the list. Nothing happens to the folder. */
+  remove(id: string): Promise<void>;
+  /** The record of this very folder, for one that was chosen or dropped once more. */
+  find(folder: LocalFolder): Promise<FolderRecord | undefined>;
+  /** The records of folders with this project in them, one of which might have moved. */
+  withProject(project: string): Promise<readonly FolderRecord[]>;
 }

@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./browser": "./src/browser.ts"
+    "./browser": "./src/browser.ts",
+    "./memory": "./src/memory-disk.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

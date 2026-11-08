@@ -6,13 +6,11 @@ import {
   type SaveFilePicker,
 } from "./growing.ts";
 import type { FolderAccess, SourceFolder, TargetFolder, WriteOptions } from "./index.ts";
-import { FALLBACK_NAME, folderNameFor, partsOf } from "./paths.ts";
+import { FALLBACK_NAME, fileNameFor, folderNameFor, isToolFolder, partsOf } from "./paths.ts";
 import { zipTarget } from "./zip.ts";
 
 /** Lets the browser come back to the place people used the last time. */
 const PICKER_ID = "animaquill-projects";
-/** Folders that belong to tools. A project can be a Git repository. */
-const TOOL_FOLDERS = new Set([".git", ".animaquill", "node_modules"]);
 /** A folder asked for by a name that is taken gets a number, within reason. */
 const MAX_NUMBER = 1000;
 /**
@@ -38,12 +36,6 @@ export interface FolderAccessOptions {
   readonly scratch?: () => Promise<FileSystemDirectoryHandle>;
 }
 
-/** A file name for anything: what is after the dot is what opens it, and it stays. */
-export function fileNameFor(name: string): string {
-  const [, stem = name, extension = ""] = /^(.*)(\.[^.]*)$/su.exec(name) ?? [];
-  return `${folderNameFor(stem)}${extension}`;
-}
-
 const isNamed = (error: unknown, ...names: readonly string[]) =>
   error instanceof Error && names.includes(error.name);
 
@@ -58,7 +50,7 @@ export function sourceFromFiles(files: readonly File[]): SourceFolder {
     async *files() {
       for (const file of files) {
         const [, ...parts] = file.webkitRelativePath.split("/");
-        if (parts.slice(0, -1).some((part) => TOOL_FOLDERS.has(part))) continue;
+        if (parts.slice(0, -1).some(isToolFolder)) continue;
         yield { path: parts.join("/"), read: async () => file };
       }
     },

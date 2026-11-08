@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isRefusedByChrome } from "./chrome-names.ts";
 import { createFolderAccess, sourceFromFiles, type FolderAccessOptions } from "./folders.ts";
 import type { SourceFolder, TargetFolder } from "./index.ts";
-import { FALLBACK_NAME, folderNameFor } from "./paths.ts";
+import { FALLBACK_NAME, MAX_NAME_LENGTH, folderNameFor } from "./paths.ts";
 
 /** A file on a disk. As in the browser, writing goes to a copy that takes over on closing. */
 class FakeFile {
@@ -395,6 +395,9 @@ describe("a project name that becomes a folder", () => {
     ["\uFEFF标题\uFEFF"],
     ["clock$"],
     ["CLOCK$.备份"],
+    ["conin$"],
+    ["第1~3集"],
+    ["a~b.txt"],
     ["CON"],
     ["com1"],
     ["desktop.ini"],
@@ -563,7 +566,12 @@ describe("the name of a folder", () => {
     ["console", "console"],
     ["官网.url", "官网_url"],
     ["快捷方式.LNK", "快捷方式_LNK"],
-    ["第1~3集", "第1~3集"],
+    ["第1~3集", "第1-3集"],
+    ["a~b.txt", "a-b.txt"],
+    ["第1~3集正片完整版", "第1~3集正片完整版"],
+    ["conin$", "_conin$"],
+    ["CONOUT$", "_CONOUT$"],
+    ["conin$.txt", "conin$.txt"],
     ["第二集~", "第二集"],
     ["~第二集", "第二集"],
     ["程序员🧑\u200D💻教程", "程序员🧑💻教程"],
@@ -575,16 +583,24 @@ describe("the name of a folder", () => {
     expect(folderNameFor(name)).toBe(folder);
   });
 
-  it("stays short enough for every disk, without cutting a character in two", () => {
+  it("stays short enough for Windows, without cutting a character in two", () => {
     const name = folderNameFor("😀".repeat(200));
-    expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(200);
+    expect(name.length).toBeLessThanOrEqual(56);
     expect(name.endsWith("😀")).toBe(true);
-    expect(folderNameFor("字".repeat(66))).toHaveLength(66);
-    expect(folderNameFor("字".repeat(67))).toHaveLength(66);
+    expect(folderNameFor("字".repeat(56))).toHaveLength(56);
+    expect(folderNameFor("字".repeat(57))).toHaveLength(56);
+    expect(folderNameFor(`${"字".repeat(55)}😀`)).toBe("字".repeat(55));
+  });
+
+  it("leaves room for a number, and for the ending of a zip file", () => {
+    expect(`${folderNameFor("字".repeat(100))} (1000)`.length).toBeLessThanOrEqual(MAX_NAME_LENGTH);
+    expect(`${folderNameFor("con".repeat(100))}.zip`.length).toBeLessThanOrEqual(MAX_NAME_LENGTH);
   });
 
   it("does not end in what it would have to take away, after being cut", () => {
-    expect(folderNameFor(`${"字".repeat(66)}~${"字".repeat(10)}`)).toBe("字".repeat(66));
-    expect(folderNameFor(`${"a".repeat(199)}~字`)).toBe("a".repeat(199));
+    expect(folderNameFor(`${"字".repeat(56)}~${"字".repeat(10)}`)).toBe("字".repeat(56));
+    expect(folderNameFor(`${"a".repeat(55)}~字`)).toBe("a".repeat(55));
+    expect(folderNameFor(`${"a".repeat(52)}.urlX`)).toBe(`${"a".repeat(52)}_url`);
+    expect(folderNameFor(`con.${"a".repeat(60)}`)).toBe(`_con.${"a".repeat(51)}`);
   });
 });
