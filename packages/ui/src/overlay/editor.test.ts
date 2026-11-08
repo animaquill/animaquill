@@ -88,8 +88,10 @@ async function setup({
     quality = { ...quality, size: { shown: size, full: HD } };
     for (const listener of qualityListeners) listener();
   };
-  const handles = new SceneHandles();
+  // Answers of scenes count right away here: the page waits for its next frame for them.
+  const handles = new SceneHandles({ schedule: (run: () => void) => (run(), () => {}) });
   let registration: Registration | undefined;
+  const gone = vi.fn();
   const registrations = {
     registrationOf: () => registration,
     subscribe: () => () => {},
@@ -104,6 +106,7 @@ async function setup({
     handles,
     registrations,
     describe: (clip) => describeClip(store.getState(), clip, registrations),
+    messages: { gone },
   });
   overlay.setViewport(viewport.width, viewport.height);
 
@@ -172,6 +175,7 @@ async function setup({
     writer,
     overlay,
     handles,
+    gone,
     main,
     video,
     run,
@@ -442,7 +446,7 @@ describe("the anchor", () => {
     expect(property("c", "transform.anchorX")).toBeCloseTo(0.5 - 200 / 1920, 6);
   });
 
-  it("writes keys at the playhead where the anchor has keys of its own", async () => {
+  it("writes the anchor at the playhead where it has keys, and the position on every frame", async () => {
     const { addClip, edit, drag, pointer, property, timeline } = await setup();
     addClip("c");
     edit(
@@ -455,11 +459,12 @@ describe("the anchor", () => {
     drag(pointer(505, 270), pointer(405, 270, { alt: true }));
     const anchor = (property("c", "transform.anchorX") as Animation).keys;
     expect(anchor.map(({ time }) => time)).toEqual(["0", "1"]);
+    // The anchor changes from its key at 0 on, so the position does too, and stays changed after.
     const x = (property("c", "transform.x") as Animation).keys;
     expect(x.map(({ time, value }) => [time, value])).toEqual([
       ["0", 0],
       ["1", -150],
-      ["2", 100],
+      ["2", -100],
     ]);
   });
 });
@@ -633,5 +638,242 @@ describe("handles of code objects", () => {
     setRegistration(undefined);
     handles.note("c", revision, 0, raw);
     expect(grips().filter(({ role }) => role === "object")).toEqual([]);
+  });
+});
+
+/** Where the corners of the picture of a clip are on the overlay, at frames of the timeline. */
+function cornersAt(
+  context: Awaited<ReturnType<typeof setup>>,
+  clip: string,
+  frames: readonly number[],
+): (readonly { readonly x: number; readonly y: number }[])[] {
+  const { timeline, grip } = context;
+  const was = timeline.frame;
+  const found = frames.map((frame) => {
+    timeline.seek(frame);
+    return ["nw", "ne", "se", "sw"].map((side) => grip(`${clip} scale ${side}`).at);
+  });
+  timeline.seek(was);
+  return found;
+}
+
+const expectSamePlaces = (
+  after: readonly (readonly { readonly x: number; readonly y: number }[])[],
+  before: readonly (readonly { readonly x: number; readonly y: number }[])[],
+) => {
+  after.forEach((corners, frame) =>
+    corners.forEach((corner, index) => {
+      const wanted = before[frame]?.[index] as { x: number; y: number };
+      expect(Math.abs(corner.x - wanted.x), `frame ${frame} corner ${index} x`).toBeLessThan(0.01);
+      expect(Math.abs(corner.y - wanted.y), `frame ${frame} corner ${index} y`).toBeLessThan(0.01);
+    }),
+  );
+};
+
+const FRAMES = [0, 10, 30, 45, 60, 75, 110];
+
+describe("the anchor, as it is when it moves", () => {
+  it("is worked out from the keys as they are now, and keeps what others did to them", async () => {
+    const { addClip, edit, overlay, pointer, property } = await setup();
+    addClip("c");
+    edit(
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "0", value: 0 },
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "2", value: 100 },
+    );
+    overlay.press(pointer(480, 270));
+    overlay.drag(pointer(430, 270, { alt: true }));
+    // Somebody else, meanwhile: the key at 2 goes to 500 and holds, one at 3 comes in.
+    edit(
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "2", value: 500 },
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "3", value: 900 },
+      {
+        owner: { clip: "c" },
+        path: "transform.x",
+        op: "setInterp",
+        times: ["2"],
+        ease: { interp: "hold" },
+      },
+    );
+    overlay.drag(pointer(380, 270, { alt: true }));
+    overlay.release(pointer(380, 270, { alt: true }));
+    const keys = (property("c", "transform.x") as Animation).keys;
+    expect(keys.map(({ time, value, interp }) => [time, value, interp])).toEqual([
+      ["0", -200, undefined],
+      ["2", 300, "hold"],
+      ["3", 700, undefined],
+    ]);
+  });
+
+  it("stops and says so when what it moves went away on the way", async () => {
+    const { addClip, overlay, pointer, property, run, gone, writer } = await setup();
+    addClip("c");
+    overlay.press(pointer(480, 270));
+    overlay.drag(pointer(430, 270, { alt: true }));
+    run("clip.remove", { timeline: "main", clips: ["c"] });
+    overlay.drag(pointer(380, 270, { alt: true }));
+    overlay.release(pointer(380, 270, { alt: true }));
+    expect(gone).toHaveBeenCalledTimes(1);
+    expect(writer.getPreviewed().size).toBe(0);
+    expect(property("c", "transform.anchorX")).toBeUndefined();
+  });
+
+  it("goes as far as the pointer went, wherever it was grabbed", async () => {
+    const { addClip, set, drag, pointer, grip } = await setup();
+    addClip("c");
+    set("c", { "transform.scale": 0.5 });
+    drag(pointer(486, 270), pointer(481, 270, { alt: true }), pointer(476, 270, { alt: true }));
+    expectAt(grip("c anchor").at, 470, 270);
+  });
+
+  it("keeps the picture where it is on every frame, with keys on the anchor and none on the position", async () => {
+    const context = await setup();
+    const { addClip, edit, drag, pointer, property } = context;
+    addClip("c");
+    edit(
+      { owner: { clip: "c" }, path: "transform.scale", op: "set", value: 0.5 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "0", value: 0.3 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "2", value: 0.7 },
+      {
+        owner: { clip: "c" },
+        path: "transform.anchorX",
+        op: "setInterp",
+        times: ["0"],
+        ease: { interp: "bezier", out: [0.4, 0], in: [0.2, 1] },
+      },
+    );
+    context.timeline.seek(30);
+    const before = cornersAt(context, "c", FRAMES);
+    const anchor = context.grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x - 70, anchor.y - 40, { alt: true }));
+    expectSamePlaces(cornersAt(context, "c", FRAMES), before);
+    // A key of the position for each key of the anchor, which go the same way.
+    const anchorKeys = (property("c", "transform.anchorX") as Animation).keys;
+    const keys = (property("c", "transform.x") as Animation).keys;
+    expect(keys.map(({ time }) => time)).toEqual(anchorKeys.map(({ time }) => time));
+  });
+
+  it("keeps it on every frame of a turned clip with keys on both sides of the anchor", async () => {
+    const context = await setup();
+    const { addClip, edit, drag, pointer } = context;
+    addClip("c");
+    edit(
+      { owner: { clip: "c" }, path: "transform.scale", op: "set", value: 0.5 },
+      { owner: { clip: "c" }, path: "transform.rotation", op: "set", value: 30 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "0", value: 0.2 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "3", value: 0.6 },
+      { owner: { clip: "c" }, path: "transform.anchorY", op: "setKey", time: "0", value: 0.5 },
+      { owner: { clip: "c" }, path: "transform.anchorY", op: "setKey", time: "3", value: 0.9 },
+    );
+    context.timeline.seek(30);
+    const before = cornersAt(context, "c", FRAMES);
+    const anchor = context.grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x + 50, anchor.y + 20, { alt: true }));
+    expectSamePlaces(cornersAt(context, "c", FRAMES), before);
+  });
+
+  it("keeps it on every frame with keys on the anchor and on the position, all of them straight", async () => {
+    const context = await setup();
+    const { addClip, edit, drag, pointer } = context;
+    addClip("c");
+    edit(
+      { owner: { clip: "c" }, path: "transform.scale", op: "set", value: 0.5 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "0", value: 0.3 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "2", value: 0.7 },
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "1/2", value: -100 },
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "3", value: 200 },
+    );
+    context.timeline.seek(30);
+    const before = cornersAt(context, "c", FRAMES);
+    const anchor = context.grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x + 60, anchor.y + 25, { alt: true }));
+    expectSamePlaces(cornersAt(context, "c", FRAMES), before);
+  });
+});
+
+describe("the anchor, where only a key on every frame keeps the picture still", () => {
+  it("writes those, and only where the anchor changed", async () => {
+    const context = await setup();
+    const { addClip, edit, drag, pointer, property } = context;
+    addClip("c");
+    edit(
+      { owner: { clip: "c" }, path: "transform.scale", op: "set", value: 0.5 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "0", value: 0.3 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "2", value: 0.7 },
+      {
+        owner: { clip: "c" },
+        path: "transform.anchorX",
+        op: "setInterp",
+        times: ["0"],
+        ease: { interp: "bezier", out: [0.4, 0], in: [0.2, 1] },
+      },
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "1/2", value: -100 },
+      { owner: { clip: "c" }, path: "transform.x", op: "setKey", time: "3", value: 200 },
+    );
+    context.timeline.seek(30);
+    const frames = Array.from({ length: 12 }, (_, index) => index * 10);
+    const before = cornersAt(context, "c", frames);
+    const anchor = context.grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x - 40, anchor.y, { alt: true }));
+    expectSamePlaces(cornersAt(context, "c", frames), before);
+    const keys = (property("c", "transform.x") as Animation).keys;
+    // Two seconds of frames where the anchor changed, and the key that was there after them.
+    expect(keys.length).toBeLessThanOrEqual(63);
+    expect(keys.at(-1)).toMatchObject({ time: "3" });
+  });
+});
+
+describe("a path of many keys", () => {
+  const many = async (count: number) => {
+    const context = await setup();
+    context.addClip("c", { duration: String(count) });
+    // Most of them take the clip off the picture.
+    const keys = Array.from({ length: count }, (_, index) => ({
+      time: String(index),
+      value: (index % 100) * 30,
+    }));
+    context.edit({ owner: { clip: "c" }, path: "transform.x", op: "set", value: { keys } });
+    context.timeline.selectOnly("c");
+    return context;
+  };
+
+  it("has handles only for the keys on the screen, and not too many of them", async () => {
+    const { grips, overlay } = await many(20000);
+    const keys = grips().filter(({ role }) => role === "key");
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys.length).toBeLessThanOrEqual(200);
+    for (const { at } of keys) {
+      expect(at.x).toBeGreaterThanOrEqual(-1);
+      expect(at.x).toBeLessThanOrEqual(961);
+    }
+    expect(overlay.getSnapshot().scene.marks.some(({ kind }) => kind === "path")).toBe(true);
+  });
+});
+
+describe("handles that reach another object by an older name", () => {
+  it("are not there, and write nothing", async () => {
+    const context = await setup();
+    context.run("scene.add", {
+      id: "s",
+      scene: { name: "场景", entry: "index.html", runtime: 1 },
+      files: { "index.html": "<p>场景</p>" },
+    });
+    context.addClip("c", {}, { kind: "scene", scene: "s" });
+    context.edit({ owner: { clip: "c" }, path: "object.leg.x", op: "set", value: 7 });
+    context.setRegistration({
+      objects: [
+        { id: "arm", aliases: ["leg"], properties: [{ path: "x", type: "number", default: 0 }] },
+        { id: "leg", properties: [{ path: "x", type: "number", default: 0 }] },
+      ],
+      elements: [],
+      complete: true,
+    });
+    const revision = sceneSourceOf(context.store.getState(), "s")?.revision as string;
+    context.overlay.getSnapshot();
+    context.handles.note("c", revision, 0, [
+      { object: "arm", handles: [{ kind: "move", id: "m", at: [0, 0], bind: { x: "x" } }] },
+    ]);
+    expect(context.grips().filter(({ role }) => role === "object")).toEqual([]);
+    context.drag(context.pointer(480, 270), context.pointer(520, 270));
+    expect(context.property("c", "object.leg.x")).toBe(7);
   });
 });

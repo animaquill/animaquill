@@ -187,9 +187,14 @@ describe("the path of a clip", () => {
     expectNear(path.points[0] as Point, { x: -100, y: 0 });
     expectNear(path.points.at(-1) as Point, { x: 100, y: 50 });
     expect(path.keys).toEqual([
-      { time: "1", clock: 1, hasX: true, hasY: false, x: -100, y: 0 },
-      { time: "2", clock: 2, hasX: false, hasY: true, x: 0, y: 0 },
-      { time: "3", clock: 3, hasX: true, hasY: true, x: 100, y: 50 },
+      { time: "1", clock: 1, hasX: true, hasY: false },
+      { time: "2", clock: 2, hasX: false, hasY: true },
+      { time: "3", clock: 3, hasX: true, hasY: true },
+    ]);
+    expect(path.keys.map(({ clock }) => path.at(clock))).toEqual([
+      { x: -100, y: 0 },
+      { x: 0, y: 0 },
+      { x: 100, y: 50 },
     ]);
     expect(path.frames.length).toBe(61);
   });
@@ -214,6 +219,19 @@ describe("the path of a clip", () => {
     expectNear(path.points[0] as Point, { x: 200, y: 40 });
     expectNear(path.points.at(-1) as Point, { x: 400, y: 40 });
     expect(path.keys).toEqual([]);
+  });
+
+  it("takes more keys than a call can take arguments", () => {
+    const count = 130000;
+    const many: Animation = {
+      keys: Array.from({ length: count }, (_, index) => ({
+        time: String(index),
+        value: index % 7,
+      })),
+    };
+    const path = motionPath(many, undefined, { from: 0, to: count }, 30, origin);
+    expect(path?.keys).toHaveLength(count);
+    expect(path?.points.length).toBeLessThanOrEqual(4003);
   });
 
   it("does not take forever for a long clip", () => {

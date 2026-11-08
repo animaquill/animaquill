@@ -168,7 +168,9 @@ export {
 } from "./clip-handles.ts";
 export {
   HANDLE_LIMITS,
+  HANDLE_REACH_PICTURES,
   MIN_SCALE_FACTOR,
+  handleReach,
   ROTATE_STEP,
   readHandles,
   solveHandle,

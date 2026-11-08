@@ -15,9 +15,10 @@ const raw = [
 
 describe("the handles scenes say their objects have", () => {
   it("only count from the clip that was asked", () => {
-    const handles = new SceneHandles();
+    const handles = new SceneHandles({ schedule: (run) => (run(), () => {}) });
     const changed = vi.fn();
     handles.subscribe(changed);
+    expect(handles.of("c", "r", 0, registration)).toEqual([]);
     handles.note("c", "r", 0, raw);
     expect(changed).not.toHaveBeenCalled();
     handles.want("c");
@@ -61,5 +62,72 @@ describe("the handles scenes say their objects have", () => {
     handles.want(undefined);
     expect(asked).toHaveBeenCalledTimes(2);
     expect(handles.wanted).toBeUndefined();
+  });
+});
+
+describe("a scene that answers a lot", () => {
+  function scheduled() {
+    const runs: (() => void)[] = [];
+    const schedule = vi.fn((run: () => void) => {
+      runs.push(run);
+      return () => runs.splice(runs.indexOf(run), 1);
+    });
+    const flush = () => {
+      for (const run of runs.splice(0)) run();
+    };
+    return { schedule, flush, pending: () => runs.length };
+  }
+
+  it("makes nothing look again with answers of another frame or state, and keeps the last", () => {
+    const { schedule } = scheduled();
+    // Slow enough to be no flood.
+    let now = 0;
+    const handles = new SceneHandles({ schedule, now: () => (now += 1000) });
+    const changed = vi.fn();
+    handles.subscribe(changed);
+    handles.want("c");
+    expect(handles.of("c", "r", 5, registration)).toEqual([]);
+    for (let index = 0; index < 1000; index += 1) handles.note("c", "r", 6 + (index % 3), raw);
+    for (let index = 0; index < 1000; index += 1) handles.note("c", "other", 5, raw);
+    expect(schedule).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+    // The playhead got there after the answer: it is still there to be read.
+    handles.note("c", "r", 9, raw);
+    expect(handles.of("c", "r", 9, registration)).toHaveLength(1);
+  });
+
+  it("looks at answers for what shows once a frame of the screen, however many came", () => {
+    const { schedule, flush, pending } = scheduled();
+    const handles = new SceneHandles({ schedule });
+    const changed = vi.fn();
+    handles.subscribe(changed);
+    handles.want("c");
+    handles.of("c", "r", 0, registration);
+    for (let index = 0; index < 10; index += 1) handles.note("c", "r", 0, raw);
+    expect(pending()).toBe(1);
+    expect(changed).not.toHaveBeenCalled();
+    flush();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(handles.of("c", "r", 0, registration)).toHaveLength(1);
+  });
+
+  it("says once that a scene says too much, and leaves out what is too much", () => {
+    let now = 0;
+    const tooMany = vi.fn();
+    const { schedule } = scheduled();
+    const handles = new SceneHandles({ schedule, now: () => now, tooMany });
+    handles.want("c");
+    handles.of("c", "r", 0, registration);
+    const other = [{ object: "arm", handles: [] }];
+    for (let index = 0; index < 200; index += 1)
+      handles.note("c", "r", 0, index < 100 ? raw : other);
+    expect(tooMany).toHaveBeenCalledTimes(1);
+    expect(tooMany).toHaveBeenCalledWith("c", "r");
+    // What came while it said too much did not count.
+    expect(handles.of("c", "r", 0, registration)).toHaveLength(1);
+    now += 10_000;
+    handles.note("c", "r", 0, other);
+    expect(handles.of("c", "r", 0, registration)).toEqual([]);
+    expect(tooMany).toHaveBeenCalledTimes(1);
   });
 });

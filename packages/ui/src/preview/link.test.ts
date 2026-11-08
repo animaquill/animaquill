@@ -835,18 +835,20 @@ describe("where the objects of a scene are", () => {
   });
 
   it("goes where the handles are kept, as raw as it came", () => {
-    const handles = new SceneHandles();
+    const handles = new SceneHandles({ schedule: (run) => (run(), () => {}) });
     handles.want("c");
-    const { hello, fromCompositor } = setup(undefined, { handles });
-    hello();
-    const raw = [{ object: "arm", handles: [] }];
-    fromCompositor({ type: "scene-handles", layer: "c", revision: "r1", frame: 4, handles: raw });
     const registration = {
-      objects: [{ id: "arm", properties: [] }],
+      objects: [{ id: "arm", properties: [{ path: "x", type: "number" as const }] }],
       elements: [],
       complete: true,
     };
     expect(handles.of("c", "r1", 4, registration)).toEqual([]);
+    const { hello, fromCompositor } = setup(undefined, { handles });
+    hello();
+    const move = { kind: "move", id: "m", at: [0, 0], bind: { x: "x" } };
+    const raw = [{ object: "arm", handles: [move] }];
+    fromCompositor({ type: "scene-handles", layer: "c", revision: "r1", frame: 4, handles: raw });
     expect(handles.getVersion()).toBe(1);
+    expect(handles.of("c", "r1", 4, registration)).toEqual([{ object: "arm", handles: [move] }]);
   });
 });

@@ -1,4 +1,4 @@
-import { readHandles, type ReadHandles } from "@animaquill/core/handles";
+import { handleReach, readHandles, type ReadHandles } from "@animaquill/core/handles";
 import { REGISTRATION_LIMITS } from "@animaquill/core/registration";
 import { MESSAGE_RULES, weightOf } from "../budget.ts";
 import { startCapture, type Capture } from "./capture.ts";
@@ -226,7 +226,7 @@ function sendHandles(): void {
   let read: ReadHandles;
   try {
     // What code returned can still run code of its own while it is read, a getter for one.
-    read = readHandles(said, objects.descriptors());
+    read = readHandles(said, objects.descriptors(), handleReach(scene.view));
   } catch (error) {
     problems.thrown("error", error);
     return;

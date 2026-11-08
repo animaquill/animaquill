@@ -1,6 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import {
   BLACK,
+  compositor,
   expectColor,
   field,
   goTo,
@@ -228,6 +229,54 @@ test("the anchor moves without the picture, and things turn around it then", asy
   await page.keyboard.press("Control+z");
   await expect(field(page, "锚点 X")).toHaveValue("50%");
   await expect(field(page, "位置 X")).toHaveValue("0");
+});
+
+/** How red the middle row of the picture is, every few pixels, as the compositor drew it. */
+async function middleRow(page: Page): Promise<readonly number[]> {
+  const frame = await compositor(page);
+  return frame.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const data = canvas?.getContext("2d")?.getImageData(0, 540, 1920, 1).data;
+    return data ? Array.from({ length: 480 }, (_, index) => data[index * 16] ?? 0) : [];
+  });
+}
+
+/** How many places differ by more than a little, which is where something moved. */
+const moved = (a: readonly number[], b: readonly number[]) =>
+  a.filter((value, index) => Math.abs(value - (b[index] ?? -999)) > 60).length;
+
+test("the anchor with keys of its own moves without moving the picture on any frame", async ({
+  page,
+}) => {
+  await placeImage(page);
+  await typeInto(field(page, "缩放"), "50");
+  await typeInto(field(page, "锚点 X"), "30");
+  await keyButton(page, "锚点 X").click();
+  await goTo(page, "0:02/00");
+  await typeInto(field(page, "锚点 X"), "70");
+  const frames = ["0:00/00", "0:00/15", "0:01/00", "0:01/20", "0:02/00", "0:03/00"];
+  const before: (readonly number[])[] = [];
+  for (const frame of frames) {
+    await goTo(page, frame);
+    await expect.poll(async () => (await middleRow(page)).length).toBe(480);
+    // The picture has to have got there: it is still if it reads the same twice.
+    let row = await middleRow(page);
+    await expect.poll(async () => moved((row = await middleRow(page)), row)).toBe(0);
+    before.push(row);
+  }
+  expect(moved(before[0] as number[], before[4] as number[])).toBeGreaterThan(10);
+  await goTo(page, "0:01/00");
+  const anchor = await middleOf(handle(page, "锚点"));
+  await page.keyboard.down("Alt");
+  await drag(page, anchor, { x: anchor.x - 40, y: anchor.y - 20 });
+  await page.keyboard.up("Alt");
+  await expect(field(page, "锚点 X")).not.toHaveValue("50%");
+  for (const [index, frame] of frames.entries()) {
+    await goTo(page, frame);
+    await expect
+      .poll(async () => moved(await middleRow(page), before[index] as number[]), { message: frame })
+      .toBeLessThanOrEqual(2);
+  }
 });
 
 test("keys on the position make a path, and dragging a key on it changes that key", async ({

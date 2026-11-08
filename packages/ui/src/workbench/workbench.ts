@@ -96,7 +96,7 @@ export class Workbench {
   readonly properties: PropertyWriter;
   readonly keyframes: KeyframeEditor;
   /** What scenes say about where the objects of their code are, for the handles on the picture. */
-  readonly sceneHandles = new SceneHandles();
+  readonly sceneHandles: SceneHandles;
   /** The handles on the picture of the preview. */
   readonly overlay: OverlayEditor;
   readonly input: InputMode;
@@ -340,6 +340,14 @@ export class Workbench {
       },
       this.registrations,
     );
+    this.sceneHandles = new SceneHandles({
+      tooMany: (clip, revision) =>
+        this.preview.noteProblem(clip, revision, {
+          kind: "api",
+          code: "handles-flood",
+          frame: 0,
+        }),
+    });
     this.overlay = new OverlayEditor({
       session: this.session,
       timeline: this.timeline,
@@ -349,6 +357,7 @@ export class Workbench {
       handles: this.sceneHandles,
       registrations: this.registrations,
       describe: this.keyframes.describe,
+      messages: { gone: () => this.notifications.push(t("notice.overlayGone")) },
     });
     this.#keepTrail();
     this.#keepPropertyProblems();

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   HANDLE_LIMITS,
   MIN_SCALE_FACTOR,
+  handleReach,
   readHandles,
   solveHandle,
   turnBetween,
@@ -334,5 +335,35 @@ describe("how far a pointer goes around", () => {
 
   it("is nothing for a place that is no place", () => {
     expect(turnBetween([0, 0], [Number.NaN, 0], [5, 5])).toBe(0);
+  });
+});
+
+describe("how far handles can be", () => {
+  const view = { width: 1920, height: 1080 };
+
+  it("goes by the size of the picture of the scene", () => {
+    const reach = handleReach(view);
+    expect(reach).toBe(19200);
+    const circle = (radius: number) =>
+      readHandles(
+        [{ object: "arm", handles: [{ kind: "circle", at: [0, 0], radius }] }],
+        [arm],
+        reach,
+      );
+    expect(circle(9000).objects).toHaveLength(1);
+    expect(circle(999999).problems).toEqual([{ code: "handle-point", target: "arm" }]);
+    const far = (x: number) =>
+      readHandles(
+        [{ object: "arm", handles: [{ kind: "move", id: "m", at: [x, 0], bind: { x: "x" } }] }],
+        [arm],
+        reach,
+      );
+    expect(far(15000).objects).toHaveLength(1);
+    expect(far(-30000).problems).toEqual([{ code: "handle-point", target: "arm.m" }]);
+  });
+
+  it("is never more than the most a place can be, whatever the picture", () => {
+    expect(handleReach({ width: 1e9, height: 1 })).toBe(HANDLE_LIMITS.reach);
+    expect(handleReach({ width: 0, height: 0 })).toBeGreaterThan(0);
   });
 });

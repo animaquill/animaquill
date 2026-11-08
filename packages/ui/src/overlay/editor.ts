@@ -1,10 +1,14 @@
 import {
   buildRenderPlan,
   channelOf,
+  clipEnd,
+  clipOffset,
+  clipStart,
   clockOf,
   cornersOf,
   effectiveProperties,
   entryOf,
+  handleReach,
   invert,
   isInside,
   multiply,
@@ -34,16 +38,27 @@ import {
   type RenderLayer,
   type RenderPlan,
 } from "@animaquill/core";
-import type { ObjectDescriptor, PropertySpec, PropertyValue } from "@animaquill/schema";
+import {
+  add,
+  compare,
+  formatTime,
+  subtract,
+  toSeconds,
+  type ObjectDescriptor,
+  type PropertySpec,
+  type PropertyValue,
+} from "@animaquill/schema";
 import { inspectProperty, writeEdit } from "../properties/inspect.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
 import type { TrialSession } from "../properties/trial.ts";
 import type { QualitySnapshot } from "../preview/quality.ts";
 import { withShown } from "../preview/link.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
+import { frameTime, type FrameRate } from "../timeline/frames.ts";
 import type { ClipBox, TimelineModel } from "../timeline/model.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { clipVisual } from "./clip-visual.ts";
+import type { FrameMoment } from "./compensate.ts";
 import {
   resizeCursor,
   type Binder,
@@ -54,7 +69,13 @@ import {
   type GripRole,
   type Mark,
 } from "./extension.ts";
-import { declarativeGesture, type Bound, type Gesture, type OverlayPointer } from "./gestures.ts";
+import {
+  declarativeGesture,
+  type Bound,
+  type Gesture,
+  type Live,
+  type OverlayPointer,
+} from "./gestures.ts";
 import type { SceneHandles } from "./scene-handles.ts";
 import { worldToScreen } from "./screen.ts";
 
@@ -126,6 +147,12 @@ export interface OverlaySources {
   };
   /** What a clip offers beyond what the editor knows by itself, as the properties tab has it. */
   readonly describe: (clip: ClipState) => ClipDescription | undefined;
+  readonly messages: OverlayMessages;
+}
+
+export interface OverlayMessages {
+  /** A drag stopped because what it changes went away, for an undo or in another window. */
+  gone(): void;
 }
 
 /** Moving less than this is a click, as on the timeline. */
@@ -195,6 +222,8 @@ interface Drag {
   /** What letting go without moving does. */
   readonly click: (() => void) | undefined;
   moved: boolean;
+  /** What it changes went away, and it stopped. */
+  stopped: boolean;
   edits: readonly PropertyEdit[];
 }
 
@@ -345,29 +374,55 @@ export class OverlayEditor {
     click: (() => void) | undefined,
   ): Drag {
     const unchanged = JSON.stringify(gesture?.edits(start) ?? []);
-    return { start, frame, what, gesture, unchanged, click, moved: false, edits: [] };
+    return {
+      start,
+      frame,
+      what,
+      gesture,
+      unchanged,
+      click,
+      moved: false,
+      stopped: false,
+      edits: [],
+    };
   }
 
   drag(pointer: OverlayPointer): void {
     const drag = this.#drag;
-    if (!drag) return;
+    if (!drag || drag.stopped) return;
     if (!drag.moved) {
       const distance = Math.hypot(pointer.x - drag.start.x, pointer.y - drag.start.y);
       if (distance < CLICK_REACH) return;
       drag.moved = true;
     }
     if (!drag.gesture) return;
-    drag.edits = drag.gesture.edits(pointer);
-    this.#sources.properties.preview(drag.edits);
+    const edits = drag.gesture.edits(pointer);
+    if (!edits) {
+      this.#stopDrag(drag);
+      return;
+    }
+    drag.edits = edits;
+    this.#sources.properties.preview(edits);
+  }
+
+  /** What a drag changes went away: what it showed goes, and people hear why nothing happened. */
+  #stopDrag(drag: Drag): void {
+    drag.stopped = true;
+    drag.edits = [];
+    this.#sources.properties.cancel();
+    this.#set({ dragging: undefined });
+    this.#sources.messages.gone();
   }
 
   release(pointer: OverlayPointer): void {
     const drag = this.#drag;
     if (!drag) return;
+    // What gets written is worked out from the properties as they are when it lets go.
     this.drag(pointer);
     this.#drag = undefined;
     this.#set({ dragging: undefined });
     const { properties } = this.#sources;
+    if (drag.stopped) return;
     if (!drag.moved) {
       properties.cancel();
       drag.click?.();
@@ -588,7 +643,9 @@ export class OverlayEditor {
       toScreen: frame.toScreen,
       toWorld: frame.toWorld,
       properties: shownProperties(box.clip, previewed),
+      clock: clockOf(layer, frame.seconds),
       fps: frame.model.rate.fps,
+      frames: (from, to) => framesOf(box.clip, frame.model.rate, from, to),
       fits: (point) => this.#fits(point),
     };
   }
@@ -661,24 +718,19 @@ export class OverlayEditor {
    * when the clip cannot change now.
    */
   #bound(frame: Frame, box: ClipBox, spec: PropertySpec, start: number): Bound | undefined {
-    const { trials } = this.#sources;
-    const view = { look: trials.look, comparing: trials.getSnapshot().comparing };
-    const { row, blocked, time } = inspectProperty(
-      frame.state,
-      frame.model,
-      box,
-      spec,
-      frame.frame,
-      view,
-    );
-    if (blocked) return undefined;
-    return {
-      path: spec.path,
-      spec,
-      start,
-      stored: row.stored,
-      write: (value) => writeEdit(box.id, row, time, value),
+    const now = (): Live | undefined => {
+      const { trials, session, timeline } = this.#sources;
+      const state = session.store?.getState();
+      const { model } = timeline;
+      const current = model?.boxes.get(box.id);
+      if (!state || !model || !current) return undefined;
+      const view = { look: trials.look, comparing: trials.getSnapshot().comparing };
+      const inspected = inspectProperty(state, model, current, spec, frame.frame, view);
+      const { row, blocked, time } = inspected;
+      if (blocked) return undefined;
+      return { stored: row.stored, write: (value) => writeEdit(box.id, row, time, value) };
     };
+    return now() && { path: spec.path, spec, start, now };
   }
 
   /** Dragging a clip itself, where it has no handle. */
@@ -706,10 +758,11 @@ export class OverlayEditor {
     const { handles, registrations, describe } = this.#sources;
     const registration = registrations.registrationOf(source.revision);
     const sceneFrame = sceneFrameOf(clockOf(layer, frame.seconds), frame.plan.scenes.fps);
-    const objects = handles.of(layer.id, source.revision, sceneFrame, registration);
-    if (objects.length === 0 || !registration) return;
     const settled = frame.settled.get(layer.id) ?? layer;
     const view = sceneViewOf(settled, frame.plan.stage);
+    const reach = handleReach(view);
+    const objects = handles.of(layer.id, source.revision, sceneFrame, registration, reach);
+    if (objects.length === 0 || !registration) return;
     const sceneToScreen = multiply(boxToScreen, sceneMatrix(view, placement.box));
     const toScene = invert(sceneToScreen);
     if (!toScene) return;
@@ -721,7 +774,7 @@ export class OverlayEditor {
       const registered = registration.objects.find(({ id }) => id === entry.object);
       const own = described.find(({ id }) => id === `object.${entry.object}`);
       if (!registered || !own) continue;
-      const specOf = (bind: string) => specFor(registered, own, bind);
+      const specOf = (bind: string) => specFor(registration, registered, own, bind);
       const valueOf = (bind: string) => {
         const spec = specOf(bind);
         return spec && numberIn(shown, spec, clock);
@@ -764,6 +817,8 @@ export class OverlayEditor {
     },
   ): Grip | undefined {
     const { name, onScreen, toScene, specOf, valueOf, shown, marks } = tools;
+    // What does not bind properties of its own object is no handle of it.
+    if ("id" in handle && bindsOf(handle).some((bind) => !specOf(bind))) return undefined;
     if (!("id" in handle)) {
       if (handle.kind === "circle") {
         const radius = this.#onScreenLength(onScreen, handle.at, handle.radius);
@@ -831,20 +886,68 @@ function bindsOf(handle: GrabHandle): readonly string[] {
   return [bind.x, bind.y].filter((name): name is string => name !== undefined);
 }
 
+/** The paths of everything a scene registered, by what it registered. */
+const registeredPaths = new WeakMap<Registration, ReadonlySet<string>>();
+
+function pathsOf(registration: Registration): ReadonlySet<string> {
+  let paths = registeredPaths.get(registration);
+  if (!paths) {
+    paths = new Set(
+      registration.objects.flatMap(({ id, properties }) =>
+        properties.map(({ path }) => objectPath(id, path)),
+      ),
+    );
+    registeredPaths.set(registration, paths);
+  }
+  return paths;
+}
+
 /**
  * The property a handle of a code object binds, as the clip has it: the description says where its
- * keys are, which can be a path the property went by before. Registered and described properties
- * come in the same order.
+ * keys are, which can be a path the property or its object went by before. Such a path is only this
+ * property's as long as no property that is registered now has it: a handle never writes the keys of
+ * another object. Registered and described properties come in the same order.
  */
 function specFor(
+  registration: Registration,
   registered: ObjectDescriptor,
   described: ObjectDescriptor,
   bind: string,
 ): PropertySpec | undefined {
   const index = registered.properties.findIndex(({ path }) => path === bind);
-  const spec = index < 0 ? undefined : described.properties[index];
-  if (!spec) return undefined;
-  const expected = objectPath(registered.id, bind);
-  // Anything else would be somebody else's property.
-  return spec.path === expected || spec.path.startsWith("object.") ? spec : undefined;
+  const property = registered.properties[index];
+  const spec = described.properties[index];
+  if (!property || !spec) return undefined;
+  if (spec.path === objectPath(registered.id, bind)) return spec;
+  const names = [bind, ...(property.aliases ?? [])];
+  const before = [
+    ...names.slice(1).map((name) => objectPath(registered.id, name)),
+    ...(registered.aliases ?? []).flatMap((was) => names.map((name) => objectPath(was, name))),
+  ];
+  return before.includes(spec.path) && !pathsOf(registration).has(spec.path) ? spec : undefined;
+}
+
+/** The most frames one change looks at: eleven minutes of a clip at 30 frames a second. */
+const MAX_FRAMES = 20000;
+
+/** The frames of the timeline that show a clip, from one reading of its clock to another. */
+function framesOf(clip: ClipState, rate: FrameRate, from: number, to: number): FrameMoment[] {
+  const start = clipStart(clip);
+  const end = clipEnd(clip);
+  const offset = clipOffset(clip);
+  const startSeconds = toSeconds(start);
+  const shift = startSeconds - toSeconds(offset);
+  const first = Math.max(from + shift, startSeconds);
+  const last = Math.min(to + shift, toSeconds(end));
+  if (!(last >= first)) return [];
+  const frames: FrameMoment[] = [];
+  const firstFrame = Math.max(Math.ceil(first * rate.fps - 1e-6), 0);
+  const lastFrame = Math.min(Math.floor(last * rate.fps + 1e-6), firstFrame + MAX_FRAMES);
+  for (let frame = firstFrame; frame <= lastFrame; frame += 1) {
+    const moment = frameTime(frame, rate);
+    if (compare(moment, start) < 0 || compare(moment, end) >= 0) continue;
+    const clock = add(offset, subtract(moment, start));
+    frames.push({ time: formatTime(clock), clock: toSeconds(clock) });
+  }
+  return frames;
 }

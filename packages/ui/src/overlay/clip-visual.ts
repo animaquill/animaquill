@@ -7,6 +7,7 @@ import {
   transformPoint,
   type GrabHandle,
   type HandlePoint,
+  type PathKey,
   type Point,
 } from "@animaquill/core";
 import {
@@ -111,33 +112,51 @@ function transformHandles(target: ExtensionTarget, marks: Mark[]): ExtensionHand
     at: anchorOnScreen,
     angle,
     cursor: "crosshair",
-    solve: (bind) => {
+    solve: (bind, pointer) => {
       const x = bind("transform.x", transform.x);
       const y = bind("transform.y", transform.y);
       const anchorX = bind("transform.anchorX", transform.anchorX);
       const anchorY = bind("transform.anchorY", transform.anchorY);
       if (!x || !y || !anchorX || !anchorY) return undefined;
-      return anchorGesture(
-        target.clip,
-        placement,
-        toScreen,
-        target.toWorld,
-        anchorStops(placement),
-        {
-          x,
-          y,
-          anchorX,
-          anchorY,
-        },
-      );
+      const { clip, clock, frames, toWorld } = target;
+      const stops = anchorStops(placement);
+      const place = { clip, placement, clock, toScreen, toWorld, stops, frames };
+      return anchorGesture(place, { x, y, anchorX, anchorY }, pointer);
     },
   });
   return handles;
 }
 
-/** The path that keys on the position make, with a handle for each key. */
+/** Keys that get a handle at most: more would be in each other's way, and take the page with them. */
+export const MAX_KEY_HANDLES = 200;
+/** How many keys around the playhead get looked at for those, at most. */
+const KEYS_LOOKED_AT = 4000;
+
+/** The keys nearest to the playhead that show on the overlay, nearest first. */
+function nearKeys(keys: readonly PathKey[], clock: number, shows: (key: PathKey) => boolean) {
+  let after = keys.findIndex((key) => key.clock >= clock);
+  if (after < 0) after = keys.length;
+  let before = after - 1;
+  const near: PathKey[] = [];
+  for (let looked = 0; looked < KEYS_LOOKED_AT && near.length < MAX_KEY_HANDLES; looked += 1) {
+    const earlier = keys[before];
+    const later = keys[after];
+    if (!earlier && !later) break;
+    const takeEarlier = earlier && (!later || clock - earlier.clock <= later.clock - clock);
+    const key = (takeEarlier ? earlier : later) as PathKey;
+    if (takeEarlier) before -= 1;
+    else after += 1;
+    if (shows(key)) near.push(key);
+  }
+  return near;
+}
+
+/**
+ * The path that keys on the position make, with a handle for each key near the playhead that shows
+ * on the overlay. A clip can have tens of thousands of keys, and a handle for each would be no use.
+ */
 function pathHandles(target: ExtensionTarget, marks: Mark[]): ExtensionHandle[] {
-  const { layer, placement, properties, toScreen, toWorld, fps, clip } = target;
+  const { layer, placement, properties, toScreen, toWorld, fps, clip, fits } = target;
   const path = motionPath(
     entryOf(properties, "transform.x"),
     entryOf(properties, "transform.y"),
@@ -152,20 +171,33 @@ function pathHandles(target: ExtensionTarget, marks: Mark[]): ExtensionHandle[] 
     points: path.points.map(onScreen),
     frames: path.frames.map(onScreen),
   });
-  return path.keys.map((key) => ({
-    id: `key ${key.time}`,
-    role: "key",
-    detail: key.time,
-    look: "key",
-    at: onScreen(key),
-    angle: 0,
-    cursor: "move",
-    solve: (bind, pointer) => {
-      const x = bind("transform.x", key.x);
-      const y = bind("transform.y", key.y);
-      return x && y ? pathKeyGesture(clip, key, toWorld, { x, y }, pointer) : undefined;
-    },
-  }));
+  const placed = new Map<PathKey, Point>();
+  const shows = (key: PathKey) => {
+    const at = onScreen(path.at(key.clock));
+    placed.set(key, at);
+    return fits(at);
+  };
+  return nearKeys(path.keys, target.clock, shows)
+    .toSorted((a, b) => a.clock - b.clock)
+    .map((key) => {
+      const world = path.at(key.clock);
+      const at = placed.get(key) as Point;
+      return {
+        id: `key ${key.time}`,
+        role: "key",
+        detail: key.time,
+        look: "key",
+        at,
+        angle: 0,
+        cursor: "move",
+        solve: (bind, pointer) => {
+          const x = bind("transform.x", world.x);
+          const y = bind("transform.y", world.y);
+          const spot = { ...key, ...world };
+          return x && y ? pathKeyGesture(clip, spot, toWorld, { x, y }, pointer) : undefined;
+        },
+      };
+    });
 }
 
 export const clipVisual: EditorExtension = {

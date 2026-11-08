@@ -380,6 +380,7 @@
     "keysComparing": "正在对比已保存的内容，关键帧不能改。关掉对比再试。",
     "comparing": "正在对比已保存的内容，不能修改。关掉对比再试。",
     "keysGone": "拖动中这个关键帧被撤销或在别处改掉了，这次拖动没有生效。",
+    "overlayGone": "拖动中要改的片段或关键帧被撤销或在别处改掉了，这次拖动没有生效。",
     "keysLocked": "轨道已锁定，这些关键帧不能改。",
     "keysNotShown": "选中的关键帧不在时间轴上。展开它们的片段，或者到关键帧选项卡里操作。"
   },
@@ -799,6 +800,7 @@
         "handle-kind": "手柄 {{target}} 的 kind 不对或者还不支持。现在能用 move、rotate、scale，和只显示的 line、polyline、circle",
         "handle-object": "{{target}} 没有用 aq.object 登记，它的手柄不能用",
         "handle-point": "{{target}} 的手柄里有位置或大小不是数字，或者离画面太远",
+        "handles-flood": "场景发来手柄位置的消息太多，后面的没有用上。只用 aq.object 的 handles 和 bounds，不要自己给编辑器发消息",
         "handles-too-many": "手柄太多（{{target}}），后面的没有显示",
         "import-map-scopes": "import map 的 scopes 不起作用",
         "missing-asset": "这个素材场景拿不到：{{target}}",

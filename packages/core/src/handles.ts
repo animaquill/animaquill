@@ -78,9 +78,31 @@ export const HANDLE_LIMITS = {
   handles: 64,
   /** Points of all lines together. */
   points: 256,
-  /** How far from the middle a place can be, in units. Further than that is no place on a picture. */
-  reach: 1e6,
+  /**
+   * How far from the middle a place or a radius can be in any case, in units. A scene gets less than
+   * that, by the size of its picture: see `handleReach`.
+   */
+  reach: 1e5,
 } as const;
+
+/** How many times the size of its picture the handles of a scene can reach from its middle. */
+export const HANDLE_REACH_PICTURES = 10;
+
+/**
+ * How far from the middle of a scene its handles can be, and how large a circle can be: some times
+ * the long side of its picture, which is far more than anybody can grab, and keeps what gets drawn
+ * of them in proportion to the picture.
+ */
+export function handleReach({
+  width,
+  height,
+}: {
+  readonly width: number;
+  readonly height: number;
+}) {
+  const side = Math.max(width, height, 1);
+  return Math.min(side * HANDLE_REACH_PICTURES, HANDLE_LIMITS.reach);
+}
 
 /** Each of these is a code of a problem of the scene too, so they say what they are about. */
 export type HandleProblemCode =
@@ -110,16 +132,17 @@ const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown
 const field = (value: unknown, name: string): unknown =>
   isPlainObject(value) && Object.hasOwn(value, name) ? value[name] : undefined;
 
-const isPlace = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= HANDLE_LIMITS.reach;
+const isPlace = (value: unknown, reach: number): value is number =>
+  typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= reach;
 
-function pointOf(value: unknown): HandlePoint | undefined {
+function pointOf(value: unknown, reach: number): HandlePoint | undefined {
   if (!Array.isArray(value) || value.length !== 2) return undefined;
   const [x, y] = value as unknown[];
-  return isPlace(x) && isPlace(y) ? [x, y] : undefined;
+  return isPlace(x, reach) && isPlace(y, reach) ? [x, y] : undefined;
 }
 
-const isRadius = (value: unknown): value is number => isPlace(value) && value > 0;
+const isRadius = (value: unknown, reach: number): value is number =>
+  isPlace(value, reach) && value > 0;
 
 /** Kinds that are part of the design but do not work yet. They are said to be missing, not wrong. */
 const LATER = new Set(["custom", "move3d", "rotate3d"]);
@@ -140,6 +163,7 @@ interface Reading {
   readonly properties: ReadonlyMap<string, PropertySpec>;
   readonly ids: Set<string>;
   readonly room: Room;
+  readonly reach: number;
   readonly report: Report;
 }
 
@@ -164,14 +188,14 @@ function readGrab(
   kind: GrabHandle["kind"],
   reading: Reading,
 ): GrabHandle | undefined {
-  const { object, ids, report } = reading;
+  const { object, ids, reach, report } = reading;
   const id = field(raw, "id");
   if (!isIdPart(id) || ids.has(id)) {
     report("handle-id", `${object}.${typeof id === "string" ? id.slice(0, 64) : "?"}`);
     return undefined;
   }
   const where = `${object}.${id}`;
-  const at = pointOf(field(raw, "at"));
+  const at = pointOf(field(raw, "at"), reach);
   if (!at) {
     report("handle-point", where);
     return undefined;
@@ -183,14 +207,14 @@ function readGrab(
     handle = bind && { kind, id, at, bind };
   } else if (kind === "rotate") {
     const radius = field(raw, "radius");
-    if (!isRadius(radius)) {
+    if (!isRadius(radius, reach)) {
       report("handle-point", where);
       return undefined;
     }
     const bind = bindOf(rawBind, reading);
     handle = bind === undefined ? undefined : { kind, id, at, radius, bind };
   } else {
-    const center = pointOf(field(raw, "center"));
+    const center = pointOf(field(raw, "center"), reach);
     if (!center) {
       report("handle-point", where);
       return undefined;
@@ -205,11 +229,11 @@ function readGrab(
 
 /** A handle that only shows. What has too many points keeps as many as there is room for. */
 function readShape(raw: unknown, kind: string, reading: Reading): HandleSpec | undefined {
-  const { object, room, report } = reading;
+  const { object, room, reach, report } = reading;
   if (kind === "circle") {
-    const at = pointOf(field(raw, "at"));
+    const at = pointOf(field(raw, "at"), reach);
     const radius = field(raw, "radius");
-    if (at && isRadius(radius)) return { kind, at, radius };
+    if (at && isRadius(radius, reach)) return { kind, at, radius };
     report("handle-point", object);
     return undefined;
   }
@@ -221,7 +245,7 @@ function readShape(raw: unknown, kind: string, reading: Reading): HandleSpec | u
   const list = Array.isArray(given) ? given : [];
   const points: HandlePoint[] = [];
   for (const entry of list) {
-    const point = pointOf(entry);
+    const point = pointOf(entry, reach);
     if (!point) {
       report("handle-point", object);
       return undefined;
@@ -252,10 +276,11 @@ function readHandle(raw: unknown, reading: Reading): HandleSpec | undefined {
   return undefined;
 }
 
-function readBounds(raw: unknown): ObjectHandles["bounds"] {
+function readBounds(raw: unknown, reach: number): ObjectHandles["bounds"] {
   if (!Array.isArray(raw) || raw.length !== 4) return undefined;
   const [x, y, width, height] = raw as unknown[];
-  const fits = isPlace(x) && isPlace(y) && isPlace(width) && isPlace(height);
+  const fits =
+    isPlace(x, reach) && isPlace(y, reach) && isPlace(width, reach) && isPlace(height, reach);
   return fits && width >= 0 && height >= 0 ? [x, y, width, height] : undefined;
 }
 
@@ -271,9 +296,14 @@ const MAX_PROBLEMS = 50;
  * Reads what a scene says about where its objects are and what can be grabbed of them, against what
  * it registered: a handle can only bind numbers of its own object, which keeps it away from other
  * objects, other clips and the transform of its clip. What comes out is new data that only has what
- * makes sense, cut down to `HANDLE_LIMITS`, and every problem says what got left out.
+ * makes sense, cut down to `HANDLE_LIMITS` and to `reach`, see `handleReach`, and every problem
+ * says what got left out.
  */
-export function readHandles(raw: unknown, registered: readonly ObjectDescriptor[]): ReadHandles {
+export function readHandles(
+  raw: unknown,
+  registered: readonly ObjectDescriptor[],
+  reach: number = HANDLE_LIMITS.reach,
+): ReadHandles {
   const problems: HandleProblem[] = [];
   const seen = new Set<string>();
   const report: Report = (code, target) => {
@@ -301,10 +331,11 @@ export function readHandles(raw: unknown, registered: readonly ObjectDescriptor[
       properties: new Map(descriptor.properties.map((spec) => [spec.path, spec])),
       ids: new Set(),
       room,
+      reach: Math.min(reach, HANDLE_LIMITS.reach),
       report,
     };
     const rawBounds = field(entry, "bounds");
-    const bounds = rawBounds === undefined ? undefined : readBounds(rawBounds);
+    const bounds = rawBounds === undefined ? undefined : readBounds(rawBounds, reading.reach);
     if (rawBounds !== undefined && !bounds) report("handle-bounds", descriptor.id);
     const given = field(entry, "handles");
     const list = Array.isArray(given) ? given : [];

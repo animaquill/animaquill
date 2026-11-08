@@ -1,5 +1,6 @@
-import type { Point } from "@animaquill/core";
+import type { Point, Rect } from "@animaquill/core";
 import type { Grip, Mark, OverlaySnapshot } from "./editor.ts";
+import { visibleCircle, visibleLines } from "./visible.ts";
 
 /** Canvas cannot read CSS variables, so the colours come over once. */
 export interface OverlayTheme {
@@ -36,17 +37,53 @@ const ANCHOR_ARM = 10;
 const FRAME_DOT = 1.5;
 /** Dots closer than this would only make a thicker line. */
 const MIN_FRAME_GAP = 4;
+/** How far past the edges lines still go, so that they do not stop short of them. */
+const MARGIN = 16;
 
 type Context = CanvasRenderingContext2D;
 
-function trace(context: Context, points: readonly Point[], closed: boolean): void {
+/**
+ * Lines through points, as far as they show: a scene can make them reach far past the picture,
+ * and only what shows is worth any time.
+ */
+function trace(context: Context, area: Rect, points: readonly Point[], closed: boolean): boolean {
+  const lines = visibleLines(points, area, closed);
+  if (lines.length === 0) return false;
   context.beginPath();
-  points.forEach(({ x, y }, index) => {
-    if (index === 0) context.moveTo(x, y);
-    else context.lineTo(x, y);
-  });
-  if (closed) context.closePath();
+  for (const line of lines) {
+    line.forEach(({ x, y }, index) => {
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+  }
+  return true;
 }
+
+/** A circle, as far as it shows: a scene can make it far larger than the picture. */
+function circle(context: Context, area: Rect, at: Point, radius: number): boolean {
+  const shown = visibleCircle(at, radius, area);
+  if (shown === "whole") {
+    context.beginPath();
+    context.arc(at.x, at.y, radius, 0, Math.PI * 2);
+    return true;
+  }
+  return drawArcs(context, shown);
+}
+
+function drawArcs(context: Context, arcs: readonly (readonly Point[])[]): boolean {
+  if (arcs.length === 0) return false;
+  context.beginPath();
+  for (const arc of arcs) {
+    arc.forEach(({ x, y }, index) => {
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+  }
+  return true;
+}
+
+const isOn = ({ x, y }: Point, area: Rect) =>
+  x >= area.x && y >= area.y && x <= area.x + area.width && y <= area.y + area.height;
 
 /** A line with a darker one under it. */
 function stroke(context: Context, theme: OverlayTheme, color: string, dashed = false): void {
@@ -61,23 +98,22 @@ function stroke(context: Context, theme: OverlayTheme, color: string, dashed = f
   context.setLineDash([]);
 }
 
-function paintMark(context: Context, theme: OverlayTheme, mark: Mark): void {
+function paintMark(context: Context, theme: OverlayTheme, area: Rect, mark: Mark): void {
   switch (mark.kind) {
     case "outline":
-      trace(context, mark.corners, true);
+      if (!trace(context, area, mark.corners, true)) return;
       if (mark.style === "target") stroke(context, theme, theme.line);
       else stroke(context, theme, mark.style === "locked" ? theme.muted : theme.line, true);
       return;
     case "stem":
-      trace(context, [mark.from, mark.to], false);
-      stroke(context, theme, theme.line);
+      if (trace(context, area, [mark.from, mark.to], false)) stroke(context, theme, theme.line);
       return;
     case "path": {
-      trace(context, mark.points, false);
-      stroke(context, theme, theme.path);
+      if (trace(context, area, mark.points, false)) stroke(context, theme, theme.path);
       let last: Point | undefined;
       context.fillStyle = theme.path;
       for (const point of mark.frames) {
+        if (!isOn(point, area)) continue;
         if (last && Math.hypot(point.x - last.x, point.y - last.y) < MIN_FRAME_GAP) continue;
         last = point;
         context.beginPath();
@@ -87,17 +123,15 @@ function paintMark(context: Context, theme: OverlayTheme, mark: Mark): void {
       return;
     }
     case "bounds":
-      trace(context, mark.corners, true);
-      stroke(context, theme, theme.muted, true);
+      if (trace(context, area, mark.corners, true)) stroke(context, theme, theme.muted, true);
       return;
     case "line":
-      trace(context, mark.points, mark.closed);
-      stroke(context, theme, theme.line);
+      if (trace(context, area, mark.points, mark.closed)) stroke(context, theme, theme.line);
       return;
     case "ring":
-      context.beginPath();
-      context.arc(mark.at.x, mark.at.y, Math.max(mark.radius, 1), 0, Math.PI * 2);
-      stroke(context, theme, theme.line, true);
+      if (circle(context, area, mark.at, Math.max(mark.radius, 1))) {
+        stroke(context, theme, theme.line, true);
+      }
   }
 }
 
@@ -175,8 +209,14 @@ export function paintOverlay(
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.lineJoin = "round";
-  for (const mark of scene.marks) paintMark(context, theme, mark);
+  const area = {
+    x: -MARGIN,
+    y: -MARGIN,
+    width: canvas.width / ratio + MARGIN * 2,
+    height: canvas.height / ratio + MARGIN * 2,
+  };
+  for (const mark of scene.marks) paintMark(context, theme, area, mark);
   for (const grip of scene.grips) {
-    paintGrip(context, theme, grip, grip.id === (dragging ?? hovered));
+    if (isOn(grip.at, area)) paintGrip(context, theme, grip, grip.id === (dragging ?? hovered));
   }
 }

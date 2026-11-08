@@ -1,5 +1,6 @@
 import type { GrabHandle, Matrix, Placement, Point, RenderLayer } from "@animaquill/core";
 import type { PropertyValue } from "@animaquill/schema";
+import type { FrameMoment } from "./compensate.ts";
 import type { Bound, Gesture, OverlayPointer } from "./gestures.ts";
 
 /**
@@ -57,8 +58,12 @@ export interface ExtensionTarget {
   readonly toWorld: Matrix;
   /** What the clip shows: its properties with what is being tried or dragged on top. */
   readonly properties: Readonly<Record<string, PropertyValue>>;
+  /** The clock of the clip at the playhead. */
+  readonly clock: number;
   /** Frames per second of the project, for what goes frame by frame. */
   readonly fps: number;
+  /** The frames of the clip from one reading of its clock to another, as far as it shows. */
+  readonly frames: (from: number, to: number) => readonly FrameMoment[];
   /** Whether a place on the overlay can be seen and grabbed. */
   readonly fits: (point: Point) => boolean;
 }

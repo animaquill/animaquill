@@ -128,41 +128,64 @@ export interface MotionPath {
   readonly points: readonly Point[];
   /** Where it is at each frame, to show how fast it goes. */
   readonly frames: readonly Point[];
-  readonly keys: readonly (PathKey & Point)[];
+  /** Every moment either direction has a key, within what the clip shows, in time order. */
+  readonly keys: readonly PathKey[];
+  /** Where the anchor is at a reading of the clock. */
+  readonly at: (clock: number) => Point;
 }
 
 /** More than a path needs to look smooth, and few enough to draw on every move of a drag. */
 const MAX_PATH_POINTS = 2000;
 const MAX_FRAME_DOTS = 600;
+/** Moments closer than this on the clock are compared exactly. */
+const CLOSE = 1e-6;
 
 const keysOf = (value: PropertyValue | undefined): readonly Key[] =>
   value !== undefined && isAnimation(value) ? value.keys : [];
 
-/** The keys of both directions, by moment, within a stretch of the clock. */
+/**
+ * The keys of both directions by moment, within a stretch of the clock. Keys are in time order, so
+ * this goes through both once, however many there are.
+ */
 function pathKeys(x: readonly Key[], y: readonly Key[], from: number, to: number): PathKey[] {
-  const all = [
-    ...x.map((key) => ({ key, axis: "x" as const })),
-    ...y.map((key) => ({ key, axis: "y" as const })),
-  ]
-    .map((entry) => ({ ...entry, moment: parseTime(entry.key.time) }))
-    .toSorted((a, b) => compare(a.moment, b.moment));
   const keys: PathKey[] = [];
-  for (const { key, axis, moment } of all) {
-    const clock = secondsOf(key.time);
-    if (!(clock >= from - 1e-9 && clock <= to + 1e-9)) continue;
-    const last = keys.at(-1);
-    const hasX = axis === "x";
-    if (last && compare(parseTime(last.time), moment) === 0) {
-      keys[keys.length - 1] = { ...last, ...(hasX ? { hasX } : { hasY: true }) };
-    } else keys.push({ time: key.time, clock, hasX, hasY: !hasX });
+  let atX = 0;
+  let atY = 0;
+  while (atX < x.length || atY < y.length) {
+    const keyX = x[atX];
+    const keyY = y[atY];
+    const clockX = keyX ? secondsOf(keyX.time) : Number.POSITIVE_INFINITY;
+    const clockY = keyY ? secondsOf(keyY.time) : Number.POSITIVE_INFINITY;
+    let order = clockX - clockY;
+    if (keyX && keyY && Math.abs(order) < CLOSE) {
+      order = compare(parseTime(keyX.time), parseTime(keyY.time));
+    }
+    const hasX = order <= 0;
+    const hasY = order >= 0;
+    const key = (hasX ? keyX : keyY) as Key;
+    const clock = hasX ? clockX : clockY;
+    if (clock >= from - 1e-9 && clock <= to + 1e-9)
+      keys.push({ time: key.time, clock, hasX, hasY });
+    if (hasX) atX += 1;
+    if (hasY) atY += 1;
   }
   return keys;
+}
+
+/** The first and last moment of keys in time order, in seconds. */
+function spanOf(keys: readonly Key[]): readonly [number, number] {
+  const first = keys[0];
+  const last = keys.at(-1);
+  return first && last
+    ? [secondsOf(first.time), secondsOf(last.time)]
+    : [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
 }
 
 /**
  * The path the anchor of a clip takes because of keys on its position, from the first key to the
  * last one within the part of the clock that the clip shows. Worked out with `curve.ts`, the way the
- * compositor does. Nothing when neither direction has keys.
+ * compositor does. Nothing when neither direction has keys. However many keys there are, the path
+ * has a few thousand points at most: a path through more keys than that goes near them.
  */
 export function motionPath(
   x: PropertyValue | undefined,
@@ -180,22 +203,21 @@ export function motionPath(
     x: numberAt(xChannel, clock, fallback.x),
     y: numberAt(yChannel, clock, fallback.y),
   });
-  const times = [...xKeys, ...yKeys].map((key) => secondsOf(key.time)).filter(Number.isFinite);
-  const from = Math.max(Math.min(...times), shown.from);
-  const to = Math.min(Math.max(...times), shown.to);
-  const keys = pathKeys(xKeys, yKeys, shown.from, shown.to).map((key) => ({
-    ...key,
-    ...at(key.clock),
-  }));
-  if (!(to >= from)) return { points: [], frames: [], keys };
+  const [firstX, lastX] = spanOf(xKeys);
+  const [firstY, lastY] = spanOf(yKeys);
+  const from = Math.max(Math.min(firstX, firstY), shown.from);
+  const to = Math.min(Math.max(lastX, lastY), shown.to);
+  const keys = pathKeys(xKeys, yKeys, shown.from, shown.to);
+  if (!(to >= from)) return { points: [], frames: [], keys, at };
   const step = Math.max((to - from) / MAX_PATH_POINTS, 1 / Math.max(fps, 1) / 4);
   const clocks = new Set<number>();
   for (let clock = from; clock < to; clock += step) clocks.add(clock);
   clocks.add(to);
-  for (const key of keys) clocks.add(key.clock);
+  // Through the keys, as long as there are not more of them than points.
+  if (keys.length <= MAX_PATH_POINTS) for (const key of keys) clocks.add(key.clock);
   const points = [...clocks].toSorted((a, b) => a - b).map(at);
   const frameStep = Math.max(1 / Math.max(fps, 1), (to - from) / MAX_FRAME_DOTS);
   const frames: Point[] = [];
   for (let clock = from; clock <= to + 1e-9; clock += frameStep) frames.push(at(clock));
-  return { points, frames, keys };
+  return { points, frames, keys, at };
 }
