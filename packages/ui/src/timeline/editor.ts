@@ -31,6 +31,7 @@ import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
 import {
   EndGesture,
+  FadeGesture,
   MarqueeGesture,
   MoveGesture,
   RazorGesture,
@@ -38,8 +39,10 @@ import {
   TrimGesture,
   copiesOf,
   cutAt,
+  fadeCall,
   freeShift,
   type ClipCopy,
+  type FadeSide,
   type Gesture,
   type GestureHost,
   type Placed,
@@ -49,7 +52,9 @@ import {
 import {
   NO_ROOM_BELOW,
   buildModel,
+  canFade,
   clipAt,
+  fadesOf,
   firstEndingAfter,
   forEachBetween,
   isInsideClip,
@@ -70,6 +75,8 @@ const EXPANDER_HEIGHT = 24;
 const EDGE_REACH = 7;
 /** A fingertip covers more than a mouse pointer. */
 const TOUCH_EDGE_REACH = 16;
+/** How far down from the top of a track the handles of fades reach: the height they show at. */
+const FADE_HANDLE_REACH = 10;
 const SNAP_REACH = 8;
 /**
  * Room after the end of the timeline, as a share of its length: clips need somewhere to go. Not in
@@ -125,6 +132,8 @@ export type Hit =
       readonly row: Row;
       readonly box: ClipBox;
       readonly edge?: "start" | "end";
+      /** On the handle at a top corner that says how long the clip fades in or out. */
+      readonly fade?: FadeSide;
       /** On the button for what shows under the track. */
       readonly expander?: boolean;
     }
@@ -1429,9 +1438,44 @@ export class TimelineEditor implements TouchTarget {
     const fromEnd = this.xAt(box.end) - x;
     if (this.#onExpander(box, row, x, y)) return { kind: "clip", row, box, expander: true };
     if (row.track.locked || this.#snapshot.tool !== "select") return { kind: "clip", row, box };
+    const fade = this.#fadeAt(box, row, x, y);
+    if (fade) return { kind: "clip", row, box, fade };
     if (fromStart <= reach) return { kind: "clip", row, box, edge: "start" };
     if (fromEnd <= reach) return { kind: "clip", row, box, edge: "end" };
     return { kind: "clip", row, box };
+  }
+
+  /**
+   * Which fade handle is under the pointer: they are at the top of a clip, where each fade ends, as
+   * in most video editors. Over the trim edges, which still have the rest of the height.
+   */
+  #fadeAt(box: ClipBox, row: Row, x: number, y: number): FadeSide | undefined {
+    if (!canFade(row.track) || this.laneAt(y) - row.top >= FADE_HANDLE_REACH) return undefined;
+    const fades = fadesOf(box.clip);
+    const reach = this.#edgeReach;
+    const fromIn = Math.abs(x - this.xAt(box.start + fades.in));
+    const fromOut = Math.abs(x - this.xAt(box.end - fades.out));
+    if (fromIn > reach && fromOut > reach) return undefined;
+    return fromIn <= fromOut ? "in" : "out";
+  }
+
+  /** Whether clips of a row show the handles of their fades: only where they can be dragged. */
+  showsFadeHandles(row: Row): boolean {
+    return canFade(row.track) && row.track.locked !== true && this.#snapshot.tool === "select";
+  }
+
+  /**
+   * Says how long a clip fades in or out, in one step, as the handles on the timeline do. It goes
+   * as far as the other fade lets it. Says whether anything changed.
+   */
+  setFade(clip: string, side: FadeSide, length: Rational): boolean {
+    const { model } = this;
+    const [id] = this.#changeable([clip], model);
+    const box = id === undefined ? undefined : model?.boxes.get(id);
+    const row = model?.rowOfClip.get(clip);
+    if (!model || !box || !row || !canFade(row.track)) return false;
+    const call = fadeCall(model.id, box.clip, side, length);
+    return call !== undefined && this.#run([call]);
   }
 
   /** Whether a clip shows the button for what is under its track. */
@@ -1471,7 +1515,7 @@ export class TimelineEditor implements TouchTarget {
       hit.kind !== before.kind ||
       (hit.kind === "clip" &&
         before.kind === "clip" &&
-        (hit.box !== before.box || hit.edge !== before.edge));
+        (hit.box !== before.box || hit.edge !== before.edge || hit.fade !== before.fade));
     if (changed || razorAt !== this.#razorAt) {
       this.#razorAt = razorAt;
       this.#viewEmitter.emit();
@@ -1491,6 +1535,7 @@ export class TimelineEditor implements TouchTarget {
     if (hit.kind !== "clip") return "default";
     if (hit.expander) return "pointer";
     if (this.#snapshot.tool === "razor") return "crosshair";
+    if (hit.fade) return "col-resize";
     return hit.edge ? "ew-resize" : "default";
   }
 
@@ -1514,7 +1559,9 @@ export class TimelineEditor implements TouchTarget {
       !hit.row.track.locked &&
       selection.has(hit.box.id) &&
       tool === "select";
-    if (hit.kind === "ruler" || hit.kind === "end" || (selected && hit.edge)) return "grab";
+    if (hit.kind === "ruler" || hit.kind === "end" || (selected && (hit.edge || hit.fade))) {
+      return "grab";
+    }
     return selected ? "selected" : "plain";
   }
 
@@ -1564,9 +1611,14 @@ export class TimelineEditor implements TouchTarget {
   }
 
   #pressClip(hit: Extract<Hit, { kind: "clip" }>, pointer: Pointer): void {
-    const { box, row, edge } = hit;
+    const { box, row, edge, fade } = hit;
     if (this.#snapshot.tool === "razor") {
       this.#gesture = new RazorGesture(this.#host, row, pointer);
+      return;
+    }
+    if (fade) {
+      this.#select(this.#withLinked(new Set([box.id])));
+      this.#gesture = new FadeGesture(this.#host, box, fade, pointer);
       return;
     }
     if (edge) {

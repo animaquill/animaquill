@@ -81,6 +81,18 @@
   padding: 6px 4px 10px 10px;
 }
 
+.fades {
+  display: grid;
+  flex: none;
+  gap: 1px;
+  padding: 6px 4px 6px 10px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.fades .objectName {
+  margin-top: 0;
+}
+
 .rows[data-readonly] .number,
 .rows[data-readonly] .choice {
   color: var(--aq-text-muted);

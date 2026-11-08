@@ -102,4 +102,75 @@ describe("automatic handles", () => {
     };
     expect(withAutoTangents(words)).toBe(words);
   });
+
+  describe("of vectors, whose parts share their handles", () => {
+    const vector = (time: string, value: number[], extra: Partial<Key> = {}): Key => ({
+      ...auto(time, 0, extra),
+      value,
+    });
+    const part = (animation: Animation, index: number): Animation => ({
+      keys: animation.keys.map((key) => ({
+        ...key,
+        value: (key.value as number[])[index] as number,
+      })),
+    });
+
+    it("come out as for a number when only one part moves", () => {
+      const numbers = [0, 10, 30, 31];
+      const times = ["0", "1", "3", "4"];
+      const worked = withAutoTangents({
+        keys: times.map((time, index) =>
+          vector(time, [numbers[index] as number, 5], index === 3 ? { interp: undefined } : {}),
+        ),
+      });
+      const alone = withAutoTangents({
+        keys: times.map((time, index) =>
+          auto(time, numbers[index] as number, index === 3 ? { interp: undefined } : {}),
+        ),
+      });
+      worked.keys.forEach((key, index) => {
+        expect(key.in).toEqual(alone.keys[index]?.in);
+        expect(key.out).toEqual(alone.keys[index]?.out);
+      });
+      expect(worked.keys[1]?.out?.[1]).toBeGreaterThan(0);
+    });
+
+    it("are flat where every part has a peak or a valley", () => {
+      const worked = withAutoTangents({
+        keys: [
+          vector("0", [0, 0]),
+          vector("1", [10, -4]),
+          vector("2", [5, 2], { interp: undefined }),
+        ],
+      });
+      expect(worked.keys[1]?.in).toEqual([0.666667, 1]);
+      expect(worked.keys[1]?.out).toEqual([0.333333, 0]);
+    });
+
+    it("go in between where the parts disagree, weighed by how far each goes", () => {
+      // x turns around at the middle key, y goes on rising, and y goes further.
+      const keys = [vector("0", [0, 0]), vector("1", [2, 10]), vector("2", [0, 20])];
+      const worked = withAutoTangents({
+        keys: [...keys.slice(0, 2), { ...(keys[2] as Key), interp: undefined }],
+      });
+      const rising = withAutoTangents({
+        keys: [auto("0", 0), auto("1", 10), auto("2", 20, { interp: undefined })],
+      });
+      const out = worked.keys[1]?.out?.[1] as number;
+      expect(out).toBeGreaterThan(0);
+      expect(out).toBeLessThan(rising.keys[1]?.out?.[1] as number);
+      // No part swings past the keys around it.
+      for (const index of [0, 1]) {
+        const values = valuesBetween(part(worked, index), 0, 2);
+        const ends = part(worked, index).keys.map(({ value }) => value as number);
+        expect(Math.max(...values)).toBeLessThanOrEqual(Math.max(...ends) + 1e-9);
+        expect(Math.min(...values)).toBeGreaterThanOrEqual(Math.min(...ends) - 1e-9);
+      }
+    });
+
+    it("leave vectors alone whose keys do not have the same parts", () => {
+      const uneven: Animation = { keys: [vector("0", [0, 0]), vector("1", [1, 2, 3])] };
+      expect(withAutoTangents(uneven)).toBe(uneven);
+    });
+  });
 });

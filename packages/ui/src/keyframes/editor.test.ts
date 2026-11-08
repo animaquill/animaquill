@@ -1,11 +1,12 @@
 import {
   clipNodeOf,
+  componentKeys,
   orderedTracks,
   sceneSourceOf,
   secondsOf,
   type PropertyEdit,
 } from "@animaquill/core";
-import { formatTime, parseTime, type Animation } from "@animaquill/schema";
+import { formatTime, parseTime, type Animation, type Key } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { writeEdit } from "../properties/inspect.ts";
 import { SceneRegistrations } from "../properties/registrations.ts";
@@ -33,6 +34,7 @@ import {
   type Lane,
 } from "./lanes.ts";
 import type { ShownHandle } from "./area.ts";
+import { handlePoint, type CurvePoint } from "./handles.ts";
 import { KeySelection, type KeyRef } from "./selection.ts";
 
 const WIDTH = 1000;
@@ -1423,7 +1425,7 @@ describe("handles", () => {
 
   it("say how a key changes them, and automatic ones follow what moves around them", async () => {
     const { keyframes, keysNow, panel, at } = await selectedKey();
-    expect(keyframes.selectedTangent).toBe("aligned");
+    expect(keyframes.selectedTangent()).toBe("aligned");
     // Automatic only changes the handles of a bezier, and leaves a straight line as it is.
     keyframes.setTangent("auto");
     expect(keysNow()[1]).toEqual({ time: "2", value: 100, tangent: "auto" });
@@ -1437,7 +1439,7 @@ describe("handles", () => {
     keyframes.select(KeySelection.of([{ clip: "a", path: X, time: "2" }]));
     expect(keysNow()[1]?.tangent).toBe("broken");
     keyframes.setTangent("auto");
-    expect(keyframes.selectedTangent).toBe("auto");
+    expect(keyframes.selectedTangent()).toBe("auto");
     const smooth = keysNow()[1];
     expect(smooth).toMatchObject({ interp: "bezier", tangent: "auto" });
     expect(smooth?.out).not.toEqual([0.42, 0]);
@@ -2751,6 +2753,39 @@ describe("parts of a vector", () => {
     ]);
     store.undo();
     expect(keysNow()[0]?.interp).toBeUndefined();
+  });
+
+  it("works out and lines up the handles all parts share, in the part people look at", async () => {
+    const { keyframes, keysNow, values, store, edit } = await vector();
+    // X goes on rising through the middle key, Y has a valley there.
+    edit({ owner: { clip: "c" }, path: P, op: "setKey", time: "2", value: [100, 0] });
+    const times = ["1", "2", "3"].map((time) => ({ clip: "c", path: P, time }));
+    keyframes.select(KeySelection.of(times));
+    keyframes.setEase({ interp: "bezier", out: [0.42, 0], in: [0.58, 1] });
+    const middle = KeySelection.of([{ clip: "c", path: P, time: "2" }]);
+    keyframes.select(middle);
+    keyframes.setTangent("auto");
+    expect(keyframes.selectedTangent()).toBe("auto");
+    expect(keysNow()[1]).toMatchObject({ tangent: "auto", interp: "bezier" });
+    expect(keysNow()[1]?.out).not.toEqual([0.42, 0]);
+    const slope = (index: number, side: "in" | "out") => {
+      const keys = componentKeys(keysNow(), index) as Key[];
+      const point = handlePoint(keys, 1, side) as CurvePoint;
+      return (point.v - (keys[1]?.value as number)) / (point.t - 2);
+    };
+    for (const index of [0, 1]) {
+      keyframes.setTangent("aligned", index);
+      expect(keyframes.selectedTangent(index)).toBe("aligned");
+      expect(slope(index, "in")).toBeCloseTo(slope(index, "out"), 3);
+    }
+    expect(values().map(([, value]) => value)).toEqual([
+      [0, 100],
+      [100, 0],
+      [200, 50],
+    ]);
+    store.undo();
+    store.undo();
+    expect(keysNow()[1]?.tangent).toBe("auto");
   });
 
   it("remembers rows of parts made taller, apart from each other", async () => {

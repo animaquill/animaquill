@@ -17,6 +17,29 @@ const ROW_HEIGHTS: Readonly<Record<TrackState["kind"], number>> = {
   audio: 44,
 };
 
+/**
+ * Whether clips on a track can fade in and out. The picture does that with `fadeIn` and `fadeOut`,
+ * and what the sound plays has no fades yet, so sound tracks leave them out.
+ */
+export const canFade = (track: TrackState): boolean => track.kind === "video";
+
+/** A length of a fade in seconds. What is no length, or not readable, is no fade. */
+function fadeSeconds(time: string | undefined): number {
+  if (time === undefined) return 0;
+  try {
+    const seconds = toSeconds(parseTime(time));
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** How long a clip fades in and out, in seconds, for drawing and finding the handles. */
+export const fadesOf = (clip: ClipState): { readonly in: number; readonly out: number } => ({
+  in: fadeSeconds(clip.fadeIn),
+  out: fadeSeconds(clip.fadeOut),
+});
+
 /** How much room tracks need under their clips. */
 export type RoomBelow = ReadonlyMap<string, number>;
 

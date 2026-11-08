@@ -13,6 +13,7 @@ import {
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
 import {
   clipAt,
+  fadesOf,
   forEachBetween,
   isInsideClip,
   type ClipBox,
@@ -63,6 +64,8 @@ export interface Preview {
   readonly end?: number;
   /** Clips stay where they are, and what `clips` shows are copies. */
   readonly copying?: boolean;
+  /** How long a clip fades in and out while a handle of it is dragged, in seconds. */
+  readonly fade?: { readonly clip: string; readonly in: number; readonly out: number };
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */
@@ -577,6 +580,148 @@ export class TrimGesture implements Gesture {
     if (landing.seconds <= this.#lower.seconds) return limit(this.#lower);
     if (landing.seconds >= this.#upper.seconds) return limit(this.#upper);
     return landing;
+  }
+}
+
+export type FadeSide = "in" | "out";
+
+const FADE_FIELDS = { in: "fadeIn", out: "fadeOut" } as const;
+
+/** A fade as it is saved, exactly. What cannot be read counts as none, as it does for the picture. */
+function exactFade(time: string | undefined): Rational {
+  if (time === undefined) return ZERO;
+  try {
+    const length = parseTime(time);
+    return compare(length, ZERO) > 0 ? length : ZERO;
+  } catch {
+    return ZERO;
+  }
+}
+
+/** How long a clip can fade on one side: all of it, apart from what the other side fades. */
+export function longestFade(clip: ClipState, side: FadeSide): Rational {
+  const other = exactFade(side === "in" ? clip.fadeOut : clip.fadeIn);
+  const room = subtract(parseTime(clip.duration), other);
+  return compare(room, ZERO) > 0 ? room : ZERO;
+}
+
+/**
+ * What changes how long a clip fades on one side, or nothing when it stays as it is. A fade of
+ * nothing is no fade, and it goes from the clip as well.
+ */
+export function fadeCall(
+  timeline: string,
+  clip: ClipState,
+  side: FadeSide,
+  length: Rational,
+): CommandCall | undefined {
+  const field = FADE_FIELDS[side];
+  const longest = longestFade(clip, side);
+  const limited =
+    compare(length, ZERO) < 0 ? ZERO : compare(length, longest) > 0 ? longest : length;
+  const current = clip[field];
+  if (compare(limited, ZERO) === 0) {
+    if (current === undefined) return undefined;
+    return {
+      type: "clip.update",
+      params: { timeline, clip: clip.id, changes: {}, clear: [field] },
+    };
+  }
+  if (current !== undefined && compare(limited, exactFade(current)) === 0) return undefined;
+  const changes = { [field]: formatTime(limited) };
+  return { type: "clip.update", params: { timeline, clip: clip.id, changes } };
+}
+
+/**
+ * Drags the handle at a top corner of a clip, which says how long the clip fades in or out, as in
+ * most video editors. It goes by frames, or to what it snaps to, and never past the other fade.
+ */
+export class FadeGesture implements Gesture {
+  readonly #host: GestureHost;
+  readonly #box: ClipBox;
+  readonly #side: FadeSide;
+  readonly #press: Pointer;
+  readonly #grabTime: number;
+  readonly #points: SnapPoints;
+  #length: Landing | undefined;
+
+  constructor(host: GestureHost, box: ClipBox, side: FadeSide, press: Pointer) {
+    this.#host = host;
+    this.#box = box;
+    this.#side = side;
+    this.#press = press;
+    this.#grabTime = host.timeAt(press.x);
+    this.#points = snapPointsOf(host.model, host.frame, new Set([box.id]));
+  }
+
+  move(pointer: Pointer): void {
+    if (!this.#length && !hasMoved(this.#press, pointer)) return;
+    const { clip, start, end } = this.#box;
+    const fades = fadesOf(clip);
+    const fadeIn = this.#side === "in";
+    const handle = fadeIn ? start + fades.in : end - fades.out;
+    const wanted = handle + this.#host.timeAt(pointer.x) - this.#grabTime;
+    const point = this.#points.nearest(wanted, this.#host.snapDistance(pointer));
+    const length = point
+      ? this.#snapped(point)
+      : this.#onFrames(fadeIn ? wanted - start : end - wanted);
+    this.#length = this.#limited(length);
+    const shown = this.#length.seconds;
+    const fade = {
+      clip: this.#box.id,
+      in: fadeIn ? shown : fades.in,
+      out: fadeIn ? fades.out : shown,
+    };
+    const line = this.#length.line === undefined ? {} : { snap: this.#length.line };
+    this.#host.setPreview({ fade, ...line });
+  }
+
+  end(pointer: Pointer): void {
+    this.move(pointer);
+    const length = this.#length;
+    if (length) {
+      const call = fadeCall(this.#host.model.id, this.#box.clip, this.#side, length.exact());
+      if (call) this.#host.run([call]);
+    }
+    this.#host.setPreview(undefined);
+  }
+
+  cancel(): void {
+    this.#host.setPreview(undefined);
+  }
+
+  isStale(model: TimelineModel): boolean {
+    return !model.boxes.has(this.#box.id);
+  }
+
+  /** A whole number of frames from the edge, which is what people see in the preview. */
+  #onFrames(seconds: number): Landing {
+    const { rate } = this.#host.model;
+    const frames = Math.max(Math.round(seconds * rate.fps), 0);
+    return { seconds: frameSeconds(frames, rate), exact: () => frameTime(frames, rate) };
+  }
+
+  #snapped(point: SnapPoint): Landing {
+    const { clip, start, end } = this.#box;
+    return this.#side === "in"
+      ? {
+          seconds: point.seconds - start,
+          exact: () => subtract(point.exact(), clipStart(clip)),
+          line: point.seconds,
+        }
+      : {
+          seconds: end - point.seconds,
+          exact: () => subtract(clipEnd(clip), point.exact()),
+          line: point.seconds,
+        };
+  }
+
+  #limited(length: Landing): Landing {
+    const longest = longestFade(this.#box.clip, this.#side);
+    if (length.seconds <= 0) return { seconds: 0, exact: () => ZERO };
+    if (length.seconds >= toSeconds(longest))
+      return { seconds: toSeconds(longest), exact: () => longest };
+    return length;
   }
 }
 

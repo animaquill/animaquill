@@ -100,7 +100,8 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
     const canMove = keyframes.canMove(spot.box.id);
     // Switches, choices and words only hold, so there is nothing to ease or to steer.
     const canEase = canMove && keyframes.canEase;
-    const tangent = canEase ? keyframes.selectedTangent : undefined;
+    const part = spot.lane.component?.index;
+    const tangent = canEase ? keyframes.selectedTangent(part) : undefined;
     setMenu({
       x,
       y,
@@ -118,7 +119,7 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
           label: t(`keyframes.tangent.${mode}`),
           disabled: !canEase,
           selected: tangent === mode,
-          run: () => keyframes.setTangent(mode),
+          run: () => keyframes.setTangent(mode, part),
         })),
         [
           {

@@ -1,5 +1,5 @@
 import { SCENE_OBJECT_TYPES } from "@animaquill/core";
-import type { ObjectDescriptor, PropertySpec } from "@animaquill/schema";
+import { ZERO, type ObjectDescriptor, type PropertySpec } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
 import {
@@ -14,10 +14,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { PopupMenu } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
-import type { ClipBox } from "../timeline/model.ts";
+import { frameTime } from "../timeline/frames.ts";
+import type { FadeSide } from "../timeline/gestures.ts";
+import { canFade, fadesOf, type ClipBox } from "../timeline/model.ts";
 import { CONTROLS, PlainValue, RowButton } from "./controls.tsx";
 import { inspectSelection, keyEdit, writeEdit, type Blocked, type Selected } from "./inspect.ts";
 import { groupOf, nameOf, textOf } from "./names.ts";
+import { NumberField } from "./NumberField.tsx";
 import styles from "./PropertiesPanel.module.css";
 import { placeOf, PropertyRows } from "./rows.ts";
 
@@ -330,6 +333,72 @@ function SoundStatus({ clip }: { clip: ClipBox["clip"] }) {
   );
 }
 
+const FADE_SIDES: readonly FadeSide[] = ["in", "out"];
+const NOTHING = () => {};
+
+/**
+ * How long a clip fades in and out, which the handles at the top corners of the clip on the timeline
+ * also say. It is about the clip and not a property that changes over time, so a change is a step of
+ * its own right away, like trimming the clip, and not something to try first. It goes by frames.
+ */
+function FadeRows({ box, readOnly }: { box: ClipBox; readOnly: boolean }) {
+  const { timeline } = useWorkbench();
+  const { t } = useTranslation();
+  const fades = fadesOf(box.clip);
+  const length = box.end - box.start;
+  const title = t("property.fade.title");
+  const commit = (side: FadeSide, seconds: number) => {
+    const rate = timeline.model?.rate;
+    if (!rate) return;
+    const frames = Math.max(Math.round(seconds * rate.fps), 0);
+    timeline.setFade(box.id, side, frameTime(frames, rate));
+  };
+  return (
+    <section className={styles.fades} aria-label={title}>
+      <h3 className={styles.objectName}>{title}</h3>
+      {FADE_SIDES.map((side) => {
+        const label = t(`property.fade.${side}`);
+        const other = side === "in" ? fades.out : fades.in;
+        const spec: PropertySpec = {
+          path: `fade.${side}`,
+          type: "number",
+          unit: "s",
+          min: 0,
+          max: Math.max(length - other, 0),
+        };
+        return (
+          <div key={side} className={styles.row} role="group" aria-label={label}>
+            <span className={styles.name}>{label}</span>
+            <NumberField
+              label={label}
+              spec={spec}
+              value={fades[side]}
+              automatic={false}
+              placeholder=""
+              animated={false}
+              tried={false}
+              readOnly={readOnly}
+              onPreview={NOTHING}
+              onCommit={(seconds) => commit(side, seconds)}
+              onCancel={NOTHING}
+            />
+            <div className={styles.rowButtons}>
+              <RowButton
+                name={t(`property.fade.remove.${side}`)}
+                usage={t("property.help.fade")}
+                unavailable={readOnly || fades[side] === 0}
+                onClick={() => timeline.setFade(box.id, side, ZERO)}
+              >
+                <RotateCcw size={12} />
+              </RowButton>
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 /** What an object of a clip is called by itself, unless it is the clip itself. */
 function ownName(t: TFunction, { type, name, id }: ObjectDescriptor): string | undefined {
   if (type === "clip.visual" || type === "clip.sound") return undefined;
@@ -361,12 +430,14 @@ function objectName(
 
 function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: PropertyRows }) {
   const { t } = useTranslation();
+  const { timeline } = useWorkbench();
   const { box, objects } = selected;
   const { blocked, firstFrame } = usePlace(rows, box.id);
   const byId = new Map(objects.map((object) => [object.id, object]));
   const { kind } = box.clip.source;
   const kindName = textOf(t, `timeline.kind.${kind}`, kind);
   const shown = objects.filter((object) => object.properties.length > 0);
+  const track = timeline.model?.rowOfClip.get(box.id)?.track;
   return (
     <>
       <header className={styles.header}>
@@ -375,6 +446,7 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
       </header>
       {kind === "sound" && <SoundStatus clip={box.clip} />}
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
+      {track && canFade(track) && <FadeRows box={box} readOnly={track.locked === true} />}
       <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
         {shown.map((object, index) => (
           // Another clip gets fields of its own, so nothing typed can end up on the wrong one.

@@ -225,9 +225,54 @@ function setOffset(draft: Draft, timeline: string, clip: ClipState, offset: Rati
   else if (clip.offset !== undefined) draft.delete(path);
 }
 
+/** A fade as it is saved, or undefined when there is none or it cannot be read. */
+function fadeLength(time: string | undefined): Rational | undefined {
+  if (time === undefined) return undefined;
+  try {
+    return parseTime(time);
+  } catch {
+    return undefined;
+  }
+}
+
+const atMost = (value: Rational, limit: Rational) => (compare(value, limit) > 0 ? limit : value);
+
+/**
+ * Shortens the fades of a clip that got too short for them, as video editors do: first the fade at
+ * the edge that moved, then the other one, so that what is left of the clip fades as it did. A fade
+ * of nothing goes. What fits, or cannot be read, stays as it is.
+ */
+function fitFades(
+  draft: Draft,
+  path: readonly string[],
+  clip: Pick<ClipState, "fadeIn" | "fadeOut">,
+  duration: Rational,
+  moved: "start" | "end",
+): void {
+  const fadeIn = fadeLength(clip.fadeIn);
+  const fadeOut = fadeLength(clip.fadeOut);
+  if (!fadeIn && !fadeOut) return;
+  const total = add(fadeIn ?? ZERO, fadeOut ?? ZERO);
+  if (compare(total, duration) <= 0) return;
+  type Field = "fadeIn" | "fadeOut";
+  const [near, far]: [Field, Field] =
+    moved === "start" ? ["fadeIn", "fadeOut"] : ["fadeOut", "fadeIn"];
+  const lengths: Record<Field, Rational> = { fadeIn: fadeIn ?? ZERO, fadeOut: fadeOut ?? ZERO };
+  const kept = atMost(lengths[far], duration);
+  const shortened = { [far]: kept, [near]: atMost(lengths[near], subtract(duration, kept)) };
+  for (const field of [near, far]) {
+    if (clip[field] === undefined) continue;
+    const length = shortened[field] as Rational;
+    if (compare(length, lengths[field]) === 0) continue;
+    if (compare(length, ZERO) <= 0) draft.delete([...path, field]);
+    else draft.set([...path, field], formatTime(length));
+  }
+}
+
 /**
  * Moves the edges of a clip. Its content stays where it is on the timeline, and so do keys: they are
- * on the clock of the clip, which only has to read differently at the new first frame.
+ * on the clock of the clip, which only has to read differently at the new first frame. Fades that
+ * no longer fit get shorter, see `fitFades`.
  */
 export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: Span): void {
   const path = clipPath(timeline, clip.id);
@@ -244,13 +289,16 @@ export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: 
     }
     draft.set([...path, "start"], formatTime(span.from));
   }
-  const duration = formatTime(subtract(span.to, span.from));
+  const length = subtract(span.to, span.from);
+  const duration = formatTime(length);
   if (duration !== clip.duration) draft.set([...path, "duration"], duration);
+  fitFades(draft, path, clip, length, compare(moved, ZERO) !== 0 ? "start" : "end");
 }
 
 /**
  * Cuts one clip in two, and returns the id of the part after the cut. Both parts keep all keys: on
- * the clock of the clip they are in the same place as before, so nothing has to be calculated.
+ * the clock of the clip they are in the same place as before, so nothing has to be calculated. The
+ * part before keeps the fade in and the part after the fade out, each as long as the part can take.
  */
 export function splitClip(
   draft: Draft,
@@ -262,15 +310,17 @@ export function splitClip(
 ): void {
   const { fadeIn: _fadeIn, offset: _offset, ...rest } = clip;
   const offset = add(clipOffset(clip), subtract(at, clipStart(clip)));
+  const rightLength = subtract(clipEnd(clip), at);
   draft.note({ kind: "cut", clip: clip.id, piece: rightId });
   draft.set(clipPath(timeline, rightId), {
     ...rest,
     id: rightId,
     start: formatTime(at),
-    duration: formatTime(subtract(clipEnd(clip), at)),
+    duration: formatTime(rightLength),
     offset: formatTime(offset),
     ...(rightLink === undefined ? {} : { link: rightLink }),
   });
+  fitFades(draft, clipPath(timeline, rightId), rest, rightLength, "start");
   // What a version changes goes for both parts, apart from where they are.
   forEachOverride(draft, timeline, clip.id, (changes, _path, version) => {
     const { start: _start, duration: _duration, offset: _changed, ...shared } = changes;
@@ -279,8 +329,11 @@ export function splitClip(
     draft.set(target, shared);
   });
   const path = clipPath(timeline, clip.id);
-  draft.set([...path, "duration"], formatTime(subtract(at, clipStart(clip))));
+  const leftLength = subtract(at, clipStart(clip));
+  draft.set([...path, "duration"], formatTime(leftLength));
   if (clip.fadeOut !== undefined) draft.delete([...path, "fadeOut"]);
+  const { fadeOut: _fadeOut, ...left } = clip;
+  fitFades(draft, path, left, leftLength, "end");
   for (const transition of Object.values(timelineOf(draft, timeline).transitions)) {
     if (transition.from === clip.id) {
       const transitionPath = [...timelinePath(timeline), "transitions", transition.id];

@@ -17,6 +17,7 @@ import { PopupMenu } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
 import { CONTROLS, PlainValue, RowButton } from "../properties/controls.tsx";
+import { formatNumber } from "../properties/scrub.ts";
 import {
   keyEdit,
   writeEdit,
@@ -74,6 +75,14 @@ interface PropertyControlsProps {
   readonly component?: number | undefined;
 }
 
+interface ValueControlProps extends PropertyControlsProps {
+  /**
+   * Only what the value is, without fields: a vector with its parts open has a field for each part
+   * in their own rows, and in its own row they would be too narrow to read.
+   */
+  readonly summary?: boolean;
+}
+
 /** What a control shows of one part of a vector: a number in the units of the vector. */
 function partRowOf(row: PropertyRow, component: number): PropertyRow {
   const value = row.value === undefined ? undefined : componentOf(row.value, component);
@@ -100,8 +109,8 @@ function useInspected(
  * The value of a row. A part of a vector is a number of its own, and changing it writes the vector
  * with that one number changed, the way the properties tab does it.
  */
-function ValueControl(props: PropertyControlsProps) {
-  const { area, box, node, label, component } = props;
+function ValueControl(props: ValueControlProps) {
+  const { area, box, node, label, component, summary } = props;
   const { properties } = useWorkbench();
   const inspected = useInspected(props, ({ row, blocked }) => [
     row.value,
@@ -112,6 +121,7 @@ function ValueControl(props: PropertyControlsProps) {
   ]);
   if (!inspected) return null;
   const { row, blocked } = inspected;
+  if (summary) return <VectorSummary row={row} />;
   const shown = component === undefined ? row : partRowOf(row, component);
   const readOnly = blocked !== undefined || shown.value === undefined;
   const Control =
@@ -141,6 +151,24 @@ function ValueControl(props: PropertyControlsProps) {
         }}
         onCancel={() => properties.cancel()}
       />
+    </span>
+  );
+}
+
+/** The numbers of a vector as they read in the fields of its parts, one after the other. */
+function VectorSummary({ row }: { row: PropertyRow }) {
+  const { value, spec } = row;
+  const part = componentSpecOf(spec);
+  const text = Array.isArray(value)
+    ? value
+        .map((number) => (typeof number === "number" ? formatNumber(number, part) : ""))
+        .join(", ")
+    : "";
+  return (
+    <span className={styles.value} data-summary>
+      <span className={styles.summary} title={text}>
+        {text}
+      </span>
     </span>
   );
 }
@@ -387,7 +415,14 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
         </button>
         {node.kind === "property" && box && (
           <>
-            <ValueControl area={area} box={box} node={node} label={label} component={component} />
+            <ValueControl
+              area={area}
+              box={box}
+              node={node}
+              label={label}
+              component={component}
+              summary={canOpen && open}
+            />
             <ValueMarks area={area} box={box} node={node} label={label} />
             <KeyButtons area={area} box={box} node={node} label={label} />
           </>

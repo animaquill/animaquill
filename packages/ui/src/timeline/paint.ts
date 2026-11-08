@@ -1,7 +1,15 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
 import type { ClipState } from "@animaquill/core";
 import { EXPANDER_SIZE, RULER_HEIGHT, type TimelineEditor } from "./editor.ts";
-import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "./model.ts";
+import type { FadeSide } from "./gestures.ts";
+import {
+  canFade,
+  fadesOf,
+  forEachBetween,
+  type ClipBox,
+  type Row,
+  type TimelineModel,
+} from "./model.ts";
 import { paintRuler } from "./ruler.ts";
 import { StagePainter, readTheme, type Theme } from "./stage-painter.ts";
 
@@ -11,6 +19,10 @@ const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
 const LABEL_PLATE_PADDING = 3;
 const EDGE_HANDLE = 6;
+const FADE_HANDLE = 8;
+/** Over what fades, darker the less of the clip shows, as the line says. */
+const FADE_SHADE = "#00000066";
+const FADE_LINE = "#ffffffd9";
 const END_HANDLE = 6;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
@@ -37,6 +49,10 @@ interface ClipLook {
   readonly end: number;
   readonly selected: boolean;
   readonly edge?: "start" | "end" | undefined;
+  /** The pointer is over the clip, which shows the handles of its fades. */
+  readonly hovered?: boolean;
+  /** The handle of a fade under the pointer. */
+  readonly fade?: FadeSide | undefined;
 }
 
 /**
@@ -140,14 +156,16 @@ export class TimelinePainter extends StagePainter {
       if (top + row.height < RULER_HEIGHT || top > editor.height) continue;
       forEachBetween(row, from, to, (box) => {
         const isMoved = moved?.has(box.id) === true;
-        const edge = hovered.kind === "clip" && hovered.box === box ? hovered.edge : undefined;
+        const over = hovered.kind === "clip" && hovered.box === box ? hovered : undefined;
         this.context.globalAlpha = isMoved || cut.has(box.id) ? 0.35 : 1;
         this.#paintClip(box, {
           row,
           start: box.start,
           end: box.end,
           selected: !isMoved && selection.has(box.id),
-          edge,
+          edge: over?.edge,
+          hovered: over !== undefined && !isMoved,
+          fade: over?.fade,
         });
         this.context.globalAlpha = 1;
       });
@@ -214,6 +232,7 @@ export class TimelinePainter extends StagePainter {
       const room = expander === undefined ? 0 : EXPANDER_SIZE;
       this.#paintLabel(box, left, top, width, height, fill, room);
     }
+    if (canFade(track)) this.#paintFades(box, look, { left, right, top, height, width });
     if (expander !== undefined) this.#paintExpander(box, expander, top, fill);
     // Too narrow for words it should still show, and on any clip it stays out of the way.
     if (this.#hasFailed(box.clip)) {
@@ -226,6 +245,7 @@ export class TimelinePainter extends StagePainter {
       const x = look.edge === "start" ? left : right - EDGE_HANDLE;
       context.fillRect(x, top, EDGE_HANDLE, height);
     }
+    if (look.selected || look.hovered) this.#paintFadeHandles(box, look, left, right, top);
     if (look.selected) {
       context.strokeStyle = this.#theme.selected;
       context.lineWidth = 1.5;
@@ -234,6 +254,88 @@ export class TimelinePainter extends StagePainter {
       context.stroke();
     }
     context.globalAlpha = alpha;
+  }
+
+  /** How long the clip fades in and out, while a handle is dragged as well. */
+  #fadesOf(box: ClipBox): { readonly in: number; readonly out: number } {
+    const dragged = this.#editor.preview?.fade;
+    return dragged?.clip === box.id ? dragged : fadesOf(box.clip);
+  }
+
+  /**
+   * A line from the bottom at the edge of the clip to the top where it fades all the way in, and
+   * from the top where it starts to fade out to the bottom at the other edge, with what does not
+   * show shaded, as in most video editors.
+   */
+  #paintFades(
+    box: ClipBox,
+    look: ClipLook,
+    area: {
+      readonly left: number;
+      readonly right: number;
+      readonly top: number;
+      readonly height: number;
+      readonly width: number;
+    },
+  ): void {
+    const fades = this.#fadesOf(box);
+    if (fades.in <= 0 && fades.out <= 0) return;
+    const editor = this.#editor;
+    const { context } = this;
+    const { left, right, top, height, width } = area;
+    const bottom = top + height;
+    const inX = Math.min(editor.xAt(look.start + fades.in), right);
+    const outX = Math.max(editor.xAt(look.end - fades.out), left);
+    context.save();
+    context.beginPath();
+    context.roundRect(left, top, width, height, CLIP_RADIUS);
+    context.clip();
+    context.fillStyle = FADE_SHADE;
+    context.beginPath();
+    if (fades.in > 0) {
+      context.moveTo(left, bottom);
+      context.lineTo(left, top);
+      context.lineTo(inX, top);
+      context.closePath();
+    }
+    if (fades.out > 0) {
+      context.moveTo(right, bottom);
+      context.lineTo(right, top);
+      context.lineTo(outX, top);
+      context.closePath();
+    }
+    context.fill();
+    context.strokeStyle = FADE_LINE;
+    context.lineWidth = 1;
+    context.beginPath();
+    if (fades.in > 0) {
+      context.moveTo(left, bottom);
+      context.lineTo(inX, top);
+    }
+    if (fades.out > 0) {
+      context.moveTo(outX, top);
+      context.lineTo(right, bottom);
+    }
+    context.stroke();
+    context.restore();
+  }
+
+  /** The handles at the top corners, where each fade ends. They stay inside the clip. */
+  #paintFadeHandles(box: ClipBox, look: ClipLook, left: number, right: number, top: number): void {
+    const editor = this.#editor;
+    if (!editor.showsFadeHandles(look.row) || right - left < FADE_HANDLE * 2) return;
+    const { context } = this;
+    const fades = this.#fadesOf(box);
+    const at = { in: look.start + fades.in, out: look.end - fades.out };
+    for (const side of ["in", "out"] as const) {
+      const middle = editor.xAt(at[side]);
+      const x = Math.min(Math.max(middle - FADE_HANDLE / 2, left), right - FADE_HANDLE);
+      context.fillStyle = look.fade === side ? this.#theme.selected : "#ffffff";
+      context.strokeStyle = "#000000b3";
+      context.lineWidth = 1;
+      context.fillRect(this.sharp(x), top + 1, FADE_HANDLE, FADE_HANDLE);
+      context.strokeRect(this.sharp(x) + 0.5, top + 1.5, FADE_HANDLE - 1, FADE_HANDLE - 1);
+    }
   }
 
   /** Pictures side by side, from the part of the video that plays at each place. */

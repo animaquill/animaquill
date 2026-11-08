@@ -24,6 +24,7 @@ const isShare = ({ unit }: PropertySpec) => unit === "ratio";
 export function formatNumber(value: number, spec: PropertySpec): string {
   if (isShare(spec)) return `${fixed(value * 100, SHOWN_DIGITS)}%`;
   if (spec.unit === "deg") return `${fixed(value, SHOWN_DIGITS)}°`;
+  if (spec.unit === "s") return `${fixed(value, SHOWN_DIGITS)}s`;
   return String(fixed(value, SHOWN_DIGITS));
 }
 
@@ -47,7 +48,7 @@ export function parseNumber(text: string, spec: PropertySpec): number | undefine
   const plain = text
     .normalize("NFKC")
     .replaceAll("−", "-")
-    .replace(/[%°]\s*$/u, "")
+    .replace(spec.unit === "s" ? /(?:s|秒)\s*$/u : /[%°]\s*$/u, "")
     .trim();
   const number = plain === "" ? Number.NaN : Number(plain);
   if (!Number.isFinite(number)) return undefined;

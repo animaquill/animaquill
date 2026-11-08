@@ -1,5 +1,5 @@
 import { ProjectStore, clipEnd, orderedTracks, type ClipState } from "@animaquill/core";
-import { formatTime } from "@animaquill/schema";
+import { formatTime, parseTime, toSeconds } from "@animaquill/schema";
 import type { SettingsStore } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-library.ts";
@@ -1100,6 +1100,95 @@ describe("moving", () => {
     });
     editor.release(at(6));
     expect(commandFailed).toHaveBeenCalledOnce();
+  });
+});
+
+describe("fades", () => {
+  /** Near the top of a track, where the handles of fades are. */
+  const near = (editor: TimelineEditor, pointer: Pointer, track: string, by = 0): Pointer => {
+    const row = editor.model?.rows.find(({ id }) => id === track);
+    if (!row) throw new Error("no row");
+    return { ...pointer, x: pointer.x + by, y: RULER_HEIGHT - editor.scrollY + row.top + 4 };
+  };
+  const seconds = (time: string | undefined) =>
+    time === undefined ? 0 : toSeconds(parseTime(time));
+  const exactly = (length: number) => parseTime(String(length));
+
+  it("have handles at the top corners where each fade ends, and the edges keep the rest", async () => {
+    const { editor, addClip, at, video } = await setup();
+    addClip("a", 2, 4, video, { fadeOut: "1" });
+    const fadeAt = (pointer: Pointer) => {
+      const found = editor.hitAt(pointer);
+      return found.kind === "clip" ? found.fade : "none";
+    };
+    expect(fadeAt(near(editor, at(2), video, 2))).toBe("in");
+    expect(fadeAt(near(editor, at(5), video))).toBe("out");
+    expect(fadeAt(near(editor, at(6), video, -2))).toBeUndefined();
+    expect(fadeAt(at(2))).toBeUndefined();
+    expect(editor.hover(near(editor, at(2), video, 2))).toBe("col-resize");
+    const lower = editor.hitAt({ ...at(2), x: at(2).x + 2 });
+    expect(lower.kind === "clip" && lower.edge).toBe("start");
+  });
+
+  it("go as far as a handle is dragged, by frames, in one step of undo", async () => {
+    const { editor, store, addClip, at, clip, drag, selection, video } = await setup();
+    addClip("a", 2, 4);
+    const from = near(editor, at(2), video, 1);
+    editor.press(from);
+    editor.drag(near(editor, at(2.5), video));
+    editor.drag(near(editor, at(3), video));
+    expect(editor.preview?.fade).toEqual({ clip: "a", in: 1, out: 0 });
+    expect(clip("a").fadeIn).toBeUndefined();
+    editor.release(near(editor, at(3), video));
+    expect(editor.preview).toBeUndefined();
+    expect(seconds(clip("a").fadeIn)).toBe(1);
+    expect(selection()).toEqual(["a"]);
+    drag(near(editor, at(6), video, -1), near(editor, at(4.5), video));
+    expect(seconds(clip("a").fadeOut)).toBe(1.5);
+    store.undo();
+    expect(clip("a").fadeOut).toBeUndefined();
+    expect(seconds(clip("a").fadeIn)).toBe(1);
+    store.undo();
+    expect(clip("a").fadeIn).toBeUndefined();
+  });
+
+  it("stop at the other fade, and back at the edge there is no fade", async () => {
+    const { editor, addClip, at, clip, drag, video } = await setup();
+    addClip("a", 2, 4, video, { fadeOut: "3" });
+    drag(near(editor, at(2), video, 1), near(editor, at(5.5), video));
+    expect(seconds(clip("a").fadeIn)).toBe(1);
+    drag(near(editor, at(3), video), near(editor, at(1), video));
+    expect(clip("a").fadeIn).toBeUndefined();
+    expect(clip("a").fadeOut).toBe("3");
+  });
+
+  it("are not offered on a locked track, nor on sound, which has no fades", async () => {
+    const { editor, addClip, at, clip, video, audio } = await setup();
+    addClip("a", 2, 4);
+    addClip("s", 2, 4, audio);
+    const top = near(editor, at(2), audio, 2);
+    const onSound = editor.hitAt(top);
+    expect(onSound.kind === "clip" && onSound.fade).toBeUndefined();
+    expect(editor.setFade("s", "in", exactly(1))).toBe(false);
+    expect(clip("s").fadeIn).toBeUndefined();
+    editor.updateTrack(video, { locked: true });
+    const locked = editor.hitAt(near(editor, at(2), video, 2));
+    expect(locked.kind === "clip" && locked.fade).toBeUndefined();
+    expect(editor.setFade("a", "in", exactly(1))).toBe(false);
+    expect(clip("a").fadeIn).toBeUndefined();
+  });
+
+  it("can be said in numbers, as far as the other fade lets them go", async () => {
+    const { editor, store, addClip, clip } = await setup();
+    addClip("a", 2, 4, undefined, { fadeIn: "1" });
+    expect(editor.setFade("a", "out", exactly(9))).toBe(true);
+    expect(clip("a").fadeOut).toBe("3");
+    // The same again changes nothing, and leaves nothing to undo.
+    expect(editor.setFade("a", "out", exactly(3))).toBe(false);
+    expect(editor.setFade("a", "in", exactly(0))).toBe(true);
+    expect(clip("a").fadeIn).toBeUndefined();
+    store.undo();
+    expect(clip("a").fadeIn).toBe("1");
   });
 });
 

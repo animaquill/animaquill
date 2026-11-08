@@ -1,4 +1,4 @@
-import { MAX_SPLIT_Y, MIN_SPLIT_Y, compileChannel, sample } from "@animaquill/core";
+import { MAX_SPLIT_Y, MIN_SPLIT_Y, compileChannel, componentKeys, sample } from "@animaquill/core";
 import { Animation, type Key } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -255,5 +255,50 @@ describe("how a key changes its handles", () => {
     const changed = withTangent(line, [1], "broken");
     expect([...changed.keys()]).toEqual([1]);
     expect(changed.get(1)).toEqual({ ...line[1], tangent: "broken" });
+  });
+
+  describe("of a vector, whose parts share their handles", () => {
+    /** x goes up and down again, and y keeps rising, more and more. */
+    const vector: readonly Key[] = [
+      { time: "0", value: [0, 0] },
+      { time: "1", value: [10, 5] },
+      { time: "2", value: [0, 30] },
+    ];
+    const partOf = (keys: readonly Key[], part: number) => componentKeys(keys, part) as Key[];
+
+    it("aligned puts the handles on one line in the part people look at", () => {
+      for (const part of [0, 1]) {
+        const keys = applied(vector, withTangent(vector, [1], "aligned", part));
+        expect(keys[1]?.tangent).toBe("aligned");
+        expect(keys.map(({ value }) => value)).toEqual(vector.map(({ value }) => value));
+        const own = partOf(keys, part);
+        expect(slopeOf(own, 1, "in")).toBeCloseTo(slopeOf(own, 1, "out"), 4);
+        const unsaid = keys.map(({ tangent: _tangent, ...rest }) => rest);
+        expect(tangentOf(unsaid, 1, part)).toBe("aligned");
+      }
+      // A peak lines up flat, and with shared handles the part that keeps rising stops there too.
+      const byPeak = applied(vector, withTangent(vector, [1], "aligned", 0));
+      expect(slopeOf(partOf(byPeak, 0), 1, "out")).toBeCloseTo(0, 6);
+      expect(slopeOf(partOf(byPeak, 1), 1, "out")).toBeCloseTo(0, 6);
+    });
+
+    it("aligned without a part goes by the part that changes the most around the key", () => {
+      const keys = applied(vector, withTangent(vector, [1], "aligned"));
+      const rising = partOf(keys, 1);
+      expect(slopeOf(rising, 1, "in")).toBeCloseTo(slopeOf(rising, 1, "out"), 4);
+      expect(slopeOf(rising, 1, "out")).toBeGreaterThan(0);
+    });
+
+    it("automatic works out one set of handles for all parts", () => {
+      const curved = vector.map((key, index) =>
+        index < 2
+          ? { ...key, interp: "bezier" as const, out: [0.5, 0.5] as [number, number] }
+          : key,
+      );
+      const keys = applied(curved, withTangent(curved, [1], "auto"));
+      expect(keys[1]).toMatchObject({ tangent: "auto", interp: "bezier" });
+      expect(keys[1]?.out).not.toEqual([0.5, 0.5]);
+      expect(keys.map(({ value }) => value)).toEqual(vector.map(({ value }) => value));
+    });
   });
 });

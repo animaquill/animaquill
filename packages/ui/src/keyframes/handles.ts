@@ -2,6 +2,8 @@ import {
   AUTO_REACH,
   MAX_SPLIT_Y,
   MIN_SPLIT_Y,
+  componentKeys,
+  keyWithComponent,
   secondsOf,
   withAutoTangents,
 } from "@animaquill/core";
@@ -123,14 +125,41 @@ function isAligned(keys: readonly Key[], index: number): boolean {
   return Math.abs(sine) < ALIGNED_SINE && a.t * b.t + a.v * b.v < 0;
 }
 
+const isVector = (value: unknown): value is readonly number[] => Array.isArray(value);
+
+/**
+ * The part of a vector to look at for the handles of a key, which all parts share: the one people
+ * look at, or else the one that changes the most around the key, which is what moves the most.
+ * Undefined for a number, which is its own curve.
+ */
+function partFor(keys: readonly Key[], index: number, component?: number): number | undefined {
+  const value = keys[index]?.value;
+  if (!isVector(value)) return undefined;
+  if (component !== undefined) return component;
+  let best = 0;
+  let most = -1;
+  value.forEach((_, part) => {
+    let change = 0;
+    for (const at of [index - 1, index + 1]) {
+      const other = keys[at]?.value;
+      const there = isVector(other) ? other[part] : undefined;
+      if (typeof there === "number") change += Math.abs(there - (value[part] as number));
+    }
+    if (change > most) [best, most] = [part, change];
+  });
+  return best;
+}
+
 /**
  * How a key changes its handles. What it says, or else what it looks like: a key that goes through
  * smoothly stays smooth, and a corner stays a corner.
  */
-export function tangentOf(keys: readonly Key[], index: number): TangentMode {
+export function tangentOf(keys: readonly Key[], index: number, component?: number): TangentMode {
   const { tangent } = keys[index] as Key;
   if (tangent) return tangent;
-  return isAligned(keys, index) ? "aligned" : "broken";
+  const part = partFor(keys, index, component);
+  const numbers = part === undefined ? keys : componentKeys(keys, part);
+  return numbers && isAligned(numbers, index) ? "aligned" : "broken";
 }
 
 /** The keys that change, by index. What is not in it stays as it is. */
@@ -317,19 +346,48 @@ function alignAt(keys: readonly Key[], changed: ChangedKeys, index: number): voi
 }
 
 /**
+ * Aligns the handles of a key of a number, or of a vector in one of its parts: the parts share
+ * their handles, so on one line in one part they are what they are in the others, and a part that
+ * goes another way there has a corner. That is why it is the part people look at.
+ */
+function alignVectorAt(
+  keys: readonly Key[],
+  changed: ChangedKeys,
+  index: number,
+  component: number | undefined,
+): void {
+  const part = partFor(keys, index, component);
+  if (part === undefined) {
+    alignAt(keys, changed, index);
+    return;
+  }
+  const current = [...keys];
+  for (const [at, one] of changed) current[at] = one;
+  const numbers = componentKeys(current, part);
+  if (!numbers) return;
+  const own: ChangedKeys = new Map();
+  alignAt(numbers, own, index);
+  for (const [at, one] of own) changed.set(at, keyWithComponent(current[at] as Key, one, part));
+}
+
+/**
  * What saying how keys change their handles does: aligned puts both on one line, automatic works
  * them out, and broken only says so. None of it changes how keys go on: a key that holds or goes
- * straight keeps doing that, and `tangent` is about its handles when it is a bezier.
+ * straight keeps doing that, and `tangent` is about its handles when it is a bezier. The keys of a
+ * vector share their handles: aligned goes by the part in `component`, see `alignVectorAt`, and
+ * automatic by all of them, see `withAutoTangents`.
  */
 export function withTangent(
   keys: readonly Key[],
   indices: readonly number[],
   mode: TangentMode,
+  component?: number,
 ): ChangedKeys {
   const changed: ChangedKeys = new Map();
   for (const index of indices) {
-    if (!keys[index] || typeof keys[index]?.value !== "number") continue;
-    if (mode === "aligned") alignAt(keys, changed, index);
+    const value = keys[index]?.value;
+    if (typeof value !== "number" && !isVector(value)) continue;
+    if (mode === "aligned") alignVectorAt(keys, changed, index, component);
     const key = keyIn(keys, changed, index);
     if (key.tangent !== mode || changed.has(index)) changed.set(index, { ...key, tangent: mode });
   }

@@ -12,6 +12,7 @@ import {
   BLACK,
   addColor,
   clips,
+  colorAt,
   compositor,
   dragField,
   expectColor,
@@ -752,6 +753,46 @@ test("a key that is not on a frame any more can be reached and removed", async (
   await remove.click();
   await goTo(page, "0:00/00");
   await expect(x).toHaveValue("300");
+});
+
+test("fades a clip with the fields and with the handles on the timeline, each a step", async ({
+  page,
+}) => {
+  await addColor(page);
+  const fadeIn = field(page, "淡入");
+  const fadeOut = field(page, "淡出");
+  await expect(fadeIn).toHaveValue("0s");
+  await expect(fadeOut).toHaveValue("0s");
+  let full: readonly number[] = [];
+  await expect.poll(async () => (full = await colorAt(page, 100, 100)).length).toBe(4);
+  const [red = 0, green = 0, blue = 0] = full;
+  // A second into a fade of two seconds, half of the clip shows over black.
+  await typeInto(fadeIn, "2");
+  await expect(fadeIn).toHaveValue("2s");
+  const half: Color = [red / 2, green / 2, blue / 2];
+  await expectColor(page, 100, 100, half, 3);
+  await page.keyboard.press("Control+z");
+  await expect(fadeIn).toHaveValue("0s");
+  await expectColor(page, 100, 100, [red, green, blue], 3);
+
+  // The handle at the top right corner of the clip pulls the fade out in.
+  await tab(page, "timeline").click();
+  const clip = clips(page).first();
+  const box = await clip.boundingBox();
+  if (!box) throw new Error("no clip on screen");
+  const top = box.y + 4;
+  await page.mouse.move(box.x + box.width - 2, top);
+  await expect(content(page, "timeline").getByRole("group", { name: "时间轴" })).toHaveCSS(
+    "cursor",
+    "col-resize",
+  );
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, top, { steps: 8 });
+  await page.mouse.up();
+  await tab(page, "properties").click();
+  await expect.poll(async () => Number.parseFloat(await fadeOut.inputValue())).toBeGreaterThan(1);
+  await page.keyboard.press("Control+z");
+  await expect(fadeOut).toHaveValue("0s");
 });
 
 test("a clip fades in and out, on top of its opacity", async ({ page }) => {

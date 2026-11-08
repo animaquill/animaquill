@@ -445,6 +445,15 @@ test("a vector opens up into its parts, each with its curve, which share their k
   await animate(page);
   await open(page, "场景");
   await open(page, "球");
+  // Closed, the row of the vector has a field for each part.
+  const fields = row(page, "中心").getByRole("spinbutton");
+  await expect(fields).toHaveCount(2);
+  await open(page, "中心");
+  // Open, each part has its own row with a field, and the row of the vector only says what it is.
+  await expect(fields).toHaveCount(0);
+  await expect(row(page, "中心")).toContainText("0, 100");
+  await panel(page).getByRole("button", { name: "收起 中心", exact: true }).click();
+  await expect(fields).toHaveCount(2);
   await open(page, "中心");
   const keyOf = (name: string) =>
     panel(page).getByRole("option", { name: new RegExp(`^${name}，`) });

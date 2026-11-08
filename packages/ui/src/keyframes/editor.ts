@@ -1102,26 +1102,32 @@ export class KeyframeEditor {
     return { keys: animation.keys, indices: indices.toSorted((a, b) => a - b) };
   }
 
-  /** How the selected keys change their handles, as far as they all agree on it. */
-  get selectedTangent(): TangentMode | undefined {
+  /**
+   * How the selected keys change their handles, as far as they all agree on it. A vector looks like
+   * it does in the part people look at, by `component`.
+   */
+  selectedTangent(component?: number): TangentMode | undefined {
     const found = new Set<TangentMode>();
     for (const { clip, path, times } of this.selection.channels()) {
       if (!this.isGradual(clip, path)) continue;
       const selected = this.#selectedIndices(clip, path, times);
       for (const index of selected?.indices ?? []) {
-        found.add(tangentOf(selected?.keys ?? [], index));
+        found.add(tangentOf(selected?.keys ?? [], index, component));
         if (found.size > 1) return undefined;
       }
     }
     return [...found][0];
   }
 
-  /** Says how the selected keys change their handles, in one step: see `withTangent`. */
-  setTangent(mode: TangentMode): void {
+  /**
+   * Says how the selected keys change their handles, in one step: see `withTangent`. Vectors line
+   * up their handles in the part `component`, which is the row people asked in.
+   */
+  setTangent(mode: TangentMode, component?: number): void {
     const edits = this.#gradualChannels().flatMap(({ clip, path, times }): PropertyEdit[] => {
       const selected = this.#selectedIndices(clip, path, times);
       if (!selected) return [];
-      const changed = withTangent(selected.keys, selected.indices, mode);
+      const changed = withTangent(selected.keys, selected.indices, mode, component);
       return changed.size > 0
         ? [{ owner: { clip }, path, op: "putKeys", keys: [...changed.values()] }]
         : [];

@@ -113,6 +113,17 @@
   width: 68px;
 }
 
+.summary {
+  display: block;
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .value input,
 .value select,
 .value button {

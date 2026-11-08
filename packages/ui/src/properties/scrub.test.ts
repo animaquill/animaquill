@@ -9,6 +9,7 @@ const opacity = spec("opacity");
 const anchor = spec("transform.anchorX");
 const width = spec("transform.width");
 const scale = spec("transform.scale");
+const fade: PropertySpec = { path: "fade.in", type: "number", unit: "s", min: 0, max: 4 };
 
 const plain = { shift: false, alt: false };
 
@@ -25,6 +26,7 @@ describe("showing a number", () => {
     [opacity, 0.12345, "12.35%"],
     [scale, 1.5, "150%"],
     [anchor, 0.5, "50%"],
+    [fade, 1.5, "1.5s"],
   ])("%#", (property, value, text) => {
     expect(formatNumber(value, property)).toBe(text);
   });
@@ -43,6 +45,9 @@ describe("typing a number", () => {
     [opacity, "50%", 0.5],
     [opacity, "37.5 %", 0.375],
     [scale, "200", 2],
+    [fade, "1.5s", 1.5],
+    [fade, "2 秒", 2],
+    [fade, "9", 4],
   ])("%#", (property, text, value) => {
     expect(parseNumber(text, property)).toBe(value);
   });
