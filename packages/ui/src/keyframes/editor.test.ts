@@ -1,4 +1,4 @@
-import { orderedTracks, secondsOf, type PropertyEdit } from "@animaquill/core";
+import { clipNodeOf, orderedTracks, secondsOf, type PropertyEdit } from "@animaquill/core";
 import { formatTime, parseTime, type Animation } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { writeEdit } from "../properties/inspect.ts";
@@ -1773,6 +1773,24 @@ describe("more about what a drag does", () => {
   });
 });
 
+describe("keys that nothing describes yet", () => {
+  it("are in a group that says whether the scene ran at all, or did not say all of it", async () => {
+    const { keyframes, addClip, store } = await setup();
+    addClip("a", 0, 8, { properties: { "object.arm.x": { keys: [{ time: "0", value: 1 }] } } });
+    const clip = store.getState().timelines["main"]?.clips["a"];
+    if (!clip) throw new Error("no clip");
+    const pending = (ran: "never" | "partial") =>
+      clipNodeOf(clip, { objects: [], ran }).children.find(
+        (child) => child.kind === "object" && child.pending !== undefined,
+      );
+    const never = pending("never");
+    const partial = pending("partial");
+    if (!never || !partial) throw new Error("no group");
+    expect(keyframes.nameOfNode(never)).toBe("keyframes.pending");
+    expect(keyframes.nameOfNode(partial)).toBe("keyframes.pendingPartial");
+  });
+});
+
 describe("rows of what only holds", () => {
   async function stepped() {
     const setting = await setup();
@@ -1801,7 +1819,7 @@ describe("rows of what only holds", () => {
 
   it("have keys in the middle, as tall as the row is, and nothing to ease or to steer", async () => {
     const { panel, lane, keyframes, click, at } = await stepped();
-    const id = "a/object:orphans/param.visible";
+    const id = laneOf("a", "param.visible");
     keyframes.toggleTall("a", "param.visible");
     expect(lane(id).height).toBe(DEFAULT_TALL_HEIGHT);
     const key = panel.visibleKeys(50).find((one) => one.lane.id === id);
@@ -1821,7 +1839,7 @@ describe("rows of what only holds", () => {
 
   it("keys there go along the time, and not up or down", async () => {
     const { panel, keyframes, at, trials, lane } = await stepped();
-    const id = "a/object:orphans/blend";
+    const id = laneOf("a", "blend");
     keyframes.toggleTall("a", "blend");
     const from = { ...at(2, id), y: panel.screenY(lane(id).top) + DEFAULT_TALL_HEIGHT / 2 };
     panel.press(from);
@@ -1840,7 +1858,7 @@ describe("rows of what only holds", () => {
   it("a value written in the row is a key at the playhead, as for a number", async () => {
     const { keyframes, timeline, writer, panel } = await stepped();
     timeline.seek(30);
-    const lane = panel.lanes.find((one) => one.id === "a/object:orphans/param.visible");
+    const lane = panel.lanes.find((one) => one.id === laneOf("a", "param.visible"));
     if (!lane?.box || lane.node.kind !== "property") throw new Error("no row");
     const inspected = keyframes.inspect(lane.box, lane.node.spec);
     if (!inspected) throw new Error("nothing to inspect");
@@ -1853,7 +1871,7 @@ describe("rows of what only holds", () => {
       "1 false",
       "2 false",
     ]);
-    const choice = panel.lanes.find((one) => one.id === "a/object:orphans/blend");
+    const choice = panel.lanes.find((one) => one.id === laneOf("a", "blend"));
     if (!choice?.box || choice.node.kind !== "property") throw new Error("no row");
     const now = keyframes.inspect(choice.box, choice.node.spec);
     if (!now) throw new Error("nothing to inspect");

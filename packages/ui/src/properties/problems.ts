@@ -72,7 +72,9 @@ export function propertyProblems(
     const target = (path: string) => ({ target: { clip: clip.id, path }, place: path });
     for (const path of orphanPaths(clipNodeOf(clip, described).children)) {
       if (!isSceneOwned(path)) continue;
-      const text = t("problems.properties.orphan", words({ path }));
+      // Code can make an element at any moment, so one that is not there is not known to be gone.
+      const kind = path.startsWith("element.") ? "orphanElement" : "orphan";
+      const text = t(`problems.properties.${kind}`, words({ path }));
       problems.push({ severity: "warning", text, origin, ...target(path) });
     }
     for (const { from, to } of described.renames ?? []) {

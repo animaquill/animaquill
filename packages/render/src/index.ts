@@ -203,14 +203,16 @@ export type FromCompositor =
     }
   /**
    * What the code of a scene registered and which elements its page has, in the state it came
-   * from. Only ever data: the editor reads it with `readRegistration`.
+   * from, as JSON. Only ever data: the editor reads it with `readRegistrationText`.
    */
   | {
       readonly type: "scene-objects";
       readonly layer: string;
       readonly revision: string;
-      readonly registration: unknown;
+      readonly registration: string;
     }
+  /** What the scene of a layer registered before is not all there is any more. */
+  | { readonly type: "scene-objects-unsure"; readonly layer: string; readonly revision: string }
   /** What came out of the code of a sound. Only ever data, and checked again on arrival. */
   | {
       readonly type: "sound-done";

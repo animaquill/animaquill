@@ -27,11 +27,16 @@ function setup(properties: object, params?: readonly object[]) {
     clip: { id: "c", start: "0", duration: "5", source: { kind: "scene", scene: "a" }, properties },
   });
   const renames: string[] = [];
-  const problemsFor = (registration?: Registration, registered: RegistrationProblem[] = []) => {
+  const problemsFor = (
+    registration?: Registration,
+    registered: RegistrationProblem[] = [],
+    exact = true,
+  ) => {
     const state = store.getState();
     const revision = sceneSourceOf(state, "a")?.revision;
     const registry = {
-      registrationOf: (asked: string) => (asked === revision ? registration : undefined),
+      registrationOf: (asked: string) =>
+        asked === revision && registration ? { registration, exact } : undefined,
     };
     return propertyProblems(
       state,
@@ -53,6 +58,7 @@ const registration = (objects: Registration["objects"], complete = true): Regist
   objects,
   elements: [],
   complete,
+  params: {},
 });
 
 describe("problems of what clips hold for their scenes", () => {
@@ -70,6 +76,21 @@ describe("problems of what clips hold for their scenes", () => {
         place: "object.arm.x",
       },
     ]);
+  });
+
+  it("say of an element that is not there that it connects once it is, and nothing of deleting", () => {
+    const { problemsFor } = setup({ "element.logo.opacity": keys });
+    expect(problemsFor(registration([], false))).toEqual([]);
+    const [problem] = problemsFor(registration([]));
+    expect(problem?.text).toBe('problems.properties.orphanElement {"path":"element.logo.opacity"}');
+  });
+
+  it("say nothing of keys while it is not known that code registered all of it for the clip", () => {
+    const { problemsFor } = setup({ "object.arm.x": keys });
+    const leg = { id: "leg", properties: [{ path: "x", type: "number", default: 0 }] };
+    // All that code registered, for other values of the parameters of the scene.
+    expect(problemsFor(registration([leg as never]), [], false)).toEqual([]);
+    expect(problemsFor(registration([leg as never]))).toHaveLength(1);
   });
 
   it("say where keys are under a path of before, and move them as one step", () => {

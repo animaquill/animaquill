@@ -799,8 +799,11 @@
         "missing-file": "文件不在：{{target}}",
         "missing-param": "scene.json 里没有这个参数：{{target}}",
         "object-alias": "{{target}} 的 aliases 里有不能用的 ID",
+        "object-churn": "登记的内容变得太频繁，有一部分还没告诉编辑器，这段时间不会判断哪些关键帧没有对象认领",
+        "object-components": "属性 {{target}} 的 components 要给每个分量一个不同的名字，没有用上",
         "object-default": "属性 {{target}} 的默认值和它的类型对不上，用了这个类型的空值",
         "object-id": "aq.object 的 ID 不能用：{{target}}。只能用英文字母、数字、下划线和连字符，用点分出层级，比如 rig.arm_l",
+        "object-late": "对象 {{target}} 在第一帧之后才登记，编辑器从此不知道还会不会有别的对象，不再判断哪些关键帧没有对象认领。在加载时或第一帧里登记全部对象",
         "object-parent": "对象 {{target}} 的 parent 不能用",
         "object-presence": "对象 {{target}} 的 presence 要写成它自己的一个开关或数字属性",
         "object-property": "属性 {{target}} 不能用：名字只能用英文字母、数字、下划线和连字符，type 要写对，choice 要有 options",
@@ -809,6 +812,7 @@
         "object-spans": "对象 {{target}} 的 spans 不对：每一段写成 [开始, 结束]，单位是秒，开始在前",
         "object-too-many": "登记的内容太多（{{target}}），后面的没有用上",
         "object-twice": "有两个 ID 都是 {{target}} 的对象，只用第一个",
+        "object-unstable": "对象 {{target}} 的描述一直在变，后面的变化不再告诉编辑器。aq.object 的描述要固定，会变的值写成关键帧或参数",
         "param-read-once": "参数 {{target}} 只在场景打开时读了一次，之后的修改和关键帧不会显示。在 aq.frame 里用 aq.param 读，就会跟着变",
         "slow-work": "读取文件或者加载模块超过一秒，有的结果可能到得晚",
         "too-many-problems": "问题太多，后面的不再记录",
@@ -1015,6 +1019,7 @@
     },
     "properties": {
       "orphan": "{{path}} 没有对象认领，关键帧不起作用。可以在关键帧编辑器的“未连接”里连接到别的属性，或者删除",
+      "orphanElement": "场景页面上现在没有 {{path}} 的元素，关键帧暂时不起作用。元素出现后会自己连上；元素的 id 改了的话，可以在关键帧编辑器的“未连接”里连接到新的属性",
       "renamed": "{{from}} 改名成了 {{to}}，关键帧还在旧路径上，照样生效",
       "migrate": "迁移",
       "mismatch": "{{path}} 的值不是{{type}}，不起作用，用的是默认值",
@@ -1059,6 +1064,7 @@
     },
     "orphans": "未连接",
     "pending": "未运行",
+    "pendingPartial": "未确定",
     "objects": {
       "params": "参数",
       "elements": "元素"

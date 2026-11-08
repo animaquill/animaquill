@@ -708,6 +708,10 @@ export class SceneLayers {
         const { revision } = source;
         this.#options.send({ type: "scene-objects", layer: id, revision, registration });
       },
+      onObjectsUnsure: () => {
+        const { id } = entry.layer;
+        this.#options.send({ type: "scene-objects-unsure", layer: id, revision: source.revision });
+      },
     };
     const host = (this.#options.makeHost ?? ((all) => new SceneHost(all)))(options);
     const started: Run = { key, host, frame: undefined, sent: new Map() };

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { REGISTRATION_LIMITS } from "@animaquill/core/registration";
 import { isRegistration, readFromScene, readSamples, readSoundFailure } from "./protocol.ts";
 
 const problem = { kind: "error", message: "boom", file: "a.js", line: 3, column: 7, frame: 12 };
@@ -14,17 +15,17 @@ describe("readFromScene", () => {
     [{ type: "progress", frame: 7 }],
     [{ type: "problem", problem }],
     [{ type: "pong", nonce: 9 }],
-    [{ type: "objects", registration: { objects: [], elements: [], complete: true } }],
+    [{ type: "objects", registration: '{"objects":[],"elements":[],"complete":true}' }],
+    [{ type: "objects-unsure" }],
   ])("takes %j", (message) => {
     expect(readFromScene(message)).toEqual(message);
   });
 
   it.each([
     { type: "objects" },
-    { type: "objects", registration: "all of it" },
-    { type: "objects", registration: { objects: {}, elements: [] } },
-    { type: "objects", registration: { objects: [] } },
-  ])("takes no registration without its lists, as in %j", (message) => {
+    { type: "objects", registration: { objects: [], elements: [] } },
+    { type: "objects", registration: " ".repeat(REGISTRATION_LIMITS.text + 1) },
+  ])("takes no registration that is no text of a size that it can have, as in %j", (message) => {
     expect(readFromScene(message)).toBeUndefined();
   });
 

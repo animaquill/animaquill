@@ -7,7 +7,7 @@ import {
   type ValueType,
 } from "@animaquill/schema";
 import { entryOf, type ProjectState } from "./model.ts";
-import { isIdPart } from "./registration.ts";
+import { isIdPart, paramDefault, zeroOf } from "./registration.ts";
 
 /** One asset a scene can ask for with `aq.asset(id)`. */
 export interface SceneAsset {
@@ -39,19 +39,18 @@ export interface SceneSource {
   readonly seed: number;
 }
 
-/** Parameters with an id that no path can hold cannot get a value from a clip, so they stay out. */
+/**
+ * Parameters with an id that no path can hold cannot get a value from a clip, so they stay out. A
+ * default of another type than its parameter is no default: code gets what its type starts from.
+ */
 const paramsOf = (manifest: SceneManifest): readonly SceneParam[] =>
-  (manifest.params ?? []).flatMap((param) =>
-    isIdPart(param.id)
-      ? [
-          {
-            id: param.id,
-            type: param.type as ValueType,
-            ...(param.default !== undefined && { default: param.default }),
-          },
-        ]
-      : [],
-  );
+  (manifest.params ?? []).flatMap((param) => {
+    if (!isIdPart(param.id)) return [];
+    const type = param.type as ValueType;
+    const given = paramDefault(param);
+    const fallback = given ?? zeroOf(type, param.options);
+    return [{ id: param.id, type, ...(fallback !== undefined && { default: fallback }) }];
+  });
 
 /** Everything in here goes to every scene and sound that asks. */
 const SHARED_FOLDER = "code/";

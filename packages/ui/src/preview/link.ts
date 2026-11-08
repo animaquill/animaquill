@@ -126,6 +126,8 @@ export class PreviewLink {
   readonly #painted: FrameRateFeed;
   readonly #quality: PreviewQuality;
   readonly #registrations: SceneRegistrations | undefined;
+  /** What the scene of each layer registered last, to say later that it is not sure any more. */
+  readonly #registered = new Map<string, { readonly revision: string; readonly params: string }>();
   /** What the last plan was drawn at. */
   #scale: number | undefined;
   #ready = false;
@@ -259,7 +261,14 @@ export class PreviewLink {
       }
     } else if (data.type === "scene-objects") {
       // What any state of a scene registered is true of that state, also one on its way out.
-      this.#registrations?.note(data.revision, data.registration);
+      const params = this.#registrations?.note(data.revision, data.registration);
+      if (params !== undefined) {
+        this.#registered.set(data.layer, { revision: data.revision, params });
+      }
+    } else if (data.type === "scene-objects-unsure") {
+      const known = this.#registered.get(data.layer);
+      if (known?.revision === data.revision)
+        this.#registrations?.unsure(known.revision, known.params);
     } else if (data.type === "origin-retired") {
       this.#status.noteRetired(data.origin);
     } else if (data.type === "frames") {

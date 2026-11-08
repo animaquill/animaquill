@@ -7,6 +7,7 @@ import {
   readElement,
   readObject,
   readRegistration,
+  readRegistrationText,
   readValue,
   type RegistrationProblem,
 } from "./registration.ts";
@@ -96,7 +97,51 @@ describe("a registration", () => {
       objects: [],
       elements: [],
       complete: false,
+      params: {},
     });
+  });
+
+  it("says what parameters it went by, as JSON to compare with", () => {
+    const keys = { keys: [{ time: "0", value: 2 }] };
+    expect(read([]).registration.params).toEqual({});
+    const params = readRegistration({
+      objects: [],
+      elements: [],
+      complete: true,
+      params: { "param.count": keys, "param.title": null },
+    })?.registration;
+    expect(params?.params).toEqual({ "param.count": JSON.stringify(keys), "param.title": "null" });
+    expect(params?.complete).toBe(true);
+  });
+
+  it.each([
+    ["no map", ["param.a"]],
+    ["no parameter", { "object.a.x": 1 }],
+    ["no id", { "param.a.b": 1 }],
+    ["too many", Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`param.p${i}`, 1]))],
+    ["too much", { "param.a": "x".repeat(70000) }],
+  ])("cannot be all there is with parameters that are %s", (_, params) => {
+    const result = readRegistration({ objects: [], elements: [], complete: true, params });
+    expect(result?.registration.complete).toBe(false);
+    expect(result?.registration.params).toEqual({});
+  });
+
+  it("cannot be all there is when something had to be left out", () => {
+    const objects = Array.from({ length: REGISTRATION_LIMITS.objects + 1 }, (_, i) => ({
+      id: `o${i}`,
+      properties: [],
+    }));
+    expect(read(objects).registration.complete).toBe(false);
+    const properties = Array.from({ length: 300 }, (_, i) => ({ path: `p${i}`, type: "number" }));
+    expect(read([{ id: "a", properties }]).registration.complete).toBe(false);
+  });
+
+  it("travels as JSON, which is read as anything else", () => {
+    const text = JSON.stringify({ objects: [ARM], elements: [], complete: true });
+    expect(readRegistrationText(text)?.registration.objects[0]?.id).toBe("arm");
+    expect(readRegistrationText("{")).toBeUndefined();
+    expect(readRegistrationText({ objects: [] })).toBeUndefined();
+    expect(readRegistrationText(" ".repeat(REGISTRATION_LIMITS.text + 1))).toBeUndefined();
   });
 
   it("gives a default to what has none, for code to read", () => {
@@ -119,6 +164,76 @@ describe("a registration", () => {
       [0, 0, 0],
       "a",
     ]);
+  });
+
+  it("takes no list with holes for a list of numbers", () => {
+    // Lists with holes, which is what `new Array(3)` has, and what a gap in a list literal makes.
+    const empty: number[] = [];
+    empty.length = 3;
+    const gap: number[] = [];
+    gap[0] = 1;
+    gap[2] = 3;
+    const holes = structuredClone({
+      objects: [
+        {
+          id: "o",
+          properties: [
+            { path: "v", type: "vec3", default: empty },
+            { path: "n", type: "numbers", default: gap },
+          ],
+        },
+      ],
+      elements: [],
+      complete: true,
+    });
+    const result = readRegistration(holes);
+    expect(result?.registration.objects[0]?.properties.map((spec) => spec.default)).toEqual([
+      [0, 0, 0],
+      [],
+    ]);
+    expect(result?.problems.map(({ code }) => code)).toEqual(["object-default", "object-default"]);
+  });
+
+  it("names the parts of a vector each by a name of its own, with no holes", () => {
+    const named: string[] = [];
+    named[1] = "b";
+    const { registration, problems } = read([
+      {
+        id: "a",
+        properties: [
+          { path: "p", type: "vec2", components: ["x", "x"] },
+          { path: "q", type: "vec2", components: structuredClone(named) },
+        ],
+      },
+    ]);
+    expect(registration.objects[0]?.properties.map((spec) => spec.components)).toEqual([
+      ["x", "y"],
+      ["x", "y"],
+    ]);
+    expect(problems.map(({ code }) => code)).toEqual(["object-components", "object-components"]);
+  });
+
+  it("leaves out an alias that is a property of the object itself", () => {
+    const { registration, problems } = read([
+      {
+        id: "arm",
+        properties: [
+          { path: "angle", type: "angle", aliases: ["rotation", "turn"] },
+          { path: "rotation", type: "angle" },
+        ],
+      },
+    ]);
+    expect(registration.objects[0]?.properties[0]?.aliases).toEqual(["turn"]);
+    expect(problems).toEqual([{ code: "object-alias", target: "arm.angle" }]);
+  });
+
+  it("leaves out an alias of an object that another object has as its id", () => {
+    const { registration, problems } = read([
+      { id: "arm", properties: [] },
+      { id: "arm2", aliases: ["arm", "old"], properties: [] },
+    ]);
+    expect(registration.objects[1]?.aliases).toEqual(["old"]);
+    expect(problems).toEqual([{ code: "object-alias", target: "arm2" }]);
   });
 
   it("names the parts of a vector, unless it says otherwise", () => {
@@ -265,7 +380,7 @@ describe("a registration", () => {
         properties: [{ path: "x", type: "number", group: "  " }],
       },
     ]);
-    expect(registration.objects[0]?.name).toHaveLength(REGISTRATION_LIMITS.text);
+    expect(registration.objects[0]?.name).toHaveLength(REGISTRATION_LIMITS.name);
     expect(registration.objects[0]?.properties[0]?.group).toBeUndefined();
   });
 

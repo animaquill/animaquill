@@ -209,10 +209,7 @@ describe("the tree of a clip", () => {
     expect(rig.object.name).toBe("骨架");
     expect(names(rig.children)).toEqual([
       ["root", ["object.rig.x", "object.rig.y"]],
-      [
-        "deep/object:rig/object:arm",
-        ["object.arm.r", ["deep/object:rig/object:arm/object:hand", ["object.hand.r"]]],
-      ],
+      ["deep/object:arm", ["object.arm.r", ["deep/object:hand", ["object.hand.r"]]]],
     ]);
     expect(pathsBelow(rig)).toEqual([
       "object.rig.x",
@@ -220,6 +217,26 @@ describe("the tree of a clip", () => {
       "object.arm.r",
       "object.hand.r",
     ]);
+  });
+
+  it("has ids that do not add up what is above them, however deep and long ids go", () => {
+    const long = (n: number) =>
+      Array.from({ length: 16 }, (_, i) => `p${n}x${i}`.padEnd(64, "a")).join(".");
+    const objects: ObjectDescriptor[] = Array.from({ length: 32 }, (_, i) => ({
+      id: long(i),
+      ...(i > 0 && { parent: long(i - 1) }),
+      properties: [number(`object.${long(i)}.x`, { group: "g" })],
+    }));
+    const node = clipNodeOf(clip({ id: "c" }), [CLIP_VISUAL, ...objects]);
+    const ids: string[] = [];
+    const visit = (child: TreeNode) => {
+      ids.push(child.id);
+      if (child.kind !== "property") child.children.forEach(visit);
+    };
+    visit(node);
+    const longest = `c/object:${long(31)}/group:g`.length;
+    expect(Math.max(...ids.map((id) => id.length))).toBeLessThanOrEqual(longest);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("is the same object as long as the clip is", () => {

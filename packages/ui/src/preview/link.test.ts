@@ -794,8 +794,18 @@ describe("what a scene works out itself", () => {
     const registrations = new SceneRegistrations();
     registrations.open("p");
     const { fromCompositor } = withScene(registrations);
-    const registration = { objects: [{ id: "arm", properties: [] }], elements: [], complete: true };
+    const registration = JSON.stringify({
+      objects: [{ id: "arm", properties: [] }],
+      elements: [],
+      complete: true,
+    });
     fromCompositor({ type: "scene-objects", layer: "sc", revision: "r9", registration });
-    expect(registrations.registrationOf("r9")?.objects).toEqual([{ id: "arm", properties: [] }]);
+    const found = () => registrations.registrationOf("r9", () => "null")?.registration;
+    expect(found()?.objects).toEqual([{ id: "arm", properties: [] }]);
+    expect(found()?.complete).toBe(true);
+    fromCompositor({ type: "scene-objects-unsure", layer: "sc", revision: "r8" });
+    expect(found()?.complete).toBe(true);
+    fromCompositor({ type: "scene-objects-unsure", layer: "sc", revision: "r9" });
+    expect(found()?.complete).toBe(false);
   });
 });

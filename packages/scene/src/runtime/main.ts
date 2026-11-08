@@ -1,12 +1,12 @@
-import { REGISTRATION_LIMITS, type Registration } from "@animaquill/core/registration";
+import { REGISTRATION_LIMITS } from "@animaquill/core/registration";
 import { startCapture, type Capture } from "./capture.ts";
-import { MESSAGE_RULES, weightOf } from "../budget.ts";
 import { loadProject, type LoadedProject } from "../loader/project.ts";
 import { pathOfVirtual } from "../loader/paths.ts";
 import { RUNTIME_VERSION, type FromScene, type SceneLoad, type ToScene } from "../protocol.ts";
 import { AnimationClock } from "./animations.ts";
 import { ClipValues, CodeObjects, SceneParams } from "./content.ts";
 import { PageElements } from "./elements.ts";
+import { RegistrationSender } from "./registering.ts";
 import { SceneClock } from "./clock.ts";
 import { installFileAccess } from "./files.ts";
 import { ProblemLog } from "./problems.ts";
@@ -138,13 +138,31 @@ const animations = new AnimationClock(() => clock.now);
 /** Time stands still until the project is there. The compositor asks again when it hears `ready`. */
 let ready = false;
 
-/** Something the project threw while it loaded, which may have kept it from registering the rest. */
-let loadFailed = false;
+/**
+ * Tells the editor what code registered. It hears of problems, so it comes first. What it reads
+ * from the others is only read once the first frame ran.
+ */
+const registering = new RegistrationSender(
+  {
+    objects: () => objects.descriptors(),
+    elements: () => elements.found,
+    params: () => params.seen(),
+    settled: () => objects.settled,
+  },
+  {
+    send,
+    report: (code, target) =>
+      problems.report({ kind: "api", code, ...(target !== undefined && { target }) }),
+    now: () => real.now(),
+    later: (run, ms) => void real.setTimeout(run, ms),
+  },
+);
 
 const problems = new ProblemLog(
   (problem) => {
-    if (!ready && (problem.kind === "error" || problem.kind === "rejection")) loadFailed = true;
     send({ type: "problem", problem });
+    // What came after it in the code may never have registered.
+    if (problem.kind === "error" || problem.kind === "rejection") registering.failed();
   },
   () => clock.frameNow,
 );
@@ -162,55 +180,13 @@ const misused = (code: string, target?: string) =>
 const seconds = () => clock.now / 1000;
 
 const values = new ClipValues(scene.values);
-const objects = new CodeObjects(values, seconds, () => registrationChanged());
-const params = new SceneParams(scene.params, values, seconds, misused);
+const objects = new CodeObjects(values, seconds, () => registering.changed());
+const params = new SceneParams(scene.params, values, seconds, misused, () => registering.changed());
 const elements = new PageElements(
   values,
   (code, target) => problems.report({ kind: "api", code, ...(target !== undefined && { target }) }),
   REGISTRATION_LIMITS.elements,
 );
-
-/** A registration goes again after a change, and not more often than this. */
-const REGISTRATION_EVERY_MS = 250;
-/** What the compositor takes in one message, less what the message itself weighs. */
-const REGISTRATION_BYTES = MESSAGE_RULES.maxRegistrationBytes - 1024;
-let registrationWaiting = false;
-let registrationSent = Number.NEGATIVE_INFINITY;
-
-/**
- * Says what code registered and which elements there are. The compositor would take a scene away
- * that sends more than a message can hold, so what does not fit stays out, and people hear why.
- */
-function sendRegistration(): void {
-  registrationWaiting = false;
-  registrationSent = real.now();
-  const all = objects.descriptors();
-  const registration = (count: number): Registration => ({
-    objects: all.slice(0, count),
-    elements: elements.found,
-    complete: !loadFailed,
-  });
-  let fits = all.length;
-  if (weightOf(registration(fits), REGISTRATION_BYTES) > REGISTRATION_BYTES) {
-    let low = 0;
-    while (low < fits) {
-      const middle = (low + fits + 1) >> 1;
-      if (weightOf(registration(middle), REGISTRATION_BYTES) > REGISTRATION_BYTES)
-        fits = middle - 1;
-      else low = middle;
-    }
-    problems.report({ kind: "api", code: "object-too-many", target: "bytes" });
-  }
-  send({ type: "objects", registration: registration(fits) });
-}
-
-/** Before the scene is ready all of it goes at once, after that a change goes after a moment. */
-function registrationChanged(): void {
-  if (!ready || registrationWaiting) return;
-  registrationWaiting = true;
-  const wait = Math.max(REGISTRATION_EVERY_MS - (real.now() - registrationSent), 0);
-  real.setTimeout(sendRegistration, wait);
-}
 
 const frameCallbacks = new Set<(seconds: number) => void>();
 
@@ -273,13 +249,15 @@ let lastProgress = 0;
 const transport = new Transport(clock, {
   arrived: async () => {
     runFrameCallbacks();
-    // What the clip says about elements comes last, so that it wins over code.
+    animations.sync();
+    // What the clip says about elements comes last, so that it wins over code and animations.
     try {
       elements.apply(seconds());
     } catch (error) {
       reportError(error);
     }
-    animations.sync();
+    objects.firstFrameRan();
+    registering.framesRan();
     await contentReady(true);
     await capture?.take(clock.frame);
   },
@@ -492,8 +470,7 @@ async function main(): Promise<void> {
   animations.sync();
   ready = true;
   params.loaded();
-  elements.scan(registrationChanged);
-  sendRegistration();
+  elements.scan(() => registering.changed());
   send({ type: "ready", width: innerWidth, height: innerHeight });
 }
 

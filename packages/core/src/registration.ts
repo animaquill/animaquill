@@ -32,10 +32,17 @@ export interface Registration {
   readonly objects: readonly ObjectDescriptor[];
   readonly elements: readonly SceneElement[];
   /**
-   * The scene got through loading without an error. Only then is a channel that nothing registered
-   * one that lost its object: an error halfway through would leave everything after it out.
+   * The code got through everything that registers without an error, and all of it fits. Only then
+   * is a channel that nothing registered one that lost its object: an error halfway through, or a
+   * frame that did not run yet, would leave out what comes after it.
    */
   readonly complete: boolean;
+  /**
+   * The parameters code read before it was done registering, with what the clip held for each of
+   * them then, as JSON: `null` when it held nothing. What code registers can depend on them, so this
+   * is only all there is for a clip that holds the same.
+   */
+  readonly params: Readonly<Record<string, string>>;
 }
 
 /** Each of these is a code of a problem of the scene too, so they say what they are about. */
@@ -53,6 +60,8 @@ export type RegistrationProblemCode =
   | "object-default"
   | "object-range"
   | "object-property-twice"
+  /** Two parts of a vector with one name. */
+  | "object-components"
   /** More than there is room for. What came first stays. */
   | "object-too-many";
 
@@ -78,12 +87,22 @@ export const REGISTRATION_LIMITS = {
   idParts: 16,
   idPart: 64,
   /** Names and groups, which only show. */
-  text: 200,
+  name: 200,
   /** What a default of `text` can be. */
   textValue: 10000,
   /** What a default of `numbers` can have. */
   numbers: 4096,
   unit: 16,
+  /** Paths a property can find keys under from before, all its aliases and those of its object. */
+  aliasPaths: 16,
+  /** Parameters a registration can go by, and how much of them as JSON. */
+  params: 64,
+  paramsText: 64 * 1024,
+  /**
+   * How long a registration is as JSON, which is how it travels. 10000 properties with the usual
+   * fields take about 900000 characters, so this leaves room for long names.
+   */
+  text: 1_500_000,
 } as const;
 
 const ID_PART = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -110,6 +129,30 @@ export function isObjectId(text: unknown): text is string {
 export const objectPath = (object: string, property: string) => `object.${object}.${property}`;
 export const elementPath = (element: string, property: string) => `element.${element}.${property}`;
 export const paramPath = (param: string) => `param.${param}`;
+
+/**
+ * Where the keys of a property of code can be from before, in the order they count: under its own
+ * aliases, then under the ids its object went by. Ids that other objects have now are not its own
+ * any more. There are only so many, so that aliases cannot make a description grow without end.
+ */
+export function aliasPathsOf(
+  object: Pick<ObjectDescriptor, "id" | "aliases">,
+  spec: Pick<PropertySpec, "path" | "aliases">,
+  taken?: ReadonlySet<string>,
+): readonly string[] {
+  const own = spec.aliases ?? [];
+  const paths: string[] = [];
+  const add = (path: string) => {
+    if (paths.length < REGISTRATION_LIMITS.aliasPaths && !paths.includes(path)) paths.push(path);
+  };
+  for (const alias of own) add(objectPath(object.id, alias));
+  for (const was of object.aliases ?? []) {
+    if (taken?.has(was)) continue;
+    add(objectPath(was, spec.path));
+    for (const alias of own) add(objectPath(was, alias));
+  }
+  return paths;
+}
 
 /** What a scene works out by itself, as opposed to the compositor: see `RenderLayer.content`. */
 export const SCENE_PREFIXES = ["param.", "element.", "object."] as const;
@@ -144,7 +187,7 @@ const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
 /** Text that only shows, cut down to what anybody reads. */
-function textOf(value: unknown, limit: number = REGISTRATION_LIMITS.text): string | undefined {
+function textOf(value: unknown, limit: number = REGISTRATION_LIMITS.name): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.slice(0, limit * 2).trim();
   return trimmed === "" ? undefined : trimmed.slice(0, limit);
@@ -211,27 +254,75 @@ export function readValue(
       if (!Array.isArray(value) || value.length > REGISTRATION_LIMITS.numbers) return undefined;
       const length = VECTOR_LENGTHS[type];
       if (length !== undefined && value.length !== length) return undefined;
-      return value.every(finite) ? [...value] : undefined;
+      return numbersIn(value);
     }
   }
+}
+
+/**
+ * Every place of a list, holes included: `every` and `map` go past those, and a list with a hole is
+ * no list of numbers.
+ */
+function numbersIn(list: readonly unknown[]): number[] | undefined {
+  const numbers: number[] = [];
+  for (let index = 0; index < list.length; index += 1) {
+    const value = list[index];
+    if (!finite(value)) return undefined;
+    numbers.push(value);
+  }
+  return numbers;
 }
 
 function readOptions(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const options: string[] = [];
   for (const option of value.slice(0, REGISTRATION_LIMITS.options)) {
-    const text = typeof option === "string" ? option.slice(0, REGISTRATION_LIMITS.text) : undefined;
+    const text = typeof option === "string" ? option.slice(0, REGISTRATION_LIMITS.name) : undefined;
     if (text !== undefined && text !== "" && !options.includes(text)) options.push(text);
   }
   return options.length > 0 ? options : undefined;
 }
 
-function readComponents(type: ValueType, value: unknown): readonly string[] | undefined {
+/** The names of the parts of a vector: as many as it has, each one of its own, or the usual ones. */
+function readComponents(
+  type: ValueType,
+  value: unknown,
+  report: () => void,
+): readonly string[] | undefined {
   const length = VECTOR_LENGTHS[type];
   if (length === undefined) return undefined;
-  const given = Array.isArray(value) && value.length === length ? value.map((v) => textOf(v)) : [];
-  const names = given.length === length && given.every((name) => name !== undefined);
-  return names ? (given as string[]) : VECTOR_COMPONENTS.slice(0, length);
+  const usual = VECTOR_COMPONENTS.slice(0, length);
+  if (value === undefined) return usual;
+  const names: string[] = [];
+  if (Array.isArray(value) && value.length === length) {
+    // A loop and not `map`, which goes past holes.
+    for (let index = 0; index < length; index += 1) {
+      const name = textOf(value[index], 16);
+      if (name === undefined || names.includes(name)) break;
+      names.push(name);
+    }
+  }
+  if (names.length === length) return names;
+  report();
+  return usual;
+}
+
+/** What a parameter of `scene.json` can be: the schema only says that it is some value. */
+interface DeclaredParam {
+  readonly type: string;
+  readonly default?: unknown;
+  readonly options?: readonly string[] | undefined;
+}
+
+/** The default of a parameter, as far as it is a value of its type. */
+export function paramDefault(param: DeclaredParam): Value | undefined {
+  if (param.default === undefined || !VALUE_TYPES.has(param.type)) return undefined;
+  // Words can also be a reference to the string tables of the project.
+  const { default: given } = param;
+  if (param.type === "text" && typeof field(given, "string") === "string") {
+    return { string: field(given, "string") as string };
+  }
+  return readValue(param.type as ValueType, given, param.options);
 }
 
 /** Ids a property or an object went by before. Only those that could be ids count. */
@@ -302,7 +393,9 @@ function readProperty(raw: unknown, object: string, report: Report): PropertySpe
   if (name !== undefined) spec.name = name;
   const group = textOf(field(raw, "group"), 64);
   if (group !== undefined) spec.group = group;
-  const components = readComponents(valueType, field(raw, "components"));
+  const components = readComponents(valueType, field(raw, "components"), () =>
+    report("object-components", where),
+  );
   if (components) spec.components = components;
   const aliases = readAliases(field(raw, "aliases"), path, isIdPart, () =>
     report("object-alias", where),
@@ -336,7 +429,7 @@ export function readObject(
 ): ObjectDescriptor | undefined {
   const id = field(raw, "id");
   if (!isObjectId(id)) {
-    report("object-id", typeof id === "string" ? id.slice(0, 200) : undefined);
+    report("object-id", typeof id === "string" ? id.slice(0, REGISTRATION_LIMITS.name) : undefined);
     return undefined;
   }
   const given = field(raw, "properties");
@@ -354,6 +447,14 @@ export function readObject(
     }
     paths.add(spec.path);
     properties.push(spec);
+  }
+  // An alias that is a path of the object itself would read the keys of another property.
+  for (const [index, spec] of properties.entries()) {
+    const own = spec.aliases?.filter((alias) => !paths.has(alias));
+    if (!spec.aliases || own?.length === spec.aliases.length) continue;
+    report("object-alias", `${id}.${spec.path}`);
+    const { aliases: _aliases, ...rest } = spec;
+    properties[index] = (own && own.length > 0 ? { ...rest, aliases: own } : rest) as PropertySpec;
   }
   const object: Record<string, unknown> = { id, properties };
   const name = textOf(field(raw, "name"));
@@ -404,6 +505,36 @@ export interface ReadRegistration {
   readonly problems: readonly RegistrationProblem[];
 }
 
+const PARAM_PATH = /^param\.([^.]+)$/;
+
+/**
+ * The parameters a registration went by, as JSON. They only serve to compare with what a clip holds,
+ * so nothing else is read of them. What does not make sense takes away the right to say that the
+ * registration is all there is, because there is no telling which clips it goes for.
+ */
+function readParams(raw: unknown): Readonly<Record<string, string>> | undefined {
+  if (raw === undefined) return {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const params: Record<string, string> = {};
+  let size = 0;
+  let count = 0;
+  for (const [path, value] of Object.entries(raw)) {
+    count += 1;
+    if (count > REGISTRATION_LIMITS.params || !isIdPart(PARAM_PATH.exec(path)?.[1]))
+      return undefined;
+    let text: string | undefined;
+    try {
+      text = JSON.stringify(value ?? null);
+    } catch {
+      return undefined;
+    }
+    size += path.length + (text?.length ?? 0);
+    if (text === undefined || size > REGISTRATION_LIMITS.paramsText) return undefined;
+    params[path] = text;
+  }
+  return params;
+}
+
 /** The most problems one registration gets to report. Each one is said once anyway. */
 const MAX_PROBLEMS = 100;
 
@@ -427,13 +558,19 @@ export function readRegistration(raw: unknown): ReadRegistration | undefined {
   const ids = new Set<string>();
   let room: number = REGISTRATION_LIMITS.properties;
   const { objects: maxObjects, elements: maxElements } = REGISTRATION_LIMITS;
-  if (objects.length > maxObjects) report("object-too-many", "objects");
+  // Whatever got left out may be what a key is about, so nothing can be said about what is missing.
+  let cut = false;
+  const cutting: Report = (code, target) => {
+    if (code === "object-too-many") cut = true;
+    report(code, target);
+  };
+  if (objects.length > maxObjects) cutting("object-too-many", "objects");
   for (const entry of objects.slice(0, maxObjects)) {
     if (room <= 0) {
-      report("object-too-many", "properties");
+      cutting("object-too-many", "properties");
       break;
     }
-    const object = readObject(entry, report, room);
+    const object = readObject(entry, cutting, room);
     if (!object) continue;
     if (ids.has(object.id)) {
       report("object-twice", object.id);
@@ -443,15 +580,54 @@ export function readRegistration(raw: unknown): ReadRegistration | undefined {
     room -= object.properties.length;
     read.push(object);
   }
+  withoutTakenAliases(read, ids, report);
   const found: SceneElement[] = [];
   const elementIds = new Set<string>();
-  if (elements.length > maxElements) report("object-too-many", "elements");
+  if (elements.length > maxElements) cutting("object-too-many", "elements");
   for (const entry of elements.slice(0, maxElements)) {
     const element = readElement(entry);
     if (!element || elementIds.has(element.id)) continue;
     elementIds.add(element.id);
     found.push(element);
   }
-  const complete = field(raw, "complete") === true;
-  return { registration: { objects: read, elements: found, complete }, problems };
+  const params = readParams(field(raw, "params"));
+  const complete = field(raw, "complete") === true && !cut && params !== undefined;
+  return {
+    registration: { objects: read, elements: found, complete, params: params ?? {} },
+    problems,
+  };
+}
+
+/**
+ * An object cannot have gone by the id of another one that is there: the keys under it belong to
+ * that one. Such an alias is left out, and people hear about it.
+ */
+function withoutTakenAliases(
+  objects: ObjectDescriptor[],
+  ids: ReadonlySet<string>,
+  report: Report,
+): void {
+  for (const [index, object] of objects.entries()) {
+    const { aliases } = object;
+    const free = aliases?.filter((alias) => !ids.has(alias));
+    if (!aliases || free?.length === aliases.length) continue;
+    report("object-alias", object.id);
+    const { aliases: _aliases, ...rest } = object;
+    objects[index] = free && free.length > 0 ? { ...rest, aliases: free } : rest;
+  }
+}
+
+/**
+ * A registration the way it travels, as JSON: that is what keeps what a message weighs close to
+ * what it holds. Undefined for what is too long, or no registration.
+ */
+export function readRegistrationText(text: unknown): ReadRegistration | undefined {
+  if (typeof text !== "string" || text.length > REGISTRATION_LIMITS.text) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  return readRegistration(raw);
 }

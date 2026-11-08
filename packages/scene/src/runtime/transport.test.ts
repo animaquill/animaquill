@@ -290,7 +290,7 @@ describe("Transport", () => {
       expect(log).toEqual(["position 4"]);
     });
 
-    it("is nothing before the first frame, while playing, or on the way somewhere", async () => {
+    it("is nothing before the first frame, or while playing", async () => {
       let arrivals = 0;
       const { transport, settled, setPosition } = setup({
         arrived: async () => void (arrivals += 1),
@@ -303,11 +303,31 @@ describe("Transport", () => {
       transport.refresh();
       await settled();
       expect(arrivals).toBe(0);
-      transport.pause();
-      transport.seek(1, 3);
-      transport.refresh();
+    });
+
+    it("on the way somewhere, gets there once more, with what changed on the way", async () => {
+      const drawn: number[] = [];
+      let value = 1;
+      let release: () => void = () => {};
+      const { transport, settled, setPosition, log } = setup({
+        arrived: () => {
+          drawn.push(value);
+          return new Promise<void>((done) => (release = done));
+        },
+      });
+      setPosition(4);
+      transport.seek(1, 4);
       await settled();
-      expect(arrivals).toBe(1);
+      // The value changes after the frame read it, while it is still on its way to the screen.
+      value = 2;
+      transport.refresh();
+      transport.refresh();
+      release();
+      await settled();
+      release();
+      await settled();
+      expect(drawn).toEqual([1, 2]);
+      expect(log).toEqual(["seeked 1 4 false", "position 4"]);
     });
   });
 });

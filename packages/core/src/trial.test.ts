@@ -2504,6 +2504,32 @@ describe("what is tried on a property that gets another path", () => {
     expect(tried("object.arm.r")).toBe(10);
   });
 
+  it("goes along with two properties that swap, and with one that goes where another left", () => {
+    const { run, trial, tried } = setup();
+    run(set(1, "object.o.a"));
+    run(set(2, "object.o.b"));
+    trial.write([write(100, "object.o.a"), write(200, "object.o.b")]);
+    const move = (from: string, to: string) => ({ owner, from, to });
+    run({
+      type: "property.rename",
+      params: {
+        timeline: "main",
+        renames: [move("object.o.a", "object.o.b"), move("object.o.b", "object.o.a")],
+      },
+    });
+    expect(tried("object.o.b")).toBe(100);
+    expect(tried("object.o.a")).toBe(200);
+    run({
+      type: "property.rename",
+      params: {
+        timeline: "main",
+        renames: [move("object.o.b", "object.o.c"), move("object.o.a", "object.o.b")],
+      },
+    });
+    expect(tried("object.o.c")).toBe(100);
+    expect(tried("object.o.b")).toBe(200);
+  });
+
   it("leaves what is tried under the new path as it is", () => {
     const { run, trial, tried } = setup();
     run(set(1, "object.a.x"));

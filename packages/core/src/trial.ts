@@ -222,16 +222,71 @@ function applyFact(entries: Entries, fact: ClipFact, clocks: Map<string, Rationa
       }
       break;
     }
-    case "renamed": {
-      // What is tried goes along. Something tried under the new path already is newer than this.
-      const held = entries.get(fact.clip);
-      const change = held?.get(fact.from);
-      if (!change || held?.has(fact.to)) break;
-      const moved = renamedChange(change, fact);
-      put(entries, fact.clip, fact.from, undefined);
-      if (moved) put(entries, fact.clip, fact.to, moved);
+    case "renamed":
+      applyRenames(entries, [fact]);
       break;
+  }
+}
+
+type RenamedFact = Extract<ClipFact, { kind: "renamed" }>;
+
+/** Facts in their order. What one step renames moves all at once, see `applyRenames`. */
+function applyFacts(entries: Entries, facts: readonly ClipFact[], clocks: Map<string, Rational>) {
+  let renames: RenamedFact[] = [];
+  const rename = () => {
+    if (renames.length > 0) applyRenames(entries, renames);
+    renames = [];
+  };
+  for (const fact of facts) {
+    if (fact.kind === "renamed") {
+      renames.push(fact);
+      continue;
     }
+    rename();
+    applyFact(entries, fact, clocks);
+  }
+  rename();
+}
+
+/**
+ * What is tried goes along with properties that get another path. One step moves its paths all at
+ * once, so that two properties can swap, and one can go where another left. Something tried under a
+ * path that does not move is newer than what would come there, so that stays, and what would have
+ * come stays where it was.
+ */
+function applyRenames(entries: Entries, facts: readonly RenamedFact[]): void {
+  const byClip = new Map<string, Map<string, RenamedFact>>();
+  for (const fact of facts) {
+    const moves = byClip.get(fact.clip) ?? new Map<string, RenamedFact>();
+    moves.set(fact.from, fact);
+    byClip.set(fact.clip, moves);
+  }
+  for (const [clip, moves] of byClip) {
+    const held = entries.get(clip);
+    if (!held) continue;
+    const staying = new Set([...held.keys()].filter((path) => !moves.has(path)));
+    const moving = new Map<string, TrialChange>();
+    for (const [path, change] of held) {
+      const fact = moves.get(path);
+      const moved = fact && renamedChange(change, fact);
+      if (moved) moving.set(path, moved);
+      else staying.add(path);
+    }
+    // What cannot go where it would stays, and then nothing can go where it stays either.
+    for (let blocked = true; blocked;) {
+      blocked = false;
+      for (const path of moving.keys()) {
+        if (!staying.has((moves.get(path) as RenamedFact).to)) continue;
+        moving.delete(path);
+        staying.add(path);
+        blocked = true;
+      }
+    }
+    const next = new Map<string, TrialChange>();
+    for (const path of staying) next.set(path, held.get(path) as TrialChange);
+    for (const [path, change] of moving) next.set((moves.get(path) as RenamedFact).to, change);
+    if (next.size > 0) entries.set(clip, next);
+    else entries.delete(clip);
   }
 }
 
@@ -879,7 +934,7 @@ export class Trial {
     const back = change?.back === undefined ? undefined : this.#returning.get(change.back);
     // What was tried on a property since then stays.
     const returning = back?.filter(({ clip, path }) => entries.get(clip)?.has(path) !== true);
-    for (const fact of facts) applyFact(next, fact, this.#clocks);
+    applyFacts(next, facts, this.#clocks);
     for (const { clip, path, change: value } of returning ?? []) put(next, clip, path, value);
     this.#withoutSaved(next);
     if (change?.takesBack) {

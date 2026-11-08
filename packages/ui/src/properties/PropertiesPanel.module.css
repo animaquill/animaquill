@@ -3,6 +3,9 @@
   flex-direction: column;
   height: 100%;
   overflow: auto;
+  /* With room for the scrollbar kept, a value that changes inside does not lay out all of the tab
+     again: with the scrollbars of the theme it did, in every frame while playing. */
+  scrollbar-gutter: stable;
   font-size: 12px;
   outline: none;
 }
@@ -87,6 +90,7 @@
 
 .object {
   display: grid;
+  align-content: start;
   gap: 1px;
 }
 

@@ -1,4 +1,5 @@
 import type { SceneParam } from "@animaquill/core";
+import { REGISTRATION_LIMITS } from "@animaquill/core/registration";
 
 /**
  * What the compositor and a scene say to each other. A scene runs code from the project, so what
@@ -248,10 +249,16 @@ export type FromScene =
   | { readonly type: "progress"; readonly frame: number }
   | { readonly type: "problem"; readonly problem: SceneProblem }
   /**
-   * What its code registered with `aq.object` and which elements of its page have an id, once it is
-   * `ready` and whenever that changes. Only ever data, which the editor reads with `readRegistration`.
+   * What its code registered with `aq.object` and which elements of its page have an id, once its
+   * first frame ran and whenever that changes, as JSON. Only ever data, which the editor reads with
+   * `readRegistrationText`.
    */
-  | { readonly type: "objects"; readonly registration: unknown }
+  | { readonly type: "objects"; readonly registration: string }
+  /**
+   * What it said it registered is not all there is any more: its code threw, or it had more to say
+   * than it could. It says so without saying all of it again.
+   */
+  | { readonly type: "objects-unsure" }
   | { readonly type: "pong"; readonly nonce: number };
 
 /** Whether a message is about what a scene registered, which is the one that can be large. */
@@ -360,13 +367,12 @@ export function readFromScene(data: unknown): Exclude<FromScene, { type: "frame"
     }
     case "objects": {
       const { registration } = message;
-      const lists =
-        typeof registration === "object" &&
-        registration !== null &&
-        Array.isArray((registration as { objects?: unknown }).objects) &&
-        Array.isArray((registration as { elements?: unknown }).elements);
-      return lists ? { type: "objects", registration } : undefined;
+      const fits =
+        typeof registration === "string" && registration.length <= REGISTRATION_LIMITS.text;
+      return fits ? { type: "objects", registration } : undefined;
     }
+    case "objects-unsure":
+      return { type: "objects-unsure" };
     case "pong": {
       const nonce = count(message.nonce);
       return nonce === undefined ? undefined : { type: "pong", nonce };

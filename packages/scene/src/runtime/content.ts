@@ -2,6 +2,7 @@ import type { SceneParam } from "@animaquill/core";
 import { compileChannel, sample, type Channel } from "@animaquill/core/curve";
 import {
   REGISTRATION_LIMITS,
+  aliasPathsOf,
   objectPath,
   paramPath,
   readObject,
@@ -59,6 +60,11 @@ export class ClipValues {
     return this.#raw.has(path);
   }
 
+  /** What the clip holds for a path, as it stores it. */
+  raw(path: string): unknown {
+    return this.#raw.get(path);
+  }
+
   paths(): readonly string[] {
     return [...this.#raw.keys()];
   }
@@ -112,16 +118,14 @@ function rawObject(id: unknown, options: unknown): Record<string, unknown> {
   return { id, name, parent, spans, presence, aliases, properties: list };
 }
 
-/** A property, with where its keys can be. The first path that holds any counts. */
-interface Placed {
-  readonly spec: PropertySpec;
-  readonly paths: readonly string[];
-}
-
 interface Registered {
   readonly descriptor: ObjectDescriptor;
   readonly text: string;
   readonly handle: ObjectHandle;
+  /** What goes to the editor of it, which stops following an object that keeps changing. */
+  readonly told: ObjectDescriptor;
+  /** How often it came with another description. */
+  readonly changes: number;
 }
 
 export interface ObjectHandle {
@@ -133,17 +137,12 @@ export interface ObjectHandle {
   at(seconds?: number): Readonly<Record<string, Value>>;
 }
 
-function placedOf({ id, aliases = [], properties }: ObjectDescriptor): readonly Placed[] {
-  return properties.map((spec) => {
-    const own = spec.aliases ?? [];
-    const paths = [
-      objectPath(id, spec.path),
-      ...own.map((alias) => objectPath(id, alias)),
-      ...aliases.flatMap((was) => [spec.path, ...own].map((alias) => objectPath(was, alias))),
-    ];
-    return { spec, paths };
-  });
-}
+/**
+ * How often an object can come with another description before it counts as one that keeps
+ * changing. A few times is code that is still finding its way; more is a description that goes by
+ * time, which is what keys are for.
+ */
+export const MAX_DESCRIPTION_CHANGES = 3;
 
 /** The objects code registered, by id, with what their values come to. */
 export class CodeObjects {
@@ -151,11 +150,34 @@ export class CodeObjects {
   readonly #values: ClipValues;
   readonly #now: () => number;
   readonly #changed: () => void;
+  /** Goes up whenever objects come or go, which is what aliases depend on. */
+  #version = 0;
+  /** Some objects could not be registered, so what is there is not all there is. */
+  #cut = false;
+  /** Some objects keep changing their description, see `MAX_DESCRIPTION_CHANGES`. */
+  #unstable = false;
+  /** The first frame ran, so that what comes now came late: see `firstFrameRan`. */
+  #afterFirstFrame = false;
+  /** Code registered something after its first frame, which it may do again at any moment. */
+  #late = false;
 
   constructor(values: ClipValues, now: () => number, changed: () => void) {
     this.#values = values;
     this.#now = now;
     this.#changed = changed;
+  }
+
+  /** Whether what the editor gets of these is all there is. */
+  get settled(): boolean {
+    return !this.#cut && !this.#unstable && !this.#late;
+  }
+
+  /**
+   * What code registers by the end of its first frame is what it registers. An object that comes
+   * later could have come at any moment the editor never got to, so then nothing is all there is.
+   */
+  firstFrameRan(): void {
+    this.#afterFirstFrame = true;
   }
 
   /**
@@ -173,39 +195,59 @@ export class CodeObjects {
     if (known && known.text === text) return known.handle;
     if (descriptor && !known && this.#objects.size >= REGISTRATION_LIMITS.objects) {
       report("object-too-many", "objects");
+      this.#cut = true;
       descriptor = undefined;
     }
     // Without an id that a path can hold, the values are the defaults, and that is all they can be.
     const shape = descriptor ?? readObject({ ...raw, id: "unregistered" }, () => {});
     const handle = this.#handleOf(shape, descriptor !== undefined);
-    if (descriptor && text !== undefined) {
-      this.#objects.set(descriptor.id, { descriptor, text, handle });
-      this.#changed();
+    if (!descriptor || text === undefined) return handle;
+    if (!known && this.#afterFirstFrame && !this.#late) {
+      report("object-late", descriptor.id);
+      this.#late = true;
     }
+    const changes = known ? known.changes + 1 : 0;
+    const keepsChanging = changes > MAX_DESCRIPTION_CHANGES;
+    if (keepsChanging && !this.#unstable) report("object-unstable", descriptor.id);
+    this.#unstable ||= keepsChanging;
+    const told = keepsChanging && known ? known.told : descriptor;
+    this.#objects.set(descriptor.id, { descriptor, text, handle, told, changes });
+    this.#version += 1;
+    if (!keepsChanging) this.#changed();
     return handle;
   }
 
   #handleOf(descriptor: ObjectDescriptor | undefined, registered: boolean): ObjectHandle {
-    const placed = descriptor ? placedOf(descriptor) : [];
     const values = this.#values;
     const result: Record<string, Value> = {};
     const now = this.#now;
-    // What each property reads only changes with what the clip holds, not with every frame.
+    const objects = this.#objects;
+    const versionOf = () => this.#version;
+    const specs = descriptor?.properties ?? [];
+    // Where each property reads from only changes with what the clip holds and what is registered,
+    // not with every frame.
     let channels: readonly (Channel | undefined)[] = [];
-    let preparedIn = -1;
+    let preparedFor = "";
     return freeze({
       id: descriptor && registered ? descriptor.id : "",
       at(seconds?: number) {
         const clock = typeof seconds === "number" && Number.isFinite(seconds) ? seconds : now();
-        if (preparedIn !== values.version) {
-          preparedIn = values.version;
-          channels = placed.map(({ spec, paths }) => {
-            const path = registered ? paths.find((candidate) => values.has(candidate)) : undefined;
+        const version = `${values.version} ${versionOf()}`;
+        if (preparedFor !== version && descriptor) {
+          preparedFor = version;
+          const taken = new Set(objects.keys());
+          channels = specs.map((spec) => {
+            if (!registered) return undefined;
+            const paths = [
+              objectPath(descriptor.id, spec.path),
+              ...aliasPathsOf(descriptor, spec, taken),
+            ];
+            const path = paths.find((candidate) => values.has(candidate));
             return path === undefined ? undefined : values.channel(path, spec.type);
           });
         }
-        for (let index = 0; index < placed.length; index += 1) {
-          const { spec } = placed[index] as Placed;
+        for (let index = 0; index < specs.length; index += 1) {
+          const spec = specs[index] as PropertySpec;
           const channel = channels[index];
           const value = channel ? sample(channel, clock) : spec.default;
           if (value !== undefined) result[spec.path] = value;
@@ -215,9 +257,9 @@ export class CodeObjects {
     });
   }
 
-  /** What there is, in the order it got registered. */
+  /** What the editor gets to know, in the order it got registered. */
   descriptors(): readonly ObjectDescriptor[] {
-    return [...this.#objects.values()].map(({ descriptor }) => descriptor);
+    return [...this.#objects.values()].map(({ told }) => told);
   }
 }
 
@@ -232,18 +274,24 @@ export class SceneParams {
   readonly #later = new Set<string>();
   readonly #missing = new Set<string>();
   readonly #warned = new Set<string>();
+  /** What the clip held for each parameter when code first read it, as stored: null for nothing. */
+  readonly #first = new Map<string, unknown>();
+  readonly #seenMore: () => void;
   #ready = false;
 
+  /** `seenMore` hears of a parameter that code read for the first time, see `seen`. */
   constructor(
     params: readonly SceneParam[],
     values: ClipValues,
     now: () => number,
     report: ContentReport,
+    seenMore: () => void = () => {},
   ) {
     this.#params = new Map(params.map((param) => [param.id, param]));
     this.#values = values;
     this.#now = now;
     this.#report = report;
+    this.#seenMore = seenMore;
   }
 
   read(id: unknown, seconds?: unknown): Value | undefined {
@@ -255,8 +303,21 @@ export class SceneParams {
       return undefined;
     }
     (this.#ready ? this.#later : this.#early).add(name);
+    const path = paramPath(name);
+    if (!this.#first.has(path)) {
+      this.#first.set(path, this.#values.raw(path) ?? null);
+      this.#seenMore();
+    }
     const clock = typeof seconds === "number" && Number.isFinite(seconds) ? seconds : this.#now();
-    return this.#values.at(paramPath(name), param.type, clock) ?? param.default;
+    return this.#values.at(path, param.type, clock) ?? param.default;
+  }
+
+  /**
+   * The parameters code read so far, with what the clip held for them then. What code registered
+   * can depend on them, so a registration goes by these.
+   */
+  seen(): Readonly<Record<string, unknown>> {
+    return Object.fromEntries(this.#first);
   }
 
   /** From here on, code reads values in its own time. */

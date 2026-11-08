@@ -13,9 +13,11 @@ import {
 } from "@animaquill/schema";
 import { clipOffset, clipStart, entryOf, type ClipState, type ProjectState } from "./model.ts";
 import {
+  aliasPathsOf,
   elementPath,
   isIdPart,
   objectPath,
+  paramDefault,
   paramPath,
   type Registration,
   type SceneElement,
@@ -36,11 +38,32 @@ export function objectsOf(clip: ClipState): readonly ObjectDescriptor[] {
   return WITH_A_PICTURE.has(clip.source.kind) ? [CLIP_VISUAL] : [];
 }
 
+/** What a scene registered, and whether it ran with what a clip holds. */
+export interface FoundRegistration {
+  readonly registration: Registration;
+  /**
+   * It ran with the same parameters as the clip has, as far as its code read them. Otherwise it may
+   * have registered something else for this clip, so it only shows what there probably is.
+   */
+  readonly exact: boolean;
+}
+
 /** What is known of scenes apart from the project: what their code registered when it ran. */
 export interface SceneRegistry {
-  /** What a state of a scene registered, by its revision. Undefined when it did not run here. */
-  registrationOf(revision: string): Registration | undefined;
+  /**
+   * What a state of a scene registered, by its revision, for a clip: `paramOf` gives what the clip
+   * holds for a parameter, as JSON, the way `Registration.params` has it. Undefined when it did not
+   * run here.
+   */
+  registrationOf(
+    revision: string,
+    paramOf: (path: string) => string,
+  ): FoundRegistration | undefined;
 }
+
+/** What a clip holds for a parameter, the way a registration compares it. */
+export const paramTextOf = (clip: ClipState, path: string): string =>
+  JSON.stringify(entryOf(effectiveProperties(clip), path) ?? null);
 
 /**
  * How far the code of a scene got when it last ran: through loading, or not, or it never ran here.
@@ -73,18 +96,20 @@ export const SCENE_OBJECT_TYPES = {
 const PARAMS_ID = "params";
 const ELEMENTS_ID = "elements";
 
-/** What `scene.json` declares, as properties. Parameters with ids no path can hold are left out. */
+/**
+ * What `scene.json` declares, as properties. Parameters with ids no path can hold are left out, and
+ * so is a default of another type than its parameter: it would be no value of it.
+ */
 function paramsObject(manifest: SceneManifest | undefined): ObjectDescriptor | undefined {
   const properties = (manifest?.params ?? []).flatMap((param): PropertySpec[] => {
     if (!isIdPart(param.id)) return [];
-    const spec: Record<string, unknown> = {
-      path: paramPath(param.id),
-      type: param.type as ValueType,
-      name: param.name,
-    };
-    for (const key of ["default", "min", "max", "options"] as const) {
+    const type = param.type as ValueType;
+    const spec: Record<string, unknown> = { path: paramPath(param.id), type, name: param.name };
+    for (const key of ["min", "max", "options"] as const) {
       if (param[key] !== undefined) spec[key] = param[key];
     }
+    const fallback = paramDefault(param);
+    if (fallback !== undefined) spec.default = fallback;
     return [spec as unknown as PropertySpec];
   });
   return properties.length > 0
@@ -130,13 +155,9 @@ function codeObject(
   object: ObjectDescriptor,
   renamed: (index: number, placed: Placed) => void,
 ): ObjectDescriptor {
-  const { id, name, parent, spans, presence, aliases = [] } = object;
+  const { id, name, parent, spans, presence } = object;
   const properties = object.properties.map((spec, index): PropertySpec => {
-    const own = spec.aliases ?? [];
-    const before = [
-      ...own.map((alias) => objectPath(id, alias)),
-      ...aliases.flatMap((was) => [spec.path, ...own].map((alias) => objectPath(was, alias))),
-    ];
+    const before = aliasPathsOf(object, spec);
     const { aliases: _aliases, ...rest } = spec;
     const placed: PropertySpec = {
       ...rest,
@@ -181,31 +202,48 @@ function resolve(
 
 const NO_REGISTRATION = {};
 const NO_MANIFEST = {};
-const resolved = new WeakMap<object, WeakMap<object, Resolved>>();
+const resolutions = new WeakMap<object, WeakMap<object, Resolved>>();
 
 function resolvedOf(manifest: SceneManifest | undefined, registration: Registration | undefined) {
   const byRegistration = registration ?? NO_REGISTRATION;
-  let known = resolved.get(byRegistration);
-  if (!known) resolved.set(byRegistration, (known = new WeakMap()));
+  let known = resolutions.get(byRegistration);
+  if (!known) resolutions.set(byRegistration, (known = new WeakMap()));
   const byManifest = manifest ?? NO_MANIFEST;
   let found = known.get(byManifest);
   if (!found) known.set(byManifest, (found = resolve(manifest, registration)));
   return found;
 }
 
+/** All paths that something describes, which are no path from before for anything else. */
+const described = new WeakMap<Resolved, ReadonlySet<string>>();
+
+function describedPaths(resolved: Resolved): ReadonlySet<string> {
+  let paths = described.get(resolved);
+  if (!paths) {
+    paths = new Set(
+      resolved.objects.flatMap(({ properties }) => properties.map(({ path }) => path)),
+    );
+    described.set(resolved, paths);
+  }
+  return paths;
+}
+
 /**
  * Where the keys of a property are for a clip: under its path, or else under the first path it went
  * by before that has any. That is what keeps keys working when code renames what they are about.
+ * A path that something else describes is that one's, and never anybody's from before.
  */
-function withRenames(clip: ClipState, { objects, renamed }: Resolved) {
+function withRenames(clip: ClipState, resolved: Resolved) {
+  const { objects, renamed } = resolved;
   if (renamed.length === 0) return { objects, renames: [] };
   const properties = effectiveProperties(clip);
+  const taken = describedPaths(resolved);
   const renames: PendingRename[] = [];
   let changed: ObjectDescriptor[] | undefined;
   for (const { object, index, placed } of renamed) {
     const { spec, before } = placed;
     if (entryOf(properties, spec.path) !== undefined) continue;
-    const from = before.find((path) => entryOf(properties, path) !== undefined);
+    const from = before.find((path) => !taken.has(path) && entryOf(properties, path) !== undefined);
     if (from === undefined) continue;
     renames.push({ from, to: spec.path });
     changed ??= [...objects];
@@ -235,9 +273,13 @@ export function describeClip(
   }
   const scene = sceneSourceOf(state, source.scene);
   const manifest = entryOf(state.scenes, source.scene);
-  const registration = scene && registry?.registrationOf(scene.revision);
+  const found =
+    scene && registry?.registrationOf(scene.revision, (path) => paramTextOf(clip, path));
+  const registration = found?.registration;
   const { objects, renames } = withRenames(clip, resolvedOf(manifest, registration));
-  const ran: SceneRun = registration ? (registration.complete ? "complete" : "partial") : "never";
+  // What ran with other parameters shows what there probably is, and says nothing about the rest.
+  let ran: SceneRun = "never";
+  if (found) ran = found.exact && found.registration.complete ? "complete" : "partial";
   return { objects, ran, ...(renames.length > 0 && { renames }) };
 }
 

@@ -142,13 +142,16 @@ describe("aq.param", () => {
     const values = new ClipValues(initial);
     const said: string[] = [];
     let now = 0;
+    let seenMore = 0;
     const read = new SceneParams(
       declared,
       values,
       () => now,
       (code, target) => said.push(`${code} ${target ?? ""}`),
+      () => (seenMore += 1),
     );
-    return { values, said, read, at: (seconds: number) => (now = seconds) };
+    const seen = () => seenMore;
+    return { values, said, read, seen, at: (seconds: number) => (now = seconds) };
   }
 
   it("is what the clip says, or the default", () => {
@@ -157,6 +160,17 @@ describe("aq.param", () => {
     at(1);
     expect(read.read("size")).toBe(20);
     expect(read.read("size", 2)).toBe(30);
+  });
+
+  it("remembers what the clip held for each one when code first read it, and says when there is more", () => {
+    const { read, values, seen } = params({ "param.size": ramp(10, 30) });
+    read.read("size");
+    read.read("size", 2);
+    expect(seen()).toBe(1);
+    values.change({ "param.title": "新" });
+    read.read("title");
+    expect(seen()).toBe(2);
+    expect(read.seen()).toEqual({ "param.size": ramp(10, 30), "param.title": "新" });
   });
 
   it("says once that a parameter is not declared", () => {

@@ -612,7 +612,9 @@ export class KeyframeEditor {
       }
       case "object": {
         if (node.orphans) return t("keyframes.orphans");
-        if (node.pending) return t("keyframes.pending");
+        // A scene that ran and did not say all of it is not one that never ran.
+        if (node.pending)
+          return t(node.pending === "partial" ? "keyframes.pendingPartial" : "keyframes.pending");
         const { type } = node.object;
         if (type === SCENE_OBJECT_TYPES.params) return t("keyframes.objects.params");
         if (type === SCENE_OBJECT_TYPES.elements) return t("keyframes.objects.elements");

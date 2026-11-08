@@ -106,10 +106,12 @@ export interface SceneHostOptions {
   /** What it looks like now. Whoever gets a picture has to close it. */
   readonly onPicture?: (picture: ScenePicture) => void;
   /**
-   * What its code registered, and the elements of its page with an id. Nothing but a list of each
-   * was checked: it is for `readRegistration`.
+   * What its code registered, and the elements of its page with an id, as JSON. Nothing but its
+   * length was checked: it is for `readRegistrationText`.
    */
-  readonly onObjects?: (registration: unknown) => void;
+  readonly onObjects?: (registration: string) => void;
+  /** What it registered before is not all there is any more. */
+  readonly onObjectsUnsure?: () => void;
   /** An origin not to start on: where the scene this one replaces runs, which may be stuck. */
   readonly avoid?: string;
   readonly rules?: WatchdogRules;
@@ -459,6 +461,9 @@ export class SceneHost {
       case "objects":
         // A frame on its way to take over runs the same code, and what it found counts as much.
         this.#options.onObjects?.(message.registration);
+        break;
+      case "objects-unsure":
+        this.#options.onObjectsUnsure?.();
         break;
       case "pong":
         frame.dog.answered(message.nonce);

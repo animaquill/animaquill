@@ -60,7 +60,8 @@ export const MESSAGE_RULES: MessageRules = {
   burstMessages: 2000,
   messagesPerSecond: 1000,
   maxMessageBytes: 64 * 1024,
-  maxRegistrationBytes: 2 * 1024 * 1024,
+  // What the longest registration weighs as JSON, see `REGISTRATION_LIMITS.text`.
+  maxRegistrationBytes: 3 * 1024 * 1024 + 64 * 1024,
   burstBytes: 4 * 1024 * 1024,
   bytesPerSecond: 1024 * 1024,
   burstPictures: 600,

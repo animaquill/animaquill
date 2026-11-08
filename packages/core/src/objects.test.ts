@@ -147,13 +147,14 @@ describe("what a clip with a scene offers", () => {
   };
   const sceneClip = (properties: object = {}) =>
     clip({ kind: "scene", scene: "s" }, { properties }) as ClipState;
-  const registry = (registration: Registration | undefined): SceneRegistry => ({
-    registrationOf: () => registration,
+  const registry = (registration: Registration | undefined, exact = true): SceneRegistry => ({
+    registrationOf: () => registration && { registration, exact },
   });
   const registration = (extra: Partial<Registration> = {}): Registration => ({
     objects: [],
     elements: [],
     complete: true,
+    params: {},
     ...extra,
   });
   const paths = (objects: readonly ObjectDescriptor[]) =>
@@ -162,6 +163,20 @@ describe("what a clip with a scene offers", () => {
   it("is its picture until its code ran", () => {
     const described = describeClip(sceneState(), sceneClip(), undefined);
     expect(described).toEqual({ objects: [SCENE_VISUAL], ran: "never" });
+  });
+
+  it("has no default of a parameter that is no value of its type", () => {
+    const params = [
+      { id: "size", name: "字号", type: "number", default: "big" },
+      { id: "tint", name: "颜色", type: "color", default: "#FF0000" },
+      { id: "title", name: "标题", type: "text", default: { string: "title" } },
+    ];
+    const { objects } = describeClip(sceneState(params), sceneClip(), undefined);
+    expect(objects[1]?.properties.map((property) => property.default)).toEqual([
+      undefined,
+      "#ff0000",
+      { string: "title" },
+    ]);
   });
 
   it("has the parameters of its scene, which do not need the code to run", () => {
@@ -243,6 +258,67 @@ describe("what a clip with a scene offers", () => {
       registry(registration({ complete: false })),
     );
     expect(ran).toBe("partial");
+  });
+
+  it("only knows all there is from what ran with the parameters of the clip", () => {
+    const arm = { id: "arm", properties: [{ path: "x", type: "number" as const }] };
+    const other = describeClip(
+      sceneState(),
+      sceneClip(),
+      registry(registration({ objects: [arm] }), false),
+    );
+    expect(other.ran).toBe("partial");
+    expect(other.objects.map(({ id }) => id)).toContain("object.arm");
+  });
+
+  it("asks for what the clip holds for each parameter, as JSON", () => {
+    const asked: string[] = [];
+    const keys = { keys: [{ time: "0", value: 2 }] };
+    describeClip(sceneState(), sceneClip({ "param.count": keys }), {
+      registrationOf: (_revision, paramOf) => {
+        asked.push(paramOf("param.count"), paramOf("param.none"));
+        return undefined;
+      },
+    });
+    expect(asked).toEqual([JSON.stringify(keys), "null"]);
+  });
+
+  it("does not take keys from what another property describes", () => {
+    const found = registration({
+      objects: [
+        { id: "a", properties: [{ path: "x", type: "number", default: 0 }] },
+        // A registration that got this far would have had the alias taken out.
+        { id: "b", aliases: ["a"], properties: [{ path: "x", type: "number", default: 0 }] },
+      ],
+    });
+    const described = describeClip(sceneState(), sceneClip({ "object.a.x": 5 }), registry(found));
+    expect(described.renames).toBeUndefined();
+    expect(paths(described.objects.slice(1))).toEqual([
+      ["object.a", ["object.a.x"]],
+      ["object.b", ["object.b.x"]],
+    ]);
+  });
+
+  it("goes through only so many paths from before", () => {
+    const many = (prefix: string) => Array.from({ length: 16 }, (_, index) => `${prefix}${index}`);
+    const found = registration({
+      objects: [
+        {
+          id: "a",
+          aliases: many("was"),
+          properties: [{ path: "x", type: "number", default: 0, aliases: many("old") }],
+        },
+      ],
+    });
+    // The last of all those paths, which is past what anybody looks through.
+    const late = describeClip(
+      sceneState(),
+      sceneClip({ "object.was15.old15": 1 }),
+      registry(found),
+    );
+    expect(late.renames).toBeUndefined();
+    const early = describeClip(sceneState(), sceneClip({ "object.a.old3": 1 }), registry(found));
+    expect(early.renames).toEqual([{ from: "object.a.old3", to: "object.a.x" }]);
   });
 
   it("reads keys from a path a property went by before, as long as its own path has none", () => {

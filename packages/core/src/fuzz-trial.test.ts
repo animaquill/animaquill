@@ -26,7 +26,24 @@ function randomClipChange(
   const alone = random.pick(clips.filter(({ link }) => link === undefined))?.id ?? "none";
   const track = random.pick(Object.keys(main?.tracks ?? {})) ?? "none";
   const timeline = "main";
+  const owner = { clip };
+  const rename = (...renames: readonly object[]): CommandCall => ({
+    type: "property.rename",
+    params: { timeline, renames: renames.map((one) => ({ owner, ...one })) },
+  });
   const calls: (() => CommandCall)[] = [
+    // What is being tried goes where its keys go: both ways at once, in a chain, or changed on the way.
+    () =>
+      rename(
+        { from: "object.arm.x", to: "object.arm_l.x" },
+        { from: "object.arm_l.x", to: "object.arm.x" },
+      ),
+    () =>
+      rename(
+        { from: "object.arm_l.x", to: "object.arm.x" },
+        { from: "object.arm.x", to: "object.arm_r.x" },
+      ),
+    () => rename({ from: "object.arm_l.x", to: "object.arm.x", scale: 2, offset: 1 }),
     () => ({
       type: "clip.split",
       params: { timeline, clip: alone, at: String(random.int(60)), id: `cut${round}` },
@@ -106,6 +123,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
       expect(trial.count).toBe(0);
       expect(deepEqual(tried.getState().timelines, direct.getState().timelines)).toBe(true);
     };
+    let renamed = 0;
     for (let round = 0; round < 400; round++) {
       if (random.chance(0.75)) {
         const clip = randomClipOf(direct, random);
@@ -122,11 +140,20 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
         expect(tried.executeBatch(calls(tried)).ok).toBe(direct.executeBatch(calls(direct)).ok);
       } else {
         const call = randomClipChange(direct, random, round);
-        expect(tried.execute(call).ok).toBe(direct.execute(call).ok);
+        if (call.type !== "property.rename") {
+          expect(tried.execute(call).ok).toBe(direct.execute(call).ok);
+        } else if (replica(tried).execute(call).ok && replica(direct).execute(call).ok) {
+          // A rename goes by what the project holds, which is not the same before saving. Only one
+          // that moves the same in both says anything.
+          expect(tried.execute(call).ok).toBe(true);
+          expect(direct.execute(call).ok).toBe(true);
+          renamed += 1;
+        }
       }
       if (random.chance(0.05)) same();
     }
     same();
+    expect(renamed).toBeGreaterThan(0);
   });
 
   it("going back and forth shows exactly what was there", () => {

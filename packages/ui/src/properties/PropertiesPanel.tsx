@@ -1,46 +1,88 @@
-import { SCENE_OBJECT_TYPES, type PropertyEdit } from "@animaquill/core";
-import type { ObjectDescriptor } from "@animaquill/schema";
+import { SCENE_OBJECT_TYPES } from "@animaquill/core";
+import type { ObjectDescriptor, PropertySpec } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
-import { useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
+import type { ClipBox } from "../timeline/model.ts";
 import { CONTROLS, PlainValue, RowButton } from "./controls.tsx";
-import {
-  inspect,
-  keyEdit,
-  writeEdit,
-  type Blocked,
-  type Inspection,
-  type PropertyRow,
-} from "./inspect.ts";
+import { inspectSelection, keyEdit, writeEdit, type Blocked, type Selected } from "./inspect.ts";
 import { groupOf, nameOf, textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
+import { placeOf, PropertyRows } from "./rows.ts";
 
-type ClipInspection = Extract<Inspection, { kind: "clip" }>;
+type ClipSelected = Extract<Selected, { kind: "clip" }>;
+
+/** How tall a row is, for what is not on screen yet. A row that says more is taller. */
+const ROW_HEIGHT = 25;
+const HEADING_HEIGHT = 28;
+/** How far from the screen a section starts to show what it has, so that scrolling finds it there. */
+const NEAR_SCREEN = "600px 0px";
+/** The first sections show right away: most clips have no more, and the rest is below them. */
+const EAGER_SECTIONS = 4;
+
+/**
+ * Whether something is on the screen or close to it. A tab that does not show is nowhere near it,
+ * so what is in it stops following the playhead.
+ */
+function useNearScreen(ref: RefObject<HTMLElement | null>, eager: boolean): boolean {
+  const [near, setNear] = useState(eager);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === "undefined") return;
+    const root = element.closest<HTMLElement>("[data-scroll]");
+    const observer = new IntersectionObserver(
+      ([entry]) => setNear(entry?.isIntersecting === true),
+      { root, rootMargin: NEAR_SCREEN },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+  return near;
+}
+
+/**
+ * What a row shows of its property at the playhead, which it follows by itself, as far as what it
+ * shows changes: playing goes through here with every frame, and most rows stay the same.
+ */
+function useInspected(rows: PropertyRows, clip: string, spec: PropertySpec) {
+  useSyncExternalStore(rows.subscribe, () => rows.signatureOf(clip, spec));
+  return rows.inspect(clip, spec);
+}
 
 interface RowProps {
-  readonly inspection: ClipInspection;
-  readonly row: PropertyRow;
+  readonly rows: PropertyRows;
+  readonly clip: string;
+  readonly spec: PropertySpec;
   /** The first of a group says what the group is. */
   readonly startsGroup: boolean;
 }
 
-function Row({ inspection, row, startsGroup }: RowProps) {
-  const { properties, timeline, trials } = useWorkbench();
+const Row = memo(function Row({ rows, clip, spec, startsGroup }: RowProps) {
+  const { properties, trials } = useWorkbench();
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ readonly x: number; readonly y: number }>();
-  const { spec, path, animated, keyTime, previousKey, nextKey, stored, tried } = row;
-  const { box, blocked, time } = inspection;
+  const inspected = useInspected(rows, clip, spec);
+  if (!inspected) return null;
+  const { row, blocked } = inspected;
+  const { path, tried } = row;
   const name = nameOf(t, spec);
   const { group } = spec;
   const label = group === undefined ? name : `${groupOf(t, group)} ${name}`;
   const readOnly = blocked !== undefined;
   const Control = CONTROLS[spec.type] ?? PlainValue;
-  const onKey = keyTime !== undefined;
-  const key = keyEdit(box.id, row, time);
-  const reset: PropertyEdit = { owner: { clip: box.id }, path, op: "clear" };
+  /** What the playhead says when something happens, which is where the edit goes. */
+  const now = () => rows.inspect(clip, spec) ?? inspected;
 
   return (
     <>
@@ -49,6 +91,7 @@ function Row({ inspection, row, startsGroup }: RowProps) {
         role="group"
         aria-label={label}
         data-tried={tried || undefined}
+        data-readonly={readOnly || undefined}
         onContextMenu={(event) => {
           if (!tried) return;
           event.preventDefault();
@@ -67,59 +110,29 @@ function Row({ inspection, row, startsGroup }: RowProps) {
           row={row}
           label={label}
           readOnly={readOnly}
-          onPreview={(number) => properties.preview([writeEdit(box.id, row, time, number)])}
+          onPreview={(value) => {
+            const { row: current, time } = now();
+            properties.preview([writeEdit(clip, current, time, value)]);
+          }}
           // The playhead can leave the clip while a value is still in somebody's hands.
-          onCommit={(number) => {
-            if (readOnly) properties.cancel();
-            else properties.commit([writeEdit(box.id, row, time, number)]);
+          onCommit={(value) => {
+            const { row: current, time, blocked: stopped } = now();
+            if (stopped) properties.cancel();
+            else properties.commit([writeEdit(clip, current, time, value)]);
           }}
           onCancel={() => properties.cancel()}
         />
-        <div className={styles.rowButtons}>
-          {spec.animatable !== false && (
-            <>
-              <RowButton
-                name={t("property.previousKey")}
-                usage={t("property.help.previousKey")}
-                unavailable={previousKey === undefined}
-                onClick={() => timeline.seek(previousKey as number)}
-              >
-                <ChevronLeft size={13} />
-              </RowButton>
-              <RowButton
-                name={onKey ? t("property.removeKey") : t("property.addKey")}
-                usage={animated ? t("property.help.key") : t("property.help.firstKey")}
-                unavailable={readOnly || key === undefined}
-                pressed={onKey}
-                onClick={() => {
-                  if (key) properties.commit([key]);
-                }}
-              >
-                <Diamond
-                  size={12}
-                  className={animated ? styles.keyed : undefined}
-                  {...(onKey ? { fill: "currentColor" } : {})}
-                />
-              </RowButton>
-              <RowButton
-                name={t("property.nextKey")}
-                usage={t("property.help.nextKey")}
-                unavailable={nextKey === undefined}
-                onClick={() => timeline.seek(nextKey as number)}
-              >
-                <ChevronRight size={13} />
-              </RowButton>
-            </>
-          )}
-          <RowButton
-            name={t("property.reset")}
-            usage={t("property.help.reset")}
-            unavailable={readOnly || stored === undefined}
-            onClick={() => properties.commit([reset])}
-          >
-            <RotateCcw size={12} />
-          </RowButton>
-        </div>
+        <RowButtons
+          rows={rows}
+          clip={clip}
+          spec={spec}
+          animated={row.animated}
+          onKey={row.keyTime !== undefined}
+          previousKey={row.previousKey}
+          nextKey={row.nextKey}
+          canKey={!readOnly && keyEdit(clip, row, inspected.time) !== undefined}
+          canReset={!readOnly && row.stored !== undefined}
+        />
       </div>
       {row.changedElsewhere && <p className={styles.elsewhere}>{t("trial.changedElsewhere")}</p>}
       {menu && (
@@ -132,7 +145,7 @@ function Row({ inspection, row, startsGroup }: RowProps) {
               {
                 id: "discard",
                 label: t("trial.discardProperty"),
-                run: () => trials.discardProperty(box.id, path),
+                run: () => trials.discardProperty(clip, path),
               },
             ],
           ]}
@@ -141,6 +154,136 @@ function Row({ inspection, row, startsGroup }: RowProps) {
       )}
     </>
   );
+});
+
+interface RowButtonsProps {
+  readonly rows: PropertyRows;
+  readonly clip: string;
+  readonly spec: PropertySpec;
+  readonly animated: boolean;
+  readonly onKey: boolean;
+  readonly previousKey: number | undefined;
+  readonly nextKey: number | undefined;
+  readonly canKey: boolean;
+  readonly canReset: boolean;
+}
+
+/**
+ * The buttons of a row, which stay the same while its value changes: playing changes values with
+ * every frame, and keys only now and then.
+ */
+const RowButtons = memo(function RowButtons(props: RowButtonsProps) {
+  const { rows, clip, spec, animated, onKey, previousKey, nextKey, canKey, canReset } = props;
+  const { properties, timeline } = useWorkbench();
+  const { t } = useTranslation();
+  return (
+    <div className={styles.rowButtons}>
+      {spec.animatable !== false && (
+        <>
+          <RowButton
+            name={t("property.previousKey")}
+            usage={t("property.help.previousKey")}
+            unavailable={previousKey === undefined}
+            onClick={() => timeline.seek(previousKey as number)}
+          >
+            <ChevronLeft size={13} />
+          </RowButton>
+          <RowButton
+            name={onKey ? t("property.removeKey") : t("property.addKey")}
+            usage={animated ? t("property.help.key") : t("property.help.firstKey")}
+            unavailable={!canKey}
+            pressed={onKey}
+            onClick={() => {
+              const now = rows.inspect(clip, spec);
+              const key = now && keyEdit(clip, now.row, now.time);
+              if (key) properties.commit([key]);
+            }}
+          >
+            <Diamond
+              size={12}
+              className={animated ? styles.keyed : undefined}
+              {...(onKey ? { fill: "currentColor" } : {})}
+            />
+          </RowButton>
+          <RowButton
+            name={t("property.nextKey")}
+            usage={t("property.help.nextKey")}
+            unavailable={nextKey === undefined}
+            onClick={() => timeline.seek(nextKey as number)}
+          >
+            <ChevronRight size={13} />
+          </RowButton>
+        </>
+      )}
+      <RowButton
+        name={t("property.reset")}
+        usage={t("property.help.reset")}
+        unavailable={!canReset}
+        onClick={() => properties.commit([{ owner: { clip }, path: spec.path, op: "clear" }])}
+      >
+        <RotateCcw size={12} />
+      </RowButton>
+    </div>
+  );
+});
+
+interface SectionProps {
+  readonly rows: PropertyRows;
+  readonly clip: string;
+  readonly object: ObjectDescriptor;
+  readonly name: string | undefined;
+  readonly eager: boolean;
+}
+
+/**
+ * The properties of one object. Only what is near the screen has rows: a skeleton has hundreds of
+ * bones, and each row follows the playhead.
+ */
+const Section = memo(function Section({ rows, clip, object, name, eager }: SectionProps) {
+  const element = useRef<HTMLElement>(null);
+  // A field that somebody is in stays, also when they scroll away from it.
+  const [focused, setFocused] = useState(false);
+  const near = useNearScreen(element, eager) || focused;
+  const { properties } = object;
+  // What it took when it showed, which is what it takes when it does not, so that nothing jumps.
+  const [height, setHeight] = useState<number>();
+  useEffect(() => {
+    const shown = element.current;
+    if (!near || !shown || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setHeight(shown.offsetHeight));
+    observer.observe(shown);
+    return () => observer.disconnect();
+  }, [near]);
+  const estimate = (name === undefined ? 0 : HEADING_HEIGHT) + properties.length * ROW_HEIGHT;
+  return (
+    <section
+      ref={element}
+      className={styles.object}
+      {...(name !== undefined && { "aria-label": name })}
+      style={near ? undefined : { height: height ?? estimate }}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}
+    >
+      {name !== undefined && <h3 className={styles.objectName}>{name}</h3>}
+      {near &&
+        properties.map((spec, index) => (
+          <Row
+            key={spec.path}
+            rows={rows}
+            clip={clip}
+            spec={spec}
+            startsGroup={properties[index - 1]?.group !== spec.group}
+          />
+        ))}
+    </section>
+  );
+});
+
+/** Whether the clip can change at the playhead, which only changes at the edges of the clip. */
+function usePlace(rows: PropertyRows, clip: string) {
+  return placeOf(useSyncExternalStore(rows.subscribe, () => rows.placeOf(clip)));
 }
 
 /** Says why the controls do not react, and how to change that when something can be done. */
@@ -169,7 +312,7 @@ function BlockedHint({ blocked, firstFrame }: { blocked: Blocked; firstFrame: nu
 }
 
 /** A sound that code makes says how that is going, and one that failed can try again. */
-function SoundStatus({ clip }: { clip: ClipInspection["box"]["clip"] }) {
+function SoundStatus({ clip }: { clip: ClipBox["clip"] }) {
   const { sounds } = useWorkbench();
   const { t } = useTranslation();
   useSyncExternalStore(sounds.subscribe, sounds.getVersion);
@@ -216,12 +359,14 @@ function objectName(
   return names.join(" › ");
 }
 
-function ClipProperties({ inspection }: { inspection: ClipInspection }) {
+function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: PropertyRows }) {
   const { t } = useTranslation();
-  const { box, blocked, objects, firstFrame } = inspection;
-  const byId = new Map(objects.map(({ object }) => [object.id, object]));
+  const { box, objects } = selected;
+  const { blocked, firstFrame } = usePlace(rows, box.id);
+  const byId = new Map(objects.map((object) => [object.id, object]));
   const { kind } = box.clip.source;
   const kindName = textOf(t, `timeline.kind.${kind}`, kind);
+  const shown = objects.filter((object) => object.properties.length > 0);
   return (
     <>
       <header className={styles.header}>
@@ -231,28 +376,17 @@ function ClipProperties({ inspection }: { inspection: ClipInspection }) {
       {kind === "sound" && <SoundStatus clip={box.clip} />}
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
       <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
-        {objects.map(({ object, rows }) => {
-          if (rows.length === 0) return null;
-          const name = objectName(t, object, byId);
-          return (
-            // Another clip gets fields of its own, so nothing typed can end up on the wrong one.
-            <section
-              key={`${box.id} ${object.id}`}
-              className={styles.object}
-              {...(name !== undefined && { "aria-label": name })}
-            >
-              {name !== undefined && <h3 className={styles.objectName}>{name}</h3>}
-              {rows.map((row, index) => (
-                <Row
-                  key={row.path}
-                  inspection={inspection}
-                  row={row}
-                  startsGroup={rows[index - 1]?.spec.group !== row.spec.group}
-                />
-              ))}
-            </section>
-          );
-        })}
+        {shown.map((object, index) => (
+          // Another clip gets fields of its own, so nothing typed can end up on the wrong one.
+          <Section
+            key={`${box.id} ${object.id}`}
+            rows={rows}
+            clip={box.id}
+            object={object}
+            name={objectName(t, object, byId)}
+            eager={index < EAGER_SECTIONS}
+          />
+        ))}
       </div>
     </>
   );
@@ -271,27 +405,29 @@ export function PropertiesPanel() {
   const { timeline, trials, keyframes, registrations } = useWorkbench();
   const { t } = useTranslation();
   const { store } = useSession();
-  const state = useProject(store);
+  // What changes which properties there are. Where the playhead is, rows look at for themselves.
+  useProject(store);
   const { model, selection } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
-  const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
   const { comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
-  // What scenes registered changes what their clips have to show.
   useSyncExternalStore(registrations.subscribe, registrations.getVersion);
+  const rows = useMemo(
+    () => new PropertyRows({ timeline, trials, state: () => store?.getState() }),
+    [timeline, trials, store],
+  );
   const { describe } = keyframes;
-  const inspection: Inspection =
-    state && model
-      ? inspect(state, model, selection, frame, { look: trials.look, comparing, describe })
-      : { kind: "nothing" };
+  const selected: Selected = model
+    ? inspectSelection(model, selection, { look: trials.look, comparing, describe })
+    : { kind: "nothing" };
 
   return (
     // Focusable, so that the keyboard has somewhere to go after a field, without a frame around it.
-    <div className={styles.panel} tabIndex={-1}>
-      {inspection.kind === "nothing" && <Message text={t("property.nothing")} />}
-      {inspection.kind === "no-properties" && <Message text={t("property.noProperties")} />}
-      {inspection.kind === "several" && (
-        <Message text={t("property.several", { count: inspection.count })} />
+    <div className={styles.panel} tabIndex={-1} data-scroll>
+      {selected.kind === "nothing" && <Message text={t("property.nothing")} />}
+      {selected.kind === "no-properties" && <Message text={t("property.noProperties")} />}
+      {selected.kind === "several" && (
+        <Message text={t("property.several", { count: selected.count })} />
       )}
-      {inspection.kind === "clip" && <ClipProperties inspection={inspection} />}
+      {selected.kind === "clip" && <ClipProperties selected={selected} rows={rows} />}
     </div>
   );
 }

@@ -12,6 +12,12 @@ const executablePath = process.env["AQ_CHROME"];
  */
 const build = (process.env["AQ_E2E_BUILD"] ??= join(tmpdir(), `animaquill-e2e-${process.pid}`));
 
+/**
+ * The React for development says what is wrong with components, and is several times slower than
+ * the one people get. `AQ_REACT=production` builds with that one, for measuring how fast it is.
+ */
+const react = process.env["AQ_REACT"] === "production" ? "production" : "development";
+
 export default defineConfig({
   testDir: "e2e",
   // Every test opens a page of its own and leaves nothing for the next one, so the tests of a file
@@ -39,10 +45,10 @@ export default defineConfig({
   // A build of the development page, with what it has for tests, see `devPage` in e2e/support.ts.
   // On the development server every page that opens asks for each module on its own, which made
   // the whole run take almost twice as long, and the code editor most of all. React stays the one
-  // for development, which says what is wrong with components. A server that is already running,
+  // for development unless `AQ_REACT` says otherwise, see above. A server that is already running,
   // like `pnpm dev`, gets used instead: no build then, and changes show without one.
   webServer: {
-    command: `NODE_ENV=development pnpm exec vite build --logLevel warn --outDir ${build} && pnpm exec vite preview --outDir ${build}`,
+    command: `NODE_ENV=${react} pnpm exec vite build --logLevel warn --outDir ${build} && pnpm exec vite preview --outDir ${build}`,
     url: "http://localhost:5173",
     reuseExistingServer: true,
     timeout: 180_000,

@@ -352,6 +352,31 @@ test.describe("a frame with a scene", () => {
       expect(await differenceFromPreview(page, png)).toBeLessThanOrEqual(2);
     });
 
+    test("has elements where their values put them, as the preview does", async ({ page }) => {
+      // Transitions of the page would take the values of the clip there over seconds.
+      const elements = `<!doctype html><style>
+        body { margin: 0; background: #000 }
+        #box { position: absolute; left: 0; top: 490px; width: 100px; height: 100px;
+          background: #fff; transition: opacity 3s, translate 3s }
+      </style><div id="box" style="opacity: 0.5"></div>
+      <svg width="1920" height="1080" style="position: absolute; left: 0; top: 0">
+        <rect id="r" x="1000" y="0" width="100" height="50" fill="#fff" transform="rotate(10)"
+          style="transition: rotate 3s" />
+      </svg>`;
+      const properties = {
+        "element.box.x": 500,
+        "element.box.opacity": 1,
+        "element.r.rotation": 90,
+      };
+      await openScene(page, elements, { properties });
+      await goTo(page, "0:01/00");
+      await expect.poll(async () => close(await colorInPreview(page, 550, 540), WHITE)).toBe(true);
+      const png = await exportFrame(page);
+      expect(close(await pixelOf(page, png, 550, 540), WHITE)).toBe(true);
+      expect(close(await pixelOf(page, png, 50, 540), BLACK)).toBe(true);
+      expect(await differenceFromPreview(page, png)).toBeLessThanOrEqual(2);
+    });
+
     test("does not exist when the scene stopped", async ({ page, problems }) => {
       await importFolder(page, projectFolder({ a: { "other.html": "<p>a</p>" } }, [{}]));
       await dialog(page).getByRole("button").click();

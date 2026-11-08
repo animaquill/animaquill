@@ -92,14 +92,17 @@ test("a code object takes keys in the keyframe editor, and the scene moves with 
 test("an element with an id is there to change in the properties tab", async ({ page }) => {
   await openForScenes(page);
   const logo = `<!doctype html><style>body { margin: 0 } #logo { width: 50px; height: 50px;
-    background: #f00 }</style><div id="logo"></div><span id="名字">不能用</span>`;
+    background: #f00 }</style><div id="logo"></div><span id="名字">不能用</span>
+    <div id="${"long".repeat(17)}">一段 ID 最长 64 个字符</div>`;
   await importFolder(page, projectFolder({ a: { "index.html": logo } }, [{}]));
   await clickFirstClip(page);
   await tab(page, "properties").click();
   // Inside of what holds all elements, which a flat list says by name.
   const element = content(page, "properties").getByRole("region", { name: "元素 › logo" });
   await expect(element).toBeVisible();
-  await expect(content(page, "properties").getByRole("region", { name: /名字/ })).toHaveCount(0);
+  await expect(
+    content(page, "properties").getByRole("region", { name: /名字|longlong/ }),
+  ).toHaveCount(0);
   await typeInto(element.getByRole("spinbutton", { name: "不透明度", exact: true }), "25");
   const opacity = () =>
     sceneFrames(page)
@@ -169,4 +172,241 @@ test("keys of a renamed object stay, and go back to work where people connect th
   await page.keyboard.press("Control+z");
   await expect.poll(() => said(page, "x")).toBe("0");
   await expect(row(page, "未连接")).toBeVisible();
+});
+
+/** Runs something in the page of the scene that shows. */
+const inScene = <T>(page: Page, run: () => T) =>
+  sceneFrames(page)
+    .at(-1)
+    ?.evaluate(run)
+    .catch(() => undefined);
+
+const elementRegion = (page: Page, id: string) =>
+  content(page, "properties").getByRole("region", { name: `元素 › ${id}`, exact: true });
+
+async function resetAll(region: Locator): Promise<void> {
+  const resets = region.locator('button[aria-label="恢复默认"]:not([aria-disabled])');
+  while ((await resets.count()) > 0) await resets.first().click();
+}
+
+test("an element shows the value of the frame whatever transitions it has, and gets its own back", async ({
+  page,
+}) => {
+  await openForScenes(page);
+  const logo = `<!doctype html><style>body { margin: 0 } #logo { width: 50px; height: 50px;
+    background: #f00; transition: opacity 2s, translate 2s, color 2s }</style>
+    <div id="logo" style="opacity: 0.5"></div>`;
+  await importFolder(page, projectFolder({ a: { "index.html": logo } }, [{}]));
+  const look = () =>
+    inScene(page, () => {
+      const element = document.getElementById("logo") as HTMLElement;
+      const { opacity, translate } = getComputedStyle(element);
+      return { opacity, translate, inline: element.style.cssText };
+    });
+  await expect.poll(look).toEqual({ opacity: "0.5", translate: "none", inline: "opacity: 0.5;" });
+  await clickFirstClip(page);
+  await tab(page, "properties").click();
+  const element = elementRegion(page, "logo");
+  await typeInto(element.getByRole("spinbutton", { name: "不透明度", exact: true }), "25");
+  await typeInto(element.getByRole("spinbutton", { name: "位置 X", exact: true }), "30");
+  // Right away, and not somewhere on the way there over two seconds.
+  await expect.poll(look, { timeout: 1000 }).toMatchObject({ opacity: "0.25", translate: "30px" });
+  await goTo(page, "0:02/00");
+  await expect.poll(look, { timeout: 1000 }).toMatchObject({ opacity: "0.25", translate: "30px" });
+
+  await resetAll(element);
+  await expect
+    .poll(look, { timeout: 1000 })
+    .toEqual({ opacity: "0.5", translate: "none", inline: "opacity: 0.5;" });
+});
+
+test("an element of SVG with a transform of its own moves and turns around where it shows", async ({
+  page,
+}) => {
+  await openForScenes(page);
+  const svg = `<!doctype html><style>body { margin: 0 }</style>
+    <svg width="400" height="400"><rect id="r" x="200" y="0" width="40" height="20" fill="red"
+    transform="rotate(45)"/></svg>`;
+  await importFolder(page, projectFolder({ a: { "index.html": svg } }, [{}]));
+  // Where its middle shows, what it has of its own, and what it got.
+  const middle = () =>
+    inScene(page, () => {
+      const rect = document.getElementById("r") as Element;
+      const box = rect.getBoundingClientRect();
+      const { transformBox, transformOrigin, transform, rotate } = getComputedStyle(rect);
+      return {
+        x: Math.round(box.x + box.width / 2),
+        y: Math.round(box.y + box.height / 2),
+        own: `${transformBox} ${transformOrigin} ${transform}`,
+        rotate,
+        style: rect.getAttribute("style") ?? "",
+      };
+    });
+  await expect.poll(middle).not.toBeUndefined();
+  const before = await middle();
+  if (!before) throw new Error("no rect");
+  expect(before).toMatchObject({ rotate: "none", style: "" });
+  await clickFirstClip(page);
+  await tab(page, "properties").click();
+  const element = elementRegion(page, "r");
+  await typeInto(element.getByRole("spinbutton", { name: "位置 X", exact: true }), "10");
+  const moved = { x: before.x + 10, y: before.y, own: before.own };
+  await expect.poll(middle).toMatchObject({ ...moved, rotate: "none" });
+  // Its own transform stays what it is, and turning keeps its middle where it is.
+  await typeInto(element.getByRole("spinbutton", { name: "旋转", exact: true }), "90");
+  await expect.poll(middle).toMatchObject({ ...moved, rotate: "90deg" });
+
+  await resetAll(element);
+  await expect.poll(middle).toEqual(before);
+});
+
+test("an element turns around its middle, on top of a move of its own", async ({ page }) => {
+  await openForScenes(page);
+  const bar = `<!doctype html><style>body { margin: 0 } #bar { position: absolute; left: 100px;
+    top: 100px; width: 60px; height: 20px; background: #f00; translate: -50% -50% }</style>
+    <div id="bar"></div>`;
+  const properties = { "element.bar.rotation": 90 };
+  await importFolder(page, projectFolder({ a: { "index.html": bar } }, [{ properties }]));
+  const box = () =>
+    inScene(page, () => {
+      const { x, y, width, height } = (
+        document.getElementById("bar") as Element
+      ).getBoundingClientRect();
+      return [x + width / 2, y + height / 2, width, height].map(Math.round);
+    });
+  await expect.poll(box).toEqual([100, 100, 20, 60]);
+});
+
+test("what code registers counts for the parameters it went by, and for nothing else", async ({
+  page,
+}) => {
+  await openForScenes(page);
+  const bars = `<!doctype html><script>
+    const count = aq.param("count");
+    const bars = [];
+    for (let i = 0; i < count; i += 1) bars.push(aq.object("bar" + i, { properties: { x: 0 } }));
+    aq.frame((s) => { document.body.dataset.x = bars.map((bar) => bar.at(s).x).join(","); });
+  </script>`;
+  const params = [{ id: "count", name: "数量", type: "number" as const, default: 1 }];
+  const keys = {
+    keys: [
+      { time: "0", value: 0 },
+      { time: "2", value: 200 },
+    ],
+  };
+  const clips = [
+    { id: "one", start: "0", duration: "10", properties: { "param.count": 1 } },
+    {
+      id: "two",
+      start: "10",
+      duration: "10",
+      properties: { "param.count": 2, "object.bar1.x": keys },
+    },
+  ];
+  await importFolder(
+    page,
+    projectFolder({ a: { "index.html": bars } }, clips, undefined, { a: { params } }),
+  );
+  await expect.poll(() => said(page, "x")).toBe("0");
+  await tab(page, "problems").click();
+  const problems = content(page, "problems");
+  // The scene of the first clip has one bar, which says nothing about the second clip.
+  await page.waitForTimeout(1500);
+  await expect(problems).not.toContainText("没有对象认领");
+  await goTo(page, "0:11/00");
+  await expect.poll(() => said(page, "x")).toBe("0,100");
+  await goTo(page, "0:01/00");
+  await expect.poll(() => said(page, "x")).toBe("0");
+  await page.waitForTimeout(1500);
+  await expect(problems).not.toContainText("没有对象认领");
+});
+
+test("code that stops in its frame is not known to have registered all of it", async ({
+  page,
+  problems: thrown,
+}) => {
+  await openForScenes(page);
+  const html = `<!doctype html><script>
+    aq.frame((s) => {
+      if (s >= 0) missing();
+      const arm = aq.object("arm", { properties: { x: 0 } });
+      document.body.dataset.x = String(arm.at(s).x);
+    });
+  </script>`;
+  const keys = {
+    keys: [
+      { time: "0", value: 0 },
+      { time: "2", value: 200 },
+    ],
+  };
+  await importFolder(
+    page,
+    projectFolder({ a: { "index.html": html } }, [{ properties: { "object.arm.x": keys } }]),
+  );
+  await tab(page, "problems").click();
+  const problems = content(page, "problems");
+  await expect(problems).toContainText("missing is not defined");
+  await page.waitForTimeout(1500);
+  await expect(problems).not.toContainText("没有对象认领");
+  // What the scene threw, which the page heard of as well.
+  expect(thrown).toContain("missing is not defined");
+  thrown.splice(0);
+});
+
+test("a big registration gets to the editor whole", async ({ page }) => {
+  await openForScenes(page);
+  const html = `<!doctype html><script>
+    const bones = [];
+    for (let i = 0; i < 1600; i += 1) {
+      bones.push(aq.object("rig.bone" + i, { name: "骨骼 " + i, properties: {
+        x: { type: "number", unit: "world", default: 0, group: "position" },
+        y: { type: "number", unit: "world", default: 0, group: "position" },
+        rotation: { type: "angle", default: 0 }, scale: 1 } }));
+    }
+    aq.frame((s) => { document.body.dataset.last = String(bones[1599].at(s).rotation); });
+  </script>`;
+  const keys = {
+    keys: [
+      { time: "0", value: 0 },
+      { time: "2", value: 200 },
+    ],
+  };
+  const clip = { properties: { "object.rig.bone1599.rotation": keys, "object.rig.bone1600.x": 1 } };
+  await importFolder(page, projectFolder({ a: { "index.html": html } }, [clip]));
+  await goTo(page, "0:01/00");
+  await expect.poll(() => said(page, "last")).toBe("100");
+  await tab(page, "problems").click();
+  // All of it came, so what is not there is known not to be.
+  await expect(content(page, "problems")).toContainText("object.rig.bone1600.x 没有对象认领");
+  await expect(content(page, "problems")).not.toContainText("object.rig.bone1599");
+});
+
+test("a registration that keeps changing does not take the scene away", async ({ page }) => {
+  test.setTimeout(120_000);
+  await openForScenes(page);
+  // Big, and different in every frame, which is what a registration should never be.
+  const html = `<!doctype html><script>
+    let frames = 0;
+    aq.frame((s) => {
+      for (let i = 0; i < 1600; i += 1) {
+        aq.object("rig.bone" + i, { name: "骨骼 " + i, properties: {
+          x: { type: "number", default: Math.round(s * 30) + i, group: "position" },
+          y: { type: "number", default: 0, group: "position" } } });
+      }
+      frames += 1;
+      document.body.dataset.frames = String(frames);
+    });
+  </script>`;
+  await importFolder(page, projectFolder({ a: { "index.html": html } }, [{ duration: "20" }]));
+  await expect.poll(() => said(page, "frames"), { timeout: 30_000 }).toBeTruthy();
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(8000);
+  await page.keyboard.press("Space");
+  await tab(page, "problems").click();
+  const problems = content(page, "problems");
+  await expect(problems).toContainText("的描述一直在变");
+  await expect(problems).not.toContainText("发的消息太多");
+  const frames = Number(await said(page, "frames"));
+  await goTo(page, "0:15/00");
+  await expect.poll(async () => Number(await said(page, "frames"))).toBeGreaterThan(frames);
 });

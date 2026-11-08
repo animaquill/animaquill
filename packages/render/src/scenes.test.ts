@@ -1357,8 +1357,10 @@ describe("what clips hold for their scenes", () => {
 
   it("and what a scene registered goes to the editor, with the state it came from", () => {
     const { hosts, sent } = showing();
-    const registration = { objects: [], elements: [], complete: true };
+    const registration = JSON.stringify({ objects: [], elements: [], complete: true });
     hosts[0]?.options.onObjects?.(registration);
+    hosts[0]?.options.onObjectsUnsure?.();
+    expect(sent).toContainEqual({ type: "scene-objects-unsure", layer: "a", revision: "r1" });
     expect(sent).toContainEqual({
       type: "scene-objects",
       layer: "a",

@@ -270,17 +270,25 @@ export interface TrialView {
   readonly describe?: (clip: ClipState) => ClipDescription | undefined;
 }
 
+/** What the properties tab is about, whatever the moment: which clip, and what it offers. */
+export type Selected =
+  | Exclude<Inspection, { kind: "clip" }>
+  | {
+      readonly kind: "clip";
+      readonly box: ClipBox;
+      readonly objects: readonly ObjectDescriptor[];
+    };
+
 /**
- * What the properties tab shows. Picture and sound of a video are selected together and only one of
- * them has anything to show here, so it comes down to the clips that do.
+ * What the properties tab is about. Picture and sound of a video are selected together and only one
+ * of them has anything to show here, so it comes down to the clips that do. Nothing in here goes by
+ * the moment: each row looks at that for itself, see `inspectProperty`.
  */
-export function inspect(
-  state: ProjectState,
+export function inspectSelection(
   model: TimelineModel,
   selection: ReadonlySet<string>,
-  frame: number,
   trial: TrialView = {},
-): Inspection {
+): Selected {
   if (selection.size === 0) return { kind: "nothing" };
   const boxes = [...selection].flatMap((id) => {
     const box = model.boxes.get(id);
@@ -289,5 +297,32 @@ export function inspect(
   const [box] = boxes;
   if (!box) return { kind: "no-properties" };
   if (boxes.length > 1) return { kind: "several", count: boxes.length };
-  return inspectClip(state, model, box, frame, trial);
+  const clip = trial.look?.apply(box.clip) ?? box.clip;
+  return { kind: "clip", box, objects: objectsOfClip(clip, trial.describe) };
+}
+
+/** Where the playhead is for a clip: whether it can change there, and how to get to it. */
+export function inspectPlace(
+  state: ProjectState,
+  model: TimelineModel,
+  box: ClipBox,
+  frame: number,
+  { look, comparing }: TrialView = {},
+): { readonly blocked: Blocked | undefined; readonly firstFrame: number } {
+  const clip = look?.apply(box.clip) ?? box.clip;
+  const place = placeOf(state, model, clip, frame);
+  return { blocked: blockedAt(place, comparing), firstFrame: place.firstFrame };
+}
+
+/** All of what the properties tab shows at a moment, see `inspectSelection` and `inspectProperty`. */
+export function inspect(
+  state: ProjectState,
+  model: TimelineModel,
+  selection: ReadonlySet<string>,
+  frame: number,
+  trial: TrialView = {},
+): Inspection {
+  const selected = inspectSelection(model, selection, trial);
+  if (selected.kind !== "clip") return selected;
+  return inspectClip(state, model, selected.box, frame, trial);
 }

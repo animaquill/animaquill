@@ -122,10 +122,11 @@ export interface ObjectNode {
   /** Channels nobody describes. They do nothing, and they stay in sight so that it shows. */
   readonly orphans?: true;
   /**
-   * Channels that code has to describe, of a scene that did not get through loading here yet. They
-   * may well be fine, so they show as they are and nothing is said about them.
+   * Channels that code has to describe, of a scene that did not get through registering here yet:
+   * it never ran, or it ran and not all of it is known. They may well be fine, so they show as they
+   * are and nothing is said about them.
    */
-  readonly pending?: true;
+  readonly pending?: "never" | "partial";
 }
 
 export interface ClipNode {
@@ -211,9 +212,14 @@ export function objectForest(objects: readonly ObjectDescriptor[]): ObjectForest
   return { roots, detached };
 }
 
-const propertyNode = (clip: string, prefix: string, spec: PropertySpec): PropertyNode => ({
+/**
+ * Ids of nodes are the clip with something unique in it: a path, or the id of an object, which is as
+ * deep as anything goes. They never add up what is above them, because ids of objects can be long
+ * and objects can be deep, and an id is looked up with every listing.
+ */
+const propertyNode = (clip: string, spec: PropertySpec): PropertyNode => ({
   kind: "property",
-  id: `${prefix}/${spec.path}`,
+  id: `${clip}/${spec.path}`,
   clip,
   spec,
   rows: rowsOf(spec),
@@ -229,7 +235,7 @@ function propertyNodes(
   const groups = new Map<string, PropertyNode[]>();
   for (const spec of specs) {
     if (spec.animatable === false) continue;
-    const node = propertyNode(clip, prefix, spec);
+    const node = propertyNode(clip, spec);
     const { group } = spec;
     if (group === undefined) {
       nodes.push(node);
@@ -247,8 +253,8 @@ function propertyNodes(
   return nodes;
 }
 
-function objectNode(clip: string, prefix: string, tree: ObjectTree): ObjectNode {
-  const id = `${prefix}/object:${tree.object.id}`;
+function objectNode(clip: string, tree: ObjectTree): ObjectNode {
+  const id = `${clip}/object:${tree.object.id}`;
   return {
     kind: "object",
     id,
@@ -257,7 +263,7 @@ function objectNode(clip: string, prefix: string, tree: ObjectTree): ObjectNode 
     children: [
       ...propertyNodes(clip, id, tree.object.properties),
       ...tree.children
-        .map((child) => objectNode(clip, id, child))
+        .map((child) => objectNode(clip, child))
         .filter((node) => node.children.length > 0),
     ],
   };
@@ -284,18 +290,20 @@ export function guessedSpec(path: string, stored: PropertyValue): PropertySpec {
 /** A group of channels that nothing describes, for one reason or another. */
 function undescribedNode(
   clip: ClipState,
-  prefix: string,
   specs: readonly PropertySpec[],
   kind: "orphans" | "pending",
+  ran: ClipDescription["ran"],
 ): ObjectNode | undefined {
   if (specs.length === 0) return undefined;
   const object = { id: kind, properties: specs };
-  const id = `${prefix}/object:${kind}`;
+  const id = `${clip.id}/object:${kind}`;
   const children = specs.map((spec) => {
-    const node = propertyNode(clip.id, id, spec);
+    const node = propertyNode(clip.id, spec);
     return kind === "orphans" ? { ...node, orphan: true as const } : node;
   });
-  return { kind: "object", id, clip: clip.id, object, children, [kind]: true };
+  const node = { kind: "object" as const, id, clip: clip.id, object, children };
+  if (kind === "orphans") return { ...node, orphans: true };
+  return { ...node, pending: ran === "partial" ? "partial" : "never" };
 }
 
 /**
@@ -308,7 +316,6 @@ function undescribedOf(
   clip: ClipState,
   objects: readonly ObjectTree[],
   ran: ClipDescription["ran"],
-  prefix: string,
 ): readonly ObjectNode[] {
   const animatable = new Set<string>();
   const known = new Set<string>();
@@ -337,8 +344,8 @@ function undescribedOf(
     }
   }
   return [
-    undescribedNode(clip, prefix, pending, "pending"),
-    undescribedNode(clip, prefix, orphans, "orphans"),
+    undescribedNode(clip, pending, "pending", ran),
+    undescribedNode(clip, orphans, "orphans", ran),
   ].filter((node): node is ObjectNode => node !== undefined);
 }
 
@@ -349,13 +356,13 @@ function buildClipNode(clip: ClipState, { objects, ran }: ClipDescription): Clip
     if (isClipItself(tree.object)) {
       return [
         ...propertyNodes(id, id, tree.object.properties),
-        ...tree.children.map((child) => objectNode(id, id, child)),
+        ...tree.children.map((child) => objectNode(id, child)),
       ];
     }
-    const node = objectNode(id, id, tree);
+    const node = objectNode(id, tree);
     return node.children.length > 0 ? [node] : [];
   });
-  const undescribed = undescribedOf(clip, roots, ran, id);
+  const undescribed = undescribedOf(clip, roots, ran);
   return { kind: "clip", id, clip: id, children: [...children, ...undescribed] };
 }
 

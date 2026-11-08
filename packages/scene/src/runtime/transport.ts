@@ -44,6 +44,11 @@ export class Transport {
   #base: TimeBase | undefined;
   #walking = false;
   #ticking = false;
+  /**
+   * What a frame shows changed while it was on its way, after it read what it shows: it has to get
+   * there once more when it is there, or it would show what was before.
+   */
+  #again = false;
 
   constructor(clock: Walkable, hooks: TransportHooks) {
     this.#clock = clock;
@@ -71,7 +76,11 @@ export class Transport {
    * there again, and is seen again. Whatever is under way gets there with the change anyway.
    */
   refresh(): void {
-    if (this.#base || this.#walking || this.#clock.frame < 0) return;
+    if (this.#base || this.#clock.frame < 0) return;
+    if (this.#walking) {
+      this.#again = true;
+      return;
+    }
     this.#wanted = this.#clock.frame;
     void this.#walk();
   }
@@ -102,17 +111,24 @@ export class Transport {
     if (this.#walking) return;
     this.#walking = true;
     try {
-      while (this.#wanted !== undefined) {
-        const wanted = this.#wanted;
-        if (wanted > this.#clock.frame) {
-          await this.#clock.step(wanted);
-          this.#hooks.walked(this.#clock.frame);
-        } else if (wanted === this.#clock.frame || this.#clock.rewind(wanted))
-          await this.#arrive(wanted);
-        else this.#cannotGoBack(wanted);
+      for (;;) {
+        while (this.#wanted !== undefined) {
+          const wanted = this.#wanted;
+          if (wanted > this.#clock.frame) {
+            await this.#clock.step(wanted);
+            this.#hooks.walked(this.#clock.frame);
+          } else if (wanted === this.#clock.frame || this.#clock.rewind(wanted))
+            await this.#arrive(wanted);
+          else this.#cannotGoBack(wanted);
+        }
+        // Playing gets to the next frame anyway, with whatever changed.
+        if (!this.#again || this.#base) break;
+        this.#again = false;
+        this.#wanted = this.#clock.frame;
       }
     } catch (error) {
       this.#wanted = undefined;
+      this.#again = false;
       this.#hooks.broke(error);
     } finally {
       this.#walking = false;
