@@ -10,9 +10,9 @@ import { COMMANDS, type CommandDefinition } from "./commands.ts";
 import { CommandError, Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
-import { Mutator, type Patch } from "./patch.ts";
+import { Mutator, getIn, type Patch } from "./patch.ts";
 import { danglingAt, touchesLockedTrack } from "./references.ts";
-import { flatEntry, flatKey, isContainer, isFlat, type Path } from "./structure.ts";
+import { flatKey, flatParts, isContainer, isFlat, type Path } from "./structure.ts";
 import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
 
 /** Who a change comes from. Every change in the document carries this. */
@@ -92,6 +92,16 @@ export type CommandResult =
       readonly results: readonly unknown[];
       readonly patches: readonly Patch[];
     }
+  | { readonly ok: false; readonly error: CommandFailure };
+
+/** What became of a file, see importFile(). */
+export type ImportResult =
+  | (Extract<CommandResult, { ok: true }> & {
+      /** What the file would change on locked tracks, which stays as it is. */
+      readonly kept: readonly Path[];
+      /** The same for people and AI: a warning for each thing that stays, which says why. */
+      readonly problems: readonly Problem[];
+    })
   | { readonly ok: false; readonly error: CommandFailure };
 
 /** What came of taking something back or doing it again. */
@@ -178,13 +188,19 @@ function fill(map: Y.Map<unknown>, path: Path, value: object): void {
   for (const [key, item] of Object.entries(value)) {
     if (item === undefined) continue;
     const child = [...path, key];
-    if (isFlat(child)) {
-      for (const [entry, inner] of Object.entries(item as object)) {
-        if (inner !== undefined) map.set(flatKey(key, entry), inner);
-      }
-    } else {
-      map.set(key, toYjs(child, item));
-    }
+    if (isFlat(child)) fillFlat(map, [key], child, item);
+    else map.set(key, toYjs(child, item));
+  }
+}
+
+/** Puts what flat levels hold in the map above them, one value at a time. */
+function fillFlat(map: Y.Map<unknown>, parts: Path, path: Path, value: unknown): void {
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, item] of Object.entries(value)) {
+    if (item === undefined) continue;
+    const child = [...path, key];
+    if (isFlat(child)) fillFlat(map, [...parts, key], child, item);
+    else map.set(flatKey([...parts, key]), toYjs(child, item));
   }
 }
 
@@ -196,76 +212,107 @@ function toYjs(path: Path, value: unknown): unknown {
   return map;
 }
 
-/** The map a document from before flat levels has for this level. */
-function oldMap(map: Y.Map<unknown>, level: string): Y.Map<unknown> | undefined {
-  const old = map.get(level);
-  return old instanceof Y.Map ? (old as Y.Map<unknown>) : undefined;
+/** How far down a path the maps of their own go: what is below sits flat in the last of them. */
+function mapDepth(path: Path): number {
+  let depth = path.length - 1;
+  while (depth > 0 && isFlat(path.slice(0, depth))) depth -= 1;
+  return depth;
 }
 
-/** An entry of a flat level. An old map only counts where nothing has been written since. */
-function readEntry(map: Y.Map<unknown>, level: string, entry: string): unknown {
-  const key = flatKey(level, entry);
-  return map.has(key) ? map.get(key) : oldMap(map, level)?.get(entry);
+/**
+ * A value of flat levels, by its path from the map they sit in. An older document keeps it in maps
+ * of those levels instead, one inside the other, which only count where nothing has been written
+ * since: the key of its own is always the newer one.
+ */
+function readFlat(map: Y.Map<unknown>, parts: Path): unknown {
+  const key = flatKey(parts);
+  if (map.has(key)) return map.get(key);
+  const [level = "", ...rest] = parts;
+  const old = rest.length > 0 ? map.get(level) : undefined;
+  return old instanceof Y.Map ? readFlat(old as Y.Map<unknown>, rest) : undefined;
 }
 
-/** All entries of the flat levels of a map, by level. */
-function readEntries(map: Y.Map<unknown>, path: Path): ReadonlyMap<string, Map<string, unknown>> {
-  const levels = new Map<string, Map<string, unknown>>();
-  const entriesOf = (level: string) => {
-    const entries = levels.get(level) ?? new Map<string, unknown>();
-    levels.set(level, entries);
-    return entries;
-  };
+/** Takes a value of flat levels out of the maps an older document keeps for them. */
+function forgetOld(map: Y.Map<unknown>, parts: Path): void {
+  const [level = "", ...rest] = parts;
+  const old = rest.length > 0 ? map.get(level) : undefined;
+  if (!(old instanceof Y.Map)) return;
+  // Such a map can itself have values that sit flat, from the time when only the lower levels did.
+  (old as Y.Map<unknown>).delete(flatKey(rest));
+  forgetOld(old as Y.Map<unknown>, rest);
+}
+
+type Tree = Record<string, unknown>;
+
+function putIn(tree: Tree, parts: Path, value: unknown): void {
+  let node = tree;
+  for (const part of parts.slice(0, -1)) {
+    const next = node[part];
+    node = typeof next === "object" && next !== null ? (next as Tree) : (node[part] = {});
+  }
+  node[parts.at(-1) as string] = value;
+}
+
+/**
+ * Everything flat levels hold in a map, as levels inside of levels, the way the state has them.
+ * The map is one of its own at a path, or one that an older document has for a flat level there.
+ * Levels without a value are not there at all.
+ */
+function readFlatAll(map: Y.Map<unknown>, path: Path): Tree {
+  const tree: Tree = {};
+  // Maps of an older document first: what has a key of its own is newer.
   map.forEach((item, key) => {
-    if (isFlat([...path, key]) && item instanceof Y.Map) {
-      const entries = entriesOf(key);
-      (item as Y.Map<unknown>).forEach((inner, entry) => {
-        if (entry !== UNSAFE_KEY && !entries.has(entry)) entries.set(entry, inner);
-      });
+    if (key === UNSAFE_KEY || !(item instanceof Y.Map) || !isFlat([...path, key])) return;
+    const inner = readFlatAll(item as Y.Map<unknown>, [...path, key]);
+    if (Object.keys(inner).length > 0) tree[key] = inner;
+  });
+  map.forEach((item, key) => {
+    const parts = flatParts(path, key);
+    if (parts && !parts.includes(UNSAFE_KEY)) {
+      putIn(tree, parts, toState([...path, ...parts], item));
     }
   });
-  map.forEach((item, key) => {
-    const found = flatEntry(path, key);
-    if (found && found[1] !== UNSAFE_KEY) entriesOf(found[0]).set(found[1], item);
-  });
-  return levels;
+  return tree;
 }
 
 /** Something in the document the way the rest of the code sees it. */
 function toState(path: Path, value: unknown): unknown {
   if (value instanceof Y.Text) return value.toString();
   if (!(value instanceof Y.Map)) return value;
-  const entries: (readonly [string, unknown])[] = [];
-  (value as Y.Map<unknown>).forEach((item, key) => {
+  const map = value as Y.Map<unknown>;
+  const state: Tree = {};
+  map.forEach((item, key) => {
     const child = [...path, key];
-    if (key !== UNSAFE_KEY && !isFlat(child) && !flatEntry(path, key)) {
-      entries.push([key, toState(child, item)]);
+    if (key !== UNSAFE_KEY && !isFlat(child) && !flatParts(path, key)) {
+      state[key] = toState(child, item);
     }
   });
-  for (const [level, items] of readEntries(value as Y.Map<unknown>, path)) {
-    if (items.size > 0) entries.push([level, Object.fromEntries(items)]);
-  }
-  return Object.fromEntries(entries);
+  return Object.assign(state, readFlatAll(map, path));
 }
 
-/** What a key of a map in the document comes to in the state. */
-function readChange(map: Y.Map<unknown>, path: Path, key: string) {
-  const entry = flatEntry(path, key);
-  if (entry) {
-    const [level, name] = entry;
-    return { path: [...path, level, name], value: readEntry(map, level, name) };
+/** What the state has at a path, read from the document. */
+function readAt(root: Y.Map<unknown>, path: Path): unknown {
+  const depth = mapDepth(path);
+  let map = root;
+  for (const key of path.slice(0, depth)) {
+    const next = map.get(key);
+    if (!(next instanceof Y.Map)) return undefined;
+    map = next as Y.Map<unknown>;
   }
-  const owner = map.parent;
-  if (isFlat(path) && owner instanceof Y.Map) {
-    const value = readEntry(owner as Y.Map<unknown>, path.at(-1) as string, key);
-    return { path: [...path, key], value };
-  }
-  const child = [...path, key];
-  if (isFlat(child)) {
-    const items = readEntries(map, path).get(key);
-    return { path: child, value: items?.size ? Object.fromEntries(items) : undefined };
-  }
-  return { path: child, value: toState(child, map.get(key)) };
+  const parts = path.slice(depth);
+  if (parts.length === 1 && !isFlat(path)) return toState(path, map.get(parts[0] as string));
+  if (!isFlat(path)) return readFlat(map, parts);
+  // A whole level, which only an older document changes like that. It is somewhere in all of this.
+  return getIn(readFlatAll(map, path.slice(0, depth)), parts);
+}
+
+/** Where a key of a map in the document is in the state, and what is there now. */
+function readChange(root: Y.Map<unknown>, map: Y.Map<unknown>, path: Path, key: string) {
+  const parts = flatParts(path, key);
+  const where = parts ? [...path, ...parts] : [...path, key];
+  // What sits flat can be in more than one place, so it has to be looked for from the top.
+  if (parts || isFlat(where)) return { path: where, value: readAt(root, where) };
+  return { path: where, value: toState(where, map.get(key)) };
 }
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
@@ -504,16 +551,36 @@ export class ProjectStore {
     );
   }
 
-  /** Takes in a file that changed outside of the editor. See planFileImport. */
-  importFile(path: string, text: string, options: ExecuteOptions = {}): CommandResult {
+  /**
+   * Takes in a file that changed outside of the editor. See planFileImport. What it would change on
+   * a locked track stays as it is, and the result says what. When that is all it would change,
+   * nothing happens, and the result is a failure that says the same.
+   */
+  importFile(path: string, text: string, options: ExecuteOptions = {}): ImportResult {
     const origin = options.origin ?? USER;
-    return this.#commit(["file.import"], origin, options, (draft) => {
+    let kept: readonly Path[] = [];
+    let held: readonly Problem[] = [];
+    const result = this.#commit(["file.import"], origin, options, (draft) => {
       this.#assertUnlocked(draft);
       draft.knowsOnlyOutcome();
-      const problems = planFileImport(draft, path, text);
-      if (problems.length > 0) throw new ImportRejected(problems);
+      const planned = planFileImport(draft, path, text);
+      if (planned.problems.length > 0) {
+        const message = "文件不符合项目格式，没有导入";
+        throw new ImportRejected({ code: "invalid-file", message, problems: planned.problems });
+      }
+      ({ kept, held } = planned);
+      if (kept.length > 0 && draft.steps.length === 0) {
+        throw new ImportRejected({
+          code: "track-locked",
+          message: "文件里的改动都在锁定的轨道上，没有生效",
+          conflicts: kept,
+          obstacle: "locked",
+          problems: held,
+        });
+      }
       return [];
     });
+    return result.ok ? { ...result, kept, problems: held } : result;
   }
 
   get canUndo(): boolean {
@@ -651,10 +718,7 @@ export class ProjectStore {
     try {
       results = plan(draft);
     } catch (error) {
-      if (error instanceof ImportRejected) {
-        const { message, problems } = error;
-        return { ok: false, error: { code: "invalid-file", message, problems } };
-      }
+      if (error instanceof ImportRejected) return { ok: false, error: error.failure };
       if (error instanceof CommandError) {
         return { ok: false, error: { code: error.code, message: error.message } };
       }
@@ -861,12 +925,10 @@ export class ProjectStore {
 
   #apply(patch: Patch): void {
     const { path } = patch;
-    const parent = path.slice(0, -1);
-    const name = path.at(-1) as string;
-    const isEntry = isFlat(parent);
-    const level = parent.at(-1) as string;
-    const map = this.#mapAt(isEntry ? parent.slice(0, -1) : parent);
-    const key = isEntry ? flatKey(level, name) : name;
+    const depth = mapDepth(path);
+    const map = this.#mapAt(path.slice(0, depth));
+    const parts = path.slice(depth);
+    const key = flatKey(parts);
     switch (patch.op) {
       case "delete":
         map.delete(key);
@@ -881,8 +943,8 @@ export class ProjectStore {
         break;
       }
     }
-    // From now on this entry lives in its own key.
-    if (isEntry) oldMap(map, level)?.delete(name);
+    // From now on this value lives under a key of its own.
+    forgetOld(map, parts);
   }
 
   #markWrite(path: Path, write: Write, removed: boolean): void {
@@ -916,7 +978,7 @@ export class ProjectStore {
       }
       const target = event.target as Y.Map<unknown>;
       event.changes.keys.forEach((_, key) => {
-        const { path, value } = readChange(target, base, key);
+        const { path, value } = readChange(this.#root, target, base, key);
         if (path.includes(UNSAFE_KEY)) return;
         const removed = value === undefined;
         if (removed) mutator.delete(path);
@@ -932,11 +994,12 @@ export class ProjectStore {
   };
 }
 
+/** Why nothing of a file comes in. */
 class ImportRejected extends Error {
-  readonly problems: readonly Problem[];
+  readonly failure: CommandFailure;
 
-  constructor(problems: readonly Problem[]) {
-    super("文件不符合项目格式，没有导入");
-    this.problems = problems;
+  constructor(failure: CommandFailure) {
+    super(failure.message);
+    this.failure = failure;
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Mutator, deepEqual, diff, getIn, settled } from "./patch.ts";
-import { flatEntry, flatKey, isContainer, isFlat } from "./structure.ts";
+import { flatKey, flatParts, isContainer, isFlat } from "./structure.ts";
 
 describe("structure", () => {
   it.each([
@@ -28,11 +28,18 @@ describe("structure", () => {
 describe("what not everything has", () => {
   const clip = ["timelines", "main", "clips", "c1"];
   const track = ["timelines", "main", "tracks", "t1"];
+  const versions = ["timelines", "main", "overrides"];
+  const version = [...versions, "language.en"];
 
   it.each([
     [[...clip, "properties"]],
     [[...track, "properties"]],
-    [["timelines", "main", "overrides", "language.en", "clips", "c1", "properties"]],
+    [version],
+    [[...version, "sections"]],
+    [[...version, "clips"]],
+    [[...version, "clips", "c1"]],
+    [[...version, "clips", "c1", "properties"]],
+    [["locales", "en"]],
     [["assets"]],
     [["notes"]],
   ])("%j has no map of its own, so that two people cannot both make one", (path) => {
@@ -44,32 +51,75 @@ describe("what not everything has", () => {
     [["manifest"]],
     [["timelines", "main", "clips"]],
     [[...clip, "properties", "opacity"]],
+    [versions],
+    [[...version, "scope"]],
+    [[...version, "sections", "s1"]],
+    [[...version, "clips", "c1", "hidden"]],
+    [["locales"]],
+    [["locales", "en", "intro.title"]],
     [["files"]],
   ])("%j is what it always was", (path) => {
     expect(isFlat(path)).toBe(false);
   });
 
-  it("finds its entries next to the fields of what has them", () => {
-    expect(flatEntry(clip, flatKey("properties", "transform.x"))).toEqual([
+  it("finds its values next to the fields of what has them", () => {
+    expect(flatParts(clip, flatKey(["properties", "transform.x"]))).toEqual([
       "properties",
       "transform.x",
     ]);
-    expect(flatEntry([], flatKey("assets", "a"))).toEqual(["assets", "a"]);
+    expect(flatParts([], flatKey(["assets", "a"]))).toEqual(["assets", "a"]);
+  });
+
+  it("finds them however far down they are", () => {
+    const parts = ["language.en", "clips", "c1", "properties", "opacity"];
+    expect(flatKey(parts)).toBe("language.en/clips/c1/properties/opacity");
+    expect(flatParts(versions, flatKey(parts))).toEqual(parts);
+    expect(flatParts(versions, "language.en/scope")).toEqual(["language.en", "scope"]);
+    expect(flatParts(versions, "language.en/sections/s1")).toEqual([
+      "language.en",
+      "sections",
+      "s1",
+    ]);
+    expect(flatParts(versions, "language.en/clips/c1/hidden")).toEqual([
+      "language.en",
+      "clips",
+      "c1",
+      "hidden",
+    ]);
+  });
+
+  it("takes the rest of the key for the name of a value, which can be anything", () => {
+    expect(flatParts(["locales"], "en/intro/title")).toEqual(["en", "intro/title"]);
+  });
+
+  it("reads the maps of an older document the same way from where they are", () => {
+    expect(flatParts(version, "scope")).toEqual(["scope"]);
+    expect(flatParts([...version, "clips", "c1"], "properties/opacity")).toEqual([
+      "properties",
+      "opacity",
+    ]);
+    expect(flatParts([...version, "clips", "c1"], "hidden")).toEqual(["hidden"]);
+    expect(flatParts(["locales", "en"], "properties/x")).toEqual(["properties/x"]);
   });
 
   it.each([
     [clip, "start"],
     [clip, "source/kind"],
     [["files"], "scenes/title/index.html"],
-    [["locales", "en"], "properties/x"],
-    [[...clip, "properties"], "properties/x"],
+    [versions, "language.en"],
+    [versions, "language.en/clips"],
+    [versions, "language.en/clips/c1"],
+    [[...version, "clips", "c1"], "properties"],
+    [["locales"], "en"],
   ])("does not take %j %s for one", (path, key) => {
-    expect(flatEntry(path, key)).toBeUndefined();
+    expect(flatParts(path, key)).toBeUndefined();
   });
 
   it("does not go by what every object inherits", () => {
     expect(isContainer(["timelines", "main", "clips", "constructor"])).toBe(true);
     expect(isFlat(["timelines", "main", "clips", "constructor", "properties"])).toBe(true);
+    expect(isFlat([...versions, "constructor", "clips", "toString"])).toBe(true);
+    expect(isFlat([...version, "constructor"])).toBe(false);
     expect(isContainer(["constructor"])).toBe(false);
     expect(isContainer(["manifest", "constructor"])).toBe(false);
     expect(getIn({ a: {} }, ["a", "constructor"])).toBeUndefined();

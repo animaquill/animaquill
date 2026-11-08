@@ -79,8 +79,10 @@ export interface Step {
   /** What it left there. As long as that is still there, the step is free to go back. */
   readonly left: Written;
   /**
-   * It wrote on a locked track, which only a file can. A lock keeps what was there when it came, so
-   * it does not stop this step from going back to that.
+   * It wrote on a locked track. Files and commands leave what is there as it is, and a file changes
+   * a track before it puts a lock on, but a change elsewhere can still reach there: a transition on
+   * a locked track that points at a clip that goes away. A lock keeps what was there when it came,
+   * so it does not stop this step from going back to that.
    */
   readonly pastLock: boolean;
 }

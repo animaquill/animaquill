@@ -275,6 +275,26 @@ export function stateToTimeline(state: TimelineState): unknown {
   };
 }
 
+/** The scope that the name of a version stands for, see `override-misnamed`. */
+function scopeNamed(name: string): Overrides["scope"] | undefined {
+  const [kind, first, second, ...rest] = name.split(".");
+  if (!first || rest.length > 0) return undefined;
+  if (kind === "language" && second === undefined) return { language: first };
+  if (kind === "format" && second === undefined) return { format: first };
+  return kind === "version" && second ? { language: first, format: second } : undefined;
+}
+
+/**
+ * What a version changes sits in the document one value at a time, and so does its scope. Two
+ * people at once can leave a version without one: one takes a change back, the other has just made
+ * one there. Its name says the same, so the version keeps its place in the files.
+ */
+function withScope(name: string, version: Overrides): Overrides {
+  if ((version as { readonly scope?: unknown }).scope !== undefined) return version;
+  const scope = scopeNamed(name);
+  return scope ? { ...version, scope } : version;
+}
+
 export interface ExportedProject {
   readonly project: Project;
   /** Documents that are not valid any more stay out, so that the last good file survives. */
@@ -317,7 +337,7 @@ export function stateToProject(state: ProjectState): ExportedProject {
   for (const [id, timeline] of Object.entries(state.timelines)) {
     const document = check(`timelines/${id}/timeline.json`, Timeline, stateToTimeline(timeline));
     const overrides = validMap(
-      Object.entries(timeline.overrides),
+      Object.entries(timeline.overrides).map(([name, version]) => [name, withScope(name, version)]),
       (name) => `timelines/${id}/overrides/${name}.json`,
       Overrides,
     );

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { orderedTracks } from "./model.ts";
 import { MAX_SOURCE_BYTES } from "./scene-edits.ts";
-import { ProjectStore, aiTask, type CommandCall, type CommandResult } from "./store.ts";
+import { ProjectStore, USER, aiTask, type CommandCall, type CommandResult } from "./store.ts";
 
 const manifest: SceneManifest = { name: "标题", entry: "index.html", runtime: 1 };
 const PAGE = "<!doctype html><h1>标题</h1>";
@@ -793,15 +793,25 @@ describe("a scene on a locked track", () => {
     expect(state().files["scenes/title/a.js"]).toBe("1");
   });
 
-  it("a file that came in from outside can go back past a lock, like a clip of a file", () => {
+  it.each([USER, aiTask("t")])("stays as it is for a file from outside, from %s", (origin) => {
     const { store, state, run, ok, addScene, useScene, lock } = open();
     addScene();
     useScene();
     ok(run("file.write", { path: "scenes/title/a.js", text: "1" }));
+    ok(run("file.write", { path: "code/shared.js", text: "1" }));
     lock();
-    ok(store.importFile("scenes/title/a.js", "from outside"));
-    expect(state().files["scenes/title/a.js"]).toBe("from outside");
-    expect(store.undo().ok).toBe(true);
-    expect(state().files["scenes/title/a.js"]).toBe("1");
+    const before = state();
+    for (const [path, text] of [
+      ["scenes/title/a.js", "from outside"],
+      ["scenes/title/new.js", "from outside"],
+      ["scenes/title/scene.json", JSON.stringify({ ...manifest, name: "改过" })],
+      ["code/shared.js", "from outside"],
+    ] as const) {
+      const result = store.importFile(path, text, { origin });
+      expect(result.ok, path).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("track-locked");
+    }
+    expect(state()).toBe(before);
+    ok(store.importFile("scenes/free/a.js", "from outside", { origin }));
   });
 });

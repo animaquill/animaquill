@@ -283,7 +283,8 @@ function reachesLockedCode(state: ProjectState, path: Path): boolean {
 
 /**
  * Whether a change reaches what is on a locked track: what is there now, or what would end up there.
- * The track itself stays open, or nobody could take the lock off. It only cannot go away.
+ * The track itself stays open, or nobody could take the lock off. It only cannot go away, or become
+ * another kind of track: the kind says what it can hold, and what is on it would no longer fit.
  */
 export function touchesLockedTrack(state: ProjectState, patch: Patch): boolean {
   const { path } = patch;
@@ -302,7 +303,7 @@ export function touchesLockedTrack(state: ProjectState, patch: Patch): boolean {
     case undefined:
       return Object.values(timeline.tracks).some(({ locked }) => locked);
     case "tracks":
-      return path.length === 4 && isLocked(item);
+      return (path.length === 4 || (path.length === 5 && field === "kind")) && isLocked(item);
     case "clips":
       return isLocked(entryOf(timeline.clips, item)?.track) || isLocked(coming());
     case "transitions":

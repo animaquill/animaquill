@@ -239,6 +239,7 @@ export {
   type CommandResult,
   type ExecuteOptions,
   type HistoryEntry,
+  type ImportResult,
   type LocalChange,
   type UndoObstacle,
   type UndoResult,

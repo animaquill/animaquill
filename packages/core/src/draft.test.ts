@@ -76,6 +76,33 @@ describe("planning a change", () => {
     plan.delete([...clipPath, "properties", "opacity"]);
     expect(plan.state.timelines["main"]?.clips["c"]).not.toHaveProperty("properties");
   });
+
+  it("writes a new version one value at a time, however far down they are", () => {
+    const plan = draft();
+    const version = ["timelines", "main", "overrides", "language.fr"];
+    plan.set(version, {
+      scope: { language: "fr" },
+      sections: {},
+      clips: { c: { hidden: { value: true }, properties: { opacity: { value: 0.5 } } } },
+    });
+    expect(plan.steps.map(({ patch }) => [patch.op, patch.path.slice(3).join("/")])).toEqual([
+      ["set", "language.fr/scope"],
+      ["set", "language.fr/clips/c/hidden"],
+      ["set", "language.fr/clips/c/properties/opacity"],
+    ]);
+    plan.delete([...version, "clips", "c"]);
+    expect(plan.steps.slice(3).map(({ patch }) => [patch.op, patch.path.at(-1)])).toEqual([
+      ["delete", "hidden"],
+      ["delete", "opacity"],
+    ]);
+    expect(getIn(plan.state, version)).toEqual({ scope: { language: "fr" } });
+  });
+
+  it("writes the strings of a language one at a time", () => {
+    const plan = draft();
+    plan.set(["locales", "fr"], { "intro.title": { text: "Atome" }, empty: undefined });
+    expect(plan.steps.map(({ patch }) => patch.path)).toEqual([["locales", "fr", "intro.title"]]);
+  });
 });
 
 describe("taking a step back", () => {

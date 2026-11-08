@@ -20,6 +20,7 @@ import {
   mergeUpdates,
   type CommandResult,
   type ExecuteOptions,
+  type ImportResult,
   type UndoResult,
 } from "./store.ts";
 
@@ -2561,6 +2562,256 @@ describe("two devices writing different properties", () => {
   });
 });
 
+/** Changes a document of the project the way somebody outside of the editor would. */
+function rewriteFile(
+  store: ProjectStore,
+  path: string,
+  change: (document: any) => void,
+  options: ExecuteOptions = {},
+) {
+  const text = store.exportFiles().files.get(path);
+  const document = text === undefined ? {} : JSON.parse(text);
+  change(document);
+  return store.importFile(path, JSON.stringify(document), options);
+}
+
+describe("two devices writing what versions and translations change", () => {
+  const VERTICAL = "timelines/main/overrides/format.vertical.json";
+  const FRENCH = "timelines/main/overrides/language.fr.json";
+  const version = (store: ProjectStore, name: string) => timeline(store).overrides[name];
+
+  it("keeps both first sections of a version", () => {
+    const a = open();
+    const b = twin(a);
+    success(
+      rewriteFile(a, VERTICAL, (document) => {
+        document.sections = { section_intro: { duration: { value: "4" } } };
+      }),
+    );
+    success(
+      rewriteFile(b, VERTICAL, (document) => {
+        document.sections = { section_end: { duration: { value: "6" } } };
+      }),
+    );
+    sync(a, b);
+    const sections = {
+      section_intro: { duration: { value: "4" } },
+      section_end: { duration: { value: "6" } },
+    };
+    expect(version(a, "format.vertical")?.sections).toEqual(sections);
+    expect(version(b, "format.vertical")?.sections).toEqual(sections);
+  });
+
+  it("keeps both first changes of a clip in a version", () => {
+    const a = open();
+    const b = twin(a);
+    success(
+      rewriteFile(a, VERTICAL, (document) => {
+        document.clips.clip_logo = { hidden: { value: true } };
+      }),
+    );
+    success(
+      rewriteFile(b, VERTICAL, (document) => {
+        document.clips.clip_logo = { properties: { opacity: { value: 0.5, base: 1 } } };
+      }),
+    );
+    sync(a, b);
+    const changes = { hidden: { value: true }, properties: { opacity: { value: 0.5, base: 1 } } };
+    expect(version(a, "format.vertical")?.clips?.["clip_logo"]).toEqual(changes);
+    expect(version(b, "format.vertical")?.clips?.["clip_logo"]).toEqual(changes);
+  });
+
+  it("keeps the first changes of two clips in a version that had none", () => {
+    const a = open();
+    success(
+      rewriteFile(a, FRENCH, (document) => {
+        document.scope = { language: "fr" };
+      }),
+    );
+    const b = twin(a);
+    success(
+      rewriteFile(a, FRENCH, (document) => {
+        document.clips = { clip_title: { hidden: { value: true } } };
+      }),
+    );
+    success(
+      rewriteFile(b, FRENCH, (document) => {
+        document.clips = { clip_logo: { start: { value: "18" } } };
+      }),
+    );
+    sync(a, b);
+    expect(version(b, "language.fr")).toEqual({
+      scope: { language: "fr" },
+      clips: { clip_title: { hidden: { value: true } }, clip_logo: { start: { value: "18" } } },
+    });
+    expect(a.getState()).toEqual(b.getState());
+  });
+
+  it("keeps both when two devices start the same version, whoever wins", () => {
+    for (let round = 0; round < 6; round += 1) {
+      const a = open();
+      const b = twin(a);
+      success(
+        rewriteFile(a, FRENCH, (document) => {
+          document.scope = { language: "fr" };
+          document.clips = { clip_title: { properties: { "param.size": { value: 56 } } } };
+        }),
+      );
+      success(
+        rewriteFile(b, FRENCH, (document) => {
+          document.scope = { language: "fr" };
+          document.sections = { section_body: { duration: { value: "24", base: "20" } } };
+        }),
+      );
+      if (round % 2 === 0) sync(a, b);
+      else sync(b, a);
+      for (const store of [a, b]) {
+        expect(version(store, "language.fr")).toEqual({
+          scope: { language: "fr" },
+          sections: { section_body: { duration: { value: "24", base: "20" } } },
+          clips: { clip_title: { properties: { "param.size": { value: 56 } } } },
+        });
+      }
+    }
+  });
+
+  it("keeps both first strings of a language", () => {
+    const a = open();
+    const b = twin(a);
+    success(
+      rewriteFile(a, "locales/fr.json", (document) => {
+        document.strings = { "intro.title": { text: "Qu'est-ce qu'un atome" } };
+      }),
+    );
+    success(
+      rewriteFile(b, "locales/fr.json", (document) => {
+        document.strings = { "subtitle.one": { text: "Tout est fait d'atomes" } };
+      }),
+    );
+    sync(a, b);
+    const strings = {
+      "intro.title": { text: "Qu'est-ce qu'un atome" },
+      "subtitle.one": { text: "Tout est fait d'atomes" },
+    };
+    expect(a.getState().locales["fr"]).toEqual(strings);
+    expect(b.getState().locales["fr"]).toEqual(strings);
+    expect(b.exportFiles().files.get("locales/fr.json")).toBe(
+      a.exportFiles().files.get("locales/fr.json"),
+    );
+  });
+
+  it("each can undo their own afterwards", () => {
+    const a = open();
+    const b = twin(a);
+    success(
+      rewriteFile(a, FRENCH, (document) => {
+        document.scope = { language: "fr" };
+        document.clips = { clip_title: { hidden: { value: true } } };
+      }),
+    );
+    success(
+      rewriteFile(b, FRENCH, (document) => {
+        document.scope = { language: "fr" };
+        document.clips = { clip_logo: { start: { value: "18" } } };
+      }),
+    );
+    sync(a, b);
+    expect(a.undo().ok).toBe(true);
+    sync(a, b);
+    expect(version(b, "language.fr")).toMatchObject({
+      clips: { clip_logo: { start: { value: "18" } } },
+    });
+    expect(version(b, "language.fr")?.clips?.["clip_title"]).toBeUndefined();
+    expect(b.undo().ok).toBe(true);
+    sync(a, b);
+    expect(version(a, "language.fr")).toEqual(version(b, "language.fr"));
+    expect(version(a, "language.fr")?.clips).toBeUndefined();
+  });
+
+  it("leaves a valid version when one of two who started it takes that back", () => {
+    for (const [first, second] of [
+      [1, 2],
+      [2, 1],
+    ] as const) {
+      const base = open();
+      const a = windowOf(base, first);
+      const b = windowOf(base, second);
+      success(
+        rewriteFile(a, FRENCH, (document) => {
+          document.scope = { language: "fr" };
+          document.clips = { clip_title: { hidden: { value: true } } };
+        }),
+      );
+      success(
+        rewriteFile(b, FRENCH, (document) => {
+          document.scope = { language: "fr" };
+          document.clips = { clip_logo: { start: { value: "18" } } };
+        }),
+      );
+      sync(a, b);
+      expect(a.undo().ok).toBe(true);
+      sync(a, b);
+      for (const store of [a, b]) {
+        expect(version(store, "language.fr")?.clips).toEqual({
+          clip_logo: { start: { value: "18" } },
+        });
+        const { files, problems } = store.exportFiles();
+        expect(problems).toEqual([]);
+        expect(JSON.parse(files.get(FRENCH) as string)).toEqual({
+          scope: { language: "fr" },
+          clips: { clip_logo: { start: { value: "18" } } },
+        });
+      }
+    }
+  });
+
+  it("makes no map for a version, the changes in it, or a language", () => {
+    const store = open();
+    success(
+      rewriteFile(store, FRENCH, (document) => {
+        document.scope = { language: "fr" };
+        document.sections = { section_body: { duration: { value: "24" } } };
+        document.clips = { clip_title: { properties: { "param.size": { value: 56 } } } };
+      }),
+    );
+    success(
+      rewriteFile(store, "locales/fr.json", (document) => {
+        document.strings = { "intro/title": { text: "Qu'est-ce qu'un atome" } };
+      }),
+    );
+    const root = store.doc.getMap<unknown>("project");
+    const main = (root.get("timelines") as Y.Map<Y.Map<unknown>>).get("main");
+    const versions = main?.get("overrides") as Y.Map<unknown>;
+    expect(versions.has("language.fr")).toBe(false);
+    expect(versions.get("language.fr/scope")).toEqual({ language: "fr" });
+    expect(versions.get("language.fr/sections/section_body")).toEqual({
+      duration: { value: "24" },
+    });
+    expect(versions.get("language.fr/clips/clip_title/properties/param.size")).toEqual({
+      value: 56,
+    });
+    const locales = root.get("locales") as Y.Map<unknown>;
+    expect(locales.has("fr")).toBe(false);
+    expect(locales.get("fr/intro/title")).toEqual({ text: "Qu'est-ce qu'un atome" });
+    const { store: opened } = ProjectStore.fromUpdates([store.encodeState()]);
+    expect(opened?.getState()).toEqual(store.getState());
+    expect(opened?.exportFiles().files).toEqual(store.exportFiles().files);
+  });
+
+  it("takes what a version changes away one value at a time, and undo brings it back", () => {
+    const store = open();
+    const before = store.getState();
+    success(
+      rewriteFile(store, VERTICAL, (document) => {
+        document.clips = {};
+      }),
+    );
+    expect(version(store, "format.vertical")).toEqual({ scope: { format: "vertical" } });
+    expect(store.undo().ok).toBe(true);
+    expect(store.getState()).toEqual(before);
+  });
+});
+
 describe("a document from when properties had a map of their own", () => {
   function written() {
     const store = freshProject();
@@ -3482,17 +3733,19 @@ describe("taking back what is on a locked track", () => {
     expect(opacity(store, "e")).toBeUndefined();
   });
 
-  it("takes back what a file wrote there, which goes back to what the lock is for", () => {
+  it("takes back what a file wrote on a track it locked at the same time, which the lock is for", () => {
     const store = freshProject();
     const track = trackOf(store);
-    lockTrack(store, track);
     const before = store.getState();
     const document = JSON.parse(store.exportFiles().files.get(MAIN) as string);
     for (const each of document.tracks) {
+      if (each.id === track) each.locked = true;
       for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
     }
-    success(store.importFile(MAIN, JSON.stringify(document)));
+    const imported = store.importFile(MAIN, JSON.stringify(document));
+    expect(imported).toMatchObject({ ok: true, kept: [], problems: [] });
     expect(opacity(store)).toBe(0.5);
+    expect(timeline(store).tracks[track]?.locked).toBe(true);
     expect(taken(store.undo()).kept).toEqual([]);
     expect(store.getState()).toEqual(before);
     expect(taken(store.redo()).kept).toEqual([]);
@@ -3568,6 +3821,392 @@ describe("taking back what is on a locked track", () => {
     expect(taken(store.undo()).kept).toEqual([]);
     expect(clip(store, "c")?.start).toBe("0");
     expect(timeline(store).tracks[track]?.locked).toBe(true);
+  });
+});
+
+describe("a file that would change what is on a locked track", () => {
+  /** In the example, 叠加 is locked, with clip_lottie and clip_idea on it. */
+  const LOCKED = "track_overlay";
+  const VERTICAL = "timelines/main/overrides/format.vertical.json";
+  const clipIn = (document: any, id: string) =>
+    document.tracks.flatMap((track: any) => track.clips).find((item: any) => item.id === id);
+  const trackIn = (document: any, id: string) =>
+    document.tracks.find((track: any) => track.id === id);
+  const imported = (result: ImportResult) => {
+    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    return result;
+  };
+  const refused = (result: ImportResult) => {
+    if (result.ok) throw new Error("expected the file to change nothing");
+    return result.error;
+  };
+  const sorted = (paths: readonly (readonly string[])[]) =>
+    paths.map((path) => path.join("/")).toSorted();
+  const lock = (store: ProjectStore, track: string, options: ExecuteOptions = {}) =>
+    success(
+      store.execute(
+        { type: "track.update", params: { timeline: "main", track, changes: { locked: true } } },
+        options,
+      ),
+    );
+
+  it("leaves what it would change there as it is, takes in the rest, and says what stayed", () => {
+    const store = open();
+    const result = imported(
+      rewriteFile(store, MAIN, (document) => {
+        clipIn(document, "clip_idea").name = "改过";
+        clipIn(document, "clip_idea").start = "11";
+        clipIn(document, "clip_title").properties["param.size"] = 80;
+      }),
+    );
+    expect(clip(store, "clip_idea")).toMatchObject({ name: "样片：换个开场", start: "10" });
+    expect(property(store, "param.size")).toBe(80);
+    expect(result.patches.map(({ path }) => path.join("/"))).toEqual([
+      "timelines/main/clips/clip_title/properties/param.size",
+    ]);
+    expect(sorted(result.kept)).toEqual([
+      "timelines/main/clips/clip_idea/name",
+      "timelines/main/clips/clip_idea/start",
+    ]);
+    expect(result.problems).toEqual([
+      {
+        severity: "warning",
+        code: "track-locked",
+        file: MAIN,
+        path: "clip_idea",
+        message: "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
+      },
+    ]);
+  });
+
+  it("changes nothing when that is all it would change, and says why", () => {
+    const store = open();
+    const before = store.getState();
+    const { revision } = store;
+    const error = refused(
+      rewriteFile(store, MAIN, (document) => {
+        clipIn(document, "clip_lottie").loop = false;
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "track-locked",
+      message: "文件里的改动都在锁定的轨道上，没有生效",
+      obstacle: "locked",
+      conflicts: [["timelines", "main", "clips", "clip_lottie", "loop"]],
+    });
+    expect(error.problems).toEqual([
+      expect.objectContaining({ severity: "warning", file: MAIN, path: "clip_lottie" }),
+    ]);
+    expect(store.getState()).toBe(before);
+    expect(store.revision).toBe(revision);
+    expect(store.canUndo).toBe(false);
+  });
+
+  it("does not take a clip away, put one there, or move one off or onto it", () => {
+    const store = open();
+    const before = timeline(store);
+    const result = imported(
+      rewriteFile(store, MAIN, (document) => {
+        const overlay = trackIn(document, LOCKED);
+        const video = trackIn(document, "track_video");
+        overlay.clips = overlay.clips.filter((item: any) => item.id !== "clip_idea");
+        const lottie = overlay.clips.find((item: any) => item.id === "clip_lottie");
+        overlay.clips = overlay.clips.filter((item: any) => item !== lottie);
+        video.clips.push({ ...lottie, start: "40" });
+        const logo = video.clips.find((item: any) => item.id === "clip_logo");
+        video.clips = video.clips.filter((item: any) => item !== logo);
+        overlay.clips.push(logo, {
+          id: "clip_new",
+          start: "30",
+          duration: "1",
+          source: { kind: "color", color: "#ffffff" },
+        });
+        document.name = "改了名字";
+      }),
+    );
+    expect(timeline(store).name).toBe("改了名字");
+    for (const id of ["clip_idea", "clip_lottie", "clip_logo"]) {
+      expect(clip(store, id)).toEqual(before.clips[id]);
+    }
+    expect(clip(store, "clip_new")).toBeUndefined();
+    expect(result.problems.map(({ path }) => path).toSorted()).toEqual([
+      "clip_idea",
+      "clip_logo",
+      "clip_lottie",
+      "clip_new",
+    ]);
+    expect(result.problems.find(({ path }) => path === "clip_new")?.message).toBe(
+      "轨道“叠加”已锁定，文件里对片段“clip_new”的改动没有生效",
+    );
+  });
+
+  it("does not take the track away, or make it another kind, but its name can change", () => {
+    const store = open();
+    const before = timeline(store);
+    const result = imported(
+      rewriteFile(store, MAIN, (document) => {
+        const overlay = trackIn(document, LOCKED);
+        overlay.kind = "caption";
+        overlay.clips = [];
+        delete overlay.hidden;
+        overlay.name = "叠加层";
+      }),
+    );
+    expect(timeline(store).tracks[LOCKED]).toMatchObject({ kind: "video", name: "叠加层" });
+    expect(clip(store, "clip_idea")).toEqual(before.clips["clip_idea"]);
+    expect(result.problems.map(({ path }) => path).toSorted()).toEqual([
+      "clip_idea",
+      "clip_lottie",
+      "track_overlay",
+    ]);
+    expect(store.exportFiles().problems).toEqual([]);
+    const gone = imported(
+      rewriteFile(store, MAIN, (document) => {
+        document.tracks = document.tracks.filter((track: any) => track.id !== LOCKED);
+        document.name = "没有叠加";
+      }),
+    );
+    expect(timeline(store).tracks[LOCKED]).toBeDefined();
+    expect(clip(store, "clip_lottie")).toEqual(before.clips["clip_lottie"]);
+    expect(gone.problems.map(({ path }) => path).toSorted()).toEqual([
+      "clip_idea",
+      "clip_lottie",
+      "track_overlay",
+    ]);
+  });
+
+  it("does not change a transition there", () => {
+    const store = open();
+    lock(store, "track_video");
+    const error = refused(
+      rewriteFile(store, MAIN, (document) => {
+        trackIn(document, "track_video").transitions[0].duration = "1";
+      }),
+    );
+    expect(error.problems?.map(({ message }) => message)).toEqual([
+      "轨道“画面”已锁定，文件里对转场“tr_1”的改动没有生效",
+    ]);
+    expect(timeline(store).transitions["tr_1"]?.duration).toBe("0.5");
+  });
+
+  it("does not change what a version changes about a clip there, in a version or a new one", () => {
+    const store = open();
+    const result = imported(
+      rewriteFile(store, VERTICAL, (document) => {
+        document.clips.clip_idea = { hidden: { value: false, base: true } };
+        document.clips.clip_title.properties["param.size"].value = 40;
+      }),
+    );
+    const vertical = timeline(store).overrides["format.vertical"];
+    expect(vertical?.clips?.["clip_idea"]).toBeUndefined();
+    expect(vertical?.clips?.["clip_title"]?.properties?.["param.size"]?.value).toBe(40);
+    expect(result.problems).toEqual([
+      {
+        severity: "warning",
+        code: "track-locked",
+        file: VERTICAL,
+        path: "clips.clip_idea",
+        message: "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的差异没有生效",
+      },
+    ]);
+    const square = "timelines/main/overrides/format.square.json";
+    const added = imported(
+      store.importFile(
+        square,
+        JSON.stringify({
+          scope: { format: "square" },
+          clips: {
+            clip_lottie: { hidden: { value: true } },
+            clip_logo: { hidden: { value: true } },
+          },
+        }),
+      ),
+    );
+    expect(timeline(store).overrides["format.square"]).toEqual({
+      scope: { format: "square" },
+      clips: { clip_logo: { hidden: { value: true } } },
+    });
+    expect(added.problems.map(({ path }) => path)).toEqual(["clips.clip_lottie"]);
+  });
+
+  it("does not change the code that a locked track runs", () => {
+    const store = open();
+    lock(store, "track_video");
+    const scene = refused(store.importFile("scenes/title/index.html", "<p>改过</p>"));
+    expect(scene.problems?.[0]?.message).toBe("“标题卡”在锁定的轨道上使用，文件里的改动没有生效");
+    const manifest = refused(
+      rewriteFile(store, "scenes/title/scene.json", (document) => {
+        document.name = "改过";
+      }),
+    );
+    expect(manifest.code).toBe("track-locked");
+    const shared = refused(store.importFile("code/animate.js", "export {};"));
+    expect(shared.problems?.[0]?.message).toBe(
+      "锁定的轨道上有场景或声音，共用代码不能改，文件里的改动没有生效",
+    );
+    expect(store.getState().files["scenes/title/index.html"]).not.toBe("<p>改过</p>");
+    expect(store.getState().scenes["title"]?.name).toBe("标题卡");
+  });
+
+  it("lets a person's file take the lock off and change what is there in one go", () => {
+    const store = open();
+    const before = store.getState();
+    const result = imported(
+      rewriteFile(store, MAIN, (document) => {
+        delete trackIn(document, LOCKED).locked;
+        clipIn(document, "clip_idea").name = "改过";
+      }),
+    );
+    expect(result).toMatchObject({ kept: [], problems: [] });
+    expect(timeline(store).tracks[LOCKED]?.locked).toBeUndefined();
+    expect(clip(store, "clip_idea")?.name).toBe("改过");
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+  });
+
+  it("keeps the lock on for an AI task, whose file cannot say that it means to take it off", () => {
+    const store = open();
+    for (const unlocked of [undefined, false]) {
+      const result = imported(
+        rewriteFile(
+          store,
+          MAIN,
+          (document) => {
+            const overlay = trackIn(document, LOCKED);
+            if (unlocked === undefined) delete overlay.locked;
+            else overlay.locked = unlocked;
+            clipIn(document, "clip_idea").name = "AI 改的";
+            document.name = `AI 改的 ${String(unlocked)}`;
+          },
+          { origin: AI },
+        ),
+      );
+      expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
+      expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
+      expect(timeline(store).name).toBe(`AI 改的 ${String(unlocked)}`);
+      expect(result.problems.map(({ message }) => message)).toEqual([
+        "轨道“叠加”已锁定，AI 不能用文件解锁，要解锁请用命令，或者请用户解锁",
+        "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
+      ]);
+    }
+  });
+
+  it("lets a file put a lock on and change the track in one go, AI or not", () => {
+    for (const origin of [USER, AI]) {
+      const store = open();
+      const result = imported(
+        rewriteFile(
+          store,
+          MAIN,
+          (document) => {
+            trackIn(document, "track_video").locked = true;
+            clipIn(document, "clip_title").properties["param.size"] = 80;
+          },
+          { origin },
+        ),
+      );
+      expect(result.problems).toEqual([]);
+      expect(timeline(store).tracks["track_video"]?.locked).toBe(true);
+      expect(property(store, "param.size")).toBe(80);
+      expect(failure(setProperty(store, "param.size", 70)).code).toBe("track-locked");
+    }
+  });
+
+  it("takes a lock it put on back first, and what it protects only with it", () => {
+    const store = open();
+    const before = store.getState();
+    imported(
+      rewriteFile(store, MAIN, (document) => {
+        trackIn(document, "track_video").locked = true;
+        clipIn(document, "clip_title").properties["param.size"] = 80;
+      }),
+    );
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+    expect(taken(store.redo()).kept).toEqual([]);
+    // Somebody else locks it too: that lock stays, and so does what it protects.
+    lock(store, "track_video", { origin: AI });
+    blocked(store.undo());
+    expect(timeline(store).tracks["track_video"]?.locked).toBe(true);
+    expect(property(store, "param.size")).toBe(80);
+  });
+
+  it("takes back a new track that came with its lock and its clips, as a whole", () => {
+    const store = open();
+    const before = store.getState();
+    const added = {
+      id: "track_new",
+      kind: "video",
+      locked: true,
+      clips: [
+        { id: "clip_new", start: "0", duration: "1", source: { kind: "color", color: "#ffffff" } },
+      ],
+    };
+    imported(
+      rewriteFile(store, MAIN, (document) => {
+        document.tracks.push(added);
+      }),
+    );
+    expect(timeline(store).tracks["track_new"]?.locked).toBe(true);
+    expect(clip(store, "clip_new")?.track).toBe("track_new");
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+    expect(taken(store.redo()).kept).toEqual([]);
+    expect(timeline(store).tracks["track_new"]?.locked).toBe(true);
+  });
+
+  it("takes back a new timeline that came with a locked track, as a whole", () => {
+    const store = open();
+    const before = store.getState();
+    const document = {
+      name: "新的",
+      sections: [{ id: "s", duration: "5" }],
+      tracks: [{ id: "t", kind: "video", locked: true, clips: [] }],
+    };
+    imported(store.importFile("timelines/other/timeline.json", JSON.stringify(document)));
+    expect(store.getState().timelines["other"]?.tracks["t"]?.locked).toBe(true);
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+  });
+
+  it("checks without doing, and says the same", () => {
+    const store = open();
+    const before = store.getState();
+    const result = imported(
+      rewriteFile(
+        store,
+        MAIN,
+        (document) => {
+          clipIn(document, "clip_idea").name = "改过";
+          document.name = "改了名字";
+        },
+        { dryRun: true },
+      ),
+    );
+    expect(store.getState()).toBe(before);
+    expect(sorted(result.kept)).toEqual(["timelines/main/clips/clip_idea/name"]);
+    expect(result.patches).toHaveLength(1);
+  });
+
+  it("lets an AI task take back what came in, and never what stayed", () => {
+    const store = open();
+    const before = store.getState();
+    imported(
+      rewriteFile(
+        store,
+        MAIN,
+        (document) => {
+          clipIn(document, "clip_idea").name = "AI 改的";
+          clipIn(document, "clip_title").properties["param.size"] = 80;
+        },
+        { origin: AI },
+      ),
+    );
+    expect(taken(store.undoTask("task-1")).kept).toEqual([]);
+    expect(store.getState()).toEqual(before);
+    expect(taken(store.redoTask("task-1")).kept).toEqual([]);
+    expect(property(store, "param.size")).toBe(80);
+    expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
   });
 });
 
@@ -4591,6 +5230,380 @@ describe("a real document from when assets, notes and properties had maps of the
     setProperty(store, "opacity", 0.1, { origin: AI }, "clip_interview");
     blocked(store.undo());
     expect(property(store, "opacity", "clip_interview")).toBe(0.1);
+  });
+});
+
+describe("a real document from when versions and translations had maps of their own", () => {
+  /**
+   * Saved by the code of 0.3.13, not made with today's code: this is what people have. The example
+   * project plus real work on it: a version that got its first sections and the first changes of a
+   * clip, fields and properties that came and went in maps that were there, all changes of a clip
+   * taken away, a new version whose sections were emptied again, a new language, one without any
+   * strings, and a rename and a cut that wrote what versions change. Never change these two files.
+   */
+  const folder = new URL("../fixtures/before-flat-versions/", import.meta.url);
+  const update = () =>
+    Uint8Array.from(Buffer.from(readFileSync(new URL("document.txt", folder), "utf8"), "base64"));
+  const saved = () => {
+    const { store, damaged } = ProjectStore.fromUpdates([update()]);
+    if (!store || damaged > 0) throw new Error("the sample did not open");
+    return store;
+  };
+  const SEEN_BACK_THEN = JSON.parse(readFileSync(new URL("state.json", folder), "utf8"));
+  /** A map that was emptied showed as a level without anything. That is the same as none. */
+  const READS_NOW = (() => {
+    const state = structuredClone(SEEN_BACK_THEN);
+    delete state.timelines.main.overrides["language.fr"].sections;
+    delete state.locales.de;
+    return state;
+  })();
+  const reopened = (store: ProjectStore) =>
+    ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
+  const write = (store: ProjectStore, path: string, change: (document: any) => void) =>
+    success(rewriteFile(store, path, change));
+  const VERTICAL = "timelines/main/overrides/format.vertical.json";
+  const ENGLISH = "timelines/main/overrides/language.en.json";
+  const BOTH = "timelines/main/overrides/version.en.vertical.json";
+  const FRENCH = "timelines/main/overrides/language.fr.json";
+  const version = (store: ProjectStore, name: string) => timeline(store).overrides[name];
+  type Level = Y.Map<unknown>;
+  const mapsOf = (store: ProjectStore) => {
+    const root = store.doc.getMap<unknown>("project");
+    const main = (root.get("timelines") as Y.Map<Level>).get("main") as Level;
+    const versions = main.get("overrides") as Y.Map<Level>;
+    const inside = (map: Level | undefined, key: string) => map?.get(key) as Level | undefined;
+    return { versions, locales: root.get("locales") as Y.Map<Level>, inside };
+  };
+
+  it("is still what was saved back then", () => {
+    const digest = (name: string) =>
+      createHash("sha256")
+        .update(readFileSync(new URL(name, folder)))
+        .digest("hex");
+    expect(digest("document.txt")).toBe(
+      "38fa8f242cbcbaa4b325464714a9a4a40ab9125e0ef23fe2a508cf037b76c9eb",
+    );
+    expect(digest("state.json")).toBe(
+      "7b40f69746e4d8bd90224b616e038acf6ff3edac77da64ea6d1e83045de31faf",
+    );
+  });
+
+  it("really has them", () => {
+    const { versions, locales, inside } = mapsOf(saved());
+    const vertical = versions.get("format.vertical");
+    expect(vertical).toBeInstanceOf(Y.Map);
+    expect(inside(vertical, "sections")).toBeInstanceOf(Y.Map);
+    const logo = inside(inside(vertical, "clips"), "clip_logo");
+    expect(logo).toBeInstanceOf(Y.Map);
+    expect(logo?.get("hidden")).toEqual({ value: true });
+    expect(logo?.get("properties/transform.x")).toBeDefined();
+    expect(inside(versions.get("language.fr"), "sections")?.size).toBe(0);
+    expect(locales.get("fr")).toBeInstanceOf(Y.Map);
+    expect(locales.get("de")?.size).toBe(0);
+  });
+
+  it("reads as it read back then, apart from emptied levels, which are the same as none", () => {
+    expect(SEEN_BACK_THEN.timelines.main.overrides["language.fr"].sections).toEqual({});
+    expect(SEEN_BACK_THEN.locales.de).toEqual({});
+    expect(saved().getState()).toEqual(READS_NOW);
+  });
+
+  it("writes valid files, which read the same", () => {
+    const { files, problems } = saved().exportFiles();
+    expect(problems).toEqual([]);
+    expect(files.has("timelines/main/overrides/language.fr.json")).toBe(true);
+    expect(files.has("locales/de.json")).toBe(false);
+    const { store } = ProjectStore.open(files);
+    expect((store as ProjectStore).exportFiles().files).toEqual(files);
+  });
+
+  it("writes next to them, where two windows cannot get in each other's way", () => {
+    const store = saved();
+    write(store, VERTICAL, (document) => {
+      document.clips.clip_logo.hidden.value = false;
+      document.clips.clip_title.properties["param.size"].value = 42;
+      document.sections.section_intro.duration.value = "3";
+    });
+    write(store, "locales/en.json", (document) => {
+      document.strings["intro.title"].text = "Atoms";
+    });
+    const { versions, locales, inside } = mapsOf(store);
+    const vertical = versions.get("format.vertical");
+    const clips = inside(vertical, "clips");
+    expect(versions.get("format.vertical/clips/clip_logo/hidden")).toEqual({ value: false });
+    expect(inside(clips, "clip_logo")?.has("hidden")).toBe(false);
+    expect(versions.get("format.vertical/clips/clip_title/properties/param.size")).toEqual({
+      value: 42,
+      base: 64,
+    });
+    expect(inside(clips, "clip_title")?.has("properties/param.size")).toBe(false);
+    expect(versions.get("format.vertical/sections/section_intro")).toEqual({
+      duration: { value: "3", base: "5" },
+    });
+    expect(inside(vertical, "sections")?.has("section_intro")).toBe(false);
+    expect(locales.get("en/intro.title")).toEqual({ text: "Atoms", base: "原子是什么" });
+    expect(locales.get("en")?.has("intro.title")).toBe(false);
+    expect(reopened(store).getState()).toEqual(store.getState());
+  });
+
+  it("takes changes to what versions change, and keeps the others next to them", () => {
+    const store = saved();
+    write(store, VERTICAL, (document) => {
+      document.clips.clip_title.properties["param.size"].value = 42;
+      document.clips.clip_card = { hidden: { value: true } };
+      document.sections.section_body = { duration: { value: "18", base: "20" } };
+    });
+    const before = READS_NOW.timelines.main.overrides["format.vertical"];
+    expect(version(reopened(store), "format.vertical")).toEqual({
+      ...before,
+      sections: { ...before.sections, section_body: { duration: { value: "18", base: "20" } } },
+      clips: {
+        ...before.clips,
+        clip_title: {
+          properties: {
+            ...before.clips.clip_title.properties,
+            "param.size": { value: 42, base: 64 },
+          },
+        },
+        clip_card: { hidden: { value: true } },
+      },
+    });
+  });
+
+  it("takes them away for good, also the last one of a map", () => {
+    const store = saved();
+    write(store, VERTICAL, (document) => {
+      delete document.sections;
+      delete document.clips.clip_logo;
+    });
+    write(store, BOTH, (document) => {
+      delete document.clips;
+    });
+    write(store, "locales/fr.json", (document) => {
+      document.strings = {};
+    });
+    for (const state of [store, reopened(store)]) {
+      expect(version(state, "format.vertical")).not.toHaveProperty("sections");
+      expect(version(state, "format.vertical")?.clips).not.toHaveProperty("clip_logo");
+      expect(version(state, "version.en.vertical")).toEqual({
+        scope: { language: "en", format: "vertical" },
+      });
+      expect(state.getState().locales).not.toHaveProperty("fr");
+    }
+  });
+
+  it("writes into a map that was emptied", () => {
+    const store = saved();
+    write(store, FRENCH, (document) => {
+      document.sections = { section_body: { duration: { value: "24", base: "20" } } };
+    });
+    write(store, "locales/de.json", (document) => {
+      document.strings = { "intro.title": { text: "Was ist ein Atom" } };
+    });
+    const state = reopened(store).getState();
+    expect(state.timelines["main"]?.overrides["language.fr"]?.sections).toEqual({
+      section_body: { duration: { value: "24", base: "20" } },
+    });
+    expect(state.locales["de"]).toEqual({ "intro.title": { text: "Was ist ein Atom" } });
+  });
+
+  it("undoes and redoes all of that exactly", () => {
+    const store = saved();
+    const steps: (() => unknown)[] = [
+      () =>
+        write(store, VERTICAL, (document) => {
+          document.clips.clip_logo.hidden.value = false;
+          delete document.sections.section_end;
+        }),
+      () =>
+        write(store, ENGLISH, (document) => {
+          delete document.clips.clip_voice.properties;
+          document.clips.clip_logo = { offset: { value: "1" } };
+        }),
+      () =>
+        write(store, BOTH, (document) => {
+          delete document.clips;
+        }),
+      () =>
+        write(store, FRENCH, (document) => {
+          document.sections = { section_end: { duration: { value: "5" } } };
+        }),
+      () =>
+        write(store, "locales/en.json", (document) => {
+          delete document.strings["outro.thanks"];
+          document.strings["intro.title"].text = "Atoms";
+        }),
+      () =>
+        store.execute({
+          type: "property.rename",
+          params: {
+            timeline: "main",
+            renames: [
+              { owner: { clip: "clip_title_b" }, from: "object.arm_l.*", to: "object.arm.*" },
+            ],
+          },
+        }),
+      () =>
+        store.execute({
+          type: "clip.split",
+          params: { timeline: "main", clip: "clip_title_b", at: "4", id: "clip_title_c" },
+        }),
+    ];
+    const states = [store.getState()];
+    for (const step of steps) {
+      expect((step() as { ok?: boolean }).ok).toBe(true);
+      states.push(store.getState());
+    }
+    expect(new Set(states).size).toBe(steps.length + 1);
+    for (const state of states.toReversed().slice(1)) {
+      taken(store.undo());
+      expect(store.getState()).toEqual(state);
+    }
+    expect(store.getState()).toEqual(READS_NOW);
+    for (const state of states.slice(1)) {
+      taken(store.redo());
+      expect(store.getState()).toEqual(state);
+    }
+    expect(reopened(store).getState()).toEqual(store.getState());
+  });
+
+  it("merges what two windows write at the same time, into a map or next to it", () => {
+    const a = saved();
+    const b = twin(a);
+    write(a, VERTICAL, (document) => {
+      document.clips.clip_title.properties["param.size"].value = 42;
+      document.clips.clip_card = { hidden: { value: true } };
+    });
+    write(b, VERTICAL, (document) => {
+      document.clips.clip_title.properties["object.arm_l.x"].value = 6;
+      document.clips.clip_card = { start: { value: "26" } };
+    });
+    write(a, "locales/en.json", (document) => {
+      document.strings["intro.title"].text = "Atoms";
+    });
+    write(b, "locales/en.json", (document) => {
+      document.strings["subtitle.one"] = { text: "Everything is atoms" };
+    });
+    sync(a, b);
+    expect(a.getState()).toEqual(b.getState());
+    expect(version(a, "format.vertical")?.clips).toMatchObject({
+      clip_title: {
+        properties: { "param.size": { value: 42 }, "object.arm_l.x": { value: 6 } },
+      },
+      clip_card: { hidden: { value: true }, start: { value: "26" } },
+    });
+    expect(a.getState().locales["en"]).toMatchObject({
+      "intro.title": { text: "Atoms" },
+      "subtitle.one": { text: "Everything is atoms" },
+      "outro.thanks": { text: "Thanks for watching" },
+    });
+    expect(reopened(a).getState()).toEqual(a.getState());
+  });
+
+  it("follows what a window that is still on the old maps writes into them", () => {
+    const a = saved();
+    const b = twin(a);
+    const { versions, locales, inside } = mapsOf(b);
+    b.doc.transact(() => {
+      const clips = inside(versions.get("format.vertical"), "clips") as Level;
+      const card = new Y.Map<unknown>();
+      card.set("hidden", { value: true });
+      clips.set("clip_card", card);
+      (inside(clips, "clip_title") as Level).set("properties/param.size", { value: 30 });
+      (locales.get("en") as Level).set("intro.title", { text: "Atoms" });
+      inside(versions.get("language.fr"), "sections")?.set("section_end", {
+        duration: { value: "5" },
+      });
+    }, "old");
+    sync(a, b);
+    for (const store of [a, b]) {
+      expect(version(store, "format.vertical")?.clips).toMatchObject({
+        clip_card: { hidden: { value: true } },
+        clip_title: { properties: { "param.size": { value: 30 } } },
+      });
+      expect(version(store, "language.fr")?.sections).toEqual({
+        section_end: { duration: { value: "5" } },
+      });
+      expect(store.getState().locales["en"]?.["intro.title"]).toEqual({ text: "Atoms" });
+      expect(reopened(store).getState()).toEqual(store.getState());
+    }
+  });
+
+  it("does not let an old map win over what is written next to it", () => {
+    const a = saved();
+    write(a, VERTICAL, (document) => {
+      document.clips.clip_title.properties["param.size"].value = 42;
+    });
+    const { versions, inside } = mapsOf(a);
+    a.doc.transact(() => {
+      const title = inside(inside(versions.get("format.vertical"), "clips"), "clip_title");
+      title?.set("properties/param.size", { value: 30 });
+    }, "old");
+    expect(
+      version(a, "format.vertical")?.clips?.["clip_title"]?.properties?.["param.size"],
+    ).toEqual({ value: 42, base: 64 });
+    expect(reopened(a).getState()).toEqual(a.getState());
+  });
+
+  it("leaves what is on a locked track as it is in its maps, and writes the rest next to them", () => {
+    const store = saved();
+    const lock = { timeline: "main", track: "track_video", changes: { locked: true } };
+    success(store.execute({ type: "track.update", params: lock }));
+    const before = version(store, "format.vertical");
+    const result = rewriteFile(
+      store,
+      VERTICAL,
+      (document) => {
+        delete document.clips.clip_title;
+        document.clips.clip_logo.hidden.value = false;
+        document.clips.clip_idea = { hidden: { value: false } };
+        document.clips.clip_voice = { offset: { value: "1" } };
+      },
+      { origin: AI },
+    );
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.problems.map(({ path }) => path).toSorted()).toEqual([
+      "clips.clip_idea",
+      "clips.clip_logo",
+      "clips.clip_title",
+    ]);
+    const after = version(store, "format.vertical");
+    expect(after?.clips).toEqual({ ...before?.clips, clip_voice: { offset: { value: "1" } } });
+    const { versions, inside } = mapsOf(store);
+    const clips = inside(versions.get("format.vertical"), "clips");
+    expect(inside(clips, "clip_title")?.get("properties/param.size")).toEqual({
+      value: 44,
+      base: 64,
+    });
+    expect(versions.get("format.vertical/clips/clip_voice/offset")).toEqual({ value: "1" });
+    expect(reopened(store).getState()).toEqual(store.getState());
+    expect(taken(store.undoTask("task-1")).kept).toEqual([]);
+    expect(store.getState()).toEqual(
+      (() => {
+        const state = saved();
+        success(state.execute({ type: "track.update", params: lock }));
+        return state.getState();
+      })(),
+    );
+  });
+
+  it("knows what is the same write there too", () => {
+    const store = saved();
+    const size = (value: number) => (document: any) => {
+      document.clips.clip_title.properties["param.size"].value = value;
+    };
+    write(store, VERTICAL, size(42));
+    write(store, VERTICAL, size(43));
+    const ai = (value: number) => {
+      const document = JSON.parse(store.exportFiles().files.get(VERTICAL) as string);
+      size(value)(document);
+      success(store.importFile(VERTICAL, JSON.stringify(document), { origin: AI }));
+    };
+    ai(41);
+    ai(43);
+    blocked(store.undo());
+    const changes = version(store, "format.vertical")?.clips?.["clip_title"]?.properties;
+    expect(changes?.["param.size"]).toEqual({ value: 43, base: 64 });
   });
 });
 
