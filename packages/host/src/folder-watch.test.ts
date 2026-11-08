@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FolderWatcher, type WatchedFolder } from "./folder-watch.ts";
+import type { DirectoryHandleLike } from "./handles.ts";
 import type { FolderChange, FolderError, LocalFolder, WatchOptions } from "./index.ts";
 import { MemoryDisk, memoryFolders, type MemoryDiskOptions } from "./memory-disk.ts";
 
@@ -25,6 +27,8 @@ interface Watched {
   readonly watch: ReturnType<LocalFolder["watch"]>;
   /** What was told, a batch at a time: the path, and whether a file is there. */
   readonly told: (readonly (readonly [string, string | undefined])[])[];
+  /** For each batch, whether the folder was still changing when it was told. */
+  readonly stillChanging: (boolean | undefined)[];
   readonly problems: FolderError[];
 }
 
@@ -43,21 +47,23 @@ async function watched(
   disk.chooseNext(PROJECT);
   const folder = (await memoryFolders(disk).choose()) as LocalFolder;
   const told: Watched["told"] = [];
+  const stillChanging: Watched["stillChanging"] = [];
   const problems: FolderError[] = [];
   const watch = folder.watch({
     includes,
     ...(options.files && { files: () => options.files ?? [] }),
-    async onChange(changes) {
-      const batch = await Promise.all(
+    async onChange(changes, batch) {
+      const found = await Promise.all(
         changes.map(async ({ path, file }) => [path, await file?.text()] as const),
       );
-      told.push(batch);
+      told.push(found);
+      stillChanging.push(batch?.stillChanging);
       await options.onChange?.(changes);
     },
     onProblem: (error) => problems.push(error),
   });
   await watch.ready;
-  return { disk, folder, watch, told, problems };
+  return { disk, folder, watch, told, stillChanging, problems };
 }
 
 /** Long enough for the folder to be quiet for a moment. */
@@ -89,13 +95,58 @@ describe("watching a folder", () => {
     ]);
   });
 
-  it("does not wait for ever when the folder never gets quiet", async () => {
-    const { disk, told } = await watched();
-    for (let round = 0; round < 10; round++) {
+  it("waits for what goes on for a while to be over, such as a checkout", async () => {
+    const { disk, told, stillChanging } = await watched();
+    for (let round = 0; round < 20; round++) {
       disk.write(`${PROJECT}/scenes/a/scene.json`, `第 ${round} 次`);
       await vi.advanceTimersByTimeAsync(400);
     }
-    expect(told.length).toBeGreaterThan(0);
+    expect(told).toEqual([]);
+    await quiet();
+    expect(told).toEqual([[["scenes/a/scene.json", "第 19 次"]]]);
+    expect(stillChanging).toEqual([false]);
+  });
+
+  it("tells what changed after half a minute of changes, and that it still changes", async () => {
+    const { disk, told, stillChanging } = await watched();
+    for (let round = 0; round < 80; round++) {
+      disk.write(`${PROJECT}/scenes/a/scene.json`, `第 ${round} 次`);
+      await vi.advanceTimersByTimeAsync(400);
+    }
+    expect(told).toHaveLength(1);
+    expect(stillChanging).toEqual([true]);
+    await quiet();
+    expect(told.at(-1)).toEqual([["scenes/a/scene.json", "第 79 次"]]);
+    expect(stillChanging).toEqual([true, false]);
+  });
+
+  it("tells a change that kept the size and the time, when the browser tells about it", async () => {
+    const { disk, told } = await watched();
+    disk.write(`${PROJECT}/animaquill.json`, "[]", { keepTime: true });
+    await quiet();
+    expect(told).toEqual([[["animaquill.json", "[]"]]]);
+  });
+
+  it("tells about a file it was told about that comes back", async () => {
+    const { disk, told } = await watched({ files: ["assets/片头.mp4"] });
+    disk.write(`${PROJECT}/assets/片头.mp4`, "回来了");
+    await quiet();
+    expect(told).toEqual([[["assets/片头.mp4", "回来了"]]]);
+  });
+
+  it("looks again a while later at a file it could not look at", async () => {
+    const { disk, told } = await watched();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cannot = () => {
+      throw new DOMException("busy", "NoModificationAllowedError");
+    };
+    disk.onNext("getFile", `${PROJECT}/animaquill.json`, cannot);
+    disk.onNext("getFile", `${PROJECT}/animaquill.json`, cannot);
+    disk.write(`${PROJECT}/animaquill.json`, "后来能读了");
+    await quiet();
+    expect(told).toEqual([]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(told).toEqual([[["animaquill.json", "后来能读了"]]]);
   });
 
   it("says nothing about what it wrote itself", async () => {
@@ -285,11 +336,15 @@ describe("what the browser misses", () => {
     expect(told).toEqual([[["animaquill.json", "看不见"]]]);
   });
 
-  it("is found by looking again, also a new time and nothing else", async () => {
+  it("is found by looking again, by what is in a file and not by its time", async () => {
     const { disk, watch, told } = await watched();
     disk.touch(`${PROJECT}/animaquill.json`);
     await watch.rescan();
-    expect(told).toEqual([[["animaquill.json", "{}"]]]);
+    expect(told).toEqual([]);
+    disk.missesChanges = true;
+    disk.write(`${PROJECT}/animaquill.json`, "改了");
+    await watch.rescan();
+    expect(told).toEqual([[["animaquill.json", "改了"]]]);
   });
 });
 
@@ -306,18 +361,26 @@ describe("a folder that goes away", () => {
     expect(told).toEqual([]);
   });
 
-  it("is watched again when the browser stops, and the folder is still there", async () => {
+  it("says it is gone when another folder comes to its place, and tells nothing of that one", async () => {
     const { disk, told, problems } = await watched();
-    disk.missesChanges = true;
-    disk.write(`${PROJECT}/animaquill.json`, "期间改的");
-    disk.missesChanges = false;
+    disk.move(PROJECT, "文档/原子-旧");
+    disk.write(`${PROJECT}/animaquill.json`, '{"id":"另一个项目"}', { quietly: true });
+    await quiet();
+    expect(problems).toEqual([expect.objectContaining({ reason: "gone" })]);
+    disk.front();
+    await quiet();
+    expect(told).toEqual([]);
+  });
+
+  it("says it is gone once the browser stops watching, whatever is there", async () => {
+    const { disk, told, problems } = await watched();
     disk.tell("errored", PROJECT);
     await quiet();
-    expect(problems).toEqual([]);
-    expect(told).toEqual([[["animaquill.json", "期间改的"]]]);
-    disk.write(`${PROJECT}/scenes/a/scene.json`, "之后改的");
+    expect(problems).toEqual([expect.objectContaining({ reason: "gone" })]);
+    disk.write(`${PROJECT}/animaquill.json`, "之后改的");
+    disk.front();
     await quiet();
-    expect(told.at(-1)).toEqual([["scenes/a/scene.json", "之后改的"]]);
+    expect(told).toEqual([]);
   });
 
   it("cannot be watched at all", async () => {
@@ -343,5 +406,95 @@ describe("a folder the editor may not see any more", () => {
     disk.front();
     await quiet();
     expect(told).toEqual([[["animaquill.json", "期间改的"]]]);
+  });
+});
+
+describe("writes of its own while it looks", () => {
+  it("are not taken for changes, however the two fall", async () => {
+    vi.useRealTimers();
+    let told = 0;
+    for (let delay = 0; delay < 40; delay++) {
+      const disk = new MemoryDisk();
+      disk.write(`${PROJECT}/animaquill.json`, "{}", { quietly: true });
+      for (let index = 0; index < 30; index++) {
+        disk.write(`${PROJECT}/scenes/s${index}/scene.json`, "x", { quietly: true });
+      }
+      disk.chooseNext(PROJECT);
+      const timing = { quietMs: 1, longestMs: 1000, pollMs: 60_000 };
+      const folder = (await memoryFolders(disk, timing).choose()) as LocalFolder;
+      const changes: string[] = [];
+      const watch = folder.watch({
+        includes,
+        onChange: (batch) => void changes.push(...batch.map(({ path }) => path)),
+      });
+      await watch.ready;
+      const looking = watch.rescan();
+      for (let hop = 0; hop < delay; hop++) await Promise.resolve();
+      await folder.write("animaquill.json", '{"new":1}');
+      await looking;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await watch.flush();
+      if (changes.includes("animaquill.json")) told += 1;
+      watch.stop();
+    }
+    expect(told).toBe(0);
+  });
+});
+
+describe("a look that crosses a write of the folder", () => {
+  it("is looked at again, so that the write is not taken for a change", async () => {
+    vi.useRealTimers();
+    const file = (text: string, lastModified: number) =>
+      new File([text], "zz.json", { lastModified });
+    let onDisk = file("旧的", 1);
+    let writes = 0;
+    let looking: ((found: File) => void) | undefined;
+    const folder: WatchedFolder = {
+      root: {} as DirectoryHandleLike,
+      // The first look after the start waits for the test, with what it found then.
+      look: async () => {
+        const found = onDisk;
+        if (!looking) return found;
+        return new Promise<File>((resolve) => {
+          const waiting = looking;
+          looking = undefined;
+          waiting?.(found);
+          setTimeout(() => resolve(found), 0);
+        });
+      },
+      async *list() {
+        yield "zz.json";
+      },
+      isThere: async () => true,
+      isWriting: () => false,
+      writes: () => writes,
+    };
+    const told: string[] = [];
+    const environment = { onFront: () => () => {}, isHidden: () => false };
+    const watcher = new FolderWatcher(
+      folder,
+      {
+        includes: () => true,
+        onChange: (changes) => void told.push(...changes.map(({ path }) => path)),
+      },
+      environment,
+      () => {},
+    );
+    await watcher.ready;
+    const looked = new Promise<File>((resolve) => {
+      looking = resolve;
+    });
+    const rescan = watcher.rescan();
+    await looked;
+    // The folder writes the file while the look has what was there before.
+    writes += 1;
+    onDisk = file("编辑器写的", 2);
+    watcher.wrote("zz.json", { size: onDisk.size, lastModified: 2 });
+    writes += 1;
+    watcher.doneWriting("zz.json");
+    await rescan;
+    await watcher.flush();
+    expect(told).toEqual([]);
+    watcher.stop();
   });
 });

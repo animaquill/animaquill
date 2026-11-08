@@ -105,11 +105,12 @@ export const isSafePath = (path: string): boolean =>
   path.length <= MAX_PATH_LENGTH && (partsOf(path)?.every(isSafeName) ?? false);
 
 /**
- * What names are the same file as on some system: Windows does not tell case apart, and a Mac does
- * not tell apart the ways to write "é". A little more than that does no harm: it only keeps names
- * further apart.
+ * What names are the same file as on some system: Windows does not tell case apart, also not of
+ * "ſ" and "s" or "ς" and "σ", and a Mac does not tell apart the ways to write "é". A little more
+ * than that does no harm: it only keeps names further apart.
  */
-export const sameNameKey = (name: string): string => name.normalize("NFC").toLowerCase();
+export const sameNameKey = (name: string): string =>
+  name.normalize("NFC").toUpperCase().toLowerCase();
 
 /**
  * A name for a new file or folder of a project, from what people called it, such as a video they

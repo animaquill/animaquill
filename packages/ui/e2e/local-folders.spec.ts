@@ -1,11 +1,13 @@
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -333,6 +335,22 @@ test.describe("writing a folder on a disk", () => {
     expect(readdirSync(disk).toSorted()).toEqual(["b.json", "d.json"]);
   });
 
+  test("does not take a file that differs only in case for the same one", async ({ page }) => {
+    const disk = onDisk({ "Scene.html": "大写的", "scene.html": "用户的另一个文件" });
+    await open(page, disk);
+    const result = await page.evaluate(() =>
+      window.lab.failureOf(window.lab.folder.move("Scene.html", "scene.html")),
+    );
+    expect(result).toBe("exists");
+    expect(text(disk, "Scene.html")).toBe("大写的");
+    expect(text(disk, "scene.html")).toBe("用户的另一个文件");
+    // Where nothing else is there, only the case of the name changes.
+    rmSync(join(disk, "scene.html"));
+    await page.evaluate(() => window.lab.folder.move("Scene.html", "scene.html"));
+    expect(readdirSync(disk)).toEqual(["scene.html"]);
+    expect(text(disk, "scene.html")).toBe("大写的");
+  });
+
   test("takes away a file, and the folders it leaves empty, but nothing else", async ({ page }) => {
     const disk = onDisk({
       "scenes/a/scene.json": "{}",
@@ -518,7 +536,62 @@ test.describe("what writing leaves behind on a disk", () => {
   });
 });
 
+test.describe("a file that a browser was making when it went away", () => {
+  test("is left empty, which counts as none", async ({ page }) => {
+    const disk = onDisk();
+    const server = await chromium.launchServer({
+      headless: true,
+      args: ["--enable-experimental-web-platform-features"],
+    });
+    const crashing = await chromium.connect(server.wsEndpoint());
+    const doomed = await crashing.newPage();
+    await open(doomed, disk);
+    await doomed.evaluate(() => {
+      window.lab.holding = window.lab.folder.write("animaquill.json", window.lab.held("{}"));
+    });
+    await expect.poll(() => existsSync(join(disk, "animaquill.json.crswap"))).toBe(true);
+    await server.kill();
+    expect(text(disk, "animaquill.json")).toBe("");
+    await open(page, disk);
+    const answer = await page.evaluate(() =>
+      window.lab.failureOf(
+        window.lab.folder.write("animaquill.json", "{}", { expected: "absent" }),
+      ),
+    );
+    expect(answer).toBe("done");
+    expect(text(disk, "animaquill.json")).toBe("{}");
+    expect(
+      await page.evaluate(() => window.lab.folder.removeLeftovers(["animaquill.json"])),
+    ).toEqual(["animaquill.json.crswap"]);
+    expect(readdirSync(disk)).toEqual(["animaquill.json"]);
+  });
+});
+
 test.describe("watching a folder on a disk", () => {
+  test("tells a change that kept the size and the time", async ({ page }) => {
+    const disk = onDisk({ "animaquill.json": '{"v":1}' });
+    const { mtime } = statSync(join(disk, "animaquill.json"));
+    await open(page, disk);
+    await watch(page);
+    put(disk, "animaquill.json", '{"v":2}');
+    utimesSync(join(disk, "animaquill.json"), mtime, mtime);
+    await expect.poll(() => told(page)).toEqual([[["animaquill.json", '{"v":2}']]]);
+  });
+
+  test("says it is gone when another folder comes to its place, and tells nothing of it", async ({
+    page,
+  }) => {
+    const disk = onDisk({ "animaquill.json": '{"id":"A"}' });
+    await open(page, disk);
+    await watch(page);
+    renameSync(disk, `${disk}-旧`);
+    mkdirSync(disk);
+    writeFileSync(join(disk, "animaquill.json"), '{"id":"B"}');
+    await expect.poll(() => page.evaluate(() => window.lab.problems)).toEqual(["gone"]);
+    await page.waitForTimeout(QUIET_MS);
+    expect(await told(page)).toEqual([]);
+  });
+
   test("tells what other programs change, and nothing of its own", async ({ page }) => {
     const disk = onDisk({ "animaquill.json": "{}", "scenes/a/scene.json": "片头" });
     await open(page, disk);
@@ -574,13 +647,17 @@ test.describe("watching a folder on a disk", () => {
     const disk = onDisk({ "animaquill.json": "{}" });
     await open(page, disk);
     await watch(page);
-    // Only a new time: Chromium on Linux tells nothing about it.
+    // Through another name of the file, outside of the folder: Linux tells nothing about it. Only
+    // a new time is no change, since what is in the file is the same.
     const later = new Date(Date.now() + 60_000);
     utimesSync(join(disk, "animaquill.json"), later, later);
+    const elsewhere = join(dirname(disk), "另一个名字.json");
+    linkSync(join(disk, "animaquill.json"), elsewhere);
+    writeFileSync(elsewhere, '{"改":"了"}');
     await page.waitForTimeout(QUIET_MS);
     expect(await told(page)).toEqual([]);
     await page.evaluate(() => dispatchEvent(new Event("focus")));
-    await expect.poll(() => told(page)).toEqual([[["animaquill.json", "{}"]]]);
+    await expect.poll(() => told(page)).toEqual([[["animaquill.json", '{"改":"了"}']]]);
   });
 
   test("says when the folder goes away", async ({ page }) => {

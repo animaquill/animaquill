@@ -159,6 +159,18 @@ describe("finding the project", () => {
     expect(await reasonOf([...inside, [`导出/${INCOMPLETE_FILE}`, "没有完成"]])).toBe("incomplete");
   });
 
+  it("refuses a project with an empty manifest, which is what stopping while making it leaves", async () => {
+    expect(await reasonOf(projectFiles((files) => files.set(MANIFEST_FILE, "")))).toBe(
+      "incomplete",
+    );
+    const inside = [...projectFiles((files) => files.set(MANIFEST_FILE, ""))].map(
+      ([path, text]) => [`备份/${path}`, text] as const,
+    );
+    expect(await reasonOf(inside)).toBe("incomplete");
+    // Nothing but blanks is something else: somebody wrote that.
+    expect(await reasonOf(projectFiles((files) => files.set(MANIFEST_FILE, " ")))).toBe("invalid");
+  });
+
   it("leaves out what systems put in folders, without a word", async () => {
     const clutter = [
       ".DS_Store",

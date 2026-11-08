@@ -16,18 +16,20 @@ import {
   createLocalFolders,
   type LocalFoldersEnvironment,
   type RecordStore,
+  type StoredRecord,
 } from "./local-folders.ts";
 
 /**
  * For tests: a disk in memory that behaves like a real one does to a page in Chrome, with what goes
  * wrong there. Other programs change it, the browser misses changes, writes fail halfway, people
- * allow and refuse, folders go away. Paths are from the top of the disk, with forward slashes.
+ * allow and refuse, folders go away, the browser crashes. Paths are from the top of the disk, with
+ * forward slashes.
  *
  * What it does was measured on Chrome 157 on Linux and Edge 158 on Windows, 2026-11-08: a write goes
  * to "<name>.crswap" next to the file first and takes its place on closing, an exclusive writer keeps
  * every other one out, `move` replaces what is at the new place without a word, a file that was read
- * cannot be read any more once the file changed, the browser tells about changes one at a time and
- * also about its own, and nothing about temporary files.
+ * cannot be read any more once the time or the size of the file changed, the browser tells about
+ * changes one at a time and also about its own, and nothing about temporary files.
  */
 
 type Bytes = Uint8Array<ArrayBuffer>;
@@ -37,8 +39,6 @@ interface FileNode {
   name: string;
   content: Bytes;
   lastModified: number;
-  /** Goes up with every change, so that a file that was read can tell that it is not the same. */
-  version: number;
   /** The writer that keeps all others out, or how many writers keep only that one out. */
   lock: "exclusive" | number;
 }
@@ -76,9 +76,17 @@ export interface WriteFailure {
   readonly times?: number;
 }
 
+/** What a page does to a file, which a test can get in between, see `MemoryDisk.onNext`. */
+export type DiskStep = "getFile" | "createWritable" | "written" | "removeEntry";
+
 interface ChangeOptions {
   /** The browser does not tell about it, as it sometimes does not on Linux. */
   readonly quietly?: boolean;
+  /**
+   * The file keeps its time, as when a program puts it back: then only what is in it can tell that
+   * it changed. Chrome even reads the new content through a `File` it gave out before.
+   */
+  readonly keepTime?: boolean;
 }
 
 interface Writer {
@@ -86,7 +94,7 @@ interface Writer {
   readonly swap: Names;
   readonly node: FileNode;
   readonly exclusive: boolean;
-  /** The page went away while it was writing. */
+  /** The browser went away while it was writing. */
   dead: boolean;
 }
 
@@ -111,29 +119,35 @@ const bytesOf = (content: string | Uint8Array): Bytes => {
   return copy;
 };
 const split = (path: string): Names => (path === "" ? [] : path.split("/"));
+const sameNames = (a: Names, b: Names) =>
+  a.length === b.length && a.every((name, index) => name === b[index]);
 
-/** A file as it was read, which cannot be read any more once the file changed, as in Chrome. */
+/**
+ * A file as it was given out. Like in Chrome it reads what the file has, as long as its time and
+ * size are what they were, and fails once they are not.
+ */
 class MemoryFile extends File {
-  readonly #check: () => void;
+  readonly #read: () => Bytes;
 
-  constructor(node: FileNode, check: () => void) {
+  constructor(node: FileNode, read: () => Bytes) {
     super([node.content], node.name, { lastModified: node.lastModified });
-    this.#check = check;
+    this.#read = read;
   }
 
   override async arrayBuffer(): Promise<ArrayBuffer> {
-    this.#check();
-    return super.arrayBuffer();
+    return this.#read().slice().buffer;
   }
 
   override async text(): Promise<string> {
-    this.#check();
-    return super.text();
+    return new TextDecoder().decode(this.#read());
   }
 
   override stream(): ReadableStream<Uint8Array<ArrayBuffer>> {
-    this.#check();
-    return super.stream();
+    return new Blob([this.#read()]).stream();
+  }
+
+  override slice(start?: number, end?: number, contentType?: string): Blob {
+    return new Blob([this.#read().slice(start, end)], contentType ? { type: contentType } : {});
   }
 }
 
@@ -146,6 +160,10 @@ class DiskState {
   readonly observations = new Set<Observation>();
   readonly writers = new Set<Writer>();
   readonly failures = new Map<string, Required<WriteFailure>>();
+  /** What tests put in between the steps of a page, by step and path. */
+  readonly hooks = new Map<string, (() => void)[]>();
+  /** Which life of the browser this is: one ends when it crashes, and so do all its pages. */
+  life = 0;
   missesChanges = false;
   activation = false;
   answer: "allow" | "refuse" = "allow";
@@ -170,6 +188,16 @@ class DiskState {
   tick(): number {
     this.#clock += 1;
     return this.#clock;
+  }
+
+  /** A page of a browser that crashed does nothing any more. */
+  alive(life: number): void {
+    if (life !== this.life) throw failure("AbortError", "The browser of this page went away.");
+  }
+
+  /** Runs what a test put before this step of a page, which can make the step fail. */
+  step(step: DiskStep, names: Names): void {
+    this.hooks.get(`${step}:${this.keyOf(names)}`)?.shift()?.();
   }
 
   refuses(name: string): boolean {
@@ -411,10 +439,12 @@ class DiskState {
 class MemoryFileHandle implements FileHandleLike {
   readonly kind = "file";
   readonly #state: DiskState;
+  readonly #life: number;
   #names: Names;
 
   constructor(state: DiskState, names: Names) {
     this.#state = state;
+    this.#life = state.life;
     this.#names = names;
   }
 
@@ -428,39 +458,48 @@ class MemoryFileHandle implements FileHandleLike {
   }
 
   async queryPermission({ mode }: { readonly mode: PermissionMode }) {
+    this.#state.alive(this.#life);
     return this.#state.permission(this.#names, mode);
   }
 
   async requestPermission({ mode }: { readonly mode: PermissionMode }) {
+    this.#state.alive(this.#life);
     return this.#state.request(this.#names, mode);
   }
 
+  /** The same place, as it was asked for: the browser compares paths, also their case. */
   async isSameEntry(other: HandleLike): Promise<boolean> {
-    return (
-      other instanceof MemoryFileHandle &&
-      this.#state.keyOf(other.names) === this.#state.keyOf(this.#names)
-    );
+    return other instanceof MemoryFileHandle && sameNames(other.names, this.#names);
   }
 
   async getFile(): Promise<File> {
     const state = this.#state;
+    const life = this.#life;
     const names = this.#names;
+    state.alive(life);
     state.mayRead(names);
+    state.step("getFile", names);
     const node = state.fileAt(names);
-    const { version } = node;
+    const { lastModified } = node;
+    const size = node.content.byteLength;
     return new MemoryFile(node, () => {
+      state.alive(life);
       const now = state.find(names);
       if (!now) throw notFound();
-      if (now !== node || node.version !== version) {
-        throw failure("NotReadableError", "The requested file could not be read.");
-      }
+      const isSame =
+        now === node && node.lastModified === lastModified && node.content.byteLength === size;
+      if (!isSame) throw failure("NotReadableError", "The requested file could not be read.");
+      return node.content;
     });
   }
 
   async createWritable({ mode, keepExistingData = false }: CreateWritableOptions = {}) {
     const state = this.#state;
+    const life = this.#life;
     const target = this.#names;
+    state.alive(life);
     state.mayWrite(target);
+    state.step("createWritable", target);
     const node = state.fileAt(target);
     const exclusive = mode === "exclusive";
     if (node.lock === "exclusive" || (exclusive && node.lock !== 0)) {
@@ -477,7 +516,6 @@ class MemoryFileHandle implements FileHandleLike {
       name: swapName,
       content: keepExistingData ? bytesOf(node.content) : new Uint8Array(),
       lastModified: state.tick(),
-      version: 0,
       lock: "exclusive",
     };
     folder.entries.set(state.key(swapName), swap);
@@ -502,7 +540,8 @@ class MemoryFileHandle implements FileHandleLike {
       if (swapFolder?.kind === "directory") swapFolder.entries.delete(state.key(swapName));
     };
     const alive = () => {
-      if (writer.dead) throw failure("AbortError", "The page went away.");
+      state.alive(life);
+      if (writer.dead) throw failure("AbortError", "The browser went away.");
     };
     return new WritableStream<Uint8Array>({
       write(chunk) {
@@ -534,23 +573,23 @@ class MemoryFileHandle implements FileHandleLike {
           name: fileName,
           content: new Uint8Array(),
           lastModified: 0,
-          version: 0,
           lock: 0,
         };
         if (!existing) parent.entries.set(state.key(fileName), now);
         now.content = swap.content;
         now.lastModified = state.tick();
-        now.version += 1;
         state.emit("modified", state.diskNames(target), "file");
+        state.step("written", target);
       },
       abort() {
-        if (!writer.dead) release();
+        if (life === state.life && !writer.dead) release();
       },
     });
   }
 
   async move(parent: DirectoryHandleLike | string, name?: string): Promise<void> {
     const state = this.#state;
+    state.alive(this.#life);
     const from = this.#names;
     const folder =
       typeof parent === "string" ? from.slice(0, -1) : (parent as MemoryDirectoryHandle).names;
@@ -571,6 +610,7 @@ class MemoryFileHandle implements FileHandleLike {
       throw failure("NoModificationAllowedError", "Modifications are not allowed.");
     }
     state.folderAt(folder);
+    // What is at the new place goes without a word, as in Chrome.
     if (there && there !== node) state.take(to, true);
     state.place(from, to, false);
     this.#names = to;
@@ -580,10 +620,12 @@ class MemoryFileHandle implements FileHandleLike {
 class MemoryDirectoryHandle implements DirectoryHandleLike {
   readonly kind = "directory";
   readonly #state: DiskState;
+  readonly #life: number;
   readonly names: Names;
 
   constructor(state: DiskState, names: Names) {
     this.#state = state;
+    this.#life = state.life;
     this.names = names;
   }
 
@@ -592,18 +634,18 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
   }
 
   async queryPermission({ mode }: { readonly mode: PermissionMode }) {
+    this.#state.alive(this.#life);
     return this.#state.permission(this.names, mode);
   }
 
   async requestPermission({ mode }: { readonly mode: PermissionMode }) {
+    this.#state.alive(this.#life);
     return this.#state.request(this.names, mode);
   }
 
+  /** The same place, as it was asked for: the browser compares paths, also their case. */
   async isSameEntry(other: HandleLike): Promise<boolean> {
-    return (
-      other instanceof MemoryDirectoryHandle &&
-      this.#state.keyOf(other.names) === this.#state.keyOf(this.names)
-    );
+    return other instanceof MemoryDirectoryHandle && sameNames(other.names, this.names);
   }
 
   async resolve(possibleDescendant: HandleLike): Promise<string[] | null> {
@@ -617,6 +659,7 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
 
   async getDirectoryHandle(name: string, { create = false } = {}) {
     const state = this.#state;
+    state.alive(this.#life);
     state.checkName(name);
     state.mayRead(this.names);
     const folder = state.folderAt(this.names);
@@ -635,6 +678,7 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
 
   async getFileHandle(name: string, { create = false } = {}) {
     const state = this.#state;
+    state.alive(this.#life);
     state.checkName(name);
     state.mayRead(this.names);
     const folder = state.folderAt(this.names);
@@ -650,7 +694,6 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
         name,
         content: new Uint8Array(),
         lastModified: state.tick(),
-        version: 0,
         lock: 0,
       };
       folder.entries.set(state.key(name), file);
@@ -661,8 +704,11 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
 
   async removeEntry(name: string, { recursive = false } = {}) {
     const state = this.#state;
+    state.alive(this.#life);
     state.checkName(name);
     state.mayWrite(this.names);
+    const names = [...this.names, name];
+    state.step("removeEntry", names);
     const folder = state.folderAt(this.names);
     const entry = folder.entries.get(state.key(name));
     if (!entry) throw notFound();
@@ -672,11 +718,12 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
     if (entry.kind === "directory" && entry.entries.size > 0 && !recursive) {
       throw failure("InvalidModificationError", "The object can not be modified in this way.");
     }
-    state.take([...this.names, name], false);
+    state.take(names, false);
   }
 
   async *values(): AsyncGenerator<HandleLike> {
     const state = this.#state;
+    state.alive(this.#life);
     state.mayRead(this.names);
     const folder = state.folderAt(this.names);
     // As it was when listing started: what changes on the way is for the next time.
@@ -693,8 +740,11 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
 
 /** For tests: a disk in memory, see the top of this file. */
 export class MemoryDisk {
-  /** Where the folders that were opened are kept. It stays the same for every page. */
-  readonly records: RecordStore = memoryRecordStore();
+  /**
+   * Where the folders that were opened are kept, which every page of the browser shares. Like
+   * IndexedDB it gives handles of the browser that is running, also after a crash.
+   */
+  readonly records: RecordStore;
   /** Whether the browser tells about changes, as Chrome and Edge do from version 133 on. */
   observes = true;
   /** Whether the window is out of sight. */
@@ -707,6 +757,21 @@ export class MemoryDisk {
   constructor({ system = "windows", depth = 40 }: MemoryDiskOptions = {}) {
     const state = new DiskState(system, depth);
     this.#state = state;
+    const kept = memoryRecordStore();
+    const fresh = (record: StoredRecord): StoredRecord => ({
+      ...record,
+      handle: new MemoryDirectoryHandle(state, (record.handle as MemoryDirectoryHandle).names),
+    });
+    this.records = {
+      list: async () => (await kept.list()).map(fresh),
+      get: async (id) => {
+        const found = await kept.get(id);
+        return found && fresh(found);
+      },
+      put: (record) => kept.put(record),
+      remove: (id) => kept.remove(id),
+      withProject: async (project) => (await kept.withProject(project)).map(fresh),
+    };
     this.#Observer = class MemoryObserver implements ObserverLike {
       readonly #callback: (records: readonly ChangeRecordLike[]) => void;
       readonly #own = new Set<Observation>();
@@ -776,7 +841,11 @@ export class MemoryDisk {
   }
 
   /** Writes a file, and the folders on the way, as another program does. */
-  write(path: string, content: string | Uint8Array = "", { quietly = false }: ChangeOptions = {}) {
+  write(
+    path: string,
+    content: string | Uint8Array = "",
+    { quietly = false, keepTime = false }: ChangeOptions = {},
+  ) {
     const state = this.#state;
     const names = split(path);
     const parent = this.#makeFolders(names.slice(0, -1), quietly);
@@ -788,12 +857,10 @@ export class MemoryDisk {
       name: names.at(-1) as string,
       content: new Uint8Array(),
       lastModified: 0,
-      version: 0,
       lock: 0,
     };
     file.content = bytesOf(content);
-    file.lastModified = state.tick();
-    file.version += 1;
+    if (!keepTime || !existing) file.lastModified = state.tick();
     parent.entries.set(key, file);
     if (quietly) return;
     if (!existing) state.emit("appeared", state.diskNames(names), "file");
@@ -819,9 +886,7 @@ export class MemoryDisk {
 
   /** Gives a file a new time and nothing else, which Linux does not tell about. */
   touch(path: string): void {
-    const file = this.#state.fileAt(split(path));
-    file.lastModified = this.#state.tick();
-    file.version += 1;
+    this.#state.fileAt(split(path)).lastModified = this.#state.tick();
   }
 
   /**
@@ -830,6 +895,17 @@ export class MemoryDisk {
    */
   tell(type: ChangeRecordLike["type"], path: string): void {
     this.#state.say(type, split(path));
+  }
+
+  /**
+   * Runs `callback` the next time a page does this to the file at `path`: right before, or for
+   * "written" right after a write took the place of the file. That is where another program can
+   * change something, or where the step fails: whatever the callback throws, the page gets. Each
+   * call is for one time, in turn.
+   */
+  onNext(step: DiskStep, path: string, callback: () => void): void {
+    const key = `${step}:${this.#state.keyOf(split(path))}`;
+    this.#state.hooks.set(key, [...(this.#state.hooks.get(key) ?? []), callback]);
   }
 
   has(path: string): boolean {
@@ -901,10 +977,13 @@ export class MemoryDisk {
   }
 
   /**
-   * As if the browser went away while it was writing: the files stay as they were, and on Linux
-   * the temporary files stay too, which the browser never takes away.
+   * As if the browser crashed, or the computer went off, while pages were writing: the files stay as
+   * they were, a file that was being made stays empty, and on Linux the temporary files stay too,
+   * which the browser never takes away. Its pages go with it and do nothing more: get the folders
+   * again from a new `memoryFolders` of this disk, as a new page would. With `pageGoesOn` only the
+   * writes stop, and the page goes on as if nothing happened.
    */
-  crash({ leaveTemporaryFiles = this.system === "linux" } = {}): void {
+  crash({ leaveTemporaryFiles = this.system === "linux", pageGoesOn = false } = {}): void {
     const state = this.#state;
     for (const writer of state.writers) {
       writer.dead = true;
@@ -913,12 +992,14 @@ export class MemoryDisk {
       if (swap?.kind === "file") swap.lock = 0;
       if (!leaveTemporaryFiles) {
         const folder = state.find(writer.swap.slice(0, -1));
-        if (folder?.kind === "directory")
+        if (folder?.kind === "directory") {
           folder.entries.delete(state.key(writer.swap.at(-1) as string));
+        }
       }
     }
     state.writers.clear();
     state.observations.clear();
+    if (!pageGoesOn) state.life += 1;
   }
 
   /** People come back to the window. */

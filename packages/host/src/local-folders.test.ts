@@ -402,6 +402,61 @@ describe("writing a file", () => {
   });
 });
 
+describe("writing a file over what a crash left", () => {
+  it("takes an empty file for none when it expects none, which is what a crash leaves", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/new.json", "");
+    await folder.write("new.json", "新的", { expected: "absent" });
+    expect(disk.text("文档/原子/new.json")).toBe("新的");
+  });
+
+  it("leaves an empty file when the browser goes away making one, which the next page writes over", async () => {
+    const { disk, folder } = await chosen({ system: "linux" });
+    const { content, release, begun } = held('{"format":1}');
+    const writing = folder.write("animaquill.json", content).catch(() => "stopped");
+    await begun;
+    disk.crash();
+    // What the page had started does not go on: the page is gone with the browser.
+    release();
+    expect(await writing).toBe("stopped");
+    expect(disk.text("文档/原子/animaquill.json")).toBe("");
+    expect(disk.names("文档/原子").toSorted()).toEqual([
+      "animaquill.json",
+      "animaquill.json.crswap",
+    ]);
+    disk.chooseNext("文档/原子");
+    const next = (await memoryFolders(disk).choose()) as LocalFolder;
+    expect(await next.removeLeftovers(["animaquill.json"])).toEqual(["animaquill.json.crswap"]);
+    await next.write("animaquill.json", "{}", { expected: "absent" });
+    expect(disk.text("文档/原子/animaquill.json")).toBe("{}");
+  });
+});
+
+describe("what a write finds right after", () => {
+  it.each([
+    ["a small file", 1000],
+    ["a large one", 6 * 1024 * 1024],
+  ])("is told when another program got there first, in %s", async (_, size) => {
+    const { disk, folder } = await chosen();
+    const other = new Uint8Array(size).fill(2);
+    disk.onNext("written", "文档/原子/a.bin", () => {
+      disk.write("文档/原子/a.bin", other, { keepTime: true });
+    });
+    await expect(folder.write("a.bin", new Uint8Array(size).fill(1))).rejects.toEqual(
+      failed("changed", "a.bin"),
+    );
+  });
+
+  it("says the path is too long only where the folder for it is there", async () => {
+    const { disk, folder } = await chosen();
+    // The file is made, and goes away with its folder before the browser writes it.
+    disk.onNext("createWritable", "文档/原子/scenes/a.json", () => {
+      disk.remove("文档/原子/scenes", { quietly: true });
+    });
+    await expect(folder.write("scenes/a.json", "x")).rejects.toEqual(failed("changed"));
+  });
+});
+
 describe("writing many files", () => {
   const slow = (text: string, open: { now: number; most: number }) => {
     const bytes = encoder.encode(text);
@@ -451,6 +506,16 @@ describe("writing many files", () => {
     expect(disk.has("文档/原子/e.json")).toBe(false);
   });
 
+  it("writes a file once that is named in two ways, as Windows has it", async () => {
+    const { disk, folder } = await chosen({ system: "windows" });
+    await folder.writeAll([
+      { path: "A.json", content: "1" },
+      { path: "a.json", content: "2" },
+    ]);
+    expect(disk.names("文档/原子")).toEqual(["a.json"]);
+    expect(disk.text("文档/原子/a.json")).toBe("2");
+  });
+
   it("writes a file once, with what came last for it", async () => {
     const { disk, folder } = await chosen();
     await folder.writeAll([
@@ -497,6 +562,26 @@ describe("removing a file", () => {
     expect(disk.has("文档/原子/scenes")).toBe(true);
   });
 
+  it("removes only what it expects", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/scenes/a.html", "v1");
+    const seen = await folder.file("scenes/a.html");
+    disk.write("文档/原子/scenes/a.html", "v2 外面改的");
+    await expect(folder.remove("scenes/a.html", { expected: seen })).rejects.toEqual(
+      failed("changed", "scenes/a.html"),
+    );
+    expect(disk.text("文档/原子/scenes/a.html")).toBe("v2 外面改的");
+    await folder.remove("scenes/a.html", { expected: await folder.file("scenes/a.html") });
+    expect(disk.has("文档/原子/scenes")).toBe(false);
+  });
+
+  it("leaves a folder that people made empty themselves", async () => {
+    const { disk, folder } = await chosen();
+    disk.folder("文档/原子/scenes/空的");
+    await folder.remove("scenes/空的/scene.json");
+    expect(disk.has("文档/原子/scenes/空的")).toBe(true);
+  });
+
   it("leaves a file that is being written", async () => {
     const { disk, folder } = await chosen();
     const { content, release, begun } = held();
@@ -538,6 +623,30 @@ describe("moving a file", () => {
     expect(disk.names("文档/原子").toSorted()).toEqual(["A.json", "B.json"]);
   });
 
+  it("does not take a file that differs only in case for the same one, where case matters", async () => {
+    const { disk, folder } = await chosen({ system: "linux" });
+    disk.write("文档/原子/Scene.html", "大写的");
+    disk.write("文档/原子/scene.html", "另一个文件");
+    await expect(folder.move("Scene.html", "scene.html")).rejects.toEqual(
+      failed("exists", "scene.html"),
+    );
+    expect(disk.text("文档/原子/Scene.html")).toBe("大写的");
+    expect(disk.text("文档/原子/scene.html")).toBe("另一个文件");
+  });
+
+  it("moves only what it expects", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/a.json", "旧的");
+    const seen = await folder.file("a.json");
+    disk.write("文档/原子/a.json", "外面改的");
+    await expect(folder.move("a.json", "b.json", { expected: seen })).rejects.toEqual(
+      failed("changed", "a.json"),
+    );
+    expect(disk.names("文档/原子")).toEqual(["a.json"]);
+    await folder.move("a.json", "b.json", { expected: await folder.file("a.json") });
+    expect(disk.text("文档/原子/b.json")).toBe("外面改的");
+  });
+
   it("writes it at the new place where the browser cannot move it", async () => {
     const { disk, folder } = await chosen();
     disk.write("文档/原子/a.json", "要移动的");
@@ -560,6 +669,73 @@ describe("moving a file", () => {
     await expect(folder.move("a.json", "b.json")).rejects.toEqual(failed("busy"));
     release();
     await writing;
+  });
+});
+
+describe("moving a file where the browser cannot", () => {
+  /** Whatever the folder tells it changed, a moment after. */
+  async function watching(folder: LocalFolder) {
+    const told: string[] = [];
+    const watch = folder.watch({
+      includes: () => true,
+      onChange: (changes) => void told.push(...changes.map(({ path }) => path)),
+    });
+    await watch.ready;
+    return {
+      told: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await watch.flush();
+        watch.stop();
+        return told;
+      },
+    };
+  }
+
+  const inUse = () => {
+    throw new DOMException("in use", "NoModificationAllowedError");
+  };
+
+  it("keeps both where the file changed after it was copied", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/a.json", "v1");
+    disk.refusesMoves = true;
+    const { told } = await watching(folder);
+    disk.onNext("written", "文档/原子/b.json", () =>
+      disk.write("文档/原子/a.json", "v2 外面刚改的"),
+    );
+    const error = await folder.move("a.json", "b.json").catch((failure: unknown) => failure);
+    expect(error).toEqual(failed("changed", "a.json"));
+    expect((error as FolderError).copy).toBe("b.json");
+    expect(disk.text("文档/原子/a.json")).toBe("v2 外面刚改的");
+    expect(disk.text("文档/原子/b.json")).toBe("v1");
+    // The copy is the editor's own, and only the change of the other program is news.
+    expect(await told()).toEqual(["a.json"]);
+  });
+
+  it("takes the copy away again where the file cannot be taken away", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/a.json", "v1");
+    disk.refusesMoves = true;
+    const { told } = await watching(folder);
+    disk.onNext("removeEntry", "文档/原子/a.json", inUse);
+    await expect(folder.move("a.json", "b.json")).rejects.toEqual(failed("busy", "a.json"));
+    expect(disk.names("文档/原子")).toEqual(["a.json"]);
+    expect(disk.text("文档/原子/a.json")).toBe("v1");
+    expect(await told()).toEqual([]);
+  });
+
+  it("says that both are there where neither can be taken away", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/a.json", "v1");
+    disk.refusesMoves = true;
+    const { told } = await watching(folder);
+    disk.onNext("removeEntry", "文档/原子/a.json", inUse);
+    disk.onNext("removeEntry", "文档/原子/b.json", inUse);
+    const error = await folder.move("a.json", "b.json").catch((failure: unknown) => failure);
+    expect(error).toEqual(failed("busy", "a.json"));
+    expect((error as FolderError).copy).toBe("b.json");
+    expect(disk.names("文档/原子").toSorted()).toEqual(["a.json", "b.json"]);
+    expect(await told()).toEqual([]);
   });
 });
 

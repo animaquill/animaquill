@@ -71,7 +71,10 @@ export type FolderRefusal =
   | "not-a-project"
   /** None at the top, and several folders right inside have one. */
   | "several-projects"
-  /** An export that did not get to the end, see `INCOMPLETE_FILE`. */
+  /**
+   * An export that did not get to the end, see `INCOMPLETE_FILE`, or a project with an empty
+   * animaquill.json: that is what is left of it when a page stops while it is written.
+   */
   | "incomplete"
   /** More than `MAX_FOLDER_FILES`. */
   | "too-many-files"
@@ -327,6 +330,7 @@ export async function readFolder(
     signal?.throwIfAborted();
     onFile?.(path);
     const file = await folder.file(`${root}${path}`);
+    if (path === MANIFEST_FILE && file.size === 0) throw new FolderRefused("incomplete");
     if (!isDocument && file.size > MAX_SOURCE_BYTES) {
       skipped.add(path);
       continue;

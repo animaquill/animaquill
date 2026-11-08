@@ -112,3 +112,59 @@ describe("a disk in memory", () => {
     expect(await root.queryPermission?.({ mode: "read" })).toBe("granted");
   });
 });
+
+describe("a crash of the browser", () => {
+  it("stops what its pages were doing, and the next page has the folders again", async () => {
+    const { disk, root } = await picked();
+    disk.write("文件夹/a.txt", "旧的");
+    await disk.records.put({ id: "1", handle: root, project: "p", name: "原子", openedAt: 1 });
+    const file = await root.getFileHandle("a.txt");
+    disk.crash();
+    await expect(file.getFile()).rejects.toMatchObject({ name: "AbortError" });
+    await expect(root.getFileHandle("b.txt", { create: true })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    const [kept] = await disk.records.list();
+    const again = await kept?.handle.getFileHandle("a.txt");
+    expect(await (await again?.getFile())?.text()).toBe("旧的");
+  });
+});
+
+describe("what a test puts in between", () => {
+  it("happens right before a step of the page, or right after a write", async () => {
+    const { disk, root } = await picked();
+    const steps: string[] = [];
+    disk.onNext("createWritable", "文件夹/a.txt", () => steps.push("before writing"));
+    disk.onNext("written", "文件夹/a.txt", () =>
+      steps.push(`written: ${disk.text("文件夹/a.txt")}`),
+    );
+    const file = await root.getFileHandle("a.txt", { create: true });
+    await new Blob(["内容"]).stream().pipeTo(await file.createWritable());
+    expect(steps).toEqual(["before writing", "written: 内容"]);
+  });
+
+  it("makes the step fail with what it throws, once", async () => {
+    const { disk, root } = await picked();
+    disk.write("文件夹/a.txt", "x");
+    disk.onNext("removeEntry", "文件夹/a.txt", () => {
+      throw new DOMException("in use", "NoModificationAllowedError");
+    });
+    await expect(root.removeEntry("a.txt")).rejects.toMatchObject({
+      name: "NoModificationAllowedError",
+    });
+    await root.removeEntry("a.txt");
+    expect(disk.has("文件夹/a.txt")).toBe(false);
+  });
+});
+
+describe("a change that keeps the time", () => {
+  it("is read through a file that was given out before, as in Chrome", async () => {
+    const { disk, root } = await picked();
+    disk.write("文件夹/a.txt", "一一");
+    const before = await (await root.getFileHandle("a.txt")).getFile();
+    disk.write("文件夹/a.txt", "二二", { keepTime: true });
+    expect(await before.text()).toBe("二二");
+    disk.touch("文件夹/a.txt");
+    await expect(before.text()).rejects.toMatchObject({ name: "NotReadableError" });
+  });
+});

@@ -477,11 +477,22 @@ export class FolderError extends Error {
   readonly reason: FolderFailure;
   /** From the top of the folder, "" for the folder itself. */
   readonly path: string;
+  /**
+   * Where a copy of the file is that this left behind, as a move that wrote the new file and could
+   * not take away the old one: then both are there.
+   */
+  readonly copy: string | undefined;
 
-  constructor(reason: FolderFailure, path: string, options?: { readonly cause?: unknown }) {
-    super(`${reason}: ${path === "" ? "the folder" : path}`, options);
+  constructor(
+    reason: FolderFailure,
+    path: string,
+    options?: { readonly cause?: unknown; readonly copy?: string },
+  ) {
+    const both = options?.copy === undefined ? "" : `, and a copy is at ${options.copy}`;
+    super(`${reason}: ${path === "" ? "the folder" : path}${both}`, options);
     this.reason = reason;
     this.path = path;
+    this.copy = options?.copy;
   }
 }
 
@@ -492,9 +503,18 @@ export interface LocalWriteOptions {
   readonly onProgress?: (bytes: number) => void;
   /**
    * Writes only when the file is still the way it was seen, so that a change from somewhere else
-   * does not get lost, and rejects with "changed" otherwise. "absent" when there should be no file.
+   * does not get lost, and rejects with "changed" otherwise. "absent" when there should be no file,
+   * or an empty one: that is what a crash leaves of a file that was being made.
    */
   readonly expected?: FileStat | "absent";
+}
+
+export interface RemoveOptions {
+  /**
+   * Takes the file away only when it is still the way it was seen, and rejects with "changed"
+   * otherwise: whatever another program just wrote stays.
+   */
+  readonly expected?: FileStat;
 }
 
 export interface WriteAllOptions {
@@ -564,16 +584,20 @@ export interface LocalFolder {
     options?: WriteAllOptions,
   ): Promise<void>;
   /**
-   * Takes away a file, and the folders on the way that are left empty, apart from this one. A file
-   * that is not there is fine. Folders are not taken away with what is in them.
+   * Takes away a file, and the folders on the way that this leaves empty, apart from this one. A
+   * file that is not there is fine. Folders are not taken away with what is in them, and a folder
+   * that was empty before stays: people may have made it.
    */
-  remove(path: string): Promise<void>;
+  remove(path: string, options?: RemoveOptions): Promise<void>;
   /**
-   * Moves or renames a file. Rejects with "exists" when something is at the new path, which the
-   * browser would replace without a word. Where the browser cannot move a file, this writes it at
-   * the new path and then takes away the old one. Folders cannot be moved.
+   * Moves or renames a file. Rejects with "exists" when another file is at the new path, which the
+   * browser would replace without a word, also one that differs only in case on a system where
+   * that is another file. Where the browser cannot move a file, this writes it at the new path and
+   * then takes away the old one. When the old one changed in the meantime, or cannot be taken away,
+   * the copy stays only as long as it is needed: the error says when both are there, see
+   * `FolderError.copy`. Folders cannot be moved.
    */
-  move(from: string, to: string): Promise<void>;
+  move(from: string, to: string, options?: RemoveOptions): Promise<void>;
   /**
    * Takes away the temporary files that writing these files left behind. A write that stops because
    * the browser went away leaves one next to the file on Linux and maybe a Mac, as
@@ -599,12 +623,21 @@ export interface WatchOptions {
    * several files at once. What this folder wrote itself does not show up. The next changes wait
    * until what this returns is done.
    */
-  readonly onChange: (changes: readonly FolderChange[]) => void | Promise<void>;
+  readonly onChange: (changes: readonly FolderChange[], batch: FolderBatch) => void | Promise<void>;
   /**
    * The folder cannot be looked at. "gone" ends the watch: start another one once the folder is
    * back. After "denied" the watch looks again when the window comes to the front again.
    */
   readonly onProblem?: (error: FolderError) => void;
+}
+
+/** How a batch of changes came to be told. */
+export interface FolderBatch {
+  /**
+   * The folder kept changing, for half a minute, as during a long checkout: more is likely to come,
+   * and whoever takes this in may want to wait for the next batch, which comes once it is quiet.
+   */
+  readonly stillChanging: boolean;
 }
 
 /** A file that changed. */

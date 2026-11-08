@@ -1,6 +1,8 @@
 import { createRecordStore } from "./folder-records.ts";
 import {
   FolderWatcher,
+  HASHED_BYTES,
+  hashOf,
   inTurns,
   isSameSeen,
   statOf,
@@ -29,6 +31,7 @@ import {
   type LocalFolder,
   type LocalFolders,
   type LocalWriteOptions,
+  type RemoveOptions,
   type WatchOptions,
   type WriteAllOptions,
 } from "./index.ts";
@@ -36,8 +39,13 @@ import { isToolFolder, partsOf, sameNameKey } from "./paths.ts";
 
 /** Lets the browser come back to the place people used the last time, as it does for exports. */
 const PICKER_ID = "animaquill-projects";
-/** A file up to this size is read back after writing it, to be sure that it is what was written. */
-const READ_BACK_BYTES = 4 * 1024 * 1024;
+/**
+ * A file up to this size is read back whole after writing it, to be sure that it is what was
+ * written. Of a larger one, such as a video, three pieces are.
+ */
+const READ_BACK_BYTES = HASHED_BYTES;
+/** How large each of those pieces is. */
+const PIECE_BYTES = 64 * 1024;
 /**
  * How many files get written at the same time. On Windows each one costs about 0.1 s, whatever its
  * size. On Linux 200 small files took 0.6 to 0.9 s one after the other, 0.2 s with 8 at a time and
@@ -124,25 +132,16 @@ async function fileIn(
   }
 }
 
-/** Whether something is at a name in a folder, a file or a folder. */
-async function isTaken(folder: DirectoryHandleLike, name: string): Promise<boolean> {
-  try {
-    await folder.getFileHandle(name);
-    return true;
-  } catch (error) {
-    if (isNamed(error, "TypeMismatchError")) return true;
-    if (isNamed(error, "NotFoundError")) return false;
-    throw error;
-  }
-}
-
 /** Takes away the empty file that a write made and could not fill. */
 async function removeIfEmpty(folder: DirectoryHandleLike, name: string): Promise<void> {
   const file = await (await folder.getFileHandle(name)).getFile();
   if (file.size === 0) await folder.removeEntry(name);
 }
 
-/** Takes away the folders on the way to a file that are left empty. Never the top one. */
+/**
+ * Takes away the folders on the way to a file that was just taken away, as far as that left them
+ * empty. Never the top one.
+ */
 async function prune(chain: readonly DirectoryHandleLike[], parts: readonly string[]) {
   for (let depth = chain.length - 2; depth >= 0; depth--) {
     try {
@@ -155,15 +154,39 @@ async function prune(chain: readonly DirectoryHandleLike[], parts: readonly stri
   }
 }
 
-/** Whether what is in the file now is what was written. */
-async function isWritten(written: File, content: Blob): Promise<boolean> {
-  if (written.size !== content.size) return false;
-  if (content.size > READ_BACK_BYTES) return true;
-  const [now, meant] = await Promise.all([written.arrayBuffer(), content.arrayBuffer()]);
-  const a = new Uint8Array(now);
-  const b = new Uint8Array(meant);
-  return a.every((byte, index) => byte === b[index]);
+/** The pieces of a file that get read back after writing it: all of a small one. */
+function piecesOf(size: number): (readonly [number, number])[] {
+  if (size <= READ_BACK_BYTES) return [[0, size]];
+  const middle = Math.floor(size / 2 - PIECE_BYTES / 2);
+  return [
+    [0, PIECE_BYTES],
+    [middle, middle + PIECE_BYTES],
+    [size - PIECE_BYTES, size],
+  ];
 }
+
+/** Keeps the pieces that `piecesOf` names of what goes by, to compare with the file after. */
+function keeper(size: number) {
+  const pieces = piecesOf(size).map(([start, end]) => ({
+    start,
+    bytes: new Uint8Array(end - start),
+  }));
+  let offset = 0;
+  return {
+    pieces,
+    take(chunk: Uint8Array) {
+      for (const { start, bytes } of pieces) {
+        const from = Math.max(start, offset);
+        const to = Math.min(start + bytes.length, offset + chunk.length);
+        if (from < to) bytes.set(chunk.subarray(from - offset, to - offset), from - start);
+      }
+      offset += chunk.length;
+    },
+  };
+}
+
+const sameBytes = (a: Uint8Array, b: Uint8Array) =>
+  a.length === b.length && a.every((byte, index) => byte === b[index]);
 
 /** The file that a leftover of writing belongs to, among those that matter, by `sameNameKey`. */
 function ownerOf(name: string, owners: ReadonlyMap<string, string>): string | undefined {
@@ -178,12 +201,28 @@ function ownerOf(name: string, owners: ReadonlyMap<string, string>): string | un
   return undefined;
 }
 
+/** What a write left: the file, and what a watch keeps of it to know it as its own. */
+interface Written {
+  readonly file: File;
+  readonly seen: Seen;
+}
+
+/** Where a file moves from and to, by writing it. */
+interface Places {
+  readonly sourceFolder: DirectoryHandleLike;
+  readonly sourceName: string;
+  readonly targetFolder: DirectoryHandleLike;
+  readonly targetName: string;
+}
+
 class HandleFolder implements LocalFolder {
   readonly name: string;
   readonly #root: DirectoryHandleLike;
   readonly #environment: LocalFoldersEnvironment;
   /** Files that are being written or moved, by `sameNameKey`, and by how many. */
   readonly #writing = new Map<string, number>();
+  /** How many times a write of a file started or ended, by `sameNameKey`. */
+  readonly #writes = new Map<string, number>();
   readonly #watchers = new Set<FolderWatcher>();
   readonly #watched: WatchedFolder;
 
@@ -198,6 +237,7 @@ class HandleFolder implements LocalFolder {
       list: (folder, includes) => this.#listIncluded(folder, includes),
       isThere: () => this.#isThere(),
       isWriting: (path) => this.#writing.has(sameNameKey(path)),
+      writes: (path) => this.#writes.get(sameNameKey(path)) ?? 0,
     };
   }
 
@@ -276,17 +316,27 @@ class HandleFolder implements LocalFolder {
       [path],
       async () => {
         await this.#mayWrite(path);
-        const folder = await this.#folderAt(parts.slice(0, -1), true);
+        const folder = await this.#folderAt(parts.slice(0, -1), true, path);
         const name = parts.at(-1) as string;
         const found = await fileIn(folder, name);
+        // An empty file is what a crash leaves of one that was being made: it counts as none.
         const isAsExpected =
-          expected === undefined || (expected === "absent" ? !found : found !== undefined);
+          expected === undefined ||
+          (expected === "absent"
+            ? !found || (await found.getFile()).size === 0
+            : found !== undefined);
         if (!isAsExpected) throw new FolderError("changed", path);
-        const handle = found ?? (await folder.getFileHandle(name, { create: true }));
+        const handle =
+          found ??
+          (await this.#made(
+            () => folder.getFileHandle(name, { create: true }),
+            parts.slice(0, -1),
+            path,
+          ));
         // A file that this made stays only with what it was meant to have.
         const undo = found ? async () => {} : () => removeIfEmpty(folder, name);
-        const file = await this.#put(handle, blob, path, options, undo);
-        this.#wrote(path, statOf(file));
+        const { file, seen } = await this.#put(handle, blob, path, options, undo);
+        this.#wrote(path, seen);
         return file;
       },
       path,
@@ -298,12 +348,19 @@ class HandleFolder implements LocalFolder {
     files: Iterable<{ readonly path: string; readonly content: FileContent }>,
     { signal, concurrency = WRITE_AT_ONCE, onProgress, onWritten }: WriteAllOptions = {},
   ): Promise<void> {
-    // Two writes of one file would keep each other out. The last one is what it gets.
-    const all = [...new Map([...files].map(({ path, content }) => [path, content]))];
+    // Two writes of one file would keep each other out, also where it is named in two ways that
+    // are one file on Windows. The last one is what it gets.
+    const byKey = new Map<string, { readonly path: string; readonly content: FileContent }>();
+    for (const file of files) {
+      const key = sameNameKey(file.path);
+      byKey.delete(key);
+      byKey.set(key, file);
+    }
+    const all = [...byKey.values()];
     let written = 0;
     let failure: { readonly error: unknown } | undefined;
     onProgress?.(0, all.length);
-    await inTurns(all, Math.max(1, concurrency), async ([path, content]) => {
+    await inTurns(all, Math.max(1, concurrency), async ({ path, content }) => {
       if (failure || signal?.aborted) return;
       try {
         const file = await this.write(path, content, signal ? { signal } : {});
@@ -318,7 +375,7 @@ class HandleFolder implements LocalFolder {
     if (failure) throw failure.error;
   }
 
-  async remove(path: string): Promise<void> {
+  async remove(path: string, { expected }: RemoveOptions = {}): Promise<void> {
     const parts = this.#parts(path);
     await this.#changing(
       [path],
@@ -327,21 +384,31 @@ class HandleFolder implements LocalFolder {
         const chain = await this.#chain(parts.slice(0, -1));
         const folder = chain?.at(-1);
         const name = parts.at(-1) as string;
-        if (folder && (await this.#hasFile(folder, name))) {
-          try {
-            await folder.removeEntry(name);
-          } catch (error) {
-            if (!isNamed(error, "NotFoundError")) throw error;
-          }
+        const handle = folder && (await this.#fileHandleIn(folder, name));
+        if (!chain || !folder || !handle) {
+          this.#wrote(path, "absent");
+          return;
+        }
+        if (expected !== undefined) {
+          const now = await handle.getFile();
+          if (!isSameSeen(statOf(now), statOf(expected))) throw new FolderError("changed", path);
+        }
+        try {
+          await folder.removeEntry(name);
+        } catch (error) {
+          if (!isNamed(error, "NotFoundError")) throw error;
+          // It went, and not because of this: what it leaves is not this one's to tidy.
+          this.#wrote(path, "absent");
+          return;
         }
         this.#wrote(path, "absent");
-        if (chain) await prune(chain, parts);
+        await prune(chain, parts);
       },
       path,
     );
   }
 
-  async move(from: string, to: string): Promise<void> {
+  async move(from: string, to: string, { expected }: RemoveOptions = {}): Promise<void> {
     const source = this.#parts(from);
     const target = this.#parts(to);
     if (from === to) return;
@@ -358,19 +425,17 @@ class HandleFolder implements LocalFolder {
           .catch(async (error: unknown) => {
             throw await this.#failure(error, from, false);
           });
+        const snapshot = await handle.getFile();
+        if (expected !== undefined && !isSameSeen(statOf(snapshot), statOf(expected))) {
+          throw new FolderError("changed", from);
+        }
         const targetName = target.at(-1) as string;
-        const targetFolder = await this.#folderAt(target.slice(0, -1), true).catch(
-          async (error: unknown) => {
-            throw await this.#failure(error, to, true);
-          },
-        );
-        // Only the case of the name changes, which is the same file on Windows.
-        const isRename =
+        const targetFolder = await this.#folderAt(target.slice(0, -1), true, to);
+        const sameFolder =
           sameNameKey(from.slice(0, from.lastIndexOf("/") + 1)) ===
-            sameNameKey(to.slice(0, to.lastIndexOf("/") + 1)) &&
-          sameNameKey(sourceName) === sameNameKey(targetName);
+          sameNameKey(to.slice(0, to.lastIndexOf("/") + 1));
         // The browser would replace it without a word.
-        if (!isRename && (await isTaken(targetFolder, targetName))) {
+        if (await this.#isAnotherAt(targetFolder, targetName, handle, sameFolder)) {
           throw new FolderError("exists", to);
         }
         const moved = await this.#tryMove(handle, targetFolder, targetName, to).catch(
@@ -378,16 +443,14 @@ class HandleFolder implements LocalFolder {
             throw await this.#failure(error, from, false);
           },
         );
-        if (!moved) {
-          await this.#copy(handle, targetFolder, targetName, to);
-          await sourceFolder.removeEntry(sourceName).catch((error: unknown) => {
-            // Gone already, which is all that was to happen to it.
-            if (!isNamed(error, "NotFoundError")) throw error;
-          });
+        if (moved) {
+          const file = await (await targetFolder.getFileHandle(targetName)).getFile();
+          this.#wrote(from, "absent");
+          this.#wrote(to, statOf(file));
+        } else {
+          const places: Places = { sourceFolder, sourceName, targetFolder, targetName };
+          await this.#moveByCopy(handle, snapshot, places, from, to, target.slice(0, -1));
         }
-        const file = await (await targetFolder.getFileHandle(targetName)).getFile();
-        this.#wrote(from, "absent");
-        this.#wrote(to, statOf(file));
         await prune(chain, source);
       },
       from,
@@ -493,12 +556,29 @@ class HandleFolder implements LocalFolder {
         return fail(writing && hasLongName(path) ? "too-long" : "failed");
       case "NotFoundError":
         if (!(await this.#isThere())) return fail("gone");
-        if (!writing) return fail("missing");
-        // What Windows says for a path that is too long, where the folder is there. A file that is
-        // there could be made, so something else happened to it.
-        return fail((await this.#hasFileAt(path)) ? "changed" : "too-long");
+        // A path that is too long is told where something gets made, see `#made`. Anywhere else a
+        // file or a folder went away on the way.
+        return fail(writing ? "changed" : "missing");
       default:
         return fail("failed");
+    }
+  }
+
+  /**
+   * Makes a file or a folder. Windows says "NotFoundError" for a path that is too long, which is
+   * what that means where the folder it goes in is there.
+   */
+  async #made<T>(make: () => Promise<T>, folder: readonly string[], path: string): Promise<T> {
+    try {
+      return await make();
+    } catch (error) {
+      if (!isNamed(error, "NotFoundError")) throw error;
+      if (!(await this.#isThere())) throw new FolderError("gone", path, { cause: error });
+      const isFolderThere = await this.#folderAt(folder, false).then(
+        () => true,
+        () => false,
+      );
+      throw new FolderError(isFolderThere ? "too-long" : "changed", path, { cause: error });
     }
   }
 
@@ -510,7 +590,10 @@ class HandleFolder implements LocalFolder {
     signal?: AbortSignal,
   ): Promise<T> {
     const keys = paths.map(sameNameKey);
-    for (const key of keys) this.#writing.set(key, (this.#writing.get(key) ?? 0) + 1);
+    for (const key of keys) {
+      this.#writing.set(key, (this.#writing.get(key) ?? 0) + 1);
+      this.#writes.set(key, (this.#writes.get(key) ?? 0) + 1);
+    }
     try {
       return await work();
     } catch (error) {
@@ -521,6 +604,7 @@ class HandleFolder implements LocalFolder {
         const left = (this.#writing.get(key) ?? 1) - 1;
         if (left > 0) this.#writing.set(key, left);
         else this.#writing.delete(key);
+        this.#writes.set(key, (this.#writes.get(key) ?? 0) + 1);
         for (const watcher of this.#watchers) watcher.doneWriting(paths[index] as string);
       }
     }
@@ -530,9 +614,23 @@ class HandleFolder implements LocalFolder {
     for (const watcher of this.#watchers) watcher.wrote(path, seen);
   }
 
-  async #folderAt(parts: readonly string[], create: boolean): Promise<DirectoryHandleLike> {
+  /** The folder at these parts. Making them, a too long path rejects as that, about `path`. */
+  async #folderAt(
+    parts: readonly string[],
+    create: boolean,
+    path = parts.join("/"),
+  ): Promise<DirectoryHandleLike> {
     let folder = this.#root;
-    for (const part of parts) folder = await folder.getDirectoryHandle(part, { create });
+    for (const [index, part] of parts.entries()) {
+      const parent = folder;
+      folder = create
+        ? await this.#made(
+            () => parent.getDirectoryHandle(part, { create: true }),
+            parts.slice(0, index),
+            path,
+          )
+        : await parent.getDirectoryHandle(part);
+    }
     return folder;
   }
 
@@ -559,31 +657,50 @@ class HandleFolder implements LocalFolder {
     return chain;
   }
 
-  async #hasFileAt(path: string): Promise<boolean> {
-    const parts = partsOf(path);
-    return (
-      parts !== undefined &&
-      this.#fileAt(parts).then(
-        () => true,
-        () => false,
-      )
-    );
-  }
-
-  async #hasFile(folder: DirectoryHandleLike, name: string): Promise<boolean> {
+  /** The file of this name in a folder, undefined when there is none, or a folder is there. */
+  async #fileHandleIn(
+    folder: DirectoryHandleLike,
+    name: string,
+  ): Promise<FileHandleLike | undefined> {
     try {
-      await folder.getFileHandle(name);
-      return true;
+      return await folder.getFileHandle(name);
     } catch (error) {
-      if (isNamed(error, "TypeMismatchError")) return false;
-      if (isNamed(error, "NotFoundError") && (await this.#isThere())) return false;
+      if (isNamed(error, "TypeMismatchError")) return undefined;
+      if (isNamed(error, "NotFoundError") && (await this.#isThere())) return undefined;
       throw error;
     }
   }
 
   /**
+   * Whether another file or a folder is at a name, which a move would replace. Where only the case
+   * of a name changes, the browser on Windows finds the file itself at the new name, which it does
+   * not take for the same: there a file is another one only when its name on the disk is just the
+   * new one, as on Linux.
+   */
+  async #isAnotherAt(
+    folder: DirectoryHandleLike,
+    name: string,
+    source: FileHandleLike,
+    sameFolder: boolean,
+  ): Promise<boolean> {
+    let found: FileHandleLike;
+    try {
+      found = await folder.getFileHandle(name);
+    } catch (error) {
+      if (isNamed(error, "TypeMismatchError")) return true;
+      if (isNamed(error, "NotFoundError")) return false;
+      throw error;
+    }
+    if (await found.isSameEntry(source).catch(() => false)) return false;
+    if (!sameFolder || sameNameKey(name) !== sameNameKey(source.name)) return true;
+    for await (const entry of folder.values()) if (entry.name === name) return true;
+    return false;
+  }
+
+  /**
    * Writes a file through a temporary one of the browser, which takes its place once it is all
-   * there, with every other writer of this browser kept out.
+   * there, with every other writer of this browser kept out. Then reads back what is there: all of
+   * a small file, three pieces of a large one.
    */
   async #put(
     handle: FileHandleLike,
@@ -591,8 +708,9 @@ class HandleFolder implements LocalFolder {
     path: string,
     { signal, onProgress, expected }: LocalWriteOptions,
     undo: () => Promise<void>,
-  ): Promise<File> {
+  ): Promise<Written> {
     const writable = await handle.createWritable({ mode: "exclusive", keepExistingData: false });
+    const kept = keeper(content.size);
     try {
       // Once no other writer of this browser can change it any more.
       if (expected !== undefined) {
@@ -604,6 +722,7 @@ class HandleFolder implements LocalFolder {
       let bytes = 0;
       const counter = new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
+          kept.take(chunk);
           bytes += chunk.byteLength;
           onProgress?.(bytes);
           controller.enqueue(chunk);
@@ -620,8 +739,14 @@ class HandleFolder implements LocalFolder {
     }
     const written = await handle.getFile();
     // Something else got there right after, and it is what there is now.
-    if (!(await isWritten(written, content))) throw new FolderError("changed", path);
-    return written;
+    if (written.size !== content.size) throw new FolderError("changed", path);
+    for (const { start, bytes } of kept.pieces) {
+      const there = new Uint8Array(await written.slice(start, start + bytes.length).arrayBuffer());
+      if (!sameBytes(there, bytes)) throw new FolderError("changed", path);
+    }
+    const [whole] = kept.pieces;
+    const hash = content.size <= HASHED_BYTES && whole ? hashOf(whole.bytes) : undefined;
+    return { file: written, seen: { ...statOf(written), hash } };
   }
 
   /** Resolves to false where the browser cannot move the file, so that writing has to do it. */
@@ -648,16 +773,72 @@ class HandleFolder implements LocalFolder {
     }
   }
 
-  /** Writes what a file has at a new place, which nothing is at. */
-  async #copy(source: FileHandleLike, folder: DirectoryHandleLike, name: string, to: string) {
-    try {
-      const target = await folder.getFileHandle(name, { create: true });
-      await this.#put(target, await source.getFile(), to, { expected: "absent" }, () =>
-        removeIfEmpty(folder, name),
-      );
-    } catch (error) {
+  /**
+   * Moves a file by writing it at the new place, which nothing is at, and taking away the old one.
+   * Where the old one changed in the meantime, both stay. Where it cannot be taken away, the copy
+   * goes again, as long as it is still what this wrote, and otherwise both stay. Where both stay,
+   * the error says so.
+   */
+  async #moveByCopy(
+    handle: FileHandleLike,
+    snapshot: File,
+    { sourceFolder, sourceName, targetFolder, targetName }: Places,
+    from: string,
+    to: string,
+    targetParts: readonly string[],
+  ): Promise<void> {
+    // What gets written is what was looked at. A document is read at once, a video as it goes.
+    const content =
+      snapshot.size <= READ_BACK_BYTES
+        ? new Blob([
+            await snapshot.arrayBuffer().catch(async (error: unknown) => {
+              throw await this.#failure(error, from, false);
+            }),
+          ])
+        : snapshot;
+    const target = await this.#made(
+      () => targetFolder.getFileHandle(targetName, { create: true }),
+      targetParts,
+      to,
+    );
+    const { seen } = await this.#put(target, content, to, { expected: "absent" }, () =>
+      removeIfEmpty(targetFolder, targetName),
+    ).catch(async (error: unknown) => {
       throw await this.#failure(error, to, true);
+    });
+    // From here on the copy is the editor's own.
+    const now = await handle.getFile().catch(() => undefined);
+    if (now && !isSameSeen(statOf(now), statOf(snapshot))) {
+      this.#wrote(to, seen);
+      throw new FolderError("changed", from, { copy: to });
     }
+    try {
+      await sourceFolder.removeEntry(sourceName);
+    } catch (error) {
+      // Gone already, which is all that was to happen to it.
+      if (isNamed(error, "NotFoundError")) {
+        this.#wrote(from, "absent");
+        this.#wrote(to, seen);
+        return;
+      }
+      const failure = await this.#failure(error, from, true);
+      const copied = await target.getFile().catch(() => undefined);
+      const isOwn = copied !== undefined && isSameSeen(statOf(copied), seen);
+      const isUndone =
+        isOwn &&
+        (await targetFolder.removeEntry(targetName).then(
+          () => true,
+          () => false,
+        ));
+      if (isUndone) {
+        this.#wrote(to, "absent");
+        throw failure;
+      }
+      if (isOwn) this.#wrote(to, seen);
+      throw new FolderError(failure.reason, from, { cause: error, copy: to });
+    }
+    this.#wrote(from, "absent");
+    this.#wrote(to, seen);
   }
 
   /** What a watch sees of a file: missing is no failure, and nor is what cannot be told now. */

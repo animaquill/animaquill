@@ -50,6 +50,13 @@ describe("a name for a new file", () => {
     expect(newNameFor("é.png", ["é.png"])).toBe("é (2).png");
   });
 
+  it("takes names that Windows has as one file for one, also beyond plain case", () => {
+    expect(newNameFor("ſ.txt", ["s.txt"])).toBe("ſ (2).txt");
+    expect(newNameFor("ς.txt", ["σ.txt"])).toBe("ς (2).txt");
+    expect(newNameFor("ı.txt", ["i.txt"])).toBe("ı (2).txt");
+    expect(sameNameKey("Ⅻ")).toBe(sameNameKey("ⅻ"));
+  });
+
   it("takes out what the browser refuses", () => {
     expect(newNameFor("a:b?.mp4", [])).toBe("a_b_.mp4");
     expect(newNameFor("第1~3集.mp4", [])).toBe("第1-3集.mp4");
