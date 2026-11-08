@@ -523,7 +523,9 @@ test.describe("an export under way", () => {
 
 test.describe("a long export", () => {
   test("takes no more memory the longer it goes", async ({ page }) => {
-    test.setTimeout(240_000);
+    // How long it takes is not what this is about: a slow machine, or one busy with other tests,
+    // encodes noise at a few frames a second. See `goingTo` for what makes it fail.
+    test.setTimeout(900_000);
     const seconds = 60;
     // Noise does not compress, so the file grows as fast as the bitrate lets it.
     const noise = png(WIDTH, HEIGHT, () => [
@@ -592,10 +594,31 @@ test.describe("a long export", () => {
       .find((frame) => frame.url().includes("compositor.html") && frame !== shown);
     if (!exporting) throw new Error("No compositor");
     const box = await page.context().newCDPSession(exporting);
-    await expect.poll(percent, { timeout: 120_000 }).toBeGreaterThanOrEqual(15);
+    /**
+     * Until the export is this far, for as long as it gets further: an export that stands still
+     * for a minute is what is wrong, not one that takes its time.
+     */
+    const goingTo = async (wanted: number) => {
+      let last = -1;
+      let movedAt = Date.now();
+      for (;;) {
+        const now = await percent();
+        if (now >= wanted) return now;
+        if (now > last) {
+          last = now;
+          movedAt = Date.now();
+        }
+        expect(Date.now() - movedAt, `the export stood still at ${last}%`).toBeLessThan(60_000);
+        await page.waitForTimeout(500);
+      }
+    };
+    const from = await goingTo(15);
+    const fromAt = Date.now();
     const early = { editor: await heapOf(editor), compositor: await heapOf(box) };
-    await expect.poll(percent, { timeout: 200_000 }).toBeGreaterThanOrEqual(90);
+    const to = await goingTo(90);
     const late = { editor: await heapOf(editor), compositor: await heapOf(box) };
+    const frames = ((to - from) / 100) * seconds * 30;
+    console.log(`${(frames / ((Date.now() - fromAt) / 1000)).toFixed(1)} frames a second`);
     await exported(page);
     const file = (await savedFile(page)) as Buffer;
     const megabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
@@ -607,10 +630,13 @@ test.describe("a long export", () => {
     expect((await factsOf(file)).frames).toBe(seconds * 30);
     const sound = await soundOf(page, file);
     expect(sound?.duration).toBeGreaterThan(seconds - 0.001);
-    // The file grows by three quarters of its size in between, and memory does not go with it.
+    // The file grows by about three quarters of its size in between, which is what memory would
+    // grow by if any of it stayed there. Collected heaps still move by a few megabytes either way:
+    // half of what the file grew by tells the one from the other.
     expect(file.byteLength).toBeGreaterThan(8 * 1024 * 1024);
-    expect(late.editor - early.editor).toBeLessThan(4 * 1024 * 1024);
-    expect(late.compositor - early.compositor).toBeLessThan(4 * 1024 * 1024);
+    const grown = (file.byteLength * (to - from)) / 100;
+    expect(late.editor - early.editor).toBeLessThan(grown / 2);
+    expect(late.compositor - early.compositor).toBeLessThan(grown / 2);
   });
 });
 
@@ -1105,48 +1131,102 @@ const keptExports = (page: Page) =>
 
 const offer = (page: Page) => dialog(page).filter({ hasText: "有一个没完成的导出" });
 
+/** The frame of the last place to go on from that an export has on the disk, or -1. */
+const keptFrame = (page: Page) =>
+  page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("animaquill-exports");
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    if (!database.objectStoreNames.contains("exports")) return -1;
+    const request = database.transaction("exports").objectStore("exports").getAll();
+    const all = await new Promise<{ state: { progress: { frame: number } } }[]>((resolve) => {
+      request.addEventListener("success", () => resolve(request.result));
+    });
+    database.close();
+    return Math.max(-1, ...all.map(({ state }) => state.progress.frame));
+  });
+
+/**
+ * Keeps an export from getting further on the disk, as a disk that stopped answering would: a
+ * transaction that never ends holds up every write after it. Resolves to the frame of the last
+ * place to go on from, which is where it goes on from after the page is gone. Ends with the page.
+ */
+const holdKept = (page: Page) =>
+  page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("animaquill-exports");
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    const store = database.transaction(["exports", "pieces"], "readwrite").objectStore("exports");
+    return new Promise<number>((resolve) => {
+      const first = store.getAll();
+      first.addEventListener("success", () => {
+        const all = first.result as { state: { progress: { frame: number } } }[];
+        resolve(Math.max(-1, ...all.map(({ state }) => state.progress.frame)));
+        // A transaction with a request on its way does not end.
+        const again = () => store.count().addEventListener("success", again);
+        again();
+      });
+    });
+  });
+
 test.describe("an export after a reload", () => {
-  /** Forty seconds, which has places to go on from every ten, stopped somewhere after twenty. */
+  /**
+   * Forty seconds, which has places to go on from every ten, stopped after the one at twenty. It
+   * gets no further on the disk before the page goes, however fast this machine encodes: going by
+   * how far it says it is, a fast one got past thirty, or even to the end, before the page went.
+   */
   async function stopHalfway(page: Page, how: "reload" | "crash"): Promise<Page> {
+    const { page: again } = await stoppedAt(page, how);
+    return again;
+  }
+
+  async function stoppedAt(
+    page: Page,
+    how: "reload" | "crash",
+  ): Promise<{ readonly page: Page; readonly kept: number }> {
     await open(page, projectFolder(40, [movingSquare(40)]));
     await startExport(page);
-    await expect.poll(() => percentOf(page), { timeout: 30_000 }).toBeGreaterThanOrEqual(55);
+    await expect.poll(() => keptFrame(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(600);
+    const kept = await holdKept(page);
+    expect([600, 900]).toContain(kept);
     if (how === "reload") {
       // The page asks first, which people would answer.
       const asked = page.waitForEvent("dialog");
       page.once("dialog", (question) => void question.accept());
       await page.reload();
       expect((await asked).type()).toBe("beforeunload");
-      return page;
+      return { page, kept };
     }
     // A crash says nothing first.
     const address = page.url();
     const next = await page.context().newPage();
     await page.close({ runBeforeUnload: false });
     await next.goto(address);
-    return next;
+    return { page: next, kept };
   }
 
   test("goes on where it was, and the file is as one made in one go", async ({ page }) => {
     test.setTimeout(120_000);
-    const again = await stopHalfway(page, "reload");
-    await expect(offer(again)).toContainText("导到了第 600 / 1200 帧");
+    const { page: again, kept } = await stoppedAt(page, "reload");
+    await expect(offer(again)).toContainText(`导到了第 ${kept} / 1200 帧`);
     await offer(again).getByRole("button", { name: "继续导出" }).click();
-    // It goes on from twenty seconds, not from the start.
-    await expect.poll(() => percentOf(again)).toBeGreaterThanOrEqual(50);
+    // It goes on from where it was kept, not from the start.
+    await expect.poll(() => percentOf(again)).toBeGreaterThanOrEqual((kept / 1200) * 100);
     await exported(again);
     const file = (await savedFile(again)) as Buffer;
     const facts = await factsOf(file);
     expect(facts.frames).toBe(1200);
     expect(facts.duration).toBeCloseTo(40, 2);
     expect(await keptExports(again)).toEqual({ exports: 0, pieces: 0 });
-    for (const [index, time] of [
-      [299, "0:09/29"],
-      [599, "0:19/29"],
-      [600, "0:20/00"],
-      [1199, "0:39/29"],
-    ] as const) {
-      const still = await stillAt(again, time);
+    const at = (index: number) =>
+      `0:${String(Math.floor(index / 30)).padStart(2, "0")}/${String(index % 30).padStart(2, "0")}`;
+    // A frame on each side of where it went on, and others before and after.
+    for (const index of [299, kept - 1, kept, 1199]) {
+      const still = await stillAt(again, at(index));
       const { psnr, video, still: expected } = await compare(again, file, index, still);
       console.log(`after a reload, frame ${index}: ${psnr.toFixed(1)} dB, ${video} / ${expected}`);
       expect(psnr).toBeGreaterThan(35);
