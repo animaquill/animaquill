@@ -1450,3 +1450,25 @@ describe("what clips hold for their scenes", () => {
     });
   });
 });
+
+describe("a join that comes while a scene plays", () => {
+  it("starts the scene early by as much as the join has it show", () => {
+    const { scenes, hosts } = setup();
+    const before = planOf(layer("a", { offset: 2 }));
+    scenes.handle(CONTENT);
+    scenes.follow(before, 8.6);
+    scenes.handle({ type: "play", seconds: 8.6, at: 1000, rate: 1, jump: true });
+    // Its clip starts at 10, where its clock reads 2 s: frame 60, 1.4 s from now.
+    expect(hosts[0]?.plays).toHaveLength(1);
+    expect(hosts[0]?.plays[0]?.frame).toBe(60);
+    expect(hosts[0]?.plays[0]?.at).toBeCloseTo(2400, 6);
+    // A join is put on its start while it plays: it shows from 9 on, on its own clock.
+    const after = planOf(layer("a", { offset: 2, shows: { from: 9, to: 20 } }));
+    scenes.follow(after, 8.7);
+    // Its clock reads 1 s at 9 s on the timeline: frame 30, 0.4 s after the time base.
+    expect(hosts[0]?.plays).toHaveLength(2);
+    expect(hosts[0]?.plays[1]?.frame).toBe(30);
+    expect(hosts[0]?.plays[1]?.at).toBeCloseTo(1400, 6);
+    expect(hosts[0]?.plays[1]?.rate).toBe(1);
+  });
+});

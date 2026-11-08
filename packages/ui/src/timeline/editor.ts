@@ -23,6 +23,7 @@ import {
   type ClipState,
   type CommandCall,
   type ProjectStore,
+  type WholeJoin,
 } from "@animaquill/core";
 import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
@@ -44,6 +45,7 @@ import {
   TrimGesture,
   copiedJoins,
   copiesOf,
+  joinsAmong,
   cutAt,
   freeShift,
   longestTransition,
@@ -332,6 +334,8 @@ export class TimelineEditor implements TouchTarget {
   };
   /** What was copied, in this window. */
   #clipboard: readonly ClipState[] = [];
+  /** The joins between clips on the clipboard, as they were when they got copied. */
+  #clipboardJoins: readonly WholeJoin[] = [];
   #store: ProjectStore | undefined;
   #stopStore: (() => void) | undefined;
   #gesture: Gesture | undefined;
@@ -710,6 +714,7 @@ export class TimelineEditor implements TouchTarget {
       cut: new Set(),
     };
     this.#clipboard = [];
+    this.#clipboardJoins = [];
     this.#beforeFit = undefined;
     this.pause();
     this.#refresh();
@@ -1036,6 +1041,12 @@ export class TimelineEditor implements TouchTarget {
     const boxes = [...clips].flatMap((id) => model?.boxes.get(id) ?? []);
     if (boxes.length === 0) return;
     this.#clipboard = boxes.map(({ clip }) => clip);
+    this.#clipboardJoins = model
+      ? joinsAmong(
+          model,
+          this.#clipboard.map(({ id }) => id),
+        )
+      : [];
     this.#setCut(new Set());
     this.#copied.emit();
   }
@@ -1044,6 +1055,7 @@ export class TimelineEditor implements TouchTarget {
   forgetClipboard(): void {
     if (this.#clipboard.length === 0 && this.#snapshot.cut.size === 0) return;
     this.#clipboard = [];
+    this.#clipboardJoins = [];
     this.#setCut(new Set());
   }
 
@@ -1059,6 +1071,7 @@ export class TimelineEditor implements TouchTarget {
   cancelCut(): boolean {
     if (this.#snapshot.cut.size === 0) return false;
     this.#clipboard = [];
+    this.#clipboardJoins = [];
     this.#setCut(new Set());
     return true;
   }
@@ -1127,7 +1140,7 @@ export class TimelineEditor implements TouchTarget {
         : [];
     // Joins between what was copied come along, which is how cutting and pasting moves them too.
     const originals = this.#clipboard.map(({ id }) => id);
-    const joins = copiedJoins(model, originals, copies);
+    const joins = copiedJoins(model.id, this.#clipboardJoins, originals, copies);
     if (!this.#run([...removal, ...trackCalls, ...calls, ...joins])) return;
     this.#setCut(new Set());
     this.#select(new Set(copies.map(({ id }) => id)));

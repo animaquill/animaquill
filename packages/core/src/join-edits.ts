@@ -61,6 +61,14 @@ export const JoinAdd = TransitionShape.extend({
   duration: Duration.optional(),
   /** Without it the editor picks by what the clips have past the cut. */
   align: Align.optional(),
+  /**
+   * It is a copy of a join that was there, which comes along with copies of its clips: it comes as
+   * it was, also when this editor does not do it yet, and gets shorter where it does not fit, as
+   * copied transitions at the edges of clips do. Where there is no room for it at all, or the cut
+   * has a join already, it stays out instead of stopping everything else. Only for what people
+   * paste, see `userOnlyParams`.
+   */
+  copied: z.boolean().optional(),
 });
 
 /**
@@ -99,9 +107,14 @@ function checked(join: Record<string, unknown>): JoinTransition {
   return transition;
 }
 
+/** Only video and audio tracks have joins. */
+function checkTrack(track: TrackState): void {
+  if (track.kind === "caption") fail("wrong-track", "字幕轨道不能放衔接转场");
+}
+
 /** A join that comes to a cut has to be one that this editor does there, so that it does it. */
 function checkDone(track: TrackState, transition: JoinTransition): void {
-  if (track.kind === "caption") fail("wrong-track", "字幕轨道不能放衔接转场");
+  checkTrack(track);
   const media = mediaOfTrack(track.kind);
   const found = findTransition(transition, media, "join");
   if (found.kind === "missing") fail("transition-missing", describeMissing(found.why));
@@ -152,13 +165,14 @@ function checkFits(
 }
 
 export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
-  const { timeline, id: wanted, from, to, duration, align, ...reference } = params;
+  const { timeline, id: wanted, from, to, duration, align, copied, ...reference } = params;
   const target = timelineOf(draft, timeline);
   const { before, after } = cutBetween(target, from, to);
   const track =
     editableTrack(target, before.track) ?? fail("not-found", `没有这条轨道：${before.track}`);
   const taken = joinOnCut(target, before, after);
   if (taken !== undefined) {
+    if (copied) return { left: "taken" as const };
     fail("join-taken", `这个剪切点已经有衔接转场了：${taken}，要换成别的用 join.update`);
   }
   const id = wanted ?? newId("join");
@@ -166,11 +180,14 @@ export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
   const joined = joinedEndsOf(target);
   let length = duration === undefined ? defaultLength(track, reference) : parseTime(duration);
   const place = align ?? chooseAlign(draft.state, before, after, length);
-  if (duration === undefined) {
+  if (duration === undefined || copied) {
     // What it says it takes, or as much as there is room for.
     const longest = longestJoin(joined, before, after, place);
     if (compare(length, longest) > 0) length = longest;
-    if (compare(length, ZERO) <= 0) fail("transition-too-long", "这个剪切点两边没有地方放衔接转场");
+    if (compare(length, ZERO) <= 0) {
+      if (copied) return { left: "no-room" as const };
+      fail("transition-too-long", "这个剪切点两边没有地方放衔接转场");
+    }
   }
   const transition = checked({
     id,
@@ -180,7 +197,9 @@ export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
     duration: formatTime(length),
     ...(place === "center" ? {} : { align: place }),
   });
-  checkDone(track, transition);
+  // A copy is what it was, also what this editor cannot do yet, which the problems then tell.
+  if (copied) checkTrack(track);
+  else checkDone(track, transition);
   checkFits(joined, before, after, length, place);
   draft.set(joinPath(timeline, id), { track: track.id, from, to, transition });
   return { id, align: place };

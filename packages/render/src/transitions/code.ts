@@ -51,6 +51,12 @@ export interface TransitionHost {
   readonly canvas: OffscreenCanvas;
   /** What draws a frame. When it returns, the canvas is the frame. The last one said counts. */
   render(draw: (frame: TransitionFrame) => void): void;
+  /**
+   * A clear canvas of this size for steps in between, while a frame gets drawn: it goes back when
+   * the frame is done, and its memory goes once frames stop taking it for a while. Code that keeps
+   * canvases of its own keeps their memory as long as it runs.
+   */
+  scratch(width: number, height: number): OffscreenCanvas;
 }
 
 /** The code of a transition, which runs once with `aq`, like the top of a module. */

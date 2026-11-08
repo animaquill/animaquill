@@ -170,6 +170,44 @@ describe("a join that is put on a cut", () => {
   });
 });
 
+describe("a copy of a join that comes with copies of its clips", () => {
+  it("comes as it was, shorter where it does not fit, and stays out where nothing fits", () => {
+    const { run, joinOf, main } = project((video) => {
+      video.clips[1].exit = { type: "fade", duration: "2" };
+    });
+    const copied = { copied: true, align: "center" };
+    // Two seconds in the middle want a second of b, whose exit takes all of it.
+    const none = success(
+      run("join.add", { from: "a", to: "b", type: "fade", duration: "2", ...copied }),
+    );
+    expect(none.results).toEqual([{ left: "no-room" }]);
+    expect(main()).not.toHaveProperty("joins");
+    // At the end of b it wins over that exit: two seconds on each side of the cut are all there is.
+    const result = success(
+      run("join.add", { id: "j", from: "b", to: "c", type: "fade", duration: "6", ...copied }),
+    );
+    expect(result.results).toEqual([{ id: "j", align: "center" }]);
+    expect(joinOf("j")?.transition).toEqual({ type: "fade", duration: "4" });
+  });
+
+  it("gets shorter to what its clips leave, also this editor does not do", () => {
+    const { run, joinOf } = project();
+    const params = { from: "b", to: "c", type: "plugin.star", duration: "6", copied: true };
+    const result = success(run("join.add", { id: "j", ...params, align: "after" }));
+    expect(result.results).toEqual([{ id: "j", align: "after" }]);
+    expect(joinOf("j")?.transition).toEqual({ type: "plugin.star", duration: "2", align: "after" });
+    // On a cut that has one already it stays out, instead of stopping the rest.
+    const again = success(run("join.add", { id: "k", ...params, type: "fade" }));
+    expect(again.results).toEqual([{ left: "taken" }]);
+  });
+
+  it("is only for people, never for AI", () => {
+    const { run } = project();
+    const params = { from: "b", to: "c", type: "fade", copied: true };
+    expect(failure(run("join.add", params, { origin: aiTask("t") })).code).toBe("user-only");
+  });
+});
+
 describe("where a join goes around its cut when nobody says", () => {
   /** A clip of the video file before a color, or after it, with its file around it as it says. */
   const around = (offset: string, duration: string, before: boolean) =>
@@ -408,6 +446,21 @@ describe("a join whose clips change", () => {
     expect(joinOf("j")?.transition?.duration).toBe("0.5");
     success(run("clip.update", { clip: "a", changes: { start: "0" } }));
     expect(joinOf("j")).toBeDefined();
+  });
+
+  it("at an end of a clip that stays gets no longer than what is left of it", () => {
+    for (const how of ["clip.trim", "clip.update"] as const) {
+      const { run, joinOf, main } = project((video) => {
+        video.clips[1].duration = "3";
+        video.clips[2].start = "5";
+        video.joins = [{ id: "j", from: "b", to: "c", type: "fade", duration: "2" }];
+      });
+      // b keeps its end at the cut and gets half a second long: so does the half of j in it.
+      if (how === "clip.trim") success(run("clip.trim", { clip: "b", start: "4.5", end: "5" }));
+      else success(run("clip.update", { clip: "b", changes: { start: "4.5", duration: "0.5" } }));
+      expect(main()?.clips["b"]?.start, how).toBe("4.5");
+      expect(joinOf("j")?.transition?.duration, how).toBe("1");
+    }
   });
 
   it("keeps room for an exit at the other end, which gets shorter first", () => {

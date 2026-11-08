@@ -1480,6 +1480,67 @@ describe("joins", () => {
     void video;
   });
 
+  it("are pasted as they were copied, also when their clips went away since", async () => {
+    const { editor, main, store, addClip, video } = await setup();
+    addClip("a", 2, 3, video);
+    addClip("b", 5, 3, video);
+    store.execute({
+      type: "join.add",
+      params: { timeline: "main", id: "j", from: "a", to: "b", type: "wipe", variant: "up" },
+    });
+    editor.selectOnly("a");
+    editor.addToSelection("b");
+    editor.copySelection();
+    // Later changes are not what was copied, and nor is the join going with its clips.
+    store.execute({
+      type: "join.update",
+      params: { timeline: "main", join: "j", changes: { type: "fade", variant: null } },
+    });
+    store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["a", "b"] } });
+    expect(main()).not.toHaveProperty("joins");
+    editor.seekToEnd();
+    editor.paste();
+    const pasted = Object.values(main().joins ?? {});
+    expect(pasted).toHaveLength(1);
+    expect(pasted[0]?.transition).toEqual({ type: "wipe", variant: "up", duration: "0.5" });
+    const [from, to] = [pasted[0]?.from as string, pasted[0]?.to as string];
+    // At the end of the timeline, next to each other as they were.
+    expect(main().clips[from]?.start).toBe("10");
+    expect(main().clips[to]?.start).toBe("13");
+  });
+
+  it("are pasted shorter where their copies leave less room, and never stop the paste", async () => {
+    const { editor, main, store, addClip, video, commandFailed } = await setup();
+    addClip("z", 0, 2, video);
+    // a comes in over 1.5 s, which does nothing while the join from z is at its start.
+    addClip("a", 2, 2, video, { enter: { type: "fade", duration: "1.5" } });
+    addClip("b", 4, 2, video);
+    const run = (type: string, params: object) => {
+      const result = store.execute({ type, params: { timeline: "main", ...params } });
+      if (!result.ok) throw new Error(result.error.message);
+    };
+    run("join.add", {
+      id: "j0",
+      from: "z",
+      to: "a",
+      type: "fade",
+      duration: "0.2",
+      align: "after",
+    });
+    run("join.add", { id: "j1", from: "a", to: "b", type: "fade", duration: "2" });
+    editor.selectOnly("a");
+    editor.addToSelection("b");
+    editor.copySelection();
+    editor.seekToEnd();
+    editor.paste();
+    expect(commandFailed).not.toHaveBeenCalled();
+    expect(Object.keys(main().clips)).toHaveLength(5);
+    const copy = Object.entries(main().joins ?? {}).find(([id]) => id !== "j0" && id !== "j1");
+    // Without the join at its start, the copy of a comes in over 1.5 s of its 2: half a second is
+    // left for the half of the join before the cut, which stays in the middle of it.
+    expect(copy?.[1].transition).toEqual({ type: "fade", duration: "1" });
+  });
+
   it("put another transition at an edge of a clip in place of the one there", async () => {
     const { editor, main, addClip, video } = await setup();
     addClip("a", 2, 4, video, { enter: { type: "fade", duration: "1", curve: [0.42, 0, 1, 1] } });

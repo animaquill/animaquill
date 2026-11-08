@@ -206,6 +206,54 @@ test.describe("a dissolve", () => {
     await differences(page, easing, 2, [[...MIDDLE, mix(RED, GREEN, done)]]);
   });
 
+  test("with nothing but black under it is the same drawn straight onto the picture", async ({
+    page,
+  }) => {
+    // Something see-through in a box, and a box of another size, which leaves the corners out.
+    const SEE_THROUGH = 192 / 255;
+    const layers = [
+      color("a", 0, 2, "#ff8000c0", half),
+      color("b", 2, 4, "#2060ff", { channels: { "transform.scale": still(0.75) } }),
+    ];
+    const dissolve = join("a", "b", 1, 3, "fade");
+    const straight = planOf(layers, [dissolve]);
+    // With a black layer under it, its sum goes onto the picture as one picture of its own.
+    const over = planOf([color("below", 0, 4, "#000000"), ...layers], [dissolve]);
+    const white = planOf([color("white", 0, 4, "#ffffff")]);
+    const keep = async () =>
+      (await findCompositor(page))?.evaluate(() => {
+        const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+        const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height);
+        Object.assign(window, { kept: data?.data });
+      });
+    const furthest = async () =>
+      (await findCompositor(page))?.evaluate(() => {
+        const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+        const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height);
+        const kept = (window as unknown as { kept?: Uint8ClampedArray }).kept;
+        if (!data || kept?.length !== data.data.length) return Number.POSITIVE_INFINITY;
+        let most = 0;
+        for (let at = 0; at < kept.length; at += 1) {
+          most = Math.max(most, Math.abs((kept[at] ?? 0) - (data.data[at] ?? 0)));
+        }
+        return most;
+      });
+    for (const seconds of [1.137, 2, 2.811]) {
+      const progress = (seconds - 1) / 2;
+      const middle = mix([255 * SEE_THROUGH, 128 * SEE_THROUGH, 0], [32, 96, 255], progress);
+      const wanted: [number, number, Color][] = [
+        [...MIDDLE, middle],
+        [...CORNER, BLACK],
+      ];
+      await differences(page, straight, seconds, wanted);
+      await keep();
+      // Something else in between, so that what comes next is a frame of its own.
+      await differences(page, white, seconds, [[...MIDDLE, WHITE]]);
+      await differences(page, over, seconds, wanted);
+      expect(await furthest(), `at ${seconds}`).toBeLessThanOrEqual(1);
+    }
+  });
+
   test("of a side with nothing in it is the fade that the quick way draws", async ({ page }) => {
     // A fade in, which the compositor draws by opacity, and the same through the code of a join.
     const quick = planOf([
@@ -300,6 +348,112 @@ test.describe("built-in transitions", () => {
     const x = Math.floor(edge - 3.6);
     const shown = (edge - (x + 0.5)) / 7.2;
     await differences(page, plan, 2, [[x, HEIGHT / 2, mix(RED, GREEN, shown)]], 4);
+  });
+
+  test("wipe the same as across the whole picture, only working on the band of the edge", async ({
+    page,
+  }) => {
+    /** A row or a column of the picture across the edge, as the compositor drew it. */
+    const line = async (across: boolean) => {
+      const frame = await findCompositor(page);
+      return frame?.evaluate((horizontal) => {
+        const canvas = document.querySelector("canvas");
+        const context = canvas?.getContext("2d");
+        if (!canvas || !context) return [];
+        const data = horizontal
+          ? context.getImageData(0, canvas.height / 2, canvas.width, 1).data
+          : context.getImageData(canvas.width / 2, 0, 1, canvas.height).data;
+        return [...data];
+      }, across);
+    };
+    /** The same row or column of the wipe this one replaced, which drew on the whole picture. */
+    const before = (progress: number, direction: readonly number[]) =>
+      page.evaluate(
+        ({ width, height, progress: p, direction: [x = 0, y = 0] }) => {
+          const fill = (paint: string) => {
+            const canvas = new OffscreenCanvas(width, height);
+            const context = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+            context.fillStyle = paint;
+            context.fillRect(0, 0, width, height);
+            return canvas;
+          };
+          const [from, to] = [fill("#ff0000"), fill("#00ff00")];
+          const canvas = new OffscreenCanvas(width, height);
+          const context = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+          const after = new OffscreenCanvas(width, height);
+          const cut = after.getContext("2d") as OffscreenCanvasRenderingContext2D;
+          const across = Math.abs(x) >= Math.abs(y);
+          const length = across ? width : height;
+          const soft = Math.max(0.02 * Math.min(width, height), 0.5);
+          const edge = p * (length + soft);
+          const forwards = across ? x > 0 : y > 0;
+          const along = (away: number) => (forwards ? away : length - away);
+          const full = along(edge - soft);
+          const none = along(edge);
+          const keep = (target: OffscreenCanvasRenderingContext2D, operation: string) => {
+            const gradient = across
+              ? target.createLinearGradient(full, 0, none, 0)
+              : target.createLinearGradient(0, full, 0, none);
+            gradient.addColorStop(0, "#000000ff");
+            gradient.addColorStop(1, "#00000000");
+            target.globalCompositeOperation = operation as GlobalCompositeOperation;
+            target.fillStyle = gradient;
+            target.fillRect(0, 0, width, height);
+          };
+          context.drawImage(from, 0, 0);
+          keep(context, "destination-out");
+          cut.drawImage(to, 0, 0);
+          keep(cut, "destination-in");
+          context.globalCompositeOperation = "lighter";
+          context.drawImage(after, 0, 0);
+          // Onto the black behind everything, as the compositor puts it.
+          const shown = new OffscreenCanvas(width, height);
+          const picture = shown.getContext("2d") as OffscreenCanvasRenderingContext2D;
+          picture.fillStyle = "#000000";
+          picture.fillRect(0, 0, width, height);
+          picture.drawImage(canvas, 0, 0);
+          const data = across
+            ? picture.getImageData(0, height / 2, width, 1).data
+            : picture.getImageData(width / 2, 0, 1, height).data;
+          return [...data];
+        },
+        { width: WIDTH, height: HEIGHT, progress, direction },
+      );
+    for (const [variant, direction] of [
+      ["right", [1, 0]],
+      ["left", [-1, 0]],
+      ["up", [0, -1]],
+    ] as const) {
+      for (const progress of [0.137, 0.5, 0.811]) {
+        const plan = planOf(
+          [color("a", 0, 2, "#ff0000"), color("b", 2, 4, "#00ff00")],
+          [
+            join("a", "b", 1, 3, "wipe", {
+              how: {
+                kind: "built-in",
+                type: "wipe",
+                variant,
+                values: { softness: 0.02, direction: [...direction] },
+              },
+            }),
+          ],
+        );
+        const seconds = 1 + 2 * progress;
+        const wanted = await before(progress, direction);
+        await show(page, plan, seconds);
+        let worst = Number.POSITIVE_INFINITY;
+        await expect
+          .poll(async () => {
+            const found = (await line(direction[0] !== 0)) ?? [];
+            worst =
+              found.length === wanted.length
+                ? Math.max(...found.map((value, at) => Math.abs(value - (wanted[at] ?? 0))))
+                : Number.POSITIVE_INFINITY;
+            return worst;
+          }, `${variant} at ${progress}`)
+          .toBeLessThanOrEqual(1);
+      }
+    }
   });
 
   test("push the side before out with the side after, and overshoot where the curve does", async ({

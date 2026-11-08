@@ -313,7 +313,7 @@ export function fitTransitions(
 }
 
 /** The joins in effect at the edges of a clip, by the edge they win over. */
-function joinsAtEdgesOf(timeline: TimelineState, clip: string): JoinedEdges {
+export function joinsAtEdgesOf(timeline: TimelineState, clip: string): JoinedEdges {
   const joined: { enter?: WholeJoin; exit?: WholeJoin } = {};
   for (const { join, place } of placedJoins(timeline).values()) {
     if (place.kind !== "cut") continue;

@@ -36,6 +36,7 @@ import {
   fitTransitions,
   followJoins,
   joinPath,
+  joinsAtEdgesOf,
   joinsTogether,
   removeClips,
   spanOf,
@@ -49,7 +50,7 @@ import {
 } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
 import { JoinAdd, JoinRemove, JoinUpdate, addJoin, removeJoins, updateJoin } from "./join-edits.ts";
-import { joinedEndsOf, placedJoins, takenAt, type JoinedEnds } from "./joins.ts";
+import { joinedEndsOf, takenAt, type JoinedEnds } from "./joins.ts";
 import {
   clipEnd,
   clipOffset,
@@ -683,20 +684,18 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const moves = changes.start !== undefined || changes.duration !== undefined;
       if (moves) assertFree(target, current.track, [spanOf(updated)], new Set([clip]));
       const together = moves ? joinsTogether(target) : [];
-      // A join at the start stays where the start stays.
-      const stays: JoinedEdges = {};
-      if (
-        changes.start === undefined ||
-        compare(parseTime(changes.start), clipStart(current)) === 0
-      ) {
-        const join = [...placedJoins(target).values()].find(
-          ({ join: { to }, place }) => to === clip && place.kind === "cut",
-        );
-        if (join) stays.enter = join.join;
-      }
+      // A join at an edge that stays where it is stays too, and has to fit what is left.
+      const startStays = compare(clipStart(updated), clipStart(current)) === 0;
+      const endStays = compare(clipEnd(updated), clipEnd(current)) === 0;
+      const { enter, exit } = joinsAtEdgesOf(target, clip);
+      const stays: JoinedEdges = {
+        ...(startStays && enter && { enter }),
+        ...(endStays && exit && { exit }),
+      };
       draft.replace(clipPath(timeline, clip), next);
       if (changes.duration !== undefined) {
-        fitTransitions(draft, timeline, updated, parseTime(updated.duration), "end", stays);
+        const moved = startStays ? "end" : "start";
+        fitTransitions(draft, timeline, updated, parseTime(updated.duration), moved, stays);
       }
       if (!moves) return undefined;
       extendToFit(draft, timeline, clipEnd(updated));
@@ -748,7 +747,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   ),
 
   /** Puts a join on the cut between two clips, see join-edits.ts. */
-  define("join.add", JoinAdd, addJoin),
+  define("join.add", JoinAdd, addJoin, { userOnlyParams: ["copied"] }),
   define("join.update", JoinUpdate, updateJoin),
   define("join.remove", JoinRemove, removeJoins),
 

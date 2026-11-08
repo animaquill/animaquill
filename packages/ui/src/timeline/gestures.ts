@@ -6,6 +6,7 @@ import {
   takenAt,
   type ClipState,
   type CommandCall,
+  type WholeJoin,
 } from "@animaquill/core";
 import {
   ZERO,
@@ -326,7 +327,8 @@ export class MoveGesture implements Gesture {
       return { type: "clip.add", params: { timeline, track, clip, ...this.#overlap() } };
     });
     const originals = this.#moving.map(({ box }) => box.id);
-    const joins = copiedJoins(this.#host.model, originals, copies);
+    const { model } = this.#host;
+    const joins = copiedJoins(model.id, joinsAmong(model, originals), originals, copies);
     if (this.#host.run([...calls, ...joins])) {
       this.#host.select(new Set(copies.map(({ id }) => id)));
     }
@@ -1067,22 +1069,36 @@ export class EndGesture implements Gesture {
 export type ClipCopy = Omit<ClipState, "track">;
 
 /**
+ * The joins on the cuts between clips of a timeline that are all in a set, as they are: what comes
+ * along when those clips get copied. One that another join keeps from its cut does nothing, and
+ * stays behind.
+ */
+export function joinsAmong(model: TimelineModel, clips: Iterable<string>): readonly WholeJoin[] {
+  const among = new Set(clips);
+  return [...model.joins.values()].flatMap(({ join, trouble }) =>
+    trouble !== "taken" && among.has(join.from) && among.has(join.to) ? [join] : [],
+  );
+}
+
+/**
  * The joins between clips that get copied together, for their copies, which keep where they are
- * to each other: each goes along with a new id, as long as this editor does it. Others stay.
+ * to each other: each goes along with a new id, as it was. Where it does not fit, it gets shorter,
+ * see `copied` of `join.add`, so that it never stops the copies from coming.
  */
 export function copiedJoins(
-  model: TimelineModel,
+  timeline: string,
+  joins: readonly WholeJoin[],
   clips: readonly string[],
   copies: readonly { readonly id: string }[],
 ): readonly CommandCall[] {
   const copyOf = new Map(clips.map((id, index) => [id, copies[index]?.id]));
-  return [...model.joins.values()].flatMap(({ join, trouble }) => {
+  return joins.flatMap((join) => {
     const from = copyOf.get(join.from);
     const to = copyOf.get(join.to);
-    if (from === undefined || to === undefined || trouble !== undefined) return [];
+    if (from === undefined || to === undefined) return [];
     const { align, ...transition } = join.transition;
-    const params = { timeline: model.id, from, to, ...transition, align: align ?? "center" };
-    return [{ type: "join.add", params }];
+    const where = { align: align ?? "center", copied: true };
+    return [{ type: "join.add", params: { timeline, from, to, ...transition, ...where } }];
   });
 }
 

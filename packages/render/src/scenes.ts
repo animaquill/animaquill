@@ -542,7 +542,11 @@ export class SceneLayers {
   #keepUp(layer: RenderLayer & { source: SceneSource }, plan: RenderPlan): void {
     const entry = this.#entryOf(layer);
     const wasGoing = entry.stopLingering !== undefined;
-    const moved = entry.layer.start !== layer.start || entry.layer.offset !== layer.offset;
+    // A join that comes or goes moves where it starts to show, without moving its clip.
+    const moved =
+      entry.layer.start !== layer.start ||
+      entry.layer.offset !== layer.offset ||
+      rangeOf(entry.layer).start !== rangeOf(layer).start;
     entry.stopLingering?.();
     entry.stopLingering = undefined;
     entry.layer = layer;
