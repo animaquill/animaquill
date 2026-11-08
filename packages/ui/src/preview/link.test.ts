@@ -841,6 +841,7 @@ describe("where the objects of a scene are", () => {
       objects: [{ id: "arm", properties: [{ path: "x", type: "number" as const }] }],
       elements: [],
       complete: true,
+      params: {},
     };
     expect(handles.of("c", "r1", 4, registration)).toEqual([]);
     const { hello, fromCompositor } = setup(undefined, { handles });

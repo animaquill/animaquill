@@ -16,6 +16,7 @@ import {
   objectPath,
   objectsOf,
   opacityAt,
+  paramTextOf,
   placementOf,
   sample,
   sceneFrameOf,
@@ -37,6 +38,7 @@ import {
   type Registration,
   type RenderLayer,
   type RenderPlan,
+  type SceneRegistry,
 } from "@animaquill/core";
 import {
   add,
@@ -140,8 +142,7 @@ export interface OverlaySources {
   readonly trials: TrialSession;
   readonly quality: { getSnapshot(): QualitySnapshot; subscribe(listener: () => void): () => void };
   readonly handles: SceneHandles;
-  readonly registrations: {
-    registrationOf(revision: string): Registration | undefined;
+  readonly registrations: SceneRegistry & {
     subscribe(listener: () => void): () => void;
     getVersion(): number;
   };
@@ -756,7 +757,11 @@ export class OverlayEditor {
     const { source } = layer;
     if (source.kind !== "scene") return;
     const { handles, registrations, describe } = this.#sources;
-    const registration = registrations.registrationOf(source.revision);
+    // What the scene registered with the parameters of this clip, as far as that is known.
+    const found = registrations.registrationOf(source.revision, (path) =>
+      paramTextOf(box.clip, path),
+    );
+    const registration = found?.registration;
     const sceneFrame = sceneFrameOf(clockOf(layer, frame.seconds), frame.plan.scenes.fps);
     const settled = frame.settled.get(layer.id) ?? layer;
     const view = sceneViewOf(settled, frame.plan.stage);

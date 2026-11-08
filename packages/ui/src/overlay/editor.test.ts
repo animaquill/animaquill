@@ -2,6 +2,8 @@ import {
   describeClip,
   orderedTracks,
   sceneSourceOf,
+  type ClipDescription,
+  type ClipState,
   type PropertyEdit,
   type Registration,
 } from "@animaquill/core";
@@ -33,6 +35,8 @@ async function setup({
   trying = false,
   viewport = { width: 960, height: 540 } as Size,
   shown = HD as Size,
+  /** Stands in for what describes clips, for what it would get wrong. */
+  describing = undefined as ((clip: ClipState) => ClipDescription | undefined) | undefined,
 } = {}) {
   const session = new ProjectSession(new MemoryLibrary(), memoryAddress(), {
     createFailed: vi.fn(),
@@ -93,7 +97,7 @@ async function setup({
   let registration: Registration | undefined;
   const gone = vi.fn();
   const registrations = {
-    registrationOf: () => registration,
+    registrationOf: () => registration && { registration, exact: true },
     subscribe: () => () => {},
     getVersion: () => 0,
   };
@@ -105,7 +109,7 @@ async function setup({
     quality: sizes,
     handles,
     registrations,
-    describe: (clip) => describeClip(store.getState(), clip, registrations),
+    describe: describing ?? ((clip) => describeClip(store.getState(), clip, registrations)),
     messages: { gone },
   });
   overlay.setViewport(viewport.width, viewport.height);
@@ -545,6 +549,7 @@ const ARM: Registration = {
   ],
   elements: [],
   complete: true,
+  params: {},
 };
 
 async function withScene() {
@@ -850,8 +855,18 @@ describe("a path of many keys", () => {
 });
 
 describe("handles that reach another object by an older name", () => {
-  it("are not there, and write nothing", async () => {
-    const context = await setup();
+  const ARM_AND_LEG: Registration = {
+    objects: [
+      { id: "arm", aliases: ["leg"], properties: [{ path: "x", type: "number", default: 0 }] },
+      { id: "leg", properties: [{ path: "x", type: "number", default: 0 }] },
+    ],
+    elements: [],
+    complete: true,
+    params: {},
+  };
+
+  async function armAndLeg(describing?: (clip: ClipState) => ClipDescription | undefined) {
+    const context = await setup(describing ? { describing } : {});
     context.run("scene.add", {
       id: "s",
       scene: { name: "场景", entry: "index.html", runtime: 1 },
@@ -859,19 +874,34 @@ describe("handles that reach another object by an older name", () => {
     });
     context.addClip("c", {}, { kind: "scene", scene: "s" });
     context.edit({ owner: { clip: "c" }, path: "object.leg.x", op: "set", value: 7 });
-    context.setRegistration({
-      objects: [
-        { id: "arm", aliases: ["leg"], properties: [{ path: "x", type: "number", default: 0 }] },
-        { id: "leg", properties: [{ path: "x", type: "number", default: 0 }] },
-      ],
-      elements: [],
-      complete: true,
-    });
+    context.setRegistration(ARM_AND_LEG);
     const revision = sceneSourceOf(context.store.getState(), "s")?.revision as string;
     context.overlay.getSnapshot();
     context.handles.note("c", revision, 0, [
       { object: "arm", handles: [{ kind: "move", id: "m", at: [0, 0], bind: { x: "x" } }] },
     ]);
+    return context;
+  }
+
+  it("write their own object, since an older name that is another object counts for nothing", async () => {
+    const context = await armAndLeg();
+    context.drag(context.pointer(480, 270), context.pointer(520, 270));
+    expect(context.property("c", "object.arm.x")).toBe(80);
+    expect(context.property("c", "object.leg.x")).toBe(7);
+  });
+
+  it("are not there where what describes the clip says it is another object's", async () => {
+    // As if the older name counted: the property of the arm would be where the leg has its own.
+    const wrong: ClipDescription = {
+      objects: [
+        {
+          id: "object.arm",
+          properties: [{ path: "object.leg.x", type: "number", default: 0 }],
+        },
+      ],
+      ran: "complete",
+    };
+    const context = await armAndLeg((clip) => (clip.source.kind === "scene" ? wrong : undefined));
     expect(context.grips().filter(({ role }) => role === "object")).toEqual([]);
     context.drag(context.pointer(480, 270), context.pointer(520, 270));
     expect(context.property("c", "object.leg.x")).toBe(7);

@@ -6,6 +6,7 @@ const registration: Registration = {
   objects: [{ id: "arm", properties: [{ path: "x", type: "number", default: 0 }] }],
   elements: [],
   complete: true,
+  params: {},
 };
 
 const move = { kind: "move", id: "m", at: [1, 2], bind: { x: "x" } };
