@@ -1,6 +1,7 @@
 import { chromeRefuses, isRefusedByChrome } from "./chrome-names.ts";
-import { memoryRecordStore } from "./folder-records.ts";
+import { memoryBases, memoryBaseStore, memoryRecordStore } from "./folder-records.ts";
 import type { WatchTiming } from "./folder-watch.ts";
+import { MemoryWriters, type WriterPage } from "./folder-writer.ts";
 import type {
   ChangeRecordLike,
   CreateWritableOptions,
@@ -162,6 +163,10 @@ class DiskState {
   readonly failures = new Map<string, Required<WriteFailure>>();
   /** What tests put in between the steps of a page, by step and path. */
   readonly hooks = new Map<string, (() => void)[]>();
+  /** What pages keep about the files of folders, which outlives them, as a database does. */
+  readonly bases = memoryBases();
+  /** Which page writes which folder. */
+  readonly turns = new MemoryWriters();
   /** Which life of the browser this is: one ends when it crashes, and so do all its pages. */
   life = 0;
   missesChanges = false;
@@ -753,6 +758,8 @@ export class MemoryDisk {
   readonly #front = new Set<() => void>();
   #chosen: string | undefined;
   readonly #Observer: ObserverConstructor;
+  /** The pages of the folders that `folders` gave. */
+  readonly #pages = new WeakMap<LocalFolders, WriterPage>();
 
   constructor({ system = "windows", depth = 40 }: MemoryDiskOptions = {}) {
     const state = new DiskState(system, depth);
@@ -999,7 +1006,28 @@ export class MemoryDisk {
     }
     state.writers.clear();
     state.observations.clear();
-    if (!pageGoesOn) state.life += 1;
+    if (pageGoesOn) return;
+    state.life += 1;
+    // The pages went with it, and so did their turns to write folders.
+    state.turns.sweep();
+  }
+
+  /** Folders as a new page of the browser has them. */
+  folders(timing?: Partial<WatchTiming>): LocalFolders {
+    const page = this.#newPage();
+    const folders = createLocalFolders(this.#environmentOf(page, timing));
+    this.#pages.set(folders, page);
+    return folders;
+  }
+
+  /**
+   * Puts the page of these folders to sleep, as a browser does with a window that was out of sight
+   * for long, or wakes it up. Asleep it holds on to its turns to write and answers nobody.
+   */
+  sleep(folders: LocalFolders, asleep = true): void {
+    const page = this.#pages.get(folders);
+    if (!page) throw new Error("These folders are not of this disk");
+    page.asleep = asleep;
   }
 
   /** People come back to the window. */
@@ -1008,8 +1036,20 @@ export class MemoryDisk {
     for (const listener of this.#front) listener();
   }
 
-  /** What `createLocalFolders` needs, on this disk. */
+  /** What `createLocalFolders` needs, on this disk, for a page of its own. */
   environment(timing?: Partial<WatchTiming>): LocalFoldersEnvironment {
+    return this.#environmentOf(this.#newPage(), timing);
+  }
+
+  #newPage(): WriterPage {
+    const state = this.#state;
+    const { life } = state;
+    return { isAlive: () => life === state.life, asleep: false };
+  }
+
+  #environmentOf(page: WriterPage, timing?: Partial<WatchTiming>): LocalFoldersEnvironment {
+    const state = this.#state;
+    const { life } = state;
     // Asked for when a watch starts, so that a test can take it away before.
     const observer = () => (this.observes ? this.#Observer : undefined);
     return {
@@ -1023,6 +1063,9 @@ export class MemoryDisk {
       },
       isHidden: () => this.hidden,
       records: this.records,
+      // Like a database, it outlives the page, and a page of a browser that went away gets nothing.
+      bases: memoryBaseStore(state.bases, () => state.alive(life)),
+      writer: (folder) => state.turns.writer(folder, page),
       timing,
     };
   }
@@ -1059,6 +1102,6 @@ export class MemoryDisk {
   }
 }
 
-/** For tests: folders on a disk in memory, the way a page in Chrome has them. */
+/** For tests: folders on a disk in memory, the way a new page in Chrome has them. */
 export const memoryFolders = (disk: MemoryDisk, timing?: Partial<WatchTiming>): LocalFolders =>
-  createLocalFolders(disk.environment(timing));
+  disk.folders(timing);

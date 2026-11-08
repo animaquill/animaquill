@@ -14,6 +14,11 @@ export function formatHash(digest: Uint8Array): string {
   return `${PREFIX}${btoa(text).replaceAll("+", "-").replaceAll("/", "_")}`;
 }
 
+/** The hash of a text as UTF-8, right away: for documents, which are in memory anyway. */
+export function hashText(text: string): string {
+  return formatHash(sha256(new TextEncoder().encode(text)));
+}
+
 /**
  * The hash of a file of any size. The browser has a faster way, but only for what fits in memory
  * as a whole, and WebAssembly is not an option because of the Content-Security-Policy.

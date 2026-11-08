@@ -393,6 +393,98 @@ export interface LocalFolders {
   dropped(transfer: DataTransfer): Promise<readonly LocalEntry[]>;
   /** The folders that were opened in this browser, in a database of their own. */
   readonly records: FolderRecords;
+  /** What the editor last wrote or read in each file of those folders, in the same database. */
+  readonly bases: FolderBases;
+  /**
+   * Which window of this browser writes the folder with this number, see `FolderRecord.id`: one at
+   * a time, so that no two of them write a file, or take in what changed in it, at once.
+   */
+  writer(folder: string): FolderWriter;
+}
+
+/**
+ * What the editor keeps about a file of a folder that it reads and writes, see `FolderBases`. Values
+ * are stored as they are, and only the editor knows what they mean.
+ */
+export interface FolderFileRecord {
+  /** From the top of the folder, with forward slashes. */
+  readonly path: string;
+  /**
+   * What the file held when the editor last wrote or read it: what changed outside is the difference
+   * from this. Not there when the file was not.
+   */
+  readonly base?: string | undefined;
+  /** How the file was then, so that it gets replaced only while it still is. */
+  readonly stat?: FileStat | undefined;
+  /** Something the editor keeps to tell whether it has to write the file again. */
+  readonly synced?: string | undefined;
+  /**
+   * What the editor is about to do to the file, while it does it. A crash leaves this behind, and
+   * the file tells then whether it got there.
+   */
+  readonly intent?: string | undefined;
+}
+
+/** A change to what is kept about the files of a folder, which happens as a whole or not at all. */
+export interface FolderBasesChange {
+  /** In place of what is kept for the same paths. */
+  readonly put?: readonly FolderFileRecord[];
+  /** Paths to keep nothing for any more. */
+  readonly remove?: readonly string[];
+  /** Everything else that was kept for the folder goes. */
+  readonly replace?: boolean;
+}
+
+/**
+ * What the editor last wrote or read in the files of the folders it works on, by the number this
+ * browser knows a folder by. It is what tells a change from outside apart from the editor's own, so
+ * it is on the disk before anything resolves. Only one window keeps it for a folder at a time:
+ * whoever takes over claims it, and what a window that lost its turn keeps after that is refused,
+ * since it would put back what the folder had before.
+ */
+export interface FolderBases {
+  /** Has this window keep what is kept for the folder from now on. Resolves to its turn. */
+  claim(folder: string): Promise<number>;
+  /** What is kept for each file of the folder. */
+  load(folder: string): Promise<readonly FolderFileRecord[]>;
+  /**
+   * Keeps a change, once it is on the disk. Resolves to false, and keeps nothing, when another
+   * window claimed the folder after `turn`.
+   */
+  save(folder: string, turn: number, change: FolderBasesChange): Promise<boolean>;
+  /** Keeps nothing more for the folder, such as one that was taken off the list. */
+  forget(folder: string): Promise<void>;
+}
+
+/**
+ * Which window of this browser writes a folder. It goes to one window at a time, and to the next
+ * one, in turn, once that one lets go or goes away.
+ */
+export interface FolderWriter {
+  /**
+   * Waits until no other window writes the folder, and then has this one write it. Rejects with the
+   * reason of the signal when asked to stop waiting. `steal` takes over right away from the one
+   * that writes now, which only makes sense when that one does not answer: a browser can put a
+   * window to sleep with its turn.
+   */
+  claim(options?: {
+    readonly signal?: AbortSignal | undefined;
+    readonly steal?: boolean;
+    /** Called when another window writes the folder now, so that this one has to wait. */
+    readonly onWaiting?: () => void;
+  }): Promise<WriterClaim>;
+  /** Whether the window that writes the folder answers within this long. True when none does. */
+  answers(timeoutMs: number): Promise<boolean>;
+}
+
+/** That this window writes a folder, for as long as it lasts. */
+export interface WriterClaim {
+  /**
+   * Settles once this window does not write the folder any more: another one took over, or this
+   * one let go. Nothing may be written after that.
+   */
+  readonly lost: Promise<void>;
+  release(): void;
 }
 
 /** Something on this computer that people dropped. */
@@ -556,8 +648,9 @@ export interface LocalFolder {
   /**
    * Every file in it, apart from what belongs to tools, such as .git. Chrome does not show names it
    * does not allow, see `chromeRefuses`: those files stay as they are, but this leaves them out.
+   * With `includes` only what matters, as for a watch, which is much quicker in a large folder.
    */
-  list(): AsyncIterable<string>;
+  list(options?: { readonly includes?: WatchOptions["includes"] }): AsyncIterable<string>;
   /**
    * A file as it is now. Once it changes, also because the editor wrote it, reading this one fails
    * with a "NotReadableError": get it again then.

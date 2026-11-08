@@ -258,6 +258,7 @@ export {
   INCOMPLETE_FILE,
   MAX_FOLDER_FILES,
   isFolderProblem,
+  isNoneOfIt,
   isToolFolder,
   readFolder,
   type FolderProblemCode,

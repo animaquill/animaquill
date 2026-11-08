@@ -1,4 +1,4 @@
-import { createRecordStore } from "./folder-records.ts";
+import { createBaseStore, createRecordStore } from "./folder-records.ts";
 import {
   FolderWatcher,
   HASHED_BYTES,
@@ -10,6 +10,7 @@ import {
   type WatchedFolder,
   type WatchTiming,
 } from "./folder-watch.ts";
+import { browserFolderWriter } from "./folder-writer.ts";
 import {
   isNamed,
   type DirectoryHandleLike,
@@ -21,11 +22,13 @@ import {
   FolderError,
   type AccessAnswer,
   type FileContent,
+  type FolderBases,
   type FolderFailure,
   type FolderRecord,
   type FolderRecords,
   type FolderStatus,
   type FolderWatch,
+  type FolderWriter,
   type LocalEntry,
   type LocalFile,
   type LocalFolder,
@@ -89,6 +92,10 @@ export interface LocalFoldersEnvironment {
   /** Whether nobody can see the window right now. */
   readonly isHidden: () => boolean;
   readonly records: RecordStore;
+  /** What the editor last wrote or read in the files of the folders, see `LocalFolders.bases`. */
+  readonly bases: FolderBases;
+  /** Which window writes a folder, see `LocalFolders.writer`. */
+  readonly writer: (folder: string) => FolderWriter;
   /** How long watching waits, for tests. */
   readonly timing?: Partial<WatchTiming> | undefined;
 }
@@ -272,8 +279,14 @@ class HandleFolder implements LocalFolder {
     return parts?.join("/");
   }
 
-  async *list(): AsyncGenerator<string> {
-    yield* this.#walk(this.#root, "", () => true);
+  async *list({ includes }: { readonly includes?: WatchOptions["includes"] } = {}) {
+    if (!includes) {
+      yield* this.#walk(this.#root, "", () => true);
+      return;
+    }
+    for await (const path of this.#walk(this.#root, "", (inner) => includes(inner, "folder"))) {
+      if (includes(path, "file")) yield path;
+    }
   }
 
   async file(path: string): Promise<File> {
@@ -991,6 +1004,8 @@ export function createLocalFolders(environment: LocalFoldersEnvironment): LocalF
       ).then((entries) => entries.filter((entry) => entry !== undefined));
     },
     records,
+    bases: environment.bases,
+    writer: environment.writer,
   };
 }
 
@@ -1003,7 +1018,10 @@ type DirectoryPicker = (options: {
  * Folders on this computer, through the File System Access API. Undefined where a page cannot write
  * to them: Firefox and Safari, and Brave as it comes.
  */
-export function browserLocalFolders(database: () => IDBFactory): LocalFolders | undefined {
+export function browserLocalFolders(
+  database: () => IDBFactory,
+  locks: () => LockManager | undefined = () => navigator.locks,
+): LocalFolders | undefined {
   const scope = globalThis as {
     showDirectoryPicker?: DirectoryPicker;
     FileSystemObserver?: ObserverConstructor;
@@ -1029,5 +1047,7 @@ export function browserLocalFolders(database: () => IDBFactory): LocalFolders | 
     },
     isHidden: () => document.visibilityState === "hidden",
     records: createRecordStore(database),
+    bases: createBaseStore(database),
+    writer: (folder) => browserFolderWriter(folder, locks),
   });
 }

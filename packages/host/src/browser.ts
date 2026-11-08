@@ -668,7 +668,7 @@ export function createBrowserHost(
       ).catch(() => {});
     }
   };
-  const localFolders = browserLocalFolders(database);
+  const localFolders = browserLocalFolders(database, locks);
   return {
     settings,
     projects: createLibrary(projects, locks, forget),

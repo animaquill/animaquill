@@ -73,6 +73,29 @@ export class ProjectSession {
     return !this.hasUnsavedChanges;
   }
 
+  /**
+   * Takes in everything the log has that the project does not have yet, such as what another window
+   * wrote just before it let go of the project folder, and has not arrived here. Resolves once it is
+   * in: whoever writes the folder next has to have it, or would take it for a change from outside.
+   */
+  async readLog(): Promise<void> {
+    const log = this.#log;
+    const { store } = this.#snapshot;
+    if (!log || !store) return;
+    let done = () => {};
+    const read = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    this.#enqueue(async () => {
+      try {
+        store.catchUp(await log.load());
+      } finally {
+        done();
+      }
+    });
+    await read;
+  }
+
   list(): Promise<readonly ProjectSummary[]> {
     return this.#projects.list();
   }

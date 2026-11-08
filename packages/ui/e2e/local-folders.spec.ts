@@ -69,6 +69,8 @@ interface Lab {
   held(text: string): Blob;
   letGo: () => void;
   holding: Promise<unknown> | undefined;
+  /** What a test keeps on the page between calls. */
+  readonly kept: Record<string, any>;
 }
 
 declare global {
@@ -140,6 +142,7 @@ async function openLab(page: Page) {
       },
       letGo: () => {},
       holding: undefined,
+      kept: {},
     } as Partial<Lab> as Lab;
     addEventListener("dragover", (event) => event.preventDefault());
     addEventListener("drop", (event) => {
@@ -701,5 +704,84 @@ test.describe("folders that were opened", () => {
       return (await window.lab.folders.records.find(entry.folder))?.id;
     });
     expect(found).toBe("本机1");
+  });
+});
+
+test.describe("which page writes a folder", () => {
+  /** Has the page claim the turn to write, and note when it waits, gets it and loses it. */
+  const claim = (page: Page, steal = false) =>
+    page.evaluate((taking) => {
+      const { kept, folders } = window.lab;
+      kept["waiting"] = false;
+      kept["lost"] = false;
+      kept["claim"] = folders
+        .writer("本机1")
+        .claim({ steal: taking, onWaiting: () => (kept["waiting"] = true) })
+        .then((given) => {
+          void given.lost.then(() => (kept["lost"] = true));
+          kept["granted"] = given;
+          return true;
+        });
+    }, steal);
+  const kept = (page: Page, key: string) => page.evaluate((name) => window.lab.kept[name], key);
+
+  test("is one at a time, and the next one once it lets go", async ({ page, context }) => {
+    await openLab(page);
+    const other = await context.newPage();
+    await openLab(other);
+    await claim(page);
+    expect(await page.evaluate(() => window.lab.kept["claim"])).toBe(true);
+    await claim(other);
+    await expect.poll(() => kept(other, "waiting")).toBe(true);
+    expect(await other.evaluate(() => window.lab.folders.writer("本机1").answers(2000))).toBe(true);
+    await page.evaluate(() => window.lab.kept["granted"].release());
+    expect(await other.evaluate(() => window.lab.kept["claim"])).toBe(true);
+    expect(await kept(page, "lost")).toBe(true);
+  });
+
+  test("goes to another page that takes over, and the first one hears of it", async ({
+    page,
+    context,
+  }) => {
+    await openLab(page);
+    const other = await context.newPage();
+    await openLab(other);
+    await claim(page);
+    await page.evaluate(() => window.lab.kept["claim"]);
+    await claim(other, true);
+    expect(await other.evaluate(() => window.lab.kept["claim"])).toBe(true);
+    await expect.poll(() => kept(page, "lost")).toBe(true);
+  });
+});
+
+test.describe("what is kept about the files of a folder", () => {
+  test("is there for the next page, and refused from a page that lost its turn", async ({
+    page,
+    context,
+  }) => {
+    await openLab(page);
+    const other = await context.newPage();
+    await openLab(other);
+    const turn = await page.evaluate(() => window.lab.folders.bases.claim("本机1"));
+    expect(
+      await page.evaluate(
+        (mine) =>
+          window.lab.folders.bases.save("本机1", mine, {
+            put: [{ path: "a.json", base: "{}", stat: { size: 2, lastModified: 1 } }],
+          }),
+        turn,
+      ),
+    ).toBe(true);
+    await other.evaluate(() => window.lab.folders.bases.claim("本机1"));
+    expect(
+      await page.evaluate(
+        (mine) => window.lab.folders.bases.save("本机1", mine, { put: [{ path: "a.json" }] }),
+        turn,
+      ),
+    ).toBe(false);
+    await openLab(page);
+    expect(await page.evaluate(() => window.lab.folders.bases.load("本机1"))).toEqual([
+      { path: "a.json", base: "{}", stat: { size: 2, lastModified: 1 } },
+    ]);
   });
 });
