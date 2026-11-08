@@ -502,15 +502,22 @@ test.describe("an export under way", () => {
     await expect(dialog(page)).toContainText("视频没有导出", { timeout: 60_000 });
     await expect(dialog(page)).toContainText("第 31 帧（0:01/00）");
     await expect(dialog(page)).toContainText("“蓝色”的素材文件不在这台设备上");
-    // Three seconds are less than a place to go on from: nothing stays, and nothing says it does.
+    // Three seconds are less than a place to go on from, which it does not say. It stays in the
+    // list of exports to be retried, with the same choices and the same file, which is empty.
     await expect(dialog(page)).not.toContainText("已经导好的部分留着");
+    await expect(dialog(page)).toContainText("点“重试”");
     await dialog(page).getByRole("button", { name: "关闭" }).click();
     await expect(
       page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }),
     ).toContainText("0:01/00");
     await expect(content(page, "timeline").getByRole("option", { selected: true })).toHaveCount(1);
-    expect((await keptExports(page)).exports).toBe(0);
-    expect(await savedFile(page)).toBeUndefined();
+    expect((await keptExports(page)).exports).toBe(1);
+    expect((await savedFile(page))?.length).toBe(0);
+    // Taken out of the list, nothing of it stays: not what it kept, and not its empty file.
+    await page.getByRole("contentinfo").getByRole("button", { name: "导出：1 个没完成" }).click();
+    await page.getByRole("button", { name: /^移除：/u }).click();
+    await expect.poll(async () => (await keptExports(page)).exports).toBe(0);
+    await expect.poll(() => savedFile(page)).toBeUndefined();
   });
 });
 
@@ -1537,8 +1544,9 @@ test("a new export that stops early leaves the file of the one left for later, w
   await dialog(again).getByRole("button", { name: "关闭" }).click();
   const left = await keptExports(again);
   const file = await savedFile(again);
-  // The first one is still there, with its empty file, and goes on into it.
-  expect(left.exports).toBe(1);
+  // The first one is still there, with its empty file, and goes on into it. The new one stays in
+  // the list too, failed, for a retry.
+  expect(left.exports).toBe(2);
   expect(file?.length).toBe(0);
   await again.reload();
   await offer(again).getByRole("button", { name: "继续导出" }).click();

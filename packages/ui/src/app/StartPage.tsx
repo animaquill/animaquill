@@ -25,12 +25,19 @@ function UnfinishedExports({ projects }: { projects: readonly ProjectSummary[] }
       <h2>{t("export.unfinished.title")}</h2>
       <p className={styles.muted}>{t("export.unfinished.about")}</p>
       <ul className={styles.list}>
-        {found.map(({ id, project, name, bytes }) => (
+        {found.map(({ id, project, name, bytes, status, done, total }) => (
           <li key={id} className={styles.unfinished}>
             <span className={styles.name}>
               {t("export.unfinished.item", {
                 project: nameOf(project),
                 file: name,
+                status:
+                  total > 0
+                    ? t("export.unfinished.percent", {
+                        status: t(`export.unfinished.status.${status}`),
+                        percent: Math.floor((done / total) * 100),
+                      })
+                    : t(`export.unfinished.status.${status}`),
                 size: sizeOf(bytes),
                 interpolation: { escapeValue: false },
               })}

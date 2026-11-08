@@ -356,6 +356,70 @@ describe("an export compositor", () => {
   });
 });
 
+describe("an export compositor that waits", () => {
+  /** Lets time go by, answering every ping the way a compositor that is there does. */
+  async function pass(ms: number, answer: boolean) {
+    let answered = 0;
+    for (let at = 0; at < ms; at += 100) {
+      await vi.advanceTimersByTimeAsync(100);
+      if (!answer) continue;
+      const pings = sent().filter((message) => message.type === "ping");
+      for (const ping of pings.slice(answered)) say({ type: "pong", nonce: ping.nonce });
+      answered = pings.length;
+    }
+  }
+
+  const visible = (state: DocumentVisibilityState) => {
+    (mount as unknown as { visibilityState: string }).visibilityState = state;
+  };
+
+  it("is not taken for hung while it waits for a file that takes long to read", async () => {
+    vi.useFakeTimers();
+    try {
+      const read = Promise.withResolvers<Blob | undefined>();
+      const compositor = open({ plan: plan([clip("big")]), media: () => read.promise });
+      say({ type: "ready" });
+      const encoding = compositor.startEncoding(
+        { codec: "avc1.64001e", width: 2, height: 2 },
+        () => {},
+      );
+      say({ type: "needs", id: "big" });
+      // Two minutes of a 4K file coming off a slow disk.
+      await pass(120_000, true);
+      expect(frame.remove).not.toHaveBeenCalled();
+      read.resolve(new Blob(["x"]));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent().some((message) => message.type === "file")).toBe(true);
+      const request = sent().find((message) => message.type === "encode-start");
+      say({ type: "encode-answer", request: (request as { request: number }).request });
+      await encoding;
+      compositor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts no time while its page is not on the screen, however long that is", async () => {
+    vi.useFakeTimers();
+    try {
+      const compositor = open();
+      say({ type: "ready" });
+      const still = compositor.still(1).catch((reason: unknown) => reason);
+      visible("hidden");
+      // A browser that stops drawing a page in the background does not answer either.
+      await pass(600_000, false);
+      expect(frame.remove).not.toHaveBeenCalled();
+      visible("visible");
+      await pass(1000, true);
+      expect(frame.remove).not.toHaveBeenCalled();
+      compositor.dispose();
+      expect(await still).toBeInstanceOf(DOMException);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("encoding in an export compositor", () => {
   const toEncode = { index: 0, seconds: 1, timestamp: 0, duration: 33333, keyFrame: true };
 

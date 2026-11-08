@@ -90,6 +90,10 @@ export interface WindowView {
   readonly catchingUp?: number;
   readonly writing?: boolean;
   readonly makingSound?: boolean;
+  readonly readingMedia?: boolean;
+  readonly pausing?: boolean;
+  /** Exports in line behind this one, which go on in this window. */
+  readonly after?: number;
 }
 
 /** Minutes and seconds, which is as exact as an estimate gets. */
@@ -114,6 +118,7 @@ export function fillExportWindow(
     getSnapshot(): WindowView | undefined;
   },
   cancel: () => void,
+  pause?: () => void,
 ): () => void {
   page.title = t("export.window.title");
   look(page.body, {
@@ -130,17 +135,23 @@ export function fillExportWindow(
   amount.setAttribute("role", "status");
   const note = page.createElement("p");
   note.textContent = t("export.window.note");
+  const after = page.createElement("p");
+  const buttons = page.createElement("div");
   const stop = page.createElement("button");
   stop.type = "button";
   stop.textContent = t("export.video.cancel");
   stop.addEventListener("click", cancel);
+  const hold = page.createElement("button");
+  hold.type = "button";
+  hold.textContent = t("export.window.pause");
+  if (pause) hold.addEventListener("click", pause);
   look(heading, {
     margin: "0 0 4px",
     fontSize: "14px",
     fontWeight: "600",
     color: "var(--aq-text-strong, #fff)",
   });
-  for (const text of [file, amount, note]) {
+  for (const text of [file, amount, after, note]) {
     look(text, {
       margin: "0 0 8px",
       color: "var(--aq-text-muted, #aaa)",
@@ -148,16 +159,21 @@ export function fillExportWindow(
     });
   }
   look(bar, { display: "block", width: "100%", height: "6px", margin: "4px 0 8px" });
-  look(stop, {
-    padding: "4px 14px",
-    color: "inherit",
-    font: "inherit",
-    background: "var(--aq-bg-input, #333)",
-    border: "1px solid var(--aq-border, #444)",
-    borderRadius: "3px",
-    cursor: "pointer",
-  });
-  page.body.append(heading, file, bar, amount, note, stop);
+  look(buttons, { display: "flex", gap: "8px" });
+  for (const button of [stop, hold]) {
+    look(button, {
+      padding: "4px 14px",
+      color: "inherit",
+      font: "inherit",
+      background: "var(--aq-bg-input, #333)",
+      border: "1px solid var(--aq-border, #444)",
+      borderRadius: "3px",
+      cursor: "pointer",
+    });
+  }
+  // Cancelling comes first, where it always was: people who know the window press it there.
+  buttons.append(stop, ...(pause ? [hold] : []));
+  page.body.append(heading, file, bar, amount, after, note, buttons);
 
   const show = () => {
     const job = watch.getSnapshot();
@@ -168,11 +184,15 @@ export function fillExportWindow(
       ? t("export.video.stopping")
       : writing
         ? t("export.video.writing")
-        : makingSound
-          ? t("export.video.makingSound")
-          : catchingUp !== undefined
-            ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
-            : t("export.video.running", { percent });
+        : job.pausing
+          ? t("export.queue.status.pausing")
+          : makingSound
+            ? t("export.video.makingSound")
+            : catchingUp !== undefined
+              ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
+              : job.readingMedia
+                ? t("export.queue.status.readingMedia")
+                : t("export.video.running", { percent });
     file.textContent = name;
     bar.max = Math.max(total, 1);
     bar.value = done;
@@ -182,6 +202,9 @@ export function fillExportWindow(
         ? ""
         : ` · ${t("export.video.remaining", { time: duration(remainingMs) })}`);
     stop.disabled = stopping;
+    hold.disabled = stopping || job.writing === true || job.pausing === true;
+    after.textContent = job.after ? t("export.window.after", { count: job.after }) : "";
+    after.hidden = !job.after;
   };
   show();
   return watch.subscribe(show);

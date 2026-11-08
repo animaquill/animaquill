@@ -1,0 +1,190 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  color: var(--aq-text-muted);
+  text-align: center;
+}
+
+.toolbar {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.toolbar button {
+  padding: 2px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0 8px;
+  overflow: auto;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.item:hover {
+  background: var(--aq-bg-hover);
+}
+
+.icon {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.item[data-status="running"] .icon {
+  color: var(--aq-accent);
+  animation: spin 1.6s linear infinite;
+}
+
+.item[data-status="failed"] .icon {
+  color: var(--aq-danger);
+}
+
+.item[data-status="done"] .icon {
+  color: var(--aq-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item[data-status="running"] .icon {
+    animation: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.name {
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.bar {
+  width: 100%;
+  max-width: 420px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 2px;
+  accent-color: var(--aq-accent);
+}
+
+.bar::-webkit-progress-bar {
+  background: var(--aq-bg-input);
+}
+
+.bar::-webkit-progress-value {
+  background: var(--aq-accent);
+}
+
+.status {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.item[data-status="failed"] .status {
+  color: var(--aq-text);
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.action,
+.primary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--aq-bg-hover);
+}
+
+.primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.primary:hover {
+  filter: brightness(1.1);
+}
+
+/* How far a stopped one got, which does not look like one that goes. */
+.item[data-status="paused"] .bar::-webkit-progress-value,
+.item[data-status="interrupted"] .bar::-webkit-progress-value {
+  background: var(--aq-text-muted);
+}
+
+.item[data-status="failed"] .bar::-webkit-progress-value {
+  background: var(--aq-danger);
+}

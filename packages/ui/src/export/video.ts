@@ -70,6 +70,15 @@ import {
   type SoundSupportCheck,
 } from "./sound.ts";
 import { PieceWriter, writeTracks } from "./pieces.ts";
+import {
+  ExportQueue,
+  Pace,
+  statusAfterReload,
+  type ExportStatus,
+  type QueueEntry,
+  type SavedQueue,
+  type SavedStatus,
+} from "./queue.ts";
 import { describeFailure, type ExportFailure } from "./words.ts";
 
 /** An export that nobody went on with for this long is not going to be. */
@@ -103,6 +112,8 @@ const HARDWARE_KEY = "export.hardwareFailed";
 const HARDWARE_MEMORY_MS = 30 * 24 * 60 * 60 * 1000;
 /** Seconds are floats, frames are not. */
 const FRAME_TOLERANCE = 1e-6;
+/** A file that takes longer than this to be read gets said, so that a wait does not look like a hang. */
+const READING_SAID_AFTER_MS = 400;
 
 export type VideoCompositor = Pick<
   ExportCompositor,
@@ -170,11 +181,15 @@ export interface SavedProgress {
   readonly decoderConfig?: VideoDecoderConfig;
   /** How what is kept was encoded, which can be the processor after the graphics card failed. */
   readonly acceleration?: VideoEncoding["acceleration"];
+  /** How many frames there are, for people, also where the project is not open. */
+  readonly total?: number;
 }
 
 export interface SavedState {
   readonly plan: SavedPlan;
   readonly progress: SavedProgress;
+  /** Where it is in the line of exports. Not there in what was kept before there was one. */
+  readonly queue?: SavedQueue;
 }
 
 /** An export that stopped halfway, as people see it. */
@@ -185,6 +200,9 @@ export interface UnfinishedExport {
   readonly savedAt: number;
   /** What it keeps takes this much room. */
   readonly bytes: number;
+  readonly status: ExportStatus;
+  readonly done: number;
+  readonly total: number;
 }
 
 /** An export as it runs. */
@@ -203,6 +221,7 @@ const SOUND_LEAD_SECONDS = 1;
 
 /** How an export is doing, for the status bar. */
 export interface VideoJob {
+  readonly id: string;
   readonly name: string;
   readonly done: number;
   readonly total: number;
@@ -219,6 +238,31 @@ export interface VideoJob {
   readonly catchingUp?: number;
   /** Code makes a sound that comes next, and the picture waits for it. */
   readonly makingSound?: boolean;
+  /** A file of the project takes a while to be read, and the picture waits for it. */
+  readonly readingMedia?: boolean;
+  /** The page it is drawn in is not on the screen, where a browser may stop drawing. */
+  readonly hidden?: boolean;
+  /** People paused it: it goes on to the next place to go on from, and stops there. */
+  readonly pausing?: boolean;
+}
+
+/** What this window has of an export in its list. */
+interface Held {
+  /** Lets go of the claim on it, which this window keeps for as long as it is in the list. */
+  readonly release: () => void;
+  /** The project as it was when people asked for it, while this page has that. */
+  state?: ProjectState;
+  /** What it was asked to do, until it first runs: after that it goes on from what was kept. */
+  fresh?: Omit<Job, "place"> | undefined;
+  /** The export that this one is to take the place of. */
+  replaces?: Replacing | undefined;
+}
+
+/** People paused the export, and it got to a place to go on from. */
+class PausedHere extends Error {
+  constructor() {
+    super("The export was paused");
+  }
 }
 
 /** A moment of the timeline that did not make it into the video. */
@@ -381,6 +425,28 @@ export class VideoExport {
   readonly #windows: ExportWindows;
   /** Takes the window it goes on in, while it waits for one. */
   #resume: ((opening: Promise<ExportWindow | undefined>) => void) | undefined;
+  /** The exports of this window, in line. */
+  readonly #queue = new ExportQueue();
+  /** What this window holds of each export in its list. */
+  readonly #held = new Map<string, Held>();
+  /** Over once what the exports before this page kept is in the list. */
+  readonly #restored: Promise<void>;
+  /** The line goes, one export after the other, until this is over. */
+  #pumping: Promise<void> | undefined;
+  /** Where the exports in line go, one after the other: a window takes a press to open. */
+  #place: ExportWindow | undefined;
+  #placeGone = false;
+  /** People asked the export that runs to pause. */
+  #pauseAsked = false;
+  /** Tells the export that waits for its window that people paused it. */
+  #onPauseAsked: (() => void) | undefined;
+  /** How fast the export that runs goes, without what it waits for. */
+  #pace: Pace | undefined;
+  /**
+   * What is being written of each export, one write after the other: a change of its place in line
+   * reads what is kept and writes it back, and must not undo a place to go on from written meanwhile.
+   */
+  readonly #writes = new Map<string, Promise<unknown>>();
 
   constructor(options: VideoExportOptions) {
     this.#options = options;
@@ -390,28 +456,182 @@ export class VideoExport {
       const { store } = options.session;
       if (store === shown) return;
       shown = store;
-      if (store) void this.#offer(store);
+      if (store) void this.#opened(store);
     });
+    const watch = {
+      subscribe: (listener: () => void) => {
+        const stopJob = this.subscribe(listener);
+        const stopQueue = this.#queue.subscribe(listener);
+        return () => {
+          stopJob();
+          stopQueue();
+        };
+      },
+      getSnapshot: () => {
+        const job = this.#job;
+        return job && { ...job, after: this.#queue.waiting() };
+      },
+    };
     this.#windows =
       options.windows ??
       pictureInPictureWindows((page) =>
-        fillExportWindow(page, options.t, this, () => this.cancel()),
+        fillExportWindow(
+          page,
+          options.t,
+          watch,
+          () => this.cancel(),
+          () => this.pause(),
+        ),
       );
+    this.#restored = this.#restore();
   }
 
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): VideoJob | undefined => this.#job;
+
+  /** The exports of this window, as people see them in the list. */
+  get queue(): Pick<ExportQueue, "subscribe" | "getSnapshot" | "ahead" | "waiting"> {
+    return this.#queue;
+  }
 
   #set(job: VideoJob | undefined): void {
     this.#job = job;
     this.#emitter.emit();
   }
 
-  /** Stops the export under way. It cleans up after itself, and says so when it is over. */
-  cancel(): void {
+  /**
+   * Stops an export. The one under way cleans up after itself, and says so when it is over. One
+   * that is not under way goes from the list with what it kept, as with `remove`.
+   */
+  cancel(id?: string): void {
+    if (id !== undefined && id !== this.#job?.id) {
+      void this.remove(id);
+      return;
+    }
     if (!this.#job || !this.#controller) return;
     this.#set({ ...this.#job, stopping: true });
     this.#controller.abort(new DOMException("Export stopped", "AbortError"));
+  }
+
+  /**
+   * Pauses an export. One that waits for its turn stays where it is in line, and does not go until
+   * people say so. The one under way goes on to the next place to go on from and stops there, which
+   * costs nothing of what it did; one whose window was closed goes back to the last one. Then the
+   * next in line goes, in the same window.
+   */
+  pause(id?: string): void {
+    const job = this.#job;
+    const which = id ?? job?.id;
+    if (which === undefined) return;
+    const entry = this.#queue.get(which);
+    if (entry?.status === "waiting") {
+      this.#queue.update(which, { status: "paused", restored: undefined });
+      void this.#saveStatus(which, "paused");
+      return;
+    }
+    if (!job || job.id !== which || job.stopping || job.writing || job.pausing) return;
+    this.#pauseAsked = true;
+    this.#set({ ...job, pausing: true });
+    this.#onPauseAsked?.();
+  }
+
+  /**
+   * Puts an export that is paused, failed or stopped with the page back in line, in the place it
+   * had. It goes on from where it was kept. Comes from a button: when it goes right away, the
+   * browser may ask about the file and the window, which takes a press just before.
+   */
+  goOn(id: string): void {
+    const entry = this.#queue.get(id);
+    if (!entry || entry.status === "running" || entry.status === "done") return;
+    this.#queue.update(id, {
+      status: "waiting",
+      restored: undefined,
+      needsPress: undefined,
+      failure: undefined,
+    });
+    void this.#saveStatus(id, "waiting");
+    if (!this.#busy) void this.#pump();
+  }
+
+  /** Same as going on: from where it was kept. What went wrong should be put right by then. */
+  retry(id: string): void {
+    this.goOn(id);
+  }
+
+  /** All that are paused or stopped with the page go on, each in its place in line. */
+  goOnWithAll(): void {
+    for (const entry of this.#queue.getSnapshot()) {
+      const stopped =
+        entry.status === "paused" ||
+        entry.status === "interrupted" ||
+        (entry.status === "waiting" && entry.restored);
+      if (!stopped) continue;
+      this.#queue.update(entry.id, {
+        status: "waiting",
+        restored: undefined,
+        needsPress: undefined,
+      });
+      void this.#saveStatus(entry.id, "waiting");
+    }
+    if (!this.#busy) void this.#pump();
+  }
+
+  /**
+   * Takes an export out of the list, with what it kept and its file while that is still the empty
+   * one it made. The one under way is stopped. A finished one only leaves the list.
+   */
+  async remove(id: string): Promise<void> {
+    if (id === this.#job?.id) {
+      this.cancel();
+      return;
+    }
+    const entry = this.#queue.get(id);
+    if (!entry) return;
+    if (entry.status === "done") {
+      this.#queue.remove(id);
+      return;
+    }
+    const saved = await this.#savedOf(id);
+    if (saved) {
+      if (await this.#dropEntry(saved, true)) this.#sayEmptyLeft(saved);
+    } else {
+      // Only in this page: what it would write to goes.
+      const fresh = this.#held.get(id)?.fresh;
+      if (fresh) await this.#abandon(fresh.file, id);
+      this.#forgetEntry(id);
+    }
+    this.#options.notifications.push(this.#options.t("export.queue.removed"));
+  }
+
+  /** The finished ones leave the list. */
+  clearDone(): void {
+    for (const { id, status } of this.#queue.getSnapshot()) {
+      if (status === "done") this.#queue.remove(id);
+    }
+  }
+
+  /**
+   * A project goes away: this window lets go of its exports, so that what they kept goes with it.
+   * One under way stops.
+   */
+  async letGoOfProject(project: string): Promise<void> {
+    for (const entry of this.#queue.getSnapshot()) {
+      if (entry.project !== project) continue;
+      if (entry.id === this.#job?.id) {
+        this.cancel();
+        // Until it cleaned up after itself: what comes after it in line may go on meanwhile.
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (this.#job?.id === entry.id) return;
+            stop();
+            resolve();
+          };
+          const stop = this.subscribe(check);
+          check();
+        });
+      }
+      this.#forgetEntry(entry.id);
+    }
   }
 
   /**
@@ -431,41 +651,137 @@ export class VideoExport {
    */
   async offerResume(): Promise<void> {
     const { store } = this.#options.session;
-    if (store) await this.#offer(store);
+    if (store) await this.#opened(store);
+  }
+
+  /** A project opened: what stopped with the page before is offered, and what waits for it goes. */
+  async #opened(store: ProjectStore): Promise<void> {
+    await this.#offer(store);
+    if (this.#options.session.store === store) await this.#pump();
+  }
+
+  /** Whether exports go one after the other in this window right now. */
+  #isRunning(): boolean {
+    return this.#job !== undefined || this.#pumping !== undefined;
   }
 
   /** Whether an export, or the questions before one, is under way in this window. */
   #isBusy(): boolean {
-    return this.#busy || this.#job !== undefined;
+    return this.#busy || this.#isRunning();
   }
 
   /**
-   * Asks about each export of this project that stopped before it was finished. Returns whether
-   * people went on with one or gave it up, as opposed to leaving it for later or there being none.
+   * What exports kept before this page goes in its list, as it was: in line, paused, failed, or
+   * stopped with the page. Nothing of it goes on by itself, because going on takes people pressing a
+   * button. Another window that has one keeps it.
+   */
+  async #restore(): Promise<void> {
+    const all = await this.#options.exports.all().catch(() => []);
+    for (const saved of all.toSorted((a, b) => orderOf(a) - orderOf(b))) await this.#adopt(saved);
+  }
+
+  /**
+   * Takes a kept export into the list of this window, unless another window has it. This window
+   * keeps the claim on it for as long as it is in the list. Resolves to whether it is in the list.
+   */
+  async #adopt(saved: SavedExport): Promise<boolean> {
+    if (this.#held.has(saved.id)) return true;
+    if ((saved.state as SavedState | undefined)?.plan?.version !== 1) return false;
+    const release = await this.#options.exports.claim(saved.id);
+    if (!release) return false;
+    if (this.#held.has(saved.id)) {
+      release();
+      return true;
+    }
+    if (isExpired(saved)) {
+      await this.#drop(saved, false);
+      release();
+      return false;
+    }
+    this.#held.set(saved.id, { release });
+    const { progress, queue } = saved.state as SavedState;
+    this.#queue.put({
+      id: saved.id,
+      project: saved.project,
+      name: nameOfTarget(saved.target),
+      status: statusAfterReload(queue),
+      order: orderOf(saved),
+      done: progress.frame,
+      total: progress.total ?? 0,
+      ...(queue?.failure !== undefined && { failure: queue.failure }),
+      restored: true,
+    });
+    return true;
+  }
+
+  /** It leaves the list, and this window lets go of it. What it kept is somebody else's business. */
+  #forgetEntry(id: string): void {
+    this.#held.get(id)?.release();
+    this.#held.delete(id);
+    this.#queue.remove(id);
+  }
+
+  /** What is kept of an export now, if anything. */
+  async #savedOf(id: string): Promise<SavedExport | undefined> {
+    const all = await this.#options.exports.all().catch(() => []);
+    return all.find((saved) => saved.id === id);
+  }
+
+  /** Writes what is kept of an export after whatever was being written of it before. */
+  #inTurn<T>(id: string, write: () => Promise<T>): Promise<T> {
+    const before = this.#writes.get(id) ?? Promise.resolve();
+    const now = before.catch(() => {}).then(write);
+    const settled = now.catch(() => {});
+    this.#writes.set(id, settled);
+    void settled.then(() => {
+      if (this.#writes.get(id) === settled) this.#writes.delete(id);
+    });
+    return now;
+  }
+
+  /** Keeps where an export is in line, next to what it did. Losing that costs little. */
+  #saveStatus(id: string, status: SavedStatus, failure?: string): Promise<void> {
+    return this.#inTurn(id, async () => {
+      const saved = await this.#savedOf(id);
+      if (!saved) return;
+      const state = saved.state as SavedState;
+      const order = this.#queue.get(id)?.order ?? orderOf(saved);
+      const queue: SavedQueue = { status, order, ...(failure !== undefined && { failure }) };
+      await this.#options.exports
+        .save({ ...saved, savedAt: Date.now(), state: { ...state, queue } })
+        .catch((error: unknown) => console.warn("Where an export is in line is not kept", error));
+    });
+  }
+
+  /**
+   * Asks about each export of this project that stopped with the page, and on starting a new one
+   * also about each that failed. Returns whether people went on with one or gave it up, as opposed
+   * to leaving it for later or there being none.
    */
   async #offer(store: ProjectStore, fromStart = false): Promise<boolean | Replacing> {
     const { exports, dialogs, t } = this.#options;
+    await this.#restored;
     if (this.#isBusy()) return false;
     const id = store.getState().manifest.id;
     const found = await exports.list(id).catch(() => []);
-    const waiting = found
-      .filter(({ state }) => (state as SavedState | undefined)?.plan?.version === 1)
-      .toSorted((a, b) => b.savedAt - a.savedAt);
+    // What other windows let go of since this page started is this one's now.
+    for (const saved of found.toSorted((a, b) => orderOf(a) - orderOf(b))) {
+      await this.#adopt(saved);
+    }
+    const asked = (saved: SavedExport) => {
+      const status = this.#queue.get(saved.id)?.status;
+      return status === "interrupted" || (fromStart && status === "failed");
+    };
+    const waiting = found.filter(asked).toSorted((a, b) => b.savedAt - a.savedAt);
     for (const saved of waiting) {
-      // Another window may be at it, or asking about it. The one that asks keeps it until it is
-      // decided, so that two windows never do two things with one export.
-      const release = await exports.claim(saved.id);
-      if (!release) continue;
       if (isExpired(saved)) {
-        await this.#drop(saved, false);
-        release();
+        await this.#dropEntry(saved, false);
         continue;
       }
       await this.#quiet();
-      if (this.#options.session.store !== store || this.#isBusy()) {
-        release();
-        return false;
-      }
+      if (this.#options.session.store !== store || this.#isBusy()) return false;
+      // It may have gone on, or gone, while another question was open.
+      if (!asked(saved)) continue;
       this.#busy = true;
       try {
         const { plan, progress } = saved.state as SavedState;
@@ -486,19 +802,22 @@ export class VideoExport {
             { id: "continue", label: t("export.resume.continue"), kind: "primary" },
           ],
         });
-        if (answer === "new") return { saved, release };
+        if (answer === "new") return { saved };
         // Going back from there leaves it for the next time.
-        if (answer === undefined) {
-          release();
-          return false;
-        }
+        if (answer === undefined) return false;
         if (answer === "discard") {
           await this.#discard(saved);
-          release();
           return true;
         }
+        // The line it was in goes on with it, as it would have without the reload.
+        for (const entry of this.#queue.getSnapshot()) {
+          if (entry.project === id && entry.status === "waiting" && entry.restored) {
+            this.#queue.update(entry.id, { restored: undefined });
+          }
+        }
+        this.#queue.update(saved.id, { status: "waiting", restored: undefined });
         this.#busy = false;
-        await this.#continue(store, saved, release);
+        await this.#pump();
         return true;
       } finally {
         this.#busy = false;
@@ -528,7 +847,7 @@ export class VideoExport {
   /** What it kept goes, and its file too when that is still empty. People said so. */
   async #discard(saved: SavedExport): Promise<void> {
     const { notifications, t } = this.#options;
-    const left = await this.#drop(saved, true);
+    const left = await this.#dropEntry(saved, true);
     notifications.push(t("export.resume.discarded"));
     if (left) this.#sayEmptyLeft(saved);
   }
@@ -541,6 +860,15 @@ export class VideoExport {
     );
   }
 
+  /** As `#drop`, and the export leaves the list of this window too. */
+  async #dropEntry(saved: SavedExport, ask: boolean): Promise<boolean> {
+    try {
+      return await this.#drop(saved, ask);
+    } finally {
+      this.#forgetEntry(saved.id);
+    }
+  }
+
   /**
    * What an export kept goes, and so does the file it was to write, as long as that is still the
    * empty one it made and no other export goes there: the file only gets written at the end, and a
@@ -549,7 +877,7 @@ export class VideoExport {
    */
   async #drop(saved: SavedExport, ask: boolean): Promise<boolean> {
     const { exports, folders } = this.#options;
-    await exports.remove(saved.id).catch(() => {});
+    await this.#inTurn(saved.id, () => exports.remove(saved.id)).catch(() => {});
     const others = await this.#othersThan(saved.id);
     if (!others) return true;
     return folders.dropTarget(saved.target, others, ask).catch(() => true);
@@ -561,7 +889,13 @@ export class VideoExport {
    */
   async #othersThan(id: string): Promise<readonly unknown[] | undefined> {
     const all = await this.#options.exports.all().catch(() => undefined);
-    return all?.filter((saved) => saved.id !== id).map(({ target }) => target);
+    if (!all) return undefined;
+    const kept = all.filter((saved) => saved.id !== id).map(({ target }) => target);
+    // Those in line here that did not get to keep anything yet go somewhere too.
+    const fresh = [...this.#held]
+      .filter(([other, held]) => other !== id && held.fresh)
+      .map(([, held]) => held.fresh?.file.target);
+    return [...kept, ...fresh];
   }
 
   /**
@@ -586,8 +920,13 @@ export class VideoExport {
    */
   async cleanUp(): Promise<void> {
     const { exports } = this.#options;
+    await this.#restored;
     for (const saved of await exports.all().catch(() => [])) {
       if (!isExpired(saved)) continue;
+      if (this.#held.has(saved.id)) {
+        if (saved.id !== this.#job?.id) await this.#dropEntry(saved, false);
+        continue;
+      }
       const release = await exports.claim(saved.id);
       if (!release) continue;
       try {
@@ -598,27 +937,36 @@ export class VideoExport {
     }
   }
 
-  async #continue(store: ProjectStore, saved: SavedExport, release: () => void): Promise<void> {
-    let handedOn = false;
-    try {
-      handedOn = await this.#goOn(store, saved, release);
-    } finally {
-      if (!handedOn) release();
-    }
-  }
-
-  /** Returns whether the export took over the claim on it. */
-  async #goOn(store: ProjectStore, saved: SavedExport, release: () => void): Promise<boolean> {
+  /**
+   * Goes on with an export that ran before, from what it kept. Without `held.state` it goes on with
+   * the project as it is now, which has to be the same as when it started. `pressed` says whether
+   * people pressed a button just now, which the browser wants before it lets a page write a file
+   * again: without it, it waits for one.
+   */
+  async #goOn(saved: SavedExport, held: Held, pressed: boolean): Promise<void> {
     const { dialogs, folders, t, notifications } = this.#options;
     const state = saved.state as SavedState;
     let plan = state.plan;
     let progress: SavedProgress | undefined = state.progress;
     const name = nameOfTarget(saved.target);
     const plain = { interpolation: { escapeValue: false } };
+    const store =
+      this.#options.session.store?.getState().manifest.id === saved.project
+        ? this.#options.session.store
+        : undefined;
+    const before = held.state ?? store?.getState();
+    if (!before) return;
     this.#busy = true;
     try {
       // The file first: the browser asks about it right after the button, which it takes for that.
       let file = await folders.reopen(saved.target, plan.kind).catch(() => "gone" as const);
+      if (file === "denied" && !pressed) {
+        // Asking now would be asking for nothing: the browser only asks right after a press.
+        this.#queue.update(saved.id, { status: "paused", needsPress: true });
+        void this.#saveStatus(saved.id, "paused");
+        notifications.push(t("export.queue.needsPress", { file: name, ...plain }));
+        return;
+      }
       if (typeof file === "string") {
         const answer = await dialogs.choose({
           title: t("export.resume.goneTitle"),
@@ -633,63 +981,63 @@ export class VideoExport {
         });
         if (answer === "discard") {
           await this.#discard(saved);
-          return false;
+          return;
         }
-        if (answer !== "choose") return false;
+        if (answer !== "choose") return;
         const chosen = await folders.chooseFile(name, plan.kind).catch(() => undefined);
-        if (!chosen) return false;
+        if (!chosen) return;
         file = chosen;
       }
       // The way what is kept was encoded, which the processor may have taken over.
       const keptWay =
         progress?.acceleration === "software" ? inSoftware(plan.encoding) : plan.encoding;
       if (!(await (this.#options.support ?? browserSupport)(keptWay.config))) {
-        const encoding = await this.#encodingFor(store.getState(), plan);
+        const encoding = await this.#encodingFor(before, plan);
         // The file was asked for as one kind, and the other kind would not open as that.
         if (!encoding || containerOf(encoding.codec) !== containerOf(plan.encoding.codec)) {
           await this.#notice(t("export.video.failed"), t("export.video.cannotEncode"));
-          return false;
+          return;
         }
         notifications.push(t("export.resume.cannotEncode"));
         plan = { ...plan, encoding };
         progress = undefined;
       }
-      const place = await this.#placeFor();
-      if (!place) return false;
-      // What the video is drawn from, and what it is checked against, at the same moment.
-      const now = store.getState();
-      const snapshot = await snapshotOfFiles(store.exportFiles().files);
-      if (snapshot !== plan.snapshot) {
-        const answer = await dialogs.choose({
-          title: t("export.resume.changedTitle"),
-          message: t("export.resume.changed"),
-          choices: [
-            { id: "discard", label: t("export.resume.discard") },
-            { id: "again", label: t("export.resume.again"), kind: "primary" },
-          ],
-        });
-        if (answer !== "again") {
-          place.close();
-          if (answer === "discard") await this.#discard(saved);
-          return false;
-        }
-        const again = this.#planAgain(now, plan);
-        if (!again) {
-          place.close();
-          await this.#notice(t("export.video.failed"), t("export.resume.planGone"));
-          return false;
-        }
-        plan = { ...again, snapshot };
-        progress = undefined;
-        if (store.getState() !== now) {
+      const place = await this.#placeHere();
+      if (!place) return;
+      // What the video is drawn from, and what it is checked against, at the same moment. The project
+      // as this page had it when the export started is that already.
+      let now = before;
+      if (!held.state && store) {
+        now = store.getState();
+        const snapshot = await snapshotOfFiles(store.exportFiles().files);
+        if (snapshot !== plan.snapshot) {
+          const answer = await dialogs.choose({
+            title: t("export.resume.changedTitle"),
+            message: t("export.resume.changed"),
+            choices: [
+              { id: "discard", label: t("export.resume.discard") },
+              { id: "again", label: t("export.resume.again"), kind: "primary" },
+            ],
+          });
+          if (answer !== "again") {
+            if (answer === "discard") await this.#discard(saved);
+            return;
+          }
+          const again = this.#planAgain(now, plan);
+          if (!again) {
+            await this.#notice(t("export.video.failed"), t("export.resume.planGone"));
+            return;
+          }
+          plan = { ...again, snapshot };
+          progress = undefined;
           // It changed again while people were asked. Then this is a new snapshot again.
-          place.close();
-          return false;
+          if (store.getState() !== now) return;
         }
+        // From now on this page knows what it is of, also when the project changes or closes.
+        held.state = now;
       }
       this.#busy = false;
-      await this.#run({ id: saved.id, plan, progress, state: now, file, place }, release);
-      return true;
+      await this.#run({ id: saved.id, plan, progress, state: now, file, place }, held);
     } finally {
       this.#busy = false;
     }
@@ -727,13 +1075,20 @@ export class VideoExport {
     return all
       .filter((saved) => (saved.state as SavedState | undefined)?.plan?.version === 1)
       .filter((saved) => !isExpired(saved))
-      .map(({ id, project, savedAt, target, state }) => ({
-        id,
-        project,
-        savedAt,
-        name: nameOfTarget(target),
-        bytes: (state as SavedState).progress.bytes ?? 0,
-      }))
+      .map(({ id, project, savedAt, target, state }) => {
+        const { progress, queue } = state as SavedState;
+        const entry = this.#queue.get(id);
+        return {
+          id,
+          project,
+          savedAt,
+          name: nameOfTarget(target),
+          bytes: progress.bytes ?? 0,
+          status: entry?.status ?? statusAfterReload(queue),
+          done: progress.frame,
+          total: progress.total ?? entry?.total ?? 0,
+        };
+      })
       .toSorted((a, b) => b.savedAt - a.savedAt);
   }
 
@@ -743,10 +1098,17 @@ export class VideoExport {
    */
   async forget(id: string): Promise<boolean> {
     const { exports } = this.#options;
+    if (this.#held.has(id)) {
+      if (id === this.#job?.id) return false;
+      const saved = await this.#savedOf(id);
+      if (!saved) this.#forgetEntry(id);
+      else if (await this.#dropEntry(saved, true)) this.#sayEmptyLeft(saved);
+      return true;
+    }
     const release = await exports.claim(id);
     if (!release) return false;
     try {
-      const saved = (await exports.all().catch(() => [])).find((each) => each.id === id);
+      const saved = await this.#savedOf(id);
       if (!saved) return true;
       if (await this.#drop(saved, true)) this.#sayEmptyLeft(saved);
       return true;
@@ -755,40 +1117,188 @@ export class VideoExport {
     }
   }
 
-  /** Asks how, and exports. Over when the export is. */
+  /**
+   * Asks how, and puts the export in line. When none goes yet, it goes right away, and this is over
+   * when the line is: when it and whatever came after it are done. Otherwise it is over once the
+   * export is in line.
+   */
   async start(): Promise<void> {
     const { session, notifications, t } = this.#options;
-    if (this.#isBusy()) {
+    await this.#restored;
+    if (this.#busy) {
       notifications.push(t("export.video.busy"));
       return;
     }
     const { store } = session;
     if (!store) return;
-    // One that stopped halfway comes first: it is what people likely want, and it holds the place.
-    const offered = await this.#offer(store, true);
-    if (offered === true) return;
-    const replacing = offered === false ? undefined : offered;
-    if (this.#isBusy()) {
-      replacing?.release();
-      return;
+    let replacing: Replacing | undefined;
+    if (!this.#isRunning()) {
+      // One that stopped halfway comes first: it is what people likely want, and it holds the place.
+      const offered = await this.#offer(store, true);
+      if (offered === true) return;
+      replacing = offered === false ? undefined : offered;
+      if (this.#busy) return;
     }
     this.#busy = true;
-    let job: Job | undefined;
-    let release: (() => void) | undefined;
+    let prepared: Prepared | undefined;
     try {
-      const prepared = await this.#prepare(store);
-      job = prepared?.job;
-      release = prepared?.release;
+      // A window only when this one goes right away: one in line goes in the window of the line.
+      prepared = await this.#prepare(store, !this.#isRunning());
     } finally {
       this.#busy = false;
     }
-    if (job && release) await this.#run(job, release, replacing);
-    else replacing?.release();
+    if (!prepared) {
+      // People may have put one back in line while they were asked.
+      if (!this.#isRunning() && this.#queue.next((entry) => this.#canRun(entry))) {
+        await this.#pump();
+      }
+      return;
+    }
+    const { job, release, total, place } = prepared;
+    const fresh = job;
+    this.#held.set(job.id, {
+      release,
+      state: job.state,
+      fresh,
+      ...(replacing && { replaces: replacing }),
+    });
+    const order = this.#queue.nextOrder();
+    this.#queue.put({
+      id: job.id,
+      project: job.state.manifest.id,
+      name: job.file.name,
+      status: "waiting",
+      order,
+      done: 0,
+      total,
+    });
+    if (place) this.#usePlace(place);
+    if (!this.#isRunning()) {
+      await this.#pump();
+      return;
+    }
+    // It waits for its turn: what it is asked to do is kept now, so that a reload does not lose it.
+    await this.#keep(
+      job.id,
+      job.state.manifest.id,
+      job.file.target,
+      () => ({ kind: "download", name: job.file.name }),
+      {
+        plan: job.plan,
+        progress: { frame: 0, videoPieces: 0, bytes: 0, total },
+        queue: { status: "waiting", order },
+      },
+    ).catch((error: unknown) => console.warn("An export in line is not kept", error));
+    notifications.push(
+      t("export.queue.added", {
+        file: job.file.name,
+        ahead: this.#queue.ahead(job.id),
+        interpolation: { escapeValue: false },
+      }),
+    );
   }
 
-  async #prepare(
-    store: ProjectStore,
-  ): Promise<{ readonly job: Job; readonly release: () => void } | undefined> {
+  /** The exports in line go, one after the other, until none can go. */
+  #pump(): Promise<void> {
+    this.#pumping ??= this.#drain().finally(() => {
+      this.#pumping = undefined;
+    });
+    return this.#pumping;
+  }
+
+  async #drain(): Promise<void> {
+    await this.#restored;
+    try {
+      for (;;) {
+        const next = this.#queue.next((entry) => this.#canRun(entry));
+        if (!next) break;
+        await this.#runEntry(next);
+        // Whatever happened to it, it is not in line any more: else it would go again and again.
+        if (this.#queue.get(next.id)?.status === "waiting") {
+          this.#queue.update(next.id, { status: "paused" });
+        }
+      }
+    } finally {
+      this.#closePlace();
+    }
+  }
+
+  /**
+   * Whether it can go now: one from before a reload waits for people, and one this page does not
+   * know the project of needs the project open.
+   */
+  #canRun(entry: QueueEntry): boolean {
+    if (entry.restored) return false;
+    const held = this.#held.get(entry.id);
+    if (!held) return false;
+    if (held.state) return true;
+    return this.#options.session.store?.getState().manifest.id === entry.project;
+  }
+
+  async #runEntry(entry: QueueEntry): Promise<void> {
+    const { id } = entry;
+    const held = this.#held.get(id);
+    if (!held) {
+      this.#queue.remove(id);
+      return;
+    }
+    const pressed = isPressed();
+    this.#queue.update(id, { status: "running", needsPress: undefined, failure: undefined });
+    try {
+      const { fresh } = held;
+      if (fresh) {
+        held.fresh = undefined;
+        const place = await this.#placeHere();
+        if (!place) {
+          // People did not want it to go now. It waits for them, with what it was asked to do.
+          held.fresh = fresh;
+          this.#queue.update(id, { status: "paused" });
+          return;
+        }
+        await this.#run({ ...fresh, place }, held);
+        return;
+      }
+      const saved = await this.#savedOf(id);
+      if (!saved) {
+        this.#forgetEntry(id);
+        return;
+      }
+      await this.#goOn(saved, held, pressed);
+    } finally {
+      // It went back to where it was, as when people went back from a question about it.
+      if (this.#queue.get(id)?.status === "running") {
+        const back = entry.status === "waiting" ? "paused" : entry.status;
+        this.#queue.update(id, { status: back });
+        if (back === "paused") void this.#saveStatus(id, "paused");
+      }
+    }
+  }
+
+  /** Where the export whose turn it is goes: where the one before went, while that is there. */
+  async #placeHere(): Promise<ExportWindow | undefined> {
+    if (this.#place && !this.#placeGone) return this.#place;
+    this.#place = undefined;
+    const place = await this.#placeFor();
+    if (place) this.#usePlace(place);
+    return place;
+  }
+
+  #usePlace(place: ExportWindow): void {
+    if (this.#place === place) return;
+    if (this.#place && this.#place !== place) this.#place.close();
+    this.#place = place;
+    this.#placeGone = false;
+    void place.closed.then(() => {
+      if (this.#place === place) this.#placeGone = true;
+    });
+  }
+
+  #closePlace(): void {
+    this.#place?.close();
+    this.#place = undefined;
+  }
+
+  async #prepare(store: ProjectStore, withPlace: boolean): Promise<Prepared | undefined> {
     const { timeline, dialogs, t, exports } = this.#options;
     const { model } = timeline;
     if (!model) return undefined;
@@ -830,11 +1340,14 @@ export class VideoExport {
     // Where unfinished exports of this project go, so that a new one does not suggest the same.
     const kept = await exports.list(asked.manifest.id).catch(() => []);
     const taken = new Set(kept.map(({ target }) => nameOfTarget(target)));
+    for (const entry of this.#queue.getSnapshot()) {
+      if (entry.project === asked.manifest.id && entry.status !== "done") taken.add(entry.name);
+    }
     const answer = await dialogs.form({
       title: t("export.video.title"),
       fields: this.#fields(asked, ranges, quality, remembered !== undefined),
-      notes: this.#notes(asked, firstEncoding, audible, firstSound),
-      confirm: t("export.video.start"),
+      notes: this.#notes(asked, firstEncoding, audible, firstSound, !withPlace),
+      confirm: t(withPlace ? "export.video.start" : "export.queue.add"),
     });
     if (!answer) return undefined;
     const format = formats.find(({ id }) => id === answer["format"]) ?? first;
@@ -887,10 +1400,13 @@ export class VideoExport {
       return undefined;
     }
     if (!file) return undefined;
-    const place = await this.#placeFor();
-    if (!place) {
-      await this.#abandon(file, "");
-      return undefined;
+    let place: ExportWindow | undefined;
+    if (withPlace) {
+      place = await this.#placeHere();
+      if (!place) {
+        await this.#abandon(file, "");
+        return undefined;
+      }
     }
     void this.#saveQuality(chosen);
     // What the video is drawn from and what it is known by, at one moment: people may have changed
@@ -911,10 +1427,10 @@ export class VideoExport {
     const id = `export-${crypto.randomUUID()}`;
     const release = await exports.claim(id);
     if (!release) {
-      place.close();
+      if (place && !this.#isRunning()) this.#closePlace();
       return undefined;
     }
-    return { job: { id, plan: saved, progress: undefined, state, file, place }, release };
+    return { job: { id, plan: saved, progress: undefined, state, file }, place, release, total };
   }
 
   /**
@@ -939,27 +1455,26 @@ export class VideoExport {
     return answer === "go";
   }
 
-  async #run(job: Job, release: () => void, replaces?: Replacing): Promise<void> {
+  async #run(job: Job, held: Held): Promise<void> {
     const { t, notifications } = this.#options;
     const exports = this.#options.exports;
     const { id, state, file, plan: saved } = job;
     let place = job.place;
     const timelineId = saved.timeline;
     const plan = buildRenderPlan(state, timelineId, { format: saved.format });
-    if (!plan) {
-      place.close();
-      release();
-      return;
-    }
+    if (!plan) return;
     const { range } = saved;
     const frames = framesOf(range, plan.scenes.fps);
     const { total } = frames;
     const controller = new AbortController();
     const { signal } = controller;
     this.#controller = controller;
+    this.#pauseAsked = false;
     const resumed = job.progress;
-    let started = { at: performance.now(), done: resumed?.frame ?? 0 };
+    const order = this.#queue.get(id)?.order ?? this.#queue.nextOrder();
+    this.#pace = new Pace(performance.now(), resumed?.frame ?? 0);
     this.#set({
+      id,
       name: file.name,
       done: resumed?.frame ?? 0,
       total,
@@ -978,13 +1493,44 @@ export class VideoExport {
       job.progress?.acceleration === "software" ? inSoftware(saved.encoding) : saved.encoding;
     /** The disk does not keep up, and frames would pile up in memory. */
     const behind = () => unwritten > MAX_UNWRITTEN;
+    /** Files of the project being read for the compositor, which the picture waits for. */
+    let reading = 0;
+    let readingSaid: ReturnType<typeof setTimeout> | undefined;
     const openCompositor = (where: ExportWindow): VideoCompositor => {
+      const base = exportCompositorOptions(this.#options, state, plan);
       const options = {
-        ...exportCompositorOptions(this.#options, state, plan),
+        ...base,
         document: where.document,
+        media: (hash: string) => {
+          reading += 1;
+          // Only a read that takes a while gets said, or the status would flicker with every file.
+          readingSaid ??= setTimeout(() => {
+            readingSaid = undefined;
+            if (reading > 0) this.#flag("readingMedia", true);
+          }, READING_SAID_AFTER_MS);
+          return base.media(hash).finally(() => {
+            reading -= 1;
+            if (reading > 0) return;
+            clearTimeout(readingSaid);
+            readingSaid = undefined;
+            this.#flag("readingMedia", false);
+          });
+        },
       };
       return this.#options.compositor?.(options) ?? new ExportCompositor(options);
     };
+    /** A page that is not on the screen may not get drawn, and then the export waits for it. */
+    const watchHidden = (where: ExportWindow) => {
+      const page = where.document;
+      const update = () => this.#flag("hidden", page.visibilityState === "hidden");
+      page.addEventListener?.("visibilitychange", update);
+      update();
+      return () => {
+        page.removeEventListener?.("visibilitychange", update);
+        this.#flag("hidden", false);
+      };
+    };
+    let unwatch = watchHidden(place);
     let index = resumed?.frame ?? 0;
     let videoChunks = index;
     let bytes = resumed?.bytes ?? 0;
@@ -1024,24 +1570,28 @@ export class VideoExport {
      * The export people chose to do again with this one. It goes once this one has a place to go
      * on from of its own: until then, what that one did is all there is.
      */
-    let toReplace = replaces;
     const dropReplaced = async () => {
-      const old = toReplace;
+      const old = held.replaces;
       if (!old) return;
-      toReplace = undefined;
-      try {
-        if (await this.#drop(old.saved, false)) this.#sayEmptyLeft(old.saved);
-        notifications.push(t("export.resume.replaced"));
-      } finally {
-        old.release();
-      }
+      held.replaces = undefined;
+      if (await this.#dropEntry(old.saved, false)) this.#sayEmptyLeft(old.saved);
+      notifications.push(t("export.resume.replaced"));
     };
     /** How many of the bytes are of the picture, which can go back to the last place kept. */
     let videoBytes = 0;
     /** The last place kept, which an encoder that broke goes back to. */
     let kept = { frame: index, videoPieces: video.nextSeq, videoBytes, decoding };
-    const checkpoint = async (frame: number) => {
-      await this.#keep(
+    /** The same, as it is on the disk. */
+    let keptProgress: SavedProgress = {
+      frame: index,
+      videoPieces: video.nextSeq,
+      bytes,
+      ...(decoding && { decoderConfig: decoding }),
+      acceleration: used.acceleration,
+      total,
+    };
+    const keepState = (queue: SavedQueue) =>
+      this.#keep(
         id,
         state.manifest.id,
         target,
@@ -1049,18 +1599,21 @@ export class VideoExport {
           target = { kind: "download", name: file.name };
           return target;
         },
-        {
-          plan: saved,
-          progress: {
-            frame,
-            videoPieces: video.nextSeq,
-            bytes,
-            ...(decoding && { decoderConfig: decoding }),
-            acceleration: used.acceleration,
-          },
-        },
+        { plan: saved, progress: keptProgress, queue },
       );
+    const checkpoint = async (frame: number) => {
+      const progress: SavedProgress = {
+        frame,
+        videoPieces: video.nextSeq,
+        bytes,
+        ...(decoding && { decoderConfig: decoding }),
+        acceleration: used.acceleration,
+        total,
+      };
+      keptProgress = progress;
+      await keepState({ status: "running", order });
       kept = { frame, videoPieces: video.nextSeq, videoBytes, decoding };
+      this.#queue.update(id, { done: frame, total });
     };
     /** Where the encoder now in use started, and what it is to be done about it. */
     let encoderStart = index;
@@ -1068,7 +1621,8 @@ export class VideoExport {
     let triedSoftware = used.acceleration === "software";
     try {
       // What came after the last place to go on from is not to be trusted, and the sound is
-      // quick to make again, so that it never has a seam.
+      // quick to make again, so that it never has a seam. Doing it again after a failure leaves
+      // no more on the disk than doing it once.
       await exports.dropPieces(id, "video", video.nextSeq);
       await exports.dropPieces(id, "sound", 0);
       await checkpoint(index);
@@ -1115,11 +1669,11 @@ export class VideoExport {
         const source: SoundSource = async (layer) => {
           const wanted = layer.made && made.get(layer.file);
           if (!wanted) return undefined;
-          this.#makingSound(true);
+          this.#flag("makingSound", true);
           const outcome = await untilAborted(
             this.#options.sounds.whenMade(wanted, state, signal),
             signal,
-          ).finally(() => this.#makingSound(false));
+          ).finally(() => this.#flag("makingSound", false));
           if (outcome.state === "failed") throw new SoundNotMade(layer, outcome.reason);
           const wav = await media.get(layer.file).catch(() => undefined);
           if (!wav) throw new SoundFailed(layer, "missing-file");
@@ -1199,6 +1753,8 @@ export class VideoExport {
               if (videoChunks !== index) throw new WrongOutput("count");
               await checkpoint(index);
               await dropReplaced();
+              // A place to go on from is where a pause costs nothing.
+              if (this.#pauseAsked) throw new PausedHere();
             }
             const planned = frames.at(index);
             const frame = index === restartAt ? { ...planned, keyFrame: true } : planned;
@@ -1211,7 +1767,7 @@ export class VideoExport {
               throw error;
             });
             while (behind()) await untilAborted(written, signal);
-            this.#progress(index + 1, total, started);
+            this.#progress(index + 1, total);
           }
           await untilAborted(current.finishEncoding(), signal);
           if (changed) throw new ResumeFailed();
@@ -1220,7 +1776,7 @@ export class VideoExport {
           if (videoChunks !== total) throw new WrongOutput("count");
           break;
         } catch (error) {
-          if (signal.aborted) throw error;
+          if (signal.aborted || error instanceof PausedHere) throw error;
           replacing = true;
           const again = startedOverWith !== used.acceleration;
           if (error instanceof ResumeFailed && again && videoChunks === encoderStart) {
@@ -1237,7 +1793,7 @@ export class VideoExport {
             videoBytes = 0;
             startedOverWith = used.acceleration;
             await checkpoint(0);
-            started = { at: performance.now(), done: 0 };
+            this.#pace.restart(performance.now(), 0);
             next = "encoder";
             continue;
           }
@@ -1260,7 +1816,7 @@ export class VideoExport {
             ({ videoBytes, decoding } = kept);
             index = kept.frame;
             videoChunks = kept.frame;
-            started = { at: performance.now(), done: index };
+            this.#pace.restart(performance.now(), index);
             next = "encoder";
             continue;
           }
@@ -1269,8 +1825,11 @@ export class VideoExport {
           compositor?.dispose();
           await untilAborted(written, signal);
           index = videoChunks;
+          unwatch();
           place = await this.#pause(signal, index, total);
-          started = { at: performance.now(), done: index };
+          this.#usePlace(place);
+          unwatch = watchHidden(place);
+          this.#pace.restart(performance.now(), index);
           next = "compositor";
         }
       }
@@ -1283,9 +1842,13 @@ export class VideoExport {
       await checkpoint(total);
       await dropReplaced();
       compositor?.dispose();
-      place.close();
       await this.#writeFile(id, file, saved, fps, decoding, soundDecoding, signal);
-      await exports.remove(id).catch((error: unknown) => console.warn("An export stays", error));
+      await this.#inTurn(id, () => exports.remove(id)).catch((error: unknown) =>
+        console.warn("An export stays", error),
+      );
+      this.#queue.update(id, { status: "done", done: total, total });
+      this.#held.get(id)?.release();
+      this.#held.delete(id);
       const done = file.kind === "download" ? "export.video.doneDownload" : "export.video.done";
       const picture = t(`export.video.encoded.${used.acceleration}`, {
         codec: t(`export.video.codecName.${used.codec}`),
@@ -1299,54 +1862,94 @@ export class VideoExport {
       notifications.push(t(done, { file: file.name, how, interpolation: { escapeValue: false } }));
     } catch (error) {
       compositor?.dispose();
-      // What went wrong is said here, and the window only shows how far it got.
-      place.close();
       soundTrack?.close();
       this.#set(undefined);
       if (signal.aborted) {
         // People said stop: nothing of it stays.
-        await exports.remove(id).catch(() => {});
+        await this.#inTurn(id, () => exports.remove(id)).catch(() => {});
         const cleaned = await this.#abandon(file, id);
+        this.#forgetEntry(id);
         await this.#stopped(error, true, cleaned, file, state, range);
+      } else if (error instanceof PausedHere) {
+        // Everything up to here is on the disk, and it goes on from here when people say so.
+        const stays = await keepState({ status: "paused", order }).then(
+          () => true,
+          (reason: unknown) => {
+            console.warn("A paused export is not kept as paused", reason);
+            return false;
+          },
+        );
+        this.#queue.update(id, { status: "paused", done: keptProgress.frame, total });
+        notifications.push(
+          t(stays ? "export.queue.paused" : "export.queue.pausedNotKept", {
+            file: file.name,
+            frame: keptProgress.frame,
+            total,
+            interpolation: { escapeValue: false },
+          }),
+        );
       } else if (isGone(error)) {
         // Somebody cleared what it kept while it ran: there is nothing to go on from. What a last
         // place to go on from wrote again goes too.
-        await exports.remove(id).catch(() => {});
+        await this.#inTurn(id, () => exports.remove(id)).catch(() => {});
         const cleaned = await this.#abandon(file, id);
+        this.#forgetEntry(id);
         await this.#stopped(error, false, cleaned, file, state, range, false);
-      } else if (kept.frame > 0) {
-        // What it got to stays, as far as there is a place to go on from: once what went wrong is
-        // put right, it goes on from there.
-        await this.#stopped(error, false, true, file, state, range, true);
       } else {
-        // Nothing to go on from: going on would be starting over, and an empty file says nothing.
-        await exports.remove(id).catch(() => {});
-        const cleaned = await this.#abandon(file, id);
-        await this.#stopped(error, false, cleaned, file, state, range, false);
+        // What it got to stays in the list, failed, as far as there is a place to go on from: once
+        // what went wrong is put right, a retry goes on from there. Without one it starts over,
+        // with the same choices and the same file.
+        const reason = this.#reasonOf(error, file, state, range);
+        const failed = await keepState({ status: "failed", order, failure: reason }).then(
+          () => true,
+          () => false,
+        );
+        if (failed) {
+          this.#queue.update(id, {
+            status: "failed",
+            failure: reason,
+            done: keptProgress.frame,
+            total,
+          });
+          this.#sayFailed(
+            reason,
+            keptProgress.frame > 0 ? "export.video.kept" : "export.video.retry",
+          );
+        } else {
+          // Not even that can be kept, as when the storage of the browser is full: nothing stays.
+          await this.#inTurn(id, () => exports.remove(id)).catch(() => {});
+          const cleaned = await this.#abandon(file, id);
+          this.#forgetEntry(id);
+          await this.#stopped(error, false, cleaned, file, state, range, false);
+        }
       }
     } finally {
       compositor?.dispose();
-      place.close();
-      release();
-      toReplace?.release();
+      clearTimeout(readingSaid);
+      unwatch();
       this.#resume = undefined;
+      this.#onPauseAsked = undefined;
+      this.#pauseAsked = false;
       this.#controller = undefined;
+      this.#pace = undefined;
       this.#set(undefined);
     }
   }
 
-  /** How far the sound has got, while it has a way to go before the picture can go on. */
-  #makingSound(on: boolean): void {
+  /** What the export waits for, or not any more. Waiting does not count for how long it takes. */
+  #flag(name: "makingSound" | "readingMedia" | "hidden", on: boolean): void {
+    this.#pace?.wait(name, on, performance.now());
     const job = this.#job;
-    if (!job || (job.makingSound ?? false) === on) return;
-    if (on) this.#set({ ...job, makingSound: true });
+    if (!job || (job[name] ?? false) === on) return;
+    if (on) this.#set({ ...job, [name]: true });
     else {
-      const { makingSound: _, ...rest } = job;
+      const { [name]: _, ...rest } = job;
       this.#set(rest);
     }
   }
 
   #catchingUp(done: number | undefined, total: number): void {
+    this.#pace?.wait("catchingUp", done !== undefined, performance.now());
     const job = this.#job;
     if (!job) return;
     if (done === undefined) {
@@ -1371,15 +1974,17 @@ export class VideoExport {
     state: SavedState,
   ): Promise<void> {
     const { exports, notifications, t } = this.#options;
-    const saved = { id, project, savedAt: Date.now(), state };
-    try {
-      await exports.save({ ...saved, target });
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === "DataCloneError")) throw error;
-      const download = instead();
-      await exports.save({ ...saved, target: download });
-      notifications.push(t("export.resume.noKeeping"));
-    }
+    await this.#inTurn(id, async () => {
+      const saved = { id, project, savedAt: Date.now(), state };
+      try {
+        await exports.save({ ...saved, target });
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "DataCloneError")) throw error;
+        const download = instead();
+        await exports.save({ ...saved, target: download });
+        notifications.push(t("export.resume.noKeeping"));
+      }
+    });
   }
 
   /** Puts what was kept into the file people chose, which is where it first gets written. */
@@ -1451,19 +2056,30 @@ export class VideoExport {
     return (await windows.open()) ?? thisPage();
   }
 
-  /** Waits for people to say it goes on, after its window was closed. */
+  /**
+   * Waits for people to say it goes on, after its window was closed. People pausing it then goes
+   * back to the last place to go on from, which takes nothing that would not be done again anyway.
+   */
   #pause(signal: AbortSignal, done: number, total: number): Promise<ExportWindow> {
     const { notifications, t } = this.#options;
     const job = this.#job;
     if (job) {
-      const { name, stopping, place } = job;
-      this.#set({ name, done, total, stopping, place, paused: true });
+      const { id, name, stopping, place } = job;
+      this.#set({ id, name, done, total, stopping, place, paused: true });
     }
     notifications.push(t("export.window.paused"));
     return new Promise((resolve, reject) => {
       const stop = () => reject(signal.reason);
       signal.addEventListener("abort", stop, { once: true });
+      const paused = () => {
+        signal.removeEventListener("abort", stop);
+        this.#resume = undefined;
+        reject(new PausedHere());
+      };
+      if (this.#pauseAsked) paused();
+      this.#onPauseAsked = paused;
       this.#resume = (opening) => {
+        this.#onPauseAsked = undefined;
         void opening.then((opened) => {
           signal.removeEventListener("abort", stop);
           const place = opened ?? thisPage();
@@ -1500,17 +2116,15 @@ export class VideoExport {
     }
   }
 
-  #progress(
-    done: number,
-    total: number,
-    started: { readonly at: number; readonly done: number },
-  ): void {
+  #progress(done: number, total: number): void {
     const job = this.#job;
     if (!job) return;
-    const spent = performance.now() - started.at;
-    const since = done - started.done;
-    const remainingMs =
-      since >= ESTIMATE_AFTER_FRAMES ? Math.round((spent / since) * (total - done)) : undefined;
+    const remainingMs = this.#pace?.remainingMs(
+      performance.now(),
+      done,
+      total,
+      ESTIMATE_AFTER_FRAMES,
+    );
     this.#set({
       ...job,
       done,
@@ -1528,47 +2142,70 @@ export class VideoExport {
     range: Range,
     kept = false,
   ): Promise<void> {
-    const { t, notifications, timeline } = this.#options;
+    const { t, notifications } = this.#options;
     const plain = { interpolation: { escapeValue: false } };
     const left = cleaned ? "" : t("export.video.leftBehind", { file: file.name, ...plain });
     if (cancelled) {
       if (cleaned) notifications.push(t("export.video.cancelled"));
-      else await this.#notice(t("export.video.cancelled"), left);
+      else this.#tell(t("export.video.cancelled"), left);
       return;
     }
-    let message: string;
+    const message = this.#reasonOf(error, file, state, range);
+    const after = kept ? t("export.video.kept") : left;
+    this.#tell(t("export.video.failed"), `${message}${after}`);
+  }
+
+  /** Says that it failed, and what people can do: the export stays in the list. */
+  #sayFailed(reason: string, after: "export.video.kept" | "export.video.retry"): void {
+    const { t } = this.#options;
+    this.#tell(t("export.video.failed"), `${reason}${t(after)}`);
+  }
+
+  /**
+   * Shows a notice without holding up the line: the next export goes meanwhile. It waits for a
+   * question that is open, such as the one for the next export, instead of taking its place.
+   */
+  #tell(title: string, message: string): void {
+    void this.#quiet().then(() => this.#notice(title, message));
+  }
+
+  /** What went wrong, for people. A frame that failed is where the timeline goes. */
+  #reasonOf(error: unknown, file: GrowingFile, state: ProjectState, range: Range): string {
+    const { t, timeline } = this.#options;
+    const plain = { interpolation: { escapeValue: false } };
     // Wherever the storage of the browser said so: a piece, a place to go on from, the start.
     if (isQuotaError(error)) {
       console.warn("Export stopped", error);
-      message = t("export.storage.full");
-    } else if (isGone(error)) {
-      console.warn("Export stopped", error);
-      message = t("export.video.notKept");
-    } else if (error instanceof FrameFailed) {
-      const at = this.#locate(error, range);
-      const reason = describeFailure(t, error.failure, state, timeline);
-      message = t("export.video.failedAt", { frame: error.index + 1, at, reason, ...plain });
-    } else if (error instanceof ResumeFailed) {
-      message = t("export.window.resumeFailed");
-    } else if (error instanceof WrongOutput) {
-      console.warn("Export stopped", error);
-      message = t("export.video.wrongOutput");
-    } else if (error instanceof WriteFailed) {
-      console.warn("Export stopped", error.cause);
-      message = t("export.video.writeFailed", { file: file.name, error: error.message, ...plain });
-    } else {
-      console.warn("Export stopped", error);
-      message = describeFailure(t, failureOf(error), state, timeline);
+      return t("export.storage.full");
     }
-    const after = kept ? t("export.video.kept") : left;
-    await this.#notice(t("export.video.failed"), `${message}${after}`);
+    if (isGone(error)) {
+      console.warn("Export stopped", error);
+      return t("export.video.notKept");
+    }
+    if (error instanceof FrameFailed) {
+      const at = this.#locate(error, range, state);
+      const reason = describeFailure(t, error.failure, state, timeline);
+      return t("export.video.failedAt", { frame: error.index + 1, at, reason, ...plain });
+    }
+    if (error instanceof ResumeFailed) return t("export.window.resumeFailed");
+    if (error instanceof WrongOutput) {
+      console.warn("Export stopped", error);
+      return t("export.video.wrongOutput");
+    }
+    if (error instanceof WriteFailed) {
+      console.warn("Export stopped", error.cause);
+      return t("export.video.writeFailed", { file: file.name, error: error.message, ...plain });
+    }
+    console.warn("Export stopped", error);
+    return describeFailure(t, failureOf(error), state, timeline);
   }
 
   /** Takes people to where it went wrong: the playhead goes there, and the clip gets selected. */
-  #locate({ seconds, failure }: FrameFailed, range: Range): string {
-    const { timeline } = this.#options;
+  #locate({ seconds, failure }: FrameFailed, range: Range, state: ProjectState): string {
+    const { timeline, session } = this.#options;
     const { model } = timeline;
-    if (!model) return "";
+    // An export of another project than the one that is open has nowhere to take people.
+    if (!model || session.store?.getState().manifest.id !== state.manifest.id) return "";
     const frame = Math.floor(Math.min(seconds, range.to) * model.rate.fps + FRAME_TOLERANCE);
     timeline.seek(frame);
     if ("layer" in failure && model.boxes.has(failure.layer)) timeline.selectOnly(failure.layer);
@@ -1646,6 +2283,7 @@ export class VideoExport {
     encoding: VideoEncoding | undefined,
     audible: boolean,
     sound: SoundEncoding | undefined,
+    inLine: boolean,
   ): string[] {
     const { t, timeline } = this.#options;
     const notes: string[] = [];
@@ -1680,6 +2318,8 @@ export class VideoExport {
     if (clips.some(({ track }) => captions.has(track))) notes.push(t("export.video.noCaptions"));
     notes.push(t(this.#windows.supported ? "export.window.inWindow" : "export.window.noWindow"));
     notes.push(t("export.video.snapshot"));
+    // Last, where it is seen right above the button that says so.
+    if (inLine) notes.push(t("export.queue.inLine", { count: this.#queue.waiting() + 1 }));
     return notes;
   }
 
@@ -1741,9 +2381,25 @@ const PLAIN = { interpolation: { escapeValue: false } };
 /** An export that stopped, which people chose to do again with a new one. */
 interface Replacing {
   readonly saved: SavedExport;
-  /** The claim on it, which the new export holds until it takes its place. */
-  readonly release: () => void;
 }
+
+/** What people chose for an export, before it is in line. */
+interface Prepared {
+  readonly job: Omit<Job, "place">;
+  /** Where it goes, when it goes right away. */
+  readonly place: ExportWindow | undefined;
+  /** The claim on it, which this window keeps while it is in the list. */
+  readonly release: () => void;
+  readonly total: number;
+}
+
+/** Its place in line. What was kept before there was a line goes by when it was kept. */
+const orderOf = ({ savedAt, state }: SavedExport): number =>
+  (state as SavedState | undefined)?.queue?.order ?? savedAt;
+
+/** Whether people pressed something just now, which the browser wants before some questions. */
+const isPressed = (): boolean =>
+  (globalThis as { navigator?: Navigator }).navigator?.userActivation?.isActive === true;
 
 const isExpired = ({ savedAt }: SavedExport) => Date.now() - savedAt > KEEP_UNFINISHED_MS;
 

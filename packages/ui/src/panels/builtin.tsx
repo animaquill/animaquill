@@ -3,6 +3,7 @@ import {
   CodeXml,
   Diamond,
   Diff,
+  Download,
   Files,
   Gauge,
   Grid3x3,
@@ -29,6 +30,7 @@ import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
 import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel.tsx";
+import { ExportsPanel } from "../export/ExportsPanel.tsx";
 import { KeyframesPanel } from "../keyframes/KeyframesPanel.tsx";
 import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
@@ -59,6 +61,7 @@ function planned(
     | "properties"
     | "settings"
     | "keyframes"
+    | "exports"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -170,6 +173,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "bottom",
     component: ProblemsPanel,
     keys: ["mod+shift+m"],
+  },
+  {
+    type: "exports",
+    title: (t) => t("panel.exports.title"),
+    icon: Download,
+    area: "bottom",
+    component: ExportsPanel,
   },
   planned("terminal", "bottom", SquareTerminal, { keepAlive: true, keys: ["mod+`"] }),
   planned("cache", "bottom", HardDrive),

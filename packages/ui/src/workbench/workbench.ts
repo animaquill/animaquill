@@ -851,6 +851,8 @@ export class Workbench {
     });
     if (!confirmed) return false;
     try {
+      // What its exports kept goes with it, which only happens once this window lets go of them.
+      await this.videos.letGoOfProject(project.id);
       await this.session.remove(project.id);
       return true;
     } catch (error) {

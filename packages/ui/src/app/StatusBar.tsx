@@ -1,4 +1,4 @@
-import { Circle, CircleAlert, CircleX, TriangleAlert, X } from "lucide-react";
+import { Circle, CircleAlert, CircleX, Download, Pause, TriangleAlert, X } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { InputChoice } from "../workbench/input-mode.ts";
@@ -64,45 +64,82 @@ function InputSwitch() {
   );
 }
 
-/** An export goes on while people work, so this is where they see it and can stop it. */
+/**
+ * An export goes on while people work, so this is where they see it, and can pause or stop it. It
+ * says what it waits for, and how many more are in line; the list of them is a press away.
+ */
 function VideoExportStatus() {
-  const { videos } = useWorkbench();
+  const { videos, layout } = useWorkbench();
   const { t } = useTranslation();
   const job = useSyncExternalStore(videos.subscribe, videos.getSnapshot);
-  if (!job) return null;
+  const entries = useSyncExternalStore(videos.queue.subscribe, videos.queue.getSnapshot);
+  const openList = () => layout.openPanel("exports");
+  if (!job) {
+    const unfinished = entries.filter(({ status }) => status !== "done").length;
+    if (unfinished === 0) return null;
+    return (
+      <Tip name={t("panel.exports.title")} usage={t("export.queue.idleUsage")}>
+        <button type="button" className={styles.name} onClick={openList}>
+          <Download size={12} />
+          {t("export.queue.idle", { count: unfinished })}
+        </button>
+      </Tip>
+    );
+  }
   const { name, done, total, remainingMs, stopping, paused, catchingUp, writing, makingSound } =
     job;
   const percent = total > 0 ? Math.floor((done / total) * 100) : 0;
+  const more = videos.queue.waiting();
   const about = t("export.video.runningAbout", {
     file: name,
     done,
     total,
     interpolation: { escapeValue: false },
   });
+  const canPause = !stopping && !writing && !job.pausing && !paused;
   return (
     <span className={styles.export} role="status" aria-label={about}>
       <progress className={styles.exportBar} value={done} max={Math.max(total, 1)} />
-      <span>
+      <button type="button" className={styles.exportText} onClick={openList}>
         {stopping
           ? t("export.video.stopping")
           : writing
             ? t("export.video.writing")
-            : makingSound
-              ? t("export.video.makingSound")
-              : catchingUp !== undefined
-                ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
-                : paused
-                  ? t("export.window.pausedStatus", { percent })
-                  : t("export.video.running", { percent }) +
-                    (remainingMs === undefined
-                      ? ""
-                      : ` · ${t("export.video.remaining", { time: duration(remainingMs) })}`)}
-      </span>
+            : job.pausing
+              ? t("export.queue.status.pausing")
+              : makingSound
+                ? t("export.video.makingSound")
+                : catchingUp !== undefined
+                  ? t("export.resume.catchingUp", { percent: Math.floor(catchingUp * 100) })
+                  : paused
+                    ? t("export.window.pausedStatus", { percent })
+                    : job.readingMedia
+                      ? t("export.queue.status.readingMedia")
+                      : job.hidden
+                        ? t("export.queue.status.hidden")
+                        : t("export.video.running", { percent }) +
+                          (remainingMs === undefined
+                            ? ""
+                            : ` · ${t("export.video.remaining", { time: duration(remainingMs) })}`)}
+        {more > 0 && ` · ${t("export.queue.more", { count: more })}`}
+      </button>
       {paused && !stopping && (
         // The browser only opens the window of the export for a press of a button.
         <button type="button" className={styles.exportResume} onClick={() => videos.resume()}>
           {t("export.window.resume")}
         </button>
+      )}
+      {canPause && (
+        <Tip name={t("export.queue.pause")} usage={t("export.queue.status.pausing")}>
+          <button
+            type="button"
+            className={styles.exportCancel}
+            aria-label={t("export.queue.pause")}
+            onClick={() => videos.pause()}
+          >
+            <Pause size={12} />
+          </button>
+        </Tip>
       )}
       {!stopping && (
         <Tip name={t("export.video.cancel")} usage={about}>

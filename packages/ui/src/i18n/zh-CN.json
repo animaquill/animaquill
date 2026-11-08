@@ -57,9 +57,18 @@
   "export": {
     "unfinished": {
       "title": "没完成的导出",
-      "about": "导出到一半停下的视频，进度存在这个浏览器里，打开项目时可以接着导出。不要的可以清掉，30 天没动的会自动清掉。",
-      "item": "{{project}} · {{file}} · 占 {{size}}",
-      "clear": "清掉"
+      "about": "导出到一半停下或者排队等着的视频，进度存在这个浏览器里，打开项目后可以在“导出”选项卡里接着导出。不要的可以清掉，30 天没动的会自动清掉。",
+      "item": "{{project}} · {{file}} · {{status}} · 占 {{size}}",
+      "clear": "清掉",
+      "status": {
+        "waiting": "排队中",
+        "running": "正在导出",
+        "paused": "已暂停",
+        "failed": "没有导出",
+        "interrupted": "上次没导完",
+        "done": "已完成"
+      },
+      "percent": "{{status}} {{percent}}%"
     },
     "storage": {
       "title": "浏览器存储可能不够",
@@ -104,7 +113,9 @@
       "paused": "导出的小窗关掉了，导出已暂停，写好的部分还在。点状态栏的“继续导出”接着导出。",
       "resume": "继续导出",
       "pausedStatus": "视频导出已暂停 {{percent}}%",
-      "resumeFailed": "接着导出时编码器的设置和之前不一样，这个文件不能接着写。"
+      "resumeFailed": "接着导出时编码器的设置和之前不一样，这个文件不能接着写。",
+      "pause": "暂停",
+      "after": "后面还有 {{count}} 个导出"
     },
     "video": {
       "action": "导出视频…",
@@ -160,7 +171,7 @@
       },
       "file": "{{name}}-{{format}}.{{extension}}",
       "fileNumbered": "{{name}}-{{format}}-{{number}}.{{extension}}",
-      "busy": "已经有一个视频在导出，等它完成或者取消后再开始新的。",
+      "busy": "另一个导出的设置还没选完，选完以后再开始新的。",
       "running": "正在导出视频 {{percent}}%",
       "remaining": "约剩 {{time}}",
       "runningAbout": "正在导出“{{file}}”：第 {{done}} / {{total}} 帧。",
@@ -183,8 +194,9 @@
       "empty": "这个范围里没有可以导出的帧。",
       "noFile": "没能新建文件。",
       "notKept": "这个导出存下的进度在导出时被清掉了，导出停下了，没有留下什么。",
-      "kept": "已经导好的部分留着。修好以后再点“导出视频…”，或者重新打开项目，就能从最后一个完整的段接着导出；要是项目改过了，就只能从头导出。",
-      "wrongOutput": "出图的页面交回来的编码数据不对，导出停下了。"
+      "kept": "已经导好的部分留着。修好以后在“导出”选项卡里点“重试”，从最后一个完整的段接着导出。",
+      "wrongOutput": "出图的页面交回来的编码数据不对，导出停下了。",
+      "retry": "修好以后在“导出”选项卡里点“重试”，设置和保存的位置都不用重新选。"
     },
     "frameAction": "导出当前帧",
     "frameRunning": "正在导出当前帧",
@@ -203,6 +215,44 @@
       "compositor": "负责出图的页面没有响应。可以再试一次。",
       "encoder": "编码器出错：{{message}}",
       "other": "画面没有做出来：{{message}}"
+    },
+    "queue": {
+      "add": "加入队列",
+      "inLine": "现在有导出在进行，这个排在第 {{count}} 个，轮到时在同一个小窗里接着导出。",
+      "added": "“{{file}}”已加入导出队列，前面还有 {{ahead}} 个。",
+      "removed": "已从导出列表里移除。",
+      "needsPress": "浏览器要你点一下才让接着写“{{file}}”，它先暂停了。在“导出”选项卡里点“继续”。",
+      "paused": "“{{file}}”已暂停，导到第 {{frame}} / {{total}} 帧。继续时从这里接着导出。",
+      "pausedNotKept": "“{{file}}”已暂停，但进度没能存进浏览器，刷新以后要从头导出。",
+      "pause": "暂停",
+      "goOn": "继续",
+      "retry": "重试",
+      "remove": "移除",
+      "goOnWithAll": "全部继续",
+      "clearDone": "清除已完成",
+      "empty": "还没有导出。用“文件 > 导出视频…”开始一个；可以连着排好几个，它们一个接一个导出。",
+      "listLabel": "导出列表",
+      "more": "后面还有 {{count}} 个",
+      "idle": "导出：{{count}} 个没完成",
+      "idleUsage": "打开“导出”选项卡，继续、重试或者移除。",
+      "frames": "第 {{done}} / {{total}} 帧",
+      "framesOnly": "第 {{done}} 帧",
+      "status": {
+        "waiting": "排队中，前面还有 {{ahead}} 个",
+        "waitingNext": "排队中，下一个就是它",
+        "waitingRestored": "排队中，等你点“继续”",
+        "otherProject": "打开项目“{{project}}”以后接着导出",
+        "running": "正在导出 {{percent}}%",
+        "pausing": "正在暂停：导到下一个保存点就停，不丢进度",
+        "paused": "已暂停",
+        "needsPress": "已暂停：点“继续”，浏览器才让接着写这个文件",
+        "failed": "没有导出：{{failure}}",
+        "interrupted": "上次没导完",
+        "done": "已完成",
+        "windowClosed": "小窗关掉了，已暂停",
+        "readingMedia": "正在读入素材",
+        "hidden": "页面在后台，浏览器停了绘制，切回来接着导出"
+      }
     }
   },
   "transfer": {
@@ -468,6 +518,9 @@
     },
     "settings": {
       "title": "设置"
+    },
+    "exports": {
+      "title": "导出"
     }
   },
   "settings": {
