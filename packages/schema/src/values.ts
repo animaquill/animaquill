@@ -84,8 +84,12 @@ export const Animation = z
     });
   });
 
-/** A property holds one value, or keys that change it over time. */
-export const PropertyValue = z.union([Value, Animation]);
+/**
+ * A property holds one value, or keys that change it over time. Keys come first: a value is quick to
+ * tell apart from them, while keys that are tried as each kind of value first would make a problem
+ * for every one of those, thousands of times in a big timeline.
+ */
+export const PropertyValue = z.union([Animation, Value]);
 
 /**
  * One part of a path has the characters of an id. It cannot be a name that means something to a

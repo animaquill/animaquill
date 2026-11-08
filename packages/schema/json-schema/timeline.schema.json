@@ -378,21 +378,41 @@
     },
     "__schema44": {
       "anyOf": [
-        { "$ref": "#/$defs/__schema45" },
         {
           "type": "object",
           "properties": {
-            "keys": { "$ref": "#/$defs/__schema46" },
+            "keys": { "$ref": "#/$defs/__schema45" },
             "before": { "$ref": "#/$defs/__schema55" },
             "after": { "$ref": "#/$defs/__schema57" },
             "modifiers": { "$ref": "#/$defs/__schema58" }
           },
           "required": ["keys"],
           "additionalProperties": false
-        }
+        },
+        { "$ref": "#/$defs/__schema47" }
       ]
     },
     "__schema45": {
+      "minItems": 1,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema46" }
+    },
+    "__schema46": {
+      "type": "object",
+      "properties": {
+        "time": { "$ref": "#/$defs/__schema10" },
+        "value": { "$ref": "#/$defs/__schema47" },
+        "interp": { "$ref": "#/$defs/__schema48" },
+        "out": { "$ref": "#/$defs/__schema49" },
+        "in": { "$ref": "#/$defs/__schema51" },
+        "tangent": { "$ref": "#/$defs/__schema52" },
+        "preset": { "$ref": "#/$defs/__schema53" },
+        "spring": { "$ref": "#/$defs/__schema54" }
+      },
+      "required": ["time", "value"],
+      "additionalProperties": false
+    },
+    "__schema47": {
       "anyOf": [
         { "type": "number" },
         { "type": "string" },
@@ -404,26 +424,6 @@
         { "$ref": "#/$defs/__schema29" },
         { "$ref": "#/$defs/__schema19" }
       ]
-    },
-    "__schema46": {
-      "minItems": 1,
-      "type": "array",
-      "items": { "$ref": "#/$defs/__schema47" }
-    },
-    "__schema47": {
-      "type": "object",
-      "properties": {
-        "time": { "$ref": "#/$defs/__schema10" },
-        "value": { "$ref": "#/$defs/__schema45" },
-        "interp": { "$ref": "#/$defs/__schema48" },
-        "out": { "$ref": "#/$defs/__schema49" },
-        "in": { "$ref": "#/$defs/__schema51" },
-        "tangent": { "$ref": "#/$defs/__schema52" },
-        "preset": { "$ref": "#/$defs/__schema53" },
-        "spring": { "$ref": "#/$defs/__schema54" }
-      },
-      "required": ["time", "value"],
-      "additionalProperties": false
     },
     "__schema48": { "type": "string", "enum": ["linear", "bezier", "hold", "spring", "preset"] },
     "__schema49": { "$ref": "#/$defs/__schema50" },

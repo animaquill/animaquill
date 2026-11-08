@@ -1,4 +1,13 @@
-import { isContainer, isFlat, isStanding, type Path } from "./structure.ts";
+import {
+  isFlat,
+  isFlatLevel,
+  isStanding,
+  isStandingLevel,
+  levelAt,
+  levelIn,
+  type Level,
+  type Path,
+} from "./structure.ts";
 
 /** One change to a project. A command turns into a list of these, which also records what it did. */
 export type Patch =
@@ -24,16 +33,49 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /** The patches that turn what is in one object into what is in the other. */
-function diffEntries(path: Path, before: Plain, after: Plain): Patch[] {
-  const patches: Patch[] = [];
+function diffEntries(
+  path: Path,
+  level: Level,
+  before: Plain,
+  after: Plain,
+  patches: Patch[],
+): void {
   for (const key of Object.keys(before)) {
     if (!Object.hasOwn(after, key)) patches.push({ op: "delete", path: [...path, key] });
   }
   for (const [key, value] of Object.entries(after)) {
     const known = Object.hasOwn(before, key) ? before[key] : undefined;
-    patches.push(...diff([...path, key], known, value));
+    // What did not change at all is skipped right away: there can be thousands of it.
+    if (known !== value) diffAt([...path, key], levelIn(level, key), known, value, patches);
   }
-  return patches;
+}
+
+function diffAt(
+  path: Path,
+  level: Level | undefined,
+  before: unknown,
+  after: unknown,
+  patches: Patch[],
+): void {
+  if (deepEqual(before, after)) return;
+  if (level !== undefined && isFlatLevel(level)) {
+    if (isStandingLevel(level) && (before === undefined) !== (after === undefined)) {
+      patches.push(
+        after === undefined ? { op: "delete", path } : { op: "set", path, value: after },
+      );
+      return;
+    }
+    const entries = (value: unknown) => (isPlainObject(value) ? value : {});
+    diffEntries(path, level, entries(before), entries(after), patches);
+    return;
+  }
+  if (after === undefined) {
+    patches.push({ op: "delete", path });
+  } else if (level === undefined || !isPlainObject(before) || !isPlainObject(after)) {
+    patches.push({ op: "set", path, value: after });
+  } else {
+    diffEntries(path, level, before, after, patches);
+  }
 }
 
 /**
@@ -42,22 +84,9 @@ function diffEntries(path: Path, before: Plain, after: Plain): Patch[] {
  * standing one that comes or goes: that is a patch of its own, which `Draft` takes apart.
  */
 export function diff(path: Path, before: unknown, after: unknown): Patch[] {
-  if (deepEqual(before, after)) return [];
-  if (isFlat(path)) {
-    if (isStanding(path) && (before === undefined) !== (after === undefined)) {
-      return [after === undefined ? { op: "delete", path } : { op: "set", path, value: after }];
-    }
-    return diffEntries(
-      path,
-      isPlainObject(before) ? before : {},
-      isPlainObject(after) ? after : {},
-    );
-  }
-  if (after === undefined) return [{ op: "delete", path }];
-  if (!isContainer(path) || !isPlainObject(before) || !isPlainObject(after)) {
-    return [{ op: "set", path, value: after }];
-  }
-  return diffEntries(path, before, after);
+  const patches: Patch[] = [];
+  diffAt(path, levelAt(path), before, after, patches);
+  return patches;
 }
 
 export function getIn(root: unknown, path: Path): unknown {
@@ -75,13 +104,30 @@ export function getIn(root: unknown, path: Path): unknown {
  * stands on its own.
  */
 export function settled(path: Path, value: unknown): unknown {
-  if (!isContainer(path) || !isPlainObject(value)) return value;
-  const entries = Object.entries(value).flatMap(([key, item]) => {
-    const inner = settled([...path, key], item);
-    return inner === undefined ? [] : [[key, inner] as const];
-  });
-  const isGone = entries.length === 0 && isFlat(path) && !isStanding(path);
-  return isGone ? undefined : Object.fromEntries(entries);
+  const level = levelAt(path);
+  return level === undefined ? value : settledIn(level, value);
+}
+
+/**
+ * See `settled`. A value that is that way already comes back as it is, the same object, so that what
+ * did not change is quick to tell apart, see `diff`.
+ */
+function settledIn(level: Level, value: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  let changed = false;
+  const entries: [string, unknown][] = [];
+  for (const [key, item] of Object.entries(value)) {
+    const inner = levelIn(level, key);
+    const kept = inner === undefined ? item : settledIn(inner, item);
+    if (kept === undefined) {
+      changed = true;
+      continue;
+    }
+    if (kept !== item) changed = true;
+    entries.push([key, kept]);
+  }
+  if (entries.length === 0 && isFlatLevel(level) && !isStandingLevel(level)) return undefined;
+  return changed ? Object.fromEntries(entries) : value;
 }
 
 /** A change the way the document will hold it. */

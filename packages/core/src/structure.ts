@@ -110,6 +110,22 @@ function nodeAt(path: Path): Tree | undefined {
 /** Whether this path is a level of its own, as opposed to one value. */
 export const isContainer = (path: Path): boolean => nodeAt(path) !== undefined;
 
+/**
+ * A level of a project, to go down from one key at a time, where looking up each path from the top
+ * would take long: a timeline has thousands of clips. Undefined where the path is one value.
+ */
+export type Level = Tree;
+
+export const levelAt = (path: Path): Level | undefined => nodeAt(path);
+
+/** The level under a key of a level, as `nodeAt` finds it. */
+export const levelIn = (level: Level, key: string): Level | undefined =>
+  Object.hasOwn(level, key) ? level[key] : level[ANY];
+
+/** See `isFlat` and `isStanding`. */
+export const isFlatLevel = (level: Level): boolean => FLAT.has(level);
+export const isStandingLevel = (level: Level): boolean => STANDING.has(level);
+
 /** Whether what this level holds sits in the nearest map above it. See `flat`. */
 export const isFlat = (path: Path): boolean => {
   const node = nodeAt(path);

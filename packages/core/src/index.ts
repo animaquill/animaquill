@@ -238,6 +238,21 @@ export {
   type TrialSaved,
 } from "./trial.ts";
 export { isSourceFile } from "./import-file.ts";
+export type {
+  BaseOf,
+  FileChange,
+  MergeConflict,
+  MergedFile,
+  MergedFileStatus,
+} from "./merge-files.ts";
+export {
+  linesOf,
+  matchLines,
+  mergeText,
+  type LineRange,
+  type MergedText,
+  type TextConflict,
+} from "./merge-text.ts";
 export {
   FolderRefused,
   INCOMPLETE_FILE,
@@ -280,9 +295,11 @@ export {
 } from "./model.ts";
 export type { Patch } from "./patch.ts";
 export {
+  MAX_BATCHES,
   ProjectStore,
   USER,
   aiTask,
+  folderBatch,
   mergeUpdates,
   type CommandCall,
   type CommandFailure,
@@ -293,6 +310,8 @@ export {
   type ImportOptions,
   type ImportResult,
   type LocalChange,
+  type MergeOptions,
+  type MergeResult,
   type UndoObstacle,
   type UndoResult,
   type Origin,

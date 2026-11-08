@@ -34,8 +34,24 @@ export function rational(n: bigint, d = 1n): Rational {
 
 export const ZERO = rational(0n);
 
+/**
+ * The same times come up again and again in a project, such as the start of every clip in a column,
+ * and reading one takes a while: what the last few thousand were read as is kept.
+ */
+const MOST_KNOWN_TIMES = 4096;
+const knownTimes = new Map<string, Rational>();
+
 /** Reads a time. Throws when the text is not one. */
 export function parseTime(text: string): Rational {
+  const known = knownTimes.get(text);
+  if (known) return known;
+  const value = readTime(text);
+  if (knownTimes.size >= MOST_KNOWN_TIMES) knownTimes.clear();
+  knownTimes.set(text, value);
+  return value;
+}
+
+function readTime(text: string): Rational {
   if (!TIME_PATTERN.test(text)) throw new RangeError(`Not a time: ${text}`);
   const negative = text.startsWith("-");
   const digits = negative ? text.slice(1) : text;
@@ -63,9 +79,17 @@ export function formatTime({ n, d }: Rational): string {
   return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
 }
 
+const knownSpellings = new Map<string, string>();
+
 /** The canonical spelling of a time. Text that is no time comes back unchanged. */
-export const normalizeTime = (text: string): string =>
-  TIME_PATTERN.test(text) ? formatTime(parseTime(text)) : text;
+export function normalizeTime(text: string): string {
+  const known = knownSpellings.get(text);
+  if (known !== undefined) return known;
+  const spelling = TIME_PATTERN.test(text) ? formatTime(parseTime(text)) : text;
+  if (knownSpellings.size >= MOST_KNOWN_TIMES) knownSpellings.clear();
+  knownSpellings.set(text, spelling);
+  return spelling;
+}
 
 export const add = (a: Rational, b: Rational) => rational(a.n * b.d + b.n * a.d, a.d * b.d);
 export const subtract = (a: Rational, b: Rational) => rational(a.n * b.d - b.n * a.d, a.d * b.d);

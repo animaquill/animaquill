@@ -80,6 +80,10 @@ export function hashOfText(text: string): string {
 /** `aq.asset("logo")`. An id that code works out cannot be found here, see the scene runtime. */
 const ASSET_CALL = /\baq\s*\.\s*asset\(\s*(["'`])([A-Za-z0-9][A-Za-z0-9_-]*)\1\s*\)/g;
 
+/** The assets that code asks for by name, see `ASSET_CALL`. */
+export const assetsNamedIn = (text: string): readonly string[] =>
+  [...text.matchAll(ASSET_CALL)].map((call) => call[2] as string);
+
 interface FileFacts {
   readonly text: string;
   readonly hash: string;
@@ -118,7 +122,7 @@ class FileIndex {
         : {
             text,
             hash: hashOfText(text),
-            assets: [...text.matchAll(ASSET_CALL)].map((call) => call[2] as string),
+            assets: assetsNamedIn(text),
           };
     this.#facts.set(path, facts);
     return facts;

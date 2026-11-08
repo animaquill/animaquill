@@ -34,6 +34,14 @@ const withSource = (timeline: TimelineState, source: unknown) =>
 const CLIP = ["timelines", "main", "clips", "c"];
 
 describe("what points at nothing", () => {
+  it("is nothing in a timeline that has only some of what makes one, while a change is made", () => {
+    const { state } = project();
+    const version = { scope: { format: "vertical" }, clips: { c: { hidden: { value: true } } } };
+    const partial = { overrides: { "format.vertical": version } } as unknown as TimelineState;
+    const partly = { ...state, timelines: { ...state.timelines, copy: partial } };
+    expect(danglingAt(partly, ["timelines", "copy"])).toEqual([]);
+  });
+
   it("is nothing when everything is there", () => {
     const { state, track } = project();
     expect(danglingAt(state, ["assets", "a"])).toEqual([]);

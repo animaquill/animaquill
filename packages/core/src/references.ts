@@ -200,17 +200,21 @@ function danglingInTimeline(state: ProjectState, path: Path): readonly string[] 
   }
 }
 
-/** A whole timeline can come back, which is everything in it at once. */
+/**
+ * A whole timeline can come back, which is everything in it at once. Only some of a timeline can be
+ * there, while a change to it is being taken apart: what is not there points at nothing.
+ */
 function danglingFromTimeline(
   state: ProjectState,
   id: string,
-  timeline: TimelineState,
+  timeline: Partial<TimelineState>,
 ): readonly string[] {
+  const whole = { clips: {}, tracks: {}, overrides: {}, ...timeline } as TimelineState;
   return [
-    ...Object.values(timeline.clips).flatMap((clip) => danglingFromClip(state, id, timeline, clip)),
-    ...Object.keys(timeline.joins ?? {}).flatMap((join) => danglingFromJoin(id, timeline, join)),
-    ...Object.keys(timeline.overrides).flatMap((name) =>
-      danglingFromOverride(state, id, timeline, name, undefined),
+    ...Object.values(whole.clips).flatMap((clip) => danglingFromClip(state, id, whole, clip)),
+    ...Object.keys(whole.joins ?? {}).flatMap((join) => danglingFromJoin(id, whole, join)),
+    ...Object.keys(whole.overrides).flatMap((name) =>
+      danglingFromOverride(state, id, whole, name, undefined),
     ),
   ];
 }

@@ -9,8 +9,19 @@ import * as Y from "yjs";
 import { COMMANDS, type CommandDefinition } from "./commands.ts";
 import { CommandError, Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
+import {
+  planMerge,
+  rememberWritten,
+  unmergedFiles,
+  type BaseOf,
+  type FileChange,
+  type FileMerge,
+  type MergeConflict,
+  type MergedFile,
+  type MergeMemory,
+} from "./merge-files.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
-import { NOBODY, USER, aiTask, type Origin } from "./origin.ts";
+import { NOBODY, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
 import { Mutator, getIn, type Patch } from "./patch.ts";
 import { danglingAt, touchesLockedTrack } from "./references.ts";
 import {
@@ -25,13 +36,15 @@ import {
 } from "./structure.ts";
 import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
 
-export { USER, aiTask, type Origin };
+export { USER, aiTask, folderBatch, type Origin };
 
 const LOAD = "load";
 const REMOTE = "remote";
 const ROOT = "project";
 const MAX_HISTORY = 1000;
 const MAX_UNDO = 500;
+/** How many batches of files from the folder can still be taken back, see mergeFiles(). */
+export const MAX_BATCHES = 20;
 
 export interface CommandCall {
   readonly type: string;
@@ -117,6 +130,43 @@ export type ImportResult =
       readonly problems: readonly Problem[];
     })
   | { readonly ok: false; readonly error: CommandFailure };
+
+/**
+ * How a batch of files comes in. Like a file, it has to say who changed it, see `ImportOptions`.
+ * Changes in the folder are nobody's in particular: each batch gets an origin of its own, see
+ * `folderBatch`, so that it can be taken back as a whole with `undoOrigin`.
+ */
+export interface MergeOptions {
+  readonly origin: Origin;
+  /**
+   * What each file of the folder outside the batch holds, which is its base: the merge has to know
+   * what the folder still has, to tell what only the editor took away. See `BaseOf`.
+   */
+  readonly baseOf: BaseOf;
+  /** Runs every check and writes nothing. */
+  readonly dryRun?: boolean;
+}
+
+/** What became of a batch of files, see mergeFiles(). */
+export type MergeResult =
+  | (Extract<CommandResult, { ok: true }> & {
+      /** For each file, what became of it and what its base is from now on. */
+      readonly files: readonly MergedFile[];
+      /** Conflicts, what locks kept, what waits for people and why. */
+      readonly problems: readonly Problem[];
+      /** What both sides changed, each in its own way, where the editor's stayed. */
+      readonly conflicts: readonly MergeConflict[];
+      /** What would change on locked tracks, or what only people can change, which stayed. */
+      readonly kept: readonly Path[];
+      /** What the folder took away that is still in use, which stays until people decide. */
+      readonly held: readonly Path[];
+    })
+  | {
+      readonly ok: false;
+      readonly error: CommandFailure;
+      /** Nothing came in: each file keeps its base. */
+      readonly files: readonly MergedFile[];
+    };
 
 /** What came of taking something back or doing it again. */
 export type UndoResult =
@@ -393,6 +443,10 @@ const PROJECT_LOCKED: CommandFailure = {
   message: "项目有不可编辑的标签，要先移除标签",
 };
 const NOTHING_TO_UNDO: CommandFailure = { code: "nothing-to-undo", message: "没有可以撤销的步骤" };
+const ONE_AT_A_TIME: CommandFailure = {
+  code: "one-at-a-time",
+  message: "自己的改动一步一步撤销",
+};
 const OBSTACLES: Readonly<Record<UndoObstacle, string>> = {
   changed: "这一步之后别人改过，已跳过",
   inUse: "这一步还被别的内容用着，或者用到的东西已经没了，已跳过",
@@ -409,6 +463,10 @@ export class ProjectStore {
   readonly #listeners = new Set<() => void>();
   readonly #watchers = new Set<(outcome: CommandOutcome) => void>();
   readonly #undo = new Map<Origin, UndoLog>();
+  /** The batches of files from the folder that can be taken back, the oldest first. */
+  readonly #batches: Origin[] = [];
+  /** What the texts of files were read as, see `MergeMemory`. */
+  readonly #read: MergeMemory = new Map();
   readonly #writes = new Map<string, Write>();
   readonly #removals = new Map<string, Write>();
   /** What everyone sees. */
@@ -623,6 +681,66 @@ export class ProjectStore {
     return result.ok ? { ...result, kept, problems: told } : result;
   }
 
+  /**
+   * Takes in a batch of files that changed outside of the editor as one change, see planMerge: what
+   * Git, another editor or an AI tool did to the project folder. Each file says what it held when
+   * the editor last wrote or read it, and only what changed from there comes in, on top of what the
+   * project has now, so what the editor has not written yet stays. Where both changed the same thing,
+   * the editor's stays. The result says for each file what its base is from now on. Nothing comes in
+   * when the project is locked, or the batch would break it, and nothing when the merge itself goes
+   * wrong: it never throws. Who changed the files has to be said, see `MergeOptions`. The last
+   * `MAX_BATCHES` batches can be taken back, each as a whole, with undoOrigin().
+   */
+  mergeFiles(changes: readonly FileChange[], options: MergeOptions): MergeResult {
+    if (!isBatch(changes)) {
+      const message = "这一批文件的格式不对，没有并入";
+      return { ok: false, error: { code: "invalid-batch", message }, files: [] };
+    }
+    // Code that does not say who changed the files gets nothing that only a person can do.
+    const origin = (options as MergeOptions | undefined)?.origin ?? NOBODY;
+    const given = { origin, ...(options?.dryRun === true && { dryRun: true }) };
+    let merge: FileMerge = { files: [], problems: [], conflicts: [], kept: [], held: [] };
+    const result = this.#commit(["file.merge"], origin, given, (draft) => {
+      this.#assertUnlocked(draft);
+      draft.knowsOnlyOutcome();
+      // Code that does not say what the folder has gets the merge that assumes the most.
+      const baseOf = typeof options?.baseOf === "function" ? options.baseOf : undefined;
+      try {
+        merge = planMerge(draft, changes, { baseOf, memory: this.#read });
+      } catch (error) {
+        if (error instanceof CommandError) throw error;
+        // Nothing is written of a draft that did not get through, so the project stays as it is.
+        const message = "合并时出了错，这一批没有并入";
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new ImportRejected({
+          code: "merge-failed",
+          message,
+          problems: [
+            { severity: "error", code: "merge-failed", file: "", message: `${message}：${detail}` },
+          ],
+        });
+      }
+      if (merge.refusal) throw new ImportRejected(merge.refusal);
+      return [];
+    });
+    if (!result.ok) return { ...result, files: unmergedFiles(changes) };
+    if (result.patches.length > 0 && options?.dryRun !== true) this.#rememberBatch(origin);
+    const { files, problems, conflicts, kept, held } = merge;
+    return { ...result, files, problems, conflicts, kept, held };
+  }
+
+  /** Only the last few batches of files can be taken back: the oldest goes, with all of its log. */
+  #rememberBatch(origin: Origin): void {
+    if (!origin.startsWith(folderBatch(""))) return;
+    const known = this.#batches.indexOf(origin);
+    if (known >= 0) this.#batches.splice(known, 1);
+    this.#batches.push(origin);
+    while (this.#batches.length > MAX_BATCHES) {
+      const oldest = this.#batches.shift();
+      if (oldest !== undefined) this.#undo.delete(oldest);
+    }
+  }
+
   get canUndo(): boolean {
     return (this.#undo.get(USER)?.done.length ?? 0) > 0;
   }
@@ -654,7 +772,20 @@ export class ProjectStore {
 
   /** Takes back everything an AI task did in one step. What others changed since then stays. */
   undoTask(task: string): UndoResult {
-    const origin = aiTask(task);
+    return this.undoOrigin(aiTask(task));
+  }
+
+  redoTask(task: string): UndoResult {
+    return this.redoOrigin(aiTask(task));
+  }
+
+  /**
+   * Takes back everything that came from somewhere other than the person in one step: an AI task,
+   * a batch of files from the folder. What others changed since then stays. The person's own
+   * changes go back one at a time, with undo().
+   */
+  undoOrigin(origin: Origin): UndoResult {
+    if (origin === USER) return { ok: false, error: ONE_AT_A_TIME };
     const refusal = this.#whyNotNow;
     if (refusal) return { ok: false, error: refusal };
     const log = this.#undo.get(origin);
@@ -663,8 +794,10 @@ export class ProjectStore {
     return this.#takeBack(entries, log.undone, origin, "undo");
   }
 
-  redoTask(task: string): UndoResult {
-    return this.#stepBack(aiTask(task), "undone", "done");
+  /** Does again what undoOrigin() took back. */
+  redoOrigin(origin: Origin): UndoResult {
+    if (origin === USER) return { ok: false, error: ONE_AT_A_TIME };
+    return this.#stepBack(origin, "undone", "done");
   }
 
   /** The project as files. Documents that became invalid stay out and are reported. */
@@ -672,6 +805,8 @@ export class ProjectStore {
     const { project, problems } = stateToProject(this.#state);
     const files = writeProject(project);
     for (const [path, text] of Object.entries(this.#state.files)) files.set(path, text);
+    // What is written is often the base of the next merge, see `rememberWritten`.
+    if (problems.length === 0) rememberWritten(this.#read, projectToState(project), files);
     return { files, problems };
   }
 
@@ -1075,6 +1210,18 @@ export class ProjectStore {
     this.#show();
   };
 }
+
+/** Whether what came as a batch of files is one, from code that does not check its types. */
+const isBatch = (changes: unknown): changes is readonly FileChange[] =>
+  Array.isArray(changes) &&
+  changes.every(
+    (change: unknown) =>
+      typeof change === "object" &&
+      change !== null &&
+      typeof (change as FileChange).path === "string" &&
+      ["string", "undefined"].includes(typeof (change as FileChange).base) &&
+      ["string", "undefined"].includes(typeof (change as FileChange).text),
+  );
 
 /** Why nothing of a file comes in. */
 class ImportRejected extends Error {

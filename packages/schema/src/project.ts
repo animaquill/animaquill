@@ -86,10 +86,14 @@ export function parseDocument<T>(
   let data: unknown;
   let hasProto = false;
   try {
-    data = JSON.parse(text, (key, value: unknown) => {
-      hasProto ||= key === "__proto__";
-      return value;
-    });
+    // Only a text that has the name, or an escape that could spell it, can have it as a key: the
+    // others are read without looking at every key, which takes a while for a big file.
+    data = /__proto__|\\u/.test(text)
+      ? JSON.parse(text, (key, value: unknown) => {
+          hasProto ||= key === "__proto__";
+          return value;
+        })
+      : JSON.parse(text);
   } catch (error) {
     const message = `不是有效的 JSON：${(error as Error).message}`;
     return { problems: [{ severity: "error", code: "invalid-json", file: path, message }] };

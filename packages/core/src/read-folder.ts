@@ -64,7 +64,7 @@ export const isToolFolder = (name: string): boolean => TOOL_FOLDERS.has(name);
 const CLUTTER = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|[^/]*\.crswap)$/i;
 
 /** What a folder holds besides a project, which nobody needs to hear about. */
-const isNoneOfIt = (path: string) =>
+export const isNoneOfIt = (path: string) =>
   CLUTTER.test(path) || path.split("/").slice(0, -1).some(isToolFolder);
 
 export type FolderRefusal =

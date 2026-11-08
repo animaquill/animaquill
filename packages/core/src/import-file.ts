@@ -40,7 +40,7 @@ import {
 import type { Path } from "./structure.ts";
 
 /** Only the person at the editor is one: an AI task, a tool or anything else is not. */
-const isUser = (origin: string) => origin === USER;
+export const isUser = (origin: string) => origin === USER;
 
 /** Whether a file holds code that belongs to the project, kept as text. */
 export const isSourceFile = (path: string): boolean =>
@@ -182,7 +182,7 @@ export function planFileImport(draft: Draft, path: string, text: string): FileIm
 }
 
 /** The join a change is about, as `<timeline> <join>`, or nothing for anything else. */
-const joinOf = ({ path }: Patch): string | undefined => {
+export const joinOf = ({ path }: Patch): string | undefined => {
   const [root, timeline, level, join] = path;
   return root === "timelines" && level === "joins" && join !== undefined
     ? `${timeline} ${join}`
@@ -193,7 +193,7 @@ const joinOf = ({ path }: Patch): string | undefined => {
  * The joins a file changes on locked tracks. A join comes as one field at a time, which one by one
  * would let some of a new one in next to a lock, or move one there partly: all of it stays instead.
  */
-function heldJoins(
+export function heldJoins(
   locks: ProjectState,
   patches: readonly Patch[],
   origin: string,
@@ -212,7 +212,7 @@ function heldJoins(
  * tracks use of one stays as it is, and the others change. Returns what to write instead, nothing
  * when that is all of it, and what stays, each as a patch of its own to say so.
  */
-function withLockedLibraries(
+export function withLockedLibraries(
   locks: ProjectState,
   patch: Patch,
 ): { readonly patch: Patch | undefined; readonly held: readonly Patch[] } {
@@ -280,7 +280,7 @@ function unlockedIn(before: ProjectState, locks: ProjectState, file: string): re
 const OF_ANOTHER_KIND = " of another kind";
 
 /** Says in words what a link from `danglingAt` comes to. */
-function linkInWords(link: string): string {
+export function linkInWords(link: string): string {
   const [from = "", rest = ""] = link.split(" -> ");
   const isOfAnotherKind = rest.endsWith(OF_ANOTHER_KIND);
   const to = isOfAnotherKind ? rest.slice(0, -OF_ANOTHER_KIND.length) : rest;
@@ -352,7 +352,7 @@ const lockOf = (path: Path): Patch => ({ op: "set", path: [...path, "locked"], v
  * protects, or leaves that as it is when the lock has to stay. A new track, also of a new timeline,
  * gets its lock after what is on it in the same way.
  */
-function inLockOrder(patches: readonly Patch[]): readonly Patch[] {
+export function inLockOrder(patches: readonly Patch[]): readonly Patch[] {
   const opening: Patch[] = [];
   const changes: Patch[] = [];
   const closing: Patch[] = [];
@@ -391,7 +391,7 @@ function inLockOrder(patches: readonly Patch[]): readonly Patch[] {
  * from one that means it, so its files leave locks as they are. A file that puts a lock on changes
  * that track like any other, and the lock is there from then on.
  */
-function locksOf(before: ProjectState, planned: ProjectState, origin: string): ProjectState {
+export function locksOf(before: ProjectState, planned: ProjectState, origin: string): ProjectState {
   if (!isUser(origin)) return before;
   let opened: Mutator<ProjectState> | undefined;
   for (const [id, timeline] of Object.entries(before.timelines)) {
@@ -416,7 +416,7 @@ const isLockOf = (state: ProjectState, { path }: Patch) => {
 };
 
 /** Whether a file leaves this as it is, because of a lock. */
-const isHeld = (locks: ProjectState, patch: Patch, origin: string) =>
+export const isHeld = (locks: ProjectState, patch: Patch, origin: string) =>
   touchesLockedTrack(locks, patch) || (!isUser(origin) && isLockOf(locks, patch));
 
 /** Why a file leaves something on a locked track as it is: what that is, where, and the message. */
@@ -487,7 +487,11 @@ function whyHeld(
 }
 
 /** What a file leaves as it is because of locks, for the problems of the file: once for each thing. */
-function heldIn(locks: ProjectState, file: string, kept: readonly Patch[]): readonly Problem[] {
+export function heldIn(
+  locks: ProjectState,
+  file: string,
+  kept: readonly Patch[],
+): readonly Problem[] {
   const said = new Map<string, Problem>();
   for (const patch of kept) {
     const { about, where, message } = whyHeld(locks, patch);
@@ -498,14 +502,27 @@ function heldIn(locks: ProjectState, file: string, kept: readonly Patch[]): read
   return [...said.values()];
 }
 
-/** Plans what a valid file changes, and says what is wrong with one that is not. */
-function planDocument(draft: Draft, path: string, text: string): readonly Problem[] {
-  const problems: Problem[] = [];
+/** What a document means to the project, where the project keeps it, and what is wrong with it. */
+export interface DocumentReading {
+  /** Where it goes. Undefined for a file that is no document of the project. */
+  readonly at?: Path;
+  readonly value?: unknown;
+  /** What is wrong with it. Nothing of it can come in then. */
+  readonly problems: readonly Problem[];
+}
 
-  if (isSourceFile(path)) {
-    if (draft.state.files[path] !== text) draft.setText(["files", path], text);
-    return problems;
-  }
+/**
+ * Reads a document the way a file that comes in is read: with every check, against what the project
+ * has, which lets a document keep what the project already has. See `planDocument`.
+ */
+export function readDocument(
+  state: ProjectState,
+  origin: string,
+  path: string,
+  text: string,
+): DocumentReading {
+  const problems: Problem[] = [];
+  const read = (at: Path, value: unknown): DocumentReading => ({ at, value, problems });
 
   const timeline = /^timelines\/([^/]+)\/timeline\.json$/.exec(path)?.[1];
   const overrides = /^timelines\/([^/]+)\/overrides\/([^/]+)\.json$/.exec(path);
@@ -515,56 +532,75 @@ function planDocument(draft: Draft, path: string, text: string): readonly Proble
 
   if (path === "animaquill.json") {
     const value = parsed(path, text, ProjectManifest, problems);
-    if (!value) return problems;
+    if (!value) return { problems };
     if (value.formatVersion !== CURRENT_FORMAT_VERSION) {
       throw new CommandError("format-mismatch", "不能在这里改项目的格式版本");
     }
-    if (!isUser(draft.origin) && !deepEqual(value.tags, draft.state.manifest.tags)) {
+    if (!isUser(origin) && !deepEqual(value.tags, state.manifest.tags)) {
       throw new CommandError("user-only", "AI 不能改项目的标签");
     }
-    draft.replace(["manifest"], value);
-  } else if (path === "assets.json") {
+    return read(["manifest"], value);
+  }
+  if (path === "assets.json") {
     const value = parsed(path, text, Assets, problems);
-    if (value) draft.replace(["assets"], value.assets);
-  } else if (path === "libraries.json") {
+    return value ? read(["assets"], value.assets) : { problems };
+  }
+  if (path === "libraries.json") {
     const value = parsed(path, text, Libraries, problems);
-    if (value) draft.replace(["libraries"], value);
-  } else if (path === "libraries.lock.json") {
+    return value ? read(["libraries"], value) : { problems };
+  }
+  if (path === "libraries.lock.json") {
     const value = parsed(path, text, LibrariesLock, problems);
-    if (value) draft.replace(["lock"], value);
-  } else if (path === "notes.json") {
+    return value ? read(["lock"], value) : { problems };
+  }
+  if (path === "notes.json") {
     const value = parsed(path, text, Notes, problems);
-    if (value) {
-      draft.replace(["notes"], Object.fromEntries(value.notes.map((note) => [note.id, note])));
-    }
-  } else if (timeline) {
+    if (!value) return { problems };
+    return read(["notes"], Object.fromEntries(value.notes.map((note) => [note.id, note])));
+  }
+  if (timeline) {
     const value = parsed(path, text, Timeline, problems);
-    if (!value) return problems;
-    const current = entryOf(draft.state.timelines, timeline);
+    if (!value) return { problems };
+    const current = entryOf(state.timelines, timeline);
     const next = timelineToState(value, new Map(Object.entries(current?.overrides ?? {})));
     checkTimelineKeys(path, next, current, problems);
-    draft.replace(["timelines", timeline], current ? keepOrder(current, next) : next);
-  } else if (overrides) {
+    return read(["timelines", timeline], current ? keepOrder(current, next) : next);
+  }
+  if (overrides) {
     const [, owner = "", name = ""] = overrides;
     const value = parsed(path, text, Overrides, problems);
-    if (!value) return problems;
-    const target = entryOf(draft.state.timelines, owner);
+    if (!value) return { problems };
+    const target = entryOf(state.timelines, owner);
     if (!target) {
       const message = `没有这条时间轴：${owner}`;
       problems.push({ severity: "error", code: "timeline-missing", file: path, path: "", message });
-      return problems;
+      return { problems };
     }
     checkOverrideKeys(path, value, entryOf(target.overrides, name), problems);
-    draft.replace(["timelines", owner, "overrides", name], value);
-  } else if (scene) {
-    const value = parsed(path, text, SceneManifest, problems);
-    if (value) draft.replace(["scenes", scene], value);
-  } else if (sound) {
-    const value = parsed(path, text, SoundManifest, problems);
-    if (value) draft.replace(["sounds", sound], value);
-  } else if (locale) {
-    const value = parsed(path, text, Locale, problems);
-    if (value) draft.replace(["locales", locale], value.strings);
+    return read(["timelines", owner, "overrides", name], value);
   }
+  if (scene) {
+    const value = parsed(path, text, SceneManifest, problems);
+    return value ? read(["scenes", scene], value) : { problems };
+  }
+  if (sound) {
+    const value = parsed(path, text, SoundManifest, problems);
+    return value ? read(["sounds", sound], value) : { problems };
+  }
+  if (locale) {
+    const value = parsed(path, text, Locale, problems);
+    return value ? read(["locales", locale], value.strings) : { problems };
+  }
+  return { problems };
+}
+
+/** Plans what a valid file changes, and says what is wrong with one that is not. */
+export function planDocument(draft: Draft, path: string, text: string): readonly Problem[] {
+  if (isSourceFile(path)) {
+    if (draft.state.files[path] !== text) draft.setText(["files", path], text);
+    return [];
+  }
+  const { at, value, problems } = readDocument(draft.state, draft.origin, path, text);
+  if (problems.length === 0 && at) draft.replace(at, value);
   return problems;
 }
