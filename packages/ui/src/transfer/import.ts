@@ -1,24 +1,19 @@
-import { ProjectStore, isSourceFile } from "@animaquill/core";
+import {
+  FolderRefused,
+  ProjectStore,
+  isFolderProblem,
+  readFolder,
+  type FolderProblemCode,
+  type FolderRefusal,
+  type LostPart,
+  type ReadOnlyFolder,
+} from "@animaquill/core";
 import type { FolderFile, ProjectLibrary, SourceFolder } from "@animaquill/host";
 import { hashFile, isSameHash } from "@animaquill/media";
-import {
-  MANIFEST_FILE,
-  createTimeline,
-  documentSchema,
-  newId,
-  readProject,
-  stringifyDocument,
-  writeProject,
-  type Problem,
-  type Project,
-} from "@animaquill/schema";
+import { newId, type Problem, type Project } from "@animaquill/schema";
 import type { TFunction } from "i18next";
-import { INCOMPLETE_FILE, MAX_SOURCE_BYTES, type TransferStep } from "./export.ts";
+import type { TransferStep } from "./export.ts";
 
-/** Nobody keeps this many files in a project: this is a whole disk chosen by mistake. */
-const MAX_FILES = 100_000;
-/** What systems leave in folders, which is not worth a word to anybody. */
-const CLUTTER = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|[^/]*\.crswap)$/i;
 /** What a project still points at when something it needs stayed out. */
 const POINTS_AT_NOTHING = new Set([
   "asset-missing",
@@ -29,8 +24,7 @@ const POINTS_AT_NOTHING = new Set([
   "timeline-missing",
 ]);
 
-export type RefusalReason =
-  "not-a-project" | "several-projects" | "incomplete" | "too-many-files" | "too-new" | "invalid";
+export type RefusalReason = FolderRefusal;
 
 /** The folder cannot become a project. Nothing has been written at this point. */
 export class ImportRefused extends Error {
@@ -71,148 +65,60 @@ export interface ReadOptions {
   readonly onStep?: (step: TransferStep) => void;
 }
 
-/** The project itself, or the one project right inside of what people chose. */
-function rootOf(paths: Iterable<string>): string {
-  const roots = new Set<string>();
-  for (const path of paths) {
-    const parts = path.split("/");
-    const name = parts.at(-1);
-    if (parts.length > 2 || (name !== MANIFEST_FILE && name !== INCOMPLETE_FILE)) continue;
-    roots.add(parts.length === 2 ? `${parts[0]}/` : "");
-  }
-  if (roots.size === 0) throw new ImportRefused("not-a-project");
-  if (roots.has("")) return "";
-  if (roots.size > 1) throw new ImportRefused("several-projects");
-  return [...roots][0] as string;
-}
-
-async function list(
-  source: SourceFolder,
-  { signal, onStep }: ReadOptions,
-): Promise<Map<string, FolderFile>> {
+/** A folder people chose, the way folders are read. It keeps what it listed, for later. */
+function readable(source: SourceFolder) {
   const files = new Map<string, FolderFile>();
-  for await (const file of source.files()) {
-    signal?.throwIfAborted();
-    if (CLUTTER.test(file.path)) continue;
-    files.set(file.path, file);
-    if (files.size > MAX_FILES) throw new ImportRefused("too-many-files");
-    onStep?.({ file: file.path, done: 0, total: 0 });
-  }
-  const root = rootOf(files.keys());
-  const inside = [...files].filter(([path]) => path.startsWith(root));
-  return new Map(inside.map(([path, file]) => [path.slice(root.length), file]));
+  const folder: ReadOnlyFolder = {
+    async *list() {
+      for await (const file of source.files()) {
+        files.set(file.path, file);
+        yield file.path;
+      }
+    },
+    file(path) {
+      const file = files.get(path);
+      return file ? file.read() : Promise.reject(new Error(`Not listed: ${path}`));
+    },
+  };
+  return { folder, files };
 }
 
-const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+/** What the editor says about what reading a folder found, see `FolderProblemCode`. */
+const PROBLEMS = {
+  "not-text": "transfer.notText",
+  "timeline-not-in-folder": "transfer.noTimeline",
+  "entry-missing": "transfer.entryMissing",
+} as const satisfies Record<FolderProblemCode, string>;
 
-/** Resolves to undefined and leaves a reason for what is no text. */
-async function readText(
-  file: File,
-  t: TFunction,
-  refuse: (message: string) => void,
-): Promise<string | undefined> {
-  const bytes = await file.arrayBuffer();
-  try {
-    // The text of a file stays what it is. A file that is no text would come out damaged.
-    return decoder.decode(bytes);
-  } catch {
-    refuse(t("transfer.notText"));
-    return undefined;
-  }
-}
-
-const unreadable = (file: string, message: string): Problem => ({
-  severity: "error",
-  code: "unreadable",
-  file,
-  message,
-});
-
-const timelineFile = (id: string) => `timelines/${id}/timeline.json`;
+/** A problem in words of the editor. What the format says comes with words of its own. */
+const said = (problem: Problem, t: TFunction): Problem =>
+  isFolderProblem(problem) ? { ...problem, message: t(PROBLEMS[problem.code]) } : problem;
 
 /** What people lose with a document. */
-function consequenceOf(file: string, project: Project, t: TFunction): string {
-  const named = (pattern: RegExp) => pattern.exec(file)?.slice(1) ?? [];
-  const [timeline] = named(/^timelines\/([^/]+)\/timeline\.json$/);
-  if (timeline !== undefined) {
-    const stays = project.manifest.timelines.includes(timeline);
-    return t(stays ? "transfer.lost.timeline" : "transfer.lost.otherTimeline", { id: timeline });
-  }
-  const [owner, version] = named(/^timelines\/([^/]+)\/overrides\/([^/]+)\.json$/);
-  if (owner !== undefined) return t("transfer.lost.override", { id: owner, version });
-  const [scene] = named(/^scenes\/([^/]+)\/scene\.json$/);
-  if (scene !== undefined) return t("transfer.lost.scene", { id: scene });
-  const [sound] = named(/^sounds\/([^/]+)\/sound\.json$/);
-  if (sound !== undefined) return t("transfer.lost.sound", { id: sound });
-  const [language] = named(/^locales\/([^/]+)\.json$/);
-  if (language !== undefined) return t("transfer.lost.locale", { id: language });
-  if (file === "assets.json") return t("transfer.lost.assets");
-  if (file === "notes.json") return t("transfer.lost.notes");
-  if (file === "libraries.json") return t("transfer.lost.libraries");
-  if (file === "libraries.lock.json") return t("transfer.lost.lock");
-  return file;
-}
-
-interface UsablePart {
-  readonly project: Project;
-  /** What is left to say about the project. */
-  readonly warnings: readonly Problem[];
-  readonly lost: readonly LostDocument[];
-}
-
-/**
- * Finds out what can come in. A document with an error goes, and the rest is read again: taking one
- * out can make the next error show, and what comes out of this has been through all the checks a
- * healthy project goes through. That is why it can be opened, and exported, and read again.
- *
- * A project needs its manifest, and the manifest stays as it is. So a timeline it lists comes in
- * empty, which also keeps whatever refers to it pointing at something.
- */
-function readUsablePart(
-  texts: Map<string, string>,
-  unusable: readonly Problem[],
-  t: TFunction,
-): UsablePart {
-  const lost = new Map<string, Problem[]>();
-  const lose = (problem: Problem) => {
-    lost.set(problem.file, [...(lost.get(problem.file) ?? []), problem]);
-    return texts.delete(problem.file);
-  };
-  unusable.forEach(lose);
-
-  for (;;) {
-    const { project, problems } = readProject(texts);
-    const tooNew = problems.find((problem) => problem.code === "format-too-new");
-    if (tooNew) throw new ImportRefused("too-new", [tooNew]);
-    const errors = problems.filter((problem) => problem.severity === "error");
-    if (!project) throw new ImportRefused("invalid", [...[...lost.values()].flat(), ...errors]);
-    if (errors.length === 0) {
-      const documents = [...lost].map(([file, reasons]) => ({
-        file,
-        consequence: consequenceOf(file, project, t),
-        problems: reasons,
-      }));
-      return { project, warnings: problems, lost: documents };
+function consequenceOf(file: string, part: LostPart, t: TFunction): string {
+  switch (part.kind) {
+    case "timeline": {
+      const key = part.listed ? "transfer.lost.timeline" : "transfer.lost.otherTimeline";
+      return t(key, { id: part.id });
     }
-
-    let changed = false;
-    // What the manifest says about a timeline is taken care of below, and it has nothing else.
-    for (const error of errors) {
-      if (error.file !== MANIFEST_FILE) changed = lose(error) || changed;
-    }
-    for (const id of project.manifest.timelines) {
-      const file = timelineFile(id);
-      if (texts.has(file)) continue;
-      if (!lost.has(file)) {
-        lost.set(file, [
-          { severity: "error", code: "timeline-missing", file, message: t("transfer.noTimeline") },
-        ]);
-      }
-      const empty = createTimeline(t("transfer.emptyTimeline", { id }));
-      texts.set(file, stringifyDocument(empty));
-      changed = true;
-    }
-    if (!changed) throw new ImportRefused("invalid", errors);
+    case "override":
+      return t("transfer.lost.override", { id: part.timeline, version: part.version });
+    case "scene":
+      return t("transfer.lost.scene", { id: part.id });
+    case "sound":
+      return t("transfer.lost.sound", { id: part.id });
+    case "locale":
+      return t("transfer.lost.locale", { id: part.id });
+    case "assets":
+      return t("transfer.lost.assets");
+    case "notes":
+      return t("transfer.lost.notes");
+    case "libraries":
+      return t("transfer.lost.libraries");
+    case "lock":
+      return t("transfer.lost.lock");
+    case "other":
+      return file;
   }
 }
 
@@ -226,66 +132,37 @@ function readUsablePart(
 export async function readProjectFolder(
   source: SourceFolder,
   t: TFunction,
-  options: ReadOptions = {},
+  { signal, onStep }: ReadOptions = {},
 ): Promise<ProjectFolder> {
-  const { signal, onStep } = options;
-  const files = await list(source, options);
-  if (files.has(INCOMPLETE_FILE)) throw new ImportRefused("incomplete");
-
-  const texts = new Map<string, string>();
-  const problems: Problem[] = [];
-  const skipped = new Set<string>();
-  for (const [path, entry] of files) {
-    const isDocument = documentSchema(path) !== undefined;
-    if (!isDocument && !isSourceFile(path)) {
-      skipped.add(path);
-      continue;
-    }
-    signal?.throwIfAborted();
-    onStep?.({ file: path, done: 0, total: 0 });
-    const file = await entry.read();
-    if (!isDocument && file.size > MAX_SOURCE_BYTES) {
-      skipped.add(path);
-      continue;
-    }
-    const text = await readText(file, t, (message) => {
-      if (isDocument) problems.push(unreadable(path, message));
-      else skipped.add(path);
-    });
-    // Editors on Windows like to put a byte order mark in front, which JSON does not allow.
-    if (text !== undefined) texts.set(path, isDocument ? text.replace(/^\uFEFF/, "") : text);
-  }
-
-  const { project, warnings, lost } = readUsablePart(texts, problems, t);
-
-  // A document can be fine and still have no place, such as what belongs to no timeline.
-  const kept = writeProject(project);
-  for (const path of texts.keys()) {
-    if (!kept.has(path) && !isSourceFile(path)) skipped.add(path);
-  }
-  for (const { path } of Object.values(project.assets?.assets ?? {})) skipped.delete(path);
-
-  // Browsers do not show links in a folder, so what a project needs can be gone without a trace.
-  const entries = [
-    ...[...project.scenes].map(([id, { entry }]) => `scenes/${id}/${entry}`),
-    ...[...project.sounds].map(([id, { entry }]) => `sounds/${id}/${entry}`),
-  ];
-  const withoutEntry = entries.filter((path) => !texts.has(path));
+  const { folder, files } = readable(source);
+  const reading = await readFolder(folder, {
+    ...(signal ? { signal } : {}),
+    onFile: (file) => onStep?.({ file, done: 0, total: 0 }),
+    emptyTimeline: (id) => t("transfer.emptyTimeline", { id }),
+  }).catch((error: unknown) => {
+    if (!(error instanceof FolderRefused)) throw error;
+    throw new ImportRefused(
+      error.reason,
+      error.problems.map((problem) => said(problem, t)),
+    );
+  });
+  const { root, project, sources, skipped, lost, warnings } = reading;
   return {
     project,
-    sources: Object.fromEntries([...texts].filter(([path]) => isSourceFile(path))),
-    files,
-    skipped: [...skipped].toSorted(),
-    lost,
-    warnings: [
-      ...warnings,
-      ...withoutEntry.map((file): Problem => ({
-        severity: "warning",
-        code: "entry-missing",
-        file,
-        message: t("transfer.entryMissing"),
-      })),
-    ],
+    sources,
+    files: new Map(
+      reading.files.flatMap((path) => {
+        const file = files.get(`${root}${path}`);
+        return file ? [[path, file] as const] : [];
+      }),
+    ),
+    skipped,
+    lost: lost.map(({ file, part, problems }) => ({
+      file,
+      consequence: consequenceOf(file, part, t),
+      problems: problems.map((problem) => said(problem, t)),
+    })),
+    warnings: warnings.map((problem) => said(problem, t)),
   };
 }
 

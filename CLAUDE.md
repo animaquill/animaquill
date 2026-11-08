@@ -59,4 +59,4 @@
 - 改完运行 `pnpm --filter @animaquill/schema export-schema`，更新公开的 JSON Schema。
 - 项目内容是不可信的。ID 和路径字段都要防止指向项目之外。
 - 宿主里存的是 Yjs 文档，不是文件。第一次升级格式时，`ProjectSession` 也要迁移已保存的项目，现在只拒绝比编辑器新的格式。
-- 项目进出文件夹在 `packages/ui/src/transfer`，怎么读写文件夹由宿主决定（`Host.folders`）。导出时 `animaquill.json` 最后写，中途停下的文件夹就不会被当成项目。导入只产生新项目，走 `ProjectLibrary.receive`，完成前别人看不到，校验都在写入之前。清单之外的文档坏了可以跳过，但要用户在对话框里同意（`ProjectFolder.lost`），跳过后的内容重新走一遍 `readProject`，所以结果和健康的项目过同样的检查。读文件夹不要用 `FileSystemDirectoryHandle.values()`：Chrome 不允许的名字（比如 `aux.js`、`~草稿.html`）它不列出来，也不报错，文件就无声丢了。
+- 读文件夹解析成项目在 `packages/core/src/read-folder.ts`（与平台无关，Node 用 `@animaquill/core/disk-folder`），界面层只做适配和翻译。项目进出文件夹的界面在 `packages/ui/src/transfer`，怎么读写文件夹由宿主决定（`Host.folders`）。导出时 `animaquill.json` 最后写，中途停下的文件夹就不会被当成项目。导入只产生新项目，走 `ProjectLibrary.receive`，完成前别人看不到，校验都在写入之前。清单之外的文档坏了可以跳过，但要用户在对话框里同意（`ProjectFolder.lost`），跳过后的内容重新走一遍 `readProject`，所以结果和健康的项目过同样的检查。读文件夹不要用 `FileSystemDirectoryHandle.values()`：Chrome 不允许的名字（比如 `aux.js`、`~草稿.html`）它不列出来，也不报错，文件就无声丢了。

@@ -2,6 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFolder as readInNode } from "@animaquill/core";
+import { diskFolder } from "@animaquill/core/disk-folder";
+import { writeProject } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { isRefusedByChrome } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
@@ -1112,6 +1115,37 @@ test.describe("a browser that cannot write to folders", () => {
       expect(readFileSync(join(unpacked, "原子是什么", path))).toEqual(
         readFileSync(join(folder, path)),
       );
+    }
+  });
+
+  test("brings in what Node reads of the same folder, all of it", async ({ page }) => {
+    const folder = fileURLToPath(new URL("../../schema/fixtures/v1", import.meta.url));
+    const reading = await readInNode(await diskFolder(folder));
+    await importFrom(page, folder);
+    await openAnyway(page);
+    const report = dialog(page);
+    await expect(report.getByRole("heading", { name: "项目已导入" })).toBeVisible();
+    for (const path of reading.skipped) {
+      await expect(report.getByText(path, { exact: true })).toBeVisible();
+    }
+    await closeDialog(page);
+
+    const download = page.waitForEvent("download");
+    await startExport(page);
+    const file = await download;
+    await closeDialog(page);
+    const unpacked = mkdtempSync(join(tmpdir(), "animaquill-"));
+    const { name } = reading.project.manifest;
+    const names = unzip(readFileSync(await file.path()), unpacked);
+    const expected = new Map([
+      ...writeProject(reading.project),
+      ...Object.entries(reading.sources),
+    ]);
+    expect(names.map((path) => path.slice(`${name}/`.length)).toSorted()).toEqual(
+      [...expected.keys()].toSorted(),
+    );
+    for (const [path, text] of expected) {
+      expect(readFileSync(join(unpacked, name, path), "utf8"), path).toBe(text);
     }
   });
 

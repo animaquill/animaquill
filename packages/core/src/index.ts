@@ -205,6 +205,22 @@ export {
 } from "./trial.ts";
 export { isSourceFile } from "./import-file.ts";
 export {
+  FolderRefused,
+  INCOMPLETE_FILE,
+  MAX_FOLDER_FILES,
+  isFolderProblem,
+  isToolFolder,
+  readFolder,
+  type FolderProblemCode,
+  type FolderReading,
+  type FolderRefusal,
+  type LostDocument,
+  type LostPart,
+  type ReadableFile,
+  type ReadFolderOptions,
+  type ReadOnlyFolder,
+} from "./read-folder.ts";
+export {
   clipEnd,
   clipOffset,
   clipStart,

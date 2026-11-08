@@ -4,5 +4,5 @@
     "types": []
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/fuzz-support.ts"]
+  "exclude": ["src/**/*.test.ts", "src/fuzz-support.ts", "src/disk-folder.ts"]
 }

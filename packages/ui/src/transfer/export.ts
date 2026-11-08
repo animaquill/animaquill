@@ -1,20 +1,18 @@
-import { MAX_SOURCE_BYTES, isSourceFile, type ProjectStore } from "@animaquill/core";
+import {
+  INCOMPLETE_FILE,
+  MAX_SOURCE_BYTES,
+  isSourceFile,
+  type ProjectStore,
+} from "@animaquill/core";
 import type { MediaStore, TargetFolder } from "@animaquill/host";
 import { hashFile, isSameHash } from "@animaquill/media";
 import { MANIFEST_FILE, readProject, type Problem } from "@animaquill/schema";
 
 /**
- * Lies in a folder for as long as an export is going on. Should it never get to the end, because
- * the disk is full or the page went away, this is what says so to people, and to an import.
+ * Lies in a folder for as long as an export is going on, and reading a folder knows it: should the
+ * export never get to the end, the folder is not taken for a project.
  */
-export const INCOMPLETE_FILE = "导出未完成.txt";
-
-/**
- * Importing reads scene and sound files as a whole. A larger one is not what it claims to be, such
- * as a video. Documents have no such limit: they are what makes a project, and all of it is in
- * memory while it is open anyway.
- */
-export { MAX_SOURCE_BYTES };
+export { INCOMPLETE_FILE };
 
 /** How far moving a project has got. */
 export interface TransferStep {
