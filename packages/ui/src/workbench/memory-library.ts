@@ -222,6 +222,26 @@ export class MemoryLibrary implements ProjectLibrary {
     this.instances.delete(id);
     this.#removeFiles(id);
   }
+
+  async toFolder(id: string) {
+    if (this.failing) throw new Error("quota");
+    const summary = this.summaries.get(id);
+    if (!summary) throw new Error(`No project ${id}`);
+    this.summaries.set(id, { ...summary, folder: true });
+  }
+
+  async copies(id: string) {
+    return [...this.files]
+      .filter(([key]) => key.startsWith(`${id}/`))
+      .map(([key, file]) => ({ name: key.slice(id.length + 1), size: file.size }))
+      .filter(({ name }) => !isMadeFile(name));
+  }
+
+  async dropCopies(id: string, names: readonly string[]) {
+    if (this.failing) throw new Error("quota");
+    if (this.summaries.get(id)?.folder !== true) throw new Error(`Project ${id} is no folder`);
+    for (const name of names) if (!isMadeFile(name)) this.files.delete(`${id}/${name}`);
+  }
 }
 
 /** For tests: what exports keep, in memory, as it would be on the disk. */

@@ -3,6 +3,7 @@ import { Feather, FolderInput, FolderOpen, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { sizeOf, type UnfinishedExport } from "../export/video.ts";
+import { formatSize } from "../transfer/transfer.ts";
 import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./StartPage.module.css";
@@ -107,14 +108,20 @@ function Waiting({ waiting }: { waiting: WaitingFolder }) {
   );
 }
 
-/** Folders opened in this browser before, the most recent first, and how each is now. */
+/**
+ * Folders opened in this browser before, the most recent first, and how each is now. A project that
+ * moved here from the browser may have copies of the files of its assets there still, which people
+ * can let go of.
+ */
 function RecentFolders({
   records,
   statuses,
+  copies,
   refresh,
 }: {
   records: readonly FolderRecord[];
   statuses: ReadonlyMap<string, FolderStatus>;
+  copies: ReadonlyMap<string, number>;
   refresh: () => void;
 }) {
   const { projectFolders } = useWorkbench();
@@ -160,6 +167,18 @@ function RecentFolders({
                   </button>
                 </>
               )}
+              {(copies.get(record.id) ?? 0) > 0 && (
+                <button
+                  type="button"
+                  className={styles.again}
+                  title={t("folder.move.copiesHint", {
+                    size: formatSize(copies.get(record.id) ?? 0),
+                  })}
+                  onClick={() => void projectFolders.releaseCopies(record).then(refresh)}
+                >
+                  {t("folder.move.releaseShort", { size: formatSize(copies.get(record.id) ?? 0) })}
+                </button>
+              )}
               <button
                 type="button"
                 className={styles.remove}
@@ -187,6 +206,7 @@ export function StartPage() {
   const [projects, setProjects] = useState<readonly ProjectSummary[]>();
   const [records, setRecords] = useState<readonly FolderRecord[]>([]);
   const [statuses, setStatuses] = useState<ReadonlyMap<string, FolderStatus>>(new Map());
+  const [copies, setCopies] = useState<ReadonlyMap<string, number>>(new Map());
   /** The folders this browser knows cannot be read: nobody can tell its projects from them then. */
   const [foldersFailed, setFoldersFailed] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -209,6 +229,9 @@ export function StartPage() {
           void projectFolders.projects
             .statusOf(record)
             .then((status) => setStatuses((before) => new Map(before).set(record.id, status)));
+          void projectFolders
+            .copiesOf(record)
+            .then((size) => setCopies((before) => new Map(before).set(record.id, size)));
         }
       },
       (error: unknown) => {
@@ -276,7 +299,7 @@ export function StartPage() {
             {t("project.listFailed")}
           </p>
         )}
-        <RecentFolders records={records} statuses={statuses} refresh={refresh} />
+        <RecentFolders records={records} statuses={statuses} copies={copies} refresh={refresh} />
 
         {inBrowser && inBrowser.length > 0 && (
           <h2>{projectFolders ? t("folder.browserProjects") : t("project.recent")}</h2>
@@ -292,6 +315,16 @@ export function StartPage() {
                 <span className={styles.name}>{project.name}</span>
                 <span className={styles.time}>{when.format(project.updatedAt)}</span>
               </button>
+              {projectFolders && (
+                <button
+                  type="button"
+                  className={styles.again}
+                  aria-label={t("folder.move.button", { name: project.name })}
+                  onClick={() => void projectFolders.moveToFolder(project.id).then(refresh)}
+                >
+                  {t("folder.move.action")}
+                </button>
+              )}
               <button
                 type="button"
                 className={styles.remove}

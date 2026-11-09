@@ -201,7 +201,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
         <div className={styles.buttons}>
           {!(isConfirm && request.noticeOnly) && (
             <button ref={cancel} type="button" onClick={dismiss}>
-              {t("dialog.cancel")}
+              {(isConfirm && request.cancel) || t("dialog.cancel")}
             </button>
           )}
           {request.kind === "choice" ? (

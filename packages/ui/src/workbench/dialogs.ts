@@ -12,6 +12,8 @@ export interface ConfirmOptions {
   readonly title: string;
   readonly message: string;
   readonly confirm: string;
+  /** The word on the button that says no, where "cancel" would not say what it does. */
+  readonly cancel?: string;
   /** The action cannot be taken back, so it should look that way. */
   readonly danger?: boolean;
   /** Only something to read, so there is nothing to cancel. */

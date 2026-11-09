@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FolderError, type LocalFolder, type LocalFolders } from "./index.ts";
+import { browserLocalFolders } from "./local-folders.ts";
 import { MemoryDisk, memoryFolders, type MemoryDiskOptions } from "./memory-disk.ts";
 
 const encoder = new TextEncoder();
@@ -60,6 +61,62 @@ describe("choosing a folder", () => {
     const { disk, folders } = setup();
     disk.chooseNext("cancel");
     expect(await folders.choose()).toBeUndefined();
+  });
+});
+
+describe("a browser that may or may not write folders", () => {
+  const CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/157.0.0.0 Safari/537.36";
+  const FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0";
+  /** A handle that can write, which Firefox and Safari have too, for their private folder. */
+  const Writable = class {
+    createWritable() {}
+  };
+
+  const browserWith = (globals: Record<string, unknown>) => {
+    for (const [name, value] of Object.entries(globals)) vi.stubGlobal(name, value);
+    return browserLocalFolders(() => ({}) as IDBFactory);
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("is told by what it has, not by its name", () => {
+    const picker = async () => ({});
+    expect(
+      browserWith({
+        navigator: { userAgent: FIREFOX },
+        showDirectoryPicker: picker,
+        FileSystemFileHandle: Writable,
+      }),
+    ).toBeDefined();
+    expect(
+      browserWith({
+        navigator: { userAgent: CHROME },
+        showDirectoryPicker: undefined,
+        FileSystemFileHandle: Writable,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("cannot without a dialog for folders, as Firefox, Safari and Brave as it comes", () => {
+    expect(
+      browserWith({ showDirectoryPicker: undefined, FileSystemFileHandle: Writable }),
+    ).toBeUndefined();
+  });
+
+  it("cannot where its handles cannot write", () => {
+    const picker = async () => ({});
+    /** A handle that can only be read, as the first browsers had them. */
+    const ReadOnly = class {
+      getFile() {}
+    };
+    expect(
+      browserWith({ showDirectoryPicker: picker, FileSystemFileHandle: ReadOnly }),
+    ).toBeUndefined();
+    expect(
+      browserWith({ showDirectoryPicker: picker, FileSystemFileHandle: undefined }),
+    ).toBeUndefined();
   });
 });
 

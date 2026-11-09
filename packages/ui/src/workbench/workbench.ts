@@ -171,6 +171,9 @@ export class Workbench {
       remove: (id) => library.remove(id),
       // The files of a project that is a folder are in the folder, see `FolderAssets`.
       media: (id) => this.projectFolders?.mediaFor(id) ?? library.media(id),
+      toFolder: (id) => library.toFolder(id),
+      copies: (id) => library.copies(id),
+      dropCopies: (id, names) => library.dropCopies(id, names),
     };
     // An export reads each file of a project folder all through again: what goes out is what the
     // project says, whatever a kept hash says.
@@ -931,6 +934,15 @@ export class Workbench {
     await this.projectFolders?.open();
   }
 
+  /**
+   * Moves a project of this browser, the open one by default, into a folder on this computer, where
+   * the browser can write folders: see `ProjectFolders.moveToFolder`. Resolves to whether it moved.
+   */
+  async moveToFolder(id = this.session.key): Promise<boolean> {
+    if (!this.projectFolders || id === undefined) return false;
+    return this.projectFolders.moveToFolder(id);
+  }
+
   /** The open project stays open until the new one is there, so a failure costs nothing. */
   async importProject(): Promise<void> {
     this.diagnostics.mark("import", { step: "start" });
@@ -1289,6 +1301,16 @@ export class Workbench {
         title: (t) => t("transfer.importAction"),
         run: () => void this.importProject(),
         menu: { name: "file", group: "folder" },
+      });
+    } else {
+      const folders = this.projectFolders;
+      this.actions.register({
+        id: "project.moveToFolder",
+        title: (t) => t("folder.move.action"),
+        run: () => void this.moveToFolder(),
+        menu: { name: "file", group: "folder" },
+        // Only a project of the browser: a folder is where a project goes already.
+        enabled: () => isOpen() && !folders.holds(this.session.key),
       });
     }
     this.actions.register({

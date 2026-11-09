@@ -106,10 +106,13 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
-    const { code, session, transfer, trials, videos } = workbench;
+    const { code, session, transfer, trials, videos, projectFolders } = workbench;
     // An export that stops halfway can go on after a reload, but its sound has to catch up first.
     const exporting = videos.getSnapshot() !== undefined;
-    const atRisk = session.hasUnsavedChanges || transfer.running || trials.notKept || exporting;
+    // A project that is moving into a folder stays in the browser, and the folder has half of it.
+    const moving = projectFolders?.moving === true;
+    const atRisk =
+      session.hasUnsavedChanges || transfer.running || trials.notKept || exporting || moving;
     if (atRisk || code.hasUnsaved) event.preventDefault();
   };
   window.addEventListener("beforeunload", onBeforeUnload);

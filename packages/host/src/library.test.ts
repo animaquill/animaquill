@@ -809,3 +809,83 @@ describe("files the editor made", () => {
     vi.restoreAllMocks();
   });
 });
+
+describe("a project of the browser that moved into a folder", () => {
+  const ASSET = "sha256-n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg=";
+  const OTHER = "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=";
+  const SOUND = "sound-1:abc";
+
+  async function moved() {
+    const opened = browser();
+    const { library } = opened;
+    await library.create(PROJECT, STATE);
+    const media = library.media(PROJECT.id);
+    await media.put(ASSET, file("用户的视频"));
+    await media.put(OTHER, file("用户的图"));
+    await media.put(SOUND, file("代码做的声音"));
+    return { ...opened, media };
+  }
+
+  it("is kept by its folder from then on, and its log goes on", async () => {
+    const { library } = await moved();
+    const log = await logOf(library);
+    await library.toFolder(PROJECT.id);
+    expect(await library.list()).toEqual([expect.objectContaining({ ...PROJECT, folder: true })]);
+    // A window that had it open goes on writing its log, and so does the next one.
+    await log.append(new Uint8Array([4]), PROJECT.name);
+    expect(await (await logOf(library)).load()).toEqual([STATE, new Uint8Array([4])]);
+    // Saying so again changes nothing.
+    await library.toFolder(PROJECT.id);
+    expect(await library.list()).toEqual([expect.objectContaining({ folder: true })]);
+  });
+
+  it("keeps what windows were trying out on it", async () => {
+    const { library, host, tab } = await moved();
+    const memory = tab();
+    const place = await host(memory).trials.open(PROJECT.id);
+    await place.save("试改");
+    place.close();
+    await library.toFolder(PROJECT.id);
+    const again = await host(memory).trials.open(PROJECT.id);
+    expect(await again.load()).toBe("试改");
+    again.close();
+  });
+
+  it("cannot be one that is not there", async () => {
+    const { library } = browser();
+    await expect(library.toFolder("project_none")).rejects.toThrow();
+    expect(await library.list()).toEqual([]);
+  });
+
+  it("has copies of the files people brought in, which are all that can be let go of", async () => {
+    const { library, media } = await moved();
+    await library.toFolder(PROJECT.id);
+    const copies = await library.copies(PROJECT.id);
+    expect(copies.map(({ name }) => name).toSorted()).toEqual([ASSET, OTHER].toSorted());
+    expect(copies.find(({ name }) => name === ASSET)?.size).toBe(file("用户的视频").size);
+    await library.dropCopies(PROJECT.id, [ASSET, SOUND]);
+    expect(await media.get(ASSET)).toBeUndefined();
+    expect(await textIn(await media.get(OTHER))).toBe("用户的图");
+    // What the editor made stays, whatever is asked.
+    expect(await textIn(await media.get(SOUND))).toBe("代码做的声音");
+    expect((await library.copies(PROJECT.id)).map(({ name }) => name)).toEqual([OTHER]);
+  });
+
+  it("is the only one whose files can go that way: a project of the browser keeps them", async () => {
+    const { library, media } = await moved();
+    await expect(library.dropCopies(PROJECT.id, [ASSET])).rejects.toThrow();
+    await expect(library.dropCopies("project_none", [ASSET])).rejects.toThrow();
+    expect(await textIn(await media.get(ASSET))).toBe("用户的视频");
+  });
+
+  it("are only its own copies", async () => {
+    const { library } = await moved();
+    const other = { id: "project_b", name: "别的" };
+    await library.create(other, STATE);
+    await library.media(other.id).put(ASSET, file("别的项目的视频"));
+    await library.toFolder(PROJECT.id);
+    await library.dropCopies(PROJECT.id, [ASSET]);
+    expect(await textIn(await library.media(other.id).get(ASSET))).toBe("别的项目的视频");
+    expect((await library.copies(other.id)).map(({ name }) => name)).toEqual([ASSET]);
+  });
+});

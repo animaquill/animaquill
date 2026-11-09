@@ -454,6 +454,48 @@ function createLibrary(
         console.warn("What windows kept of a project that is gone stays for now", error);
       });
     },
+    async toFolder(id) {
+      // "strict", as for its log: from here on the browser keeps it by its folder.
+      const transaction = (await database()).transaction(PROJECTS, "readwrite", {
+        durability: "strict",
+      });
+      const projects = transaction.objectStore(PROJECTS);
+      const read = projects.get(id);
+      let isThere = false;
+      read.addEventListener("success", () => {
+        const record = read.result as ProjectRecord | undefined;
+        if (!record || record.incoming) return;
+        isThere = true;
+        // Its instance stays, which is what windows of it and what they keep go by.
+        if (!record.folder) projects.put({ ...record, folder: true } satisfies ProjectRecord);
+      });
+      await committed(transaction);
+      if (!isThere) throw new Error(`No project ${id} to keep by its folder`);
+    },
+    async copies(id) {
+      const transaction = (await database()).transaction(MEDIA);
+      const index = transaction.objectStore(MEDIA).index(BY_PROJECT);
+      // Records hold their files by reference, so reading them reads none of the files.
+      const records = await resultOf<MediaRecord[]>(index.getAll(id));
+      return records.flatMap(({ hash, file }) =>
+        isMadeFile(hash) ? [] : [{ name: hash, size: file.size }],
+      );
+    },
+    async dropCopies(id, names) {
+      const transaction = (await database()).transaction([PROJECTS, MEDIA], "readwrite");
+      const read = transaction.objectStore(PROJECTS).get(id);
+      let isFolder = false;
+      read.addEventListener("success", () => {
+        const record = read.result as ProjectRecord | undefined;
+        isFolder = record?.folder === true && !record.incoming;
+        // The files of a project of the browser are the only ones it has.
+        if (!isFolder) return;
+        const media = transaction.objectStore(MEDIA);
+        for (const name of names) if (!isMadeFile(name)) media.delete([id, name]);
+      });
+      await committed(transaction);
+      if (!isFolder) throw new Error(`Project ${id} is no folder: its files are its own`);
+    },
   };
   return library;
 }

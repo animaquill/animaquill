@@ -5,7 +5,7 @@
  * `FolderSession`. What is in a folder and what this browser keeps of it is `FolderProjects`; this
  * is the part that asks people and tells them.
  */
-import { isNoneOfIt, type ProjectStore } from "@animaquill/core";
+import { INCOMPLETE_FILE, isNoneOfIt, type ProjectStore } from "@animaquill/core";
 import {
   FolderError,
   type AccessAnswer,
@@ -18,6 +18,7 @@ import {
   type ProjectAddress,
   type ProjectLibrary,
 } from "@animaquill/host";
+import type { Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import {
   FolderAssets,
@@ -25,6 +26,14 @@ import {
   type AssetIssue,
   type AssetProgress,
 } from "../folder/assets.ts";
+import {
+  FolderMove,
+  loadProject,
+  type Mismatch,
+  type MoveRefusal,
+  type MoveResult,
+  type MoveStep,
+} from "../folder/move.ts";
 import { isProjectFile } from "../folder/project-files.ts";
 import {
   FolderProjects,
@@ -42,7 +51,8 @@ import {
 import type { Hasher } from "../media/hasher.ts";
 import type { ProblemList } from "../problems/list.ts";
 import type { ImportRefused, ImportReport } from "../transfer/import.ts";
-import type { ConfirmOptions, Dialogs } from "./dialogs.ts";
+import { formatSize } from "../transfer/transfer.ts";
+import type { ConfirmOptions, DialogDetail, Dialogs, ProgressDialog } from "./dialogs.ts";
 import { Emitter } from "./emitter.ts";
 import type { Notifications } from "./notifications.ts";
 import { projectKeyOf, type ProjectSession } from "./session.ts";
@@ -133,10 +143,32 @@ interface Current {
 
 type Listed = Parameters<ProblemList["setFolder"]>[0][number];
 
+/** The files of a project folder that opens, see `ProjectFolders.#filesOf`. */
+interface OpeningFiles {
+  readonly assets: FolderAssets;
+  /** From now on the folder is the one of this session, which can find it somewhere else. */
+  follow(session: FolderSession): void;
+  /** The project did not open after all. */
+  drop(): void;
+}
+
 /** More than anybody reads: what of the folder did not come in, since the project opened. */
 const MAX_LISTED = 200;
 /** What of a value the folder had is shown, at most. */
 const MAX_SHOWN = 4000;
+/** A dialog is no place for thousands of lines. */
+const MAX_IN_DIALOG = 100;
+/** Often enough to see a move go, and little enough for the files to be what takes the time. */
+const STEP_INTERVAL_MS = 100;
+/**
+ * What writing a file costs whatever its size, as bytes of a large one: about a tenth of a second
+ * on Windows, see the design, 2.2, at about 100 MB a second.
+ */
+const FILE_COST_BYTES = 10_000_000;
+/** How fast a guess of how long it takes goes, before the time it took so far says better. */
+const GUESSED_BYTES_PER_S = 100_000_000;
+/** Until then the guess goes by the files and their size; from then on by how it went so far. */
+const MEASURE_AFTER_S = 2;
 
 const NOTHING: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
 
@@ -146,6 +178,26 @@ function shown(value: unknown, t: TFunction): string {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return text.length > MAX_SHOWN ? `${text.slice(0, MAX_SHOWN)}…` : text;
 }
+
+/** A list in a dialog, of what is not too long to read. */
+function listOf(t: TFunction, title: string, items: readonly string[]): DialogDetail {
+  const listed = items.slice(0, MAX_IN_DIALOG);
+  const more = items.length - listed.length;
+  return {
+    title: t("transfer.listTitle", { title, count: items.length }),
+    items: more > 0 ? [...listed, t("transfer.andMore", { count: more })] : listed,
+  };
+}
+
+/** What is wrong with a file, the way the import says it. */
+const problemText = (t: TFunction, { file, path, message }: Problem): string =>
+  t("transfer.problem", { place: path ? `${file} ${path}` : file, message });
+
+/** How much of a move is done, where every file costs about as much as `FILE_COST_BYTES`. */
+const doneOf = ({ files, totalFiles, bytes, totalBytes }: MoveStep): number => {
+  const total = totalBytes + totalFiles * FILE_COST_BYTES;
+  return total > 0 ? Math.min(1, (bytes + files * FILE_COST_BYTES) / total) : 1;
+};
 
 export class ProjectFolders {
   readonly projects: FolderProjects;
@@ -167,6 +219,9 @@ export class ProjectFolders {
   #assets: { readonly key: string; readonly assets: FolderAssets } | undefined;
   readonly #progressEmitter = new Emitter();
   #progress: AssetProgress = NO_PROGRESS;
+  /** Moves projects of the browser into folders, see `moveToFolder`. */
+  readonly #mover: FolderMove;
+  #moving = false;
 
   constructor(options: ProjectFoldersOptions) {
     this.#options = options;
@@ -174,6 +229,12 @@ export class ProjectFolders {
       folders: options.folders,
       projects: options.projects,
       t: options.t,
+    });
+    this.#mover = new FolderMove({
+      folders: options.folders,
+      projects: options.projects,
+      t: options.t,
+      ...(options.hasher && { hasher: options.hasher }),
     });
   }
 
@@ -629,6 +690,321 @@ export class ProjectFolders {
     }
   }
 
+  /** Whether a project is moving into a folder, which leaving the page now would stop halfway. */
+  get moving(): boolean {
+    return this.#moving;
+  }
+
+  /**
+   * Whether this window has the project that this browser keeps by `key` open as a folder, or is
+   * opening it as one: then it is no project of the browser, to move into a folder.
+   */
+  holds(key: string | undefined): boolean {
+    return key !== undefined && (this.#assets?.key === key || this.#current?.record.id === key);
+  }
+
+  /**
+   * Moves a project of this browser into a folder on this computer, see the design, section 8:
+   * people choose where it goes, as for a new project, all of it gets written there and compared
+   * with what the project has, and only then does this browser keep the project by its folder, see
+   * `FolderMove`. Whatever is not right stops it, and the project stays as it was. One that is open
+   * stays open: its log, what is being tried, the code that is not saved and what its exports did
+   * go on. This asks for a folder, so it has to run right after people did something. Resolves to
+   * whether it moved.
+   */
+  async moveToFolder(key: string): Promise<boolean> {
+    if (this.#moving) return false;
+    this.#moving = true;
+    try {
+      return await this.#moveToFolder(key);
+    } finally {
+      this.#moving = false;
+    }
+  }
+
+  async #moveToFolder(key: string): Promise<boolean> {
+    const { session, projects, dialogs, notifications, t } = this.#options;
+    // The browser asks only right after people did something, so that comes first.
+    const chosen = await this.#choose();
+    if (!chosen) return false;
+    const open = session.key === key ? session.store : undefined;
+    let loaded: ProjectStore | undefined;
+    try {
+      const store = open ?? (loaded = await loadProject(projects, key));
+      if (!store) {
+        notifications.push(t("notice.projectNotFound"));
+        return false;
+      }
+      const { name } = store.getState().manifest;
+      // What the folder gets has to be in the log first, see `FolderMove.run`.
+      if (open && !(await session.trySave())) {
+        await this.#notice(t("folder.move.refusedTitle", { name }), t("folder.move.unsaved"));
+        return false;
+      }
+      const media = projects.media(key);
+      const refusal = await this.#mover.check(key, store, media);
+      if (refusal) {
+        await this.#refusedMove(name, refusal);
+        return false;
+      }
+      const place = await this.#placeFor(chosen, name);
+      if (!place) return false;
+      const progress = dialogs.progress({
+        title: t("folder.move.title", { name }),
+        cancel: t("dialog.cancel"),
+        stopping: t("transfer.stopping"),
+      });
+      let result: MoveResult;
+      try {
+        result = await this.#mover.run(
+          key,
+          store,
+          media,
+          { chosen, inside: place.inside },
+          {
+            notice: t("folder.move.incompleteNotice"),
+            signal: progress.signal,
+            onStep: this.#followMove(progress),
+            ...(open && { saved: () => session.trySave() }),
+          },
+        );
+      } finally {
+        progress.close();
+      }
+      if (result.kind !== "moved") {
+        await this.#notMoved(name, result);
+        return false;
+      }
+      // The project stays open, and from now on its folder is kept in step with it.
+      if (open && session.store === open) {
+        await this.#attach(result.record, open, this.#filesOf(result.record), false);
+        // What the page has of the files came from the browser: from now on it comes from the folder.
+        this.#options.assetFiles.filesChanged(
+          Object.values(open.getState().assets ?? {}).map(({ path }) => path),
+        );
+      }
+      await this.#moved(name, result);
+      return true;
+    } catch (error) {
+      console.warn("A project could not be moved into a folder", error);
+      notifications.push(t("folder.move.failed"));
+      return false;
+    } finally {
+      loaded?.destroy();
+    }
+  }
+
+  /** What the copies of the files of the assets of a project that moved take in the browser. */
+  copiesOf(record: FolderRecord): Promise<number> {
+    return this.#mover.copiesOf(record.id).catch(() => 0);
+  }
+
+  /**
+   * Lets go of what this browser still keeps of the files of the assets of a project that moved
+   * into its folder, as far as the folder has them as the project says, see `FolderMove.release`.
+   * It reads the folder, which the browser may ask about: it has to run right after people did
+   * something. `asked` is for people who said so already. Resolves to whether anything went.
+   */
+  async releaseCopies(record: FolderRecord, { asked = false } = {}): Promise<boolean> {
+    const { dialogs, notifications, projects, folders, hasher, t } = this.#options;
+    if (!asked) {
+      const size = formatSize(await this.copiesOf(record));
+      const go = await dialogs.confirm({
+        title: t("folder.move.releaseTitle", { name: record.name }),
+        message: t("folder.move.releaseMessage", { size }),
+        confirm: t("folder.move.release", { size }),
+      });
+      if (!go) return false;
+    }
+    let status = await this.projects.statusOf(record);
+    if (status === "ask" && (await record.folder.requestAccess()) === "granted") status = "ready";
+    if (status !== "ready") {
+      notifications.push(t("folder.move.releaseUnreachable", { name: record.name }));
+      return false;
+    }
+    const current = this.#current?.record.id === record.id ? this.#current : undefined;
+    const files =
+      current?.assets ??
+      new FolderAssets({
+        folder: () => record.folder,
+        key: record.id,
+        bases: folders.bases,
+        browser: projects.media(record.id),
+        ...(hasher && { hasher }),
+      });
+    let loaded: ProjectStore | undefined;
+    try {
+      const store = current?.store ?? (loaded = await loadProject(projects, record.id));
+      // Without the project nothing says which files it needs, and so none of them go.
+      if (!store) throw new Error(`Nothing of project ${record.id} to compare its files with`);
+      const { released, kept } = await this.#mover.release(
+        record.id,
+        store.getState().assets ?? {},
+        files,
+      );
+      const size = formatSize(released);
+      notifications.push(
+        kept.length > 0
+          ? t("folder.move.releasedPartly", { size, count: kept.length })
+          : t("folder.move.released", { size }),
+      );
+      return released > 0;
+    } catch (error) {
+      console.warn("The copies in the browser could not be let go of", error);
+      notifications.push(t("folder.move.releaseFailed"));
+      return false;
+    } finally {
+      loaded?.destroy();
+      if (files !== current?.assets) files.stop();
+    }
+  }
+
+  /** Keeps the dialog of a move up with what is happening, and how long it may take. */
+  #followMove(progress: ProgressDialog): (step: MoveStep) => void {
+    const { t } = this.#options;
+    let last = Number.NEGATIVE_INFINITY;
+    let phase: MoveStep["phase"] | undefined;
+    let since = 0;
+    return (step) => {
+      const now = performance.now();
+      if (step.phase !== phase) {
+        phase = step.phase;
+        since = now;
+        last = Number.NEGATIVE_INFINITY;
+      }
+      if (now - last < STEP_INTERVAL_MS) return;
+      last = now;
+      const ratio = doneOf(step);
+      const elapsed = (now - since) / 1000;
+      // At first by what there is to do, then by how it went so far.
+      const seconds =
+        elapsed < MEASURE_AFTER_S || ratio <= 0
+          ? ((step.totalFiles - step.files) * FILE_COST_BYTES + step.totalBytes - step.bytes) /
+            GUESSED_BYTES_PER_S
+          : (elapsed * (1 - ratio)) / ratio;
+      const left = Math.ceil(seconds);
+      const counted = t(`folder.move.${step.phase}`, { done: step.files, total: step.totalFiles });
+      progress.update({
+        detail: step.file,
+        ratio,
+        amount: left > 1 ? `${counted}${t("folder.move.left", { seconds: left })}` : counted,
+      });
+    };
+  }
+
+  /** Says that the project is the folder now, and what the browser still keeps of its files. */
+  async #moved(name: string, { record, missing, copies }: Extract<MoveResult, { kind: "moved" }>) {
+    const { dialogs, t } = this.#options;
+    const title = t("folder.move.movedTitle");
+    const message = t("folder.move.moved", { name, folder: record.folder.name });
+    const details = missing.length > 0 ? [listOf(t, t("folder.move.missing"), missing)] : [];
+    if (copies === 0) {
+      await this.#notice(title, message, details);
+      return;
+    }
+    const size = formatSize(copies);
+    const release = await dialogs.confirm({
+      title,
+      message: `${message}${t("folder.move.copies", { size })}`,
+      confirm: t("folder.move.release", { size }),
+      cancel: t("folder.move.keep"),
+      ...(details.length > 0 && { details }),
+    });
+    if (release) await this.releaseCopies(record, { asked: true });
+  }
+
+  /** Says why a project did not move, and that it stays as it was in the browser. */
+  async #notMoved(name: string, result: Exclude<MoveResult, { kind: "moved" }>): Promise<void> {
+    const { notifications, t } = this.#options;
+    const title = t("folder.move.failedTitle", { name });
+    const left = (cleaned: boolean, folder: string) =>
+      cleaned
+        ? t("folder.move.nothingLeft")
+        : t("folder.move.leftBehind", { folder, file: INCOMPLETE_FILE });
+    switch (result.kind) {
+      case "refused":
+        await this.#refusedMove(name, result.refusal);
+        return;
+      case "stopped": {
+        if (result.cancelled && result.cleaned) {
+          notifications.push(t("folder.move.cancelled", { name }));
+          return;
+        }
+        const reason = result.cancelled
+          ? t("folder.move.cancelled", { name })
+          : t("folder.move.writeFailed", {
+              file: result.file,
+              reason: this.#reasonOf(result.error),
+            });
+        await this.#notice(title, `${reason}${left(result.cleaned, result.folder)}`);
+        return;
+      }
+      case "unverified":
+        await this.#notice(
+          title,
+          t("folder.move.unverified", { folder: result.folder, file: INCOMPLETE_FILE }),
+          [
+            listOf(
+              t,
+              t("folder.move.mismatchList"),
+              result.mismatches.flatMap((mismatch) => this.#describe(mismatch)),
+            ),
+          ],
+        );
+        return;
+      case "unswitched":
+        console.warn("A project in a folder could not be kept by it", result.error);
+        await this.#notice(
+          title,
+          `${t("folder.move.unswitched", { folder: result.folder })}${left(result.cleaned, result.folder)}`,
+        );
+        return;
+    }
+  }
+
+  /** Why a project cannot move: what people have to put right first, or why it does not matter. */
+  async #refusedMove(name: string, refusal: MoveRefusal): Promise<void> {
+    const { notifications, t } = this.#options;
+    if (refusal.kind === "already" || refusal.kind === "busy") {
+      notifications.push(t(`folder.move.${refusal.kind}`, { name }));
+      return;
+    }
+    const items =
+      refusal.kind === "invalid"
+        ? refusal.problems.map((problem) => problemText(t, problem))
+        : refusal.kind === "too-new"
+          ? []
+          : refusal.paths;
+    await this.#notice(
+      t("folder.move.refusedTitle", { name }),
+      t(`folder.move.refused.${refusal.kind}`),
+      items.length > 0 ? [listOf(t, t("folder.move.listTitle"), items)] : undefined,
+    );
+  }
+
+  /** What is not right with the folder, in a line or a few. */
+  #describe(mismatch: Mismatch): string[] {
+    const { t } = this.#options;
+    switch (mismatch.kind) {
+      case "unreadable":
+        return [
+          t("folder.move.mismatch.unreadable", { reason: mismatch.reason }),
+          ...mismatch.problems.map((problem) => problemText(t, problem)),
+        ];
+      case "lost":
+        return [
+          t("folder.move.mismatch.lost", {
+            file: mismatch.file,
+            message: mismatch.problems
+              .map(({ message }) => message)
+              .join(t("folder.listSeparator")),
+          }),
+        ];
+      default:
+        return [t(`folder.move.mismatch.${mismatch.kind}`, { file: mismatch.file })];
+    }
+  }
+
   async #askName(): Promise<string | undefined> {
     const { dialogs, t } = this.#options;
     return dialogs.prompt({
@@ -903,7 +1279,7 @@ export class ProjectFolders {
 
   /** Opens the project of a folder this browser knows, and keeps the folder in step. */
   async #open(record: FolderRecord, { relocated = false } = {}): Promise<boolean> {
-    const { session, folders, timing, t } = this.#options;
+    const { session, t } = this.#options;
     // A newer editor wrote it: this one does not open it, and leaves the files as they are.
     if (await this.projects.isTooNew(record.folder).catch(() => false)) {
       await this.#notice(
@@ -920,11 +1296,35 @@ export class ProjectFolders {
     if (!prepared) return false;
     ({ report } = prepared);
     if (report) await this.#options.warnAboutCode(report);
+    const files = this.#filesOf(record);
+    const isOpen = await session.open(record.id).catch((error: unknown) => {
+      files.drop();
+      throw error;
+    });
+    if (!isOpen) {
+      files.drop();
+      return false;
+    }
+    const store = session.store as ProjectStore;
+    await this.#attach(record, store, files, relocated);
+    await this.projects.opened(record, store.getState().manifest.name).catch((error: unknown) => {
+      console.warn("When the folder was opened could not be noted down", error);
+    });
+    if (report) this.#options.noteArrival(report);
+    return true;
+  }
+
+  /**
+   * The files of the assets of a project folder, which whatever wants a file of its project gets
+   * from now on, also while the project opens, see `mediaFor`. They are in the folder of its
+   * session once it has one, which can be another one after people found it again.
+   */
+  #filesOf(record: FolderRecord): OpeningFiles {
     let folderSession: FolderSession | undefined;
     const assets: FolderAssets = new FolderAssets({
       folder: () => folderSession?.folder ?? record.folder,
       key: record.id,
-      bases: folders.bases,
+      bases: this.#options.folders.bases,
       // What the editor makes of the files stays in the browser.
       browser: this.#options.projects.media(record.id),
       ...(this.#options.hasher && { hasher: this.#options.hasher }),
@@ -939,16 +1339,27 @@ export class ProjectFolders {
       },
     });
     this.#assets = { key: record.id, assets };
-    const isOpen = await session.open(record.id).catch((error: unknown) => {
-      if (this.#assets?.assets === assets) this.#assets = undefined;
-      throw error;
-    });
-    if (!isOpen) {
-      if (this.#assets?.assets === assets) this.#assets = undefined;
-      return false;
-    }
-    const store = session.store as ProjectStore;
-    folderSession = new FolderSession({
+    return {
+      assets,
+      follow: (session) => {
+        folderSession = session;
+      },
+      drop: () => {
+        if (this.#assets?.assets === assets) this.#assets = undefined;
+      },
+    };
+  }
+
+  /** Keeps the folder of a project that is open in this window in step with it. */
+  async #attach(
+    record: FolderRecord,
+    store: ProjectStore,
+    files: OpeningFiles,
+    relocated: boolean,
+  ): Promise<void> {
+    const { session, folders, timing } = this.#options;
+    const { assets } = files;
+    const folderSession = new FolderSession({
       store,
       folder: record.folder,
       id: record.id,
@@ -957,6 +1368,7 @@ export class ProjectFolders {
       log: { saved: () => session.trySave(), caughtUp: () => session.readLog() },
       ...(timing && { timing }),
     });
+    files.follow(folderSession);
     const stops: (() => void)[] = [];
     const current: Current = {
       session: folderSession,
@@ -992,11 +1404,6 @@ export class ProjectFolders {
       // What a copy that stopped with the page left behind.
       void assets.removeEmpty(store);
     }
-    await this.projects.opened(record, store.getState().manifest.name).catch((error: unknown) => {
-      console.warn("When the folder was opened could not be noted down", error);
-    });
-    if (report) this.#options.noteArrival(report);
-    return true;
   }
 
   #merged(store: ProjectStore, merge: FolderMerge): void {

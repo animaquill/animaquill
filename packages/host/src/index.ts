@@ -239,6 +239,31 @@ export interface ProjectLibrary {
   open(id: string): Promise<ProjectLog>;
   media(id: string): MediaStore;
   remove(id: string): Promise<void>;
+  /**
+   * Makes a project of this host one that is a folder on this computer, see `ProjectSummary.folder`,
+   * once all of it is in that folder. Everything kept by its id goes on as it was: its log, what
+   * windows keep of it, what its exports did, and the files people brought in, which are copies
+   * now, see `copies`. Rejects when there is no such project. A folder already is fine.
+   */
+  toFolder(id: string): Promise<void>;
+  /**
+   * The files people brought into a project, as this host keeps them, by name: of a project that
+   * is a folder now, copies of what is in the folder. Never what the editor made, see `isMadeFile`.
+   */
+  copies(id: string): Promise<readonly KeptFile[]>;
+  /**
+   * Takes away copies of files people brought into a project that is a folder now, see `toFolder`,
+   * once people say so. Rejects for a project of this host, whose files those are, and for one that
+   * is not there. What the editor made stays.
+   */
+  dropCopies(id: string, names: readonly string[]): Promise<void>;
+}
+
+/** A file that a host keeps, as far as the room it takes goes. */
+export interface KeptFile {
+  readonly name: string;
+  /** Bytes. */
+  readonly size: number;
 }
 
 /**
