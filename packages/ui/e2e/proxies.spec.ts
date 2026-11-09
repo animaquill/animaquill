@@ -78,7 +78,7 @@ async function goTo(page: Page, time: string) {
 /** Asks for the proxy of the video, from its menu in the explorer, as people do. */
 async function askForProxy(page: Page) {
   await tab(page, "explorer").click();
-  await content(page, "explorer").getByRole("treeitem", { name: "素材" }).click();
+  await content(page, "explorer").getByRole("treeitem", { name: "素材", exact: true }).click();
   await resourcesIn(page, "explorer").filter({ hasText: "数字.mp4" }).click({
     button: "right",
   });
