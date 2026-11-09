@@ -1,23 +1,31 @@
 /**
  * Moving a project of the browser into a folder on this computer, see the design of local projects,
  * section 8. All of it gets written there, as an export does: the files of its assets from what the
- * browser keeps, its documents and code after them, animaquill.json last, and all the while a file
- * that says this is not done yet. Then the folder is read again, the way a folder that people open
- * is, and compared with what was written: every document as it is, the project it reads as, and the
- * file of every asset by its hash. Only when all of that is right does this browser keep the project
- * by its folder: the same record goes on, under the same number, with its log, what is being tried,
- * the code that is not saved and what its exports did, and what was written is what the editor
- * knows the files by, see `FolderBases`. Whatever is not right stops it, and the project stays in
- * the browser as it was. The folder stays too, for people to look at.
+ * browser keeps, each checked by its hash as it goes, its documents and code after them,
+ * animaquill.json last, and all the while a file that says this is not done yet. Then the folder is
+ * read again, the way a folder that people open is, and compared with what was written: every
+ * document as it is, the project it reads as, and the file of every asset by its hash. Only when all
+ * of that is right does this browser keep the project by its folder: the same record goes on, under
+ * the same number, with its log, what is being tried, the code that is not saved and what its
+ * exports did, and what was written is what the editor knows the files by, see `FolderBases`. The
+ * file that says the move is not done goes last, and a folder that opens takes away what a move
+ * that stopped right there left of it. Whatever is not right before that stops it, and the project
+ * stays in the browser as it was. The folder stays too, for people to look at, and what was written
+ * can go with it once they say so.
  *
- * The files of the assets stay in the browser as well, until people let them go, see
+ * The file of an asset whose path no folder can have goes to a path of its own, which the project
+ * takes in one step once the folder is right. Only folders that the move made itself are ever taken
+ * away again. The files of the assets stay in the browser as well, until people let them go, see
  * `FolderMove.release`. Nothing here asks people anything or touches the page: that is
  * `ProjectFolders`.
  */
-import { INCOMPLETE_FILE, ProjectStore } from "@animaquill/core";
+import { INCOMPLETE_FILE, ProjectStore, type CommandCall } from "@animaquill/core";
 import {
   FolderError,
+  MAX_NAME_LENGTH,
+  MAX_PATH_LENGTH,
   isRefusedByChrome,
+  newNameFor,
   sameNameKey,
   type FileStat,
   type FolderFileRecord,
@@ -73,11 +81,11 @@ export interface MoveOptions {
   readonly signal?: AbortSignal;
   readonly onStep?: (step: MoveStep) => void;
   /**
-   * For a project that is open: resolves once every change of it so far is in its log, to whether
-   * it is, see `FolderLog.saved`. What the folder got becomes what the editor knows its files by
-   * only then. A project read from its log has all of it there already.
+   * Resolves once every change of the project so far is in its log, to whether it is, see
+   * `FolderLog.saved`. What the folder got becomes what the editor knows its files by only then,
+   * and new paths of assets are a change of the project.
    */
-  readonly saved?: () => Promise<boolean>;
+  readonly saved: () => Promise<boolean>;
 }
 
 /** What keeps a project from moving, found before anything gets written. */
@@ -90,10 +98,24 @@ export type MoveRefusal =
   | { readonly kind: "too-new" }
   /** Parts that the format does not take, which the folder would not have. */
   | { readonly kind: "invalid"; readonly problems: readonly Problem[] }
-  /** Paths with names that a folder cannot have, at least on one system. */
+  /** Documents and code with names that a folder cannot have, at least on one system. */
   | { readonly kind: "refused"; readonly paths: readonly string[] }
+  /**
+   * Documents and code with names or paths longer than what the editor makes, see
+   * `MAX_NAME_LENGTH`: Windows may not take them, wherever the folder is.
+   */
+  | { readonly kind: "too-long"; readonly paths: readonly string[] }
   /** Paths that are one file on some systems, so that one would take the place of the other. */
-  | { readonly kind: "clashing"; readonly paths: readonly string[] };
+  | { readonly kind: "clashing"; readonly paths: readonly string[] }
+  /** Files of assets need paths of their own in the folder, which a locked project cannot take. */
+  | { readonly kind: "locked"; readonly paths: readonly string[] };
+
+/** An asset whose file goes to another path, as no folder can have the one it had. */
+export interface Rename {
+  readonly asset: string;
+  readonly from: string;
+  readonly to: string;
+}
 
 /** What the folder has that is not what was written, see `MoveResult`. */
 export type Mismatch =
@@ -127,6 +149,10 @@ export type MoveResult =
       readonly record: FolderRecord;
       /** Assets whose files were not in the browser before, so that the folder does not have them. */
       readonly missing: readonly string[];
+      /** Assets whose files the browser had as something else: the folder does not have them. */
+      readonly damaged: readonly string[];
+      /** Assets whose files went to paths of their own, which the project took in one step. */
+      readonly renamed: readonly Rename[];
       /** What the copies of the files of its assets take in the browser, in bytes, see `release`. */
       readonly copies: number;
     }
@@ -144,15 +170,19 @@ export type MoveResult =
       readonly cleaned: boolean;
       readonly folder: string;
     }
-  /** The folder is not what was written. It stays as it is, for people to look at. */
+  /**
+   * The folder is not what was written. It stays as it is, for people to look at, until they say
+   * that what this wrote goes: `takeBack` resolves to whether all of it went.
+   */
   | {
       readonly kind: "unverified";
       readonly folder: string;
       readonly mismatches: readonly Mismatch[];
+      readonly takeBack: () => Promise<boolean>;
     }
   /**
    * All of it was in the folder, and right, but this browser could not keep the project by it: what
-   * was written is taken back, as after a failure, and the project stays in the browser.
+   * was written is taken back, as after a failure, and the project stays in the browser as it was.
    */
   | {
       readonly kind: "unswitched";
@@ -166,7 +196,12 @@ export interface Release {
   /** Bytes that are free now. */
   readonly released: number;
   /** Copies that stay, because the folder does not have their files as the project says. */
-  readonly kept: readonly KeptFile[];
+  readonly missing: readonly KeptFile[];
+  /**
+   * Copies of files that no asset uses now, which stay while the project is open somewhere: undo
+   * can bring back an asset that uses one, and then it can go back to the folder.
+   */
+  readonly unused: readonly KeptFile[];
 }
 
 export interface FolderMoveOptions {
@@ -175,6 +210,14 @@ export interface FolderMoveOptions {
   readonly t: TFunction;
   readonly hasher?: Hasher;
   readonly now?: () => number;
+}
+
+/** A project read from its log, which takes what changes in it there too. */
+export interface LoadedProject {
+  readonly store: ProjectStore;
+  /** Resolves once what changed is in the log, to whether it is. */
+  saved(): Promise<boolean>;
+  close(): void;
 }
 
 /** A file of an asset on its way into the folder. */
@@ -192,7 +235,7 @@ interface Covered {
   readonly hash: string;
 }
 
-/** What gets written, from one moment of the project. */
+/** What gets written, from one moment of the project, as it is with its new paths of assets. */
 interface Plan {
   /** Documents and code, by path, animaquill.json too. */
   readonly files: ReadonlyMap<string, string>;
@@ -201,12 +244,24 @@ interface Plan {
   readonly copies: readonly Copy[];
   readonly covered: readonly Covered[];
   readonly missing: readonly string[];
+  readonly renames: readonly Rename[];
 }
 
 /** A file that this wrote, as it was once it was there. */
 interface Written {
   readonly path: string;
   readonly file: File;
+}
+
+/** Where a move writes, and what of it was there before, which stays whatever happens. */
+interface Spot {
+  /** The folder of the project. */
+  readonly target: LocalFolder;
+  /** Whether this move made it, in the folder people chose: then it goes again with the rest. */
+  readonly made: boolean;
+  readonly place: MovePlace;
+  /** Folders of the project that were there before, by path from it, "" for itself. */
+  readonly kept: ReadonlyMap<string, LocalFolder>;
 }
 
 /** What writing did so far, for taking it back. */
@@ -217,6 +272,8 @@ interface Trail {
   readonly written: Written[];
   /** Every file that writing began: one that failed can leave the folders on its way behind. */
   readonly begun: Set<string>;
+  /** Assets whose files the browser has as something else, by path: they stay out. */
+  readonly damaged: Map<string, string>;
   /** What it is at, for people. */
   file: string;
 }
@@ -234,11 +291,8 @@ interface Following {
 const WRITE_AT_ONCE = 8;
 /** A file that cannot go right away, as one that another program holds on to, gets this many tries. */
 const CLEANUP_ATTEMPTS = 3;
-/**
- * A file that is there for a moment, to take away the empty folders on its way with it: a folder
- * itself can only go that way, see `LocalFolder.remove`.
- */
-const TIDY_FILE = ".animaquill-tidy";
+/** Where the file of an asset goes whose folder no folder can have either. */
+const ASSETS_FOLDER = "assets";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -259,6 +313,14 @@ function textOf(content: Uint8Array): string | undefined {
     return undefined;
   }
 }
+
+/** The folders on the way to a file, from the top: "a" and "a/b" of "a/b/c.txt". */
+function foldersOf(path: string): string[] {
+  const parts = path.split("/").slice(0, -1);
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
+}
+
+const depthOf = (path: string): number => (path === "" ? 0 : path.split("/").length);
 
 /** Runs `work` on every item, `limit` at a time. The first failure comes once all are done. */
 async function inTurns<T>(
@@ -295,6 +357,10 @@ function unlessStopped<T>(work: Promise<T>, signal: AbortSignal | undefined): Pr
 /** Whether a folder on some system cannot have a file at this path, as Chrome has it. */
 const isRefused = (path: string): boolean => path.split("/").some(isRefusedByChrome);
 
+/** Whether a path is as long as what the editor makes at most, see `MAX_PATH_LENGTH`. */
+const fits = (path: string): boolean =>
+  path.length <= MAX_PATH_LENGTH && path.split("/").every((part) => part.length <= MAX_NAME_LENGTH);
+
 /** Takes a file away, a few times where it is in use. Resolves to whether it is gone. */
 async function removing(remove: () => Promise<void>): Promise<boolean> {
   for (let attempt = 1; attempt <= CLEANUP_ATTEMPTS; attempt++) {
@@ -312,34 +378,103 @@ async function removing(remove: () => Promise<void>): Promise<boolean> {
   return false;
 }
 
-/**
- * Takes away the folders on the way to a file that are empty, as a failed write leaves them, by
- * putting a file there for a moment. Only empty folders can stay, which nobody takes for a project.
- */
-async function tidy(folder: LocalFolder, path: string): Promise<void> {
-  const parent = path.split("/").slice(0, -1).join("/");
-  if (parent === "") return;
-  const placeholder = `${parent}/${TIDY_FILE}`;
-  try {
-    const file = await folder.write(placeholder, "", { expected: "absent" });
-    await folder.remove(placeholder, { expected: file });
-  } catch {
-    // Empty folders are all that stays.
-  }
-}
+/** What gives assets new paths, as one change. */
+const renameCalls = (renames: readonly Rename[], back = false): CommandCall[] =>
+  renames.map(
+    ({ asset, from, to }) =>
+      ({
+        type: "asset.update",
+        params: { asset, changes: { path: back ? from : to } },
+      }) as CommandCall,
+  );
 
-/** The project of a log, as it is now, or undefined when there is nothing of it. */
+/**
+ * The project of a log, as it is now, or undefined when there is nothing of it. What changes in it
+ * goes into the log, as for an open project, see `ProjectSession`.
+ */
 export async function loadProject(
   projects: ProjectLibrary,
   key: string,
-): Promise<ProjectStore | undefined> {
+): Promise<LoadedProject | undefined> {
   const log = await projects.open(key);
+  let store: ProjectStore | undefined;
   try {
     const updates = await log.load();
-    return updates.length === 0 ? undefined : ProjectStore.fromUpdates(updates).store;
-  } finally {
+    store = updates.length === 0 ? undefined : ProjectStore.fromUpdates(updates).store;
+  } catch (error) {
     log.close();
+    throw error;
   }
+  if (!store) {
+    log.close();
+    return undefined;
+  }
+  const loaded = store;
+  let pending: Promise<boolean> = Promise.resolve(true);
+  const stop = loaded.onLocalUpdate((update) => {
+    pending = pending.then((isSaved) =>
+      log.append(update, loaded.getState().manifest.name).then(
+        () => isSaved,
+        () => false,
+      ),
+    );
+  });
+  return {
+    store: loaded,
+    saved: () => pending,
+    close() {
+      stop();
+      loaded.destroy();
+      log.close();
+    },
+  };
+}
+
+/**
+ * New paths for the files of assets whose paths no folder can have, or that are longer than what the
+ * editor makes, see `MAX_PATH_LENGTH`: in the folder they were in where that one is fine, otherwise
+ * in the assets folder, under the names they had as far as they can. Two assets of one file go to
+ * one place.
+ */
+function renamesOf(state: ReturnType<ProjectStore["getState"]>): Rename[] {
+  const assets = Object.entries(state.assets ?? {});
+  /** The names in each folder, which a new one must not be, also in another case. */
+  const taken = new Map<string, Set<string>>();
+  const take = (path: string) => {
+    const folder = path.split("/").slice(0, -1).join("/");
+    const names = taken.get(folder) ?? new Set<string>();
+    names.add(path.split("/").at(-1) as string);
+    taken.set(folder, names);
+  };
+  for (const [, { path }] of assets) take(path);
+  for (const path of Object.keys(state.files)) take(path);
+  const moved = new Map<string, string>();
+  const renames: Rename[] = [];
+  for (const [asset, { path }] of assets) {
+    if (!isRefused(path) && fits(path)) continue;
+    let to = moved.get(path);
+    if (to === undefined) {
+      const name = path.split("/").at(-1) as string;
+      const near = path.split("/").slice(0, -1).join("/");
+      for (const folder of [near, ASSETS_FOLDER]) {
+        if (folder === "" || isRefused(folder) || !fits(folder)) continue;
+        let candidate: string;
+        try {
+          candidate = `${folder}/${newNameFor(name, taken.get(folder) ?? [], folder)}`;
+        } catch {
+          continue;
+        }
+        if (isRefused(candidate) || !fits(candidate)) continue;
+        to = candidate;
+        break;
+      }
+      if (to === undefined) continue;
+      moved.set(path, to);
+      take(to);
+    }
+    renames.push({ asset, from: path, to });
+  }
+  return renames;
 }
 
 export class FolderMove {
@@ -366,7 +501,7 @@ export class FolderMove {
 
   /**
    * What keeps the project from moving, before anything gets written: then people can put it right
-   * first. `store` is what the log has of it, see `run`.
+   * first. Nothing of the project changes.
    */
   async check(
     key: string,
@@ -380,10 +515,9 @@ export class FolderMove {
   /**
    * Moves the project of the browser that this browser keeps by `key`: writes it into the folder,
    * reads that again and compares it, and only then keeps the project by the folder. `store` is the
-   * project as the log has it: what the folder gets is the base of what the editor writes there
-   * next, and a log that does not have it would take it back after a crash. What changes after
-   * this was called goes into the folder once the project is open as a folder. While this runs,
-   * this window is the one that writes the folder of the project, see `LocalFolders.writer`.
+   * project as the log has it, or will once `saved` resolves. What changes after this was called
+   * goes into the folder once the project is open as a folder. While this runs, this window is the
+   * one that writes the folder of the project, see `LocalFolders.writer`.
    */
   async run(
     key: string,
@@ -409,6 +543,25 @@ export class FolderMove {
   }
 
   /**
+   * Takes away what a move that stopped right at the end left of the file that says it is not done,
+   * once the folder opens: only while it is the very file the move wrote, see
+   * `FolderRecord.unfinished`. Resolves to the record as it is after that.
+   */
+  async settle(record: FolderRecord): Promise<FolderRecord> {
+    const { unfinished } = record;
+    if (!unfinished) return record;
+    try {
+      await record.folder.remove(INCOMPLETE_FILE, { expected: unfinished });
+    } catch (error) {
+      // Not the file of the move any more: somebody else's. Anything else is tried again next time.
+      if (!isFolderError(error, "changed")) return record;
+    }
+    const { unfinished: _, ...settled } = record;
+    await this.#folders.records.put(settled).catch(() => {});
+    return settled;
+  }
+
+  /**
    * What the copies of the files of the assets take in the browser, of a project that is a folder
    * now, in bytes.
    */
@@ -419,24 +572,30 @@ export class FolderMove {
 
   /**
    * Lets go of the copies in the browser of the files of the assets of a project that is a folder
-   * now, as people say. Only of what the folder has, as the project says it is, and of what no asset
-   * of the project uses: the copy of a file that the folder does not have, or has as something
-   * else, stays. `assets` are those of the project now, and `files` how the folder has them.
+   * now, as people say: of the files that the folder has as the project says. A copy of a file
+   * that no asset uses now stays while the project is open somewhere, `open`, as undo can bring
+   * back an asset that uses it: once it is open nowhere, nothing can. `assets` are those of the
+   * project now, and `files` how the folder has them.
    */
   async release(
     key: string,
     assets: Readonly<Record<string, Asset>>,
     files: FolderAssets,
+    { open }: { readonly open: boolean },
   ): Promise<Release> {
     const copies = await this.#projects.copies(key);
-    if (copies.length === 0) return { released: 0, kept: [] };
     const going: KeptFile[] = [];
-    const kept: KeptFile[] = [];
+    const missing: KeptFile[] = [];
+    const unused: KeptFile[] = [];
     for (const copy of copies) {
       const users = Object.values(assets).filter(
         ({ hash }) => hash !== undefined && isSameHash(hash, copy.name),
       );
-      let isThere = users.length === 0;
+      if (users.length === 0) {
+        (open ? unused : going).push(copy);
+        continue;
+      }
+      let isThere = false;
       for (const { path } of users) {
         const found = await files.fileAt(path);
         if (found.kind === "there" && isSameHash(found.hash, copy.name)) {
@@ -444,7 +603,7 @@ export class FolderMove {
           break;
         }
       }
-      (isThere ? going : kept).push(copy);
+      (isThere ? going : missing).push(copy);
     }
     if (going.length > 0) {
       // A move that stopped right at the end may not have got to this: the project is a folder.
@@ -454,7 +613,7 @@ export class FolderMove {
         going.map(({ name }) => name),
       );
     }
-    return { released: going.reduce((sum, { size }) => sum + size, 0), kept };
+    return { released: going.reduce((sum, { size }) => sum + size, 0), missing, unused };
   }
 
   /**
@@ -475,6 +634,38 @@ export class FolderMove {
     }
   }
 
+  /** Where the project goes, and what of it was there before, which stays whatever happens. */
+  async #spotFor(place: MovePlace, plan: Plan): Promise<Spot> {
+    const { chosen, inside } = place;
+    let target = chosen;
+    let made = false;
+    if (inside !== undefined) {
+      const there = await chosen.inside(inside).catch((error: unknown) => {
+        if (isFolderError(error, "missing")) return undefined;
+        throw error;
+      });
+      made = there === undefined;
+      target = there ?? (await chosen.inside(inside, { create: true }));
+    }
+    const kept = new Map<string, LocalFolder>();
+    if (made) return { target, made, place, kept };
+    kept.set("", target);
+    const paths = [INCOMPLETE_FILE, ...plan.files.keys(), ...plan.copies.map(({ path }) => path)];
+    const folders = [...new Set(paths.flatMap(foldersOf))].toSorted(
+      (a, b) => depthOf(a) - depthOf(b),
+    );
+    for (const folder of folders) {
+      const parent = folder.split("/").slice(0, -1).join("/");
+      const above = kept.get(parent);
+      // A folder in one that is not there is not there either.
+      if (!above) continue;
+      const name = folder.split("/").at(-1) as string;
+      const there = await above.inside(name).catch(() => undefined);
+      if (there) kept.set(folder, there);
+    }
+    return { target, made, place, kept };
+  }
+
   async #move(
     key: string,
     store: ProjectStore,
@@ -483,34 +674,36 @@ export class FolderMove {
     { notice, signal, onStep, saved }: MoveOptions,
   ): Promise<MoveResult> {
     const startedAt = this.#now();
-    let target: LocalFolder;
+    let spot: Spot;
     try {
-      target =
-        place.inside === undefined
-          ? place.chosen
-          : await place.chosen.inside(place.inside, { create: true });
+      spot = await this.#spotFor(place, plan);
     } catch (error) {
       const folder = place.inside ?? place.chosen.name;
       return { kind: "stopped", cancelled: false, file: folder, error, cleaned: true, folder };
     }
+    const { target } = spot;
     const trail: Trail = {
       notice: undefined,
       written: [],
       begun: new Set(),
+      damaged: new Map(),
       file: INCOMPLETE_FILE,
     };
     const stopped = async (error: unknown, cancelled: boolean): Promise<MoveResult> => {
-      const cleaned = await this.#takeBack(place, target, trail);
+      const cleaned = await this.#takeBack(spot, trail);
       return { kind: "stopped", cancelled, file: trail.file, error, cleaned, folder: target.name };
     };
     try {
-      await this.#write(target, plan, notice, trail, { signal, onStep });
+      await this.#write(spot, plan, notice, trail, { signal, onStep });
     } catch (error) {
       return stopped(error, signal?.aborted === true);
     }
     let compared: { readonly mismatches: readonly Mismatch[]; readonly seen: Seen };
     try {
-      compared = await this.#compare(key, target, store, plan, startedAt, { signal, onStep });
+      compared = await this.#compare(key, target, store, plan, trail, startedAt, {
+        signal,
+        onStep,
+      });
     } catch (error) {
       // Stopped while it was being compared: as if it never got there.
       if (signal?.aborted) {
@@ -524,15 +717,37 @@ export class FolderMove {
     }
     if (compared.mismatches.length > 0) {
       await this.#forgetHashes(key);
-      return { kind: "unverified", folder: target.name, mismatches: compared.mismatches };
+      return {
+        kind: "unverified",
+        folder: target.name,
+        mismatches: compared.mismatches,
+        takeBack: () => this.#takeBack(spot, trail),
+      };
     }
 
-    // All of it is right. What the editor knows the files by comes first: without the record of
-    // the folder nothing goes by it, and the record comes once the folder is a project. The log
-    // has to have what the folder has before that, as always, see `FolderSession`.
-    const { bases } = this.#folders;
+    // All of it is right. The project takes the new paths of its assets, in one step, and the log
+    // has to have all of it before the folder counts: see `FolderSession`. What the editor knows the
+    // files by comes next, then the record, which makes the folder the project, and the file that
+    // says it is not done goes last: a folder that opens takes it away where the move stopped
+    // right before, see `settle`.
+    const renamed = plan.renames.length > 0;
+    const unswitched = async (error: unknown): Promise<MoveResult> => {
+      await this.#forgetHashes(key);
+      if (renamed) store.executeBatch(renameCalls(plan.renames, true));
+      const cleaned = await this.#takeBack(spot, trail);
+      return { kind: "unswitched", folder: target.name, error, cleaned };
+    };
+    if (renamed) {
+      const result = store.executeBatch(renameCalls(plan.renames));
+      if (!result.ok) {
+        await this.#forgetHashes(key);
+        const cleaned = await this.#takeBack(spot, trail);
+        return { kind: "unswitched", folder: target.name, error: result.error, cleaned };
+      }
+    }
+    const { bases, records } = this.#folders;
     try {
-      if (saved && !(await saved())) throw new Error("The log of the project cannot be written");
+      if (!(await saved())) throw new Error("The log of the project cannot be written");
       const turn = await bases.claim(key);
       const put: FolderFileRecord[] = [...plan.files].map(([path, text]) => {
         const stat = compared.seen.get(path);
@@ -542,52 +757,93 @@ export class FolderMove {
         throw new Error("Another window claimed the folder while the project moved");
       }
     } catch (error) {
-      await this.#forgetHashes(key);
-      const cleaned = await this.#takeBack(place, target, trail);
-      return { kind: "unswitched", folder: target.name, error, cleaned };
-    }
-    trail.file = INCOMPLETE_FILE;
-    try {
-      // Only while it is what this wrote: anything else there is somebody else's.
-      await target.remove(INCOMPLETE_FILE, trail.notice && { expected: trail.notice });
-    } catch (error) {
-      await this.#forgetHashes(key);
-      return stopped(error, false);
+      return unswitched(error);
     }
     const { id: project, name } = store.getState().manifest;
-    const record: FolderRecord = { id: key, folder: target, project, name, openedAt: this.#now() };
+    const record: FolderRecord = {
+      id: key,
+      folder: target,
+      project,
+      name,
+      openedAt: this.#now(),
+      ...(trail.notice && { unfinished: statOf(trail.notice) }),
+    };
     try {
-      await this.#folders.records.put(record);
+      await records.put(record);
     } catch (error) {
-      await this.#forgetHashes(key);
-      const cleaned = await this.#takeBack(place, target, trail);
-      return { kind: "unswitched", folder: target.name, error, cleaned };
+      return unswitched(error);
     }
     // From here on the project is the folder: its record says so. What the list of projects says
     // follows, and gets another chance, see `release`.
     await this.#projects.toFolder(key).catch((error: unknown) => {
       console.warn("The project moved, and the list of projects does not say so yet", error);
     });
+    let settled = record;
+    if (trail.notice) {
+      // Only while it is what this wrote: anything else there is somebody else's.
+      const isGone = await removing(() =>
+        target.remove(INCOMPLETE_FILE, { expected: trail.notice as File }),
+      );
+      if (isGone) {
+        const { unfinished: _, ...without } = record;
+        settled = without;
+        await records.put(settled).catch(() => {});
+      }
+    }
     const copies = await this.copiesOf(key).catch(() => 0);
-    return { kind: "moved", record, missing: plan.missing, copies };
+    return {
+      kind: "moved",
+      record: settled,
+      missing: plan.missing,
+      damaged: [...trail.damaged.values()],
+      renamed: plan.renames,
+      copies,
+    };
   }
 
-  /** What gets written, and what keeps the project from moving, from one moment of it. */
+  /**
+   * What gets written, and what keeps the project from moving, from one moment of it: as it is with
+   * new paths for the files of assets that need them, which the project itself only takes once it
+   * moved, see `#move`.
+   */
   async #plan(
     key: string,
     store: ProjectStore,
     media: MediaStore,
   ): Promise<Plan | { readonly refusal: MoveRefusal }> {
     if (await this.isFolder(key)) return { refusal: { kind: "already" } };
-    const state = store.getState();
-    if (state.manifest.formatVersion > CURRENT_FORMAT_VERSION) {
+    if (store.getState().manifest.formatVersion > CURRENT_FORMAT_VERSION) {
       return { refusal: { kind: "too-new" } };
     }
+    const renames = renamesOf(store.getState());
+    if (renames.length === 0) return this.#planOf(store, media, []);
+    // What the project is with the new paths, without changing it.
+    const fork = ProjectStore.fromUpdates([store.encodeState()]).store;
+    if (!fork) throw new Error("The project cannot be read as it is");
+    try {
+      const result = fork.executeBatch(renameCalls(renames));
+      if (!result.ok) {
+        const paths = [...new Set(renames.map(({ from }) => from))].toSorted();
+        return { refusal: { kind: "locked", paths } };
+      }
+      return await this.#planOf(fork, media, renames);
+    } finally {
+      fork.destroy();
+    }
+  }
+
+  async #planOf(
+    store: ProjectStore,
+    media: MediaStore,
+    renames: readonly Rename[],
+  ): Promise<Plan | { readonly refusal: MoveRefusal }> {
+    const state = store.getState();
     const { files, problems } = store.exportFiles();
     const errors = problems.filter(({ severity }) => severity === "error");
     if (errors.length > 0) return { refusal: { kind: "invalid", problems: errors } };
 
     const refused = new Set<string>();
+    const long = new Set<string>();
     const clashing = new Set<string>();
     /** What is at each place of the folder, where some systems do not tell case apart. */
     const places = new Map<string, { readonly path: string; readonly hash?: string }>([
@@ -597,6 +853,7 @@ export class FolderMove {
     for (const [path, text] of files) {
       sizes.set(path, encoder.encode(text).byteLength);
       if (isRefused(path)) refused.add(path);
+      else if (!fits(path)) long.add(path);
       const place = sameNameKey(path);
       if (places.has(place)) clashing.add(path);
       else places.set(place, { path });
@@ -607,10 +864,9 @@ export class FolderMove {
     for (const [id, asset] of Object.entries(state.assets ?? {})) {
       const { path, hash } = asset;
       const label = asset.name ?? path ?? id;
-      if (isRefused(path)) {
-        refused.add(path);
-        continue;
-      }
+      // Only where no new path was found for it.
+      if (isRefused(path)) refused.add(path);
+      else if (!fits(path)) long.add(path);
       const place = sameNameKey(path);
       const there = places.get(place);
       if (there) {
@@ -635,24 +891,27 @@ export class FolderMove {
       copies.push({ path, file, hash, label });
     }
     if (refused.size > 0) return { refusal: { kind: "refused", paths: [...refused].toSorted() } };
+    if (long.size > 0) return { refusal: { kind: "too-long", paths: [...long].toSorted() } };
     if (clashing.size > 0) {
       return { refusal: { kind: "clashing", paths: [...clashing].toSorted() } };
     }
-    return { files, sizes, copies, covered, missing };
+    return { files, sizes, copies, covered, missing, renames };
   }
 
   /**
-   * Writes all of it, a file that says it is not done yet first: the files of the assets, then
-   * documents and code in turns, what others refer to first, animaquill.json last. `trail` gets
-   * every file it begins and every file once it is there, for taking it back.
+   * Writes all of it, a file that says it is not done yet first: the files of the assets, each
+   * checked by its hash as it is read, then documents and code in turns, what others refer to
+   * first, animaquill.json last. `trail` gets every file it begins and every file once it is there,
+   * for taking it back. The file of an asset that the browser has as something else does not stay.
    */
   async #write(
-    target: LocalFolder,
+    spot: Spot,
     plan: Plan,
     notice: string,
     trail: Trail,
     { signal, onStep }: Following,
   ): Promise<void> {
+    const { target } = spot;
     const documents = [...plan.files.keys()].filter((path) => path !== MANIFEST_FILE);
     const totalFiles = 1 + plan.copies.length + plan.files.size;
     let totalBytes = 0;
@@ -676,6 +935,7 @@ export class FolderMove {
       files += 1;
       bytes += size;
       step(label);
+      return file;
     };
     signal?.throwIfAborted();
     step(INCOMPLETE_FILE);
@@ -684,12 +944,30 @@ export class FolderMove {
       ...(signal && { signal }),
     });
     files += 1;
-    for (const { path, file, label } of plan.copies) await put(path, file, file.size, label);
+    for (const { path, file, hash, label } of plan.copies) {
+      const copy = this.#hasher.copy(file);
+      let written: File;
+      try {
+        written = await put(path, copy.content, file.size, label);
+      } catch (error) {
+        copy.abandon();
+        throw error;
+      }
+      const read = (await copy.hash()) ?? (await this.#hasher.file(file));
+      if (isSameHash(read, hash)) continue;
+      // What the browser has of it is not the file the project means: it stays out, and is said.
+      const index = trail.written.findIndex((each) => each.file === written);
+      if (!(await this.#unwrite(spot, path, written))) {
+        throw new FolderError("changed", path);
+      }
+      trail.written.splice(index, 1);
+      trail.damaged.set(path, label);
+    }
     const sizeOf = (path: string) => plan.sizes.get(path) ?? 0;
     for (const rank of inRanks(documents)) {
-      await inTurns(rank, WRITE_AT_ONCE, (path) =>
-        put(path, plan.files.get(path) as string, sizeOf(path)),
-      );
+      await inTurns(rank, WRITE_AT_ONCE, async (path) => {
+        await put(path, plan.files.get(path) as string, sizeOf(path));
+      });
     }
     await put(MANIFEST_FILE, plan.files.get(MANIFEST_FILE) ?? "", sizeOf(MANIFEST_FILE));
   }
@@ -705,11 +983,14 @@ export class FolderMove {
     target: LocalFolder,
     store: ProjectStore,
     plan: Plan,
+    trail: Trail,
     since: number,
     { signal, onStep }: Following,
   ): Promise<{ readonly mismatches: readonly Mismatch[]; readonly seen: Seen }> {
     const checks = [
-      ...plan.copies.map(({ path, hash, label, file }) => ({ path, hash, label, size: file.size })),
+      ...plan.copies
+        .filter(({ path }) => !trail.damaged.has(path))
+        .map(({ path, hash, label, file }) => ({ path, hash, label, size: file.size })),
       ...plan.covered.map(({ path, hash }) => ({ path, hash, label: path, size: 0 })),
     ];
     const totalFiles = plan.files.size + checks.length;
@@ -810,6 +1091,7 @@ export class FolderMove {
         step(check.label);
       }
     } finally {
+      // What is still on its way when people stop is not kept, see `FolderAssets.stop`.
       assets.stop();
     }
     const seen = new Map([...read].map(([path, { stat }]) => [path, stat]));
@@ -817,30 +1099,52 @@ export class FolderMove {
   }
 
   /**
-   * Takes back what was written, newest first, each file only while it is what was written, and
-   * the file that says it is not done yet last: a new folder goes with it then, once it is empty.
-   * Resolves to whether all of it went, apart from empty folders.
+   * Takes away a file that this wrote, while it is what was written, through the deepest folder on
+   * its way that was there before: only folders that this made go with it.
    */
-  async #takeBack(place: MovePlace, target: LocalFolder, trail: Trail): Promise<boolean> {
+  async #unwrite(spot: Spot, path: string, file: FileStat): Promise<boolean> {
+    for (const folder of ["", ...foldersOf(path)].toReversed()) {
+      const kept = spot.kept.get(folder);
+      if (!kept) continue;
+      const rest = folder === "" ? path : path.slice(folder.length + 1);
+      return removing(() => kept.remove(rest, { expected: file }));
+    }
+    // In a folder that this made for the project, which goes too once it is empty.
+    const { chosen, inside } = spot.place;
+    return removing(() => chosen.remove(`${inside}/${path}`, { expected: file }));
+  }
+
+  /**
+   * Takes back what was written, newest first, each file only while it is what was written, then
+   * the folders that this made and nothing is in, and the file that says it is not done yet, where
+   * this wrote it and nothing else of this stays: a folder made for the project goes with it then,
+   * once it is empty. Resolves to whether all of it went, apart from folders that something else
+   * is in now.
+   */
+  async #takeBack(spot: Spot, trail: Trail): Promise<boolean> {
     let isClean = true;
     for (const { path, file } of trail.written.toReversed()) {
-      if (!(await removing(() => target.remove(path, { expected: file })))) isClean = false;
+      if (!(await this.#unwrite(spot, path, file))) isClean = false;
     }
+    // What stays of this move says so: the file that says it is not done stays with it.
     if (!isClean) return false;
     // A write that failed made the folders on its way, with nothing in them.
     const done = new Set(trail.written.map(({ path }) => path));
-    for (const path of trail.begun) if (!done.has(path)) await tidy(target, path);
-    // Through the folder people chose, so that a folder made for this goes too.
-    const top = place.inside === undefined ? target : place.chosen;
-    const notice =
-      place.inside === undefined ? INCOMPLETE_FILE : `${place.inside}/${INCOMPLETE_FILE}`;
-    const isThere = await top.file(notice).then(
-      () => true,
-      () => false,
-    );
-    const expected = trail.notice && { expected: trail.notice };
-    if (isThere) return removing(() => top.remove(notice, expected));
-    if (place.inside !== undefined) await tidy(top, notice);
+    const made = new Set<string>();
+    for (const path of trail.begun) {
+      if (done.has(path)) continue;
+      for (const folder of foldersOf(path)) if (!spot.kept.has(folder)) made.add(folder);
+    }
+    const { chosen, inside } = spot.place;
+    for (const folder of [...made].toSorted((a, b) => depthOf(b) - depthOf(a))) {
+      const path = spot.made ? `${inside}/${folder}` : folder;
+      await (spot.made ? chosen : spot.target).removeFolder(path).catch(() => false);
+    }
+    if (trail.notice) {
+      if (!(await this.#unwrite(spot, INCOMPLETE_FILE, trail.notice))) return false;
+      trail.notice = undefined;
+    }
+    if (spot.made && inside !== undefined) await chosen.removeFolder(inside).catch(() => false);
     return true;
   }
 

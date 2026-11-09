@@ -261,7 +261,7 @@ function ProblemsStatus() {
 
 const noSubscription = () => () => {};
 const noProxies = () => NO_PROXIES;
-const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
+const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined, moves: 0 };
 const noFolders = () => NO_FOLDERS;
 const writtenWhen = new Intl.DateTimeFormat("zh-CN", { timeStyle: "medium" });
 

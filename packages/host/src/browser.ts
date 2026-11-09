@@ -4,6 +4,7 @@ import { browserFolders } from "./folders.ts";
 import { dropTarget } from "./growing.ts";
 import { isMadeFile } from "./index.ts";
 import { browserLocalFolders } from "./local-folders.ts";
+import { browserPresence } from "./presence.ts";
 import type {
   Host,
   IncomingProject,
@@ -445,10 +446,20 @@ function createLibrary(
       return openLog(database, id, record?.instance);
     },
     media: (id) => openMedia(database, id),
-    async remove(id) {
+    async remove(id, { folder = false } = {}) {
       const transaction = (await database()).transaction(allStores, "readwrite");
-      removeFrom(transaction, id);
-      await committed(transaction);
+      const read = transaction.objectStore(PROJECTS).get(id);
+      let isFolder = false;
+      read.addEventListener("success", () => {
+        // A folder relies on its log: it only goes with the folder, off the list of folders.
+        isFolder = (read.result as ProjectRecord | undefined)?.folder === true && !folder;
+        if (isFolder) transaction.abort();
+        else removeFrom(transaction, id);
+      });
+      await committed(transaction).catch((error: unknown) => {
+        if (isFolder) throw new Error(`Project ${id} is a folder: it goes with its folder`);
+        throw error;
+      });
       // The project is gone either way, and what stays behind gets swept up later.
       await forgetPlaces(id).catch((error: unknown) => {
         console.warn("What windows kept of a project that is gone stays for now", error);
@@ -757,5 +768,6 @@ export function createBrowserHost(
     drafts: drafts.store,
     exports,
     caches: createWorkCache(database),
+    presence: browserPresence(locks),
   };
 }

@@ -3,8 +3,14 @@
  * and only then does the browser keep the project by its folder, under the same number. Whatever is
  * not right stops it, and the project stays in the browser as it was.
  */
-import { INCOMPLETE_FILE, ProjectStore, readFolder, type ReadOnlyFolder } from "@animaquill/core";
-import type { LocalFolder, LocalFolders } from "@animaquill/host";
+import {
+  INCOMPLETE_FILE,
+  ProjectStore,
+  readFolder,
+  type CommandCall,
+  type ReadOnlyFolder,
+} from "@animaquill/core";
+import type { FolderRecord, LocalFolder, LocalFolders } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { hashFile, hashText } from "@animaquill/media";
 import { MANIFEST_FILE, createProject } from "@animaquill/schema";
@@ -12,7 +18,13 @@ import { describe, expect, it } from "vitest";
 import { MemoryLibrary } from "../workbench/memory-library.ts";
 import { FolderAssets } from "./assets.ts";
 import { filesOf, fixture } from "./folder-support.ts";
-import { FolderMove, loadProject, type MoveResult, type MoveStep } from "./move.ts";
+import {
+  FolderMove,
+  loadProject,
+  type LoadedProject,
+  type MoveResult,
+  type MoveStep,
+} from "./move.ts";
 
 const t = ((key: string) => key) as never;
 const NOTICE = "没有移完";
@@ -52,14 +64,14 @@ async function browserProject(
 ): Promise<string> {
   const store = ProjectStore.create(createProject({ name: "片子" }), code);
   const id = store.getState().manifest.id;
-  for (const [path, content] of Object.entries(files)) {
+  for (const [index, [path, content]] of Object.entries(files).entries()) {
     const file = new Blob([content]);
     const hash = await hashFile(file);
     await library.media(id).put(hash, file);
     const result = store.execute({
       type: "asset.add",
       params: {
-        id: `asset_${path.replaceAll(/[^a-z]/g, "")}`,
+        id: `asset_${index}`,
         asset: { kind: "image", storage: "local", path, hash, size: file.size, name: path },
       },
     });
@@ -95,26 +107,37 @@ async function chosen(disk: MemoryDisk, folders: LocalFolders, path = PLACE) {
   return (await folders.choose()) as LocalFolder;
 }
 
-/** Moves a project into a new folder of its name in `PLACE`, as people do. */
+const loaded = async (library: MemoryLibrary, key: string) =>
+  (await loadProject(library, key)) as LoadedProject;
+
+/**
+ * Moves a project into a new folder of its name in `PLACE`, as people do, or right into `PLACE`
+ * where `inside` is undefined.
+ */
 async function moveIt(
   { disk, folders, library, move }: Setup,
   key: string,
   options: { readonly signal?: AbortSignal; readonly onStep?: (step: MoveStep) => void } = {},
+  inside: string | null = "片子",
 ): Promise<MoveResult> {
-  const store = (await loadProject(library, key)) as ProjectStore;
+  const project = await loaded(library, key);
   try {
-    const place = { chosen: await chosen(disk, folders), inside: "片子" };
-    return await move.run(key, store, library.media(key), place, { notice: NOTICE, ...options });
+    const place = { chosen: await chosen(disk, folders), inside: inside ?? undefined };
+    return await move.run(key, project.store, library.media(key), place, {
+      notice: NOTICE,
+      saved: project.saved,
+      ...options,
+    });
   } finally {
-    store.destroy();
+    project.close();
   }
 }
 
 /** What the project exports, as a folder has it. */
 async function exported(library: MemoryLibrary, key: string): Promise<Map<string, string>> {
-  const store = (await loadProject(library, key)) as ProjectStore;
-  const { files } = store.exportFiles();
-  store.destroy();
+  const project = await loaded(library, key);
+  const { files } = project.store.exportFiles();
+  project.close();
   return files;
 }
 
@@ -262,11 +285,12 @@ describe("a folder that is not what was written", () => {
       disk.write(path, changed, { quietly: true, keepTime: true });
     });
     const result = await moveIt(context, key);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       kind: "unverified",
       folder: "片子",
       mismatches: [{ kind: "asset-different", file: "assets/大.bin" }],
     });
+    if (result.kind === "unverified") expect(result.mismatches).toHaveLength(1);
     expect(await folders.records.get(key)).toBeUndefined();
     // What was found out for that folder does not stay with the number of the project.
     expect(await folders.bases.hashOf(key, "assets/大.bin")).toBeUndefined();
@@ -377,6 +401,374 @@ describe("a move that does not get to the end", () => {
   });
 });
 
+describe("a project with effects", () => {
+  it("moves with the effects of its clips, their order, and the keys of their parameters", async () => {
+    const context = setup();
+    const { disk, folders, library } = context;
+    const store = ProjectStore.create(createProject({ name: "片子" }), {});
+    const id = store.getState().manifest.id;
+    const tracks = Object.values(store.getState().timelines["main"]?.tracks ?? {});
+    const track = tracks.find(({ kind }) => kind === "video")?.id;
+    const run = (type: string, params: object) =>
+      expect(store.execute({ type, params } as CommandCall).ok).toBe(true);
+    const color = { kind: "color", color: "#ff0000" };
+    run("clip.add", {
+      timeline: "main",
+      track,
+      clip: { id: "c", start: "0", duration: "5", source: color },
+    });
+    const radius = {
+      keys: [
+        { time: "0", value: 0 },
+        { time: "2", value: 20 },
+      ],
+    };
+    run("effect.add", {
+      timeline: "main",
+      clip: "c",
+      id: "fx_blur",
+      type: "blur",
+      values: { radius },
+    });
+    run("effect.add", {
+      timeline: "main",
+      clip: "c",
+      id: "fx_crop",
+      type: "crop",
+      enabled: false,
+      index: 0,
+      values: { left: 0.1 },
+    });
+    await library.create({ id, name: "片子" }, store.encodeState());
+    store.destroy();
+
+    const result = await moveIt(context, id);
+    expect(result.kind).toBe("moved");
+    const timeline = JSON.parse(disk.text(`${PLACE}/片子/timelines/main/timeline.json`));
+    const clip = timeline.tracks
+      .flatMap((each: { clips: { id: string }[] }) => each.clips)
+      .find((each: { id: string }) => each.id === "c");
+    expect(clip.effects).toEqual([
+      { id: "fx_crop", type: "crop", enabled: false },
+      { id: "fx_blur", type: "blur" },
+    ]);
+    expect(clip.properties["effect.fx_blur.radius"]).toEqual(radius);
+    expect(clip.properties["effect.fx_crop.left"]).toBe(0.1);
+    // The folder reads as the project, effects and all, and is what the editor knows it by.
+    const record = (await folders.records.get(id)) as FolderRecord;
+    const reading = await readFolder({
+      async *list() {
+        yield* record.folder.list();
+      },
+      file: (path) => record.folder.file(path),
+    });
+    const back = reading.project.timelines.get("main")?.document;
+    const read = back?.tracks.flatMap(({ clips }) => clips).find((each) => each.id === "c");
+    expect(read?.effects?.map(({ id: effect }) => effect)).toEqual(["fx_crop", "fx_blur"]);
+    const bases = new Map((await folders.bases.load(id)).map(({ path, base }) => [path, base]));
+    expect(bases.get("timelines/main/timeline.json")).toBe(
+      disk.text(`${PLACE}/片子/timelines/main/timeline.json`),
+    );
+  });
+});
+
+describe("what a move did not write", () => {
+  it("stays: a file that says another export is not done, and what is next to it", async () => {
+    const context = setup();
+    const { disk } = context;
+    const key = await browserProject(context.library);
+    // Another export writes into the same folder right now.
+    disk.write(`${PLACE}/片子/${INCOMPLETE_FILE}`, "别人的导出还没完成");
+    disk.write(`${PLACE}/片子/notes.json`, "{}");
+    const result = await moveIt(context, key);
+    expect(result).toMatchObject({ kind: "stopped", cleaned: true });
+    expect(disk.text(`${PLACE}/片子/${INCOMPLETE_FILE}`)).toBe("别人的导出还没完成");
+    expect(disk.text(`${PLACE}/片子/notes.json`)).toBe("{}");
+  });
+
+  it("stays: folders that were there before, also empty ones, where the move goes right in", async () => {
+    const context = setup();
+    const { disk } = context;
+    const key = await browserProject(context.library, { "assets/图.png": "图" });
+    disk.write(`${PLACE}/README.md`, "# 我的仓库");
+    disk.folder(`${PLACE}/assets`);
+    disk.failWrites(`${PLACE}/${MANIFEST_FILE}`);
+    const result = await moveIt(context, key, {}, null);
+    expect(result).toMatchObject({ kind: "stopped", cleaned: true });
+    expect(disk.names(PLACE).toSorted()).toEqual(["README.md", "assets"]);
+    expect(disk.names(`${PLACE}/assets`)).toEqual([]);
+    expect(disk.text(`${PLACE}/README.md`)).toBe("# 我的仓库");
+  });
+
+  it("is not where folders it made for a file that did not get there were", async () => {
+    const context = setup();
+    const { disk } = context;
+    const key = await browserProject(context.library);
+    disk.write(`${PLACE}/README.md`, "# 我的仓库");
+    disk.failWrites(`${PLACE}/timelines/main/timeline.json`);
+    const result = await moveIt(context, key, {}, null);
+    expect(result).toMatchObject({ kind: "stopped", cleaned: true });
+    expect(disk.names(PLACE)).toEqual(["README.md"]);
+  });
+});
+
+describe("the file of an asset that the browser has as something else", () => {
+  it("stays out of the folder, is said, and the rest moves", async () => {
+    const context = setup();
+    const { disk, folders, library } = context;
+    const key = await browserProject(library, { "assets/图.png": "图", "assets/声.wav": "声" });
+    const project = await loaded(library, key);
+    const picture = Object.values(project.store.getState().assets ?? {}).find(
+      ({ path }) => path === "assets/图.png",
+    );
+    project.close();
+    // The copy in the browser is damaged.
+    await library.media(key).put(picture?.hash as string, new Blob(["坏了"]));
+    const result = await moveIt(context, key);
+    expect(result).toMatchObject({ kind: "moved", damaged: ["assets/图.png"], missing: [] });
+    expect(disk.has(`${PLACE}/片子/assets/图.png`)).toBe(false);
+    expect(disk.text(`${PLACE}/片子/assets/声.wav`)).toBe("声");
+    expect(await folders.records.get(key)).toBeDefined();
+  });
+});
+
+describe("a folder that is not what was written, which people want gone", () => {
+  it("loses what this move wrote, and keeps what somebody else put there", async () => {
+    const context = setup();
+    const { disk, folders } = context;
+    const key = await browserProject(context.library, { "assets/图.png": "图" });
+    let isPut = false;
+    const result = await moveIt(context, key, {
+      onStep: ({ phase }) => {
+        if (phase !== "checking" || isPut) return;
+        isPut = true;
+        disk.write(`${PLACE}/片子/code/别人的.js`, "// 别人写的", { quietly: true });
+      },
+    });
+    if (result.kind !== "unverified") throw new Error(`Not unverified: ${result.kind}`);
+    expect(disk.has(`${PLACE}/片子/${INCOMPLETE_FILE}`)).toBe(true);
+    expect(await result.takeBack()).toBe(true);
+    expect(filesOf(disk, `${PLACE}/片子`)).toEqual(new Map([["code/别人的.js", "// 别人写的"]]));
+    expect(await folders.records.get(key)).toBeUndefined();
+  });
+});
+
+describe("a project that moved", () => {
+  it("is not taken away as a project of the browser, only with its folder", async () => {
+    const context = setup();
+    const { folders, library } = context;
+    const key = await browserProject(library);
+    expect((await moveIt(context, key)).kind).toBe("moved");
+    await expect(library.remove(key)).rejects.toThrow();
+    expect(await folders.records.get(key)).toBeDefined();
+    expect((await loaded(library, key)).store).toBeDefined();
+  });
+
+  it("leaves no file that says it is not done, and none where it stopped before taking it away", async () => {
+    const context = setup();
+    const { disk, folders, move } = context;
+    const key = await browserProject(context.library);
+    // The page goes away right after the record: the file is there, and the record says so.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      disk.onNext("removeEntry", `${PLACE}/片子/${INCOMPLETE_FILE}`, () => {
+        throw new DOMException("The page went away", "AbortError");
+      });
+    }
+    expect((await moveIt(context, key)).kind).toBe("moved");
+    expect(disk.has(`${PLACE}/片子/${INCOMPLETE_FILE}`)).toBe(true);
+    const record = (await folders.records.get(key)) as FolderRecord;
+    expect(record.unfinished).toBeDefined();
+    // The next time it opens, that goes.
+    const settled = await move.settle(record);
+    expect(settled.unfinished).toBeUndefined();
+    expect(disk.has(`${PLACE}/片子/${INCOMPLETE_FILE}`)).toBe(false);
+    expect((await folders.records.get(key))?.unfinished).toBeUndefined();
+  });
+
+  it("leaves a file that says it is not done that somebody else wrote since", async () => {
+    const context = setup();
+    const { disk, folders, move } = context;
+    const key = await browserProject(context.library);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      disk.onNext("removeEntry", `${PLACE}/片子/${INCOMPLETE_FILE}`, () => {
+        throw new DOMException("The page went away", "AbortError");
+      });
+    }
+    expect((await moveIt(context, key)).kind).toBe("moved");
+    disk.write(`${PLACE}/片子/${INCOMPLETE_FILE}`, "别人的导出");
+    const settled = await move.settle((await folders.records.get(key)) as FolderRecord);
+    expect(settled.unfinished).toBeUndefined();
+    expect(disk.text(`${PLACE}/片子/${INCOMPLETE_FILE}`)).toBe("别人的导出");
+  });
+});
+
+describe("an asset whose path no folder can have", () => {
+  const LONG = `assets/${"长".repeat(70)}.png`;
+
+  it("gets a path of its own, which the project takes in one step once the folder is right", async () => {
+    const context = setup();
+    const { disk, folders, library, move } = context;
+    const key = await browserProject(library, { "assets/第1~3集.png": "图", [LONG]: "长图" });
+    const project = await loaded(library, key);
+    expect(await move.check(key, project.store, library.media(key))).toBeUndefined();
+    // Checking changes nothing.
+    const before = Object.values(project.store.getState().assets ?? {}).map(({ path }) => path);
+    expect(before.toSorted()).toEqual(["assets/第1~3集.png", LONG].toSorted());
+    const place = { chosen: await chosen(disk, folders), inside: "片子" };
+    const result = await move.run(key, project.store, library.media(key), place, {
+      notice: NOTICE,
+      saved: project.saved,
+    });
+    expect(result.kind).toBe("moved");
+    if (result.kind !== "moved") return;
+    const renamed = new Map(result.renamed.map(({ from, to }) => [from, to]));
+    expect(renamed.get("assets/第1~3集.png")).toBe("assets/第1-3集.png");
+    const short = renamed.get(LONG) as string;
+    expect(short.length).toBeLessThanOrEqual(120);
+    expect(short.split("/").every((part) => part.length <= 64)).toBe(true);
+    expect(disk.text(`${PLACE}/片子/assets/第1-3集.png`)).toBe("图");
+    expect(disk.text(`${PLACE}/片子/${short}`)).toBe("长图");
+    const after = Object.values(project.store.getState().assets ?? {}).map(({ path }) => path);
+    expect(after.toSorted()).toEqual(["assets/第1-3集.png", short].toSorted());
+    // What the folder has is what the project says, and the log has it too.
+    expect(filesOf(disk, `${PLACE}/片子`).get("assets.json")).toBe(
+      project.store.exportFiles().files.get("assets.json"),
+    );
+    // One step takes it back.
+    expect(project.store.undo().ok).toBe(true);
+    const undone = Object.values(project.store.getState().assets ?? {}).map(({ path }) => path);
+    expect(undone.toSorted()).toEqual(before.toSorted());
+    project.close();
+    const again = await loaded(library, key);
+    expect(
+      Object.values(again.store.getState().assets ?? {})
+        .map(({ path }) => path)
+        .toSorted(),
+    ).toEqual(after.toSorted());
+    again.close();
+  });
+
+  it("stays as it was where the move does not get to the end", async () => {
+    const context = setup();
+    const { disk, library } = context;
+    const key = await browserProject(library, { "assets/第1~3集.png": "图" });
+    disk.failWrites(`${PLACE}/片子/${MANIFEST_FILE}`);
+    expect((await moveIt(context, key)).kind).toBe("stopped");
+    const project = await loaded(library, key);
+    expect(Object.values(project.store.getState().assets ?? {}).map(({ path }) => path)).toEqual([
+      "assets/第1~3集.png",
+    ]);
+    project.close();
+  });
+
+  it("cannot get one in a locked project, which then does not move", async () => {
+    const context = setup();
+    const { library } = context;
+    const base = createProject({ name: "片子" });
+    const locked = {
+      ...base,
+      manifest: { ...base.manifest, tags: [{ name: "已发布", color: "#2ea043", locked: true }] },
+    };
+    const store = ProjectStore.create(locked, {});
+    const id = store.getState().manifest.id;
+    store.destroy();
+    const unlocked = ProjectStore.create(base, {});
+    const file = new Blob(["图"]);
+    const hash = await hashFile(file);
+    await library.media(id).put(hash, file);
+    expect(
+      unlocked.execute({
+        type: "asset.add",
+        params: {
+          id: "asset_a",
+          asset: { kind: "image", storage: "local", path: "assets/第1~3集.png", hash, size: 3 },
+        },
+      }).ok,
+    ).toBe(true);
+    const withAsset = unlocked.getState();
+    unlocked.destroy();
+    const project = ProjectStore.create(
+      {
+        ...locked,
+        manifest: { ...locked.manifest, id },
+        assets: { assets: withAsset.assets ?? {} },
+      },
+      {},
+    );
+    await library.create({ id, name: "片子" }, project.encodeState());
+    project.destroy();
+    expect(await moveIt(context, id)).toEqual({
+      kind: "refused",
+      refusal: { kind: "locked", paths: ["assets/第1~3集.png"] },
+    });
+  });
+
+  it("is no reason to give other files paths of their own: long ones of code are listed", async () => {
+    const context = setup();
+    const name = `code/${"长".repeat(70)}.js`;
+    const key = await browserProject(context.library, {}, { [name]: "// 长" });
+    expect(await moveIt(context, key)).toEqual({
+      kind: "refused",
+      refusal: { kind: "too-long", paths: [name] },
+    });
+  });
+});
+
+describe("a move that people stopped while it compared", () => {
+  it("keeps nothing of what reading the files found out after that", async () => {
+    const context = setup();
+    const { folders, library } = context;
+    const key = await browserProject(library, { "assets/大.bin": big() });
+    const stopper = new AbortController();
+    const result = await moveIt(context, key, {
+      signal: stopper.signal,
+      onStep: ({ phase, file }) => {
+        if (phase === "checking" && file === "assets/大.bin") stopper.abort();
+      },
+    });
+    expect(result).toMatchObject({ kind: "stopped", cancelled: true });
+    // Reading the file goes on by itself for a moment.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await folders.bases.hashOf(key, "assets/大.bin")).toBeUndefined();
+  });
+});
+
+describe("an asset that people took away before the move", () => {
+  it("keeps the copy of its file while the project is open, so that undo can have it back", async () => {
+    const context = setup();
+    const { disk, folders, library, move } = context;
+    const key = await browserProject(library, { "assets/图.png": "图" });
+    const project = await loaded(library, key);
+    const [asset, { hash }] = Object.entries(project.store.getState().assets ?? {})[0] as [
+      string,
+      { hash: string },
+    ];
+    expect(project.store.execute({ type: "asset.remove", params: { asset } }).ok).toBe(true);
+    const place = { chosen: await chosen(disk, folders), inside: "片子" };
+    const result = await move.run(key, project.store, library.media(key), place, {
+      notice: NOTICE,
+      saved: project.saved,
+    });
+    expect(result.kind).toBe("moved");
+    const record = (await folders.records.get(key)) as FolderRecord;
+    const files = new FolderAssets({
+      folder: () => record.folder,
+      key,
+      bases: folders.bases,
+      browser: library.media(key),
+    });
+    const released = await move.release(key, project.store.getState().assets ?? {}, files, {
+      open: true,
+    });
+    files.stop();
+    expect(released.released).toBe(0);
+    expect(project.store.undo().ok).toBe(true);
+    expect(project.store.getState().assets?.[asset]?.hash).toBe(hash);
+    expect(await (await library.media(key).get(hash))?.text()).toBe("图");
+    project.close();
+  });
+});
+
 describe("a move after one that stopped right before the end", () => {
   it("has what the editor knows the files by from this folder, and nothing of the one before", async () => {
     const context = setup();
@@ -421,12 +813,12 @@ describe("a project that cannot move", () => {
   it("is one with names that a folder cannot have, which nothing gets written of", async () => {
     const context = setup();
     const key = await browserProject(context.library, {}, { "code/aux.js": "// 设备名" });
-    const store = (await loadProject(context.library, key)) as ProjectStore;
-    expect(await context.move.check(key, store, context.library.media(key))).toEqual({
+    const project = await loaded(context.library, key);
+    expect(await context.move.check(key, project.store, context.library.media(key))).toEqual({
       kind: "refused",
       paths: ["code/aux.js"],
     });
-    store.destroy();
+    project.close();
     expect(await moveIt(context, key)).toMatchObject({ kind: "refused" });
     expect(context.disk.names(PLACE)).toEqual([]);
   });
@@ -462,19 +854,31 @@ describe("the copies in the browser of the files of a project that moved", () =>
       bases: folders.bases,
       browser: library.media(key),
     });
-    const store = (await loadProject(library, key)) as ProjectStore;
-    const assets = store.getState().assets ?? {};
-    store.destroy();
+    const project = await loaded(library, key);
+    const assets = project.store.getState().assets ?? {};
+    project.close();
     return { ...context, key, files, assets };
   }
 
-  it("go where the folder has the files, also those that no asset uses, and what the editor made stays", async () => {
+  it("go where the folder has the files as the project says, and what the editor made stays", async () => {
     const { move, library, key, files, assets } = await moved();
     expect(await move.copiesOf(key)).toBe(
       new Blob(["图"]).size + new Blob(["声"]).size + new Blob(["没用了"]).size,
     );
-    const { released, kept } = await move.release(key, assets, files);
-    expect(kept).toEqual([]);
+    const { released, missing, unused } = await move.release(key, assets, files, { open: true });
+    expect(missing).toEqual([]);
+    expect(released).toBe(new Blob(["图", "声"]).size);
+    // Undo can bring back an asset that uses this one while the project is open somewhere.
+    expect(unused.map(({ name }) => name)).toEqual(["sha256-unused"]);
+    expect((await library.copies(key)).map(({ name }) => name)).toEqual(["sha256-unused"]);
+    expect(await library.media(key).get("sound-1:abc")).toBeDefined();
+    files.stop();
+  });
+
+  it("of files that no asset uses go once the project is open nowhere, as nothing can bring it back", async () => {
+    const { move, library, key, files, assets } = await moved();
+    const { released, unused } = await move.release(key, assets, files, { open: false });
+    expect(unused).toEqual([]);
     expect(released).toBe(new Blob(["图", "声", "没用了"]).size);
     expect(await library.copies(key)).toEqual([]);
     expect(await library.media(key).get("sound-1:abc")).toBeDefined();
@@ -484,9 +888,9 @@ describe("the copies in the browser of the files of a project that moved", () =>
   it("stay where the folder does not have the file as the project says", async () => {
     const { disk, move, library, key, files, assets } = await moved();
     disk.write(`${PLACE}/片子/assets/声.wav`, "换掉了");
-    const { kept } = await move.release(key, assets, files);
+    const { missing } = await move.release(key, assets, files, { open: false });
     const sound = Object.values(assets).find(({ path }) => path === "assets/声.wav");
-    expect(kept.map(({ name }) => name)).toEqual([sound?.hash]);
+    expect(missing.map(({ name }) => name)).toEqual([sound?.hash]);
     expect((await library.copies(key)).map(({ name }) => name)).toEqual([sound?.hash]);
     files.stop();
   });

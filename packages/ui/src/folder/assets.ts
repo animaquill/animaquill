@@ -41,6 +41,11 @@ export type AssetIssue =
       readonly found?: string;
       /** A name on the way that the browser does not show, which may well be why. */
       readonly hidden?: string;
+      /**
+       * The browser still has a copy of the file, from before the project moved into the folder,
+       * which can go back to its place, as after undo brought back an asset.
+       */
+      readonly copy?: true;
     }
   | {
       /** Another file is at its path, as after people replaced it outside. */
@@ -263,6 +268,9 @@ export class FolderAssets {
   }
 
   #note(hash: FolderHash): void {
+    // What was on its way when this stopped is no business of anybody any more, as of a move that
+    // was stopped: what it says may well be about a folder that is gone.
+    if (this.#stopped) return;
     this.#known.set(hash.path, hash);
     const { bases, key } = this.#options;
     void bases.keepHash(key, hash).catch(() => {});
@@ -432,7 +440,14 @@ export class FolderAssets {
       const places = await this.#lookFor(missing, store);
       for (const { asset, path, hash } of missing) {
         const found = places.get(hash);
-        issues.push({ kind: "missing", asset, path, ...(found !== undefined && { found }) });
+        const copy = await this.#options.browser.get(hash).catch(() => undefined);
+        issues.push({
+          kind: "missing",
+          asset,
+          path,
+          ...(found !== undefined && { found }),
+          ...(copy && { copy: true as const }),
+        });
       }
     }
     return issues;

@@ -11,6 +11,7 @@ import type { ProxyMaker } from "../proxy/maker.ts";
 import {
   MemoryExports,
   MemoryLibrary,
+  MemoryPresence,
   MemoryTrials,
   memoryAddress,
   memoryWindow,
@@ -38,6 +39,8 @@ export function browserOf(disk = new MemoryDisk()) {
     address: memoryAddress(),
     values: new Map(),
     localFolders: memoryFolders(disk),
+    /** Which windows have which projects open: every window of the browser shares it. */
+    presence: new MemoryPresence(),
   };
 }
 
@@ -73,6 +76,7 @@ export function windowOf(
     trials: new MemoryTrials(),
     drafts: new MemoryTrials(),
     exports: new MemoryExports(),
+    presence: browser.presence.window(),
   };
   const workbench = new Workbench({
     host,

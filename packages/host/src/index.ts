@@ -31,6 +31,23 @@ export interface Host {
   readonly exports: ExportStore;
   /** What the editor worked out and can work out again, kept to save time. Optional: see `WorkCache`. */
   readonly caches?: WorkCache;
+  /** Which windows have which projects open. Without it every window is on its own. */
+  readonly presence?: ProjectPresence;
+}
+
+/**
+ * Which windows of this browser have which projects open, and what they have to hear of another
+ * window: a project that moved into a folder in one window is a folder in all of them.
+ */
+export interface ProjectPresence {
+  /** This window has a project open, by what the browser keeps it by, until this returns. */
+  enter(project: string): () => void;
+  /** How many other windows have the project open now, as far as the browser can tell. */
+  others(project: string): Promise<number>;
+  /** Tells the other windows that a project is a folder now, see `onMoved`. */
+  moved(project: string): void;
+  /** What another window says about a project that moved into a folder. Returns how to stop. */
+  onMoved(listener: (project: string) => void): () => void;
 }
 
 /** An export that stopped before it was finished, and can go on from where it got. */
@@ -238,7 +255,12 @@ export interface ProjectLibrary {
   }): Promise<IncomingProject | undefined>;
   open(id: string): Promise<ProjectLog>;
   media(id: string): MediaStore;
-  remove(id: string): Promise<void>;
+  /**
+   * Takes a project away with all that is kept of it. The log of a project that is a folder, see
+   * `ProjectSummary.folder`, only goes with `folder`, as the folder goes off the list: a page that
+   * still takes it for a project of the browser must not take away what the folder relies on.
+   */
+  remove(id: string, options?: { readonly folder?: boolean }): Promise<void>;
   /**
    * Makes a project of this host one that is a folder on this computer, see `ProjectSummary.folder`,
    * once all of it is in that folder. Everything kept by its id goes on as it was: its log, what
@@ -803,6 +825,12 @@ export interface LocalFolder {
    * Resolves to the paths of what was taken away.
    */
   removeLeftovers(paths: Iterable<string>): Promise<readonly string[]>;
+  /**
+   * Takes away a folder in this one while nothing is in it, also nothing that the browser does not
+   * show: a folder with anything in it stays as it is, and so does a file of that name. Resolves to
+   * whether it is gone, also when it was not there.
+   */
+  removeFolder(path: string): Promise<boolean>;
   /** Tells what changes in the folder, see `FolderWatch`. */
   watch(options: WatchOptions): FolderWatch;
 }
@@ -884,6 +912,11 @@ export interface FolderRecord {
   readonly name: string;
   /** Milliseconds since 1970. */
   readonly openedAt: number;
+  /**
+   * The file that says that a move into this folder is not done, see `INCOMPLETE_FILE` of core, as
+   * the move wrote it, while it may still be there: it goes once the folder opens.
+   */
+  readonly unfinished?: FileStat;
 }
 
 /** The folders that were opened in this browser. */

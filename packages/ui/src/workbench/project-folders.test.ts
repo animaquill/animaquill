@@ -192,7 +192,7 @@ describe("a project folder after a reload", () => {
     const id = folderOf(first)?.record.id as string;
     await first.closeProject();
     // As when the data of the site was cleared, but for the folders the browser knows.
-    await browser.library.remove(id);
+    await browser.library.remove(id, { folder: true });
     browser.address.write(id);
     const again = windowOf(browser);
     await again.load();

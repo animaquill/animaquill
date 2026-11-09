@@ -709,6 +709,36 @@ describe("writing many files", () => {
   });
 });
 
+describe("removing a folder", () => {
+  it("takes away one with nothing in it, and only that one", async () => {
+    const { disk, folder } = await chosen();
+    disk.folder("文档/原子/空的/更空的");
+    expect(await folder.removeFolder("空的/更空的")).toBe(true);
+    expect(disk.has("文档/原子/空的/更空的")).toBe(false);
+    expect(disk.has("文档/原子/空的")).toBe(true);
+    expect(await folder.removeFolder("空的")).toBe(true);
+    expect(disk.names("文档/原子")).toEqual([]);
+  });
+
+  it("leaves one with anything in it, also what the browser does not show", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/有东西/笔记.txt", "笔记");
+    disk.write("文档/原子/藏着的/aux.js", "// 浏览器看不到");
+    expect(await folder.removeFolder("有东西")).toBe(false);
+    expect(await folder.removeFolder("藏着的")).toBe(false);
+    expect(disk.text("文档/原子/有东西/笔记.txt")).toBe("笔记");
+    expect(disk.text("文档/原子/藏着的/aux.js")).toBe("// 浏览器看不到");
+  });
+
+  it("never takes a file of that name, and one that is not there is gone already", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/文件", "不是文件夹");
+    expect(await folder.removeFolder("文件")).toBe(false);
+    expect(disk.text("文档/原子/文件")).toBe("不是文件夹");
+    expect(await folder.removeFolder("没有/这个")).toBe(true);
+  });
+});
+
 describe("removing a file", () => {
   it("takes away the folders on the way that are left empty", async () => {
     const { disk, folder } = await chosen();
@@ -992,6 +1022,24 @@ describe("folders that were opened", () => {
     });
     return { disk, folders, folder, other };
   }
+
+  it("keep what a move left unfinished, and only how the file was", async () => {
+    const { disk, folders, folder } = await opened();
+    const written = await folder.write("导出未完成.txt", "没有移完");
+    await folders.records.put({
+      id: "本机3",
+      folder,
+      project: "p1",
+      name: "移过来的",
+      openedAt: 3,
+      unfinished: written,
+    });
+    const kept = await memoryFolders(disk).records.get("本机3");
+    expect(kept?.unfinished).toEqual({ size: written.size, lastModified: written.lastModified });
+    const { unfinished: _, ...settled } = kept as NonNullable<typeof kept>;
+    await folders.records.put(settled);
+    expect((await folders.records.get("本机3"))?.unfinished).toBeUndefined();
+  });
 
   it("are there for the next page, the most recent first", async () => {
     const { disk } = await opened();

@@ -889,3 +889,23 @@ describe("a project of the browser that moved into a folder", () => {
     expect((await library.copies(other.id)).map(({ name }) => name)).toEqual([ASSET]);
   });
 });
+
+describe("a project that is a folder", () => {
+  it("does not go the way a project of the browser goes, only with its folder", async () => {
+    const { library } = browser();
+    await library.create(PROJECT, STATE);
+    await library.toFolder(PROJECT.id);
+    await expect(library.remove(PROJECT.id)).rejects.toThrow();
+    expect(await ids(library)).toEqual([PROJECT.id]);
+    expect(await (await logOf(library)).load()).toEqual([STATE]);
+    await library.remove(PROJECT.id, { folder: true });
+    expect(await ids(library)).toEqual([]);
+  });
+
+  it("is not what a project of the browser is, which goes as it always did", async () => {
+    const { library } = browser();
+    await library.create(PROJECT, STATE);
+    await library.remove(PROJECT.id);
+    expect(await ids(library)).toEqual([]);
+  });
+});

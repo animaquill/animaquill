@@ -23,6 +23,7 @@ import {
   FolderError,
   type AccessAnswer,
   type FileContent,
+  type FileStat,
   type FolderBases,
   type FolderFailure,
   type FolderRecord,
@@ -72,6 +73,8 @@ export interface StoredRecord {
   readonly project: string;
   readonly name: string;
   readonly openedAt: number;
+  /** See `FolderRecord.unfinished`. */
+  readonly unfinished?: FileStat;
 }
 
 /** Where records of folders are kept, see folder-records.ts. */
@@ -578,6 +581,38 @@ class HandleFolder implements LocalFolder {
     );
   }
 
+  async removeFolder(path: string): Promise<boolean> {
+    const parts = this.#parts(path);
+    return this.#changing(
+      [path],
+      async () => {
+        await this.#mayWrite(path);
+        const chain = await this.#chain(parts.slice(0, -1));
+        const parent = chain?.at(-1);
+        if (!parent) return true;
+        const name = parts.at(-1) as string;
+        try {
+          // Taking away an entry takes a file just as well: only a folder goes this way.
+          await parent.getDirectoryHandle(name);
+        } catch (error) {
+          if (isNamed(error, "NotFoundError")) return true;
+          if (isNamed(error, "TypeMismatchError")) return false;
+          throw error;
+        }
+        try {
+          // Not with what is in it: the browser takes away only an empty folder this way.
+          await parent.removeEntry(name);
+          return true;
+        } catch (error) {
+          if (isNamed(error, "NotFoundError")) return true;
+          if (isNamed(error, "InvalidModificationError")) return false;
+          throw error;
+        }
+      },
+      path,
+    );
+  }
+
   async removeLeftovers(paths: Iterable<string>): Promise<readonly string[]> {
     const byFolder = new Map<string, Map<string, string>>();
     for (const path of paths) {
@@ -1056,12 +1091,22 @@ function localFile(handle: FileHandleLike): LocalFile {
 export function createLocalFolders(environment: LocalFoldersEnvironment): LocalFolders {
   const folderOf = (handle: DirectoryHandleLike): LocalFolder =>
     new HandleFolder(handle, environment);
-  const recordOf = ({ id, handle, project, name, openedAt }: StoredRecord): FolderRecord => ({
+  const recordOf = ({
+    id,
+    handle,
+    project,
+    name,
+    openedAt,
+    unfinished,
+  }: StoredRecord): FolderRecord => ({
     id,
     folder: folderOf(handle),
     project,
     name,
     openedAt,
+    ...(unfinished && {
+      unfinished: { size: unfinished.size, lastModified: unfinished.lastModified },
+    }),
   });
   const newestFirst = (records: readonly StoredRecord[]) =>
     records.toSorted((a, b) => b.openedAt - a.openedAt);
@@ -1072,8 +1117,18 @@ export function createLocalFolders(environment: LocalFoldersEnvironment): LocalF
       const stored = await environment.records.get(id);
       return stored && recordOf(stored);
     },
-    async put({ id, folder, project, name, openedAt }) {
-      await environment.records.put({ id, handle: directoryOf(folder), project, name, openedAt });
+    async put({ id, folder, project, name, openedAt, unfinished }) {
+      await environment.records.put({
+        id,
+        handle: directoryOf(folder),
+        project,
+        name,
+        openedAt,
+        // Only what tells the file again: a `File` cannot be kept in a database as it is.
+        ...(unfinished && {
+          unfinished: { size: unfinished.size, lastModified: unfinished.lastModified },
+        }),
+      });
     },
     remove: (id) => environment.records.remove(id),
     async find(folder) {

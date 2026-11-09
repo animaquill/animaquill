@@ -188,7 +188,7 @@ test.describe("a project of the browser", () => {
     await expect(said.getByRole("heading", { name: `“${NAME}”没有移到文件夹` })).toBeVisible();
     await expect(said).toContainText("项目还在浏览器里，没有改动");
     await expect(said).toContainText("assets.json：内容和写进去的不一样");
-    await said.getByRole("button", { name: "关闭" }).click();
+    await said.getByRole("button", { name: "留着看看" }).click();
 
     // The project goes on in the browser, as it was.
     expect(keyOf(page)).toBe(key);
@@ -197,6 +197,39 @@ test.describe("a project of the browser", () => {
     await chooseFrom(page, "文件", "关闭项目");
     await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
     await expect(page.getByRole("button", { name: `把“${NAME}”移到文件夹…` })).toBeVisible();
+  });
+
+  test("moves while another window has it open, which goes on with the folder", async ({
+    page,
+    context,
+    devPage,
+  }) => {
+    test.skip(!devPage, "only the development page has window.aqExecute");
+    const key = await projectOfTheBrowser(page);
+    const other = await context.newPage();
+    await other.goto(page.url());
+    await expect(footer(other).getByText(NAME)).toBeVisible();
+
+    await chooseFrom(page, "文件", "移到文件夹…");
+    await expect(dialog(page)).toContainText(`另外还有 1 个窗口开着“${NAME}”`);
+    await dialog(page).getByRole("button", { name: "一起切换" }).click();
+    await dialog(page).getByRole("button", { name: "先留着" }).click();
+
+    // The other window hears of it, and goes on as the folder: one of them writes it.
+    await expect(other.getByText(`“${NAME}”在另一个窗口里移到了文件夹“选的”`)).toBeVisible();
+    await expect(footer(other).getByText("另一个窗口在写这个文件夹")).toBeVisible({
+      timeout: 10_000,
+    });
+    await other.evaluate(() =>
+      (window as unknown as { aqExecute: (call: unknown) => unknown }).aqExecute({
+        type: "project.rename",
+        params: { name: "另一个窗口改的" },
+      }),
+    );
+    await expect
+      .poll(async () => JSON.parse((await privateText(page, "选的/animaquill.json")) ?? "{}").name)
+      .toBe("另一个窗口改的");
+    expect(keyOf(other)).toBe(key);
   });
 
   test("lets go of the copies of its files in the browser once people say so", async ({ page }) => {

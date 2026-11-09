@@ -11,7 +11,7 @@ import styles from "./StartPage.module.css";
 const when = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" });
 
 const noSubscription = () => () => {};
-const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
+const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined, moves: 0 };
 const noFolders = () => NO_FOLDERS;
 
 /** What people see before a project is open: every panel needs a project to show anything. */
@@ -242,7 +242,8 @@ export function StartPage() {
     );
   }, [workbench, projectFolders]);
 
-  useEffect(refresh, [refresh, folders.waiting]);
+  // A project that moved into a folder in another window is listed as a folder from then on.
+  useEffect(refresh, [refresh, folders.waiting, folders.moves]);
 
   // The log of a project folder is in the browser too, but it is no project of the browser. Where
   // the folders cannot be read, nothing tells them apart: then none of them shows.
@@ -329,11 +330,8 @@ export function StartPage() {
                 type="button"
                 className={styles.remove}
                 aria-label={t("project.removeButton", { name: project.name })}
-                onClick={() => {
-                  void workbench.removeProject(project).then((removed) => {
-                    if (removed) refresh();
-                  });
-                }}
+                // One that moved into a folder meanwhile is not removed, and shows where it is now.
+                onClick={() => void workbench.removeProject(project).then(refresh)}
               >
                 <X size={14} />
               </button>

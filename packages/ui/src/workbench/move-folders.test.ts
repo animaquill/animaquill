@@ -190,11 +190,13 @@ describe("an open project of the browser", () => {
     });
     browser.disk.chooseNext(HOME);
     const moving = workbench.moveToFolder();
-    const said = await answerNext(workbench, "confirm", true);
+    // People keep the folder to look at it.
+    const said = await answerNext(workbench, "confirm", false);
     expect(said).toMatchObject({
       title: expect.stringContaining("folder.move.failedTitle"),
       message: expect.stringContaining("folder.move.unverified"),
-      noticeOnly: true,
+      confirm: "folder.move.discard",
+      cancel: "folder.move.keepFolder",
       details: [
         {
           title: expect.stringContaining("folder.move.mismatchList"),
@@ -335,7 +337,7 @@ describe("a project on the start page", () => {
       title: expect.stringContaining("folder.move.releaseTitle"),
     });
     expect(await releasing).toBe(false);
-    expect(notices(workbench).at(-1)).toContain("folder.move.releasedPartly");
+    expect(notices(workbench).at(-1)).toContain("folder.move.releasedMissing");
     expect(await browser.library.copies(key)).toHaveLength(1);
   });
 
@@ -351,6 +353,129 @@ describe("a project on the start page", () => {
     expect(await workbench.projectFolders?.moveToFolder(key)).toBe(false);
     expect(notices(workbench)).toContain('folder.move.already {"name":"片子"}');
     expect(browser.disk.names("文档/又一个")).toEqual([]);
+  });
+});
+
+describe("other windows of the browser", () => {
+  it("that have the project open are said first, and go on with the folder once it moved", async () => {
+    const browser = browserOf();
+    const first = windowOf(browser);
+    const { key } = await browserProject(browser, first);
+    const second = windowOf(browser);
+    expect(await second.session.open(key)).toBe(true);
+    const other = second.session.store as ProjectStore;
+
+    browser.disk.chooseNext(HOME);
+    const moving = first.moveToFolder();
+    expect(await answerNext(first, "confirm", true)).toMatchObject({
+      title: expect.stringContaining("folder.move.othersTitle"),
+    });
+    await answerNext(first, "confirm", false);
+    expect(await moving).toBe(true);
+
+    // The other window goes on as the folder, with the project it had open.
+    await vi.waitFor(() => expect(folderOf(second)?.record.id).toBe(key));
+    expect(second.session.store).toBe(other);
+    expect(notices(second).some((said) => said.startsWith("folder.move.movedElsewhere"))).toBe(
+      true,
+    );
+    // What it changes gets into the folder, which one of the two writes.
+    other.execute({ type: "project.rename", params: { name: "另一个窗口改的" } });
+    await vi.waitFor(() => expect(manifestOn(browser.disk, HOME).name).toBe("另一个窗口改的"));
+  });
+
+  it("that have the project open can be left as they are, and then nothing moves", async () => {
+    const browser = browserOf();
+    const first = windowOf(browser);
+    const { key } = await browserProject(browser, first);
+    const second = windowOf(browser);
+    expect(await second.session.open(key)).toBe(true);
+    browser.disk.chooseNext(HOME);
+    const moving = first.moveToFolder();
+    await answerNext(first, "confirm", false);
+    expect(await moving).toBe(false);
+    expect(browser.disk.has(HOME)).toBe(false);
+    expect(await browser.disk.records.get(key)).toBeUndefined();
+  });
+
+  it("that listed it as a project of the browser open it as its folder, and do not take it away", async () => {
+    const browser = browserOf();
+    const first = windowOf(browser);
+    const { key } = await browserProject(browser, first);
+    await first.closeProject();
+    const second = windowOf(browser);
+    const [summary] = await second.session.list();
+    if (!summary) throw new Error("No project");
+
+    browser.disk.chooseNext(HOME);
+    const moving = first.projectFolders?.moveToFolder(key);
+    await answerNext(first, "confirm", false);
+    expect(await moving).toBe(true);
+    // What the other window lists is out of date, which it hears.
+    await vi.waitFor(() => expect(second.projectFolders?.getSnapshot().moves).toBe(1));
+    expect(await second.removeProject(summary)).toBe(false);
+    expect(notices(second)).toContain('folder.move.removeIsFolder {"name":"片子"}');
+    expect((await browser.library.list()).map(({ id }) => id)).toEqual([key]);
+    await second.openProject(key);
+    await written(second);
+    expect(folderOf(second)?.record.id).toBe(key);
+  });
+});
+
+describe("a project that moved", () => {
+  it("that stopped right before the file that says it is not done went, is done once it opens", async () => {
+    const browser = browserOf();
+    const workbench = windowOf(browser);
+    const { key } = await browserProject(browser, workbench);
+    await workbench.closeProject();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      browser.disk.onNext("removeEntry", `${HOME}/${INCOMPLETE_FILE}`, () => {
+        throw new DOMException("The page went away", "AbortError");
+      });
+    }
+    browser.disk.chooseNext(HOME);
+    const moving = workbench.projectFolders?.moveToFolder(key);
+    await answerNext(workbench, "confirm", false);
+    expect(await moving).toBe(true);
+    expect(browser.disk.has(`${HOME}/${INCOMPLETE_FILE}`)).toBe(true);
+    const [record] = (await workbench.projectFolders?.list()) ?? [];
+    if (!record) throw new Error("No record");
+    await workbench.projectFolders?.openRecent(record);
+    await written(workbench);
+    expect(browser.disk.has(`${HOME}/${INCOMPLETE_FILE}`)).toBe(false);
+    expect((await browser.disk.records.get(key))?.unfinished).toBeUndefined();
+  });
+
+  it("gets back the file of an asset that undo brought back, from the copy in the browser", async () => {
+    const browser = browserOf();
+    const workbench = windowOf(browser);
+    const { key, store } = await browserProject(browser, workbench);
+    // People took the asset away before the move.
+    expect(store.execute({ type: "asset.remove", params: { asset: "asset_pic" } }).ok).toBe(true);
+    browser.disk.chooseNext(HOME);
+    const moving = workbench.moveToFolder();
+    // They let go of the copies right away: the one that no asset uses stays, as the project is open.
+    await answerNext(workbench, "confirm", true);
+    expect(await moving).toBe(true);
+    expect(notices(workbench).at(-1)).toContain("folder.move.releasedUnused");
+    expect(await browser.library.copies(key)).toHaveLength(1);
+
+    expect(store.undo().ok).toBe(true);
+    await written(workbench);
+    await workbench.projectFolders?.assetsChecked();
+    const missing = workbench.problems
+      .getSnapshot()
+      .problems.find(({ file }) => file === "assets/图.png");
+    expect(missing?.action?.label).toBe("folder.move.restoreCopy");
+    missing?.action?.run();
+    await vi.waitFor(() => expect(browser.disk.has(`${HOME}/assets/图.png`)).toBe(true));
+    expect(browser.disk.text(`${HOME}/assets/图.png`)).toBe(PICTURE);
+    await vi.waitFor(async () => {
+      await workbench.projectFolders?.assetsChecked();
+      expect(
+        workbench.problems.getSnapshot().problems.filter(({ file }) => file === "assets/图.png"),
+      ).toEqual([]);
+    });
   });
 });
 

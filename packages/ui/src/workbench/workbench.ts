@@ -168,7 +168,7 @@ export class Workbench {
       create: (project, state) => library.create(project, state),
       receive: (project) => library.receive(project),
       open: (id) => library.open(id),
-      remove: (id) => library.remove(id),
+      remove: (id, removing) => library.remove(id, removing),
       // The files of a project that is a folder are in the folder, see `FolderAssets`.
       media: (id) => this.projectFolders?.mediaFor(id) ?? library.media(id),
       toFolder: (id) => library.toFolder(id),
@@ -403,8 +403,10 @@ export class Workbench {
         },
         ...(options.hasher && { hasher: options.hasher }),
         ...(options.folderTiming && { timing: options.folderTiming }),
+        ...(host.presence && { presence: host.presence }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
+    this.#keepPresence(host);
     this.proxies =
       this.projectFolders && options.proxyMaker
         ? this.#proxiesOf(this.projectFolders, options.proxyMaker)
@@ -896,8 +898,36 @@ export class Workbench {
     if (name) await this.#changeProject(() => this.session.create(name));
   }
 
+  /**
+   * A project of this browser, or one that moved into a folder since the list that has it was made:
+   * that one opens as its folder.
+   */
   async openProject(id: string): Promise<void> {
+    const record = await this.projectFolders?.projects.records.get(id).catch(() => undefined);
+    if (record) {
+      await this.projectFolders?.openRecent(record);
+      return;
+    }
     await this.#changeProject(() => this.session.open(id));
+  }
+
+  /**
+   * Says to the windows of this browser which project this one has open, and goes on as a folder
+   * where another window moved that project into one, see `ProjectFolders.followMove`.
+   */
+  #keepPresence(host: Host): void {
+    const { presence } = host;
+    if (!presence) return;
+    let entered: { readonly key: string; readonly leave: () => void } | undefined;
+    const follow = () => {
+      const { key } = this.session;
+      if (entered?.key === key) return;
+      entered?.leave();
+      entered = key === undefined ? undefined : { key, leave: presence.enter(key) };
+    };
+    this.session.subscribe(follow);
+    follow();
+    presence.onMoved((project) => void this.projectFolders?.followMove(project));
   }
 
   /** Back to the start page. */
@@ -1095,6 +1125,12 @@ export class Workbench {
   /** Resolves to whether the project was removed. */
   async removeProject(project: ProjectSummary): Promise<boolean> {
     const { t } = this;
+    // A list made before the project moved into a folder: what the folder relies on stays, and the
+    // folder goes off its own list, see `ProjectFolders.remove`.
+    if (await this.#isFolder(project.id)) {
+      this.notifications.push(t("folder.move.removeIsFolder", { name: project.name }));
+      return false;
+    }
     const confirmed = await this.dialogs.confirm({
       title: t("project.removeTitle", { name: project.name }),
       message: t("project.removeWarning"),
@@ -1117,6 +1153,13 @@ export class Workbench {
       this.notifications.push(t("notice.projectRemoveFailed"));
       return false;
     }
+  }
+
+  /** Whether a project is a folder now, by its record or by what the list of projects says. */
+  async #isFolder(id: string): Promise<boolean> {
+    if (await this.projectFolders?.projects.records.get(id).catch(() => undefined)) return true;
+    const summaries = await this.projects.list().catch(() => []);
+    return summaries.some((summary) => summary.id === id && summary.folder === true);
   }
 
   /**

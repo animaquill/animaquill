@@ -371,7 +371,7 @@ export class FolderProjects {
   async forget(id: string): Promise<void> {
     await this.#folders.records.remove(id);
     await this.#folders.bases.forget(id);
-    await this.#projects.remove(id);
+    await this.#projects.remove(id, { folder: true });
   }
 
   /** The one folder right inside with a project in it, which reading found. */
