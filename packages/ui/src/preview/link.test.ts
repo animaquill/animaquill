@@ -1,4 +1,5 @@
 import type { MediaLibrary } from "../media/library.ts";
+import type { StandIn, StandIns } from "../proxy/proxies.ts";
 import { ProjectStore, orderedTracks, type CommandCall } from "@animaquill/core";
 import type { FromCompositor, ToCompositor } from "@animaquill/render";
 import type { ProjectLibrary } from "@animaquill/host";
@@ -45,11 +46,13 @@ function setup(
     registrations,
     handles,
     diagnostics = new DiagnosticsRecorder("test"),
+    standIns,
   }: {
     files?: Map<string, Blob>;
     registrations?: SceneRegistrations;
     handles?: SceneHandles;
     diagnostics?: DiagnosticsRecorder;
+    standIns?: StandIns;
   } = {},
 ) {
   const restored: ((hash: string) => void)[] = [];
@@ -152,6 +155,7 @@ function setup(
     quality,
     registrations,
     handles,
+    standIns,
   );
   links.push(link);
   const hello = () => {
@@ -918,5 +922,143 @@ describe("timings for a report", () => {
     expect(diagnostics.finish({}).events).toEqual([
       { kind: "compositor.longtask", ms: 120, t: expect.any(Number) },
     ]);
+  });
+});
+
+describe("a video with a stand-in", () => {
+  const asset = {
+    kind: "video",
+    path: "assets/4k.mp4",
+    storage: "local",
+    hash: "sha256-v",
+    info: { width: 3840, height: 2160 },
+  };
+
+  function withVideo() {
+    const files = new Map([["sha256-v", new Blob(["原片"])]]);
+    const emitter = new Emitter();
+    let standIn: StandIn | undefined;
+    const failed: string[] = [];
+    const standIns: StandIns = {
+      standInFor: (hash) => (hash === "sha256-v" ? standIn : undefined),
+      failed: (hash) => void failed.push(hash),
+      subscribe: emitter.subscribe,
+    };
+    // Without watching a page, which there is none of here.
+    const diagnostics = new DiagnosticsRecorder(
+      "test",
+      () => () => {},
+      () => ({}),
+    );
+    const context = setup(undefined, { files, standIns, diagnostics });
+    context.run({ type: "asset.add", params: { id: "v", asset } });
+    context.clip("vc", { start: "6", source: { kind: "video", media: { asset: "v" } } });
+    context.hello();
+    const give = (next: StandIn | undefined) => {
+      standIn = next;
+      emitter.emit();
+    };
+    const lastFile = () => context.ofType("file").at(-1);
+    const asks = () => context.fromCompositor({ type: "needs", id: "sha256-v" });
+    return { ...context, files, give, failed, lastFile, asks, diagnostics };
+  }
+
+  const proxy = new Blob(["代理"]);
+  const size = { width: 3840, height: 2160 };
+
+  it("is decoded in place of the video at its size, unless the quality is full", async () => {
+    const { give, lastFile, asks, quality } = withVideo();
+    give({ file: proxy, ...size });
+    asks();
+    await vi.waitFor(() => expect(lastFile()).toMatchObject({ file: proxy, standIn: size }));
+    quality.choose("full");
+    await vi.waitFor(() => expect(lastFile()?.file).not.toBe(proxy));
+    expect(lastFile()).not.toHaveProperty("standIn");
+    expect(await lastFile()?.file.text()).toBe("原片");
+    quality.choose("quarter");
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    quality.choose("auto");
+    await new Promise((done) => setTimeout(done, 20));
+    // Nothing new: what the compositor has is what it should have.
+    expect(lastFile()?.file).toBe(proxy);
+  });
+
+  it("takes the place of the video once it is made, and gives it back once it goes", async () => {
+    const { give, lastFile, asks, ofType } = withVideo();
+    asks();
+    await vi.waitFor(() => expect(lastFile()).toBeDefined());
+    expect(lastFile()).not.toHaveProperty("standIn");
+    give({ file: proxy, ...size });
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    give(undefined);
+    await vi.waitFor(() => expect(lastFile()?.file).not.toBe(proxy));
+    expect(ofType("file")).toHaveLength(3);
+  });
+
+  it("goes in place of the video that was on its way when it came", async () => {
+    const { give, lastFile, asks, ofType } = withVideo();
+    asks();
+    // While the video is being read for the compositor.
+    give({ file: proxy, ...size });
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    await new Promise((done) => setTimeout(done, 20));
+    expect(ofType("file").map(({ file }) => file)).toEqual([proxy]);
+  });
+
+  it("gives way to the video when the compositor cannot read it, until another one comes", async () => {
+    const { give, lastFile, asks, failed, fromCompositor } = withVideo();
+    give({ file: proxy, ...size });
+    asks();
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    fromCompositor({ type: "stand-in-failed", id: "sha256-v" });
+    expect(failed).toEqual(["sha256-v"]);
+    await vi.waitFor(() => expect(lastFile()?.file).not.toBe(proxy));
+    // The same one again is not taken.
+    give({ file: proxy, ...size });
+    await new Promise((done) => setTimeout(done, 20));
+    expect(lastFile()?.file).not.toBe(proxy);
+    const made = new Blob(["新的代理"]);
+    give({ file: made, ...size });
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(made));
+  });
+
+  it("is not sent for what the compositor did not ask for, nor for pictures", async () => {
+    const { give, ofType } = withVideo();
+    give({ file: proxy, ...size });
+    await new Promise((done) => setTimeout(done, 20));
+    expect(ofType("file")).toEqual([]);
+  });
+
+  it("is in a recording, with whether the video itself was decoded, and no names", async () => {
+    const { give, lastFile, asks, diagnostics, quality, fromCompositor } = withVideo();
+    diagnostics.start();
+    give({ file: proxy, ...size });
+    asks();
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    quality.choose("full");
+    await vi.waitFor(() => expect(lastFile()?.file).not.toBe(proxy));
+    fromCompositor({
+      type: "frames",
+      frames: [
+        {
+          seconds: 1,
+          ms: 40,
+          decodeMs: 30,
+          gettingReady: false,
+          cold: 1,
+          behindMs: 0,
+          abandoned: 0,
+          coldClips: [{ layer: "vc", kind: "video", width: 960, height: 540, standIn: true }],
+        },
+      ],
+    });
+    const { events } = diagnostics.finish({});
+    expect(events.filter(({ kind }) => kind === "video.file")).toEqual([
+      { kind: "video.file", t: expect.any(Number), proxy: true, ...size },
+      { kind: "video.file", t: expect.any(Number), proxy: false, ...size },
+    ]);
+    expect(events.find(({ kind }) => kind === "frame")?.["coldClips"]).toBe(
+      "vc video 960x540 proxy",
+    );
   });
 });

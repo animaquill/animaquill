@@ -17,6 +17,7 @@ import {
   type FileHandleLike,
   type HandleLike,
   type ObserverConstructor,
+  type WriteChunk,
 } from "./handles.ts";
 import {
   FolderError,
@@ -33,6 +34,7 @@ import {
   type LocalFile,
   type LocalFolder,
   type LocalFolders,
+  type LocalGrowingFile,
   type LocalWriteOptions,
   type RemoveOptions,
   type WatchOptions,
@@ -217,6 +219,15 @@ interface Written {
   readonly seen: Seen;
 }
 
+/** A file on its way, see `LocalFolder.grow`. */
+interface Growing {
+  readonly folder: DirectoryHandleLike;
+  readonly handle: FileHandleLike;
+  readonly writer: WritableStreamDefaultWriter<WriteChunk>;
+  /** Whether `grow` made the empty file, which it then takes away again. */
+  readonly made: boolean;
+}
+
 /** Where a file moves from and to, by writing it. */
 interface Places {
   readonly sourceFolder: DirectoryHandleLike;
@@ -368,6 +379,90 @@ class HandleFolder implements LocalFolder {
       path,
       signal,
     );
+  }
+
+  async grow(path: string): Promise<LocalGrowingFile> {
+    const parts = this.#parts(path);
+    const name = parts.at(-1) as string;
+    const done = this.#startChanging([path]);
+    let opened: Growing;
+    try {
+      await this.#mayWrite(path);
+      const folder = await this.#folderAt(parts.slice(0, -1), true, path);
+      const found = await fileIn(folder, name);
+      // An empty file is what a crash leaves of one that was being made: it counts as none.
+      if (found && (await found.getFile()).size > 0) throw new FolderError("changed", path);
+      const handle =
+        found ??
+        (await this.#made(
+          () => folder.getFileHandle(name, { create: true }),
+          parts.slice(0, -1),
+          path,
+        ));
+      const writable = await handle.createWritable({ mode: "exclusive", keepExistingData: false });
+      // Once no other writer of this browser can change it any more.
+      if ((await handle.getFile()).size > 0) {
+        await writable.abort().catch(() => {});
+        throw new FolderError("changed", path);
+      }
+      opened = { folder, handle, writer: writable.getWriter(), made: found === undefined };
+    } catch (error) {
+      done();
+      throw await this.#failure(error, path, true);
+    }
+    const { folder, handle, writer, made } = opened;
+    let state: "open" | "finished" | "abandoned" = "open";
+    /** Once a write failed, the stream only says that it did, and not why. */
+    let failure: FolderError | undefined;
+    /** What is at the path once it is over, as a watch should know it. */
+    const seenNow = async (): Promise<Seen> => {
+      const now = await fileIn(folder, name).catch(() => undefined);
+      const file = await now?.getFile().catch(() => undefined);
+      return file ? statOf(file) : "absent";
+    };
+    const takeBack = async () => {
+      await writer.abort().catch(() => {});
+      // Only the empty file this made: one with something in it got that from somewhere else.
+      if (made) await removeIfEmpty(folder, name).catch(() => {});
+      this.#wrote(path, await seenNow());
+    };
+    return {
+      write: async (data, position) => {
+        if (state !== "open") throw new FolderError("failed", path);
+        if (failure) throw failure;
+        try {
+          await writer.write({ type: "write", position, data });
+        } catch (error) {
+          failure ??= await this.#failure(error, path, true);
+          throw failure;
+        }
+      },
+      finish: async () => {
+        if (state !== "open") throw new FolderError("failed", path);
+        state = "finished";
+        try {
+          if (failure) throw failure;
+          await writer.close();
+          const file = await handle.getFile();
+          this.#wrote(path, statOf(file));
+          return file;
+        } catch (error) {
+          await takeBack();
+          throw await this.#failure(error, path, true);
+        } finally {
+          done();
+        }
+      },
+      abandon: async () => {
+        if (state !== "open") return;
+        state = "abandoned";
+        try {
+          await takeBack();
+        } finally {
+          done();
+        }
+      },
+    };
   }
 
   async writeAll(
@@ -615,17 +710,31 @@ class HandleFolder implements LocalFolder {
     failurePath: string,
     signal?: AbortSignal,
   ): Promise<T> {
-    const keys = paths.map(sameNameKey);
-    for (const key of keys) {
-      this.#writing.set(key, (this.#writing.get(key) ?? 0) + 1);
-      this.#writes.set(key, (this.#writes.get(key) ?? 0) + 1);
-    }
+    const done = this.#startChanging(paths);
     try {
       return await work();
     } catch (error) {
       if (signal?.aborted) throw signal.reason;
       throw await this.#failure(error, failurePath, true);
     } finally {
+      done();
+    }
+  }
+
+  /**
+   * Has watches take these files for ones this folder writes, from now until what this returns is
+   * called, which has to happen once, whatever came of it.
+   */
+  #startChanging(paths: readonly string[]): () => void {
+    const keys = paths.map(sameNameKey);
+    for (const key of keys) {
+      this.#writing.set(key, (this.#writing.get(key) ?? 0) + 1);
+      this.#writes.set(key, (this.#writes.get(key) ?? 0) + 1);
+    }
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
       for (const [index, key] of keys.entries()) {
         const left = (this.#writing.get(key) ?? 1) - 1;
         if (left > 0) this.#writing.set(key, left);
@@ -633,7 +742,7 @@ class HandleFolder implements LocalFolder {
         this.#writes.set(key, (this.#writes.get(key) ?? 0) + 1);
         for (const watcher of this.#watchers) watcher.doneWriting(paths[index] as string);
       }
-    }
+    };
   }
 
   #wrote(path: string, seen: Seen): void {

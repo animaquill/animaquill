@@ -18,11 +18,18 @@ export interface CreateWritableOptions {
   readonly keepExistingData?: boolean;
 }
 
+/**
+ * What a writable of a file takes: bytes that go after what came before, or bytes for a place in
+ * the file, anywhere, as `FileSystemWritableFileStream` has it.
+ */
+export type WriteChunk =
+  Uint8Array | { readonly type: "write"; readonly position: number; readonly data: Uint8Array };
+
 export interface FileHandleLike extends Permissions {
   readonly kind: "file";
   readonly name: string;
   getFile(): Promise<File>;
-  createWritable(options?: CreateWritableOptions): Promise<WritableStream<Uint8Array>>;
+  createWritable(options?: CreateWritableOptions): Promise<WritableStream<WriteChunk>>;
   /** Only Chrome has this, for files. It replaces what is at the new place without a word. */
   move?(parent: DirectoryHandleLike, name: string): Promise<void>;
   isSameEntry(other: HandleLike): Promise<boolean>;

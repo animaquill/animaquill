@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { FolderTrouble } from "../folder/session.ts";
 import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
 import type { InputChoice } from "../workbench/input-mode.ts";
+import { NO_PROXIES } from "../proxy/proxies.ts";
 import { PreviewStatus } from "../preview/Quality.tsx";
 import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
 import { duration } from "../export/window.ts";
@@ -160,6 +161,66 @@ function VideoExportStatus() {
   );
 }
 
+/**
+ * A proxy on its way, which goes on while people work, as an export does: how far, how many more,
+ * and the way to stop it. It says so when it waits for something to stop playing.
+ */
+function ProxyStatus() {
+  const { proxies, layout, session } = useWorkbench();
+  const { t } = useTranslation();
+  const snapshot = useSyncExternalStore(
+    proxies?.subscribe ?? noSubscription,
+    proxies?.getSnapshot ?? noProxies,
+  );
+  const { making, waiting, paused, elsewhere } = snapshot;
+  if (!proxies) return null;
+  if (!making) {
+    if (!elsewhere || waiting === 0) return null;
+    return (
+      <Tip name={t("proxy.status.elsewhere")} usage={t("proxy.status.usage")}>
+        <span className={styles.info} role="status">
+          {t("proxy.status.elsewhere")}
+        </span>
+      </Tip>
+    );
+  }
+  const { percent } = making;
+  const asset = Object.values(session.store?.getState().assets ?? {}).find(
+    ({ hash }) => hash === making.hash,
+  );
+  const about = t("proxy.status.about", {
+    name: asset?.name ?? asset?.path ?? "",
+    interpolation: { escapeValue: false },
+  });
+  const text =
+    (paused ? t("proxy.status.paused", { percent }) : t("proxy.status.making", { percent })) +
+    (waiting > 0 ? ` · ${t("proxy.status.more", { count: waiting })}` : "");
+  return (
+    <span className={styles.export} role="status" aria-label={about}>
+      <progress className={styles.exportBar} value={percent} max={100} />
+      <Tip name={about} usage={t("proxy.status.usage")}>
+        <button
+          type="button"
+          className={styles.exportText}
+          onClick={() => layout.openPanel("assets")}
+        >
+          {text}
+        </button>
+      </Tip>
+      <Tip name={t("proxy.stop")} usage={t("proxy.status.stopAll")}>
+        <button
+          type="button"
+          className={styles.exportCancel}
+          aria-label={t("proxy.stop")}
+          onClick={() => proxies.stop()}
+        >
+          <X size={12} />
+        </button>
+      </Tip>
+    </span>
+  );
+}
+
 /** Nothing gets recorded without this being on the screen. */
 function RecordingStatus() {
   const { diagnostics, layout } = useWorkbench();
@@ -199,6 +260,7 @@ function ProblemsStatus() {
 }
 
 const noSubscription = () => () => {};
+const noProxies = () => NO_PROXIES;
 const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
 const noFolders = () => NO_FOLDERS;
 const writtenWhen = new Intl.DateTimeFormat("zh-CN", { timeStyle: "medium" });
@@ -362,6 +424,7 @@ export function StatusBar() {
       )}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
+      {project && <ProxyStatus />}
       <VideoExportStatus />
       <RecordingStatus />
       {project && <TimeStatus />}

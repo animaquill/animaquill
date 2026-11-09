@@ -23,6 +23,7 @@ import {
 import { BUILT_IN_PROPERTIES, type PropertyValue } from "@animaquill/schema";
 import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
 import type { MediaLibrary } from "../media/library.ts";
+import type { StandIn, StandIns } from "../proxy/proxies.ts";
 import type { SceneHandles } from "../overlay/scene-handles.ts";
 import type { SceneRegistrations } from "../properties/registrations.ts";
 import type { PreviewedValues, PropertyWriter } from "../properties/writer.ts";
@@ -54,9 +55,10 @@ function describeCold(clips: FrameTiming["coldClips"]): string | undefined {
     typeof value === "number" && Number.isInteger(value) && value > 0 ? value : "?";
   return clips
     .slice(0, MAX_COLD_CLIPS)
-    .map(({ layer, kind, width, height }) => {
+    .map(({ layer, kind, width, height, standIn }) => {
       const id = typeof layer === "string" && ID.test(layer) ? layer : "?";
-      return `${id} ${kind === "video" ? kind : "?"} ${size(width)}x${size(height)}`;
+      const proxy = standIn === true ? " proxy" : "";
+      return `${id} ${kind === "video" ? kind : "?"} ${size(width)}x${size(height)}${proxy}`;
     })
     .join(", ");
 }
@@ -154,6 +156,16 @@ export class PreviewLink {
   /** What the scene of each layer registered last, to say later that it is not sure any more. */
   readonly #registered = new Map<string, { readonly revision: string; readonly params: string }>();
   readonly #handles: SceneHandles | undefined;
+  readonly #standIns: StandIns | undefined;
+  /**
+   * What the compositor got for each video it asked for, by id: the stand-in, or undefined for the
+   * video itself. A file that comes later takes the place of the one before.
+   */
+  readonly #sent = new Map<string, Blob | undefined>();
+  /** Stand-ins the compositor could not read: the video goes instead, until another one comes. */
+  readonly #failedStandIns = new Map<string, Blob>();
+  /** Goes up with each file sent for an id, so that one that took a while does not come after. */
+  readonly #sending = new Map<string, number>();
   /** Which clip was last asked to say where its objects are. */
   #handlesFor: string | undefined;
   /** What the last plan was drawn at. */
@@ -183,9 +195,12 @@ export class PreviewLink {
     quality: PreviewQuality,
     registrations?: SceneRegistrations,
     handles?: SceneHandles,
+    /** Smaller copies of videos, which the preview decodes in their place unless at full quality. */
+    standIns?: StandIns,
   ) {
     this.#registrations = registrations;
     this.#handles = handles;
+    this.#standIns = standIns;
     this.#frame = frame;
     this.#timeline = timeline;
     this.#properties = properties;
@@ -223,7 +238,12 @@ export class PreviewLink {
     const stopProperties = properties.subscribe(this.#sendPreview);
     const stopQuality = quality.subscribe(this.#sendPlan);
     const stopHandles = handles?.subscribeWanted(this.#sendHandles);
+    // A stand-in that comes or goes, or full quality, has the compositor decode another file.
+    const stopStandIns = standIns?.subscribe(this.#followStandIns);
+    const stopQualityChoice = quality.subscribe(this.#followStandIns);
     this.#stop = () => {
+      stopStandIns?.();
+      stopQualityChoice();
       stopHandles?.();
       this.#keyboard.dispose();
       this.#watch.dispose();
@@ -273,6 +293,8 @@ export class PreviewLink {
       this.#playingSince = undefined;
       this.#recording = false;
       this.#handlesFor = undefined;
+      this.#sent.clear();
+      this.#failedStandIns.clear();
       this.#watch.ready();
       this.#status.forgetScenes();
       this.#send({ type: "setup", ...this.#setup, retired: this.#status.retiredOrigins });
@@ -336,6 +358,13 @@ export class PreviewLink {
       void this.#sendFile(data.id);
     } else if (data.type === "cannot-decode") {
       this.#onProblem(data.id);
+    } else if (data.type === "stand-in-failed") {
+      const sent = this.#sent.get(data.id);
+      if (!sent) return;
+      // The video itself goes instead, and the stand-in gets made again.
+      this.#failedStandIns.set(data.id, sent);
+      this.#standIns?.failed(data.id);
+      void this.#sendFile(data.id, true);
     }
   };
 
@@ -460,18 +489,77 @@ export class PreviewLink {
     }
   }
 
+  /** The stand-in the compositor should decode in place of a video, if any. */
+  #standInFor(id: string): StandIn | undefined {
+    // Full quality is what an export has, and is for seeing just that.
+    if (this.#quality.getSnapshot().choice === "full") return undefined;
+    const standIn = this.#standIns?.standInFor(id);
+    if (!standIn || this.#failedStandIns.get(id) === standIn.file) return undefined;
+    return standIn;
+  }
+
+  /** Sends again what the compositor decodes another file of now, at the moment it is at. */
+  #followStandIns = (): void => {
+    for (const [id, sent] of this.#sent) {
+      if (this.#standInFor(id)?.file !== sent) void this.#sendFile(id, true);
+    }
+  };
+
   /**
    * The sandbox runs code from projects, so it only gets what the plan uses. `again` is for a file
    * that changed since: one that is not there any more is taken back, and asked for again later.
+   * A video can get a smaller copy that stands in for it, see `StandIns`.
    */
   async #sendFile(id: string, again = false): Promise<void> {
-    const used = this.#plan?.layers.some(
+    const layers = this.#plan?.layers ?? [];
+    const used = layers.some(
       ({ source }) => (source.kind === "image" || source.kind === "video") && source.file === id,
     );
     if (!used) return;
+    const turn = (this.#sending.get(id) ?? 0) + 1;
+    this.#sending.set(id, turn);
+    const isVideo = layers.some(({ source }) => source.kind === "video" && source.file === id);
+    const standIn = isVideo ? this.#standInFor(id) : undefined;
+    if (standIn) {
+      this.#sendStandIn(id, standIn);
+      return;
+    }
     const file = await this.#projects.media(projectKeyOf(this.#store)).get(id);
-    if (file) this.#send({ type: "file", id, file });
-    else if (again) this.#send({ type: "no-file", id });
-    else this.#onProblem(id);
+    // Another file for it went meanwhile, which is newer.
+    if (this.#sending.get(id) !== turn) return;
+    // A stand-in that came while the video was read goes instead: nothing else would send it now.
+    const came = isVideo ? this.#standInFor(id) : undefined;
+    if (came) {
+      this.#sendStandIn(id, came);
+      return;
+    }
+    if (file) {
+      this.#sent.set(id, undefined);
+      this.#send({ type: "file", id, file });
+      if (isVideo) this.#noteVideo(id);
+    } else if (again) {
+      this.#sent.delete(id);
+      this.#send({ type: "no-file", id });
+    } else this.#onProblem(id);
+  }
+
+  #sendStandIn(id: string, { file, width, height }: StandIn): void {
+    this.#sent.set(id, file);
+    this.#send({ type: "file", id, file, standIn: { width, height } });
+    this.#diagnostics.note("video.file", { proxy: true, width, height });
+  }
+
+  /** That the compositor decodes a video itself, for a recording: how large, never its name. */
+  #noteVideo(hash: string): void {
+    if (!this.#diagnostics.getRecording()) return;
+    const asset = Object.values(this.#store.getState().assets ?? {}).find(
+      (each) => each.hash === hash,
+    );
+    const { width, height } = asset?.info ?? {};
+    this.#diagnostics.note("video.file", {
+      proxy: false,
+      ...(width !== undefined && { width }),
+      ...(height !== undefined && { height }),
+    });
   }
 }

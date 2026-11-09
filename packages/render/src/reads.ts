@@ -3,6 +3,8 @@ import { fileTimeOf, readingAt, VideoCursor, type FrameSource, type TimedFrame }
 
 interface Entry<Frame extends TimedFrame> {
   readonly file: string;
+  /** What it reads from: another one for the same file, as a stand-in, is another read. */
+  readonly source: FrameSource<Frame>;
   readonly cursor: VideoCursor<Frame>;
 }
 
@@ -24,12 +26,16 @@ function layerById(layers: readonly RenderLayer[], id: string): RenderLayer | un
 export class VideoReads<Frame extends TimedFrame> {
   readonly #entries = new Map<string, Entry<Frame>>();
 
-  /** The cursor of a clip. Another file for the clip, as after a change, starts a new one. */
+  /**
+   * The cursor of a clip. Another file for the clip, as after a change, starts a new one, and so
+   * does another source of the same file: a frame that was on its way when a stand-in took the
+   * place of a video still reads the video, and what comes after it must not go on from there.
+   */
   async cursorOf(layer: string, file: string, source: FrameSource<Frame>) {
     let entry = this.#entries.get(layer);
-    if (entry?.file !== file) {
+    if (entry?.file !== file || entry.source !== source) {
       await entry?.cursor.close();
-      entry = { file, cursor: new VideoCursor(source) };
+      entry = { file, source, cursor: new VideoCursor(source) };
       this.#entries.set(layer, entry);
     }
     return entry.cursor;

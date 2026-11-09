@@ -40,9 +40,11 @@ export interface FrameTiming {
 export interface ColdClip {
   readonly layer: string;
   readonly kind: "video";
-  /** Of the video, as it shows. */
+  /** Of what was decoded, as it shows. */
   readonly width?: number;
   readonly height?: number;
+  /** What was decoded is a smaller copy of the video, see `ToCompositor` "file". */
+  readonly standIn?: true;
 }
 
 /** What changed about the curves of a layer, by property path. Null takes a property away. */
@@ -131,7 +133,17 @@ export type ToCompositor =
       /** For what the scene of the layer works out itself. */
       readonly content?: ContentChanges;
     }
-  | { readonly type: "file"; readonly id: string; readonly file: Blob }
+  | {
+      readonly type: "file";
+      readonly id: string;
+      readonly file: Blob;
+      /**
+       * The file is a smaller copy of a video, a proxy, to decode in its place: it shows at the size
+       * the video shows at, so that the picture is the same apart from its sharpness. Only for the
+       * preview. Another file for the id, also the video itself, takes its place.
+       */
+      readonly standIn?: { readonly width: number; readonly height: number };
+    }
   /** What it asked for with `needs` is not there, so that waiting for it is over. */
   | { readonly type: "no-file"; readonly id: string }
   /** A jump is somebody moving the playhead, as opposed to time carrying it along while playing. */
@@ -207,6 +219,8 @@ export type FromCompositor =
   /** It needs this file. Nothing leaves the sandbox on its own, and nothing comes in by itself. */
   | { readonly type: "needs"; readonly id: string }
   | { readonly type: "cannot-decode"; readonly id: string }
+  /** A stand-in for a video, see "file", cannot be read: the video itself should come instead. */
+  | { readonly type: "stand-in-failed"; readonly id: string }
   /** It needs this scene, in this state. */
   | { readonly type: "needs-scene"; readonly scene: string; readonly revision: string }
   | { readonly type: "scene-status"; readonly layer: string; readonly status: SceneStatus }

@@ -10,6 +10,7 @@ import type { PanelDefinition } from "./workbench/panels.ts";
 import { Workbench } from "./workbench/workbench.ts";
 import { workspaces } from "./workbench/workspaces.ts";
 import { workerHasher } from "./media/hasher.ts";
+import { workerProxyMaker } from "./proxy/maker.ts";
 
 export interface EditorOptions {
   readonly host: Host;
@@ -26,6 +27,8 @@ export interface EditorOptions {
   readonly sceneStage?: "plain";
   /** For tests: how long code gets to make a sound. */
   readonly soundLimitMs?: number;
+  /** For tests: how long making a proxy waits after each frame, to see one on its way. */
+  readonly proxyFrameMs?: number;
   /** Panels the host adds to the built-in ones. */
   readonly panels?: readonly PanelDefinition[];
   /** For tests: what no control can do yet, such as changing code. */
@@ -48,6 +51,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     ...(options.soundLimitMs !== undefined && { soundLimitMs: options.soundLimitMs }),
     // A large video takes a while to hash, and the page goes on meanwhile.
     hasher: workerHasher(),
+    // The same for making smaller copies of large videos for the preview.
+    proxyMaker: workerProxyMaker({ frameMs: options.proxyFrameMs }),
   });
   // Before anything else runs, so that whatever fails from here on is caught.
   const stopWatching = watchPage(workbench.errors, workbench.diagnostics, options.compositorUrl);
@@ -72,6 +77,10 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     void workbench.projectFolders?.flush();
   };
   document.addEventListener("visibilitychange", save);
+
+  // People come back from their files, where they may have taken proxies away.
+  const lookAgain = () => void workbench.proxies?.lookAgain();
+  window.addEventListener("focus", lookAgain);
 
   // A dialog has to be answered first: nothing behind it should change in the meantime.
   const onKeyDown = (event: KeyboardEvent) => {
@@ -111,6 +120,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", save);
+    window.removeEventListener("focus", lookAgain);
+    workbench.proxies?.dispose();
     root.unmount();
     stopWatching();
   };

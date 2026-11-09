@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./hash": "./src/hash.ts"
+    "./hash": "./src/hash.ts",
+    "./proxy": "./src/proxy.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

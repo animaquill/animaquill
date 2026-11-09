@@ -16,6 +16,7 @@ import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import type { FilmStrip } from "../media/library.ts";
 import styles from "./AssetsPanel.module.css";
 import { NO_PROGRESS } from "../folder/assets.ts";
+import { NO_PROXIES, type ProxySnapshot, type ProxyState } from "../proxy/proxies.ts";
 
 /** What a drag from this list carries. */
 export const ASSET_DRAG_TYPE = "application/x-animaquill-asset";
@@ -80,6 +81,37 @@ function Thumbnail({ id, asset }: { id: string; asset: Asset }) {
   return <Icon size={28} />;
 }
 
+const noProxies = () => NO_PROXIES;
+
+/** What a proxy is doing, in a word or two on its video and in a sentence over it. */
+function useProxyWords() {
+  const { t } = useTranslation();
+  return (state: ProxyState, snapshot: ProxySnapshot) => {
+    const paused = snapshot.paused && state.kind === "making";
+    const percent = state.kind === "making" ? state.percent : 0;
+    const badge = paused ? t("proxy.badge.paused") : t(`proxy.badge.${state.kind}`, { percent });
+    const about =
+      state.kind === "failed"
+        ? t(`proxy.state.failed.${state.reason}`)
+        : paused
+          ? t("proxy.state.paused", { percent })
+          : state.kind === "waiting" && snapshot.elsewhere
+            ? t("proxy.state.elsewhere")
+            : t(`proxy.state.${state.kind}`, { percent });
+    return { badge, about };
+  };
+}
+
+/** How the proxy of a video is, on its picture. Nothing for one that needs none. */
+function ProxyBadge({ state, snapshot }: { state: ProxyState; snapshot: ProxySnapshot }) {
+  const words = useProxyWords()(state, snapshot);
+  return (
+    <span className={styles.proxy} data-state={state.kind} title={words.about}>
+      {words.badge}
+    </span>
+  );
+}
+
 interface PopupState {
   readonly x: number;
   readonly y: number;
@@ -109,6 +141,11 @@ export function AssetsPanel() {
   const [reading] = progress.reading;
   // A thumbnail gave up on a file that was not there, and starts over when one came back.
   const restored = useSyncExternalStore(media.subscribe, media.getRestored);
+  const { proxies } = workbench;
+  const proxySnapshot = useSyncExternalStore(
+    proxies?.subscribe ?? noSubscription,
+    proxies?.getSnapshot ?? noProxies,
+  );
   const [popup, setPopup] = useState<PopupState>();
   const [over, setOver] = useState(false);
   const assets = Object.entries(project?.assets ?? {}).filter(
@@ -277,42 +314,59 @@ export function AssetsPanel() {
               <span className={styles.name}>{sound.name}</span>
             </li>
           ))}
-          {assets.map(([id, asset]) => (
-            <li
-              key={id}
-              className={styles.item}
-              title={asset.name}
-              draggable
-              onDragStart={(event) => {
-                event.dataTransfer.setData(ASSET_DRAG_TYPE, id);
-                event.dataTransfer.effectAllowed = "copy";
-              }}
-              onDoubleClick={() => timeline.addAsset(id)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setPopup({
-                  x: event.clientX,
-                  y: event.clientY,
-                  groups: [
-                    [
-                      {
-                        id: "add",
-                        label: t("assets.addToTimeline"),
-                        run: () => timeline.addAsset(id),
-                      },
-                      { id: "remove", label: t("assets.remove"), run: () => remove(id) },
+          {assets.map(([id, asset]) => {
+            const { hash } = asset;
+            const proxy = hash === undefined ? undefined : proxySnapshot.states.get(hash);
+            // What people can do about the proxy of a video that has one.
+            const proxyItems: MenuItem[] =
+              proxies && hash !== undefined && proxy
+                ? proxy.kind === "stopped" || proxy.kind === "failed"
+                  ? [{ id: "proxy", label: t("proxy.make"), run: () => proxies.make(hash) }]
+                  : proxy.kind === "ready"
+                    ? []
+                    : [{ id: "proxy", label: t("proxy.stop"), run: () => proxies.stop(hash) }]
+                : [];
+            return (
+              <li
+                key={id}
+                className={styles.item}
+                title={asset.name}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(ASSET_DRAG_TYPE, id);
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
+                onDoubleClick={() => timeline.addAsset(id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setPopup({
+                    x: event.clientX,
+                    y: event.clientY,
+                    groups: [
+                      [
+                        {
+                          id: "add",
+                          label: t("assets.addToTimeline"),
+                          run: () => timeline.addAsset(id),
+                        },
+                        { id: "remove", label: t("assets.remove"), run: () => remove(id) },
+                      ],
+                      ...(proxyItems.length > 0 ? [proxyItems] : []),
                     ],
-                  ],
-                });
-              }}
-            >
-              <div className={styles.thumbnail}>
-                <Thumbnail key={restored} id={id} asset={asset} />
-                {lengthOf(asset) && <span className={styles.length}>{lengthOf(asset)}</span>}
-              </div>
-              <span className={styles.name}>{asset.name}</span>
-            </li>
-          ))}
+                  });
+                }}
+              >
+                <div className={styles.thumbnail}>
+                  <Thumbnail key={restored} id={id} asset={asset} />
+                  {proxy && proxy.kind !== "checking" && (
+                    <ProxyBadge state={proxy} snapshot={proxySnapshot} />
+                  )}
+                  {lengthOf(asset) && <span className={styles.length}>{lengthOf(asset)}</span>}
+                </div>
+                <span className={styles.name}>{asset.name}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
       {popup && (

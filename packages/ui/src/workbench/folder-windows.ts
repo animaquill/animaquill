@@ -7,6 +7,7 @@ import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { MANIFEST_FILE } from "@animaquill/schema";
 import { expect, vi } from "vitest";
 import type { Hasher } from "../media/hasher.ts";
+import type { ProxyMaker } from "../proxy/maker.ts";
 import {
   MemoryExports,
   MemoryLibrary,
@@ -44,7 +45,10 @@ const opened: Workbench[] = [];
 
 /** Lets go of the folders of every window, for after each test. */
 export async function closeWindows(): Promise<void> {
-  for (const workbench of opened.splice(0)) await workbench.projectFolders?.close();
+  for (const workbench of opened.splice(0)) {
+    workbench.proxies?.dispose();
+    await workbench.projectFolders?.close();
+  }
 }
 
 /** A window of that browser, with folders of its own, as a page has. */
@@ -52,6 +56,7 @@ export function windowOf(
   browser: ReturnType<typeof browserOf>,
   localFolders?: LocalFolders,
   hasher?: Hasher,
+  proxyMaker?: ProxyMaker,
 ) {
   const { values } = browser;
   const host: Host = {
@@ -80,6 +85,7 @@ export function windowOf(
     compositorUrl: "",
     folderTiming: FAST,
     ...(hasher && { hasher }),
+    ...(proxyMaker && { proxyMaker }),
   });
   opened.push(workbench);
   return workbench;

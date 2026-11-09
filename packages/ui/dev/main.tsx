@@ -58,6 +58,9 @@ const sceneStage = new URLSearchParams(location.search).get("sceneStage") === "p
 /** Waiting a whole minute for code that never ends is no way to test it. */
 const soundLimit = new URLSearchParams(location.search).get("soundLimit");
 
+/** A small video is made a proxy of in a moment, which a test of what happens meanwhile cannot catch. */
+const proxyFrameMs = new URLSearchParams(location.search).get("proxyFrameMs");
+
 /**
  * Reports go where they go on a site, which the development server does not answer: tests stand in
  * for the server there.
@@ -85,6 +88,7 @@ if (root)
     sceneOrigins,
     ...(sceneStage && { sceneStage: "plain" }),
     ...(soundLimit !== null && { soundLimitMs: Number(soundLimit) }),
+    ...(proxyFrameMs !== null && { proxyFrameMs: Number(proxyFrameMs) }),
     panels: [crashTest, frameTest],
     onWorkbench: (workbench) => {
       Object.assign(window, {
@@ -95,6 +99,15 @@ if (root)
         aqAudio: () => import("@animaquill/audio"),
         // For keeping a project folder in step in the browser tests, without the editor around it.
         aqFolders: async () => ({ host, ...(await import("./folder-lab.ts")) }),
+        // How the proxies of the open project are, by the hash of each video, for the browser tests.
+        aqProxies: () => {
+          const snapshot = workbench.proxies?.getSnapshot();
+          const assets = workbench.session.store?.getState().assets ?? {};
+          const made = Object.fromEntries(
+            Object.entries(assets).map(([id, { hash }]) => [hash, workbench.proxies?.madeOf(id)]),
+          );
+          return snapshot && { ...snapshot, states: Object.fromEntries(snapshot.states), made };
+        },
       });
     },
   });

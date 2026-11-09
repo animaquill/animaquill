@@ -659,6 +659,20 @@ export interface RemoveOptions {
   readonly expected?: FileStat;
 }
 
+/**
+ * A new file of a folder on this computer that gets written piece by piece, anywhere in it, see
+ * `LocalFolder.grow`. Nothing of it counts until `finish`: a file that stops halfway is not a file.
+ * What fails rejects with a `FolderError`.
+ */
+export interface LocalGrowingFile {
+  /** Puts bytes at a place in the file, also where something was before, or past its end. */
+  write(data: Uint8Array<ArrayBuffer>, position: number): Promise<void>;
+  /** Puts all of it at its path at once. Resolves to the file as it was written. */
+  finish(): Promise<File>;
+  /** Takes back what was written, and the empty file that `grow` made. Fine after `finish` too. */
+  abandon(): Promise<void>;
+}
+
 export interface WriteAllOptions {
   /** Stops writing. Files that were written stay written. */
   readonly signal?: AbortSignal;
@@ -723,6 +737,15 @@ export interface LocalFolder {
    * this browser, the others get "busy". Resolves to the file as it was written.
    */
   write(path: string, content: FileContent, options?: LocalWriteOptions): Promise<File>;
+  /**
+   * Starts a new file that gets written piece by piece, anywhere in it, such as a video that an
+   * encoder makes: it never has to be in memory, whatever its size. As with `write`, the browser
+   * writes next to it and puts that in place on `finish`, so nobody ever sees half of it. Until then
+   * the path has an empty file, which is also what a crash leaves. Rejects with "changed" where a
+   * file that is not empty is at the path, and with "busy" where another writer has it. From start
+   * to end a watch takes it for a write of this folder.
+   */
+  grow(path: string): Promise<LocalGrowingFile>;
   /**
    * Writes many files, some at the same time, because each one costs about a tenth of a second on
    * Windows, however small it is. Rejects with the first failure, once the files on their way are

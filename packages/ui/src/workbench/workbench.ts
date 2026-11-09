@@ -29,6 +29,9 @@ import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
 import type { Hasher } from "../media/hasher.ts";
 import { MadeSounds, SoundMaker } from "../media/sounds.ts";
+import { isSameHash } from "@animaquill/media";
+import type { ProxyMaker } from "../proxy/maker.ts";
+import { ProxyFiles, type ProxyProject } from "../proxy/proxies.ts";
 import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
 import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts";
 import { PreviewFrameRate } from "../preview/frame-rate.ts";
@@ -71,6 +74,11 @@ export interface WorkbenchOptions {
   readonly folderTiming?: Partial<FolderTiming>;
   /** What finds out hashes of files in project folders, in a worker where the page has one. */
   readonly hasher?: Hasher;
+  /**
+   * What makes proxies, smaller copies of large videos for the preview, in a worker. Without it
+   * there are none, as in tests that are not about them.
+   */
+  readonly proxyMaker?: ProxyMaker;
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
@@ -117,6 +125,11 @@ export class Workbench {
    * Edge. Elsewhere projects stay in the browser, see the design of local projects, section 6.
    */
   readonly projectFolders: ProjectFolders | undefined;
+  /**
+   * Smaller copies of large videos in a project folder, which the preview plays unless its quality
+   * is full. Only where projects are folders, see the decision of 2026-11-09.
+   */
+  readonly proxies: ProxyFiles | undefined;
   readonly diagnostics: DiagnosticsRecorder;
   /** Errors of the editor while this page is open, and whether people want to report them. */
   readonly errors: ErrorReports;
@@ -370,6 +383,10 @@ export class Workbench {
         ...(options.folderTiming && { timing: options.folderTiming }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
+    this.proxies =
+      this.projectFolders && options.proxyMaker
+        ? this.#proxiesOf(this.projectFolders, options.proxyMaker)
+        : undefined;
     // Reading a large video for its hash takes the disk and a core for a while, which a recording of
     // how playing goes should know about.
     this.diagnostics.watch("hashing", {
@@ -384,6 +401,17 @@ export class Workbench {
         };
       },
     });
+    // Making a proxy decodes a large video too, which it stops doing while something plays.
+    const proxies = this.proxies;
+    if (proxies) {
+      this.diagnostics.watch("proxies", {
+        get: () => {
+          const { making, paused } = proxies.getSnapshot();
+          return making !== undefined && !paused;
+        },
+        subscribe: (listener) => proxies.subscribe(listener),
+      });
+    }
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
@@ -449,6 +477,46 @@ export class Workbench {
     this.#registerHelpActions();
     registerTimelineActions(this.actions, this.timeline, this.keyframes.inTimeline);
     registerKeyframeActions(this.actions, this.keyframes, this.timeline);
+  }
+
+  /** The proxies of whatever project folder is open, see `ProxyFiles`. */
+  #proxiesOf(folders: ProjectFolders, maker: ProxyMaker): ProxyFiles {
+    const project = (): ProxyProject | undefined => {
+      const { open } = folders.getSnapshot();
+      const session = folders.session;
+      const assets = folders.assets();
+      const store = this.session.store;
+      if (!open || !session || !assets || !store) return undefined;
+      return {
+        key: open.record.id,
+        store,
+        folder: session.folder,
+        writes: open.snapshot.role === "writing",
+        elsewhere: open.snapshot.role === "waiting",
+        // Where the project says the file of a video is, while it is that file. Nothing that
+        // looks for it shows as waiting: the preview does not wait for a proxy.
+        async file(hash) {
+          for (const asset of Object.values(store.getState().assets ?? {})) {
+            if (asset.hash === undefined || !isSameHash(asset.hash, hash)) continue;
+            const found = await assets.fileAt(asset.path);
+            if (found.kind === "there" && isSameHash(found.hash, hash)) return found.file;
+          }
+          return undefined;
+        },
+      };
+    };
+    return new ProxyFiles({
+      project,
+      subscribe: (listener) => {
+        const stops = [folders.subscribe(listener), this.session.subscribe(listener)];
+        return () => {
+          for (const stop of stops) stop();
+        };
+      },
+      maker,
+      playing: () => this.timeline.getSnapshot().playing,
+      subscribePlaying: (listener) => this.timeline.subscribe(listener),
+    });
   }
 
   /**
@@ -931,11 +999,21 @@ export class Workbench {
             offset: toSeconds(clipOffset(clip)),
           })),
       ),
-      assets: Object.values(state.assets ?? {}).map(({ kind, size, info }) => ({
-        kind,
-        size,
-        info,
-      })),
+      assets: Object.entries(state.assets ?? {}).map(([id, { kind, size, info }]) => {
+        // Whether the preview decodes a smaller copy of a video, or the video itself, and how
+        // long making that took here: what it takes on this computer.
+        const proxy = this.proxies?.stateOf(id)?.kind;
+        const proxyMade = this.proxies?.madeOf(id);
+        return {
+          kind,
+          size,
+          info,
+          ...(proxy !== undefined && { proxy }),
+          ...(proxyMade && { proxyMade }),
+        };
+      }),
+      // Which decides whether proxies are used: not at full quality.
+      previewQuality: this.previewQuality.getSnapshot().choice,
     };
   }
 

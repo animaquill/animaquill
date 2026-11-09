@@ -1281,9 +1281,20 @@ describe("the report of how it runs", () => {
     );
     const project = report?.project as Record<string, unknown>;
     expect(Object.keys(project).toSorted()).toEqual(
-      ["assets", "clips", "formats", "fps", "layout", "storage", "tracks"].toSorted(),
+      [
+        "assets",
+        "clips",
+        "formats",
+        "fps",
+        "layout",
+        "previewQuality",
+        "storage",
+        "tracks",
+      ].toSorted(),
     );
     expect(project["storage"]).toBe("browser");
+    // Which decides whether the preview decodes proxies, which a project in the browser has none of.
+    expect(project["previewQuality"]).toBe("auto");
     const layout = project["layout"] as Record<string, unknown>[];
     expect(layout).toEqual([{ id: "clip_a", kind: "color", track, start: 0, end: 2, offset: 0 }]);
     expect(JSON.stringify(report)).not.toContain("秘密");

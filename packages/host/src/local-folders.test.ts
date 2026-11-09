@@ -461,6 +461,103 @@ describe("writing a file over what a crash left", () => {
   });
 });
 
+describe("a file that grows piece by piece", () => {
+  const ROOT = "文档/原子";
+
+  it("takes pieces anywhere, and is there at its path only once it is finished", async () => {
+    const { disk, folder } = await chosen();
+    const growing = await folder.grow("代理/a.mp4");
+    await growing.write(encoder.encode("尾巴"), 6);
+    // Going back, as a video file does for the length of its data once all of it is there.
+    await growing.write(encoder.encode("头"), 0);
+    await growing.write(encoder.encode("中"), 3);
+    // Until then the path has an empty file, and the pieces are next to it.
+    expect(disk.text(`${ROOT}/代理/a.mp4`)).toBe("");
+    expect(disk.names(`${ROOT}/代理`).toSorted()).toEqual(["a.mp4", "a.mp4.crswap"]);
+    const file = await growing.finish();
+    expect(disk.text(`${ROOT}/代理/a.mp4`)).toBe("头中尾巴");
+    expect(disk.names(`${ROOT}/代理`)).toEqual(["a.mp4"]);
+    expect(file.size).toBe(encoder.encode("头中尾巴").length);
+    // Taking back what is finished does nothing.
+    await growing.abandon();
+    expect(disk.text(`${ROOT}/代理/a.mp4`)).toBe("头中尾巴");
+  });
+
+  it("leaves nothing when it is taken back", async () => {
+    const { disk, folder } = await chosen();
+    const growing = await folder.grow("代理/a.mp4");
+    await growing.write(encoder.encode("一半"), 0);
+    await growing.abandon();
+    expect(disk.names(`${ROOT}/代理`)).toEqual([]);
+    await expect(growing.write(encoder.encode("更多"), 6)).rejects.toEqual(failed("failed"));
+    await expect(growing.finish()).rejects.toEqual(failed("failed"));
+    expect(disk.names(`${ROOT}/代理`)).toEqual([]);
+  });
+
+  it("does not start over a file with something in it, and keeps a second writer out", async () => {
+    const { disk, folder } = await chosen();
+    disk.write(`${ROOT}/a.mp4`, "别人的");
+    await expect(folder.grow("a.mp4")).rejects.toEqual(failed("changed", "a.mp4"));
+    expect(disk.text(`${ROOT}/a.mp4`)).toBe("别人的");
+    const first = await folder.grow("b.mp4");
+    await expect(folder.grow("b.mp4")).rejects.toEqual(failed("busy", "b.mp4"));
+    await first.write(encoder.encode("第一个"), 0);
+    await first.finish();
+    expect(disk.text(`${ROOT}/b.mp4`)).toBe("第一个");
+    await expect(folder.grow("../c.mp4")).rejects.toEqual(failed("refused"));
+  });
+
+  it("fails as a write does, and leaves nothing it made", async () => {
+    const { disk, folder } = await chosen();
+    disk.failWrites(`${ROOT}/a.mp4`, { afterBytes: 3 });
+    const growing = await folder.grow("a.mp4");
+    await expect(growing.write(encoder.encode("太长了的内容"), 0)).rejects.toEqual(failed("full"));
+    await expect(growing.finish()).rejects.toEqual(failed("full"));
+    expect(disk.names(ROOT)).toEqual([]);
+  });
+
+  it("leaves an empty file when the browser goes away, which is no file and gets written over", async () => {
+    const { disk, folder } = await chosen({ system: "linux" });
+    const growing = await folder.grow("a.mp4");
+    await growing.write(encoder.encode("一半"), 0);
+    disk.crash();
+    await expect(growing.finish()).rejects.toBeDefined();
+    expect(disk.text(`${ROOT}/a.mp4`)).toBe("");
+    expect(disk.names(ROOT).toSorted()).toEqual(["a.mp4", "a.mp4.crswap"]);
+    disk.chooseNext(ROOT);
+    const next = (await memoryFolders(disk).choose()) as LocalFolder;
+    const again = await next.grow("a.mp4");
+    await again.write(encoder.encode("全部"), 0);
+    await again.finish();
+    expect(disk.text(`${ROOT}/a.mp4`)).toBe("全部");
+  });
+
+  it("is no change to a watch of the folder, from start to end", async () => {
+    const { disk, folder } = await chosen();
+    const changes: string[] = [];
+    const watch = folder.watch({
+      // As every watch has it: what the browser writes next to a file is nobody's business.
+      includes: (path) => !path.endsWith(".crswap"),
+      onChange: (found) => void changes.push(...found.map(({ path }) => path)),
+    });
+    await watch.ready;
+    const growing = await folder.grow("a.mp4");
+    await growing.write(encoder.encode("视频"), 0);
+    await watch.rescan();
+    await growing.finish();
+    await watch.rescan();
+    const dropped = await folder.grow("b.mp4");
+    await dropped.abandon();
+    await watch.rescan();
+    expect(changes).toEqual([]);
+    // What another program does is told, as before.
+    disk.write(`${ROOT}/a.mp4`, "别人改的");
+    await watch.rescan();
+    expect(changes).toEqual(["a.mp4"]);
+    watch.stop();
+  });
+});
+
 describe("what a write finds right after", () => {
   it.each([
     ["a small file", 1000],

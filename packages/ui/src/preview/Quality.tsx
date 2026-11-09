@@ -21,10 +21,24 @@ function useChoiceName() {
       : t(`preview.quality.${choice}`);
 }
 
+const noSubscription = () => () => {};
+const noFolder = () => false;
+
+/** Whether large videos of the open project get proxies, which only a project folder has. */
+function useHasProxies(): boolean {
+  const { projectFolders, proxies } = useWorkbench();
+  const inFolder = useSyncExternalStore(
+    projectFolders?.subscribe ?? noSubscription,
+    projectFolders ? () => projectFolders.getSnapshot().open !== undefined : noFolder,
+  );
+  return inFolder && proxies !== undefined;
+}
+
 /** Where people choose how sharp the preview is. */
 function QualityBubble({ anchor, onClose }: { anchor: DOMRect; onClose: () => void }) {
   const { previewQuality } = useWorkbench();
   const { t } = useTranslation();
+  const hasProxies = useHasProxies();
   const { choice, scale } = useSyncExternalStore(
     previewQuality.subscribe,
     previewQuality.getSnapshot,
@@ -51,7 +65,9 @@ function QualityBubble({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
           </button>
         ))}
       </div>
-      <p className={styles.note}>{t("preview.quality.decodeNote")}</p>
+      <p className={styles.note}>
+        {t(hasProxies ? "preview.quality.proxyNote" : "preview.quality.decodeNote")}
+      </p>
     </Bubble>
   );
 }

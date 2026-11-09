@@ -11,6 +11,7 @@ import type {
   ObserverConstructor,
   ObserverLike,
   PermissionMode,
+  WriteChunk,
 } from "./handles.ts";
 import type { LocalFolders } from "./index.ts";
 import {
@@ -557,18 +558,26 @@ class MemoryFileHandle implements FileHandleLike {
       state.alive(life);
       if (writer.dead) throw failure("AbortError", "The browser went away.");
     };
-    return new WritableStream<Uint8Array>({
+    // Where the next bytes go, as in the browser: after the last ones, or where a chunk said.
+    let cursor = swap.content.byteLength;
+    return new WritableStream<WriteChunk>({
       write(chunk) {
         alive();
-        written += chunk.byteLength;
+        const at = chunk instanceof Uint8Array ? cursor : chunk.position;
+        const data = chunk instanceof Uint8Array ? chunk : chunk.data;
+        if (!Number.isInteger(at) || at < 0) throw new TypeError("No such place in a file");
+        written += data.byteLength;
         if (fails && !fails.atClose && written > fails.afterBytes) {
           release();
           throw failure(fails.name, "Writing failed.");
         }
-        const grown = new Uint8Array(swap.content.byteLength + chunk.byteLength);
+        // Past the end the file grows, with zeros in between, as in the browser.
+        const end = Math.max(swap.content.byteLength, at + data.byteLength);
+        const grown = new Uint8Array(end);
         grown.set(swap.content);
-        grown.set(chunk, swap.content.byteLength);
+        grown.set(data, at);
         swap.content = grown;
+        cursor = at + data.byteLength;
       },
       close() {
         alive();

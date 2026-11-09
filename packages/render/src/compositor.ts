@@ -20,6 +20,7 @@ import { FrameLoop, type PendingFrame } from "./frame-loop.ts";
 import type { Corners } from "./transitions/code.ts";
 import { VideoReads } from "./reads.ts";
 import { withChannels } from "./plan.ts";
+import { videoPicture, type Picture } from "./picture.ts";
 import { placeholderPicture } from "./placeholder.ts";
 import { SceneLayers } from "./scenes.ts";
 import { SoundJobs } from "./sounds.ts";
@@ -36,14 +37,6 @@ import type {
  * The compositor. It runs in a sandbox on a site of its own, where it can decode, draw and later
  * encode without network or storage. Everything it gets comes from the editor as a message.
  */
-
-interface Picture {
-  readonly width: number;
-  readonly height: number;
-  /** Draws a part of it, in its pixels, on the same pixels of whatever the matrix says. */
-  draw(target: Context2D, x: number, y: number, width: number, height: number): void;
-  close(): void;
-}
 
 /**
  * Errors of the compositor itself go to the editor, which asks people whether to report them. The
@@ -79,6 +72,8 @@ interface VideoFile {
   /** As it shows, for telling which videos are hard to decode. */
   readonly width: number;
   readonly height: number;
+  /** How large the video shows that this file is a smaller copy of, see "file". */
+  readonly standsFor?: { readonly width: number; readonly height: number } | undefined;
 }
 
 /**
@@ -123,9 +118,17 @@ let plan: RenderPlan | undefined;
 /** The plan without what somebody is only trying out. A scene does not start over for that. */
 let settledPlan: RenderPlan | undefined;
 const files = new Map<string, Blob>();
+/** Files that stand in for a video, by id, with how large that video shows, see "file". */
+const standIns = new Map<string, { readonly width: number; readonly height: number }>();
+/** Stand-ins that could not be read, which the editor heard of once. */
+const failedStandIns = new Set<Blob>();
 const arrivals = new FileArrivals();
 const images = new Map<string, Promise<ImageBitmap | undefined>>();
-const videos = new Map<string, Promise<VideoFile | undefined>>();
+/** By id, with the file each was opened from: another file for the id is another video. */
+const videos = new Map<
+  string,
+  { readonly file: Blob; readonly video: Promise<VideoFile | undefined> }
+>();
 const asked = new Set<string>();
 const reads = new VideoReads<VideoSample>();
 
@@ -159,39 +162,71 @@ function imageOf(id: string, file: Blob): Promise<ImageBitmap | undefined> {
   return image;
 }
 
-async function openVideo(id: string, file: Blob): Promise<VideoFile | undefined> {
+/** What a read gets once what it reads was let go of, for another file: no failure of the file. */
+const isLetGo = (error: unknown) => error instanceof Error && error.name === "InputDisposedError";
+
+/**
+ * The editor hears once that a stand-in cannot be read, and sends the video itself: that it cannot
+ * be decoded is not something people need to hear about. A file that another one took the place of
+ * meanwhile, as when people choose full quality, is none of that.
+ */
+function cannotDecode(
+  id: string,
+  file: Blob,
+  standsFor: VideoFile["standsFor"],
+  error?: unknown,
+): void {
+  if (!standsFor) {
+    send({ type: "cannot-decode", id });
+    return;
+  }
+  if (files.get(id) !== file || isLetGo(error) || failedStandIns.has(file)) return;
+  failedStandIns.add(file);
+  send({ type: "stand-in-failed", id });
+}
+
+async function openVideo(
+  id: string,
+  file: Blob,
+  standsFor: VideoFile["standsFor"],
+): Promise<VideoFile | undefined> {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   const track = await input.getPrimaryVideoTrack();
   if (track && (await track.canDecode())) {
     const { displayWidth: width, displayHeight: height } = track;
-    return { sink: new VideoSampleSink(track), input, width, height };
+    return { sink: new VideoSampleSink(track), input, width, height, standsFor };
   }
   input.dispose();
-  send({ type: "cannot-decode", id });
+  cannotDecode(id, file, standsFor);
   return undefined;
 }
 
 function videoOf(id: string, file: Blob): Promise<VideoFile | undefined> {
-  let video = videos.get(id);
-  if (!video) {
-    video = openVideo(id, file).catch(() => {
-      send({ type: "cannot-decode", id });
-      return undefined;
-    });
-    videos.set(id, video);
-  }
+  // What a frame on its way asks for after another file took the place of this one, as a stand-in
+  // does: nothing, or it would stay what the id reads. The next frame reads the new file.
+  if (files.get(id) !== file) return Promise.resolve(undefined);
+  const known = videos.get(id);
+  if (known?.file === file) return known.video;
+  // One of a file before this one, which nothing reads any more.
+  void known?.video.then((video) => video?.input.dispose());
+  // Along with the file it came with: the next file for the id comes with its own.
+  const standsFor = standIns.get(id);
+  const video = openVideo(id, file, standsFor).catch((error: unknown) => {
+    cannotDecode(id, file, standsFor, error);
+    return undefined;
+  });
+  videos.set(id, { file, video });
   return video;
 }
 
 /** Which clip had to start decoding, by id and size only. */
-async function coldClipOf(layer: RenderLayer, id: string, file: Blob): Promise<ColdClip> {
-  const video = await videoOf(id, file);
-  return {
-    layer: layer.id,
-    kind: "video",
-    ...(video && { width: video.width, height: video.height }),
-  };
-}
+const coldClipOf = (layer: RenderLayer, video: VideoFile): ColdClip => ({
+  layer: layer.id,
+  kind: "video",
+  width: video.width,
+  height: video.height,
+  ...(video.standsFor && { standIn: true }),
+});
 
 const imagePicture = (bitmap: ImageBitmap | OffscreenCanvas, close = () => {}): Picture => ({
   width: bitmap.width,
@@ -200,24 +235,6 @@ const imagePicture = (bitmap: ImageBitmap | OffscreenCanvas, close = () => {}): 
     target.drawImage(bitmap, x, y, width, height, x, y, width, height);
   },
   close,
-});
-
-/**
- * What a phone records upright is stored on its side with a note to turn it, and only the sample
- * knows how to read parts of that. Going around it for all the other videos keeps the numbers that
- * reach the canvas the same as for a picture.
- */
-const videoPicture = (sample: VideoSample): Picture => ({
-  width: sample.displayWidth,
-  height: sample.displayHeight,
-  draw(target, x, y, width, height) {
-    if (sample.rotation !== 0 || sample.flip) {
-      sample.draw(target, x, y, width, height, x, y, width, height);
-    } else {
-      target.drawImage(sample.toCanvasImageSource(), x, y, width, height, x, y, width, height);
-    }
-  },
-  close() {},
 });
 
 /** Whatever a scene has last. It runs at its own pace, and frames in between just do not show. */
@@ -242,9 +259,16 @@ async function pictureOf(layer: RenderLayer, frame: PendingFrame): Promise<Pictu
   // Opening the file takes a while, and the playhead does not wait for it.
   if (frame.jumped) frame.givenUp = true;
   if (!video || frame.givenUp) return undefined;
-  const read = await reads.frameAt(layer, source.file, video.sink, seconds);
-  if (read.cold) frame.cold.push(await coldClipOf(layer, source.file, file));
-  return read.frame && videoPicture(read.frame);
+  let read: Awaited<ReturnType<typeof reads.frameAt>>;
+  try {
+    read = await reads.frameAt(layer, source.file, video.sink, seconds);
+  } catch (error) {
+    // A stand-in that cannot be read, such as one that went away, gives way to the video.
+    if (video.standsFor) cannotDecode(source.file, file, video.standsFor, error);
+    throw error;
+  }
+  if (read.cold) frame.cold.push(coldClipOf(layer, video));
+  return read.frame && videoPicture(read.frame, video.standsFor);
 }
 
 /** Gets a clip that starts soon ready, see `FrameLoop`. */
@@ -281,12 +305,17 @@ function releaseFilesExcept(keep: readonly RenderLayer[]): void {
     lastNeeded.delete(id);
     void images.get(id)?.then((bitmap) => bitmap?.close());
     images.delete(id);
-    void videos.get(id)?.then((video) => video?.input.dispose());
+    void videos.get(id)?.video.then((video) => video?.input.dispose());
     videos.delete(id);
   }
   // For seeing how much is held, also from a test.
   document.documentElement.dataset["pictures"] = String(images.size);
   document.documentElement.dataset["videos"] = String(videos.size);
+}
+
+/** For seeing what stands in for videos, also from a test. */
+function showStandIns(): void {
+  document.documentElement.dataset["standIns"] = String(standIns.size);
 }
 
 /** Whether two files are one file of a disk as it was, which reads the same either way. */
@@ -305,7 +334,7 @@ const isSameFile = (a: Blob, b: Blob): boolean =>
 async function forgetRead(id: string): Promise<void> {
   const image = images.get(id);
   images.delete(id);
-  const video = videos.get(id);
+  const video = videos.get(id)?.video;
   videos.delete(id);
   try {
     await reads.forget(id);
@@ -466,8 +495,9 @@ async function paintStill(seconds: number): Promise<void> {
     },
     video: async (layer, id, file) => {
       const video = await videoOf(id, file);
-      const read = video && (await reads.frameAt(layer, id, video.sink, seconds));
-      return read?.frame && videoPicture(read.frame);
+      if (!video) return undefined;
+      const read = await reads.frameAt(layer, id, video.sink, seconds);
+      return read.frame && videoPicture(read.frame, video.standsFor);
     },
     scene: async ({ id }) => {
       const held = await scenes.exactPicture(id);
@@ -763,7 +793,9 @@ function handle(data: ToCompositor): void {
     // Somebody may bring it back, so that the next one gets to ask again.
     asked.delete(data.id);
     // It went away after it came, as a file of a project folder can: what was read of it goes too.
+    standIns.delete(data.id);
     if (files.delete(data.id)) void forgetRead(data.id);
+    showStandIns();
     arrivals.settle(data.id, undefined);
     return;
   }
@@ -777,15 +809,23 @@ function handle(data: ToCompositor): void {
     loop.seek(data.seconds, data.jump);
   } else {
     const before = files.get(data.id);
+    const wasStandIn = standIns.get(data.id);
+    const { standIn } = data;
+    const isOtherSize =
+      wasStandIn?.width !== standIn?.width || wasStandIn?.height !== standIn?.height;
+    if (standIn) standIns.set(data.id, { width: standIn.width, height: standIn.height });
+    else standIns.delete(data.id);
     // The same content in another file, as after the file changed on the disk: the old one cannot
     // be read any more. The same file of a disk again, as when it is sent twice, is nothing new.
-    if (before && !isSameFile(before, data.file)) {
+    // A stand-in and its video are other files, and the picture goes on at the same moment.
+    if (before && (!isSameFile(before, data.file) || isOtherSize)) {
       files.set(data.id, data.file);
       void forgetRead(data.id);
     } else if (!before) {
       files.set(data.id, data.file);
     }
     arrivals.settle(data.id, data.file);
+    showStandIns();
   }
   // It goes where `still` says, and a scene at the start of the plan is not worth opening for nothing.
   if (loop.exporting) return;
