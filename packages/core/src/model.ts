@@ -48,6 +48,9 @@ export interface EffectState {
   readonly enabled?: boolean;
   /** Effects have an order, a map of them does not. */
   readonly order?: number;
+  /** When it works, from the start of the clip, see the project format. Each is a field of its own. */
+  readonly start?: string;
+  readonly end?: string;
 }
 
 /** An effect as files have it. */
@@ -81,10 +84,12 @@ export function effectsOf(clip: Pick<ClipState, "effects">): readonly ClipEffect
       ([a, first], [b, second]) =>
         (first.order ?? 0) - (second.order ?? 0) || (a < b ? -1 : a > b ? 1 : 0),
     )
-    .map(([id, { type, enabled }]): ClipEffect => ({
+    .map(([id, { type, enabled, start, end }]): ClipEffect => ({
       id,
       type: type as string,
       ...(enabled === undefined ? {} : { enabled }),
+      ...(typeof start === "string" ? { start } : {}),
+      ...(typeof end === "string" ? { end } : {}),
     }));
   listed.set(effects, list);
   return list;
@@ -96,9 +101,15 @@ export function effectStates(
 ): Readonly<Record<string, EffectState>> | undefined {
   if (!effects || effects.length === 0) return undefined;
   return Object.fromEntries(
-    effects.map(({ id, type, enabled }, order) => [
+    effects.map(({ id, type, enabled, start, end }, order) => [
       id,
-      { type, ...(enabled === undefined ? {} : { enabled }), order },
+      {
+        type,
+        ...(enabled === undefined ? {} : { enabled }),
+        order,
+        ...(start === undefined ? {} : { start }),
+        ...(end === undefined ? {} : { end }),
+      },
     ]),
   );
 }

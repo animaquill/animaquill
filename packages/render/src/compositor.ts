@@ -9,6 +9,7 @@ import {
   boxOf,
   clockOf,
   effectValuesAt,
+  effectWorksAt,
   fitIn,
   layerMatrix,
   multiply,
@@ -428,7 +429,7 @@ const effects = new EffectRunner();
 function effectStepsAt(layer: RenderLayer, seconds: number): readonly EffectStep[] {
   if (!layer.effects) return [];
   return layer.effects.flatMap((effect): EffectStep[] => {
-    if (effect.missing) return [];
+    if (effect.missing || !effectWorksAt(effect, seconds)) return [];
     const { values, idle } = effectValuesAt(layer, effect, seconds);
     return idle ? [] : [{ effect, values }];
   });

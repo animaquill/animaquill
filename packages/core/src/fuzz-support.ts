@@ -404,13 +404,13 @@ export function randomCommand(
 }
 
 /** What a join or a transition is, picked from what comes with the editor and what does not. */
-export function randomTransition(random: Random): Record<string, string> {
+export function randomTransition(random: Random): Record<string, unknown> {
   return (
-    random.pick([
+    random.pick<Record<string, unknown>>([
       { type: "fade" },
-      { type: "dip", variant: random.pick(["black", "white"]) as string },
-      { type: "wipe", variant: random.pick(["left", "up"]) as string },
-      { type: "push", variant: random.pick(["right", "down"]) as string },
+      { type: "dip", values: { color: random.pick(["#000000", "#ffffff"]) as string } },
+      { type: "wipe", values: { direction: random.pick(["left", "up"]) as string } },
+      { type: "push", values: { direction: random.pick(["right", "down"]) as string } },
       { type: "plugin.star" },
     ]) ?? { type: "fade" }
   );

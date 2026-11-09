@@ -18,6 +18,7 @@ import {
   PropertyPath,
   PropertyValue,
   StringRef,
+  Value,
   checkProperty,
   withoutRetired,
 } from "./values.ts";
@@ -34,6 +35,14 @@ const EffectFields = z.strictObject({
   type: ExtensionName,
   /** Off, it does nothing, and keeps its place and its values. */
   enabled: z.boolean().optional(),
+  /**
+   * When it works, in seconds from the start of the clip on the timeline: from `start` up to
+   * `end`. Without `start` it works from the start of the clip, without `end` up to its end, so
+   * that it goes along when the clip gets longer. Only what is within the clip counts, and from
+   * `start` to an `end` that is not after it, it does nothing.
+   */
+  start: Time.optional(),
+  end: Time.optional(),
 });
 
 export const Effect = z.preprocess(
@@ -139,11 +148,14 @@ const transitionFields = {
   /** One of a library. */
   library: Id.optional(),
   resource: Id.optional(),
-  /** Which one of its kinds, for one that has kinds. */
-  variant: Id.optional(),
   duration: Duration,
   /** Without it the speed is even. */
   curve: TransitionCurve.optional(),
+  /**
+   * What it sets for the properties that it says it has, such as which way a wipe goes, each one
+   * plain value: none can have keys. What it leaves out is the default.
+   */
+  values: z.record(PropertyPath, Value).overwrite(sortKeys).optional(),
 };
 
 /**
@@ -166,8 +178,17 @@ const hasOneReference = (transition: {
 
 const ONE_REFERENCE = "转场要写 type、transition，或者同时写 library 和 resource";
 
+/**
+ * What transitions had once: kinds of one by name, such as which way a wipe goes, which are values
+ * of its properties now (2026-11-09). Reading drops it, and what it said is the default again.
+ */
+const RETIRED_TRANSITION_FIELDS = ["variant"];
+
 /** At the start or the end of a clip, from nothing to the clip or from the clip to nothing. */
-export const Transition = z.strictObject(transitionFields).refine(hasOneReference, ONE_REFERENCE);
+export const Transition = z.preprocess(
+  without(RETIRED_TRANSITION_FIELDS),
+  z.strictObject(transitionFields).refine(hasOneReference, ONE_REFERENCE),
+);
 
 /** What a clip does when a section gets longer, for example because English takes more time. */
 const SectionFit = z.enum(["stretch", "hold", "span"]);
@@ -245,16 +266,19 @@ const Clips = z
   .overwrite((clips) => sortByTime(clips, (clip) => clip.start));
 
 /** On the cut between two clips that follow each other on its track, from the first to the second. */
-export const Join = z
-  .strictObject({
-    id: Id,
-    from: Id,
-    to: Id,
-    ...transitionFields,
-    /** Where it is around the cut. Without it, half before and half after. */
-    align: z.enum(JOIN_ALIGNS).optional(),
-  })
-  .refine(hasOneReference, ONE_REFERENCE);
+export const Join = z.preprocess(
+  without(RETIRED_TRANSITION_FIELDS),
+  z
+    .strictObject({
+      id: Id,
+      from: Id,
+      to: Id,
+      ...transitionFields,
+      /** Where it is around the cut. Without it, half before and half after. */
+      align: z.enum(JOIN_ALIGNS).optional(),
+    })
+    .refine(hasOneReference, ONE_REFERENCE),
+);
 
 const Joins = z.array(Join).overwrite(sortById);
 

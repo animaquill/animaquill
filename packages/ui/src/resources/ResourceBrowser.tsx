@@ -67,6 +67,20 @@ export interface ResourceBrowserProps<T> {
   readonly onDragStart?: (resource: Resource<T>, event: DragEvent<HTMLElement>) => void;
   /** Whether it was dropped somewhere that took it. */
   readonly onDragEnd?: (resource: Resource<T>, dropped: boolean) => void;
+  /**
+   * What a click just did, or why it did nothing, for a while: on the resource it is about, and in
+   * the line under the list, where screen readers hear it. `at` tells two of the same apart.
+   */
+  readonly notice?: Notice | undefined;
+}
+
+/** Something that a tab says about a resource for a moment, see `ResourceBrowserProps.notice`. */
+export interface Notice {
+  readonly resource: string;
+  readonly text: string;
+  /** Short, on the resource itself, such as how many clips it went on. Without it, only below. */
+  readonly badge?: string;
+  readonly at: number;
 }
 
 interface Entry<T> {
@@ -109,7 +123,7 @@ function verticalNeighbor(options: readonly HTMLElement[], from: number, down: b
 export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
   const { tab, label, resources, types, firstType, defaultGrouping, typeName } = props;
   const { unavailable, isCurrent, Icon, onActivate, canDrag, onDragStart, onDragEnd } = props;
-  const { selected, onSelect, revealed, empty } = props;
+  const { selected, onSelect, revealed, empty, notice } = props;
   const { t } = useTranslation();
   const workbench = useWorkbench();
   const { resourceHabits: habits } = workbench;
@@ -405,6 +419,11 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                           <Icon resource={resource} playing={key === pointed} />
                         </div>
                         <span className={styles.name}>{resource.name}</span>
+                        {notice?.badge !== undefined && notice.resource === resource.id && (
+                          <span key={notice.at} className={styles.badge} aria-hidden>
+                            {notice.badge}
+                          </span>
+                        )}
                         {off && (
                           <span id={reasonId} className={styles.hidden}>
                             {off.reason}
@@ -426,8 +445,8 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
           </p>
         )}
       </section>
-      <p className={styles.status} role="status">
-        {why ? why.reason : ""}
+      <p className={styles.status} role="status" data-notice={notice ? "" : undefined}>
+        {notice ? notice.text : why ? why.reason : ""}
       </p>
       {menu && (
         <PopupMenu

@@ -1,8 +1,10 @@
 import {
   BUILT_IN_PROPERTIES,
   CLIP_VISUAL,
+  ZERO,
   add,
   builtInEffect,
+  compare,
   effectOfPath,
   effectPath,
   findEffect,
@@ -85,10 +87,9 @@ export type LayerSource =
 export interface TransitionImplementation {
   readonly kind: "built-in";
   readonly type: string;
-  readonly variant?: string;
   /**
-   * What its code gets as it is: those of the transition, with those of the variant over them.
-   * Without it, none.
+   * What its code gets as it is: a value for each of its properties, as the transition sets it or
+   * else the default. Without it, none.
    */
   readonly values?: TransitionValues;
 }
@@ -136,6 +137,12 @@ export interface RenderJoin extends PlannedTransition {
 export interface PlannedEffect {
   readonly id: string;
   readonly type: string;
+  /**
+   * Seconds on the timeline when it works, from `from` up to `to`, within its clip. Without them it
+   * works for as long as the layer shows: also past its clip, where a join has it go on.
+   */
+  readonly from?: number;
+  readonly to?: number;
   /**
    * This editor cannot do it. The preview goes on without it, and an export stops wherever the
    * layer shows, so that no file says something else than the project.
@@ -279,12 +286,42 @@ const NO_PLANNED: readonly PlannedEffect[] = [];
 
 /** The effects of a clip that are on, as a compositor draws them. Only pictures have them so far. */
 export function plannedEffects(clip: ClipState): readonly PlannedEffect[] {
-  const planned = effectsOf(clip).flatMap(({ id, type, enabled }): PlannedEffect[] => {
+  const planned = effectsOf(clip).flatMap((effect): PlannedEffect[] => {
+    const { id, type, enabled } = effect;
     if (enabled === false) return [];
     const found = findEffect(type, "picture");
-    return [found.kind === "built-in" ? { id, type } : { id, type, missing: true }];
+    const range = effectRangeOf(clip, effect);
+    if (range === "nowhere") return [];
+    return [
+      found.kind === "built-in" ? { id, type, ...range } : { id, type, ...range, missing: true },
+    ];
   });
   return planned.length > 0 ? planned : NO_PLANNED;
+}
+
+/**
+ * When an effect of a clip works, in seconds on the timeline, as far as that is within the clip: see
+ * `PlannedEffect`. Nothing for what works as long as the layer shows, `nowhere` for one that does not
+ * work at all.
+ */
+function effectRangeOf(
+  clip: ClipState,
+  { start, end }: { readonly start?: string | undefined; readonly end?: string | undefined },
+): { readonly from?: number; readonly to?: number } | "nowhere" {
+  if (start === undefined && end === undefined) return {};
+  const length = parseTime(clip.duration);
+  const within = (time: string) => {
+    const at = parseTime(time);
+    return compare(at, length) > 0 ? length : at;
+  };
+  const from = start === undefined ? ZERO : within(start);
+  const to = end === undefined ? length : within(end);
+  if (compare(from, to) >= 0) return "nowhere";
+  const begin = clipStart(clip);
+  return {
+    ...(start === undefined ? {} : { from: toSeconds(add(begin, from)) }),
+    ...(end === undefined ? {} : { to: toSeconds(add(begin, to)) }),
+  };
 }
 
 /** The one value of what cannot have keys: only a hand-written project can have them anyway. */
@@ -330,10 +367,10 @@ function implementationOf(
   if (found.kind !== "built-in" || !isSupported(found, "picture", use)) {
     return { how: FADE, missing: true };
   }
-  const { type, variant, values, spec } = found;
+  const { type, values, spec } = found;
   const given = Object.keys(values).length > 0 ? { values } : {};
   return {
-    how: { kind: "built-in", type, ...(variant === undefined ? {} : { variant }), ...given },
+    how: { kind: "built-in", type, ...given },
     ...(spec.overshoot && { overshoot: true as const }),
   };
 }
@@ -560,7 +597,7 @@ function sameJoin(a: RenderJoin, b: RenderJoin): boolean {
     a.missing === b.missing &&
     a.overshoot === b.overshoot &&
     a.how.type === b.how.type &&
-    a.how.variant === b.how.variant &&
+    JSON.stringify(a.how.values) === JSON.stringify(b.how.values) &&
     JSON.stringify(a.curve) === JSON.stringify(b.curve)
   );
 }

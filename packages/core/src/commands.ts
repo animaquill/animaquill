@@ -36,6 +36,7 @@ import {
   clearSpans,
   clipPath,
   extendToFit,
+  fitEffects,
   fitTransitions,
   followJoins,
   joinPath,
@@ -63,7 +64,15 @@ import {
   removeEffects,
   updateEffect,
 } from "./effect-edits.ts";
-import { JoinAdd, JoinRemove, JoinUpdate, addJoin, removeJoins, updateJoin } from "./join-edits.ts";
+import {
+  JoinAdd,
+  JoinRemove,
+  JoinUpdate,
+  addJoin,
+  checkValues,
+  removeJoins,
+  updateJoin,
+} from "./join-edits.ts";
 import { joinedEndsOf, takenAt, type JoinedEnds } from "./joins.ts";
 import {
   clipEnd,
@@ -222,6 +231,7 @@ function checkTransitions(
       const words = kind === "caption" ? "这一版的编辑器还不能显示字幕的转场" : undefined;
       fail("transition-unsupported", words ?? describeUnsupported(found.type, media, edge));
     }
+    checkValues(found.spec, found.type, transition.values);
   }
   const total = edgesLength(next);
   if (compare(total, parseTime(next.duration)) > 0 && compare(total, edgesLength(current)) > 0) {
@@ -750,6 +760,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
       if (changes.duration !== undefined) {
         const moved = startStays ? "end" : "start";
         fitTransitions(draft, timeline, updated, parseTime(updated.duration), moved, stays);
+        // What the clip shows moves along with its start here, and so do its effects.
+        fitEffects(draft, timeline, clip, ZERO, parseTime(updated.duration));
       }
       if (!moves) return undefined;
       extendToFit(draft, timeline, clipEnd(updated));
@@ -783,7 +795,9 @@ export const COMMANDS: readonly CommandDefinition[] = [
         const wanted = params[edge];
         if (wanted === null) delete next[edge];
         else if (wanted !== undefined) {
-          next[edge] = wanted;
+          // Nothing set is what it is without saying so.
+          const { values, ...rest } = wanted;
+          next[edge] = values && Object.keys(values).length > 0 ? wanted : rest;
           setting.push(edge);
         }
       }

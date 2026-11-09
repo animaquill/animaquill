@@ -12,11 +12,9 @@ export function transitionName(
   use: TransitionUse,
   media: TransitionMedia,
 ): string {
-  const { type, variant } = transition;
+  const { type } = transition;
   if (type === undefined) return transition.transition ?? transition.resource ?? "";
-  const kind = variant === undefined ? type : `${type}.${variant}`;
-  const fallback = variant === undefined ? type : `${type} ${variant}`;
   // A name with a dot in it comes from a plugin, and would not be a key of the texts.
-  if (type.includes(".")) return fallback;
-  return textOf(t, `transition.names.${media}.${kind}.${use}`, fallback);
+  if (type.includes(".")) return type;
+  return textOf(t, `transition.names.${media}.${type}.${use}`, type);
 }

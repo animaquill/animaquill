@@ -92,7 +92,7 @@
           },
           "effects": [
             { "id": "fx_crop", "type": "crop" },
-            { "id": "fx_blur", "type": "blur" },
+            { "id": "fx_blur", "type": "blur", "start": "1", "end": "6.5" },
             { "id": "fx_grade", "type": "plugin.film-grade", "enabled": false }
           ]
         },
@@ -133,8 +133,8 @@
           "to": "clip_card",
           "library": "lib_7f3a",
           "resource": "ink-wipe",
-          "variant": "left",
           "duration": "0.8",
+          "values": { "direction": "left" },
           "align": "before"
         }
       ]

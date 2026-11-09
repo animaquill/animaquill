@@ -2,6 +2,7 @@ import {
   ZERO,
   add,
   compare,
+  effectOfPath,
   formatTime,
   isAnimation,
   joinParts,
@@ -20,6 +21,7 @@ import {
   clipEnd,
   clipOffset,
   clipStart,
+  effectsOf,
   entryOf,
   orderedSections,
   timelineLength,
@@ -199,6 +201,72 @@ export function forEachOverride(
   }
 }
 
+/** Takes effects off a clip, with all they took, also in versions. */
+export function dropEffects(
+  draft: Draft,
+  timeline: string,
+  clip: ClipState,
+  effects: readonly string[],
+): void {
+  const gone = new Set(effects);
+  const isGone = (path: string) => {
+    const of = effectOfPath(path);
+    return of !== undefined && gone.has(of.effect);
+  };
+  for (const id of gone) draft.delete([...clipPath(timeline, clip.id), "effects", id]);
+  for (const path of Object.keys(clip.properties ?? {})) {
+    if (isGone(path)) draft.delete([...clipPath(timeline, clip.id), "properties", path]);
+  }
+  forEachOverride(draft, timeline, clip.id, (changes, path) => {
+    for (const property of Object.keys(changes.properties ?? {})) {
+      if (isGone(property)) draft.delete([...path, "properties", property]);
+    }
+  });
+}
+
+/**
+ * When the effects of a clip work, after its start moved by `shift` (later for more than zero) and
+ * it became `length` long: they stay where they were on the timeline, as far as that is within the
+ * clip, the way keys stay with what the clip shows. What works from the start or up to the end of
+ * the clip without saying when goes along with it. One that nothing is left of works nowhere: at a
+ * trim it stays, with no time at the edge where it went, so that people still find it and can drag
+ * it out again; at a cut (`drop`) it goes from the part that it is not in, with what it takes.
+ */
+export function fitEffects(
+  draft: Draft,
+  timeline: string,
+  id: string,
+  shift: Rational,
+  length: Rational,
+  drop = false,
+): void {
+  const clip = entryOf(timelineOf(draft, timeline).clips, id);
+  if (!clip) return;
+  const gone: string[] = [];
+  const within = (time: Rational) =>
+    compare(time, ZERO) < 0 ? ZERO : compare(time, length) > 0 ? length : time;
+  for (const { id: effect, start, end } of effectsOf(clip)) {
+    if (start === undefined && end === undefined) continue;
+    const from = start === undefined ? undefined : within(subtract(parseTime(start), shift));
+    const to = end === undefined ? undefined : within(subtract(parseTime(end), shift));
+    if (compare(from ?? ZERO, to ?? length) >= 0 && drop) {
+      gone.push(effect);
+      continue;
+    }
+    const path = [...clipPath(timeline, id), "effects", effect];
+    const next = {
+      start: from === undefined ? undefined : formatTime(from),
+      end: to === undefined ? undefined : formatTime(to),
+    };
+    for (const field of ["start", "end"] as const) {
+      const value = next[field];
+      if (value === undefined || value === entryOf(clip.effects, effect)?.[field]) continue;
+      draft.set([...path, field], value);
+    }
+  }
+  if (gone.length > 0) dropEffects(draft, timeline, clip, gone);
+}
+
 function setOffset(draft: Draft, timeline: string, clip: ClipState, offset: Rational): void {
   const path = [...clipPath(timeline, clip.id), "offset"];
   if (compare(offset, ZERO) !== 0) draft.set(path, formatTime(offset));
@@ -333,6 +401,7 @@ export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: 
   const duration = formatTime(length);
   if (duration !== clip.duration) draft.set([...path, "duration"], duration);
   fitTransitions(draft, timeline, clip, length, startStays ? "end" : "start", joined);
+  fitEffects(draft, timeline, clip.id, moved, length);
 }
 
 /** Whether two clips are one after the other on a track, exactly. */
@@ -434,6 +503,9 @@ export function splitClip(
   if (clip.exit !== undefined) draft.delete([...path, "exit"]);
   const { exit: _exit, ...left } = clip;
   fitTransitions(draft, timeline, left, leftLength, "end", enter && { enter });
+  // Each part keeps the effects that work in it, for as much of it as they do.
+  fitEffects(draft, timeline, clip.id, ZERO, leftLength, true);
+  fitEffects(draft, timeline, rightId, leftLength, rightLength, true);
 }
 
 /** Takes away the part of a clip under a span. What comes after a cut is not looked at again. */

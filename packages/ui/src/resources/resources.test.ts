@@ -153,19 +153,18 @@ describe("the transitions that come with the editor", () => {
 
   it("are listed once for each place they go, each kind on its own, with their names there", () => {
     const transitions = builtInTransitions(t);
-    // fade, two dips and four wipes and pushes, in, between and out.
-    expect(transitions).toHaveLength(11 * 3);
+    // One of each kind, in, between and out: which way and what color are its properties.
+    expect(transitions).toHaveLength(4 * 3);
     expect(new Set(transitions.map(({ id }) => id)).size).toBe(transitions.length);
     const names = (type: string) =>
       transitions.filter((item) => item.type === type).map(({ name }) => name);
-    expect(names("transition.enter")).toContain("淡入");
-    expect(names("transition.join")).toContain("叠化");
-    expect(names("transition.exit")).toContain("向左推出");
-    expect(transitions.find(({ name }) => name === "从左推入")?.data.pick.name).toEqual({
+    expect(names("transition.enter")).toEqual(["淡入", "闪入", "擦入", "推入"]);
+    expect(names("transition.join")).toEqual(["叠化", "闪色", "擦除", "推移"]);
+    expect(names("transition.exit")).toEqual(["淡出", "闪出", "擦出", "推出"]);
+    expect(transitions.find(({ name }) => name === "推入")?.data.pick.name).toEqual({
       type: "push",
-      variant: "right",
     });
-    expect(transitions.find(({ name }) => name === "闪黑")?.tags).toEqual(["柔和", "纯色"]);
+    expect(transitions.find(({ name }) => name === "闪色")?.tags).toEqual(["柔和", "纯色"]);
   });
 });
 

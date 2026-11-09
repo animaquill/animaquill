@@ -1,13 +1,18 @@
 import {
-  BUILT_IN_TRANSITIONS,
   JOIN_ALIGNS,
+  builtInTransition,
   formatTime,
   mediaOfTrack,
   parseTime,
+  propertiesOf,
+  transitionValuesOf,
   type JoinAlign,
+  type PropertySpec,
   type SpeedCurve,
   type Transition,
+  type TransitionMedia,
   type TransitionRef,
+  type Value,
 } from "@animaquill/schema";
 import {
   useRef,
@@ -37,6 +42,8 @@ import {
   type TimelineModel,
 } from "../timeline/model.ts";
 import { transitionName } from "../timeline/transition-names.ts";
+import { CONTROLS } from "./controls.tsx";
+import type { PropertyRow } from "./inspect.ts";
 import { textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
 import {
@@ -62,11 +69,8 @@ function whyNot(model: TimelineModel, box: ClipBox, edge: Edge) {
 }
 
 /** Whether a speed curve goes past 0 and 1 as it is for a transition, see `progressAt`. */
-function overshoots(transition: TransitionRef, media: "picture" | "sound"): boolean {
-  const { type } = transition;
-  const own = BUILT_IN_TRANSITIONS[media];
-  return type !== undefined && Object.hasOwn(own, type) && own[type]?.overshoot === true;
-}
+const overshoots = (transition: TransitionRef, media: TransitionMedia): boolean =>
+  builtInTransition(media, transition.type)?.overshoot === true;
 
 /**
  * Takes the transition away, as Delete on the timeline does. Another one takes its place from the
@@ -309,14 +313,131 @@ function SpeedRows(props: {
   );
 }
 
+/** What a transition sets for its properties, as files have it, or nothing for nothing. */
+type GivenValues = Readonly<Record<string, Value>> | undefined;
+
+/** A property of a transition, as a row of the controls that every property has. */
+function rowOf(spec: PropertySpec, value: Value | undefined): PropertyRow {
+  return {
+    spec,
+    path: spec.path,
+    stored: value,
+    value,
+    automatic: false,
+    animated: false,
+    keyTime: undefined,
+    previousKey: undefined,
+    nextKey: undefined,
+    tried: false,
+    changedElsewhere: false,
+  };
+}
+
+/**
+ * What a transition says that people can set, such as which way a wipe goes: one value for the
+ * whole of it, without keys. A choice of a few is a row of buttons, and anything else is the control
+ * of its kind. A change is a step right away. What equals the default is left out of the project.
+ */
+function ValueRows(props: {
+  readonly media: TransitionMedia;
+  readonly transition: TransitionRef;
+  readonly readOnly: boolean;
+  readonly onCommit: (values: GivenValues) => void;
+}) {
+  const { media, transition, readOnly, onCommit } = props;
+  const { t } = useTranslation();
+  // What a control shows while people pick or drag, until they let go: nothing is tried first.
+  const [shown, setShown] = useState<{ readonly path: string; readonly value: Value }>();
+  const spec = builtInTransition(media, transition.type);
+  const properties = spec ? propertiesOf(spec) : [];
+  if (!spec || properties.length === 0) return null;
+  const values = transitionValuesOf(spec, transition.values);
+  const given = (transition.values ?? {}) as Readonly<Record<string, Value>>;
+  const commit = (property: PropertySpec, value: Value) => {
+    setShown(undefined);
+    if (JSON.stringify(value) === JSON.stringify(values[property.path])) return;
+    const { [property.path]: _was, ...rest } = given;
+    const next = value === property.default ? rest : { ...rest, [property.path]: value };
+    onCommit(Object.keys(next).length > 0 ? next : undefined);
+  };
+  const nameOf = (property: PropertySpec) =>
+    textOf(t, `transition.properties.${property.path}.name`, property.path);
+  const optionName = (property: PropertySpec, option: string) =>
+    textOf(t, `transition.properties.${property.path}.options.${option}`, option);
+  return (
+    <>
+      {properties.map((property) => {
+        const label = nameOf(property);
+        const value = values[property.path];
+        if (property.type === "choice" && (property.options?.length ?? 0) <= 4) {
+          return (
+            <div
+              key={property.path}
+              className={styles.row}
+              role="radiogroup"
+              aria-label={label}
+              data-transition-value={property.path}
+            >
+              <span className={styles.name}>{label}</span>
+              <div className={styles.presets}>
+                {property.options?.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="radio"
+                    className={styles.preset}
+                    aria-checked={value === option}
+                    aria-pressed={value === option}
+                    disabled={readOnly}
+                    onClick={() => commit(property, option)}
+                  >
+                    {optionName(property, option)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        const Control = CONTROLS[property.type];
+        if (!Control) return null;
+        const current = shown?.path === property.path ? shown.value : value;
+        return (
+          <div
+            key={property.path}
+            className={styles.row}
+            role="group"
+            aria-label={label}
+            data-transition-value={property.path}
+          >
+            <span className={styles.name}>{label}</span>
+            <div className={styles.valueCell}>
+              <Control
+                row={rowOf(property, current)}
+                label={label}
+                readOnly={readOnly}
+                // Nothing is tried first: a transition has no keys, and a change is a step.
+                onPreview={(next) => setShown({ path: property.path, value: next })}
+                onCommit={(next) => commit(property, next)}
+                onCancel={() => setShown(undefined)}
+                format={(option) => optionName(property, String(option))}
+              />
+            </div>
+          </div>
+        );
+      })}
+      <p className={styles.transitionHint}>{t("transition.valuesHint")}</p>
+    </>
+  );
+}
+
 /** The curve as a transition writes it: four plain numbers, or none for an even speed. */
 const writtenAs = (curve: SpeedCurve | undefined): [number, number, number, number] | undefined =>
   curve ? [curve[0], curve[1], curve[2], curve[3]] : undefined;
 
 /**
- * What a selected transition is: how long it takes and how it gets along, which is all people set,
- * and what it is, which can be another one that comes with the editor. It has no keys, and a change
- * is a step right away, as with trimming: nothing to try first.
+ * What a selected transition is: how long it takes and how it gets along, and what it says people
+ * can set for it, such as which way it goes. It has no keys, and a change is a step right away, as
+ * with trimming: nothing to try first. Another one takes its place from the transitions tab.
  */
 export function TransitionProperties({ choice }: { choice: TransitionChoice }) {
   return isJoinChoice(choice) ? (
@@ -388,6 +509,15 @@ function EdgeProperties({ clip, edge }: { readonly clip: string; readonly edge: 
           overshoot={overshoots(transition, media)}
           readOnly={readOnly}
           onCommit={(curve) => change(withCurve(curve))}
+        />
+        <ValueRows
+          media={media}
+          transition={transition}
+          readOnly={readOnly}
+          onCommit={(values) => {
+            const { values: _values, ...rest } = transition;
+            change(values ? { ...rest, values } : rest);
+          }}
         />
       </div>
     </section>
@@ -480,6 +610,12 @@ function JoinProperties({ join: id }: { readonly join: string }) {
           overshoot={overshoots(transition, media)}
           readOnly={readOnly}
           onCommit={(curve) => update({ curve: writtenAs(curve) ?? null })}
+        />
+        <ValueRows
+          media={media}
+          transition={transition}
+          readOnly={readOnly}
+          onCommit={(values) => update({ values: values ?? null })}
         />
       </div>
     </section>

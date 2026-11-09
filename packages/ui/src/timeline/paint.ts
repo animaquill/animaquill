@@ -1,5 +1,5 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
-import { bezierProgress, effectsOf, type ClipState } from "@animaquill/core";
+import { bezierProgress, type ClipState } from "@animaquill/core";
 import type { Transition, TransitionRef, TransitionUse } from "@animaquill/schema";
 import {
   EXPANDER_SIZE,
@@ -19,6 +19,7 @@ import {
   type Row,
   type TimelineModel,
 } from "./model.ts";
+import { effectBandOf } from "./effect-band.ts";
 import { paintRuler } from "./ruler.ts";
 import type { Preview } from "./gestures.ts";
 import { StagePainter, readTheme, type Theme } from "./stage-painter.ts";
@@ -30,8 +31,11 @@ const LABEL_PADDING = 6;
 const LABEL_PLATE_PADDING = 3;
 const EDGE_HANDLE = 6;
 /** The mark of a clip with effects. */
-const EFFECTS_MARK_WIDTH = 16;
-const EFFECTS_MARK_HEIGHT = 12;
+/** The band of effects along the bottom of a clip, and a thin one on a low track. */
+const EFFECT_BAND_HEIGHT = 13;
+const EFFECT_BAND_THIN = 4;
+const EFFECT_BAND_MIN_CLIP = 34;
+const EFFECT_BAND_LABEL_MIN = 20;
 const TRANSITION_HANDLE = 8;
 /** Over what fades, darker the less of the clip shows, as the line says. */
 const FADE_SHADE = "#00000066";
@@ -55,6 +59,19 @@ function readableOn(color: string): string {
   const value = Number.parseInt(color.slice(1, 7), 16);
   const [red, green, blue] = [value >> 16, (value >> 8) & 255, value & 255];
   return red * 0.299 + green * 0.587 + blue * 0.114 > 150 ? "#000000" : "#ffffff";
+}
+
+/** Text cut short with an ellipsis to fit a width, as the canvas measures it. */
+function fitText(context: CanvasRenderingContext2D, text: string, width: number): string {
+  if (context.measureText(text).width <= width) return text;
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (context.measureText(`${text.slice(0, middle)}…`).width <= width) low = middle;
+    else high = middle - 1;
+  }
+  return low > 0 ? `${text.slice(0, low)}…` : "";
 }
 
 export type ClipLabel = (box: ClipBox) => string;
@@ -100,6 +117,8 @@ export class TimelinePainter extends StagePainter {
   readonly #editor: TimelineEditor;
   readonly #labelOf: ClipLabel;
   readonly #transitionLabelOf: TransitionLabel;
+  /** What people call effects of these types, together, as the band of a clip says it. */
+  readonly #effectNamesOf: (types: readonly string[]) => string;
   readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
   readonly #stripOf: (clip: ClipState) => ClipStrip | undefined;
   readonly #hasFailed: (clip: ClipState) => boolean;
@@ -116,12 +135,14 @@ export class TimelinePainter extends StagePainter {
     stripOf: (clip: ClipState) => ClipStrip | undefined,
     hasFailed: (clip: ClipState) => boolean,
     transitionLabelOf: TransitionLabel,
+    effectNamesOf: (types: readonly string[]) => string,
     below?: BelowPainter,
   ) {
     super(canvas);
     this.#editor = editor;
     this.#labelOf = labelOf;
     this.#transitionLabelOf = transitionLabelOf;
+    this.#effectNamesOf = effectNamesOf;
     this.#peaksOf = peaksOf;
     this.#stripOf = stripOf;
     this.#hasFailed = hasFailed;
@@ -292,8 +313,9 @@ export class TimelinePainter extends StagePainter {
       this.#paintLabel(box, left, top, width, height, fill, entering);
     }
     this.#paintTransitions(box, look, edges, { left, right, top, height, width });
+    this.#paintEffectsBand(box, look, { left, right, top, height, width }, expander);
     if (expander !== undefined) this.#paintExpander(box, expander, top + height, fill);
-    this.#paintEffectsMark(box, { right, top, height, width }, expander);
+    this.#paintFlash(box, { left, top, height, width });
     // Too narrow for words it should still show, and on any clip it stays out of the way.
     if (this.#hasFailed(box.clip)) {
       context.fillStyle = this.#theme.failed;
@@ -657,32 +679,76 @@ export class TimelinePainter extends StagePainter {
   }
 
   /**
-   * Says that a clip has effects: a small `fx` at its bottom right, dimmed when all of them are off.
-   * A clip too narrow for it goes without, as it does without its name.
+   * Says that a clip has effects, and where they work: a colored band along its bottom over that
+   * much of it, with their names on it where there is room, dimmed when all of them are off. A
+   * low track gets a thin band without names. The button at the bottom left goes over it, and the
+   * names start after that.
    */
-  #paintEffectsMark(
+  #paintEffectsBand(
     box: ClipBox,
-    { right, top, height, width }: { right: number; top: number; height: number; width: number },
+    look: ClipLook,
+    area: { left: number; right: number; top: number; height: number; width: number },
     expander: number | undefined,
   ): void {
-    const effects = effectsOf(box.clip);
-    if (effects.length === 0 || width < EFFECTS_MARK_WIDTH + 6 || height < 14) return;
+    const band = effectBandOf(box.clip);
+    if (!band || band.spans.length === 0) return;
+    const editor = this.#editor;
     const { context } = this;
-    const x = right - EFFECTS_MARK_WIDTH - 3;
-    // The button at the bottom left comes first.
-    if (expander !== undefined && expander + EXPANDER_SIZE + 2 > x) return;
-    const y = top + height - EFFECTS_MARK_HEIGHT - 3;
+    const { left, right, top, height, width } = area;
+    const thick = height >= EFFECT_BAND_MIN_CLIP;
+    const size = thick ? EFFECT_BAND_HEIGHT : EFFECT_BAND_THIN;
+    const y = top + height - size;
     context.save();
-    context.globalAlpha *= effects.some(({ enabled }) => enabled !== false) ? 1 : 0.5;
-    context.fillStyle = "#000000b3";
     context.beginPath();
-    context.roundRect(x, y, EFFECTS_MARK_WIDTH, EFFECTS_MARK_HEIGHT, 3);
-    context.fill();
+    context.roundRect(left, top, width, height, CLIP_RADIUS);
+    context.clip();
+    context.globalAlpha *= band.off ? 0.4 : 1;
+    context.fillStyle = this.#theme.effect;
+    let widest: { from: number; to: number } | undefined;
+    for (const [from, to] of band.spans) {
+      const x = Math.max(this.sharp(editor.xAt(look.start + from)), left);
+      const end = Math.min(this.sharp(editor.xAt(look.start + to)), right);
+      if (end <= x) continue;
+      context.fillRect(x, y, Math.max(end - x, 1), size);
+      if (!widest || end - x > widest.to - widest.from) widest = { from: x, to: end };
+    }
+    const names = this.#effectNamesOf(band.types);
+    if (thick && widest && names) {
+      // The button at the bottom left of the clip comes first.
+      const after = expander === undefined ? widest.from : expander + EXPANDER_SIZE + 2;
+      const from = Math.max(widest.from, after) + 4;
+      const room = widest.to - from - 4;
+      if (room >= EFFECT_BAND_LABEL_MIN) {
+        context.beginPath();
+        context.rect(from, y, room, size);
+        context.clip();
+        context.fillStyle = "#ffffff";
+        context.font = `600 10px ${this.#theme.font}`;
+        context.textBaseline = "middle";
+        context.fillText(fitText(context, names, room), from, y + size / 2 + 0.5);
+      }
+    }
+    context.restore();
+  }
+
+  /** Lights up a clip that something just happened to, fading away, see `TimelineEditor.flash`. */
+  #paintFlash(
+    box: ClipBox,
+    { left, top, height, width }: { left: number; top: number; height: number; width: number },
+  ): void {
+    const share = this.#editor.flashOf(box.id);
+    if (share <= 0) return;
+    const { context } = this;
+    context.save();
+    context.globalAlpha *= share * 0.55;
     context.fillStyle = "#ffffff";
-    context.font = "italic 600 10px system-ui, sans-serif";
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText("fx", x + EFFECTS_MARK_WIDTH / 2, y + EFFECTS_MARK_HEIGHT / 2 + 0.5);
+    context.beginPath();
+    context.roundRect(left, top, width, height, CLIP_RADIUS);
+    context.fill();
+    context.globalAlpha = Math.min(share * 1.5, 1);
+    context.strokeStyle = this.#theme.effect;
+    context.lineWidth = 2;
+    context.stroke();
     context.restore();
   }
 

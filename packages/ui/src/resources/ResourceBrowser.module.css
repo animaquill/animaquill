@@ -235,3 +235,47 @@
 .status:empty {
   border-top-color: transparent;
 }
+
+.status[data-notice] {
+  color: var(--aq-text);
+}
+
+/* What a click just did, over the picture of what was clicked, for a moment. */
+.badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  left: 6px;
+  padding: 2px 4px;
+  overflow: hidden;
+  color: var(--aq-on-accent);
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: center;
+  text-overflow: ellipsis;
+  background: var(--aq-accent);
+  border-radius: 3px;
+  pointer-events: none;
+  animation: badge 1.6s ease-out forwards;
+}
+
+@keyframes badge {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  12%,
+  75% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge {
+    animation: none;
+  }
+}

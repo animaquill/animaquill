@@ -1,5 +1,4 @@
 import {
-  BUILT_IN_TRANSITIONS,
   Duration,
   Id,
   JOIN_ALIGNS,
@@ -16,8 +15,11 @@ import {
   mediaOfTrack,
   newId,
   parseTime,
+  builtInTransition,
+  transitionValueProblems,
   type JoinAlign,
   type Rational,
+  type TransitionSpec,
 } from "@animaquill/schema";
 import { z } from "zod";
 import { joinPath, timelineOf } from "./clip-edits.ts";
@@ -73,15 +75,16 @@ export const JoinAdd = TransitionShape.extend({
 
 /**
  * Changes a join. Naming what it is takes the place of all of that: one that is a `type` becomes
- * another `type`, and a variant goes unless it is named again. Null takes a field away.
+ * another `type`, and what it set for its properties goes, unless `values` comes along. `values`
+ * is all of them at once: what it leaves out is the default. Null takes a field away.
  */
 export const JoinUpdate = z.strictObject({
   timeline: Id,
   join: Id,
   changes: TransitionShape.partial().extend({
-    variant: Id.nullable().optional(),
     curve: TransitionCurve.nullable().optional(),
     align: Align.nullable().optional(),
+    values: TransitionShape.shape.values.unwrap().nullable().optional(),
   }),
 });
 
@@ -96,8 +99,9 @@ function checked(join: Record<string, unknown>): JoinTransition {
     const where = issue?.path.join(".");
     fail("invalid-value", where ? `${where}：${issue?.message}` : `${issue?.message}`);
   }
-  const { id: _id, from: _from, to: _to, ...transition } = result.data as Join;
-  return transition;
+  const { id: _id, from: _from, to: _to, values, ...transition } = result.data as Join;
+  // Nothing set is what it is without saying so.
+  return values && Object.keys(values).length > 0 ? { ...transition, values } : transition;
 }
 
 /** Only video and audio tracks have joins. */
@@ -105,7 +109,10 @@ function checkTrack(track: TrackState): void {
   if (track.kind === "caption") fail("wrong-track", "字幕轨道不能放衔接转场");
 }
 
-/** A join that comes to a cut has to be one that this editor does there, so that it does it. */
+/**
+ * A join that comes to a cut has to be one that this editor does there, so that it does it, and
+ * what it sets has to be what it has.
+ */
 function checkDone(track: TrackState, transition: JoinTransition): void {
   checkTrack(track);
   const media = mediaOfTrack(track.kind);
@@ -113,14 +120,23 @@ function checkDone(track: TrackState, transition: JoinTransition): void {
   if (found.kind === "missing") fail("transition-missing", describeMissing(found.why));
   else if (!isSupported(found, media, "join")) {
     fail("transition-unsupported", describeUnsupported(found.type, media, "join"));
-  }
+  } else checkValues(found.spec, found.type, transition.values);
+}
+
+/** What a transition sets for its properties has to be what they can take, see the format. */
+export function checkValues(
+  spec: TransitionSpec,
+  type: string,
+  values: Readonly<Record<string, unknown>> | undefined,
+): void {
+  const [problem] = transitionValueProblems(spec, type, values);
+  if (problem !== undefined) fail("invalid-value", problem);
 }
 
 /** How long a transition is when it is put somewhere, as it says itself. */
 function defaultLength(track: TrackState, transition: Record<string, unknown>): Rational {
   const { type } = transition as { readonly type?: string };
-  const own = BUILT_IN_TRANSITIONS[mediaOfTrack(track.kind)];
-  const spec = type !== undefined && Object.hasOwn(own, type) ? own[type] : undefined;
+  const spec = builtInTransition(mediaOfTrack(track.kind), type);
   return parseTime(spec?.duration ?? "0.5");
 }
 
@@ -198,7 +214,7 @@ export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
   return { id, align: place };
 }
 
-const REFERENCE = ["type", "transition", "library", "resource", "variant"] as const;
+const REFERENCE = ["type", "transition", "library", "resource"] as const;
 
 export function updateJoin(
   draft: Draft,
@@ -208,9 +224,10 @@ export function updateJoin(
   const join = entryOf(target.joins, id) ?? fail("not-found", `没有这个衔接转场：${id}`);
   const current = join.transition ?? fail("not-found", `这个衔接转场不完整：${id}`);
   const next: Record<string, unknown> = { ...current };
-  const renamed = REFERENCE.some((field) => field !== "variant" && changes[field] !== undefined);
-  // What it is goes as a whole, so that it never names two things.
-  if (renamed) for (const field of REFERENCE) delete next[field];
+  const renamed = REFERENCE.some((field) => changes[field] !== undefined);
+  // What it is goes as a whole, so that it never names two things, and what the one before set
+  // is about the one before.
+  if (renamed) for (const field of [...REFERENCE, "values"]) delete next[field];
   for (const [field, value] of Object.entries(changes)) {
     if (value === null) delete next[field];
     else if (value !== undefined) next[field] = value;
@@ -221,10 +238,15 @@ export function updateJoin(
   const sameThing = REFERENCE.every((field) => transition[field] === current[field]);
   const track = join.track === undefined ? undefined : entryOf(target.tracks, join.track);
   // One that is there already can always get another length or speed. Something else in its
-  // place has to be what this editor does.
+  // place has to be what this editor does, and so does what it sets.
   if (!sameThing) {
     if (!track) fail("not-found", `没有这条轨道：${join.track}`);
     else checkDone(track, transition);
+  } else if (!deepEqual(transition.values, current.values)) {
+    const media = track ? mediaOfTrack(track.kind) : "picture";
+    const found = findTransition(transition, media, "join");
+    if (found.kind === "missing") fail("transition-missing", describeMissing(found.why));
+    else checkValues(found.spec, found.type, transition.values);
   }
   const whole = wholeJoin(id, join);
   const from = whole && entryOf(target.clips, whole.from);

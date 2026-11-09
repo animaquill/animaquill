@@ -139,6 +139,14 @@
   padding: 4px 0 0 84px;
 }
 
+/* What a transition says people can set: a control as wide as the presets above it. */
+.valueCell {
+  display: flex;
+  grid-column: 3 / 5;
+  align-items: center;
+  min-width: 0;
+}
+
 .curveRow .transitionHint {
   margin-top: 4px;
   padding-left: 0;
@@ -500,6 +508,38 @@
 
 .effect[data-dragged] {
   opacity: 0.5;
+}
+
+/* One that just went on the clip, for a moment. */
+.effect[data-fresh] {
+  animation: fresh 1.6s ease-out;
+}
+
+@keyframes fresh {
+  0%,
+  40% {
+    background: color-mix(in srgb, var(--aq-accent) 28%, transparent);
+    box-shadow: 0 0 0 1px var(--aq-accent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 1px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .effect[data-fresh] {
+    animation: none;
+    box-shadow: 0 0 0 1px var(--aq-accent);
+  }
+}
+
+.rangeFields {
+  display: flex;
+  grid-column: 3 / 5;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .effect[data-drop="before"]::before,

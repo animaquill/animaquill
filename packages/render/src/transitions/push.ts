@@ -1,7 +1,7 @@
 import { clear, contextOf, directionOf, type TransitionCode } from "./code.ts";
 
 /**
- * 推移: the side after pushes the side before out of the picture, the way the variant says, the two
+ * 推移: the side after pushes the side before out of the picture, the way its direction says, the two
  * moving as one. A speed curve that goes past the end overshoots: the two go a little too far and
  * come back. The edges where they meet add up, so that no line shows between them.
  */

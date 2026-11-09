@@ -4,7 +4,7 @@ import type { Point } from "@animaquill/core/view";
 /** Where a transition is: at the start of a clip, at its end, or on the cut between two. */
 export type TransitionUse = TransitionNotDone["use"];
 
-/** What a transition gets as it is, from its description and its variant. */
+/** What a transition gets as it is: a value for each of its properties. */
 export type TransitionValues = NonNullable<TransitionImplementation["values"]>;
 
 /**
@@ -35,7 +35,7 @@ export interface TransitionFrame {
   readonly use: TransitionUse;
   /** Where the clip boxes of the sides are, or null for nothing, or for more than one clip. */
   readonly boxes: { readonly from: Corners | null; readonly to: Corners | null };
-  /** What its description gives it, with what its variant gives over that. */
+  /** What people set for its properties, with the defaults for the rest. They have no keys. */
   readonly values: TransitionValues;
   /** Pixels of the picture, which the canvas and both sides have. */
   readonly width: number;
@@ -66,12 +66,18 @@ export type TransitionCode = (aq: TransitionHost) => void;
 export const share = (value: number): number =>
   Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : 0;
 
-/** Which way something goes, as x and y of length one, from what a description says. */
+/** Which way each direction goes, as x and y, with y down as on the screen. */
+const DIRECTIONS: Readonly<Record<string, readonly [number, number]>> = {
+  left: [-1, 0],
+  right: [1, 0],
+  up: [0, -1],
+  down: [0, 1],
+};
+
+/** Which way something goes, as x and y of length one, from the `direction` of a transition. */
 export function directionOf(value: unknown): readonly [number, number] {
-  if (!Array.isArray(value)) return [1, 0];
-  const [x, y] = value.map(Number);
-  const length = Math.hypot(x ?? 0, y ?? 0);
-  return length > 0 && Number.isFinite(length) ? [(x ?? 0) / length, (y ?? 0) / length] : [1, 0];
+  const known = typeof value === "string" && Object.hasOwn(DIRECTIONS, value);
+  return known ? (DIRECTIONS[value] as readonly [number, number]) : [1, 0];
 }
 
 /** Gets a canvas ready for a new frame: nothing on it, and nothing left of the one before. */

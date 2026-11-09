@@ -1,9 +1,4 @@
-import {
-  BUILT_IN_TRANSITIONS,
-  TRANSITION_USES,
-  variantsOf,
-  type TransitionUse,
-} from "@animaquill/schema";
+import { BUILT_IN_TRANSITIONS, TRANSITION_USES, type TransitionUse } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { AttachContext } from "../timeline/transition-place.ts";
 import { builtInPick, isPicked, type TransitionPick } from "../timeline/transition-place.ts";
@@ -31,31 +26,28 @@ export const typeOfUse = (use: TransitionUse): string => `transition.${use}`;
 const USE_ORDER: readonly TransitionUse[] = ["enter", "join", "exit"];
 
 /**
- * The picture transitions that come with the editor, once for each place they can go, each kind
- * of them on its own, as the project writes them: `fade` comes in as 淡入 and goes out as 淡出.
- * Those of the project and of libraries come with their own lists later, see `ResourceSource`.
+ * The picture transitions that come with the editor, once for each place they can go, each with the
+ * name it has there: `fade` comes in as 淡入 and goes out as 淡出. Which way one goes and such are
+ * its properties, which people set once it is there. Those of the project and of libraries come with
+ * their own lists later, see `ResourceSource`.
  */
 export function builtInTransitions(t: TFunction): readonly Resource<TransitionItem>[] {
   const resources: Resource<TransitionItem>[] = [];
   for (const use of USE_ORDER.filter((value) => TRANSITION_USES.includes(value))) {
     for (const [type, spec] of Object.entries(BUILT_IN_TRANSITIONS.picture)) {
       if (!spec.uses.includes(use)) continue;
-      const variants = variantsOf(spec);
-      for (const variant of variants.length === 0 ? [undefined] : variants) {
-        const pick = builtInPick(type, variant);
-        if (!pick) continue;
-        const kind = variant === undefined ? type : `${type}.${variant}`;
-        const tags = textOf(t, `transitionPanel.tags.${type}`, "");
-        resources.push({
-          id: `transition:built-in:${kind}:${use}`,
-          source: { kind: "built-in" },
-          type: typeOfUse(use),
-          name: transitionName(t, pick.name, use, "picture"),
-          tags: tags ? tags.split("、") : [],
-          keywords: [kind, t(`transition.uses.${use}`)],
-          data: { pick, use },
-        });
-      }
+      const pick = builtInPick(type);
+      if (!pick) continue;
+      const tags = textOf(t, `transitionPanel.tags.${type}`, "");
+      resources.push({
+        id: `transition:built-in:${type}:${use}`,
+        source: { kind: "built-in" },
+        type: typeOfUse(use),
+        name: transitionName(t, pick.name, use, "picture"),
+        tags: tags ? tags.split("、") : [],
+        keywords: [type, t(`transition.uses.${use}`)],
+        data: { pick, use },
+      });
     }
   }
   return resources;

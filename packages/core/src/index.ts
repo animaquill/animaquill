@@ -174,6 +174,7 @@ export {
   TIME_TOLERANCE,
   boxOf,
   clockOf,
+  effectWorksAt,
   fitIn,
   fadeLeftAt,
   invert,

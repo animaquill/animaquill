@@ -151,6 +151,187 @@ test("go on every clip selected with a click, and say why where they cannot", as
   await expect(clips(page).nth(0)).toHaveAttribute("data-effects", "1");
 });
 
+test("go on once more with each click, and say so where they went", async ({ page }) => {
+  await open(page);
+  await page.mouse.click(...xy(await onClip(page, 0)));
+  await page.keyboard.down("Shift");
+  await page.mouse.click(...xy(await onClip(page, 1)));
+  await page.keyboard.up("Shift");
+  await item(page, "模糊").click();
+  // The effect says on how many clips it went, and the clips light up for a moment.
+  await expect(item(page, "模糊")).toContainText("已加到 2 个片段");
+  await expect(panel(page).getByRole("status")).toHaveText("模糊已加到 2 个片段");
+  await expect(clips(page).nth(0)).toHaveAttribute("data-flash", "true");
+  await content(page, "timeline").screenshot(shot("effects-flash.png"));
+  await panel(page).screenshot(shot("effects-added.png"));
+  await expect(clips(page).nth(0)).not.toHaveAttribute("data-flash");
+  // The same one again is one more.
+  await item(page, "模糊").click();
+  for (const index of [0, 1]) {
+    await expect(clips(page).nth(index)).toHaveAttribute("data-effects", "2");
+  }
+  await expect(clips(page).nth(2)).not.toHaveAttribute("data-effects");
+
+  // With one clip, its list goes to the one that is new, which stands out for a moment.
+  await page.mouse.click(...xy(await onClip(page, 1)));
+  await tab(page, "properties").click();
+  await item(page, "亮度").click();
+  await expect.poll(() => names(page)).toEqual(["模糊", "模糊", "亮度"]);
+  await expect(effectsOn(page).nth(2)).toHaveAttribute("data-fresh", "true");
+  await expect(effectsOn(page).nth(2)).toBeInViewport();
+  await properties(page).screenshot(shot("effects-fresh.png"));
+  await expect(effectsOn(page).nth(2)).not.toHaveAttribute("data-fresh");
+});
+
+/** The color of the timeline at a place on the page, as it is drawn. */
+async function timelineColor(page: Page, x: number, y: number): Promise<readonly number[]> {
+  return page.evaluate(
+    ([left, top]) => {
+      const canvas = document
+        .elementsFromPoint(left, top)
+        .find((element): element is HTMLCanvasElement => element instanceof HTMLCanvasElement);
+      if (!canvas) return [];
+      const box = canvas.getBoundingClientRect();
+      const ratio = canvas.width / box.width;
+      const data = canvas
+        .getContext("2d")
+        ?.getImageData((left - box.left) * ratio, (top - box.top) * ratio, 1, 1).data;
+      return data ? [...data].slice(0, 3) : [];
+    },
+    [x, y] as const,
+  );
+}
+
+const violet = (color: readonly number[]) =>
+  color.length === 3 && (color[2] ?? 0) > 180 && (color[0] ?? 0) > 110 && (color[1] ?? 255) < 140;
+
+test("show on the clip as a band where they work, with their names, dimmed when off", async ({
+  page,
+}) => {
+  await importClips(page, 10, [
+    {
+      id: "a",
+      name: "灰",
+      start: "0",
+      duration: "4",
+      source: { kind: "color", color: "#606060" },
+      effects: [
+        { id: "x", type: "brightness", start: "1", end: "2" },
+        { id: "y", type: "blur", start: "1.5", end: "3" },
+      ],
+    },
+  ]);
+  const clip = clips(page).nth(0);
+  // One band over where either works, from 1 to 3 seconds of the clip, with both names.
+  await expect(clip).toHaveAttribute("data-effect-band", "1-3");
+  await expect(clip).toHaveAttribute("aria-description", "效果：亮度 · 模糊");
+  await expect(clip).not.toHaveAttribute("data-effects-off");
+  const box = await boxOf(clip);
+  const bottom = box.y + box.height - 4;
+  const at = (seconds: number) => box.x + (box.width * seconds) / 4;
+  await expect.poll(async () => violet(await timelineColor(page, at(2.2), bottom))).toBe(true);
+  expect(violet(await timelineColor(page, at(0.5), bottom))).toBe(false);
+  expect(violet(await timelineColor(page, at(3.5), bottom))).toBe(false);
+  // Above the band the clip is as it was.
+  expect(violet(await timelineColor(page, at(2.2), box.y + box.height / 2))).toBe(false);
+  await content(page, "timeline").screenshot(shot("effects-band.png"));
+
+  // All off, it stays where it was, dimmed.
+  await page.mouse.click(...xy(await onClip(page, 0)));
+  await tab(page, "properties").click();
+  await effectList(page).getByRole("checkbox", { name: "启用亮度" }).uncheck();
+  await expect(clip).toHaveAttribute("data-effect-band", "1.5-3");
+  await effectList(page).getByRole("checkbox", { name: "启用模糊" }).uncheck();
+  await expect(clip).toHaveAttribute("data-effects-off", "");
+  await expect(clip).toHaveAttribute("data-effect-band", "1-3");
+  await content(page, "timeline").screenshot(shot("effects-band-off.png"));
+});
+
+test("work for a time of the clip, which their bar under the clip and the properties change", async ({
+  page,
+}) => {
+  await importClips(page, 10, [
+    {
+      id: "a",
+      name: "灰",
+      start: "0",
+      duration: "4",
+      source: { kind: "color", color: "#606060" },
+      effects: [{ id: "x", type: "brightness", start: "1", end: "2" }],
+    },
+  ]);
+  await page.mouse.click(...xy(await onClip(page, 0)));
+  await tab(page, "properties").click();
+  const range = effectsOn(page).nth(0).getByRole("group", { name: "生效时间" });
+  const start = range.getByRole("textbox", { name: "开始" });
+  const end = range.getByRole("textbox", { name: "结束" });
+  await expect(start).toHaveValue("0:01/00");
+  await expect(end).toHaveValue("0:02/00");
+
+  // The clip opens under its track, where the effect has a bar from 1 to 2 seconds.
+  await content(page, "timeline").getByRole("group", { name: "时间轴" }).focus();
+  await page.keyboard.press("u");
+  const timeline = content(page, "timeline");
+  const row = timeline.getByRole("treeitem", { name: "亮度", exact: true });
+  await expect(row).toBeVisible();
+  const clip = await boxOf(clips(page).nth(0));
+  // Down to the row of the effect, under those of the clip itself: the wheel over the names of the
+  // rows goes up and down.
+  const area = await boxOf(timeline.getByRole("group", { name: "时间轴" }));
+  const heading = await boxOf(timeline.getByRole("treeitem", { name: "灰", exact: true }));
+  await page.mouse.move(heading.x + heading.width / 2, heading.y + heading.height / 2);
+  for (let turn = 0; turn < 20; turn += 1) {
+    const { y: top } = await boxOf(row);
+    if (top + 24 <= area.y + area.height - 4) break;
+    await page.mouse.wheel(0, 60);
+    await page.waitForTimeout(50);
+  }
+  const lane = await boxOf(row);
+  const x = (seconds: number) => clip.x + (clip.width * seconds) / 4;
+  const y = lane.y + 24 - 4.5;
+  await expect.poll(async () => violet(await timelineColor(page, x(1.5), y))).toBe(true);
+  expect(violet(await timelineColor(page, x(2.5), y))).toBe(false);
+  await timeline.screenshot(shot("effects-range-bar.png"));
+
+  // Its end goes to 3 seconds, to a whole frame, as one step.
+  await page.mouse.move(x(2) - 1, y);
+  await page.mouse.down();
+  await page.mouse.move(x(2.5), y, { steps: 4 });
+  await page.mouse.move(x(3) - 1, y, { steps: 4 });
+  await page.mouse.up();
+  await expect(end).toHaveValue("0:03/00");
+  await expect(start).toHaveValue("0:01/00");
+  // All of it goes half a second earlier.
+  await page.mouse.move(x(2), y);
+  await page.mouse.down();
+  await page.mouse.move(x(1.75), y, { steps: 4 });
+  await page.mouse.move(x(1.5), y, { steps: 4 });
+  await page.mouse.up();
+  await expect(start).toHaveValue("0:00/15");
+  await expect(end).toHaveValue("0:02/15");
+  await expect.poll(async () => violet(await timelineColor(page, x(0.75), y))).toBe(true);
+  await timeline.screenshot(shot("effects-range-moved.png"));
+  await timeline.getByRole("group", { name: "时间轴" }).focus();
+  await page.keyboard.press("Control+z");
+  await expect(start).toHaveValue("0:01/00");
+  await expect(end).toHaveValue("0:03/00");
+
+  // Written in the properties: the end of the clip is its own end again.
+  await page.mouse.move(heading.x + heading.width / 2, area.y + area.height / 2);
+  await page.mouse.wheel(0, -2000);
+  await expect(clips(page).nth(0)).toBeVisible();
+  await end.fill("4");
+  await end.press("Enter");
+  await expect(end).toHaveValue("0:04/00");
+  await expect(clips(page).nth(0)).toHaveAttribute("data-effect-band", "1-4");
+  await start.fill("0:03/00");
+  await start.press("Enter");
+  await expect(clips(page).nth(0)).toHaveAttribute("data-effect-band", "3-4");
+  await start.fill("5");
+  await start.press("Enter");
+  await expect(range.locator("..").getByText("开始要在结束之前，并且都在片段之内")).toBeVisible();
+});
+
 test.describe("in the properties tab", () => {
   test.use({ trying: false });
 
@@ -225,7 +406,8 @@ test.describe("in the properties tab", () => {
     const tree = content(page, "keyframes");
     const node = (name: string) => tree.getByRole("treeitem", { name, exact: true });
     await tree.getByRole("button", { name: "展开 灰", exact: true }).click();
-    await tree.getByRole("button", { name: "展开 效果", exact: true }).click();
+    // The effects of a clip are open at first, each one row.
+    await expect(tree.getByRole("button", { name: "收起 效果", exact: true })).toBeVisible();
     for (const name of ["亮度", "模糊"]) {
       await tree.getByRole("button", { name: `展开 ${name}`, exact: true }).click();
     }
@@ -463,7 +645,7 @@ const bytesOf = async (download: Download) => {
   return Buffer.concat(chunks);
 };
 
-test("an exported frame is the same as the preview, with effects and their keys", async ({
+test("an exported frame is the same as the preview, with effects, their keys and their times", async ({
   page,
 }) => {
   await importClips(page, 4, [
@@ -478,6 +660,8 @@ test("an exported frame is the same as the preview, with effects and their keys"
         { id: "s", type: "saturation" },
         { id: "k", type: "crop" },
         { id: "b", type: "blur" },
+        // Only from two seconds on: darker there.
+        { id: "d", type: "brightness", start: "2", end: "3.5" },
       ],
       properties: {
         "transform.scale": 0.6,
@@ -492,6 +676,7 @@ test("an exported frame is the same as the preview, with effects and their keys"
         "effect.k.left": 0.2,
         "effect.k.top": 0.1,
         "effect.b.radius": 12,
+        "effect.d.brightness": -0.6,
       },
     },
   ]);
@@ -499,30 +684,43 @@ test("an exported frame is the same as the preview, with effects and their keys"
     await content(page, "preview").locator("iframe").elementHandle()
   )?.contentFrame();
   if (!frame) throw new Error("No compositor");
-  await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
-  await page.getByRole("textbox", { name: "当前时间" }).fill("0:01/00");
-  await page.keyboard.press("Enter");
-  const download = page.waitForEvent("download");
-  await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-  await page.getByRole("menu").getByRole("menuitem", { name: "导出当前帧", exact: true }).click();
-  const png = await bytesOf(await download);
-  const difference = await frame.evaluate(async (base64) => {
-    const pixelsOf = async (source: CanvasImageSource) => {
-      const picture = new VideoFrame(source, { timestamp: 0 });
-      const pixels = new Uint8Array(picture.allocationSize({ format: "RGBA" }));
-      await picture.copyTo(pixels, { format: "RGBA" });
-      picture.close();
-      return pixels;
-    };
-    const canvas = document.querySelector("canvas") as HTMLCanvasElement;
-    const shown = await pixelsOf(canvas);
-    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-    const file = await pixelsOf(await createImageBitmap(new Blob([bytes])));
-    let most = file.length === shown.length ? 0 : 255;
-    for (let index = 0; index < file.length; index += 1) {
-      most = Math.max(most, Math.abs((file[index] ?? 0) - (shown[index] ?? 0)));
-    }
-    return most;
-  }, png.toString("base64"));
-  expect(difference).toBeLessThanOrEqual(2);
+  const middle = () =>
+    frame.evaluate(() => {
+      const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+      const data = canvas.getContext("2d")?.getImageData(canvas.width / 2, canvas.height / 2, 1, 1);
+      return data ? [...data.data].slice(0, 3) : [];
+    });
+  const brightness: number[] = [];
+  for (const time of ["0:01/00", "0:03/00"]) {
+    await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
+    await page.getByRole("textbox", { name: "当前时间" }).fill(time);
+    await page.keyboard.press("Enter");
+    const download = page.waitForEvent("download");
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menu").getByRole("menuitem", { name: "导出当前帧", exact: true }).click();
+    const png = await bytesOf(await download);
+    const difference = await frame.evaluate(async (base64) => {
+      const pixelsOf = async (source: CanvasImageSource) => {
+        const picture = new VideoFrame(source, { timestamp: 0 });
+        const pixels = new Uint8Array(picture.allocationSize({ format: "RGBA" }));
+        await picture.copyTo(pixels, { format: "RGBA" });
+        picture.close();
+        return pixels;
+      };
+      const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+      const shown = await pixelsOf(canvas);
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const file = await pixelsOf(await createImageBitmap(new Blob([bytes])));
+      let most = file.length === shown.length ? 0 : 255;
+      for (let index = 0; index < file.length; index += 1) {
+        most = Math.max(most, Math.abs((file[index] ?? 0) - (shown[index] ?? 0)));
+      }
+      return most;
+    }, png.toString("base64"));
+    expect(difference, time).toBeLessThanOrEqual(2);
+    const [red = 0, green = 0, blue = 0] = await middle();
+    brightness.push(red + green + blue);
+  }
+  // Within its time the brightness works, before it it does not.
+  expect(brightness[1] ?? 0).toBeLessThan((brightness[0] ?? 0) * 0.7);
 });

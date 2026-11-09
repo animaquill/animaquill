@@ -725,14 +725,14 @@ describe("transitions that do not do what they say", () => {
       (d) => (d.tracks[0].clips[0].enter.type = "fade-linear"),
     ],
     [
-      "transition-missing",
+      "transition-value",
       "tracks.0.clips.0.enter",
-      (d) => (d.tracks[0].clips[0].enter.variant = "left"),
+      (d) => (d.tracks[0].clips[0].enter.values = { direction: "left" }),
     ],
     [
-      "transition-missing",
+      "transition-value",
       "tracks.0.clips.0.enter",
-      (d) => (d.tracks[0].clips[0].enter.type = "dip"),
+      (d) => (d.tracks[0].clips[0].enter = { type: "dip", duration: "1", values: { hold: 2 } }),
     ],
     [
       "transition-missing",
@@ -788,8 +788,11 @@ describe("transitions that do not do what they say", () => {
       readProject(withChange(MAIN, change))
         .problems.filter(({ path }) => path === "tracks.0.clips.0.enter")
         .map(({ message }) => message);
-    expect(messages((d) => (d.tracks[0].clips[0].enter.type = "dip"))).toEqual([
-      "转场 dip 要写 variant，可以是：black、white，预览按淡入淡出显示，导出会停在这里",
+    expect(
+      messages((d) => (d.tracks[0].clips[0].enter.values = { direction: "left", hold: 0.5 })),
+    ).toEqual([
+      "转场 fade 没有这个属性：direction，超出范围的按边界算，其余按默认值算",
+      "转场 fade 没有这个属性：hold，超出范围的按边界算，其余按默认值算",
     ]);
     expect(messages((d) => (d.tracks[0].clips[0].enter.type = "fade-linear"))).toEqual([
       "转场 fade-linear 不能用在画面上，预览按淡入淡出显示，导出会停在这里",

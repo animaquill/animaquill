@@ -46,6 +46,8 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { effectName } from "../resources/effects.ts";
+import { EFFECT_NAMES_SEPARATOR, effectBandOf } from "./effect-band.ts";
 import { EFFECT_DRAG_TYPE, effectDrag } from "./effect-drag.ts";
 import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
@@ -539,12 +541,21 @@ function TrackHeaders({
 /** What is on the canvas, for those who cannot see it. */
 function ClipList({ editor }: { editor: TimelineEditor }) {
   const { t } = useTranslation();
-  /** What the mark of a clip with effects says, as the canvas shows it. */
+  /** What the band of a clip with effects says, as the canvas shows it. */
   const effectsMark = (box: ClipBox) => {
     const count = effectsOf(box.clip).length;
-    return count === 0
-      ? {}
-      : { "data-effects": count, "aria-description": t("effect.mark", { count }) };
+    const band = effectBandOf(box.clip);
+    if (count === 0 || !band) return {};
+    const names = band.types.map((type) => effectName(t, type)).join(EFFECT_NAMES_SEPARATOR);
+    const seconds = (value: number) => Number(value.toFixed(3));
+    return {
+      "data-effects": count,
+      "data-effect-band": band.spans
+        .map(([from, to]) => `${seconds(from)}-${seconds(to)}`)
+        .join(" "),
+      ...(band.off ? { "data-effects-off": "" } : {}),
+      "aria-description": t("effect.mark", { names }),
+    };
   };
   const labelOf = useClipLabel();
   const trackNameOf = useTrackName();
@@ -590,6 +601,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
             end: timecode(box.end),
           })}
           {...effectsMark(box)}
+          data-flash={editor.flashOf(box.id) > 0 || undefined}
           style={{ left, top, width, height }}
         />
       ))}
@@ -636,8 +648,10 @@ function Surface({
           (clip) => sounds.stateOf(clip)?.state === "failed",
           (transition, use, row) =>
             transitionName(t, transition, use, mediaOfTrack(row.track.kind)),
+          (types) => types.map((type) => effectName(t, type)).join(EFFECT_NAMES_SEPARATOR),
           (context, theme, sharp) => {
             painter.paint(context, theme, sharp);
+            lanes.paintRanges(context, theme);
             paintMarquee(context, lanes, theme);
             paintSnapLine(context, lanes, theme, sharp);
           },

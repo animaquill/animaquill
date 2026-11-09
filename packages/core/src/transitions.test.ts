@@ -187,8 +187,9 @@ describe("setting the transitions of a clip", () => {
     ["transition-too-long", { exit: fade("4.5") }],
     ["transition-missing", { enter: fade("1", { type: "melt" }) }],
     ["transition-missing", { enter: fade("1", { type: "plugin.star" }) }],
-    ["transition-missing", { enter: fade("1", { type: "dip" }) }],
-    ["transition-missing", { enter: fade("1", { variant: "left" }) }],
+    ["invalid-value", { enter: fade("1", { type: "dip", values: { color: "black" } }) }],
+    ["invalid-value", { enter: fade("1", { values: { direction: "left" } }) }],
+    ["invalid-params", { enter: fade("1", { type: "wipe", values: { direction: { keys: [] } } }) }],
     ["transition-missing", { enter: fade("1", { type: "fade-linear" }) }],
     ["transition-missing", { enter: { transition: "ink", duration: "1" } }],
     ["transition-missing", { enter: { library: "lib", resource: "ink", duration: "1" } }],
@@ -237,12 +238,17 @@ describe("setting the transitions of a clip", () => {
     expect(failure(set({ enter: { ...star, type: "plugin.moon" } })).code).toBe(
       "transition-missing",
     );
-    expect(failure(set({ enter: { ...star, variant: "up" } })).code).toBe("transition-missing");
+    expect(failure(set({ enter: { ...star, values: { up: 1 } } })).code).toBe("transition-missing");
     expect(failure(set({ exit: star })).code).toBe("transition-missing");
     // Every picture that comes with the editor can come instead, such as pushing in from the left.
-    const push = { type: "push", variant: "right", duration: "1" };
+    const push = { type: "push", values: { direction: "right" }, duration: "1" };
     success(set({ enter: push }));
     expect(clipOf()?.enter).toEqual(push);
+    // What it sets changes as one step, and setting nothing is its defaults.
+    success(set({ enter: { ...push, values: { direction: "up" } } }));
+    expect(clipOf()?.enter?.values).toEqual({ direction: "up" });
+    success(set({ enter: { ...push, values: {} } }));
+    expect(clipOf()?.enter).toEqual({ type: "push", duration: "1" });
     success(set({ enter: null }));
     expect(clipOf()).not.toHaveProperty("enter");
     success(set({ exit: null }));
@@ -339,7 +345,7 @@ describe("transitions of clips that are added", () => {
   });
 
   it("come along as they are, also what this editor cannot do yet, which it tells about", () => {
-    const wipe = { type: "wipe", variant: "up", duration: "1" };
+    const wipe = { type: "wipe", values: { direction: "up" }, duration: "1" };
     const melt = { type: "melt", duration: "1" };
     const { result, clipOf } = add({ start: "2", duration: "2", enter: wipe, exit: melt });
     success(result);
@@ -733,7 +739,7 @@ describe("what an export stops at", () => {
         { id: "j1", from: "a", to: "b", library: "lib", resource: "ink", duration: "1" },
         { id: "j2", from: "b", to: "c", type: "plugin.melt", duration: "1", align: "before" },
         // What comes with the editor is done: a wipe, which a join is now too.
-        { id: "j3", from: "c", to: "d", type: "wipe", variant: "up", duration: "1" },
+        { id: "j3", from: "c", to: "d", type: "wipe", values: { direction: "up" }, duration: "1" },
       ];
       withTone(audio);
     });
@@ -784,7 +790,7 @@ describe("what an export stops at", () => {
           duration: "2",
           source: color,
           hidden: true,
-          enter: { type: "wipe", variant: "up", duration: "1" },
+          enter: { type: "wipe", values: { direction: "up" }, duration: "1" },
         },
         { id: "b", start: "2", duration: "2", source: color },
       );

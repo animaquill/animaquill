@@ -772,7 +772,6 @@ test("puts a fade in on a clip from the transitions tab, which the properties ta
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 8);
   await tab(page, "transitions").click();
   await content(page, "transitions").getByRole("option", { name: "淡入", exact: true }).click();
-  await page.getByRole("menuitem", { name: "加在开头（淡入）" }).click();
   // Its block at the top of the clip selects it, and the properties tab shows what a transition
   // has, and no more.
   await tab(page, "timeline").click();

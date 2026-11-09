@@ -3,9 +3,19 @@ import type { LaneKeys } from "../timeline/actions.ts";
 import { RULER_HEIGHT, type RowExtras, type TimelineEditor } from "../timeline/editor.ts";
 import type { Gesture, Pointer } from "../timeline/gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "../timeline/model.ts";
+import type { Theme } from "../timeline/stage-painter.ts";
 import type { TouchStart } from "../timeline/touch.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { KeyArea } from "./area.ts";
+import {
+  RangeGesture,
+  barOf,
+  cursorOfPart,
+  paintRangeBars,
+  partAt,
+  type RangeHost,
+  type RangePreview,
+} from "./effect-ranges.ts";
 import type { KeyframeEditor, ShownClips } from "./editor.ts";
 import { lanesOfClip, laneAt, type Lane, type LaneRules } from "./lanes.ts";
 
@@ -28,6 +38,7 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   readonly #lanesChanged = new Emitter();
   readonly #open = new Set<string>();
   #lanes = NO_LANES;
+  #range: RangePreview | undefined;
 
   constructor(keyframes: KeyframeEditor, timeline: TimelineEditor) {
     super(keyframes);
@@ -97,7 +108,53 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   }
 
   get holdsDrag(): boolean {
+    if (this.#range !== undefined) return true;
     return this.keyframes.preview !== undefined && this.keyframes.isPreviewOf(this);
+  }
+
+  /* When effects work: a bar in the row of each, see effect-ranges.ts. */
+
+  /** The bar of an effect being dragged, where it is so far. */
+  get rangePreview(): RangePreview | undefined {
+    return this.#range;
+  }
+
+  /** The bar under a point on screen, and which part of it, on a track that is not locked. */
+  #barAt(pointer: Pointer) {
+    if (pointer.y < RULER_HEIGHT) return undefined;
+    const lane = laneAt(this.#lanes, this.laneY(pointer.y));
+    if (!lane || lane.row.track.locked === true) return undefined;
+    const bar = barOf(lane, this.screenY(lane.top), (seconds) => this.xAt(seconds), this.#range);
+    const part = bar && partAt(bar, pointer.x, pointer.y);
+    return bar && part && { ...bar, part };
+  }
+
+  #pressBar(pointer: Pointer): Gesture | undefined {
+    const hit = this.#barAt(pointer);
+    const rate = this.#timeline.model?.rate;
+    if (!hit || !rate) return undefined;
+    const host: RangeHost = {
+      rate,
+      timeAt: (x) => this.timeAt(x),
+      show: (preview) => {
+        this.#range = preview;
+        this.#timeline.redraw();
+      },
+      commit: (clip, effect, from, to) => {
+        this.#timeline.setEffectRange(clip, effect, from, to);
+      },
+    };
+    return new RangeGesture(host, hit.box, hit.effect, hit.part, pointer);
+  }
+
+  /** Draws the bars of the effects of the rows on screen. */
+  paintRanges(context: CanvasRenderingContext2D, theme: Theme): void {
+    const lanes = this.lanesBetween(this.laneY(RULER_HEIGHT), this.laneY(this.screenHeight));
+    paintRangeBars(context, theme, lanes, {
+      screenY: (top) => this.screenY(top),
+      xAt: (seconds) => this.xAt(seconds),
+      preview: this.#range,
+    });
   }
 
   canOpen({ clip }: ClipBox): boolean {
@@ -222,6 +279,8 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   }
 
   press(pointer: Pointer): Gesture | undefined {
+    const bar = this.#pressBar(pointer);
+    if (bar) return bar;
     if (this.#isOnLanes(pointer)) return this.pressLanes(pointer);
     // What people do next is about clips. The ruler is about neither.
     if (pointer.y >= RULER_HEIGHT) this.keyframes.clearSelection();
@@ -229,6 +288,8 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
   }
 
   hover(pointer: Pointer): string | undefined {
+    const bar = this.#barAt(pointer);
+    if (bar) return cursorOfPart(bar.part);
     return this.#isOnLanes(pointer) ? this.cursorAt(pointer) : undefined;
   }
 

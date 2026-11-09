@@ -1,5 +1,5 @@
 import type { CommandCall } from "@animaquill/core";
-import { findEffect } from "@animaquill/schema";
+import { findEffect, newId } from "@animaquill/schema";
 import { clipAt, type ClipBox, type Row, type TimelineModel } from "./model.ts";
 
 /**
@@ -67,13 +67,20 @@ export function effectProblem(
   return context.boxes.length > 0 ? undefined : (context.blocked ?? "locked");
 }
 
-/** What puts an effect last on each of some clips, as commands of one step. */
-export const effectCalls = (
+/**
+ * What puts an effect last on each of some clips, as commands of one step, with the id that each
+ * gets: the same effect again is one more, so that people can stack it.
+ */
+export function effectCalls(
   model: TimelineModel,
   boxes: readonly ClipBox[],
   type: string,
-): readonly CommandCall[] =>
-  boxes.map((box) => ({
-    type: "effect.add",
-    params: { timeline: model.id, clip: box.id, type },
-  }));
+): { readonly calls: readonly CommandCall[]; readonly added: ReadonlyMap<string, string> } {
+  const added = new Map<string, string>();
+  const calls = boxes.map((box): CommandCall => {
+    const id = newId("fx");
+    added.set(box.id, id);
+    return { type: "effect.add", params: { timeline: model.id, clip: box.id, type, id } };
+  });
+  return { calls, added };
+}

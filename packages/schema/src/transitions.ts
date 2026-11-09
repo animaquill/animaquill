@@ -1,3 +1,4 @@
+import { specValueProblem, type PropertySpec } from "./properties.ts";
 import {
   ZERO,
   add,
@@ -8,6 +9,7 @@ import {
   subtract,
   type Rational,
 } from "./time.ts";
+import type { Value } from "./values.ts";
 
 /**
  * Transitions, apart from how files write them (see timeline.ts). A transition goes from one side
@@ -41,14 +43,12 @@ export const SPEED_PRESETS: Readonly<Record<"easeIn" | "easeOut" | "easeInOut", 
   easeInOut: [0.42, 0, 0.58, 1],
 };
 
-/** Values that the code of a transition gets as they are, as a description has them. */
-export type TransitionValues = Readonly<Record<string, unknown>>;
-
-/** A kind of a transition, which is another transition to people: such as which way a wipe goes. */
-export interface TransitionVariant {
-  /** What its code gets on top of the values of the transition, which they win over. */
-  readonly values?: TransitionValues;
-}
+/**
+ * What the code of a transition gets as `values`: one plain value for each of its properties, by
+ * path, which people set. They have no keys: a transition goes from one side to the other, and
+ * how it gets there over its time is its speed curve.
+ */
+export type TransitionValues = Readonly<Record<string, Value>>;
 
 /** What a transition that comes with the editor is, as a description says it for any other. */
 export interface TransitionSpec {
@@ -59,46 +59,79 @@ export interface TransitionSpec {
   readonly curve?: SpeedCurve;
   /** A speed curve that goes past 0 and 1 is used as it is. Otherwise it stops there. */
   readonly overshoot?: boolean;
-  /** What its code gets as it is, whatever kind of it there is. */
-  readonly values?: TransitionValues;
-  /** The kinds of it there are, by name, in the order people see them. One has to be picked. */
-  readonly variants?: Readonly<Record<string, TransitionVariant>>;
+  /**
+   * What people can set for it, besides how long it takes and how it gets along, such as which way
+   * a wipe goes. Each has a default, which is what a transition gets that does not say. None of
+   * them can have keys. A transition of a project or a library declares its own the same way.
+   */
+  readonly properties?: readonly PropertySpec[];
 }
 
-/** Which way something goes on the picture, as x and y, with y down as on the screen. */
-const DIRECTIONS: Readonly<Record<string, TransitionVariant>> = {
-  left: { values: { direction: [-1, 0] } },
-  right: { values: { direction: [1, 0] } },
-  up: { values: { direction: [0, -1] } },
-  down: { values: { direction: [0, 1] } },
-};
+/** Which way something goes on the picture: the way the picture moves, or the edge does. */
+export const DIRECTIONS: readonly string[] = ["left", "right", "up", "down"];
+
+/** Which way a transition goes, with the way it goes when nobody says. */
+const direction = (fallback: string): PropertySpec => ({
+  path: "direction",
+  type: "choice",
+  options: DIRECTIONS,
+  default: fallback,
+  animatable: false,
+});
 
 /**
  * The transitions that come with the editor, by what they change and by name, which is what projects
  * keep. What each of them looks like is part of the format, see the project format, and their code
- * gets the values here. Their names come from the interface texts, by type, variant and use.
+ * gets the values of their properties. Their names come from the interface texts, by type and use.
  */
 export const BUILT_IN_TRANSITIONS: Readonly<
   Record<TransitionMedia, Readonly<Record<string, TransitionSpec>>>
 > = {
   picture: {
     fade: { uses: TRANSITION_USES, duration: "0.5" },
+    /**
+     * Through a plain color. `hold` is the share of the time that is nothing but the color: in the
+     * middle of a join, at the start of an enter and at the end of an exit.
+     */
     dip: {
       uses: TRANSITION_USES,
       duration: "0.5",
-      variants: {
-        black: { values: { color: "#000000" } },
-        white: { values: { color: "#ffffff" } },
-      },
+      properties: [
+        { path: "color", type: "color", default: "#000000", animatable: false },
+        {
+          path: "hold",
+          type: "number",
+          unit: "ratio",
+          default: 0,
+          min: 0,
+          max: 0.9,
+          animatable: false,
+        },
+      ],
     },
     /** The soft edge is a share of the short side of the picture. */
     wipe: {
       uses: TRANSITION_USES,
       duration: "0.5",
-      values: { softness: 0.02 },
-      variants: DIRECTIONS,
+      properties: [
+        direction("right"),
+        {
+          path: "softness",
+          type: "number",
+          unit: "ratio",
+          default: 0.02,
+          min: 0,
+          max: 0.5,
+          animatable: false,
+        },
+      ],
     },
-    push: { uses: TRANSITION_USES, duration: "0.5", variants: DIRECTIONS, overshoot: true },
+    push: {
+      uses: TRANSITION_USES,
+      duration: "0.5",
+      overshoot: true,
+      properties: [direction("left")],
+    },
   },
   sound: {
     fade: { uses: TRANSITION_USES, duration: "0.2" },
@@ -106,9 +139,73 @@ export const BUILT_IN_TRANSITIONS: Readonly<
   },
 };
 
-/** The kinds of a transition, in the order people see them. */
-export const variantsOf = (spec: TransitionSpec): readonly string[] =>
-  Object.keys(spec.variants ?? {});
+const NO_PROPERTIES: readonly PropertySpec[] = [];
+
+/** What people can set for a transition, in the order they see it. */
+export const propertiesOf = (spec: TransitionSpec): readonly PropertySpec[] =>
+  spec.properties ?? NO_PROPERTIES;
+
+/** A built-in transition by what it changes and its name, or nothing for one there is not. */
+export function builtInTransition(
+  media: TransitionMedia,
+  type: string | undefined,
+): TransitionSpec | undefined {
+  const own = BUILT_IN_TRANSITIONS[media];
+  return type !== undefined && Object.hasOwn(own, type) ? own[type] : undefined;
+}
+
+/**
+ * What the code of a transition gets: each of its properties as the transition sets it, or else its
+ * default. A number past the limits counts as the limit, and anything else that a property cannot
+ * take counts as its default, as `transitionValueProblems` tells. What no property has is left out.
+ */
+export function transitionValuesOf(
+  spec: TransitionSpec,
+  given: Readonly<Record<string, unknown>> | undefined,
+): TransitionValues {
+  const values: Record<string, Value> = {};
+  for (const property of propertiesOf(spec)) {
+    const value = given && Object.hasOwn(given, property.path) ? given[property.path] : undefined;
+    if (typeof value === "number" && (property.type === "number" || property.type === "angle")) {
+      const fallback = typeof property.default === "number" ? property.default : 0;
+      values[property.path] = Number.isFinite(value)
+        ? Math.min(Math.max(value, property.min ?? -Infinity), property.max ?? Infinity)
+        : fallback;
+    } else if (value !== undefined && !specValueProblem(property, value)) {
+      values[property.path] = value as Value;
+    } else if (property.default !== undefined) {
+      values[property.path] = property.default;
+    }
+  }
+  return values;
+}
+
+/**
+ * What is wrong with what a transition sets, in words: a property it does not have, or a value one
+ * cannot take. Empty when nothing is. Values are plain: no property of a transition has keys.
+ */
+export function transitionValueProblems(
+  spec: TransitionSpec,
+  type: string,
+  given: Readonly<Record<string, unknown>> | undefined,
+): readonly string[] {
+  const problems: string[] = [];
+  const properties = propertiesOf(spec);
+  for (const [path, value] of Object.entries(given ?? {})) {
+    const property = properties.find((each) => each.path === path);
+    if (!property) {
+      problems.push(`转场 ${type} 没有这个属性：${path}`);
+      continue;
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value) && "keys" in value) {
+      problems.push(`转场的属性不能打关键帧：${path}`);
+      continue;
+    }
+    const problem = specValueProblem(property, value, path);
+    if (problem) problems.push(problem);
+  }
+  return problems;
+}
 
 /** Every picture transition that comes with the editor. */
 const PICTURES = ["fade", "dip", "wipe", "push"];
@@ -130,7 +227,8 @@ export interface TransitionRef {
   readonly transition?: string | undefined;
   readonly library?: string | undefined;
   readonly resource?: string | undefined;
-  readonly variant?: string | undefined;
+  /** What it sets for its properties. */
+  readonly values?: Readonly<Record<string, unknown>> | undefined;
 }
 
 /** Why there is no telling what a transition is. */
@@ -142,12 +240,6 @@ export type TransitionMissing =
   | { readonly reason: "project"; readonly transition: string }
   /** Nor transitions of libraries. */
   | { readonly reason: "library"; readonly library: string; readonly resource: string }
-  | {
-      readonly reason: "no-variant";
-      readonly type: string;
-      readonly variants: readonly string[];
-    }
-  | { readonly reason: "variant"; readonly type: string; readonly variant: string }
   /** It cannot go there, such as one that only goes between clips put at the start of one. */
   | { readonly reason: "use"; readonly type: string; readonly use: TransitionUse }
   /** It is not for this, such as one for sound on a picture. */
@@ -157,9 +249,8 @@ export type TransitionFound =
   | {
       readonly kind: "built-in";
       readonly type: string;
-      readonly variant?: string;
       readonly spec: TransitionSpec;
-      /** What its code gets: the values of the transition, with those of the variant over them. */
+      /** What its code gets: what the transition sets, and the defaults for the rest. */
       readonly values: TransitionValues;
     }
   | { readonly kind: "missing"; readonly why: TransitionMissing };
@@ -176,7 +267,7 @@ export function findTransition(
   use: TransitionUse,
 ): TransitionFound {
   const missing = (why: TransitionMissing): TransitionFound => ({ kind: "missing", why });
-  const { type, variant } = ref;
+  const { type } = ref;
   if (type === undefined) {
     if (ref.transition !== undefined) {
       return missing({ reason: "project", transition: ref.transition });
@@ -191,14 +282,7 @@ export function findTransition(
     return missing(elsewhere ? { reason: "media", type, media } : { reason: "unknown", type });
   }
   if (!spec.uses.includes(use)) return missing({ reason: "use", type, use });
-  const { variants } = spec;
-  if (variant === undefined && variants) {
-    return missing({ reason: "no-variant", type, variants: variantsOf(spec) });
-  }
-  if (variant === undefined) return { kind: "built-in", type, spec, values: spec.values ?? {} };
-  const chosen = variants && Object.hasOwn(variants, variant) ? variants[variant] : undefined;
-  if (!chosen) return missing({ reason: "variant", type, variant });
-  return { kind: "built-in", type, variant, spec, values: { ...spec.values, ...chosen.values } };
+  return { kind: "built-in", type, spec, values: transitionValuesOf(spec, ref.values) };
 }
 
 /** Whether this editor shows or plays what was found, there. See `SUPPORTED_TRANSITIONS`. */
@@ -228,10 +312,6 @@ export function describeMissing(why: TransitionMissing): string {
       return `这一版还不能用项目里的转场：${why.transition}`;
     case "library":
       return `这一版还不能用素材库里的转场：${why.library} 的 ${why.resource}`;
-    case "no-variant":
-      return `转场 ${why.type} 要写 variant，可以是：${why.variants.join("、")}`;
-    case "variant":
-      return `转场 ${why.type} 没有这个变体：${why.variant}`;
     case "use":
       return `转场 ${why.type} 不能用作${TRANSITION_USE_NAMES[why.use]}`;
     case "media":

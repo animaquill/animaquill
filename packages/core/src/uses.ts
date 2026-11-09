@@ -81,8 +81,7 @@ const sameRef = (a: TransitionRef, b: TransitionRef): boolean =>
   a.type === b.type &&
   a.transition === b.transition &&
   a.library === b.library &&
-  a.resource === b.resource &&
-  a.variant === b.variant;
+  a.resource === b.resource;
 
 /** Clips by where they start, so that a list of uses reads like the timeline. */
 const byStart = (timeline: TimelineState) => {
@@ -238,15 +237,13 @@ const GONE: ReadonlySet<TransitionMissing["reason"]> = new Set([
   "plugin",
   "project",
   "library",
-  "variant",
-  "no-variant",
 ]);
 
 const mediaOf = (timeline: TimelineState, track: string | undefined): TransitionMedia =>
   track !== undefined && entryOf(timeline.tracks, track)?.kind === "audio" ? "sound" : "picture";
 
 const refKey = (use: TransitionUse, ref: TransitionRef) =>
-  JSON.stringify([use, ref.type, ref.variant, ref.transition, ref.library, ref.resource]);
+  JSON.stringify([use, ref.type, ref.transition, ref.library, ref.resource]);
 
 /**
  * What clips use that is not there: assets, scenes and sounds that the project does not have, and

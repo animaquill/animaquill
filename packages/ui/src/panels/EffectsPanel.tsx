@@ -7,6 +7,7 @@ import { ResourceBrowser, type ResourceIconProps } from "../resources/ResourceBr
 import { PREVIEW_HEIGHT, PREVIEW_WIDTH } from "../resources/transition-preview.ts";
 import { STILL_SWING, effectPreviews, swingAt } from "../resources/effect-preview.ts";
 import { EFFECT_RESOURCE_TYPES, builtInEffects, type EffectItem } from "../resources/effects.ts";
+import { useNotice } from "../resources/notice.ts";
 import type { Resource } from "../resources/resources.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { EFFECT_DRAG_TYPE, effectDrag } from "../timeline/effect-drag.ts";
@@ -62,7 +63,9 @@ export function endEffectDrag(timeline: TimelineEditor): void {
 
 /**
  * The effects to find and use: dragged onto a clip of the timeline, or clicked with clips selected
- * there, which puts it last on each. See docs/design/resource-panels.md, sections 2 and 4.
+ * there, which puts it last on each, once more with each click. A click says what it did: the clips
+ * light up, their list of effects goes to the new one, and the effect here says on how many clips it
+ * went. See docs/design/resource-panels.md, sections 2, 4 and 7.
  */
 export function EffectsPanel() {
   const { timeline, resourceHabits: habits } = useWorkbench();
@@ -70,6 +73,7 @@ export function EffectsPanel() {
   // What is selected says what a click does.
   useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const resources = useMemo(() => builtInEffects(t), [t]);
+  const [notice, say] = useNotice();
 
   const unavailable = ({ data }: Resource<EffectItem>) => {
     const problem = timeline.effectProblem(data.type);
@@ -90,8 +94,14 @@ export function EffectsPanel() {
       unavailable={unavailable}
       Icon={EffectIcon}
       onActivate={(resource) => {
-        if (timeline.attachEffect(resource.data.type)) habits.used(resource.id);
+        // Each click is one more, also where it is already: people can stack the same effect.
+        const count = timeline.attachEffect(resource.data.type);
+        if (count === 0) return;
+        habits.used(resource.id);
+        const added = t("effectPanel.added", { count });
+        say(resource.id, t("effectPanel.addedLong", { name: resource.name, count }), added);
       }}
+      notice={notice}
       onDragStart={(resource, event) => startEffectDrag(resource.data, event)}
       onDragEnd={(resource, dropped) => {
         endEffectDrag(timeline);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatTime, parseTime } from "./time.ts";
+import { Join, Transition } from "./timeline.ts";
 import {
   BUILT_IN_TRANSITIONS,
   SUPPORTED_TRANSITIONS,
@@ -7,11 +8,15 @@ import {
   isSupported,
   joinParts,
   placeJoins,
-  variantsOf,
+  propertiesOf,
+  transitionValueProblems,
   type ClipTimes,
   type JoinSides,
   type TransitionSpec,
 } from "./transitions.ts";
+
+const wipeSpec = BUILT_IN_TRANSITIONS.picture["wipe"] as TransitionSpec;
+const dipSpec = BUILT_IN_TRANSITIONS.picture["dip"] as TransitionSpec;
 
 describe("what a transition is", () => {
   it("is a built-in one by name, for what it changes and where it is", () => {
@@ -19,10 +24,9 @@ describe("what a transition is", () => {
       kind: "built-in",
       type: "fade",
     });
-    expect(findTransition({ type: "dip", variant: "white" }, "picture", "join")).toMatchObject({
+    expect(findTransition({ type: "dip" }, "picture", "join")).toMatchObject({
       kind: "built-in",
       type: "dip",
-      variant: "white",
     });
     expect(findTransition({ type: "fade-linear" }, "sound", "exit")).toMatchObject({
       kind: "built-in",
@@ -33,9 +37,6 @@ describe("what a transition is", () => {
     [{ type: "melt" }, "picture", "enter", { reason: "unknown", type: "melt" }],
     [{ type: "plugin.star" }, "picture", "enter", { reason: "plugin", type: "plugin.star" }],
     [{ type: "fade-linear" }, "picture", "exit", { reason: "media", media: "picture" }],
-    [{ type: "dip" }, "picture", "enter", { reason: "no-variant", variants: ["black", "white"] }],
-    [{ type: "dip", variant: "red" }, "picture", "enter", { reason: "variant", variant: "red" }],
-    [{ type: "fade", variant: "left" }, "picture", "enter", { reason: "variant" }],
     [{ transition: "ink" }, "picture", "join", { reason: "project", transition: "ink" }],
     [{ library: "lib", resource: "ink" }, "picture", "join", { reason: "library", library: "lib" }],
   ] as const)("is missing for %j on %s at %s", (ref, media, use, why) => {
@@ -52,9 +53,7 @@ describe("what a transition is", () => {
   it("is done here for every picture that comes with the editor, and for no sound so far", () => {
     for (const type of Object.keys(BUILT_IN_TRANSITIONS.picture)) {
       for (const use of ["enter", "exit", "join"] as const) {
-        const spec = BUILT_IN_TRANSITIONS.picture[type];
-        const variant = spec?.variants ? Object.keys(spec.variants)[0] : undefined;
-        const found = findTransition({ type, variant }, "picture", use);
+        const found = findTransition({ type }, "picture", use);
         expect(isSupported(found, "picture", use), `${type} ${use}`).toBe(true);
       }
     }
@@ -63,30 +62,67 @@ describe("what a transition is", () => {
     expect(Object.keys(SUPPORTED_TRANSITIONS.picture)).toEqual(["enter", "exit", "join"]);
   });
 
-  it("gives its code the values of the transition, with those of the variant over them", () => {
-    const wipe = findTransition({ type: "wipe", variant: "up" }, "picture", "join");
-    expect(wipe.kind === "built-in" && wipe.values).toEqual({ softness: 0.02, direction: [0, -1] });
-    const dip = findTransition({ type: "dip", variant: "white" }, "picture", "enter");
-    expect(dip.kind === "built-in" && dip.values).toEqual({ color: "#ffffff" });
+  it("gives its code what it sets, and the defaults for the rest", () => {
+    const wipe = findTransition({ type: "wipe", values: { direction: "up" } }, "picture", "join");
+    expect(wipe.kind === "built-in" && wipe.values).toEqual({ direction: "up", softness: 0.02 });
+    const dip = findTransition({ type: "dip", values: { color: "#ffffff" } }, "picture", "enter");
+    expect(dip.kind === "built-in" && dip.values).toEqual({ color: "#ffffff", hold: 0 });
     expect(findTransition({ type: "fade" }, "picture", "exit")).toMatchObject({ values: {} });
-    // A variant is looked up by its own name, never one that every object has.
-    expect(findTransition({ type: "wipe", variant: "toString" }, "picture", "join").kind).toBe(
-      "missing",
+    const plain = findTransition({ type: "push" }, "picture", "enter");
+    expect(plain.kind === "built-in" && plain.values).toEqual({ direction: "left" });
+  });
+
+  it("counts what a property cannot take as its default, and a number past it as the limit", () => {
+    const values = { direction: "sideways", softness: 9, extra: 1, toString: "x" };
+    const wipe = findTransition({ type: "wipe", values }, "picture", "join");
+    expect(wipe.kind === "built-in" && wipe.values).toEqual({ direction: "right", softness: 0.5 });
+    const keyed = { color: { keys: [{ time: "0", value: "#ffffff" }] } };
+    const dip = findTransition({ type: "dip", values: keyed }, "picture", "join");
+    expect(dip.kind === "built-in" && dip.values).toEqual({ color: "#000000", hold: 0 });
+    expect(transitionValueProblems(wipeSpec, "wipe", values)).toEqual([
+      "direction 只能是：left、right、up、down",
+      "softness 不能大于 0.5",
+      "转场 wipe 没有这个属性：extra",
+      "转场 wipe 没有这个属性：toString",
+    ]);
+    expect(transitionValueProblems(dipSpec, "dip", keyed)).toEqual([
+      "转场的属性不能打关键帧：color",
+    ]);
+    expect(transitionValueProblems(wipeSpec, "wipe", { direction: "up" })).toEqual([]);
+  });
+
+  it("is read without the kinds it had once, and keeps what it sets, which has no keys", () => {
+    const old = { type: "wipe", variant: "left", duration: "1" };
+    expect(Transition.parse(old)).toEqual({ type: "wipe", duration: "1" });
+    expect(Join.parse({ id: "j", from: "a", to: "b", ...old })).toEqual({
+      id: "j",
+      from: "a",
+      to: "b",
+      type: "wipe",
+      duration: "1",
+    });
+    const values = { softness: 0.1, direction: "up" };
+    expect(Transition.parse({ type: "wipe", duration: "1", values }).values).toEqual(values);
+    const keyed = { direction: { keys: [{ time: "0", value: "up" }] } };
+    expect(Transition.safeParse({ type: "wipe", duration: "1", values: keyed }).success).toBe(
+      false,
     );
   });
 
-  it("comes with every name of the design, their kinds and their default lengths", () => {
-    expect(variantsOf(BUILT_IN_TRANSITIONS.picture["dip"] as TransitionSpec)).toEqual([
-      "black",
-      "white",
-    ]);
+  it("comes with every name of the design, their properties and their default lengths", () => {
+    const paths = (type: string) =>
+      propertiesOf(BUILT_IN_TRANSITIONS.picture[type] as TransitionSpec).map(({ path }) => path);
+    expect(paths("fade")).toEqual([]);
+    expect(paths("dip")).toEqual(["color", "hold"]);
+    expect(paths("wipe")).toEqual(["direction", "softness"]);
+    expect(paths("push")).toEqual(["direction"]);
     for (const type of ["wipe", "push"]) {
-      expect(variantsOf(BUILT_IN_TRANSITIONS.picture[type] as TransitionSpec)).toEqual([
-        "left",
-        "right",
-        "up",
-        "down",
-      ]);
+      const [direction] = propertiesOf(BUILT_IN_TRANSITIONS.picture[type] as TransitionSpec);
+      expect(direction?.options).toEqual(["left", "right", "up", "down"]);
+    }
+    // None of them can have keys.
+    for (const spec of Object.values(BUILT_IN_TRANSITIONS.picture)) {
+      for (const property of propertiesOf(spec)) expect(property.animatable).toBe(false);
     }
     expect(Object.keys(BUILT_IN_TRANSITIONS.picture)).toEqual(["fade", "dip", "wipe", "push"]);
     expect(Object.keys(BUILT_IN_TRANSITIONS.sound)).toEqual(["fade", "fade-linear"]);

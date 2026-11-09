@@ -6,9 +6,9 @@ import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-
 import { ProjectSession } from "../workbench/session.ts";
 import { ActionRegistry } from "../workbench/actions.ts";
 import { registerTimelineActions } from "./actions.ts";
-import { RULER_HEIGHT, TimelineEditor, type TransitionChoice } from "./editor.ts";
+import { FLASH_MS, RULER_HEIGHT, TimelineEditor, type TransitionChoice } from "./editor.ts";
 import { frameAt } from "./frames.ts";
-import { builtInPick, type TransitionPick } from "./transition-place.ts";
+import { builtInPick, greysOut, type TransitionPick } from "./transition-place.ts";
 import type { Pointer } from "./gestures.ts";
 import { sceneTemplate } from "./scene-template.ts";
 
@@ -1342,9 +1342,9 @@ describe("transitions at the edges of clips", () => {
 });
 
 describe("transitions from their tab", () => {
-  const pick = (type: string, variant?: string) => builtInPick(type, variant) as TransitionPick;
+  const pick = (type: string) => builtInPick(type) as TransitionPick;
   const fade = pick("fade");
-  const push = pick("push", "left");
+  const push = pick("push");
 
   /** a and b one after the other, c alone, and a sound under them. */
   async function clips() {
@@ -1372,7 +1372,7 @@ describe("transitions from their tab", () => {
     expect(editor.preview?.transitionDrop).toMatchObject({ start: 10, end: 10.5 });
     expect(editor.dropTransition(at(10.5), push)).toBe(true);
     expect(editor.preview).toBeUndefined();
-    expect(main().clips["c"]?.enter).toEqual({ type: "push", variant: "left", duration: "0.5" });
+    expect(main().clips["c"]?.enter).toEqual({ type: "push", duration: "0.5" });
     expect(editor.getSnapshot().transition).toEqual({ clip: "c", edge: "enter" });
     expect(editor.dropTransition(at(12.8), fade)).toBe(true);
     expect(main().clips["c"]?.exit).toEqual({ type: "fade", duration: "0.5" });
@@ -1391,7 +1391,7 @@ describe("transitions from their tab", () => {
       replacing: true,
     });
     expect(editor.dropTransition(at(4.2), push)).toBe(true);
-    expect(main().clips["a"]?.enter).toEqual({ type: "push", variant: "left", duration: "2.5" });
+    expect(main().clips["a"]?.enter).toEqual({ type: "push", duration: "2.5" });
     addClip("b", 8, 2, video);
     store.execute({
       type: "join.add",
@@ -1402,11 +1402,7 @@ describe("transitions from their tab", () => {
       join: { id: "j" },
     });
     expect(editor.dropTransition(at(8.3), push)).toBe(true);
-    expect(main().joins?.["j"]?.transition).toEqual({
-      type: "push",
-      variant: "left",
-      duration: "1",
-    });
+    expect(main().joins?.["j"]?.transition).toEqual({ type: "push", duration: "1" });
     expect(editor.getSnapshot().transition).toEqual({ join: "j" });
   });
 
@@ -1434,22 +1430,28 @@ describe("transitions from their tab", () => {
     });
   });
 
-  it("go on one selected clip at the edges people say, each a step", async () => {
+  it("go on a selected clip: one that comes in at its start, one that goes out at its end", async () => {
     const { editor, main, store } = await clips();
     editor.selectOnly("c");
     expect(editor.attachContext).toMatchObject({ kind: "clips", pairs: [] });
     expect(editor.attachProblem("enter", fade)).toBeUndefined();
-    expect(editor.attachProblem("join", fade)).toBe("noPair");
-    expect(editor.attachTransition(push, "enter", ["enter", "exit"])).toBe(true);
-    const pushed = { type: "push", variant: "left", duration: "0.5" };
+    // One between two clips is never greyed out: a click says how it goes.
+    expect(editor.attachProblem("join", fade)).toBe("joinHow");
+    expect(greysOut(editor.attachProblem("join", fade))).toBe(false);
+    expect(editor.attachTransition(fade, "join")).toBe(false);
+    expect(editor.attachTransition(push, "enter")).toBe(true);
+    const pushed = { type: "push", duration: "0.5" };
     expect(main().clips["c"]?.enter).toEqual(pushed);
+    expect(main().clips["c"]).not.toHaveProperty("exit");
+    expect(editor.attachTransition(push, "exit")).toBe(true);
     expect(main().clips["c"]?.exit).toEqual(pushed);
     // The clip stays selected, so another click puts another one in their place.
     expect([...editor.getSnapshot().selection]).toEqual(["c"]);
-    expect(editor.attachTransition(fade, "exit", ["exit"])).toBe(true);
+    expect(editor.attachTransition(fade, "exit")).toBe(true);
     expect(main().clips["c"]?.exit).toEqual({ type: "fade", duration: "0.5" });
     store.undo();
     expect(main().clips["c"]?.exit).toEqual(pushed);
+    store.undo();
     store.undo();
     expect(main().clips["c"]).not.toHaveProperty("enter");
     expect(main().clips["c"]).not.toHaveProperty("exit");
@@ -1461,7 +1463,7 @@ describe("transitions from their tab", () => {
     editor.addToSelection("b");
     editor.addToSelection("c");
     expect(editor.attachContext).toMatchObject({ kind: "clips" });
-    expect(editor.attachTransition(fade, "enter", ["enter"])).toBe(true);
+    expect(editor.attachTransition(fade, "enter")).toBe(true);
     for (const id of ["a", "b", "c"]) {
       expect(main().clips[id]?.enter).toEqual({ type: "fade", duration: "0.5" });
     }
@@ -1470,7 +1472,7 @@ describe("transitions from their tab", () => {
     expect(editor.attachTransition(push, "join")).toBe(true);
     const joins = Object.values(main().joins ?? {});
     expect(joins.map(({ from, to, transition }) => [from, to, transition])).toEqual([
-      ["a", "b", { type: "push", variant: "left", duration: "0.5" }],
+      ["a", "b", { type: "push", duration: "0.5" }],
     ]);
     store.undo();
     expect(main()).not.toHaveProperty("joins");
@@ -1481,9 +1483,10 @@ describe("transitions from their tab", () => {
     addClip("a", 2, 4, video, { enter: { type: "fade", duration: "1.5", curve: [0.42, 0, 1, 1] } });
     editor.selectTransition("a", "enter");
     expect(editor.attachProblem("exit", fade)).toBe("chosenEnter");
-    expect(editor.attachProblem("join", fade)).toBe("chosenEnter");
+    expect(editor.attachProblem("join", fade)).toBe("joinHow");
     expect(editor.attachTransition(push, "enter")).toBe(true);
-    expect(main().clips["a"]?.enter).toEqual({ type: "push", variant: "left", duration: "1.5" });
+    // In the place of another, it keeps the length and goes with its own defaults.
+    expect(main().clips["a"]?.enter).toEqual({ type: "push", duration: "1.5" });
     // The same one again changes nothing.
     expect(editor.attachTransition(push, "enter")).toBe(false);
     editor.updateTrack(video, { locked: true });
@@ -1494,6 +1497,7 @@ describe("transitions from their tab", () => {
   it("say why they cannot go on what is selected", async () => {
     const { editor, video } = await clips();
     expect(editor.attachProblem("enter", fade)).toBe("nothing");
+    expect(editor.attachProblem("join", fade)).toBe("joinHow");
     editor.selectOnly("s");
     expect(editor.attachProblem("enter", fade)).toBe("sound");
     editor.updateTrack(video, { locked: true });
@@ -1595,13 +1599,13 @@ describe("joins", () => {
     const { editor, main, store, addJoin } = await joined();
     addJoin();
     const id = Object.keys(main().joins ?? {})[0] as string;
-    expect(editor.updateJoin(id, { type: "push", variant: "left" })).toBe(true);
+    expect(editor.updateJoin(id, { type: "push", values: { direction: "up" } })).toBe(true);
     expect(main().joins?.[id]?.transition).toEqual({
       type: "push",
-      variant: "left",
+      values: { direction: "up" },
       duration: "0.5",
     });
-    expect(editor.updateJoin(id, { type: "fade", variant: null })).toBe(true);
+    expect(editor.updateJoin(id, { type: "fade" })).toBe(true);
     expect(main().joins?.[id]?.transition).toEqual({ type: "fade", duration: "0.5" });
     expect(editor.canChangeSelection).toBe(true);
     editor.deleteSelection();
@@ -1626,7 +1630,14 @@ describe("joins", () => {
     const { editor, main, store, at, video } = await joined();
     store.execute({
       type: "join.add",
-      params: { timeline: "main", id: "j", from: "a", to: "b", type: "wipe", variant: "up" },
+      params: {
+        timeline: "main",
+        id: "j",
+        from: "a",
+        to: "b",
+        type: "wipe",
+        values: { direction: "up" },
+      },
     });
     editor.selectOnly("a");
     editor.addToSelection("b");
@@ -1637,7 +1648,11 @@ describe("joins", () => {
     const joins = Object.entries(main().joins ?? {});
     expect(joins).toHaveLength(2);
     const [, copy] = joins.find(([id]) => id !== "j") ?? [];
-    expect(copy?.transition).toEqual({ type: "wipe", variant: "up", duration: "0.5" });
+    expect(copy?.transition).toEqual({
+      type: "wipe",
+      values: { direction: "up" },
+      duration: "0.5",
+    });
     expect(copy?.from).not.toBe("a");
     expect(main().clips[copy?.from as string]?.start).toBe("10");
     expect(main().clips[copy?.to as string]?.start).toBe("13");
@@ -1658,7 +1673,14 @@ describe("joins", () => {
     addClip("b", 5, 3, video);
     store.execute({
       type: "join.add",
-      params: { timeline: "main", id: "j", from: "a", to: "b", type: "wipe", variant: "up" },
+      params: {
+        timeline: "main",
+        id: "j",
+        from: "a",
+        to: "b",
+        type: "wipe",
+        values: { direction: "up" },
+      },
     });
     editor.selectOnly("a");
     editor.addToSelection("b");
@@ -1666,7 +1688,7 @@ describe("joins", () => {
     // Later changes are not what was copied, and nor is the join going with its clips.
     store.execute({
       type: "join.update",
-      params: { timeline: "main", join: "j", changes: { type: "fade", variant: null } },
+      params: { timeline: "main", join: "j", changes: { type: "fade" } },
     });
     store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["a", "b"] } });
     expect(main()).not.toHaveProperty("joins");
@@ -1674,7 +1696,11 @@ describe("joins", () => {
     editor.paste();
     const pasted = Object.values(main().joins ?? {});
     expect(pasted).toHaveLength(1);
-    expect(pasted[0]?.transition).toEqual({ type: "wipe", variant: "up", duration: "0.5" });
+    expect(pasted[0]?.transition).toEqual({
+      type: "wipe",
+      values: { direction: "up" },
+      duration: "0.5",
+    });
     const [from, to] = [pasted[0]?.from as string, pasted[0]?.to as string];
     // At the end of the timeline, next to each other as they were.
     expect(main().clips[from]?.start).toBe("10");
@@ -3444,12 +3470,66 @@ describe("effects from their tab", () => {
     editor.addToSelection("s");
     expect(editor.effectProblem("blur")).toBeUndefined();
     expect(editor.effectProblem("plugin.glow")).toBe("unknown");
-    expect(editor.attachEffect("brightness")).toBe(true);
+    expect(editor.attachEffect("brightness")).toBe(2);
     expect(listOf(main().clips["a"])).toEqual(["brightness"]);
     expect(listOf(main().clips["b"])).toEqual(["brightness"]);
     store.undo();
     expect(listOf(main().clips["a"])).toEqual([]);
     expect(listOf(main().clips["b"])).toEqual([]);
+  });
+
+  it("go on once more with each click, and say where they went", async () => {
+    const { editor, main, store } = await clips();
+    vi.useFakeTimers();
+    try {
+      editor.selectOnly("a");
+      editor.addToSelection("b");
+      expect(editor.attachEffect("blur")).toBe(2);
+      const first = editor.lastAdded;
+      expect(editor.attachEffect("blur")).toBe(2);
+      // The same effect again is one more, not nothing.
+      expect(listOf(main().clips["a"])).toEqual(["blur", "blur"]);
+      expect(listOf(main().clips["b"])).toEqual(["blur", "blur"]);
+      // The list of each clip goes to the one that is new there.
+      const added = editor.lastAdded;
+      expect(added?.at).toBe((first?.at ?? 0) + 1);
+      for (const clip of ["a", "b"]) {
+        const ids = effectsOf(main().clips[clip] as ClipState).map(({ id }) => id);
+        expect(added?.effects.get(clip)).toBe(ids[1]);
+      }
+      // The clips light up for a moment, and the light goes.
+      expect(editor.flashOf("a")).toBe(1);
+      expect(editor.flashOf("s")).toBe(0);
+      vi.advanceTimersByTime(FLASH_MS / 2);
+      expect(editor.flashOf("b")).toBeGreaterThan(0);
+      expect(editor.flashOf("b")).toBeLessThan(1);
+      vi.advanceTimersByTime(FLASH_MS);
+      expect(editor.flashOf("b")).toBe(0);
+      store.undo();
+      expect(listOf(main().clips["a"])).toEqual(["blur"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("change when they work in one step, from the start of the clip, and the edges are its own", async () => {
+    const { editor, main, store } = await clips();
+    editor.selectOnly("a");
+    editor.attachEffect("blur");
+    const [blur] = effectsOf(main().clips["a"] as ClipState).map(({ id }) => id);
+    const id = blur as string;
+    const rangeOf = () => {
+      const effect = effectsOf(main().clips["a"] as ClipState)[0];
+      return [effect?.start, effect?.end];
+    };
+    expect(editor.setEffectRange("a", id, parseTime("0.5"), parseTime("2"))).toBe(true);
+    expect(rangeOf()).toEqual(["0.5", "2"]);
+    expect(editor.setEffectRange("a", id, parseTime("0.5"), parseTime("2"))).toBe(false);
+    expect(editor.setEffectRange("a", id, undefined, parseTime("2"))).toBe(true);
+    expect(rangeOf()).toEqual([undefined, "2"]);
+    store.undo();
+    store.undo();
+    expect(rangeOf()).toEqual([undefined, undefined]);
   });
 
   it("move, turn off and go from the list of a clip, and not on a locked track", async () => {

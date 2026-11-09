@@ -185,20 +185,20 @@ describe("a layer of the render plan", () => {
       missing: true,
     });
     // What comes with the editor is drawn as it says, with what its code gets.
-    const wipe = planned({ exit: { type: "wipe", variant: "left", duration: "1" } })?.exit;
+    const values = { direction: "up", softness: 0.1 };
+    const wipe = planned({ exit: { type: "wipe", values, duration: "1" } })?.exit;
     expect(wipe).toEqual({
-      how: {
-        kind: "built-in",
-        type: "wipe",
-        variant: "left",
-        values: { softness: 0.02, direction: [-1, 0] },
-      },
+      how: { kind: "built-in", type: "wipe", values },
       start: 2,
       end: 3,
       duration: 1,
     });
-    const push = planned({ enter: { type: "push", variant: "up", duration: "1" } })?.enter;
-    expect(push).toMatchObject({ how: { type: "push", variant: "up" }, overshoot: true });
+    // What it does not set is the default.
+    const push = planned({ enter: { type: "push", duration: "1" } })?.enter;
+    expect(push).toMatchObject({
+      how: { type: "push", values: { direction: "left" } },
+      overshoot: true,
+    });
     const typo = planned({ exit: { type: "fdae", duration: "1" } })?.exit;
     expect(typo).toMatchObject({ how: { type: "fade" }, missing: true });
     expect(layer()).not.toHaveProperty("enter");

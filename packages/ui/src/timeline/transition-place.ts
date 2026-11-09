@@ -1,13 +1,12 @@
 import { clipEnd, clipStart, type ClipState, type CommandCall } from "@animaquill/core";
 import {
-  BUILT_IN_TRANSITIONS,
   ZERO,
+  builtInTransition,
   compare,
   formatTime,
   newId,
   parseTime,
   toSeconds,
-  variantsOf,
   type Rational,
   type SpeedCurve,
   type Transition,
@@ -39,7 +38,6 @@ export interface TransitionName {
   readonly transition?: string | undefined;
   readonly library?: string | undefined;
   readonly resource?: string | undefined;
-  readonly variant?: string | undefined;
 }
 
 /**
@@ -55,28 +53,27 @@ export interface TransitionPick {
   readonly curve?: SpeedCurve;
 }
 
-/** A picture transition that comes with the editor, or nothing for one there is not. */
-export function builtInPick(type: string, variant?: string): TransitionPick | undefined {
-  const own = BUILT_IN_TRANSITIONS.picture;
-  const spec = Object.hasOwn(own, type) ? own[type] : undefined;
+/**
+ * A picture transition that comes with the editor, or nothing for one there is not. It comes with
+ * the defaults of its properties, which people change once it is there.
+ */
+export function builtInPick(type: string): TransitionPick | undefined {
+  const spec = builtInTransition("picture", type);
   if (!spec) return undefined;
-  const variants = variantsOf(spec);
-  if (variant === undefined ? variants.length > 0 : !variants.includes(variant)) return undefined;
   return {
-    name: variant === undefined ? { type } : { type, variant },
+    name: { type },
     uses: spec.uses,
     duration: spec.duration,
     ...(spec.curve && { curve: spec.curve }),
   };
 }
 
-/** Whether a transition is the one picked. */
+/** Whether a transition is the one picked, whatever it sets for its properties. */
 export const isPicked = (transition: TransitionName, { name }: TransitionPick): boolean =>
   transition.type === name.type &&
   transition.transition === name.transition &&
   transition.library === name.library &&
-  transition.resource === name.resource &&
-  transition.variant === name.variant;
+  transition.resource === name.resource;
 
 const atMost = (value: Rational, limit: Rational) => (compare(value, limit) > 0 ? limit : value);
 
@@ -88,8 +85,8 @@ function presetLength(pick: TransitionPick, model: TimelineModel): Rational {
 
 /**
  * A transition at an edge of a clip as the pick makes it: in place of one that is there, it keeps
- * how long that one is, and goes as the pick does (see the decision of 2026-11-09). A new one is as
- * long as the pick says, or as there is room for.
+ * how long that one is, and goes as the pick does, with the defaults of its own properties (see the
+ * decisions of 2026-11-09). A new one is as long as the pick says, or as there is room for.
  */
 function edgeTransition(
   model: TimelineModel,
@@ -287,12 +284,13 @@ function joinCall(
 
 /** What puts the pick in the place of a join, as long as that one is. */
 function replaceJoinCall(model: TimelineModel, join: string, pick: TransitionPick): CommandCall {
-  const { type, transition, library, resource, variant } = pick.name;
+  const { type, transition, library, resource } = pick.name;
   const names = { type, transition, library, resource };
   const changes: Record<string, unknown> = Object.fromEntries(
     Object.entries(names).filter(([, value]) => value !== undefined),
   );
-  changes["variant"] = variant ?? null;
+  // What the one before set is about the one before.
+  changes["values"] = null;
   changes["curve"] = pick.curve ?? null;
   return { type: "join.update", params: { timeline: model.id, join, changes } };
 }
@@ -421,7 +419,8 @@ export function attachContext(
 
 /**
  * Why a click on a transition for a use does nothing with what is selected, as a key of the
- * texts, or nothing when it does something.
+ * texts, or nothing when it does something. One that goes between two clips is never greyed out
+ * for it: a click with no two clips next to each other selected says how it goes (`joinHow`).
  */
 export function attachProblem(
   model: TimelineModel | undefined,
@@ -436,15 +435,16 @@ export function attachProblem(
   | "chosenEnter"
   | "chosenExit"
   | "chosenJoin"
-  | "noPair"
+  | "joinHow"
   | "noRoom"
   | "use"
   | undefined {
   if (!pick.uses.includes(use)) return "use";
   switch (context.kind) {
     case "nothing":
-      return "nothing";
+      return use === "join" ? "joinHow" : "nothing";
     case "edge":
+      if (use === "join") return "joinHow";
       if (context.locked) return "locked";
       if (context.edge !== use) return context.edge === "enter" ? "chosenEnter" : "chosenExit";
       return undefined;
@@ -452,19 +452,26 @@ export function attachProblem(
       if (context.locked) return "locked";
       return use === "join" ? undefined : "chosenJoin";
     case "clips": {
-      if (context.blocked) return context.blocked;
-      if (use === "join")
+      if (use === "join") {
         return context.pairs.some(([row, from, to]) => model && canJoin(model, row, from, to))
           ? undefined
-          : "noPair";
+          : "joinHow";
+      }
+      if (context.blocked) return context.blocked;
       if (!model) return "nothing";
-      // One clip can take it at either edge: people say which.
-      const edges: readonly Edge[] = context.boxes.length === 1 ? ["enter", "exit"] : [use];
-      const any = context.boxes.some((box) => edges.some((edge) => canTakeEdge(model, box, edge)));
+      const any = context.boxes.some((box) => canTakeEdge(model, box, use));
       return any ? undefined : "noRoom";
     }
   }
 }
+
+type AttachProblem = ReturnType<typeof attachProblem>;
+
+/** Whether a problem of a click is one that greys out what was clicked. */
+export const greysOut = (
+  problem: AttachProblem,
+): problem is Exclude<AttachProblem, undefined | "nothing" | "joinHow"> =>
+  problem !== undefined && problem !== "nothing" && problem !== "joinHow";
 
 /** Whether a join can go between two clips, or is there to take the place of. */
 const canJoin = (model: TimelineModel, row: Row, from: ClipBox, to: ClipBox) =>
@@ -473,15 +480,15 @@ const canJoin = (model: TimelineModel, row: Row, from: ClipBox, to: ClipBox) =>
 
 /**
  * What a click on a transition does with what is selected, as commands of one step: a transition
- * that is selected becomes it, as long as it was; the clips selected get it at `edges`, a pair of
- * them that touch gets it between them.
+ * that is selected becomes it, as long as it was; the clips selected get one that comes in at their
+ * start and one that goes out at their end, and each pair of them that touch gets one that goes
+ * between them there. See docs/design/resource-panels.md, section 7.
  */
 export function attachCalls(
   model: TimelineModel,
   context: AttachContext,
   use: TransitionUse,
   pick: TransitionPick,
-  edges: readonly Edge[],
 ): readonly CommandCall[] {
   if (attachProblem(model, context, use, pick)) return [];
   switch (context.kind) {
@@ -503,7 +510,7 @@ export function attachCalls(
         });
       }
       return context.boxes.flatMap((box) => {
-        const call = edgesCall(model, box, edges, pick);
+        const call = edgesCall(model, box, [use], pick);
         return call ? [call] : [];
       });
   }

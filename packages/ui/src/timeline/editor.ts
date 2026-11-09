@@ -15,6 +15,7 @@ import {
 import {
   clipEnd,
   clipStart,
+  effectsOf,
   longestJoin,
   orderedSections,
   projectFrameRate,
@@ -215,6 +216,18 @@ export const isJoinChoice = (
   choice: TransitionChoice | undefined,
 ): choice is { readonly join: string } => choice !== undefined && "join" in choice;
 
+/** Effects that just went on clips: the id of each, by clip, and which time that was. */
+export interface AddedEffects {
+  readonly effects: ReadonlyMap<string, string>;
+  readonly at: number;
+  /** When, by `Date.now()`. */
+  readonly time: number;
+}
+
+/** How long clips light up when something happened to them, see `TimelineEditor.flash`. */
+export const FLASH_MS = 700;
+const FLASH_STEP_MS = 40;
+
 /** What React shows. The view changes far more often and goes through `subscribeView`. */
 export interface TimelineSnapshot {
   readonly model: TimelineModel | undefined;
@@ -338,6 +351,10 @@ export class TimelineEditor implements TouchTarget {
   readonly #viewEmitter = new Emitter();
   readonly #copied = new Emitter();
   readonly #chosen = new Emitter();
+  readonly #addedEmitter = new Emitter();
+  #added: AddedEffects | undefined;
+  #flash: { readonly clips: ReadonlySet<string>; readonly share: number } | undefined;
+  #flashTimer: ReturnType<typeof setTimeout> | undefined;
   #snapshot: TimelineSnapshot = {
     model: undefined,
     selection: new Set(),
@@ -1834,13 +1851,13 @@ export class TimelineEditor implements TouchTarget {
 
   /**
    * What a click on a transition does, in one step: what is selected becomes it, the clips selected
-   * get it at `edges`, and pairs of them that touch get it between them. Says whether anything
-   * changed.
+   * get it at their start or their end, and pairs of them that touch get it between them. Says
+   * whether anything changed.
    */
-  attachTransition(pick: TransitionPick, use: TransitionUse, edges: readonly Edge[] = []): boolean {
+  attachTransition(pick: TransitionPick, use: TransitionUse): boolean {
     const { model } = this;
     if (!model) return false;
-    const calls = attachCalls(model, this.attachContext, use, pick, edges);
+    const calls = attachCalls(model, this.attachContext, use, pick);
     return calls.length > 0 && this.#run(calls);
   }
 
@@ -1882,9 +1899,53 @@ export class TimelineEditor implements TouchTarget {
     const { model } = this;
     const box = model && this.effectDropAt(pointer);
     this.showEffectDrop(undefined);
-    if (!model || !box || !this.#run(effectCalls(model, [box], type))) return false;
+    if (!model || !box) return false;
+    const { calls, added } = effectCalls(model, [box], type);
+    if (!this.#run(calls)) return false;
     this.#setSelection(new Set([box.id]));
+    this.#effectsAdded(added);
     return true;
+  }
+
+  /**
+   * Says where effects just went, by clip: the clips light up for a moment, and the list of their
+   * effects goes to the new one. See `lastAdded`.
+   */
+  #effectsAdded(added: ReadonlyMap<string, string>): void {
+    this.#added = { effects: added, at: (this.#added?.at ?? 0) + 1, time: Date.now() };
+    this.#addedEmitter.emit();
+    this.flash(new Set(added.keys()));
+  }
+
+  /** Effects that clicks or drops put on clips last, by clip, and a number that tells two apart. */
+  get lastAdded(): AddedEffects | undefined {
+    return this.#added;
+  }
+
+  subscribeAdded = this.#addedEmitter.subscribe;
+
+  /**
+   * Lights up clips for a moment, going from bright to nothing over `FLASH_MS`: something just
+   * happened to them. See `flashOf`.
+   */
+  flash(clips: ReadonlySet<string>): void {
+    clearTimeout(this.#flashTimer);
+    const began = Date.now();
+    this.#flash = { clips, share: 1 };
+    const step = () => {
+      const share = 1 - (Date.now() - began) / FLASH_MS;
+      this.#flash = share > 0 ? { clips, share } : undefined;
+      this.#viewEmitter.emit();
+      if (share > 0) this.#flashTimer = setTimeout(step, FLASH_STEP_MS);
+    };
+    this.#viewEmitter.emit();
+    this.#flashTimer = setTimeout(step, FLASH_STEP_MS);
+  }
+
+  /** How bright a clip is lit up now, from 1 down to 0 for not at all. */
+  flashOf(clip: string): number {
+    const flash = this.#flash;
+    return flash?.clips.has(clip) ? flash.share : 0;
   }
 
   /** What a click on an effect in the tab is about: the clips selected. */
@@ -1902,12 +1963,48 @@ export class TimelineEditor implements TouchTarget {
     return effectProblem(this.effectContext, type);
   }
 
-  /** Puts an effect last on every clip selected that can take one, in one step. */
-  attachEffect(type: string): boolean {
+  /**
+   * Puts an effect last on every clip selected that can take one, in one step: also where it is
+   * already, as one more. Says how many clips got it.
+   */
+  attachEffect(type: string): number {
     const { model } = this;
     const context = this.effectContext;
-    if (!model || effectProblem(context, type) !== undefined) return false;
-    return this.#run(effectCalls(model, context.boxes, type));
+    if (!model || effectProblem(context, type) !== undefined) return 0;
+    const { calls, added } = effectCalls(model, context.boxes, type);
+    if (!this.#run(calls)) return 0;
+    this.#effectsAdded(added);
+    return added.size;
+  }
+
+  /**
+   * Changes when an effect of a clip works, in one step: seconds from the start of the clip, where
+   * undefined is the start or the end of the clip, as long as it is.
+   */
+  setEffectRange(
+    clip: string,
+    effect: string,
+    start: Rational | undefined,
+    end: Rational | undefined,
+  ): boolean {
+    const { model } = this;
+    if (!model || !this.canChangeEffects(clip)) return false;
+    const box = model.boxes.get(clip);
+    const current = box && effectsOf(box.clip).find(({ id }) => id === effect);
+    if (!current) return false;
+    const next = {
+      start: start === undefined ? undefined : formatTime(start),
+      end: end === undefined ? undefined : formatTime(end),
+    };
+    if (next.start === current.start && next.end === current.end) return false;
+    const params = {
+      timeline: model.id,
+      clip,
+      effect,
+      start: next.start ?? null,
+      end: next.end ?? null,
+    };
+    return this.#run([{ type: "effect.update", params }]);
   }
 
   /** Whether the effects of a clip can change: it is there, and its track is not locked. */

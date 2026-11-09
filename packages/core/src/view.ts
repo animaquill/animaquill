@@ -387,6 +387,20 @@ export function blendAt(layer: Pick<RenderLayer, "channels" | "offset" | "start"
   return (typeof value === "string" && BLEND_MODES.has(value) ? value : "normal") as BlendMode;
 }
 
+/**
+ * How far off a moment can be from where an effect starts or ends and still count as there: the
+ * times of frames and of effects are worked out in seconds apart, and can be that far apart.
+ */
+const ALMOST = 1e-9;
+
+/**
+ * Whether an effect works at a moment, in seconds on the timeline: from where it starts, up to but
+ * not at where it ends. See `PlannedEffect`.
+ */
+export const effectWorksAt = (effect: Pick<PlannedEffect, "from" | "to">, time: number): boolean =>
+  (effect.from === undefined || time >= effect.from - ALMOST) &&
+  (effect.to === undefined || time < effect.to - ALMOST);
+
 /** What an effect of a layer takes at a moment, by parameter, and whether that changes anything. */
 export interface EffectValues {
   readonly values: Readonly<Record<string, Value>>;

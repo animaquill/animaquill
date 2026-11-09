@@ -1,8 +1,8 @@
 import { clear, contextOf, directionOf, share, type TransitionCode } from "./code.ts";
 
 /**
- * 擦除: an edge goes across the picture the way the variant says, and what it has gone past shows
- * the side after. The edge is soft over a share of the short side of the picture. It starts just
+ * 擦除: an edge goes across the picture the way its direction says, and what it has gone past shows
+ * the side after. The edge is soft over `softness` of the short side of the picture. It starts just
  * outside the picture and ends just outside the other side of it, so that nothing of the side after
  * shows at the start, and nothing of the side before at the end.
  *

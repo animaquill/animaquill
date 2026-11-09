@@ -78,18 +78,18 @@ describe("a join that is put on a cut", () => {
       from: "b",
       to: "c",
       type: "push",
-      variant: "left",
       duration: "1",
       curve: [0.42, 0, 0.58, 1],
       align: "after",
+      values: { direction: "right" },
     };
     success(run("join.add", params));
     expect(joinOf("j")?.transition).toEqual({
       type: "push",
-      variant: "left",
       duration: "1",
       curve: [0.42, 0, 0.58, 1],
       align: "after",
+      values: { direction: "right" },
     });
     const file = JSON.parse(store.exportFiles().files.get(MAIN) as string);
     const video = file.tracks.find(({ kind }: { kind: string }) => kind === "video");
@@ -102,7 +102,10 @@ describe("a join that is put on a cut", () => {
     ["invalid-value", { from: "a", to: "a", type: "fade" }],
     ["not-found", { from: "a", to: "gone", type: "fade" }],
     ["transition-missing", { from: "a", to: "b", type: "melt" }],
-    ["transition-missing", { from: "a", to: "b", type: "wipe" }],
+    ["invalid-value", { from: "a", to: "b", type: "wipe", values: { direction: "middle" } }],
+    ["invalid-value", { from: "a", to: "b", type: "wipe", values: { angle: 1 } }],
+    ["invalid-params", { from: "a", to: "b", type: "wipe", variant: "left" }],
+    ["invalid-params", { from: "a", to: "b", type: "wipe", values: { direction: { keys: [] } } }],
     ["transition-missing", { from: "a", to: "b", type: "plugin.star" }],
     ["transition-missing", { from: "a", to: "b", library: "lib", resource: "ink" }],
     ["invalid-value", { from: "a", to: "b" }],
@@ -121,9 +124,7 @@ describe("a join that is put on a cut", () => {
     const { run } = project((video) => {
       video.joins = [{ id: "j", from: "a", to: "b", type: "fade", duration: "1" }];
     });
-    expect(
-      failure(run("join.add", { from: "a", to: "b", type: "dip", variant: "black" })).code,
-    ).toBe("join-taken");
+    expect(failure(run("join.add", { from: "a", to: "b", type: "dip" })).code).toBe("join-taken");
     expect(failure(run("join.add", { id: "j", from: "b", to: "c", type: "fade" })).code).toBe(
       "id-taken",
     );
@@ -289,17 +290,19 @@ describe("where a join goes around its cut when nobody says", () => {
 describe("changing a join", () => {
   const joined = () =>
     project((video) => {
-      video.joins = [{ id: "j", from: "a", to: "b", type: "wipe", variant: "left", duration: "1" }];
+      video.joins = [
+        { id: "j", from: "a", to: "b", type: "wipe", values: { direction: "left" }, duration: "1" },
+      ];
     });
 
   it("puts another one in its place as a whole, and changes its length, speed and place", () => {
     const { run, joinOf, store } = joined();
     success(run("join.update", { join: "j", changes: { type: "fade" } }));
     expect(joinOf("j")?.transition).toEqual({ type: "fade", duration: "1" });
-    success(run("join.update", { join: "j", changes: { type: "push", variant: "right" } }));
-    expect(joinOf("j")?.transition).toEqual({ type: "push", variant: "right", duration: "1" });
-    success(run("join.update", { join: "j", changes: { variant: "up" } }));
-    expect(joinOf("j")?.transition?.variant).toBe("up");
+    success(run("join.update", { join: "j", changes: { type: "push" } }));
+    expect(joinOf("j")?.transition).toEqual({ type: "push", duration: "1" });
+    success(run("join.update", { join: "j", changes: { values: { direction: "up" } } }));
+    expect(joinOf("j")?.transition?.values).toEqual({ direction: "up" });
     success(
       run("join.update", {
         join: "j",
@@ -308,15 +311,27 @@ describe("changing a join", () => {
     );
     expect(joinOf("j")?.transition).toEqual({
       type: "push",
-      variant: "up",
       duration: "1.5",
       curve: [0.42, 0, 1, 1],
       align: "before",
+      values: { direction: "up" },
     });
     success(run("join.update", { join: "j", changes: { curve: null, align: "center" } }));
-    expect(joinOf("j")?.transition).toEqual({ type: "push", variant: "up", duration: "1.5" });
-    for (let step = 0; step < 5; step++) store.undo();
-    expect(joinOf("j")?.transition).toEqual({ type: "wipe", variant: "left", duration: "1" });
+    expect(joinOf("j")?.transition).toEqual({
+      type: "push",
+      duration: "1.5",
+      values: { direction: "up" },
+    });
+    // Another one in its place starts from its own defaults, unless it says otherwise.
+    success(run("join.update", { join: "j", changes: { type: "wipe" } }));
+    expect(joinOf("j")?.transition).toEqual({ type: "wipe", duration: "1.5" });
+    success(run("join.update", { join: "j", changes: { values: null } }));
+    for (let step = 0; step < 6; step++) store.undo();
+    expect(joinOf("j")?.transition).toEqual({
+      type: "wipe",
+      values: { direction: "left" },
+      duration: "1",
+    });
   });
 
   it("leaves no step when nothing changes", () => {
@@ -327,8 +342,11 @@ describe("changing a join", () => {
   });
 
   it.each([
-    ["transition-missing", { type: "wipe" }],
-    ["transition-missing", { variant: "middle" }],
+    ["transition-missing", { type: "melt" }],
+    ["invalid-value", { values: { direction: "middle" } }],
+    ["invalid-value", { values: { softness: 2 } }],
+    ["invalid-value", { values: { color: "#ffffff" } }],
+    ["invalid-params", { variant: "left" }],
     ["transition-missing", { type: "plugin.star" }],
     ["transition-too-long", { duration: "4.5" }],
     ["transition-too-long", { align: "after", duration: "3" }],
@@ -337,7 +355,11 @@ describe("changing a join", () => {
   ])("is refused with %s for %j", (code, changes) => {
     const { run, joinOf } = joined();
     expect(failure(run("join.update", { join: "j", changes })).code).toBe(code);
-    expect(joinOf("j")?.transition).toEqual({ type: "wipe", variant: "left", duration: "1" });
+    expect(joinOf("j")?.transition).toEqual({
+      type: "wipe",
+      values: { direction: "left" },
+      duration: "1",
+    });
   });
 
   it("can always make one shorter that a file left too long, and take it away", () => {
@@ -520,7 +542,14 @@ describe("a join in the render plan", () => {
       video.clips[1].enter = { type: "fade", duration: "0.5" };
     });
     success(
-      run("join.add", { id: "j", from: "a", to: "b", type: "wipe", variant: "up", duration: "1" }),
+      run("join.add", {
+        id: "j",
+        from: "a",
+        to: "b",
+        type: "wipe",
+        values: { direction: "up" },
+        duration: "1",
+      }),
     );
     const plan = buildRenderPlan(store.getState(), "main");
     expect(plan?.joins).toEqual([
@@ -532,8 +561,7 @@ describe("a join in the render plan", () => {
         how: {
           kind: "built-in",
           type: "wipe",
-          variant: "up",
-          values: { softness: 0.02, direction: [0, -1] },
+          values: { direction: "up", softness: 0.02 },
         },
         start: 1.5,
         end: 2.5,
@@ -577,7 +605,7 @@ describe("a join in the render plan", () => {
     const { store } = project((video) => {
       video.joins = [
         { id: "j", from: "a", to: "b", type: "fade-linear", duration: "1" },
-        { id: "k", from: "b", to: "c", type: "dip", duration: "1" },
+        { id: "k", from: "b", to: "c", type: "plugin.star", duration: "1" },
       ];
     });
     expect(buildRenderPlan(store.getState(), "main")?.joins).toMatchObject([

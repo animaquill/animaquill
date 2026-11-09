@@ -20,10 +20,8 @@ export type ExplorerItem =
 export const as = <T, D>(resource: Resource<T>, data: D): Resource<D> => ({ ...resource, data });
 
 /** What a reference to a transition says it is, as people read it. */
-const refName = (ref: TransitionRef): string => {
-  const base = ref.type ?? ref.transition ?? `${ref.library ?? ""}/${ref.resource ?? ""}`;
-  return ref.variant === undefined ? base : `${base}.${ref.variant}`;
-};
+const refName = (ref: TransitionRef): string =>
+  ref.type ?? ref.transition ?? `${ref.library ?? ""}/${ref.resource ?? ""}`;
 
 /** Something that is missing, as a resource of the list. */
 function missingResource(t: TFunction, missing: MissingResource): Resource<ExplorerItem> {

@@ -2,6 +2,10 @@ import {
   ExtensionName,
   Id,
   PropertyValue,
+  Time,
+  ZERO,
+  compare,
+  parseTime,
   describeMissingEffect,
   effectOfPath,
   effectPath,
@@ -13,7 +17,7 @@ import {
   type EffectSpec,
 } from "@animaquill/schema";
 import { z } from "zod";
-import { clipPath, forEachOverride, timelineOf } from "./clip-edits.ts";
+import { clipPath, dropEffects, timelineOf } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
 import { effectsOf, entryOf, type ClipState, type EffectState } from "./model.ts";
 
@@ -104,13 +108,31 @@ export const EffectAdd = z.strictObject({
   index: z.number().int().min(0).optional(),
   /** What its parameters start with, by parameter, plain or with keys. The rest have defaults. */
   values: z.record(z.string(), PropertyValue).optional(),
+  /**
+   * When it works, in seconds from the start of the clip, within the clip. Without `start` it
+   * works from the start of the clip, without `end` up to its end, as long as the clip is.
+   */
+  start: Time.optional(),
+  end: Time.optional(),
 });
 
+/** When an effect works, checked against its clip: within it, and starting before it ends. */
+function checkRange(clip: ClipState, start: string | undefined, end: string | undefined): void {
+  const length = parseTime(clip.duration);
+  const from = start === undefined ? ZERO : parseTime(start);
+  const to = end === undefined ? length : parseTime(end);
+  if (compare(to, length) > 0 || compare(from, length) > 0) {
+    fail("invalid-value", "效果的生效时间要在片段之内");
+  }
+  if (compare(from, to) >= 0) fail("invalid-value", "效果的开始要在结束之前");
+}
+
 export function addEffect(draft: Draft, params: z.output<typeof EffectAdd>): { id: string } {
-  const { timeline, type, enabled, index, values } = params;
+  const { timeline, type, enabled, index, values, start, end } = params;
   const clip = clipOf(draft, timeline, params.clip);
   checkPicture(draft, timeline, clip);
   const spec = specOf(type);
+  checkRange(clip, start, end);
   const id = params.id ?? newId("fx");
   if (entryOf(clip.effects, id)) fail("id-taken", `这个片段已经有这个 ID 的效果了：${id}`);
   for (const [parameter, value] of Object.entries(values ?? {})) {
@@ -120,6 +142,8 @@ export function addEffect(draft: Draft, params: z.output<typeof EffectAdd>): { i
     type,
     ...(enabled === false ? { enabled } : {}),
     order: orderAt(clip, index),
+    ...(start === undefined ? {} : { start }),
+    ...(end === undefined ? {} : { end }),
   };
   draft.set([...effectsPath(timeline, clip.id), id], effect);
   for (const [parameter, value] of Object.entries(values ?? {})) {
@@ -142,20 +166,7 @@ export function removeEffects(draft: Draft, params: z.output<typeof EffectRemove
   for (const id of params.effects) {
     if (!entryOf(clip.effects, id)) fail("not-found", `片段 ${clip.id} 没有这个效果：${id}`);
   }
-  const gone = new Set(params.effects);
-  const isGone = (path: string) => {
-    const of = effectOfPath(path);
-    return of !== undefined && gone.has(of.effect);
-  };
-  for (const id of gone) draft.delete([...effectsPath(timeline, clip.id), id]);
-  for (const path of Object.keys(clip.properties ?? {})) {
-    if (isGone(path)) draft.delete([...clipPath(timeline, clip.id), "properties", path]);
-  }
-  forEachOverride(draft, timeline, clip.id, (changes, path) => {
-    for (const property of Object.keys(changes.properties ?? {})) {
-      if (isGone(property)) draft.delete([...path, "properties", property]);
-    }
-  });
+  dropEffects(draft, timeline, clip, params.effects);
 }
 
 /** Moves an effect to another place in the list of its clip, which changes what it works on. */
@@ -179,21 +190,45 @@ export function moveEffect(draft: Draft, params: z.output<typeof EffectMove>): v
   );
 }
 
-/** Turns an effect on or off. Off, it does nothing, and keeps its place and its values. */
-export const EffectUpdate = z.strictObject({
-  timeline: Id,
-  clip: Id,
-  effect: Id,
-  enabled: z.boolean(),
-});
+/**
+ * Turns an effect on or off, and changes when it works. Off, it does nothing, and keeps its place
+ * and its values. `start` and `end` are from the start of the clip, within it; null takes one away,
+ * which is the start or the end of the clip, as long as it is. What is left out stays as it is.
+ */
+export const EffectUpdate = z
+  .strictObject({
+    timeline: Id,
+    clip: Id,
+    effect: Id,
+    enabled: z.boolean().optional(),
+    start: Time.nullable().optional(),
+    end: Time.nullable().optional(),
+  })
+  .refine(
+    ({ enabled, start, end }) => enabled !== undefined || start !== undefined || end !== undefined,
+    "要写 enabled、start 或 end",
+  );
 
 export function updateEffect(draft: Draft, params: z.output<typeof EffectUpdate>): void {
   const { timeline, enabled } = params;
   const clip = clipOf(draft, timeline, params.clip);
   const effect = effectOf(clip, params.effect);
-  if ((effect.enabled !== false) === enabled) return;
-  const path = [...effectsPath(timeline, clip.id), params.effect, "enabled"];
+  const path = [...effectsPath(timeline, clip.id), params.effect];
+  const range = {
+    start: params.start === undefined ? effect.start : (params.start ?? undefined),
+    end: params.end === undefined ? effect.end : (params.end ?? undefined),
+  };
+  if (params.start !== undefined || params.end !== undefined) {
+    checkRange(clip, range.start, range.end);
+  }
+  for (const field of ["start", "end"] as const) {
+    const value = range[field];
+    if (value === effect[field]) continue;
+    if (value === undefined) draft.delete([...path, field]);
+    else draft.set([...path, field], value);
+  }
+  if (enabled === undefined || (effect.enabled !== false) === enabled) return;
   // On is what an effect is without saying so.
-  if (enabled) draft.delete(path);
-  else draft.set(path, false);
+  if (enabled) draft.delete([...path, "enabled"]);
+  else draft.set([...path, "enabled"], false);
 }

@@ -46,6 +46,7 @@
   --aq-timeline-key-summary: #6f7d8b;
   --aq-timeline-curve: #2aaaff;
   --aq-timeline-handle: #c8c8c8;
+  --aq-timeline-effect: #9a5ce6;
 
   /* What the preview draws over the picture: it has to stand out on any picture. */
   --aq-overlay-line: #2aaaff;

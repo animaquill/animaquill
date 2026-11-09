@@ -580,7 +580,7 @@ test.describe("a video with transitions", () => {
       duration: "1",
       source: { kind: "color", color: "#ff0000" },
       // Comes in from the left, which is more than a fade, before the join.
-      enter: { type: "push", variant: "right", duration: "0.4" },
+      enter: { type: "push", values: { direction: "right" }, duration: "0.4" },
     };
     const green: Clip = {
       id: "green",
@@ -593,7 +593,7 @@ test.describe("a video with transitions", () => {
       from: "red",
       to: "green",
       type: "wipe",
-      variant: "right",
+      values: { direction: "right", softness: 0.05 },
       duration: "1",
     };
     await open(page, projectFolder(2, [red, green], {}, {}, [], {}, [wipe]));

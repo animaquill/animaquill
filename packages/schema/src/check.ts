@@ -16,6 +16,7 @@ import {
   edgeLength,
   findTransition,
   isSupported,
+  transitionValueProblems,
   joinParts,
   mediaOfTrack,
   placeJoins,
@@ -112,8 +113,13 @@ function checkImplementation(
     } else {
       report("transition-missing", `${describeMissing(why)}${instead}`);
     }
-  } else if (track.kind !== "caption" && !isSupported(found, media, use)) {
-    report("transition-unsupported", `${describeUnsupported(found.type, media, use)}${instead}`);
+  } else {
+    if (track.kind !== "caption" && !isSupported(found, media, use)) {
+      report("transition-unsupported", `${describeUnsupported(found.type, media, use)}${instead}`);
+    }
+    for (const problem of transitionValueProblems(found.spec, found.type, ref.values)) {
+      report("transition-value", `${problem}，超出范围的按边界算，其余按默认值算`);
+    }
   }
 }
 
@@ -223,7 +229,19 @@ function checkEffects(track: Track, trackPath: string, file: string, problems: P
   track.clips.forEach((clip, index) => {
     const path = `${trackPath}.clips.${index}`;
     const types = new Map<string, EffectSpec | undefined>();
+    const length = parseTime(clip.duration);
     clip.effects?.forEach((effect, at) => {
+      const range = `${path}.effects.${at}`;
+      const start = effect.start === undefined ? undefined : parseTime(effect.start);
+      const end = effect.end === undefined ? undefined : parseTime(effect.end);
+      if ([start, end].some((time) => time !== undefined && compare(time, length) > 0)) {
+        const message = "效果的生效时间超出了片段，只用到片段之内";
+        problems.push(warning("effect-range", file, range, message));
+      }
+      if (start !== undefined && end !== undefined && compare(start, end) >= 0) {
+        const message = "效果的开始不在结束之前，这个效果不生效";
+        problems.push(warning("effect-range", file, range, message));
+      }
       const found = findEffect(effect.type, "picture");
       types.set(effect.id, found.kind === "built-in" ? found.spec : undefined);
       if (found.kind === "missing" && effect.enabled !== false) {

@@ -6,7 +6,7 @@ import { Trial } from "./trial.ts";
 import { describeClip } from "./objects.ts";
 import { buildRenderPlan, transitionsNotDone } from "./render-plan.ts";
 import { ProjectStore, type CommandCall } from "./store.ts";
-import { effectValuesAt } from "./view.ts";
+import { effectValuesAt, effectWorksAt } from "./view.ts";
 
 /**
  * The effects of clips: how files and the live project keep them, the commands that change them,
@@ -252,6 +252,169 @@ describe("the commands", () => {
     }
     // What is left of it can still go.
     expect(failure(run(a, "effect.remove", { effects: ["x"] }))).toBe("ok");
+  });
+});
+
+describe("when an effect works", () => {
+  const rangeOf = (store: ProjectStore, id = "c") => {
+    const clip = store.getState().timelines["main"]?.clips[id] as ClipState;
+    return Object.fromEntries(
+      effectsOf(clip).map(({ id: effect, start, end }) => [effect, [start, end]]),
+    );
+  };
+
+  it("is all of the clip without saying, and from a start up to an end, as one step", () => {
+    const { store } = withClip();
+    expect(failure(run(store, "effect.add", { id: "a", type: "blur" }))).toBe("ok");
+    expect(failure(run(store, "effect.add", { id: "b", type: "blur", start: "1" }))).toBe("ok");
+    expect(rangeOf(store)).toEqual({ a: [undefined, undefined], b: ["1", undefined] });
+    expect(failure(run(store, "effect.update", { effect: "a", start: "0.5", end: "3" }))).toBe(
+      "ok",
+    );
+    expect(rangeOf(store)["a"]).toEqual(["0.5", "3"]);
+    // Null is the edge of the clip again.
+    expect(failure(run(store, "effect.update", { effect: "a", end: null }))).toBe("ok");
+    expect(rangeOf(store)["a"]).toEqual(["0.5", undefined]);
+    store.undo();
+    expect(rangeOf(store)["a"]).toEqual(["0.5", "3"]);
+    store.undo();
+    expect(rangeOf(store)["a"]).toEqual([undefined, undefined]);
+    // The files have it, and read it back the same.
+    const read = readProject(store.exportFiles().files);
+    const document = read.project?.timelines.get("main")?.document;
+    const clip = document?.tracks.flatMap(({ clips }) => clips)[0];
+    expect(clip?.effects).toEqual([
+      { id: "a", type: "blur" },
+      { id: "b", type: "blur", start: "1" },
+    ]);
+  });
+
+  it.each([
+    [{ start: "5" }],
+    [{ end: "4.5" }],
+    [{ start: "2", end: "2" }],
+    [{ start: "3", end: "1" }],
+    [{ start: "-1" }],
+  ])("is refused outside the clip, or where it would not work at all: %j", (range) => {
+    const { store } = withClip([{ id: "a", type: "blur" }]);
+    const revision = store.revision;
+    expect(failure(run(store, "effect.update", { effect: "a", ...range }))).not.toBe("ok");
+    expect(failure(run(store, "effect.add", { type: "blur", ...range }))).not.toBe("ok");
+    expect(store.revision).toBe(revision);
+  });
+
+  it("stays where it was when the clip is trimmed, cut down to what is left of the clip", () => {
+    const { store } = withClip([
+      { id: "all", type: "blur" },
+      { id: "mid", type: "blur", start: "1", end: "3" },
+      { id: "late", type: "blur", start: "3" },
+      { id: "early", type: "blur", end: "1" },
+    ]);
+    const trim = (start?: string, end?: string) =>
+      store.execute({
+        type: "clip.trim",
+        params: { timeline: "main", clip: "c", ...(start && { start }), ...(end && { end }) },
+      });
+    // The start goes 2 seconds later: what was at 3 on the clip is at 1 now.
+    expect(failure(trim("2"))).toBe("ok");
+    expect(rangeOf(store)).toEqual({
+      all: [undefined, undefined],
+      mid: ["0", "1"],
+      late: ["1", undefined],
+      // Nothing is left of it: it stays, working nowhere, at the edge where it went.
+      early: [undefined, "0"],
+    });
+    // The end goes 1.5 seconds earlier: what goes up to the end stays up to the end.
+    expect(failure(trim(undefined, "3.5"))).toBe("ok");
+    expect(rangeOf(store)).toEqual({
+      all: [undefined, undefined],
+      mid: ["0", "1"],
+      late: ["1", undefined],
+      early: [undefined, "0"],
+    });
+    expect(failure(trim(undefined, "2.5"))).toBe("ok");
+    expect(rangeOf(store)["mid"]).toEqual(["0", "0.5"]);
+    // Back out, what moved along stays where it was on the timeline.
+    expect(failure(trim("1"))).toBe("ok");
+    expect(rangeOf(store)["mid"]).toEqual(["1", "1.5"]);
+    expect(rangeOf(store)["late"]).toEqual(["1.5", undefined]);
+    for (let step = 0; step < 4; step++) store.undo();
+    expect(rangeOf(store)).toEqual({
+      all: [undefined, undefined],
+      mid: ["1", "3"],
+      late: ["3", undefined],
+      early: [undefined, "1"],
+    });
+  });
+
+  it("goes with each part of a cut clip as far as it works there, and from a part it is not in", () => {
+    const { store } = withClip(
+      [
+        { id: "all", type: "blur" },
+        { id: "left", type: "blur", end: "1" },
+        { id: "right", type: "crop", start: "3" },
+        { id: "across", type: "blur", start: "1", end: "3" },
+      ],
+      { "effect.right.left": 0.5, "effect.left.radius": 2 },
+    );
+    const cut = store.execute({
+      type: "clip.split",
+      params: { timeline: "main", clip: "c", at: "2", id: "d" },
+    });
+    expect(cut.ok).toBe(true);
+    expect(rangeOf(store, "c")).toEqual({
+      all: [undefined, undefined],
+      left: [undefined, "1"],
+      across: ["1", "2"],
+    });
+    expect(rangeOf(store, "d")).toEqual({
+      all: [undefined, undefined],
+      right: ["1", undefined],
+      across: ["0", "1"],
+    });
+    const clips = store.getState().timelines["main"]?.clips;
+    expect(clips?.["c"]?.properties).toEqual({ "effect.left.radius": 2 });
+    expect(clips?.["d"]?.properties).toEqual({ "effect.right.left": 0.5 });
+    store.undo();
+    expect(rangeOf(store, "c")["right"]).toEqual(["3", undefined]);
+  });
+
+  it("is cut down when the clip gets shorter, and goes along when the clip moves", () => {
+    const { store } = withClip([{ id: "a", type: "blur", start: "1", end: "3" }]);
+    const update = (changes: object) =>
+      store.execute({ type: "clip.update", params: { timeline: "main", clip: "c", changes } });
+    expect(failure(update({ start: "5" }))).toBe("ok");
+    expect(rangeOf(store)["a"]).toEqual(["1", "3"]);
+    expect(failure(update({ duration: "2" }))).toBe("ok");
+    expect(rangeOf(store)["a"]).toEqual(["1", "2"]);
+  });
+
+  it("is when the render plan has it work, on the timeline, and only then", () => {
+    const { store } = withClip([
+      { id: "a", type: "blur", start: "1", end: "3" },
+      { id: "b", type: "blur" },
+      { id: "nowhere", type: "blur", start: "2", end: "2" },
+    ]);
+    const moved = store.execute({
+      type: "clip.update",
+      params: { timeline: "main", clip: "c", changes: { start: "10" } },
+    });
+    expect(moved.ok).toBe(true);
+    const layer = buildRenderPlan(store.getState(), "main")?.layers[0];
+    expect(layer?.effects).toEqual([
+      { id: "a", type: "blur", from: 11, to: 13 },
+      { id: "b", type: "blur" },
+    ]);
+    const [a, b] = layer?.effects ?? [];
+    expect(a && [10.5, 11, 12.9, 13, 13.5].map((time) => effectWorksAt(a, time))).toEqual([
+      false,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // Without a range it works wherever the layer shows, also past its clip for a join.
+    expect(b && [9, 11, 15].map((time) => effectWorksAt(b, time))).toEqual([true, true, true]);
   });
 });
 

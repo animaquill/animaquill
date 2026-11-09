@@ -76,7 +76,7 @@ const join = (
   end: number,
   type: string,
   more: Partial<RenderJoin> = {},
-  values: Record<string, unknown> = {},
+  values: NonNullable<RenderJoin["how"]["values"]> = {},
 ): RenderJoin => ({
   id: `${from}-${to}`,
   track: "t",
@@ -288,18 +288,18 @@ test.describe("built-in transitions", () => {
   const BOTTOM = HEIGHT - 60;
 
   test("dip to a color that covers everything in the middle, black or white", async ({ page }) => {
-    for (const [variant, plain] of [
-      ["black", BLACK],
-      ["white", WHITE],
+    for (const [hex, plain] of [
+      ["#000000", BLACK],
+      ["#ffffff", WHITE],
     ] as const) {
-      const values = { color: variant === "black" ? "#000000" : "#ffffff" };
+      const values = { color: hex, hold: 0 };
       const plan = planOf(
         [
           color("below", 0, 4, "#0000ff"),
           color("a", 0, 2, "#ff0000", half),
           color("b", 2, 4, "#00ff00", half),
         ],
-        [join("a", "b", 1, 3, "dip", { how: { kind: "built-in", type: "dip", variant, values } })],
+        [join("a", "b", 1, 3, "dip", { how: { kind: "built-in", type: "dip", values } })],
       );
       await differences(page, plan, 1, [[...MIDDLE, RED]]);
       await differences(page, plan, 1.5, [[...MIDDLE, mix(RED, plain, 0.5)]]);
@@ -312,21 +312,34 @@ test.describe("built-in transitions", () => {
     }
   });
 
+  test("dip stays on its color for the share of the time that it says", async ({ page }) => {
+    // Half of two seconds is only the color: from 1.5 to 2.5. It goes there and back in half a second.
+    const values = { color: "#ffffff", hold: 0.5 };
+    const plan = planOf(
+      [color("a", 0, 2, "#ff0000"), color("b", 2, 4, "#00ff00")],
+      [join("a", "b", 1, 3, "dip", { how: { kind: "built-in", type: "dip", values } })],
+    );
+    await differences(page, plan, 1.25, [[...MIDDLE, mix(RED, WHITE, 0.5)]]);
+    await differences(page, plan, 1.6, [[...MIDDLE, WHITE]]);
+    await differences(page, plan, 2.4, [[...MIDDLE, WHITE]]);
+    await differences(page, plan, 2.75, [[...MIDDLE, mix(WHITE, GREEN, 0.5)]]);
+  });
+
   test("wipe across the way they say, with a soft edge", async ({ page }) => {
-    const wipe = (variant: string, direction: readonly number[]) =>
+    const wipe = (direction: string, softness = 0.02) =>
       planOf(layers, [
         join("a", "b", 1, 3, "wipe", {
-          how: { kind: "built-in", type: "wipe", variant, values: { softness: 0.02, direction } },
+          how: { kind: "built-in", type: "wipe", values: { softness, direction } },
         }),
       ]);
     const cases = [
-      ["left", [-1, 0], [RIGHT, HEIGHT / 2], [LEFT, HEIGHT / 2]],
-      ["right", [1, 0], [LEFT, HEIGHT / 2], [RIGHT, HEIGHT / 2]],
-      ["up", [0, -1], [WIDTH / 2, BOTTOM], [WIDTH / 2, TOP]],
-      ["down", [0, 1], [WIDTH / 2, TOP], [WIDTH / 2, BOTTOM]],
+      ["left", [RIGHT, HEIGHT / 2], [LEFT, HEIGHT / 2]],
+      ["right", [LEFT, HEIGHT / 2], [RIGHT, HEIGHT / 2]],
+      ["up", [WIDTH / 2, BOTTOM], [WIDTH / 2, TOP]],
+      ["down", [WIDTH / 2, TOP], [WIDTH / 2, BOTTOM]],
     ] as const;
-    for (const [variant, direction, passed, ahead] of cases) {
-      const plan = wipe(variant, direction);
+    for (const [direction, passed, ahead] of cases) {
+      const plan = wipe(direction);
       // Nothing of the side after at the start, half of the picture in the middle, all at the end.
       await differences(page, plan, 1, [
         [...passed, RED],
@@ -343,11 +356,16 @@ test.describe("built-in transitions", () => {
     }
     // The edge is soft over 2% of the short side, which is 7.2 pixels here, and in the middle of it
     // at the middle of the wipe: half way across the picture and the edge.
-    const plan = wipe("right", [1, 0]);
+    const plan = wipe("right");
     const edge = (WIDTH + 7.2) / 2;
     const x = Math.floor(edge - 3.6);
     const shown = (edge - (x + 0.5)) / 7.2;
     await differences(page, plan, 2, [[x, HEIGHT / 2, mix(RED, GREEN, shown)]], 4);
+    // A softer edge: a tenth of the short side, 36 pixels, in the middle at the same place.
+    const soft = (WIDTH + 36) / 2;
+    const at = Math.floor(soft - 18);
+    const part = (soft - (at + 0.5)) / 36;
+    await differences(page, wipe("right", 0.1), 2, [[at, HEIGHT / 2, mix(RED, GREEN, part)]], 4);
   });
 
   test("wipe the same as across the whole picture, only working on the band of the edge", async ({
@@ -419,7 +437,7 @@ test.describe("built-in transitions", () => {
         },
         { width: WIDTH, height: HEIGHT, progress, direction },
       );
-    for (const [variant, direction] of [
+    for (const [name, direction] of [
       ["right", [1, 0]],
       ["left", [-1, 0]],
       ["up", [0, -1]],
@@ -429,12 +447,7 @@ test.describe("built-in transitions", () => {
           [color("a", 0, 2, "#ff0000"), color("b", 2, 4, "#00ff00")],
           [
             join("a", "b", 1, 3, "wipe", {
-              how: {
-                kind: "built-in",
-                type: "wipe",
-                variant,
-                values: { softness: 0.02, direction: [...direction] },
-              },
+              how: { kind: "built-in", type: "wipe", values: { softness: 0.02, direction: name } },
             }),
           ],
         );
@@ -450,7 +463,7 @@ test.describe("built-in transitions", () => {
                 ? Math.max(...found.map((value, at) => Math.abs(value - (wanted[at] ?? 0))))
                 : Number.POSITIVE_INFINITY;
             return worst;
-          }, `${variant} at ${progress}`)
+          }, `${name} at ${progress}`)
           .toBeLessThanOrEqual(1);
       }
     }
@@ -459,31 +472,31 @@ test.describe("built-in transitions", () => {
   test("push the side before out with the side after, and overshoot where the curve does", async ({
     page,
   }) => {
-    const push = (variant: string, direction: readonly number[], more: Partial<RenderJoin> = {}) =>
+    const push = (direction: string, more: Partial<RenderJoin> = {}) =>
       planOf(
         [color("a", 0, 2, "#ff0000", half), color("b", 2, 4, "#00ff00", half)],
         [
           join("a", "b", 1, 3, "push", {
-            how: { kind: "built-in", type: "push", variant, values: { direction } },
+            how: { kind: "built-in", type: "push", values: { direction } },
             overshoot: true,
             ...more,
           }),
         ],
       );
     // Halfway, the box before is half the picture further on, the one after half of it short.
-    await differences(page, push("right", [1, 0]), 2, [
+    await differences(page, push("right"), 2, [
       [WIDTH * 0.8, HEIGHT / 2, RED],
       [WIDTH * 0.1, HEIGHT / 2, GREEN],
       [...MIDDLE, BLACK],
     ]);
-    await differences(page, push("up", [0, -1]), 2, [
+    await differences(page, push("up"), 2, [
       [WIDTH / 2, HEIGHT * 0.15, RED],
       [WIDTH / 2, HEIGHT * 0.9, GREEN],
       [...MIDDLE, BLACK],
     ]);
     // A curve that goes past the end takes the box after further than the middle, and then back.
     const curve = [0.3, 2, 0.6, 1.4] as const;
-    const bouncing = push("right", [1, 0], { curve });
+    const bouncing = push("right", { curve });
     const seconds = 2.6;
     const progress = bezierProgress(...curve, (seconds - 1) / 2);
     expect(progress).toBeGreaterThan(1.05);
@@ -514,8 +527,7 @@ test.describe("transitions that run into each other", () => {
       how: {
         kind: "built-in" as const,
         type: "dip",
-        variant: "black",
-        values: { color: "#000000" },
+        values: { color: "#000000", hold: 0 },
       },
       start: 0,
       end: 1,
@@ -674,10 +686,8 @@ test.describe("joins on the timeline", () => {
     // buttons.
     const block = await cut(page, true);
     await page.mouse.click(block.x, block.y);
-    await content(page, "transitions")
-      .getByRole("option", { name: "向左推移", exact: true })
-      .click();
-    await expect(properties.getByLabel("向左推移")).toBeVisible();
+    await content(page, "transitions").getByRole("option", { name: "推移", exact: true }).click();
+    await expect(properties.getByLabel("推移")).toBeVisible();
     await properties.getByRole("button", { name: "从剪切点开始" }).click();
     await expect(properties.getByRole("button", { name: "从剪切点开始" })).toHaveAttribute(
       "aria-pressed",
@@ -694,7 +704,7 @@ test.describe("joins on the timeline", () => {
     await page.keyboard.press("Control+z");
     // Inside the block: from the cut on, it starts right at the cut, which a pixel can miss.
     await page.mouse.click(block.x + 4, block.y);
-    await expect(properties.getByLabel("向左推移")).toBeVisible();
+    await expect(properties.getByLabel("推移")).toBeVisible();
   });
 
   test("go when the clips are taken apart, which people hear, and undo brings them back", async ({

@@ -669,7 +669,11 @@ export class KeyframeEditor {
   isOpen(node: TreeNode): boolean {
     if (this.#snapshot.query !== "" && node.kind !== "property") return true;
     const toggled = this.#toggled.has(node.id);
-    return node.kind === "track" ? !toggled : toggled;
+    // The effects of a clip show one row each, which on the timeline has when each works.
+    const openFirst =
+      node.kind === "track" ||
+      (node.kind === "object" && node.object.type === EFFECT_OBJECT_TYPES.effects);
+    return openFirst ? !toggled : toggled;
   }
 
   readonly #rules: LaneRules = {

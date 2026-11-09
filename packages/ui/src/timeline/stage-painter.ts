@@ -24,6 +24,8 @@ export interface Theme {
   readonly curve: string;
   readonly handle: string;
   readonly warning: string;
+  /** The band of a clip with effects. */
+  readonly effect: string;
 }
 
 export function readTheme(element: Element): Theme {
@@ -54,6 +56,7 @@ export function readTheme(element: Element): Theme {
     curve: color("curve"),
     handle: color("handle"),
     warning: style.getPropertyValue("--aq-warning").trim(),
+    effect: color("effect"),
   };
 }
 
