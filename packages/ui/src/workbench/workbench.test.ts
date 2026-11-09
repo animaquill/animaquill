@@ -1232,3 +1232,60 @@ describe("the black box", () => {
     });
   });
 });
+
+describe("the report of how it runs", () => {
+  it("has only these facts about a project, and none of its names", async () => {
+    const { workbench } = setup();
+    await create(workbench, "秘密发布会");
+    const store = workbench.session.store as ProjectStore;
+    const main = store.getState().timelines["main"];
+    const track = orderedTracks(main as never).find(({ kind }) => kind === "video")?.id;
+    const added = store.execute({
+      type: "clip.add",
+      params: {
+        timeline: "main",
+        track,
+        clip: {
+          id: "clip_a",
+          start: "0",
+          duration: "2",
+          source: { kind: "color", color: "#ff0000" },
+        },
+      },
+    });
+    expect(added.ok).toBe(true);
+    // What the device says about itself, which a page has.
+    vi.stubGlobal("screen", { width: 1440, height: 900 });
+    vi.stubGlobal("devicePixelRatio", 2);
+    vi.stubGlobal("innerWidth", 1000);
+    vi.stubGlobal("innerHeight", 800);
+    try {
+      workbench.finishDiagnostics();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const report = workbench.diagnostics.getSnapshot().report;
+    expect(Object.keys(report ?? {}).toSorted()).toEqual(
+      [
+        "device",
+        "dropped",
+        "durationMs",
+        "during",
+        "events",
+        "format",
+        "frameTimes",
+        "project",
+        "startedAt",
+        "version",
+      ].toSorted(),
+    );
+    const project = report?.project as Record<string, unknown>;
+    expect(Object.keys(project).toSorted()).toEqual(
+      ["assets", "clips", "formats", "fps", "layout", "storage", "tracks"].toSorted(),
+    );
+    expect(project["storage"]).toBe("browser");
+    const layout = project["layout"] as Record<string, unknown>[];
+    expect(layout).toEqual([{ id: "clip_a", kind: "color", track, start: 0, end: 2, offset: 0 }]);
+    expect(JSON.stringify(report)).not.toContain("秘密");
+  });
+});

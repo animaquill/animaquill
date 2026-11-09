@@ -15,15 +15,22 @@ import {
   type Matrix,
 } from "@animaquill/core/view";
 import { Composer, type Context2D } from "./compose.ts";
-import { comesUpAfter, fileTimeOf, readingAt, showsAt, VideoCursor } from "./cursor.ts";
+import { showsAt } from "./cursor.ts";
+import { FrameLoop, type PendingFrame } from "./frame-loop.ts";
 import type { Corners } from "./transitions/code.ts";
-import { GiveUpTimer } from "./patience.ts";
+import { VideoReads } from "./reads.ts";
 import { withChannels } from "./plan.ts";
 import { placeholderPicture } from "./placeholder.ts";
 import { SceneLayers } from "./scenes.ts";
 import { SoundJobs } from "./sounds.ts";
 import { failureOf, FileArrivals, stillPictures, StillFailed } from "./still.ts";
-import type { FrameTiming, FrameToEncode, FromCompositor, ToCompositor } from "./index.ts";
+import type {
+  ColdClip,
+  FrameTiming,
+  FrameToEncode,
+  FromCompositor,
+  ToCompositor,
+} from "./index.ts";
 
 /**
  * The compositor. It runs in a sandbox on a site of its own, where it can decode, draw and later
@@ -69,6 +76,9 @@ const PAINTED_EVERY_MS = 250;
 interface VideoFile {
   readonly sink: VideoSampleSink;
   readonly input: Input;
+  /** As it shows, for telling which videos are hard to decode. */
+  readonly width: number;
+  readonly height: number;
 }
 
 /**
@@ -117,35 +127,16 @@ const arrivals = new FileArrivals();
 const images = new Map<string, Promise<ImageBitmap | undefined>>();
 const videos = new Map<string, Promise<VideoFile | undefined>>();
 const asked = new Set<string>();
-/** By layer, because two clips of one file read different places. */
-const cursors = new Map<
-  string,
-  { readonly file: string; readonly cursor: VideoCursor<VideoSample> }
->();
+const reads = new VideoReads<VideoSample>();
 
-let wanted = 0;
-/** This one only draws what `still` asks for. */
-let exporting = false;
 /** One at a time: they draw on the same canvas and read the same videos. */
 let stills: Promise<void> = Promise.resolve();
-let gettingReady = false;
 let recording = false;
-let coldInFrame = 0;
-let decodeMsInFrame = 0;
 let timings: FrameTiming[] = [];
-let drawing = false;
-let drawAgain = false;
-/** How many times somebody moved the playhead, and how many of those the frame being drawn knows. */
-let jumps = 0;
-let jumpsInFrame = 0;
-/** The frame being drawn stays unfinished, and nothing of it reaches the screen. */
-let frameGivenUp = false;
-/** Frames given up since the last one that was drawn. */
-let abandoned = 0;
 /** When frames of a new place on the timeline reached the canvas, since the editor last heard. */
 let paintedAt: number[] = [];
-/** The place the last of them showed. Drawing a place again is not another frame of it. */
-let lastPainted: number | undefined;
+/** Long tasks while recording, with when they started on this clock. */
+let longTasks: { readonly ms: number; readonly at: number }[] = [];
 
 function fileOf(id: string): Blob | undefined {
   const file = files.get(id);
@@ -171,7 +162,10 @@ function imageOf(id: string, file: Blob): Promise<ImageBitmap | undefined> {
 async function openVideo(id: string, file: Blob): Promise<VideoFile | undefined> {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   const track = await input.getPrimaryVideoTrack();
-  if (track && (await track.canDecode())) return { sink: new VideoSampleSink(track), input };
+  if (track && (await track.canDecode())) {
+    const { displayWidth: width, displayHeight: height } = track;
+    return { sink: new VideoSampleSink(track), input, width, height };
+  }
   input.dispose();
   send({ type: "cannot-decode", id });
   return undefined;
@@ -189,20 +183,14 @@ function videoOf(id: string, file: Blob): Promise<VideoFile | undefined> {
   return video;
 }
 
-async function cursorOf(
-  layer: RenderLayer,
-  id: string,
-  file: Blob,
-): Promise<VideoCursor<VideoSample> | undefined> {
+/** Which clip had to start decoding, by id and size only. */
+async function coldClipOf(layer: RenderLayer, id: string, file: Blob): Promise<ColdClip> {
   const video = await videoOf(id, file);
-  if (!video) return undefined;
-  let entry = cursors.get(layer.id);
-  if (entry?.file !== id) {
-    await entry?.cursor.close();
-    entry = { file: id, cursor: new VideoCursor(video.sink) };
-    cursors.set(layer.id, entry);
-  }
-  return entry.cursor;
+  return {
+    layer: layer.id,
+    kind: "video",
+    ...(video && { width: video.width, height: video.height }),
+  };
 }
 
 const imagePicture = (bitmap: ImageBitmap | OffscreenCanvas, close = () => {}): Picture => ({
@@ -239,7 +227,8 @@ function scenePictureOf({ id }: RenderLayer): Picture | undefined {
   return scenes.showsPlaceholder(id) ? imagePicture(placeholderPicture()) : undefined;
 }
 
-async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture | undefined> {
+async function pictureOf(layer: RenderLayer, frame: PendingFrame): Promise<Picture | undefined> {
+  const { seconds } = frame;
   const { source } = layer;
   if (source.kind === "color") return undefined;
   if (source.kind === "scene") return scenePictureOf(layer);
@@ -249,40 +238,27 @@ async function pictureOf(layer: RenderLayer, seconds: number): Promise<Picture |
     const bitmap = await imageOf(source.file, file);
     return bitmap && imagePicture(bitmap);
   }
-  const cursor = await cursorOf(layer, source.file, file);
+  const video = await videoOf(source.file, file);
   // Opening the file takes a while, and the playhead does not wait for it.
-  if (jumps !== jumpsInFrame) {
-    frameGivenUp = true;
-    return undefined;
-  }
-  const sample = await cursor?.at(fileTimeOf(layer, seconds));
-  if (cursor?.takeCold()) coldInFrame += 1;
-  return sample && videoPicture(sample);
+  if (frame.jumped) frame.givenUp = true;
+  if (!video || frame.givenUp) return undefined;
+  const read = await reads.frameAt(layer, source.file, video.sink, seconds);
+  if (read.cold) frame.cold.push(await coldClipOf(layer, source.file, file));
+  return read.frame && videoPicture(read.frame);
 }
 
-/** Clips that start soon. */
-const upcomingAt = (seconds: number): readonly RenderLayer[] =>
-  plan?.layers.filter((layer) => comesUpAfter(layer, seconds)) ?? [];
-
-/**
- * Opening a file and decoding up to a first frame takes longer than a frame may, so a clip does that
- * before it shows, and playing goes straight from one clip into the next.
- */
-async function getReady(seconds: number): Promise<void> {
-  for (const layer of upcomingAt(seconds)) {
-    const { source } = layer;
-    if (source.kind === "color" || source.kind === "scene") continue;
-    const file = fileOf(source.file);
-    if (!file) continue;
-    if (source.kind === "image") {
-      await imageOf(source.file, file);
-      continue;
-    }
-    const cursor = await cursorOf(layer, source.file, file);
-    const reading = readingAt(layer, seconds);
-    if (reading !== undefined) await cursor?.at(reading);
-    cursor?.takeCold();
+/** Gets a clip that starts soon ready, see `FrameLoop`. */
+async function getReady(layer: RenderLayer, seconds: number): Promise<void> {
+  const { source } = layer;
+  if (source.kind === "color" || source.kind === "scene") return;
+  const file = fileOf(source.file);
+  if (!file) return;
+  if (source.kind === "image") {
+    await imageOf(source.file, file);
+    return;
   }
+  const video = await videoOf(source.file, file);
+  if (video) await reads.prepare(layer, source.file, video.sink, seconds);
 }
 
 /** When each file was last needed, for letting go of the ones that have not been for longest. */
@@ -296,7 +272,7 @@ function releaseFilesExcept(keep: readonly RenderLayer[]): void {
     if (source.kind === "image" || source.kind === "video") lastNeeded.set(source.file, needs);
   }
   // A cursor may still read a file while a frame that went before it gets drawn.
-  const reading = new Set([...cursors.values()].map(({ file }) => file));
+  const reading = reads.files();
   const stale = [...lastNeeded]
     .filter(([id, at]) => at !== needs && !reading.has(id))
     .toSorted(([, a], [, b]) => b - a)
@@ -331,49 +307,18 @@ async function forgetRead(id: string): Promise<void> {
   images.delete(id);
   const video = videos.get(id);
   videos.delete(id);
-  const reading = [...cursors].filter(([, entry]) => entry.file === id);
-  for (const [layer] of reading) cursors.delete(layer);
   try {
-    await Promise.all(reading.map(([, { cursor }]) => cursor.close().catch(() => {})));
+    await reads.forget(id);
     await image?.then((bitmap) => bitmap?.close());
     await video?.then((opened) => opened?.input.dispose());
   } finally {
-    void refresh();
+    void loop.refresh();
   }
 }
 
 /** A decoder is a scarce thing, so a clip that left the picture gives its own back. */
-async function closeCursorsExcept(keep: readonly RenderLayer[]): Promise<void> {
-  const ids = new Set(keep.map(({ id }) => id));
-  for (const [id, { cursor }] of cursors) {
-    if (ids.has(id)) continue;
-    cursors.delete(id);
-    await cursor.close();
-  }
-}
-
-/** Reading to a place the playhead left is what keeps it from getting to where it is now. */
-function giveUpFor(seconds: number): boolean {
-  let gaveUp = false;
-  for (const [id, { cursor }] of cursors) {
-    const layer = plan?.layers.find((candidate) => candidate.id === id);
-    if (cursor.giveUpUnlessLeadsTo(layer && readingAt(layer, seconds))) gaveUp = true;
-  }
-  if (gaveUp) {
-    frameGivenUp = true;
-    void refresh();
-  }
-  return gaveUp;
-}
-
-/** Only somebody moving the playhead starts this. Time carries it along without any rest. */
-const patience = new GiveUpTimer(
-  (milliseconds, run) => {
-    const timer = setTimeout(run, milliseconds);
-    return () => clearTimeout(timer);
-  },
-  () => giveUpFor(wanted),
-);
+const closeCursorsExcept = (keep: readonly RenderLayer[]): Promise<void> =>
+  reads.closeExcept(new Set(keep.map(({ id }) => id)));
 
 /** Canvas ignores a matrix it cannot use and would draw with the one before. */
 const canUse = (matrix: Matrix) => matrix.every((number) => Number.isFinite(number));
@@ -435,23 +380,25 @@ function missingJoinAt(shown: RenderPlan, seconds: number): string | undefined {
 }
 
 /** Everything is decoded first, so that a frame appears whole and never half drawn. */
-async function drawFrame(seconds: number): Promise<boolean> {
+async function drawFrame(frame: PendingFrame): Promise<boolean> {
   const shown = plan;
   if (!shown) return false;
-  const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
-  await closeCursorsExcept([...showing, ...upcomingAt(seconds)]);
-  releaseFilesExcept([...showing, ...upcomingAt(seconds)]);
+  const { seconds } = frame;
+  const showing = loop.showing(seconds);
+  const needed = [...showing, ...loop.upcoming(seconds)];
+  await closeCursorsExcept(needed);
+  releaseFilesExcept(needed);
   const askedAt = performance.now();
   // A picture of a scene is held until it is drawn, so one that fails must not keep the others.
-  const results = await Promise.allSettled(showing.map((layer) => pictureOf(layer, seconds)));
+  const results = await Promise.allSettled(showing.map((layer) => pictureOf(layer, frame)));
   const pictures = results.map((result) =>
     result.status === "fulfilled" ? result.value : undefined,
   );
-  decodeMsInFrame = performance.now() - askedAt;
+  frame.decodeMs = performance.now() - askedAt;
   try {
     const failed = results.find((result) => result.status === "rejected");
     if (failed) throw failed.reason;
-    if (frameGivenUp) return false;
+    if (frame.givenUp) return false;
     paintAll(shown, showing, pictures, seconds);
     return true;
   } finally {
@@ -479,69 +426,29 @@ function paintAll(
   );
 }
 
-/** One frame at a time. When time runs ahead of it, frames in between are skipped. */
-async function refresh(): Promise<void> {
-  if (exporting) return;
-  if (drawing) {
-    drawAgain = true;
-    return;
-  }
-  drawing = true;
-  do {
-    drawAgain = false;
-    frameGivenUp = false;
-    jumpsInFrame = jumps;
-    const seconds = wanted;
-    const started = performance.now();
-    coldInFrame = 0;
-    decodeMsInFrame = 0;
-    const wasGettingReady = gettingReady;
-    try {
-      if ((await drawFrame(seconds)) && seconds !== lastPainted) {
-        lastPainted = seconds;
-        paintedAt.push(performance.now());
-      }
-    } catch (error) {
-      console.warn("A frame could not be drawn", error);
-    }
-    if (frameGivenUp) {
-      // Whatever did this asked for the next round.
-      if (recording) abandoned += 1;
-      continue;
-    }
-    patience.drew();
-    // Getting ready for a place the playhead left would only be in the way.
-    if (!gettingReady && jumps === jumpsInFrame) {
-      gettingReady = true;
-      void getReady(seconds)
-        .catch((error: unknown) => console.warn("A clip could not get ready", error))
-        .finally(() => {
-          gettingReady = false;
-        });
-    }
-    if (recording) {
-      const ms = performance.now() - started;
-      const behindMs = Math.max(wanted - seconds, 0) * 1000;
-      timings.push({
-        seconds,
-        ms,
-        decodeMs: decodeMsInFrame,
-        gettingReady: wasGettingReady,
-        cold: coldInFrame,
-        behindMs,
-        abandoned,
-      });
-      abandoned = 0;
-    }
-  } while (drawAgain);
-  drawing = false;
-}
+/** One frame at a time, see `FrameLoop`. */
+const loop = new FrameLoop({
+  layers: () => plan?.layers ?? [],
+  draw: drawFrame,
+  prepare: getReady,
+  giveUpFor: (seconds) => reads.giveUpFor(plan?.layers ?? [], seconds),
+  drew(timing, newPlace) {
+    if (newPlace) paintedAt.push(performance.now());
+    if (recording) timings.push(timing);
+  },
+  wait(milliseconds, run) {
+    const timer = setTimeout(run, milliseconds);
+    return () => clearTimeout(timer);
+  },
+  now: () => performance.now(),
+});
+const refresh = () => loop.refresh();
 
 /** The same painting as the preview, after waiting for everything that the preview goes without. */
 async function paintStill(seconds: number): Promise<void> {
   const shown = plan;
   if (!shown) throw new StillFailed({ reason: "failed", message: "No plan" });
-  wanted = seconds;
+  loop.wanted = seconds;
   scenes.follow(settledPlan, seconds, shown);
   const showing = shown.layers.filter((layer) => showsAt(layer, seconds));
   await closeCursorsExcept(showing);
@@ -558,9 +465,9 @@ async function paintStill(seconds: number): Promise<void> {
       return bitmap && imagePicture(bitmap);
     },
     video: async (layer, id, file) => {
-      const cursor = await cursorOf(layer, id, file);
-      const sample = await cursor?.at(fileTimeOf(layer, seconds));
-      return sample && videoPicture(sample);
+      const video = await videoOf(id, file);
+      const read = video && (await reads.frameAt(layer, id, video.sink, seconds));
+      return read?.frame && videoPicture(read.frame);
     },
     scene: async ({ id }) => {
       const held = await scenes.exactPicture(id);
@@ -823,10 +730,11 @@ function handle(data: ToCompositor): void {
   }
   if (data.type === "record") {
     recording = data.on;
+    watchLongTasks(data.on);
     return;
   }
   if (data.type === "exporting") {
-    exporting = true;
+    loop.exporting = true;
     return;
   }
   if (data.type === "still") {
@@ -848,7 +756,7 @@ function handle(data: ToCompositor): void {
           : data.type === "encode-flush"
             ? flushEncoding
             : finishEncoding;
-    stills = stills.then(() => answerEncoding(request, exporting ? work : notExporting));
+    stills = stills.then(() => answerEncoding(request, loop.exporting ? work : notExporting));
     return;
   }
   if (data.type === "no-file") {
@@ -866,11 +774,7 @@ function handle(data: ToCompositor): void {
   } else if (data.type === "channels") {
     if (plan) plan = withChannels(plan, data.layer, data);
   } else if (data.type === "seek") {
-    wanted = data.seconds;
-    if (data.jump) {
-      jumps += 1;
-      patience.jumped();
-    }
+    loop.seek(data.seconds, data.jump);
   } else {
     const before = files.get(data.id);
     // The same content in another file, as after the file changed on the disk: the old one cannot
@@ -884,19 +788,40 @@ function handle(data: ToCompositor): void {
     arrivals.settle(data.id, data.file);
   }
   // It goes where `still` says, and a scene at the start of the plan is not worth opening for nothing.
-  if (exporting) return;
+  if (loop.exporting) return;
   try {
-    scenes.follow(settledPlan, wanted, plan);
+    scenes.follow(settledPlan, loop.wanted, plan);
   } finally {
     // Whatever went wrong with a scene, the rest of the picture goes on.
     void refresh();
   }
 }
 
+/** The editor sees long tasks of its own page only, and this one runs on a site of its own. */
+let longTaskObserver: PerformanceObserver | undefined;
+function watchLongTasks(on: boolean): void {
+  longTaskObserver?.disconnect();
+  longTaskObserver = undefined;
+  longTasks = [];
+  if (!on || !PerformanceObserver.supportedEntryTypes.includes("longtask")) return;
+  longTaskObserver = new PerformanceObserver((list) => {
+    for (const { duration, startTime } of list.getEntries()) {
+      longTasks.push({ ms: Math.round(duration), at: startTime });
+    }
+  });
+  longTaskObserver.observe({ type: "longtask" });
+}
+
 setInterval(() => {
-  if (timings.length === 0) return;
-  send({ type: "frames", frames: timings });
-  timings = [];
+  if (timings.length > 0) {
+    send({ type: "frames", frames: timings });
+    timings = [];
+  }
+  if (longTasks.length > 0) {
+    const now = performance.now();
+    send({ type: "long-tasks", tasks: longTasks.map(({ ms, at }) => ({ ms, ago: now - at })) });
+    longTasks = [];
+  }
 }, TIMINGS_EVERY_MS);
 
 setInterval(() => {

@@ -14,6 +14,7 @@ import {
   layerWith,
   type ChannelChanges,
   type ContentChanges,
+  type FrameTiming,
   type FromCompositor,
   type LayerChanges,
   type SceneSetup,
@@ -37,6 +38,28 @@ import { projectKeyOf } from "../workbench/session.ts";
 
 /** Over this a frame misses the next refresh of a 60 Hz screen. */
 const SLOW_FRAME_MS = 17;
+/** More than a recording needs, and a message cannot make the report grow without end. */
+const MAX_LONG_TASKS = 100;
+const MAX_COLD_CLIPS = 8;
+/** An id of a project, see `Id`. Anything else goes as `?`. */
+const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * Which clips started decoding at a keyframe for a frame, as `clip_1 video 3840x2160` and so on: ids
+ * and sizes only, never names, so that a report can tell which video it was by the layout.
+ */
+function describeCold(clips: FrameTiming["coldClips"]): string | undefined {
+  if (!clips || clips.length === 0) return undefined;
+  const size = (value: unknown) =>
+    typeof value === "number" && Number.isInteger(value) && value > 0 ? value : "?";
+  return clips
+    .slice(0, MAX_COLD_CLIPS)
+    .map(({ layer, kind, width, height }) => {
+      const id = typeof layer === "string" && ID.test(layer) ? layer : "?";
+      return `${id} ${kind === "video" ? kind : "?"} ${size(width)}x${size(height)}`;
+    })
+    .join(", ");
+}
 
 /**
  * The clock of a playing timeline is the sound, and what goes by itself has to stay with it. What is
@@ -289,6 +312,7 @@ export class PreviewLink {
       for (const frame of data.frames) {
         const { ms, seconds, cold, behindMs, decodeMs, gettingReady, abandoned } = frame;
         const slow = ms > SLOW_FRAME_MS || cold > 0;
+        const coldClips = describeCold(frame.coldClips);
         const facts = {
           seconds,
           cold,
@@ -296,8 +320,15 @@ export class PreviewLink {
           decodeMs: Math.round(decodeMs),
           gettingReady,
           abandoned,
+          ...(coldClips && { coldClips }),
         };
         this.#diagnostics.noteFrame(ms, facts, slow);
+      }
+    } else if (data.type === "long-tasks") {
+      const now = performance.now();
+      for (const { ms, ago } of data.tasks.slice(0, MAX_LONG_TASKS)) {
+        if (!Number.isFinite(ms) || !Number.isFinite(ago)) continue;
+        this.#diagnostics.note("compositor.longtask", { ms: Math.round(ms) }, now - ago);
       }
     } else if (data.type === "painted") {
       this.#painted.painted(data.ago);

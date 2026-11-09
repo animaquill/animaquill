@@ -102,4 +102,43 @@ describe("recording", () => {
     recorder.finish({});
     expect(stop).toHaveBeenCalledOnce();
   });
+
+  it("follows what competes with playing, and says whether it went on at all", () => {
+    let on = true;
+    const listeners = new Set<() => void>();
+    const change = (value: boolean) => {
+      on = value;
+      for (const listener of listeners) listener();
+    };
+    const recorder = create();
+    recorder.watch("hashing", {
+      get: () => on,
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    });
+    change(false);
+    recorder.start();
+    change(false);
+    change(true);
+    change(false);
+    const report = recorder.finish({});
+    expect(report.events.map(({ kind, on: value }) => [kind, value])).toEqual([
+      ["hashing", false],
+      ["hashing", true],
+      ["hashing", false],
+    ]);
+    expect(report.during).toEqual({ hashing: true });
+    expect(listeners.size).toBe(0);
+    recorder.start();
+    expect(recorder.finish({}).during).toEqual({ hashing: false });
+  });
+
+  it("puts what it heard of later where it happened", () => {
+    const recorder = started();
+    const at = performance.now();
+    recorder.note("compositor.longtask", { ms: 80 }, at - 1_000_000);
+    expect(recorder.finish({}).events).toEqual([{ kind: "compositor.longtask", ms: 80, t: 0 }]);
+  });
 });

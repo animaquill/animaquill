@@ -370,6 +370,20 @@ export class Workbench {
         ...(options.folderTiming && { timing: options.folderTiming }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
+    // Reading a large video for its hash takes the disk and a core for a while, which a recording of
+    // how playing goes should know about.
+    this.diagnostics.watch("hashing", {
+      get: () => this.#hashing(),
+      subscribe: (listener) => {
+        const stops = [
+          this.media.subscribe(listener),
+          this.projectFolders?.subscribeProgress(listener),
+        ];
+        return () => {
+          for (const stop of stops) stop?.();
+        };
+      },
+    });
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
@@ -878,12 +892,27 @@ export class Workbench {
     if (fps && !this.applyFrameRate(fps)) this.notifications.push(t("notice.frameRateInvalid"));
   }
 
+  /**
+   * Whether files of the project are being read for their hashes: those that come in, which this
+   * browser reads whole, and those of a project folder, which get checked.
+   */
+  #hashing(): boolean {
+    const progress = this.projectFolders?.getProgress();
+    return (
+      this.media.getImporting() > 0 ||
+      this.media.getCopying() !== undefined ||
+      (progress !== undefined && (progress.reading.length > 0 || progress.checked !== undefined))
+    );
+  }
+
   /** Facts about the size of a project, never its names or content. */
   #projectFacts(): unknown {
     const state = this.session.store?.getState();
     if (!state) return undefined;
     const timelines = Object.values(state.timelines);
     return {
+      // Where its files are read from: what this browser keeps, or a folder on the disk.
+      storage: this.projectFolders?.getSnapshot().open ? "folder" : "browser",
       fps: state.manifest.fps,
       formats: state.manifest.formats.map(({ width, height, fps }) => ({ width, height, fps })),
       tracks: timelines.reduce((sum, { tracks }) => sum + Object.keys(tracks).length, 0),
@@ -893,6 +922,8 @@ export class Workbench {
         Object.values(clips)
           .slice(0, MAX_REPORTED_CLIPS)
           .map((clip) => ({
+            // An id, which is no name, so that a slow frame of a clip can be found here.
+            id: clip.id,
             kind: clip.source.kind,
             track: clip.track,
             start: toSeconds(clipStart(clip)),

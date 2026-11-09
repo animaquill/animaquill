@@ -45,6 +45,17 @@ export interface DiagnosticsReport {
   readonly events: readonly DiagnosticsEvent[];
   /** Events that did not fit. */
   readonly dropped: number;
+  /**
+   * Whether something that competes with playing went on at some time while recording, by what it is,
+   * such as `hashing`. When it did is in the events of the same kind.
+   */
+  readonly during: Readonly<Record<string, boolean>>;
+}
+
+/** Something that is on or off, such as hashing files, which a recording follows. */
+export interface Condition {
+  get(): boolean;
+  subscribe(listener: () => void): () => void;
 }
 
 export type DiagnosticsStatus = "idle" | "recording" | "finished";
@@ -127,6 +138,10 @@ export class DiagnosticsRecorder {
   #dropped = 0;
   #frameTimes = new Map<string, number>();
   #stopSampling: (() => void) | undefined;
+  readonly #conditions = new Map<string, Condition>();
+  /** Whether each was on at some time while recording. */
+  #during = new Map<string, boolean>();
+  #stopWatching: (() => void)[] = [];
 
   constructor(
     version: string,
@@ -151,8 +166,34 @@ export class DiagnosticsRecorder {
     this.#dropped = 0;
     this.#frameTimes = new Map();
     this.#stopSampling = this.#sample((kind, data) => this.note(kind, data));
+    this.#during = new Map();
+    for (const [kind, condition] of this.#conditions) this.#follow(kind, condition);
     this.#refresh = setInterval(() => this.#publish(), REFRESH_MS);
     this.#publish();
+  }
+
+  /**
+   * Notes when something that competes with playing goes on and off, while recording: `kind` is the
+   * name of the event, with `on`. Once for each kind, for as long as the recorder is there.
+   */
+  watch(kind: string, condition: Condition): void {
+    this.#conditions.set(kind, condition);
+    if (this.getRecording()) this.#follow(kind, condition);
+  }
+
+  #follow(kind: string, condition: Condition): void {
+    let on = condition.get();
+    this.#during.set(kind, on);
+    this.note(kind, { on });
+    this.#stopWatching.push(
+      condition.subscribe(() => {
+        const now = condition.get();
+        if (now === on) return;
+        on = now;
+        if (now) this.#during.set(kind, true);
+        this.note(kind, { on });
+      }),
+    );
   }
 
   #publish(report?: DiagnosticsReport, sentId?: string): void {
@@ -198,6 +239,7 @@ export class DiagnosticsRecorder {
   #stop(): void {
     this.#stopSampling?.();
     this.#stopSampling = undefined;
+    for (const stop of this.#stopWatching.splice(0)) stop();
     clearInterval(this.#refresh);
     this.#refresh = undefined;
   }
@@ -217,13 +259,14 @@ export class DiagnosticsRecorder {
     this.note(kind, data);
   }
 
-  note(kind: string, data: Readonly<Record<string, Value>> = {}): void {
+  /** `at` is when it happened, as `performance.now()`, for what is heard of later. */
+  note(kind: string, data: Readonly<Record<string, Value>> = {}, at = performance.now()): void {
     if (!this.getRecording()) return;
     if (this.#events.length >= MAX_EVENTS) {
       this.#dropped += 1;
       return;
     }
-    const t = Math.round(performance.now() - this.#startedAt);
+    const t = Math.max(Math.round(at - this.#startedAt), 0);
     this.#events.push({ ...data, t, kind });
   }
 
@@ -249,6 +292,7 @@ export class DiagnosticsRecorder {
       frameTimes: Object.fromEntries(this.#frameTimes),
       events: this.#events,
       dropped: this.#dropped,
+      during: Object.fromEntries(this.#during),
     };
     this.#stop();
     this.#status = "finished";

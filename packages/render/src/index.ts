@@ -32,6 +32,17 @@ export interface FrameTiming {
   readonly behindMs: number;
   /** Frames given up before this one because the playhead left them. They have no timing of their own. */
   readonly abandoned: number;
+  /** Which clips `cold` was about. Ids only, never names. */
+  readonly coldClips?: readonly ColdClip[];
+}
+
+/** A clip whose video had to start decoding at a keyframe for a frame. */
+export interface ColdClip {
+  readonly layer: string;
+  readonly kind: "video";
+  /** Of the video, as it shows. */
+  readonly width?: number;
+  readonly height?: number;
 }
 
 /** What changed about the curves of a layer, by property path. Null takes a property away. */
@@ -252,6 +263,14 @@ export type FromCompositor =
       readonly stack: string | undefined;
     }
   | { readonly type: "frames"; readonly frames: readonly FrameTiming[] }
+  /**
+   * Long tasks of the compositor while recording, which the editor cannot see from its own page:
+   * how long each took, and how many milliseconds before this message it started.
+   */
+  | {
+      readonly type: "long-tasks";
+      readonly tasks: readonly { readonly ms: number; readonly ago: number }[];
+    }
   /**
    * New places on the timeline that reached the canvas, as how many milliseconds before this message
    * each one did. Comes always, not only while recording, and only when there were any.

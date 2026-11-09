@@ -44,7 +44,13 @@ function setup(
     files = new Map<string, Blob>(),
     registrations,
     handles,
-  }: { files?: Map<string, Blob>; registrations?: SceneRegistrations; handles?: SceneHandles } = {},
+    diagnostics = new DiagnosticsRecorder("test"),
+  }: {
+    files?: Map<string, Blob>;
+    registrations?: SceneRegistrations;
+    handles?: SceneHandles;
+    diagnostics?: DiagnosticsRecorder;
+  } = {},
 ) {
   const restored: ((hash: string) => void)[] = [];
   const store = ProjectStore.create(createProject({ name: "预览" }));
@@ -133,7 +139,7 @@ function setup(
       media: () => ({ get: (id: string) => Promise.resolve(files.get(id)) }),
     } as unknown as ProjectLibrary,
     () => {},
-    new DiagnosticsRecorder("test"),
+    diagnostics,
     {
       onRestored: (listener: (hash: string) => void) => {
         restored.push(listener);
@@ -851,5 +857,66 @@ describe("where the objects of a scene are", () => {
     fromCompositor({ type: "scene-handles", layer: "c", revision: "r1", frame: 4, handles: raw });
     expect(handles.getVersion()).toBe(1);
     expect(handles.of("c", "r1", 4, registration)).toEqual([{ object: "arm", handles: [move] }]);
+  });
+});
+
+describe("timings for a report", () => {
+  function recording() {
+    const diagnostics = new DiagnosticsRecorder(
+      "test",
+      () => () => {},
+      () => ({}),
+    );
+    const context = setup(undefined, { diagnostics });
+    context.hello();
+    diagnostics.start();
+    return { ...context, diagnostics };
+  }
+
+  const frame = {
+    seconds: 6.9,
+    ms: 3300,
+    decodeMs: 3290,
+    gettingReady: true,
+    cold: 2,
+    behindMs: 3300,
+    abandoned: 0,
+  };
+
+  it("say which clips a decoder started for, by id and size only", () => {
+    const { diagnostics, fromCompositor } = recording();
+    fromCompositor({
+      type: "frames",
+      frames: [
+        {
+          ...frame,
+          coldClips: [
+            { layer: "clip_a", kind: "video", width: 3840, height: 2160 },
+            { layer: "我的 秘密.mp4", kind: "video" },
+          ],
+        },
+      ],
+    });
+    const [event] = diagnostics.finish({}).events;
+    expect(event).toEqual({
+      kind: "frame",
+      t: expect.any(Number),
+      seconds: 6.9,
+      ms: 3300,
+      cold: 2,
+      behindMs: 3300,
+      decodeMs: 3290,
+      gettingReady: true,
+      abandoned: 0,
+      coldClips: "clip_a video 3840x2160, ? video ?x?",
+    });
+  });
+
+  it("have the long tasks of the compositor, which the page cannot see", () => {
+    const { diagnostics, fromCompositor } = recording();
+    fromCompositor({ type: "long-tasks", tasks: [{ ms: 120.4, ago: 30 }] });
+    expect(diagnostics.finish({}).events).toEqual([
+      { kind: "compositor.longtask", ms: 120, t: expect.any(Number) },
+    ]);
   });
 });

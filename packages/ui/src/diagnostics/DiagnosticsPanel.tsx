@@ -79,13 +79,14 @@ function FrameTimes({ times }: { times: Readonly<Record<string, number>> }) {
 function EventRow({ event }: { event: DiagnosticsEvent }) {
   const { timeline } = useWorkbench();
   const { t } = useTranslation();
-  const { kind, seconds, ms, cold, message } = event;
+  const { kind, seconds, ms, cold, message, on } = event;
   const { model } = timeline;
   const canJump = typeof seconds === "number" && model !== undefined;
   const parts = [
     typeof ms === "number" ? `${ms} ms` : undefined,
     typeof cold === "number" && cold > 0 ? t("diagnostics.coldNote") : undefined,
     typeof message === "string" ? message : undefined,
+    typeof on === "boolean" ? t(on ? "diagnostics.on" : "diagnostics.off") : undefined,
   ].filter(Boolean);
   const content = (
     <>
