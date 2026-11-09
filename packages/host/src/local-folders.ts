@@ -85,6 +85,9 @@ export interface RecordStore {
 export interface LocalFoldersEnvironment {
   /** Asks people for a folder to read and write, as `showDirectoryPicker` does. */
   readonly pick: () => Promise<DirectoryHandleLike>;
+  /** Asks people for files to read, as `showOpenFilePicker` does, where the browser can. */
+  readonly pickFiles?:
+    ((near: DirectoryHandleLike | undefined) => Promise<readonly FileHandleLike[]>) | undefined;
   /** What tells about changes in folders, where the browser has it. */
   readonly Observer?: ObserverConstructor | undefined;
   /** Calls back when the window comes to the front again. Returns how to stop. */
@@ -1013,6 +1016,17 @@ export function createLocalFolders(environment: LocalFoldersEnvironment): LocalF
         }),
       ).then((entries) => entries.filter((entry) => entry !== undefined));
     },
+    async chooseFiles(near) {
+      const { pickFiles } = environment;
+      if (!pickFiles) return undefined;
+      try {
+        const picked = await pickFiles(near && directoryOf(near));
+        return picked.map((handle): LocalEntry => ({ kind: "file", file: localFile(handle) }));
+      } catch (error) {
+        if (isNamed(error, "AbortError")) return [];
+        throw error;
+      }
+    },
     records,
     bases: environment.bases,
     writer: environment.writer,
@@ -1024,6 +1038,15 @@ type DirectoryPicker = (options: {
   readonly mode: "readwrite";
 }) => Promise<DirectoryHandleLike>;
 
+type FilePicker = (options: {
+  readonly id: string;
+  readonly multiple: true;
+  readonly startIn?: DirectoryHandleLike;
+}) => Promise<readonly FileHandleLike[]>;
+
+/** Where the dialog for files starts when no folder says, as the browser remembers it. */
+const FILES_PICKER_ID = "animaquill-files";
+
 /**
  * Folders on this computer, through the File System Access API. Undefined where a page cannot write
  * to them: Firefox and Safari, and Brave as it comes.
@@ -1034,15 +1057,25 @@ export function browserLocalFolders(
 ): LocalFolders | undefined {
   const scope = globalThis as {
     showDirectoryPicker?: DirectoryPicker;
+    showOpenFilePicker?: FilePicker;
     FileSystemObserver?: ObserverConstructor;
   };
-  const { showDirectoryPicker } = scope;
+  const { showDirectoryPicker, showOpenFilePicker } = scope;
   const canWrite =
     typeof FileSystemFileHandle !== "undefined" &&
     "createWritable" in FileSystemFileHandle.prototype;
   if (typeof showDirectoryPicker !== "function" || !canWrite) return undefined;
   return createLocalFolders({
     pick: () => showDirectoryPicker.call(globalThis, { id: PICKER_ID, mode: "readwrite" }),
+    pickFiles:
+      typeof showOpenFilePicker === "function"
+        ? (near) =>
+            showOpenFilePicker.call(globalThis, {
+              id: FILES_PICKER_ID,
+              multiple: true,
+              ...(near && { startIn: near }),
+            })
+        : undefined,
     Observer: scope.FileSystemObserver,
     onFront(listener) {
       const onVisible = () => {

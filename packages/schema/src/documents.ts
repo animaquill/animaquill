@@ -95,7 +95,8 @@ export const ProjectManifest = z
     unique(project.timelines, "timelines");
   });
 
-const MediaInfo = z.strictObject({
+/** What a video, a sound or a picture is like, as the editor found it out. */
+export const MediaInfo = z.strictObject({
   duration: Duration.optional(),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),

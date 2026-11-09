@@ -212,7 +212,7 @@ export async function bringIn(
 ): Promise<ImportReport> {
   const { project, sources, files, skipped, lost, warnings } = folder;
   let { id, name } = project.manifest;
-  let incoming = await projects.receive({ id: key ?? id, name });
+  let incoming = await projects.receive({ id: key ?? id, name, ...(key && { folder: true }) });
   const copied = incoming === undefined && key === undefined;
   if (!incoming && key === undefined) {
     id = newId("project");
@@ -224,7 +224,8 @@ export async function bringIn(
   try {
     const assets = { ...project.assets?.assets };
     const found = [];
-    for (const [assetId, asset] of Object.entries(assets)) {
+    // A project that stays in its folder reads its files from there: nothing comes into the browser.
+    for (const [assetId, asset] of key === undefined ? Object.entries(assets) : []) {
       const file = await files.get(asset.path)?.read();
       if (file) found.push({ id: assetId, asset, file });
     }
@@ -257,9 +258,12 @@ export async function bringIn(
     // Another asset can have brought in the same content from a place of its own.
     const isCovered = (assetId: string, hash: string | undefined) =>
       damaged.has(assetId) || (hash !== undefined && stored.has(hash));
-    const missing = Object.entries(assets)
-      .filter(([assetId, asset]) => !isCovered(assetId, asset.hash))
-      .map(([, asset]) => asset.name ?? asset.path);
+    const missing =
+      key === undefined
+        ? Object.entries(assets)
+            .filter(([assetId, asset]) => !isCovered(assetId, asset.hash))
+            .map(([, asset]) => asset.name ?? asset.path)
+        : [];
 
     const store = ProjectStore.create(
       {

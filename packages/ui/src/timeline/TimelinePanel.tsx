@@ -596,7 +596,8 @@ function Surface({
   showMenu: ShowMenu;
 }) {
   const { t } = useTranslation();
-  const { input, media, keyframes, sounds } = useWorkbench();
+  const workbench = useWorkbench();
+  const { input, media, keyframes, sounds } = workbench;
   const labelOf = useClipLabel();
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -682,7 +683,7 @@ function Surface({
       editor.addSound(sound, place);
       return;
     }
-    void media.importFiles([...event.dataTransfer.files]).then((ids) => {
+    void workbench.importDropped(event.dataTransfer).then((ids) => {
       for (const id of ids) editor.addAsset(id, place);
     });
   };

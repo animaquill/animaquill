@@ -754,3 +754,24 @@ describe("the log, when it cannot be written", () => {
     expect(session.getSnapshot()).toMatchObject({ unrecorded: false, status: "saved" });
   });
 });
+
+describe("a project folder that a newer editor wrote", () => {
+  it("is not written any more, and the window stops until people update the editor", async () => {
+    const browser = new TestBrowser();
+    const { store, session } = await browser.open();
+    await browser.settle();
+    const manifest = JSON.parse(textOn(browser.disk, MANIFEST_FILE));
+    browser.disk.write(
+      `${PROJECT}/${MANIFEST_FILE}`,
+      JSON.stringify({ ...manifest, formatVersion: 99 }, null, 2),
+    );
+    await browser.settle();
+    renameClip(store, "clip_title", "旧编辑器写的");
+    await browser.settle();
+    expect(session.getSnapshot()).toMatchObject({
+      role: "stopped",
+      trouble: { reason: "too-new" },
+    });
+    expect(nameOnDisk(browser)).toBe("标题");
+  });
+});

@@ -178,6 +178,8 @@ function faultyBases(bases: FolderBases, faults: Faults): FolderBases {
     load: async (folder) => (fail(), bases.load(folder)),
     save: async (folder, turn, change) => (fail(), bases.save(folder, turn, change)),
     forget: async (folder) => (fail(), bases.forget(folder)),
+    hashOf: async (folder, path) => (fail(), bases.hashOf(folder, path)),
+    keepHash: async (folder, hash) => (fail(), bases.keepHash(folder, hash)),
   };
 }
 

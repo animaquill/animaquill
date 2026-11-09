@@ -1,4 +1,4 @@
-import type { FolderBases, FolderBasesChange, FolderFileRecord } from "./index.ts";
+import type { FolderBases, FolderBasesChange, FolderFileRecord, FolderHash } from "./index.ts";
 import type { RecordStore, StoredRecord } from "./local-folders.ts";
 
 /**
@@ -8,7 +8,7 @@ import type { RecordStore, StoredRecord } from "./local-folders.ts";
  */
 const DATABASE = "animaquill-folders";
 /** 2 added what is kept about files. Nothing used the database before that. */
-const VERSION = 2;
+const VERSION = 3;
 const FOLDERS = "folders";
 const BY_PROJECT = "project";
 /** What is kept about each file, by the number of its folder and its path. */
@@ -16,6 +16,8 @@ const FILES = "files";
 const BY_FOLDER = "folder";
 /** Which turn it is to keep what is kept about the files of a folder, see `FolderBases.claim`. */
 const TURNS = "turns";
+/** The hashes of files of folders, by folder and path, see `FolderBases.keepHash`. */
+const HASHES = "hashes";
 
 /** A file as it is kept, with the folder it belongs to. */
 interface StoredFile extends FolderFileRecord {
@@ -53,6 +55,10 @@ function open(factory: IDBFactory): Promise<IDBDatabase> {
       const files = database.createObjectStore(FILES, { keyPath: [BY_FOLDER, "path"] });
       files.createIndex(BY_FOLDER, BY_FOLDER);
       database.createObjectStore(TURNS, { keyPath: BY_FOLDER });
+    }
+    if (event.oldVersion < 3) {
+      const hashes = database.createObjectStore(HASHES, { keyPath: [BY_FOLDER, "path"] });
+      hashes.createIndex(BY_FOLDER, BY_FOLDER);
     }
   });
   return resultOf(request);
@@ -157,6 +163,18 @@ export function createBaseStore(factory: () => IDBFactory): FolderBases {
       const read = transaction.objectStore(TURNS).get(folder);
       return (await resultOf<StoredTurn | undefined>(read))?.turn ?? 0;
     },
+    async hashOf(folder, path) {
+      const transaction = (await database()).transaction(HASHES);
+      const read = transaction.objectStore(HASHES).get([folder, path]);
+      const found = await resultOf<(FolderHash & { folder: string }) | undefined>(read);
+      if (!found) return undefined;
+      const { folder: _, ...hash } = found;
+      return hash;
+    },
+    keepHash: (folder, hash) =>
+      write(database, HASHES, (transaction) => {
+        transaction.objectStore(HASHES).put({ ...hash, folder });
+      }),
     async load(folder) {
       const transaction = (await database()).transaction(FILES);
       const index = transaction.objectStore(FILES).index(BY_FOLDER);
@@ -185,8 +203,9 @@ export function createBaseStore(factory: () => IDBFactory): FolderBases {
       return !isTheirs;
     },
     forget: (folder) =>
-      write(database, [FILES, TURNS], (transaction) => {
+      write(database, [FILES, TURNS, HASHES], (transaction) => {
         removeAllOf(transaction.objectStore(FILES), folder, () => {});
+        removeAllOf(transaction.objectStore(HASHES), folder, () => {});
         transaction.objectStore(TURNS).delete(folder);
       }),
   };
@@ -213,9 +232,14 @@ export function memoryRecordStore(): RecordStore {
 export interface MemoryBases {
   readonly turns: Map<string, number>;
   readonly files: Map<string, Map<string, FolderFileRecord>>;
+  readonly hashes: Map<string, Map<string, FolderHash>>;
 }
 
-export const memoryBases = (): MemoryBases => ({ turns: new Map(), files: new Map() });
+export const memoryBases = (): MemoryBases => ({
+  turns: new Map(),
+  files: new Map(),
+  hashes: new Map(),
+});
 
 /**
  * What the editor last wrote or read in files, kept in memory the way a database keeps it: by value,
@@ -242,6 +266,17 @@ export function memoryBaseStore(kept: MemoryBases, check: () => void = () => {})
       check();
       return kept.turns.get(folder) ?? 0;
     },
+    async hashOf(folder, path) {
+      check();
+      const found = kept.hashes.get(folder)?.get(path);
+      return found && { ...found };
+    },
+    async keepHash(folder, hash) {
+      check();
+      const hashes = kept.hashes.get(folder) ?? new Map<string, FolderHash>();
+      hashes.set(hash.path, { ...hash });
+      kept.hashes.set(folder, hashes);
+    },
     async load(folder) {
       check();
       return [...(kept.files.get(folder)?.values() ?? [])].map((record) => structuredClone(record));
@@ -259,6 +294,7 @@ export function memoryBaseStore(kept: MemoryBases, check: () => void = () => {})
       check();
       kept.files.delete(folder);
       kept.turns.delete(folder);
+      kept.hashes.delete(folder);
     },
   };
 }

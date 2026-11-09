@@ -766,6 +766,8 @@ export class MemoryDisk {
   readonly #state: DiskState;
   readonly #front = new Set<() => void>();
   #chosen: string | undefined;
+  #chosenFiles: readonly string[] | undefined;
+  #startedIn: string | undefined;
   readonly #Observer: ObserverConstructor;
   /** The pages of the folders that `folders` gave. */
   readonly #pages = new WeakMap<LocalFolders, WriterPage>();
@@ -958,6 +960,19 @@ export class MemoryDisk {
   }
 
   /**
+   * What the next dialog for choosing files gives: these files, which have to be there, or none
+   * when people change their minds. The folder it started in is in `filesStartedIn` then.
+   */
+  chooseFilesNext(...paths: readonly string[] | readonly ["cancel"]): void {
+    this.#chosenFiles = paths;
+  }
+
+  /** Where the last dialog for choosing files started, as a path on the disk. */
+  get filesStartedIn(): string | undefined {
+    return this.#startedIn;
+  }
+
+  /**
    * What dropping these folders and files gives, for `LocalFolders.dropped`. They may be read, and
    * dropping counts as people doing something.
    */
@@ -1080,6 +1095,7 @@ export class MemoryDisk {
     const observer = () => (this.observes ? this.#Observer : undefined);
     return {
       pick: async () => this.#pick(),
+      pickFiles: async (near) => this.#pickFiles(near),
       get Observer() {
         return observer();
       },
@@ -1094,6 +1110,23 @@ export class MemoryDisk {
       writer: (folder) => state.turns.writer(folder, page),
       timing,
     };
+  }
+
+  #pickFiles(near: DirectoryHandleLike | undefined): readonly FileHandleLike[] {
+    const chosen = this.#chosenFiles;
+    this.#chosenFiles = undefined;
+    this.#startedIn = near && (near as MemoryDirectoryHandle).names.join("/");
+    if (chosen === undefined || chosen[0] === "cancel") {
+      throw failure("AbortError", "The user aborted a request.");
+    }
+    const state = this.#state;
+    return chosen.map((path) => {
+      const names = split(path);
+      if (state.find(names)?.kind !== "file") throw new Error(`No file is at ${path}`);
+      // A file people chose may be read.
+      if (state.permission(names, "read") !== "granted") state.grant(names, "read");
+      return new MemoryFileHandle(state, names);
+    });
   }
 
   #pick(): DirectoryHandleLike {

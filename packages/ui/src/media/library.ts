@@ -1,6 +1,6 @@
 import { computePeaks, readSound } from "@animaquill/audio";
 import { madeSoundOf, type ClipState, type ProjectStore } from "@animaquill/core";
-import type { ProjectLibrary } from "@animaquill/host";
+import { FolderError, type ProjectLibrary } from "@animaquill/host";
 import { formatHash, isSameHash, probeMedia, type MediaFacts } from "@animaquill/media";
 import {
   fromSeconds,
@@ -13,6 +13,7 @@ import {
 import { Emitter } from "../workbench/emitter.ts";
 import { encodeStrip, stripCount, StripMaker } from "./strips.ts";
 import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
+import type { FolderAssets } from "../folder/assets.ts";
 
 /** Peaks are worked out from a file. A new way of doing that gets a new key, and old ones stay unused. */
 const peaksKey = (hash: string) => `peaks-1:${hash}`;
@@ -35,6 +36,49 @@ export interface MediaMessages {
   tooLarge(name: string): void;
   saveFailed(name: string): void;
   commandFailed(message: string): void;
+  /**
+   * A large file is about to be copied into the project folder, where it takes as much room again,
+   * see `ASK_BEFORE_COPYING_BYTES`. Resolves to whether people want that.
+   */
+  confirmCopy(name: string, bytes: number): Promise<boolean>;
+  /** A file did not get into the project folder, and why, as far as is known. */
+  copyFailed(name: string, reason: CopyFailure): void;
+  /** A file in the project folder could not be read, so it did not come in. */
+  readFailed(name: string): void;
+  /** The file that took the place of the file of an asset is another kind of file. */
+  otherKind(name: string): void;
+}
+
+/** Why a file did not get into the project folder. */
+export type CopyFailure =
+  /** The path is too long for the system, see `FolderFailure`. */
+  | "too-long"
+  /** The disk is full. */
+  | "full"
+  /** The editor may not write the folder now: the folder itself says why. */
+  | "folder"
+  | "other";
+
+const failureOf = (error: unknown): CopyFailure => {
+  if (!(error instanceof FolderError)) return "other";
+  if (error.reason === "too-long" || error.reason === "full") return error.reason;
+  return error.reason === "denied" || error.reason === "gone" ? "folder" : "other";
+};
+
+/**
+ * From this size on, people are asked before a file gets copied into a project folder: it takes as
+ * much room again, which putting it into the folder first would not. See the design, 5.
+ */
+export const ASK_BEFORE_COPYING_BYTES = 1024 ** 3;
+
+/** What goes into the project folder right now, for people to see, and to stop. */
+export interface Copying {
+  readonly name: string;
+  /** Reading it to tell whether the project has it already, or copying it. */
+  readonly stage: "checking" | "copying";
+  /** Whole percent. */
+  readonly percent: number;
+  readonly stop: () => void;
 }
 
 async function hashOf(file: Blob): Promise<string> {
@@ -62,7 +106,11 @@ export class MediaLibrary {
   readonly #projects: ProjectLibrary;
   readonly #messages: MediaMessages;
   readonly #emitter = new Emitter();
-  readonly #urls = new Map<string, Promise<string | undefined>>();
+  /** By asset, for the file it had: another hash or path is another file. */
+  readonly #urls = new Map<
+    string,
+    { readonly key: string; readonly url: Promise<string | undefined> }
+  >();
   /** By file. Undefined means it is on its way or there is nothing to show. */
   readonly #peaks = new Map<string, Uint8Array | undefined>();
   /** One at a time, because decoding takes the whole file. */
@@ -73,6 +121,8 @@ export class MediaLibrary {
   readonly #restoredListeners = new Set<(hash: string) => void>();
   #store: ProjectStore | undefined;
   #importing = 0;
+  readonly #folder: () => FolderAssets | undefined;
+  #copying: Copying | undefined;
   #restored = 0;
 
   constructor(
@@ -80,17 +130,22 @@ export class MediaLibrary {
     projects: ProjectLibrary,
     messages: MediaMessages,
     compositorUrl: string,
+    /** The files of the open project where it is a folder: they go there, see `FolderAssets`. */
+    folder: () => FolderAssets | undefined = () => undefined,
   ) {
     this.#stripMaker = new StripMaker(compositorUrl);
     this.#session = session;
     this.#projects = projects;
     this.#messages = messages;
+    this.#folder = folder;
     session.subscribe(() => this.#followSession());
   }
 
   subscribe = this.#emitter.subscribe;
   /** How many files are on their way in. */
   getImporting = (): number => this.#importing;
+  /** What goes into the project folder right now, see `Copying`. */
+  getCopying = (): Copying | undefined => this.#copying;
   /** Changes when a file came back, for what has to look again. */
   getRestored = (): number => this.#restored;
 
@@ -103,10 +158,9 @@ export class MediaLibrary {
   #followSession(): void {
     if (this.#session.store === this.#store) return;
     this.#store = this.#session.store;
-    for (const url of this.#urls.values()) {
-      void url.then((value) => value && URL.revokeObjectURL(value));
-    }
-    this.#urls.clear();
+    // What was on its way into the folder of the project before does not go on.
+    this.#copying?.stop();
+    for (const id of this.#urls.keys()) this.#dropUrl(id);
     this.#peaks.clear();
     for (const strip of this.#strips.values()) strip?.image.close();
     this.#strips.clear();
@@ -228,11 +282,17 @@ export class MediaLibrary {
 
   /** One at a time, because each one is read into memory. A file that fails does not stop others. */
   async importFiles(files: readonly File[]): Promise<readonly string[]> {
+    const store = this.#session.store;
     const ids: string[] = [];
     this.#setImporting(this.#importing + files.length);
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
+      // Another project opened meanwhile: what is left was not meant for it.
+      if (this.#session.store !== store) {
+        this.#setImporting(this.#importing - (files.length - index));
+        break;
+      }
       const id = await this.#importFile(file);
-      if (id !== undefined) ids.push(id);
+      if (id !== undefined && this.#session.store === store) ids.push(id);
       this.#setImporting(this.#importing - 1);
     }
     return ids;
@@ -243,9 +303,44 @@ export class MediaLibrary {
     this.#emitter.emit();
   }
 
+  /**
+   * Files that are in the project folder already, by their path there: they are used where they
+   * are, nothing gets copied.
+   */
+  async importPaths(paths: readonly string[]): Promise<readonly string[]> {
+    const store = this.#session.store;
+    const folder = this.#folder();
+    if (!store || !folder) return [];
+    const ids: string[] = [];
+    this.#setImporting(this.#importing + paths.length);
+    for (const path of paths) {
+      try {
+        if (this.#session.store !== store) continue;
+        const found = await folder.fileAt(path);
+        if (found.kind !== "there") {
+          this.#messages.readFailed(path);
+          continue;
+        }
+        const facts = await probeMedia(found.file);
+        if (!facts) {
+          this.#messages.unsupported(found.file.name);
+          continue;
+        }
+        if (this.#session.store !== store) continue;
+        const id = this.#add(store, found.file, path, found.hash, facts);
+        if (id !== undefined) ids.push(id);
+      } finally {
+        this.#setImporting(this.#importing - 1);
+      }
+    }
+    return ids;
+  }
+
   async #importFile(file: File): Promise<string | undefined> {
     const store = this.#session.store;
     if (!store) return undefined;
+    const folder = this.#folder();
+    if (folder) return this.#bringIntoFolder(store, folder, file);
     if (file.size > MAX_FILE_BYTES) {
       this.#messages.tooLarge(file.name);
       return undefined;
@@ -301,7 +396,7 @@ export class MediaLibrary {
     for (const [id, { hash }] of assets) {
       if (hash === undefined || (await media.get(hash))) continue;
       await media.put(hash, file);
-      this.#urls.delete(id);
+      this.#dropUrl(id);
       this.#peaks.delete(hash);
       this.#strips.delete(hash);
       this.#restored += 1;
@@ -314,12 +409,222 @@ export class MediaLibrary {
     return this.#projects.media(projectKeyOf(store));
   }
 
+  /**
+   * A file from outside into the assets folder of the project, whatever its size: it is written as
+   * it is read, and its hash comes with that. It is in the project once all of it is there. A file
+   * the project has already is not copied again, and people are asked before a large one is.
+   */
+  async #bringIntoFolder(
+    store: ProjectStore,
+    folder: FolderAssets,
+    file: File,
+  ): Promise<string | undefined> {
+    const facts = await probeMedia(file);
+    if (!facts) {
+      this.#messages.unsupported(file.name);
+      return undefined;
+    }
+    const stopper = new AbortController();
+    const { signal } = stopper;
+    const show = (stage: Copying["stage"], bytes: number) => {
+      const percent = file.size > 0 ? Math.floor((bytes / file.size) * 100) : 100;
+      const now = this.#copying;
+      if (now?.stage === stage && now.percent === percent && now.name === file.name) return;
+      this.#copying = { name: file.name, stage, percent, stop: () => stopper.abort() };
+      this.#emitter.emit();
+    };
+    try {
+      // Only a file of a size the project has can be one that it has.
+      const sameSize = Object.entries(store.getState().assets ?? {}).filter(
+        ([, asset]) => asset.size === file.size && asset.hash !== undefined,
+      );
+      if (sameSize.length > 0) {
+        show("checking", 0);
+        const hash = await folder.hashOutside(file, {
+          signal,
+          onProgress: (bytes) => show("checking", bytes),
+        });
+        const known = sameSize.find(([, asset]) => isSameHash(asset.hash as string, hash));
+        if (known && (await folder.fileAt(known[1].path)).kind === "there") return known[0];
+      }
+      this.#copying = undefined;
+      this.#emitter.emit();
+      if (
+        file.size >= ASK_BEFORE_COPYING_BYTES &&
+        !(await this.#messages.confirmCopy(file.name, file.size))
+      ) {
+        return undefined;
+      }
+      show("copying", 0);
+      const copied = await folder.copyIn(file, {
+        signal,
+        onProgress: (bytes) => show("copying", bytes),
+      });
+      // The project closed meanwhile: the copy came for nothing.
+      if (this.#session.store !== store) {
+        await folder.remove(copied.path, copied.written);
+        return undefined;
+      }
+      const known = Object.entries(store.getState().assets ?? {}).find(
+        ([, asset]) => asset.hash !== undefined && isSameHash(asset.hash, copied.hash),
+      );
+      if (!known) return this.#add(store, file, copied.path, copied.hash, facts);
+      // The project has it: the copy goes, unless the one it has is not there any more.
+      const [id, asset] = known;
+      if ((await folder.fileAt(asset.path)).kind === "there") {
+        await folder.remove(copied.path, copied.written);
+        return id;
+      }
+      const result = store.execute({
+        type: "asset.update",
+        params: { asset: id, changes: { path: copied.path } },
+      });
+      if (!result.ok) this.#messages.commandFailed(result.error.message);
+      this.filesChanged([copied.path]);
+      return id;
+    } catch (error) {
+      if (signal.aborted) return undefined;
+      console.warn("A file could not be copied into the project folder", error);
+      this.#messages.copyFailed(file.name, failureOf(error));
+      return undefined;
+    } finally {
+      this.#copying = undefined;
+      this.#emitter.emit();
+    }
+  }
+
+  /** Adds a file of the project folder as an asset, once it is all there. */
+  #add(
+    store: ProjectStore,
+    file: File,
+    path: string,
+    hash: string,
+    facts: MediaFacts,
+  ): string | undefined {
+    const known = Object.entries(store.getState().assets ?? {}).find(
+      ([, asset]) => asset.path === path,
+    );
+    if (known) return known[0];
+    const id = newId("asset");
+    const asset = {
+      name: file.name,
+      kind: facts.kind,
+      path,
+      storage: "local",
+      hash,
+      size: file.size,
+      info: infoOf(facts),
+    };
+    const result = store.execute({ type: "asset.add", params: { id, asset } });
+    if (result.ok) return id;
+    this.#messages.commandFailed(result.error.message);
+    return undefined;
+  }
+
+  /**
+   * The file of an asset in the project folder is another one now, as when people replaced it
+   * outside: the project takes it as it is, and what was made of the old one is made again.
+   */
+  async useNewFile(assetId: string): Promise<boolean> {
+    const store = this.#store;
+    const folder = this.#folder();
+    const asset = store?.getState().assets?.[assetId];
+    if (!store || !folder || !asset) return false;
+    const name = asset.name ?? asset.path;
+    const found = await folder.fileAt(asset.path);
+    if (found.kind !== "there") {
+      this.#messages.readFailed(asset.path);
+      return false;
+    }
+    const facts = await probeMedia(found.file);
+    if (!facts) {
+      this.#messages.unsupported(name);
+      return false;
+    }
+    // Clips of a video cannot play a sound file in its place.
+    if (facts.kind !== asset.kind) {
+      this.#messages.otherKind(name);
+      return false;
+    }
+    const result = store.execute({
+      type: "asset.update",
+      params: {
+        asset: assetId,
+        changes: { hash: found.hash, size: found.file.size, info: infoOf(facts) },
+      },
+    });
+    if (!result.ok) {
+      this.#messages.commandFailed(result.error.message);
+      return false;
+    }
+    this.filesChanged([asset.path]);
+    return true;
+  }
+
+  /** The file of an asset is at another path of the project folder now: the asset goes there. */
+  async usePlace(assetId: string, path: string): Promise<boolean> {
+    const store = this.#store;
+    const folder = this.#folder();
+    const asset = store?.getState().assets?.[assetId];
+    if (!store || !folder || !asset?.hash) return false;
+    const found = await folder.fileAt(path);
+    if (found.kind !== "there" || !isSameHash(found.hash, asset.hash)) {
+      this.#messages.readFailed(path);
+      return false;
+    }
+    const result = store.execute({
+      type: "asset.update",
+      params: { asset: assetId, changes: { path } },
+    });
+    if (!result.ok) {
+      this.#messages.commandFailed(result.error.message);
+      return false;
+    }
+    this.filesChanged([path]);
+    return true;
+  }
+
+  /**
+   * Files of assets changed on the disk, by path, as a project folder tells: whatever has them has
+   * to get them again, see `onRestored`, and what could not be made of them before gets another go.
+   */
+  filesChanged(paths: readonly string[]): void {
+    const store = this.#store;
+    if (!store) return;
+    const changed = new Set(paths);
+    const hashes = new Set<string>();
+    for (const [id, asset] of Object.entries(store.getState().assets ?? {})) {
+      if (!changed.has(asset.path)) continue;
+      this.#dropUrl(id);
+      const { hash } = asset;
+      if (hash === undefined) continue;
+      hashes.add(hash);
+      // What was made of the file stays: it is the same content, by its hash.
+      if (this.#peaks.has(hash) && this.#peaks.get(hash) === undefined) this.#peaks.delete(hash);
+      if (this.#strips.has(hash) && this.#strips.get(hash) === undefined) this.#strips.delete(hash);
+    }
+    if (hashes.size === 0) return;
+    this.#restored += 1;
+    for (const hash of hashes) for (const listener of this.#restoredListeners) listener(hash);
+    this.#emitter.emit();
+  }
+
+  #dropUrl(assetId: string): void {
+    const cached = this.#urls.get(assetId);
+    if (!cached) return;
+    this.#urls.delete(assetId);
+    void cached.url.then((value) => value && URL.revokeObjectURL(value));
+  }
+
   /** Something an image element can show, or undefined when the file is not in this browser. */
   urlOf(assetId: string): Promise<string | undefined> {
+    const asset = this.#session.store?.getState().assets?.[assetId];
+    const key = `${asset?.hash ?? ""}\n${asset?.path ?? ""}`;
     const cached = this.#urls.get(assetId);
-    if (cached) return cached;
+    if (cached?.key === key) return cached.url;
+    this.#dropUrl(assetId);
     const url = this.#load(assetId);
-    this.#urls.set(assetId, url);
+    this.#urls.set(assetId, { key, url });
     return url;
   }
 

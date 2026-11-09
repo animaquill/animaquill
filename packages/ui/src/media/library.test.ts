@@ -3,7 +3,7 @@ import type { Asset } from "@animaquill/schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLibrary, memoryAddress } from "../workbench/memory-library.ts";
 import { ProjectSession } from "../workbench/session.ts";
-import { MediaLibrary } from "./library.ts";
+import { MediaLibrary, type CopyFailure } from "./library.ts";
 
 vi.mock("@animaquill/media", async (original) => ({
   ...(await original<typeof import("@animaquill/media")>()),
@@ -29,6 +29,10 @@ async function setup() {
     tooLarge: vi.fn<(name: string) => void>(),
     saveFailed: vi.fn<(name: string) => void>(),
     commandFailed: vi.fn<(message: string) => void>(),
+    confirmCopy: vi.fn<(name: string, bytes: number) => Promise<boolean>>(async () => true),
+    copyFailed: vi.fn<(name: string, reason: CopyFailure) => void>(),
+    readFailed: vi.fn<(name: string) => void>(),
+    otherKind: vi.fn<(name: string) => void>(),
   };
   const library = new MediaLibrary(session, projects, messages, "");
   await session.create("我的项目");

@@ -14,6 +14,15 @@ export function formatHash(digest: Uint8Array): string {
   return `${PREFIX}${btoa(text).replaceAll("+", "-").replaceAll("/", "_")}`;
 }
 
+/** A hash that is found out piece by piece, for a file that comes in pieces. */
+export function createHash(): { update(piece: Uint8Array): void; digest(): string } {
+  const hash = sha256.create();
+  return {
+    update: (piece) => void hash.update(piece),
+    digest: () => formatHash(hash.digest()),
+  };
+}
+
 /** The hash of a text as UTF-8, right away: for documents, which are in memory anyway. */
 export function hashText(text: string): string {
   return formatHash(sha256(new TextEncoder().encode(text)));
@@ -40,6 +49,33 @@ export async function hashFile(file: Blob, { signal, onProgress }: HashOptions =
     // Whatever stopped this, the file does not have to stay open.
     await reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * A file to write somewhere, which finds out its hash while it is read for that: one read for both,
+ * which counts for a large video. `hash` is there once all of it was read.
+ */
+export function hashingCopy(file: Blob): { readonly content: Blob; hash(): string | undefined } {
+  let found: string | undefined;
+  const content = new (class extends Blob {
+    override stream(): ReadableStream<Uint8Array<ArrayBuffer>> {
+      // A write that starts again reads it all again.
+      const hash = sha256.create();
+      found = undefined;
+      return file.stream().pipeThrough(
+        new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
+          transform(chunk, controller) {
+            hash.update(chunk);
+            controller.enqueue(chunk);
+          },
+          flush() {
+            found = formatHash(hash.digest());
+          },
+        }),
+      );
+    }
+  })([file], { type: file.type });
+  return { content, hash: () => found };
 }
 
 /** The digest in a form that can be compared, whatever a tool wrote it as. */

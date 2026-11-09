@@ -36,6 +36,7 @@ async function watched(
   options: MemoryDiskOptions & {
     readonly observes?: boolean;
     readonly files?: readonly string[];
+    readonly newTimes?: boolean;
     readonly onChange?: (changes: readonly FolderChange[]) => Promise<void>;
   } = {},
 ): Promise<Watched> {
@@ -52,6 +53,7 @@ async function watched(
   const watch = folder.watch({
     includes,
     ...(options.files && { files: () => options.files ?? [] }),
+    ...(options.newTimes && { newTimes: true }),
     async onChange(changes, batch) {
       const found = await Promise.all(
         changes.map(async ({ path, file }) => [path, await file?.text()] as const),
@@ -334,6 +336,22 @@ describe("what the browser misses", () => {
     disk.front();
     await quiet();
     expect(told).toEqual([[["animaquill.json", "看不见"]]]);
+  });
+
+  it("is a new time, where whoever watches holds on to files", async () => {
+    const { disk, watch, told } = await watched({ newTimes: true, files: ["assets/红色.webm"] });
+    disk.touch(`${PROJECT}/assets/红色.webm`);
+    await watch.rescan();
+    expect(told).toEqual([[["assets/红色.webm", "视频"]]]);
+    // Gone and back as it was, while nobody looked, is a new time too.
+    disk.remove(`${PROJECT}/assets/红色.webm`);
+    disk.write(`${PROJECT}/assets/红色.webm`, "视频");
+    await quiet();
+    expect(told).toHaveLength(2);
+    // What did not change at all is still nothing.
+    disk.tell("modified", `${PROJECT}/assets/红色.webm`);
+    await quiet();
+    expect(told).toHaveLength(2);
   });
 
   it("is found by looking again, by what is in a file and not by its time", async () => {

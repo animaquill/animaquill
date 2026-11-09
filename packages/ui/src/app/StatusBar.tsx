@@ -210,6 +210,7 @@ function troubleText(trouble: FolderTrouble, t: TFunction): string {
     case "replaced":
     case "manifest-gone":
     case "outdated":
+    case "too-new":
     case "denied":
     case "full":
       return t(`folder.trouble.${trouble.reason}`);
@@ -255,7 +256,7 @@ function FolderSaveStatus({ open }: { open: OpenFolder }) {
         ? { label: t("folder.allowAgain"), run: () => void projectFolders.allowAgain() }
         : trouble?.reason === "manifest-gone"
           ? { label: t("folder.restore"), run: () => void projectFolders.writeEditorContent() }
-          : trouble?.reason === "outdated"
+          : trouble?.reason === "outdated" || trouble?.reason === "too-new"
             ? { label: t("folder.reload"), run: () => location.reload() }
             : undefined;
   const isTrouble = status === "unsaved";
@@ -270,6 +271,16 @@ function FolderSaveStatus({ open }: { open: OpenFolder }) {
       {fix && (
         <button type="button" className={styles.name} onClick={fix.run}>
           {fix.label}
+        </button>
+      )}
+      {trouble?.reason === "gone" && (
+        // Deleted, not moved: what the browser has goes to a new place.
+        <button
+          type="button"
+          className={styles.name}
+          onClick={() => void projectFolders.saveElsewhere(record)}
+        >
+          {t("folder.saveElsewhere")}
         </button>
       )}
       {blocked.length > 0 && (

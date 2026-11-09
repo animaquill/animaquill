@@ -85,6 +85,8 @@ interface PopupState {
   readonly groups: readonly (readonly MenuItem[])[];
 }
 
+const noSubscription = () => () => {};
+
 export function AssetsPanel() {
   const workbench = useWorkbench();
   const { media, timeline, notifications } = workbench;
@@ -92,6 +94,12 @@ export function AssetsPanel() {
   const { store } = useSession();
   const project = useProject(store);
   const importing = useSyncExternalStore(media.subscribe, media.getImporting);
+  const copying = useSyncExternalStore(media.subscribe, media.getCopying);
+  const folders = workbench.projectFolders;
+  const inFolder = useSyncExternalStore(
+    folders?.subscribe ?? noSubscription,
+    () => folders?.getSnapshot().open !== undefined,
+  );
   // A thumbnail gave up on a file that was not there, and starts over when one came back.
   const restored = useSyncExternalStore(media.subscribe, media.getRestored);
   const [popup, setPopup] = useState<PopupState>();
@@ -139,11 +147,11 @@ export function AssetsPanel() {
         if (!hasFiles(event)) return;
         event.preventDefault();
         setOver(false);
-        void media.importFiles([...event.dataTransfer.files]);
+        void workbench.importDropped(event.dataTransfer);
       }}
     >
       <div className={styles.toolbar}>
-        <button type="button" onClick={() => void media.pickFiles()}>
+        <button type="button" onClick={() => void workbench.pickFiles()}>
           <Upload size={14} />
           {t("assets.import")}
         </button>
@@ -155,10 +163,20 @@ export function AssetsPanel() {
           <Plus size={14} />
           {t("assets.newSound")}
         </button>
-        {importing > 0 && <span role="status">{t("assets.importing", { count: importing })}</span>}
+        {importing > 0 && !copying && (
+          <span role="status">{t("assets.importing", { count: importing })}</span>
+        )}
+        {copying && (
+          <span role="status">
+            {t(`folder.copy.${copying.stage}`, { name: copying.name, percent: copying.percent })}
+            <button type="button" onClick={copying.stop}>
+              {t("folder.copy.stop")}
+            </button>
+          </span>
+        )}
       </div>
       {assets.length === 0 && scenes.length === 0 && sounds.length === 0 ? (
-        <p className={styles.empty}>{t("assets.empty")}</p>
+        <p className={styles.empty}>{t(inFolder ? "assets.emptyFolder" : "assets.empty")}</p>
       ) : (
         <ul className={styles.list} aria-label={t("panel.assets.title")}>
           {scenes.map(([id, scene]) => (

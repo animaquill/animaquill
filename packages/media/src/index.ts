@@ -1,6 +1,13 @@
 import { ALL_FORMATS, BlobSource, Input } from "mediabunny";
 
-export { formatHash, hashFile, hashText, isSameHash, type HashOptions } from "./hash.ts";
+export {
+  formatHash,
+  hashFile,
+  hashText,
+  hashingCopy,
+  isSameHash,
+  type HashOptions,
+} from "./hash.ts";
 export {
   containerOf,
   VideoFileWriter,

@@ -1,25 +1,26 @@
 /**
  * Projects that are folders, the way people go about them in the editor: new in a folder they
  * choose, opened from a folder, dropped in, changed outside, opened again after a reload, found again
- * after it moved, and open in two windows.
- *
- * A test cannot answer the browser's dialog for choosing a folder, so choosing gives a folder in the
- * private storage of the site instead. What people drop is a folder on the real disk: Chromium gives
- * those to a page as they are, and with experimental web platform features it lets the page write
- * them without asking, as people would allow.
+ * after it moved, and open in two windows. See `folder-support.ts` for how folders get chosen and
+ * dropped in a test.
  */
+import { renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { Page } from "@playwright/test";
+  agreeToCode,
+  exampleProject,
+  dialog,
+  drop,
+  footer,
+  installChosen,
+  nameIn,
+  openDropped,
+  privateText,
+  projectOnDisk,
+  putPrivate,
+  rename,
+  text,
+} from "./folder-support.ts";
 import { expect, tab, test } from "./support.ts";
 
 test.use({
@@ -27,127 +28,6 @@ test.use({
   withProject: false,
   launchOptions: { args: ["--enable-experimental-web-platform-features"] },
 });
-
-declare global {
-  interface Window {
-    /** Which folder of the private storage the next "chosen" one is. */
-    chosenFolder: string;
-  }
-}
-
-/** Renames the project in this page, through the hook of the development page. */
-const rename = (page: Page, name: string) =>
-  page.evaluate((wanted) => {
-    const { aqExecute } = window as unknown as { aqExecute: (call: unknown) => unknown };
-    aqExecute({ type: "project.rename", params: { name: wanted } });
-  }, name);
-
-/** The example project, without its locked tag, so that it can be changed. */
-function exampleProject(): Record<string, string> {
-  const root = fileURLToPath(new URL("../../schema/fixtures/v1/", import.meta.url));
-  const files: Record<string, string> = {};
-  const walk = (folder: string) => {
-    for (const entry of readdirSync(join(root, folder), { withFileTypes: true })) {
-      const path = folder === "" ? entry.name : `${folder}/${entry.name}`;
-      if (entry.isDirectory()) walk(path);
-      else files[path] = readFileSync(join(root, path), "utf8");
-    }
-  };
-  walk("");
-  const manifest = JSON.parse(files["animaquill.json"] as string);
-  delete manifest.tags;
-  files["animaquill.json"] = JSON.stringify(manifest, null, 2);
-  return files;
-}
-
-/** A folder on the disk with the example project in it. */
-function projectOnDisk(name = "原子"): string {
-  const disk = join(mkdtempSync(join(tmpdir(), "animaquill-projects-")), name);
-  for (const [path, text] of Object.entries(exampleProject())) put(disk, path, text);
-  return disk;
-}
-
-function put(disk: string, path: string, text: string) {
-  mkdirSync(dirname(join(disk, path)), { recursive: true });
-  writeFileSync(join(disk, path), text);
-}
-
-const text = (disk: string, path: string) => readFileSync(join(disk, path), "utf8");
-const nameIn = (disk: string) => JSON.parse(text(disk, "animaquill.json")).name as string;
-
-/** Chosen folders come from the private storage of the site, from the next page on. */
-const installChosen = (page: Page) =>
-  page.addInitScript(() => {
-    window.chosenFolder = "选的";
-    const choose = async () => {
-      let folder = await navigator.storage.getDirectory();
-      for (const part of window.chosenFolder.split("/")) {
-        folder = await folder.getDirectoryHandle(part, { create: true });
-      }
-      return folder;
-    };
-    Object.assign(window, { showDirectoryPicker: choose });
-  });
-
-/** What a file in the private storage of the site has, or undefined. */
-const privateText = (page: Page, path: string) =>
-  page.evaluate(async (wanted) => {
-    let folder = await navigator.storage.getDirectory();
-    const parts = wanted.split("/");
-    try {
-      for (const part of parts.slice(0, -1)) folder = await folder.getDirectoryHandle(part);
-      const file = await folder.getFileHandle(parts.at(-1) as string);
-      return await (await file.getFile()).text();
-    } catch {
-      return undefined;
-    }
-  }, path);
-
-/** Puts files into a folder of the private storage of the site, as another program would. */
-const putPrivate = (page: Page, root: string, files: Record<string, string>) =>
-  page.evaluate(
-    async ({ root: top, files: all }) => {
-      for (const [path, content] of Object.entries(all)) {
-        let folder = await navigator.storage.getDirectory();
-        const parts = `${top}/${path}`.split("/");
-        for (const part of parts.slice(0, -1)) {
-          folder = await folder.getDirectoryHandle(part, { create: true });
-        }
-        const file = await folder.getFileHandle(parts.at(-1) as string, { create: true });
-        const writable = await file.createWritable();
-        await writable.write(content);
-        await writable.close();
-      }
-    },
-    { root, files },
-  );
-
-/** Drops a folder of the disk on the page, as people drag it in from their files. */
-async function drop(page: Page, disk: string) {
-  const client = await page.context().newCDPSession(page);
-  const data = { items: [], files: [disk], dragOperationsMask: 1 };
-  for (const type of ["dragEnter", "dragOver", "drop"] as const) {
-    await client.send("Input.dispatchDragEvent", { type, x: 300, y: 300, data });
-  }
-  await client.detach();
-}
-
-const footer = (page: Page) => page.locator("footer");
-const dialog = (page: Page) => page.getByRole("dialog");
-
-/** A project with code asks once, the first time it comes into this browser. */
-async function agreeToCode(page: Page) {
-  await expect(dialog(page)).toContainText("这个项目含有脚本");
-  await dialog(page).getByRole("button", { name: "知道了，打开项目" }).click();
-}
-
-/** Drops the example project in, and waits until it is open and its folder has everything. */
-async function openDropped(page: Page, disk: string) {
-  await drop(page, disk);
-  await agreeToCode(page);
-  await expect(tab(page, "preview")).toBeVisible();
-  await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
-}
 
 test.describe("a project folder", () => {
   test("is where a new project goes, and gets all of it", async ({ page }) => {
@@ -246,5 +126,72 @@ test.describe("a project folder", () => {
     await rename(other, "另一个窗口改的");
     await expect.poll(() => nameIn(disk), { timeout: 10_000 }).toBe("另一个窗口改的");
     await expect(footer(page).getByText("另一个窗口改的")).toBeVisible();
+  });
+});
+
+test.describe("the list of project folders", () => {
+  test("shows them at once while their folders are looked at, and never as projects of the browser", async ({
+    page,
+  }) => {
+    const disk = projectOnDisk();
+    await openDropped(page, disk);
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menuitem", { name: "关闭项目" }).click();
+    // Looking at a folder takes a while, as on a network drive, or a disk that sleeps.
+    await page.addInitScript(() => {
+      const prototype = FileSystemHandle.prototype as unknown as {
+        queryPermission: (...args: unknown[]) => Promise<PermissionState>;
+      };
+      const original = prototype.queryPermission;
+      prototype.queryPermission = function (this: unknown, ...args: unknown[]) {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve(original.apply(this, args)), 8000),
+        );
+      };
+    });
+    await page.reload();
+    await expect(page.getByRole("button", { name: /原子是什么.*文件夹/ })).toBeVisible({
+      timeout: 4000,
+    });
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toHaveCount(0);
+  });
+
+  test("opens one by its address after its log went, once the page can ask about its code", async ({
+    page,
+  }) => {
+    const disk = projectOnDisk();
+    await openDropped(page, disk);
+    const url = page.url();
+    const key = new URL(url).searchParams.get("project") as string;
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menuitem", { name: "关闭项目" }).click();
+    // The log goes, as when the data of the site is cleared: the folder is the project.
+    await page.evaluate(
+      (id) =>
+        new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open("animaquill");
+          request.addEventListener("error", () => reject(request.error));
+          request.addEventListener("success", () => {
+            const db = request.result;
+            const transaction = db.transaction(["projects", "updates"], "readwrite");
+            transaction.objectStore("projects").delete(id);
+            const updates = transaction.objectStore("updates");
+            const keys = updates.index("project").getAllKeys(id);
+            keys.addEventListener("success", () => {
+              for (const each of keys.result) updates.delete(each);
+            });
+            transaction.addEventListener("complete", () => {
+              db.close();
+              resolve();
+            });
+            transaction.addEventListener("error", () => reject(transaction.error));
+          });
+        }),
+      key,
+    );
+    await page.goto(url);
+    await agreeToCode(page);
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect(footer(page).getByText("原子是什么")).toBeVisible();
   });
 });

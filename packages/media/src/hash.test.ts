@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatHash, hashFile, hashText, isSameHash } from "./hash.ts";
+import { formatHash, hashFile, hashText, hashingCopy, isSameHash } from "./hash.ts";
 
 const bytes = new Uint8Array(300_000).map((_, index) => index % 251);
 
@@ -82,5 +82,17 @@ describe("the hash of a text", () => {
     const text = "原子是什么\n";
     expect(hashText(text)).toBe(await hashFile(new Blob([text])));
     expect(hashText(text)).not.toBe(hashText("原子是什么"));
+  });
+});
+
+describe("a file copied somewhere", () => {
+  it("has its hash once it was read to the end, the same as when it is hashed", async () => {
+    const file = new Blob([new Uint8Array(200_000).map((_, index) => index % 251)]);
+    const copy = hashingCopy(file);
+    expect(copy.hash()).toBeUndefined();
+    const read = new Uint8Array(await new Response(copy.content.stream()).arrayBuffer());
+    expect(read.length).toBe(200_000);
+    expect(copy.hash()).toBe(await hashFile(file));
+    expect(copy.content.size).toBe(file.size);
   });
 });

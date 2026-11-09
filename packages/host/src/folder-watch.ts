@@ -482,7 +482,7 @@ export class FolderWatcher implements FolderWatch {
           continue;
         }
         this.#remember(path, now);
-        // The same as before, with a new time: nothing to tell.
+        // The same as before, with a new time: nothing to tell, unless that is something.
         const isSameContent =
           before !== undefined &&
           before !== "absent" &&
@@ -490,7 +490,13 @@ export class FolderWatcher implements FolderWatch {
           before.hash !== undefined &&
           before.hash === now.hash &&
           before.size === now.size;
-        if (!atStart && !isSameContent) changes.push({ path, file });
+        const isNewTime =
+          before !== undefined &&
+          before !== "absent" &&
+          now !== "absent" &&
+          before.lastModified !== now.lastModified;
+        const tells = !isSameContent || (this.#options.newTimes === true && isNewTime);
+        if (!atStart && tells) changes.push({ path, file });
       }
       if (unknown) this.#retryLater();
       else this.#retries = 0;

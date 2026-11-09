@@ -344,14 +344,21 @@ function createLibrary(
   };
 
   /** Resolves to whether the id was free. */
-  const claim = async (id: string, name: string, instance: string) => {
+  const claim = async (id: string, name: string, instance: string, folder: boolean) => {
     const transaction = (await database()).transaction(PROJECTS, "readwrite");
     const projects = transaction.objectStore(PROJECTS);
     const read = projects.get(id);
     let free = false;
     read.addEventListener("success", () => {
       free = read.result === undefined;
-      const record: ProjectRecord = { id, name, updatedAt: Date.now(), incoming: true, instance };
+      const record: ProjectRecord = {
+        id,
+        name,
+        updatedAt: Date.now(),
+        incoming: true,
+        instance,
+        ...(folder && { folder: true }),
+      };
       if (free) projects.add(record);
     });
     await committed(transaction);
@@ -366,7 +373,7 @@ function createLibrary(
         .filter((project) => !project.incoming)
         .toSorted((a, b) => b.updatedAt - a.updatedAt);
     },
-    async receive({ id, name }) {
+    async receive({ id, name, folder = false }) {
       const locks = lockManager();
       // Tidying up is no reason for this to fail. It gets another chance the next time.
       await (locks && sweep(locks))?.catch((error: unknown) => {
@@ -377,7 +384,7 @@ function createLibrary(
       if (!release) return undefined;
       const instance = newInstance();
       try {
-        if (!(await claim(id, name, instance))) {
+        if (!(await claim(id, name, instance, folder))) {
           release();
           return undefined;
         }
@@ -391,7 +398,13 @@ function createLibrary(
           const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
             durability: "strict",
           });
-          const record: ProjectRecord = { id, name, updatedAt: Date.now(), instance };
+          const record: ProjectRecord = {
+            id,
+            name,
+            updatedAt: Date.now(),
+            instance,
+            ...(folder && { folder: true }),
+          };
           transaction.objectStore(PROJECTS).put(record);
           transaction
             .objectStore(UPDATES)
@@ -409,9 +422,15 @@ function createLibrary(
       };
       return incoming;
     },
-    async create({ id, name }, state) {
+    async create({ id, name, folder = false }, state) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
-      const record: ProjectRecord = { id, name, updatedAt: Date.now(), instance: newInstance() };
+      const record: ProjectRecord = {
+        id,
+        name,
+        updatedAt: Date.now(),
+        instance: newInstance(),
+        ...(folder && { folder: true }),
+      };
       transaction.objectStore(PROJECTS).add(record);
       transaction.objectStore(UPDATES).add({ project: id, update: state } satisfies UpdateRecord);
       await committed(transaction);

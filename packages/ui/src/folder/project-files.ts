@@ -83,6 +83,17 @@ export function isUnreadableDocument(path: string, text: string): boolean {
 export const isTooLarge = (path: string, size: number): boolean =>
   !isDocument(path) && size > MAX_SOURCE_BYTES;
 
+/** The version of the format in a text of animaquill.json, undefined when that cannot be told. */
+export function formatVersionOf(text: string): number | undefined {
+  try {
+    const manifest: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
+    const version = (manifest as { readonly formatVersion?: unknown } | null)?.formatVersion;
+    return typeof version === "number" ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The id in a text of animaquill.json, undefined when that cannot be told. */
 export function projectIdOf(text: string): string | undefined {
   try {

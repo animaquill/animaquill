@@ -21,7 +21,7 @@ import {
   type WriterClaim,
 } from "@animaquill/host";
 import { hashText } from "@animaquill/media";
-import { MANIFEST_FILE, type Problem } from "@animaquill/schema";
+import { CURRENT_FORMAT_VERSION, MANIFEST_FILE, type Problem } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
 import {
   inRanks,
@@ -30,6 +30,7 @@ import {
   isProjectFile,
   isTooLarge,
   looksDamaged,
+  formatVersionOf,
   projectIdOf,
   textOf,
 } from "./project-files.ts";
@@ -136,6 +137,11 @@ export type FolderTrouble =
    * tab: this page has to be reloaded, and the newer one writes the folder meanwhile.
    */
   | { readonly reason: "outdated" }
+  /**
+   * animaquill.json is of a newer format than this editor knows: nothing gets written or taken in,
+   * and the files stay as they are, until people update the editor.
+   */
+  | { readonly reason: "too-new" }
   /**
    * A file could not be written, or read, for the reason a `FolderError` gives. It gets tried
    * again. "busy" for one that another program keeps from being read.
@@ -538,7 +544,8 @@ class Turn {
   }
 
   get #isStopped(): boolean {
-    return this.trouble?.reason === "gone" || this.trouble?.reason === "replaced";
+    const reason = this.trouble?.reason;
+    return reason === "gone" || reason === "replaced" || reason === "too-new";
   }
 
   /** What keeps changes from the folder, also a file that cannot be read. */
@@ -612,6 +619,13 @@ class Turn {
 
   useEditorContent(paths?: readonly string[]): Promise<void> {
     return this.#enqueue(() => this.#useEditorContent(paths));
+  }
+
+  /** Keeps what the folder has of these files in RECOVERED_FOLDER, as they are now. */
+  keep(paths: readonly string[]): Promise<void> {
+    return this.#enqueue(async () => {
+      for (const path of paths) await this.#backUp(path);
+    });
   }
 
   /** Another handle of the folder came, which has to be looked at again from the start. */
@@ -801,6 +815,12 @@ class Turn {
   /** Whether what is in the folder is this project, and not another one at its place. */
   #isOurs(manifest: Disk | undefined): boolean {
     if (manifest?.kind !== "text") return true;
+    // A newer editor wrote it: this one would write what it does not know over what it does not
+    // know, and drop it from the files.
+    if ((formatVersionOf(manifest.text) ?? 0) > CURRENT_FORMAT_VERSION) {
+      this.#setTrouble({ reason: "too-new" });
+      return false;
+    }
     const id = projectIdOf(manifest.text);
     if (id === undefined || id === this.#context.store.getState().manifest.id) return true;
     this.#setTrouble({ reason: "replaced" });
@@ -1896,6 +1916,18 @@ export class FolderSession {
     const turn = this.#turn;
     if (!turn) return false;
     await turn.useEditorContent(paths);
+    return true;
+  }
+
+  /**
+   * Keeps what the folder has of these files in RECOVERED_FOLDER, before the editor writes over it
+   * on purpose, as when people take back what came in. Resolves to false where another window
+   * writes the folder.
+   */
+  async keep(paths: readonly string[]): Promise<boolean> {
+    const turn = this.#turn;
+    if (!turn) return false;
+    await turn.keep(paths);
     return true;
   }
 

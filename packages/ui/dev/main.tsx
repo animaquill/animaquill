@@ -89,6 +89,8 @@ if (root)
     onWorkbench: (workbench) => {
       Object.assign(window, {
         aqExecute: (call: never) => workbench.session.store?.execute(call),
+        // Resolves once what changed is kept, as Ctrl+S does, for tests that reload right after.
+        aqSave: () => workbench.save(),
         // For measuring the mix on its own, without an editor around it.
         aqAudio: () => import("@animaquill/audio"),
         // For keeping a project folder in step in the browser tests, without the editor around it.

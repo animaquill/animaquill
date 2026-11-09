@@ -99,15 +99,26 @@ export class MemoryLibrary implements ProjectLibrary {
     return [...this.summaries.values()];
   }
 
-  async create({ id, name }: { id: string; name: string }, state: Uint8Array) {
+  async create(
+    { id, name, folder = false }: { id: string; name: string; folder?: boolean },
+    state: Uint8Array,
+  ) {
     if (this.failing) throw new Error("quota");
     if (this.summaries.has(id)) throw new Error("taken");
-    this.summaries.set(id, { id, name, updatedAt: 1 });
+    this.summaries.set(id, { id, name, updatedAt: 1, ...(folder && { folder: true }) });
     this.updates.set(id, [state]);
     this.instances.set(id, this.#nextInstance++);
   }
 
-  async receive({ id, name }: { id: string; name: string }): Promise<IncomingProject | undefined> {
+  async receive({
+    id,
+    name,
+    folder = false,
+  }: {
+    id: string;
+    name: string;
+    folder?: boolean;
+  }): Promise<IncomingProject | undefined> {
     if (this.summaries.has(id) || this.incoming.has(id)) return undefined;
     this.incoming.add(id);
     return {
@@ -115,7 +126,7 @@ export class MemoryLibrary implements ProjectLibrary {
       finish: async (state) => {
         if (this.failing) throw new Error("quota");
         this.incoming.delete(id);
-        await this.create({ id, name }, state);
+        await this.create({ id, name, folder }, state);
       },
       abandon: async () => {
         this.incoming.delete(id);

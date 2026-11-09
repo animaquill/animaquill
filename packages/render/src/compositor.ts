@@ -313,6 +313,35 @@ function releaseFilesExcept(keep: readonly RenderLayer[]): void {
   document.documentElement.dataset["videos"] = String(videos.size);
 }
 
+/** Whether two files are one file of a disk as it was, which reads the same either way. */
+const isSameFile = (a: Blob, b: Blob): boolean =>
+  a === b ||
+  (a instanceof File &&
+    b instanceof File &&
+    a.name === b.name &&
+    a.size === b.size &&
+    a.lastModified === b.lastModified);
+
+/**
+ * Lets go of what was read of a file, which the picture then reads again from what is there now. A
+ * frame that was being drawn from it may not get there, so the picture is drawn again after.
+ */
+async function forgetRead(id: string): Promise<void> {
+  const image = images.get(id);
+  images.delete(id);
+  const video = videos.get(id);
+  videos.delete(id);
+  const reading = [...cursors].filter(([, entry]) => entry.file === id);
+  for (const [layer] of reading) cursors.delete(layer);
+  try {
+    await Promise.all(reading.map(([, { cursor }]) => cursor.close().catch(() => {})));
+    await image?.then((bitmap) => bitmap?.close());
+    await video?.then((opened) => opened?.input.dispose());
+  } finally {
+    void refresh();
+  }
+}
+
 /** A decoder is a scarce thing, so a clip that left the picture gives its own back. */
 async function closeCursorsExcept(keep: readonly RenderLayer[]): Promise<void> {
   const ids = new Set(keep.map(({ id }) => id));
@@ -825,6 +854,8 @@ function handle(data: ToCompositor): void {
   if (data.type === "no-file") {
     // Somebody may bring it back, so that the next one gets to ask again.
     asked.delete(data.id);
+    // It went away after it came, as a file of a project folder can: what was read of it goes too.
+    if (files.delete(data.id)) void forgetRead(data.id);
     arrivals.settle(data.id, undefined);
     return;
   }
@@ -841,7 +872,15 @@ function handle(data: ToCompositor): void {
       patience.jumped();
     }
   } else {
-    files.set(data.id, data.file);
+    const before = files.get(data.id);
+    // The same content in another file, as after the file changed on the disk: the old one cannot
+    // be read any more. The same file of a disk again, as when it is sent twice, is nothing new.
+    if (before && !isSameFile(before, data.file)) {
+      files.set(data.id, data.file);
+      void forgetRead(data.id);
+    } else if (!before) {
+      files.set(data.id, data.file);
+    }
     arrivals.settle(data.id, data.file);
   }
   // It goes where `still` says, and a scene at the start of the plan is not worth opening for nothing.

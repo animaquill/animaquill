@@ -1,9 +1,8 @@
-import type { ProjectSummary } from "@animaquill/host";
+import type { FolderRecord, FolderStatus, ProjectSummary } from "@animaquill/host";
 import { Feather, FolderInput, FolderOpen, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { sizeOf, type UnfinishedExport } from "../export/video.ts";
-import type { RecentFolder } from "../folder/projects.ts";
 import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./StartPage.module.css";
@@ -18,10 +17,10 @@ const noFolders = () => NO_FOLDERS;
 /** What exports that stopped halfway take on this device, which people should be able to clear. */
 function UnfinishedExports({
   projects,
-  recent,
+  records,
 }: {
   projects: readonly ProjectSummary[];
-  recent: readonly RecentFolder[];
+  records: readonly FolderRecord[];
 }) {
   const { videos } = useWorkbench();
   const { t } = useTranslation();
@@ -32,7 +31,7 @@ function UnfinishedExports({
   useEffect(refresh, [refresh]);
   if (found.length === 0) return null;
   const nameOf = (id: string) =>
-    recent.find(({ record }) => record.id === id)?.record.name ??
+    records.find((record) => record.id === id)?.name ??
     projects.find((project) => project.id === id)?.name ??
     "";
   return (
@@ -110,57 +109,72 @@ function Waiting({ waiting }: { waiting: WaitingFolder }) {
 
 /** Folders opened in this browser before, the most recent first, and how each is now. */
 function RecentFolders({
-  recent,
+  records,
+  statuses,
   refresh,
 }: {
-  recent: readonly RecentFolder[];
+  records: readonly FolderRecord[];
+  statuses: ReadonlyMap<string, FolderStatus>;
   refresh: () => void;
 }) {
   const { projectFolders } = useWorkbench();
   const { t } = useTranslation();
-  if (!projectFolders || recent.length === 0) return null;
+  if (!projectFolders || records.length === 0) return null;
   return (
     <>
       <h2>{t("project.recent")}</h2>
       <ul className={styles.list}>
-        {recent.map(({ record, status }) => (
-          <li key={record.id}>
-            <button
-              type="button"
-              className={styles.project}
-              onClick={() => void projectFolders.openRecent(record).then(refresh)}
-            >
-              <span className={styles.name}>{record.name}</span>
-              <span className={styles.folder}>
-                {status === "ready"
-                  ? t("folder.folderLabel", { folder: record.folder.name })
-                  : t(`folder.recentStatus.${status}`)}
-              </span>
-              <span className={styles.time}>{when.format(record.openedAt)}</span>
-            </button>
-            {status === "gone" && (
+        {records.map((record) => {
+          // Looking at a folder can take a while, as on a network: the list does not wait for it.
+          const status = statuses.get(record.id);
+          return (
+            <li key={record.id}>
               <button
                 type="button"
-                className={styles.again}
-                onClick={() => void projectFolders.findAgain(record).then(refresh)}
+                className={styles.project}
+                onClick={() => void projectFolders.openRecent(record).then(refresh)}
               >
-                {t("folder.findAgain")}
+                <span className={styles.name}>{record.name}</span>
+                <span className={styles.folder}>
+                  {status === undefined || status === "ready"
+                    ? t("folder.folderLabel", { folder: record.folder.name })
+                    : t(`folder.recentStatus.${status}`)}
+                </span>
+                <span className={styles.time}>{when.format(record.openedAt)}</span>
               </button>
-            )}
-            <button
-              type="button"
-              className={styles.remove}
-              aria-label={t("folder.removeButton", { name: record.name })}
-              onClick={() => {
-                void projectFolders.remove(record).then((removed) => {
-                  if (removed) refresh();
-                });
-              }}
-            >
-              <X size={14} />
-            </button>
-          </li>
-        ))}
+              {status === "gone" && (
+                <>
+                  <button
+                    type="button"
+                    className={styles.again}
+                    onClick={() => void projectFolders.findAgain(record).then(refresh)}
+                  >
+                    {t("folder.findAgain")}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.again}
+                    onClick={() => void projectFolders.saveElsewhere(record).then(refresh)}
+                  >
+                    {t("folder.saveElsewhere")}
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                className={styles.remove}
+                aria-label={t("folder.removeButton", { name: record.name })}
+                onClick={() => {
+                  void projectFolders.remove(record).then((removed) => {
+                    if (removed) refresh();
+                  });
+                }}
+              >
+                <X size={14} />
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </>
   );
@@ -171,7 +185,10 @@ export function StartPage() {
   const { projectFolders } = workbench;
   const { t } = useTranslation();
   const [projects, setProjects] = useState<readonly ProjectSummary[]>();
-  const [recent, setRecent] = useState<readonly RecentFolder[]>([]);
+  const [records, setRecords] = useState<readonly FolderRecord[]>([]);
+  const [statuses, setStatuses] = useState<ReadonlyMap<string, FolderStatus>>(new Map());
+  /** The folders this browser knows cannot be read: nobody can tell its projects from them then. */
+  const [foldersFailed, setFoldersFailed] = useState(false);
   const [failed, setFailed] = useState(false);
   const folders = useSyncExternalStore(
     projectFolders?.subscribe ?? noSubscription,
@@ -184,18 +201,33 @@ export function StartPage() {
       console.warn("Projects could not be listed", error);
       setFailed(true);
     });
-    projectFolders?.recent().then(setRecent, (error: unknown) => {
-      console.warn("Project folders could not be listed", error);
-      setFailed(true);
-    });
+    projectFolders?.list().then(
+      (found) => {
+        setFoldersFailed(false);
+        setRecords(found);
+        for (const record of found) {
+          void projectFolders.projects
+            .statusOf(record)
+            .then((status) => setStatuses((before) => new Map(before).set(record.id, status)));
+        }
+      },
+      (error: unknown) => {
+        console.warn("Project folders could not be listed", error);
+        setFoldersFailed(true);
+        setFailed(true);
+      },
+    );
   }, [workbench, projectFolders]);
 
   useEffect(refresh, [refresh, folders.waiting]);
 
-  // The log of a project folder is in the browser too, but it is no project of the browser.
-  const inFolders = new Set(recent.map(({ record }) => record.id));
-  const inBrowser = projects?.filter(({ id }) => !inFolders.has(id));
-  const nothing = projects !== undefined && inBrowser?.length === 0 && recent.length === 0;
+  // The log of a project folder is in the browser too, but it is no project of the browser. Where
+  // the folders cannot be read, nothing tells them apart: then none of them shows.
+  const inFolders = new Set(records.map(({ id }) => id));
+  const inBrowser = foldersFailed
+    ? []
+    : projects?.filter(({ id, folder }) => folder !== true && !inFolders.has(id));
+  const nothing = projects !== undefined && inBrowser?.length === 0 && records.length === 0;
 
   return (
     <main className={styles.page}>
@@ -244,7 +276,7 @@ export function StartPage() {
             {t("project.listFailed")}
           </p>
         )}
-        <RecentFolders recent={recent} refresh={refresh} />
+        <RecentFolders records={records} statuses={statuses} refresh={refresh} />
 
         {inBrowser && inBrowser.length > 0 && (
           <h2>{projectFolders ? t("folder.browserProjects") : t("project.recent")}</h2>
@@ -282,7 +314,7 @@ export function StartPage() {
         <p className={styles.muted}>
           {projectFolders ? t("folder.localHint") : t("folder.unsupported")}
         </p>
-        <UnfinishedExports projects={projects ?? []} recent={recent} />
+        <UnfinishedExports projects={projects ?? []} records={records} />
       </div>
     </main>
   );

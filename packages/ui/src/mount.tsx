@@ -9,6 +9,7 @@ import { builtinPanels } from "./panels/builtin.tsx";
 import type { PanelDefinition } from "./workbench/panels.ts";
 import { Workbench } from "./workbench/workbench.ts";
 import { workspaces } from "./workbench/workspaces.ts";
+import { workerHasher } from "./media/hasher.ts";
 
 export interface EditorOptions {
   readonly host: Host;
@@ -45,6 +46,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     sceneOrigins: options.sceneOrigins ?? [],
     ...(options.sceneStage && { sceneStage: options.sceneStage }),
     ...(options.soundLimitMs !== undefined && { soundLimitMs: options.soundLimitMs }),
+    // A large video takes a while to hash, and the page goes on meanwhile.
+    hasher: workerHasher(),
   });
   // Before anything else runs, so that whatever fails from here on is caught.
   const stopWatching = watchPage(workbench.errors, workbench.diagnostics, options.compositorUrl);
@@ -57,6 +60,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
       <App workbench={workbench} i18n={i18n} />
     </StrictMode>,
   );
+  void workbench.resume();
 
   // Pages can go away without warning, so hiding is the last reliable moment to save.
   const save = () => {

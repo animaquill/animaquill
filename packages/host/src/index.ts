@@ -169,6 +169,11 @@ export interface ProjectSummary {
   readonly name: string;
   /** Milliseconds since 1970. */
   readonly updatedAt: number;
+  /**
+   * The log of a project that is a folder on this computer, kept by the number of the folder, see
+   * `FolderRecord`: the project is the folder, and this is no project of the browser.
+   */
+  readonly folder?: true;
 }
 
 /**
@@ -218,7 +223,10 @@ export interface ProjectLibrary {
   /** Most recently changed first. */
   list(): Promise<readonly ProjectSummary[]>;
   /** Rejects when the id is taken: a new project never replaces another one. */
-  create(project: { readonly id: string; readonly name: string }, state: Uint8Array): Promise<void>;
+  create(
+    project: { readonly id: string; readonly name: string; readonly folder?: boolean },
+    state: Uint8Array,
+  ): Promise<void>;
   /**
    * Starts bringing in a project. Resolves to undefined when the id is taken, by a project or by
    * another one on its way in, so that two of them can never end up in one place.
@@ -226,6 +234,7 @@ export interface ProjectLibrary {
   receive(project: {
     readonly id: string;
     readonly name: string;
+    readonly folder?: boolean;
   }): Promise<IncomingProject | undefined>;
   open(id: string): Promise<ProjectLog>;
   media(id: string): MediaStore;
@@ -391,6 +400,13 @@ export interface LocalFolders {
    * away: dropping counts as people doing something, but not for long.
    */
   dropped(transfer: DataTransfer): Promise<readonly LocalEntry[]>;
+  /**
+   * Asks people for files, as `showOpenFilePicker` does, starting in `near`, such as the folder of
+   * the open project. It has to run right after they did something. Like what was dropped, they can
+   * be read, and a folder tells whether they are in it, see `LocalFolder.pathOf`. Resolves to none
+   * when people changed their minds, and to undefined where the browser cannot ask this way.
+   */
+  chooseFiles(near?: LocalFolder): Promise<readonly LocalEntry[] | undefined>;
   /** The folders that were opened in this browser, in a database of their own. */
   readonly records: FolderRecords;
   /** What the editor last wrote or read in each file of those folders, in the same database. */
@@ -447,11 +463,28 @@ export interface FolderBasesChange {
  * whoever takes over claims it, and what a window that lost its turn keeps after that is refused,
  * since it would put back what the folder had before.
  */
+/** The hash of a file of a folder, as it was found to be, for as long as the file is that way. */
+export interface FolderHash {
+  /** From the top of the folder, with forward slashes. */
+  readonly path: string;
+  readonly size: number;
+  readonly lastModified: number;
+  /** As a project writes it down, see `hashFile`. */
+  readonly hash: string;
+}
+
 export interface FolderBases {
   /** Has this window keep what is kept for the folder from now on. Resolves to its turn. */
   claim(folder: string): Promise<number>;
   /** The last turn that a window claimed for the folder, 0 when none did. */
   turnOf(folder: string): Promise<number>;
+  /** What the hash of a file of the folder was found to be, see `keepHash`. */
+  hashOf(folder: string, path: string): Promise<FolderHash | undefined>;
+  /**
+   * Notes the hash of a file of the folder, which holds for as long as the file has that size and
+   * time: reading all of a large file again is what this saves. Any window may note it down.
+   */
+  keepHash(folder: string, hash: FolderHash): Promise<void>;
   /** What is kept for each file of the folder. */
   load(folder: string): Promise<readonly FolderFileRecord[]>;
   /**
@@ -724,6 +757,12 @@ export interface WatchOptions {
   readonly includes: (path: string, kind: "file" | "folder") => boolean;
   /** Files to look at besides what is in folders that matter, such as the assets of a project. */
   readonly files?: () => Iterable<string>;
+  /**
+   * Tells also about a file that only got a new time: a `File` of it from before cannot be read any
+   * more, so whatever holds on to one has to get it again, see `LocalFolder.file`. Otherwise a file
+   * that has what it had is no change.
+   */
+  readonly newTimes?: boolean;
   /**
    * What changed since the last time, once nothing changed for a moment: other programs often change
    * several files at once. What this folder wrote itself does not show up. The next changes wait

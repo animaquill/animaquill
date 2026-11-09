@@ -27,6 +27,7 @@ import { SceneHandles } from "../overlay/scene-handles.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
+import type { Hasher } from "../media/hasher.ts";
 import { MadeSounds, SoundMaker } from "../media/sounds.ts";
 import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
 import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts";
@@ -40,7 +41,7 @@ import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import type { ImportReport } from "../transfer/import.ts";
-import { ProjectTransfer } from "../transfer/transfer.ts";
+import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
 import { InputMode } from "./input-mode.ts";
@@ -50,7 +51,7 @@ import { LayoutController, type WorkspaceDefinition } from "./layout.ts";
 import { Notifications } from "./notifications.ts";
 import { CommandPalette } from "./palette.ts";
 import type { FolderTiming } from "../folder/session.ts";
-import { ProjectFolders } from "./project-folders.ts";
+import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
@@ -68,6 +69,8 @@ export interface WorkbenchOptions {
   readonly soundLimitMs?: number;
   /** For tests: how long a project folder waits, see `FolderTiming`. */
   readonly folderTiming?: Partial<FolderTiming>;
+  /** What finds out hashes of files in project folders, in a worker where the page has one. */
+  readonly hasher?: Hasher;
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
@@ -141,7 +144,16 @@ export class Workbench {
     const { host, t, version, platform, panels, workspaces, compositorUrl } = options;
     this.t = t;
     this.version = version;
-    this.projects = host.projects;
+    const library = host.projects;
+    this.projects = {
+      list: () => library.list(),
+      create: (project, state) => library.create(project, state),
+      receive: (project) => library.receive(project),
+      open: (id) => library.open(id),
+      remove: (id) => library.remove(id),
+      // The files of a project that is a folder are in the folder, see `FolderAssets`.
+      media: (id) => this.projectFolders?.mediaFor(id) ?? library.media(id),
+    };
     this.diagnostics = new DiagnosticsRecorder(version);
     const sink = host.diagnostics;
     this.#sink = sink;
@@ -228,14 +240,25 @@ export class Workbench {
     this.input = new InputMode(host.settings);
     this.media = new MediaLibrary(
       this.session,
-      host.projects,
+      this.projects,
       {
         unsupported: (name) => this.notifications.push(t("notice.mediaUnsupported", { name })),
         tooLarge: (name) => this.notifications.push(t("notice.mediaTooLarge", { name })),
         saveFailed: (name) => this.notifications.push(t("notice.mediaSaveFailed", { name })),
         commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+        confirmCopy: (name, bytes) =>
+          this.dialogs.confirm({
+            title: t("folder.copy.title", { name }),
+            message: t("folder.copy.message", { size: formatSize(bytes) }),
+            confirm: t("folder.copy.confirm"),
+          }),
+        copyFailed: (name, reason) =>
+          this.notifications.push(t(`folder.copy.failed.${reason}`, { name })),
+        readFailed: (name) => this.notifications.push(t("folder.copy.readFailed", { name })),
+        otherKind: (name) => this.notifications.push(t("folder.asset.otherKind", { name })),
       },
       compositorUrl,
+      () => this.projectFolders?.assets(),
     );
     const soundMaker = new SoundMaker({
       url: compositorUrl,
@@ -249,7 +272,7 @@ export class Workbench {
     });
     this.sounds = new MadeSounds({
       session: this.session,
-      projects: host.projects,
+      projects: this.projects,
       run: soundMaker.run,
       messages: {
         problem: (sound, problem) => this.#noteSoundProblem(sound, problem),
@@ -268,7 +291,7 @@ export class Workbench {
     });
     this.transfer = new ProjectTransfer({
       folders: host.folders,
-      projects: host.projects,
+      projects: this.projects,
       session: this.session,
       dialogs: this.dialogs,
       notifications: this.notifications,
@@ -286,7 +309,7 @@ export class Workbench {
     this.stills = new StillExport({
       session: this.session,
       timeline: this.timeline,
-      projects: host.projects,
+      projects: this.projects,
       folders: host.folders,
       preview: this.preview,
       dialogs: this.dialogs,
@@ -299,7 +322,7 @@ export class Workbench {
     this.videos = new VideoExport({
       session: this.session,
       timeline: this.timeline,
-      projects: host.projects,
+      projects: this.projects,
       folders: host.folders,
       settings: host.settings,
       exports: host.exports,
@@ -330,6 +353,12 @@ export class Workbench {
         noteArrival: (report) => this.#noteImport(report),
         letGo: (id) => this.videos.letGoOfProject(id),
         showProblems: () => this.layout.openPanel("problems"),
+        assetFiles: {
+          useNewFile: (asset) => this.media.useNewFile(asset),
+          usePlace: (asset, path) => this.media.usePlace(asset, path),
+          filesChanged: (paths) => this.media.filesChanged(paths),
+        },
+        ...(options.hasher && { hasher: options.hasher }),
         ...(options.folderTiming && { timing: options.folderTiming }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
@@ -725,8 +754,16 @@ export class Workbench {
       this.previewQuality.load(),
       this.trials.load(),
     ]);
-    // An address of a project folder is opened as one, or waits for people to let the editor at it.
+    // An address of a project folder opens as one once the page is there, see `resume`.
     if (!(await this.projectFolders?.restore())) await this.session.restore();
+  }
+
+  /**
+   * What starts once the page is there to ask people things: opening the project folder that the
+   * address asks for, which can need people to say something, see `ProjectFolders.resume`.
+   */
+  async resume(): Promise<void> {
+    await this.projectFolders?.resume();
   }
 
   /** In a folder people choose, where the browser can write folders: see `ProjectFolders.create`. */
@@ -751,6 +788,30 @@ export class Workbench {
   /** Back to the start page. */
   async closeProject(): Promise<void> {
     await this.#changeProject();
+  }
+
+  /**
+   * Files people dropped on a panel: into the project folder where the project is a folder, those in
+   * it already where they are, see `ProjectFolders.droppedFiles`. Has to run in the `drop` event.
+   */
+  async importDropped(transfer: DataTransfer): Promise<readonly string[]> {
+    const folders = this.projectFolders;
+    if (!folders?.assets()) return this.media.importFiles([...transfer.files]);
+    return this.#importPlaced(await folders.droppedFiles(transfer));
+  }
+
+  /** Lets people choose files to bring in, in the project folder where it is one: see `importDropped`. */
+  async pickFiles(): Promise<readonly string[]> {
+    const folders = this.projectFolders;
+    const placed = folders?.assets() ? await folders.pickFiles() : undefined;
+    return placed ? this.#importPlaced(placed) : this.media.pickFiles();
+  }
+
+  async #importPlaced({ inside, files, unreadable }: PlacedFiles): Promise<readonly string[]> {
+    for (const name of unreadable) {
+      this.notifications.push(this.t("notice.mediaUnsupported", { name }));
+    }
+    return [...(await this.media.importPaths(inside)), ...(await this.media.importFiles(files))];
   }
 
   /** Asks for a project folder, and opens it: see `ProjectFolders.open`. */
@@ -1069,7 +1130,7 @@ export class Workbench {
     this.actions.register({
       id: "project.importMedia",
       title: (t) => t("assets.importAction"),
-      run: () => void this.media.pickFiles(),
+      run: () => void this.pickFiles(),
       menu: { name: "file", group: "project" },
       enabled: isOpen,
     });
@@ -1117,7 +1178,8 @@ export class Workbench {
     this.actions.register({
       id: "code.save",
       title: (t) => t("code.saveFile"),
-      run: () => void this.code.save(),
+      // Saved code is a change of the project like any other: the folder gets it right away.
+      run: () => void this.code.save().then(() => this.projectFolders?.flush()),
       keys: ["mod+s"],
       scope: "code",
       enabled: () => this.code.getSnapshot().active !== undefined,

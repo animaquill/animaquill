@@ -51,7 +51,7 @@ describe("a new project", () => {
     disk.write("文档/仓库/新项目/笔记.txt", "别人的");
     const folder = await choose("文档/仓库");
     const place = await projects.placeFor(folder, "新项目");
-    expect(place).toEqual({ kind: "other", inside: "新项目 (2)" });
+    expect(place).toEqual({ kind: "other", inside: "新项目 (2)", clashes: [] });
     const record = await projects.create("新项目", folder, "新项目 (2)");
     expect(record.folder.name).toBe("新项目 (2)");
     expect(disk.has("文档/仓库/新项目 (2)")).toBe(true);
@@ -75,7 +75,7 @@ describe("a folder people open", () => {
     const { disk, library, projects, choose } = setup();
     putProject(disk, fixture(), "文档/原子");
     const look = await projects.look(await choose("文档/原子"));
-    expect(look).toMatchObject({ kind: "project", record: undefined, moved: [] });
+    expect(look).toMatchObject({ kind: "project", replacing: undefined, moved: [] });
     if (look.kind !== "project") return;
     const { record, report } = await projects.adopt(look);
     expect(record.id).toBe("本机1");
@@ -84,9 +84,7 @@ describe("a folder people open", () => {
     expect(library.updates.get("本机1")?.length).toBeGreaterThan(0);
     // Once more, it is the same folder, and nothing is read again.
     const again = await projects.look(await choose("文档/原子"));
-    expect(again).toMatchObject({ kind: "project", record: { id: "本机1" } });
-    if (again.kind !== "project") return;
-    expect((await projects.adopt(again)).report).toBeUndefined();
+    expect(again).toMatchObject({ kind: "known", record: { id: "本机1" } });
     expect(await projects.records.list()).toHaveLength(1);
   });
 
@@ -118,7 +116,11 @@ describe("a folder people open", () => {
     const { record } = await projects.adopt(first);
     disk.move("文档/原子", "桌面/原子");
     const look = await projects.look(await choose("桌面/原子"));
-    expect(look).toMatchObject({ kind: "project", record: undefined, moved: [{ id: record.id }] });
+    expect(look).toMatchObject({
+      kind: "project",
+      replacing: undefined,
+      moved: [{ id: record.id }],
+    });
     if (look.kind !== "project") return;
     const moved = await projects.adopt(look, look.moved[0]);
     expect(moved.record.id).toBe(record.id);
@@ -135,7 +137,7 @@ describe("a folder that is not where it was", () => {
     if (look.kind !== "project") throw new Error("Not a project");
     const { record } = await projects.adopt(look);
     disk.move("文档/原子", "桌面/原子");
-    expect((await projects.recent())[0]?.status).toBe("gone");
+    expect(await projects.statusOf(record)).toBe("gone");
     disk.write("文档/别的/笔记.txt", "笔记");
     expect(await projects.findAgain(record, await choose("文档/别的"))).toBe("not-a-project");
     const other = new Map(fixture());
@@ -143,7 +145,7 @@ describe("a folder that is not where it was", () => {
     putProject(disk, other, "文档/另一个");
     expect(await projects.findAgain(record, await choose("文档/另一个"))).toBe("other-project");
     expect(await projects.findAgain(record, await choose("桌面/原子"))).toBe("found");
-    expect((await projects.recent())[0]).toMatchObject({ status: "ready" });
+    expect(await projects.statusOf((await projects.records.list())[0]!)).toBe("ready");
   });
 
   it("goes from the list with everything this browser kept of it, and nothing else", async () => {

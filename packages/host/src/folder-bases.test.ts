@@ -56,9 +56,26 @@ describe.each([
     const bases = create();
     const turn = await bases.claim("本机1");
     await bases.save("本机1", turn, { put: [{ path: "a.json", base: "1" }] });
+    await bases.keepHash("本机1", { path: "assets/a.webm", ...stat, hash: "sha256-a" });
     await bases.forget("本机1");
     expect(await bases.load("本机1")).toEqual([]);
     expect(await bases.claim("本机1")).toBe(1);
+    expect(await bases.hashOf("本机1", "assets/a.webm")).toBeUndefined();
+  });
+
+  it("has the hashes of files, by folder and path, from any window", async () => {
+    const bases = create();
+    const hash = { path: "assets/a.webm", ...stat, hash: "sha256-a" };
+    await bases.keepHash("本机1", hash);
+    await bases.keepHash("本机1", { ...hash, size: 3, hash: "sha256-b" });
+    expect(await bases.hashOf("本机1", "assets/a.webm")).toEqual({
+      ...hash,
+      size: 3,
+      hash: "sha256-b",
+    });
+    expect(await bases.hashOf("本机2", "assets/a.webm")).toBeUndefined();
+    // Nothing of what is kept about the files of the folder goes with it.
+    expect(await bases.load("本机1")).toEqual([]);
   });
 });
 
@@ -85,5 +102,26 @@ describe("the database of folders", () => {
     expect(await bases.save("本机1", await bases.claim("本机1"), { put: [{ path: "a" }] })).toBe(
       true,
     );
+  });
+
+  it("keeps what is kept about files when it gets the hashes of files", async () => {
+    const factory = new IDBFactory();
+    // As the second version left it.
+    const request = factory.open("animaquill-folders", 2);
+    request.addEventListener("upgradeneeded", () => {
+      const database = request.result;
+      const folders = database.createObjectStore("folders", { keyPath: "id" });
+      folders.createIndex("project", "project");
+      const files = database.createObjectStore("files", { keyPath: ["folder", "path"] });
+      files.createIndex("folder", "folder");
+      files.put({ folder: "本机1", path: "a.json", base: "1" });
+      database.createObjectStore("turns", { keyPath: "folder" });
+    });
+    await new Promise((resolve) => request.addEventListener("success", resolve));
+    request.result.close();
+    const bases = createBaseStore(() => factory);
+    expect(await bases.load("本机1")).toEqual([{ path: "a.json", base: "1" }]);
+    await bases.keepHash("本机1", { path: "assets/a.webm", ...stat, hash: "sha256-a" });
+    expect((await bases.hashOf("本机1", "assets/a.webm"))?.hash).toBe("sha256-a");
   });
 });

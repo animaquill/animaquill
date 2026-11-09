@@ -191,9 +191,10 @@ export class PreviewLink {
     // The timeline may get its model after the compositor said hello.
     const stopTimeline = timeline.subscribe(this.#sendAll);
     const stopDiagnostics = diagnostics.subscribe(this.#sendRecording);
-    // The compositor only asks for a file once.
+    // The compositor only asks for a file once. A file can also come again, as when it changed on
+    // the disk: the one it has cannot be read any more then.
     const stopMedia = media.onRestored((hash) => {
-      void this.#sendFile(hash);
+      void this.#sendFile(hash, true);
       this.#sendScenesWith(hash);
     });
     const stopProperties = properties.subscribe(this.#sendPreview);
@@ -428,14 +429,18 @@ export class PreviewLink {
     }
   }
 
-  /** The sandbox runs code from projects, so it only gets what the plan uses. */
-  async #sendFile(id: string): Promise<void> {
+  /**
+   * The sandbox runs code from projects, so it only gets what the plan uses. `again` is for a file
+   * that changed since: one that is not there any more is taken back, and asked for again later.
+   */
+  async #sendFile(id: string, again = false): Promise<void> {
     const used = this.#plan?.layers.some(
       ({ source }) => (source.kind === "image" || source.kind === "video") && source.file === id,
     );
     if (!used) return;
     const file = await this.#projects.media(projectKeyOf(this.#store)).get(id);
     if (file) this.#send({ type: "file", id, file });
+    else if (again) this.#send({ type: "no-file", id });
     else this.#onProblem(id);
   }
 }

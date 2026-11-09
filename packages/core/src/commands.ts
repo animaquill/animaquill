@@ -6,6 +6,7 @@ import {
   Id,
   KnownProperties,
   Marker,
+  MediaInfo,
   ProjectManifest,
   PropertyPath,
   PropertyValue,
@@ -466,6 +467,36 @@ export const COMMANDS: readonly CommandDefinition[] = [
       if (entryOf(draft.state.assets, key)) fail("id-taken", `这个 ID 已经有素材了：${key}`);
       draft.set(["assets", key], asset);
       return { id: key };
+    },
+  ),
+
+  /**
+   * Where the file of an asset is, and what it is: for a file that moved or was replaced outside, as
+   * people agreed. Clips stay on the asset.
+   */
+  define(
+    "asset.update",
+    z.strictObject({
+      asset: Id,
+      changes: z.strictObject({
+        path: z.string().optional(),
+        hash: z.string().optional(),
+        size: z.number().optional(),
+        info: MediaInfo.optional(),
+      }),
+    }),
+    (draft, { asset, changes }) => {
+      const found = entryOf(draft.state.assets, asset);
+      if (!found) fail("not-found", `没有这个素材：${asset}`);
+      const defined = Object.fromEntries(
+        Object.entries(changes).filter(([, value]) => value !== undefined),
+      );
+      const next = Asset.safeParse({ ...found, ...defined });
+      if (!next.success) {
+        fail("invalid-value", `素材的新内容不对：${next.error.issues[0]?.message ?? ""}`);
+      }
+      // Assets are no layer of their own: each one is written as a whole, see structure.ts.
+      draft.set(["assets", asset], next.data);
     },
   ),
 
