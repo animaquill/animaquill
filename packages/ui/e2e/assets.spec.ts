@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, resourcesIn, tab, test } from "./support.ts";
+import { content, expect, resourcesIn, tab, tabScrolls, test } from "./support.ts";
 
 const assets = (page: Page) => content(page, "assets");
 const items = (page: Page) => resourcesIn(page, "assets");
@@ -187,7 +187,9 @@ test("is looked after in the explorer, which asks before a file in use goes", as
   await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
   const explorer = content(page, "explorer");
   await expect(explorer).toBeVisible();
-  const details = explorer.getByRole("region", { name: "详情" });
+  await expect(explorer.getByRole("option", { name: "封面.png" }).first()).toBeFocused();
+  await explorer.getByRole("option", { name: "封面.png" }).first().click();
+  const details = content(page, "code").getByRole("region", { name: "详情" });
   await expect(details.getByRole("heading", { name: "封面.png" })).toBeVisible();
   await details.getByRole("button", { name: "删除…" }).click();
   const dialog = page.getByRole("dialog");
@@ -298,4 +300,98 @@ test("a silent sound shows no waveform", async ({ page }) => {
   await page.waitForTimeout(500);
   const [edge, inside] = await waveformProbe(page);
   expect(inside).toBe(edge);
+});
+
+async function goTo(page: Page, time: string) {
+  await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
+  await page.getByRole("textbox", { name: "当前时间" }).fill(time);
+  await page.keyboard.press("Enter");
+}
+
+/** The clip that is selected, alone. */
+const selected = (page: Page) => clips(page).and(page.locator('[aria-selected="true"]'));
+
+test("a click puts it at the playhead, on a track that has room, as one step", async ({ page }) => {
+  await importFiles(page, files.image);
+  const picture = items(page).first();
+  const tracks = timeline(page).getByText(/^视频 \d$/);
+  await expect(tracks).toHaveText(["视频 1"]);
+
+  await picture.click();
+  await expect(clips(page)).toHaveCount(1);
+  await expect(selected(page)).toHaveAttribute("aria-label", /^封面\.png，视频 1，0:00\/00 到/);
+
+  // Where the selected clip is there is no room: none of the tracks has any, so there is a new one.
+  await picture.click();
+  await expect(clips(page)).toHaveCount(2);
+  await expect(selected(page)).toHaveAttribute("aria-label", /^封面\.png，视频 2，0:00\/00 到/);
+  await expect(tracks).toHaveCount(2);
+  // The clip and its track are one step.
+  await timeline(page).getByRole("group", { name: "时间轴" }).focus();
+  await page.keyboard.press("Control+z");
+  await expect(clips(page)).toHaveCount(1);
+  await expect(tracks).toHaveText(["视频 1"]);
+  await picture.click();
+  await expect(selected(page)).toHaveAttribute("aria-label", /，视频 2，0:00\/00 到/);
+
+  // Both have room right where they end: the track of the selected clip goes first.
+  await goTo(page, "0:05/00");
+  await picture.click();
+  await expect(clips(page)).toHaveCount(3);
+  await expect(selected(page)).toHaveAttribute("aria-label", /，视频 2，0:05\/00 到/);
+
+  // With nothing selected, it is the first track with room.
+  await timeline(page).getByRole("group", { name: "时间轴" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(selected(page)).toHaveCount(0);
+  await goTo(page, "0:06/00");
+  await picture.click();
+  await expect(clips(page)).toHaveCount(4);
+  await expect(selected(page)).toHaveAttribute("aria-label", /，视频 1，0:06\/00 到/);
+  await page.screenshot(shot("assets-click-add.png"));
+});
+
+test("Ctrl and the arrow keys only choose, a double click adds once, and Enter adds", async ({
+  page,
+}) => {
+  await importFiles(page, files.image, files.sound);
+  await expect(items(page)).toHaveCount(2);
+  await items(page)
+    .first()
+    .click({ modifiers: ["ControlOrMeta"] });
+  await expect(items(page).first()).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowRight");
+  await expect(items(page).nth(1)).toBeFocused();
+  await expect(clips(page)).toHaveCount(0);
+
+  await page.keyboard.press("Enter");
+  await expect(clips(page)).toHaveCount(1);
+  await items(page).first().dblclick();
+  await expect(clips(page)).toHaveCount(2);
+  await page.waitForTimeout(300);
+  await expect(clips(page)).toHaveCount(2);
+});
+
+test("selecting a clip leaves the tab as it was, with no words about how to use it", async ({
+  page,
+}) => {
+  await importFiles(page, files.image, files.sound, files.video);
+  await expect(items(page)).toHaveCount(3);
+  await items(page).filter({ hasText: "采访.mp4" }).click();
+  await expect(clips(page)).toHaveCount(2);
+  await expect(selected(page)).toHaveCount(2);
+  expect(await tabScrolls(page, "assets")).toBe(false);
+  await expect(assets(page).getByText(/拖到时间轴|双击|点一个/)).toHaveCount(0);
+
+  // Groups close, and stay closed in this tab only.
+  const pictures = assets(page).getByRole("button", { name: "图片" });
+  await pictures.click();
+  await expect(pictures).toHaveAttribute("aria-expanded", "false");
+  await expect(items(page)).toHaveCount(2);
+  expect(await tabScrolls(page, "assets")).toBe(false);
+  await assets(page).screenshot(shot("assets-closed-group.png"));
+  await page.reload();
+  await tab(page, "assets").click();
+  await expect(pictures).toHaveAttribute("aria-expanded", "false");
+  await expect(items(page)).toHaveCount(2);
 });

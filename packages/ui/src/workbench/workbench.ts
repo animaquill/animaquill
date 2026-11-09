@@ -55,6 +55,8 @@ import { Notifications } from "./notifications.ts";
 import { CommandPalette } from "./palette.ts";
 import { ResourceHabits } from "../resources/habits.ts";
 import { ExplorerState, nodeOfResource } from "../resources/explorer.ts";
+import { ResourcePages } from "../resources/pages.ts";
+import { parseProjectResourceId } from "../resources/project-resources.ts";
 import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
@@ -160,6 +162,8 @@ export class Workbench {
   /** What the code of scenes registered when it ran, which is not in the project. */
   readonly registrations: SceneRegistrations;
   readonly code: CodeDocuments;
+  /** What is open in the resources tab: files of code, and the details of other resources. */
+  readonly resourcePages: ResourcePages;
   readonly files: FileActions;
   readonly drafts: CodeDrafts;
   #changingProject = false;
@@ -271,6 +275,7 @@ export class Workbench {
         overwrite: (path) => this.#askAboutOverwriting(path),
       },
     );
+    this.resourcePages = new ResourcePages(this.session, this.code);
     this.drafts = new CodeDrafts(this.session, this.code, host.drafts, {
       restored: (count) => this.notifications.push(t("code.draftsRestored", { count })),
       dropped: (count) => this.notifications.push(t("code.draftsDropped", { count })),
@@ -837,8 +842,33 @@ export class Workbench {
   /** Resolves to whether the project has that file. */
   showCode(path: string, place?: CodePlace): boolean {
     const opened = this.code.open(path, place);
-    if (opened) this.layout.openPanel("code");
+    if (opened) {
+      this.resourcePages.showCode();
+      this.layout.openPanel("code");
+    }
     return opened;
+  }
+
+  /**
+   * Opens a resource in the resources tab: the code of a scene or a sound, the details of anything
+   * else, also of a scene whose code is not there.
+   */
+  openResource(id: string, name: string): void {
+    const project = parseProjectResourceId(id);
+    const state = this.session.store?.getState();
+    if (project && project.kind !== "asset" && state) {
+      const manifest =
+        project.kind === "scene" ? state.scenes[project.id] : state.sounds[project.id];
+      const folder = project.kind === "scene" ? "scenes" : "sounds";
+      if (manifest && this.showCode(`${folder}/${project.id}/${manifest.entry}`)) return;
+    }
+    this.openResourcePage(id, name);
+  }
+
+  /** Opens the details of a resource in the resources tab, whatever it is. */
+  openResourcePage(id: string, name: string): void {
+    this.resourcePages.open(id, name);
+    this.layout.openPanel("code");
   }
 
   /** An import says all of this once. The list is where it can still be found afterwards. */
@@ -1460,7 +1490,8 @@ export class Workbench {
       run: () => void this.code.save().then(() => this.projectFolders?.flush()),
       keys: ["mod+s"],
       scope: "code",
-      enabled: () => this.code.getSnapshot().active !== undefined,
+      // What shows may be the details of a resource, with the file behind them.
+      enabled: () => this.code.getSnapshot().active !== undefined && this.resourcePages.showsCode,
     });
     this.actions.register({
       id: "files.rename",

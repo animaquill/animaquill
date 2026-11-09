@@ -1,7 +1,7 @@
 import type { Download, Locator, Page } from "@playwright/test";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
 import { importClips } from "./project-files.ts";
-import { content, expect, findCompositor, tab, test } from "./support.ts";
+import { content, expect, findCompositor, tab, tabScrolls, test } from "./support.ts";
 
 /**
  * Effects: the effects tab, what it puts on clips, the list of a clip in the properties tab, and
@@ -85,7 +85,8 @@ test("lists the effects by what they do, finds them, and moves the one under the
   await expect(groups.nth(1)).toHaveAccessibleName("模糊");
   await expect(groups.nth(2)).toHaveAccessibleName("变形");
   await expect(groups.nth(0).getByRole("option")).toHaveCount(4);
-  await expect(panel(page).getByText("拖到时间轴的片段上，加在它的效果列表最后。")).toBeVisible();
+  // How to use them is not written over them.
+  await expect(panel(page).getByText(/拖到时间轴|点一个效果|也可以先选中/)).toHaveCount(0);
   await panel(page).screenshot(shot("effects-panel.png"));
 
   // Under the pointer the sample goes back and forth.
@@ -134,7 +135,7 @@ test("go on every clip selected with a click, and say why where they cannot", as
   await page.mouse.click(...xy(await onClip(page, 1)));
   await page.mouse.click(...xy(await onClip(page, 2)));
   await page.keyboard.up("Shift");
-  await expect(panel(page).getByText("加在选中的 3 个片段的效果列表最后")).toBeVisible();
+  await expect(panel(page).getByText(/点一个效果|效果列表最后/)).toHaveCount(0);
   await item(page, "模糊").click();
   for (const index of [0, 1, 2]) {
     await expect(clips(page).nth(index)).toHaveAttribute("data-effects", "1");
@@ -142,8 +143,10 @@ test("go on every clip selected with a click, and say why where they cannot", as
 
   // A locked track: they are greyed out, and say why.
   await content(page, "timeline").getByRole("button", { name: /^锁定/ }).first().click();
-  await expect(panel(page).getByText("选中的片段在锁定的轨道上，不能改").first()).toBeVisible();
+  await expect(panel(page).getByRole("status")).toHaveText("选中的片段在锁定的轨道上，不能改");
   await expect(item(page, "亮度")).toHaveAttribute("aria-disabled", "true");
+  await expect(item(page, "亮度")).toHaveAttribute("title", /锁定的轨道/);
+  expect(await tabScrolls(page, "effects")).toBe(false);
   await item(page, "亮度").click({ force: true });
   await expect(clips(page).nth(0)).toHaveAttribute("data-effects", "1");
 });

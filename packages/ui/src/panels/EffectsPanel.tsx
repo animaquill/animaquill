@@ -1,6 +1,6 @@
 import type { EffectCategory } from "@animaquill/schema";
 import { Sparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { ResourceBrowser, type ResourceIconProps } from "../resources/ResourceBrowser.tsx";
@@ -8,6 +8,7 @@ import { PREVIEW_HEIGHT, PREVIEW_WIDTH } from "../resources/transition-preview.t
 import { STILL_SWING, effectPreviews, swingAt } from "../resources/effect-preview.ts";
 import { EFFECT_RESOURCE_TYPES, builtInEffects, type EffectItem } from "../resources/effects.ts";
 import type { Resource } from "../resources/resources.ts";
+import type { TimelineEditor } from "../timeline/editor.ts";
 import { EFFECT_DRAG_TYPE, effectDrag } from "../timeline/effect-drag.ts";
 
 const reducedMotion = () =>
@@ -47,6 +48,18 @@ export function EffectIcon({ resource, playing }: ResourceIconProps<EffectItem>)
   return <canvas ref={canvas} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} aria-hidden />;
 }
 
+/** What a drag of an effect carries, from any tab that lists them. */
+export function startEffectDrag(item: EffectItem, event: DragEvent<HTMLElement>): void {
+  event.dataTransfer.setData(EFFECT_DRAG_TYPE, item.type);
+  event.dataTransfer.effectAllowed = "copy";
+  effectDrag.start(item.type);
+}
+
+export function endEffectDrag(timeline: TimelineEditor): void {
+  effectDrag.end();
+  timeline.showEffectDrop(undefined);
+}
+
 /**
  * The effects to find and use: dragged onto a clip of the timeline, or clicked with clips selected
  * there, which puts it last on each. See docs/design/resource-panels.md, sections 2 and 4.
@@ -57,7 +70,6 @@ export function EffectsPanel() {
   // What is selected says what a click does.
   useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const resources = useMemo(() => builtInEffects(t), [t]);
-  const context = timeline.effectContext;
 
   const unavailable = ({ data }: Resource<EffectItem>) => {
     const problem = timeline.effectProblem(data.type);
@@ -65,13 +77,6 @@ export function EffectsPanel() {
     if (problem === undefined || problem === "nothing") return undefined;
     return { reason: t(`effectPanel.why.${problem}`), draggable: problem !== "unknown" };
   };
-
-  const hint =
-    context.selected === 0
-      ? t("effectPanel.hint.nothing")
-      : context.boxes.length === 0
-        ? t(`effectPanel.why.${context.blocked ?? "locked"}`)
-        : t("effectPanel.hint.clips", { count: context.boxes.length });
 
   return (
     <ResourceBrowser<EffectItem>
@@ -82,20 +87,14 @@ export function EffectsPanel() {
       types={EFFECT_RESOURCE_TYPES}
       defaultGrouping="type"
       typeName={(type) => t(`effectPanel.types.${type.slice("effect.".length) as EffectCategory}`)}
-      hint={hint}
       unavailable={unavailable}
       Icon={EffectIcon}
       onActivate={(resource) => {
         if (timeline.attachEffect(resource.data.type)) habits.used(resource.id);
       }}
-      onDragStart={(resource, event) => {
-        event.dataTransfer.setData(EFFECT_DRAG_TYPE, resource.data.type);
-        event.dataTransfer.effectAllowed = "copy";
-        effectDrag.start(resource.data.type);
-      }}
+      onDragStart={(resource, event) => startEffectDrag(resource.data, event)}
       onDragEnd={(resource, dropped) => {
-        effectDrag.end();
-        timeline.showEffectDrop(undefined);
+        endEffectDrag(timeline);
         if (dropped) habits.used(resource.id);
       }}
     />

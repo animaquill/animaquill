@@ -129,7 +129,8 @@ const node = (page: Page, name: string) => panel(page).locator(`[data-node="${na
 const items = (page: Page) => resourcesIn(page, "explorer");
 const item = (page: Page, name: string) =>
   panel(page).getByRole("option", { name, exact: true }).first();
-const details = (page: Page) => panel(page).getByRole("region", { name: "详情" });
+/** The details of a resource, in a tab of its own in the resources tab. */
+const details = (page: Page) => content(page, "code").getByRole("region", { name: "详情" });
 const uses = (page: Page) =>
   details(page).getByRole("list", { name: "在哪里用到" }).getByRole("button");
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
@@ -310,7 +311,6 @@ test("is where the other tabs of resources show something", async ({ page }) => 
   await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
   await expect(panel(page)).toBeVisible();
   await expect(node(page, "built-in.transitions")).toHaveAttribute("aria-selected", "true");
-  await expect(details(page).getByRole("heading", { name: "淡入" })).toBeVisible();
   await expect(item(page, "淡入")).toBeFocused();
 
   await tab(page, "effects").click();
@@ -319,11 +319,134 @@ test("is where the other tabs of resources show something", async ({ page }) => 
   });
   await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
   await expect(node(page, "built-in.effects")).toHaveAttribute("aria-selected", "true");
-  await expect(details(page).getByRole("heading", { name: "模糊" })).toBeVisible();
+  await expect(item(page, "模糊")).toBeFocused();
 
   await tab(page, "assets").click();
   await resourcesIn(page, "assets").filter({ hasText: "配音.wav" }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
   await expect(node(page, "project.media")).toHaveAttribute("aria-selected", "true");
-  await expect(details(page).getByRole("heading", { name: "配音.wav" })).toBeVisible();
+  await expect(item(page, "配音.wav")).toBeFocused();
+  // Out of a group that was closed.
+  await panel(page).getByRole("button", { name: "声音" }).click();
+  await expect(item(page, "配音.wav")).toHaveCount(0);
+  await tab(page, "assets").click();
+  await resourcesIn(page, "assets").filter({ hasText: "配音.wav" }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
+  await expect(item(page, "配音.wav")).toBeFocused();
+  await expect(panel(page).getByRole("button", { name: "声音" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
+test("opens what is clicked in the resources tab, one tab each, next to the code", async ({
+  page,
+}) => {
+  await open(page);
+  const resources = content(page, "code");
+  const pageTab = (name: string) => resources.getByRole("tab", { name, exact: true });
+  await expect(tab(page, "code")).toHaveText("资源");
+
+  await node(page, "project.media").click();
+  await item(page, "封面.png").click();
+  await expect(resources).toBeVisible();
+  await expect(pageTab("封面.png")).toHaveAttribute("aria-selected", "true");
+  await expect(details(page).getByRole("heading", { name: "封面.png" })).toBeVisible();
+  await expect(details(page)).toContainText("图片");
+  await expect(details(page)).toContainText("项目文件夹里的 assets/cover.png");
+  await expect(details(page).getByRole("button", { name: "改名…" })).toBeVisible();
+  await expect(uses(page)).toHaveText(["开头，0:00", "中间，0:03"]);
+  // The explorer is only the list now, with all the room.
+  await expect(panel(page).getByRole("region", { name: "详情" })).toHaveCount(0);
+  await page.screenshot(shot("resources-tab-asset.png"));
+
+  await node(page, "built-in.transitions").click();
+  await item(page, "淡入").click();
+  await expect(pageTab("淡入")).toHaveAttribute("aria-selected", "true");
+  await expect(details(page)).toContainText("编辑器自带");
+  await expect(resources.getByRole("tab")).toHaveText(["封面.png", "淡入"]);
+  // The same resource again goes to its tab.
+  await node(page, "project.media").click();
+  await item(page, "封面.png").click();
+  await expect(resources.getByRole("tab")).toHaveCount(2);
+  await expect(pageTab("封面.png")).toHaveAttribute("aria-selected", "true");
+  await pageTab("淡入").click();
+  await expect(details(page).getByRole("heading", { name: "淡入" })).toBeVisible();
+  await resources.getByRole("button", { name: "关闭 淡入" }).click();
+  await expect(resources.getByRole("tab")).toHaveText(["封面.png"]);
+  await expect(details(page).getByRole("heading", { name: "封面.png" })).toBeVisible();
+
+  // A scene opens in the code editor, beside the details, and the menu still has its details.
+  await tab(page, "assets").click();
+  await content(page, "assets").getByRole("button", { name: "新建场景" }).click();
+  await tab(page, "explorer").click();
+  await node(page, "project.scenes").click();
+  await item(page, "场景 1").click();
+  await expect(resources.locator(".view-lines")).toBeVisible({ timeout: 30_000 });
+  await expect(resources.getByRole("tab")).toHaveText(["封面.png", "index.html"]);
+  await expect(pageTab("index.html")).toHaveAttribute("aria-selected", "true");
+  await expect(details(page)).toHaveCount(0);
+  await page.screenshot(shot("resources-tab-code.png"));
+  await item(page, "场景 1").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "详细信息" }).click();
+  await expect(details(page).getByRole("heading", { name: "场景 1" })).toBeVisible();
+  await expect(details(page).getByRole("button", { name: "打开代码" })).toBeVisible();
+  await expect(resources.locator(".view-lines")).toBeHidden();
+  await pageTab("index.html").click();
+  await expect(resources.locator(".view-lines")).toBeVisible();
+});
+
+test("drags resources onto the timeline, as the tabs that find them do", async ({ page }) => {
+  await open(page);
+  const area = content(page, "timeline").getByRole("group", { name: "时间轴" });
+  await node(page, "project.media").click();
+  await expect(clips(page)).toHaveCount(4);
+  await item(page, "封面.png").dragTo(area, { targetPosition: { x: 700, y: 50 } });
+  await expect(clips(page)).toHaveCount(5);
+  await expect(clips(page).and(page.locator('[aria-selected="true"]'))).toHaveAttribute(
+    "aria-label",
+    /^封面\.png，视频 1，/,
+  );
+
+  // An effect goes on the clip it is dropped on.
+  await node(page, "built-in.effects").click();
+  const first = clips(page).first();
+  await expect(first).not.toHaveAttribute("data-effects");
+  const box = await first.boundingBox();
+  if (!box) throw new Error("no clip");
+  await item(page, "亮度").dragTo(area, {
+    targetPosition: {
+      x: box.x + box.width / 2 - ((await area.boundingBox())?.x ?? 0),
+      y: box.y + box.height / 2 - ((await area.boundingBox())?.y ?? 0),
+    },
+  });
+  await expect(first).toHaveAttribute("data-effects", "1");
+});
+
+test("closes groups, each tab its own, and keeps them closed", async ({ page }) => {
+  await open(page);
+  await node(page, "project").click();
+  const pictures = panel(page).getByRole("button", { name: "图片" });
+  await expect(pictures).toHaveAttribute("aria-expanded", "true");
+  await pictures.click();
+  await expect(pictures).toHaveAttribute("aria-expanded", "false");
+  await expect(item(page, "封面.png")).toHaveCount(0);
+  await expect(item(page, "配音.wav")).toBeVisible();
+  // The keyboard opens it again.
+  await pictures.focus();
+  await page.keyboard.press("Enter");
+  await expect(item(page, "封面.png")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(item(page, "封面.png")).toHaveCount(0);
+  await panel(page).screenshot(shot("explorer-closed-group.png"));
+
+  await tab(page, "assets").click();
+  await expect(content(page, "assets").getByRole("button", { name: "图片" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  // Kept when the tab comes back, and after a reload, see assets.spec.ts.
+  await tab(page, "explorer").click();
+  await expect(pictures).toHaveAttribute("aria-expanded", "false");
+  await expect(item(page, "封面.png")).toHaveCount(0);
 });

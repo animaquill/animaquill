@@ -1253,9 +1253,10 @@ export class TimelineEditor implements TouchTarget {
   }
 
   /**
-   * Puts a file on the timeline, at a place or else at the playhead: a video with sound as two
-   * linked clips. What is there stays and the clips go after it, unless people overwrite. A track
-   * that can take them is found or made.
+   * Puts a file on the timeline: a video with sound as two linked clips, in one step, which end up
+   * selected. Dropped at a place, what is there stays and the clips go after it, unless people
+   * overwrite, on the track there or else on one that can take them. Without a place, as with a
+   * click in the assets tab, they go right at the playhead, see `#freeRow`.
    */
   addAsset(assetId: string, place?: DropPlace): void {
     const { model } = this;
@@ -1275,7 +1276,12 @@ export class TimelineEditor implements TouchTarget {
       ...(asset.kind === "audio" || asset.info?.hasAudio
         ? [{ kind: "audio" as const, source: { kind: "audio", media } }]
         : []),
-    ].map((part) => ({ ...part, row: this.#rowForNew(model, part.kind, place?.lane) }));
+    ].map((part) => ({
+      ...part,
+      row: place
+        ? this.#rowForNew(model, part.kind, place.lane)
+        : this.#freeRow(model, part.kind, start, add(start, duration)),
+    }));
 
     const placed = parts.flatMap(({ row }): Placed[] => {
       if (!row) return [];
@@ -1290,8 +1296,9 @@ export class TimelineEditor implements TouchTarget {
         },
       ];
     });
-    const { overwriting } = this.#snapshot;
-    const shift = overwriting ? undefined : freeShift(placed, new Set(), 1);
+    // Without a place the rows are free where it goes, and nothing gets overwritten.
+    const overwriting = place !== undefined && this.#snapshot.overwriting;
+    const shift = overwriting || !place ? undefined : freeShift(placed, new Set(), 1);
     const at = shift ? add(start, shift.exact()) : start;
     const link = parts.length > 1 ? { link: newId("link") } : {};
     const trackCalls: CommandCall[] = [];
@@ -1324,10 +1331,10 @@ export class TimelineEditor implements TouchTarget {
     if (this.#run([...trackCalls, ...calls])) this.#select(new Set(ids));
   }
 
-  /** Puts a scene on the timeline, at a place or else at the playhead. */
+  /** Puts a scene on the timeline, at a place or else at the playhead, as `addAsset` does. */
   addScene(scene: string, place?: DropPlace): void {
     const known = this.#store?.getState().scenes[scene];
-    if (known) this.#placeCode({ kind: "scene", scene }, known.name, place, []);
+    if (known) this.#placeCode({ kind: "scene", scene }, known.name, place ?? "free", []);
   }
 
   /** A new scene from the template, on the timeline right away, to see it move and to change it. */
@@ -1341,10 +1348,10 @@ export class TimelineEditor implements TouchTarget {
     this.#placeCode({ kind: "scene", scene }, name, place, [{ type: "scene.add", params }]);
   }
 
-  /** Puts a sound on the timeline, at a place or else at the playhead. */
+  /** Puts a sound on the timeline, at a place or else at the playhead, as `addAsset` does. */
   addSound(sound: string, place?: DropPlace): void {
     const known = this.#store?.getState().sounds[sound];
-    if (known) this.#placeCode({ kind: "sound", sound }, known.name, place, []);
+    if (known) this.#placeCode({ kind: "sound", sound }, known.name, place ?? "free", []);
   }
 
   /** A new sound from the template, on the timeline right away, to hear it and to change it. */
@@ -1381,26 +1388,33 @@ export class TimelineEditor implements TouchTarget {
     return { duration, properties: { "param.duration": toSeconds(duration) } };
   }
 
-  /** What is there stays and it goes after that, unless people overwrite. Along with `before`, it is one step. */
+  /**
+   * Along with `before`, it is one step. At a place or at the playhead, what is there stays and it
+   * goes after that, unless people overwrite. "free" is right at the playhead, see `#freeRow`.
+   */
   #placeCode(
     source:
       | { readonly kind: "scene"; readonly scene: string }
       | { readonly kind: "sound"; readonly sound: string },
     name: string,
-    place: DropPlace | undefined,
+    place: DropPlace | "free" | undefined,
     before: readonly CommandCall[],
   ): void {
     const { model } = this;
     if (!model) return;
     const { rate } = model;
-    const seconds = place?.seconds ?? frameSeconds(this.#frame, rate);
+    const free = place === "free";
+    const dropped = free ? undefined : place;
+    const seconds = dropped?.seconds ?? frameSeconds(this.#frame, rate);
     const start = frameTime(frameAt(Math.max(seconds, 0), rate), rate);
     const sound =
       source.kind === "sound" ? this.#soundClip(model, source.sound, before) : undefined;
     const duration = sound?.duration ?? this.#newClipDuration(model);
     const kind = source.kind === "sound" ? "audio" : "video";
-    const row = this.#rowForNew(model, kind, place?.lane);
     const end = add(start, duration);
+    const row = free
+      ? this.#freeRow(model, kind, start, end)
+      : this.#rowForNew(model, kind, dropped?.lane);
     const placed: Placed[] = row
       ? [
           {
@@ -1412,8 +1426,8 @@ export class TimelineEditor implements TouchTarget {
           },
         ]
       : [];
-    const { overwriting } = this.#snapshot;
-    const shift = overwriting ? undefined : freeShift(placed, new Set(), 1);
+    const overwriting = !free && this.#snapshot.overwriting;
+    const shift = overwriting || free ? undefined : freeShift(placed, new Set(), 1);
     const at = shift ? add(start, shift.exact()) : start;
     const track = row?.id ?? newId("track");
     const id = newId("clip");
@@ -1438,6 +1452,33 @@ export class TimelineEditor implements TouchTarget {
       },
     ];
     if (this.#run(calls)) this.#select(new Set([id]));
+  }
+
+  /**
+   * Where something goes that people add with a click, right at the playhead: the track of a
+   * selected clip of the same kind, else the first track of the kind, as long as nothing is in the
+   * way there. Undefined when none is free, for a new track. Locked tracks are left alone.
+   */
+  #freeRow(model: TimelineModel, kind: string, start: Rational, end: Rational): Row | undefined {
+    const usable = (row: Row) => row.track.kind === kind && !row.track.locked && !row.gone;
+    const from = toSeconds(start);
+    const to = toSeconds(end);
+    // Floats find what may be in the way, the exact times say whether it is.
+    const free = (row: Row) => {
+      let clash = false;
+      forEachBetween(row, from - 1e-6, to + 1e-6, ({ clip }) => {
+        if (compare(clipStart(clip), end) < 0 && compare(clipEnd(clip), start) > 0) clash = true;
+      });
+      return !clash;
+    };
+    const tracks = new Set<string>();
+    for (const id of this.#snapshot.selection) {
+      const track = model.boxes.get(id)?.clip.track;
+      if (track !== undefined) tracks.add(track);
+    }
+    const selected = model.rows.filter((row) => tracks.has(row.id) && usable(row));
+    const rest = model.rows.filter(usable).toSorted((a, b) => a.number - b.number);
+    return [...selected, ...rest].find(free);
   }
 
   /** The row at a height when it fits, or else the first one that does. */

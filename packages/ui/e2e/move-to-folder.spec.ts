@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { dialog, footer, installChosen, privateText } from "./folder-support.ts";
-import { content, createProject, expect, tab, test } from "./support.ts";
+import { content, createProject, expect, resourcesIn, tab, test } from "./support.ts";
 
 test.use({
   folders: true,
@@ -56,7 +56,7 @@ async function projectOfTheBrowser(page: Page): Promise<string> {
     { name: "红色.webm", mimeType: "video/webm", buffer: VIDEO },
     { name: "封面.png", mimeType: "image/png", buffer: PNG },
   ]);
-  await expect(content(page, "assets").getByRole("listitem")).toHaveCount(2);
+  await expect(resourcesIn(page, "assets")).toHaveCount(2);
   await expect(footer(page).getByText("已保存")).toBeVisible();
   await installChosen(page);
   await projectsInBrowser(page, false);
@@ -135,7 +135,7 @@ test.describe("a project of the browser", () => {
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     expect(keyOf(page)).toBe(key);
     await tab(page, "assets").click();
-    await expect(content(page, "assets").getByRole("listitem")).toHaveCount(2);
+    await expect(resourcesIn(page, "assets")).toHaveCount(2);
     await tab(page, "problems").click();
     await expect(content(page, "problems")).not.toContainText("素材文件");
   });

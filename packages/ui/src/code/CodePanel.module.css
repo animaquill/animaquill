@@ -110,6 +110,11 @@
   display: none;
 }
 
+.page {
+  position: absolute;
+  inset: 0;
+}
+
 .message {
   position: absolute;
   inset: 0;

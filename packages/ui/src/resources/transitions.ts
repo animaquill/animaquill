@@ -69,23 +69,6 @@ export function firstTypeOf(context: AttachContext): string | undefined {
   return undefined;
 }
 
-/** What a click does with what is selected, as a key of the texts. */
-export function hintOf(
-  context: AttachContext,
-): "nothing" | "blocked" | "one" | "many" | "pair" | "edge" | "join" | "locked" {
-  switch (context.kind) {
-    case "nothing":
-      return "nothing";
-    case "edge":
-    case "join":
-      return context.locked ? "locked" : context.kind;
-    case "clips":
-      if (context.blocked) return "blocked";
-      if (context.pairs.length > 0) return "pair";
-      return context.boxes.length === 1 ? "one" : "many";
-  }
-}
-
 /** Whether a transition in the list is what is selected now. */
 export function isChosen(context: AttachContext, { pick, use }: TransitionItem): boolean {
   if (context.kind === "edge") {

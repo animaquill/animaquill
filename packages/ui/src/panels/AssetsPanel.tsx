@@ -26,14 +26,24 @@ const DRAG_TYPES: Readonly<Record<ProjectItem["kind"], string>> = {
   sound: SOUND_DRAG_TYPE,
 };
 
+/** Whether a resource of the project can go onto the timeline: fonts are used by captions and scenes. */
+export const canDragProjectItem = (item: ProjectItem): boolean =>
+  !(item.kind === "asset" && item.asset.kind === "font");
+
+/** What a drag of a resource of the project carries, from any tab that lists them. */
+export function startProjectItemDrag(item: ProjectItem, event: DragEvent<HTMLElement>): void {
+  event.dataTransfer.setData(DRAG_TYPES[item.kind], item.id);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
 const noSubscription = () => () => {};
 const noProgress = () => NO_PROGRESS;
 
 /**
  * The assets of the project to find and use: videos, pictures, sounds, fonts, scenes and sounds
- * made by code, dragged onto the timeline or put there with a double click. Bringing files in
- * happens here too; looking after them happens in the explorer. See docs/design/resource-panels.md,
- * section 2.
+ * made by code, dragged onto the timeline or put there with a click, at the playhead, see
+ * `TimelineEditor.addAsset`. Bringing files in happens here too; looking after them happens in the
+ * explorer. See docs/design/resource-panels.md, section 2.
  */
 export function AssetsPanel() {
   const workbench = useWorkbench();
@@ -66,9 +76,7 @@ export function AssetsPanel() {
   );
 
   const unavailable = ({ data }: Resource<ProjectItem>) =>
-    data.kind === "asset" && data.asset.kind === "font"
-      ? { reason: t("assetPanel.why.font"), draggable: false }
-      : undefined;
+    canDragProjectItem(data) ? undefined : { reason: t("assetPanel.why.font"), draggable: false };
 
   const addToTimeline = (resource: Resource<ProjectItem>) => {
     const { data } = resource;
@@ -146,12 +154,8 @@ export function AssetsPanel() {
           empty={t(inFolder ? "assets.emptyFolder" : "assets.empty")}
           unavailable={unavailable}
           Icon={ProjectIcon}
-          activateOn="double-click"
           onActivate={addToTimeline}
-          onDragStart={(resource, event) => {
-            event.dataTransfer.setData(DRAG_TYPES[resource.data.kind], resource.data.id);
-            event.dataTransfer.effectAllowed = "copy";
-          }}
+          onDragStart={(resource, event) => startProjectItemDrag(resource.data, event)}
           onDragEnd={(resource, dropped) => {
             if (dropped) habits.used(resource.id);
           }}

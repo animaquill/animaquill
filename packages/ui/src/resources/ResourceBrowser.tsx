@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -44,19 +44,15 @@ export interface ResourceBrowserProps<T> {
   readonly firstType?: string | undefined;
   readonly defaultGrouping: Grouping;
   readonly typeName: (type: string) => string;
-  /** What a click does now, over the list. */
-  readonly hint?: string | undefined;
   readonly unavailable: (resource: Resource<T>) => Unavailable | undefined;
   /** What is selected is this one. */
   readonly isCurrent?: (resource: Resource<T>) => boolean;
   readonly Icon: ComponentType<ResourceIconProps<T>>;
   /**
-   * A click, or a double click where `activateOn` says so, or Enter: `anchor` is where the resource
-   * is on the page, for a menu.
+   * A click or Enter: `anchor` is where the resource is on the page, for a menu. A double click is
+   * one click, and a click with Ctrl or ⌘ only chooses, as the arrow keys do.
    */
   readonly onActivate: (resource: Resource<T>, anchor: DOMRect) => void;
-  /** What uses a resource: one click, or a double click where one click only chooses it. */
-  readonly activateOn?: "click" | "double-click";
   /** The resource chosen, by its id, where the tab keeps that itself, as the explorer does. */
   readonly selected?: string | undefined;
   readonly onSelect?: (resource: Resource<T>) => void;
@@ -66,6 +62,8 @@ export interface ResourceBrowserProps<T> {
   readonly menu?: (resource: Resource<T>) => readonly (readonly MenuItem[])[];
   /** What it says when there is nothing at all. */
   readonly empty?: string;
+  /** What can be dragged, of what can be used here. Nothing can without `onDragStart`. */
+  readonly canDrag?: (resource: Resource<T>) => boolean;
   readonly onDragStart?: (resource: Resource<T>, event: DragEvent<HTMLElement>) => void;
   /** Whether it was dropped somewhere that took it. */
   readonly onDragEnd?: (resource: Resource<T>, dropped: boolean) => void;
@@ -104,36 +102,41 @@ function verticalNeighbor(options: readonly HTMLElement[], from: number, down: b
 
 /**
  * A list of resources to find and use, the same in every tab that has them: a search, a choice of
- * grouping, what was used recently first, moving previews, and what cannot be used here greyed out
- * with the reason. See docs/design/resource-panels.md, section 2. What a click and a drag do is up
- * to the tab.
+ * grouping, groups that close, what was used recently first, moving previews, and what cannot be
+ * used here greyed out with the reason. See docs/design/resource-panels.md, section 2. What a click
+ * and a drag do is up to the tab.
  */
 export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
-  const { tab, label, resources, types, firstType, defaultGrouping, typeName, hint } = props;
-  const { unavailable, isCurrent, Icon, onActivate, onDragStart, onDragEnd } = props;
-  const { activateOn = "click", selected, onSelect, revealed, empty } = props;
+  const { tab, label, resources, types, firstType, defaultGrouping, typeName } = props;
+  const { unavailable, isCurrent, Icon, onActivate, canDrag, onDragStart, onDragEnd } = props;
+  const { selected, onSelect, revealed, empty } = props;
   const { t } = useTranslation();
   const workbench = useWorkbench();
   const { resourceHabits: habits } = workbench;
   const saved = useSyncExternalStore(habits.subscribe, habits.getSnapshot);
   const grouping = saved.grouping[tab] ?? defaultGrouping;
+  const closedIds = saved.collapsed[tab];
+  const collapsed = useMemo(() => new Set(closedIds), [closedIds]);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<string>();
   const [pointed, setPointed] = useState<string>();
   const [menu, setMenu] = useState<{ x: number; y: number; resource: Resource<T> }>();
-  const list = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLElement>(null);
   const id = useId();
 
   const groups = useMemo(
     () => browse(resources, { query, grouping, recent: saved.recent, types, firstType }),
     [resources, query, grouping, saved.recent, types, firstType],
   );
+  // What is in a closed group is not on the page, so the keys do not go there either.
   const entries: readonly Entry<T>[] = useMemo(
     () =>
       groups.flatMap((group) =>
-        group.items.map((resource) => ({ key: `${group.id}/${resource.id}`, resource })),
+        collapsed.has(group.id)
+          ? []
+          : group.items.map((resource) => ({ key: `${group.id}/${resource.id}`, resource })),
       ),
-    [groups],
+    [groups, collapsed],
   );
   // What the tab chose comes first, unless the keyboard is on another place of the same resource.
   const chosenKey =
@@ -177,16 +180,29 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     };
   }, [menu]);
 
-  // A resource shown from elsewhere comes into view.
+  // A resource shown from elsewhere comes into view, out of a closed group if it has to.
+  const revealing = useRef(false);
   useEffect(() => {
     if (!revealed || selected === undefined) return;
+    revealing.current = true;
+    const holds = (group: (typeof groups)[number]) =>
+      group.items.some((resource) => resource.id === selected);
+    const closed = groups.filter((group) => holds(group) && collapsed.has(group.id));
+    if (closed.length > 0 && !groups.some((group) => holds(group) && !collapsed.has(group.id))) {
+      habits.setCollapsed(tab, (closed[0] as (typeof groups)[number]).id, false);
+    }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- only when it is shown again
+  }, [revealed]);
+  useEffect(() => {
+    if (!revealing.current || selected === undefined) return;
     const option = list.current?.querySelector<HTMLElement>(
       `[role="option"][data-resource="${CSS.escape(selected)}"]`,
     );
-    option?.scrollIntoView?.({ block: "nearest" });
-    option?.focus({ preventScroll: true });
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- only when it is shown again
-  }, [revealed]);
+    if (!option) return;
+    revealing.current = false;
+    option.scrollIntoView?.({ block: "nearest" });
+    option.focus({ preventScroll: true });
+  });
 
   const choose = (key: string, resource: Resource<T>) => {
     setActive(key);
@@ -210,7 +226,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     onActivate(resource, element.getBoundingClientRect());
   };
 
-  const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+  const onListKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     const options = optionsOnPage();
     const index = options.indexOf(document.activeElement as HTMLElement);
     if (index === -1) return;
@@ -299,95 +315,117 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
           ))}
         </div>
       </div>
-      {hint && <p className={styles.hint}>{hint}</p>}
-      <div
-        ref={list}
-        className={styles.list}
-        role="listbox"
-        aria-label={label}
-        onKeyDown={onListKeyDown}
-      >
-        {groups.map((group) => (
-          <div
-            key={group.id}
-            role="group"
-            aria-labelledby={`${id}-${group.id}`}
-            className={styles.group}
-            data-group={group.id}
-            data-first={group.key.kind === "type" && group.key.type === firstType ? "" : undefined}
-          >
-            <div id={`${id}-${group.id}`} className={styles.heading}>
-              {groupName(group.key)}
+      {/* Each group is a list of its own under a heading that opens and closes it. The keys go
+          through all of them as through one list. */}
+      <section ref={list} className={styles.list} aria-label={label} onKeyDown={onListKeyDown}>
+        {groups.map((group) => {
+          const closed = collapsed.has(group.id);
+          const headingId = `${id}-${group.id}`;
+          const Chevron = closed ? ChevronRight : ChevronDown;
+          return (
+            <div
+              key={group.id}
+              role="group"
+              aria-labelledby={headingId}
+              className={styles.group}
+              data-group={group.id}
+              data-first={
+                group.key.kind === "type" && group.key.type === firstType ? "" : undefined
+              }
+            >
+              <button
+                type="button"
+                className={styles.heading}
+                aria-expanded={!closed}
+                aria-controls={closed ? undefined : `${headingId}-items`}
+                onClick={() => habits.setCollapsed(tab, group.id, !closed)}
+              >
+                <Chevron size={14} aria-hidden />
+                <span id={headingId}>{groupName(group.key)}</span>
+                <span className={styles.count} aria-hidden>
+                  {group.items.length}
+                </span>
+              </button>
+              {!closed && (
+                <div
+                  id={`${headingId}-items`}
+                  className={styles.grid}
+                  role="listbox"
+                  aria-labelledby={headingId}
+                >
+                  {group.items.map((resource) => {
+                    const key = `${group.id}/${resource.id}`;
+                    const off = unavailable(resource);
+                    const reasonId = `${id}-${key}-why`;
+                    return (
+                      <div
+                        key={key}
+                        role="option"
+                        tabIndex={key === activeKey ? 0 : -1}
+                        aria-label={resource.name}
+                        aria-selected={key === activeKey}
+                        aria-disabled={off ? true : undefined}
+                        aria-current={isCurrent?.(resource) ? true : undefined}
+                        aria-describedby={off ? reasonId : undefined}
+                        className={styles.item}
+                        data-resource={resource.id}
+                        title={off ? `${resource.name}：${off.reason}` : resource.name}
+                        draggable={
+                          onDragStart !== undefined &&
+                          (canDrag?.(resource) ?? true) &&
+                          (!off || off.draggable)
+                        }
+                        onFocus={() => choose(key, resource)}
+                        onPointerEnter={() => setPointed(key)}
+                        onPointerLeave={() => setPointed((was) => (was === key ? undefined : was))}
+                        onClick={(event) => {
+                          choose(key, resource);
+                          // The second click of a double click, or one that only chooses.
+                          if (event.detail > 1 || event.ctrlKey || event.metaKey) return;
+                          activate(resource, event.currentTarget);
+                        }}
+                        // A right click focuses the option after the menu opened, which would close it
+                        // again: the menu focuses the option itself first.
+                        onMouseDown={(event) => {
+                          if (event.button === 2) event.preventDefault();
+                        }}
+                        onContextMenu={(event) => {
+                          choose(key, resource);
+                          onContextMenu(event, resource);
+                        }}
+                        onDragStart={(event) => {
+                          setPointed(undefined);
+                          onDragStart?.(resource, event);
+                        }}
+                        onDragEnd={(event) =>
+                          onDragEnd?.(resource, event.dataTransfer.dropEffect !== "none")
+                        }
+                      >
+                        <div className={styles.picture}>
+                          <Icon resource={resource} playing={key === pointed} />
+                        </div>
+                        <span className={styles.name}>{resource.name}</span>
+                        {off && (
+                          <span id={reasonId} className={styles.hidden}>
+                            {off.reason}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <div className={styles.grid}>
-              {group.items.map((resource) => {
-                const key = `${group.id}/${resource.id}`;
-                const off = unavailable(resource);
-                const reasonId = `${id}-${key}-why`;
-                return (
-                  <div
-                    key={key}
-                    role="option"
-                    tabIndex={key === activeKey ? 0 : -1}
-                    aria-label={resource.name}
-                    aria-selected={key === activeKey}
-                    aria-disabled={off ? true : undefined}
-                    aria-current={isCurrent?.(resource) ? true : undefined}
-                    aria-describedby={off ? reasonId : undefined}
-                    className={styles.item}
-                    data-resource={resource.id}
-                    title={off ? `${resource.name}：${off.reason}` : resource.name}
-                    draggable={!off || off.draggable}
-                    onFocus={() => choose(key, resource)}
-                    onPointerEnter={() => setPointed(key)}
-                    onPointerLeave={() => setPointed((was) => (was === key ? undefined : was))}
-                    onClick={(event) => {
-                      choose(key, resource);
-                      if (activateOn === "click") activate(resource, event.currentTarget);
-                    }}
-                    onDoubleClick={(event) => {
-                      if (activateOn === "double-click") activate(resource, event.currentTarget);
-                    }}
-                    // A right click focuses the option after the menu opened, which would close it
-                    // again: the menu focuses the option itself first.
-                    onMouseDown={(event) => {
-                      if (event.button === 2) event.preventDefault();
-                    }}
-                    onContextMenu={(event) => {
-                      choose(key, resource);
-                      onContextMenu(event, resource);
-                    }}
-                    onDragStart={(event) => {
-                      setPointed(undefined);
-                      onDragStart?.(resource, event);
-                    }}
-                    onDragEnd={(event) =>
-                      onDragEnd?.(resource, event.dataTransfer.dropEffect !== "none")
-                    }
-                  >
-                    <div className={styles.picture}>
-                      <Icon resource={resource} playing={key === pointed} />
-                    </div>
-                    <span className={styles.name}>{resource.name}</span>
-                    {off && (
-                      <span id={reasonId} className={styles.hidden}>
-                        {off.reason}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {entries.length === 0 && (
+          );
+        })}
+        {groups.length === 0 && (
           <p className={styles.empty}>
             {query.trim()
               ? t("resources.notFound", { query: query.trim() })
               : (empty ?? t("resources.none"))}
           </p>
         )}
-      </div>
+      </section>
       <p className={styles.status} role="status">
         {why ? why.reason : ""}
       </p>

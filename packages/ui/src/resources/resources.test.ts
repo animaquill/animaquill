@@ -117,6 +117,30 @@ describe("the habits of people with resources", () => {
     fromOtherWindow("broken");
     expect(habits.recent).toEqual(["x"]);
   });
+
+  it("keeps which groups are closed in each tab, and reads what was saved before that", async () => {
+    const { store, fromOtherWindow } = settings();
+    const habits = new ResourceHabits(store);
+    await habits.load();
+    expect(habits.collapsedIn("assets")).toEqual([]);
+    habits.setCollapsed("assets", "type:media_image", true);
+    habits.setCollapsed("assets", "recent", true);
+    habits.setCollapsed("assets", "recent", true);
+    habits.setCollapsed("effects", "type:effect.blur", true);
+    habits.setCollapsed("assets", "type:media_image", false);
+    expect(habits.collapsedIn("assets")).toEqual(["recent"]);
+    expect(habits.collapsedIn("effects")).toEqual(["type:effect.blur"]);
+    expect(habits.collapsedIn("transitions")).toEqual([]);
+    const again = new ResourceHabits(store);
+    await again.load();
+    expect(again.collapsedIn("assets")).toEqual(["recent"]);
+    // The last window to listen hears the others.
+    fromOtherWindow({ version: 1, recent: [], grouping: {} });
+    expect(again.collapsedIn("assets")).toEqual([]);
+    fromOtherWindow({ version: 1, recent: [], grouping: {}, collapsed: { a: ["x", 1], b: "y" } });
+    expect(again.collapsedIn("a")).toEqual(["x"]);
+    expect(again.collapsedIn("b")).toEqual([]);
+  });
 });
 
 describe("the transitions that come with the editor", () => {

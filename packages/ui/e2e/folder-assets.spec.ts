@@ -252,7 +252,7 @@ test.describe("the assets of a project folder", () => {
     await expect(missing).toHaveText("缺失的资源（1）", { timeout: 10_000 });
     await missing.click();
     await explorer.getByRole("option", { name: "红色.webm" }).first().click();
-    const details = explorer.getByRole("region", { name: "详情" });
+    const details = content(page, "code").getByRole("region", { name: "详情" });
     await expect(details.getByRole("note").last()).toContainText("footage/红色.webm");
     await details.getByRole("button", { name: "改用 footage/红色.webm" }).click();
     await expect

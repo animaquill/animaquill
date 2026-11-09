@@ -79,13 +79,6 @@
   outline-offset: -1px;
 }
 
-.hint {
-  flex: none;
-  margin: 0;
-  padding: 2px 8px 4px;
-  color: var(--aq-text-muted);
-}
-
 .list {
   flex: 1;
   min-height: 0;
@@ -98,9 +91,38 @@
 }
 
 .heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
   padding: 6px 0 4px;
   color: var(--aq-text-muted);
+  font: inherit;
   font-weight: 600;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.heading:hover {
+  color: var(--aq-text);
+}
+
+.heading:focus-visible {
+  outline: 1px solid var(--aq-accent);
+  outline-offset: -1px;
+}
+
+.heading svg {
+  flex: none;
+}
+
+.count {
+  font-weight: normal;
+  opacity: 0.7;
 }
 
 .group[data-first] .heading {
@@ -113,7 +135,9 @@
   gap: 6px;
 }
 
+/* What is only there for screen readers stays inside: out of it, it would make the tab scroll. */
 .item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;

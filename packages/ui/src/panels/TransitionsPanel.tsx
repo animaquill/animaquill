@@ -1,6 +1,6 @@
 import { parseTime, toSeconds, type TransitionUse } from "@animaquill/schema";
 import { Blend } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useWorkbench } from "../app/context.ts";
@@ -18,10 +18,10 @@ import {
   TRANSITION_TYPES,
   builtInTransitions,
   firstTypeOf,
-  hintOf,
   isChosen,
   type TransitionItem,
 } from "../resources/transitions.ts";
+import type { TimelineEditor } from "../timeline/editor.ts";
 import type { Edge } from "../timeline/model.ts";
 import { TRANSITION_DRAG_TYPE, transitionDrag } from "../timeline/transition-drag.ts";
 import { canTakeEdge } from "../timeline/transition-place.ts";
@@ -65,6 +65,22 @@ export function TransitionIcon({ resource, playing }: ResourceIconProps<Transiti
 
   if (!drawn) return <Blend size={24} aria-hidden />;
   return <canvas ref={canvas} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} aria-hidden />;
+}
+
+/** What a drag of a transition carries, from any tab that lists them. */
+export function startTransitionDrag(
+  item: TransitionItem,
+  id: string,
+  event: DragEvent<HTMLElement>,
+): void {
+  event.dataTransfer.setData(TRANSITION_DRAG_TYPE, id);
+  event.dataTransfer.effectAllowed = "copy";
+  transitionDrag.start(item.pick);
+}
+
+export function endTransitionDrag(timeline: TimelineEditor): void {
+  transitionDrag.end();
+  timeline.showTransitionDrop(undefined);
 }
 
 interface AttachMenu {
@@ -130,7 +146,6 @@ export function TransitionsPanel() {
     return [[item("enter", ["enter"]), item("exit", ["exit"]), item("both", ["enter", "exit"])]];
   };
 
-  const hint = hintOf(context);
   return (
     <>
       <ResourceBrowser<TransitionItem>
@@ -144,23 +159,13 @@ export function TransitionsPanel() {
         typeName={(type) =>
           t(`transitionPanel.types.${type.slice("transition.".length) as TransitionUse}`)
         }
-        hint={
-          hint === "blocked" && context.kind === "clips" && context.blocked
-            ? t(`transitionPanel.why.${context.blocked}`)
-            : t(`transitionPanel.hint.${hint === "blocked" ? "nothing" : hint}`)
-        }
         unavailable={unavailable}
         isCurrent={(resource) => isChosen(context, resource.data)}
         Icon={TransitionIcon}
         onActivate={onActivate}
-        onDragStart={(resource, event) => {
-          event.dataTransfer.setData(TRANSITION_DRAG_TYPE, resource.id);
-          event.dataTransfer.effectAllowed = "copy";
-          transitionDrag.start(resource.data.pick);
-        }}
+        onDragStart={(resource, event) => startTransitionDrag(resource.data, resource.id, event)}
         onDragEnd={(resource, dropped) => {
-          transitionDrag.end();
-          timeline.showTransitionDrop(undefined);
+          endTransitionDrag(timeline);
           if (dropped) habits.used(resource.id);
         }}
       />

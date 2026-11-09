@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { importClips } from "./project-files.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, tabScrolls, test } from "./support.ts";
 
 /**
  * The transitions tab, and what it puts on the timeline: dragged onto a clip or a cut, or clicked
@@ -157,7 +157,11 @@ test("go on what is selected with a click, and say why where they cannot", async
   await open(page);
   // One clip: people say where.
   await page.mouse.click(...xy(await onClip(page, 2, 0.5)));
-  await expect(panel(page).getByText("点一个转场，选加在开头、结尾还是两头。")).toBeVisible();
+  await expect(panel(page).getByText(/点一个转场|前三分之一|也可以先选中/)).toHaveCount(0);
+  // The reasons for what is greyed out stay, and it all fits without the tab scrolling.
+  await expect(item(page, "叠化")).toHaveAttribute("aria-disabled", "true");
+  await expect(item(page, "叠化")).toHaveAttribute("title", /衔接转场要加在两个首尾相接的片段之间/);
+  expect(await tabScrolls(page, "transitions")).toBe(false);
   await item(page, "从左推入").click();
   await expect(page.getByRole("menuitem", { name: "加在开头（从左推入）" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "加在结尾（向右推出）" })).toBeVisible();

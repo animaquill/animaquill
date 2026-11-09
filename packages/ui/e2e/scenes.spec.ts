@@ -274,7 +274,7 @@ test.describe("a scene from the start", () => {
       await openScene(page, SLIDE);
       await expect.poll(() => squareIsAt(page, 0)).toBe(true);
       await page.getByRole("button", { name: "视图" }).click();
-      await page.getByRole("menuitem", { name: "代码" }).click();
+      await page.getByRole("menuitem", { name: "资源", exact: true }).click();
       await goTo(page, "0:03/00");
       await page.waitForTimeout(1500);
       await expect(page.getByText("浏览器没有绘制这一帧")).toHaveCount(0);
@@ -690,7 +690,12 @@ test.describe("a new scene", () => {
     await tab(page, "assets").click();
     await items(page).first().click({ button: "right" });
     await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
-    const details = content(page, "explorer").getByRole("region", { name: "详情" });
+    // A click on a scene opens its code: the details are in its menu.
+    await content(page, "explorer").getByRole("option", { name: "场景 1" }).first().click({
+      button: "right",
+    });
+    await page.getByRole("menuitem", { name: "详细信息" }).click();
+    const details = content(page, "code").getByRole("region", { name: "详情" });
     await details.getByRole("button", { name: "删除…" }).click();
     await expect(page.getByRole("dialog")).toContainText("还有 1 处在用它");
     await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click();

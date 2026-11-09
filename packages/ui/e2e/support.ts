@@ -13,6 +13,18 @@ export const content = (page: Page, type: string) => page.locator(`[data-panel="
  */
 export const resourcesIn = (page: Page, type: string) =>
   content(page, type).locator('[role="group"]:not([data-group="recent"]) [role="option"]');
+/**
+ * Whether a tab scrolls as a whole, up to the view of its group, which only happens when something in
+ * it does not fit: its lists scroll on their own.
+ */
+export const tabScrolls = (page: Page, type: string) =>
+  content(page, type).evaluate((element) => {
+    for (let at: HTMLElement | null = element as HTMLElement; at; at = at.parentElement) {
+      if (at.scrollHeight > at.clientHeight + 1 || at.scrollWidth > at.clientWidth + 1) return true;
+      if (at.classList.contains("dv-view")) return false;
+    }
+    return false;
+  });
 /** The layout menu, which is named after the layout on screen. */
 export const layoutMenu = (page: Page, name: string) =>
   page.getByRole("button", { name: `布局：${name}`, exact: true });

@@ -2737,12 +2737,75 @@ describe("changing the project from the keyboard and menus", () => {
       expect(clips()).toHaveLength(1);
     });
 
-    it("goes after what is there, on all its tracks", async () => {
+    it("goes after what is there, on all its tracks, when it was dropped", async () => {
       const { editor, clips, addClip, audio } = await withAssets();
       addClip("x", 0, 4, audio);
-      editor.addAsset("film");
+      editor.addAsset("film", { lane: 0, seconds: 0 });
       const added = clips().filter(({ id }) => id !== "x");
       expect(added.map(({ start }) => start)).toEqual(["4", "4"]);
+    });
+
+    describe("with a click, right at the playhead", () => {
+      const at = (editor: TimelineEditor, seconds: number) =>
+        editor.seek(frameAt(seconds, editor.model?.rate as never));
+      const added = (clips: () => ClipState[], ...old: string[]) =>
+        clips().filter(({ id }) => !old.includes(id));
+
+      it("goes on the track of the selected clip, when nothing is in the way there", async () => {
+        const { editor, clips, store, addClip, selection } = await withAssets();
+        store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+        addClip("x", 0, 1, "up");
+        editor.selectOnly("x");
+        at(editor, 3);
+        editor.addAsset("pic");
+        const [clip] = added(clips, "x");
+        expect(clip).toMatchObject({ track: "up", start: "3" });
+        expect(selection()).toEqual([clip?.id]);
+      });
+
+      it("goes on the first free track of the kind when that one is in the way", async () => {
+        const { editor, clips, store, addClip, video } = await withAssets();
+        store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+        addClip("x", 0, 4, "up");
+        editor.selectOnly("x");
+        at(editor, 2);
+        editor.addAsset("pic");
+        expect(added(clips, "x")[0]).toMatchObject({ track: video, start: "2" });
+      });
+
+      it("makes a track when every one of the kind is in the way, in one step", async () => {
+        const { editor, clips, addClip, video, audio, main, store } = await withAssets();
+        addClip("x", 0, 4);
+        addClip("y", 3, 4, audio);
+        const tracks = Object.keys(main().tracks).length;
+        at(editor, 3);
+        editor.addAsset("film");
+        const both = added(clips, "x", "y");
+        expect(both).toHaveLength(2);
+        expect(both.map(({ start }) => start)).toEqual(["3", "3"]);
+        expect(both.every(({ track }) => track !== video && track !== audio)).toBe(true);
+        expect(Object.keys(main().tracks)).toHaveLength(tracks + 2);
+        expect(main().clips["x"]?.duration).toBe("4");
+        store.undo();
+        expect(added(clips, "x", "y")).toEqual([]);
+        expect(Object.keys(main().tracks)).toHaveLength(tracks);
+      });
+
+      it("fits right where a clip ends, and leaves locked tracks alone", async () => {
+        const { editor, clips, store, addClip, video } = await withAssets();
+        addClip("x", 0, 2);
+        store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+        editor.updateTrack("up", { locked: true });
+        editor.selectOnly("x");
+        at(editor, 2);
+        editor.addAsset("pic");
+        expect(added(clips, "x")[0]).toMatchObject({ track: video, start: "2" });
+        at(editor, 1);
+        editor.addAsset("mute");
+        const track = clips().find(({ start }) => start === "1")?.track;
+        expect(track).not.toBe(video);
+        expect(track).not.toBe("up");
+      });
     });
 
     it("goes to the track it was dropped on, or else to one that can take it", async () => {
@@ -2785,10 +2848,23 @@ describe("changing the project from the keyboard and menus", () => {
         expect(selection()).toHaveLength(1);
       });
 
-      it("goes after what is there, unless people overwrite", async () => {
+      it("goes on a free track at the playhead, and never over what is there", async () => {
+        const { editor, clips, addClip, video, store } = await withScenes();
+        addClip("x", 0, 2);
+        editor.toggleOverwriting();
+        editor.addScene("s");
+        const scene = clips().find(({ id }) => id !== "x");
+        expect(scene?.start).toBe("0");
+        expect(scene?.track).not.toBe(video);
+        expect(clips().find(({ id }) => id === "x")?.duration).toBe("2");
+        store.undo();
+        expect(clips()).toHaveLength(1);
+      });
+
+      it("a new one still goes after what is there", async () => {
         const { editor, clips, addClip } = await withScenes();
         addClip("x", 0, 2);
-        editor.addScene("s");
+        editor.createScene();
         expect(clips().find(({ id }) => id !== "x")?.start).toBe("2");
       });
 
