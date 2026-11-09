@@ -49,6 +49,17 @@ export type AssetIssue =
       readonly path: string;
     };
 
+/** Files read through for their hashes right now, which takes a while for a large video. */
+export interface AssetProgress {
+  readonly reading: readonly { readonly path: string; readonly percent: number }[];
+  /** Of those, the ones that something waits for to show them, such as the preview. */
+  readonly waiting: readonly string[];
+  /** How far a comparison of all the files with the project is, while one runs. */
+  readonly checked?: { readonly done: number; readonly total: number };
+}
+
+export const NO_PROGRESS: AssetProgress = { reading: [], waiting: [] };
+
 export interface FolderAssetsOptions {
   /** The folder of the project, which can be another one after people found it again. */
   readonly folder: () => LocalFolder;
@@ -58,6 +69,33 @@ export interface FolderAssetsOptions {
   /** What the browser keeps for the project that it can make again. */
   readonly browser: MediaStore;
   readonly hasher?: Hasher;
+  /**
+   * Files that turned out to have changed although their size and time did not say so: whatever
+   * holds on to one, or what was made of it, has to look again.
+   */
+  readonly onChanged?: (paths: readonly string[]) => void;
+  readonly onProgress?: (progress: AssetProgress) => void;
+  /** The clock, for tests. */
+  readonly now?: () => number;
+}
+
+/** How fine the times of files can be, as on a FAT drive: a file changed within it may change again unseen. */
+export const RACY_MS = 2000;
+
+/** The pieces that a kept hash is checked with, see `FolderHash.samples`. */
+const SAMPLE_BYTES = 64 * 1024;
+
+/** The pieces at the start, the middle and the end, hashed: for a small file, all of it. */
+async function samplesOf(file: Blob): Promise<string> {
+  const middle = Math.max(0, Math.floor(file.size / 2) - SAMPLE_BYTES / 2);
+  const end = Math.max(0, file.size - SAMPLE_BYTES);
+  const pieces = new Blob([
+    file.slice(0, SAMPLE_BYTES),
+    file.slice(middle, middle + SAMPLE_BYTES),
+    file.slice(end),
+  ]);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await pieces.arrayBuffer()));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** A content hash, which is what assets are known by: everything else is made by the editor. */
@@ -73,32 +111,75 @@ const isInAssets = (path: string): boolean => path.startsWith(`${ASSETS_FOLDER}/
 const isStill = (known: FolderHash | undefined, file: File): known is FolderHash =>
   known !== undefined && known.size === file.size && known.lastModified === file.lastModified;
 
+/** A time far ahead of the clock is a clock that is off, as on another computer, and no file being written. */
+const SKEWED_MS = 60_000;
+
+/** A hash of a file that changed right before it was read, which does not hold yet. */
+const isRacy = ({ hashedAt, lastModified }: FolderHash): boolean =>
+  hashedAt === undefined ||
+  (lastModified > hashedAt - RACY_MS && lastModified < hashedAt + SKEWED_MS);
+
+/** How a file is read, see `FolderAssets.fileAt`. */
+export interface Reading {
+  /** Only a hash found out since then holds, as for an export, which reads every file again. */
+  readonly since?: number;
+}
+
 const isNamed = (error: unknown, name: string): boolean =>
   typeof error === "object" && error !== null && (error as { name?: unknown }).name === name;
 
 export class FolderAssets {
   readonly #options: FolderAssetsOptions;
   readonly #hasher: Hasher;
+  readonly #now: () => number;
   /** What was found out in this window, so that the database is asked once for each. */
   readonly #known = new Map<string, FolderHash>();
   /** Hashes on their way, by path, size and time: one read for all who want one. */
-  readonly #hashing = new Map<string, Promise<string>>();
+  readonly #hashing = new Map<string, Promise<FolderHash>>();
+  /** How far each file that is read for its hash got, by path. */
+  readonly #reading = new Map<string, number>();
+  /** How many want each file right now, by path. */
+  readonly #wanted = new Map<string, number>();
+  #checked: AssetProgress["checked"];
+  /** Files to read again once a moment went by since they changed, see `RACY_MS`. */
+  readonly #later = new Map<string, ReturnType<typeof setTimeout>>();
+  #stopped = false;
 
   constructor(options: FolderAssetsOptions) {
     this.#options = options;
     this.#hasher = options.hasher ?? hasherHere;
+    this.#now = options.now ?? Date.now;
   }
 
   get #folder(): LocalFolder {
     return this.#options.folder();
   }
 
+  /** Lets go, once the project is not open any more. */
+  stop(): void {
+    this.#stopped = true;
+    for (const timer of this.#later.values()) clearTimeout(timer);
+    this.#later.clear();
+  }
+
+  #progressed(): void {
+    const reading = [...this.#reading].map(([path, percent]) => ({ path, percent }));
+    const waiting = [...this.#wanted.keys()].filter((path) => this.#reading.has(path));
+    this.#options.onProgress?.({
+      reading,
+      waiting,
+      ...(this.#checked && { checked: this.#checked }),
+    });
+  }
+
   /**
    * The file at a path and its hash. The hash is found out once for each size and time of the
-   * file, as Git does: reading a large video again each time is what this saves. A file that
-   * changed while it was read is read again once, see `LocalFolder.file`.
+   * file, as Git does: reading a large video again each time is what this saves. A kept hash is
+   * checked with pieces of the file, and holds only for a file that did not change right before it
+   * was read, see `FolderHash`. A file that changed while it was read is read again once, see
+   * `LocalFolder.file`.
    */
-  async fileAt(path: string): Promise<AssetFile> {
+  async fileAt(path: string, reading: Reading = {}): Promise<AssetFile> {
     for (let attempt = 1; ; attempt++) {
       let file: File;
       try {
@@ -113,7 +194,7 @@ export class FolderAssets {
         return { kind: "unknown" };
       }
       try {
-        return { kind: "there", file, hash: await this.#hashOf(path, file) };
+        return { kind: "there", file, hash: await this.#hashOf(path, file, reading) };
       } catch (error) {
         if (attempt === 1 && isNamed(error, "NotReadableError")) continue;
         if (isNamed(error, "NotFoundError")) return { kind: "missing" };
@@ -122,30 +203,100 @@ export class FolderAssets {
     }
   }
 
-  async #hashOf(path: string, file: File): Promise<string> {
-    const kept = this.#known.get(path);
-    if (isStill(kept, file)) return kept.hash;
+  async #hashOf(path: string, file: File, { since }: Reading): Promise<string> {
     const { bases, key } = this.#options;
-    const stored = await bases.hashOf(key, path).catch(() => undefined);
-    if (isStill(stored, file)) {
-      this.#known.set(path, stored);
-      return stored.hash;
+    let kept = this.#known.get(path);
+    if (!isStill(kept, file)) {
+      const stored = await bases.hashOf(key, path).catch(() => undefined);
+      if (isStill(stored, file)) this.#known.set(path, stored);
+      kept = stored;
     }
+    const holds =
+      isStill(kept, file) &&
+      !isRacy(kept) &&
+      (since === undefined || (kept.hashedAt ?? 0) >= since) &&
+      kept.samples !== undefined &&
+      kept.samples === (await samplesOf(file));
+    if (holds && kept) return kept.hash;
+    const found = await this.#readThrough(path, file);
+    // Its size and time said it was the file it was, and it is not.
+    if (isStill(kept, file) && !isSameHash(kept.hash, found.hash))
+      this.#options.onChanged?.([path]);
+    return found.hash;
+  }
+
+  /** Reads all of a file for its hash, once for all who want it, and notes it down. */
+  async #readThrough(path: string, file: File): Promise<FolderHash> {
     const job = `${path}\n${file.size}\n${file.lastModified}`;
     let hashing = this.#hashing.get(job);
     if (!hashing) {
-      hashing = this.#hasher.file(file).finally(() => this.#hashing.delete(job));
+      const hashedAt = this.#now();
+      this.#reading.set(path, 0);
+      this.#progressed();
+      const onProgress = (bytes: number) => {
+        const percent = file.size > 0 ? Math.floor((bytes / file.size) * 100) : 100;
+        if (this.#reading.get(path) === percent) return;
+        this.#reading.set(path, percent);
+        this.#progressed();
+      };
+      hashing = Promise.all([this.#hasher.file(file, { onProgress }), samplesOf(file)])
+        .then(([hash, samples]) => {
+          const found = {
+            path,
+            size: file.size,
+            lastModified: file.lastModified,
+            hash,
+            samples,
+            hashedAt,
+          };
+          this.#note(found);
+          return found;
+        })
+        .finally(() => {
+          this.#hashing.delete(job);
+          this.#reading.delete(path);
+          this.#progressed();
+        });
       this.#hashing.set(job, hashing);
     }
-    const hash = await hashing;
-    this.#note({ path, size: file.size, lastModified: file.lastModified, hash });
-    return hash;
+    return hashing;
   }
 
   #note(hash: FolderHash): void {
     this.#known.set(hash.path, hash);
     const { bases, key } = this.#options;
     void bases.keepHash(key, hash).catch(() => {});
+    if (isRacy(hash)) this.#lookAgainLater(hash);
+  }
+
+  /**
+   * Reads a file that changed right before its hash was found out again, once a moment went by:
+   * then its hash holds, and whatever wants it later does not wait for that.
+   */
+  #lookAgainLater({ path, lastModified }: FolderHash): void {
+    if (this.#stopped || this.#later.has(path)) return;
+    const wait = Math.max(0, lastModified + RACY_MS - this.#now()) + 100;
+    this.#later.set(
+      path,
+      setTimeout(() => {
+        this.#later.delete(path);
+        if (!this.#stopped) void this.fileAt(path);
+      }, wait),
+    );
+  }
+
+  /** Whatever wants a file waits for it, which people may have to know, see `AssetProgress`. */
+  async #wantedFile(path: string, reading: Reading): Promise<AssetFile> {
+    this.#wanted.set(path, (this.#wanted.get(path) ?? 0) + 1);
+    this.#progressed();
+    try {
+      return await this.fileAt(path, reading);
+    } finally {
+      const left = (this.#wanted.get(path) ?? 1) - 1;
+      if (left > 0) this.#wanted.set(path, left);
+      else this.#wanted.delete(path);
+      this.#progressed();
+    }
   }
 
   /**
@@ -153,7 +304,10 @@ export class FolderAssets {
    * while it is still that file; what the editor makes, from the browser. `assets` are those of
    * the project as it is now, also while it opens.
    */
-  media(assets: () => Readonly<Record<string, Asset>> | undefined): MediaStore {
+  media(
+    assets: () => Readonly<Record<string, Asset>> | undefined,
+    reading: Reading = {},
+  ): MediaStore {
     const { browser } = this.#options;
     return {
       put: (hash, file) =>
@@ -166,7 +320,7 @@ export class FolderAssets {
           .filter((asset) => asset.hash !== undefined && isSameHash(asset.hash, hash))
           .map(({ path }) => path);
         for (const path of new Set(paths)) {
-          const found = await this.fileAt(path);
+          const found = await this.#wantedFile(path, reading);
           if (found.kind === "there" && isSameHash(found.hash, hash)) return found.file;
         }
         return undefined;
@@ -202,6 +356,7 @@ export class FolderAssets {
     }
     for (let attempt = 1; ; attempt++) {
       const path = `${ASSETS_FOLDER}/${newNameFor(file.name, taken, ASSETS_FOLDER)}`;
+      const hashedAt = this.#now();
       const copy = this.#hasher.copy(file);
       let written: File;
       try {
@@ -212,9 +367,11 @@ export class FolderAssets {
         });
       } catch (error) {
         copy.abandon();
-        // Another window, or another program, took the name just now, or an empty folder has it.
+        // Another window, or another program, took the name just now, or an empty folder has it,
+        // or another file that comes in under that name is being written.
         const isTaken =
-          error instanceof FolderError && (error.reason === "changed" || error.reason === "exists");
+          error instanceof FolderError &&
+          (error.reason === "changed" || error.reason === "exists" || error.reason === "busy");
         if (isTaken && attempt < 5) {
           taken.add(path.slice(ASSETS_FOLDER.length + 1));
           continue;
@@ -222,7 +379,8 @@ export class FolderAssets {
         throw error;
       }
       const hash = (await copy.hash()) ?? (await this.#hasher.file(written));
-      this.#note({ path, size: written.size, lastModified: written.lastModified, hash });
+      const { size, lastModified } = written;
+      this.#note({ path, size, lastModified, hash, samples: await samplesOf(written), hashedAt });
       return { path, hash, written };
     }
   }
@@ -245,24 +403,30 @@ export class FolderAssets {
       readonly hash: string;
       readonly size: number;
     }[] = [];
-    for (const [asset, { path, hash, size, storage }] of Object.entries(
-      store.getState().assets ?? {},
-    )) {
-      // What is somewhere else on purpose has no file here.
-      if (storage === "remote") continue;
-      const found = await this.fileAt(path);
-      if (found.kind === "unknown") continue;
-      if (found.kind === "missing") {
-        const hidden = path.split("/").find(isRefusedByChrome);
-        if (hidden !== undefined) issues.push({ kind: "missing", asset, path, hidden });
-        else if (hash !== undefined && size !== undefined)
-          missing.push({ asset, path, hash, size });
-        else issues.push({ kind: "missing", asset, path });
-        continue;
+    const all = Object.entries(store.getState().assets ?? {});
+    try {
+      for (const [index, [asset, { path, hash, size, storage }]] of all.entries()) {
+        this.#checked = { done: index, total: all.length };
+        this.#progressed();
+        // What is somewhere else on purpose has no file here.
+        if (storage === "remote") continue;
+        const found = await this.fileAt(path);
+        if (found.kind === "unknown") continue;
+        if (found.kind === "missing") {
+          const hidden = path.split("/").find(isRefusedByChrome);
+          if (hidden !== undefined) issues.push({ kind: "missing", asset, path, hidden });
+          else if (hash !== undefined && size !== undefined)
+            missing.push({ asset, path, hash, size });
+          else issues.push({ kind: "missing", asset, path });
+          continue;
+        }
+        if (hash !== undefined && !isSameHash(hash, found.hash)) {
+          issues.push({ kind: "changed", asset, path });
+        }
       }
-      if (hash !== undefined && !isSameHash(hash, found.hash)) {
-        issues.push({ kind: "changed", asset, path });
-      }
+    } finally {
+      this.#checked = undefined;
+      this.#progressed();
     }
     if (missing.length > 0) {
       const places = await this.#lookFor(missing, store);
@@ -300,7 +464,7 @@ export class FolderAssets {
           continue;
         }
         if (!sizes.has(file.size)) continue;
-        const hash = await this.#hashOf(path, file).catch(() => undefined);
+        const hash = await this.#hashOf(path, file, {}).catch(() => undefined);
         const match = hash && missing.find((each) => isSameHash(each.hash, hash));
         if (match && !found.has(match.hash)) found.set(match.hash, path);
         if (found.size === missing.length) break;
@@ -309,6 +473,35 @@ export class FolderAssets {
       // The folder cannot be looked through now: what is missing is still missing.
     }
     return found;
+  }
+
+  /**
+   * Takes away the empty files in the assets folder that no asset has: what a copy that stopped
+   * with the page leaves. Nothing else, and none that is being written, or that changed meanwhile.
+   */
+  async removeEmpty(store: ProjectStore): Promise<readonly string[]> {
+    const used = new Set(Object.values(store.getState().assets ?? {}).map(({ path }) => path));
+    const folder = this.#folder;
+    const removed: string[] = [];
+    try {
+      for await (const path of folder.list({
+        includes: (inner, kind) =>
+          kind === "folder" ? inner === ASSETS_FOLDER || isInAssets(inner) : isInAssets(inner),
+      })) {
+        if (used.has(path)) continue;
+        const file = await folder.file(path).catch(() => undefined);
+        if (file?.size !== 0) continue;
+        try {
+          await folder.remove(path, { expected: file });
+          removed.push(path);
+        } catch {
+          // Being written, or not empty any more: it stays.
+        }
+      }
+    } catch {
+      // The folder cannot be looked through now: the next time.
+    }
+    return removed;
   }
 
   /**

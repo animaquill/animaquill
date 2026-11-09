@@ -1446,7 +1446,7 @@
     "movedNo": "不是，当作新的打开",
     "reading": "正在读取“{{folder}}”",
     "goneTitle": "找不到“{{name}}”的文件夹",
-    "goneMessage": "文件夹可能被移动、改名或者删除了。移动或改名的，重新找到它就接着用；删除了的，可以从这个浏览器里的内容存到新位置。",
+    "goneMessage": "文件夹可能被移动、改名或者删除了。移动或改名的，重新找到它就接着用。删除了的，可以从这个浏览器里的内容存到新位置，但素材文件不在浏览器里，不会一起存过去。",
     "findAgain": "重新找到…",
     "reconnect": {
       "gone": "找不到选的文件夹。",
@@ -1556,6 +1556,26 @@
       "checking": "正在核对“{{name}}” {{percent}}%",
       "copying": "正在把“{{name}}”复制进项目文件夹 {{percent}}%",
       "stop": "停止"
+    },
+    "elsewhereTitle": "把“{{name}}”存到新位置",
+    "elsewhereMessage": "会把这个浏览器里有的文档写进你选的文件夹。素材文件不在浏览器里，不会一起存过去。原来的文件夹只是挪了位置的话，请选“重新找到…”，素材也都还在。",
+    "chooseNewPlace": "选新位置…",
+    "assetsLeftBehind": "素材文件没有跟着存过来：把原来项目文件夹里的 assets 文件夹（和别的素材文件）拷到这里，就能接上。",
+    "undoneNothingKept": "已撤销这次并入。",
+    "undoNotKept": "没有撤销：外面那一版没能先备份（{{reason}}），撤销会把它丢掉。",
+    "undoElsewhere": "没有撤销：这个窗口现在不写这个文件夹了。",
+    "notKept": {
+      "full": "磁盘满了",
+      "denied": "需要重新允许访问文件夹",
+      "busy": "文件被别的程序占着",
+      "too-long": "路径可能太长",
+      "gone": "找不到文件夹",
+      "other": "写不进项目文件夹"
+    },
+    "checking": {
+      "progress": "正在核对素材 {{done}}/{{total}}",
+      "reading": "正在核对“{{path}}” {{percent}}%",
+      "waiting": "正在核对素材，预览在等：{{paths}}"
     }
   }
 }

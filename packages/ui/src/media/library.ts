@@ -81,6 +81,12 @@ export interface Copying {
   readonly stop: () => void;
 }
 
+/** Whether the file of an asset is at its path, and is still that file. */
+async function hasItsFile(folder: FolderAssets, path: string, hash: string): Promise<boolean> {
+  const found = await folder.fileAt(path);
+  return found.kind === "there" && isSameHash(found.hash, hash);
+}
+
 async function hashOf(file: Blob): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return formatHash(new Uint8Array(digest));
@@ -445,7 +451,8 @@ export class MediaLibrary {
           onProgress: (bytes) => show("checking", bytes),
         });
         const known = sameSize.find(([, asset]) => isSameHash(asset.hash as string, hash));
-        if (known && (await folder.fileAt(known[1].path)).kind === "there") return known[0];
+        // Only where that very file is still at its path: one put in its place is not it.
+        if (known && (await hasItsFile(folder, known[1].path, hash))) return known[0];
       }
       this.#copying = undefined;
       this.#emitter.emit();
@@ -469,9 +476,10 @@ export class MediaLibrary {
         ([, asset]) => asset.hash !== undefined && isSameHash(asset.hash, copied.hash),
       );
       if (!known) return this.#add(store, file, copied.path, copied.hash, facts);
-      // The project has it: the copy goes, unless the one it has is not there any more.
+      // The project has it: the copy goes, unless the file it has is not there any more, or another
+      // file took its place, which stays as it is: then the asset gets the copy.
       const [id, asset] = known;
-      if ((await folder.fileAt(asset.path)).kind === "there") {
+      if (await hasItsFile(folder, asset.path, copied.hash)) {
         await folder.remove(copied.path, copied.written);
         return id;
       }
@@ -480,7 +488,7 @@ export class MediaLibrary {
         params: { asset: id, changes: { path: copied.path } },
       });
       if (!result.ok) this.#messages.commandFailed(result.error.message);
-      this.filesChanged([copied.path]);
+      this.filesChanged([copied.path, asset.path]);
       return id;
     } catch (error) {
       if (signal.aborted) return undefined;

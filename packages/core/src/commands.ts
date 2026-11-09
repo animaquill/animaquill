@@ -118,6 +118,17 @@ function trackOf(timeline: TimelineState, id: string): TrackState {
   return entryOf(timeline.tracks, id) ?? fail("not-found", `没有这条轨道：${id}`);
 }
 
+/**
+ * Whether a source of a clip shows or plays the file of this asset, also one of a plugin, which
+ * says so where it likes, as `src: { asset }`.
+ */
+function usesAsset(source: unknown, asset: string, depth = 0): boolean {
+  if (typeof source !== "object" || source === null || depth > 4) return false;
+  return Object.entries(source).some(
+    ([key, value]) => (key === "asset" && value === asset) || usesAsset(value, asset, depth + 1),
+  );
+}
+
 /** A locked track protects its clips from everyone, also from AI tasks. */
 function editableTrack(timeline: TimelineState, id: string): TrackState {
   const track = trackOf(timeline, id);
@@ -488,6 +499,22 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { asset, changes }) => {
       const found = entryOf(draft.state.assets, asset);
       if (!found) fail("not-found", `没有这个素材：${asset}`);
+      // Another file is another picture for its clips, which a locked track keeps from everyone.
+      for (const timeline of Object.values(draft.state.timelines)) {
+        for (const clip of Object.values(timeline.clips)) {
+          if (!usesAsset(clip.source, asset)) continue;
+          const track = entryOf(timeline.tracks, clip.track);
+          if (track?.locked) fail("track-locked", `轨道已锁定：${track.name ?? track.id}`);
+        }
+        for (const { clips } of Object.values(timeline.overrides)) {
+          for (const [clip, changed] of Object.entries(clips ?? {})) {
+            if (!changed.source || !usesAsset(changed.source.value, asset)) continue;
+            const on = entryOf(timeline.clips, clip);
+            const track = on && entryOf(timeline.tracks, on.track);
+            if (track?.locked) fail("track-locked", `轨道已锁定：${track.name ?? track.id}`);
+          }
+        }
+      }
       const defined = Object.fromEntries(
         Object.entries(changes).filter(([, value]) => value !== undefined),
       );

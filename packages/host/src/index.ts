@@ -471,6 +471,16 @@ export interface FolderHash {
   readonly lastModified: number;
   /** As a project writes it down, see `hashFile`. */
   readonly hash: string;
+  /**
+   * A hash of pieces at the start, the middle and the end, quick to find out again: another file
+   * of the same size and time shows by that, as one that a program put back keeping the time.
+   */
+  readonly samples?: string;
+  /**
+   * When reading the file for its hash began. A file that changed less than a moment before may
+   * change again without its time changing, as Git knows, so its hash holds only once looked again.
+   */
+  readonly hashedAt?: number;
 }
 
 export interface FolderBases {

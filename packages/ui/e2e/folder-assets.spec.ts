@@ -6,12 +6,16 @@
  */
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   copyFileSync,
   existsSync,
+  ftruncateSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   renameSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -227,6 +231,55 @@ test.describe("the assets of a project folder", () => {
       .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
       .toContain("footage/红色.webm");
     await expect(problems(page)).not.toContainText("footage/红色.webm");
+  });
+});
+
+/** How a project writes down the hash of so many zeros, without having them in memory. */
+function hashOfZeros(bytes: number): string {
+  const hash = createHash("sha256");
+  const piece = Buffer.alloc(1024 * 1024);
+  for (let left = bytes; left > 0; left -= piece.length) {
+    hash.update(left >= piece.length ? piece : piece.subarray(0, left));
+  }
+  return `sha256-${hash.digest("base64").replaceAll("+", "-").replaceAll("/", "_")}`;
+}
+
+test.describe("a project folder opened for the first time in a browser", () => {
+  test("says which files it reads for their hashes, and which the preview waits for", async ({
+    page,
+  }) => {
+    const disk = projectOnDisk();
+    // A large video, as far as reading it goes: the disk keeps no zeros for it.
+    const size = 1200 * 1024 * 1024;
+    mkdirSync(join(disk, "assets"), { recursive: true });
+    const handle = openSync(join(disk, "assets/大.mp4"), "w");
+    ftruncateSync(handle, size);
+    closeSync(handle);
+    const listed = JSON.parse(text(disk, "assets.json"));
+    Object.assign(listed.assets.interview, {
+      path: "assets/大.mp4",
+      size,
+      hash: hashOfZeros(size),
+    });
+    writeFileSync(join(disk, "assets.json"), JSON.stringify(listed, null, 2));
+    // Its clip first, where the playhead is.
+    const timeline = JSON.parse(text(disk, "timelines/main/timeline.json"));
+    for (const track of timeline.tracks) {
+      for (const clip of track.clips) {
+        if (clip.id === "clip_interview") clip.start = "0";
+        if (clip.id === "clip_title") clip.start = "12.5";
+      }
+    }
+    writeFileSync(join(disk, "timelines/main/timeline.json"), JSON.stringify(timeline, null, 2));
+    await drop(page, disk);
+    await dialog(page).getByRole("button", { name: "知道了，打开项目" }).click();
+    const waiting = content(page, "preview").getByRole("status").filter({ hasText: "预览在等" });
+    await expect(waiting).toContainText("正在核对素材，预览在等：assets/大.mp4", {
+      timeout: 10_000,
+    });
+    await tab(page, "assets").click();
+    const reading = assets(page).getByRole("status").filter({ hasText: "正在核对" });
+    await expect(reading).toContainText("正在核对“assets/大.mp4”");
   });
 });
 

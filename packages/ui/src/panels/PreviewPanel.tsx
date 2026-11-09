@@ -10,6 +10,7 @@ import { PreviewOverlay } from "../overlay/PreviewOverlay.tsx";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
+import { NO_PROGRESS } from "../folder/assets.ts";
 
 /**
  * The compositor. A new one of these is the only way out of one that hangs: going to another address
@@ -98,6 +99,28 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
   );
 }
 
+/** Files of a project folder that the picture waits for while they are read for their hashes. */
+function WaitingForFiles() {
+  const { projectFolders } = useWorkbench();
+  const { t } = useTranslation();
+  const progress = useSyncExternalStore(
+    projectFolders?.subscribeProgress ?? noSubscription,
+    projectFolders?.getProgress ?? noProgress,
+  );
+  if (progress.waiting.length === 0) return null;
+  return (
+    <div className={styles.waiting} role="status">
+      {t("folder.checking.waiting", {
+        paths: progress.waiting.join("、"),
+        interpolation: { escapeValue: false },
+      })}
+    </div>
+  );
+}
+
+const noSubscription = () => () => {};
+const noProgress = () => NO_PROGRESS;
+
 export function PreviewPanel() {
   const { timeline, preview, trials } = useWorkbench();
   const { t } = useTranslation();
@@ -121,6 +144,7 @@ export function PreviewPanel() {
           </>
         )}
         <PreviewNotices onRetry={(layer) => link.current?.retryScene(layer)} />
+        <WaitingForFiles />
         {count > 0 && (
           <div className={styles.showing} data-comparing={comparing || undefined} role="status">
             {comparing ? t("trial.showingSaved") : t("trial.showingTrial")}

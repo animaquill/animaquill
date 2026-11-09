@@ -5,20 +5,27 @@
  * `FolderSession`. What is in a folder and what this browser keeps of it is `FolderProjects`; this
  * is the part that asks people and tells them.
  */
-import type { ProjectStore } from "@animaquill/core";
-import type {
-  AccessAnswer,
-  FolderRecord,
-  FolderStatus,
-  LocalEntry,
-  LocalFolder,
-  LocalFolders,
-  MediaStore,
-  ProjectAddress,
-  ProjectLibrary,
+import { isNoneOfIt, type ProjectStore } from "@animaquill/core";
+import {
+  FolderError,
+  type AccessAnswer,
+  type FolderRecord,
+  type FolderStatus,
+  type LocalEntry,
+  type LocalFolder,
+  type LocalFolders,
+  type MediaStore,
+  type ProjectAddress,
+  type ProjectLibrary,
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
-import { FolderAssets, type AssetIssue } from "../folder/assets.ts";
+import {
+  FolderAssets,
+  NO_PROGRESS,
+  type AssetIssue,
+  type AssetProgress,
+} from "../folder/assets.ts";
+import { isProjectFile } from "../folder/project-files.ts";
 import {
   FolderProjects,
   type FolderLook,
@@ -120,6 +127,8 @@ interface Current {
   checkTimer?: ReturnType<typeof setTimeout>;
   checking?: Promise<void> | undefined;
   checkAgain?: boolean;
+  /** Written to a new place from what the browser had, without the files of its assets. */
+  readonly relocated: boolean;
 }
 
 type Listed = Parameters<ProblemList["setFolder"]>[0][number];
@@ -156,6 +165,8 @@ export class ProjectFolders {
    * whatever wants a file of it gets it from the folder, see `mediaFor`.
    */
   #assets: { readonly key: string; readonly assets: FolderAssets } | undefined;
+  readonly #progressEmitter = new Emitter();
+  #progress: AssetProgress = NO_PROGRESS;
 
   constructor(options: ProjectFoldersOptions) {
     this.#options = options;
@@ -181,11 +192,26 @@ export class ProjectFolders {
     return opened && store && projectKeyOf(store) === opened.key ? opened.assets : undefined;
   }
 
-  /** What files of the project this is kept by, where it is the open folder, see `FolderAssets`. */
-  mediaFor(key: string): MediaStore | undefined {
+  /**
+   * What files of the project this is kept by, where it is the open folder, see `FolderAssets`.
+   * `since` is for an export: every file it reads is read all through again, once since then.
+   */
+  mediaFor(key: string, since?: number): MediaStore | undefined {
     const opened = this.#assets;
     if (opened?.key !== key) return undefined;
-    return opened.assets.media(() => this.#options.session.store?.getState().assets);
+    return opened.assets.media(
+      () => this.#options.session.store?.getState().assets,
+      since === undefined ? {} : { since },
+    );
+  }
+
+  /** Which files of the open project folder are read for their hashes now, see `AssetProgress`. */
+  subscribeProgress = this.#progressEmitter.subscribe;
+  getProgress = (): AssetProgress => this.#progress;
+
+  #setProgress(progress: AssetProgress): void {
+    this.#progress = progress;
+    this.#progressEmitter.emit();
   }
 
   /**
@@ -219,7 +245,8 @@ export class ProjectFolders {
         continue;
       }
       const path = await folder?.pathOf(entry).catch(() => undefined);
-      if (path) {
+      // A file of a scene, a sound or code belongs to that: an asset gets a copy of its own.
+      if (path && !isProjectFile(path) && !isNoneOfIt(path)) {
         inside.push(path);
         continue;
       }
@@ -259,7 +286,22 @@ export class ProjectFolders {
       })
       .then((issues) => {
         if (this.#current !== current) return;
-        this.#assetNotes = issues.map((issue) => this.#assetProblem(current, issue));
+        const { t } = this.#options;
+        // Written somewhere new without its files: they are where the project was before.
+        const leftBehind =
+          current.relocated && issues.some(({ kind }) => kind === "missing")
+            ? [
+                {
+                  severity: "warning" as const,
+                  text: t("folder.assetsLeftBehind"),
+                  origin: t("folder.origin"),
+                },
+              ]
+            : [];
+        this.#assetNotes = [
+          ...leftBehind,
+          ...issues.map((issue) => this.#assetProblem(current, issue)),
+        ];
         this.#changed();
       })
       .finally(() => {
@@ -383,6 +425,7 @@ export class ProjectFolders {
     this.#current = undefined;
     if (this.#assets?.assets === current.assets) this.#assets = undefined;
     current.stop();
+    this.#setProgress(NO_PROGRESS);
     this.#notes = [];
     this.#assetNotes = [];
     this.#changed();
@@ -509,8 +552,21 @@ export class ProjectFolders {
    * Writes the whole project of a folder that is gone to a new place, which people choose as for a
    * new project, from what this browser has of it. From then on that is its folder.
    */
-  async saveElsewhere(record: FolderRecord): Promise<void> {
-    const { notifications, t } = this.#options;
+  async saveElsewhere(record: FolderRecord, { asked = false } = {}): Promise<void> {
+    const { dialogs, notifications, t } = this.#options;
+    if (!asked) {
+      // The files of the assets are not in the browser: a folder that only moved has them.
+      const answer = await dialogs.choose({
+        title: t("folder.elsewhereTitle", { name: record.name }),
+        message: t("folder.elsewhereMessage"),
+        choices: [
+          { id: "find", label: t("folder.findAgain") },
+          { id: "elsewhere", label: t("folder.chooseNewPlace"), kind: "primary" },
+        ],
+      });
+      if (answer === "find") await this.findAgain(record);
+      if (answer !== "elsewhere") return;
+    }
     const chosen = await this.#choose();
     if (!chosen) return;
     const place = await this.#placeFor(chosen, record.name);
@@ -527,7 +583,7 @@ export class ProjectFolders {
       return;
     }
     this.#setWaiting(undefined);
-    await this.#options.changeProject(() => this.#open(moved));
+    await this.#options.changeProject(() => this.#open(moved, { relocated: true }));
   }
 
   /** Lets the editor at the open folder again, after the browser took that back. */
@@ -842,11 +898,11 @@ export class ProjectFolders {
       ],
     });
     if (answer === "find") await this.findAgain(record);
-    if (answer === "elsewhere") await this.saveElsewhere(record);
+    if (answer === "elsewhere") await this.saveElsewhere(record, { asked: true });
   }
 
   /** Opens the project of a folder this browser knows, and keeps the folder in step. */
-  async #open(record: FolderRecord): Promise<boolean> {
+  async #open(record: FolderRecord, { relocated = false } = {}): Promise<boolean> {
     const { session, folders, timing, t } = this.#options;
     // A newer editor wrote it: this one does not open it, and leaves the files as they are.
     if (await this.projects.isTooNew(record.folder).catch(() => false)) {
@@ -865,13 +921,22 @@ export class ProjectFolders {
     ({ report } = prepared);
     if (report) await this.#options.warnAboutCode(report);
     let folderSession: FolderSession | undefined;
-    const assets = new FolderAssets({
+    const assets: FolderAssets = new FolderAssets({
       folder: () => folderSession?.folder ?? record.folder,
       key: record.id,
       bases: folders.bases,
       // What the editor makes of the files stays in the browser.
       browser: this.#options.projects.media(record.id),
       ...(this.#options.hasher && { hasher: this.#options.hasher }),
+      onChanged: (paths) => {
+        const current = this.#current;
+        if (current?.assets !== assets) return;
+        this.#options.assetFiles.filesChanged(paths);
+        this.#checkSoon(current);
+      },
+      onProgress: (progress) => {
+        if (this.#assets?.assets === assets) this.#setProgress(progress);
+      },
     });
     this.#assets = { key: record.id, assets };
     const isOpen = await session.open(record.id).catch((error: unknown) => {
@@ -898,10 +963,12 @@ export class ProjectFolders {
       store,
       assets,
       record,
+      relocated,
       stop: () => {
         for (const stop of stops) stop();
         clearTimeout(current.checkTimer);
         current.assetWatch?.stop();
+        assets.stop();
       },
     };
     stops.push(
@@ -922,6 +989,8 @@ export class ProjectFolders {
     if (this.#current === current) {
       this.#watchAssets(current);
       void this.#check(current);
+      // What a copy that stopped with the page left behind.
+      void assets.removeEmpty(store);
     }
     await this.projects.opened(record, store.getState().manifest.name).catch((error: unknown) => {
       console.warn("When the folder was opened could not be noted down", error);
@@ -989,26 +1058,51 @@ export class ProjectFolders {
     const { notifications, t } = this.#options;
     const current = this.#current;
     if (current?.store !== store) return;
-    await current.session.keep(merge.files).catch((error: unknown) => {
+    // What the folder has now goes, so it is kept first, or nothing is taken back.
+    let kept: readonly string[] | undefined;
+    try {
+      kept = await current.session.keep(merge.files);
+    } catch (error) {
       console.warn("What the folder had could not be kept before taking it back", error);
-    });
+      notifications.push(t("folder.undoNotKept", { reason: this.#reasonOf(error) }));
+      return;
+    }
+    if (kept === undefined) {
+      notifications.push(t("folder.undoElsewhere"));
+      return;
+    }
     const result = store.undoOrigin(merge.origin);
     if (!result.ok) {
       notifications.push(t("folder.undoFailed", { message: result.error.message }));
       return;
     }
-    notifications.push(t("folder.undone", { folder: RECOVERED_FOLDER }), {
-      actions: [
-        {
-          label: t("folder.redoMerge"),
-          run: () => {
-            const again = store.redoOrigin(merge.origin);
-            if (!again.ok)
-              notifications.push(t("folder.undoFailed", { message: again.error.message }));
+    // Where it went, as it was written: the folder of this time in RECOVERED_FOLDER.
+    const [first] = kept;
+    const place = first?.split("/").slice(0, 3).join("/");
+    notifications.push(
+      place === undefined ? t("folder.undoneNothingKept") : t("folder.undone", { folder: place }),
+      {
+        actions: [
+          {
+            label: t("folder.redoMerge"),
+            run: () => {
+              const again = store.redoOrigin(merge.origin);
+              if (!again.ok)
+                notifications.push(t("folder.undoFailed", { message: again.error.message }));
+            },
           },
-        },
-      ],
-    });
+        ],
+      },
+    );
+  }
+
+  /** Why something could not be written into the folder, for people. */
+  #reasonOf(error: unknown): string {
+    const { t } = this.#options;
+    const known = ["full", "denied", "busy", "too-long", "gone"] as const;
+    const reason =
+      error instanceof FolderError ? known.find((each) => each === error.reason) : undefined;
+    return t(`folder.notKept.${reason ?? "other"}`);
   }
 
   async #notice(

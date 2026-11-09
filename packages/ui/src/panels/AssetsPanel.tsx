@@ -15,6 +15,7 @@ import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import type { FilmStrip } from "../media/library.ts";
 import styles from "./AssetsPanel.module.css";
+import { NO_PROGRESS } from "../folder/assets.ts";
 
 /** What a drag from this list carries. */
 export const ASSET_DRAG_TYPE = "application/x-animaquill-asset";
@@ -86,6 +87,7 @@ interface PopupState {
 }
 
 const noSubscription = () => () => {};
+const noProgress = () => NO_PROGRESS;
 
 export function AssetsPanel() {
   const workbench = useWorkbench();
@@ -100,6 +102,11 @@ export function AssetsPanel() {
     folders?.subscribe ?? noSubscription,
     () => folders?.getSnapshot().open !== undefined,
   );
+  const progress = useSyncExternalStore(
+    folders?.subscribeProgress ?? noSubscription,
+    folders?.getProgress ?? noProgress,
+  );
+  const [reading] = progress.reading;
   // A thumbnail gave up on a file that was not there, and starts over when one came back.
   const restored = useSyncExternalStore(media.subscribe, media.getRestored);
   const [popup, setPopup] = useState<PopupState>();
@@ -165,6 +172,19 @@ export function AssetsPanel() {
         </button>
         {importing > 0 && !copying && (
           <span role="status">{t("assets.importing", { count: importing })}</span>
+        )}
+        {reading && (
+          <span
+            role="status"
+            title={progress.reading.map(({ path, percent }) => `${path} ${percent}%`).join("\n")}
+          >
+            {progress.checked && t("folder.checking.progress", progress.checked)}{" "}
+            {t("folder.checking.reading", {
+              path: reading.path,
+              percent: reading.percent,
+              interpolation: { escapeValue: false },
+            })}
+          </span>
         )}
         {copying && (
           <span role="status">

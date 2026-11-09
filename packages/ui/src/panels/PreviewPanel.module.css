@@ -18,6 +18,22 @@
   pointer-events: none;
 }
 
+.waiting {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  padding: 1px 6px;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--aq-bg-input);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 .showing[data-comparing] {
   color: var(--aq-text-strong);
   background: var(--aq-bg-input);

@@ -486,8 +486,40 @@ describe("what comes in from outside", () => {
     const undone = workbench.notifications
       .getSnapshot()
       .find(({ message }) => message.startsWith("folder.undone"));
+    // Where it went, as it was written.
+    const [stamp] = browser.disk.names("文档/原子/.animaquill/recovered");
+    expect(undone?.message).toContain(`.animaquill/recovered/${stamp}`);
     undone?.actions?.find(({ label }) => label === "folder.redoMerge")?.run();
     expect(store?.getState().notes?.["note_1"]?.text).toBe("外面写的");
+  });
+
+  it("is not taken back where what the folder has cannot be kept first, and people hear why", async () => {
+    const browser = browserOf();
+    const workbench = windowOf(browser);
+    putProject(browser.disk, fixture(), "文档/原子");
+    await openAt(browser, workbench, "文档/原子");
+    await written(workbench);
+    editOnDisk(browser.disk, "notes.json", (document) => {
+      document.notes[0].text = "外面写的";
+    });
+    const store = workbench.session.store;
+    await vi.waitFor(() => expect(store?.getState().notes?.["note_1"]?.text).toBe("外面写的"));
+    // No room for the copy.
+    browser.disk.failWrites("文档/原子/.animaquill/.gitignore", { times: 1000 });
+    const merged = workbench.notifications
+      .getSnapshot()
+      .find(({ message }) => message.startsWith("folder.merged"));
+    merged?.actions?.find(({ label }) => label === "folder.undoMerge")?.run();
+    await vi.waitFor(() =>
+      expect(notices(workbench)).toContainEqual(expect.stringContaining("folder.undoNotKept")),
+    );
+    expect(
+      notices(workbench).find((message) => message.startsWith("folder.undoNotKept")),
+    ).toContain("folder.notKept.full");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(store?.getState().notes?.["note_1"]?.text).toBe("外面写的");
+    expect(textOn(browser.disk, "notes.json")).toContain("外面写的");
+    expect(notices(workbench).some((message) => message.startsWith("folder.undone"))).toBe(false);
   });
 });
 
@@ -522,6 +554,56 @@ describe("a project whose folder was deleted", () => {
     await written(workbench);
     expect(manifestOn(browser.disk, "桌面/新地方").name).toBe("只在浏览器里");
     expect(folderOf(workbench)?.record.id).toBe(record.id);
+  });
+});
+
+describe("a project whose folder is gone, written somewhere else", () => {
+  async function gone() {
+    const browser = browserOf();
+    const workbench = windowOf(browser);
+    putProject(browser.disk, fixture(), "文档/原子");
+    await openAt(browser, workbench, "文档/原子");
+    await written(workbench);
+    const record = folderOf(workbench)!.record;
+    await workbench.closeProject();
+    return { browser, workbench, record };
+  }
+
+  it("is said first to leave the files of its assets behind, and later where they belong", async () => {
+    const { browser, workbench, record } = await gone();
+    browser.disk.remove("文档/原子");
+    browser.disk.folder("桌面/新地方");
+    browser.disk.chooseNext("桌面/新地方");
+    const asked = await answering(
+      workbench,
+      workbench.projectFolders!.saveElsewhere(record),
+      (dialog) => (dialog.kind === "choice" ? "elsewhere" : true),
+    );
+    expect(asked[0]).toMatchObject({
+      title: expect.stringContaining("folder.elsewhereTitle"),
+      message: "folder.elsewhereMessage",
+    });
+    await written(workbench);
+    await workbench.projectFolders?.assetsChecked();
+    const listed = workbench.problems.getSnapshot().problems.map(({ text }) => text);
+    expect(listed).toContain("folder.assetsLeftBehind");
+  });
+
+  it("can be found again instead, as a folder that only moved, which has its files", async () => {
+    const { browser, workbench, record } = await gone();
+    browser.disk.move("文档/原子", "桌面/原子");
+    browser.disk.chooseNext("桌面/原子");
+    const asked = await answering(
+      workbench,
+      workbench.projectFolders!.saveElsewhere(record),
+      (dialog) => (dialog.kind === "choice" ? "find" : true),
+    );
+    expect(titles(asked)[0]).toContain("folder.elsewhereTitle");
+    expect(nameOf(workbench)).toBe("原子是什么");
+    expect(browser.disk.has("桌面/新地方")).toBe(false);
+    await workbench.projectFolders?.assetsChecked();
+    const listed = workbench.problems.getSnapshot().problems.map(({ text }) => text);
+    expect(listed).not.toContain("folder.assetsLeftBehind");
   });
 });
 

@@ -10,7 +10,7 @@ import { createProject, type Asset } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
 import { MemoryLibrary } from "../workbench/memory-library.ts";
-import { FolderAssets } from "./assets.ts";
+import { FolderAssets, RACY_MS, type AssetProgress, type FolderAssetsOptions } from "./assets.ts";
 
 const ROOT = "文档/原子";
 const KEY = "本机1";
@@ -30,7 +30,7 @@ function countingHasher() {
   return { hasher, reads };
 }
 
-async function setup(options: { hasher?: Hasher } = {}) {
+async function setup(options: Partial<Omit<FolderAssetsOptions, "folder" | "key">> = {}) {
   const disk = new MemoryDisk();
   disk.folder(ROOT);
   const folders: LocalFolders = memoryFolders(disk);
@@ -115,6 +115,92 @@ describe("the file of an asset", () => {
     });
   });
 
+  it("is read again where another file of the same size and time took its place", async () => {
+    const { hasher, reads } = countingHasher();
+    const changed: string[][] = [];
+    const { disk, assets } = await setup({
+      hasher,
+      onChanged: (paths) => void changed.push([...paths]),
+    });
+    disk.write(`${ROOT}/assets/a.webm`, "红色的视频");
+    await assets.fileAt("assets/a.webm");
+    // As a program that puts back a file it keeps the time of.
+    disk.write(`${ROOT}/assets/a.webm`, "蓝色的视频", { keepTime: true });
+    expect(await assets.fileAt("assets/a.webm")).toMatchObject({
+      kind: "there",
+      hash: await hashFile(new Blob([bytes("蓝色的视频")])),
+    });
+    expect(reads).toHaveLength(2);
+    expect(changed).toEqual([["assets/a.webm"]]);
+  });
+
+  it("is read again while it changed right before it was read, and once more a moment later", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { hasher, reads } = countingHasher();
+      const { disk, assets } = await setup({
+        hasher,
+        // The clock of the editor, which the times of the disk in memory follow here.
+        now: () => disk.lastModified(`${ROOT}/assets/a.webm`) + 500,
+      });
+      disk.write(`${ROOT}/assets/a.webm`, "刚写好的视频");
+      await assets.fileAt("assets/a.webm");
+      await assets.fileAt("assets/a.webm");
+      // Each time: what changed so shortly before may have changed again without a new time.
+      expect(reads).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(RACY_MS + 200);
+      expect(reads.length).toBeGreaterThanOrEqual(3);
+      assets.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is read all through again for an export, once", async () => {
+    const { hasher, reads } = countingHasher();
+    const { disk, assets, store, add } = await setup({ hasher });
+    disk.write(`${ROOT}/assets/a.webm`, "一段视频");
+    const hash = await hashFile(new Blob([bytes("一段视频")]));
+    add("a", { path: "assets/a.webm", hash });
+    await assets.fileAt("assets/a.webm");
+    expect(reads).toHaveLength(1);
+    // The export begins after that.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const exporting = assets.media(() => store.getState().assets, { since: Date.now() });
+    expect(await (await exporting.get(hash))?.text()).toBe("一段视频");
+    await exporting.get(hash);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("says which files are read for their hashes, and which something waits for", async () => {
+    let release = () => {};
+    const progress: AssetProgress[] = [];
+    const hasher: Hasher = {
+      file: async (file, options) => {
+        await new Promise<void>((resolve) => (release = resolve));
+        return hasherHere.file(file, options);
+      },
+      copy: (file) => hasherHere.copy(file),
+    };
+    const { disk, assets, store, add } = await setup({
+      hasher,
+      onProgress: (now) => void progress.push(now),
+    });
+    disk.write(`${ROOT}/assets/a.webm`, "一段视频");
+    const hash = await hashFile(new Blob([bytes("一段视频")]));
+    add("a", { path: "assets/a.webm", hash });
+    const getting = assets.media(() => store.getState().assets).get(hash);
+    await vi.waitFor(() =>
+      expect(progress.at(-1)).toMatchObject({
+        reading: [{ path: "assets/a.webm" }],
+        waiting: ["assets/a.webm"],
+      }),
+    );
+    release();
+    expect(await getting).toBeDefined();
+    expect(progress.at(-1)).toEqual({ reading: [], waiting: [] });
+  });
+
   it("is missing when nothing is at its path", async () => {
     const { assets } = await setup();
     expect(await assets.fileAt("assets/没有.webm")).toEqual({ kind: "missing" });
@@ -137,6 +223,18 @@ describe("a file that people bring in", () => {
     const copied = await assets.copyIn(new File(["红色的视频"], "红色.webm"));
     expect(copied.path).toBe("assets/红色 (3).webm");
     expect(disk.text(`${ROOT}/assets/红色.WEBM`)).toBe("别的");
+  });
+
+  it("takes another name while another file of that name is being written in this browser", async () => {
+    const { disk, assets } = await setup();
+    const one = new File(["第一台机器拍的".repeat(50)], "clip.mp4");
+    const two = new File(["第二台机器拍的".repeat(50)], "clip.mp4");
+    const [first, second] = await Promise.all([assets.copyIn(one), assets.copyIn(two)]);
+    expect(new Set([first.path, second.path])).toEqual(
+      new Set(["assets/clip.mp4", "assets/clip (2).mp4"]),
+    );
+    expect(disk.text(`${ROOT}/${first.path}`)).toBe("第一台机器拍的".repeat(50));
+    expect(disk.text(`${ROOT}/${second.path}`)).toBe("第二台机器拍的".repeat(50));
   });
 
   it("takes another name when another program takes its name right then", async () => {
@@ -242,6 +340,22 @@ describe("comparing the files with the project", () => {
     expect(await assets.check(store)).toEqual([
       { kind: "missing", asset: "hidden", path: "assets/desktop.ini", hidden: "desktop.ini" },
     ]);
+  });
+});
+
+describe("empty files in the assets folder", () => {
+  it("go when no asset has them, as what a copy that stopped left, and nothing else does", async () => {
+    const { disk, assets, store, add } = await setup();
+    disk.write(`${ROOT}/assets/半截.webm`, "");
+    disk.write(`${ROOT}/assets/空的但有用.webm`, "");
+    disk.write(`${ROOT}/assets/有内容.webm`, "内容");
+    disk.write(`${ROOT}/footage/空的.webm`, "");
+    add("used", { path: "assets/空的但有用.webm" });
+    expect(await assets.removeEmpty(store)).toEqual(["assets/半截.webm"]);
+    expect(disk.has(`${ROOT}/assets/半截.webm`)).toBe(false);
+    expect(disk.has(`${ROOT}/assets/空的但有用.webm`)).toBe(true);
+    expect(disk.has(`${ROOT}/assets/有内容.webm`)).toBe(true);
+    expect(disk.has(`${ROOT}/footage/空的.webm`)).toBe(true);
   });
 });
 

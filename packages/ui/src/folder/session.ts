@@ -621,11 +621,28 @@ class Turn {
     return this.#enqueue(() => this.#useEditorContent(paths));
   }
 
-  /** Keeps what the folder has of these files in RECOVERED_FOLDER, as they are now. */
-  keep(paths: readonly string[]): Promise<void> {
-    return this.#enqueue(async () => {
-      for (const path of paths) await this.#backUp(path);
+  /**
+   * Keeps what the folder has of these files in RECOVERED_FOLDER, as they are now. Resolves to
+   * where each went, none for a file that is not there, and rejects with why one could not be
+   * kept, or when this window does not write the folder any more.
+   */
+  async keep(paths: readonly string[]): Promise<readonly string[]> {
+    let outcome: { readonly kept: readonly string[] } | { readonly error: unknown } | undefined;
+    await this.#enqueue(async () => {
+      try {
+        const kept: string[] = [];
+        for (const path of paths) {
+          const place = await this.#backUp(path);
+          if (place !== undefined) kept.push(place);
+        }
+        outcome = { kept };
+      } catch (error) {
+        outcome = { error };
+      }
     });
+    if (outcome === undefined) throw new FolderError("failed", paths[0] ?? "");
+    if ("error" in outcome) throw outcome.error;
+    return outcome.kept;
   }
 
   /** Another handle of the folder came, which has to be looked at again from the start. */
@@ -1921,14 +1938,14 @@ export class FolderSession {
 
   /**
    * Keeps what the folder has of these files in RECOVERED_FOLDER, before the editor writes over it
-   * on purpose, as when people take back what came in. Resolves to false where another window
-   * writes the folder.
+   * on purpose, as when people take back what came in. Resolves to where each went, see
+   * `Turn.keep`, or to undefined where another window writes the folder. Rejects with why one
+   * could not be kept: then nothing should be written over them.
    */
-  async keep(paths: readonly string[]): Promise<boolean> {
+  async keep(paths: readonly string[]): Promise<readonly string[] | undefined> {
     const turn = this.#turn;
-    if (!turn) return false;
-    await turn.keep(paths);
-    return true;
+    if (!turn) return undefined;
+    return turn.keep(paths);
   }
 
   /**

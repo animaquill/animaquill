@@ -122,6 +122,8 @@ export class Workbench {
   readonly errors: ErrorReports;
   readonly #sink: DiagnosticsSink | undefined;
   readonly projects: ProjectLibrary;
+  /** When the last export began, see `exporting` in the constructor. */
+  #exportSince = 0;
   /** Where the page with the compositor is. A site of its own keeps it apart from the editor. */
   readonly compositorUrl: string;
   /** Where scenes run, which is never where the compositor is. */
@@ -153,6 +155,12 @@ export class Workbench {
       remove: (id) => library.remove(id),
       // The files of a project that is a folder are in the folder, see `FolderAssets`.
       media: (id) => this.projectFolders?.mediaFor(id) ?? library.media(id),
+    };
+    // An export reads each file of a project folder all through again: what goes out is what the
+    // project says, whatever a kept hash says.
+    const exporting: ProjectLibrary = {
+      ...this.projects,
+      media: (id) => this.projectFolders?.mediaFor(id, this.#exportSince) ?? library.media(id),
     };
     this.diagnostics = new DiagnosticsRecorder(version);
     const sink = host.diagnostics;
@@ -291,7 +299,7 @@ export class Workbench {
     });
     this.transfer = new ProjectTransfer({
       folders: host.folders,
-      projects: this.projects,
+      projects: exporting,
       session: this.session,
       dialogs: this.dialogs,
       notifications: this.notifications,
@@ -309,7 +317,7 @@ export class Workbench {
     this.stills = new StillExport({
       session: this.session,
       timeline: this.timeline,
-      projects: this.projects,
+      projects: exporting,
       folders: host.folders,
       preview: this.preview,
       dialogs: this.dialogs,
@@ -322,7 +330,7 @@ export class Workbench {
     this.videos = new VideoExport({
       session: this.session,
       timeline: this.timeline,
-      projects: this.projects,
+      projects: exporting,
       folders: host.folders,
       settings: host.settings,
       exports: host.exports,
@@ -1002,6 +1010,8 @@ export class Workbench {
   /** An export is what is saved, which is not what people have been looking at while trying. */
   async #readyToExport(): Promise<boolean> {
     const { t } = this;
+    // From now on, what the export reads of a project folder is read again, see `exporting`.
+    this.#exportSince = Date.now();
     const { count } = this.trials.getSnapshot();
     if (count === 0) return true;
     const answer = await this.dialogs.choose({

@@ -1,6 +1,18 @@
 import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
+import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { ProjectStore } from "./store.ts";
+
+/** The example project without its locked tag: its overlay track is locked, and uses a logo. */
+function example(): ProjectStore {
+  const files = loadFixture("v1");
+  const manifest = JSON.parse(files.get("animaquill.json") as string);
+  delete manifest.tags;
+  files.set("animaquill.json", JSON.stringify(manifest));
+  const { store } = ProjectStore.open(files);
+  if (!store) throw new Error("The example did not open");
+  return store;
+}
 
 const HASH = "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=";
 const OTHER = "sha256-LCa0a2j_xo_5m0U8HTBBNBNCLXBkg7-g-YpeiGJm564=";
@@ -58,5 +70,20 @@ describe("updating an asset", () => {
       params: { asset: "asset_b", changes: { size: 1 } },
     });
     expect(missing).toMatchObject({ ok: false, error: { code: "not-found" } });
+  });
+
+  it("refuses another file for an asset that a clip on a locked track has, as any change there", () => {
+    const store = example();
+    const locked = store.execute({
+      type: "asset.update",
+      params: { asset: "logo", changes: { hash: OTHER } },
+    });
+    expect(locked).toMatchObject({ ok: false, error: { code: "track-locked" } });
+    expect(store.getState().assets?.["logo"]?.hash).toBeUndefined();
+    const open = store.execute({
+      type: "asset.update",
+      params: { asset: "interview", changes: { hash: OTHER } },
+    });
+    expect(open.ok).toBe(true);
   });
 });

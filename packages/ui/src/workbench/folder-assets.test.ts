@@ -16,6 +16,7 @@ import {
   windowOf,
   written,
 } from "./folder-windows.ts";
+import { hasherHere, type Hasher } from "../media/hasher.ts";
 import { projectKeyOf } from "./session.ts";
 import type { Workbench } from "./workbench.ts";
 
@@ -128,6 +129,68 @@ describe("a file people bring into a project folder", () => {
     expect(second).toBe(first);
     expect(disk.has(`${ROOT}/assets/二.webm`)).toBe(false);
     expect(Object.keys(store.getState().assets ?? {})).toHaveLength(1);
+  });
+
+  it("takes the place of a file of the project that another one took the place of, which stays", async () => {
+    const { disk, workbench, store, key } = await newFolderProject();
+    const [id] = await workbench.media.importFiles([new File(["红色的视频"], "红色.webm")]);
+    const hash = assetOf(store, id)?.hash as string;
+    // Replaced outside by another file of the same size.
+    disk.write(`${ROOT}/assets/红色.webm`, "蓝色的视频");
+    expect(await workbench.media.importFiles([new File(["红色的视频"], "红色原片.webm")])).toEqual([
+      id,
+    ]);
+    expect(assetOf(store, id)?.path).toBe("assets/红色原片.webm");
+    expect(await (await workbench.projects.media(key).get(hash))?.text()).toBe("红色的视频");
+    expect(disk.text(`${ROOT}/assets/红色.webm`)).toBe("蓝色的视频");
+  });
+
+  it("takes the place of such a file also when the project does not know its size", async () => {
+    const { disk, workbench, store, key } = await newFolderProject();
+    const hash = await hashFile(new Blob([bytes("红色的视频")]));
+    // As another tool wrote it down, with a hash and no size.
+    store.execute({
+      type: "asset.add",
+      params: {
+        id: "asset_red",
+        asset: {
+          name: "红色.webm",
+          kind: "video",
+          path: "assets/红色.webm",
+          storage: "local",
+          hash,
+        },
+      },
+    });
+    disk.write(`${ROOT}/assets/红色.webm`, "别的内容，长短也不一样");
+    expect(await workbench.media.importFiles([new File(["红色的视频"], "红色.webm")])).toEqual([
+      "asset_red",
+    ]);
+    expect(assetOf(store, "asset_red")?.path).toBe("assets/红色 (2).webm");
+    expect(await (await workbench.projects.media(key).get(hash))?.text()).toBe("红色的视频");
+    expect(disk.text(`${ROOT}/assets/红色.webm`)).toBe("别的内容，长短也不一样");
+  });
+
+  it("is copied when it is a file of a scene, a sound or code, which belongs to that", async () => {
+    const { disk, workbench, store } = await newFolderProject();
+    disk.write(`${ROOT}/scenes/片头/背景.webm`, "背景视频");
+    const [id] = await workbench.importDropped(disk.drop(`${ROOT}/scenes/片头/背景.webm`));
+    expect(assetOf(store, id)?.path).toBe("assets/背景.webm");
+    expect(disk.text(`${ROOT}/assets/背景.webm`)).toBe("背景视频");
+    expect(disk.text(`${ROOT}/scenes/片头/背景.webm`)).toBe("背景视频");
+  });
+
+  it("comes in under another name when another one of that name comes in at the same time", async () => {
+    const { disk, workbench, store } = await newFolderProject();
+    const one = new File(["第一台机器拍的".repeat(50)], "clip.mp4");
+    const two = new File(["第二台机器拍的".repeat(50)], "clip.mp4");
+    const [first, second] = await Promise.all([
+      workbench.media.importFiles([one]),
+      workbench.media.importFiles([two]),
+    ]);
+    const paths = [...(first ?? []), ...(second ?? [])].map((id) => assetOf(store, id)?.path);
+    expect(new Set(paths)).toEqual(new Set(["assets/clip.mp4", "assets/clip (2).mp4"]));
+    expect(disk.names(`${ROOT}/assets`)).toHaveLength(2);
   });
 
   it("takes the place of a file of the project that went away", async () => {
@@ -293,6 +356,49 @@ async function exampleWithFile() {
   browser.disk.write("文档/原子/assets/raw.mov", "原始素材");
   return { browser, hash };
 }
+
+describe("reading the files of a project folder for their hashes", () => {
+  it("says how far it is, and which files the preview waits for", async () => {
+    const { browser, hash } = await exampleWithFile();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const hasher: Hasher = {
+      file: async (file, options) => {
+        await held;
+        return hasherHere.file(file, options);
+      },
+      copy: (file) => hasherHere.copy(file),
+    };
+    const workbench = windowOf(browser, undefined, hasher);
+    await openAt(browser, workbench, "文档/原子");
+    const folders = workbench.projectFolders as NonNullable<Workbench["projectFolders"]>;
+    const key = folderOf(workbench)?.record.id as string;
+    await vi.waitFor(() =>
+      expect(folders.getProgress()).toMatchObject({
+        reading: [{ path: "assets/raw.mov" }],
+        checked: { total: 7 },
+      }),
+    );
+    const showing = workbench.projects.media(key).get(hash);
+    await vi.waitFor(() => expect(folders.getProgress().waiting).toEqual(["assets/raw.mov"]));
+    release();
+    expect(await (await showing)?.text()).toBe("原始素材");
+    await vi.waitFor(() => expect(folders.getProgress()).toEqual({ reading: [], waiting: [] }));
+  });
+});
+
+describe("a project folder that opens", () => {
+  it("lets go of empty files in its assets folder that no asset has, and only those", async () => {
+    const { browser } = await exampleWithFile();
+    browser.disk.write("文档/原子/assets/没写完.webm", "");
+    browser.disk.write("文档/原子/footage/空的.webm", "");
+    const workbench = windowOf(browser);
+    await openAt(browser, workbench, "文档/原子");
+    await vi.waitFor(() => expect(browser.disk.has("文档/原子/assets/没写完.webm")).toBe(false));
+    expect(browser.disk.text("文档/原子/assets/raw.mov")).toBe("原始素材");
+    expect(browser.disk.has("文档/原子/footage/空的.webm")).toBe(true);
+  });
+});
 
 describe("a project folder that comes into this browser", () => {
   it("has its files read from the folder from the moment its project opens", async () => {
