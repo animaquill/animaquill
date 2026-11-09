@@ -84,6 +84,11 @@ interface ChangeOptions {
   /** The browser does not tell about it, as it sometimes does not on Linux. */
   readonly quietly?: boolean;
   /**
+   * The time the file gets, as when the system brings back a file after the power went: the
+   * replacement of it was not on the disk yet, and the file is the one before, time and all.
+   */
+  readonly lastModified?: number;
+  /**
    * The file keeps its time, as when a program puts it back: then only what is in it can tell that
    * it changed. Chrome even reads the new content through a `File` it gave out before.
    */
@@ -200,9 +205,13 @@ class DiskState {
     if (life !== this.life) throw failure("AbortError", "The browser of this page went away.");
   }
 
-  /** Runs what a test put before this step of a page, which can make the step fail. */
-  step(step: DiskStep, names: Names): void {
+  /**
+   * Runs what a test put before this step of a page, which can make the step fail. A page whose
+   * browser went away meanwhile does nothing more, see `life`.
+   */
+  step(step: DiskStep, names: Names, life?: number): void {
     this.hooks.get(`${step}:${this.keyOf(names)}`)?.shift()?.();
+    if (life !== undefined) this.alive(life);
   }
 
   refuses(name: string): boolean {
@@ -483,7 +492,7 @@ class MemoryFileHandle implements FileHandleLike {
     const names = this.#names;
     state.alive(life);
     state.mayRead(names);
-    state.step("getFile", names);
+    state.step("getFile", names, life);
     const node = state.fileAt(names);
     const { lastModified } = node;
     const size = node.content.byteLength;
@@ -504,7 +513,7 @@ class MemoryFileHandle implements FileHandleLike {
     const target = this.#names;
     state.alive(life);
     state.mayWrite(target);
-    state.step("createWritable", target);
+    state.step("createWritable", target, life);
     const node = state.fileAt(target);
     const exclusive = mode === "exclusive";
     if (node.lock === "exclusive" || (exclusive && node.lock !== 0)) {
@@ -713,7 +722,7 @@ class MemoryDirectoryHandle implements DirectoryHandleLike {
     state.checkName(name);
     state.mayWrite(this.names);
     const names = [...this.names, name];
-    state.step("removeEntry", names);
+    state.step("removeEntry", names, this.#life);
     const folder = state.folderAt(this.names);
     const entry = folder.entries.get(state.key(name));
     if (!entry) throw notFound();
@@ -851,7 +860,7 @@ export class MemoryDisk {
   write(
     path: string,
     content: string | Uint8Array = "",
-    { quietly = false, keepTime = false }: ChangeOptions = {},
+    { quietly = false, keepTime = false, lastModified }: ChangeOptions = {},
   ) {
     const state = this.#state;
     const names = split(path);
@@ -867,7 +876,8 @@ export class MemoryDisk {
       lock: 0,
     };
     file.content = bytesOf(content);
-    if (!keepTime || !existing) file.lastModified = state.tick();
+    if (lastModified !== undefined) file.lastModified = lastModified;
+    else if (!keepTime || !existing) file.lastModified = state.tick();
     parent.entries.set(key, file);
     if (quietly) return;
     if (!existing) state.emit("appeared", state.diskNames(names), "file");
@@ -908,11 +918,16 @@ export class MemoryDisk {
    * Runs `callback` the next time a page does this to the file at `path`: right before, or for
    * "written" right after a write took the place of the file. That is where another program can
    * change something, or where the step fails: whatever the callback throws, the page gets. Each
-   * call is for one time, in turn.
+   * call is for one time, in turn. Returns how to take it back before it ran.
    */
-  onNext(step: DiskStep, path: string, callback: () => void): void {
+  onNext(step: DiskStep, path: string, callback: () => void): () => void {
     const key = `${step}:${this.#state.keyOf(split(path))}`;
     this.#state.hooks.set(key, [...(this.#state.hooks.get(key) ?? []), callback]);
+    return () => {
+      const hooks = this.#state.hooks.get(key) ?? [];
+      const index = hooks.indexOf(callback);
+      if (index >= 0) hooks.splice(index, 1);
+    };
   }
 
   has(path: string): boolean {
@@ -921,6 +936,11 @@ export class MemoryDisk {
 
   bytes(path: string): Bytes {
     return bytesOf(this.#state.fileAt(split(path)).content);
+  }
+
+  /** The time of a file, as a page sees it. */
+  lastModified(path: string): number {
+    return this.#state.fileAt(split(path)).lastModified;
   }
 
   text(path: string): string {
@@ -1028,6 +1048,12 @@ export class MemoryDisk {
     const page = this.#pages.get(folders);
     if (!page) throw new Error("These folders are not of this disk");
     page.asleep = asleep;
+    if (!asleep) this.#state.turns.woke(page);
+  }
+
+  /** How the turns to write folders behave, see `MemoryWriters`. */
+  get turns(): MemoryWriters {
+    return this.#state.turns;
   }
 
   /** People come back to the window. */

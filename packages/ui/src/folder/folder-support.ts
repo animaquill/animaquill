@@ -4,6 +4,7 @@
  */
 import { ProjectStore, readFolder, type CommandCall } from "@animaquill/core";
 import type {
+  FolderBases,
   FolderWriter,
   LocalFolder,
   LocalFolders,
@@ -158,12 +159,54 @@ function pageLibrary(
   });
 }
 
+/** What goes wrong around the windows, which a test switches on and off. */
+export interface Faults {
+  /** What the browser keeps about folders cannot be read or written, as a database that fails. */
+  bases: boolean;
+  /** Files that another program holds on to, so that they cannot be read. */
+  readonly unreadable: Set<string>;
+}
+
+/** The bases of a page, which fail while `faults.bases` says so. */
+function faultyBases(bases: FolderBases, faults: Faults): FolderBases {
+  const fail = () => {
+    if (faults.bases) throw new DOMException("The database could not be reached", "UnknownError");
+  };
+  return {
+    claim: async (folder) => (fail(), bases.claim(folder)),
+    turnOf: async (folder) => (fail(), bases.turnOf(folder)),
+    load: async (folder) => (fail(), bases.load(folder)),
+    save: async (folder, turn, change) => (fail(), bases.save(folder, turn, change)),
+    forget: async (folder) => (fail(), bases.forget(folder)),
+  };
+}
+
+/** A folder whose files in `faults.unreadable` cannot be read, as when a program holds on to them. */
+function faultyFolder(folder: LocalFolder, faults: Faults): LocalFolder {
+  return new Proxy(folder, {
+    get(target, key) {
+      const value: unknown = Reflect.get(target, key);
+      if (key !== "file") return typeof value === "function" ? value.bind(target) : value;
+      return async (path: string) => {
+        const found = await target.file(path);
+        if (!faults.unreadable.has(path)) return found;
+        const held = new File([], found.name, { lastModified: found.lastModified });
+        Object.defineProperty(held, "size", { value: found.size });
+        held.arrayBuffer = () =>
+          Promise.reject(new DOMException("The file could not be read", "NotReadableError"));
+        return held;
+      };
+    },
+  });
+}
+
 /** A browser in memory, with its disk and its database. */
 export class TestBrowser {
   readonly disk: MemoryDisk;
   /** The logs of projects, which every window of the browser shares. */
   readonly library = new MemoryLibrary();
   readonly windows: TestWindow[] = [];
+  readonly faults: Faults = { bases: false, unreadable: new Set() };
 
   constructor(options?: MemoryDiskOptions, files: Map<string, string> | undefined = fixture()) {
     this.disk = new MemoryDisk(options);
@@ -197,7 +240,6 @@ export class TestBrowser {
         openedAt: 1,
       });
     }
-    let fresh = false;
     if ((this.library.updates.get(LOCAL) ?? []).length === 0) {
       const reading = await readFolder(folder);
       const read = ProjectStore.create(reading.project, reading.sources);
@@ -207,7 +249,6 @@ export class TestBrowser {
         read.encodeState(),
       );
       read.destroy();
-      fresh = true;
     }
     const arriving = { updates: [] as (() => void)[], holding };
     const window = { dead: false, arriving } as {
@@ -222,12 +263,11 @@ export class TestBrowser {
     const store = project.store as ProjectStore;
     const session = new FolderSession({
       store,
-      folder,
+      folder: faultyFolder(folder, this.faults),
       id: LOCAL,
-      bases: folders.bases,
+      bases: faultyBases(folders.bases, this.faults),
       writer: (writer ?? ((given) => given))(folders.writer(LOCAL)),
       log: { saved: () => project.trySave(), caughtUp: () => project.readLog() },
-      fresh,
       ...(timing && { timing }),
     });
     const merges: FolderMerge[] = [];

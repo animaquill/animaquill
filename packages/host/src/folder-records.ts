@@ -152,6 +152,11 @@ export function createBaseStore(factory: () => IDBFactory): FolderBases {
       });
       return turn;
     },
+    async turnOf(folder) {
+      const transaction = (await database()).transaction(TURNS);
+      const read = transaction.objectStore(TURNS).get(folder);
+      return (await resultOf<StoredTurn | undefined>(read))?.turn ?? 0;
+    },
     async load(folder) {
       const transaction = (await database()).transaction(FILES);
       const index = transaction.objectStore(FILES).index(BY_FOLDER);
@@ -232,6 +237,10 @@ export function memoryBaseStore(kept: MemoryBases, check: () => void = () => {})
       const turn = (kept.turns.get(folder) ?? 0) + 1;
       kept.turns.set(folder, turn);
       return turn;
+    },
+    async turnOf(folder) {
+      check();
+      return kept.turns.get(folder) ?? 0;
     },
     async load(folder) {
       check();

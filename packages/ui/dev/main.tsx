@@ -75,10 +75,11 @@ const diagnostics = {
   },
 };
 
+const host = { ...createBrowserHost(), diagnostics };
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
   await mountEditor(root, {
-    host: { ...createBrowserHost(), diagnostics },
+    host,
     version: "dev",
     compositorUrl: "/compositor.html",
     sceneOrigins,
@@ -90,6 +91,8 @@ if (root)
         aqExecute: (call: never) => workbench.session.store?.execute(call),
         // For measuring the mix on its own, without an editor around it.
         aqAudio: () => import("@animaquill/audio"),
+        // For keeping a project folder in step in the browser tests, without the editor around it.
+        aqFolders: async () => ({ host, ...(await import("./folder-lab.ts")) }),
       });
     },
   });

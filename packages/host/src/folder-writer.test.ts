@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { browserFolderWriter } from "./folder-writer.ts";
 import type { WriterClaim } from "./index.ts";
 import { MemoryDisk, memoryFolders } from "./memory-disk.ts";
 
@@ -75,4 +76,35 @@ describe("the turn to write a folder, among the pages of a browser in memory", (
     stop.abort(new Error("不等了"));
     await expect(waiting).rejects.toThrow("不等了");
   });
+});
+
+describe("the turn to write a folder, with the Web Locks of Node", () => {
+  const locks = () => (globalThis.navigator as Navigator & { locks?: LockManager }).locks;
+
+  it.skipIf(!locks())(
+    "tells the one of two that ask at once and has to wait that it waits",
+    async () => {
+      vi.useRealTimers();
+      for (let round = 0; round < 5; round++) {
+        const name = `本机-${round}-${Math.random()}`;
+        const pages = [browserFolderWriter(name, locks), browserFolderWriter(name, locks)];
+        const told = pages.map(() => ({ waiting: false, granted: false }));
+        const claims = pages.map((writer, index) =>
+          writer
+            .claim({ onWaiting: () => ((told[index] as { waiting: boolean }).waiting = true) })
+            .then((claim) => {
+              (told[index] as { granted: boolean }).granted = true;
+              return claim;
+            }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // One writes, and the other one knows that it waits.
+        expect(told.filter(({ granted }) => granted)).toHaveLength(1);
+        expect(told.every(({ granted, waiting }) => granted || waiting)).toBe(true);
+        const first = await Promise.race(claims);
+        first.release();
+        for (const claim of await Promise.all(claims)) claim.release();
+      }
+    },
+  );
 });

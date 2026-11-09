@@ -423,6 +423,11 @@ export interface FolderFileRecord {
    * the file tells then whether it got there.
    */
   readonly intent?: string | undefined;
+  /**
+   * What the file held before the editor last replaced it or took it away, until the folder was
+   * looked at again: a crash can take back the replacement, and the file is that one then.
+   */
+  readonly replaced?: string | undefined;
 }
 
 /** A change to what is kept about the files of a folder, which happens as a whole or not at all. */
@@ -445,6 +450,8 @@ export interface FolderBasesChange {
 export interface FolderBases {
   /** Has this window keep what is kept for the folder from now on. Resolves to its turn. */
   claim(folder: string): Promise<number>;
+  /** The last turn that a window claimed for the folder, 0 when none did. */
+  turnOf(folder: string): Promise<number>;
   /** What is kept for each file of the folder. */
   load(folder: string): Promise<readonly FolderFileRecord[]>;
   /**

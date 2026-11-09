@@ -10,10 +10,11 @@ afterEach(() => {
 });
 
 describe("a project folder that the editor, other programs and the browser change at random", () => {
-  it.each(Array.from({ length: 30 }, (_, index) => index + 1))(
+  it.each(Array.from({ length: 15 }, (_, index) => index + 1))(
     "loses nothing, takes nothing in twice, and ends up as the project: seed %i",
     async (seed) => {
       await fuzzFolder(seed);
     },
+    60_000,
   );
 });

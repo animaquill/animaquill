@@ -2,6 +2,7 @@ import {
   folderBatch,
   type FileChange,
   type MergeConflict,
+  type MergeResult,
   type Origin,
   type ProjectStore,
 } from "@animaquill/core";
@@ -28,7 +29,7 @@ import {
   isDocument,
   isProjectFile,
   isTooLarge,
-  isUnreadableDocument,
+  looksDamaged,
   projectIdOf,
   textOf,
 } from "./project-files.ts";
@@ -42,9 +43,11 @@ import {
  *
  * What the editor last wrote or read in each file is its base, kept in the browser: a file that is
  * not its base changed outside, and a document that is not what the editor wrote of it has changes
- * that are not in the folder yet. Whatever goes into the folder is in the log first, and only then is
- * it taken as the base: a crash before that leaves the folder ahead of the log, which the next time
- * merges back in, rather than behind, which would take back what people did.
+ * that are not in the folder yet. The folder gets written once the log has what goes there, and only
+ * then is that the base: a crash in between leaves the folder ahead of the log, which comes in again
+ * the next time, rather than behind, which would take back what people did. When the log cannot be
+ * written, the folder still is, since it is the project, but nothing is noted down of it, see
+ * `FolderSnapshot.unrecorded`.
  *
  * One window of the browser writes the folder and takes in what changes there, the others leave it
  * to that one, see `FolderWriter`: two windows taking in the same change would put it in twice.
@@ -58,7 +61,7 @@ export interface FolderTiming {
   readonly quietMs: number;
   /** ...or once they have been changing things for this long. */
   readonly longestMs: number;
-  /** What could not be written or kept is tried again after this long. */
+  /** What could not be written, read or kept is tried again after this long. */
   readonly retryMs: number;
   /**
    * Changes that came while the folder kept changing, as during a long checkout, wait this long for
@@ -84,7 +87,7 @@ export interface FolderLog {
   /**
    * Takes in what the log has that the project does not have yet, such as what the window that wrote
    * the folder before did last. Whatever is in the folder of it would otherwise look like a change
-   * from outside, and come in a second time.
+   * from outside, and come in a second time. Rejects when the log cannot be read.
    */
   caughtUp(): Promise<void>;
 }
@@ -100,11 +103,6 @@ export interface FolderSessionOptions {
   readonly bases: FolderBases;
   readonly writer: FolderWriter;
   readonly log: FolderLog;
-  /**
-   * The project was just read from this folder, because the browser had no log of it: whatever is
-   * still kept about the folder is from before, and counts for nothing.
-   */
-  readonly fresh?: boolean;
   readonly timing?: Partial<FolderTiming>;
 }
 
@@ -114,6 +112,11 @@ export type FolderRole =
   | "writing"
   /** Another window of this browser writes the folder, and takes in what changes there. */
   | "waiting"
+  /**
+   * This window does not write the folder for now, and no other one does for it: see `trouble`.
+   * The folder is not where it was, or this page is too old for what the browser keeps.
+   */
+  | "stopped"
   | "closed";
 
 /** What keeps changes from the folder. */
@@ -128,7 +131,15 @@ export type FolderTrouble =
    * `FolderSession.useEditorContent`.
    */
   | { readonly reason: "manifest-gone" }
-  /** A file could not be written, for the reason a `FolderError` gives. It gets tried again. */
+  /**
+   * What the browser keeps about the folder is of a newer version of the editor, open in another
+   * tab: this page has to be reloaded, and the newer one writes the folder meanwhile.
+   */
+  | { readonly reason: "outdated" }
+  /**
+   * A file could not be written, or read, for the reason a `FolderError` gives. It gets tried
+   * again. "busy" for one that another program keeps from being read.
+   */
   | { readonly reason: Exclude<FolderFailure, "gone">; readonly path: string }
   /** Two files of the project are one file on some systems: only the first of them gets written. */
   | { readonly reason: "clash"; readonly path: string };
@@ -154,6 +165,11 @@ export interface FolderSnapshot {
   readonly blocked: readonly BlockedFile[];
   /** When this window last wrote the folder, in milliseconds since 1970. */
   readonly writtenAt: number | undefined;
+  /**
+   * The folder got written while the browser could not keep the log, so nothing is noted down of
+   * it: should the browser go away now, people may have to look at the folder themselves.
+   */
+  readonly unrecorded: boolean;
 }
 
 /** Changes from the folder that came in, as one change of the project. */
@@ -189,8 +205,11 @@ const WRITE_AT_ONCE = 8;
 const READ_ATTEMPTS = 3;
 /** Refusals of a batch that say which files they are about, which can wait while the rest comes. */
 const SALVAGEABLE = new Set(["merge-would-break", "merge-unsettled"]);
-/** Refusals that a change of the project can lift, so that the files are tried again then. */
-const RETRYABLE = new Set(["project-locked"]);
+/**
+ * Refusals that a change of the project can lift, so that the files are tried again then: a tag
+ * that locks the project, or what the editor did that the files run into.
+ */
+const RETRYABLE = new Set(["project-locked", ...SALVAGEABLE]);
 /**
  * Why a file waits that has to do with another file, rather than with itself: it goes along with
  * the next batch, which may bring what it waits for.
@@ -220,13 +239,22 @@ interface Synced {
 interface Known {
   /** What it last wrote or read there: what a merge goes from. Undefined when there was none. */
   readonly base: string | undefined;
-  /** How the file was then, to replace it only while it still is. */
+  /** How the file was then. */
   readonly stat: FileStat | typeof ABSENT;
   /**
    * Undefined when the project may hold something else than the file: then it gets written. A file
    * that somebody wrote in another way than the editor does stays as it is while it means the same.
    */
   readonly synced: Synced | undefined;
+  /** What the file held before the editor last replaced it or took it away, see `replacedOf`. */
+  readonly replaced?: string | undefined;
+}
+
+/** A version of a file that the editor writes over, and no other one. */
+interface Overwrite {
+  readonly disk: Disk;
+  /** Whether it is kept in RECOVERED_FOLDER already, or needs no keeping. */
+  readonly isKept: boolean;
 }
 
 interface Blocked {
@@ -245,6 +273,17 @@ interface Plan {
   readonly clash: string | undefined;
 }
 
+/** Why a turn to write the folder ended. */
+type TurnEnd =
+  /** Another window took over, or this one let go. */
+  | "lost"
+  /** Something failed before the folder could be looked at: another turn goes again later. */
+  | "again"
+  /** The folder is gone, or another project took its place: nothing more until it is found. */
+  | "park"
+  /** What the browser keeps is of a newer editor: this page has to be reloaded. */
+  | "outdated";
+
 const statOf = ({ size, lastModified }: FileStat): FileStat => ({ size, lastModified });
 
 const isSameStat = (a: FileStat | typeof ABSENT, b: FileStat | typeof ABSENT): boolean =>
@@ -252,6 +291,8 @@ const isSameStat = (a: FileStat | typeof ABSENT, b: FileStat | typeof ABSENT): b
 
 const statIn = (disk: Disk): FileStat | typeof ABSENT =>
   disk.kind === "absent" ? ABSENT : disk.stat;
+
+const textIn = (disk: Disk): string | undefined => (disk.kind === "text" ? disk.text : undefined);
 
 /** Whether a file is what it was the last time the editor wrote or read it. */
 const isAsBase = (disk: Disk, base: string | undefined): boolean =>
@@ -261,6 +302,12 @@ const isAsBase = (disk: Disk, base: string | undefined): boolean =>
 const isAsDisk = (text: string | undefined, disk: Disk): boolean =>
   disk.kind === "text" ? disk.text === text : disk.kind === "absent" && text === undefined;
 
+const isSameDisk = (a: Disk, b: Disk): boolean => {
+  if (a.kind === "absent" || b.kind === "absent") return a.kind === b.kind;
+  if (a.kind !== b.kind || !isSameStat(a.stat, b.stat)) return false;
+  return a.kind !== "text" || a.text === (b as Extract<Disk, { kind: "text" }>).text;
+};
+
 /** Whether a file holds the same as before, whatever its time says. */
 function holdsTheSame(a: Disk, b: Disk): boolean {
   if (a.kind === "text" || b.kind === "text") {
@@ -268,12 +315,6 @@ function holdsTheSame(a: Disk, b: Disk): boolean {
   }
   return isSameDisk(a, b);
 }
-
-const isSameDisk = (a: Disk, b: Disk): boolean => {
-  if (a.kind === "absent" || b.kind === "absent") return a.kind === b.kind;
-  if (a.kind !== b.kind || !isSameStat(a.stat, b.stat)) return false;
-  return a.kind !== "text" || a.text === (b as Extract<Disk, { kind: "text" }>).text;
-};
 
 const encoder = new TextEncoder();
 
@@ -302,12 +343,32 @@ function isDamagedWrite(intent: string, disk: Disk): boolean {
   return disk.stat.size === 0 || disk.stat.size === size;
 }
 
+/** What a file was before the editor replaced it, to know it again: by what it has and its time. */
+function replacedOf(disk: Disk): string | undefined {
+  if (disk.kind === "absent") return ABSENT;
+  if (disk.kind !== "text") return undefined;
+  return `${hashText(disk.text)} ${disk.stat.size} ${disk.stat.lastModified}`;
+}
+
+/** Whether a file is what the editor replaced, time and all: what a crash takes the folder back to. */
+function isReplacedBack(replaced: string, disk: Disk): boolean {
+  if (replaced === ABSENT) return disk.kind === "absent";
+  if (disk.kind !== "text") return false;
+  const [hash = "", size = "", time = ""] = replaced.split(" ");
+  return (
+    disk.stat.size === Number(size) &&
+    disk.stat.lastModified === Number(time) &&
+    hashText(disk.text) === hash
+  );
+}
+
 function isSynced(known: Known | undefined, text: string | undefined): boolean {
   if (!known) return text === undefined;
   const { synced } = known;
   if (!synced) return false;
-  if (text === undefined || synced.hash === ABSENT)
+  if (text === undefined || synced.hash === ABSENT) {
     return text === undefined && synced.hash === ABSENT;
+  }
   if (synced.text !== undefined) return synced.text === text;
   if (synced.hash !== hashText(text)) return false;
   synced.text = text;
@@ -321,6 +382,14 @@ const isFolderError = (
   error: unknown,
   ...reasons: readonly FolderFailure[]
 ): error is FolderError => error instanceof FolderError && reasons.includes(error.reason);
+
+/** Whether what the browser keeps is of a newer version of the editor, open in another tab. */
+function isOutdated(error: unknown): boolean {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if (cause.name === "VersionError") return true;
+  }
+  return false;
+}
 
 async function collect<T>(items: AsyncIterable<T>): Promise<T[]> {
   const all: T[] = [];
@@ -371,13 +440,6 @@ function problemsAbout(
   return [{ severity: "error", code: error.code, file: path, message: error.message }];
 }
 
-const recordOf = (path: string, known: Known): FolderFileRecord => ({
-  path,
-  base: known.base,
-  ...(known.stat !== ABSENT && { stat: known.stat }),
-  ...(known.synced && { synced: known.synced.hash }),
-});
-
 let batches = 0;
 const nextBatch = () => `${Date.now().toString(36)}-${(batches += 1).toString(36)}`;
 
@@ -388,13 +450,10 @@ interface TurnContext {
   readonly bases: FolderBases;
   readonly log: FolderLog;
   readonly timing: FolderTiming;
-  readonly fresh: boolean;
   readonly folder: () => LocalFolder;
   /** What the session shows changed. */
   readonly changed: () => void;
   readonly merged: (merge: FolderMerge) => void;
-  /** Another window took over: this one has to stop. */
-  readonly lost: () => void;
 }
 
 /**
@@ -409,25 +468,34 @@ class Turn {
   readonly #blocked = new Map<string, Blocked>();
   /** Files that changed outside, or may have, to take in before anything gets written. */
   readonly #external = new Set<string>();
+  /** Files that could not be looked at: they get looked at again after a while. */
+  readonly #unlookable = new Set<string>();
+  #lookTimer: ReturnType<typeof setTimeout> | undefined;
   /**
-   * Files the editor is about to write over, where the folder has something that did not come in:
-   * a conflict, what a lock kept out. How the file was then, to keep it in RECOVERED_FOLDER first.
+   * Files the editor writes over although they are not their base: where not all of what the
+   * folder has came in, as people asked, as a crash left them. Just that version, once it is kept.
    */
-  readonly #toKeep = new Map<string, FileStat>();
+  readonly #overwrites = new Map<string, Overwrite>();
   /**
-   * Files the editor writes over although they are not their base, as people asked or a crash left
-   * them, once they were kept in RECOVERED_FOLDER: just that version, and no other.
+   * What the editor is about to write, as noted down before it does, see `intentOf`, until it is
+   * known what came of it. What a window before this one noted down stays until the file was
+   * looked at.
    */
-  readonly #replacing = new Map<string, Disk>();
+  readonly #intents = new Map<string, string>();
   /** Paths whose record changed since it was kept. */
   readonly #dirty = new Set<string>();
-  /** The first time all records of the folder get replaced, see `fresh`. */
-  #replaceAll = false;
-  /** What the editor was writing when the window before stopped, until the folder was looked at. */
-  #intents = new Map<string, string>();
-  /** Nothing was kept about the folder: what the project has of a file counts as its base. */
+  /**
+   * Nothing was kept about the folder, by any window: what the project has of a file counts as its
+   * base. Whatever another window kept counts, also for a window that just made the project from
+   * the folder, as it may have let go before keeping anything, and another one wrote since.
+   */
   #baseline = false;
-  /** The folder was looked at, and is watched. */
+  /**
+   * The folder was compared with what is kept about it, file by file, since this turn began. Until
+   * then what a crash can have left counts, see `replaced`.
+   */
+  #compared = false;
+  /** The watch runs. */
   #connected = false;
   #watch: FolderWatch | undefined;
   #work: Promise<void> = Promise.resolve();
@@ -445,10 +513,13 @@ class Turn {
   #isBehind = true;
   #dead = false;
   #end = () => {};
-  /** Settles once this turn is over, also when it found out by itself that another one began. */
+  /** Settles once this turn is over, also when it found out by itself that it has to end. */
   readonly ended: Promise<void>;
+  endReason: TurnEnd = "lost";
   trouble: FolderTrouble | undefined;
   writtenAt: number | undefined;
+  /** See `FolderSnapshot.unrecorded`. */
+  unrecorded = false;
 
   constructor(context: TurnContext) {
     this.#context = context;
@@ -470,9 +541,16 @@ class Turn {
     return this.trouble?.reason === "gone" || this.trouble?.reason === "replaced";
   }
 
+  /** What keeps changes from the folder, also a file that cannot be read. */
+  get troubleNow(): FolderTrouble | undefined {
+    if (this.trouble) return this.trouble;
+    const [path] = this.#unlookable;
+    return path === undefined ? undefined : { reason: "busy", path };
+  }
+
   get status(): FolderSnapshot["status"] {
     // What keeps changes from the folder says more than that it is tried again.
-    if (this.trouble) return "unsaved";
+    if (this.troubleNow) return "unsaved";
     if (this.#queued > 0 || this.#timer !== undefined || this.#holding) return "saving";
     if (!this.#connected) return "unsaved";
     return this.#isBehind || this.#external.size > 0 ? "saving" : "saved";
@@ -495,9 +573,18 @@ class Turn {
     this.#end();
     clearTimeout(this.#timer);
     clearTimeout(this.#settle);
+    clearTimeout(this.#lookTimer);
     this.#timer = undefined;
     this.#watch?.stop();
     this.#watch = undefined;
+  }
+
+  /** Ends this turn by itself, for the session to go on from there. */
+  #stopFor(reason: TurnEnd): void {
+    if (this.#dead) return;
+    this.endReason = reason;
+    this.stop();
+    this.#context.changed();
   }
 
   /** The project changed: here, in another window, or by a merge. */
@@ -527,7 +614,7 @@ class Turn {
     return this.#enqueue(() => this.#useEditorContent(paths));
   }
 
-  /** The folder is back, or another one with this project took its place. */
+  /** Another handle of the folder came, which has to be looked at again from the start. */
   reconnected(): Promise<void> {
     return this.#enqueue(async () => {
       this.#setTrouble(undefined);
@@ -576,21 +663,31 @@ class Turn {
     this.#context.changed();
   }
 
+  /** A file could not be looked at: once in a while it gets looked at again, and nothing waits. */
+  #cannotLook(path: string): void {
+    this.#unlookable.add(path);
+    this.#context.changed();
+    if (this.#lookTimer !== undefined || this.#dead) return;
+    this.#lookTimer = setTimeout(() => {
+      this.#lookTimer = undefined;
+      for (const again of this.#unlookable) this.#external.add(again);
+      this.#arm(0);
+    }, this.#context.timing.retryMs);
+  }
+
   #setTrouble(trouble: FolderTrouble | undefined): void {
     this.trouble = trouble;
-    if (this.#isStopped) {
-      // Whatever is there now is not this project: it is looked at again only once it is back.
-      this.#watch?.stop();
-      this.#watch = undefined;
-      this.#connected = false;
-      clearTimeout(this.#timer);
-      this.#timer = undefined;
-    }
     this.#context.changed();
+    // Whatever is there now is not this project: nothing more until people find it.
+    if (this.#isStopped) this.#stopFor("park");
   }
 
   #failed(error: unknown): void {
     if (this.#dead) return;
+    if (isOutdated(error)) {
+      this.#stopFor("outdated");
+      return;
+    }
     if (error instanceof FolderError) {
       if (error.reason === "gone") {
         this.#setTrouble({ reason: "gone" });
@@ -607,25 +704,29 @@ class Turn {
   }
 
   async #begin(): Promise<void> {
-    const { bases, id, log, fresh } = this.#context;
-    this.#turn = await bases.claim(id);
+    const { bases, id, log } = this.#context;
+    let records: readonly FolderFileRecord[];
+    try {
+      this.#turn = await bases.claim(id);
+      if (this.#dead) return;
+      await log.caughtUp();
+      records = await bases.load(id);
+    } catch (error) {
+      // Without all of that, what the editor did itself would look like changes from outside.
+      if (!isOutdated(error)) console.warn("The project folder cannot be compared now", error);
+      this.#stopFor(isOutdated(error) ? "outdated" : "again");
+      return;
+    }
     if (this.#dead) return;
-    await log.caughtUp();
-    const records = fresh ? [] : await bases.load(id);
-    if (this.#dead) return;
-    this.#replaceAll = fresh;
-    this.#baseline = fresh || records.length === 0;
-    for (const { path, base, stat, synced, intent } of records) {
-      if (intent !== undefined) {
-        this.#intents.set(path, intent);
-        // It goes once the file was looked at, whatever came of the write.
-        this.#dirty.add(path);
-      }
-      if (base === undefined) continue;
+    this.#baseline = records.length === 0;
+    for (const { path, base, stat, synced, intent, replaced } of records) {
+      if (intent !== undefined) this.#intents.set(path, intent);
+      if (base === undefined && replaced === undefined) continue;
       this.#known.set(path, {
         base,
         stat: stat ?? ABSENT,
         synced: synced === undefined ? undefined : { hash: synced, text: undefined },
+        replaced,
       });
     }
     await this.#connect();
@@ -644,89 +745,38 @@ class Turn {
     await watch.ready;
     if (this.#dead) return;
     await this.#reconcile();
-    if (this.#dead || this.#isStopped) return;
-    this.#connected = true;
-    this.#intents = new Map();
-    this.#baseline = false;
+    // From now on what the watch tells gets taken in. What it told meanwhile waits for this.
+    if (!this.#dead) this.#connected = true;
   }
 
   /**
-   * Takes in what changed in the folder since the editor last saw it, and has written what the
-   * folder does not have yet, see the design, 2.3. What the editor wrote and could not note down
-   * any more is its own. What the editor wrote that a crash left damaged is kept, and written again.
+   * Compares the whole folder with what the editor knows, see the design, 2.3: what changed outside
+   * comes in, what the editor wrote and could not note down any more is its own, what a crash
+   * damaged or took back gets written again, and what the folder does not have yet gets written.
    */
   async #reconcile(): Promise<void> {
     const folder = this.#folder;
-    // What waited is looked at again with everything else. What the watch tells meanwhile stays to
-    // be taken in, which only finds the same once more.
+    // What waited is looked at again with everything else.
     this.#blocked.clear();
-    this.#toKeep.clear();
-    this.#replacing.clear();
     const listed = await collect(folder.list({ includes }));
     const exported = this.#context.store.exportFiles().files;
     const paths = [
-      ...new Set([MANIFEST_FILE, ...listed, ...this.#known.keys(), ...this.#intents.keys()]),
+      ...new Set([
+        MANIFEST_FILE,
+        ...listed,
+        ...this.#known.keys(),
+        ...this.#intents.keys(),
+        ...this.#overwrites.keys(),
+      ]),
     ].filter(isProjectFile);
     const own = new Set([...paths, ...[...exported.keys()].filter(isProjectFile)]);
     await folder.removeLeftovers(own).catch(() => []);
-    const disk = await this.#lookAll(paths);
+    const isComplete = await this.#compare(paths, exported);
     if (this.#dead) return;
-    const manifest = disk.get(MANIFEST_FILE);
-    if (manifest?.kind === "absent") {
-      this.#setTrouble({ reason: "manifest-gone" });
-      return;
+    if (isComplete) {
+      this.#compared = true;
+      this.#baseline = false;
     }
-    if (!this.#isOurs(manifest)) return;
-    const changes: FileChange[] = [];
-    const damaged: string[] = [];
-    for (const path of paths) {
-      const now = disk.get(path);
-      if (!now) {
-        this.#external.add(path);
-        continue;
-      }
-      const known = this.#known.get(path);
-      const intent = this.#intents.get(path);
-      const base = known
-        ? known.base
-        : this.#baseline && now.kind !== "absent"
-          ? exported.get(path)
-          : undefined;
-      if (isAsBase(now, base)) {
-        if (known) this.#refresh(path, now);
-        else if (base !== undefined && now.kind === "text") {
-          this.#known.set(path, { base, stat: now.stat, synced: syncedOf(base) });
-          this.#dirty.add(path);
-        }
-        continue;
-      }
-      if (intent !== undefined && hasLanded(intent, now)) {
-        const text = now.kind === "text" ? now.text : undefined;
-        const hash = hashOfIntent(intent);
-        this.#known.set(path, { base: text, stat: statIn(now), synced: { hash, text } });
-        this.#dirty.add(path);
-        continue;
-      }
-      const isUnusable =
-        now.kind === "unreadable" || (now.kind === "text" && isUnreadableDocument(path, now.text));
-      // A file the editor was writing, or one just as it wrote it, that cannot be read any more.
-      const isOwn =
-        (intent !== undefined && isDamagedWrite(intent, now)) ||
-        (known !== undefined && now.kind !== "absent" && isSameStat(known.stat, now.stat));
-      if (isUnusable && isOwn) {
-        damaged.push(path);
-        continue;
-      }
-      if (now.kind === "unreadable") {
-        if (base !== undefined || isDocument(path) || this.#isInProject(path)) {
-          this.#block(path, now, [unreadable(path, now)], false, base);
-        }
-        continue;
-      }
-      changes.push({ path, base, text: now.kind === "text" ? now.text : undefined });
-    }
-    for (const path of damaged) await this.#recover(path, disk.get(path) as Disk);
-    if (changes.length > 0) await this.#merge(changes, disk);
     await this.#keep();
     this.#isBehind = true;
     this.#arm(0);
@@ -739,18 +789,6 @@ class Turn {
     const stat = statIn(now);
     if (!isSameStat(known.stat, stat)) {
       this.#known.set(path, { ...known, stat });
-      this.#dirty.add(path);
-    }
-    // What is to be kept before writing over it is still that, with its new time.
-    if (stat !== ABSENT && this.#toKeep.has(path)) this.#toKeep.set(path, stat);
-  }
-
-  /** A file the editor writes over holds what was kept, maybe with a new time: that is the one. */
-  #replaced(path: string, now: Disk): void {
-    this.#replacing.set(path, now);
-    const known = this.#known.get(path);
-    if (known && !isSameStat(known.stat, statIn(now))) {
-      this.#known.set(path, { ...known, stat: statIn(now) });
       this.#dirty.add(path);
     }
   }
@@ -794,7 +832,7 @@ class Turn {
       try {
         bytes = new Uint8Array(await file.arrayBuffer());
       } catch {
-        // It changed while it was read.
+        // It changed while it was read, or something holds on to it.
         continue;
       }
       const text = textOf(bytes);
@@ -856,48 +894,144 @@ class Turn {
     if (!this.#connected || this.#external.size === 0 || this.#isStopped) return;
     const paths = [...this.#external];
     this.#external.clear();
-    const disk = await this.#lookAll(paths);
-    if (this.#dead) return;
-    const manifest = disk.get(MANIFEST_FILE);
-    if (manifest && !this.#isOurs(manifest)) return;
-    if (this.trouble?.reason === "manifest-gone") {
-      // The project is back: everything gets compared again.
-      if (manifest?.kind === "text") {
-        this.#setTrouble(undefined);
-        await this.#reconcile();
-      }
-      return;
+    try {
+      await this.#compare(paths);
+    } catch (error) {
+      // Nothing of it was taken in: it goes again.
+      for (const path of paths) this.#external.add(path);
+      throw error;
     }
+    await this.#keep();
+  }
+
+  /**
+   * Compares files of the folder with what the editor knows of them, and takes in what changed
+   * outside. `exported`, what the project has of each file, comes with the comparison of the whole
+   * folder. Resolves to whether all of them could be looked at, and were.
+   */
+  async #compare(
+    paths: readonly string[],
+    exported?: ReadonlyMap<string, string>,
+  ): Promise<boolean> {
+    const disk = await this.#lookAll(paths);
+    if (this.#dead) return false;
+    const manifest = disk.get(MANIFEST_FILE);
+    if (manifest?.kind === "absent") {
+      // Not a project any more, for now: what changed waits for it to come back.
+      this.#setTrouble({ reason: "manifest-gone" });
+      return false;
+    }
+    if (manifest && !this.#isOurs(manifest)) return false;
+    if (this.trouble?.reason === "manifest-gone") {
+      if (manifest?.kind !== "text") return false;
+      this.#setTrouble(undefined);
+      // The project is back: everything gets compared again.
+      if (!exported) {
+        await this.#reconcile();
+        return false;
+      }
+    }
+    // Before the folder was compared as a whole once, what a crash can have left still counts.
+    const isAfterCrash = !this.#compared;
+    const baseline = this.#baseline
+      ? (exported ?? this.#context.store.exportFiles().files)
+      : undefined;
     const changes: FileChange[] = [];
+    const damaged: [string, Disk][] = [];
+    let isComplete = true;
     for (const path of paths) {
       const now = disk.get(path);
       if (!now) {
-        this.#external.add(path);
+        isComplete = false;
+        this.#cannotLook(path);
         continue;
       }
+      this.#unlookable.delete(path);
+      const overwrite = this.#overwrites.get(path);
+      // Still the version the editor is about to write over, maybe with a new time.
+      if (overwrite) {
+        if (holdsTheSame(overwrite.disk, now)) {
+          this.#overwrites.set(path, { ...overwrite, disk: now });
+          continue;
+        }
+        // Not all of the version before came in, and it is not kept yet: it is, from what was read
+        // of it, and then the file compares with it. What came of it is in the project already.
+        if (!overwrite.isKept) await this.#keepVersion(path, overwrite.disk);
+        this.#overwrites.delete(path);
+        if (this.#dead) return false;
+      }
       const known = this.#known.get(path);
+      const intent = this.#intents.get(path);
       const blocked = this.#blocked.get(path);
-      const replacing = this.#replacing.get(path);
-      if (replacing && holdsTheSame(replacing, now)) {
-        // Still what the editor kept and is about to write over, only with a new time.
-        this.#replaced(path, now);
+      const base = known
+        ? known.base
+        : baseline && now.kind !== "absent"
+          ? baseline.get(path)
+          : undefined;
+      // What the editor was writing is settled: the file says what came of it.
+      const settled = () => {
+        if (this.#intents.delete(path)) this.#dirty.add(path);
+        if (isAfterCrash && known?.replaced !== undefined) {
+          this.#known.set(path, { ...(this.#known.get(path) ?? known), replaced: undefined });
+          this.#dirty.add(path);
+        }
+      };
+      // A crash took back what the editor wrote last: the file is the one it replaced, time and
+      // all, not something that another program wrote. It gets written again.
+      if (isAfterCrash && known?.replaced !== undefined && isReplacedBack(known.replaced, now)) {
+        this.#overwrites.set(path, { disk: now, isKept: true });
+        this.#known.set(path, {
+          ...known,
+          stat: statIn(now),
+          synced: undefined,
+          replaced: undefined,
+        });
+        this.#dirty.add(path);
+        if (this.#intents.delete(path)) this.#dirty.add(path);
         continue;
       }
       if (blocked) {
         if (!blocked.retry && isSameDisk(blocked.disk, now)) continue;
-      } else if (isAsBase(now, known?.base)) {
-        this.#refresh(path, now);
+      } else if (isAsBase(now, base)) {
+        if (known) this.#refresh(path, now);
+        else if (base !== undefined && now.kind === "text") {
+          this.#known.set(path, { base, stat: now.stat, synced: syncedOf(base) });
+          this.#dirty.add(path);
+        }
+        settled();
         continue;
       }
+      if (intent !== undefined && hasLanded(intent, now)) {
+        const text = textIn(now);
+        this.#known.set(path, {
+          base: text,
+          stat: statIn(now),
+          synced: { hash: hashOfIntent(intent), text },
+        });
+        this.#dirty.add(path);
+        settled();
+        continue;
+      }
+      // A file the editor was writing, or one just as it wrote it, that a crash left damaged: it is
+      // kept, and written again. Its note stays until then.
+      const isOwn =
+        (intent !== undefined && isDamagedWrite(intent, now)) ||
+        (known !== undefined && now.kind !== "absent" && isSameStat(known.stat, now.stat));
+      if (isOwn && now.kind !== "absent" && looksDamaged(path, textIn(now))) {
+        damaged.push([path, now]);
+        continue;
+      }
+      settled();
       if (now.kind === "unreadable") {
-        if (known || isDocument(path) || this.#isInProject(path)) {
-          this.#block(path, now, [unreadable(path, now)], false, known?.base);
+        if (base !== undefined || isDocument(path) || this.#isInProject(path)) {
+          this.#block(path, now, [unreadable(path, now)], false, base);
         }
         continue;
       }
-      changes.push({ path, base: known?.base, text: now.kind === "text" ? now.text : undefined });
+      changes.push({ path, base, text: textIn(now) });
     }
-    if (changes.length > 0) {
+    for (const [path, now] of damaged) await this.#recover(path, now);
+    if (changes.length > 0 && !this.#dead) {
       const all = new Map(disk);
       for (const [path, { problems, disk: there }] of this.#blocked) {
         const isAlong = problems.every(({ code }) => WAITS_FOR_ANOTHER.has(code));
@@ -907,15 +1041,14 @@ class Turn {
       }
       await this.#merge(changes, all);
     }
-    await this.#keep();
+    return isComplete && !this.#dead;
   }
 
   /** What the folder holds of a file outside of a batch, from what is known here, at once. */
   readonly #baseOf = (path: string): string | undefined => {
-    const blocked = this.#blocked.get(path);
-    if (!blocked) return this.#known.get(path)?.base;
-    const { disk } = blocked;
-    return disk.kind === "text" ? disk.text : disk.kind === "absent" ? undefined : UNREADABLE;
+    const there = this.#blocked.get(path)?.disk ?? this.#overwrites.get(path)?.disk;
+    if (!there) return this.#known.get(path)?.base;
+    return there.kind === "text" ? there.text : there.kind === "absent" ? undefined : UNREADABLE;
   };
 
   #block(
@@ -927,8 +1060,7 @@ class Turn {
   ): void {
     const disk = now ?? { kind: "absent" };
     this.#blocked.set(path, { problems, disk, retry });
-    this.#toKeep.delete(path);
-    this.#replacing.delete(path);
+    this.#overwrites.delete(path);
     // What it waits with: a merge that lets it in later goes from here.
     if (!this.#known.has(path) && base !== undefined) {
       this.#known.set(path, { base, stat: statIn(disk), synced: undefined });
@@ -937,14 +1069,33 @@ class Turn {
     this.#context.changed();
   }
 
+  /** Whether this window still has its turn: one that slept may not have heard that it lost it. */
+  async #hasTurn(): Promise<boolean> {
+    const latest = await this.#context.bases.turnOf(this.#context.id);
+    if (latest === this.#turn) return true;
+    this.#stopFor("lost");
+    return false;
+  }
+
   async #merge(
     changes: readonly FileChange[],
     disk: ReadonlyMap<string, Disk | undefined>,
   ): Promise<void> {
+    // Another window may take in the same changes: what comes in twice is there twice.
+    let hasTurn: boolean;
+    try {
+      hasTurn = await this.#hasTurn();
+    } catch (error) {
+      for (const { path } of changes) this.#external.add(path);
+      throw error;
+    }
+    if (!hasTurn) return;
     const { store } = this.#context;
     const origin = folderBatch(nextBatch());
+    const mergeOf = (files: readonly FileChange[]) =>
+      store.mergeFiles(files, { origin, baseOf: this.#baseOf });
     let batch = changes;
-    let result = store.mergeFiles(batch, { origin, baseOf: this.#baseOf });
+    let result = mergeOf(batch);
     // What would break the project, and says about which files, keeps out only those.
     for (
       let round = 0;
@@ -956,27 +1107,100 @@ class Turn {
       const out = batch.filter(({ path }) => named.has(path));
       if (out.length === 0 || out.length === batch.length) break;
       for (const { path, base } of out) {
-        this.#block(path, disk.get(path), problemsAbout(error, path), false, base);
+        this.#block(path, disk.get(path), problemsAbout(error, path), true, base);
       }
       batch = batch.filter(({ path }) => !named.has(path));
-      result = store.mergeFiles(batch, { origin, baseOf: this.#baseOf });
+      result = mergeOf(batch);
     }
-    if (!result.ok) {
-      const { error } = result;
-      if (error.code === "missing-updates") {
-        // Another window's changes are on their way: once they are here, this goes again.
-        for (const { path } of batch) this.#external.add(path);
-        this.#arm(this.#context.timing.retryMs);
-        return;
+    if (!result.ok && SALVAGEABLE.has(result.error.code) && batch.length > 1) {
+      // It does not say which: each file goes on its own then, what others refer to first, and
+      // what still would break the project waits, to be tried again once the project changes.
+      for (const rank of inRanks(batch.map(({ path }) => path))) {
+        for (const path of rank) {
+          const one = batch.filter((change) => change.path === path);
+          const alone = mergeOf(one);
+          if (alone.ok) this.#took(alone, one, disk, origin);
+          else this.#refused(alone.error, one, disk);
+        }
       }
-      if (error.code === "manifest-deleted") this.#setTrouble({ reason: "manifest-gone" });
-      for (const { path, base } of batch) {
-        const retry = RETRYABLE.has(error.code);
-        this.#block(path, disk.get(path), problemsAbout(error, path), retry, base);
-      }
+      await this.#keepPartly();
       return;
     }
-    const after = store.exportFiles().files;
+    if (!result.ok) {
+      this.#refused(result.error, batch, disk);
+      return;
+    }
+    this.#took(result, batch, disk, origin);
+    await this.#keepPartly();
+  }
+
+  /**
+   * Keeps at once what did not all come in of files, see `#keepVersion`, so that the base of each
+   * moves on with what came in. What cannot be kept now is tried again before it gets written over.
+   */
+  async #keepPartly(): Promise<void> {
+    for (const [path, overwrite] of this.#overwrites) {
+      if (overwrite.isKept || this.#dead) continue;
+      if (!(await this.#keepVersion(path, overwrite.disk))) continue;
+      if (this.#overwrites.get(path) === overwrite) {
+        this.#overwrites.set(path, { ...overwrite, isKept: true });
+      }
+    }
+  }
+
+  /**
+   * Puts a version of a file that did not all come in in RECOVERED_FOLDER, from what was read of it,
+   * and makes it the base of the file: what came of it is in the project, and the rest is kept. Until
+   * then the file keeps its old base, so that the next merge finds the same conflict again. Resolves
+   * to whether it is kept.
+   */
+  async #keepVersion(path: string, disk: Disk): Promise<boolean> {
+    if (disk.kind !== "text") return false;
+    try {
+      await this.#backUp(path, undefined, encoder.encode(disk.text));
+    } catch (error) {
+      if (isFolderError(error, "gone", "denied") || !(error instanceof FolderError)) throw error;
+      console.warn("What the folder had of a file could not be kept yet", error);
+      return false;
+    }
+    if (this.#dead) return false;
+    const known = this.#known.get(path);
+    this.#known.set(path, {
+      base: disk.text,
+      stat: disk.stat,
+      synced: undefined,
+      ...(known?.replaced !== undefined && { replaced: known.replaced }),
+    });
+    this.#dirty.add(path);
+    return true;
+  }
+
+  #refused(
+    error: Extract<MergeResult, { ok: false }>["error"],
+    batch: readonly FileChange[],
+    disk: ReadonlyMap<string, Disk | undefined>,
+  ): void {
+    if (error.code === "missing-updates") {
+      // Another window's changes are on their way: once they are here, this goes again.
+      for (const { path } of batch) this.#external.add(path);
+      this.#arm(this.#context.timing.retryMs);
+      return;
+    }
+    if (error.code === "manifest-deleted") this.#setTrouble({ reason: "manifest-gone" });
+    const retry = RETRYABLE.has(error.code);
+    for (const { path, base } of batch) {
+      this.#block(path, disk.get(path), problemsAbout(error, path), retry, base);
+    }
+  }
+
+  /** What came of a merge, file by file, and what to tell people. */
+  #took(
+    result: Extract<MergeResult, { ok: true }>,
+    batch: readonly FileChange[],
+    disk: ReadonlyMap<string, Disk | undefined>,
+    origin: Origin,
+  ): void {
+    const after = this.#context.store.exportFiles().files;
     const bases = new Map(batch.map(({ path, base }) => [path, base]));
     const came: string[] = [];
     for (const file of result.files) {
@@ -991,26 +1215,31 @@ class Turn {
         continue;
       }
       this.#blocked.delete(file.path);
-      this.#replacing.delete(file.path);
+      this.#overwrites.delete(file.path);
       if (file.status === "ignored") {
         if (this.#known.delete(file.path)) this.#dirty.add(file.path);
         continue;
       }
       came.push(file.path);
-      const text = after.get(file.path);
-      const stat = now ? statIn(now) : ABSENT;
-      this.#known.set(file.path, {
-        base: file.base,
-        stat,
-        synced: file.rewrite ? undefined : syncedOf(text),
-      });
-      this.#dirty.add(file.path);
-      // The editor writes over what the folder has here, and not all of that came in.
       const isPartly =
         result.conflicts.some(({ file: about }) => about === file.path) ||
         result.problems.some(({ file: about }) => about === file.path);
-      if (file.rewrite && isPartly && stat !== ABSENT) this.#toKeep.set(file.path, stat);
-      else this.#toKeep.delete(file.path);
+      if (file.rewrite && isPartly && now && now.kind !== "absent") {
+        // The editor writes over what the folder has here, and not all of that came in. Until that
+        // is kept, the file keeps its old base, so that a crash before brings the same merge again,
+        // and the same conflict.
+        this.#overwrites.set(file.path, { disk: now, isKept: false });
+        const known = this.#known.get(file.path);
+        if (known) this.#known.set(file.path, { ...known, synced: undefined });
+        continue;
+      }
+      const text = after.get(file.path);
+      this.#known.set(file.path, {
+        base: file.base,
+        stat: now ? statIn(now) : ABSENT,
+        synced: file.rewrite ? undefined : syncedOf(text),
+      });
+      this.#dirty.add(file.path);
     }
     if (result.patches.length > 0 || result.problems.length > 0) {
       this.#context.merged({
@@ -1023,32 +1252,50 @@ class Turn {
     if (result.files.some(({ rewrite }) => rewrite)) this.#arm(0);
   }
 
+  /** The record of a file, as it is to be kept now. */
+  #recordOf(path: string): FolderFileRecord | undefined {
+    const known = this.#known.get(path);
+    const intent = this.#intents.get(path);
+    if (known?.base === undefined && known?.replaced === undefined && intent === undefined) {
+      return undefined;
+    }
+    return {
+      path,
+      ...(known?.base !== undefined && { base: known.base }),
+      ...(known && known.stat !== ABSENT && { stat: known.stat }),
+      ...(known?.synced && { synced: known.synced.hash }),
+      ...(known?.replaced !== undefined && { replaced: known.replaced }),
+      ...(intent !== undefined && { intent }),
+    };
+  }
+
   /**
    * Keeps what changed of the records, once the log has what the folder has: should the page go away
    * between the two, the folder is ahead of the log, and comes in as a change from outside.
    */
   async #keep(logged?: boolean): Promise<void> {
-    if (this.#dirty.size === 0 && !this.#replaceAll) return;
+    if (this.#dirty.size === 0) return;
     const isLogged = logged ?? (await this.#context.log.saved());
     if (this.#dead) return;
     if (!isLogged) {
       this.#arm(this.#context.timing.retryMs);
       return;
     }
-    const replace = this.#replaceAll;
     const dirty = [...this.#dirty];
-    const paths = replace ? [...this.#known.keys()] : dirty;
     const put: FolderFileRecord[] = [];
     const remove: string[] = [];
-    for (const path of paths) {
-      const known = this.#known.get(path);
-      if (known?.base !== undefined) put.push(recordOf(path, known));
+    for (const path of dirty) {
+      const record = this.#recordOf(path);
+      if (record) put.push(record);
       else remove.push(path);
     }
     this.#dirty.clear();
     try {
-      if (!(await this.#save({ put, ...(replace ? { replace } : { remove }) }))) return;
-      this.#replaceAll = false;
+      if (!(await this.#save({ put, remove }))) return;
+      if (this.unrecorded) {
+        this.unrecorded = false;
+        this.#context.changed();
+      }
     } catch (error) {
       for (const path of dirty) this.#dirty.add(path);
       throw error;
@@ -1057,29 +1304,27 @@ class Turn {
 
   async #save(change: FolderBasesChange): Promise<boolean> {
     const kept = await this.#context.bases.save(this.#context.id, this.#turn, change);
-    if (!kept && !this.#dead) {
-      // Another window writes the folder now. What this one has is from before.
-      this.stop();
-      this.#context.lost();
-    }
+    // Another window writes the folder now. What this one has is from before.
+    if (!kept) this.#stopFor("lost");
     return kept;
   }
 
   /** Whether animaquill.json is as the editor knows it, or else has it taken in first. */
   async #checkManifest(): Promise<void> {
     const known = this.#known.get(MANIFEST_FILE);
-    const blocked = this.#blocked.get(MANIFEST_FILE);
+    const there =
+      this.#blocked.get(MANIFEST_FILE)?.disk ?? this.#overwrites.get(MANIFEST_FILE)?.disk;
     let file: File;
     try {
       file = await this.#folder.file(MANIFEST_FILE);
     } catch (error) {
       if (!isFolderError(error, "missing")) throw error;
-      if (known?.stat !== ABSENT) this.#external.add(MANIFEST_FILE);
+      if ((there ? statIn(there) : known?.stat) !== ABSENT) this.#external.add(MANIFEST_FILE);
       return;
     }
     const stat = statOf(file);
-    if (blocked && blocked.disk.kind !== "absent" && isSameStat(blocked.disk.stat, stat)) return;
-    if (!blocked && known && known.stat !== ABSENT && isSameStat(known.stat, stat)) return;
+    const seen = there ? statIn(there) : known?.stat;
+    if (seen !== undefined && seen !== ABSENT && isSameStat(seen, stat)) return;
     this.#external.add(MANIFEST_FILE);
   }
 
@@ -1109,35 +1354,39 @@ class Turn {
     const plan = this.#plan(files, new Set(problems.map(({ file }) => file)));
     if (plan.writes.size + plan.removes.length + plan.moves.length === 0) {
       await this.#keep();
-      if (!this.#dead)
-        this.#setTrouble(plan.clash ? { reason: "clash", path: plan.clash } : undefined);
+      if (!this.#dead) this.#settleTrouble(plan, undefined);
       return;
     }
-    // The log has to have it before the folder does, see the top of this file.
+    // The log has to have it before the folder does, see the top of this file. Without the log the
+    // folder still gets written, as it is the project, but nothing gets noted down.
     const logged = await this.#context.log.saved();
     if (this.#dead) return;
     const hashes = new Map([...plan.writes].map(([path, text]) => [path, hashText(text)]));
     if (logged) {
+      for (const [path, hash] of hashes) {
+        this.#intents.set(path, intentOf(plan.writes.get(path) as string, hash));
+        this.#dirty.add(path);
+      }
+      for (const path of plan.removes) {
+        this.#intents.set(path, ABSENT);
+        this.#dirty.add(path);
+      }
       await this.#keep(true);
       if (this.#dead) return;
-      const intents = [
-        ...[...hashes].map(([path, hash]) => ({
-          ...this.#recordOf(path),
-          intent: intentOf(plan.writes.get(path) as string, hash),
-        })),
-        ...plan.removes.map((path) => ({ ...this.#recordOf(path), intent: ABSENT })),
-      ];
-      if (!(await this.#save({ put: intents }))) return;
     }
     let failure: unknown;
     let isHalted = false;
     const each = async (paths: readonly string[], work: (path: string) => Promise<boolean>) => {
       await inTurns(paths, WRITE_AT_ONCE, async (path) => {
+        if (this.#dead) return;
+        // A file that is not there yet and does not get there would be missing for what comes
+        // after: then that waits. A file that stays as it was only stays a little older.
+        const isNew = this.#isNew(path);
         try {
-          if (!(await work(path))) isHalted = true;
+          if (!(await work(path)) && isNew) isHalted = true;
         } catch (error) {
           failure ??= error;
-          isHalted = true;
+          if (isNew) isHalted = true;
         }
       });
     };
@@ -1145,7 +1394,6 @@ class Turn {
       plan.moves.map(([from]) => from),
       (from) => this.#moveOne(from, plan.moves.find(([path]) => path === from)?.[1] as string),
     );
-    // What comes after something that did not get there would refer to it.
     for (const rank of inRanks(plan.writes.keys())) {
       if (isHalted || this.#dead) break;
       await each(rank, (path) =>
@@ -1157,18 +1405,32 @@ class Turn {
       await each(rank, (path) => this.#removeOne(path));
     }
     if (this.#dead) return;
-    for (const path of [...plan.writes.keys(), ...plan.removes]) this.#dirty.add(path);
+    // What came of it is known now, whatever it was.
+    for (const path of [...plan.writes.keys(), ...plan.removes]) {
+      if (this.#intents.delete(path)) this.#dirty.add(path);
+    }
+    if (!logged) {
+      this.unrecorded = true;
+      this.#context.changed();
+    }
     await this.#keep(logged || undefined);
     if (this.#dead) return;
     this.writtenAt = Date.now();
-    if (failure !== undefined) this.#failed(failure);
-    else this.#setTrouble(plan.clash ? { reason: "clash", path: plan.clash } : undefined);
+    this.#settleTrouble(plan, failure);
     if (this.#external.size > 0) this.#arm(0);
   }
 
-  #recordOf(path: string): FolderFileRecord {
+  #settleTrouble(plan: Plan, failure: unknown): void {
+    if (failure !== undefined) this.#failed(failure);
+    else this.#setTrouble(plan.clash ? { reason: "clash", path: plan.clash } : undefined);
+  }
+
+  /** Whether the folder does not have a file yet, as far as the editor knows. */
+  #isNew(path: string): boolean {
+    const there = this.#overwrites.get(path)?.disk;
+    if (there) return there.kind === "absent";
     const known = this.#known.get(path);
-    return known ? recordOf(path, known) : { path };
+    return !known || known.stat === ABSENT;
   }
 
   #plan(files: ReadonlyMap<string, string>, unwritable: ReadonlySet<string>): Plan {
@@ -1178,7 +1440,7 @@ class Turn {
     /** Files the project has under a name that only differs in case, see below. */
     const renamed: [string, string][] = [];
     let clash: string | undefined;
-    const paths = [...new Set([...files.keys(), ...this.#known.keys()])]
+    const paths = [...new Set([...files.keys(), ...this.#known.keys(), ...this.#overwrites.keys()])]
       .filter(isProjectFile)
       .toSorted();
     /** The files of the project by `sameNameKey`, which on Windows is one file. */
@@ -1190,8 +1452,9 @@ class Turn {
       else named.set(key, path);
     }
     for (const path of paths) {
-      // A document that the project cannot write as it is stays as the folder has it.
-      if (unwritable.has(path)) continue;
+      // A document that the project cannot write as it is stays as the folder has it, and so does
+      // a file that cannot be looked at now.
+      if (unwritable.has(path) || this.#unlookable.has(path)) continue;
       const text = files.get(path);
       const blocked = this.#blocked.get(path);
       if (blocked) {
@@ -1201,15 +1464,16 @@ class Turn {
       }
       if (text !== undefined && named.get(sameNameKey(path)) !== path) continue;
       const known = this.#known.get(path);
-      if (isSynced(known, text)) continue;
+      const isOverwritten = this.#overwrites.has(path);
+      if (!isOverwritten && isSynced(known, text)) continue;
       if (text !== undefined) {
         writes.set(path, text);
         continue;
       }
       // The project is never taken away from its folder by the editor.
       if (path === MANIFEST_FILE) continue;
-      if (!known || known.stat === ABSENT) {
-        if (known) this.#forget(path);
+      if (!isOverwritten && (!known || known.stat === ABSENT)) {
+        if (known && known.replaced === undefined) this.#forget(path);
         continue;
       }
       const other = named.get(sameNameKey(path));
@@ -1234,64 +1498,92 @@ class Turn {
 
   #unblock(path: string, text: string | undefined, disk: Disk): void {
     this.#blocked.delete(path);
-    this.#known.set(path, {
-      base: disk.kind === "text" ? disk.text : undefined,
-      stat: statIn(disk),
-      synced: syncedOf(text),
-    });
+    this.#known.set(path, { base: textIn(disk), stat: statIn(disk), synced: syncedOf(text) });
     this.#dirty.add(path);
     this.#context.changed();
   }
 
   /**
-   * Keeps what the folder has of a file before the editor writes over it, when not all of that came
-   * in. Resolves to false when the file changed in the meantime, which then gets taken in first.
+   * Looks at a file right before the editor replaces it, and resolves to what is there when that is
+   * what the editor knows: what changed there comes in first. Its size and time say so too, but a
+   * program can put back the time, and a browser does not always tell.
    */
-  async #keepFirst(path: string): Promise<boolean> {
-    const stat = this.#toKeep.get(path);
-    if (stat === undefined) return true;
-    try {
-      await this.#backUp(path, stat);
-    } catch (error) {
-      if (!isFolderError(error, "changed")) throw error;
-      this.#external.add(path);
-      return false;
+  async #isAsKnown(path: string): Promise<Disk | undefined> {
+    const now = await this.#look(path);
+    if (!now) {
+      this.#cannotLook(path);
+      return undefined;
     }
-    this.#toKeep.delete(path);
-    return true;
+    this.#unlookable.delete(path);
+    const overwrite = this.#overwrites.get(path);
+    if (overwrite) {
+      // What is to be written over is what is there, also when something wrote it again since.
+      if (holdsTheSame(overwrite.disk, now)) {
+        this.#overwrites.set(path, { ...overwrite, disk: now });
+        return now;
+      }
+      // Something else is there now. What to write over goes once that comes in, see `#compare`,
+      // which keeps first what is not kept yet of it.
+    } else if (isAsBase(now, this.#known.get(path)?.base)) {
+      this.#refresh(path, now);
+      return now;
+    }
+    // It changed outside since: that comes in, and the next try goes from there.
+    this.#external.add(path);
+    return undefined;
   }
 
   /**
-   * Looks at a file right before the editor replaces it: what changed there comes in first. Its size
-   * and time say so too, but a program can put back the time, and a browser does not always tell.
+   * Keeps what the folder has of a file before the editor writes over it, where not all of that
+   * came in. From then on that is the base of the file. Resolves to false when the file changed in
+   * the meantime, which then gets taken in first.
    */
-  async #isAsKnown(path: string): Promise<boolean> {
-    const now = await this.#look(path);
-    const replacing = this.#replacing.get(path);
-    // What was kept is what is there, also when something wrote it again with a new time.
-    if (now && replacing && holdsTheSame(replacing, now)) {
-      this.#replaced(path, now);
-      return true;
+  async #keepFirst(path: string, now: Disk): Promise<boolean> {
+    const overwrite = this.#overwrites.get(path);
+    if (!overwrite || overwrite.isKept || now.kind === "absent") return true;
+    try {
+      // What was read of it is what is there, see `#isAsKnown`: a file that cannot be read now
+      // can still be kept.
+      await this.#backUp(
+        path,
+        now.stat,
+        now.kind === "text" ? encoder.encode(now.text) : undefined,
+      );
+    } catch (error) {
+      if (!isFolderError(error, "changed")) throw error;
+      this.#overwrites.delete(path);
+      this.#external.add(path);
+      return false;
     }
-    if (now && !replacing && isAsBase(now, this.#known.get(path)?.base)) {
-      this.#refresh(path, now);
-      return true;
-    }
-    // It changed outside since: that comes in, and the next try goes from there.
-    this.#replacing.delete(path);
-    this.#external.add(path);
-    return false;
+    this.#overwrites.set(path, { disk: now, isKept: true });
+    const known = this.#known.get(path);
+    this.#known.set(path, {
+      base: textIn(now),
+      stat: now.stat,
+      synced: undefined,
+      ...(known?.replaced !== undefined && { replaced: known.replaced }),
+    });
+    this.#dirty.add(path);
+    // The new base is noted down before the write: should the page go away right after it, and the
+    // file change again, the change compares with what came in, not with what was before.
+    await this.#keep();
+    return !this.#dead;
   }
 
   async #writeOne(path: string, text: string, hash: string): Promise<boolean> {
-    if (!(await this.#isAsKnown(path)) || !(await this.#keepFirst(path))) return false;
-    const expected = this.#known.get(path)?.stat ?? ABSENT;
+    const now = await this.#isAsKnown(path);
+    if (!now || this.#dead || !(await this.#keepFirst(path, now))) return false;
     try {
-      const file = await this.#folder.write(path, text, { expected });
-      if (!this.#dead) {
-        this.#known.set(path, { base: text, stat: statOf(file), synced: { hash, text } });
-        this.#replacing.delete(path);
-      }
+      const file = await this.#folder.write(path, text, { expected: statIn(now) });
+      if (this.#dead) return true;
+      this.#known.set(path, {
+        base: text,
+        stat: statOf(file),
+        synced: { hash, text },
+        replaced: replacedOf(now),
+      });
+      this.#overwrites.delete(path);
+      this.#dirty.add(path);
       return true;
     } catch (error) {
       if (!isFolderError(error, "changed")) throw error;
@@ -1302,23 +1594,26 @@ class Turn {
   }
 
   async #removeOne(path: string): Promise<boolean> {
-    const known = this.#known.get(path);
-    if (!known || known.stat === ABSENT) {
-      this.#forget(path);
+    const now = await this.#isAsKnown(path);
+    if (!now || this.#dead) return false;
+    if (now.kind === "absent") {
+      this.#overwrites.delete(path);
+      if (this.#known.get(path)?.replaced === undefined) this.#forget(path);
       return true;
     }
-    if (!(await this.#isAsKnown(path)) || !(await this.#keepFirst(path))) return false;
-    const { stat } = this.#known.get(path) ?? known;
-    if (stat === ABSENT) {
-      this.#forget(path);
-      return true;
-    }
+    if (!(await this.#keepFirst(path, now))) return false;
     try {
-      await this.#folder.remove(path, { expected: stat });
-      if (!this.#dead) {
-        this.#forget(path);
-        this.#replacing.delete(path);
-      }
+      await this.#folder.remove(path, { expected: now.stat });
+      if (this.#dead) return true;
+      // Nothing is there any more, and what was there is known again after a crash.
+      this.#known.set(path, {
+        base: undefined,
+        stat: ABSENT,
+        synced: syncedOf(undefined),
+        replaced: replacedOf(now),
+      });
+      this.#overwrites.delete(path);
+      this.#dirty.add(path);
       return true;
     } catch (error) {
       if (!isFolderError(error, "changed")) throw error;
@@ -1349,22 +1644,32 @@ class Turn {
   }
 
   /**
-   * Puts a copy of a file in RECOVERED_FOLDER, byte for byte, before the editor writes over it.
-   * With `expected` only while it is still that file, and rejects with "changed" otherwise.
-   * Resolves to where it went, or to undefined when there is no file.
+   * Puts a copy of a file in RECOVERED_FOLDER, byte for byte, before the editor writes over it:
+   * what was read of it, `given`, or else what is there. With `expected` only while it is still that
+   * file, and rejects with "changed" otherwise. Resolves to where it went, or to undefined when
+   * there is no file.
    */
-  async #backUp(path: string, expected?: FileStat): Promise<string | undefined> {
+  async #backUp(
+    path: string,
+    expected?: FileStat,
+    given?: Uint8Array<ArrayBuffer>,
+  ): Promise<string | undefined> {
     const folder = this.#folder;
     let bytes: Uint8Array<ArrayBuffer>;
-    try {
-      const file = await folder.file(path);
-      if (expected && !isSameStat(statOf(file), expected)) throw new FolderError("changed", path);
-      bytes = new Uint8Array(await file.arrayBuffer());
-    } catch (error) {
-      if (isFolderError(error, "missing")) return undefined;
-      if (error instanceof FolderError) throw error;
-      // It changed while it was read.
-      throw new FolderError("changed", path, { cause: error });
+    if (given) bytes = given;
+    else {
+      try {
+        const file = await folder.file(path);
+        if (expected && !isSameStat(statOf(file), expected)) {
+          throw new FolderError("changed", path);
+        }
+        bytes = new Uint8Array(await file.arrayBuffer());
+      } catch (error) {
+        if (isFolderError(error, "missing")) return undefined;
+        if (error instanceof FolderError) throw error;
+        // It changed while it was read.
+        throw new FolderError("changed", path, { cause: error });
+      }
     }
     try {
       await folder.write(IGNORE_FILE, "*\n", { expected: "absent" });
@@ -1400,12 +1705,20 @@ class Turn {
       if (!(error instanceof FolderError)) throw error;
       const message = "这个文件坏了，没能先备份到 .animaquill/recovered，所以没有重写";
       const problem: Problem = { severity: "error", code: "not-kept", file: path, message };
+      if (this.#intents.delete(path)) this.#dirty.add(path);
       this.#block(path, now, [problem], false, this.#known.get(path)?.base);
       return;
     }
-    const known = this.#known.get(path);
-    this.#known.set(path, { base: known?.base, stat: statIn(now), synced: undefined });
-    this.#replacing.set(path, now);
+    this.#overwrites.set(path, { disk: now, isKept: true });
+    // Until it is written again, this is what the editor replaces: should the page go away before,
+    // the next one knows it again by that, also when the editor wrote something else meanwhile.
+    const replaced = replacedOf(now);
+    const known = this.#known.get(path) ?? { base: undefined, stat: ABSENT, synced: undefined };
+    this.#known.set(path, {
+      ...known,
+      synced: undefined,
+      ...(replaced !== undefined && { replaced }),
+    });
     this.#dirty.add(path);
   }
 
@@ -1422,24 +1735,23 @@ class Turn {
     for (const path of wanted) {
       if (!isRestoring && !this.#blocked.has(path)) continue;
       const now = await this.#look(path);
-      if (!now) throw new FolderError("failed", path);
+      if (!now) {
+        this.#cannotLook(path);
+        continue;
+      }
       const text = files.get(path);
       this.#blocked.delete(path);
-      this.#toKeep.delete(path);
       const known = this.#known.get(path);
       if (isAsDisk(text, now)) {
-        this.#known.set(path, {
-          base: now.kind === "text" ? now.text : undefined,
-          stat: statIn(now),
-          synced: syncedOf(text),
-        });
+        this.#overwrites.delete(path);
+        this.#known.set(path, { base: textIn(now), stat: statIn(now), synced: syncedOf(text) });
+        this.#dirty.add(path);
       } else {
         // What the folder has goes first where it can be found again, and only then is it replaced.
         await this.#backUp(path, now.kind === "absent" ? undefined : now.stat);
-        this.#known.set(path, { base: known?.base, stat: statIn(now), synced: undefined });
-        this.#replacing.set(path, now);
+        this.#overwrites.set(path, { disk: now, isKept: true });
+        if (known) this.#known.set(path, { ...known, synced: undefined });
       }
-      this.#dirty.add(path);
     }
     if (isRestoring) this.#setTrouble(undefined);
     this.#isBehind = true;
@@ -1460,7 +1772,6 @@ export class FolderSession {
   readonly #log: FolderLog;
   readonly #timing: FolderTiming;
   #folder: LocalFolder;
-  #fresh: boolean;
   #role: FolderRole = "starting";
   #turn: Turn | undefined;
   #claim: WriterClaim | undefined;
@@ -1471,6 +1782,11 @@ export class FolderSession {
   #close = () => {};
   readonly #closed: Promise<void>;
   #ready: Promise<void> | undefined;
+  /** Why this window does not write the folder for now, see the role "stopped". */
+  #stopped: FolderTrouble | undefined;
+  #unpark = () => {};
+  /** The last turn left the folder written, but not noted down, see `FolderSnapshot.unrecorded`. */
+  #unrecorded = false;
   readonly #emitter = new Emitter();
   readonly #mergeListeners = new Set<(merge: FolderMerge) => void>();
   #snapshot: FolderSnapshot = {
@@ -1479,26 +1795,17 @@ export class FolderSession {
     trouble: undefined,
     blocked: [],
     writtenAt: undefined,
+    unrecorded: false,
   };
   readonly #stop: readonly (() => void)[];
 
-  constructor({
-    store,
-    folder,
-    id,
-    bases,
-    writer,
-    log,
-    fresh = false,
-    timing,
-  }: FolderSessionOptions) {
+  constructor({ store, folder, id, bases, writer, log, timing }: FolderSessionOptions) {
     this.#store = store;
     this.#folder = folder;
     this.#id = id;
     this.#bases = bases;
     this.#writer = writer;
     this.#log = log;
-    this.#fresh = fresh;
     this.#timing = { ...FOLDER_TIMING, ...timing };
     this.#closed = new Promise((resolve) => {
       this.#close = resolve;
@@ -1524,7 +1831,7 @@ export class FolderSession {
 
   /**
    * Starts keeping the folder. Resolves once this window writes it and has compared it with the
-   * project, or once it knows that another window writes it.
+   * project, or once it knows that another window writes it, or why nobody can.
    */
   start(): Promise<void> {
     if (!this.#ready) {
@@ -1546,7 +1853,9 @@ export class FolderSession {
    */
   async flush(): Promise<boolean> {
     const turn = this.#turn;
-    return turn ? turn.flush() : this.#log.saved();
+    if (turn) return turn.flush();
+    if (this.#stopped) return false;
+    return this.#log.saved();
   }
 
   /** Resolves once nothing this window started for the folder is on its way any more. */
@@ -1566,6 +1875,7 @@ export class FolderSession {
     await this.#turn?.flush().catch(() => false);
     this.#isClosed = true;
     this.#close();
+    this.#unpark();
     this.#waiting?.abort();
     for (const stop of this.#stop) stop();
     this.#turn?.stop();
@@ -1590,7 +1900,9 @@ export class FolderSession {
 
   /**
    * Goes on with the folder once it is back, or with another folder people found for it, see
-   * `FolderTrouble`. A folder knows only its place, so whatever is there has to be this project.
+   * `FolderTrouble`. A folder knows only its place, so whatever is there has to be this project. A
+   * window that stopped because the folder was gone writes it again, or waits for the one that does.
+   * Another window that writes it goes on with the folder it has.
    */
   async reconnect(folder: LocalFolder = this.#folder): Promise<Reconnection> {
     const status = await folder.status().catch(() => "gone" as const);
@@ -1604,12 +1916,26 @@ export class FolderSession {
     }
     if (projectIdOf(text) !== this.#store.getState().manifest.id) return "other-project";
     this.#folder = folder;
-    await this.#turn?.reconnected();
+    if (this.#stopped && this.#stopped.reason !== "outdated") {
+      this.#stopped = undefined;
+      this.#unpark();
+      this.#refresh();
+    } else await this.#turn?.reconnected();
     return "connected";
   }
 
   async #run(ready: () => void): Promise<void> {
     while (!this.#isClosed) {
+      if (this.#stopped) {
+        // Until people find the folder again, see `reconnect`: no window can write it meanwhile.
+        this.#setRole("stopped");
+        ready();
+        if (this.#stopped.reason === "outdated") return;
+        await new Promise<void>((resolve) => {
+          this.#unpark = resolve;
+        });
+        continue;
+      }
       const claim = await this.#claimTurn(ready);
       if (!claim) return;
       if (this.#isClosed) {
@@ -1623,15 +1949,12 @@ export class FolderSession {
         bases: this.#bases,
         log: this.#log,
         timing: this.#timing,
-        fresh: this.#fresh,
         folder: () => this.#folder,
         changed: () => this.#refresh(),
         merged: (merge) => {
           for (const listener of this.#mergeListeners) listener(merge);
         },
-        lost: () => claim.release(),
       });
-      this.#fresh = false;
       this.#turn = turn;
       this.#setRole("writing");
       await turn.start();
@@ -1639,10 +1962,22 @@ export class FolderSession {
       await Promise.race([claim.lost, turn.ended, this.#closed]);
       turn.stop();
       claim.release();
+      this.#unrecorded = turn.unrecorded;
       if (this.#turn === turn) this.#turn = undefined;
       this.#claim = undefined;
       if (this.#isClosed) return;
-      this.#setRole("waiting");
+      if (turn.endReason === "outdated") this.#stopped = { reason: "outdated" };
+      else if (turn.endReason === "park") this.#stopped = turn.trouble ?? { reason: "gone" };
+      else {
+        this.#setRole("waiting");
+        // Something failed before the folder could be compared: another window may do better.
+        if (turn.endReason === "again") {
+          await Promise.race([
+            new Promise((resolve) => setTimeout(resolve, this.#timing.retryMs)),
+            this.#closed,
+          ]);
+        }
+      }
     }
   }
 
@@ -1660,14 +1995,19 @@ export class FolderSession {
       }
       const waiting = new AbortController();
       this.#waiting = waiting;
+      let isGranted = false;
       try {
-        return await this.#writer.claim({
+        const claim = await this.#writer.claim({
           signal: waiting.signal,
+          // A browser can say so late, when this one has the turn already.
           onWaiting: () => {
+            if (isGranted || this.#isClosed || this.#waiting !== waiting) return;
             this.#setRole("waiting");
             ready();
           },
         });
+        isGranted = true;
+        return claim;
       } catch (error) {
         if (!waiting.signal.aborted) {
           // The page goes away with its browser: nothing more happens here.
@@ -1716,23 +2056,32 @@ export class FolderSession {
         ? "elsewhere"
         : this.#role === "closed"
           ? "saved"
-          : "saving";
-    const trouble = turn?.trouble;
+          : this.#role === "stopped"
+            ? "unsaved"
+            : "saving";
+    const trouble = turn ? turn.troubleNow : this.#role === "stopped" ? this.#stopped : undefined;
     const blocked = turn?.blocked ?? [];
     const writtenAt = turn?.writtenAt ?? this.#snapshot.writtenAt;
+    const unrecorded = turn ? turn.unrecorded : this.#unrecorded;
     const before = this.#snapshot;
+    const isSameTrouble =
+      before.trouble === trouble ||
+      (before.trouble?.reason === trouble?.reason &&
+        (before.trouble as { path?: string } | undefined)?.path ===
+          (trouble as { path?: string } | undefined)?.path);
     const isSame =
       before.role === this.#role &&
       before.status === status &&
-      before.trouble === trouble &&
+      isSameTrouble &&
       before.writtenAt === writtenAt &&
+      before.unrecorded === unrecorded &&
       before.blocked.length === blocked.length &&
       before.blocked.every(
         (file, index) =>
           file.path === blocked[index]?.path && file.problems === blocked[index]?.problems,
       );
     if (isSame) return;
-    this.#snapshot = { role: this.#role, status, trouble, blocked, writtenAt };
+    this.#snapshot = { role: this.#role, status, trouble, blocked, writtenAt, unrecorded };
     this.#emitter.emit();
   }
 }

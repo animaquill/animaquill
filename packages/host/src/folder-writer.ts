@@ -43,50 +43,61 @@ export function browserFolderWriter(
     typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(name),
 ): FolderWriter {
   const name = `${PREFIX}${folder}`;
+  /**
+   * The turn, as the lock gives it. Resolves to undefined where `ifAvailable` finds that another
+   * window has it.
+   */
+  const turnOf = (manager: LockManager, options: LockOptions) =>
+    new Promise<WriterClaim | undefined>((resolve, reject) => {
+      let lose = () => {};
+      const lost = new Promise<void>((settle) => {
+        lose = settle;
+      });
+      let stopAnswering = () => {};
+      let isGranted = false;
+      manager
+        .request(name, options, (lock) => {
+          if (!lock) {
+            resolve(undefined);
+            return undefined;
+          }
+          isGranted = true;
+          stopAnswering = answering(channel(name));
+          return new Promise<void>((release) => {
+            resolve({
+              lost,
+              release: () => {
+                stopAnswering();
+                release();
+              },
+            });
+          });
+        })
+        .then(
+          () => {
+            stopAnswering();
+            lose();
+          },
+          (error: unknown) => {
+            // Another window took over, which only says so here.
+            stopAnswering();
+            if (isGranted) lose();
+            else reject(error);
+          },
+        );
+    });
   return {
     async claim({ signal, steal = false, onWaiting } = {}) {
       const manager = locks();
       if (!manager) return ALONE;
-      if (!steal && onWaiting) {
-        const { held = [] } = await manager.query().catch(() => ({ held: undefined }));
-        if (held.some((lock) => lock.name === name)) onWaiting();
-      }
-      return new Promise<WriterClaim>((resolve, reject) => {
-        let lose = () => {};
-        const lost = new Promise<void>((settle) => {
-          lose = settle;
-        });
-        let stopAnswering = () => {};
-        let isGranted = false;
-        // Taking over cannot wait, and so it cannot be stopped either.
-        const options: LockOptions = steal ? { steal: true } : signal ? { signal } : {};
-        manager
-          .request(name, options, () => {
-            isGranted = true;
-            stopAnswering = answering(channel(name));
-            return new Promise<void>((release) => {
-              resolve({
-                lost,
-                release: () => {
-                  stopAnswering();
-                  release();
-                },
-              });
-            });
-          })
-          .then(
-            () => {
-              stopAnswering();
-              lose();
-            },
-            (error: unknown) => {
-              // Another window took over, which only says so here.
-              stopAnswering();
-              if (isGranted) lose();
-              else reject(error);
-            },
-          );
-      });
+      // Taking over cannot wait, and so it cannot be stopped either.
+      if (steal) return (await turnOf(manager, { steal: true })) as WriterClaim;
+      // Only what it gets right away says that nobody has it: asking first whether anybody has it
+      // would let two windows that ask at once both think that the other one does not wait.
+      const now = await turnOf(manager, { ifAvailable: true });
+      if (now) return now;
+      onWaiting?.();
+      return (await turnOf(manager, signal ? { signal } : {})) as WriterClaim;
     },
     async answers(timeoutMs) {
       const manager = locks();
@@ -141,6 +152,30 @@ interface Turns {
 /** For tests: the turns to write folders of all pages of a browser in memory, as Web Locks give them. */
 export class MemoryWriters {
   readonly #turns = new Map<string, Turns>();
+  /**
+   * That a page waits is told a moment later, as a browser can, even after it got the turn. A moment
+   * of promises, not of timers: a page that opens waits for it, also where a test holds the timers.
+   */
+  lateWaiting = false;
+  /**
+   * A page that sleeps hears that another one took over only once it wakes up, and goes on as the
+   * one that writes until then, as a browser that freezes a page and thaws it later.
+   */
+  lateLost = false;
+  readonly #toldLater = new Map<WriterPage, (() => void)[]>();
+
+  /** A page woke up, and hears now what happened meanwhile. */
+  woke(page: WriterPage): void {
+    const told = this.#toldLater.get(page) ?? [];
+    this.#toldLater.delete(page);
+    for (const tell of told) tell();
+  }
+
+  #lose(holder: Holder): void {
+    if (this.lateLost && holder.page.asleep) {
+      this.#toldLater.set(holder.page, [...(this.#toldLater.get(holder.page) ?? []), holder.lose]);
+    } else holder.lose();
+  }
 
   /** Lets go of the turns of pages that went away, as the browser does. */
   sweep(): void {
@@ -184,7 +219,7 @@ export class MemoryWriters {
           if (steal) {
             const before = turns.holder;
             turns.holder = undefined;
-            before?.lose();
+            if (before) this.#lose(before);
             grant();
             return;
           }
@@ -194,7 +229,12 @@ export class MemoryWriters {
           }
           const waiter: Waiter = { page, grant };
           turns.waiting.push(waiter);
-          onWaiting?.();
+          if (this.lateWaiting) {
+            void Promise.resolve()
+              .then(() => undefined)
+              .then(() => undefined)
+              .then(() => onWaiting?.());
+          } else onWaiting?.();
           signal?.addEventListener("abort", () => {
             const index = turns.waiting.indexOf(waiter);
             if (index < 0) return;

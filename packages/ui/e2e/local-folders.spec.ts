@@ -739,6 +739,38 @@ test.describe("which page writes a folder", () => {
     expect(await kept(page, "lost")).toBe(true);
   });
 
+  test("tells a page that asks at the same time as another one that it waits", async ({
+    page,
+    context,
+  }) => {
+    await openLab(page);
+    const other = await context.newPage();
+    await openLab(other);
+    for (let round = 0; round < 5; round++) {
+      const name = `本机-race-${round}`;
+      const ask = (where: Page) =>
+        where.evaluate((folder) => {
+          const { lab } = window;
+          lab.kept[folder] = { waiting: false, granted: false };
+          void lab.folders
+            .writer(folder)
+            .claim({ onWaiting: () => (lab.kept[folder].waiting = true) })
+            .then(() => (lab.kept[folder].granted = true));
+        }, name);
+      await Promise.all([ask(page), ask(other)]);
+      await page.waitForTimeout(500);
+      const state = (where: Page) =>
+        where.evaluate((folder) => {
+          const { waiting, granted } = window.lab.kept[folder];
+          return { granted, waiting };
+        }, name);
+      const both = [await state(page), await state(other)];
+      // One of them writes, and the other one knows that it waits.
+      expect(both.filter(({ granted }) => granted)).toHaveLength(1);
+      expect(both.every(({ granted, waiting }) => granted || waiting)).toBe(true);
+    }
+  });
+
   test("goes to another page that takes over, and the first one hears of it", async ({
     page,
     context,
@@ -783,5 +815,150 @@ test.describe("what is kept about the files of a folder", () => {
     expect(await page.evaluate(() => window.lab.folders.bases.load("本机1"))).toEqual([
       { path: "a.json", base: "{}", stat: { size: 2, lastModified: 1 } },
     ]);
+  });
+});
+
+declare global {
+  interface Window {
+    aqFolders: () => Promise<
+      {
+        readonly host: import("../../host/src/index.ts").Host;
+      } & typeof import("../dev/folder-lab.ts")
+    >;
+    aqDropped: Promise<readonly LocalEntry[]> | undefined;
+    aqKept: Awaited<ReturnType<typeof import("../dev/folder-lab.ts").keepFolder>>;
+  }
+}
+
+/** The example project, without its locked tag, so that it can be changed. */
+function exampleProject(): Record<string, string> {
+  const root = fileURLToPath(new URL("../../schema/fixtures/v1/", import.meta.url));
+  const files: Record<string, string> = {};
+  const walk = (folder: string) => {
+    for (const entry of readdirSync(join(root, folder), { withFileTypes: true })) {
+      const path = folder === "" ? entry.name : `${folder}/${entry.name}`;
+      if (entry.isDirectory()) walk(path);
+      else files[path] = readFileSync(join(root, path), "utf8");
+    }
+  };
+  walk("");
+  const manifest = JSON.parse(files["animaquill.json"] as string);
+  delete manifest.tags;
+  files["animaquill.json"] = JSON.stringify(manifest, null, 2);
+  return files;
+}
+
+/** The editor, as people have it, with what it has for tests, see dev/main.tsx. */
+async function openEditor(page: Page) {
+  await page.goto("http://localhost:5173/");
+  await page.waitForFunction(() => typeof window.aqFolders === "function");
+}
+
+/** Drops a folder into the editor, past what the editor itself does with what people drop. */
+async function dropFolder(page: Page, disk: string) {
+  await page.evaluate(async () => {
+    const { host } = await window.aqFolders();
+    const take = (event: DragEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.type === "drop") {
+        window.aqDropped = host.localFolders?.dropped(event.dataTransfer as DataTransfer);
+      }
+    };
+    addEventListener("dragover", take, { capture: true });
+    addEventListener("drop", take, { capture: true });
+  });
+  const client = await page.context().newCDPSession(page);
+  const data = { items: [], files: [disk], dragOperationsMask: 1 };
+  for (const type of ["dragEnter", "dragOver", "drop"] as const) {
+    await client.send("Input.dispatchDragEvent", { type, x: 100, y: 100, data });
+  }
+  await client.detach();
+  await page.waitForFunction(() => window.aqDropped !== undefined);
+}
+
+const clipNameIn = (disk: string) => {
+  const timeline = JSON.parse(text(disk, "timelines/main/timeline.json"));
+  return timeline.tracks
+    .flatMap((track: { clips: { id: string; name: string }[] }) => track.clips)
+    .find((clip: { id: string }) => clip.id === "clip_title")?.name;
+};
+
+const rename = (page: Page, name: string) =>
+  page.evaluate(async (wanted) => {
+    const { store, session } = window.aqKept;
+    store.execute({
+      type: "clip.update",
+      params: { timeline: "main", clip: "clip_title", changes: { name: wanted } },
+    });
+    await session.trySave();
+  }, name);
+
+test.describe("a project folder kept in step by the editor", () => {
+  test("gets what the editor changes, takes in what changes outside, and goes on after a crash", async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(60_000);
+    const disk = onDisk(exampleProject());
+    await openEditor(page);
+    await dropFolder(page, disk);
+    const access = await page.evaluate(async () => {
+      const [entry] = await (window.aqDropped as Promise<readonly LocalEntry[]>);
+      if (entry?.kind !== "folder") throw new Error("No folder was dropped");
+      const answer = await entry.folder.requestAccess();
+      const { host, keepFolder } = await window.aqFolders();
+      window.aqKept = await keepFolder(host, entry.folder, "本机e2e");
+      return answer;
+    });
+    expect(access).toBe("granted");
+    const notes = text(disk, "notes.json");
+    // What the editor changes gets there once people stop, and only that.
+    await rename(page, "浏览器里改的");
+    await expect.poll(() => clipNameIn(disk), { timeout: 10_000 }).toBe("浏览器里改的");
+    expect(text(disk, "notes.json")).toBe(notes);
+    // What another program changes comes in, and the file stays as it wrote it.
+    const changed = JSON.parse(notes);
+    changed.notes[0].text = "外面改的";
+    put(disk, "notes.json", JSON.stringify(changed, null, 4));
+    await expect
+      .poll(() => page.evaluate(() => window.aqKept.store.getState().notes?.["note_1"]?.text), {
+        timeout: 10_000,
+      })
+      .toBe("外面改的");
+    expect(text(disk, "notes.json")).toBe(JSON.stringify(changed, null, 4));
+    // The page goes away right after a change, before it is in the folder, and the folder changes
+    // while nothing has it open.
+    await rename(page, "崩溃前");
+    await page.close();
+    const strings = JSON.parse(text(disk, "locales/en.json"));
+    const [key] = Object.keys(strings.strings);
+    strings.strings[key as string].text = "关着时改的";
+    put(disk, "locales/en.json", JSON.stringify(strings));
+    const next = await context.newPage();
+    await openEditor(next);
+    await next.evaluate(async () => {
+      const { host, keepFolder } = await window.aqFolders();
+      const record = await host.localFolders?.records.get("本机e2e");
+      if (!record) throw new Error("The folder is not on record");
+      window.aqKept = await keepFolder(host, record.folder, "本机e2e");
+    });
+    await expect
+      .poll(
+        () =>
+          next.evaluate(
+            (wanted) => window.aqKept.store.getState().locales["en"]?.[wanted]?.text,
+            key as string,
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe("关着时改的");
+    expect(await next.evaluate(() => window.aqKept.folderSession.getSnapshot().role)).toBe(
+      "writing",
+    );
+    await expect.poll(() => clipNameIn(disk), { timeout: 10_000 }).toBe("崩溃前");
+    expect(JSON.parse(text(disk, "locales/en.json")).strings[key as string].text).toBe(
+      "关着时改的",
+    );
   });
 });

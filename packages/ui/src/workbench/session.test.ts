@@ -72,6 +72,23 @@ describe("a window on a project that was replaced", () => {
   });
 });
 
+describe("reading the log again", () => {
+  it("rejects when the log cannot be read, so that nothing goes on as if it had been", async () => {
+    const { session, library } = setup();
+    await session.create("新项目");
+    library.duringLoad = () => {
+      throw new Error("damaged");
+    };
+    await expect(session.readLog()).rejects.toThrow("damaged");
+    library.duringLoad = undefined;
+    await expect(session.readLog()).resolves.toBeUndefined();
+  });
+
+  it("rejects without a project", async () => {
+    await expect(setup().session.readLog()).rejects.toThrow();
+  });
+});
+
 describe("projects", () => {
   it("starts with nothing open", () => {
     expect(setup().session.store).toBeUndefined();

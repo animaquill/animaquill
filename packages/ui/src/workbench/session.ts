@@ -77,23 +77,22 @@ export class ProjectSession {
    * Takes in everything the log has that the project does not have yet, such as what another window
    * wrote just before it let go of the project folder, and has not arrived here. Resolves once it is
    * in: whoever writes the folder next has to have it, or would take it for a change from outside.
+   * Rejects when the log cannot be read, and then that cannot be known.
    */
-  async readLog(): Promise<void> {
+  readLog(): Promise<void> {
     const log = this.#log;
     const { store } = this.#snapshot;
-    if (!log || !store) return;
-    let done = () => {};
-    const read = new Promise<void>((resolve) => {
-      done = resolve;
+    if (!log || !store) return Promise.reject(new Error("No project is open"));
+    return new Promise<void>((resolve, reject) => {
+      this.#enqueue(async () => {
+        try {
+          store.catchUp(await log.load());
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
-    this.#enqueue(async () => {
-      try {
-        store.catchUp(await log.load());
-      } finally {
-        done();
-      }
-    });
-    await read;
   }
 
   list(): Promise<readonly ProjectSummary[]> {

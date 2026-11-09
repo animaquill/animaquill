@@ -62,6 +62,15 @@ export function textOf(bytes: Uint8Array): string | undefined {
   }
 }
 
+/**
+ * Whether a file holds what a write leaves when the power goes right after it: a document that is
+ * no JSON of its kind any more, code that is empty or only zeros, or anything that is no text.
+ */
+export const looksDamaged = (path: string, text: string | undefined): boolean =>
+  text === undefined ||
+  isUnreadableDocument(path, text) ||
+  (isSourceFile(path) && /^\0*$/.test(text));
+
 /** Whether a document cannot be read at all, as JSON of its kind. Code always can. */
 export function isUnreadableDocument(path: string, text: string): boolean {
   const schema = documentSchema(path);
@@ -77,7 +86,7 @@ export const isTooLarge = (path: string, size: number): boolean =>
 /** The id in a text of animaquill.json, undefined when that cannot be told. */
 export function projectIdOf(text: string): string | undefined {
   try {
-    const manifest: unknown = JSON.parse(text);
+    const manifest: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
     const id = (manifest as { readonly id?: unknown } | null)?.id;
     return typeof id === "string" ? id : undefined;
   } catch {

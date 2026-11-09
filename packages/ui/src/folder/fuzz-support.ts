@@ -5,8 +5,11 @@
  *
  * What each side changes is kept apart, so that what has to come of it is known exactly: the editor
  * names clips and writes code/editor.js, the other program changes notes, markers, strings and the
- * lines of code/animate.js, and breaks and fixes files. Nothing of either may get lost, nothing may
- * come in twice, and in the end the folder holds what the project holds.
+ * lines of code/animate.js, and breaks and fixes files. One clip both name: where they do at once,
+ * the editor's name stays, and what the folder had is kept in recovered. Nothing of either may get
+ * lost, nothing may come in twice, and in the end the folder holds what the project holds. Around
+ * them the browser's database fails now and then, files cannot be read for a while, the power takes
+ * back a write, and the browser tells late that a window waits or lost its turn.
  */
 import { ProjectStore, readFolder } from "@animaquill/core";
 import { MANIFEST_FILE } from "@animaquill/schema";
@@ -18,15 +21,19 @@ import {
   NOTES,
   PROJECT,
   TestBrowser,
+  clipIn,
   clipName,
   filesOf,
   fixture,
+  recovered,
   renameClip,
   run,
   type TestWindow,
 } from "./folder-support.ts";
 
 const LOCALE = "locales/en.json";
+/** The clip that both the editor and the other program name. */
+const SHARED_CLIP = "clip_title";
 const EDITOR_CODE = "code/editor.js";
 const AWAY = `${PROJECT}-搬走`;
 /** Files the other program breaks now and then. */
@@ -37,6 +44,15 @@ const OTHERS: Readonly<Record<string, string>> = {
   ".git/config": "[core]\n",
   "制作笔记/新的.md": "笔记\n",
 };
+
+/** What the shared clip is named in the text of a timeline, where it can be read. */
+function titleIn(text: string): string | undefined {
+  try {
+    return clipIn(JSON.parse(text), SHARED_CLIP)?.name;
+  } catch {
+    return undefined;
+  }
+}
 
 /** What the other program does: always on what the folder has, as a program that reads first. */
 class Outside {
@@ -51,6 +67,14 @@ class Outside {
   manifestGone = false;
   /** What has to be in the project in the end, as far as it goes. */
   note: string | undefined;
+  /**
+   * What it named the clip that the editor names too, and when: a conflict, where the editor's side
+   * stays and the folder's has to be kept in recovered.
+   */
+  readonly titles: { readonly name: string; readonly step: number }[] = [];
+  /** What it named the clip and then wrote over itself, before anybody saw it: that is gone. */
+  readonly overwritten = new Set<string>();
+  step = 0;
   readonly markers = new Map<string, string>();
   readonly strings = new Map<string, string>();
   readonly lines: string[] = [];
@@ -75,6 +99,13 @@ class Outside {
 
   /** How programs write: now and then without the browser hearing of it, as on Linux. */
   #write(path: string, text: string): void {
+    if (path === MAIN) {
+      const at = this.#path(path);
+      const before = this.#disk.has(at) ? titleIn(this.#disk.text(at)) : undefined;
+      const after = titleIn(text);
+      if (before !== undefined && before !== after) this.overwritten.add(before);
+      if (after !== undefined) this.overwritten.delete(after);
+    }
     const quietly = this.#random.chance(0.15);
     this.#disk.write(this.#path(path), text, { quietly });
   }
@@ -102,6 +133,12 @@ class Outside {
       this.note = this.#fresh();
       document.notes[0].text = this.note;
     } else if (path === MAIN) {
+      if (this.#random.chance(0.3)) {
+        const clip = clipIn(document, SHARED_CLIP);
+        clip.name = this.#fresh();
+        this.titles.push({ name: clip.name, step: this.step });
+        return;
+      }
       const marker = document.markers[this.#random.int(document.markers.length)];
       marker.name = this.#fresh();
       this.markers.set(marker.id, marker.name);
@@ -195,6 +232,9 @@ class Editor {
   readonly #random: Random;
   #count = 0;
   readonly names = new Map<string, string>();
+  /** When it last named the clip that the other program names too. */
+  titleStep = -1;
+  step = 0;
   code = "";
   readonly #clips: readonly string[];
 
@@ -206,10 +246,13 @@ class Editor {
   async act(window: TestWindow): Promise<string> {
     this.#count += 1;
     if (this.#random.chance(0.75)) {
-      const clip = this.#random.pick(this.#clips) as string;
+      const clip = this.#random.chance(0.3)
+        ? SHARED_CLIP
+        : (this.#random.pick(this.#clips) as string);
       const name = `E${this.#count}`;
       renameClip(window.store, clip, name);
       this.names.set(clip, name);
+      if (clip === SHARED_CLIP) this.titleStep = this.step;
     } else {
       this.code = `${this.code}// E${this.#count}\n`;
       run(window.store, "file.write", { path: EDITOR_CODE, text: this.code });
@@ -223,33 +266,101 @@ class Editor {
 const isAlive = (window: TestWindow) => !window.dead;
 
 /** One random run: what happens, and what has to be true in the end. */
-export async function fuzzFolder(seed: number, steps = 40): Promise<void> {
+export async function fuzzFolder(seed: number, steps = 150): Promise<void> {
   const random = randomFrom(seed);
   const system = random.chance(0.5) ? "windows" : "linux";
   const files = fixture();
   for (const [path, text] of Object.entries(OTHERS)) files.set(path, text);
   const browser = new TestBrowser({ system }, files);
+  // A browser can tell late that a window waits, and a window that slept late that it lost.
+  browser.disk.turns.lateWaiting = random.chance(0.5);
+  browser.disk.turns.lateLost = random.chance(0.5);
   const outside = new Outside(browser, random);
-  const first = await browser.open();
+  /** Every name the shared clip had in any window, to tell what came in from what got lost. */
+  const seen = new Set<string>();
+  const open = async () => {
+    const window = await browser.open();
+    const look = () => {
+      const name = clipName(window.store, SHARED_CLIP);
+      if (name !== undefined) seen.add(name);
+    };
+    look();
+    window.store.subscribe(look);
+    return window;
+  };
+  // Now and then the window that makes the project from the folder keeps nothing in its first turn:
+  // the browser's database fails, so it lets go, and another window writes before it is back.
+  const keepsNothingFirst = random.chance(0.3);
+  if (keepsNothingFirst) browser.faults.bases = true;
+  const first = await open();
   const main = first.store.getState().timelines["main"];
   // A locked track keeps its clips from the editor too.
   const clips = Object.values(main?.clips ?? {})
-    .filter(({ track }) => main?.tracks[track]?.locked !== true)
+    .filter(({ track, id }) => main?.tracks[track]?.locked !== true && id !== SHARED_CLIP)
     .map(({ id }) => id);
   const editor = new Editor(random, clips);
-  if (random.chance(0.5)) await browser.open();
-  const said: string[] = [];
+  if (keepsNothingFirst) {
+    browser.faults.bases = false;
+    await open();
+  } else if (random.chance(0.5)) await open();
+  const said: string[] = keepsNothingFirst ? ["first keeps nothing"] : [];
   const live = () => browser.windows.filter(isAlive);
   /** Crashes at a write wait for that write: in the end there is none any more. */
   let canCrash = true;
+  /** Files where the next write is taken back. */
+  const takingBack = new Set<string>();
   const crash = () => {
     if (canCrash) browser.crash();
   };
 
   for (let step = 0; step < steps; step++) {
+    editor.step = step;
+    outside.step = step;
     const roll = random.int(100);
     const windows = live();
-    if (roll < 35) {
+    if (roll < 3) {
+      // The database of the browser fails for a while, or works again.
+      browser.faults.bases = !browser.faults.bases;
+      said.push(`bases ${browser.faults.bases ? "fail" : "work"}`);
+    } else if (roll < 6) {
+      // Another program holds on to a file, or lets go.
+      const path = random.pick([MAIN, NOTES, CODE, EDITOR_CODE]) as string;
+      if (browser.faults.unreadable.has(path)) browser.faults.unreadable.delete(path);
+      else browser.faults.unreadable.add(path);
+      said.push(`unreadable ${path}`);
+    } else if (roll < 9) {
+      // The power goes right after a write, and the system takes the write back: the file before
+      // is there again, time and all. What the file was before the write that lands is what comes
+      // back, also when writes before it did not get that far. A file that a write makes is
+      // empty at first, as one that was empty already: those are left to session-edges.test.ts.
+      const path = random.pick([MAIN, CODE, EDITOR_CODE]) as string;
+      const at = `${outside.root}/${path}`;
+      // One at a time: for two, the writes that do not land would not be looked at by both.
+      if (takingBack.has(at)) said.push("skip");
+      else {
+        takingBack.add(at);
+        let before: { bytes: Uint8Array; time: number } | undefined;
+        let takeBack = () => {};
+        const look = () => {
+          const bytes = browser.disk.has(at) ? browser.disk.bytes(at) : new Uint8Array();
+          before = bytes.length > 0 ? { bytes, time: browser.disk.lastModified(at) } : undefined;
+          takeBack = browser.disk.onNext("createWritable", at, look);
+        };
+        takeBack = browser.disk.onNext("createWritable", at, look);
+        browser.disk.onNext("written", at, () => {
+          takeBack();
+          takingBack.delete(at);
+          const was = before;
+          if (!canCrash || !was) return;
+          queueMicrotask(() => {
+            if (!canCrash) return;
+            browser.crash();
+            browser.disk.write(at, was.bytes, { quietly: true, lastModified: was.time });
+          });
+        });
+        said.push(`taken back ${path}`);
+      }
+    } else if (roll < 37) {
       const window = random.pick(windows);
       if (window) said.push(await editor.act(window));
     } else if (roll < 70) {
@@ -274,7 +385,7 @@ export async function fuzzFolder(seed: number, steps = 40): Promise<void> {
       said.push(`crash ${how}`);
     } else if (roll < 78) {
       if (windows.length < 2) {
-        await browser.open();
+        await open();
         said.push("open");
       } else {
         const window = random.pick(windows) as TestWindow;
@@ -314,8 +425,8 @@ export async function fuzzFolder(seed: number, steps = 40): Promise<void> {
       for (const window of browser.windows) {
         window.dead = true;
       }
-      await browser.open();
-      if (random.chance(0.3)) await browser.open();
+      await open();
+      if (random.chance(0.3)) await open();
     }
     await browser.settle(random.pick([0, 200, 700, 1200, 3000, 6000]) as number);
   }
@@ -324,8 +435,10 @@ export async function fuzzFolder(seed: number, steps = 40): Promise<void> {
   canCrash = false;
   outside.tidy();
   browser.disk.missesChanges = false;
+  browser.faults.bases = false;
+  browser.faults.unreadable.clear();
   for (const window of live()) browser.disk.sleep(window.folders, false);
-  if (live().length === 0) await browser.open();
+  if (live().length === 0) await open();
   for (const window of live()) await window.session.reconnect();
   browser.disk.front();
   await browser.settle(40_000);
@@ -343,16 +456,35 @@ export async function fuzzFolder(seed: number, steps = 40): Promise<void> {
     blocked: [],
   });
   // What the editor did is all there.
-  for (const [clip, name] of editor.names) expect(clipName(store, clip), context).toBe(name);
+  for (const [clip, name] of editor.names) {
+    if (clip !== SHARED_CLIP) expect(clipName(store, clip), `${context}: ${clip}`).toBe(name);
+  }
+  // The clip both named: the one who named it last wins, or the editor where both did at once.
+  const last = outside.titles.at(-1);
+  const named = clipName(store, SHARED_CLIP);
+  const editorName = editor.names.get(SHARED_CLIP);
+  if (last && last.step >= editor.titleStep) {
+    expect([editorName, last.name], `${context}: ${SHARED_CLIP}`).toContain(named);
+  } else if (editorName !== undefined) {
+    expect(named, `${context}: ${SHARED_CLIP}`).toBe(editorName);
+  }
+  // Nothing the other program named it got lost: it came in, or it is kept in recovered.
+  const kept = [...recovered(browser.disk).values()].flat().join("\n");
+  for (const { name } of outside.titles) {
+    if (outside.overwritten.has(name) && !seen.has(name)) continue;
+    expect(seen.has(name) || kept.includes(`"${name}"`), `${context}: ${name}`).toBe(true);
+  }
   if (editor.code !== "") expect(store.getState().files[EDITOR_CODE], context).toBe(editor.code);
   // What the other program did is all there, and only once.
   const state = store.getState();
-  if (outside.note !== undefined) expect(state.notes?.["note_1"]?.text, context).toBe(outside.note);
+  if (outside.note !== undefined) {
+    expect(state.notes?.["note_1"]?.text, `${context}: note`).toBe(outside.note);
+  }
   for (const [id, name] of outside.markers) {
-    expect(state.timelines["main"]?.markers[id]?.name, context).toBe(name);
+    expect(state.timelines["main"]?.markers[id]?.name, `${context}: ${id}`).toBe(name);
   }
   for (const [key, text] of outside.strings) {
-    expect(state.locales["en"]?.[key]?.text, context).toBe(text);
+    expect(state.locales["en"]?.[key]?.text, `${context}: ${key}`).toBe(text);
   }
   const code = state.files[CODE] ?? "";
   for (const line of outside.lines) {
