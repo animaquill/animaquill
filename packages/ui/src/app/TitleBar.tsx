@@ -1,4 +1,4 @@
-import { Feather, Search } from "lucide-react";
+import { ChevronDown, Feather, LayoutDashboard, Search } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { TrialStatus } from "../properties/TrialStatus.tsx";
@@ -12,7 +12,7 @@ const MENUS = ["file", "edit", "view", "timeline", "help"] as const;
 export function TitleBar() {
   const workbench = useWorkbench();
   const { keybindings } = workbench;
-  const { workspace: current } = useLayout();
+  const { layout, layouts } = useLayout();
   const { store } = useSession();
   const project = useProject(store);
   const { t } = useTranslation();
@@ -43,6 +43,7 @@ export function TitleBar() {
       }),
     );
   const paletteShortcut = shortcutOf("view.commandPalette");
+  const layoutName = layouts.find((choice) => choice.id === layout)?.title(t) ?? "";
 
   return (
     <header className={styles.bar}>
@@ -55,17 +56,19 @@ export function TitleBar() {
         <Menu key={menu} label={t(`menu.${menu}`)} groups={() => menuOf(menu)} />
       ))}
       {store && (
-        <div className={styles.workspaces} role="group" aria-label={t("workspace.label")}>
-          {workbench.layout.workspaces.map((workspace) => (
-            <button
-              key={workspace.id}
-              type="button"
-              aria-pressed={workspace.id === current}
-              onClick={() => workbench.layout.switchWorkspace(workspace.id)}
-            >
-              {workspace.title(t)}
-            </button>
-          ))}
+        <div className={styles.layout}>
+          <Menu
+            label={t("layout.current", { name: layoutName })}
+            triggerClassName={styles.layoutButton}
+            trigger={
+              <>
+                <LayoutDashboard size={14} />
+                <span>{layoutName}</span>
+                <ChevronDown size={12} />
+              </>
+            }
+            groups={() => menuOf("layout")}
+          />
         </div>
       )}
       <div className={styles.end}>

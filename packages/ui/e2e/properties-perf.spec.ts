@@ -165,7 +165,10 @@ test(`a clip with ${BONES * 4} properties plays smoothly with its properties ope
   await expect(turned(0)).toHaveCount(0);
   expect(await panel.getByRole("group").count()).toBeLessThan(MAX_ROWS);
 
-  await tab(page, "chat").click();
+  // Another tab in front of it.
+  await page.getByRole("button", { name: "视图" }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: "批注", exact: true }).click();
+  await expect(tab(page, "annotations")).toBeVisible();
   await expect(panel).toBeHidden();
   expectSmooth(await play(page, "clip selected, properties hidden"), alone, "properties hidden");
 });

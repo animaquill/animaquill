@@ -12,8 +12,11 @@ export interface PanelDefinition {
   readonly icon: ComponentType<{ size?: number }>;
   readonly area: PanelArea;
   readonly component: ComponentType;
-  /** Show a shortcut in the activity bar. */
-  readonly activity?: boolean;
+  /**
+   * The real content comes later, and the panel only says so. Layouts keep its place without
+   * showing it, until it is ready.
+   */
+  readonly planned?: boolean;
   /** Default keys that open this panel. */
   readonly keys?: readonly KeyCombo[];
   /** Keep the content in place while the tab is hidden or dragged. An iframe would reload otherwise. */
@@ -39,5 +42,10 @@ export class PanelRegistry {
 
   list(): readonly PanelDefinition[] {
     return [...this.#panels.values()];
+  }
+
+  /** The panels that layouts show. */
+  ready(): ReadonlySet<string> {
+    return new Set(this.list().flatMap((panel) => (panel.planned ? [] : [panel.type])));
   }
 }

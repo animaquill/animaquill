@@ -38,3 +38,101 @@
 .dv-groupview.dv-active-group .dv-tab.dv-active-tab {
   box-shadow: inset 0 1px 0 var(--aq-accent);
 }
+
+.aq-dock {
+  height: 100%;
+}
+
+/*
+ * Tabs down a side of a group, as in Edge. Dockview lays them out and moves them; these rules only
+ * turn the names to read across instead of along the side, and give the strip its width. Whether a
+ * strip shows only icons comes from the marks of `GroupActions`.
+ */
+:root {
+  --aq-strip-width: 112px;
+  --aq-strip-icons: 36px;
+}
+
+:root .dv-tabs-container.dv-tabs-container-vertical {
+  flex-direction: column;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  writing-mode: horizontal-tb;
+}
+
+:root .dv-tabs-container-vertical .dv-tab {
+  padding: 0;
+}
+
+:root .dv-tabs-container-vertical .dv-tab::before {
+  display: none;
+}
+
+:root .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {
+  width: var(--aq-strip-width);
+}
+
+.dv-groupview-header-left > .dv-tabs-and-actions-container {
+  border-right: 1px solid var(--aq-border);
+}
+
+.dv-groupview-header-right > .dv-tabs-and-actions-container {
+  border-left: 1px solid var(--aq-border);
+}
+
+.dv-groupview-header-left.dv-active-group .dv-tab.dv-active-tab {
+  box-shadow: inset 2px 0 0 var(--aq-accent);
+}
+
+.dv-groupview-header-right.dv-active-group .dv-tab.dv-active-tab {
+  box-shadow: inset -2px 0 0 var(--aq-accent);
+}
+
+/*
+ * Only icons: the strip keeps its narrow place, and what it shows grows over the content while
+ * the mouse is there, or the keyboard, so that nothing else moves. Not for focus that a click
+ * left behind: the strip would stay open after the mouse has gone.
+ */
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"])
+  > .dv-tabs-and-actions-container {
+  position: relative;
+  z-index: 3;
+  width: var(--aq-strip-icons);
+  overflow: visible;
+}
+
+.dv-groupview-header-right:has(> .dv-tabs-and-actions-container [data-pinned="false"])
+  > .dv-tabs-and-actions-container {
+  align-items: flex-end;
+}
+
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"])
+  > .dv-tabs-and-actions-container
+  > * {
+  flex-shrink: 0;
+  width: var(--aq-strip-icons);
+  background: var(--aq-bg-chrome);
+  transition: width 0.12s ease;
+}
+
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"])
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible))
+  > * {
+  width: var(--aq-strip-width);
+  transition-delay: 0.15s;
+}
+
+.dv-groupview-header-left:has(> .dv-tabs-and-actions-container [data-pinned="false"])
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible))
+  > * {
+  box-shadow: 8px 0 12px -8px rgb(0 0 0 / 70%);
+}
+
+.dv-groupview-header-right:has(> .dv-tabs-and-actions-container [data-pinned="false"])
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible))
+  > * {
+  box-shadow: -8px 0 12px -8px rgb(0 0 0 / 70%);
+}

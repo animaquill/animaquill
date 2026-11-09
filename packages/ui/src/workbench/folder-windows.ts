@@ -16,7 +16,7 @@ import {
   memoryWindow,
 } from "./memory-library.ts";
 import { Workbench } from "./workbench.ts";
-import { workspaces } from "./workspaces.ts";
+import { layouts } from "./layouts.ts";
 
 const noFolders: FolderAccess = {
   chooseSource: async () => undefined,
@@ -81,7 +81,7 @@ export function windowOf(
     version: "test",
     platform: "other",
     panels: [],
-    workspaces,
+    layouts,
     compositorUrl: "",
     folderTiming: FAST,
     ...(hasher && { hasher }),

@@ -14,6 +14,7 @@ import {
   test,
   type SceneClip,
 } from "./scene-support.ts";
+import { chooseLayout } from "./support.ts";
 
 /**
  * What a scene registers and what its clip holds for it: keys on code objects, elements and
@@ -35,7 +36,7 @@ const open = (page: Page, name: string) =>
 const addKey = (lane: Locator) => lane.getByRole("button", { name: "添加关键帧" }).click();
 
 async function animate(page: Page) {
-  await page.getByRole("button", { name: "动画", exact: true }).click();
+  await chooseLayout(page, "动画");
   await expect(panel(page)).toBeVisible();
 }
 

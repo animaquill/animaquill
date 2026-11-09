@@ -11,7 +11,7 @@ import {
   memoryWindow,
 } from "./memory-library.ts";
 import { Workbench } from "./workbench.ts";
-import { workspaces } from "./workspaces.ts";
+import { layouts } from "./layouts.ts";
 
 const noFolders: FolderAccess = {
   chooseSource: async () => undefined,
@@ -48,7 +48,7 @@ function setup(folders = noFolders) {
     version: "test",
     platform: "other",
     panels: [],
-    workspaces,
+    layouts,
     compositorUrl: "",
   });
   return { workbench, library, trials, drafts };
@@ -1020,7 +1020,8 @@ describe("problems", () => {
   it("are not told while the list is on the screen", async () => {
     const { workbench } = await opened();
     vi.spyOn(workbench.layout, "getSnapshot").mockReturnValue({
-      workspace: "edit",
+      layout: "edit",
+      layouts: [],
       visible: new Set(["problems"]),
       active: undefined,
     });
@@ -1181,14 +1182,14 @@ describe("the black box", () => {
     const { workbench } = setup();
     await create(workbench, "秘密发布会");
     const store = workbench.session.store as ProjectStore;
-    const action = workbench.actions.get("view.resetLayout");
+    const action = workbench.actions.get("layout.reset");
     if (!action) throw new Error("No action");
     workbench.actions.perform(action, "palette");
     store.execute({ type: "project.rename", params: { name: "更秘密的名字" } });
     store.execute({ type: "project.rename", params: { name: "" } });
     const trail = kinds(workbench);
     expect(trail).toContainEqual({ kind: "project", open: true });
-    expect(trail).toContainEqual({ kind: "action", id: "view.resetLayout", way: "palette" });
+    expect(trail).toContainEqual({ kind: "action", id: "layout.reset", way: "palette" });
     expect(trail).toContainEqual({ kind: "command", name: "project.rename", by: "user", ok: true });
     expect(trail).toContainEqual({
       kind: "command",

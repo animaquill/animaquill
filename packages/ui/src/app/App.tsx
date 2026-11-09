@@ -6,7 +6,6 @@ import promptStyles from "../diagnostics/ErrorPrompt.module.css";
 import { DockArea } from "../dock/DockArea.tsx";
 import { PlaybackClock } from "../timeline/PlaybackClock.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
-import { ActivityBar } from "./ActivityBar.tsx";
 import { CommandPaletteView } from "./CommandPaletteView.tsx";
 import { DialogHost } from "./DialogHost.tsx";
 import styles from "./App.module.css";
@@ -79,7 +78,6 @@ function Content() {
   return (
     <div className={styles.body}>
       <PlaybackClock />
-      <ActivityBar />
       <main className={styles.dock}>
         <DockArea />
       </main>

@@ -45,12 +45,12 @@ import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import type { ImportReport } from "../transfer/import.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
-import { ActionRegistry } from "./actions.ts";
+import { ActionRegistry, type Action } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
 import { InputMode } from "./input-mode.ts";
 import { KeybindingService } from "./keybindings.ts";
 import type { Platform } from "./keys.ts";
-import { LayoutController, type WorkspaceDefinition } from "./layout.ts";
+import { LayoutController, type LayoutChoice, type LayoutPreset } from "./layout.ts";
 import { Notifications } from "./notifications.ts";
 import { CommandPalette } from "./palette.ts";
 import type { FolderTiming } from "../folder/session.ts";
@@ -64,7 +64,7 @@ export interface WorkbenchOptions {
   readonly version: string;
   readonly platform: Platform;
   readonly panels: readonly PanelDefinition[];
-  readonly workspaces: readonly WorkspaceDefinition[];
+  readonly layouts: readonly LayoutPreset[];
   readonly compositorUrl: string;
   readonly sceneOrigins?: readonly string[];
   readonly sceneStage?: "plain";
@@ -156,7 +156,7 @@ export class Workbench {
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
-    const { host, t, version, platform, panels, workspaces, compositorUrl } = options;
+    const { host, t, version, platform, panels, layouts, compositorUrl } = options;
     this.t = t;
     this.version = version;
     const library = host.projects;
@@ -205,15 +205,30 @@ export class Workbench {
       revisions: (revisions) => this.problems.keepRevisions(revisions),
       restarted: () => this.notifications.push(t("preview.restarted")),
     });
-    this.layout = new LayoutController(host.settings, host.windowMemory, workspaces, {
-      restoreFailed: () => this.notifications.push(t("notice.layoutRestoreFailed")),
-      saveFailed: () => this.notifications.push(t("notice.layoutSaveFailed")),
-    });
+    this.layout = new LayoutController(
+      host.settings,
+      host.windowMemory,
+      layouts,
+      () => this.panels.ready(),
+      {
+        restoreFailed: () => this.notifications.push(t("notice.layoutRestoreFailed")),
+        saveFailed: () => this.notifications.push(t("notice.layoutSaveFailed")),
+      },
+    );
     this.keybindings = new KeybindingService(host.settings, this.actions, platform, {
       restoreFailed: () => this.notifications.push(t("notice.keybindingsRestoreFailed")),
       saveFailed: () => this.notifications.push(t("notice.keybindingsSaveFailed")),
     });
-    this.layout.subscribe(() => this.keybindings.notePanel(this.layout.getSnapshot().active));
+    let choices = this.layout.getSnapshot().layouts;
+    this.layout.subscribe(() => {
+      const { active, layouts: now } = this.layout.getSnapshot();
+      this.keybindings.notePanel(active);
+      // The keys of layouts go by their place in the list.
+      if (now !== choices) {
+        choices = now;
+        this.keybindings.refresh();
+      }
+    });
     this.palette = new CommandPalette(host.settings, this.actions);
     this.session = new ProjectSession(host.projects, host.address, {
       createFailed: () => this.notifications.push(t("notice.projectCreateFailed")),
@@ -1393,8 +1408,106 @@ export class Workbench {
     });
   }
 
+  /** The layout menu: every layout, then what can be done with the current one. */
+  #registerLayoutActions(isOpen: () => boolean): void {
+    let made: { from: readonly LayoutChoice[]; actions: readonly Action[] } | undefined;
+    this.actions.provide(() => {
+      const { layouts } = this.layout.getSnapshot();
+      if (made?.from !== layouts) {
+        made = { from: layouts, actions: this.#layoutActions(layouts, isOpen) };
+      }
+      return made.actions;
+    });
+    const isCustom = () => isOpen() && this.layout.isCustom(this.layout.getSnapshot().layout);
+    this.actions.register({
+      id: "layout.saveAs",
+      title: (t) => t("layout.saveAs"),
+      run: () => void this.#saveLayoutAs(),
+      menu: { name: "layout", group: "manage" },
+      enabled: isOpen,
+    });
+    this.actions.register({
+      id: "layout.rename",
+      title: (t) => t("layout.renameAction"),
+      run: () => void this.#renameLayout(),
+      menu: { name: "layout", group: "manage", title: (t) => t("layout.rename") },
+      enabled: isCustom,
+    });
+    this.actions.register({
+      id: "layout.delete",
+      title: (t) => t("layout.deleteAction"),
+      run: () => void this.#deleteLayout(),
+      menu: { name: "layout", group: "manage", title: (t) => t("layout.delete") },
+      enabled: isCustom,
+    });
+    this.actions.register({
+      id: "layout.reset",
+      title: (t) => t("layout.reset"),
+      run: () => this.layout.resetLayout(),
+      menu: { name: "layout", group: "reset" },
+      enabled: isOpen,
+    });
+  }
+
+  /** One for each layout. The first nine have keys, by their place in the list. */
+  #layoutActions(layouts: readonly LayoutChoice[], isOpen: () => boolean): readonly Action[] {
+    return layouts.map((choice, index) => ({
+      id: `layout.switch.${choice.id}`,
+      title: (t) => t("action.switchLayout", { layout: choice.title(t) }),
+      run: () => this.layout.switchLayout(choice.id),
+      ...(index < 9 && { keys: [`alt+shift+${index + 1}`] }),
+      menu: { name: "layout", group: choice.custom ? "custom" : "presets", title: choice.title },
+      selected: () => this.layout.getSnapshot().layout === choice.id,
+      enabled: isOpen,
+    }));
+  }
+
+  #layoutTitle(): string {
+    const { layout, layouts } = this.layout.getSnapshot();
+    return layouts.find((choice) => choice.id === layout)?.title(this.t) ?? "";
+  }
+
+  async #saveLayoutAs(): Promise<void> {
+    const { t } = this;
+    const count = this.layout.getSnapshot().layouts.filter((choice) => choice.custom).length;
+    const name = await this.dialogs.prompt({
+      title: t("layout.saveAsTitle"),
+      value: t("layout.newName", { number: count + 1 }),
+      hint: t("layout.saveAsHint"),
+      confirm: t("layout.saveAsConfirm"),
+    });
+    if (name !== undefined) this.layout.saveAs(name);
+  }
+
+  async #renameLayout(): Promise<void> {
+    const { t } = this;
+    const { layout } = this.layout.getSnapshot();
+    if (!this.layout.isCustom(layout)) return;
+    const name = await this.dialogs.prompt({
+      title: t("layout.renameTitle"),
+      value: this.#layoutTitle(),
+      confirm: t("layout.renameConfirm"),
+    });
+    if (name !== undefined) this.layout.rename(layout, name);
+  }
+
+  async #deleteLayout(): Promise<void> {
+    const { t } = this;
+    const { layout, layouts } = this.layout.getSnapshot();
+    if (!this.layout.isCustom(layout)) return;
+    const first = layouts[0]?.title(t) ?? "";
+    const confirmed = await this.dialogs.confirm({
+      title: t("layout.deleteTitle", { name: this.#layoutTitle() }),
+      message: t("layout.deleteMessage", { first }),
+      confirm: t("layout.deleteConfirm"),
+      danger: true,
+    });
+    if (confirmed) this.layout.remove(layout);
+  }
+
   #registerViewActions(): void {
     const isOpen = () => this.session.store !== undefined;
+    this.#registerLayoutActions(isOpen);
     this.actions.register({
       id: "view.commandPalette",
       title: (t) => t("palette.title"),
@@ -1402,24 +1515,6 @@ export class Workbench {
       keys: ["mod+shift+p", "f1"],
       menu: { name: "view", group: "commands" },
       palette: false,
-    });
-    this.layout.workspaces.forEach((workspace, index) => {
-      this.actions.register({
-        id: `view.workspace.${workspace.id}`,
-        title: (t) => t("action.switchWorkspace", { workspace: workspace.title(t) }),
-        run: () => this.layout.switchWorkspace(workspace.id),
-        keys: [`alt+${index + 1}`],
-        menu: { name: "view", group: "workspaces", title: workspace.title },
-        selected: () => this.layout.getSnapshot().workspace === workspace.id,
-        enabled: isOpen,
-      });
-    });
-    this.actions.register({
-      id: "view.resetLayout",
-      title: (t) => t("view.resetLayout"),
-      run: () => this.layout.resetWorkspace(),
-      menu: { name: "view", group: "layout" },
-      enabled: isOpen,
     });
     for (const panel of this.panels.list()) {
       this.actions.register({

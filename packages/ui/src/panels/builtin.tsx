@@ -43,7 +43,7 @@ type Type = {
   [K in keyof typeof zhCN.panel]: (typeof zhCN.panel)[K] extends { title: string } ? K : never;
 }[keyof typeof zhCN.panel];
 
-type Extra = Pick<PanelDefinition, "activity" | "keepAlive" | "keys">;
+type Extra = Pick<PanelDefinition, "keepAlive" | "keys">;
 
 /** A panel whose real content comes in a later stage. */
 function planned(
@@ -84,6 +84,7 @@ function planned(
     icon,
     area,
     component: Placeholder,
+    planned: true,
     ...extra,
   };
 }
@@ -95,7 +96,6 @@ export const builtinPanels: readonly PanelDefinition[] = [
     icon: Files,
     area: "left",
     component: FilesPanel,
-    activity: true,
     keys: ["mod+shift+e"],
   },
   {
@@ -104,10 +104,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     icon: Images,
     area: "left",
     component: AssetsPanel,
-    activity: true,
   },
-  planned("notes", "left", BookOpen, { activity: true }),
-  planned("history", "left", History, { activity: true }),
   {
     type: "preview",
     title: (t) => t("panel.preview.title"),
@@ -149,7 +146,9 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "right",
     component: PropertiesPanel,
   },
-  planned("chat", "right", MessagesSquare, { activity: true, keepAlive: true }),
+  planned("chat", "right", MessagesSquare, { keepAlive: true }),
+  planned("history", "right", History),
+  planned("notes", "right", BookOpen),
   planned("annotations", "right", MessageSquareText),
   {
     type: "timeline",

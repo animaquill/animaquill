@@ -10,7 +10,7 @@ export function EmptyDock() {
     <div className={styles.empty}>
       <h2>{t("dock.empty")}</h2>
       <p>{t("dock.emptyHint")}</p>
-      <button type="button" onClick={() => workbench.layout.resetWorkspace()}>
+      <button type="button" onClick={() => workbench.layout.resetLayout()}>
         {t("dock.restore")}
       </button>
     </div>

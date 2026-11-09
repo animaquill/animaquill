@@ -8,6 +8,7 @@ import {
   useState,
   type FocusEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Menu.module.css";
@@ -23,6 +24,9 @@ export interface MenuItem {
 
 interface MenuProps {
   readonly label: string;
+  /** What the button shows, when that is more than the label. The label still names it. */
+  readonly trigger?: ReactNode;
+  readonly triggerClassName?: string | undefined;
   /** Asked when the menu opens, so that what is possible right now is what it shows. */
   readonly groups: () => readonly (readonly MenuItem[])[];
 }
@@ -103,7 +107,7 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
   );
 });
 
-export function Menu({ label, groups }: MenuProps) {
+export function Menu({ label, trigger, triggerClassName, groups }: MenuProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -127,12 +131,13 @@ export function Menu({ label, groups }: MenuProps) {
       <button
         ref={button}
         type="button"
-        className={styles.trigger}
+        className={`${styles.trigger} ${triggerClassName ?? ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
+        {...(trigger !== undefined && { "aria-label": label })}
         onClick={() => setOpen(!open)}
       >
-        {label}
+        {trigger ?? label}
       </button>
       {open && <MenuList label={label} groups={groups()} onClose={close} />}
     </div>

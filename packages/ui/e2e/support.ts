@@ -7,6 +7,41 @@ export { expect };
 
 export const tab = (page: Page, type: string) => page.locator(`[data-tab="${type}"]`);
 export const content = (page: Page, type: string) => page.locator(`[data-panel="${type}"]`);
+/** The layout menu, which is named after the layout on screen. */
+export const layoutMenu = (page: Page, name: string) =>
+  page.getByRole("button", { name: `布局：${name}`, exact: true });
+
+/**
+ * The keyframes and the timeline side by side, each alone in a group with its tabs across the
+ * top, for what needs both on screen. The layouts that come with the editor have them in one group.
+ */
+export async function animateBesideTimeline(page: Page) {
+  await group(page, "timeline").getByRole("button", { name: "选项卡的位置" }).click();
+  await page.getByRole("menuitemradio", { name: "选项卡在上方" }).click();
+  const from = await tab(page, "keyframes").boundingBox();
+  const target = await group(page, "timeline").boundingBox();
+  if (!from || !target) throw new Error("no keyframes");
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 8, { steps: 3 });
+  await page.mouse.move(target.x + target.width - 12, target.y + target.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await expect(content(page, "keyframes")).toBeVisible();
+  // The timeline alone in its group, so that closing it gives the keyframes all the room.
+  await tab(page, "problems").click({ button: "middle" });
+  await expect(content(page, "timeline")).toBeVisible();
+  const timeline = await group(page, "timeline").boundingBox();
+  const keyframes = await group(page, "keyframes").boundingBox();
+  expect(timeline && keyframes && timeline.x < keyframes.x).toBe(true);
+}
+
+/** Switches layouts from the title bar. */
+export async function chooseLayout(page: Page, name: string) {
+  await page.getByRole("button", { name: /^布局：/ }).click();
+  await page.getByRole("menu").getByRole("menuitemradio", { name, exact: true }).click();
+  await expect(layoutMenu(page, name)).toBeVisible();
+}
+
 export const group = (page: Page, type: string) =>
   page.locator(".dv-groupview").filter({ has: tab(page, type) });
 

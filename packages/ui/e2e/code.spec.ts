@@ -227,7 +227,10 @@ test.describe("files and code", () => {
     // Single keys are shortcuts everywhere else, and space would start playing.
     await page.keyboard.type("jkl mc ");
     await expect(lines(page)).toContainText("jkl");
-    await expect(content(page, "preview").getByRole("button", { name: "播放" })).toBeVisible();
+    // In the editing layout the preview is behind the code, so only whether it plays counts.
+    await expect(
+      content(page, "preview").getByRole("button", { name: "播放", includeHidden: true }),
+    ).toHaveCount(1);
     await page.keyboard.press("F1");
     await expect(page.getByPlaceholder("输入命令名称")).toBeVisible();
     await page.keyboard.press("Escape");

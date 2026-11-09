@@ -14,19 +14,26 @@ type GroupState = Exclude<GridNode["data"], readonly unknown[]>;
 const ROW = "HORIZONTAL" as Orientation;
 const COLUMN = "VERTICAL" as Orientation;
 
+/** What the dock saves: the state of dockview, and which groups show only the icons of their tabs. */
+export interface DockState {
+  readonly dockview: SerializedDockview;
+  readonly unpinned: readonly string[];
+}
+
 export interface PanelFacts {
   title(type: string): string;
   keepAlive(type: string): boolean;
 }
 
-/** Builds the state dockview would have saved for this layout, sized for the given area. */
+/** Builds the state the dock would have saved for this layout, sized for the given area. */
 export function toDockviewState(
   layout: LayoutNode,
   width: number,
   height: number,
   facts: PanelFacts,
-): SerializedDockview {
+): DockState {
   const panels: SerializedDockview["panels"] = {};
+  const unpinned: string[] = [];
   let groups = 0;
   let largest = { id: "", area: -1 };
 
@@ -45,7 +52,13 @@ export function toDockviewState(
         };
       }
       const data: GroupState = { id, views: [...node.panels] };
-      if (node.panels[0]) data.activeView = node.panels[0];
+      const active = node.active !== undefined && node.panels.includes(node.active);
+      const shown = active ? node.active : node.panels[0];
+      if (shown) data.activeView = shown;
+      if (node.strip === "left" || node.strip === "right") {
+        data.headerPosition = node.strip;
+        if (node.pinned === false) unpinned.push(id);
+      }
       return { type: "leaf", size, data };
     }
 
@@ -68,8 +81,11 @@ export function toDockviewState(
   const isRow = top.kind === "split" && top.direction === "row";
   const root = build(top, width, height, !isRow);
   return {
-    grid: { root, width, height, orientation: isRow ? ROW : COLUMN },
-    panels,
-    activeGroup: largest.id,
+    dockview: {
+      grid: { root, width, height, orientation: isRow ? ROW : COLUMN },
+      panels,
+      activeGroup: largest.id,
+    },
+    unpinned,
   };
 }

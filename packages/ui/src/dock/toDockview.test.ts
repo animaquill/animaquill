@@ -1,13 +1,15 @@
 import type { SerializedDockview } from "dockview-react";
 import { describe, expect, it } from "vitest";
 import type { LayoutNode } from "../workbench/layout.ts";
-import { workspaces } from "../workbench/workspaces.ts";
-import { toDockviewState } from "./toDockview.ts";
+import { layouts } from "../workbench/layouts.ts";
+import { toDockviewState as toDockState } from "./toDockview.ts";
 
 const tabs = (...panels: string[]): LayoutNode => ({ kind: "tabs", panels });
 const facts = { title: (type: string) => `title of ${type}`, keepAlive: () => false };
 
 type GridNode = SerializedDockview["grid"]["root"];
+
+const toDockviewState = (...args: Parameters<typeof toDockState>) => toDockState(...args).dockview;
 
 function childrenOf(node: GridNode): GridNode[] {
   return node.type === "branch" ? (node.data as GridNode[]) : [];
@@ -109,6 +111,17 @@ describe("toDockviewState", () => {
     expect(state.activeGroup).toBe(large.id);
   });
 
+  it("shows the tab a group asks for", () => {
+    const state = toDockviewState(
+      { kind: "tabs", panels: ["a", "b"], active: "b" },
+      400,
+      300,
+      facts,
+    );
+    const group = childrenOf(state.grid.root)[0]?.data as { activeView: string };
+    expect(group.activeView).toBe("b");
+  });
+
   it("marks only the panels that must stay alive", () => {
     const state = toDockviewState(tabs("a", "b"), 400, 300, {
       ...facts,
@@ -123,10 +136,39 @@ describe("toDockviewState", () => {
     expect(state.panels["a"]?.title).toBe("title of a");
   });
 
-  it.each(workspaces.map((workspace) => [workspace.id, workspace.layout] as const))(
-    "can build workspace %s",
+  it.each(layouts.map((layout) => [layout.id, layout.layout] as const))(
+    "can build layout %s",
     (_, layout) => {
       expect(() => toDockviewState(layout, 1392, 843, facts)).not.toThrow();
     },
   );
+
+  it("puts tabs down a side, and says which groups show only icons", () => {
+    const { dockview, unpinned } = toDockState(
+      {
+        kind: "split",
+        direction: "row",
+        children: [
+          [1, { kind: "tabs", panels: ["a"], strip: "left" }],
+          [1, { kind: "tabs", panels: ["b"] }],
+          [1, { kind: "tabs", panels: ["c"], strip: "right", pinned: false }],
+          // Tabs across the top always show their names.
+          [1, { kind: "tabs", panels: ["d"], strip: "top", pinned: false }],
+        ],
+      },
+      400,
+      300,
+      facts,
+    );
+    const groups = childrenOf(dockview.grid.root).map(
+      (child) => child.data as { id: string; headerPosition?: string },
+    );
+    expect(groups.map((group) => group.headerPosition)).toEqual([
+      "left",
+      undefined,
+      "right",
+      undefined,
+    ]);
+    expect(unpinned).toEqual([groups[2]?.id]);
+  });
 });

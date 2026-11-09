@@ -1,7 +1,7 @@
 import type { Key } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { importClips } from "./project-files.ts";
-import { content, expect, test } from "./support.ts";
+import { animateBesideTimeline, chooseLayout, content, expect, test } from "./support.ts";
 
 const CLIPS = 5000;
 const KEYS_PER_PROPERTY = 5;
@@ -128,7 +128,7 @@ test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
   await page.reload();
   await importClips(page, CLIPS, bigClips());
 
-  await page.getByRole("button", { name: "动画", exact: true }).click();
+  await animateBesideTimeline(page);
   await expect(panel(page)).toBeVisible();
   const list = panel(page).getByRole("treeitem");
   await expect(list.first()).toBeVisible({ timeout: 30_000 });
@@ -241,7 +241,7 @@ test("5000 clips with 50000 keys stay smooth", async ({ page }) => {
   // Playing has the compositor in it too, which is another matter on a machine without a GPU.
   await report(page, "playing for three seconds with rows open");
 
-  await page.getByRole("button", { name: "剪辑", exact: true }).click();
+  await chooseLayout(page, "剪辑");
   await page.evaluate(() => new Promise(requestAnimationFrame));
   await startCounting(page);
   await page.keyboard.press("Space");

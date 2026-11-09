@@ -15,7 +15,15 @@ import {
   typeInto,
 } from "./property-helpers.ts";
 import { importClips } from "./project-files.ts";
-import { content, expect, group, tab, test } from "./support.ts";
+import {
+  animateBesideTimeline,
+  chooseLayout,
+  content,
+  expect,
+  group,
+  tab,
+  test,
+} from "./support.ts";
 
 const RED = [255, 0, 0] as const;
 
@@ -31,7 +39,7 @@ const stage = (page: Page) => panel(page).getByRole("group", { name: "关键帧"
 const trialBar = (page: Page) => page.getByRole("group", { name: "试改", exact: true });
 
 async function animate(page: Page) {
-  await page.getByRole("button", { name: "动画", exact: true }).click();
+  await animateBesideTimeline(page);
   await expect(panel(page)).toBeVisible();
 }
 
@@ -144,12 +152,12 @@ const timeOf = async (key: Locator) => {
 const timesOf = async (locator: Locator) =>
   Promise.all((await locator.all()).map((key) => timeOf(key)));
 
-test("the workspace for animating has the tab, and it says when there is nothing here", async ({
+test("the layout for animating has the tab, and it says when there is nothing here", async ({
   page,
 }) => {
-  await animate(page);
-  await expect(tab(page, "keyframes")).toBeVisible();
-  await expect(tab(page, "timeline")).toBeVisible();
+  await chooseLayout(page, "动画");
+  await expect(content(page, "keyframes")).toBeVisible();
+  await expect(group(page, "keyframes").locator('[data-tab="timeline"]')).toBeVisible();
   await expect(panel(page)).toContainText("播放头这里没有能打关键帧的内容");
 });
 
@@ -627,6 +635,9 @@ test.describe("with changes written right away", () => {
   });
 
   test("keys are drawn where they are, in the shape of how they go on", async ({ page }) => {
+    // Pixel by pixel, at the width this was measured at, which was the room the editor had beside
+    // the activity bar: what makes keys land on a pixel or between two, and a zoom step keep both.
+    await page.setViewportSize({ width: 1392, height: 900 });
     await keyedColor(page);
     const canvas = panel(page).locator("canvas");
     const box = await canvas.boundingBox();
@@ -702,6 +713,9 @@ test.describe("with changes written right away", () => {
   });
 
   test("the tab scrolls and zooms on its own, and the playhead is the same", async ({ page }) => {
+    // Pixel by pixel, at the width this was measured at, which was the room the editor had beside
+    // the activity bar: what makes keys land on a pixel or between two, and a zoom step keep both.
+    await page.setViewportSize({ width: 1392, height: 900 });
     await keyedColor(page);
     const button = (name: string) => panel(page).getByRole("button", { name, exact: true });
     const gap = async () => {
@@ -929,7 +943,10 @@ const hidingTimeline = {
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 8, { steps: 3 });
-    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2, { steps: 10 });
+    // Not the very middle of a tab, which is neither before nor after it.
+    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2 + 5, {
+      steps: 10,
+    });
     await page.mouse.up();
     await expect(group(page, "timeline").locator('[data-tab="keyframes"]')).toBeVisible();
     await expect(content(page, "timeline")).toBeHidden();

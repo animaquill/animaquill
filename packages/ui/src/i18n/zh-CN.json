@@ -345,7 +345,7 @@
   },
   "action": {
     "openPanel": "打开选项卡：{{panel}}",
-    "switchWorkspace": "切换工作区：{{workspace}}"
+    "switchLayout": "切换布局：{{layout}}"
   },
   "palette": {
     "title": "命令面板",
@@ -369,28 +369,47 @@
     "none": "未设置",
     "empty": "没有匹配的命令"
   },
-  "view": {
-    "resetLayout": "恢复当前工作区的默认布局"
-  },
-  "workspace": {
-    "label": "工作区",
+  "layout": {
+    "current": "布局：{{name}}",
     "edit": "剪辑",
     "animate": "动画",
     "audio": "音频",
-    "ai": "AI"
+    "ai": "AI",
+    "saveAs": "另存为新布局…",
+    "saveAsTitle": "另存为新布局",
+    "saveAsHint": "保存的是现在的样子。之后的改动也会自动记住，随时能恢复成保存时的样子。",
+    "saveAsConfirm": "保存",
+    "newName": "我的布局 {{number}}",
+    "rename": "重命名…",
+    "renameAction": "重命名布局…",
+    "renameTitle": "重命名布局",
+    "renameConfirm": "重命名",
+    "delete": "删除",
+    "deleteAction": "删除布局",
+    "deleteTitle": "删除布局“{{name}}”？",
+    "deleteMessage": "删除后不能恢复。正在用它的窗口会换成“{{first}}”布局。",
+    "deleteConfirm": "删除",
+    "reset": "恢复这个布局的默认样子"
   },
-  "activity": {
-    "label": "常用选项卡"
+  "strip": {
+    "menu": "选项卡的位置",
+    "top": "选项卡在上方",
+    "left": "选项卡在左侧",
+    "right": "选项卡在右侧",
+    "pinned": "钉住选项卡",
+    "pin": "钉住选项卡",
+    "unpin": "取消钉住选项卡"
   },
   "tab": {
     "close": "关闭",
     "closeOthers": "关闭其他",
     "closeRight": "关闭右侧",
+    "closeBelow": "关闭下方",
     "closeAll": "全部关闭"
   },
   "dock": {
     "empty": "所有选项卡都关闭了",
-    "emptyHint": "可以从“视图”菜单打开需要的选项卡，也可以恢复这个工作区的默认布局。",
+    "emptyHint": "可以从“视图”菜单打开需要的选项卡，也可以恢复这个布局的默认样子。",
     "restore": "恢复默认布局"
   },
   "notice": {

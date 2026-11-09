@@ -669,7 +669,8 @@ test.describe("joins on the timeline", () => {
     await expect(properties.getByText("红 → 绿")).toHaveCount(0);
     await expect.poll(() => middleOfPicture(page)).toEqual([0, 255, 0]);
     await page.keyboard.press("Control+z");
-    await page.mouse.click(block.x, block.y);
+    // Inside the block: from the cut on, it starts right at the cut, which a pixel can miss.
+    await page.mouse.click(block.x + 4, block.y);
     await expect(properties.getByLabel("向左推移")).toBeVisible();
   });
 

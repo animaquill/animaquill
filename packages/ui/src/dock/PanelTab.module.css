@@ -33,3 +33,43 @@
 :global(.dv-active-tab) .close {
   visibility: visible;
 }
+
+/*
+ * Down a side: as wide as the strip, with the icon where it stays when only icons show. The close
+ * button comes with the mouse, over the end of the name, so that the strip can stay narrow.
+ */
+:global(.dv-tabs-container-vertical) .tab {
+  position: relative;
+  height: 30px;
+  padding: 0 8px 0 11px;
+  gap: 8px;
+}
+
+:global(.dv-tabs-container-vertical) .tab > svg {
+  flex-shrink: 0;
+}
+
+:global(.dv-tabs-container-vertical) .title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global(.dv-tabs-container-vertical) .close {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+}
+
+:global(.dv-tabs-container-vertical) .tab:not(:hover) .close:not(:focus-visible) {
+  visibility: hidden;
+}
+
+:global(.dv-tabs-container-vertical) .tab:hover {
+  padding-right: 28px;
+}
+
+.close {
+  flex-shrink: 0;
+}

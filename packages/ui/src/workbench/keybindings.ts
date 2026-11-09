@@ -121,6 +121,11 @@ export class KeybindingService {
     });
   }
 
+  /** Takes in actions that came or went, see `ActionRegistry.provide`. */
+  refresh(): void {
+    this.#rebuild();
+  }
+
   keysFor(actionId: string): readonly KeyCombo[] {
     return this.#keys.get(actionId) ?? [];
   }

@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, layoutMenu, tab, test } from "./support.ts";
 
 const KEYS_SETTING = "animaquill.keybindings";
 
@@ -7,7 +7,6 @@ const palette = (page: Page) => page.getByRole("dialog", { name: "命令面板" 
 const input = (page: Page) => page.getByRole("combobox", { name: "命令面板" });
 const options = (page: Page) => page.getByRole("option");
 const active = (page: Page) => page.locator('[role="option"][aria-selected="true"]');
-const workspace = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 const row = (page: Page, id: string) => page.locator(`[data-action="${id}"]`);
 
 async function openPalette(page: Page) {
@@ -155,15 +154,15 @@ test.describe("command palette", () => {
 
   test("runs a command with the mouse", async ({ page }) => {
     await openPalette(page);
-    await input(page).fill("切换工作区");
+    await input(page).fill("切换布局");
     await options(page).filter({ hasText: "动画" }).click();
-    await expect(workspace(page, "动画")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(page, "动画")).toBeVisible();
   });
 
   test("shows the shortcut of a command", async ({ page }) => {
     await openPalette(page);
-    await input(page).fill("切换工作区：音频");
-    await expect(active(page).locator("kbd")).toHaveText("Alt+3");
+    await input(page).fill("切换布局：音频");
+    await expect(active(page).locator("kbd")).toHaveText("Alt+Shift+3");
   });
 
   test("leaves Enter and Esc to the input method during composition", async ({ page }) => {
@@ -182,12 +181,12 @@ test.describe("command palette", () => {
       }, key);
     }
     await expect(palette(page)).toBeVisible();
-    await expect(tab(page, "keyframes")).toHaveCount(0);
+    await expect(content(page, "keyframes")).toBeHidden();
   });
 
   test("lists what was used recently first, also after a reload", async ({ page }) => {
     await runCommand(page, "关键帧");
-    await runCommand(page, "切换工作区：音频");
+    await runCommand(page, "切换布局：音频");
     await page.reload();
     await expect(tab(page, "timeline")).toBeVisible();
     await openPalette(page);
@@ -205,11 +204,11 @@ test.describe("command palette", () => {
 });
 
 test.describe("shortcuts", () => {
-  test("switch workspaces and open panels", async ({ page }) => {
-    await page.keyboard.press("Alt+Digit2");
-    await expect(workspace(page, "动画")).toHaveAttribute("aria-pressed", "true");
-    await page.keyboard.press("Alt+Digit1");
-    await expect(workspace(page, "剪辑")).toHaveAttribute("aria-pressed", "true");
+  test("switch layouts and open panels", async ({ page }) => {
+    await page.keyboard.press("Alt+Shift+Digit2");
+    await expect(layoutMenu(page, "动画")).toBeVisible();
+    await page.keyboard.press("Alt+Shift+Digit1");
+    await expect(layoutMenu(page, "剪辑")).toBeVisible();
     await page.keyboard.press("Control+Shift+KeyE");
     await expect(content(page, "files")).toBeVisible();
     await page.keyboard.press("Control+Shift+KeyM");
@@ -218,32 +217,32 @@ test.describe("shortcuts", () => {
     await expect(content(page, "terminal")).toBeVisible();
   });
 
-  test("appear in the view menu", async ({ page }) => {
-    await page.getByRole("button", { name: "视图" }).click();
+  test("appear in the layout menu", async ({ page }) => {
+    await layoutMenu(page, "剪辑").click();
     const item = page.getByRole("menu").getByRole("menuitemradio", { name: "动画" });
-    await expect(item).toContainText("Alt+2");
-    await expect(item).toHaveAttribute("aria-keyshortcuts", "Alt+2");
+    await expect(item).toContainText("Alt+Shift+2");
+    await expect(item).toHaveAttribute("aria-keyshortcuts", "Alt+Shift+2");
   });
 
   test("a key can be added and works at once", async ({ page }) => {
     await openShortcuts(page);
-    await startRecording(page, "view.workspace.animate");
+    await startRecording(page, "layout.switch.animate");
     await page.keyboard.press("KeyJ");
     await expect(
-      row(page, "view.workspace.animate").locator("kbd", { hasText: /^J$/ }),
+      row(page, "layout.switch.animate").locator("kbd", { hasText: /^J$/ }),
     ).toBeVisible();
     await content(page, "keybindings").click({ position: { x: 5, y: 5 } });
     await page.keyboard.press("KeyJ");
-    await expect(workspace(page, "动画")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(page, "动画")).toBeVisible();
   });
 
   test("a changed key shows in the menu and the palette", async ({ page }) => {
     await openShortcuts(page);
-    await startRecording(page, "view.resetLayout");
+    await startRecording(page, "layout.reset");
     await page.keyboard.press("Control+Alt+KeyR");
-    await page.getByRole("button", { name: "视图" }).click();
+    await layoutMenu(page, "剪辑").click();
     await expect(
-      page.getByRole("menu").getByRole("menuitem", { name: "恢复当前工作区的默认布局" }),
+      page.getByRole("menu").getByRole("menuitem", { name: "恢复这个布局的默认样子" }),
     ).toContainText("Ctrl+Alt+R");
   });
 
@@ -251,14 +250,14 @@ test.describe("shortcuts", () => {
     page,
   }) => {
     await openShortcuts(page);
-    await startRecording(page, "view.workspace.animate");
+    await startRecording(page, "layout.switch.animate");
     await page.keyboard.press("KeyJ");
     await openPalette(page);
     await page.keyboard.type("j");
     await expect(input(page)).toHaveValue("j");
-    await expect(workspace(page, "剪辑")).toHaveAttribute("aria-pressed", "true");
-    await page.keyboard.press("Alt+Digit3");
-    await expect(workspace(page, "音频")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(page, "剪辑")).toBeVisible();
+    await page.keyboard.press("Alt+Shift+Digit3");
+    await expect(layoutMenu(page, "音频")).toBeVisible();
   });
 
   test("recording catches keys before anything else does", async ({ page }) => {
@@ -300,36 +299,36 @@ test.describe("shortcuts", () => {
 
   test("a key in use has to be confirmed, and can be left where it is", async ({ page }) => {
     await openShortcuts(page);
-    const id = "view.workspace.animate";
+    const id = "layout.switch.animate";
     await startRecording(page, id);
-    await page.keyboard.press("Alt+Digit1");
-    const warning = row(page, id).getByText("Alt+1 已被“切换工作区：剪辑”使用。");
+    await page.keyboard.press("Alt+Shift+Digit1");
+    const warning = row(page, id).getByText("Alt+Shift+1 已被“切换布局：剪辑”使用。");
     await expect(warning).toBeVisible();
     await row(page, id).getByRole("button", { name: "取消" }).click();
     await expect(warning).toHaveCount(0);
-    await expect(row(page, "view.workspace.edit").locator("kbd")).toHaveText("Alt+1");
+    await expect(row(page, "layout.switch.edit").locator("kbd")).toHaveText("Alt+Shift+1");
   });
 
   test("a key in use moves over when confirmed", async ({ page }) => {
     await openShortcuts(page);
-    const id = "view.workspace.animate";
+    const id = "layout.switch.animate";
     await startRecording(page, id);
-    await page.keyboard.press("Alt+Digit1");
+    await page.keyboard.press("Alt+Shift+Digit1");
     await row(page, id).getByRole("button", { name: "改用到这里" }).click();
-    await expect(row(page, "view.workspace.edit").getByText("未设置")).toBeVisible();
+    await expect(row(page, "layout.switch.edit").getByText("未设置")).toBeVisible();
     await content(page, "keybindings").click({ position: { x: 5, y: 5 } });
-    await page.keyboard.press("Alt+Digit1");
-    await expect(workspace(page, "动画")).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("Alt+Shift+Digit1");
+    await expect(layoutMenu(page, "动画")).toBeVisible();
   });
 
   test("Enter confirms moving a key", async ({ page }) => {
     await openShortcuts(page);
-    const id = "view.workspace.animate";
+    const id = "layout.switch.animate";
     await startRecording(page, id);
-    await page.keyboard.press("Alt+Digit1");
+    await page.keyboard.press("Alt+Shift+Digit1");
     await expect(row(page, id).getByRole("button", { name: "改用到这里" })).toBeVisible();
     await page.keyboard.press("Enter");
-    await expect(row(page, "view.workspace.edit").getByText("未设置")).toBeVisible();
+    await expect(row(page, "layout.switch.edit").getByText("未设置")).toBeVisible();
   });
 
   test("the keys of keyboard navigation are refused", async ({ page }) => {
@@ -344,11 +343,11 @@ test.describe("shortcuts", () => {
 
   test("a key can be removed and the default restored", async ({ page }) => {
     await openShortcuts(page);
-    const id = "view.workspace.edit";
-    await row(page, id).getByRole("button", { name: "删除快捷键 Alt+1" }).click();
+    const id = "layout.switch.edit";
+    await row(page, id).getByRole("button", { name: "删除快捷键 Alt+Shift+1" }).click();
     await expect(row(page, id).getByText("未设置")).toBeVisible();
     await row(page, id).getByRole("button", { name: "恢复默认" }).click();
-    await expect(row(page, id).locator("kbd")).toHaveText("Alt+1");
+    await expect(row(page, id).locator("kbd")).toHaveText("Alt+Shift+1");
     await expect(row(page, id).getByRole("button", { name: "恢复默认" })).toHaveCount(0);
   });
 
@@ -356,28 +355,28 @@ test.describe("shortcuts", () => {
     await openShortcuts(page);
     const resetAll = page.getByRole("button", { name: "全部恢复默认" });
     await expect(resetAll).toBeDisabled();
-    await row(page, "view.workspace.edit")
+    await row(page, "layout.switch.edit")
       .getByRole("button", { name: /^删除快捷键/ })
       .click();
     await startRecording(page, "view.open.timeline");
     await page.keyboard.press("KeyJ");
     await resetAll.click();
-    await expect(row(page, "view.workspace.edit").locator("kbd")).toHaveText("Alt+1");
+    await expect(row(page, "layout.switch.edit").locator("kbd")).toHaveText("Alt+Shift+1");
     await expect(row(page, "view.open.timeline").getByText("未设置")).toBeVisible();
     await expect(resetAll).toBeDisabled();
   });
 
   test("changes survive a reload", async ({ page }) => {
     await openShortcuts(page);
-    await startRecording(page, "view.workspace.audio");
+    await startRecording(page, "layout.switch.audio");
     await page.keyboard.press("KeyJ");
     await expect
       .poll(() => page.evaluate((key) => localStorage.getItem(key), KEYS_SETTING))
-      .toContain("view.workspace.audio");
+      .toContain("layout.switch.audio");
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
     await page.keyboard.press("KeyJ");
-    await expect(workspace(page, "音频")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(page, "音频")).toBeVisible();
   });
 
   test("broken settings fall back to the defaults and say so", async ({ page }) => {
@@ -385,16 +384,16 @@ test.describe("shortcuts", () => {
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
     await expect(page.getByText("快捷键设置无法读取，已恢复默认。")).toBeVisible();
-    await page.keyboard.press("Alt+Digit2");
-    await expect(workspace(page, "动画")).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("Alt+Shift+Digit2");
+    await expect(layoutMenu(page, "动画")).toBeVisible();
   });
 
   test("the list can be searched by name and by key", async ({ page }) => {
     await openShortcuts(page);
     const search = page.getByLabel("搜索命令或快捷键");
-    await search.fill("alt+2");
+    await search.fill("alt+shift+2");
     await expect(page.locator("[data-action]")).toHaveCount(1);
-    await expect(row(page, "view.workspace.animate")).toBeVisible();
+    await expect(row(page, "layout.switch.animate")).toBeVisible();
     await search.fill("打开选项卡：时间轴");
     await expect(page.locator("[data-action]")).toHaveCount(1);
     await search.fill("没有这个");
@@ -403,12 +402,12 @@ test.describe("shortcuts", () => {
 
   test("the search box of the list keeps plain keys for itself", async ({ page }) => {
     await openShortcuts(page);
-    await startRecording(page, "view.workspace.animate");
+    await startRecording(page, "layout.switch.animate");
     await page.keyboard.press("KeyJ");
     const search = page.getByLabel("搜索命令或快捷键");
     await search.click();
     await page.keyboard.type("j");
     await expect(search).toHaveValue("j");
-    await expect(workspace(page, "剪辑")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(page, "剪辑")).toBeVisible();
   });
 });

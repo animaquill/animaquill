@@ -8,7 +8,7 @@ import { createI18n } from "./i18n/i18n.ts";
 import { builtinPanels } from "./panels/builtin.tsx";
 import type { PanelDefinition } from "./workbench/panels.ts";
 import { Workbench } from "./workbench/workbench.ts";
-import { workspaces } from "./workbench/workspaces.ts";
+import { layouts } from "./workbench/layouts.ts";
 import { workerHasher } from "./media/hasher.ts";
 import { workerProxyMaker } from "./proxy/maker.ts";
 
@@ -44,7 +44,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     version: options.version,
     platform: /Mac/.test(navigator.platform) ? "mac" : "other",
     panels: [...builtinPanels, ...(options.panels ?? [])],
-    workspaces,
+    layouts,
     compositorUrl: options.compositorUrl,
     sceneOrigins: options.sceneOrigins ?? [],
     ...(options.sceneStage && { sceneStage: options.sceneStage }),

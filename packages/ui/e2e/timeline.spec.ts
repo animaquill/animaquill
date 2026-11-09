@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { chooseLayout, content, expect, tab, test } from "./support.ts";
 
 const panel = (page: Page) => content(page, "timeline");
 /** The clips, and not the keys that show under them. */
@@ -1332,9 +1332,9 @@ test.describe("as part of the editor", () => {
     expect(area.x + area.width).toBeLessThanOrEqual(900);
   });
 
-  test("is shown in every workspace with what it has", async ({ page }) => {
+  test("is shown in every layout with what it has", async ({ page }) => {
     await addColor(page);
-    await page.getByRole("button", { name: "音频", exact: true }).click();
+    await chooseLayout(page, "音频");
     await expect(panel(page)).toBeVisible();
     await expect(clips(page)).toHaveCount(1);
   });

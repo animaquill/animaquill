@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { content, createProject, expect, tab, test } from "./support.ts";
+import { content, createProject, expect, layoutMenu, tab, test } from "./support.ts";
 
 const statusName = (page: Page, name: string) =>
   page.locator("footer").getByRole("button", { name, exact: true });
@@ -42,7 +42,7 @@ test.describe("without a project", () => {
     await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
     await expect(page.getByText("未打开项目")).toBeVisible();
     await expect(tab(page, "preview")).toHaveCount(0);
-    await expect(page.getByRole("group", { name: "工作区" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^布局：/ })).toHaveCount(0);
   });
 
   test("says where projects are kept", async ({ page }) => {
@@ -61,7 +61,7 @@ test.describe("without a project", () => {
   });
 
   test("does nothing on shortcuts that need a project", async ({ page }) => {
-    await page.keyboard.press("Alt+Digit2");
+    await page.keyboard.press("Alt+Shift+Digit2");
     await page.keyboard.press("Control+KeyZ");
     await expect(page.getByRole("heading", { name: "AnimaQuill" })).toBeVisible();
   });
@@ -211,11 +211,11 @@ test.describe("with a project", () => {
   });
 
   test("opens again from the start page, with the layout it had", async ({ page }) => {
-    await tab(page, "chat").click({ button: "middle" });
+    await tab(page, "assets").click({ button: "middle" });
     await chooseFrom(page, "文件", "关闭项目");
     await page.getByRole("button", { name: /^测试项目/ }).click();
     await expect(tab(page, "preview")).toBeVisible();
-    await expect(tab(page, "chat")).toHaveCount(0);
+    await expect(tab(page, "assets")).toHaveCount(0);
   });
 
   test("keeps projects apart", async ({ page }) => {
@@ -468,14 +468,11 @@ test.describe("dialogs", () => {
 
   test("keep shortcuts away from what is behind them", async ({ page }) => {
     await openRename(page);
-    await page.keyboard.press("Alt+Digit2");
+    await page.keyboard.press("Alt+Shift+Digit2");
     await page.keyboard.press("Control+Shift+KeyP");
     await expect(page.getByRole("combobox", { name: "命令面板" })).toHaveCount(0);
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("button", { name: "剪辑" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await expect(layoutMenu(page, "剪辑")).toBeVisible();
   });
 
   test("keep the keyboard inside", async ({ page }) => {
@@ -617,8 +614,8 @@ test("the panels still work after a project was closed and opened", async ({ pag
   await chooseFrom(page, "文件", "关闭项目");
   await page.getByRole("button", { name: /^测试项目/ }).click();
   await expect(tab(page, "preview")).toBeVisible();
-  await page.keyboard.press("Alt+Digit2");
+  await page.keyboard.press("Alt+Shift+Digit2");
   await expect(tab(page, "keyframes")).toBeVisible();
-  await page.keyboard.press("Alt+Digit1");
+  await page.keyboard.press("Alt+Shift+Digit1");
   await expect(content(page, "timeline")).toBeVisible();
 });

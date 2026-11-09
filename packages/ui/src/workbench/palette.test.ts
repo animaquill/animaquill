@@ -27,7 +27,7 @@ async function setup(stored?: unknown) {
   const items = [
     action("view.open.timeline", "打开选项卡：时间轴"),
     action("view.open.keyframes", "打开选项卡：关键帧"),
-    action("view.workspace.animate", "切换工作区：动画"),
+    action("layout.switch.animate", "切换布局：动画"),
     action("view.commandPalette", "命令面板", { palette: false }),
   ];
   for (const item of items) actions.register(item);
@@ -53,7 +53,7 @@ describe("searching", () => {
     expect(ids(palette, "")).toEqual([
       "view.open.timeline",
       "view.open.keyframes",
-      "view.workspace.animate",
+      "layout.switch.animate",
     ]);
   });
 
@@ -90,7 +90,7 @@ describe("recent commands", () => {
     const { palette, items } = await setup();
     palette.run(items[1] as Action);
     palette.run(items[2] as Action);
-    expect(ids(palette, "").slice(0, 2)).toEqual(["view.workspace.animate", "view.open.keyframes"]);
+    expect(ids(palette, "").slice(0, 2)).toEqual(["layout.switch.animate", "view.open.keyframes"]);
     expect(palette.search("", t).map((entry) => entry.recent)).toEqual([true, true, false]);
   });
 
@@ -112,7 +112,7 @@ describe("recent commands", () => {
     first.palette.run(first.items[2] as Action);
     await vi.waitFor(() => expect(first.values.has("palette")).toBe(true));
     const second = await setup(first.values.get("palette"));
-    expect(ids(second.palette, "")[0]).toBe("view.workspace.animate");
+    expect(ids(second.palette, "")[0]).toBe("layout.switch.animate");
   });
 
   it("skips commands that no longer exist", async () => {

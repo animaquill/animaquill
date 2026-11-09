@@ -1,5 +1,14 @@
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, group, needsDevPage, tab, test } from "./support.ts";
+import {
+  chooseLayout,
+  content,
+  expect,
+  group,
+  layoutMenu,
+  needsDevPage,
+  tab,
+  test,
+} from "./support.ts";
 
 const LAYOUT_KEY = "animaquill.layout";
 
@@ -48,6 +57,15 @@ async function pressAndMove(page: Page, fromX: number, fromY: number, x: number,
   await page.mouse.move(x, y, { steps: 10 });
 }
 
+/**
+ * Where a dropped tab goes into a strip. Not the very middle: the middle of a tab is neither
+ * before it nor after it, and dockview takes nothing there.
+ */
+async function intoStrip(page: Page, type: string): Promise<[number, number]> {
+  const strip = await box(group(page, type).locator(".dv-tabs-container"));
+  return [strip.x + strip.width / 2 + 5, strip.y + strip.height / 2 + 5];
+}
+
 /** Drags a tab to a point of the window. */
 async function dragTab(page: Page, type: string, x: number, y: number) {
   const from = await box(tab(page, type));
@@ -55,15 +73,13 @@ async function dragTab(page: Page, type: string, x: number, y: number) {
   await page.mouse.up();
 }
 
-test("opens with the editing workspace", async ({ page }) => {
+test("opens with the editing layout", async ({ page }) => {
   for (const type of ["assets", "preview", "properties", "timeline"]) {
     await expect(tab(page, type)).toBeVisible();
     await expect(content(page, type)).toBeVisible();
   }
-  await expect(page.getByRole("button", { name: "剪辑", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(tab(page, "files")).toBeVisible();
+  await expect(layoutMenu(page, "剪辑")).toBeVisible();
   await expect(page.locator("footer").getByRole("button", { name: "测试项目" })).toBeVisible();
 });
 
@@ -93,10 +109,10 @@ test("the status bar has the project on the left and what goes on now on the rig
 });
 
 test("a tab can be dragged into another group", async ({ page }) => {
-  const target = await box(group(page, "timeline").locator(".dv-tabs-container"));
-  await dragTab(page, "properties", target.x + target.width / 2, target.y + target.height / 2);
+  await dragTab(page, "properties", ...(await intoStrip(page, "timeline")));
   await expect(group(page, "timeline").locator('[data-tab="properties"]')).toBeVisible();
-  await expect(group(page, "chat").locator('[data-tab="properties"]')).toHaveCount(0);
+  // It was the only tab of its group, which goes with it.
+  await expect(groups(page)).toHaveCount(3);
 });
 
 test("only a tab starts a drag, not the empty part of the tab strip", async ({ page }) => {
@@ -138,11 +154,11 @@ test("the empty part of the tab strip still focuses the group and takes tabs", a
 test("a tab dropped on the edge of a group makes a new group", async ({ page }) => {
   const before = await groups(page).count();
   const target = await box(group(page, "preview"));
-  await dragTab(page, "properties", target.x + target.width - 12, target.y + target.height / 2);
+  await dragTab(page, "assets", target.x + target.width - 12, target.y + target.height / 2);
   await expect(groups(page)).toHaveCount(before + 1);
   const preview = await box(group(page, "preview"));
-  const properties = await box(group(page, "properties"));
-  expect(properties.x).toBeGreaterThanOrEqual(preview.x + preview.width - 2);
+  const assets = await box(group(page, "assets"));
+  expect(assets.x).toBeGreaterThanOrEqual(preview.x + preview.width - 2);
 });
 
 test("groups can be resized with the divider", async ({ page }) => {
@@ -172,37 +188,28 @@ test("a closed tab comes back from the view menu", async ({ page }) => {
 });
 
 test("a tab closes with the middle button", async ({ page }) => {
-  await tab(page, "chat").click({ button: "middle" });
-  await expect(tab(page, "chat")).toHaveCount(0);
-  await expect(tab(page, "properties")).toBeVisible();
+  await tab(page, "code").click({ button: "middle" });
+  await expect(tab(page, "code")).toHaveCount(0);
+  await expect(tab(page, "preview")).toBeVisible();
 });
 
 test("the tab menu closes other tabs", async ({ page }) => {
   await tab(page, "timeline").click({ button: "right" });
   await page.getByText("关闭其他", { exact: true }).click();
   await expect(tab(page, "problems")).toHaveCount(0);
-  await expect(tab(page, "terminal")).toHaveCount(0);
+  await expect(tab(page, "keyframes")).toHaveCount(0);
   await expect(tab(page, "timeline")).toBeVisible();
 });
 
 test("a panel opens next to the panels of its area", async ({ page }) => {
   await chooseFromView(page, "经验库");
-  await expect(group(page, "assets").locator('[data-tab="notes"]')).toBeVisible();
+  await expect(group(page, "properties").locator('[data-tab="notes"]')).toBeVisible();
   await expect(content(page, "notes")).toBeVisible();
-});
-
-test("the activity bar shows and reveals panels", async ({ page }) => {
-  const files = page.getByRole("navigation").getByRole("button", { name: "文件", exact: true });
-  await expect(files).toHaveAttribute("aria-pressed", "false");
-  await files.click();
-  await expect(content(page, "files")).toBeVisible();
-  await expect(files).toHaveAttribute("aria-pressed", "true");
 });
 
 test("the layout survives a reload", async ({ page }) => {
   const before = await savedLayout(page);
-  const target = await box(group(page, "timeline").locator(".dv-tabs-container"));
-  await dragTab(page, "properties", target.x + target.width / 2, target.y + target.height / 2);
+  await dragTab(page, "properties", ...(await intoStrip(page, "timeline")));
   await waitForSave(page, before);
   await page.reload();
   await expect(group(page, "timeline").locator('[data-tab="properties"]')).toBeVisible();
@@ -210,7 +217,7 @@ test("the layout survives a reload", async ({ page }) => {
 
 test("the layout fits a different window size", async ({ page }) => {
   const before = await savedLayout(page);
-  await tab(page, "chat").click({ button: "middle" });
+  await tab(page, "code").click({ button: "middle" });
   await waitForSave(page, before);
   await page.setViewportSize({ width: 1000, height: 640 });
   await page.reload();
@@ -223,19 +230,17 @@ test("the layout fits a different window size", async ({ page }) => {
   expect(timeline.width).toBeGreaterThan(area.width - 2);
 });
 
-test("every workspace keeps its own arrangement", async ({ page }) => {
-  await tab(page, "chat").click({ button: "middle" });
-  await page.getByRole("button", { name: "动画", exact: true }).click();
-  await expect(tab(page, "keyframes")).toBeVisible();
-  await expect(group(page, "keyframes").locator('[data-tab="timeline"]')).toHaveCount(0);
-  await page.getByRole("button", { name: "剪辑", exact: true }).click();
+test("every layout keeps its own arrangement", async ({ page }) => {
+  await tab(page, "files").click({ button: "middle" });
+  await chooseLayout(page, "动画");
+  await expect(tab(page, "files")).toBeVisible();
+  await expect(group(page, "code").locator('[data-tab="preview"]')).toHaveCount(0);
+  await chooseLayout(page, "剪辑");
   await expect(tab(page, "timeline")).toBeVisible();
-  await expect(tab(page, "chat")).toHaveCount(0);
+  await expect(tab(page, "files")).toHaveCount(0);
 });
 
 test.describe("several windows", () => {
-  const workspace = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
-
   async function secondWindow(page: Page) {
     const other = await page.context().newPage();
     await other.goto(page.url());
@@ -243,46 +248,46 @@ test.describe("several windows", () => {
     return other;
   }
 
-  test("each window keeps its workspace through a reload", async ({ page }) => {
+  test("each window keeps its layout through a reload", async ({ page }) => {
     const other = await secondWindow(page);
     const before = await savedLayout(other);
-    await workspace(other, "动画").click();
+    await chooseLayout(other, "动画");
     await waitForSave(other, before);
 
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
-    await expect(workspace(page, "剪辑")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(page, "剪辑")).toBeVisible();
 
     await other.reload();
     await expect(tab(other, "preview")).toBeVisible();
-    await expect(workspace(other, "动画")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(other, "动画")).toBeVisible();
   });
 
-  test("a new window starts in the workspace chosen last", async ({ page }) => {
+  test("a new window starts in the layout chosen last", async ({ page }) => {
     const before = await savedLayout(page);
-    await workspace(page, "动画").click();
+    await chooseLayout(page, "动画");
     await waitForSave(page, before);
     const other = await secondWindow(page);
-    await expect(workspace(other, "动画")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(other, "动画")).toBeVisible();
   });
 
-  test("a window on the start page has not chosen a workspace yet", async ({ page }) => {
+  test("a window on the start page has not chosen a layout yet", async ({ page }) => {
     const waiting = await page.context().newPage();
     await waiting.goto("/");
     await expect(waiting.getByRole("button", { name: "新建项目" })).toBeVisible();
 
     const before = await savedLayout(page);
-    await workspace(page, "动画").click();
+    await chooseLayout(page, "动画");
     await waitForSave(page, before);
 
     await waiting.getByRole("button", { name: /^测试项目/ }).click();
     await expect(tab(waiting, "preview")).toBeVisible();
-    await expect(workspace(waiting, "动画")).toHaveAttribute("aria-pressed", "true");
+    await expect(layoutMenu(waiting, "动画")).toBeVisible();
   });
 
   test("windows do not undo each other's arrangement", async ({ page }) => {
     const other = await secondWindow(page);
-    await workspace(other, "动画").click();
+    await chooseLayout(other, "动画");
     await expect(tab(other, "keyframes")).toBeVisible();
 
     let before = await savedLayout(other);
@@ -290,53 +295,56 @@ test.describe("several windows", () => {
     await waitForSave(other, before);
 
     before = await savedLayout(page);
-    await tab(page, "chat").click({ button: "middle" });
+    await tab(page, "code").click({ button: "middle" });
     await waitForSave(page, before);
 
-    // Both ask for the other workspace too: an arrangement that is gone looks the same as one that
+    // Both ask for the other layout too: an arrangement that is gone looks the same as one that
     // is not on screen.
     await other.reload();
     await expect(tab(other, "preview")).toBeVisible();
-    await workspace(other, "动画").click();
+    await chooseLayout(other, "剪辑");
+    await chooseLayout(other, "动画");
     await expect(tab(other, "preview")).toBeVisible();
     await expect(tab(other, "keyframes")).toHaveCount(0);
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
-    await workspace(page, "剪辑").click();
+    await chooseLayout(page, "动画");
+    await chooseLayout(page, "剪辑");
     await expect(tab(page, "preview")).toBeVisible();
-    await expect(tab(page, "chat")).toHaveCount(0);
+    await expect(tab(page, "code")).toHaveCount(0);
   });
 
   test("switching shows what another window arranged", async ({ page }) => {
     const other = await secondWindow(page);
-    await workspace(other, "动画").click();
+    await chooseLayout(other, "动画");
     await expect(tab(other, "keyframes")).toBeVisible();
     const before = await savedLayout(other);
     await tab(other, "keyframes").click({ button: "middle" });
     await waitForSave(other, before);
 
-    await workspace(page, "动画").click();
+    await chooseLayout(page, "动画");
     await expect(tab(page, "preview")).toBeVisible();
     await expect(tab(page, "keyframes")).toHaveCount(0);
   });
 });
 
-test("reset brings back the design of the current workspace only", async ({ page }) => {
-  await tab(page, "chat").click({ button: "middle" });
-  await page.getByRole("button", { name: "动画", exact: true }).click();
+test("reset brings back the design of the current layout only", async ({ page }) => {
+  await tab(page, "code").click({ button: "middle" });
+  await chooseLayout(page, "动画");
   await tab(page, "keyframes").click({ button: "middle" });
-  await chooseFromView(page, "恢复当前工作区的默认布局");
+  await layoutMenu(page, "动画").click();
+  await page.getByRole("menuitem", { name: "恢复这个布局的默认样子" }).click();
   await expect(tab(page, "keyframes")).toBeVisible();
-  await page.getByRole("button", { name: "剪辑", exact: true }).click();
+  await chooseLayout(page, "剪辑");
   await expect(tab(page, "timeline")).toBeVisible();
-  await expect(tab(page, "chat")).toHaveCount(0);
+  await expect(tab(page, "code")).toHaveCount(0);
 });
 
+const EVERY_TAB = ["files", "assets", "preview", "code", "properties"];
+const EVERY_TAB_BELOW = ["timeline", "keyframes", "problems"];
+
 test("closing everything leaves a way back", async ({ page }) => {
-  for (const type of ["assets", "files", "preview", "properties", "chat"]) {
-    await tab(page, type).click({ button: "middle" });
-  }
-  for (const type of ["timeline", "problems", "terminal"]) {
+  for (const type of [...EVERY_TAB, ...EVERY_TAB_BELOW]) {
     await tab(page, type).click({ button: "middle" });
   }
   await expect(page.getByText("所有选项卡都关闭了")).toBeVisible();
@@ -345,10 +353,7 @@ test("closing everything leaves a way back", async ({ page }) => {
 });
 
 test("panels of every area find their place in an empty dock", async ({ page }) => {
-  for (const type of ["assets", "files", "preview", "properties", "chat"]) {
-    await tab(page, type).click({ button: "middle" });
-  }
-  for (const type of ["timeline", "problems", "terminal"]) {
+  for (const type of [...EVERY_TAB, ...EVERY_TAB_BELOW]) {
     await tab(page, type).click({ button: "middle" });
   }
   await chooseFromView(page, "时间轴");
@@ -382,8 +387,9 @@ test("a broken saved layout falls back and says so", async ({ page }) => {
 
 test("a saved layout that dockview refuses falls back and says so", async ({ page }) => {
   await page.evaluate((key) => {
-    const states = { edit: { grid: { root: { type: "nonsense" } }, panels: {} } };
-    localStorage.setItem(key, JSON.stringify({ version: 1, workspace: "edit", states }));
+    const dockview = { grid: { root: { type: "nonsense" } }, panels: {} };
+    const states = { edit: { dock: { dockview, unpinned: [] }, panels: [] } };
+    localStorage.setItem(key, JSON.stringify({ version: 2, current: "edit", custom: [], states }));
   }, LAYOUT_KEY);
   await page.reload();
   await expect(tab(page, "preview")).toBeVisible();
@@ -392,7 +398,7 @@ test("a saved layout that dockview refuses falls back and says so", async ({ pag
 
 test("a panel from another version shows a message instead of breaking", async ({ page }) => {
   const before = await savedLayout(page);
-  await tab(page, "chat").click({ button: "middle" });
+  await tab(page, "code").click({ button: "middle" });
   await waitForSave(page, before);
   await page.evaluate((key) => {
     const text = localStorage.getItem(key) ?? "";
@@ -422,8 +428,7 @@ test("a panel that must stay alive is not reloaded by dragging", async ({ page, 
   const loads = content(page, "dev.frame").locator("p");
   await expect(loads).toHaveText("加载次数：1");
 
-  const target = await box(group(page, "timeline").locator(".dv-tabs-container"));
-  await dragTab(page, "dev.frame", target.x + target.width / 2, target.y + target.height / 2);
+  await dragTab(page, "dev.frame", ...(await intoStrip(page, "timeline")));
   await expect(group(page, "timeline").locator('[data-tab="dev.frame"]')).toBeVisible();
 
   const edge = await box(group(page, "preview"));
@@ -434,22 +439,36 @@ test("a panel that must stay alive is not reloaded by dragging", async ({ page, 
   await expect(loads).toHaveText("加载次数：1");
 });
 
-test("a panel shared by two workspaces is not rebuilt when switching", async ({ page }) => {
+test("a panel that must stay alive is not reloaded when its tabs change sides", async ({
+  page,
+  devPage,
+}) => {
+  test.skip(!devPage, needsDevPage("the tab 内嵌页面"));
+  await chooseFromView(page, "内嵌页面");
+  const loads = content(page, "dev.frame").locator("p");
+  await expect(loads).toHaveText("加载次数：1");
+  const sides = group(page, "dev.frame").getByRole("button", { name: "选项卡的位置" });
+  for (const side of ["选项卡在左侧", "选项卡在右侧", "选项卡在上方"]) {
+    await sides.click();
+    await page.getByRole("menuitemradio", { name: side }).click();
+  }
+  await group(page, "timeline").getByRole("button", { name: "钉住选项卡" }).click();
+  await page.waitForTimeout(300);
+  await expect(loads).toHaveText("加载次数：1");
+});
+
+test("a panel shared by two layouts is not rebuilt when switching", async ({ page }) => {
   await content(page, "preview").evaluate((element: HTMLElement) => {
     element.dataset["marker"] = "kept";
   });
-  await page.getByRole("button", { name: "动画", exact: true }).click();
+  await chooseLayout(page, "动画");
   await expect(tab(page, "keyframes")).toBeVisible();
   await expect(content(page, "preview")).toHaveAttribute("data-marker", "kept");
 });
 
 test("panels do not scroll when their content fits", async ({ page }) => {
   for (const name of ["剪辑", "动画", "音频", "AI"]) {
-    await page.getByRole("button", { name, exact: true }).click();
-    await expect(page.getByRole("button", { name, exact: true })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    if (name !== "剪辑") await chooseLayout(page, name);
     const overflowing = await page
       .locator("[data-panel]:visible")
       .evaluateAll((elements) =>
@@ -483,37 +502,56 @@ async function expectTabInView(page: Page, type: string) {
   const active = await box(tab(page, type));
   expect(active.x).toBeGreaterThanOrEqual(strip.x - 1);
   expect(active.x + active.width).toBeLessThanOrEqual(strip.x + strip.width + 1);
+  expect(active.y).toBeGreaterThanOrEqual(strip.y - 1);
+  expect(active.y + active.height).toBeLessThanOrEqual(strip.y + strip.height + 1);
 }
+
+/** Panels that open in the middle, enough to fill its tab strip in a small window. */
+const MORE_IN_THE_MIDDLE = ["快捷键", "设置", "版本矩阵", "音乐", "录音"];
 
 test("the active tab is not hidden in a narrow group", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 620 });
-  await chooseFromView(page, "经验库");
-  await expectTabInView(page, "notes");
-  await chooseFromView(page, "历史记录");
-  await expectTabInView(page, "history");
-  await chooseFromView(page, "文件");
-  await expectTabInView(page, "files");
-  await chooseFromView(page, "历史记录");
-  await expectTabInView(page, "history");
+  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  await expectTabInView(page, "recording");
+  await chooseFromView(page, "预览");
+  await expectTabInView(page, "preview");
+  await chooseFromView(page, "录音");
+  await expectTabInView(page, "recording");
 });
 
 test("the active tab stays in view when the strip first runs out of room", async ({ page }) => {
-  await chooseFromView(page, "经验库");
-  await expectTabInView(page, "notes");
+  for (const name of MORE_IN_THE_MIDDLE) {
+    await chooseFromView(page, name);
+  }
+  await expectTabInView(page, "recording");
+});
+
+/** Panels that open down the right side, enough to fill its strip in a low window. */
+const MORE_ON_THE_RIGHT = ["经验库", "历史记录", "批注", "聊天"];
+
+test("the active tab of a full strip down a side is in view", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 360 });
+  for (const name of MORE_ON_THE_RIGHT) await chooseFromView(page, name);
+  await expectTabInView(page, "chat");
+  await chooseFromView(page, "属性");
+  await expectTabInView(page, "properties");
 });
 
 test("a tab dragged into a full strip is in view", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 620 });
+  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
   // In the middle, because near the ends the strip scrolls by itself during a drag.
-  const strip = await settledBox(group(page, "assets").locator(".dv-tabs-container"));
+  const strip = await settledBox(group(page, "preview").locator(".dv-tabs-container"));
   await dragTab(page, "properties", strip.x + strip.width / 2, strip.y + strip.height / 2);
-  await expect(group(page, "assets").locator('[data-tab="properties"]')).toBeVisible();
+  await expect(group(page, "preview").locator('[data-tab="properties"]')).toBeVisible();
   await expectTabInView(page, "properties");
 });
 
 test("the wheel scrolls a tab strip that is full", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 620 });
-  const list = group(page, "assets").locator(".dv-tabs-container");
+  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  const list = group(page, "preview").locator(".dv-tabs-container");
+  await list.evaluate((element: HTMLElement) => (element.scrollLeft = 0));
   const strip = await settledBox(list);
   await page.mouse.move(strip.x + 40, strip.y + strip.height / 2);
   await page.mouse.wheel(0, 120);
@@ -523,29 +561,36 @@ test("the wheel scrolls a tab strip that is full", async ({ page }) => {
 });
 
 test("a tab strip that is full shows no scrollbar", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 620 });
-  const list = group(page, "assets").locator(".dv-tabs-container");
-  const height = await list.evaluate(
-    (element: HTMLElement) => element.offsetHeight - element.clientHeight,
+  await page.setViewportSize({ width: 1100, height: 360 });
+  for (const name of [...MORE_IN_THE_MIDDLE, ...MORE_ON_THE_RIGHT])
+    await chooseFromView(page, name);
+  const across = group(page, "preview").locator(".dv-tabs-container");
+  const down = group(page, "properties").locator(".dv-tabs-container");
+  expect(await across.evaluate((element: HTMLElement) => element.scrollWidth)).toBeGreaterThan(
+    await across.evaluate((element: HTMLElement) => element.clientWidth),
   );
-  expect(height).toBe(0);
+  expect(await down.evaluate((element: HTMLElement) => element.scrollHeight)).toBeGreaterThan(
+    await down.evaluate((element: HTMLElement) => element.clientHeight),
+  );
+  expect(
+    await across.evaluate((element: HTMLElement) => element.offsetHeight - element.clientHeight),
+  ).toBe(0);
+  expect(
+    await down.evaluate((element: HTMLElement) => element.offsetWidth - element.clientWidth),
+  ).toBe(0);
 });
 
-test("the view menu works from the keyboard", async ({ page }) => {
-  const trigger = page.getByRole("button", { name: "视图" });
+test("the layout menu works from the keyboard", async ({ page }) => {
+  const trigger = layoutMenu(page, "剪辑");
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "动画", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(trigger).toBeFocused();
-  await trigger.press("Enter");
+  await expect(layoutMenu(page, "动画")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
 });
@@ -554,4 +599,181 @@ test("clicking elsewhere closes the view menu", async ({ page }) => {
   await page.getByRole("button", { name: "视图" }).click();
   await content(page, "timeline").click();
   await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test.describe("tabs down a side", () => {
+  /** The tab itself, which dockview makes focusable, around the content of `tab`. */
+  const tabButton = (page: Page, type: string) =>
+    page.getByRole("tab").filter({ has: tab(page, type) });
+  const stripMenu = (page: Page, type: string) =>
+    group(page, type).getByRole("button", { name: "选项卡的位置" });
+  const pin = (page: Page, type: string) =>
+    group(page, type).getByRole("button", { name: "钉住选项卡" });
+
+  test("switch in place, with the content where it was", async ({ page }) => {
+    const left = await box(group(page, "assets"));
+    const assets = await box(content(page, "assets"));
+    await expect(groups(page)).toHaveCount(4);
+    await tab(page, "files").click();
+    await expect(content(page, "files")).toBeVisible();
+    await expect(content(page, "assets")).toBeHidden();
+    expect(await box(group(page, "files"))).toEqual(left);
+    const files = await box(content(page, "files"));
+    expect(files).toEqual(assets);
+    await expect(groups(page)).toHaveCount(4);
+    // The tabs are one under the other, beside the content, with their names.
+    const first = await box(tab(page, "files"));
+    const second = await box(tab(page, "assets"));
+    expect(second.y).toBeGreaterThanOrEqual(first.y + first.height - 1);
+    expect(first.x + first.width).toBeLessThanOrEqual(files.x + 1);
+    await expect(tabButton(page, "assets").getByText("素材库")).toBeVisible();
+  });
+
+  test("show only icons when not pinned, and the names over the content on hover", async ({
+    page,
+  }) => {
+    const pinnedTab = await box(tab(page, "timeline"));
+    const pinnedContent = await box(content(page, "timeline"));
+    await expect(pin(page, "timeline")).toHaveAttribute("aria-pressed", "true");
+    await pin(page, "timeline").click();
+    await expect(pin(page, "timeline")).toHaveAttribute("aria-pressed", "false");
+    await page.mouse.move(700, 300);
+
+    // The content gets the room.
+    const narrow = await settledBox(tab(page, "timeline"));
+    expect(narrow.width).toBeLessThan(40);
+    const wider = await settledBox(content(page, "timeline"));
+    expect(wider.x).toBeLessThan(pinnedContent.x - 60);
+    expect(wider.width).toBeGreaterThan(pinnedContent.width + 60);
+
+    // On hover the names show over the content, which stays where it is.
+    await page.mouse.move(narrow.x + narrow.width / 2, narrow.y + narrow.height / 2);
+    await expect
+      .poll(async () => (await box(tab(page, "timeline"))).width)
+      .toBeGreaterThan(pinnedTab.width - 2);
+    expect(await box(content(page, "timeline"))).toEqual(wider);
+    const name = tab(page, "timeline").getByText("时间轴");
+    await expect(name).toBeVisible();
+    // The names are on top: what is under the mouse there is the tab.
+    const point = await box(name);
+    const hit = await page.evaluate(
+      ({ x, y }) =>
+        document.elementFromPoint(x, y)?.closest("[data-tab]")?.getAttribute("data-tab"),
+      { x: point.x + point.width / 2, y: point.y + point.height / 2 },
+    );
+    expect(hit).toBe("timeline");
+
+    // And go when the mouse leaves.
+    await page.mouse.move(700, 300);
+    await expect.poll(async () => (await box(tab(page, "timeline"))).width).toBeLessThan(40);
+    // A click on an icon switches.
+    const icon = await box(tab(page, "problems"));
+    await page.mouse.click(icon.x + 12, icon.y + icon.height / 2);
+    await expect(content(page, "problems")).toBeVisible();
+  });
+
+  test("show their names over a panel that stays alive", async ({ page }) => {
+    await chooseLayout(page, "AI");
+    // Chat stays alive, which dockview shows on a layer of its own, above the groups.
+    await chooseFromView(page, "聊天");
+    await expect(group(page, "properties").locator('[data-tab="chat"]')).toBeVisible();
+    await expect(content(page, "chat")).toBeVisible();
+    await page.mouse.move(700, 300);
+    const right = await settledBox(tab(page, "properties"));
+    expect(right.width).toBeLessThan(40);
+    await page.mouse.move(right.x + right.width / 2, right.y + right.height / 2);
+    await expect.poll(async () => (await box(tab(page, "properties"))).width).toBeGreaterThan(100);
+    const name = await box(tab(page, "properties").getByText("属性"));
+    const hit = await page.evaluate(
+      ({ x, y }) =>
+        document.elementFromPoint(x, y)?.closest("[data-tab]")?.getAttribute("data-tab"),
+      { x: name.x + name.width / 2, y: name.y + name.height / 2 },
+    );
+    expect(hit).toBe("properties");
+  });
+
+  test("move to the top and back, and the preview is not rebuilt", async ({ page }) => {
+    await content(page, "preview").evaluate((element: HTMLElement) => {
+      element.dataset["marker"] = "kept";
+    });
+    await stripMenu(page, "preview").click();
+    await page.getByRole("menuitemradio", { name: "选项卡在左侧" }).click();
+    const preview = await settledBox(content(page, "preview"));
+    const code = await box(tab(page, "code"));
+    expect(code.x + code.width).toBeLessThanOrEqual(preview.x + 1);
+    expect(code.y).toBeGreaterThan((await box(tab(page, "preview"))).y);
+
+    await tab(page, "code").click({ button: "right" });
+    await page.getByText("选项卡在上方", { exact: true }).click();
+    // The menu of a tab shows that tab.
+    const across = await settledBox(content(page, "code"));
+    expect((await box(tab(page, "code"))).y + 1).toBeLessThan(across.y);
+    await tab(page, "preview").click();
+    await expect(content(page, "preview")).toHaveAttribute("data-marker", "kept");
+
+    await tab(page, "timeline").click({ button: "right" });
+    await page.getByText("选项卡在右侧", { exact: true }).click();
+    const timeline = await settledBox(content(page, "timeline"));
+    expect((await box(tab(page, "timeline"))).x).toBeGreaterThanOrEqual(
+      timeline.x + timeline.width - 1,
+    );
+  });
+
+  test("remember their side and whether they are pinned", async ({ page }) => {
+    let before = await savedLayout(page);
+    await stripMenu(page, "preview").click();
+    await page.getByRole("menuitemradio", { name: "选项卡在右侧" }).click();
+    await waitForSave(page, before);
+    before = await savedLayout(page);
+    await pin(page, "files").click();
+    await waitForSave(page, before);
+    await page.reload();
+    await expect(pin(page, "files")).toHaveAttribute("aria-pressed", "false");
+    await expect(pin(page, "preview")).toHaveAttribute("aria-pressed", "true");
+    const preview = await box(content(page, "preview"));
+    expect((await box(tab(page, "preview"))).x).toBeGreaterThanOrEqual(
+      preview.x + preview.width - 1,
+    );
+  });
+
+  test("take tabs from across the top, and give them back", async ({ page }) => {
+    const left = await box(group(page, "files").locator(".dv-tabs-container"));
+    await dragTab(page, "code", left.x + left.width / 2, left.y + left.height - 6);
+    await expect(group(page, "files").locator('[data-tab="code"]')).toBeVisible();
+    await expect(content(page, "code")).toBeVisible();
+
+    await dragTab(page, "assets", ...(await intoStrip(page, "preview")));
+    await expect(group(page, "preview").locator('[data-tab="assets"]')).toBeVisible();
+    await expect(group(page, "files").locator('[data-tab="assets"]')).toHaveCount(0);
+  });
+
+  test("change order by dragging", async ({ page }) => {
+    const files = await box(tab(page, "files"));
+    await dragTab(page, "assets", files.x + files.width / 2, files.y + 4);
+    await expect
+      .poll(async () => (await box(tab(page, "assets"))).y)
+      .toBeLessThan((await box(tab(page, "files"))).y);
+  });
+
+  test("close from the menu, with the middle button and with their button", async ({ page }) => {
+    await tab(page, "keyframes").click({ button: "middle" });
+    await expect(tab(page, "keyframes")).toHaveCount(0);
+    await tab(page, "timeline").click({ button: "right" });
+    await page.getByText("关闭下方", { exact: true }).click();
+    await expect(tab(page, "problems")).toHaveCount(0);
+    await tab(page, "files").hover();
+    await group(page, "files").getByRole("button", { name: "关闭 文件" }).click();
+    await expect(tab(page, "files")).toHaveCount(0);
+    await expect(content(page, "assets")).toBeVisible();
+  });
+
+  test("switch with the arrow keys while the tabs have the focus", async ({ page }) => {
+    await tabButton(page, "files").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(content(page, "assets")).toBeVisible();
+    await expect(tabButton(page, "assets")).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(content(page, "files")).toBeVisible();
+    await expect(tabButton(page, "files")).toBeFocused();
+  });
 });
