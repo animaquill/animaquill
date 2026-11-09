@@ -135,7 +135,7 @@ describe("open files", () => {
     code.edit(PATH, "changed");
     vi.spyOn(store, "execute").mockReturnValue({
       ok: false,
-      error: { code: "track-locked", message: "锁定了" },
+      error: { code: "project-locked", message: "锁定了" },
     });
     expect(await code.save()).toBe(false);
     expect(failed).toHaveBeenCalledWith("锁定了");
@@ -357,7 +357,7 @@ describe("open files", () => {
       code.edit(PATH, "mine");
       vi.spyOn(store, "execute").mockReturnValue({
         ok: false,
-        error: { code: "track-locked", message: "锁定了" },
+        error: { code: "project-locked", message: "锁定了" },
       });
       expect(await code.close(PATH)).toBe(false);
       expect(document()?.text).toBe("mine");

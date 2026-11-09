@@ -72,18 +72,13 @@ describe("updating an asset", () => {
     expect(missing).toMatchObject({ ok: false, error: { code: "not-found" } });
   });
 
-  it("refuses another file for an asset that a clip on a locked track has, as any change there", () => {
+  it("gives another file also to an asset that a clip on a locked track has", () => {
     const store = example();
     const locked = store.execute({
       type: "asset.update",
       params: { asset: "logo", changes: { hash: OTHER } },
     });
-    expect(locked).toMatchObject({ ok: false, error: { code: "track-locked" } });
-    expect(store.getState().assets?.["logo"]?.hash).toBeUndefined();
-    const open = store.execute({
-      type: "asset.update",
-      params: { asset: "interview", changes: { hash: OTHER } },
-    });
-    expect(open.ok).toBe(true);
+    expect(locked.ok).toBe(true);
+    expect(store.getState().assets?.["logo"]?.hash).toBe(OTHER);
   });
 });

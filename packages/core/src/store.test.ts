@@ -26,7 +26,6 @@ import {
   mergeUpdates,
   type CommandResult,
   type ExecuteOptions,
-  type ImportResult,
   type UndoResult,
 } from "./store.ts";
 
@@ -384,24 +383,18 @@ describe("running commands", () => {
     expect(failure(added).code).toBe("wrong-track");
   });
 
-  it("protects the clips of a locked track, from people and AI alike", () => {
+  it("changes the clips of a locked track like any others: locks are for the editor", () => {
     const store = open();
-    expect(failure(setProperty(store, "opacity", 0.5, {}, "clip_lottie")).code).toBe(
-      "track-locked",
+    success(setProperty(store, "opacity", 0.5, { origin: AI }, "clip_lottie"));
+    const moveIn = store.execute(
+      {
+        type: "clip.move",
+        params: { timeline: "main", clips: [{ clip: "clip_title", track: "track_overlay" }] },
+      },
+      { origin: AI },
     );
-    expect(failure(setProperty(store, "opacity", 0.5, { origin: AI }, "clip_lottie")).code).toBe(
-      "track-locked",
-    );
-    const remove = store.execute({
-      type: "track.remove",
-      params: { timeline: "main", track: "track_overlay" },
-    });
-    expect(failure(remove).code).toBe("track-locked");
-    const moveIn = store.execute({
-      type: "clip.move",
-      params: { timeline: "main", clips: [{ clip: "clip_title", track: "track_overlay" }] },
-    });
-    expect(failure(moveIn).code).toBe("track-locked");
+    success(moveIn);
+    expect(clip(store, "clip_title")?.track).toBe("track_overlay");
   });
 
   it("every command has a name of the form area.action", () => {
@@ -1393,21 +1386,6 @@ describe("editing clips on the timeline", () => {
       expect(clip(store, "a")?.track).toBe(track);
       expect(spanOf(store, "a")).toEqual(["0", "5", undefined]);
     });
-
-    it("stays away from a locked track", () => {
-      const { store, track } = withClips([
-        { id: "a", start: "0", duration: "2" },
-        { id: "b", start: "5", duration: "2" },
-      ]);
-      success(
-        store.execute({
-          type: "track.update",
-          params: { timeline: "main", track, changes: { locked: true } },
-        }),
-      );
-      expect(failure(move(store, "a", "4", "overwrite")).code).toBe("track-locked");
-      expect(clip(store, "b")?.start).toBe("5");
-    });
   });
 
   describe("moving several clips", () => {
@@ -1713,17 +1691,6 @@ describe("editing clips on the timeline", () => {
       expect(after?.["opacity"]?.value).toEqual({ keys: [{ time: "1.5", value: 0.5 }] });
     });
 
-    it("does not touch a locked track", () => {
-      const { store, track } = withClips([{ id: "a", start: "0", duration: "5" }]);
-      success(
-        store.execute({
-          type: "track.update",
-          params: { timeline: "main", track, changes: { locked: true } },
-        }),
-      );
-      expect(failure(trim(store, "a", { end: "4" })).code).toBe("track-locked");
-    });
-
     it("is one step to undo", () => {
       const { store } = withClips([{ id: "a", start: "2", duration: "5" }]);
       success(trim(store, "a", { start: "3", end: "4" }));
@@ -1839,7 +1806,7 @@ describe("editing clips on the timeline", () => {
       expect(clip(store, right)?.link).toBe("link_a");
     });
 
-    it("leaves a linked clip on a locked track whole", () => {
+    it("leaves the linked clips it is asked to keep whole, with their link", () => {
       const { store, track } = withClips([]);
       const sound = { kind: "audio", media: { asset: "interview" } };
       success(
@@ -1861,14 +1828,10 @@ describe("editing clips on the timeline", () => {
         );
       addTo("picture", track, video);
       addTo("voice", "sound", sound);
-      success(
-        store.execute({
-          type: "track.update",
-          params: { timeline: "main", track: "sound", changes: { locked: true } },
-        }),
-      );
-      split(store, "picture", "2");
+      const params = { timeline: "main", clip: "picture", at: "2", keep: ["voice"] };
+      success(store.execute({ type: "clip.split", params }));
       expect(clip(store, "voice")?.duration).toBe("6");
+      expect(clip(store, "voice")?.link).toBe("link_a");
       expect(clip(store, "picture")?.duration).toBe("2");
     });
 
@@ -3736,884 +3699,61 @@ describe("a step that cannot go back", () => {
   });
 });
 
-describe("taking back what is on a locked track", () => {
-  const trackOf = (store: ProjectStore, id = "c") => clip(store, id)?.track as string;
-  const lockTrack = (
-    store: ProjectStore,
-    track: string | undefined,
-    locked = true,
-    options: ExecuteOptions = {},
-  ) =>
-    success(
-      store.execute(
-        { type: "track.update", params: { timeline: "main", track, changes: { locked } } },
-        options,
-      ),
-    );
-  const addTrack = (store: ProjectStore, id = "k") =>
-    success(store.execute({ type: "track.add", params: { timeline: "main", kind: "video", id } }));
-  const moveToTrack = (store: ProjectStore, track: string, options: ExecuteOptions = {}) =>
-    success(
-      store.execute(
-        { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", track }] } },
-        options,
-      ),
-    );
-
-  it("does not change it for an AI task", () => {
-    const store = freshProject();
-    moveTo(store, "c", "1", { origin: AI });
-    lockTrack(store, trackOf(store));
-    expect(blocked(store.undoTask("task-1")).obstacle).toBe("locked");
-    expect(clip(store, "c")?.start).toBe("1");
-  });
-
-  it("does not change it for the person either, when the lock came from elsewhere", () => {
-    const store = freshProject();
-    setOpacity(store, 0.5);
-    lockTrack(store, trackOf(store), true, { origin: AI });
-    expect(blocked(store.undo()).obstacle).toBe("locked");
-    expect(opacity(store)).toBe(0.5);
-  });
-
-  it("does not change it on the way forward", () => {
-    const store = freshProject();
-    moveTo(store, "c", "1");
-    store.undo();
-    lockTrack(store, trackOf(store), true, { origin: AI });
-    expect(blocked(store.redo()).obstacle).toBe("locked");
-    expect(clip(store, "c")?.start).toBe("0");
-  });
-
-  it("does not take a clip away from it", () => {
-    const store = freshProject();
-    const added = {
-      id: "e",
-      start: "8",
-      duration: "1",
-      source: { kind: "color", color: "#000000" },
-    };
-    const params = { timeline: "main", track: trackOf(store), clip: added };
-    success(store.execute({ type: "clip.add", params }));
-    lockTrack(store, trackOf(store), true, { origin: AI });
-    blocked(store.undo());
-    expect(clip(store, "e")).toBeDefined();
-  });
-
-  it("does not bring back a clip on it", () => {
-    const store = freshProject();
-    success(store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["d"] } }));
-    lockTrack(store, trackOf(store), true, { origin: AI });
-    expect(blocked(store.undo()).obstacle).toBe("locked");
-    expect(clip(store, "d")).toBeUndefined();
-  });
-
-  it("does not move a clip back onto it", () => {
-    const store = freshProject();
-    const home = trackOf(store);
-    addTrack(store);
-    moveToTrack(store, "k");
-    lockTrack(store, home, true, { origin: AI });
-    expect(blocked(store.undo()).obstacle).toBe("locked");
-    expect(trackOf(store)).toBe("k");
-  });
-
-  it("does not take a clip off it", () => {
-    const store = freshProject();
-    addTrack(store);
-    moveToTrack(store, "k");
-    lockTrack(store, "k", true, { origin: AI });
-    blocked(store.undo());
-    expect(trackOf(store)).toBe("k");
-  });
-
-  it("does not take the track itself away", () => {
-    const store = freshProject();
-    addTrack(store);
-    lockTrack(store, "k", true, { origin: AI });
-    expect(blocked(store.undo()).obstacle).toBe("locked");
-    expect(timeline(store).tracks["k"]).toBeDefined();
-  });
-
-  it("does not change a join on it", () => {
-    const store = open();
-    const track = clip(store)?.track;
-    success(
-      store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["clip_title"] } }),
-    );
-    lockTrack(store, track, true, { origin: AI });
-    blocked(store.undo());
-    expect(clip(store)).toBeUndefined();
-    expect(timeline(store).joins?.["join_1"]).toBeUndefined();
-  });
-
-  it("does not change what a version changes about a clip on it", () => {
-    const store = open();
-    const file = "timelines/main/overrides/language.en.json";
-    const document = JSON.parse(store.exportFiles().files.get(file) as string);
-    document.clips["clip_title"] = { hidden: { value: true } };
-    success(store.importFile(file, JSON.stringify(document), { origin: USER }));
-    lockTrack(store, clip(store)?.track, true, { origin: AI });
-    blocked(store.undo());
-    expect(timeline(store).overrides["language.en"]?.clips?.["clip_title"]).toBeDefined();
-  });
-
-  it("takes back the rest of the change", () => {
-    const store = freshProject();
-    const other = (addTrack(store), "k");
-    const added = {
-      id: "e",
-      start: "0",
-      duration: "1",
-      source: { kind: "color", color: "#000000" },
-    };
-    success(
-      store.execute({ type: "clip.add", params: { timeline: "main", track: other, clip: added } }),
-    );
-    const both = [
-      { owner: { clip: "c" }, path: "opacity", op: "set", value: 0.5 },
-      { owner: { clip: "e" }, path: "opacity", op: "set", value: 0.5 },
-    ];
-    success(store.execute({ type: "property.edit", params: { timeline: "main", edits: both } }));
-    lockTrack(store, trackOf(store), true, { origin: AI });
-    const result = taken(store.undo());
-    expect(result.obstacle).toBe("locked");
-    expect(opacity(store)).toBe(0.5);
-    expect(opacity(store, "e")).toBeUndefined();
-  });
-
-  it("takes back what a file wrote on a track it locked at the same time, which the lock is for", () => {
-    const store = freshProject();
-    const track = trackOf(store);
-    const before = store.getState();
-    const document = JSON.parse(store.exportFiles().files.get(MAIN) as string);
-    for (const each of document.tracks) {
-      if (each.id === track) each.locked = true;
-      for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
-    }
-    const imported = store.importFile(MAIN, JSON.stringify(document), { origin: USER });
-    expect(imported).toMatchObject({ ok: true, kept: [], problems: [] });
-    expect(opacity(store)).toBe(0.5);
-    expect(timeline(store).tracks[track]?.locked).toBe(true);
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(store.getState()).toEqual(before);
-    expect(taken(store.redo()).kept).toEqual([]);
-    expect(opacity(store)).toBe(0.5);
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(opacity(store)).toBeUndefined();
-  });
-
-  it("does not take a file for permission once the lock came after it", () => {
-    const store = freshProject();
-    const document = JSON.parse(store.exportFiles().files.get(MAIN) as string);
-    for (const each of document.tracks) {
-      for (const item of each.clips) if (item.id === "c") item.properties = { opacity: 0.5 };
-    }
-    success(store.importFile(MAIN, JSON.stringify(document), { origin: USER }));
-    lockTrack(store, trackOf(store), true, { origin: AI });
-    blocked(store.undo());
-    expect(opacity(store)).toBe(0.5);
-  });
-
-  it("leaves the track itself open: a lock can always be taken back", () => {
-    const store = freshProject();
-    moveTo(store, "c", "1");
-    lockTrack(store, trackOf(store));
-    taken(store.undo());
-    expect(timeline(store).tracks[trackOf(store)]?.locked).toBeUndefined();
-    taken(store.undo());
-    expect(clip(store, "c")?.start).toBe("0");
-  });
-
-  it("can go on after the lock is gone", () => {
-    const store = freshProject();
-    moveTo(store, "c", "1", { origin: AI });
-    lockTrack(store, trackOf(store));
-    lockTrack(store, trackOf(store), false);
-    taken(store.undoTask("task-1"));
-    expect(clip(store, "c")?.start).toBe("0");
-  });
-
-  it("does not mind other tracks", () => {
-    const store = freshProject();
-    addTrack(store);
-    moveTo(store, "c", "1");
-    lockTrack(store, "k", true, { origin: AI });
-    taken(store.undo());
-    expect(clip(store, "c")?.start).toBe("0");
-  });
-
-  it("goes by the moment of each step: a change that locks after moving goes back whole", () => {
-    const store = freshProject();
-    const track = trackOf(store);
-    success(
-      store.executeBatch([
-        { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", start: "1" }] } },
-        { type: "track.update", params: { timeline: "main", track, changes: { locked: true } } },
-      ]),
-    );
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(clip(store, "c")?.start).toBe("0");
-    expect(timeline(store).tracks[track]?.locked).toBeUndefined();
-  });
-
-  it("goes by the moment of each step: a change that unlocks first goes back whole", () => {
-    const store = freshProject();
-    const track = trackOf(store);
-    lockTrack(store, track);
-    success(
-      store.executeBatch([
-        { type: "track.update", params: { timeline: "main", track, changes: { locked: false } } },
-        { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", start: "1" }] } },
-      ]),
-    );
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(clip(store, "c")?.start).toBe("0");
-    expect(timeline(store).tracks[track]?.locked).toBe(true);
-  });
-});
-
-describe("a file that would change what is on a locked track", () => {
+describe("what is on a locked track", () => {
   /** In the example, 叠加 is locked, with clip_lottie and clip_idea on it. */
   const LOCKED = "track_overlay";
-  const VERTICAL = "timelines/main/overrides/format.vertical.json";
   const clipIn = (document: any, id: string) =>
     document.tracks.flatMap((track: any) => track.clips).find((item: any) => item.id === id);
   const trackIn = (document: any, id: string) =>
     document.tracks.find((track: any) => track.id === id);
-  const imported = (result: ImportResult) => {
-    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
-    return result;
-  };
-  const refused = (result: ImportResult) => {
-    if (result.ok) throw new Error("expected the file to change nothing");
-    return result.error;
-  };
-  const sorted = (paths: readonly (readonly string[])[]) =>
-    paths.map((path) => path.join("/")).toSorted();
-  const lock = (store: ProjectStore, track: string, options: ExecuteOptions = {}) =>
-    success(
-      store.execute(
-        { type: "track.update", params: { timeline: "main", track, changes: { locked: true } } },
-        options,
-      ),
-    );
 
-  it("leaves what it would change there as it is, takes in the rest, and says what stayed", () => {
+  it("goes back like anything else, for people and AI", () => {
     const store = open();
-    const result = imported(
-      rewriteFile(store, MAIN, (document) => {
-        clipIn(document, "clip_idea").name = "改过";
-        clipIn(document, "clip_idea").start = "11";
-        clipIn(document, "clip_title").properties["param.size"] = 80;
-      }),
-    );
-    expect(clip(store, "clip_idea")).toMatchObject({ name: "样片：换个开场", start: "10" });
-    expect(property(store, "param.size")).toBe(80);
-    expect(result.patches.map(({ path }) => path.join("/"))).toEqual([
-      "timelines/main/clips/clip_title/properties/param.size",
-    ]);
-    expect(sorted(result.kept)).toEqual([
-      "timelines/main/clips/clip_idea/name",
-      "timelines/main/clips/clip_idea/start",
-    ]);
-    expect(result.problems).toEqual([
-      {
-        severity: "warning",
-        code: "track-locked",
-        file: MAIN,
-        path: "clip_idea",
-        message: "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
-      },
-    ]);
+    success(setProperty(store, "opacity", 0.5, { origin: AI }, "clip_lottie"));
+    success(setProperty(store, "opacity", 0.7, {}, "clip_idea"));
+    expect(taken(store.undoTask("task-1")).kept).toEqual([]);
+    expect(taken(store.undo()).kept).toEqual([]);
+    expect(property(store, "opacity", "clip_lottie")).toBeUndefined();
+    expect(property(store, "opacity", "clip_idea")).toBeUndefined();
   });
 
-  it("changes nothing when that is all it would change, and says why", () => {
+  it("changes with a file from anyone, and so does the lock", () => {
     const store = open();
-    const before = store.getState();
-    const { revision } = store;
-    const error = refused(
-      rewriteFile(store, MAIN, (document) => {
-        clipIn(document, "clip_lottie").loop = false;
-      }),
-    );
-    expect(error).toMatchObject({
-      code: "track-locked",
-      message: "文件里的改动都在锁定的轨道上，没有生效",
-      obstacle: "locked",
-      conflicts: [["timelines", "main", "clips", "clip_lottie", "loop"]],
-    });
-    expect(error.problems).toEqual([
-      expect.objectContaining({ severity: "warning", file: MAIN, path: "clip_lottie" }),
-    ]);
-    expect(store.getState()).toBe(before);
-    expect(store.revision).toBe(revision);
-    expect(store.canUndo).toBe(false);
-  });
-
-  it("does not take a clip away, put one there, or move one off or onto it", () => {
-    const store = open();
-    const before = timeline(store);
-    const result = imported(
-      rewriteFile(store, MAIN, (document) => {
-        const overlay = trackIn(document, LOCKED);
-        const video = trackIn(document, "track_video");
-        overlay.clips = overlay.clips.filter((item: any) => item.id !== "clip_idea");
-        const lottie = overlay.clips.find((item: any) => item.id === "clip_lottie");
-        overlay.clips = overlay.clips.filter((item: any) => item !== lottie);
-        video.clips.push({ ...lottie, start: "40" });
-        const logo = video.clips.find((item: any) => item.id === "clip_logo");
-        video.clips = video.clips.filter((item: any) => item !== logo);
-        overlay.clips.push(logo, {
-          id: "clip_new",
-          start: "30",
-          duration: "1",
-          source: { kind: "color", color: "#ffffff" },
-        });
-        document.name = "改了名字";
-      }),
-    );
-    expect(timeline(store).name).toBe("改了名字");
-    for (const id of ["clip_idea", "clip_lottie", "clip_logo"]) {
-      expect(clip(store, id)).toEqual(before.clips[id]);
-    }
-    expect(clip(store, "clip_new")).toBeUndefined();
-    expect(result.problems.map(({ path }) => path).toSorted()).toEqual([
-      "clip_idea",
-      "clip_logo",
-      "clip_lottie",
-      "clip_new",
-    ]);
-    expect(result.problems.find(({ path }) => path === "clip_new")?.message).toBe(
-      "轨道“叠加”已锁定，文件里对片段“clip_new”的改动没有生效",
-    );
-  });
-
-  it("does not take the track away, or make it another kind, but its name can change", () => {
-    const store = open();
-    const before = timeline(store);
-    const result = imported(
-      rewriteFile(store, MAIN, (document) => {
-        const overlay = trackIn(document, LOCKED);
-        overlay.kind = "caption";
-        overlay.clips = [];
-        delete overlay.hidden;
-        overlay.name = "叠加层";
-      }),
-    );
-    expect(timeline(store).tracks[LOCKED]).toMatchObject({ kind: "video", name: "叠加层" });
-    expect(clip(store, "clip_idea")).toEqual(before.clips["clip_idea"]);
-    expect(result.problems.map(({ path }) => path).toSorted()).toEqual([
-      "clip_idea",
-      "clip_lottie",
-      "track_overlay",
-    ]);
-    expect(store.exportFiles().problems).toEqual([]);
-    const gone = imported(
-      rewriteFile(store, MAIN, (document) => {
-        document.tracks = document.tracks.filter((track: any) => track.id !== LOCKED);
-        document.name = "没有叠加";
-      }),
-    );
-    expect(timeline(store).tracks[LOCKED]).toBeDefined();
-    expect(clip(store, "clip_lottie")).toEqual(before.clips["clip_lottie"]);
-    expect(gone.problems.map(({ path }) => path).toSorted()).toEqual([
-      "clip_idea",
-      "clip_lottie",
-      "track_overlay",
-    ]);
-  });
-
-  it("does not change a join there", () => {
-    const store = open();
-    lock(store, "track_video");
-    const error = refused(
-      rewriteFile(store, MAIN, (document) => {
-        trackIn(document, "track_video").joins[0].duration = "0.5";
-      }),
-    );
-    expect(error.problems?.map(({ message }) => message)).toEqual([
-      "轨道“画面”已锁定，文件里对衔接转场“join_1”的改动没有生效",
-    ]);
-    expect(timeline(store).joins?.["join_1"]?.transition?.duration).toBe("1");
-  });
-
-  it("does not change what comes in or goes out on a clip there", () => {
-    const store = open();
-    lock(store, "track_video");
-    const error = refused(
-      rewriteFile(store, MAIN, (document) => {
-        delete trackIn(document, "track_video").clips[0].enter;
-      }),
-    );
-    expect(error.code).toBe("track-locked");
-    expect(clip(store)?.enter).toEqual({ type: "fade", duration: "0.5" });
-  });
-
-  it("does not change what a version changes about a clip there, in a version or a new one", () => {
-    const store = open();
-    const result = imported(
-      rewriteFile(store, VERTICAL, (document) => {
-        document.clips.clip_idea = { hidden: { value: false, base: true } };
-        document.clips.clip_title.properties["param.size"].value = 40;
-      }),
-    );
-    const vertical = timeline(store).overrides["format.vertical"];
-    expect(vertical?.clips?.["clip_idea"]).toBeUndefined();
-    expect(vertical?.clips?.["clip_title"]?.properties?.["param.size"]?.value).toBe(40);
-    expect(result.problems).toEqual([
-      {
-        severity: "warning",
-        code: "track-locked",
-        file: VERTICAL,
-        path: "clips.clip_idea",
-        message: "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的差异没有生效",
-      },
-    ]);
-    const square = "timelines/main/overrides/format.square.json";
-    const added = imported(
-      store.importFile(
-        square,
-        JSON.stringify({
-          scope: { format: "square" },
-          clips: {
-            clip_lottie: { hidden: { value: true } },
-            clip_logo: { hidden: { value: true } },
-          },
-        }),
-        { origin: USER },
-      ),
-    );
-    expect(timeline(store).overrides["format.square"]).toEqual({
-      scope: { format: "square" },
-      clips: { clip_logo: { hidden: { value: true } } },
-    });
-    expect(added.problems.map(({ path }) => path)).toEqual(["clips.clip_lottie"]);
-  });
-
-  it("does not change the code that a locked track runs", () => {
-    const store = open();
-    lock(store, "track_video");
-    const scene = refused(
-      store.importFile("scenes/title/index.html", "<p>改过</p>", { origin: USER }),
-    );
-    expect(scene.problems?.[0]?.message).toBe("“标题卡”在锁定的轨道上使用，文件里的改动没有生效");
-    const manifest = refused(
-      rewriteFile(store, "scenes/title/scene.json", (document) => {
-        document.name = "改过";
-      }),
-    );
-    expect(manifest.code).toBe("track-locked");
-    const shared = refused(store.importFile("code/animate.js", "export {};", { origin: USER }));
-    expect(shared.problems?.[0]?.message).toBe(
-      "锁定的轨道上有场景或声音，共用代码不能改，文件里的改动没有生效",
-    );
-    expect(store.getState().files["scenes/title/index.html"]).not.toBe("<p>改过</p>");
-    expect(store.getState().scenes["title"]?.name).toBe("标题卡");
-  });
-
-  it("lets a person's file take the lock off and change what is there in one go, and says so", () => {
-    const store = open();
-    const before = store.getState();
-    const result = imported(
-      rewriteFile(store, MAIN, (document) => {
+    const result = rewriteFile(
+      store,
+      MAIN,
+      (document) => {
         delete trackIn(document, LOCKED).locked;
         clipIn(document, "clip_idea").name = "改过";
-      }),
-    );
-    expect(result.kept).toEqual([]);
-    expect(result.problems).toEqual([
-      {
-        severity: "warning",
-        code: "track-unlocked",
-        file: MAIN,
-        path: LOCKED,
-        message: "这个文件解开了轨道“叠加”的锁",
       },
-    ]);
+      { origin: AI },
+    );
+    expect(result).toMatchObject({ ok: true, problems: [] });
     expect(timeline(store).tracks[LOCKED]?.locked).toBeUndefined();
     expect(clip(store, "clip_idea")?.name).toBe("改过");
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(store.getState()).toEqual(before);
-  });
-
-  it("keeps the lock on for an AI task, whose file cannot say that it means to take it off", () => {
-    const store = open();
-    for (const unlocked of [undefined, false]) {
-      const result = imported(
-        rewriteFile(
-          store,
-          MAIN,
-          (document) => {
-            const overlay = trackIn(document, LOCKED);
-            if (unlocked === undefined) delete overlay.locked;
-            else overlay.locked = unlocked;
-            clipIn(document, "clip_idea").name = "AI 改的";
-            document.name = `AI 改的 ${String(unlocked)}`;
-          },
-          { origin: AI },
-        ),
-      );
-      expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
-      expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
-      expect(timeline(store).name).toBe(`AI 改的 ${String(unlocked)}`);
-      expect(result.problems.map(({ message }) => message)).toEqual([
-        "轨道“叠加”已锁定，只有用户自己改的文件能解锁，要解锁请用命令，或者请用户解锁",
-        "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
-      ]);
-    }
-  });
-
-  it("lets a file put a lock on and change the track in one go, AI or not", () => {
-    for (const origin of [USER, AI]) {
-      const store = open();
-      const result = imported(
-        rewriteFile(
-          store,
-          MAIN,
-          (document) => {
-            trackIn(document, "track_video").locked = true;
-            clipIn(document, "clip_title").properties["param.size"] = 80;
-          },
-          { origin },
-        ),
-      );
-      expect(result.problems).toEqual([]);
-      expect(timeline(store).tracks["track_video"]?.locked).toBe(true);
-      expect(property(store, "param.size")).toBe(80);
-      expect(failure(setProperty(store, "param.size", 70)).code).toBe("track-locked");
-    }
-  });
-
-  it("takes a lock it put on back first, and what it protects only with it", () => {
-    const store = open();
-    const before = store.getState();
-    imported(
-      rewriteFile(store, MAIN, (document) => {
-        trackIn(document, "track_video").locked = true;
-        clipIn(document, "clip_title").properties["param.size"] = 80;
-      }),
-    );
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(store.getState()).toEqual(before);
-    expect(taken(store.redo()).kept).toEqual([]);
-    // Somebody else locks it too: that lock stays, and so does what it protects.
-    lock(store, "track_video", { origin: AI });
-    blocked(store.undo());
-    expect(timeline(store).tracks["track_video"]?.locked).toBe(true);
-    expect(property(store, "param.size")).toBe(80);
-  });
-
-  it("takes back a new track that came with its lock and its clips, as a whole", () => {
-    const store = open();
-    const before = store.getState();
-    const added = {
-      id: "track_new",
-      kind: "video",
-      locked: true,
-      clips: [
-        { id: "clip_new", start: "0", duration: "1", source: { kind: "color", color: "#ffffff" } },
-      ],
-    };
-    imported(
-      rewriteFile(store, MAIN, (document) => {
-        document.tracks.push(added);
-      }),
-    );
-    expect(timeline(store).tracks["track_new"]?.locked).toBe(true);
-    expect(clip(store, "clip_new")?.track).toBe("track_new");
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(store.getState()).toEqual(before);
-    expect(taken(store.redo()).kept).toEqual([]);
-    expect(timeline(store).tracks["track_new"]?.locked).toBe(true);
-  });
-
-  it("takes back a new timeline that came with a locked track, as a whole", () => {
-    const store = open();
-    const before = store.getState();
-    const document = {
-      name: "新的",
-      sections: [{ id: "s", duration: "5" }],
-      tracks: [{ id: "t", kind: "video", locked: true, clips: [] }],
-    };
-    imported(
-      store.importFile("timelines/other/timeline.json", JSON.stringify(document), { origin: USER }),
-    );
-    expect(store.getState().timelines["other"]?.tracks["t"]?.locked).toBe(true);
-    expect(taken(store.undo()).kept).toEqual([]);
-    expect(store.getState()).toEqual(before);
-  });
-
-  it("checks without doing, and says the same", () => {
-    const store = open();
-    const before = store.getState();
-    const result = imported(
-      rewriteFile(
-        store,
-        MAIN,
-        (document) => {
-          clipIn(document, "clip_idea").name = "改过";
-          document.name = "改了名字";
-        },
-        { dryRun: true },
-      ),
-    );
-    expect(store.getState()).toBe(before);
-    expect(sorted(result.kept)).toEqual(["timelines/main/clips/clip_idea/name"]);
-    expect(result.patches).toHaveLength(1);
-  });
-
-  it("lets an AI task take back what came in, and never what stayed", () => {
-    const store = open();
-    const before = store.getState();
-    imported(
-      rewriteFile(
-        store,
-        MAIN,
-        (document) => {
-          clipIn(document, "clip_idea").name = "AI 改的";
-          clipIn(document, "clip_title").properties["param.size"] = 80;
-        },
-        { origin: AI },
-      ),
-    );
-    expect(taken(store.undoTask("task-1")).kept).toEqual([]);
-    expect(store.getState()).toEqual(before);
-    expect(taken(store.redoTask("task-1")).kept).toEqual([]);
-    expect(property(store, "param.size")).toBe(80);
+    taken(store.undoTask("task-1"));
+    expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
     expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
   });
+});
 
-  /** A valid file: the picture track goes, and what was on it goes onto the locked one. */
-  const intoLocked = (document: any, video: (track: any) => void) => {
-    const from = trackIn(document, "track_video");
-    const overlay = trackIn(document, LOCKED);
-    overlay.clips.push(
-      ...from.clips.map((item: any) => ({ ...item, start: `${40 + Number(item.start)}` })),
-    );
-    overlay.transitions = from.transitions;
-    from.clips = [];
-    delete from.transitions;
-    video(from);
-  };
-
-  it.each([USER, AI])(
-    "takes in nothing when the rest would leave clips on a track that is gone, from %s",
-    (origin) => {
-      const store = open();
-      const before = store.getState();
-      const error = refused(
-        rewriteFile(
-          store,
-          MAIN,
-          (document) =>
-            intoLocked(document, (video) => {
-              document.tracks = document.tracks.filter((track: any) => track !== video);
-            }),
-          { origin },
-        ),
-      );
-      expect(error.code).toBe("track-locked");
-      expect(error.message).toBe(
-        "文件里有些改动在锁定的轨道上，只导入其余的部分会让项目出错，整个文件没有导入",
-      );
-      const broken = error.problems?.filter(({ severity }) => severity === "error") ?? [];
-      expect(broken.map(({ code }) => code)).toContain("needs-locked-part");
-      expect(broken.map(({ message }) => message)).toContain(
-        "片段“clip_title”会留在已经没有的轨道“track_video”上",
-      );
-      expect(error.problems?.some(({ code }) => code === "track-locked")).toBe(true);
-      expect(store.getState()).toBe(before);
-      expect(store.canUndo).toBe(false);
-    },
-  );
-
-  it("takes in nothing when the rest would leave a track that cannot hold what stays on it", () => {
-    const store = open();
-    const before = store.getState();
-    const error = refused(
-      rewriteFile(store, MAIN, (document) =>
-        intoLocked(document, (video) => {
-          video.kind = "audio";
-          delete video.hidden;
-        }),
-      ),
-    );
-    const broken = error.problems?.filter(({ severity }) => severity === "error") ?? [];
-    expect(broken.map(({ message }) => message)).toContain(
-      "片段“clip_title”会留在放不下它的轨道“track_video”上",
-    );
-    expect(
-      broken.some(({ file, message }) => file === MAIN && message.includes("不再合格式")),
-    ).toBe(true);
-    expect(store.getState()).toBe(before);
-    expect(store.exportFiles().problems).toEqual([]);
-  });
-
-  it("takes in the rest as it is when what stays breaks nothing", () => {
-    const store = open();
-    const result = imported(
-      rewriteFile(store, MAIN, (document) =>
-        intoLocked(document, (video) => {
-          video.name = "空的画面";
-        }),
-      ),
-    );
-    expect(result.kept.length).toBeGreaterThan(0);
-    expect(timeline(store).tracks["track_video"]?.name).toBe("空的画面");
-    expect(clip(store, "clip_title")?.track).toBe("track_video");
-    expect(store.exportFiles().problems).toEqual([]);
-  });
-
-  it("does not change or take away an asset that a locked track shows, and changes the others", () => {
-    const store = open();
-    const result = imported(
-      rewriteFile(
-        store,
-        "assets.json",
-        (document) => {
-          // The lottie on 叠加 shows logo.
-          document.assets.logo.path = "assets/other.svg";
-          document.assets["raw-footage"].path = "assets/raw2.mov";
-        },
-        { origin: AI },
-      ),
-    );
-    expect(store.getState().assets?.["logo"]?.path).toBe("assets/logo.svg");
-    expect(store.getState().assets?.["raw-footage"]?.path).toBe("assets/raw2.mov");
-    expect(result.problems).toEqual([
-      {
-        severity: "warning",
-        code: "track-locked",
-        file: "assets.json",
-        path: "assets.logo",
-        message: "素材“logo”在锁定的轨道上使用，文件里对它的改动没有生效",
-      },
-    ]);
-    const gone = refused(
-      rewriteFile(store, "assets.json", (document) => {
-        delete document.assets.logo;
-      }),
-    );
-    expect(gone.problems?.[0]?.path).toBe("assets.logo");
-    expect(store.getState().assets?.["logo"]).toBeDefined();
-    imported(
-      rewriteFile(store, "assets.json", (document) => {
-        document.assets.logo.credit = "某人";
-      }),
-    );
-    expect(store.getState().assets?.["logo"]?.credit).toBe("某人");
-  });
-
-  it("does not take back a change to an asset that a locked track shows by now", () => {
-    const store = open();
-    imported(
-      rewriteFile(store, "assets.json", (document) => {
-        document.assets.interview.path = "assets/interview2.mp4";
-      }),
-    );
-    lock(store, "track_video", { origin: AI });
-    expect(blocked(store.undo()).obstacle).toBe("locked");
-    expect(store.getState().assets?.["interview"]?.path).toBe("assets/interview2.mp4");
-  });
-
-  it("does not change a library that a locked track takes from, and changes the others", () => {
-    const store = open();
-    lock(store, "track_video");
-    const pinned = store.getState().lock?.libraries["lib_7f3a"];
-    const newer = { commit: "b2c3d4e", integrity: "sha256-newer" };
-    const result = imported(
-      rewriteFile(
-        store,
-        "libraries.lock.json",
-        (document) => {
-          document.libraries.lib_7f3a = newer;
-          document.libraries.lib_91c0 = newer;
-        },
-        { origin: AI },
-      ),
-    );
-    expect(store.getState().lock?.libraries).toEqual({ lib_7f3a: pinned, lib_91c0: newer });
-    expect(result.kept).toEqual([["lock", "libraries", "lib_7f3a"]]);
-    expect(result.problems.map(({ message }) => message)).toEqual([
-      "库“lib_7f3a”在锁定的轨道上使用，文件里对它的改动没有生效",
-    ]);
-    const declared = refused(
-      rewriteFile(store, "libraries.json", (document) => {
-        document.libraries[0].source = "https://github.com/example/other.git";
-      }),
-    );
-    expect(declared.problems?.[0]?.path).toBe("libraries.lib_7f3a");
-    imported(
-      rewriteFile(store, "libraries.json", (document) => {
-        document.libraries[1].track = "next";
-      }),
-    );
-    expect(store.getState().libraries?.libraries.map(({ id, track }) => [id, track])).toEqual([
-      ["lib_7f3a", "main"],
-      ["lib_91c0", "next"],
-    ]);
-  });
-
-  it("does not take back only the part of a file that leaves a track not fit for its kind", () => {
-    const store = open();
-    // The voice track becomes a picture track: what only sound has goes, and so do its clips.
-    imported(
-      rewriteFile(store, MAIN, (document) => {
-        const voice = trackIn(document, "track_voice");
-        for (const key of ["role", "properties", "effects", "sends", "output"]) delete voice[key];
-        voice.kind = "video";
-        voice.clips = [];
-      }),
-    );
-    const before = store.getState();
-    lock(store, "track_voice", { origin: AI });
-    // Its kind and its clips stay with the lock, so the rest of it cannot go back either.
-    expect(blocked(store.undo()).obstacle).toBe("locked");
-    expect(timeline(store).tracks["track_voice"]).toMatchObject({ kind: "video" });
-    expect(timeline(store).tracks["track_voice"]).not.toHaveProperty("role");
-    expect(store.exportFiles().problems).toEqual([]);
-    expect(timeline(store).clips).toEqual(before.timelines["main"]?.clips);
-  });
-
+describe("who wrote a file", () => {
   it("counts only the person at the editor as a person, and nothing without a name", () => {
+    const tagged = (store: ProjectStore) => {
+      const document = JSON.parse(store.exportFiles().files.get("animaquill.json") as string);
+      document.tags = [{ name: "改过" }];
+      return JSON.stringify(document);
+    };
     for (const origin of ["mcp", "other"]) {
       const store = open();
-      const result = imported(
-        rewriteFile(
-          store,
-          MAIN,
-          (document) => {
-            delete trackIn(document, LOCKED).locked;
-            clipIn(document, "clip_idea").name = "改过";
-            document.name = "改了名字";
-          },
-          { origin },
-        ),
-      );
-      expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
-      expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
-      expect(result.problems.map(({ code }) => code)).toEqual(["track-locked", "track-locked"]);
-      const tags = failure(
-        rewriteFile(
-          store,
-          "animaquill.json",
-          (document) => {
-            document.tags = [{ name: "改过" }];
-          },
-          { origin },
-        ),
-      );
-      expect(tags.code).toBe("user-only");
+      const result = store.importFile("animaquill.json", tagged(store), { origin });
+      expect(result.ok ? undefined : result.error.code).toBe("user-only");
     }
     const store = open();
-    const text = store.exportFiles().files.get(MAIN) as string;
-    const unlocked = JSON.parse(text);
-    delete trackIn(unlocked, LOCKED).locked;
     // @ts-expect-error Who wrote a file has to be said.
-    const nobody = store.importFile(MAIN, JSON.stringify(unlocked));
-    expect(refused(nobody).code).toBe("track-locked");
-    expect(timeline(store).tracks[LOCKED]?.locked).toBe(true);
+    const nobody = store.importFile("animaquill.json", tagged(store));
+    expect(nobody.ok ? undefined : nobody.error.code).toBe("user-only");
+    expect(store.getState().manifest.tags).toBeUndefined();
   });
 });
 
@@ -6020,46 +5160,329 @@ describe("a real document from when versions and translations had maps of their 
     expect(reopened(a).getState()).toEqual(a.getState());
   });
 
-  it("leaves what is on a locked track as it is in its maps, and writes the rest next to them", () => {
+  it("knows what is the same write there too", () => {
     const store = saved();
-    const lock = { timeline: "main", track: "track_video", changes: { locked: true } };
-    success(store.execute({ type: "track.update", params: lock }));
-    const before = version(store, "format.vertical");
-    const result = rewriteFile(
-      store,
-      VERTICAL,
-      (document) => {
-        delete document.clips.clip_title;
-        document.clips.clip_logo.hidden.value = false;
-        document.clips.clip_idea = { hidden: { value: false } };
-        document.clips.clip_voice = { offset: { value: "1" } };
-      },
-      { origin: AI },
+    setProperty(store, "opacity", 0.1, {}, "clip_interview");
+    setProperty(store, "opacity", 0.2, { origin: AI }, "clip_interview");
+    setProperty(store, "opacity", 0.1, { origin: AI }, "clip_interview");
+    blocked(store.undo());
+    expect(property(store, "opacity", "clip_interview")).toBe(0.1);
+  });
+});
+
+describe("a real document from when versions and translations had maps of their own", () => {
+  /**
+   * Saved by the code of 0.3.13, not made with today's code: this is what people have. The example
+   * project plus real work on it: a version that got its first sections and the first changes of a
+   * clip, fields and properties that came and went in maps that were there, all changes of a clip
+   * taken away, a new version whose sections were emptied again, a new language, one without any
+   * strings, and a rename and a cut that wrote what versions change. Never change these two files.
+   */
+  const folder = new URL("../fixtures/before-flat-versions/", import.meta.url);
+  const update = () =>
+    Uint8Array.from(Buffer.from(readFileSync(new URL("document.txt", folder), "utf8"), "base64"));
+  const saved = () => {
+    const { store, damaged } = ProjectStore.fromUpdates([update()]);
+    if (!store || damaged > 0) throw new Error("the sample did not open");
+    return store;
+  };
+  const SEEN_BACK_THEN = JSON.parse(readFileSync(new URL("state.json", folder), "utf8"));
+  /**
+   * The sections of a version that were emptied showed as a level without anything, which is the
+   * same as none. A language without strings stays: its file says something, see `standing`.
+   */
+  const READS_NOW = (() => {
+    const state = withoutRetired(SEEN_BACK_THEN);
+    delete state.timelines.main.overrides["language.fr"].sections;
+    return state;
+  })();
+  const reopened = (store: ProjectStore) =>
+    ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
+  const write = (store: ProjectStore, path: string, change: (document: any) => void) =>
+    success(rewriteFile(store, path, change));
+  const VERTICAL = "timelines/main/overrides/format.vertical.json";
+  const ENGLISH = "timelines/main/overrides/language.en.json";
+  const BOTH = "timelines/main/overrides/version.en.vertical.json";
+  const FRENCH = "timelines/main/overrides/language.fr.json";
+  const version = (store: ProjectStore, name: string) => timeline(store).overrides[name];
+  type Level = Y.Map<unknown>;
+  const mapsOf = (store: ProjectStore) => {
+    const root = store.doc.getMap<unknown>("project");
+    const main = (root.get("timelines") as Y.Map<Level>).get("main") as Level;
+    const versions = main.get("overrides") as Y.Map<Level>;
+    const inside = (map: Level | undefined, key: string) => map?.get(key) as Level | undefined;
+    return { versions, locales: root.get("locales") as Y.Map<Level>, inside };
+  };
+
+  it("is still what was saved back then", () => {
+    const digest = (name: string) =>
+      createHash("sha256")
+        .update(readFileSync(new URL(name, folder)))
+        .digest("hex");
+    expect(digest("document.txt")).toBe(
+      "38fa8f242cbcbaa4b325464714a9a4a40ab9125e0ef23fe2a508cf037b76c9eb",
     );
-    if (!result.ok) throw new Error(result.error.message);
-    expect(result.problems.map(({ path }) => path).toSorted()).toEqual([
-      "clips.clip_idea",
-      "clips.clip_logo",
-      "clips.clip_title",
-    ]);
-    const after = version(store, "format.vertical");
-    expect(after?.clips).toEqual({ ...before?.clips, clip_voice: { offset: { value: "1" } } });
-    const { versions, inside } = mapsOf(store);
-    const clips = inside(versions.get("format.vertical"), "clips");
-    expect(inside(clips, "clip_title")?.get("properties/param.size")).toEqual({
-      value: 44,
+    expect(digest("state.json")).toBe(
+      "7b40f69746e4d8bd90224b616e038acf6ff3edac77da64ea6d1e83045de31faf",
+    );
+  });
+
+  it("really has them", () => {
+    const { versions, locales, inside } = mapsOf(saved());
+    const vertical = versions.get("format.vertical");
+    expect(vertical).toBeInstanceOf(Y.Map);
+    expect(inside(vertical, "sections")).toBeInstanceOf(Y.Map);
+    const logo = inside(inside(vertical, "clips"), "clip_logo");
+    expect(logo).toBeInstanceOf(Y.Map);
+    expect(logo?.get("hidden")).toEqual({ value: true });
+    expect(logo?.get("properties/transform.x")).toBeDefined();
+    expect(inside(versions.get("language.fr"), "sections")?.size).toBe(0);
+    expect(locales.get("fr")).toBeInstanceOf(Y.Map);
+    expect(locales.get("de")?.size).toBe(0);
+  });
+
+  it("reads as it read back then, apart from emptied sections, which are the same as none", () => {
+    expect(SEEN_BACK_THEN.timelines.main.overrides["language.fr"].sections).toEqual({});
+    expect(saved().getState()).toEqual(READS_NOW);
+    expect(saved().getState().locales["de"]).toEqual({});
+  });
+
+  it("writes valid files, which read the same", () => {
+    const { files, problems } = saved().exportFiles();
+    expect(problems).toEqual([]);
+    expect(files.has("timelines/main/overrides/language.fr.json")).toBe(true);
+    expect(JSON.parse(files.get("locales/de.json") as string)).toEqual({ strings: {} });
+    const { store } = ProjectStore.open(files);
+    expect((store as ProjectStore).exportFiles().files).toEqual(files);
+  });
+
+  it("writes next to them, where two windows cannot get in each other's way", () => {
+    const store = saved();
+    write(store, VERTICAL, (document) => {
+      document.clips.clip_logo.hidden.value = false;
+      document.clips.clip_title.properties["param.size"].value = 42;
+      document.sections.section_intro.duration.value = "3";
+    });
+    write(store, "locales/en.json", (document) => {
+      document.strings["intro.title"].text = "Atoms";
+    });
+    const { versions, locales, inside } = mapsOf(store);
+    const vertical = versions.get("format.vertical");
+    const clips = inside(vertical, "clips");
+    expect(versions.get("format.vertical/clips/clip_logo/hidden")).toEqual({ value: false });
+    expect(inside(clips, "clip_logo")?.has("hidden")).toBe(false);
+    expect(versions.get("format.vertical/clips/clip_title/properties/param.size")).toEqual({
+      value: 42,
       base: 64,
     });
-    expect(versions.get("format.vertical/clips/clip_voice/offset")).toEqual({ value: "1" });
+    expect(inside(clips, "clip_title")?.has("properties/param.size")).toBe(false);
+    expect(versions.get("format.vertical/sections/section_intro")).toEqual({
+      duration: { value: "3", base: "5" },
+    });
+    expect(inside(vertical, "sections")?.has("section_intro")).toBe(false);
+    expect(locales.get("en/intro.title")).toEqual({ text: "Atoms", base: "原子是什么" });
+    expect(locales.get("en")?.has("intro.title")).toBe(false);
     expect(reopened(store).getState()).toEqual(store.getState());
-    expect(taken(store.undoTask("task-1")).kept).toEqual([]);
-    expect(store.getState()).toEqual(
-      (() => {
-        const state = saved();
-        success(state.execute({ type: "track.update", params: lock }));
-        return state.getState();
-      })(),
-    );
+  });
+
+  it("takes changes to what versions change, and keeps the others next to them", () => {
+    const store = saved();
+    write(store, VERTICAL, (document) => {
+      document.clips.clip_title.properties["param.size"].value = 42;
+      document.clips.clip_card = { hidden: { value: true } };
+      document.sections.section_body = { duration: { value: "18", base: "20" } };
+    });
+    const before = READS_NOW.timelines.main.overrides["format.vertical"];
+    expect(version(reopened(store), "format.vertical")).toEqual({
+      ...before,
+      sections: { ...before.sections, section_body: { duration: { value: "18", base: "20" } } },
+      clips: {
+        ...before.clips,
+        clip_title: {
+          properties: {
+            ...before.clips.clip_title.properties,
+            "param.size": { value: 42, base: 64 },
+          },
+        },
+        clip_card: { hidden: { value: true } },
+      },
+    });
+  });
+
+  it("takes them away for good, also the last one of a map", () => {
+    const store = saved();
+    write(store, VERTICAL, (document) => {
+      delete document.sections;
+      delete document.clips.clip_logo;
+    });
+    write(store, BOTH, (document) => {
+      delete document.clips;
+    });
+    write(store, "locales/fr.json", (document) => {
+      document.strings = {};
+    });
+    for (const state of [store, reopened(store)]) {
+      expect(version(state, "format.vertical")).not.toHaveProperty("sections");
+      expect(version(state, "format.vertical")?.clips).not.toHaveProperty("clip_logo");
+      expect(version(state, "version.en.vertical")).toEqual({
+        scope: { language: "en", format: "vertical" },
+      });
+      // A language stays without its strings: its file says it is there.
+      expect(state.getState().locales["fr"]).toEqual({});
+    }
+  });
+
+  it("writes into a map that was emptied", () => {
+    const store = saved();
+    write(store, FRENCH, (document) => {
+      document.sections = { section_body: { duration: { value: "24", base: "20" } } };
+    });
+    write(store, "locales/de.json", (document) => {
+      document.strings = { "intro.title": { text: "Was ist ein Atom" } };
+    });
+    const state = reopened(store).getState();
+    expect(state.timelines["main"]?.overrides["language.fr"]?.sections).toEqual({
+      section_body: { duration: { value: "24", base: "20" } },
+    });
+    expect(state.locales["de"]).toEqual({ "intro.title": { text: "Was ist ein Atom" } });
+  });
+
+  it("undoes and redoes all of that exactly", () => {
+    const store = saved();
+    const steps: (() => unknown)[] = [
+      () =>
+        write(store, VERTICAL, (document) => {
+          document.clips.clip_logo.hidden.value = false;
+          delete document.sections.section_end;
+        }),
+      () =>
+        write(store, ENGLISH, (document) => {
+          delete document.clips.clip_voice.properties;
+          document.clips.clip_logo = { offset: { value: "1" } };
+        }),
+      () =>
+        write(store, BOTH, (document) => {
+          delete document.clips;
+        }),
+      () =>
+        write(store, FRENCH, (document) => {
+          document.sections = { section_end: { duration: { value: "5" } } };
+        }),
+      () =>
+        write(store, "locales/en.json", (document) => {
+          delete document.strings["outro.thanks"];
+          document.strings["intro.title"].text = "Atoms";
+        }),
+      () =>
+        store.execute({
+          type: "property.rename",
+          params: {
+            timeline: "main",
+            renames: [
+              { owner: { clip: "clip_title_b" }, from: "object.arm_l.*", to: "object.arm.*" },
+            ],
+          },
+        }),
+      () =>
+        store.execute({
+          type: "clip.split",
+          params: { timeline: "main", clip: "clip_title_b", at: "4", id: "clip_title_c" },
+        }),
+    ];
+    const states = [store.getState()];
+    for (const step of steps) {
+      expect((step() as { ok?: boolean }).ok).toBe(true);
+      states.push(store.getState());
+    }
+    expect(new Set(states).size).toBe(steps.length + 1);
+    for (const state of states.toReversed().slice(1)) {
+      taken(store.undo());
+      expect(store.getState()).toEqual(state);
+    }
+    expect(store.getState()).toEqual(READS_NOW);
+    for (const state of states.slice(1)) {
+      taken(store.redo());
+      expect(store.getState()).toEqual(state);
+    }
+    expect(reopened(store).getState()).toEqual(store.getState());
+  });
+
+  it("merges what two windows write at the same time, into a map or next to it", () => {
+    const a = saved();
+    const b = twin(a);
+    write(a, VERTICAL, (document) => {
+      document.clips.clip_title.properties["param.size"].value = 42;
+      document.clips.clip_card = { hidden: { value: true } };
+    });
+    write(b, VERTICAL, (document) => {
+      document.clips.clip_title.properties["object.arm_l.x"].value = 6;
+      document.clips.clip_card = { start: { value: "26" } };
+    });
+    write(a, "locales/en.json", (document) => {
+      document.strings["intro.title"].text = "Atoms";
+    });
+    write(b, "locales/en.json", (document) => {
+      document.strings["subtitle.one"] = { text: "Everything is atoms" };
+    });
+    sync(a, b);
+    expect(a.getState()).toEqual(b.getState());
+    expect(version(a, "format.vertical")?.clips).toMatchObject({
+      clip_title: {
+        properties: { "param.size": { value: 42 }, "object.arm_l.x": { value: 6 } },
+      },
+      clip_card: { hidden: { value: true }, start: { value: "26" } },
+    });
+    expect(a.getState().locales["en"]).toMatchObject({
+      "intro.title": { text: "Atoms" },
+      "subtitle.one": { text: "Everything is atoms" },
+      "outro.thanks": { text: "Thanks for watching" },
+    });
+    expect(reopened(a).getState()).toEqual(a.getState());
+  });
+
+  it("follows what a window that is still on the old maps writes into them", () => {
+    const a = saved();
+    const b = twin(a);
+    const { versions, locales, inside } = mapsOf(b);
+    b.doc.transact(() => {
+      const clips = inside(versions.get("format.vertical"), "clips") as Level;
+      const card = new Y.Map<unknown>();
+      card.set("hidden", { value: true });
+      clips.set("clip_card", card);
+      (inside(clips, "clip_title") as Level).set("properties/param.size", { value: 30 });
+      (locales.get("en") as Level).set("intro.title", { text: "Atoms" });
+      inside(versions.get("language.fr"), "sections")?.set("section_end", {
+        duration: { value: "5" },
+      });
+    }, "old");
+    sync(a, b);
+    for (const store of [a, b]) {
+      expect(version(store, "format.vertical")?.clips).toMatchObject({
+        clip_card: { hidden: { value: true } },
+        clip_title: { properties: { "param.size": { value: 30 } } },
+      });
+      expect(version(store, "language.fr")?.sections).toEqual({
+        section_end: { duration: { value: "5" } },
+      });
+      expect(store.getState().locales["en"]?.["intro.title"]).toEqual({ text: "Atoms" });
+      expect(reopened(store).getState()).toEqual(store.getState());
+    }
+  });
+
+  it("does not let an old map win over what is written next to it", () => {
+    const a = saved();
+    write(a, VERTICAL, (document) => {
+      document.clips.clip_title.properties["param.size"].value = 42;
+    });
+    const { versions, inside } = mapsOf(a);
+    a.doc.transact(() => {
+      const title = inside(inside(versions.get("format.vertical"), "clips"), "clip_title");
+      title?.set("properties/param.size", { value: 30 });
+    }, "old");
+    expect(
+      version(a, "format.vertical")?.clips?.["clip_title"]?.properties?.["param.size"],
+    ).toEqual({ value: 42, base: 64 });
+    expect(reopened(a).getState()).toEqual(a.getState());
   });
 
   it("knows what is the same write there too", () => {

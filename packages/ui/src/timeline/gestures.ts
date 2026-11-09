@@ -640,6 +640,17 @@ export function longestTransition(
 }
 
 /**
+ * Cuts a clip at a moment, with the clips linked to it, apart from those on locked tracks: they stay
+ * whole, and keep their link.
+ */
+export function splitCall(model: TimelineModel, clip: ClipState, at: string): CommandCall {
+  const linked = clip.link === undefined ? [] : (model.links.get(clip.link) ?? []);
+  const keep = linked.filter((id) => model.rowOfClip.get(id)?.track.locked === true);
+  const params = { timeline: model.id, clip: clip.id, at, ...(keep.length > 0 && { keep }) };
+  return { type: "clip.split", params };
+}
+
+/**
  * What makes the transition at an edge of a clip this long, or nothing when it stays as it is. One
  * that is not there yet is a fade. A transition of no time is none, and goes from the clip.
  */
@@ -1149,7 +1160,7 @@ export class RazorGesture implements Gesture {
       const { link } = box.clip;
       if (link !== undefined && seenLinks.has(link)) return [];
       if (link !== undefined) seenLinks.add(link);
-      return [{ type: "clip.split", params: { timeline: model.id, clip: box.id, at } }];
+      return [splitCall(model, box.clip, at)];
     });
     if (calls.length > 0) this.#host.run(calls);
   }

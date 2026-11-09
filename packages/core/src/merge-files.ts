@@ -10,19 +10,7 @@ import {
 } from "@animaquill/schema";
 import type { z } from "zod";
 import { CommandError, Draft } from "./draft.ts";
-import {
-  heldIn,
-  heldJoins,
-  inLockOrder,
-  isHeld,
-  isSourceFile,
-  isUser,
-  joinOf,
-  linkInWords,
-  locksOf,
-  readDocument,
-  withLockedLibraries,
-} from "./import-file.ts";
+import { isSourceFile, isUser, readDocument } from "./import-file.ts";
 import { linesOf, mergeText, type LineRange } from "./merge-text.ts";
 import {
   entryOf,
@@ -140,10 +128,10 @@ export interface MergeConflict {
 
 export interface FileMerge {
   readonly files: readonly MergedFile[];
-  /** What people should know: conflicts, what locks kept, what waits and why. */
+  /** What people should know: conflicts, what waits and why. */
   readonly problems: readonly Problem[];
   readonly conflicts: readonly MergeConflict[];
-  /** What would change on locked tracks, or what only a person can change, which stays as it is. */
+  /** What only a person can change, which stays as it is. */
   readonly kept: readonly Path[];
   /** What the folder took away that is still in use, which stays until people decide. */
   readonly held: readonly Path[];
@@ -269,6 +257,26 @@ function fileOf(path: Path): string {
         ? `timelines/${id}/overrides/${name}.json`
         : `timelines/${id}/timeline.json`;
   }
+}
+
+const OF_ANOTHER_KIND = " of another kind";
+
+/** Says in words what a link from `danglingAt` comes to. */
+function linkInWords(link: string): string {
+  const [from = "", rest = ""] = link.split(" -> ");
+  const isOfAnotherKind = rest.endsWith(OF_ANOTHER_KIND);
+  const to = isOfAnotherKind ? rest.slice(0, -OF_ANOTHER_KIND.length) : rest;
+  const nameOf = (path: string) => {
+    const parts = path.split("/");
+    const what = { clips: "片段", joins: "衔接转场", tracks: "轨道" }[parts.at(-2) ?? ""];
+    return what ? `${what}“${parts.at(-1)}”` : `“${path}”`;
+  };
+  if (to === "its kind") return `${nameOf(from)}会带着它这一种轨道没有的设置`;
+  if (to.includes("/tracks/")) {
+    const where = isOfAnotherKind ? "放不下它的" : "已经没有的";
+    return `${nameOf(from)}会留在${where}${nameOf(to)}上`;
+  }
+  return `${nameOf(from)}会指向已经没有的${nameOf(to)}`;
 }
 
 /** Where a link from `danglingAt` starts, and what it points at. */
@@ -796,7 +804,7 @@ function named(state: ProjectState, path: Path): string {
   return field === "properties" ? `${thing}的属性 ${rest.join("/")}` : `${thing}的 ${field}`;
 }
 
-/** Where in its file, for the problems tab: by ids and keys, see `whyHeld` in import-file.ts. */
+/** Where in its file, for the problems tab: by ids and keys. */
 function whereIn(path: Path): string | undefined {
   const [root = ""] = path;
   const from = (start: number) => path.slice(start).join(".") || undefined;
@@ -1130,12 +1138,10 @@ export function unmergedFiles(changes: readonly FileChange[]): readonly MergedFi
   );
 }
 
-/** What gets through: locks, what only people can change, and what has to stay. */
+/** What gets through: what only people can change and what has to stay do not. */
 interface Admitted {
   readonly draft: Draft;
   readonly patches: readonly Patch[];
-  /** Kept by locks. */
-  readonly kept: readonly Patch[];
   /** Kept because only a person can change it. */
   readonly personal: readonly Patch[];
   /** What would be a piece of a timeline that is not there. */
@@ -1150,9 +1156,9 @@ interface Admitted {
  * stays and `conflicts` says where. Documents merge by the levels the project has, see structure.ts,
  * and code by lines.
  *
- * It goes by the rules of a file that comes in, see `planFileImport`: what is on locked tracks stays
- * as it is, and a file that is not valid changes nothing and is blocked, with the versions of a
- * timeline that is, and the manifest when it lists one. What the folder took away and is still in use
+ * It goes by the rules of a file that comes in, see `planFileImport`: a file that is not valid
+ * changes nothing and is blocked, with the versions of a timeline that is, and the manifest when it
+ * lists one. What the folder took away and is still in use
  * stays too: a whole document then waits for people, blocked, and an entry of a document that
  * changed, such as an asset, simply stays.
  *
@@ -1339,10 +1345,7 @@ export function planMerge(
   };
 
   // What gets through. Each round can leave out more, until nothing new turns up.
-  const locks = locksOf(before, planned.state, origin);
-  const patches = inLockOrder(planned.steps.map(({ patch }) => patch));
-  // A join comes one field at a time: what a lock keeps of one keeps all of it, see planFileImport.
-  const lockedJoins = heldJoins(locks, patches, origin);
+  const patches = planned.steps.map(({ patch }) => patch);
   const waiting = new Map<string, Path>();
   const holds: Hold[] = [];
   /** How often what holds keep out grew, which is how far the merge got, see `waits`. */
@@ -1393,7 +1396,6 @@ export function planMerge(
   const admit = (): Admitted => {
     const admitted = new Draft(before, origin);
     const through: Patch[] = [];
-    const kept: Patch[] = [];
     const personal: Patch[] = [];
     const orphans: Patch[] = [];
     for (const each of patches) {
@@ -1410,19 +1412,15 @@ export function planMerge(
         orphans.push(free);
         continue;
       }
-      const { patch, held } = withLockedLibraries(locks, withListed(withUsedLibraries(free)));
-      kept.push(...held);
-      if (patch === undefined) continue;
-      if (isHeld(locks, patch, origin) || lockedJoins.has(joinOf(patch))) {
-        kept.push(patch);
-      } else if (!isUser(origin) && isTagChange(patch)) {
+      const patch = withListed(withUsedLibraries(free));
+      if (!isUser(origin) && isTagChange(patch)) {
         personal.push(patch);
       } else {
         admitted.repeat(patch);
         through.push(patch);
       }
     }
-    return { draft: admitted, patches: through, kept, personal, orphans };
+    return { draft: admitted, patches: through, personal, orphans };
   };
 
   /** Whether the project holds what a file has, which is asked more than once. See `isSame`. */
@@ -1650,7 +1648,6 @@ export function planMerge(
 
   for (const patch of admitted.patches) draft.repeat(patch);
 
-  const after = draft.state;
   const problems: Problem[] = [...invalid.values()].flat();
   for (const doc of docs) problems.push(...(doc.blocked ?? []));
   // Nothing of a file that waits came in, so neither did a conflict in it.
@@ -1669,14 +1666,6 @@ export function planMerge(
         : retiredFadesIn(change.path, text);
     if (retired) problems.push(retired);
   }
-  const keptIn = new Map<string, Patch[]>();
-  for (const patch of admitted.kept) {
-    const file = fileOf(patch.path);
-    const kept = keptIn.get(file);
-    if (kept) kept.push(patch);
-    else keptIn.set(file, [patch]);
-  }
-  for (const [file, kept] of keptIn) problems.push(...heldIn(locks, file, kept));
   for (const { path } of admitted.personal.slice(0, 1)) {
     const message = "只有用户自己能改项目的标签，文件里对标签的改动没有生效";
     problems.push(warningAt("user-only", path, message));
@@ -1693,16 +1682,6 @@ export function planMerge(
   for (const id of relist) {
     const message = `时间轴“${id}”留着，清单里也留着它`;
     problems.push(warningAt("kept-listed", ["manifest", "timelines"], message, MANIFEST_FILE));
-  }
-  // The locks a person's file took off, which nobody should miss.
-  for (const [id, timeline] of Object.entries(before.timelines)) {
-    for (const track of Object.values(timeline.tracks)) {
-      const now = entryOf(entryOf(after.timelines, id)?.tracks, track.id);
-      if (track.locked !== true || !now || now.locked === true) continue;
-      const message = `这个文件解开了轨道“${track.name ?? track.id}”的锁`;
-      const file = `timelines/${id}/timeline.json`;
-      problems.push({ severity: "warning", code: "track-unlocked", file, path: track.id, message });
-    }
   }
 
   const held = [
@@ -1725,7 +1704,7 @@ export function planMerge(
     files,
     problems,
     conflicts: found,
-    kept: [...admitted.kept, ...admitted.personal].map(({ path }) => path),
+    kept: admitted.personal.map(({ path }) => path),
     held,
   };
 }

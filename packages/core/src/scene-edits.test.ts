@@ -33,9 +33,7 @@ function open() {
     );
   const lock = () =>
     ok(run("track.update", { timeline: "main", track, changes: { locked: true } }));
-  const unlock = () =>
-    ok(run("track.update", { timeline: "main", track, changes: { locked: false } }));
-  return { store, state, track, run, ok, code, addScene, useScene, lock, unlock };
+  return { store, state, track, run, ok, code, addScene, useScene, lock };
 }
 
 describe("a new scene", () => {
@@ -603,20 +601,6 @@ describe("a sound", () => {
     expect(context.code(use(context, context.track))).not.toBe("ok");
   });
 
-  it("is safe from changes while it is on a locked track", () => {
-    const context = open();
-    add(context);
-    const { run, code, ok } = context;
-    const track = audioTrack(context);
-    ok(use(context, track));
-    ok(run("track.update", { timeline: "main", track, changes: { locked: true } }));
-    const path = "sounds/bell/sound.js";
-    expect(code(run("file.write", { path, text: "changed" }))).toBe("track-locked");
-    expect(code(run("sound.update", { sound: "bell", changes: { name: "钟" } }))).toBe(
-      "track-locked",
-    );
-  });
-
   it("comes back with a clip that comes back", () => {
     const context = open();
     add(context);
@@ -696,7 +680,6 @@ describe("a scene on a locked track", () => {
   const onLocked = () => {
     const opened = open();
     opened.addScene("title", { "index.html": PAGE, "a.js": "1" });
-    opened.addScene("free");
     opened.useScene();
     opened.ok(opened.run("file.write", { path: "code/shared.js", text: "1" }));
     opened.lock();
@@ -706,84 +689,11 @@ describe("a scene on a locked track", () => {
   it.each([
     ["scene.update", { scene: "title", changes: { name: "a" } }],
     ["file.write", { path: "scenes/title/a.js", text: "2" }],
-    ["file.write", { path: "scenes/title/new.js", text: "2" }],
-    ["file.remove", { path: "scenes/title/a.js" }],
     ["file.rename", { from: "scenes/title/a.js", to: "scenes/title/b.js" }],
     ["file.write", { path: "code/shared.js", text: "2" }],
-    ["file.write", { path: "code/new.js", text: "2" }],
-    ["file.remove", { path: "code/shared.js" }],
-  ])("stays as it is, for %s", (type, params) => {
-    const { state, run, code } = onLocked();
-    const before = state();
-    expect(code(run(type, params))).toBe("track-locked");
-    expect(code(run(type, params, aiTask("t")))).toBe("track-locked");
-    expect(state()).toBe(before);
-  });
-
-  it("does not lose a file of it to another scene", () => {
-    const { state, run, code } = onLocked();
-    const before = state();
-    const away = { from: "scenes/title/a.js", to: "scenes/free/a.js" };
-    expect(code(run("file.rename", away))).toBe("track-locked");
-    expect(state()).toBe(before);
-  });
-
-  it("does not get a file from another scene", () => {
-    const { state, run, ok, code } = onLocked();
-    ok(run("file.write", { path: "scenes/free/a.js", text: "1" }));
-    const before = state();
-    const over = { from: "scenes/free/a.js", to: "scenes/title/new.js" };
-    expect(code(run("file.rename", over))).toBe("track-locked");
-    expect(state()).toBe(before);
-  });
-
-  it("leaves other scenes open", () => {
+  ])("changes like any other, also for AI, for %s", (type, params) => {
     const { run, ok } = onLocked();
-    ok(run("file.write", { path: "scenes/free/a.js", text: "1" }));
-    ok(run("scene.update", { scene: "free", changes: { name: "a" } }));
-  });
-
-  it("opens again with the track", () => {
-    const { run, ok, unlock } = onLocked();
-    unlock();
-    ok(run("file.write", { path: "scenes/title/a.js", text: "2" }));
-  });
-
-  it("also counts where a version shows it on a locked track", () => {
-    const { store, track, run, ok, code, addScene, lock } = open();
-    addScene();
-    const clip = {
-      id: "c",
-      start: "0",
-      duration: "1",
-      source: { kind: "color", color: "#000000" },
-    };
-    ok(run("clip.add", { timeline: "main", track, clip }));
-    const scene = { kind: "scene", scene: "title" };
-    const version = {
-      scope: { format: "landscape" },
-      clips: { c: { source: { value: scene } } },
-    };
-    ok(
-      store.importFile("timelines/main/overrides/format.landscape.json", JSON.stringify(version), {
-        origin: USER,
-      }),
-    );
-    lock();
-    expect(code(run("file.write", { path: "scenes/title/a.js", text: "1" }))).toBe("track-locked");
-  });
-
-  it("taking back a change to it counts as a change", () => {
-    const { store, state, track, run, ok, addScene, useScene } = open();
-    addScene();
-    useScene();
-    ok(run("file.write", { path: "scenes/title/a.js", text: "1" }));
-    const changes = { locked: true };
-    ok(run("track.update", { timeline: "main", track, changes }, aiTask("t")));
-    const undone = store.undo();
-    expect(undone.ok).toBe(false);
-    if (!undone.ok) expect(undone.error.obstacle).toBe("locked");
-    expect(state().files["scenes/title/a.js"]).toBe("1");
+    ok(run(type, params, aiTask("t")));
   });
 
   it("a new file of a scene in use can go back, with or without a clip", () => {
@@ -797,25 +707,11 @@ describe("a scene on a locked track", () => {
     expect(state().files["scenes/title/a.js"]).toBe("1");
   });
 
-  it.each([USER, aiTask("t")])("stays as it is for a file from outside, from %s", (origin) => {
-    const { store, state, run, ok, addScene, useScene, lock } = open();
-    addScene();
-    useScene();
-    ok(run("file.write", { path: "scenes/title/a.js", text: "1" }));
-    ok(run("file.write", { path: "code/shared.js", text: "1" }));
-    lock();
-    const before = state();
-    for (const [path, text] of [
-      ["scenes/title/a.js", "from outside"],
-      ["scenes/title/new.js", "from outside"],
-      ["scenes/title/scene.json", JSON.stringify({ ...manifest, name: "改过" })],
-      ["code/shared.js", "from outside"],
-    ] as const) {
-      const result = store.importFile(path, text, { origin });
-      expect(result.ok, path).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("track-locked");
-    }
-    expect(state()).toBe(before);
-    ok(store.importFile("scenes/free/a.js", "from outside", { origin }));
+  it.each([USER, aiTask("t")])("changes with a file from outside, from %s", (origin) => {
+    const { store, state, ok } = onLocked();
+    ok(store.importFile("scenes/title/a.js", "from outside", { origin }));
+    ok(store.importFile("code/shared.js", "from outside", { origin }));
+    expect(state().files["scenes/title/a.js"]).toBe("from outside");
+    expect(state().files["code/shared.js"]).toBe("from outside");
   });
 });

@@ -49,6 +49,7 @@ import {
   cutAt,
   freeShift,
   longestTransition,
+  splitCall,
   transitionCall,
   type ClipCopy,
   type Gesture,
@@ -1170,7 +1171,7 @@ export class TimelineEditor implements TouchTarget {
       const { link } = box.clip;
       if (link !== undefined && links.has(link)) return [];
       if (link !== undefined) links.add(link);
-      return [{ type: "clip.split", params: { timeline: model.id, clip: box.id, at } }];
+      return [splitCall(model, box.clip, at)];
     });
     if (calls.length > 0) this.#run(calls);
   }
@@ -1448,9 +1449,11 @@ export class TimelineEditor implements TouchTarget {
     if (model) this.#run([{ type: "track.add", params: { timeline: model.id, kind } }]);
   }
 
+  /** A locked track stays, with what is on it, until people take the lock off. */
   removeTrack(track: string): void {
     const { model } = this;
-    if (model) this.#run([{ type: "track.remove", params: { timeline: model.id, track } }]);
+    if (!model || model.state.tracks[track]?.locked === true) return;
+    this.#run([{ type: "track.remove", params: { timeline: model.id, track } }]);
   }
 
   updateTrack(track: string, changes: Readonly<Record<string, unknown>>): void {

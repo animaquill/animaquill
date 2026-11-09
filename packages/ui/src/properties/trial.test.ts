@@ -439,12 +439,9 @@ describe("keeping it on the device", () => {
 
   it("goes on keeping what comes next after saving did not work", async () => {
     const { trials, store, place, id } = await setup();
-    const track = orderedTracks(store.getState().timelines["main"] as never).find(
-      ({ kind }) => kind === "video",
-    )?.id;
     const locked = (value: boolean) => ({
-      type: "track.update",
-      params: { timeline: "main", track, changes: { locked: value } },
+      type: "project.setTags",
+      params: { tags: value ? [{ name: "已发布", locked: true }] : [] },
     });
     trials.write([write(1)]);
     await trials.settle();

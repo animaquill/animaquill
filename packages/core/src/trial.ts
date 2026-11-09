@@ -969,7 +969,7 @@ export class Trial {
   }
 }
 
-/** Whether a command would write this, apart from what is true right now, like a locked track. */
+/** Whether a command would write this value, apart from what the project is like right now. */
 function canHold(
   path: string,
   saved: PropertyValue | undefined,

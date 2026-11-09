@@ -170,12 +170,6 @@ describe("what writing would refuse", () => {
     expect(trial.write([edit])).toMatchObject({ ok: false, error: { code: "not-found" } });
   });
 
-  it("a locked track", () => {
-    const { run, trial, track } = setup();
-    run({ type: "track.update", params: { timeline: "main", track, changes: { locked: true } } });
-    expect(trial.write([write(1)])).toMatchObject({ ok: false, error: { code: "track-locked" } });
-  });
-
   it("a time that is no time", () => {
     const { trial } = setup();
     const edit = { owner, path: "opacity", op: "setKey", time: "昨天", value: 1 } as PropertyEdit;
@@ -353,19 +347,11 @@ describe("undo and redo", () => {
   });
 
   it("do not count steps of the project that could not go back as coming after them", () => {
-    const { run, store, trial, track } = setup();
+    const { run, store, trial } = setup();
     trial.write([write(1)]);
     run(set(0.3, "opacity"));
-    const changes = { locked: true };
-    store.execute(
-      { type: "track.update", params: { timeline: "main", track, changes } },
-      { origin: aiTask("t") },
-    );
-    expect(store.undo()).toMatchObject({ ok: false, error: { obstacle: "locked" } });
-    store.execute(
-      { type: "track.update", params: { timeline: "main", track, changes: { locked: false } } },
-      { origin: aiTask("t") },
-    );
+    store.execute(set(0.35, "opacity"), { origin: aiTask("t") });
+    expect(store.undo()).toMatchObject({ ok: false, error: { obstacle: "changed" } });
     run(set(0.4, "opacity"));
     expect(trial.undoesFirst).toBe(false);
     store.undo();
@@ -640,10 +626,10 @@ describe("saving", () => {
   });
 
   it("keeps everything when it fails", () => {
-    const { run, trial, track, tried } = setup();
+    const { run, trial, tried } = setup();
     trial.write([write(1)]);
-    run({ type: "track.update", params: { timeline: "main", track, changes: { locked: true } } });
-    expect(trial.save()).toMatchObject({ ok: false, error: { code: "track-locked" } });
+    run({ type: "project.setTags", params: { tags: [{ name: "已发布", locked: true }] } });
+    expect(trial.save()).toMatchObject({ ok: false, error: { code: "project-locked" } });
     expect(tried("transform.x")).toBe(1);
     expect(trial.canUndo).toBe(true);
   });
@@ -2170,16 +2156,8 @@ describe("what the project says about a change", () => {
   });
 
   it("is nothing when only a part of something goes back", () => {
-    const { store, run, track } = setup();
+    const { store, run } = setup();
     run({ type: "clip.trim", params: { timeline: "main", clip: "c", start: "0" } });
-    store.execute({
-      type: "track.update",
-      params: { timeline: "main", track, changes: { locked: true } },
-    });
-    store.execute(
-      { type: "track.update", params: { timeline: "main", track, changes: { locked: false } } },
-      { origin: aiTask("t") },
-    );
     store.execute(set(5), { origin: aiTask("t") });
     const { other, arrive } = window(store);
     other.execute({
@@ -2194,8 +2172,7 @@ describe("what the project says about a change", () => {
       params: { timeline: "main", clips: [{ clip: "c", start: "1" }] },
     });
     arrive();
-    store.undo();
-    store.undo();
+    expect(store.undo()).toMatchObject({ ok: true, obstacle: "changed" });
     stop();
     expect(seen.at(-1)).toBeUndefined();
   });
@@ -2474,9 +2451,9 @@ describe("keeping it for later", () => {
     expect(next.restore(kept).restored).toBe(0);
   });
 
-  it("brings back what cannot be saved right now, like on a locked track", () => {
-    const { run, store, track } = setup();
-    run({ type: "track.update", params: { timeline: "main", track, changes: { locked: true } } });
+  it("brings back what cannot be saved right now, like in a project with a locked tag", () => {
+    const { run, store } = setup();
+    run({ type: "project.setTags", params: { tags: [{ name: "已发布", locked: true }] } });
     const next = new Trial(store, "main");
     expect(next.restore(stored([{ clip: "c", path: "opacity", value: 0.5 }])).restored).toBe(1);
   });

@@ -12,7 +12,7 @@ import { z } from "zod";
 import { fail, type Draft } from "./draft.ts";
 import { isSourceFile } from "./import-file.ts";
 import { entryOf, type ProjectState } from "./model.ts";
-import { isInUse, isOnLockedTrack, runsOnLockedTrack } from "./references.ts";
+import { isInUse } from "./references.ts";
 
 declare const TextEncoder: new () => { encode(text: string): Uint8Array };
 
@@ -42,20 +42,6 @@ export const SourcePath = RelativePath.refine(
     const owner = ownerOf(path);
     return owner.kind === "code" || owner.rest.length > 0;
   }, "文件要放在场景或声音的文件夹里");
-
-/**
- * Nobody can be sure what a locked track shows if what it runs changes, so that protects it as much
- * as a change to the clip would. Shared code can be behind anything, so all of it counts.
- */
-function assertSourceEditable(state: ProjectState, path: string): void {
-  const owner = ownerOf(path);
-  if (owner.kind === "code") {
-    if (runsOnLockedTrack(state)) fail("track-locked", "锁定的轨道上有场景或声音，共用代码不能改");
-    return;
-  }
-  const target = [owner.kind === "scene" ? "scenes" : "sounds", owner.id];
-  if (isOnLockedTrack(state, target)) fail("track-locked", `锁定的轨道上在用：${owner.id}`);
-}
 
 /** The folder has to be there: a file nothing can reach is a mistake, and the check finds it now. */
 function assertOwnerExists(state: ProjectState, path: string): void {
@@ -100,7 +86,6 @@ function assertFits(state: ProjectState, path: string): void {
 /** What every write of a file goes through, before anything gets written. */
 function checkWrite(state: ProjectState, path: string, text: string): void {
   assertOwnerExists(state, path);
-  assertSourceEditable(state, path);
   assertSize(path, text);
   if (entryOf(state.files, path) === undefined) assertFits(state, path);
 }
@@ -171,7 +156,6 @@ function sceneOf(state: ProjectState, id: string): Manifest {
 export function updateScene(draft: Draft, params: z.output<typeof SceneUpdate>): void {
   const { scene: id, changes, clear } = params;
   const current = sceneOf(draft.state, id);
-  assertSourceEditable(draft.state, sceneFile(id, "scene.json"));
   const next: Record<string, unknown> = { ...current, ...changes };
   for (const field of clear ?? []) delete next[field];
   const result = SceneManifest.safeParse(next);
@@ -237,7 +221,6 @@ function soundOf(state: ProjectState, id: string): SoundManifestType {
 export function updateSound(draft: Draft, params: z.output<typeof SoundUpdate>): void {
   const { sound: id, changes, clear } = params;
   const current = soundOf(draft.state, id);
-  assertSourceEditable(draft.state, soundFile(id, "sound.json"));
   const next: Record<string, unknown> = { ...current, ...changes };
   for (const field of clear ?? []) delete next[field];
   const result = SoundManifest.safeParse(next);
@@ -285,7 +268,6 @@ export const FileRemove = z.strictObject({ path: SourcePath });
 export function removeFile(draft: Draft, { path }: z.output<typeof FileRemove>): void {
   const { state } = draft;
   if (entryOf(state.files, path) === undefined) fail("not-found", `没有这个文件：${path}`);
-  assertSourceEditable(state, path);
   if (startsWith(state, path)) fail("entry-in-use", `这是入口文件，要先换一个入口：${path}`);
   draft.delete(["files", path]);
 }
@@ -298,7 +280,6 @@ export function renameFile(draft: Draft, { from, to }: z.output<typeof FileRenam
   const text = entryOf(state.files, from) ?? fail("not-found", `没有这个文件：${from}`);
   if (from === to) return;
   if (entryOf(state.files, to) !== undefined) fail("path-taken", `这里已经有文件了：${to}`);
-  assertSourceEditable(state, from);
   const owner = startsWith(state, from);
   const source = ownerOf(from);
   const target = ownerOf(to);

@@ -217,9 +217,11 @@ describe("committing", () => {
   });
 
   it("says when it fails, and still ends the preview", async () => {
-    const { store, writer, commandFailed, track } = await setup();
-    const changes = { locked: true };
-    store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
+    const { store, writer, commandFailed } = await setup();
+    store.execute({
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
+    });
     writer.preview([write(1)]);
     expect(writer.commit([write(1)])).toBe(false);
     expect(commandFailed).toHaveBeenCalledOnce();
@@ -323,9 +325,11 @@ describe("while people try things out", () => {
   });
 
   it("says when something cannot be tried, like when it cannot be written", async () => {
-    const { store, writer, commandFailed, track, trials } = await setup(trying);
-    const changes = { locked: true };
-    store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
+    const { store, writer, commandFailed, trials } = await setup(trying);
+    store.execute({
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
+    });
     expect(writer.commit([write(1)])).toBe(false);
     expect(commandFailed).toHaveBeenCalledOnce();
     expect(trials.getSnapshot().count).toBe(0);

@@ -155,18 +155,12 @@ describe("a join that is put on a cut", () => {
     expect(failure(longer).message).toBe("衔接转场太长，这里最长 0.4 秒");
   });
 
-  it("is not for a locked track, not even for AI, nor for sound and captions yet", () => {
-    const { store, run, track } = project();
-    const locked = { track, changes: { locked: true } };
-    success(run("track.update", locked));
-    expect(failure(run("join.add", { from: "a", to: "b", type: "fade" })).code).toBe(
-      "track-locked",
-    );
+  it("is also for a locked track, also for AI", () => {
+    const { run, track, joinOf } = project();
+    success(run("track.update", { track, changes: { locked: true } }));
     const asAi = { origin: aiTask("t") };
-    expect(failure(run("join.add", { from: "a", to: "b", type: "fade" }, asAi)).code).toBe(
-      "track-locked",
-    );
-    expect(store.getState().timelines["main"]).not.toHaveProperty("joins");
+    success(run("join.add", { id: "j", from: "a", to: "b", type: "fade" }, asAi));
+    expect(joinOf("j")).toBeDefined();
   });
 });
 
@@ -359,7 +353,7 @@ describe("changing a join", () => {
     expect(main()).not.toHaveProperty("joins");
   });
 
-  it("is not for a locked track, and goes with join.remove, also several at once", () => {
+  it("goes with join.remove, also several at once and on a locked track", () => {
     const { run, store, track, main } = project((video) => {
       video.joins = [
         { id: "j", from: "a", to: "b", type: "fade", duration: "1" },
@@ -367,11 +361,7 @@ describe("changing a join", () => {
       ];
     });
     success(run("track.update", { track, changes: { locked: true } }));
-    expect(failure(run("join.update", { join: "j", changes: { duration: "0.5" } })).code).toBe(
-      "track-locked",
-    );
-    expect(failure(run("join.remove", { joins: ["j"] })).code).toBe("track-locked");
-    success(run("track.update", { track, changes: { locked: false } }));
+    success(run("join.update", { join: "j", changes: { duration: "0.5" } }));
     expect(failure(run("join.remove", { joins: ["j", "gone"] })).code).toBe("not-found");
     success(run("join.remove", { joins: ["j", "k", "j"] }));
     expect(main()).not.toHaveProperty("joins");

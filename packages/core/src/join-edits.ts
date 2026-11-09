@@ -88,13 +88,6 @@ export const JoinUpdate = z.strictObject({
 /** Takes joins away. That always works, also for what only some of one is left of. */
 export const JoinRemove = z.strictObject({ timeline: Id, joins: z.array(Id).min(1) });
 
-/** A locked track protects its joins from everyone, also from AI tasks. */
-function editableTrack(timeline: TimelineState, id: string | undefined): TrackState | undefined {
-  const track = id === undefined ? undefined : entryOf(timeline.tracks, id);
-  if (track?.locked) fail("track-locked", `轨道已锁定：${track.name ?? id}`);
-  return track;
-}
-
 /** What a join is, checked: one thing it names, a length and a speed curve the format has. */
 function checked(join: Record<string, unknown>): JoinTransition {
   const result = Join.safeParse(join);
@@ -169,7 +162,7 @@ export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
   const target = timelineOf(draft, timeline);
   const { before, after } = cutBetween(target, from, to);
   const track =
-    editableTrack(target, before.track) ?? fail("not-found", `没有这条轨道：${before.track}`);
+    entryOf(target.tracks, before.track) ?? fail("not-found", `没有这条轨道：${before.track}`);
   const taken = joinOnCut(target, before, after);
   if (taken !== undefined) {
     if (copied) return { left: "taken" as const };
@@ -213,7 +206,6 @@ export function updateJoin(
 ) {
   const target = timelineOf(draft, timeline);
   const join = entryOf(target.joins, id) ?? fail("not-found", `没有这个衔接转场：${id}`);
-  editableTrack(target, join.track);
   const current = join.transition ?? fail("not-found", `这个衔接转场不完整：${id}`);
   const next: Record<string, unknown> = { ...current };
   const renamed = REFERENCE.some((field) => field !== "variant" && changes[field] !== undefined);
@@ -254,8 +246,7 @@ export function updateJoin(
 export function removeJoins(draft: Draft, { timeline, joins }: z.output<typeof JoinRemove>) {
   const target = timelineOf(draft, timeline);
   for (const id of joins) {
-    const join = entryOf(target.joins, id) ?? fail("not-found", `没有这个衔接转场：${id}`);
-    editableTrack(target, join.track);
+    if (!entryOf(target.joins, id)) fail("not-found", `没有这个衔接转场：${id}`);
   }
   for (const id of new Set(joins)) draft.delete(joinPath(timeline, id));
 }

@@ -361,11 +361,11 @@ describe("files the folder took away", () => {
   });
 });
 
-describe("locks and who changed the files", () => {
+describe("who changed the files", () => {
   /** In the example, 叠加 is locked, with clip_lottie and clip_idea on it. */
   const LOCKED = "track_overlay";
 
-  it("leave what is on locked tracks as it is, take in the rest, and write the file again", () => {
+  it("take in what is on locked tracks, and the lock, from anyone", () => {
     const store = open();
     const base = written(store);
     const batch = changesOf(base, (files) =>
@@ -375,51 +375,19 @@ describe("locks and who changed the files", () => {
       }),
     );
     const result = merged(mergeFiles(store, batch, { origin: FOLDER }));
-    expect(clip(store, "clip_idea")?.name).toBe("样片：换个开场");
+    expect(clip(store, "clip_idea")?.name).toBe("改过");
     expect(clip(store)?.name).toBe("新标题");
-    expect(result.kept).toEqual([["timelines", "main", "clips", "clip_idea", "name"]]);
-    expect(result.problems).toEqual([
-      {
-        severity: "warning",
-        code: "track-locked",
-        file: MAIN,
-        path: "clip_idea",
-        message: "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
-      },
-    ]);
-    expect(statusOf(result, MAIN)).toMatchObject({ status: "merged", rewrite: true });
-  });
+    expect(result.kept).toEqual([]);
+    expect(result.problems).toEqual([]);
+    expect(statusOf(result, MAIN)).toMatchObject({ status: "merged", rewrite: false });
 
-  it("do not take a lock off for the folder, but do for the person, who hears about it", () => {
-    const unlocked = (store: ProjectStore) =>
-      changesOf(written(store), (files) =>
-        editJson(files, MAIN, (document) => {
-          delete trackIn(document, LOCKED).locked;
-          clipIn(document, "clip_idea").name = "改过";
-        }),
-      );
-    const folder = open();
-    const kept = merged(mergeFiles(folder, unlocked(folder), { origin: FOLDER }));
-    expect(main(folder).tracks[LOCKED]?.locked).toBe(true);
-    expect(clip(folder, "clip_idea")?.name).toBe("样片：换个开场");
-    expect(kept.problems.map(({ message }) => message)).toEqual([
-      "轨道“叠加”已锁定，只有用户自己改的文件能解锁，要解锁请用命令，或者请用户解锁",
-      "轨道“叠加”已锁定，文件里对片段“样片：换个开场”的改动没有生效",
-    ]);
-
-    const person = open();
-    const opened = merged(mergeFiles(person, unlocked(person), { origin: USER }));
-    expect(main(person).tracks[LOCKED]?.locked).toBeUndefined();
-    expect(clip(person, "clip_idea")?.name).toBe("改过");
-    expect(opened.problems).toEqual([
-      {
-        severity: "warning",
-        code: "track-unlocked",
-        file: MAIN,
-        path: LOCKED,
-        message: "这个文件解开了轨道“叠加”的锁",
-      },
-    ]);
+    const unlocked = changesOf(written(store), (files) =>
+      editJson(files, MAIN, (document) => {
+        delete trackIn(document, LOCKED).locked;
+      }),
+    );
+    expect(merged(mergeFiles(store, unlocked, { origin: FOLDER })).problems).toEqual([]);
+    expect(main(store).tracks[LOCKED]?.locked).toBeUndefined();
   });
 
   it("leave the tags to people, and take in the rest of the file", () => {
@@ -900,7 +868,7 @@ describe("the order of tracks and sections", () => {
 });
 
 describe("more of what the folder can change", () => {
-  it("leaves a library that a locked track uses, and takes in the rest of the list", () => {
+  it("takes in a library that a locked track uses, like the rest of the list", () => {
     const store = open();
     run(store, "track.update", {
       timeline: "main",
@@ -915,12 +883,10 @@ describe("more of what the folder can change", () => {
     );
     const result = merged(mergeFiles(store, batch, { origin: FOLDER }));
     const libraries = store.getState().libraries?.libraries ?? [];
-    expect(libraries.find(({ id }) => id === "lib_7f3a")?.priority).toBe(1);
+    expect(libraries.find(({ id }) => id === "lib_7f3a")?.priority).toBe(5);
     expect(libraries.find(({ id }) => id === "lib_91c0")?.followLatest).toBe(false);
-    expect(result.problems.map(({ message }) => message)).toEqual([
-      "库“lib_7f3a”在锁定的轨道上使用，文件里对它的改动没有生效",
-    ]);
-    expect(result.files[0]).toMatchObject({ status: "merged", rewrite: true });
+    expect(result.problems).toEqual([]);
+    expect(result.files[0]).toMatchObject({ status: "merged", rewrite: false });
   });
 
   it("leaves the entry of a scene that stays, until people decide", () => {
@@ -1433,14 +1399,13 @@ describe("transitions", () => {
     expect(store.exportFiles().problems).toEqual([]);
   });
 
-  it("leave a join on a locked track as a whole, also a new one", () => {
+  it("take in a join on a locked track, also a new one", () => {
     const store = open();
     run(store, "track.update", {
       timeline: "main",
       track: "track_video",
       changes: { locked: true },
     });
-    const before = main(store).joins;
     const batch = changesOf(written(store), (files) =>
       editJson(files, MAIN, (document) => {
         joinIn(document, JOIN).duration = "2";
@@ -1455,13 +1420,11 @@ describe("transitions", () => {
       }),
     );
     const result = merged(mergeFiles(store, batch, { origin: FOLDER }));
-    expect(main(store).joins).toEqual(before);
+    expect(main(store).joins?.[JOIN]?.transition?.duration).toBe("2");
+    expect(main(store).joins?.["join_new"]?.transition?.duration).toBe("0.5");
     expect(main(store).name).toBe("改名的主线");
-    expect(result.problems.map(({ message }) => message)).toEqual([
-      "轨道“画面”已锁定，文件里对衔接转场“join_1”的改动没有生效",
-      "轨道“画面”已锁定，文件里对衔接转场“join_new”的改动没有生效",
-    ]);
-    expect(result.files[0]).toMatchObject({ status: "merged", rewrite: true });
+    expect(result.problems).toEqual([]);
+    expect(result.files[0]).toMatchObject({ status: "merged", rewrite: false });
   });
 
   it("take in a timeline file with the old fades without them, and say so", () => {

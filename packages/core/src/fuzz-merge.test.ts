@@ -684,42 +684,6 @@ function placeOfFile(path: string): Path {
   return ["files", path];
 }
 
-const lockedIn = (state: ProjectState) =>
-  Object.entries(state.timelines).flatMap(([id, timeline]) =>
-    Object.values(timeline.tracks)
-      .filter(({ locked }) => locked)
-      .map(({ id: track }) => `${id}/${track}`),
-  );
-
-/** What is on these tracks: clips, joins, and what versions change about those clips. */
-function contentOf(state: ProjectState, tracks: readonly string[]) {
-  const timelines = new Set(tracks.map((track) => track.split("/")[0]));
-  return Object.fromEntries(
-    Object.entries(state.timelines).flatMap(([id, timeline]) => {
-      if (!timelines.has(id)) return [];
-      const on = <T extends { readonly id: string; readonly track: string }>(items: readonly T[]) =>
-        Object.fromEntries(
-          items
-            .filter(({ track }) => tracks.includes(`${id}/${track}`))
-            .map((item) => [item.id, item]),
-        );
-      const clips = on(Object.values(timeline.clips));
-      const versions = Object.entries(timeline.overrides).flatMap(([name, { clips: changes }]) => {
-        const theirs = Object.keys(clips).flatMap((clip) =>
-          changes?.[clip] ? [[clip, changes[clip]]] : [],
-        );
-        return theirs.length > 0 ? [[name, Object.fromEntries(theirs)]] : [];
-      });
-      const joins = Object.entries(timeline.joins ?? {}).filter(
-        ([, { track }]) => track !== undefined && tracks.includes(`${id}/${track}`),
-      );
-      return [
-        [id, { clips, joins: Object.fromEntries(joins), versions: Object.fromEntries(versions) }],
-      ];
-    }),
-  );
-}
-
 const sequence = (items: readonly { readonly id: string }[]) => items.map(({ id }) => id);
 
 /** A track or a section without its number, which says nothing on its own, see `isOrder`. */
@@ -768,7 +732,7 @@ const counts = {
   refused: 0,
   broken: 0,
   usesRemoved: 0,
-  /** Joins, and what comes in and goes out of clips, that came in, or stayed for a lock. */
+  /** Joins, and what comes in and goes out of clips, that came in. */
   joins: 0,
   edges: 0,
   /** Where both sides changed one of those. */
@@ -786,7 +750,7 @@ const counts = {
 const AT_LEAST: Readonly<Record<keyof typeof counts, number>> = {
   conflicts: 20,
   textConflicts: 15,
-  kept: 100,
+  kept: 10,
   held: 30,
   blocked: 40,
   refused: 10,
@@ -830,7 +794,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           disk = new Map(bases);
         }
         const where = `seed ${seed} round ${round}`;
-        // Locks the editor already wrote out.
+        // Locks the editor already wrote out, which are a field like any other.
         if (random.chance(0.3)) lockOrUnlock(store, random);
         // Code twice: a conflict in code takes both sides changing lines next to each other.
         const clash = random.chance(0.3)
@@ -850,16 +814,6 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
         if (clash === "asset" && !store.getState().assets?.["raw-footage"]) {
           const asset = { kind: "video", path: "assets/raw.mov", storage: "local" };
           store.execute({ type: "asset.add", params: { id: "raw-footage", asset } });
-        }
-        // Shared code cannot change while a locked track runs code: the editor wrote out no locks.
-        if (clash === "code") {
-          for (const [timeline, { tracks }] of Object.entries(store.getState().timelines)) {
-            for (const { id: track, locked } of Object.values(tracks)) {
-              if (!locked) continue;
-              const changes = { locked: false };
-              store.execute({ type: "track.update", params: { timeline, track, changes } });
-            }
-          }
         }
         // The editor wrote out an empty track, which the folder is going to make one for sound.
         const empty = clash === "kind" ? fresh("track") : undefined;
@@ -1034,11 +988,6 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           expect(at(merged, key), `${about} ${key}`).toEqual(at(mine, key));
         }
 
-        // What locks protect stays as it is, and only a person takes a lock off.
-        const still = lockedIn(mine).filter((track) => lockedIn(merged).includes(track));
-        if (origin !== USER) expect(still, about).toEqual(lockedIn(mine));
-        expect(contentOf(merged, still), about).toEqual(contentOf(mine, still));
-
         // What the folder changed came in, apart from what the result says stayed.
         const waiting = result.files.filter(({ status }) => status === "blocked");
         const folder = new Map(next);
@@ -1125,10 +1074,8 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
             if (!was.includes(line)) expect(has.has(line), `${about} ${path}`).toBe(true);
           for (const line of was)
             if (!my.includes(line)) expect(has.has(line), `${about} ${path}`).toBe(false);
-          // An entry that has to stay, as the folder took it away, or code a lock keeps as it is.
-          const isKept = [...result.held, ...result.kept].some(
-            (held) => held[0] === "files" && held[1] === path,
-          );
+          // An entry that has to stay, as the folder took it away.
+          const isKept = result.held.some((held) => held[0] === "files" && held[1] === path);
           if (!theirs || isKept) continue;
           // What the folder changed came in, apart from the lines of a conflict, which say what the
           // folder had there, or the whole file, where there are no lines to go by.
@@ -1167,10 +1114,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
             // An empty language is always said to be there again, which changes nothing.
             const isNothing = ({ op, path: place, value }: Patch & { value?: unknown }) =>
               op === "set" && deepEqual(value, {}) && deepEqual(getIn(merged, place), {});
-            differs =
-              !check.ok ||
-              check.patches.some((patch) => !isNothing(patch)) ||
-              check.kept.length > 0;
+            differs = !check.ok || check.patches.some((patch) => !isNothing(patch));
           }
           expect(file.rewrite, `${about} ${path}`).toBe(differs);
         }

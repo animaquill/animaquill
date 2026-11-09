@@ -448,12 +448,11 @@ describe("what comes in from outside", () => {
     putProject(browser.disk, fixture(), "文档/原子");
     await openAt(browser, workbench, "文档/原子");
     await written(workbench);
-    // A clip on a locked track, changed outside: that does not come in.
-    const path = "文档/原子/timelines/main/timeline.json";
-    const timeline = JSON.parse(browser.disk.text(path));
-    const track = timeline.tracks.find(({ id }: { id: string }) => id === "track_overlay");
-    track.clips[0].name = "外面改的";
-    browser.disk.write(path, JSON.stringify(timeline, null, 2));
+    // Tags, changed outside: only people can change them, so that does not come in.
+    const path = "文档/原子/animaquill.json";
+    const manifest = JSON.parse(browser.disk.text(path));
+    manifest.tags = [{ name: "外面改的", color: "#888888" }];
+    browser.disk.write(path, JSON.stringify(manifest, null, 2));
     await vi.waitFor(() =>
       expect(notices(workbench).some((notice) => notice.startsWith("folder.mergedPartly"))).toBe(
         true,

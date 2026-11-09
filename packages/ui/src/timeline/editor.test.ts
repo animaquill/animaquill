@@ -1094,13 +1094,13 @@ describe("moving", () => {
   });
 
   it("says so when another window changed something it cannot work with", async () => {
-    const { editor, addClip, at, store, video, commandFailed } = await setup();
+    const { editor, addClip, at, store, commandFailed } = await setup();
     addClip("a", 2, 2);
     editor.press(at(3));
     editor.drag(at(6));
     store.execute({
-      type: "track.update",
-      params: { timeline: "main", track: video, changes: { locked: true } },
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
     });
     editor.release(at(6));
     expect(commandFailed).toHaveBeenCalledOnce();
@@ -1802,6 +1802,24 @@ describe("the razor", () => {
     expect(Object.keys(main().clips)).toHaveLength(4);
   });
 
+  it("leaves a linked clip on a locked track whole, also at the playhead", async () => {
+    const { editor, addClip, at, main, drag, audio, store } = await setup();
+    addClip("a", 2, 4, undefined, { link: "together" });
+    addClip("b", 2, 4, audio, { link: "together" });
+    editor.updateTrack(audio, { locked: true });
+    editor.setTool("razor");
+    drag(at(4), at(4));
+    expect(Object.keys(main().clips)).toHaveLength(3);
+    expect(main().clips["b"]).toMatchObject({ duration: "4", link: "together" });
+    store.undo();
+    editor.setTool("select");
+    editor.selectOnly("a");
+    editor.seek(120);
+    editor.splitAtPlayhead();
+    expect(Object.keys(main().clips)).toHaveLength(3);
+    expect(main().clips["b"]?.duration).toBe("4");
+  });
+
   it("goes back to selecting, and keeps out of the way of the ruler", async () => {
     const { editor, addClip, onRuler, at } = await setup();
     addClip("a", 2, 4);
@@ -1906,6 +1924,15 @@ describe("changing the project from the keyboard and menus", () => {
     editor.deleteSelection();
     expect(Object.keys(main().clips)).toEqual(["b"]);
     expect(commandFailed).not.toHaveBeenCalled();
+  });
+
+  it("does not take a locked track away", async () => {
+    const { editor, addClip, main, audio } = await setup();
+    addClip("b", 1, 1, audio);
+    editor.updateTrack(audio, { locked: true });
+    editor.removeTrack(audio);
+    expect(main().tracks[audio]).toBeDefined();
+    expect(Object.keys(main().clips)).toEqual(["b"]);
   });
 
   it("has nothing to delete without a selection", async () => {
@@ -3023,9 +3050,12 @@ describe("changing the project from the keyboard and menus", () => {
   });
 
   it("says so when a command fails", async () => {
-    const { editor, addClip, video, commandFailed } = await setup();
+    const { editor, addClip, video, commandFailed, store } = await setup();
     addClip("a", 1, 1);
-    editor.updateTrack(video, { locked: true });
+    store.execute({
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
+    });
     editor.removeTrack(video);
     expect(commandFailed).toHaveBeenCalledOnce();
   });

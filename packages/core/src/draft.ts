@@ -1,7 +1,6 @@
 import { ZERO, formatTime, parseTime, subtract } from "@animaquill/schema";
 import type { ProjectState } from "./model.ts";
 import { Mutator, diff, getIn, settled, settledPatch, type Patch } from "./patch.ts";
-import { touchesLockedTrack } from "./references.ts";
 import { isFlat, isStanding, writePathOf, type Path } from "./structure.ts";
 import { UNWRITTEN, WriteTree, sameWrites, type WriteId, type Written } from "./write-tree.ts";
 
@@ -78,13 +77,6 @@ export interface Step {
   readonly replaced: Written;
   /** What it left there. As long as that is still there, the step is free to go back. */
   readonly left: Written;
-  /**
-   * It wrote on a locked track. Files and commands leave what is there as it is, and a file changes
-   * a track before it puts a lock on, but a change elsewhere can still reach there: a transition on
-   * a locked track that points at a clip that goes away. A lock keeps what was there when it came,
-   * so it does not stop this step from going back to that.
-   */
-  readonly pastLock: boolean;
 }
 
 /**
@@ -149,20 +141,20 @@ export class Draft {
     }
     const patch = settledPatch(change);
     if (patch.op === "delete" && getIn(this.state, patch.path) === undefined) return;
-    this.#record(patch, { by: this.#write }, touchesLockedTrack(this.state, patch));
+    this.#record(patch, { by: this.#write });
   }
 
   /**
    * Takes back a step of an earlier change. Only the write that the document holds now can go, also
    * when something else left the same value. Returns whether it went. See `Written`.
    */
-  takeBack({ patch, inverse, replaced, left, pastLock }: Step): boolean {
+  takeBack({ patch, inverse, replaced, left }: Step): boolean {
     if (!sameWrites(this.#writes.at(writePathOf(patch.path)), left)) return false;
-    this.#record(inverse, replaced, pastLock);
+    this.#record(inverse, replaced);
     return true;
   }
 
-  #record(patch: Patch, left: Written, pastLock: boolean): void {
+  #record(patch: Patch, left: Written): void {
     const { path } = patch;
     const standing = isStanding(path);
     const before = getIn(this.state, path);
@@ -178,7 +170,7 @@ export class Draft {
     if (standing) this.#stand(patch);
     else this.#mutator.apply(patch);
     this.#writes.put(where, left);
-    this.#steps.push({ patch, inverse, replaced, left, pastLock });
+    this.#steps.push({ patch, inverse, replaced, left });
   }
 
   /**
@@ -244,6 +236,6 @@ export class Draft {
       this.apply(patch);
       return;
     }
-    this.#record(patch, { by: this.#write }, touchesLockedTrack(this.state, patch));
+    this.#record(patch, { by: this.#write });
   }
 }

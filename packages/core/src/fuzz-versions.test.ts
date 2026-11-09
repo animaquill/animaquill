@@ -117,7 +117,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           random,
           pickOrigin(random),
         );
-        expect(result.ok || result.error.code === "track-locked").toBe(true);
+        expect(result.ok, JSON.stringify(result.ok || result.error)).toBe(true);
         if (!result.ok) continue;
         // The first of its level on this side, which is where two maps would have fought.
         if (getIn(before, path.slice(0, -1)) === undefined) firsts += 1;

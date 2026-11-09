@@ -632,15 +632,14 @@ describe("the property.edit command", () => {
     expect(value("opacity")).toEqual({ keys: [{ time: "0.5", value: 1 }] });
   });
 
-  it("does nothing on a locked track, also for an AI task", () => {
-    const { store, run, edit, value, owner, failure, track } = setup();
+  it("works on a locked track too, also for an AI task", () => {
+    const { store, run, value, owner, track } = setup();
     run("track.update", { timeline: "main", track, changes: { locked: true } });
-    const edits = { owner, path: "opacity", op: "set", value: 0.5 };
-    expect(failure(edit(edits)).code).toBe("track-locked");
-    const params = { timeline: "main", edits: [edits] };
+    const edits = [{ owner, path: "opacity", op: "set", value: 0.5 }];
+    const params = { timeline: "main", edits };
     const asTask = store.execute({ type: "property.edit", params }, { origin: aiTask("t") });
-    expect(asTask.ok).toBe(false);
-    expect(value("opacity")).toBeUndefined();
+    expect(asTask.ok).toBe(true);
+    expect(value("opacity")).toBe(0.5);
   });
 
   it("changes nothing when one of its edits fails", () => {

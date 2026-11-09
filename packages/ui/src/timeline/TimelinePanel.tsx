@@ -390,6 +390,7 @@ function TrackHeader({
               {
                 id: "remove",
                 label: t("timeline.removeTrack"),
+                disabled: track.locked === true,
                 run: () => editor.removeTrack(row.id),
               },
             ],

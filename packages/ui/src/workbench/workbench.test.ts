@@ -151,10 +151,11 @@ describe("saving what is being tried", () => {
   });
 
   it("keeps it all and says why when it cannot be saved", async () => {
-    const { workbench, store, main } = await trying();
-    const track = main()?.clips["c"]?.track;
-    const changes = { locked: true };
-    store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
+    const { workbench, store } = await trying();
+    store.execute({
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
+    });
     await workbench.save();
     expect(countOf(workbench)).toBe(1);
     expect(notices(workbench)).toContain("notice.commandFailed");
@@ -210,26 +211,16 @@ describe("undo while trying things out", () => {
     expect(x()).toBe(20);
   });
 
-  it.each([
-    ["a lock", "locked"],
-    ["what somebody else wrote", "changed"],
-  ])("gets to what was tried after %s kept a step from going back", async (_, obstacle) => {
+  it("gets to what was tried after what somebody else wrote kept a step from going back", async () => {
     const { workbench, store, main } = await trying();
     const move = { timeline: "main", clips: [{ clip: "c", start: "2" }] };
     store.execute({ type: "clip.move", params: move });
-    const origin = { origin: aiTask("t") };
-    if (obstacle === "locked") {
-      const track = main()?.clips["c"]?.track;
-      const changes = { locked: true };
-      store.execute({ type: "track.update", params: { timeline: "main", track, changes } }, origin);
-    } else {
-      const moved = { timeline: "main", clips: [{ clip: "c", start: "3" }] };
-      store.execute({ type: "clip.move", params: moved }, origin);
-    }
+    const moved = { timeline: "main", clips: [{ clip: "c", start: "3" }] };
+    store.execute({ type: "clip.move", params: moved }, { origin: aiTask("t") });
     const start = main()?.clips["c"]?.start;
 
     run(workbench, "edit.undo");
-    expect(notices(workbench)).toContain(`notice.undoBlocked.${obstacle}`);
+    expect(notices(workbench)).toContain("notice.undoBlocked.changed");
     expect(main()?.clips["c"]?.start).toBe(start);
     expect(countOf(workbench)).toBe(1);
 
@@ -247,16 +238,12 @@ describe("undo while trying things out", () => {
       { type: "clip.move", params: { timeline: "main", clips: [{ clip: "c", start: "9" }] } },
     ];
     store.executeBatch(batch);
-    const track = main()?.clips["c"]?.track;
-    const changes = { locked: true };
-    store.execute(
-      { type: "track.update", params: { timeline: "main", track, changes } },
-      { origin: aiTask("t") },
-    );
+    const moved = { timeline: "main", clips: [{ clip: "c", start: "3" }] };
+    store.execute({ type: "clip.move", params: moved }, { origin: aiTask("t") });
     run(workbench, "edit.undo");
-    expect(notices(workbench)).toContain("notice.undoPartly.locked");
+    expect(notices(workbench)).toContain("notice.undoPartly.changed");
     expect(store.getState().manifest.name).toBe("试改");
-    expect(main()?.clips["c"]?.start).toBe("9");
+    expect(main()?.clips["c"]?.start).toBe("3");
     run(workbench, "edit.undo");
     expect(countOf(workbench)).toBe(0);
   });
@@ -358,11 +345,10 @@ describe("leaving a project with something being tried", () => {
   });
 
   it("stays when saving does not work", async () => {
-    const { workbench, store, main } = await trying();
-    const track = main()?.clips["c"]?.track;
+    const { workbench, store } = await trying();
     store.execute({
-      type: "track.update",
-      params: { timeline: "main", track, changes: { locked: true } },
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
     });
     const leaving = workbench.closeProject();
     await dialogOf(workbench);
@@ -631,10 +617,11 @@ describe("exporting with something being tried", () => {
 
   it("goes no further when saving first does not work", async () => {
     const folders = target();
-    const { workbench, store, main } = await trying(folders);
-    const track = main()?.clips["c"]?.track;
-    const changes = { locked: true };
-    store.execute({ type: "track.update", params: { timeline: "main", track, changes } });
+    const { workbench, store } = await trying(folders);
+    store.execute({
+      type: "project.setTags",
+      params: { tags: [{ name: "已发布", locked: true }] },
+    });
     const exporting = workbench.exportProject();
     await dialogOf(workbench);
     workbench.dialogs.answer("save");
@@ -757,15 +744,6 @@ describe("changes that do not go through", () => {
       store?.execute({ type: "project.rename", params: { name } }, options);
     const firstTrack = (store: ProjectStore | undefined) =>
       Object.values(store?.getState().timelines["main"]?.tracks ?? {})[0];
-    const addColorCall = (store: ProjectStore | undefined) => ({
-      type: "clip.add",
-      params: {
-        timeline: "main",
-        track: firstTrack(store)?.id,
-        clip: { start: "0", duration: "1", source: { kind: "color", color: "#000000" } },
-      },
-    });
-    const setTrackClip = (store: ProjectStore | undefined) => store?.execute(addColorCall(store));
     const setTrack = (store: ProjectStore | undefined, name: string, options = {}) => {
       const params = { timeline: "main", track: firstTrack(store)?.id, changes: { name } };
       return store?.execute({ type: "track.update", params }, options);
@@ -863,39 +841,6 @@ describe("changes that do not go through", () => {
       expect(notices(workbench)).toEqual(["notice.undoPartly.inUse"]);
     });
 
-    const lockTrack = (store: ProjectStore | undefined) =>
-      store?.execute(
-        {
-          type: "track.update",
-          params: { timeline: "main", track: firstTrack(store)?.id, changes: { locked: true } },
-        },
-        AI,
-      );
-
-    it("says the track is locked, when that is why", async () => {
-      const { workbench } = setup();
-      await create(workbench, "一");
-      const { store } = workbench.session;
-      setTrackClip(store);
-      lockTrack(store);
-      workbench.actions.get("edit.undo")?.run();
-      expect(notices(workbench)).toEqual(["notice.undoBlocked.locked"]);
-    });
-
-    it("says part of it is on a locked track, when that is why", async () => {
-      const { workbench } = setup();
-      await create(workbench, "一");
-      const { store } = workbench.session;
-      store?.executeBatch([
-        { type: "project.rename", params: { name: "二" } },
-        addColorCall(store),
-      ]);
-      lockTrack(store);
-      workbench.actions.get("edit.undo")?.run();
-      expect(notices(workbench)).toEqual(["notice.undoPartly.locked"]);
-      expect(nameOf(workbench)).toBe("一");
-    });
-
     it("says nothing when all of it went back", async () => {
       const { workbench } = setup();
       await create(workbench, "一");
@@ -962,7 +907,7 @@ describe("code", () => {
     const { workbench, store } = await withCode();
     vi.spyOn(store, "execute").mockReturnValue({
       ok: false,
-      error: { code: "track-locked", message: "锁定了" },
+      error: { code: "project-locked", message: "锁定了" },
     });
     const closing = workbench.closeProject();
     await dialogOf(workbench);

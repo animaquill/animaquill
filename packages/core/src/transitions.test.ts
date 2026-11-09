@@ -276,13 +276,12 @@ describe("setting the transitions of a clip", () => {
     expect(left.exportFiles().problems).toEqual([]);
   });
 
-  it("is not for a locked track, not even for AI", () => {
+  it("is also for a locked track, which is only there for people at the editor", () => {
     const { store, set, track, clipOf } = withClip({ start: "0", duration: "4" });
     const changes = { locked: true };
     success(store.execute({ type: "track.update", params: { timeline: "main", track, changes } }));
-    expect(failure(set({ enter: fade("1") })).code).toBe("track-locked");
-    expect(failure(set({ enter: fade("1") }, { origin: aiTask("t") })).code).toBe("track-locked");
-    expect(clipOf()).not.toHaveProperty("enter");
+    success(set({ enter: fade("1") }, { origin: aiTask("t") }));
+    expect(clipOf()?.enter).toEqual(fade("1"));
   });
 
   it("is the only way: other changes to a clip leave its transitions alone", () => {
@@ -463,7 +462,7 @@ describe("joins", () => {
     ]);
   });
 
-  it("change from a file, field by field, and a lock keeps them as they are", () => {
+  it("change from a file, field by field, also on a locked track", () => {
     const { store, main, track } = joined();
     const path = "timelines/main/timeline.json";
     const rewrite = (change: (video: any, timeline: any) => void, origin = USER) => {
@@ -481,16 +480,12 @@ describe("joins", () => {
     ]);
     const changes = { locked: true };
     success(store.execute({ type: "track.update", params: { timeline: "main", track, changes } }));
-    const held = rewrite((video, timeline) => {
+    const locked = rewrite((video, timeline) => {
       video.joins[1].duration = "0.25";
       timeline.name = "改过";
     }, aiTask("t"));
-    if (!held.ok) throw new Error(JSON.stringify(held.error));
-    expect(held.kept.map((where) => where.join("/"))).toEqual([
-      "timelines/main/joins/j2/transition",
-    ]);
-    expect(held.problems[0]?.message).toContain("衔接转场“j2”");
-    expect(main()?.joins?.["j2"]?.transition?.duration).toBe("1");
+    if (!locked.ok) throw new Error(JSON.stringify(locked.error));
+    expect(main()?.joins?.["j2"]?.transition?.duration).toBe("0.25");
     expect(main()?.name).toBe("改过");
   });
 
@@ -523,24 +518,6 @@ describe("joins", () => {
         "j2",
       ]);
     }
-  });
-
-  it("that a file adds on a locked track stay out as a whole, not field by field", () => {
-    const { store, main, track } = joined();
-    const changes = { locked: true };
-    success(store.execute({ type: "track.update", params: { timeline: "main", track, changes } }));
-    const path = "timelines/main/timeline.json";
-    const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
-    const video = timeline.tracks.find(({ kind }: { kind: string }) => kind === "video");
-    video.joins.push({ id: "j3", from: "a", to: "b", type: "fade", duration: "0.5" });
-    timeline.name = "改过";
-    const result = store.importFile(path, JSON.stringify(timeline), { origin: aiTask("t") });
-    if (!result.ok) throw new Error(JSON.stringify(result.error));
-    expect(main()?.name).toBe("改过");
-    expect(main()?.joins).not.toHaveProperty("j3");
-    expect(result.kept.map((where) => where.join("/")).toSorted()).toEqual(
-      ["from", "to", "track", "transition"].map((field) => `timelines/main/joins/j3/${field}`),
-    );
   });
 
   it("that only some of is left of stay out of the files, which stay valid", () => {

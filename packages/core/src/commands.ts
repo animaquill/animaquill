@@ -119,28 +119,11 @@ function trackOf(timeline: TimelineState, id: string): TrackState {
 }
 
 /**
- * Whether a source of a clip shows or plays the file of this asset, also one of a plugin, which
- * says so where it likes, as `src: { asset }`.
+ * Also a clip that two people at once left behind on a track that is gone: people can still clean
+ * up. Locks on tracks are for people at the editor, which keeps to them: commands do not.
  */
-function usesAsset(source: unknown, asset: string, depth = 0): boolean {
-  if (typeof source !== "object" || source === null || depth > 4) return false;
-  return Object.entries(source).some(
-    ([key, value]) => (key === "asset" && value === asset) || usesAsset(value, asset, depth + 1),
-  );
-}
-
-/** A locked track protects its clips from everyone, also from AI tasks. */
-function editableTrack(timeline: TimelineState, id: string): TrackState {
-  const track = trackOf(timeline, id);
-  if (track.locked) fail("track-locked", `轨道已锁定：${track.name ?? id}`);
-  return track;
-}
-
-/** Two people at once can leave a clip behind on a track that is gone. People can still clean up. */
-function editableClip(timeline: TimelineState, id: string): ClipState {
-  const clip = entryOf(timeline.clips, id) ?? fail("not-found", `没有这个片段：${id}`);
-  if (entryOf(timeline.tracks, clip.track)) editableTrack(timeline, clip.track);
-  return clip;
+function clipOf(timeline: TimelineState, id: string): ClipState {
+  return entryOf(timeline.clips, id) ?? fail("not-found", `没有这个片段：${id}`);
 }
 
 /**
@@ -300,7 +283,7 @@ function editProperties(draft: Draft, timeline: string, edits: readonly Property
   const changes = new Map<string, Map<string, PropertyValue | undefined>>();
   for (const edit of edits) {
     const { path, owner } = edit;
-    const clip = editableClip(target, owner.clip);
+    const clip = clipOf(target, owner.clip);
     const values = changes.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
     changes.set(clip.id, values);
     const before = values.has(path) ? values.get(path) : entryOf(clip.properties, path);
@@ -352,7 +335,7 @@ function renameProperties(
   const target = timelineOf(draft, timeline);
   const plans = new Map<string, Map<string, PlannedMove>>();
   for (const rename of renames) {
-    const clip = editableClip(target, rename.owner.clip);
+    const clip = clipOf(target, rename.owner.clip);
     const moves = movesOf(pathsOfClip(target, clip), rename);
     if (moves.length === 0) fail("not-found", `没有这个属性：${rename.from}`);
     const plan = plans.get(clip.id) ?? new Map<string, PlannedMove>();
@@ -499,22 +482,6 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { asset, changes }) => {
       const found = entryOf(draft.state.assets, asset);
       if (!found) fail("not-found", `没有这个素材：${asset}`);
-      // Another file is another picture for its clips, which a locked track keeps from everyone.
-      for (const timeline of Object.values(draft.state.timelines)) {
-        for (const clip of Object.values(timeline.clips)) {
-          if (!usesAsset(clip.source, asset)) continue;
-          const track = entryOf(timeline.tracks, clip.track);
-          if (track?.locked) fail("track-locked", `轨道已锁定：${track.name ?? track.id}`);
-        }
-        for (const { clips } of Object.values(timeline.overrides)) {
-          for (const [clip, changed] of Object.entries(clips ?? {})) {
-            if (!changed.source || !usesAsset(changed.source.value, asset)) continue;
-            const on = entryOf(timeline.clips, clip);
-            const track = on && entryOf(timeline.tracks, on.track);
-            if (track?.locked) fail("track-locked", `轨道已锁定：${track.name ?? track.id}`);
-          }
-        }
-      }
       const defined = Object.fromEntries(
         Object.entries(changes).filter(([, value]) => value !== undefined),
       );
@@ -654,7 +621,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   define("track.remove", z.strictObject({ timeline: Id, track: Id }), (draft, params) => {
     const { timeline, track } = params;
     const target = timelineOf(draft, timeline);
-    editableTrack(target, track);
+    trackOf(target, track);
     for (const clip of Object.values(target.clips)) {
       if (clip.track === track) draft.delete(clipPath(timeline, clip.id));
     }
@@ -679,7 +646,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     }),
     (draft, { timeline, track, clip, overlap, movedFrom }) => {
       const target = timelineOf(draft, timeline);
-      const home = editableTrack(target, track);
+      const home = trackOf(target, track);
       checkFits(home, clip);
       checkCode(draft.state, clip);
       const id = clip.id ?? newId("clip");
@@ -709,7 +676,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ timeline: Id, clips: z.array(Id).min(1) }),
     (draft, { timeline, clips }) => {
       const target = timelineOf(draft, timeline);
-      for (const id of clips) editableClip(target, id);
+      for (const id of clips) clipOf(target, id);
       removeClips(draft, timeline, clips);
     },
   ),
@@ -730,7 +697,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     }),
     (draft, { timeline, clip, changes, clear }) => {
       const target = timelineOf(draft, timeline);
-      const current = editableClip(target, clip);
+      const current = clipOf(target, clip);
       const next: Record<string, unknown> = { ...current, ...changes };
       for (const field of clear ?? []) delete next[field];
       checkClip(next as ClipState);
@@ -779,7 +746,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, params) => {
       const { timeline, clip } = params;
       const target = timelineOf(draft, timeline);
-      const current = editableClip(target, clip);
+      const current = clipOf(target, clip);
       const kind = entryOf(target.tracks, current.track)?.kind ?? trackKindFor(current);
       const next: Record<string, unknown> = { ...current };
       const setting: Edge[] = [];
@@ -824,8 +791,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const moving = new Set(clips.map(({ clip }) => clip));
       if (moving.size !== clips.length) fail("invalid-value", "同一个片段不能移动两次");
       const landed = clips.map(({ clip, start, track }) => {
-        const current = editableClip(target, clip);
-        if (track !== undefined) checkFits(editableTrack(target, track), current);
+        const current = clipOf(target, clip);
+        if (track !== undefined) checkFits(trackOf(target, track), current);
         const moved = { ...current, start: start ?? current.start, track: track ?? current.track };
         return { moved, span: spanOf(moved) };
       });
@@ -867,7 +834,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ timeline: Id, clip: Id, start: Time.optional(), end: Time.optional() }),
     (draft, { timeline, clip, start, end }) => {
       const target = timelineOf(draft, timeline);
-      const current = editableClip(target, clip);
+      const current = clipOf(target, clip);
       const span: Span = {
         from: start === undefined ? clipStart(current) : parseTime(start),
         to: end === undefined ? clipEnd(current) : parseTime(end),
@@ -892,10 +859,20 @@ export const COMMANDS: readonly CommandDefinition[] = [
    */
   define(
     "clip.split",
-    z.strictObject({ timeline: Id, clip: Id, at: Time, id: Id.optional() }),
-    (draft, { timeline, clip, at, id }) => {
+    z.strictObject({
+      timeline: Id,
+      clip: Id,
+      at: Time,
+      id: Id.optional(),
+      /**
+       * Linked clips that stay whole and keep their link, such as ones on a track that people
+       * locked at the editor.
+       */
+      keep: z.array(Id).optional(),
+    }),
+    (draft, { timeline, clip, at, id, keep }) => {
       const target = timelineOf(draft, timeline);
-      const current = editableClip(target, clip);
+      const current = clipOf(target, clip);
       const moment = parseTime(at);
       const isInside = (candidate: ClipState) =>
         compare(moment, clipStart(candidate)) > 0 && compare(moment, clipEnd(candidate)) < 0;
@@ -903,14 +880,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const rightId = id ?? newId("clip");
       if (entryOf(target.clips, rightId)) fail("id-taken", `这个 ID 已经有片段了：${rightId}`);
 
-      // A locked track stays as it is, so a partner there is left whole and keeps its link.
       const cut = Object.values(target.clips).filter(
         (other) =>
           current.link &&
           other.id !== clip &&
           other.link === current.link &&
           isInside(other) &&
-          entryOf(target.tracks, other.track)?.locked !== true,
+          keep?.includes(other.id) !== true,
       );
       const link = cut.length > 0 ? newId("link") : undefined;
       splitClip(draft, timeline, current, moment, rightId, link);

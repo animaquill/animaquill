@@ -718,25 +718,20 @@ describe("what does not all come in", () => {
     expect(recovered(browser.disk).get(CODE)).toEqual([theirs]);
   });
 
-  it("is kept when a lock keeps a change out, before the editor's side is written", async () => {
+  it("is kept when tags stay out, before the editor's side is written", async () => {
     const browser = new TestBrowser();
     const { store } = await browser.open();
-    run(store, "track.update", {
-      timeline: "main",
-      track: "track_video",
-      changes: { locked: true },
+    const tags = store.getState().manifest.tags;
+    editOnDisk(browser.disk, MANIFEST_FILE, (document) => {
+      document.tags = [{ name: "外面的", color: "#888888" }];
+      document.name = "外面的";
     });
+    const theirs = textOn(browser.disk, MANIFEST_FILE);
     await browser.settle();
-    editOnDisk(browser.disk, MAIN, (document) => {
-      clipIn(document, "clip_title").name = "锁着的";
-      document.markers[0].name = "外面的";
-    });
-    const theirs = textOn(browser.disk, MAIN);
-    await browser.settle();
-    expect(clipName(store, "clip_title")).toBe("标题");
-    expect(store.getState().timelines["main"]?.markers["marker_hook"]?.name).toBe("外面的");
-    expect(clipIn(JSON.parse(textOn(browser.disk, MAIN)), "clip_title").name).toBe("标题");
-    expect(recovered(browser.disk).get(MAIN)).toEqual([theirs]);
+    expect(store.getState().manifest.tags).toEqual(tags);
+    expect(store.getState().manifest.name).toBe("外面的");
+    expect(JSON.parse(textOn(browser.disk, MANIFEST_FILE)).tags).toEqual(tags);
+    expect(recovered(browser.disk).get(MANIFEST_FILE)).toEqual([theirs]);
   });
 
   it("waits while a tag locks the project, and comes in once people take it off", async () => {

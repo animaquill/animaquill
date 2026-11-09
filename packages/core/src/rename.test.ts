@@ -143,17 +143,6 @@ describe("the property.rename command", () => {
     }
   });
 
-  it("does not touch a clip on a locked track", () => {
-    const { store, track, rename, properties } = setup({ "object.a.x": 1 });
-    store.execute({
-      type: "track.update",
-      params: { timeline: "main", track, changes: { locked: true } },
-    });
-    const result = rename({ owner, from: "object.a.x", to: "object.b.x" });
-    expect(result.ok ? undefined : result.error.code).toBe("track-locked");
-    expect(properties()).toEqual({ "object.a.x": 1 });
-  });
-
   it("says what it did, so that what is tried can go along, and back again", () => {
     const { store, rename } = setup({ "object.a.x": 1 });
     let facts: unknown;

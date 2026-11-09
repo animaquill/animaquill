@@ -23,7 +23,7 @@ import {
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
 import { NOBODY, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
 import { Mutator, getIn, type Patch } from "./patch.ts";
-import { danglingAt, touchesLockedTrack } from "./references.ts";
+import { danglingAt } from "./references.ts";
 import {
   flatKey,
   flatParts,
@@ -64,7 +64,7 @@ export interface ExecuteOptions {
 
 /**
  * How a file comes in. There is no default for who wrote it: a file can come from anyone, and only
- * `USER`, the person at the editor, can do what only a person can, such as taking a lock off.
+ * `USER`, the person at the editor, can do what only a person can, such as changing the tags.
  */
 export interface ImportOptions extends ExecuteOptions {
   readonly origin: Origin;
@@ -83,10 +83,10 @@ interface CommitOptions extends ExecuteOptions {
 }
 
 /**
- * Why something stays when a change is taken back: somebody else changed it, it would leave
- * something pointing at nothing, or it is on a locked track.
+ * Why something stays when a change is taken back: somebody else changed it, or it would leave
+ * something pointing at nothing.
  */
-export type UndoObstacle = "changed" | "inUse" | "locked";
+export type UndoObstacle = "changed" | "inUse";
 
 export interface CommandFailure {
   readonly code: string;
@@ -124,9 +124,7 @@ export type CommandResult =
 /** What became of a file, see importFile(). */
 export type ImportResult =
   | (Extract<CommandResult, { ok: true }> & {
-      /** What the file would change on locked tracks, which stays as it is. */
-      readonly kept: readonly Path[];
-      /** The same for people and AI: a warning for each thing that stays, which says why. */
+      /** What people should know about the file, such as fades it still says the old way. */
       readonly problems: readonly Problem[];
     })
   | { readonly ok: false; readonly error: CommandFailure };
@@ -152,11 +150,11 @@ export type MergeResult =
   | (Extract<CommandResult, { ok: true }> & {
       /** For each file, what became of it and what its base is from now on. */
       readonly files: readonly MergedFile[];
-      /** Conflicts, what locks kept, what waits for people and why. */
+      /** Conflicts, what waits for people and why. */
       readonly problems: readonly Problem[];
       /** What both sides changed, each in its own way, where the editor's stayed. */
       readonly conflicts: readonly MergeConflict[];
-      /** What would change on locked tracks, or what only people can change, which stayed. */
+      /** What only people can change, which stayed. */
       readonly kept: readonly Path[];
       /** What the folder took away that is still in use, which stays until people decide. */
       readonly held: readonly Path[];
@@ -450,7 +448,6 @@ const ONE_AT_A_TIME: CommandFailure = {
 const OBSTACLES: Readonly<Record<UndoObstacle, string>> = {
   changed: "这一步之后别人改过，已跳过",
   inUse: "这一步还被别的内容用着，或者用到的东西已经没了，已跳过",
-  locked: "这一步在锁定的轨道上，已跳过",
 };
 
 /**
@@ -639,16 +636,13 @@ export class ProjectStore {
   }
 
   /**
-   * Takes in a file that changed outside of the editor. See planFileImport. What it would change on
-   * a locked track stays as it is, and the result says what. Nothing of it comes in when that is all
-   * it would change, or when the rest would break something without it: the result is a failure
-   * that says why. Who wrote the file has to be said, see `ImportOptions`.
+   * Takes in a file that changed outside of the editor, as a whole or not at all. See
+   * planFileImport. Who wrote the file has to be said, see `ImportOptions`.
    */
   importFile(path: string, text: string, options: ImportOptions): ImportResult {
     // Code that does not say who wrote the file gets nothing that only a person can do.
     const origin = (options as ImportOptions | undefined)?.origin ?? NOBODY;
     const given = { ...options, origin };
-    let kept: readonly Path[] = [];
     let told: readonly Problem[] = [];
     const result = this.#commit(["file.import"], origin, given, (draft) => {
       this.#assertUnlocked(draft);
@@ -658,27 +652,10 @@ export class ProjectStore {
         const message = "文件不符合项目格式，没有导入";
         throw new ImportRejected({ code: "invalid-file", message, problems: planned.problems });
       }
-      ({ kept } = planned);
-      const refused = (message: string, problems: readonly Problem[]) =>
-        new ImportRejected({
-          code: "track-locked",
-          message,
-          conflicts: kept,
-          obstacle: "locked",
-          problems,
-        });
-      if (planned.broken.length > 0) {
-        const message =
-          "文件里有些改动在锁定的轨道上，只导入其余的部分会让项目出错，整个文件没有导入";
-        throw refused(message, [...planned.held, ...planned.broken]);
-      }
-      if (kept.length > 0 && draft.steps.length === 0) {
-        throw refused("文件里的改动都在锁定的轨道上，没有生效", planned.held);
-      }
-      told = [...planned.held, ...planned.notices];
+      told = planned.notices;
       return [];
     });
-    return result.ok ? { ...result, kept, problems: told } : result;
+    return result.ok ? { ...result, problems: told } : result;
   }
 
   /**
@@ -993,13 +970,12 @@ export class ProjectStore {
   }
 
   /**
-   * Which steps of these changes can go back, last one first. The document holds their write, they
-   * stay out of locked tracks, which protect their content from everyone, and nothing new ends up
-   * pointing at nothing: an AI task cannot take back the asset a person started to use. What was
-   * like that before this, or when the change was made, is not this step's doing. That can only be
-   * told from where all of them end up, because what points at something can come back before the
-   * thing it points at. When that keeps a step here, others can depend on it, so it takes another
-   * look. Locks go step by step, because going back can also be what opens or closes one.
+   * Which steps of these changes can go back, last one first. The document holds their write, and
+   * nothing new ends up pointing at nothing: an AI task cannot take back the asset a person started
+   * to use. What was like that before this, or when the change was made, is not this step's doing.
+   * That can only be told from where all of them end up, because what points at something can come
+   * back before the thing it points at. When that keeps a step here, others can depend on it, so it
+   * takes another look.
    */
   #planBack(entries: readonly UndoEntry[], origin: Origin) {
     const steps = entries.toReversed().flatMap((entry) => entry.steps.toReversed());
@@ -1007,15 +983,8 @@ export class ProjectStore {
     const stuck = new Set<Step>();
     for (;;) {
       const draft = new Draft(this.#state, origin, this.#written);
-      let obstacle: UndoObstacle = stuck.size > 0 ? "inUse" : "changed";
-      const back = steps.filter((step) => {
-        if (stuck.has(step)) return false;
-        if (step.pastLock || !touchesLockedTrack(draft.state, step.inverse)) {
-          return draft.takeBack(step);
-        }
-        obstacle = "locked";
-        return false;
-      });
+      const obstacle: UndoObstacle = stuck.size > 0 ? "inUse" : "changed";
+      const back = steps.filter((step) => !stuck.has(step) && draft.takeBack(step));
       const dangling = back.filter(({ patch }) => {
         const already = danglingAt(this.#state, patch.path);
         return danglingAt(draft.state, patch.path).some(
