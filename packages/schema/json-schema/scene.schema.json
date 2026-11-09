@@ -29,6 +29,11 @@
         "additionalProperties": false
       }
     },
+    "tags": {
+      "maxItems": 30,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema3" }
+    },
     "presets": {
       "type": "array",
       "items": {
@@ -37,7 +42,7 @@
           "name": { "type": "string", "minLength": 1 },
           "values": {
             "type": "object",
-            "propertyNames": { "$ref": "#/$defs/__schema3" },
+            "propertyNames": { "$ref": "#/$defs/__schema4" },
             "additionalProperties": { "$ref": "#/$defs/__schema1" }
           }
         },
@@ -91,6 +96,7 @@
       ]
     },
     "__schema2": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
-    "__schema3": { "type": "string" }
+    "__schema3": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "__schema4": { "type": "string" }
   }
 }

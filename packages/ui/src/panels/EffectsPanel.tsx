@@ -17,7 +17,7 @@ const reducedMotion = () =>
  * The picture of an effect on a sample: still at some strength, and going back and forth under the
  * pointer. Each is drawn by the shared canvases of `effectPreviews`, and a still one only once.
  */
-function EffectIcon({ resource, playing }: ResourceIconProps<EffectItem>) {
+export function EffectIcon({ resource, playing }: ResourceIconProps<EffectItem>) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const { type } = resource.data;
   const [drawn, setDrawn] = useState(true);

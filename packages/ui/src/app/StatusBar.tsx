@@ -202,7 +202,7 @@ function ProxyStatus() {
         <button
           type="button"
           className={styles.exportText}
-          onClick={() => layout.openPanel("assets")}
+          onClick={() => layout.openPanel("explorer")}
         >
           {text}
         </button>

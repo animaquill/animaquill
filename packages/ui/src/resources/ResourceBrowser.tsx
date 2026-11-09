@@ -12,7 +12,7 @@ import {
   type MouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { PopupMenu } from "../app/Menu.tsx";
+import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useWorkbench } from "../app/context.ts";
 import { GROUPINGS, browse, type GroupKey, type Grouping, type Resource } from "./resources.ts";
 import styles from "./ResourceBrowser.module.css";
@@ -50,8 +50,22 @@ export interface ResourceBrowserProps<T> {
   /** What is selected is this one. */
   readonly isCurrent?: (resource: Resource<T>) => boolean;
   readonly Icon: ComponentType<ResourceIconProps<T>>;
-  /** A click, or Enter: `anchor` is where the resource is on the page, for a menu. */
+  /**
+   * A click, or a double click where `activateOn` says so, or Enter: `anchor` is where the resource
+   * is on the page, for a menu.
+   */
   readonly onActivate: (resource: Resource<T>, anchor: DOMRect) => void;
+  /** What uses a resource: one click, or a double click where one click only chooses it. */
+  readonly activateOn?: "click" | "double-click";
+  /** The resource chosen, by its id, where the tab keeps that itself, as the explorer does. */
+  readonly selected?: string | undefined;
+  readonly onSelect?: (resource: Resource<T>) => void;
+  /** Goes up when the chosen resource was shown from elsewhere: the list goes to it. */
+  readonly revealed?: number;
+  /** What the menu of a resource has. Without it, the way to it in the explorer. */
+  readonly menu?: (resource: Resource<T>) => readonly (readonly MenuItem[])[];
+  /** What it says when there is nothing at all. */
+  readonly empty?: string;
   readonly onDragStart?: (resource: Resource<T>, event: DragEvent<HTMLElement>) => void;
   /** Whether it was dropped somewhere that took it. */
   readonly onDragEnd?: (resource: Resource<T>, dropped: boolean) => void;
@@ -97,14 +111,16 @@ function verticalNeighbor(options: readonly HTMLElement[], from: number, down: b
 export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
   const { tab, label, resources, types, firstType, defaultGrouping, typeName, hint } = props;
   const { unavailable, isCurrent, Icon, onActivate, onDragStart, onDragEnd } = props;
+  const { activateOn = "click", selected, onSelect, revealed, empty } = props;
   const { t } = useTranslation();
-  const { resourceHabits: habits } = useWorkbench();
+  const workbench = useWorkbench();
+  const { resourceHabits: habits } = workbench;
   const saved = useSyncExternalStore(habits.subscribe, habits.getSnapshot);
   const grouping = saved.grouping[tab] ?? defaultGrouping;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<string>();
   const [pointed, setPointed] = useState<string>();
-  const [menu, setMenu] = useState<{ x: number; y: number }>();
+  const [menu, setMenu] = useState<{ x: number; y: number; resource: Resource<T> }>();
   const list = useRef<HTMLDivElement>(null);
   const id = useId();
 
@@ -119,7 +135,14 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
       ),
     [groups],
   );
-  const activeKey = entries.some(({ key }) => key === active) ? active : entries[0]?.key;
+  // What the tab chose comes first, unless the keyboard is on another place of the same resource.
+  const chosenKey =
+    selected === undefined
+      ? undefined
+      : (entries.find(({ key, resource }) => resource.id === selected && key === active)?.key ??
+        entries.find(({ resource }) => resource.id === selected)?.key);
+  const activeKey =
+    chosenKey ?? (entries.some(({ key }) => key === active) ? active : entries[0]?.key);
   const shown = entries.find(({ key }) => key === (pointed ?? activeKey));
   const why = shown && unavailable(shown.resource);
 
@@ -138,7 +161,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     }
   };
 
-  // The menu has nothing to do yet, so nothing in it takes the keyboard, which would close it.
+  // A menu with nothing to do in it takes no keyboard, so it closes from here too.
   useEffect(() => {
     if (!menu) return;
     const close = (event: Event) => {
@@ -154,6 +177,22 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     };
   }, [menu]);
 
+  // A resource shown from elsewhere comes into view.
+  useEffect(() => {
+    if (!revealed || selected === undefined) return;
+    const option = list.current?.querySelector<HTMLElement>(
+      `[role="option"][data-resource="${CSS.escape(selected)}"]`,
+    );
+    option?.scrollIntoView?.({ block: "nearest" });
+    option?.focus({ preventScroll: true });
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- only when it is shown again
+  }, [revealed]);
+
+  const choose = (key: string, resource: Resource<T>) => {
+    setActive(key);
+    if (resource.id !== selected) onSelect?.(resource);
+  };
+
   const optionsOnPage = () => [
     ...(list.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? []),
   ];
@@ -161,7 +200,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
   const focusEntry = (index: number) => {
     const entry = entries[index];
     if (!entry) return;
-    setActive(entry.key);
+    choose(entry.key, entry.resource);
     optionsOnPage()[index]?.focus();
     optionsOnPage()[index]?.scrollIntoView?.({ block: "nearest" });
   };
@@ -193,17 +232,30 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     if ((event.key === "Enter" || event.key === " ") && entry) {
       event.preventDefault();
       activate(entry.resource, options[index] as HTMLElement);
-    } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+    } else if (entry && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
       event.preventDefault();
       const box = (options[index] as HTMLElement).getBoundingClientRect();
-      setMenu({ x: box.left, y: box.bottom });
+      setMenu({ x: box.left, y: box.bottom, resource: entry.resource });
     }
   };
 
-  const onContextMenu = (event: MouseEvent<HTMLElement>) => {
+  const onContextMenu = (event: MouseEvent<HTMLElement>, resource: Resource<T>) => {
     event.preventDefault();
-    setMenu({ x: event.clientX, y: event.clientY });
+    event.currentTarget.focus({ preventScroll: true });
+    setMenu({ x: event.clientX, y: event.clientY, resource });
   };
+
+  const menuGroups = (resource: Resource<T>): readonly (readonly MenuItem[])[] =>
+    props.menu?.(resource) ?? [
+      [
+        {
+          id: "reveal",
+          label: t("resources.reveal"),
+          disabled: !workbench.canRevealResource(resource.id),
+          run: () => workbench.revealResource(resource.id),
+        },
+      ],
+    ];
 
   return (
     <div className={styles.browser}>
@@ -261,6 +313,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
             role="group"
             aria-labelledby={`${id}-${group.id}`}
             className={styles.group}
+            data-group={group.id}
             data-first={group.key.kind === "type" && group.key.type === firstType ? "" : undefined}
           >
             <div id={`${id}-${group.id}`} className={styles.heading}>
@@ -285,16 +338,24 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                     data-resource={resource.id}
                     title={off ? `${resource.name}：${off.reason}` : resource.name}
                     draggable={!off || off.draggable}
-                    onFocus={() => setActive(key)}
+                    onFocus={() => choose(key, resource)}
                     onPointerEnter={() => setPointed(key)}
                     onPointerLeave={() => setPointed((was) => (was === key ? undefined : was))}
                     onClick={(event) => {
-                      setActive(key);
-                      activate(resource, event.currentTarget);
+                      choose(key, resource);
+                      if (activateOn === "click") activate(resource, event.currentTarget);
+                    }}
+                    onDoubleClick={(event) => {
+                      if (activateOn === "double-click") activate(resource, event.currentTarget);
+                    }}
+                    // A right click focuses the option after the menu opened, which would close it
+                    // again: the menu focuses the option itself first.
+                    onMouseDown={(event) => {
+                      if (event.button === 2) event.preventDefault();
                     }}
                     onContextMenu={(event) => {
-                      setActive(key);
-                      onContextMenu(event);
+                      choose(key, resource);
+                      onContextMenu(event, resource);
                     }}
                     onDragStart={(event) => {
                       setPointed(undefined);
@@ -321,7 +382,9 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
         ))}
         {entries.length === 0 && (
           <p className={styles.empty}>
-            {query.trim() ? t("resources.notFound", { query: query.trim() }) : t("resources.none")}
+            {query.trim()
+              ? t("resources.notFound", { query: query.trim() })
+              : (empty ?? t("resources.none"))}
           </p>
         )}
       </div>
@@ -332,18 +395,8 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
         <PopupMenu
           x={menu.x}
           y={menu.y}
-          label={t("resources.menu")}
-          groups={[
-            [
-              {
-                id: "reveal",
-                // The explorer comes in a later step, see the design, section 5.
-                label: t("resources.reveal"),
-                disabled: true,
-                run: () => {},
-              },
-            ],
-          ]}
+          label={menu.resource.name}
+          groups={menuGroups(menu.resource)}
           onClose={() => setMenu(undefined)}
         />
       )}

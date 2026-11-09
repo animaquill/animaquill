@@ -137,3 +137,43 @@ describe("a file the project knows but this browser does not have", () => {
     expect(onRestored).not.toHaveBeenCalled();
   });
 });
+
+describe("another file for an asset", () => {
+  it("knows whether this browser has the file of an asset", async () => {
+    const { library, knowFile } = await setup();
+    knowFile(await hashFile(CONTENT));
+    expect(await library.hasFile("cover")).toBe(false);
+    expect(await library.hasFile("nothing")).toBe(false);
+    await library.importFiles([CONTENT]);
+    expect(await library.hasFile("cover")).toBe(true);
+  });
+
+  it("takes the place of the old one in one step, with the clips staying on the asset", async () => {
+    const { projects, library, store, id, knowFile } = await setup();
+    knowFile(await hashFile(CONTENT), { name: "封面" });
+    const other = new File(["另一张图片的内容"], "新封面.webp", { type: "image/webp" });
+    const restored = library.getRestored();
+    expect(await library.replaceFile("cover", { file: other })).toBe(true);
+    const asset = store.getState().assets?.["cover"];
+    const hash = await hashFile(other);
+    expect(asset).toMatchObject({
+      name: "封面",
+      hash,
+      size: other.size,
+      path: "assets/cover.webp",
+    });
+    expect(await (await projects.media(id).get(hash))?.text()).toBe("另一张图片的内容");
+    expect(library.getRestored()).toBeGreaterThan(restored);
+    store.undo();
+    expect(store.getState().assets?.["cover"]?.path).toBe("assets/cover.png");
+  });
+
+  it("refuses a file of another kind, which the clips could not show", async () => {
+    const { library, store, messages, knowFile } = await setup();
+    knowFile(await hashFile(CONTENT), { kind: "video" });
+    const before = store.getState().assets?.["cover"];
+    expect(await library.replaceFile("cover", { file: CONTENT })).toBe(false);
+    expect(messages.otherKind).toHaveBeenCalledWith("封面.png");
+    expect(store.getState().assets?.["cover"]).toEqual(before);
+  });
+});

@@ -218,6 +218,8 @@ export class ProjectFolders {
   #notes: readonly Listed[] = [];
   /** Files of assets that are not right, as problems. */
   #assetNotes: readonly Listed[] = [];
+  /** The same as they were found, for the explorer. */
+  #assetIssues: readonly AssetIssue[] = [];
   /**
    * The files of the project folder that is open, or opening: from the moment its project opens,
    * whatever wants a file of it gets it from the folder, see `mediaFor`.
@@ -371,6 +373,7 @@ export class ProjectFolders {
           ...leftBehind,
           ...issues.map((issue) => this.#assetProblem(current, issue)),
         ];
+        this.#assetIssues = issues;
         this.#changed();
       })
       .finally(() => {
@@ -378,6 +381,19 @@ export class ProjectFolders {
         if (current.checkAgain && this.#current === current) void this.#check(current);
       });
     return current.checking;
+  }
+
+  /**
+   * What is not right with the files of the assets of the open project folder, as last compared:
+   * missing ones, which may be somewhere else in it, and ones that another file took the place of.
+   */
+  get assetIssues(): readonly AssetIssue[] {
+    return this.#assetIssues;
+  }
+
+  /** Compares the files of the assets with the project again soon, after people changed them. */
+  checkAssetsSoon(): void {
+    if (this.#current) this.#checkSoon(this.#current);
   }
 
   /** Waits for what the files of the assets are like, as for a test. */
@@ -528,6 +544,7 @@ export class ProjectFolders {
     this.#setProgress(NO_PROGRESS);
     this.#notes = [];
     this.#assetNotes = [];
+    this.#assetIssues = [];
     this.#changed();
     await current.session.close();
     // The list on the start page shows what the project is called now.

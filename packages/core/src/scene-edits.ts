@@ -13,6 +13,7 @@ import { fail, type Draft } from "./draft.ts";
 import { isSourceFile } from "./import-file.ts";
 import { entryOf, type ProjectState } from "./model.ts";
 import { isInUse } from "./references.ts";
+import { removeUses } from "./resource-edits.ts";
 
 declare const TextEncoder: new () => { encode(text: string): Uint8Array };
 
@@ -141,7 +142,7 @@ export function addScene(draft: Draft, params: z.output<typeof SceneAdd>): { id:
   return { id };
 }
 
-const ClearableSceneField = z.enum(["description", "params", "presets"]);
+const ClearableSceneField = z.enum(["description", "params", "presets", "tags"]);
 
 export const SceneUpdate = z.strictObject({
   scene: Id,
@@ -167,12 +168,14 @@ export function updateScene(draft: Draft, params: z.output<typeof SceneUpdate>):
   draft.replace(["scenes", id], result.data);
 }
 
-export const SceneRemove = z.strictObject({ scene: Id });
+/** `withUses` takes the clips that use it along, in the same step, see `removeUses`. */
+export const SceneRemove = z.strictObject({ scene: Id, withUses: z.boolean().optional() });
 
 /** Its files go along: nothing else can reach them. */
-export function removeScene(draft: Draft, { scene }: z.output<typeof SceneRemove>): void {
+export function removeScene(draft: Draft, { scene, withUses }: z.output<typeof SceneRemove>): void {
   sceneOf(draft.state, scene);
-  assertSceneUnused(draft.state, scene);
+  if (withUses) removeUses(draft, "scene", scene);
+  else assertSceneUnused(draft.state, scene);
   const folder = sceneFile(scene, "");
   for (const path of Object.keys(draft.state.files)) {
     if (path.startsWith(folder)) draft.delete(["files", path]);
@@ -206,7 +209,7 @@ export function addSound(draft: Draft, params: z.output<typeof SoundAdd>): { id:
   return { id };
 }
 
-const ClearableSoundField = z.enum(["description", "params", "outputs"]);
+const ClearableSoundField = z.enum(["description", "params", "outputs", "tags"]);
 
 export const SoundUpdate = z.strictObject({
   sound: Id,
@@ -232,12 +235,14 @@ export function updateSound(draft: Draft, params: z.output<typeof SoundUpdate>):
   draft.replace(["sounds", id], result.data);
 }
 
-export const SoundRemove = z.strictObject({ sound: Id });
+/** `withUses` takes the clips that use it along, in the same step, see `removeUses`. */
+export const SoundRemove = z.strictObject({ sound: Id, withUses: z.boolean().optional() });
 
 /** Its files go along: nothing else can reach them. */
-export function removeSound(draft: Draft, { sound }: z.output<typeof SoundRemove>): void {
+export function removeSound(draft: Draft, { sound, withUses }: z.output<typeof SoundRemove>): void {
   soundOf(draft.state, sound);
-  if (isInUse(draft.state, ["sounds", sound])) {
+  if (withUses) removeUses(draft, "sound", sound);
+  else if (isInUse(draft.state, ["sounds", sound])) {
     fail("sound-in-use", "还有片段或版本在用这个声音，要先换掉或删除它们");
   }
   const folder = soundFile(sound, "");

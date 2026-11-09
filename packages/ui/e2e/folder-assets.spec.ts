@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { dialog, drop, footer, openDropped, projectOnDisk, text } from "./folder-support.ts";
-import { content, expect, findCompositor, tab, test } from "./support.ts";
+import { content, expect, findCompositor, resourcesIn, tab, test } from "./support.ts";
 
 test.use({
   folders: true,
@@ -42,7 +42,7 @@ const hashOf = (path: string) =>
     .replaceAll("/", "_")}`;
 
 const assets = (page: Page) => content(page, "assets");
-const items = (page: Page) => assets(page).getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 const problems = (page: Page) => content(page, "problems");
 
 /** The assets that the folder says the project has, none before the editor wrote any. */
@@ -231,6 +231,34 @@ test.describe("the assets of a project folder", () => {
       .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
       .toContain("footage/红色.webm");
     await expect(problems(page)).not.toContainText("footage/红色.webm");
+  });
+
+  test("are missing in the explorer, which finds them where people moved them", async ({
+    page,
+  }) => {
+    const disk = await newProjectOnDisk(page);
+    putFile(disk, "assets/红色.webm", RED);
+    await dropOnAssets(page, join(disk, "assets/红色.webm"));
+    await expect
+      .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
+      .toContain("assets/红色.webm");
+
+    mkdirSync(join(disk, "footage"), { recursive: true });
+    renameSync(join(disk, "assets/红色.webm"), join(disk, "footage/红色.webm"));
+    await toTheFront(page);
+    await tab(page, "explorer").click();
+    const explorer = content(page, "explorer");
+    const missing = explorer.locator('[data-node="missing"]');
+    await expect(missing).toHaveText("缺失的资源（1）", { timeout: 10_000 });
+    await missing.click();
+    await explorer.getByRole("option", { name: "红色.webm" }).first().click();
+    const details = explorer.getByRole("region", { name: "详情" });
+    await expect(details.getByRole("note").last()).toContainText("footage/红色.webm");
+    await details.getByRole("button", { name: "改用 footage/红色.webm" }).click();
+    await expect
+      .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
+      .toContain("footage/红色.webm");
+    await expect(missing).toHaveText("缺失的资源", { timeout: 10_000 });
   });
 });
 

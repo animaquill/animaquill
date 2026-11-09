@@ -935,6 +935,34 @@ export class TimelineEditor implements TouchTarget {
     this.#viewEmitter.emit();
   }
 
+  /**
+   * Goes to something on the timeline, as from where a resource is used: selects it, moves the
+   * playhead to its start and scrolls it into view. A transition or a join is selected instead of
+   * its clip. Resolves to whether this timeline has it.
+   */
+  revealClip(clip: string, part?: { readonly edge?: Edge; readonly join?: string }): boolean {
+    const model = this.model;
+    const join = part?.join === undefined ? undefined : model?.joins.get(part.join);
+    const box = model?.boxes.get(clip) ?? join?.from;
+    if (!model || (!box && !join)) return false;
+    if (join && part?.join !== undefined) this.selectJoin(part.join);
+    else if (box && part?.edge !== undefined && box.clip[part.edge] !== undefined) {
+      this.selectTransition(box.id, part.edge);
+    } else if (box) this.selectOnly(box.id);
+    const start = join ? join.start : (box?.start ?? 0);
+    this.seek(frameAt(start, model.rate));
+    const row = box && model.rowOfClip.get(box.id);
+    if (row) {
+      if (row.top < this.#scrollY) this.#scrollY = row.top;
+      else if (row.top + row.height > this.#scrollY + this.#height) {
+        this.#scrollY = row.top + row.height - this.#height;
+      }
+      this.#clampScroll();
+      this.#viewChanged();
+    }
+    return true;
+  }
+
   addToSelection(clip: string): void {
     this.#select(new Set([...this.#snapshot.selection, ...this.#withLinked(new Set([clip]))]));
   }

@@ -22,10 +22,10 @@ import {
   test,
   type Color,
 } from "./scene-support.ts";
-import { createProject } from "./support.ts";
+import { createProject, resourcesIn } from "./support.ts";
 
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
-const items = (page: Page) => content(page, "assets").getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 const field = (page: Page, name: string) =>
   content(page, "properties").getByRole("spinbutton", { name, exact: true });
 
@@ -685,12 +685,20 @@ test.describe("a new scene", () => {
     await expect(items(page)).toHaveCount(1);
   });
 
-  test("cannot go while a clip uses it, and says so", async ({ page }) => {
+  test("goes with its clips only once people agree, as one step", async ({ page }) => {
     await newScene(page);
     await tab(page, "assets").click();
     await items(page).first().click({ button: "right" });
-    await page.getByRole("menuitem", { name: "删除场景" }).click();
-    await expect(page.getByText("还有片段或版本在用这个场景")).toBeVisible();
+    await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
+    const details = content(page, "explorer").getByRole("region", { name: "详情" });
+    await details.getByRole("button", { name: "删除…" }).click();
+    await expect(page.getByRole("dialog")).toContainText("还有 1 处在用它");
+    await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click();
+    await tab(page, "timeline").click();
+    await expect(clips(page)).toHaveCount(0);
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(1);
+    await tab(page, "assets").click();
     await expect(items(page)).toHaveCount(1);
   });
 

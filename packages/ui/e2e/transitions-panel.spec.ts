@@ -108,9 +108,9 @@ test("lists the transitions by where they go, finds them, and groups them other 
   await expect(panel(page).getByRole("radio", { name: "按标签" })).toBeChecked();
   await panel(page).getByRole("radio", { name: "按类型" }).click();
 
-  // Right there is only a way to the explorer, which is not there yet.
+  // Right there is only the way to the explorer.
   await item(page, "淡入").click({ button: "right" });
-  await expect(page.getByRole("menuitem", { name: /在资源管理器里显示/ })).toBeDisabled();
+  await expect(page.getByRole("menuitem")).toHaveText(["在资源管理器里显示"]);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
 });

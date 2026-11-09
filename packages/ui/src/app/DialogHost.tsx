@@ -147,7 +147,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
   const isConfirm = request.kind === "confirm";
   const danger = isConfirm && request.danger === true;
   const details = request.kind === "confirm" ? (request.details ?? []) : [];
-  const canConfirm = !isPrompt || value.trim().length > 0;
+  const canConfirm = !isPrompt || request.allowEmpty === true || value.trim().length > 0;
   const confirm = () => {
     if (canConfirm) dialogs.answer(isPrompt ? value.trim() : true);
   };

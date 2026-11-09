@@ -17,8 +17,8 @@ const right = tabs("right");
 
 /**
  * The layouts that come with the editor, as designed in docs/design/workbench.md, sections 2 and 3.
- * They also name panels that are not there yet: the explorer, which has no panel yet, and chat, history, notes, music, recording, versions and the terminal, which are
- * placeholders. Each shows up in its place once it is ready, see `LayoutController`.
+ * They also name panels that are not there yet: chat, history, notes, music, recording, versions
+ * and the terminal, which are placeholders. Each shows up in its place once it is ready, see `LayoutController`.
  */
 export const layouts: readonly LayoutPreset[] = [
   {

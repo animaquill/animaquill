@@ -331,3 +331,11 @@ export {
   type Origin,
 } from "./store.ts";
 export type { Path } from "./structure.ts";
+export {
+  missingIn,
+  sourceResourceOf,
+  usesOf,
+  type MissingResource,
+  type ResourceUse,
+  type UsedResource,
+} from "./uses.ts";

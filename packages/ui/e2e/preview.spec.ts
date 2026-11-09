@@ -1,6 +1,15 @@
 import { readFileSync } from "node:fs";
 import type { Frame, Page } from "@playwright/test";
-import { compositor, content, expect, findCompositor, group, tab, test } from "./support.ts";
+import {
+  compositor,
+  content,
+  expect,
+  findCompositor,
+  group,
+  resourcesIn,
+  tab,
+  test,
+} from "./support.ts";
 
 const video = {
   name: "红色.webm",
@@ -8,7 +17,7 @@ const video = {
   buffer: readFileSync(new URL("./fixtures/red.webm", import.meta.url)),
 };
 
-const items = (page: Page) => content(page, "assets").getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 
 /** The colour in the middle of the picture. */
 async function middle(page: Page): Promise<readonly number[]> {

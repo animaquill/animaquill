@@ -11,6 +11,7 @@ import {
   PropertyPath,
   PropertyValue,
   RETIRED_PROPERTIES,
+  ResourceTags,
   Rate,
   Time,
   Track,
@@ -83,6 +84,7 @@ import { deepEqual } from "./patch.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
 import { PropertyRename, convertedValue, movesOf } from "./rename.ts";
 import { isInUse } from "./references.ts";
+import { SourceReplace, removeUses, replaceSource } from "./resource-edits.ts";
 import {
   FileRemove,
   FileRename,
@@ -480,14 +482,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
   ),
 
   /**
-   * Where the file of an asset is, and what it is: for a file that moved or was replaced outside, as
-   * people agreed. Clips stay on the asset.
+   * What an asset is called and found by, and where its file is and what it is: for a file that
+   * moved or was replaced, as people agreed. Clips stay on the asset. No tags at all takes them away.
    */
   define(
     "asset.update",
     z.strictObject({
       asset: Id,
       changes: z.strictObject({
+        name: z.string().trim().min(1).optional(),
+        tags: ResourceTags.optional(),
         path: z.string().optional(),
         hash: z.string().optional(),
         size: z.number().optional(),
@@ -497,10 +501,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { asset, changes }) => {
       const found = entryOf(draft.state.assets, asset);
       if (!found) fail("not-found", `没有这个素材：${asset}`);
-      const defined = Object.fromEntries(
+      const defined: Record<string, unknown> = Object.fromEntries(
         Object.entries(changes).filter(([, value]) => value !== undefined),
       );
-      const next = Asset.safeParse({ ...found, ...defined });
+      const merged: Record<string, unknown> = { ...found, ...defined };
+      if (changes.tags?.length === 0) delete merged.tags;
+      const next = Asset.safeParse(merged);
       if (!next.success) {
         fail("invalid-value", `素材的新内容不对：${next.error.issues[0]?.message ?? ""}`);
       }
@@ -509,15 +515,21 @@ export const COMMANDS: readonly CommandDefinition[] = [
     },
   ),
 
-  define("asset.remove", z.strictObject({ asset: Id }), (draft, { asset }) => {
-    if (!entryOf(draft.state.assets, asset)) fail("not-found", `没有这个素材：${asset}`);
-    if (isInUse(draft.state, ["assets", asset])) {
-      fail("asset-in-use", "还有片段或版本在用这个素材，要先换掉或删除它们");
-    }
-    const code = codeUsingAsset(draft.state, asset);
-    if (code !== undefined) fail("asset-in-use", `代码在用这个素材，要先改掉：${code}`);
-    draft.delete(["assets", asset]);
-  }),
+  /** `withUses` takes the clips that use it along, in the same step, see `removeUses`. */
+  define(
+    "asset.remove",
+    z.strictObject({ asset: Id, withUses: z.boolean().optional() }),
+    (draft, { asset, withUses }) => {
+      if (!entryOf(draft.state.assets, asset)) fail("not-found", `没有这个素材：${asset}`);
+      const code = codeUsingAsset(draft.state, asset);
+      if (code !== undefined) fail("asset-in-use", `代码在用这个素材，要先改掉：${code}`);
+      if (withUses) removeUses(draft, "asset", asset);
+      else if (isInUse(draft.state, ["assets", asset])) {
+        fail("asset-in-use", "还有片段或版本在用这个素材，要先换掉或删除它们");
+      }
+      draft.delete(["assets", asset]);
+    },
+  ),
 
   define("scene.add", SceneAdd, addScene),
   define("scene.update", SceneUpdate, updateScene),
@@ -525,6 +537,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
   define("sound.add", SoundAdd, addSound),
   define("sound.update", SoundUpdate, updateSound),
   define("sound.remove", SoundRemove, removeSound),
+  /** Clips that use an asset, scene or sound use another one of the same kind instead. */
+  define("source.replace", SourceReplace, replaceSource),
   define("file.write", FileWrite, writeFile),
   define("file.remove", FileRemove, removeFile),
   define("file.rename", FileRename, renameFile),

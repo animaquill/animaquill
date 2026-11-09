@@ -6,6 +6,8 @@ export interface PromptOptions {
   /** What people should know about what comes next, under the box. */
   readonly hint?: string;
   readonly confirm: string;
+  /** Nothing is an answer too, as for no tags at all. */
+  readonly allowEmpty?: boolean;
 }
 
 export interface ConfirmOptions {

@@ -230,6 +230,11 @@ export class MediaLibrary {
     return media?.asset === undefined ? undefined : state.assets?.[media.asset]?.hash;
   }
 
+  /** The waveform of the file of an asset, as `peaksOf` has it for a clip. */
+  peaksOfAsset(assetId: string): Uint8Array | undefined {
+    return this.peaksOf({ source: { kind: "audio", media: { asset: assetId } } } as ClipState);
+  }
+
   /** The waveform of a clip. It shows up later when it has to be worked out first. */
   peaksOf(clip: ClipState): Uint8Array | undefined {
     const store = this.#store;
@@ -284,6 +289,150 @@ export class MediaLibrary {
       input.addEventListener("cancel", () => resolve([]));
       input.click();
     });
+  }
+
+  /** Lets people choose one file, of a kind of media. Resolves to nothing when they do not. */
+  chooseFile(kind: Asset["kind"]): Promise<File | undefined> {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = kind === "video" || kind === "audio" || kind === "image" ? `${kind}/*` : "";
+      input.addEventListener("change", () => resolve(input.files?.[0]));
+      input.addEventListener("cancel", () => resolve(undefined));
+      input.click();
+    });
+  }
+
+  /**
+   * Whether this browser has the file of an asset, for a project that is kept in the browser: one
+   * can come in without its files. Those of a project folder are up to `ProjectFolders`.
+   */
+  async hasFile(assetId: string): Promise<boolean> {
+    const store = this.#store;
+    const asset = store?.getState().assets?.[assetId];
+    if (!store || !asset) return false;
+    if (asset.storage === "remote") return true;
+    if (asset.hash === undefined) return false;
+    return (await this.#media(store).get(asset.hash)) !== undefined;
+  }
+
+  /**
+   * Another file for an asset, which its clips show from then on: one that people chose to replace
+   * it with, or the file of a missing asset found again. It has to be the same kind of media, so that
+   * the clips can still show it. In a project folder, a file that is in it already is used where it
+   * is, by its path, and any other gets copied in. Resolves to whether the asset has it now.
+   */
+  async replaceFile(
+    assetId: string,
+    source: { readonly file: File } | { readonly path: string },
+  ): Promise<boolean> {
+    const store = this.#store;
+    const asset = store?.getState().assets?.[assetId];
+    if (!store || !asset) return false;
+    const folder = this.#folder();
+    let file: File;
+    let place: { readonly path: string; readonly hash: string } | undefined;
+    if ("path" in source) {
+      const found = folder && (await folder.fileAt(source.path));
+      if (found?.kind !== "there") {
+        this.#messages.readFailed(source.path);
+        return false;
+      }
+      file = found.file;
+      place = { path: source.path, hash: found.hash };
+    } else {
+      file = source.file;
+    }
+    const facts = await probeMedia(file);
+    if (!facts) {
+      this.#messages.unsupported(file.name);
+      return false;
+    }
+    // Clips of a video cannot play a sound file in its place.
+    if (facts.kind !== asset.kind) {
+      this.#messages.otherKind(file.name);
+      return false;
+    }
+    try {
+      if (folder) place ??= await this.#copyIn(store, folder, file);
+      else place = await this.#keep(store, assetId, asset, file);
+    } catch (error) {
+      console.warn("A file could not be taken for an asset", error);
+      this.#messages.saveFailed(file.name);
+      return false;
+    }
+    if (!place || this.#session.store !== store) return false;
+    const result = store.execute({
+      type: "asset.update",
+      params: {
+        asset: assetId,
+        changes: { path: place.path, hash: place.hash, size: file.size, info: infoOf(facts) },
+      },
+    });
+    if (!result.ok) {
+      this.#messages.commandFailed(result.error.message);
+      return false;
+    }
+    this.filesChanged([asset.path, place.path]);
+    return true;
+  }
+
+  /** Keeps a file in this browser for an asset, at a path with the extension of the file. */
+  async #keep(
+    store: ProjectStore,
+    assetId: string,
+    asset: Asset,
+    file: File,
+  ): Promise<{ readonly path: string; readonly hash: string } | undefined> {
+    if (file.size > MAX_FILE_BYTES) {
+      this.#messages.tooLarge(file.name);
+      return undefined;
+    }
+    const hash = await hashOf(file);
+    await this.#media(store).put(hash, file);
+    const extension = extensionOf(file.name);
+    const path =
+      extensionOf(asset.path) === extension
+        ? asset.path
+        : `assets/${assetId}${extension ? `.${extension}` : ""}`;
+    return { path, hash };
+  }
+
+  /** Copies a file into the project folder as `#bringIntoFolder` does, asking first for a large one. */
+  async #copyIn(
+    store: ProjectStore,
+    folder: FolderAssets,
+    file: File,
+  ): Promise<{ readonly path: string; readonly hash: string } | undefined> {
+    if (
+      file.size >= ASK_BEFORE_COPYING_BYTES &&
+      !(await this.#messages.confirmCopy(file.name, file.size))
+    ) {
+      return undefined;
+    }
+    const stopper = new AbortController();
+    const show = (bytes: number) => {
+      const percent = file.size > 0 ? Math.floor((bytes / file.size) * 100) : 100;
+      if (this.#copying?.percent === percent) return;
+      this.#copying = { name: file.name, stage: "copying", percent, stop: () => stopper.abort() };
+      this.#emitter.emit();
+    };
+    try {
+      show(0);
+      const copied = await folder.copyIn(file, { signal: stopper.signal, onProgress: show });
+      if (this.#session.store !== store) {
+        await folder.remove(copied.path, copied.written);
+        return undefined;
+      }
+      return { path: copied.path, hash: copied.hash };
+    } catch (error) {
+      if (stopper.signal.aborted) return undefined;
+      this.#messages.copyFailed(file.name, failureOf(error));
+      return undefined;
+    } finally {
+      this.#copying = undefined;
+      this.#emitter.emit();
+    }
   }
 
   /** One at a time, because each one is read into memory. A file that fails does not stop others. */

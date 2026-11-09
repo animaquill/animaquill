@@ -1,6 +1,6 @@
 import { crc32, deflateSync } from "node:zlib";
 import type { Locator, Page } from "@playwright/test";
-import { compositor, content, expect, findCompositor, tab } from "./support.ts";
+import { compositor, content, expect, findCompositor, resourcesIn, tab } from "./support.ts";
 
 export type Color = readonly [red: number, green: number, blue: number];
 
@@ -62,7 +62,7 @@ export async function placeImage(page: Page, file = red) {
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(file);
-  await content(page, "assets").getByRole("listitem").first().dblclick();
+  await resourcesIn(page, "assets").first().dblclick();
   await tab(page, "properties").click();
   await expect(field(page, "位置 X")).toBeVisible();
 }

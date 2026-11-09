@@ -68,6 +68,11 @@
         "additionalProperties": false
       }
     },
+    "tags": {
+      "maxItems": 30,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema2" }
+    },
     "outputs": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
@@ -77,6 +82,7 @@
   "additionalProperties": false,
   "$defs": {
     "__schema0": { "type": "string", "minLength": 1 },
-    "__schema1": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" }
+    "__schema1": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "__schema2": { "type": "string", "minLength": 1, "maxLength": 40 }
   }
 }

@@ -506,7 +506,7 @@ k = 1080 / min(format.width, format.height)
 }
 ```
 
-片段通过 ID 引用素材，所以文件改名不会断。`storage` 说明文件在哪：`git` 和 `lfs` 随仓库走，`local` 只在一台电脑上，`remote` 在用户的对象存储里（要写 `url`）。`license` 和 `credit` 用来导出署名清单。
+片段通过 ID 引用素材，所以文件改名不会断。`storage` 说明文件在哪：`git` 和 `lfs` 随仓库走，`local` 只在一台电脑上，`remote` 在用户的对象存储里（要写 `url`）。`license` 和 `credit` 用来导出署名清单。`tags` 是给人找东西用的标签，比如 `["片头", "竖屏可用"]`，每个最多 40 个字、不重复、最多 30 个；它们和项目的 `tags` 不同，不锁定任何东西。场景和声音的 `scene.json`、`sound.json` 也可以写 `tags`。
 
 `hash` 是文件内容的 SHA-256，写成 `sha256-` 加 URL 安全的 base64，带末尾的 `=`。别的工具写成普通 base64 或十六进制也能读。
 

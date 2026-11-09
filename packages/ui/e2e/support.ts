@@ -7,6 +7,12 @@ export { expect };
 
 export const tab = (page: Page, type: string) => page.locator(`[data-tab="${type}"]`);
 export const content = (page: Page, type: string) => page.locator(`[data-panel="${type}"]`);
+/**
+ * What a tab of resources lists, each once: those used lately show again in a group of their own
+ * first, which this leaves out.
+ */
+export const resourcesIn = (page: Page, type: string) =>
+  content(page, type).locator('[role="group"]:not([data-group="recent"]) [role="option"]');
 /** The layout menu, which is named after the layout on screen. */
 export const layoutMenu = (page: Page, name: string) =>
   page.getByRole("button", { name: `布局：${name}`, exact: true });

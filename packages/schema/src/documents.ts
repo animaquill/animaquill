@@ -107,6 +107,15 @@ export const MediaInfo = z.strictObject({
   hasAudio: z.boolean().optional(),
 });
 
+/**
+ * Free words that people find a resource by, each once: not what it is, which its kind says. See
+ * docs/design/libraries.md, "分类". Unlike the tags of the project, they lock nothing.
+ */
+export const ResourceTags = z
+  .array(z.string().trim().min(1, "标签不能是空的").max(40, "标签最多 40 个字"))
+  .max(30, "最多 30 个标签")
+  .refine((tags) => new Set(tags).size === tags.length, "标签不能重复");
+
 export const Asset = z
   .strictObject({
     name: z.string().optional(),
@@ -128,6 +137,8 @@ export const Asset = z
     info: MediaInfo.optional(),
     license: z.string().optional(),
     credit: z.string().optional(),
+    /** Free words for finding it, such as 片头 or 竖屏可用. See `ResourceTags`. */
+    tags: ResourceTags.optional(),
   })
   .refine((asset) => asset.storage !== "remote" || asset.url, "remote 素材要写 url");
 
@@ -192,6 +203,8 @@ const scriptManifest = {
    */
   runtime: z.number().int().positive(),
   params: z.array(Param).optional(),
+  /** Free words for finding it, see `ResourceTags`. */
+  tags: ResourceTags.optional(),
 };
 
 /** scenes/<id>/scene.json */

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { Page } from "@playwright/test";
-import { compositor, content, devPageOnly, expect, tab, test } from "./support.ts";
+import { compositor, content, devPageOnly, expect, resourcesIn, tab, test } from "./support.ts";
 
 const panel = (page: Page) => content(page, "performance");
 const press = (page: Page, name: string) =>
@@ -62,7 +62,7 @@ test("the report has timings and leaves out names", async ({ page }) => {
     mimeType: "video/webm",
     buffer: await readFile(new URL("./fixtures/red-blue.webm", import.meta.url)),
   });
-  await content(page, "assets").getByRole("listitem").first().dblclick();
+  await resourcesIn(page, "assets").first().dblclick();
   await openPanel(page);
   await press(page, "开始记录");
   await content(page, "preview").getByRole("button", { name: "播放", exact: true }).click();
@@ -83,7 +83,7 @@ test("the report has timings and leaves out names", async ({ page }) => {
 });
 
 test("playing from one clip into the next needs no decoder to start", async ({ page }) => {
-  const list = content(page, "assets").getByRole("listitem");
+  const list = resourcesIn(page, "assets");
   const goTo = async (time: string) => {
     await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
     await page.getByRole("textbox", { name: "当前时间" }).fill(time);

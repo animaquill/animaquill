@@ -8,7 +8,7 @@ import { writeProject } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { chromeRefuses } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
-import { content, createProject, expect, tab, test } from "./support.ts";
+import { content, createProject, expect, resourcesIn, tab, test } from "./support.ts";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -46,7 +46,7 @@ const files = {
   image: { name: "封面.png", mimeType: "image/png", buffer: PNG },
 };
 
-const items = (page: Page) => content(page, "assets").getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
 const dialog = (page: Page) => page.getByRole("dialog");
 
@@ -512,7 +512,7 @@ test.describe("a project that travels", () => {
     await expect(report.getByRole("heading", { name: "项目已导入" })).toBeVisible();
     await expect(report.getByText("这些素材的文件不在文件夹里（1）")).toBeVisible();
     await expect(report.getByRole("listitem")).toHaveText(["红色.webm"]);
-    await expect(report.getByText("在素材库里导入同样的文件")).toBeVisible();
+    await expect(report.getByText(/缺失的资源.*导入同样的文件/)).toBeVisible();
     await closeDialog(page);
 
     await tab(page, "timeline").click();

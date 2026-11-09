@@ -7,6 +7,7 @@ import {
   Diff,
   Download,
   Files,
+  FolderTree,
   Gauge,
   Grid3x3,
   HardDrive,
@@ -40,6 +41,7 @@ import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { EffectsPanel } from "./EffectsPanel.tsx";
+import { ExplorerPanel } from "./ExplorerPanel.tsx";
 import { TransitionsPanel } from "./TransitionsPanel.tsx";
 import styles from "./Placeholder.module.css";
 
@@ -68,6 +70,7 @@ function planned(
     | "exports"
     | "transitions"
     | "effects"
+    | "explorer"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -103,6 +106,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "left",
     component: FilesPanel,
     keys: ["mod+shift+e"],
+  },
+  {
+    type: "explorer",
+    title: (t) => t("panel.explorer.title"),
+    icon: FolderTree,
+    area: "left",
+    component: ExplorerPanel,
   },
   {
     type: "assets",

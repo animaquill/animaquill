@@ -1,0 +1,55 @@
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wave {
+  --wave: var(--aq-accent);
+  --line: var(--aq-text-strong);
+  width: 100%;
+  height: 100%;
+}
+
+.length {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 0 3px;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+  background: #0009;
+  border-radius: 2px;
+}
+
+/* How the proxy of a video is: quiet once there is one, clear while it is on its way or missing. */
+.proxy {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  padding: 0 3px;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+  background: #0009;
+  border-radius: 2px;
+}
+
+.proxy[data-state="making"] {
+  background: color-mix(in srgb, var(--aq-accent) 70%, #000);
+}
+
+.proxy[data-state="failed"] {
+  color: var(--aq-text-strong);
+  background: color-mix(in srgb, var(--aq-danger) 75%, #000);
+}
+
+.missing {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  padding: 0 3px;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+  background: color-mix(in srgb, var(--aq-danger) 75%, #000);
+  border-radius: 2px;
+}

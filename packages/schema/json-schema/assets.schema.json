@@ -24,7 +24,8 @@
         "size": { "$ref": "#/$defs/__schema8" },
         "info": { "$ref": "#/$defs/__schema9" },
         "license": { "$ref": "#/$defs/__schema10" },
-        "credit": { "$ref": "#/$defs/__schema11" }
+        "credit": { "$ref": "#/$defs/__schema11" },
+        "tags": { "$ref": "#/$defs/__schema12" }
       },
       "required": ["kind", "path", "storage"],
       "additionalProperties": false
@@ -53,6 +54,12 @@
       "additionalProperties": false
     },
     "__schema10": { "type": "string" },
-    "__schema11": { "type": "string" }
+    "__schema11": { "type": "string" },
+    "__schema12": {
+      "maxItems": 30,
+      "type": "array",
+      "items": { "$ref": "#/$defs/__schema13" }
+    },
+    "__schema13": { "type": "string", "minLength": 1, "maxLength": 40 }
   }
 }

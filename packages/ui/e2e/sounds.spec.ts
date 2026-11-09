@@ -11,6 +11,7 @@ import {
   createProject as createInEditor,
   expect,
   needsDevPage,
+  resourcesIn,
   tab,
   test,
 } from "./support.ts";
@@ -20,7 +21,7 @@ test.describe.configure({ timeout: 90_000 });
 
 const timeline = (page: Page) => content(page, "timeline");
 const clips = (page: Page) => timeline(page).getByRole("option");
-const items = (page: Page) => content(page, "assets").getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 const button = (page: Page, name: string) =>
   content(page, "preview").getByRole("button", { name, exact: true });
 

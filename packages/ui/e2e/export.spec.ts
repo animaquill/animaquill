@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Download, Frame, Page } from "@playwright/test";
 import { field, placeImage, red, typeInto } from "./property-helpers.ts";
-import { needsDevPage } from "./support.ts";
+import { needsDevPage, resourcesIn } from "./support.ts";
 import {
   canCapture,
   content,
@@ -17,7 +17,7 @@ import {
 const WIDTH = 1920;
 const HEIGHT = 1080;
 
-const items = (page: Page) => content(page, "assets").getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 const dialog = (page: Page) => page.getByRole("dialog");
 
 const video = {

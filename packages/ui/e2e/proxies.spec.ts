@@ -13,7 +13,15 @@ import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from "mediabunny"
 import { PROXY_FOLDER, partOf, proxyName } from "../src/proxy/spec.ts";
 import { dialog, footer } from "./folder-support.ts";
 import { BITS, encodeIn, kindIn, openProject, projectWith, stateIn } from "./proxy-support.ts";
-import { content, expect, findCompositor, needsDevPage, tab, test } from "./support.ts";
+import {
+  content,
+  expect,
+  findCompositor,
+  needsDevPage,
+  resourcesIn,
+  tab,
+  test,
+} from "./support.ts";
 
 test.use({
   folders: true,
@@ -67,10 +75,11 @@ async function goTo(page: Page, time: string) {
   await page.keyboard.press("Enter");
 }
 
-/** Asks for the proxy of the video, from its menu in the assets panel, as people do. */
+/** Asks for the proxy of the video, from its menu in the explorer, as people do. */
 async function askForProxy(page: Page) {
-  await tab(page, "assets").click();
-  await content(page, "assets").getByRole("listitem").filter({ hasText: "数字.mp4" }).click({
+  await tab(page, "explorer").click();
+  await content(page, "explorer").getByRole("treeitem", { name: "素材" }).click();
+  await resourcesIn(page, "explorer").filter({ hasText: "数字.mp4" }).click({
     button: "right",
   });
   await page.getByRole("menuitem", { name: "生成代理文件" }).click();

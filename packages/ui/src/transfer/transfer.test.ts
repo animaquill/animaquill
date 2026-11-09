@@ -898,7 +898,7 @@ describe("files that are missing or different", () => {
     const notice = await window.readDialog();
     await announcing;
     expect(notice.details?.[0]?.items).toEqual(["采访.mp4"]);
-    expect(notice.message).toContain("在素材库里导入同样的文件");
+    expect(notice.message).toContain("“缺失的资源”里重新找到文件");
   });
 
   it("does not take in a file that is not the file the project knows", async () => {

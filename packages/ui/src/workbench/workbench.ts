@@ -54,6 +54,8 @@ import { LayoutController, type LayoutChoice, type LayoutPreset } from "./layout
 import { Notifications } from "./notifications.ts";
 import { CommandPalette } from "./palette.ts";
 import { ResourceHabits } from "../resources/habits.ts";
+import { ExplorerState, nodeOfResource } from "../resources/explorer.ts";
+import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
@@ -107,6 +109,10 @@ export class Workbench {
   readonly palette: CommandPalette;
   /** What people used of the resources lately, and how they like each tab of them grouped. */
   readonly resourceHabits: ResourceHabits;
+  /** Where people are in the explorer, which every tab of resources can show something in. */
+  readonly explorer = new ExplorerState();
+  /** Which assets of the open project have no file, for the explorer and the assets tab. */
+  readonly missingFiles: MissingFileWatch;
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
@@ -406,6 +412,7 @@ export class Workbench {
         ...(host.presence && { presence: host.presence }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
+    this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders);
     this.#keepPresence(host);
     this.proxies =
       this.projectFolders && options.proxyMaker
@@ -736,6 +743,71 @@ export class Workbench {
     const origin = this.#clipName(clip);
     const text = describeStatus(this.t, origin, status);
     this.problems.noteStopped(clip, { severity: "error", text, origin });
+  }
+
+  /**
+   * Lets people choose another file for an asset, or the file of one that is missing: in a project
+   * folder one in it is used where it is, any other gets copied in, see `MediaLibrary.replaceFile`.
+   * Resolves to whether the asset has the file now.
+   */
+  async replaceAssetFile(assetId: string): Promise<boolean> {
+    const asset = this.session.store?.getState().assets?.[assetId];
+    if (!asset) return false;
+    const folders = this.projectFolders;
+    let source: { readonly file: File } | { readonly path: string } | undefined;
+    const placed = folders?.assets() ? await folders.pickFiles() : undefined;
+    if (placed) {
+      for (const name of placed.unreadable) {
+        this.notifications.push(this.t("notice.mediaUnsupported", { name }));
+      }
+      const [path] = placed.inside;
+      const [file] = placed.files;
+      source = path !== undefined ? { path } : file && { file };
+    } else {
+      const file = await this.media.chooseFile(asset.kind);
+      source = file && { file };
+    }
+    if (!source) return false;
+    const done = await this.media.replaceFile(assetId, source);
+    if (done) folders?.checkAssetsSoon();
+    return done;
+  }
+
+  /** The file of a missing asset is somewhere else in the project folder: the asset goes there. */
+  async moveAssetTo(assetId: string, path: string): Promise<boolean> {
+    const done = await this.media.usePlace(assetId, path);
+    if (done) this.projectFolders?.checkAssetsSoon();
+    return done;
+  }
+
+  /** Whether the explorer lists a resource, which is where `revealResource` goes. */
+  canRevealResource(id: string): boolean {
+    return nodeOfResource(id) !== undefined && this.panels.get("explorer") !== undefined;
+  }
+
+  /** Shows a resource in the explorer, from a tab that finds and uses resources. */
+  revealResource(id: string): void {
+    if (!this.explorer.reveal(id)) return;
+    this.layout.openPanel("explorer");
+  }
+
+  /**
+   * Goes to where a resource is used, on the timeline: the clip, or the transition or join that is
+   * it. Only the timeline that the editor shows can be gone to. Resolves to whether it could.
+   */
+  goToUse(use: {
+    readonly timeline: string;
+    readonly clip?: string;
+    readonly join?: string;
+    readonly edge?: "enter" | "exit";
+  }): boolean {
+    if (this.timeline.model?.id !== use.timeline) return false;
+    const shown = this.timeline.revealClip(use.clip ?? "", {
+      ...(use.edge && { edge: use.edge }),
+      ...(use.join !== undefined && { join: use.join }),
+    });
+    if (shown) this.layout.openPanel("timeline");
+    return shown;
   }
 
   /** Goes to where a problem is: a file of the project, or the keys of a property of a clip. */

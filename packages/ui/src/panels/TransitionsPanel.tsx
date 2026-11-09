@@ -34,7 +34,7 @@ const reducedMotion = () =>
  * The picture of a transition: still, mostly through, and on the move under the pointer. Each is
  * drawn by the shared canvases of `transitionPreviews`, and a still one only once.
  */
-function TransitionIcon({ resource, playing }: ResourceIconProps<TransitionItem>) {
+export function TransitionIcon({ resource, playing }: ResourceIconProps<TransitionItem>) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const { pick, use } = resource.data;
   const [drawn, setDrawn] = useState(true);

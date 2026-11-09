@@ -355,7 +355,16 @@ test("reset brings back the design of the current layout only", async ({ page })
   await expect(tab(page, "code")).toHaveCount(0);
 });
 
-const EVERY_TAB = ["files", "assets", "transitions", "effects", "preview", "code", "properties"];
+const EVERY_TAB = [
+  "files",
+  "explorer",
+  "assets",
+  "transitions",
+  "effects",
+  "preview",
+  "code",
+  "properties",
+];
 const EVERY_TAB_BELOW = ["timeline", "keyframes", "problems"];
 
 test("closing everything leaves a way back", async ({ page }) => {
@@ -389,7 +398,7 @@ test("opening a page changes nothing in the saved layout", async ({ page }) => {
 });
 
 test("tabs have their real names for screen readers", async ({ page }) => {
-  await expect(page.getByRole("tab", { name: "素材库" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "素材", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "assets" })).toHaveCount(0);
 });
 
@@ -658,7 +667,7 @@ test.describe("tabs down a side", () => {
     const second = await box(tab(page, "assets"));
     expect(second.y).toBeGreaterThanOrEqual(first.y + first.height - 1);
     expect(first.x + first.width).toBeLessThanOrEqual(files.x + 1);
-    await expect(page.getByRole("tab", { name: "素材库" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "素材", exact: true })).toBeVisible();
   });
 
   test("show big icons, and their names over the content on hover", async ({ page }) => {
@@ -986,8 +995,8 @@ test.describe("tabs down a side", () => {
   test("switch with the arrow keys while the tabs have the focus", async ({ page }) => {
     await tabButton(page, "files").focus();
     await page.keyboard.press("ArrowDown");
-    await expect(content(page, "assets")).toBeVisible();
-    await expect(tabButton(page, "assets")).toBeFocused();
+    await expect(content(page, "explorer")).toBeVisible();
+    await expect(tabButton(page, "explorer")).toBeFocused();
     await page.keyboard.press("ArrowUp");
     await expect(content(page, "files")).toBeVisible();
     await expect(tabButton(page, "files")).toBeFocused();

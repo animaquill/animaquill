@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, resourcesIn, tab, test } from "./support.ts";
 
 const assets = (page: Page) => content(page, "assets");
-const items = (page: Page) => assets(page).getByRole("listitem");
+const items = (page: Page) => resourcesIn(page, "assets");
 const timeline = (page: Page) => content(page, "timeline");
 const clips = (page: Page) => timeline(page).getByRole("option");
 
@@ -44,7 +44,16 @@ const files = {
     buffer: readFileSync(new URL("./fixtures/clip.mp4", import.meta.url)),
   },
   broken: { name: "坏文件.mp4", mimeType: "video/mp4", buffer: Buffer.from("no video here") },
+  changing: {
+    name: "红蓝.webm",
+    mimeType: "video/webm",
+    buffer: readFileSync(new URL("./fixtures/red-blue.webm", import.meta.url)),
+  },
+  loud: { name: "响.wav", mimeType: "audio/wav", buffer: wav(3, true) },
 };
+
+/** Screenshots to look at, in the output of each test. */
+const shot = (name: string) => ({ path: test.info().outputPath(name) });
 
 async function importFiles(page: Page, ...list: (typeof files)[keyof typeof files][]) {
   const chooser = page.waitForEvent("filechooser");
@@ -71,6 +80,48 @@ test("brings in files, and they survive a reload", async ({ page }) => {
   await page.reload();
   await expect(items(page)).toHaveCount(3);
   await expect(items(page).filter({ hasText: "封面.png" }).locator("img")).toBeVisible();
+});
+
+test("groups by type, finds by name, and plays under the pointer", async ({ page }) => {
+  await importFiles(page, files.image, files.loud, files.changing);
+  await assets(page).getByRole("button", { name: "新建场景" }).click();
+  await expect(items(page)).toHaveCount(4);
+  const groups = assets(page).locator('[role="group"]:not([data-group="recent"])');
+  await expect(groups).toHaveCount(4);
+  await expect(groups.nth(0)).toHaveAccessibleName("视频");
+  await expect(groups.nth(1)).toHaveAccessibleName("图片");
+  await expect(groups.nth(2)).toHaveAccessibleName("声音");
+  await expect(groups.nth(3)).toHaveAccessibleName("场景模板");
+
+  // A sound shows its waveform, and a video goes through its frames under the pointer.
+  const sound = items(page).filter({ hasText: "响.wav" }).locator("canvas");
+  await expect(sound).toBeVisible();
+  const video = items(page).filter({ hasText: "红蓝.webm" });
+  await expect(video.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  const still = await video.locator("canvas").screenshot();
+  await video.hover();
+  await expect
+    .poll(async () => (await video.locator("canvas").screenshot()).equals(still))
+    .toBe(false);
+  await assets(page).screenshot(shot("assets-panel.png"));
+
+  const search = assets(page).getByRole("searchbox", { name: "搜索素材" });
+  await search.fill("红蓝");
+  await expect(items(page)).toHaveText([/红蓝\.webm/]);
+  await search.fill("没有这种");
+  await expect(assets(page).getByText("没有找到“没有这种”")).toBeVisible();
+  await search.press("Escape");
+  await assets(page).getByRole("radio", { name: "按来源" }).click();
+  await expect(groups).toHaveCount(1);
+  await expect(groups.first()).toHaveAccessibleName("本项目");
+  await assets(page).getByRole("radio", { name: "按类型" }).click();
+
+  // What was put on the timeline shows first next time.
+  await items(page).filter({ hasText: "封面.png" }).dblclick();
+  await expect(clips(page)).toHaveCount(2);
+  const recent = assets(page).getByRole("group", { name: "最近用过" });
+  await expect(recent.getByRole("option")).toHaveText([/封面\.png/]);
+  await expect(items(page)).toHaveCount(4);
 });
 
 test("does not keep the same file twice", async ({ page }) => {
@@ -126,14 +177,25 @@ test("a clip cannot grow past the end of its file", async ({ page }) => {
   await expect(clips(page).first()).toHaveAttribute("aria-label", /到 0:03\/00/);
 });
 
-test("a file in use cannot be removed", async ({ page }) => {
+test("is looked after in the explorer, which asks before a file in use goes", async ({ page }) => {
   await importFiles(page, files.image);
   await items(page).first().dblclick();
   await expect(clips(page)).toHaveCount(1);
+  // Right there is only the way to the explorer: looking after files happens there.
   await items(page).first().click({ button: "right" });
-  await page.getByRole("menuitem", { name: "删除素材" }).click();
-  await expect(page.getByText("还有片段或版本在用这个素材")).toBeVisible();
+  await expect(page.getByRole("menuitem")).toHaveText(["在资源管理器里显示"]);
+  await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
+  const explorer = content(page, "explorer");
+  await expect(explorer).toBeVisible();
+  const details = explorer.getByRole("region", { name: "详情" });
+  await expect(details.getByRole("heading", { name: "封面.png" })).toBeVisible();
+  await details.getByRole("button", { name: "删除…" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("还有 1 处在用它");
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await tab(page, "assets").click();
   await expect(items(page)).toHaveCount(1);
+  await expect(clips(page)).toHaveCount(1);
 });
 
 test("the files of a project go with it", async ({ page }) => {
