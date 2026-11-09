@@ -12,7 +12,7 @@ import type { PreviewStatus } from "../preview/status.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import type { Dialogs } from "../workbench/dialogs.ts";
 import type { Notifications } from "../workbench/notifications.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import {
   ExportCompositor,
   exportCompositorOptions,
@@ -94,7 +94,7 @@ export class StillExport {
     let compositor: StillCompositor | undefined;
     let failure: unknown;
     try {
-      compositor = this.#open(state, plan);
+      compositor = this.#open(state, projectKeyOf(store), plan);
       const image = await untilAborted(compositor.still(seconds), signal);
       const file = await (this.#options.encode ?? encodeStill)(image);
       signal.throwIfAborted();
@@ -117,8 +117,12 @@ export class StillExport {
     else if (failure !== undefined) await this.#tell(failure, state);
   }
 
-  #open(state: ProjectState, plan: ExportCompositorOptions["plan"]): StillCompositor {
-    const options = exportCompositorOptions(this.#options, state, plan);
+  #open(
+    state: ProjectState,
+    project: string,
+    plan: ExportCompositorOptions["plan"],
+  ): StillCompositor {
+    const options = exportCompositorOptions(this.#options, state, project, plan);
     return this.#options.compositor?.(options) ?? new ExportCompositor(options);
   }
 

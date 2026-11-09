@@ -916,8 +916,9 @@ class Turn {
     const disk = await this.#lookAll(paths);
     if (this.#dead) return false;
     const manifest = disk.get(MANIFEST_FILE);
-    if (manifest?.kind === "absent") {
-      // Not a project any more, for now: what changed waits for it to come back.
+    // Not a project any more, for now: what changed waits for it to come back. Unless the editor
+    // never saw it there, as in the folder of a new project, which gets it last.
+    if (manifest?.kind === "absent" && this.#known.get(MANIFEST_FILE)?.base !== undefined) {
       this.#setTrouble({ reason: "manifest-gone" });
       return false;
     }

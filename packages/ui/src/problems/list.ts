@@ -80,6 +80,8 @@ export class ProblemList {
   #imported: readonly ListedProblem[] = [];
   /** What is wrong with what clips hold for their scenes, all of it at once. */
   #properties: readonly ListedProblem[] = [];
+  /** What keeps files of the project folder from being written, and what came in only partly. */
+  #folder: readonly ListedProblem[] = [];
   #snapshot = NOTHING;
 
   subscribe = this.#emitter.subscribe;
@@ -95,6 +97,7 @@ export class ProblemList {
     for (const problems of this.#files.values()) problems.forEach(add);
     this.#imported.forEach(add);
     this.#properties.forEach(add);
+    this.#folder.forEach(add);
     const problems = [...seen.values()].toSorted(compare);
     const errors = problems.filter(({ severity }) => severity === "error").length;
     this.#snapshot = {
@@ -165,6 +168,16 @@ export class ProblemList {
     this.#changed();
   }
 
+  /**
+   * All that is wrong between the project and its folder right now: files that wait for people, and
+   * what of the folder did not come in. Each comes with what people can do about it.
+   */
+  setFolder(problems: readonly Listed[]): void {
+    if (problems.length === 0 && this.#folder.length === 0) return;
+    this.#folder = problems.slice(0, MAX_PROBLEMS).map(withId);
+    this.#changed();
+  }
+
   /** What an import found. Nobody looks at it again, so it stays until people clear it. */
   noteImport(problems: readonly Listed[]): void {
     this.#imported = problems.slice(0, MAX_PROBLEMS).map(withId);
@@ -184,6 +197,7 @@ export class ProblemList {
     this.#files.clear();
     this.#imported = [];
     this.#properties = [];
+    this.#folder = [];
     if (this.#snapshot === NOTHING) return;
     this.#snapshot = NOTHING;
     this.#emitter.emit();

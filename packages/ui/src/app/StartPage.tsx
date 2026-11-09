@@ -1,16 +1,28 @@
 import type { ProjectSummary } from "@animaquill/host";
-import { Feather, FolderInput, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Feather, FolderInput, FolderOpen, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { sizeOf, type UnfinishedExport } from "../export/video.ts";
+import type { RecentFolder } from "../folder/projects.ts";
+import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./StartPage.module.css";
 
 const when = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" });
 
+const noSubscription = () => () => {};
+const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
+const noFolders = () => NO_FOLDERS;
+
 /** What people see before a project is open: every panel needs a project to show anything. */
 /** What exports that stopped halfway take on this device, which people should be able to clear. */
-function UnfinishedExports({ projects }: { projects: readonly ProjectSummary[] }) {
+function UnfinishedExports({
+  projects,
+  recent,
+}: {
+  projects: readonly ProjectSummary[];
+  recent: readonly RecentFolder[];
+}) {
   const { videos } = useWorkbench();
   const { t } = useTranslation();
   const [found, setFound] = useState<readonly UnfinishedExport[]>([]);
@@ -19,7 +31,10 @@ function UnfinishedExports({ projects }: { projects: readonly ProjectSummary[] }
   }, [videos]);
   useEffect(refresh, [refresh]);
   if (found.length === 0) return null;
-  const nameOf = (id: string) => projects.find((project) => project.id === id)?.name ?? "";
+  const nameOf = (id: string) =>
+    recent.find(({ record }) => record.id === id)?.record.name ??
+    projects.find((project) => project.id === id)?.name ??
+    "";
   return (
     <section aria-label={t("export.unfinished.title")}>
       <h2>{t("export.unfinished.title")}</h2>
@@ -52,11 +67,116 @@ function UnfinishedExports({ projects }: { projects: readonly ProjectSummary[] }
   );
 }
 
+/** A project folder that the address of this window asks for, which waits for people. */
+function Waiting({ waiting }: { waiting: WaitingFolder }) {
+  const { projectFolders } = useWorkbench();
+  const { t } = useTranslation();
+  const { record, status } = waiting;
+  if (!projectFolders) return null;
+  if (status === "ask") {
+    return (
+      <section className={styles.waiting} aria-label={t("folder.continue", { name: record.name })}>
+        <button
+          type="button"
+          className={styles.create}
+          onClick={() => void projectFolders.openRecent(record)}
+        >
+          <FolderOpen size={16} />
+          {t("folder.continue", { name: record.name })}
+        </button>
+        <p className={styles.muted}>{t("folder.continueHint")}</p>
+      </section>
+    );
+  }
+  return (
+    <section className={styles.waiting} role="alert">
+      <p>
+        {status === "gone"
+          ? t("folder.waitingGone", { name: record.name })
+          : t("folder.waitingBlocked", { name: record.name })}
+      </p>
+      {status === "gone" && (
+        <button
+          type="button"
+          className={styles.bringIn}
+          onClick={() => void projectFolders.findAgain(record)}
+        >
+          {t("folder.findAgain")}
+        </button>
+      )}
+    </section>
+  );
+}
+
+/** Folders opened in this browser before, the most recent first, and how each is now. */
+function RecentFolders({
+  recent,
+  refresh,
+}: {
+  recent: readonly RecentFolder[];
+  refresh: () => void;
+}) {
+  const { projectFolders } = useWorkbench();
+  const { t } = useTranslation();
+  if (!projectFolders || recent.length === 0) return null;
+  return (
+    <>
+      <h2>{t("project.recent")}</h2>
+      <ul className={styles.list}>
+        {recent.map(({ record, status }) => (
+          <li key={record.id}>
+            <button
+              type="button"
+              className={styles.project}
+              onClick={() => void projectFolders.openRecent(record).then(refresh)}
+            >
+              <span className={styles.name}>{record.name}</span>
+              <span className={styles.folder}>
+                {status === "ready"
+                  ? t("folder.folderLabel", { folder: record.folder.name })
+                  : t(`folder.recentStatus.${status}`)}
+              </span>
+              <span className={styles.time}>{when.format(record.openedAt)}</span>
+            </button>
+            {status === "gone" && (
+              <button
+                type="button"
+                className={styles.again}
+                onClick={() => void projectFolders.findAgain(record).then(refresh)}
+              >
+                {t("folder.findAgain")}
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.remove}
+              aria-label={t("folder.removeButton", { name: record.name })}
+              onClick={() => {
+                void projectFolders.remove(record).then((removed) => {
+                  if (removed) refresh();
+                });
+              }}
+            >
+              <X size={14} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function StartPage() {
   const workbench = useWorkbench();
+  const { projectFolders } = workbench;
   const { t } = useTranslation();
   const [projects, setProjects] = useState<readonly ProjectSummary[]>();
+  const [recent, setRecent] = useState<readonly RecentFolder[]>([]);
   const [failed, setFailed] = useState(false);
+  const folders = useSyncExternalStore(
+    projectFolders?.subscribe ?? noSubscription,
+    projectFolders?.getSnapshot ?? noFolders,
+  );
 
   // "No projects yet" would be a frightening thing to say when the list merely cannot be read.
   const refresh = useCallback(() => {
@@ -64,9 +184,18 @@ export function StartPage() {
       console.warn("Projects could not be listed", error);
       setFailed(true);
     });
-  }, [workbench]);
+    projectFolders?.recent().then(setRecent, (error: unknown) => {
+      console.warn("Project folders could not be listed", error);
+      setFailed(true);
+    });
+  }, [workbench, projectFolders]);
 
-  useEffect(refresh, [refresh]);
+  useEffect(refresh, [refresh, folders.waiting]);
+
+  // The log of a project folder is in the browser too, but it is no project of the browser.
+  const inFolders = new Set(recent.map(({ record }) => record.id));
+  const inBrowser = projects?.filter(({ id }) => !inFolders.has(id));
+  const nothing = projects !== undefined && inBrowser?.length === 0 && recent.length === 0;
 
   return (
     <main className={styles.page}>
@@ -81,30 +210,47 @@ export function StartPage() {
           <button
             type="button"
             className={styles.create}
-            onClick={() => void workbench.newProject()}
+            onClick={() => void workbench.newProject().then(refresh)}
           >
             <Plus size={16} />
             {t("project.new")}
           </button>
-          <button
-            type="button"
-            className={styles.bringIn}
-            onClick={() => void workbench.importProject().then(refresh)}
-          >
-            <FolderInput size={16} />
-            {t("transfer.importAction")}
-          </button>
+          {projectFolders ? (
+            <button
+              type="button"
+              className={styles.bringIn}
+              onClick={() => void workbench.openFolder().then(refresh)}
+            >
+              <FolderOpen size={16} />
+              {t("folder.openAction")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.bringIn}
+              onClick={() => void workbench.importProject().then(refresh)}
+            >
+              <FolderInput size={16} />
+              {t("transfer.importAction")}
+            </button>
+          )}
+          {projectFolders && <span className={styles.dropHint}>{t("folder.dropHint")}</span>}
         </div>
 
-        {projects && projects.length > 0 && <h2>{t("project.recent")}</h2>}
-        {projects?.length === 0 && <p className={styles.muted}>{t("project.none")}</p>}
+        {folders.waiting && <Waiting waiting={folders.waiting} />}
+        {nothing && <p className={styles.muted}>{t("project.none")}</p>}
         {failed && (
           <p className={styles.failed} role="alert">
             {t("project.listFailed")}
           </p>
         )}
+        <RecentFolders recent={recent} refresh={refresh} />
+
+        {inBrowser && inBrowser.length > 0 && (
+          <h2>{projectFolders ? t("folder.browserProjects") : t("project.recent")}</h2>
+        )}
         <ul className={styles.list}>
-          {projects?.map((project) => (
+          {inBrowser?.map((project) => (
             <li key={project.id}>
               <button
                 type="button"
@@ -129,9 +275,14 @@ export function StartPage() {
             </li>
           ))}
         </ul>
+        {projectFolders && inBrowser && inBrowser.length > 0 && (
+          <p className={styles.muted}>{t("folder.browserHint")}</p>
+        )}
 
-        <p className={styles.muted}>{t("project.localHint")}</p>
-        <UnfinishedExports projects={projects ?? []} />
+        <p className={styles.muted}>
+          {projectFolders ? t("folder.localHint") : t("folder.unsupported")}
+        </p>
+        <UnfinishedExports projects={projects ?? []} recent={recent} />
       </div>
     </main>
   );

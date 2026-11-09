@@ -27,7 +27,7 @@ import {
 } from "@animaquill/core";
 import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
 import { sceneTemplate } from "./scene-template.ts";
@@ -677,7 +677,7 @@ export class TimelineEditor implements TouchTarget {
   }
 
   #remember(): void {
-    const id = this.#store?.getState().manifest.id;
+    const id = this.#store && projectKeyOf(this.#store);
     if (id === undefined || this.#pixelsPerSecond === 0) return;
     const view: RememberedView = {
       rowScale: this.#rowScale,
@@ -700,7 +700,7 @@ export class TimelineEditor implements TouchTarget {
     this.#store = store;
     this.#stopStore = store?.subscribe(() => this.#refresh());
     const remembered = store
-      ? parseRemembered(this.#memory.read(`timeline.${store.getState().manifest.id}`))
+      ? parseRemembered(this.#memory.read(`timeline.${projectKeyOf(store)}`))
       : undefined;
     this.#pixelsPerSecond = remembered?.pixelsPerSecond ?? 0;
     this.#rowScale = clamp(remembered?.rowScale ?? 1, MIN_ROW_SCALE, MAX_ROW_SCALE);

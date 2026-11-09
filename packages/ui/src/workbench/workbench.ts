@@ -49,7 +49,9 @@ import type { Platform } from "./keys.ts";
 import { LayoutController, type WorkspaceDefinition } from "./layout.ts";
 import { Notifications } from "./notifications.ts";
 import { CommandPalette } from "./palette.ts";
-import { ProjectSession } from "./session.ts";
+import type { FolderTiming } from "../folder/session.ts";
+import { ProjectFolders } from "./project-folders.ts";
+import { ProjectSession, projectKeyOf } from "./session.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
 export interface WorkbenchOptions {
@@ -64,6 +66,8 @@ export interface WorkbenchOptions {
   readonly sceneStage?: "plain";
   /** For tests: how long code gets to make a sound. */
   readonly soundLimitMs?: number;
+  /** For tests: how long a project folder waits, see `FolderTiming`. */
+  readonly folderTiming?: Partial<FolderTiming>;
 }
 
 /** The editor's frame, without any rendering, so that it can be tested on its own. */
@@ -105,6 +109,11 @@ export class Workbench {
   readonly transfer: ProjectTransfer;
   readonly stills: StillExport;
   readonly videos: VideoExport;
+  /**
+   * Projects that are folders on this computer, where the browser can write folders: Chrome and
+   * Edge. Elsewhere projects stay in the browser, see the design of local projects, section 6.
+   */
+  readonly projectFolders: ProjectFolders | undefined;
   readonly diagnostics: DiagnosticsRecorder;
   /** Errors of the editor while this page is open, and whether people want to report them. */
   readonly errors: ErrorReports;
@@ -184,11 +193,11 @@ export class Workbench {
     });
     this.registrations = new SceneRegistrations(host.caches);
     let open = this.session.store;
-    this.registrations.open(open?.getState().manifest.id);
+    this.registrations.open(open && projectKeyOf(open));
     this.session.subscribe(() => {
       if (this.session.store !== open) this.problems.clear();
       open = this.session.store;
-      this.registrations.open(open?.getState().manifest.id);
+      this.registrations.open(open && projectKeyOf(open));
     });
     this.code = new CodeDocuments(
       this.session,
@@ -305,6 +314,25 @@ export class Workbench {
     });
     // What nobody went on with for long goes, whichever project it is of.
     void this.videos.cleanUp();
+    this.projectFolders =
+      host.localFolders &&
+      new ProjectFolders({
+        folders: host.localFolders,
+        projects: host.projects,
+        session: this.session,
+        address: host.address,
+        dialogs: this.dialogs,
+        notifications: this.notifications,
+        problems: this.problems,
+        t,
+        changeProject: (next) => this.#changeProject(next),
+        warnAboutCode: (report) => this.transfer.warnAboutCode(report),
+        noteArrival: (report) => this.#noteImport(report),
+        letGo: (id) => this.videos.letGoOfProject(id),
+        showProblems: () => this.layout.openPanel("problems"),
+        ...(options.folderTiming && { timing: options.folderTiming }),
+      });
+    this.session.subscribe(() => this.projectFolders?.followSession());
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
@@ -697,10 +725,16 @@ export class Workbench {
       this.previewQuality.load(),
       this.trials.load(),
     ]);
-    await this.session.restore();
+    // An address of a project folder is opened as one, or waits for people to let the editor at it.
+    if (!(await this.projectFolders?.restore())) await this.session.restore();
   }
 
+  /** In a folder people choose, where the browser can write folders: see `ProjectFolders.create`. */
   async newProject(): Promise<void> {
+    if (this.projectFolders) {
+      await this.projectFolders.create();
+      return;
+    }
     const { t } = this;
     const name = await this.dialogs.prompt({
       title: t("project.nameLabel"),
@@ -719,6 +753,11 @@ export class Workbench {
     await this.#changeProject();
   }
 
+  /** Asks for a project folder, and opens it: see `ProjectFolders.open`. */
+  async openFolder(): Promise<void> {
+    await this.projectFolders?.open();
+  }
+
   /** The open project stays open until the new one is there, so a failure costs nothing. */
   async importProject(): Promise<void> {
     this.diagnostics.mark("import", { step: "start" });
@@ -728,7 +767,7 @@ export class Workbench {
     if (!report) return;
     await this.transfer.warnAboutCode(report);
     await this.openProject(report.id);
-    if (this.session.store?.getState().manifest.id === report.id) this.#noteImport(report);
+    if (this.session.key === report.id) this.#noteImport(report);
     await this.transfer.announceImport(report);
   }
 
@@ -895,6 +934,8 @@ export class Workbench {
     }
     if (this.trials.getSnapshot().count > 0) this.trials.save();
     else await this.session.trySave();
+    // What is saved goes into the project folder right away, not once people stop.
+    await this.projectFolders?.flush();
   }
 
   /** An export is what is saved, which is not what people have been looking at while trying. */
@@ -981,6 +1022,8 @@ export class Workbench {
       if (!leave) return false;
     }
     await this.layout.detach();
+    // The folder gets what is waiting first, and the next window gets to write it.
+    await this.projectFolders?.close();
     await this.session.close();
     return true;
   }
@@ -993,6 +1036,14 @@ export class Workbench {
       run: () => void this.newProject(),
       menu: { name: "file", group: "open" },
     });
+    if (this.projectFolders) {
+      this.actions.register({
+        id: "project.openFolder",
+        title: (t) => t("folder.openAction"),
+        run: () => void this.openFolder(),
+        menu: { name: "file", group: "open" },
+      });
+    }
     this.actions.register({
       id: "project.close",
       title: (t) => t("project.close"),
@@ -1029,12 +1080,15 @@ export class Workbench {
       menu: { name: "file", group: "project" },
       enabled: isOpen,
     });
-    this.actions.register({
-      id: "project.importFolder",
-      title: (t) => t("transfer.importAction"),
-      run: () => void this.importProject(),
-      menu: { name: "file", group: "folder" },
-    });
+    // Where projects are folders, opening one takes the place of bringing one into the browser.
+    if (!this.projectFolders) {
+      this.actions.register({
+        id: "project.importFolder",
+        title: (t) => t("transfer.importAction"),
+        run: () => void this.importProject(),
+        menu: { name: "file", group: "folder" },
+      });
+    }
     this.actions.register({
       id: "project.exportFolder",
       title: (t) => t("transfer.exportAction"),

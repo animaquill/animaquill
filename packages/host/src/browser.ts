@@ -614,6 +614,20 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
   };
 }
 
+/**
+ * Says that projects stay in this browser here, as where it cannot write folders, see `LocalFolders`.
+ * Tests of everything else set it, as a page cannot answer the browser's dialog for a folder.
+ */
+export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
+
+function keepsProjectsHere(storage: () => Storage): boolean {
+  try {
+    return storage().getItem(PROJECTS_HERE_KEY) === "yes";
+  } catch {
+    return false;
+  }
+}
+
 /** Keeps everything in this browser. Used until an account or a local folder can hold it. */
 export function createBrowserHost(
   storage: () => Storage = () => localStorage,
@@ -668,7 +682,9 @@ export function createBrowserHost(
       ).catch(() => {});
     }
   };
-  const localFolders = browserLocalFolders(database, locks);
+  const localFolders = keepsProjectsHere(storage)
+    ? undefined
+    : browserLocalFolders(database, locks);
   return {
     settings,
     projects: createLibrary(projects, locks, forget),

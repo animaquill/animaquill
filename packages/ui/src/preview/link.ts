@@ -33,6 +33,7 @@ import { scaledSize, type PreviewQuality } from "./quality.ts";
 import { KeyboardKeeper } from "./keyboard.ts";
 import type { PreviewStatus } from "./status.ts";
 import { CompositorWatch } from "./watch.ts";
+import { projectKeyOf } from "../workbench/session.ts";
 
 /** Over this a frame misses the next refresh of a 60 Hz screen. */
 const SLOW_FRAME_MS = 17;
@@ -405,8 +406,7 @@ export class PreviewLink {
   }
 
   async #sendScene(scene: string, revision: string): Promise<void> {
-    const project = this.#store.getState().manifest.id;
-    const media = this.#projects.media(project);
+    const media = this.#projects.media(projectKeyOf(this.#store));
     const content = await sceneContent(
       this.#store.getState(),
       this.#plan,
@@ -434,8 +434,7 @@ export class PreviewLink {
       ({ source }) => (source.kind === "image" || source.kind === "video") && source.file === id,
     );
     if (!used) return;
-    const project = this.#store.getState().manifest.id;
-    const file = await this.#projects.media(project).get(id);
+    const file = await this.#projects.media(projectKeyOf(this.#store)).get(id);
     if (file) this.#send({ type: "file", id, file });
     else this.#onProblem(id);
   }

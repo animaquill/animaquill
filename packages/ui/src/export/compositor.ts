@@ -357,9 +357,10 @@ export interface ExportSite {
 export function exportCompositorOptions(
   { projects, preview, compositorUrl, sceneOrigins, sceneStage }: ExportSite,
   state: ProjectState,
+  project: string,
   plan: RenderPlan,
 ): ExportCompositorOptions {
-  const media = projects.media(state.manifest.id);
+  const media = projects.media(project);
   const { runScenes } = preview.getSnapshot();
   const setup: SceneSetup = {
     // The preview starts at the other end: scenes on one origin hang together.

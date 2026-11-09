@@ -64,6 +64,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     void workbench.layout.flush();
     workbench.timeline.flush();
     workbench.keyframes.flush();
+    // What is in the log is safe, and the folder should have it too, should the page not come back.
+    void workbench.projectFolders?.flush();
   };
   document.addEventListener("visibilitychange", save);
 
@@ -77,8 +79,17 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   const keepFiles = (event: DragEvent) => {
     if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
   };
+  // A folder dropped anywhere else opens as a project, where projects are folders. What a panel
+  // takes, such as assets, it has taken already.
+  const openDropped = (event: DragEvent) => {
+    const transfer = event.dataTransfer;
+    if (!transfer?.types.includes("Files")) return;
+    const taken = event.defaultPrevented;
+    event.preventDefault();
+    if (!taken && !workbench.dialogs.getSnapshot()) workbench.projectFolders?.dropped(transfer);
+  };
   window.addEventListener("dragover", keepFiles);
-  window.addEventListener("drop", keepFiles);
+  window.addEventListener("drop", openDropped);
 
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -91,7 +102,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   window.addEventListener("beforeunload", onBeforeUnload);
 
   return () => {
-    window.removeEventListener("drop", keepFiles);
+    window.removeEventListener("drop", openDropped);
     window.removeEventListener("dragover", keepFiles);
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("keydown", onKeyDown);

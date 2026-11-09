@@ -273,6 +273,16 @@ class HandleFolder implements LocalFolder {
     return theirs ? this.#root.isSameEntry(theirs).catch(() => false) : false;
   }
 
+  async inside(name: string, { create = false } = {}): Promise<LocalFolder> {
+    const parts = this.#parts(name);
+    if (parts.length !== 1) throw new FolderError("refused", name);
+    try {
+      return new HandleFolder(await this.#folderAt(parts, create), this.#environment);
+    } catch (error) {
+      throw await this.#failure(error, name, create);
+    }
+  }
+
   async pathOf(entry: LocalEntry): Promise<string | undefined> {
     const handle = handleOfEntry(entry);
     const parts = handle && (await this.#root.resolve(handle).catch(() => null));

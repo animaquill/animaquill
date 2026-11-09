@@ -50,7 +50,7 @@ import type { TimelineEditor } from "../timeline/editor.ts";
 import { frameTime } from "../timeline/frames.ts";
 import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "../timeline/model.ts";
 import { Emitter } from "../workbench/emitter.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { momentOfKey, type KeyArea } from "./area.ts";
 import type { ValueLabel } from "./paint.ts";
@@ -382,7 +382,7 @@ export class KeyframeEditor {
     this.#heldRanges = new Map();
     this.inTimeline.forgetAll();
     const remembered = store
-      ? parseRemembered(this.#memory.read(`keyframes.${store.getState().manifest.id}`))
+      ? parseRemembered(this.#memory.read(`keyframes.${projectKeyOf(store)}`))
       : {};
     const there = (ids: readonly string[]) => ids.filter((id) => this.#isThere(id));
     for (const id of there(stringsIn(remembered.toggled))) this.#toggled.add(id);
@@ -1253,7 +1253,7 @@ export class KeyframeEditor {
   }
 
   #remember(): void {
-    const id = this.#store?.getState().manifest.id;
+    const id = this.#store && projectKeyOf(this.#store);
     if (id === undefined) return;
     const { range, pinned } = this.#snapshot;
     const view = this.panel.ownView;

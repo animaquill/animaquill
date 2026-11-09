@@ -3,6 +3,8 @@ import { Emitter } from "./emitter.ts";
 export interface PromptOptions {
   readonly title: string;
   readonly value?: string;
+  /** What people should know about what comes next, under the box. */
+  readonly hint?: string;
   readonly confirm: string;
 }
 

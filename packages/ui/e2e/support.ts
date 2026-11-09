@@ -67,8 +67,15 @@ export const test = base.extend<{
   trying: boolean;
   quality: "auto" | "full";
   devPage: boolean;
+  folders: boolean;
 }>({
   withProject: [true, { option: true }],
+  /**
+   * Whether projects are folders on the disk, as in Chrome and Edge. Off for everything that is not
+   * about that: then projects stay in the browser, as in Firefox, because a test cannot answer the
+   * browser's dialog for a folder. See `PROJECTS_HERE_KEY` in the host.
+   */
+  folders: [false, { option: true }],
   /**
    * Whether this is the development page, which has things for tests that the site does not:
    * `window.aqExecute`, `window.aqAudio`, `?soundLimit=` and `?sceneStage=plain`, see
@@ -105,7 +112,7 @@ export const test = base.extend<{
     rmSync(folder, { recursive: true, force: true });
   },
   problems: [
-    async ({ page, withProject, trying, quality }, use) => {
+    async ({ page, withProject, trying, quality, folders }, use) => {
       const problems: string[] = [];
       page.on("pageerror", (error) => problems.push(error.message));
       page.on("console", (message) => {
@@ -119,6 +126,12 @@ export const test = base.extend<{
           console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
         });
       });
+      if (!folders) {
+        await page.addInitScript(() => {
+          if (window !== window.top) return;
+          localStorage.setItem("animaquill.projectsInBrowser", "yes");
+        });
+      }
       if (!trying) {
         // This runs in every frame, and the sandbox of the compositor has no storage.
         await page.addInitScript(() => {

@@ -1,6 +1,9 @@
 import { Circle, CircleAlert, CircleX, Download, Pause, TriangleAlert, X } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import type { FolderTrouble } from "../folder/session.ts";
+import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
 import type { InputChoice } from "../workbench/input-mode.ts";
 import { PreviewStatus } from "../preview/Quality.tsx";
 import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
@@ -195,6 +198,99 @@ function ProblemsStatus() {
   );
 }
 
+const noSubscription = () => () => {};
+const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
+const noFolders = () => NO_FOLDERS;
+const writtenWhen = new Intl.DateTimeFormat("zh-CN", { timeStyle: "medium" });
+
+/** What keeps changes from a project folder, in words. */
+function troubleText(trouble: FolderTrouble, t: TFunction): string {
+  switch (trouble.reason) {
+    case "gone":
+    case "replaced":
+    case "manifest-gone":
+    case "outdated":
+    case "denied":
+    case "full":
+      return t(`folder.trouble.${trouble.reason}`);
+    case "busy":
+    case "too-long":
+    case "clash":
+      return t(`folder.trouble.${trouble.reason}`, {
+        path: trouble.path,
+        interpolation: { escapeValue: false },
+      });
+    default:
+      return t("folder.trouble.other", {
+        path: trouble.path,
+        interpolation: { escapeValue: false },
+      });
+  }
+}
+
+/**
+ * Whether the project folder has everything, as the save status of a project that is a folder:
+ * what keeps changes from it, and the one thing that helps, right there.
+ */
+function FolderSaveStatus({ open }: { open: OpenFolder }) {
+  const { projectFolders, layout } = useWorkbench();
+  const { t } = useTranslation();
+  const { record, snapshot } = open;
+  const { role, status, trouble, blocked, writtenAt, unrecorded } = snapshot;
+  if (!projectFolders) return null;
+  const about =
+    writtenAt === undefined
+      ? t("folder.folderName", { folder: record.folder.name })
+      : t("folder.writtenAt", { folder: record.folder.name, time: writtenWhen.format(writtenAt) });
+  const text =
+    role === "starting"
+      ? t("folder.status.starting")
+      : status === "unsaved" && trouble
+        ? troubleText(trouble, t)
+        : t(`folder.status.${status}`);
+  const fix =
+    trouble?.reason === "gone" || trouble?.reason === "replaced"
+      ? { label: t("folder.findAgain"), run: () => void projectFolders.findAgain(record) }
+      : trouble?.reason === "denied"
+        ? { label: t("folder.allowAgain"), run: () => void projectFolders.allowAgain() }
+        : trouble?.reason === "manifest-gone"
+          ? { label: t("folder.restore"), run: () => void projectFolders.writeEditorContent() }
+          : trouble?.reason === "outdated"
+            ? { label: t("folder.reload"), run: () => location.reload() }
+            : undefined;
+  const isTrouble = status === "unsaved";
+  return (
+    <>
+      <Tip name={text} usage={isTrouble ? t("folder.troubleAbout") : about}>
+        <span className={isTrouble ? styles.failed : undefined} role="status">
+          {isTrouble && <CircleAlert size={12} />}
+          {text}
+        </span>
+      </Tip>
+      {fix && (
+        <button type="button" className={styles.name} onClick={fix.run}>
+          {fix.label}
+        </button>
+      )}
+      {blocked.length > 0 && (
+        <button
+          type="button"
+          className={`${styles.name} ${styles.failed}`}
+          onClick={() => layout.openPanel("problems")}
+        >
+          {t("folder.blockedCount", { count: blocked.length })}
+        </button>
+      )}
+      {unrecorded && (
+        <span className={styles.failed} role="status">
+          <TriangleAlert size={12} />
+          {t("folder.unrecorded")}
+        </span>
+      )}
+    </>
+  );
+}
+
 /** The size the project is made at, which is what an export gets. */
 function SizeStatus({ width, height }: { width: number; height: number }) {
   const { t } = useTranslation();
@@ -216,6 +312,13 @@ export function StatusBar() {
   const { store, save } = useSession();
   const project = useProject(store);
   const { t } = useTranslation();
+  const { projectFolders } = workbench;
+  const { open } = useSyncExternalStore(
+    projectFolders?.subscribe ?? noSubscription,
+    projectFolders?.getSnapshot ?? noFolders,
+  );
+  // A project folder says what it has; the log only when it cannot keep changes.
+  const folder = open && open.snapshot && store ? open : undefined;
 
   const saveText = {
     saved: t("project.saved"),
@@ -239,7 +342,8 @@ export function StatusBar() {
       )}
       {format && <SizeStatus width={format.width} height={format.height} />}
       {project && <FrameRateStatus />}
-      {project && (
+      {project && folder && <FolderSaveStatus open={folder} />}
+      {project && (!folder || save === "failed") && (
         <span className={save === "failed" ? styles.failed : undefined} role="status">
           {save === "failed" && <CircleAlert size={12} />}
           {saveText}

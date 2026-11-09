@@ -648,6 +648,12 @@ export interface LocalFolder {
   /** Whether this is the same folder as another one, at the same place. One that moved is not. */
   isSame(other: LocalFolder): Promise<boolean>;
   /**
+   * A folder right inside this one, as a folder of its own, which the editor may write as far as it
+   * may write this one. With `create` it is made when it is not there. Rejects with "missing" when
+   * it is not there, and when making it, with "exists" where a file has its name.
+   */
+  inside(name: string, options?: { readonly create?: boolean }): Promise<LocalFolder>;
+  /**
    * Where something that was dropped is in this folder, "" for the folder itself, or undefined when
    * it is somewhere else.
    */

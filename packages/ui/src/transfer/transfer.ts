@@ -3,7 +3,7 @@ import type { Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { DialogDetail, Dialogs, ProgressDialog } from "../workbench/dialogs.ts";
 import type { Notifications } from "../workbench/notifications.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { INCOMPLETE_FILE, exportProject, type ExportReport, type TransferStep } from "./export.ts";
 import {
   ImportRefused,
@@ -131,7 +131,7 @@ export class ProjectTransfer {
     const t = this.#t;
     const store = this.#session.store;
     if (!store) return;
-    const { id, name } = store.getState().manifest;
+    const { name } = store.getState().manifest;
     const target = await this.#choose(t("transfer.exportFailed"), () =>
       this.#folders.chooseTarget(name),
     );
@@ -147,14 +147,19 @@ export class ProjectTransfer {
       const show = this.#follow(progress);
       let current = INCOMPLETE_FILE;
       try {
-        const report = await exportProject(store, this.#projects.media(id), target, {
-          notice: t("transfer.incompleteNotice"),
-          signal,
-          onStep: (step) => {
-            current = step.file;
-            show(step);
+        const report = await exportProject(
+          store,
+          this.#projects.media(projectKeyOf(store)),
+          target,
+          {
+            notice: t("transfer.incompleteNotice"),
+            signal,
+            onStep: (step) => {
+              current = step.file;
+              show(step);
+            },
           },
-        });
+        );
         return () => this.#announceExport(target, report);
       } catch (error) {
         const cleaned = await this.#takeBack(target);

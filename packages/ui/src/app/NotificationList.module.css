@@ -23,7 +23,6 @@
 .item {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
   color: var(--aq-text);
@@ -49,4 +48,16 @@
 
 .item button:hover {
   background: var(--aq-bg-hover);
+}
+
+.item > span {
+  flex: 1;
+}
+
+.item button.action {
+  width: auto;
+  height: auto;
+  padding: 1px 8px;
+  color: var(--aq-accent);
+  white-space: nowrap;
 }

@@ -197,6 +197,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
             onChange={(event) => setValue(event.target.value)}
           />
         )}
+        {isPrompt && request.hint && <p className={styles.hint}>{request.hint}</p>}
         <div className={styles.buttons}>
           {!(isConfirm && request.noticeOnly) && (
             <button ref={cancel} type="button" onClick={dismiss}>

@@ -3,7 +3,8 @@
  * keeps failing, windows that sleep or ask at once, the power taking back a write.
  */
 import type { FolderWriter } from "@animaquill/host";
-import { MANIFEST_FILE } from "@animaquill/schema";
+import { ProjectStore } from "@animaquill/core";
+import { MANIFEST_FILE, createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserFolderWriter } from "../../../host/src/folder-writer.ts";
 import {
@@ -407,6 +408,25 @@ describe("what the browser keeps, when it cannot be read", () => {
     await browser.settle();
     expect(newer.session.getSnapshot().role).toBe("writing");
     expect(nameOnDisk(browser)).toBe("新版本的");
+  });
+});
+
+describe("the folder of a new project", () => {
+  it("gets all of it, animaquill.json last, although it has none yet", async () => {
+    const browser = new TestBrowser(undefined, new Map());
+    browser.disk.folder(PROJECT);
+    const made = ProjectStore.create(createProject({ name: "新的" }));
+    await browser.library.create({ id: LOCAL, name: "新的" }, made.encodeState());
+    made.destroy();
+    const written: string[] = [];
+    for (const path of [MANIFEST_FILE, MAIN]) {
+      browser.disk.onNext("written", `${PROJECT}/${path}`, () => written.push(path));
+    }
+    const { session } = await browser.open();
+    await browser.settle();
+    expect(session.getSnapshot()).toMatchObject({ status: "saved", trouble: undefined });
+    expect(JSON.parse(textOn(browser.disk, MANIFEST_FILE)).name).toBe("新的");
+    expect(written).toEqual([MAIN, MANIFEST_FILE]);
   });
 });
 

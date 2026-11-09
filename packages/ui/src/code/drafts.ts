@@ -2,7 +2,7 @@ import { MAX_SOURCE_BYTES, type ProjectStore } from "@animaquill/core";
 import type { DraftStore } from "@animaquill/host";
 import { RelativePath } from "@animaquill/schema";
 import { PlaceKeeper, type KeeperMessages } from "../workbench/keeper.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import type { CodeDocuments, Draft } from "./documents.ts";
 
 const FORMAT_VERSION = 1;
@@ -119,7 +119,7 @@ export class CodeDrafts {
     this.#store = store;
     this.#keeper = undefined;
     if (!store) return;
-    const { id } = store.getState().manifest;
+    const id = projectKeyOf(store);
     const leaving = this.#leaving;
     const keeper = new PlaceKeeper(
       () => toStored(this.#code.drafts),

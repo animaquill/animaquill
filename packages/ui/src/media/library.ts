@@ -12,7 +12,7 @@ import {
 } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
 import { encodeStrip, stripCount, StripMaker } from "./strips.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 
 /** Peaks are worked out from a file. A new way of doing that gets a new key, and old ones stay unused. */
 const peaksKey = (hash: string) => `peaks-1:${hash}`;
@@ -311,7 +311,7 @@ export class MediaLibrary {
   }
 
   #media(store: ProjectStore) {
-    return this.#projects.media(store.getState().manifest.id);
+    return this.#projects.media(projectKeyOf(store));
   }
 
   /** Something an image element can show, or undefined when the file is not in this browser. */

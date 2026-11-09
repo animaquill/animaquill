@@ -13,8 +13,26 @@ const RETRY_AFTER_MS = 5000;
 
 export type SaveState = "saved" | "saving" | "failed";
 
+/** What sessions opened their stores as, see `SessionSnapshot.key`. */
+const keys = new WeakMap<ProjectStore, string>();
+
+/**
+ * What this browser keeps the project of a store by, see `SessionSnapshot.key`: everything that is
+ * kept of a project in this browser goes by it, never by the id of the project. It stays with the
+ * store, also while another project opens. A store that no session opened is kept by its id.
+ */
+export const projectKeyOf = (store: ProjectStore): string =>
+  keys.get(store) ?? store.getState().manifest.id;
+
 export interface SessionSnapshot {
   readonly store?: ProjectStore;
+  /**
+   * What this browser keeps the open project by: its log, and everything else this browser has of
+   * it, such as what is being tried. For a project in a folder the number of the folder, see
+   * `FolderRecord.id`, as copies of a folder have the same project id; for a project in the browser
+   * its id.
+   */
+  readonly key?: string;
   readonly save: SaveState;
 }
 
@@ -59,6 +77,11 @@ export class ProjectSession {
 
   get store(): ProjectStore | undefined {
     return this.#snapshot.store;
+  }
+
+  /** See `SessionSnapshot.key`. */
+  get key(): string | undefined {
+    return this.#snapshot.key;
   }
 
   /** Whether closing the page now would lose something. */
@@ -181,12 +204,13 @@ export class ProjectSession {
     if (damaged > 0) this.#messages.damaged();
 
     this.#log = log;
+    keys.set(store, id);
     this.#stop = [
       store.onLocalUpdate((update) => this.#save(update)),
       log.listen((update) => this.#receive(store, log, update)),
     ];
     this.#address.write(id);
-    this.#snapshot = { store, save: "saved" };
+    this.#snapshot = { store, key: id, save: "saved" };
     this.#emitter.emit();
     this.#catchUp(store, log);
     if (updates.length >= COMPACT_AFTER) {

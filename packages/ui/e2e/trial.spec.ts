@@ -72,7 +72,7 @@ test("a change shows in the picture and stays out of the project and of an expor
   await expectColor(page, 460, 540, RED);
   await expectColor(page, 960, 540, BLACK);
 
-  await chooseFrom(page, "文件", "导出项目文件夹");
+  await chooseFrom(page, "文件", "另存一份…");
   await expect(dialog(page)).toContainText("有 1 处试改没有保存");
   await expect(dialog(page)).toContainText("不包括试改");
   await dialog(page).getByRole("button", { name: "导出已保存的内容" }).click();
@@ -92,12 +92,12 @@ test("exporting can save first, and cancelling does neither", async ({ page }) =
   await addColor(page);
   await typeInto(field(page, "位置 X"), "100");
 
-  await chooseFrom(page, "文件", "导出项目文件夹");
+  await chooseFrom(page, "文件", "另存一份…");
   await dialog(page).getByRole("button", { name: "取消" }).click();
   await expect(dialog(page)).toHaveCount(0);
   await expect(count(page)).toHaveText("试改 1 处");
 
-  await chooseFrom(page, "文件", "导出项目文件夹");
+  await chooseFrom(page, "文件", "另存一份…");
   await dialog(page).getByRole("button", { name: "保存后导出" }).click();
   await expect(dialog(page).getByRole("heading", { name: "导出完成" })).toBeVisible();
   await dialog(page).getByRole("button", { name: "关闭" }).click();

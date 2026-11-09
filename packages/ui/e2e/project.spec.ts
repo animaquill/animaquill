@@ -46,7 +46,7 @@ test.describe("without a project", () => {
   });
 
   test("says where projects are kept", async ({ page }) => {
-    await expect(page.getByText("项目保存在这个浏览器里")).toBeVisible();
+    await expect(page.getByText("项目存在浏览器里，清除浏览器数据会删掉它们")).toBeVisible();
   });
 
   test("offers only what makes sense", async ({ page }) => {

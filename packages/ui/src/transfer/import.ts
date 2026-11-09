@@ -172,6 +172,7 @@ export const pointingAtNothing = (warnings: readonly Problem[]): readonly Proble
 
 /** What people have to know about a project that came in. */
 export interface ImportReport {
+  /** What this browser keeps the project by, see `BringInOptions.key`. */
   readonly id: string;
   readonly name: string;
   /** There was a project with this id, which stayed as it is, so this one has an id of its own. */
@@ -192,6 +193,12 @@ export interface ImportReport {
 export interface BringInOptions extends ReadOptions {
   /** The name for a project that has to be a copy. */
   readonly copyName: (name: string) => string;
+  /**
+   * What this browser keeps the project by, for a project that stays in its folder: then it keeps its
+   * own id and name, as copies of a folder have the same one, see `SessionSnapshot.key`. Without
+   * this the project is kept by its id, or as a copy where that is taken.
+   */
+  readonly key?: string;
 }
 
 /**
@@ -201,18 +208,18 @@ export interface BringInOptions extends ReadOptions {
 export async function bringIn(
   folder: ProjectFolder,
   projects: ProjectLibrary,
-  { copyName, signal, onStep }: BringInOptions,
+  { copyName, key, signal, onStep }: BringInOptions,
 ): Promise<ImportReport> {
   const { project, sources, files, skipped, lost, warnings } = folder;
   let { id, name } = project.manifest;
-  let incoming = await projects.receive({ id, name });
-  const copied = incoming === undefined;
-  if (!incoming) {
+  let incoming = await projects.receive({ id: key ?? id, name });
+  const copied = incoming === undefined && key === undefined;
+  if (!incoming && key === undefined) {
     id = newId("project");
     name = copyName(name);
     incoming = await projects.receive({ id, name });
   }
-  if (!incoming) throw new Error(`The new id ${id} is taken`);
+  if (!incoming) throw new Error(`The new id ${key ?? id} is taken`);
 
   try {
     const assets = { ...project.assets?.assets };
@@ -237,10 +244,10 @@ export async function bringIn(
         damaged.set(assetId, label);
       } else {
         // A project finds a file by the hash it has written down, however a tool wrote that.
-        const key = asset.hash ?? hash;
-        if (!stored.has(key)) await incoming.media.put(key, file);
-        stored.add(key);
-        assets[assetId] = { ...asset, hash: key, size: file.size };
+        const stamp = asset.hash ?? hash;
+        if (!stored.has(stamp)) await incoming.media.put(stamp, file);
+        stored.add(stamp);
+        assets[assetId] = { ...asset, hash: stamp, size: file.size };
       }
       done += file.size * 2;
       step(0);
@@ -266,7 +273,7 @@ export async function bringIn(
     store.destroy();
     await incoming.finish(state);
     return {
-      id,
+      id: key ?? id,
       name,
       copied,
       missing,

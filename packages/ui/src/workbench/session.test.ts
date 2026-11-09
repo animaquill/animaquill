@@ -2,7 +2,7 @@ import { ProjectStore } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { MemoryLibrary, memoryAddress } from "./memory-library.ts";
-import { ProjectSession, type SessionMessages } from "./session.ts";
+import { ProjectSession, projectKeyOf, type SessionMessages } from "./session.ts";
 
 /** One window. Passing on the address of another makes it that window after a reload. */
 function setup(library = new MemoryLibrary(), address = memoryAddress()) {
@@ -69,6 +69,25 @@ describe("a window on a project that was replaced", () => {
     rename(other.session, "新窗口改的名字");
     expect(await settled(other.session)).toBe(true);
     expect(library.summaries.get(id)?.name).toBe("新窗口改的名字");
+  });
+});
+
+describe("what this browser keeps a project by", () => {
+  it("is what it was opened by, which for a project folder is not its id", async () => {
+    const library = new MemoryLibrary();
+    const made = ProjectStore.create(createProject({ name: "文件夹里的" }));
+    await library.create({ id: "本机7", name: "文件夹里的" }, made.encodeState());
+    made.destroy();
+    const { session } = setup(library);
+    expect(await session.open("本机7")).toBe(true);
+    const store = session.store as ProjectStore;
+    expect(store.getState().manifest.id).not.toBe("本机7");
+    expect(session.key).toBe("本机7");
+    expect(projectKeyOf(store)).toBe("本机7");
+    // It stays with that store, also once the window goes on to another project.
+    await session.close();
+    expect(session.key).toBeUndefined();
+    expect(projectKeyOf(store)).toBe("本机7");
   });
 });
 

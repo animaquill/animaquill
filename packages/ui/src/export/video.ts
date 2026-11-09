@@ -38,7 +38,7 @@ import type { Dialogs, FormField } from "../workbench/dialogs.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import type { MadeSounds, SoundFailure } from "../media/sounds.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import {
   browserSupport,
   chooseEncoding,
@@ -215,6 +215,8 @@ interface Job {
   readonly progress: SavedProgress | undefined;
   /** The project as it was when the export started, or as it is now, which is the same. */
   readonly state: ProjectState;
+  /** What this browser keeps that project by, see `projectKeyOf`. */
+  readonly project: string;
   readonly file: GrowingFile;
   readonly place: ExportWindow;
 }
@@ -815,7 +817,7 @@ export class VideoExport {
     const { exports, dialogs, t } = this.#options;
     await this.#restored;
     if (this.#isBusy()) return false;
-    const id = store.getState().manifest.id;
+    const id = projectKeyOf(store);
     const found = await exports.list(id).catch(() => []);
     // What other windows let go of since this page started is this one's now.
     for (const saved of found.toSorted((a, b) => orderOf(a) - orderOf(b))) {
@@ -1022,10 +1024,7 @@ export class VideoExport {
     let progress: SavedProgress | undefined = state.progress;
     const name = nameOfTarget(saved.target);
     const plain = { interpolation: { escapeValue: false } };
-    const store =
-      this.#options.session.store?.getState().manifest.id === saved.project
-        ? this.#options.session.store
-        : undefined;
+    const store = this.#openKey() === saved.project ? this.#options.session.store : undefined;
     const before = held.state ?? store?.getState();
     if (!before) return;
     /** It cannot go on as it is, which no press of a button changes. */
@@ -1132,7 +1131,10 @@ export class VideoExport {
       // From now on this page knows what it is of, also when the project changes or closes.
       held.state = now;
       this.#busy = false;
-      await this.#run({ id: saved.id, plan, progress, state: now, file, place }, held);
+      await this.#run(
+        { id: saved.id, plan, progress, state: now, project: saved.project, file, place },
+        held,
+      );
     } finally {
       this.#busy = false;
     }
@@ -1296,7 +1298,7 @@ export class VideoExport {
     const order = this.#queue.nextOrder();
     this.#queue.put({
       id: job.id,
-      project: job.state.manifest.id,
+      project: job.project,
       name: job.file.name,
       status: "waiting",
       order,
@@ -1311,7 +1313,7 @@ export class VideoExport {
     // It waits for its turn: what it is asked to do is kept now, so that a reload does not lose it.
     await this.#keep(
       job.id,
-      job.state.manifest.id,
+      job.project,
       job.file.target,
       () => ({ kind: "download", name: job.file.name }),
       {
@@ -1363,7 +1365,7 @@ export class VideoExport {
     const held = this.#held.get(entry.id);
     if (!held) return false;
     if (held.state) return true;
-    return this.#options.session.store?.getState().manifest.id === entry.project;
+    return this.#openKey() === entry.project;
   }
 
   async #runEntry(entry: QueueEntry): Promise<void> {
@@ -1474,10 +1476,11 @@ export class VideoExport {
     const audible = !new SoundMixer(audioPlan, { fileOf: async () => undefined }).silent;
     const firstSound = firstEncoding && sounds[containerOf(firstEncoding.codec)];
     // Where unfinished exports of this project go, so that a new one does not suggest the same.
-    const kept = await exports.list(asked.manifest.id).catch(() => []);
+    const project = projectKeyOf(store);
+    const kept = await exports.list(project).catch(() => []);
     const taken = new Set(kept.map(({ target }) => nameOfTarget(target)));
     for (const entry of this.#queue.getSnapshot()) {
-      if (entry.project === asked.manifest.id && entry.status !== "done") taken.add(entry.name);
+      if (entry.project === project && entry.status !== "done") taken.add(entry.name);
     }
     const answer = await dialogs.form({
       title: t("export.video.title"),
@@ -1566,7 +1569,12 @@ export class VideoExport {
       if (place && !this.#isRunning()) this.#closePlace();
       return undefined;
     }
-    return { job: { id, plan: saved, progress: undefined, state, file }, place, release, total };
+    return {
+      job: { id, plan: saved, progress: undefined, state, project: projectKeyOf(store), file },
+      place,
+      release,
+      total,
+    };
   }
 
   /**
@@ -1594,7 +1602,7 @@ export class VideoExport {
   async #run(job: Job, held: Held): Promise<void> {
     const { t, notifications } = this.#options;
     const exports = this.#options.exports;
-    const { id, state, file, plan: saved } = job;
+    const { id, state, project, file, plan: saved } = job;
     let place = job.place;
     const timelineId = saved.timeline;
     const plan = buildRenderPlan(state, timelineId, { format: saved.format });
@@ -1640,7 +1648,7 @@ export class VideoExport {
     let reading = 0;
     let readingSaid: ReturnType<typeof setTimeout> | undefined;
     const openCompositor = (where: ExportWindow): VideoCompositor => {
-      const base = exportCompositorOptions(this.#options, state, plan);
+      const base = exportCompositorOptions(this.#options, state, project, plan);
       const options = {
         ...base,
         document: where.document,
@@ -1745,7 +1753,7 @@ export class VideoExport {
     const keepState = (queue: SavedQueue, progress = keptProgress) =>
       this.#keep(
         id,
-        state.manifest.id,
+        project,
         target,
         () => {
           target = { kind: "download", name: file.name };
@@ -1817,7 +1825,7 @@ export class VideoExport {
       };
       if (saved.sound) {
         const audioPlan = buildAudioPlan(state, timelineId);
-        const media = this.#options.projects.media(state.manifest.id);
+        const media = this.#options.projects.media(project);
         const made = new Map(madeSoundsOf(state, timelineId).map((each) => [each.file, each]));
         // A sound made by code is a file like any other once it is there, made from this state.
         const source: SoundSource = async (layer) => {
@@ -1825,7 +1833,7 @@ export class VideoExport {
           if (!wanted) return undefined;
           this.#flag(run, "makingSound", true);
           const outcome = await untilAborted(
-            this.#options.sounds.whenMade(wanted, state, signal),
+            this.#options.sounds.whenMade(wanted, state, project, signal),
             signal,
           ).finally(() => this.#flag(run, "makingSound", false));
           if (outcome.state === "failed") throw new SoundNotMade(layer, outcome.reason);
@@ -2025,7 +2033,7 @@ export class VideoExport {
         await this.#removeKept(id);
         const cleaned = await this.#abandon(file, id);
         this.#forgetEntry(id);
-        await this.#stopped(error, true, cleaned, file, state, range);
+        await this.#stopped(error, true, cleaned, file, { state, project }, range);
       } else if (error instanceof PausedHere) {
         // Everything up to here is on the disk, and it goes on from here when people say so.
         const stays = await keepState({ status: "paused", order }).then(
@@ -2050,12 +2058,12 @@ export class VideoExport {
         await this.#removeKept(id);
         const cleaned = await this.#abandon(file, id);
         this.#forgetEntry(id);
-        await this.#stopped(error, false, cleaned, file, state, range, false);
+        await this.#stopped(error, false, cleaned, file, { state, project }, range, false);
       } else {
         // What it got to stays in the list, failed, as far as there is a place to go on from: once
         // what went wrong is put right, a retry goes on from there. Without one it starts over,
         // with the same choices and the same file.
-        const reason = this.#reasonOf(error, file, state, range);
+        const reason = this.#reasonOf(error, file, { state, project }, range);
         // The one this was to take the place of stays as it is: this one is no better now.
         held.replaces = undefined;
         const failed = await keepState({ status: "failed", order, failure: reason }).then(
@@ -2089,7 +2097,7 @@ export class VideoExport {
           await this.#removeKept(id);
           const cleaned = await this.#abandon(file, id);
           this.#forgetEntry(id);
-          await this.#stopped(error, false, cleaned, file, state, range, false);
+          await this.#stopped(error, false, cleaned, file, { state, project }, range, false);
         }
       }
     } finally {
@@ -2314,7 +2322,7 @@ export class VideoExport {
     cancelled: boolean,
     cleaned: boolean,
     file: GrowingFile,
-    state: ProjectState,
+    of: Pick<Job, "state" | "project">,
     range: Range,
     kept = false,
   ): Promise<void> {
@@ -2326,7 +2334,7 @@ export class VideoExport {
       else this.#tell(t("export.video.cancelled"), left);
       return;
     }
-    const message = this.#reasonOf(error, file, state, range);
+    const message = this.#reasonOf(error, file, of, range);
     const after = kept ? t("export.video.kept") : left;
     this.#tell(t("export.video.failed"), `${message}${after}`);
   }
@@ -2346,7 +2354,13 @@ export class VideoExport {
   }
 
   /** What went wrong, for people. A frame that failed is where the timeline goes. */
-  #reasonOf(error: unknown, file: GrowingFile, state: ProjectState, range: Range): string {
+  #reasonOf(
+    error: unknown,
+    file: GrowingFile,
+    of: Pick<Job, "state" | "project">,
+    range: Range,
+  ): string {
+    const { state } = of;
     const { t, timeline } = this.#options;
     const plain = { interpolation: { escapeValue: false } };
     // Wherever the storage of the browser said so: a piece, a place to go on from, the start.
@@ -2359,7 +2373,7 @@ export class VideoExport {
       return t("export.video.notKept");
     }
     if (error instanceof FrameFailed) {
-      const at = this.#locate(error, range, state);
+      const at = this.#locate(error, range, of.project);
       const reason = describeFailure(t, error.failure, state, timeline);
       return t("export.video.failedAt", { frame: error.index + 1, at, reason, ...plain });
     }
@@ -2376,12 +2390,18 @@ export class VideoExport {
     return describeFailure(t, failureOf(error), state, timeline);
   }
 
+  /** What this browser keeps the open project by, see `projectKeyOf`. */
+  #openKey(): string | undefined {
+    const { store } = this.#options.session;
+    return store && projectKeyOf(store);
+  }
+
   /** Takes people to where it went wrong: the playhead goes there, and the clip gets selected. */
-  #locate({ seconds, failure }: FrameFailed, range: Range, state: ProjectState): string {
-    const { timeline, session } = this.#options;
+  #locate({ seconds, failure }: FrameFailed, range: Range, project: string): string {
+    const { timeline } = this.#options;
     const { model } = timeline;
     // An export of another project than the one that is open has nowhere to take people.
-    if (!model || session.store?.getState().manifest.id !== state.manifest.id) return "";
+    if (!model || this.#openKey() !== project) return "";
     const frame = Math.floor(Math.min(seconds, range.to) * model.rate.fps + FRAME_TOLERANCE);
     timeline.seek(frame);
     if ("layer" in failure && model.boxes.has(failure.layer)) timeline.selectOnly(failure.layer);

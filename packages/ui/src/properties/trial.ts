@@ -10,7 +10,7 @@ import type { PropertyValue } from "@animaquill/schema";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { PlaceKeeper } from "../workbench/keeper.ts";
-import type { ProjectSession } from "../workbench/session.ts";
+import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 
 /** What the picture shows instead of the project, by clip and then by property path. */
@@ -244,7 +244,7 @@ export class TrialSession {
 
   #open(store: ProjectStore, timeline: string): Trial {
     const trial = new Trial(store, timeline);
-    const { id } = store.getState().manifest;
+    const id = projectKeyOf(store);
     const leaving = this.#leaving;
     const open = () => leaving.then(() => this.#trials.open(id));
     this.#trial = trial;

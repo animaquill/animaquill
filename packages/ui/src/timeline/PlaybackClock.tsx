@@ -3,6 +3,7 @@ import { buildAudioPlan, type AudioPlan } from "@animaquill/core";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
+import { projectKeyOf } from "../workbench/session.ts";
 
 /** Plays the sound and keeps time by it, whichever panels are open. */
 export function PlaybackClock() {
@@ -15,8 +16,7 @@ export function PlaybackClock() {
     const warned = new Set<string>();
     return new PlaybackAudio({
       fileOf: async (file) => {
-        const project = store?.getState().manifest.id;
-        return project === undefined ? undefined : projects.media(project).get(file);
+        return store ? projects.media(projectKeyOf(store)).get(file) : undefined;
       },
       onProblem(file) {
         if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));

@@ -18,6 +18,7 @@ import type { QueueEntry } from "./queue.ts";
 import type { VideoJob } from "./video.ts";
 import { duration } from "./window.ts";
 import styles from "./ExportsPanel.module.css";
+import { projectKeyOf } from "../workbench/session.ts";
 
 const PLAIN = { interpolation: { escapeValue: false } } as const;
 
@@ -99,7 +100,7 @@ function Row({
   const { t } = useTranslation();
   const job = useSyncExternalStore(videos.subscribe, videos.getSnapshot);
   const live = entry.status === "running" && job?.id === entry.id ? job : undefined;
-  const open = store?.getState().manifest.id;
+  const open = store && projectKeyOf(store);
   const projectName = projects?.find(({ id }) => id === entry.project)?.name;
   const elsewhere = entry.project !== open;
   const waitsForProject =

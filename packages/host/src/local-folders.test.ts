@@ -170,6 +170,35 @@ describe("how a folder is", () => {
   });
 });
 
+describe("a folder right inside another one", () => {
+  it("is a folder of its own, which the editor may write", async () => {
+    const { disk, folder } = await chosen();
+    disk.write("文档/原子/备份/animaquill.json", "{}");
+    const inner = await folder.inside("备份");
+    expect(inner.name).toBe("备份");
+    expect(await inner.status()).toBe("ready");
+    expect(await inner.readText("animaquill.json")).toBe("{}");
+    await inner.write("notes.json", "[]");
+    expect(disk.text("文档/原子/备份/notes.json")).toBe("[]");
+    expect(await inner.isSame(await folder.inside("备份"))).toBe(true);
+    expect(await inner.isSame(folder)).toBe(false);
+  });
+
+  it("is made where it is asked for, and is not there otherwise", async () => {
+    const { disk, folder } = await chosen();
+    await expect(folder.inside("新的")).rejects.toEqual(failed("missing", "新的"));
+    const made = await folder.inside("新的", { create: true });
+    await made.write("a.txt", "a");
+    expect(disk.text("文档/原子/新的/a.txt")).toBe("a");
+    disk.write("文档/原子/是文件", "x");
+    await expect(folder.inside("是文件")).rejects.toEqual(failed("missing", "是文件"));
+    await expect(folder.inside("是文件", { create: true })).rejects.toEqual(
+      failed("exists", "是文件"),
+    );
+    await expect(folder.inside("备份/更深")).rejects.toEqual(failed("refused", "备份/更深"));
+  });
+});
+
 describe("reading a folder", () => {
   it("gives the text, the bytes, and the file", async () => {
     const { disk, folder } = await chosen();

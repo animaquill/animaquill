@@ -18,6 +18,19 @@ export function NotificationList() {
         {items.map((item) => (
           <div key={item.id} className={styles.item}>
             <span>{item.message}</span>
+            {item.actions?.map(({ label, run }) => (
+              <button
+                key={label}
+                type="button"
+                className={styles.action}
+                onClick={() => {
+                  notifications.dismiss(item.id);
+                  run();
+                }}
+              >
+                {label}
+              </button>
+            ))}
             <button
               type="button"
               aria-label={t("notice.dismiss")}

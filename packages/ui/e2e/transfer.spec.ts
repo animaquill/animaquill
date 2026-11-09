@@ -261,7 +261,7 @@ async function chooseFrom(page: Page, menu: string, item: string) {
   await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
 }
 
-const startExport = (page: Page) => chooseFrom(page, "文件", "导出项目文件夹");
+const startExport = (page: Page) => chooseFrom(page, "文件", "另存一份…");
 const startImport = (page: Page) => chooseFrom(page, "文件", "导入项目文件夹");
 
 async function closeDialog(page: Page) {
@@ -1280,7 +1280,7 @@ test.describe("without a project", () => {
   test("offers to import, not to export", async ({ page }) => {
     await expect(page.getByRole("button", { name: "导入项目文件夹" })).toBeVisible();
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await expect(page.getByRole("menuitem", { name: "导出项目文件夹" })).toBeDisabled();
+    await expect(page.getByRole("menuitem", { name: "另存一份…" })).toBeDisabled();
     await expect(page.getByRole("menuitem", { name: "导入项目文件夹" })).toBeEnabled();
   });
 });

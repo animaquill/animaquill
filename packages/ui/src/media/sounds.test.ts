@@ -581,7 +581,7 @@ describe("a sound an export waits for", () => {
     execute("file.write", { path: "sounds/s/sound.js", text: "// 新" });
     await settle();
     expect(runs[0]?.cancel).toHaveBeenCalled();
-    const waiting = sounds.whenMade(made, state);
+    const waiting = sounds.whenMade(made, state, state.manifest.id);
     runs[1]?.finish(silence());
     await settle();
     expect(await runs[2]?.load.files.get("sounds/s/sound.js")?.text()).toBe(CODE);
@@ -600,7 +600,9 @@ describe("a sound an export waits for", () => {
     await settle();
     const made = madeSoundOf(store.getState(), clip());
     if (!made) throw new Error("No sound");
-    expect(await sounds.whenMade(made, store.getState())).toEqual({ state: "ready" });
+    expect(await sounds.whenMade(made, store.getState(), store.getState().manifest.id)).toEqual({
+      state: "ready",
+    });
     expect(runs).toHaveLength(1);
   });
 
@@ -612,7 +614,7 @@ describe("a sound an export waits for", () => {
     await settle();
     const made = madeSoundOf(store.getState(), clip());
     if (!made) throw new Error("No sound");
-    const waiting = sounds.whenMade(made, store.getState());
+    const waiting = sounds.whenMade(made, store.getState(), store.getState().manifest.id);
     runs[0]?.finish({ ok: false, reason: "time" });
     expect(await waiting).toEqual({ state: "failed", reason: "time" });
   });
@@ -629,7 +631,7 @@ describe("a sound an export waits for", () => {
     execute("clip.remove", { timeline: "main", clips: ["c"] });
     await settle();
     const stop = new AbortController();
-    const waiting = sounds.whenMade(made, state, stop.signal);
+    const waiting = sounds.whenMade(made, state, state.manifest.id, stop.signal);
     await settle();
     expect(runs).toHaveLength(2);
     const stopped = expect(waiting).rejects.toThrow("Stopped");
@@ -653,7 +655,7 @@ describe("a sound an export waits for", () => {
     // People open another project while the export of this one goes on.
     await session.create("另一个项目");
     await settle();
-    expect(await sounds.whenMade(made, state)).toEqual({ state: "ready" });
+    expect(await sounds.whenMade(made, state, state.manifest.id)).toEqual({ state: "ready" });
     expect(runs).toHaveLength(1);
   });
 
@@ -666,7 +668,7 @@ describe("a sound an export waits for", () => {
     const state = store.getState();
     const made = madeSoundOf(state, clip());
     if (!made) throw new Error("No sound");
-    const waiting = sounds.whenMade(made, state);
+    const waiting = sounds.whenMade(made, state, state.manifest.id);
     await session.create("另一个项目");
     await settle();
     // What ran for the open project stopped with it, and what the export waits for runs again.
@@ -686,7 +688,7 @@ describe("a sound an export waits for", () => {
     const state = store.getState();
     const made = madeSoundOf(state, clip());
     if (!made) throw new Error("No sound");
-    const waiting = sounds.whenMade(made, state);
+    const waiting = sounds.whenMade(made, state, state.manifest.id);
     await session.create("另一个项目");
     await settle();
     await projects.remove(state.manifest.id);
