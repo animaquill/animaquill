@@ -800,7 +800,7 @@
     "autoNow": "自动识别（现在是{{device}}）",
     "mouse": "鼠标",
     "trackpad": "触控板",
-    "touch": "触碰",
+    "touch": "触控",
     "about": {
       "auto": "按你正在用的设备自动切换。",
       "mouse": "滚轮左右滚动，Shift 加滚轮上下滚动。",
