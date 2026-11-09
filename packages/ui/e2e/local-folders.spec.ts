@@ -895,6 +895,11 @@ const rename = (page: Page, name: string) =>
   }, name);
 
 test.describe("a project folder kept in step by the editor", () => {
+  // It runs the development page itself (dev/main.tsx), which the site does not have.
+  base.skip(
+    ({ baseURL }) => baseURL !== undefined && !baseURL.startsWith("http://localhost"),
+    "only the development page has window.aqFolders",
+  );
   test("gets what the editor changes, takes in what changes outside, and goes on after a crash", async ({
     page,
     context,

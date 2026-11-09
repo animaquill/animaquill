@@ -21,7 +21,7 @@ import {
   rename,
   text,
 } from "./folder-support.ts";
-import { expect, tab, test } from "./support.ts";
+import { expect, needsDevPage, tab, test } from "./support.ts";
 
 test.use({
   folders: true,
@@ -98,7 +98,8 @@ test.describe("a project folder", () => {
     await expect(footer(page).getByText("原子是什么")).toBeVisible();
   });
 
-  test("that moved is found again, with what was not written yet", async ({ page }) => {
+  test("that moved is found again, with what was not written yet", async ({ page, devPage }) => {
+    test.skip(!devPage, needsDevPage("window.aqExecute"));
     const disk = projectOnDisk();
     await openDropped(page, disk);
     const moved = `${disk}-搬走`;
@@ -115,7 +116,12 @@ test.describe("a project folder", () => {
     await expect.poll(() => nameIn(moved)).toBe("搬走以后改的");
   });
 
-  test("is written by one window, while another one works on it too", async ({ page, context }) => {
+  test("is written by one window, while another one works on it too", async ({
+    page,
+    context,
+    devPage,
+  }) => {
+    test.skip(!devPage, needsDevPage("window.aqExecute"));
     const disk = projectOnDisk();
     await openDropped(page, disk);
     const other = await context.newPage();
