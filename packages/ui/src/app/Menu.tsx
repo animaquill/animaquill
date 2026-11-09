@@ -17,7 +17,10 @@ export interface MenuItem {
   readonly id: string;
   readonly label: string;
   readonly run: () => void;
+  /** One choice among several, which this is or is not. */
   readonly selected?: boolean;
+  /** Something on or off on its own. */
+  readonly checked?: boolean;
   readonly shortcut?: string;
   readonly disabled?: boolean;
 }
@@ -30,6 +33,11 @@ interface MenuProps {
   /** Asked when the menu opens, so that what is possible right now is what it shows. */
   readonly groups: () => readonly (readonly MenuItem[])[];
 }
+
+const roleOf = (item: MenuItem) => {
+  if (item.selected !== undefined) return "menuitemradio";
+  return item.checked === undefined ? "menuitem" : "menuitemcheckbox";
+};
 
 const itemsIn = (root: HTMLElement | null) => [
   ...(root?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? []),
@@ -82,8 +90,10 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
               key={item.id}
               type="button"
               className={styles.item}
-              role={item.selected === undefined ? "menuitem" : "menuitemradio"}
-              {...(item.selected === undefined ? {} : { "aria-checked": item.selected })}
+              role={roleOf(item)}
+              {...((item.selected ?? item.checked) === undefined
+                ? {}
+                : { "aria-checked": item.selected ?? item.checked })}
               {...(item.shortcut ? { "aria-keyshortcuts": item.shortcut } : {})}
               tabIndex={-1}
               disabled={item.disabled === true}
@@ -92,7 +102,9 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
                 onClose();
               }}
             >
-              <span className={styles.mark}>{item.selected && <Check size={14} />}</span>
+              <span className={styles.mark}>
+                {(item.selected ?? item.checked) && <Check size={14} />}
+              </span>
               <span className={styles.label}>{item.label}</span>
               {item.shortcut && (
                 <kbd className={styles.shortcut} aria-hidden="true">

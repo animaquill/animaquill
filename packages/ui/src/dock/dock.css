@@ -46,11 +46,12 @@
 /*
  * Tabs down a side of a group, as in Edge. Dockview lays them out and moves them; these rules only
  * turn the names to read across instead of along the side, and give the strip its width. Whether a
- * strip shows only icons comes from the marks of `GroupActions`.
+ * strip shows only icons, whether its names come out under the mouse, and how wide it is when pinned
+ * come from `GroupStrip`: marks on its element and the width on the element of the group.
  */
 :root {
-  --aq-strip-width: 112px;
-  --aq-strip-icons: 36px;
+  --aq-strip-width: 132px;
+  --aq-strip-icons: 44px;
 }
 
 :root .dv-tabs-container.dv-tabs-container-vertical {
@@ -65,6 +66,8 @@
 
 :root .dv-tabs-container-vertical .dv-tab {
   padding: 0;
+  /* What a tab shows goes by how wide it is right now, see PanelTab.module.css. */
+  container-type: inline-size;
 }
 
 :root .dv-tabs-container-vertical .dv-tab::before {
@@ -72,6 +75,8 @@
 }
 
 :root .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {
+  /* What the edge that changes the width goes by. */
+  position: relative;
   width: var(--aq-strip-width);
 }
 
@@ -112,27 +117,46 @@
 .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"])
   > .dv-tabs-and-actions-container
   > * {
-  flex-shrink: 0;
   width: var(--aq-strip-icons);
   background: var(--aq-bg-chrome);
   transition: width 0.12s ease;
 }
 
-.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"])
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible))
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
+    :has([role="separator"]:hover)
+  )
   > * {
   width: var(--aq-strip-width);
   transition-delay: 0.15s;
 }
 
-.dv-groupview-header-left:has(> .dv-tabs-and-actions-container [data-pinned="false"])
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible))
+.dv-groupview-header-left:has(
+    > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
+  )
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
+    :has([role="separator"]:hover)
+  )
   > * {
   box-shadow: 8px 0 12px -8px rgb(0 0 0 / 70%);
 }
 
-.dv-groupview-header-right:has(> .dv-tabs-and-actions-container [data-pinned="false"])
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible))
+.dv-groupview-header-right:has(
+    > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
+  )
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
+    :has([role="separator"]:hover)
+  )
   > * {
   box-shadow: -8px 0 12px -8px rgb(0 0 0 / 70%);
+}
+
+/* Where the tabs go when the empty part of their strip is let go here. */
+.aq-strip-target {
+  position: fixed;
+  z-index: 2000;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--aq-accent) 30%, transparent);
+  border: 2px solid var(--aq-accent);
+  pointer-events: none;
 }

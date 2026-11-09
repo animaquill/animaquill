@@ -143,17 +143,17 @@ describe("toDockviewState", () => {
     },
   );
 
-  it("puts tabs down a side, and says which groups show only icons", () => {
-    const { dockview, unpinned } = toDockState(
+  it("puts tabs down a side, and says which groups show their names", () => {
+    const { dockview, strips } = toDockState(
       {
         kind: "split",
         direction: "row",
         children: [
           [1, { kind: "tabs", panels: ["a"], strip: "left" }],
           [1, { kind: "tabs", panels: ["b"] }],
-          [1, { kind: "tabs", panels: ["c"], strip: "right", pinned: false }],
-          // Tabs across the top always show their names.
-          [1, { kind: "tabs", panels: ["d"], strip: "top", pinned: false }],
+          [1, { kind: "tabs", panels: ["c"], strip: "right", pinned: true }],
+          // Tabs across the top always show their names, so that says nothing.
+          [1, { kind: "tabs", panels: ["d"], strip: "top", pinned: true }],
         ],
       },
       400,
@@ -169,6 +169,6 @@ describe("toDockviewState", () => {
       "right",
       undefined,
     ]);
-    expect(unpinned).toEqual([groups[2]?.id]);
+    expect(strips).toEqual({ [groups[2]?.id ?? ""]: { pinned: true } });
   });
 });

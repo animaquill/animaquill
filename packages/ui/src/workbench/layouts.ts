@@ -9,7 +9,7 @@ const column = (...children: Child[]): LayoutNode => ({
   children,
 });
 const tabs =
-  (strip: TabStrip, pinned = true) =>
+  (strip: TabStrip, pinned = false) =>
   (...panels: string[]): LayoutTabs => ({ kind: "tabs", panels, strip, pinned });
 const top = tabs("top");
 const left = tabs("left");
@@ -76,7 +76,7 @@ export const layouts: readonly LayoutPreset[] = [
   {
     id: "ai",
     title: (t) => t("layout.ai"),
-    // What has to do with AI is on the right, all the way down, and only as wide as its icons.
+    // What has to do with AI is on the right, all the way down.
     layout: row(
       [
         76,
@@ -91,7 +91,7 @@ export const layouts: readonly LayoutPreset[] = [
           [40, left("timeline", "keyframes", "problems")],
         ),
       ],
-      [24, tabs("right", false)("chat", "history", "notes", "properties")],
+      [24, right("chat", "history", "notes", "properties")],
     ),
   },
 ];

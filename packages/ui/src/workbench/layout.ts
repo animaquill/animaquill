@@ -23,7 +23,7 @@ export interface LayoutTabs {
   readonly active?: string;
   /** Across the top when left out. */
   readonly strip?: TabStrip;
-  /** Only for tabs down a side: false shows just the icons, and the names while the mouse is there. */
+  /** Only for tabs down a side: names next to the icons all the time. Only icons when left out. */
   readonly pinned?: boolean;
 }
 
@@ -112,12 +112,13 @@ interface SavedLayouts {
 
 const SETTINGS_KEY = "layout";
 const WINDOW_KEY = "layout";
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 3;
 /**
- * Workspaces, as layouts were called before people could have their own. Nothing was published
- * with them, so they are dropped without a word, and without a migration.
+ * Formats of before the launch, which are dropped without a word, and without a migration: 1 had
+ * workspaces, as layouts were called before people could have their own, and 2 strips that showed
+ * names unless they were told not to.
  */
-const RETIRED_VERSION = 1;
+const RETIRED_VERSIONS: readonly unknown[] = [1, 2];
 const RETIRED = Symbol("retired");
 const SAVE_DELAY_MS = 500;
 /** Long enough for any name worth giving, short enough for a menu. */
@@ -146,7 +147,7 @@ function parseCustom(value: unknown): CustomLayout | undefined {
 
 function parseSaved(value: unknown): SavedLayouts | typeof RETIRED | undefined {
   if (!isObject(value)) return undefined;
-  if (value["version"] === RETIRED_VERSION) return RETIRED;
+  if (RETIRED_VERSIONS.includes(value["version"])) return RETIRED;
   const { version, current, custom, states } = value;
   if (version !== FORMAT_VERSION || typeof current !== "string") return undefined;
   if (!Array.isArray(custom) || !isObject(states)) return undefined;

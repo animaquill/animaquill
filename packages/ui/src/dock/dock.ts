@@ -8,7 +8,7 @@ import type {
 import type { TFunction } from "i18next";
 import type { Dock, LayoutNode, PanelNeighbours } from "../workbench/layout.ts";
 import type { PanelArea, PanelDefinition, PanelRegistry } from "../workbench/panels.ts";
-import type { TabStrips } from "./strips.ts";
+import { parseLooks, type TabStrips } from "./strips.ts";
 import {
   PANEL_COMPONENT,
   toDockviewState,
@@ -25,11 +25,9 @@ const REUSE_PANELS = { reuseExistingPanels: true };
 const typeOf = (panel: IDockviewPanel): string => (panel.params as unknown as PanelParams).type;
 
 function assertUsable(state: unknown): asserts state is DockState {
-  const { dockview, unpinned } = (state ?? {}) as Partial<DockState>;
+  const { dockview, strips } = (state ?? {}) as Partial<DockState>;
   if (typeof dockview !== "object" || dockview === null) throw new Error("No dock in saved layout");
-  if (!Array.isArray(unpinned) || unpinned.some((id) => typeof id !== "string")) {
-    throw new Error("No strips in saved layout");
-  }
+  if (!parseLooks(strips)) throw new Error("No strips in saved layout");
   const { panels } = dockview as Partial<SerializedDockview>;
   if (typeof panels !== "object" || panels === null) throw new Error("No panels in saved layout");
   for (const panel of Object.values(panels)) {
@@ -124,23 +122,23 @@ export function createDock(
     arrange(layout: LayoutNode | undefined) {
       if (!layout) {
         api.clear();
-        strips.reset([]);
+        strips.reset({});
         return;
       }
-      const { dockview, unpinned } = toDockviewState(layout, api.width, api.height, facts);
-      api.fromJSON(dockview, REUSE_PANELS);
-      strips.reset(unpinned);
+      const state = toDockviewState(layout, api.width, api.height, facts);
+      api.fromJSON(state.dockview, REUSE_PANELS);
+      strips.reset(state.strips);
     },
     restore(state) {
       assertUsable(state);
       api.fromJSON(state.dockview, REUSE_PANELS);
-      strips.reset(state.unpinned);
+      strips.reset(parseLooks(state.strips) ?? {});
       // The saved titles may come from another language.
       for (const panel of api.panels) panel.api.setTitle(facts.title(typeOf(panel)));
     },
     serialize: (): DockState => ({
       dockview: api.toJSON(),
-      unpinned: strips.unpinnedOf(api.groups),
+      strips: strips.looksOf(api.groups),
     }),
     open(type) {
       const existing = api.getPanel(type);

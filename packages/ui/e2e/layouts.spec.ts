@@ -77,7 +77,7 @@ test.describe("the layouts that come with the editor", () => {
     expect(right.height).toBeGreaterThan(dock.height - 2);
     expect(right.x + right.width).toBeGreaterThan(dock.x + dock.width - 2);
     await page.mouse.move(dock.x + 300, dock.y + 300);
-    await expect.poll(async () => (await box(tab(page, "properties"))).width).toBeLessThan(40);
+    await expect.poll(async () => (await box(tab(page, "properties"))).width).toBeLessThan(50);
     await expect(group(page, "timeline").locator('[data-tab="keyframes"]')).toBeVisible();
   });
 });

@@ -388,8 +388,8 @@ test("a broken saved layout falls back and says so", async ({ page }) => {
 test("a saved layout that dockview refuses falls back and says so", async ({ page }) => {
   await page.evaluate((key) => {
     const dockview = { grid: { root: { type: "nonsense" } }, panels: {} };
-    const states = { edit: { dock: { dockview, unpinned: [] }, panels: [] } };
-    localStorage.setItem(key, JSON.stringify({ version: 2, current: "edit", custom: [], states }));
+    const states = { edit: { dock: { dockview, strips: {} }, panels: [] } };
+    localStorage.setItem(key, JSON.stringify({ version: 3, current: "edit", custom: [], states }));
   }, LAYOUT_KEY);
   await page.reload();
   await expect(tab(page, "preview")).toBeVisible();
@@ -405,7 +405,7 @@ test("a panel from another version shows a message instead of breaking", async (
     localStorage.setItem(key, text.replaceAll('"type":"properties"', '"type":"from.the.future"'));
   }, LAYOUT_KEY);
   await page.reload();
-  await expect(page.getByText("不可用", { exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "不可用" })).toBeVisible();
   await expect(tab(page, "preview")).toBeVisible();
 });
 
@@ -447,12 +447,15 @@ test("a panel that must stay alive is not reloaded when its tabs change sides", 
   await chooseFromView(page, "内嵌页面");
   const loads = content(page, "dev.frame").locator("p");
   await expect(loads).toHaveText("加载次数：1");
-  const sides = group(page, "dev.frame").getByRole("button", { name: "选项卡的位置" });
-  for (const side of ["选项卡在左侧", "选项卡在右侧", "选项卡在上方"]) {
-    await sides.click();
+  for (const side of ["选项卡在左侧", "选项卡在右侧", "选项卡在上方", "选项卡在左侧"]) {
+    await tab(page, "dev.frame").click({ button: "right" });
     await page.getByRole("menuitemradio", { name: side }).click();
+    // The page stays where it is, and follows the content a moment later. Until then it is over
+    // where the tabs went, and a click there would go to it.
+    await settledBox(content(page, "dev.frame"));
   }
-  await group(page, "timeline").getByRole("button", { name: "钉住选项卡" }).click();
+  await tab(page, "dev.frame").click({ button: "right" });
+  await page.getByRole("menuitemcheckbox", { name: "钉住选项卡" }).click();
   await page.waitForTimeout(300);
   await expect(loads).toHaveText("加载次数：1");
 });
@@ -561,7 +564,7 @@ test("the wheel scrolls a tab strip that is full", async ({ page }) => {
 });
 
 test("a tab strip that is full shows no scrollbar", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 360 });
+  await page.setViewportSize({ width: 1100, height: 320 });
   for (const name of [...MORE_IN_THE_MIDDLE, ...MORE_ON_THE_RIGHT])
     await chooseFromView(page, name);
   const across = group(page, "preview").locator(".dv-tabs-container");
@@ -605,10 +608,23 @@ test.describe("tabs down a side", () => {
   /** The tab itself, which dockview makes focusable, around the content of `tab`. */
   const tabButton = (page: Page, type: string) =>
     page.getByRole("tab").filter({ has: tab(page, type) });
-  const stripMenu = (page: Page, type: string) =>
-    group(page, type).getByRole("button", { name: "选项卡的位置" });
-  const pin = (page: Page, type: string) =>
-    group(page, type).getByRole("button", { name: "钉住选项卡" });
+  const radio = (page: Page, name: string) =>
+    page.getByRole("menu").getByRole("menuitemradio", { name, exact: true });
+  const check = (page: Page, name: string) =>
+    page.getByRole("menu").getByRole("menuitemcheckbox", { name, exact: true });
+  const edge = (page: Page, type: string) =>
+    group(page, type).getByRole("separator", { name: "选项卡栏的宽度" });
+  /** The empty part of the strip of a group, under or after its tabs. */
+  const emptyPart = async (page: Page, type: string) => {
+    const part = await box(group(page, type).locator(".dv-void-container"));
+    return { x: part.x + part.width / 2, y: part.y + part.height / 2 };
+  };
+  const rightClickEmptyPart = async (page: Page, type: string) => {
+    const { x, y } = await emptyPart(page, type);
+    await page.mouse.click(x, y, { button: "right" });
+  };
+  const away = (page: Page) => page.mouse.move(700, 300);
+  const widthOf = async (page: Page, type: string) => (await box(tab(page, type))).width;
 
   test("switch in place, with the content where it was", async ({ page }) => {
     const left = await box(group(page, "assets"));
@@ -621,37 +637,26 @@ test.describe("tabs down a side", () => {
     const files = await box(content(page, "files"));
     expect(files).toEqual(assets);
     await expect(groups(page)).toHaveCount(4);
-    // The tabs are one under the other, beside the content, with their names.
-    const first = await box(tab(page, "files"));
+    // The tabs are one under the other, beside the content.
+    await away(page);
+    const first = await settledBox(tab(page, "files"));
     const second = await box(tab(page, "assets"));
     expect(second.y).toBeGreaterThanOrEqual(first.y + first.height - 1);
     expect(first.x + first.width).toBeLessThanOrEqual(files.x + 1);
-    await expect(tabButton(page, "assets").getByText("素材库")).toBeVisible();
+    await expect(page.getByRole("tab", { name: "素材库" })).toBeVisible();
   });
 
-  test("show only icons when not pinned, and the names over the content on hover", async ({
-    page,
-  }) => {
-    const pinnedTab = await box(tab(page, "timeline"));
-    const pinnedContent = await box(content(page, "timeline"));
-    await expect(pin(page, "timeline")).toHaveAttribute("aria-pressed", "true");
-    await pin(page, "timeline").click();
-    await expect(pin(page, "timeline")).toHaveAttribute("aria-pressed", "false");
-    await page.mouse.move(700, 300);
-
-    // The content gets the room.
+  test("show big icons, and their names over the content on hover", async ({ page }) => {
+    await away(page);
     const narrow = await settledBox(tab(page, "timeline"));
-    expect(narrow.width).toBeLessThan(40);
-    const wider = await settledBox(content(page, "timeline"));
-    expect(wider.x).toBeLessThan(pinnedContent.x - 60);
-    expect(wider.width).toBeGreaterThan(pinnedContent.width + 60);
+    expect(narrow.width).toBeLessThan(50);
+    const icon = await box(tab(page, "timeline").locator("svg").first());
+    expect(icon.width).toBe(20);
+    const before = await box(content(page, "timeline"));
 
-    // On hover the names show over the content, which stays where it is.
     await page.mouse.move(narrow.x + narrow.width / 2, narrow.y + narrow.height / 2);
-    await expect
-      .poll(async () => (await box(tab(page, "timeline"))).width)
-      .toBeGreaterThan(pinnedTab.width - 2);
-    expect(await box(content(page, "timeline"))).toEqual(wider);
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(100);
+    expect(await box(content(page, "timeline"))).toEqual(before);
     const name = tab(page, "timeline").getByText("时间轴");
     await expect(name).toBeVisible();
     // The names are on top: what is under the mouse there is the tab.
@@ -664,12 +669,20 @@ test.describe("tabs down a side", () => {
     expect(hit).toBe("timeline");
 
     // And go when the mouse leaves.
-    await page.mouse.move(700, 300);
-    await expect.poll(async () => (await box(tab(page, "timeline"))).width).toBeLessThan(40);
-    // A click on an icon switches.
-    const icon = await box(tab(page, "problems"));
-    await page.mouse.click(icon.x + 12, icon.y + icon.height / 2);
+    await away(page);
+    await expect.poll(() => widthOf(page, "timeline")).toBeLessThan(50);
+    // A click on an icon switches, and the names go in, to show what it switched to.
+    const problems = await box(tab(page, "problems"));
+    const middle = { x: problems.x + problems.width / 2, y: problems.y + problems.height / 2 };
+    await page.mouse.move(middle.x, middle.y);
+    await expect.poll(() => widthOf(page, "problems")).toBeGreaterThan(100);
+    await page.mouse.click(middle.x, middle.y);
     await expect(content(page, "problems")).toBeVisible();
+    await expect.poll(() => widthOf(page, "problems")).toBeLessThan(50);
+    // Until the mouse comes back.
+    await away(page);
+    await page.mouse.move(middle.x, middle.y);
+    await expect.poll(() => widthOf(page, "problems")).toBeGreaterThan(100);
   });
 
   test("show their names over a panel that stays alive", async ({ page }) => {
@@ -678,11 +691,11 @@ test.describe("tabs down a side", () => {
     await chooseFromView(page, "聊天");
     await expect(group(page, "properties").locator('[data-tab="chat"]')).toBeVisible();
     await expect(content(page, "chat")).toBeVisible();
-    await page.mouse.move(700, 300);
+    await away(page);
     const right = await settledBox(tab(page, "properties"));
-    expect(right.width).toBeLessThan(40);
+    expect(right.width).toBeLessThan(50);
     await page.mouse.move(right.x + right.width / 2, right.y + right.height / 2);
-    await expect.poll(async () => (await box(tab(page, "properties"))).width).toBeGreaterThan(100);
+    await expect.poll(() => widthOf(page, "properties")).toBeGreaterThan(100);
     const name = await box(tab(page, "properties").getByText("属性"));
     const hit = await page.evaluate(
       ({ x, y }) =>
@@ -692,48 +705,194 @@ test.describe("tabs down a side", () => {
     expect(hit).toBe("properties");
   });
 
-  test("move to the top and back, and the preview is not rebuilt", async ({ page }) => {
-    await content(page, "preview").evaluate((element: HTMLElement) => {
-      element.dataset["marker"] = "kept";
-    });
-    await stripMenu(page, "preview").click();
-    await page.getByRole("menuitemradio", { name: "选项卡在左侧" }).click();
-    const preview = await settledBox(content(page, "preview"));
-    const code = await box(tab(page, "code"));
-    expect(code.x + code.width).toBeLessThanOrEqual(preview.x + 1);
-    expect(code.y).toBeGreaterThan((await box(tab(page, "preview"))).y);
-
-    await tab(page, "code").click({ button: "right" });
-    await page.getByText("选项卡在上方", { exact: true }).click();
-    // The menu of a tab shows that tab.
-    const across = await settledBox(content(page, "code"));
-    expect((await box(tab(page, "code"))).y + 1).toBeLessThan(across.y);
-    await tab(page, "preview").click();
-    await expect(content(page, "preview")).toHaveAttribute("data-marker", "kept");
-
+  test("get pinned from the menu of a tab, and then give their names room", async ({ page }) => {
+    await away(page);
+    const before = await settledBox(content(page, "timeline"));
     await tab(page, "timeline").click({ button: "right" });
-    await page.getByText("选项卡在右侧", { exact: true }).click();
+    await expect(check(page, "钉住选项卡")).toHaveAttribute("aria-checked", "false");
+    await check(page, "钉住选项卡").click();
+    await away(page);
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(100);
+    const after = await settledBox(content(page, "timeline"));
+    expect(after.x).toBeGreaterThan(before.x + 60);
+    await expect(tab(page, "timeline").getByText("时间轴")).toBeVisible();
+    // Names that show all the time have nothing to come out.
+    await tab(page, "timeline").click({ button: "right" });
+    await expect(check(page, "钉住选项卡")).toHaveAttribute("aria-checked", "true");
+    await expect(check(page, "鼠标悬停时展开")).toBeDisabled();
+  });
+
+  test("keep to their icons when names coming out is turned off", async ({ page }) => {
+    await rightClickEmptyPart(page, "timeline");
+    await expect(check(page, "鼠标悬停时展开")).toHaveAttribute("aria-checked", "true");
+    await check(page, "鼠标悬停时展开").click();
+    const icon = await box(tab(page, "problems"));
+    await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await page.waitForTimeout(400);
+    expect(await widthOf(page, "problems")).toBeLessThan(50);
+    // The name is still there for the mouse to find, and a click switches.
+    await expect(tab(page, "problems")).toHaveAttribute("title", "问题");
+    await page.mouse.click(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await expect(content(page, "problems")).toBeVisible();
+  });
+
+  test("have the same menu on the empty part of their strip, for the whole group", async ({
+    page,
+  }) => {
+    await rightClickEmptyPart(page, "timeline");
+    const menu = page.getByRole("menu");
+    await expect(radio(page, "选项卡在左侧")).toHaveAttribute("aria-checked", "true");
+    await expect(check(page, "钉住选项卡")).toBeVisible();
+    // Nothing about one tab there.
+    await expect(menu.getByRole("menuitem", { name: "关闭" })).toHaveCount(0);
+    await radio(page, "选项卡在右侧").click();
     const timeline = await settledBox(content(page, "timeline"));
     expect((await box(tab(page, "timeline"))).x).toBeGreaterThanOrEqual(
       timeline.x + timeline.width - 1,
     );
   });
 
-  test("remember their side and whether they are pinned", async ({ page }) => {
+  test("move to the top and back from the menu, and the preview is not rebuilt", async ({
+    page,
+  }) => {
+    await content(page, "preview").evaluate((element: HTMLElement) => {
+      element.dataset["marker"] = "kept";
+    });
+    await rightClickEmptyPart(page, "preview");
+    await radio(page, "选项卡在左侧").click();
+    const preview = await settledBox(content(page, "preview"));
+    const code = await box(tab(page, "code"));
+    expect(code.x + code.width).toBeLessThanOrEqual(preview.x + 1);
+    expect(code.y).toBeGreaterThan((await box(tab(page, "preview"))).y);
+
+    await tab(page, "preview").click({ button: "right" });
+    await radio(page, "选项卡在上方").click();
+    const across = await settledBox(content(page, "preview"));
+    expect((await box(tab(page, "preview"))).y + 1).toBeLessThan(across.y);
+    await expect(content(page, "preview")).toHaveAttribute("data-marker", "kept");
+  });
+
+  test("go to a side of their group when the empty part of the strip is dragged there", async ({
+    page,
+  }) => {
+    const target = page.locator(".aq-strip-target");
+    const drag = async (
+      to: (box: { x: number; y: number; width: number; height: number }) => {
+        x: number;
+        y: number;
+      },
+    ) => {
+      const from = await emptyPart(page, "timeline");
+      const area = await box(group(page, "timeline"));
+      const { x, y } = to(area);
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(from.x + 10, from.y - 10, { steps: 3 });
+      await page.mouse.move(x, y, { steps: 10 });
+    };
+
+    await drag((area) => ({ x: area.x + area.width / 2, y: area.y + 20 }));
+    await expect(target).toHaveAttribute("data-side", "top");
+    await page.mouse.up();
+    await expect(target).toHaveCount(0);
+    let timeline = await settledBox(content(page, "timeline"));
+    expect((await box(tab(page, "timeline"))).y + 1).toBeLessThan(timeline.y);
+
+    await drag((area) => ({ x: area.x + area.width - 30, y: area.y + area.height / 2 }));
+    await expect(target).toHaveAttribute("data-side", "right");
+    await page.mouse.up();
+    // Off the strip, whose names would come out under the mouse.
+    await away(page);
+    timeline = await settledBox(content(page, "timeline"));
+    expect((await box(tab(page, "timeline"))).x).toBeGreaterThanOrEqual(
+      timeline.x + timeline.width - 1,
+    );
+
+    // Esc lets go without a change, and so does letting go outside the group.
+    await drag((area) => ({ x: area.x + 30, y: area.y + area.height / 2 }));
+    await expect(target).toHaveAttribute("data-side", "left");
+    await page.keyboard.press("Escape");
+    await expect(target).toHaveCount(0);
+    await page.mouse.up();
+    await drag(() => ({ x: 700, y: 200 }));
+    await expect(target).toHaveCount(0);
+    await page.mouse.up();
+    await away(page);
+    timeline = await settledBox(content(page, "timeline"));
+    expect((await box(tab(page, "timeline"))).x).toBeGreaterThanOrEqual(
+      timeline.x + timeline.width - 1,
+    );
+    await expect(groups(page)).toHaveCount(4);
+  });
+
+  test("get their names, and lose them, by dragging their edge, and keep the width", async ({
+    page,
+  }) => {
+    const saved = await savedLayout(page);
+    const handle = await box(edge(page, "timeline"));
+    const outer = (await box(group(page, "timeline"))).x;
+    const y = handle.y + handle.height / 2;
+    await page.mouse.move(handle.x + handle.width / 2, y);
+    await page.mouse.down();
+    // Out past where names fit: pinned, as wide as dragged, already while dragging.
+    await page.mouse.move(outer + 200, y, { steps: 10 });
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(190);
+    await page.mouse.move(outer + 170, y, { steps: 5 });
+    await page.mouse.up();
+    await away(page);
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(160);
+    expect(await widthOf(page, "timeline")).toBeLessThan(175);
+
+    await waitForSave(page, saved);
+    await page.reload();
+    await expect(tab(page, "timeline")).toBeVisible();
+    await away(page);
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(160);
+    await expect(tab(page, "timeline").getByText("时间轴")).toBeVisible();
+
+    // In to near the icons: only icons again.
+    const pinned = await box(edge(page, "timeline"));
+    await page.mouse.move(pinned.x + pinned.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(outer + 50, y, { steps: 10 });
+    await expect.poll(() => widthOf(page, "timeline")).toBeLessThan(50);
+    await page.mouse.up();
+    await away(page);
+    await tab(page, "timeline").click({ button: "right" });
+    await expect(check(page, "钉住选项卡")).toHaveAttribute("aria-checked", "false");
+  });
+
+  test("remember their side, and whether names show and come out", async ({ page }) => {
     let before = await savedLayout(page);
-    await stripMenu(page, "preview").click();
-    await page.getByRole("menuitemradio", { name: "选项卡在右侧" }).click();
+    await rightClickEmptyPart(page, "preview");
+    await radio(page, "选项卡在右侧").click();
     await waitForSave(page, before);
     before = await savedLayout(page);
-    await pin(page, "files").click();
+    await tab(page, "files").click({ button: "right" });
+    await check(page, "钉住选项卡").click();
+    await waitForSave(page, before);
+    before = await savedLayout(page);
+    await rightClickEmptyPart(page, "timeline");
+    await check(page, "鼠标悬停时展开").click();
     await waitForSave(page, before);
     await page.reload();
-    await expect(pin(page, "files")).toHaveAttribute("aria-pressed", "false");
-    await expect(pin(page, "preview")).toHaveAttribute("aria-pressed", "true");
+    await expect(tab(page, "preview")).toBeVisible();
+    await tab(page, "files").click({ button: "right" });
+    await expect(check(page, "钉住选项卡")).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await rightClickEmptyPart(page, "timeline");
+    await expect(check(page, "鼠标悬停时展开")).toHaveAttribute("aria-checked", "false");
+    await page.keyboard.press("Escape");
     const preview = await box(content(page, "preview"));
     expect((await box(tab(page, "preview"))).x).toBeGreaterThanOrEqual(
       preview.x + preview.width - 1,
     );
+  });
+
+  test("have no buttons of their own", async ({ page }) => {
+    for (const type of ["assets", "preview", "properties", "timeline"]) {
+      await expect(group(page, type).getByRole("button", { name: /钉住|位置/ })).toHaveCount(0);
+    }
   });
 
   test("take tabs from across the top, and give them back", async ({ page }) => {
@@ -759,7 +918,7 @@ test.describe("tabs down a side", () => {
     await tab(page, "keyframes").click({ button: "middle" });
     await expect(tab(page, "keyframes")).toHaveCount(0);
     await tab(page, "timeline").click({ button: "right" });
-    await page.getByText("关闭下方", { exact: true }).click();
+    await page.getByRole("menuitem", { name: "关闭下方" }).click();
     await expect(tab(page, "problems")).toHaveCount(0);
     await tab(page, "files").hover();
     await group(page, "files").getByRole("button", { name: "关闭 文件" }).click();

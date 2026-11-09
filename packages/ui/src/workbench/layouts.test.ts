@@ -53,11 +53,11 @@ it("keeps what has to do with AI on the right, all the way down, as icons", () =
   );
 });
 
-it("shows the names of tabs everywhere else", () => {
-  const unpinned = layouts.flatMap((layout) =>
-    groupsOf(layout.layout).filter((group) => group.pinned === false),
+it("shows only the icons of tabs down a side, everywhere", () => {
+  const pinned = layouts.flatMap((layout) =>
+    groupsOf(layout.layout).filter((group) => group.pinned === true),
   );
-  expect(unpinned).toHaveLength(1);
+  expect(pinned).toEqual([]);
 });
 
 describe("default keys", () => {

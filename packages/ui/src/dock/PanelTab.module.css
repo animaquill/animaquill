@@ -40,13 +40,16 @@
  */
 :global(.dv-tabs-container-vertical) .tab {
   position: relative;
-  height: 30px;
-  padding: 0 8px 0 11px;
-  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  gap: 10px;
 }
 
-:global(.dv-tabs-container-vertical) .tab > svg {
+/* Bigger down a side, where often only the icons show. */
+:global(.dv-tabs-container-vertical) .icon {
   flex-shrink: 0;
+  width: 20px;
+  height: 20px;
 }
 
 :global(.dv-tabs-container-vertical) .title {
@@ -58,7 +61,7 @@
 
 :global(.dv-tabs-container-vertical) .close {
   position: absolute;
-  top: 5px;
+  top: 8px;
   right: 4px;
 }
 
@@ -68,6 +71,13 @@
 
 :global(.dv-tabs-container-vertical) .tab:hover {
   padding-right: 28px;
+}
+
+/* Only the icon has room: a close button would be over it, waiting for a click meant to switch. */
+@container (max-width: 80px) {
+  .close {
+    display: none;
+  }
 }
 
 .close {

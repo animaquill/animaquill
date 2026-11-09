@@ -1,0 +1,36 @@
+.marks {
+  width: 0;
+  height: 0;
+}
+
+/*
+ * The inner edge of a strip down a side, over the line between the strip and the content. It is
+ * placed in the header of the group, which dock.css makes the box it goes by.
+ */
+.edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.marks[data-strip="left"] .edge {
+  right: -3px;
+}
+
+.marks[data-strip="right"] .edge {
+  left: -3px;
+}
+
+.edge:hover,
+.edge:active {
+  background: linear-gradient(
+    to right,
+    transparent 2px,
+    var(--aq-accent) 2px,
+    var(--aq-accent) 4px,
+    transparent 4px
+  );
+}

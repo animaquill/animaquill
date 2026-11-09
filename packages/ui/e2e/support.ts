@@ -16,7 +16,7 @@ export const layoutMenu = (page: Page, name: string) =>
  * top, for what needs both on screen. The layouts that come with the editor have them in one group.
  */
 export async function animateBesideTimeline(page: Page) {
-  await group(page, "timeline").getByRole("button", { name: "选项卡的位置" }).click();
+  await tab(page, "timeline").click({ button: "right" });
   await page.getByRole("menuitemradio", { name: "选项卡在上方" }).click();
   const from = await tab(page, "keyframes").boundingBox();
   const target = await group(page, "timeline").boundingBox();

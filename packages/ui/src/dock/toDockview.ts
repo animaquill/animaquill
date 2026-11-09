@@ -1,5 +1,6 @@
 import type { Orientation, SerializedDockview } from "dockview-react";
 import type { LayoutNode } from "../workbench/layout.ts";
+import type { SavedLook } from "./strips.ts";
 
 /** Every panel goes through one component, so that an unknown type cannot break the dock. */
 export const PANEL_COMPONENT = "panel";
@@ -14,10 +15,10 @@ type GroupState = Exclude<GridNode["data"], readonly unknown[]>;
 const ROW = "HORIZONTAL" as Orientation;
 const COLUMN = "VERTICAL" as Orientation;
 
-/** What the dock saves: the state of dockview, and which groups show only the icons of their tabs. */
+/** What the dock saves: the state of dockview, and how the strips down a side look, by group. */
 export interface DockState {
   readonly dockview: SerializedDockview;
-  readonly unpinned: readonly string[];
+  readonly strips: Readonly<Record<string, SavedLook>>;
 }
 
 export interface PanelFacts {
@@ -33,7 +34,7 @@ export function toDockviewState(
   facts: PanelFacts,
 ): DockState {
   const panels: SerializedDockview["panels"] = {};
-  const unpinned: string[] = [];
+  const strips: Record<string, SavedLook> = {};
   let groups = 0;
   let largest = { id: "", area: -1 };
 
@@ -57,7 +58,7 @@ export function toDockviewState(
       if (shown) data.activeView = shown;
       if (node.strip === "left" || node.strip === "right") {
         data.headerPosition = node.strip;
-        if (node.pinned === false) unpinned.push(id);
+        if (node.pinned === true) strips[id] = { pinned: true };
       }
       return { type: "leaf", size, data };
     }
@@ -86,6 +87,6 @@ export function toDockviewState(
       panels,
       activeGroup: largest.id,
     },
-    unpinned,
+    strips,
   };
 }

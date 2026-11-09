@@ -4,12 +4,17 @@ import { useEffect, useRef, type MouseEvent, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import styles from "./PanelTab.module.css";
+import { useStrips } from "./strips-context.ts";
 import type { PanelParams } from "./toDockview.ts";
 
 export function PanelTab({ api, params, tabLocation }: IDockviewPanelHeaderProps<PanelParams>) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
   const element = useRef<HTMLDivElement>(null);
+  const strips = useStrips();
+  const look = strips.lookOf(api.group);
+  // Only icons, and nothing comes out under the mouse: the name has to come from somewhere.
+  const iconOnly = strips.stripOf(api.group) !== "top" && !look.pinned && !look.peek;
 
   // Dockview reveals a new tab before this content exists, while the tab is still too narrow to
   // scroll to. A frame later the strip also knows whether it needs its list of hidden tabs.
@@ -43,10 +48,11 @@ export function PanelTab({ api, params, tabLocation }: IDockviewPanelHeaderProps
       ref={element}
       className={styles.tab}
       data-tab={params.type}
+      {...(iconOnly && { title })}
       onClick={focusContent}
       onAuxClick={closeOnMiddleClick}
     >
-      <Icon size={14} />
+      <Icon size={14} className={styles.icon} />
       <span className={styles.title}>{title}</span>
       <button
         type="button"

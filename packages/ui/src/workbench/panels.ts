@@ -9,7 +9,7 @@ export interface PanelDefinition {
   /** Saved layouts refer to this name, so it must never change. */
   readonly type: string;
   readonly title: (t: TFunction) => string;
-  readonly icon: ComponentType<{ size?: number }>;
+  readonly icon: ComponentType<{ size?: number; className?: string | undefined }>;
   readonly area: PanelArea;
   readonly component: ComponentType;
   /**

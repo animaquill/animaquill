@@ -129,7 +129,7 @@ const saved = (
   states: Record<string, unknown>,
   custom: Saved["custom"] = [],
 ): Saved => ({
-  version: 2,
+  version: 3,
   current,
   custom,
   states: Object.fromEntries(
@@ -208,8 +208,8 @@ describe("opening", () => {
 
   it.each([
     ["not an object", "garbage"],
-    ["a newer format", { version: 3, current: "edit", custom: [], states: {} }],
-    ["no states", { version: 2, current: "edit", custom: [] }],
+    ["a newer format", { version: 4, current: "edit", custom: [], states: {} }],
+    ["no states", { version: 3, current: "edit", custom: [] }],
     ["an arrangement without its panels", { ...saved("edit", {}), states: { edit: { dock: {} } } }],
     ["a layout of one's own without a name", { ...saved("edit", {}), custom: [{ id: "c" }] }],
     ["null", null],
@@ -219,8 +219,11 @@ describe("opening", () => {
     expect(messages.restoreFailed).toHaveBeenCalledOnce();
   });
 
-  it("drops the workspaces of before without a word", async () => {
-    const { dock, messages } = await opened({ version: 1, workspace: "edit", states: {} });
+  it.each([
+    ["the workspaces", { version: 1, workspace: "edit", states: {} }],
+    ["the strips that showed names", { version: 2, current: "edit", custom: [], states: {} }],
+  ])("drops %s of before without a word", async (_, stored) => {
+    const { dock, messages } = await opened(stored);
     expect(dock.state).toEqual(DESIGN_OF_EDIT);
     expect(messages.restoreFailed).not.toHaveBeenCalled();
   });
