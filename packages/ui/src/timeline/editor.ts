@@ -10,6 +10,7 @@ import {
   type Rational,
   type SoundManifest,
   type Transition,
+  type TransitionUse,
 } from "@animaquill/schema";
 import {
   clipEnd,
@@ -30,6 +31,16 @@ import { Emitter } from "../workbench/emitter.ts";
 import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
+import {
+  attachCalls,
+  attachContext,
+  attachProblem,
+  dropCalls,
+  transitionDropAt,
+  type AttachContext,
+  type TransitionDrop,
+  type TransitionPick,
+} from "./transition-place.ts";
 import { sceneTemplate } from "./scene-template.ts";
 import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
@@ -48,7 +59,6 @@ import {
   joinsAmong,
   cutAt,
   freeShift,
-  longestTransition,
   splitCall,
   transitionCall,
   type ClipCopy,
@@ -112,8 +122,8 @@ const MIN_ROW_SCALE = 0.6;
 const MAX_ROW_SCALE = 3;
 const ROW_SCALE_STEP = 1.25;
 const END_HANDLE_REACH = 7;
-/** How long a transition is that people put on from a menu, before they make it longer. */
-const DEFAULT_TRANSITION_SECONDS = 0.5;
+/** How far from a cut a transition dragged there still goes between the clips, in pixels. */
+const SEAM_REACH = 10;
 const REMEMBER_DELAY_MS = 300;
 const NEW_CLIP_SECONDS = 5;
 export const DEFAULT_HEADER_WIDTH = 148;
@@ -358,6 +368,14 @@ export class TimelineEditor implements TouchTarget {
   #rememberTimer: ReturnType<typeof setTimeout> | undefined;
   #extras: RowExtras | undefined;
   #roomBelow = NO_ROOM_BELOW;
+  #attachContext:
+    | {
+        readonly model: TimelineModel | undefined;
+        readonly selection: ReadonlySet<string>;
+        readonly transition: TransitionChoice | undefined;
+        readonly context: AttachContext;
+      }
+    | undefined;
 
   constructor(
     session: ProjectSession,
@@ -1589,17 +1607,18 @@ export class TimelineEditor implements TouchTarget {
 
   /**
    * Which handle of a transition is under the pointer: they are at the top of a clip, where each
-   * transition ends, or in the corners without one, as the handles of fades are in most video
-   * editors. Over the trim edges, which still have the rest of the height.
+   * transition ends. An edge without one has none: transitions come from the transitions tab. Over
+   * the trim edges, which still have the rest of the height.
    */
   #handleAt(box: ClipBox, row: Row, x: number): Edge | undefined {
     if (!canHaveTransitions(row.track)) return undefined;
     const edges = edgesOf(box.clip);
     const reach = this.#edgeReach;
-    // Where a join is, its own edges are what change it.
-    const joined = (edge: Edge) => this.model?.joined.has(`${box.id} ${edge}`) === true;
-    const fromEnter = joined("enter") ? Infinity : Math.abs(x - this.xAt(box.start + edges.enter));
-    const fromExit = joined("exit") ? Infinity : Math.abs(x - this.xAt(box.end - edges.exit));
+    // Only an edge with a transition has one. Where a join is, its own edges are what change it.
+    const none = (edge: Edge) =>
+      edges[edge] <= 0 || this.model?.joined.has(`${box.id} ${edge}`) === true;
+    const fromEnter = none("enter") ? Infinity : Math.abs(x - this.xAt(box.start + edges.enter));
+    const fromExit = none("exit") ? Infinity : Math.abs(x - this.xAt(box.end - edges.exit));
     if (fromEnter > reach && fromExit > reach) return undefined;
     return fromEnter <= fromExit ? "enter" : "exit";
   }
@@ -1620,33 +1639,6 @@ export class TimelineEditor implements TouchTarget {
     if (changeable && align !== "before" && near(join.end))
       return { kind: "join", row, join, edge: "end" };
     return { kind: "join", row, join };
-  }
-
-  /**
-   * The cut under the pointer between two clips that follow each other on a track, where a join
-   * can go. Nothing on a locked track, or where clips are apart.
-   */
-  seamAt({
-    x,
-    y,
-  }: Pointer): { readonly row: Row; readonly from: ClipBox; readonly to: ClipBox } | undefined {
-    const { model } = this;
-    const row = model && rowAt(model, this.laneAt(y));
-    if (!row || row.gone || row.track.locked || !canHaveTransitions(row.track)) return undefined;
-    const box = clipAt(row, this.timeAt(x));
-    if (!box) return undefined;
-    const index = row.clips.indexOf(box);
-    const reach = Math.max(this.#edgeReach, 1);
-    const touching = (from: ClipBox | undefined, to: ClipBox | undefined) =>
-      from && to && compare(clipEnd(from.clip), clipStart(to.clip)) === 0
-        ? { row, from, to }
-        : undefined;
-    if (Math.abs(x - this.xAt(box.start)) <= reach) {
-      const seam = touching(row.clips[index - 1], box);
-      if (seam) return seam;
-    }
-    if (Math.abs(x - this.xAt(box.end)) <= reach) return touching(box, row.clips[index + 1]);
-    return undefined;
   }
 
   /** Which block of a transition is under the pointer, at the top of a clip. */
@@ -1688,57 +1680,85 @@ export class TimelineEditor implements TouchTarget {
     return this.#run([{ type: "clip.setTransition", params }]);
   }
 
-  /**
-   * Puts a fade at an edge of a clip as long as such a fade is when it comes, or as long as there is
-   * room for, and selects it: what it is can be changed after that.
-   */
-  addEdgeTransition(clip: string, edge: Edge): boolean {
+  /* Transitions from the transitions tab, see docs/design/resource-panels.md, section 3. */
+
+  /** Where a transition dragged here would go, or nothing where it cannot go. */
+  transitionDropAt(pointer: Pointer, pick: TransitionPick): TransitionDrop | undefined {
     const { model } = this;
-    const [id] = this.#changeable([clip], model);
-    const box = id === undefined ? undefined : model?.boxes.get(id);
-    if (!model || !box || box.clip[edge]) return false;
-    const longest = longestTransition(box.clip, edge, model);
-    const wanted = frameTime(frameAt(DEFAULT_TRANSITION_SECONDS, model.rate), model.rate);
-    const length = compare(wanted, longest) > 0 ? longest : wanted;
-    const call = transitionCall(model.id, box.clip, edge, length, model);
-    if (!call || !this.#run([call])) return false;
-    this.selectTransition(box.id, edge);
+    if (!model || pointer.y < RULER_HEIGHT || this.#pixelsPerSecond <= 0) return undefined;
+    const row = rowAt(model, this.laneAt(pointer.y));
+    const reach = SEAM_REACH / this.#pixelsPerSecond;
+    return transitionDropAt(model, row, this.timeAt(pointer.x), reach, pick);
+  }
+
+  /**
+   * Shows where a transition dragged here would go, or nothing with no pointer. Says whether it can
+   * go there: where it cannot, nothing shows.
+   */
+  showTransitionDrop(pointer: Pointer | undefined, pick?: TransitionPick): boolean {
+    const drop = pointer && pick ? this.transitionDropAt(pointer, pick) : undefined;
+    const next = drop && { row: drop.row.id, start: drop.start, end: drop.end };
+    const was = this.#preview?.transitionDrop;
+    const same =
+      was === next ||
+      (was !== undefined &&
+        next !== undefined &&
+        was.row === next.row &&
+        was.start === next.start &&
+        was.end === next.end);
+    if (!same) {
+      this.#preview = next && { transitionDrop: next };
+      this.#viewEmitter.emit();
+    }
+    return drop !== undefined;
+  }
+
+  /** Puts a transition where it was dropped, in one step, and selects it. */
+  dropTransition(pointer: Pointer, pick: TransitionPick): boolean {
+    const { model } = this;
+    const drop = model && this.transitionDropAt(pointer, pick);
+    this.showTransitionDrop(undefined);
+    const made = model && drop && dropCalls(model, drop, pick);
+    if (!made || !this.#run(made.calls)) return false;
+    const { chosen } = made;
+    if ("join" in chosen) this.selectJoin(chosen.join);
+    else this.selectTransition(chosen.clip, chosen.edge);
     return true;
   }
 
-  /** Changes what the transition at an edge of a clip is, keeping how long it takes and how it goes. */
-  replaceTransition(clip: string, edge: Edge, type: string, variant?: string): boolean {
-    const current = this.model?.boxes.get(clip)?.clip[edge];
-    if (!current) return false;
-    const { curve, duration } = current;
-    const next = {
-      type,
-      ...(variant === undefined ? {} : { variant }),
-      duration,
-      ...(curve && { curve }),
-    };
-    return this.setTransition(clip, edge, next as Transition);
+  /** What a click on a transition in the tab is about, from what is selected. */
+  get attachContext(): AttachContext {
+    const { model, selection, transition } = this.#snapshot;
+    const known = this.#attachContext;
+    const same =
+      known !== undefined &&
+      known.model === model &&
+      known.selection === selection &&
+      known.transition === transition;
+    if (same) return known.context;
+    const context = attachContext(model, selection, transition);
+    this.#attachContext = { model, selection, transition, context };
+    return context;
   }
 
   /**
-   * Puts a join on the cut between two clips, in one step, and selects it. Where it goes around the
-   * cut is up to the clips, see `join.add`, and so is how long it can be.
+   * Why a click on a transition for a use would do nothing with what is selected, as a key of the
+   * texts, or nothing when it would do something.
    */
-  addJoin(from: string, to: string, type = "fade", variant?: string): boolean {
+  attachProblem(use: TransitionUse, pick: TransitionPick) {
+    return attachProblem(this.model, this.attachContext, use, pick);
+  }
+
+  /**
+   * What a click on a transition does, in one step: what is selected becomes it, the clips selected
+   * get it at `edges`, and pairs of them that touch get it between them. Says whether anything
+   * changed.
+   */
+  attachTransition(pick: TransitionPick, use: TransitionUse, edges: readonly Edge[] = []): boolean {
     const { model } = this;
     if (!model) return false;
-    const id = newId("join");
-    const params = {
-      timeline: model.id,
-      id,
-      from,
-      to,
-      type,
-      ...(variant === undefined ? {} : { variant }),
-    };
-    if (!this.#run([{ type: "join.add", params }])) return false;
-    this.selectJoin(id);
-    return true;
+    const calls = attachCalls(model, this.attachContext, use, pick, edges);
+    return calls.length > 0 && this.#run(calls);
   }
 
   /** Changes a join in one step, see `join.update`. */

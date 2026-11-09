@@ -1,4 +1,5 @@
 import {
+  Blend,
   BookOpen,
   CodeXml,
   Diamond,
@@ -37,6 +38,7 @@ import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
+import { TransitionsPanel } from "./TransitionsPanel.tsx";
 import styles from "./Placeholder.module.css";
 
 type Type = {
@@ -62,6 +64,7 @@ function planned(
     | "settings"
     | "keyframes"
     | "exports"
+    | "transitions"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -104,6 +107,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     icon: Images,
     area: "left",
     component: AssetsPanel,
+  },
+  {
+    type: "transitions",
+    title: (t) => t("panel.transitions.title"),
+    icon: Blend,
+    area: "left",
+    component: TransitionsPanel,
   },
   {
     type: "preview",

@@ -55,6 +55,8 @@ export interface TransitionSpec {
   readonly uses: readonly TransitionUse[];
   /** How long it is when it is put somewhere, in seconds, exactly. */
   readonly duration: string;
+  /** How it goes when it is put somewhere, and when it takes the place of another. Even without. */
+  readonly curve?: SpeedCurve;
   /** A speed curve that goes past 0 and 1 is used as it is. Otherwise it stops there. */
   readonly overshoot?: boolean;
   /** What its code gets as it is, whatever kind of it there is. */

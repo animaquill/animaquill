@@ -53,6 +53,7 @@ import type { Platform } from "./keys.ts";
 import { LayoutController, type LayoutChoice, type LayoutPreset } from "./layout.ts";
 import { Notifications } from "./notifications.ts";
 import { CommandPalette } from "./palette.ts";
+import { ResourceHabits } from "../resources/habits.ts";
 import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
@@ -104,6 +105,8 @@ export class Workbench {
   readonly layout: LayoutController;
   readonly keybindings: KeybindingService;
   readonly palette: CommandPalette;
+  /** What people used of the resources lately, and how they like each tab of them grouped. */
+  readonly resourceHabits: ResourceHabits;
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
@@ -230,6 +233,7 @@ export class Workbench {
       }
     });
     this.palette = new CommandPalette(host.settings, this.actions);
+    this.resourceHabits = new ResourceHabits(host.settings);
     this.session = new ProjectSession(host.projects, host.address, {
       createFailed: () => this.notifications.push(t("notice.projectCreateFailed")),
       notFound: () => this.notifications.push(t("notice.projectNotFound")),
@@ -855,6 +859,7 @@ export class Workbench {
       this.layout.load(),
       this.keybindings.load(),
       this.palette.load(),
+      this.resourceHabits.load(),
       this.timeline.load(),
       this.keyframes.load(),
       this.input.load(),

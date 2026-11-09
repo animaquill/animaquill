@@ -8,7 +8,6 @@ import {
   type SpeedCurve,
   type Transition,
   type TransitionRef,
-  type TransitionUse,
 } from "@animaquill/schema";
 import {
   useRef,
@@ -16,11 +15,9 @@ import {
   useSyncExternalStore,
   type FocusEvent,
   type KeyboardEvent,
-  type MouseEvent,
   type PointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useWorkbench } from "../app/context.ts";
 import { isJoinChoice, type TransitionChoice } from "../timeline/editor.ts";
 import {
@@ -39,7 +36,6 @@ import {
   type JoinBox,
   type TimelineModel,
 } from "../timeline/model.ts";
-import { replacementItems } from "../timeline/transition-menu.ts";
 import { transitionName } from "../timeline/transition-names.ts";
 import { textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
@@ -73,40 +69,15 @@ function overshoots(transition: TransitionRef, media: "picture" | "sound"): bool
 }
 
 /**
- * The button that puts another transition in the place of one, with what comes with the editor in
- * a menu. What it is stays as it is otherwise: how long it takes, and how it goes.
+ * Takes the transition away, as Delete on the timeline does. Another one takes its place from the
+ * transitions tab, see docs/design/resource-panels.md, section 3: there is no button here for that.
  */
-function ReplaceButton(props: {
-  readonly use: TransitionUse;
-  readonly current: TransitionRef;
-  readonly disabled: boolean;
-  readonly onPick: (type: string, variant: string | undefined) => void;
-}) {
-  const { use, current, disabled, onPick } = props;
+function DeleteButton({ disabled, onDelete }: { disabled: boolean; onDelete: () => void }) {
   const { t } = useTranslation();
-  const [menu, setMenu] = useState<{ x: number; y: number }>();
-  const open = (event: MouseEvent<HTMLButtonElement>) => {
-    const { left, bottom } = event.currentTarget.getBoundingClientRect();
-    setMenu({ x: left, y: bottom + 2 });
-  };
-  const groups: readonly (readonly MenuItem[])[] = replacementItems(t, use, current, (choice) =>
-    onPick(choice.type, choice.variant),
-  );
   return (
-    <>
-      <button type="button" className={styles.hintButton} disabled={disabled} onClick={open}>
-        {t("transition.replace")}
-      </button>
-      {menu && (
-        <PopupMenu
-          x={menu.x}
-          y={menu.y}
-          label={t("transition.replace")}
-          groups={groups}
-          onClose={() => setMenu(undefined)}
-        />
-      )}
-    </>
+    <button type="button" className={styles.hintButton} disabled={disabled} onClick={onDelete}>
+      {t("transition.delete")}
+    </button>
   );
 }
 
@@ -396,17 +367,13 @@ function EdgeProperties({ clip, edge }: { readonly clip: string; readonly edge: 
           <span>{t(`transition.why.${why}`)}</span>
         </div>
       )}
-      {media === "picture" && (
-        <div className={styles.hint}>
-          <span>{t("transition.replaceHint")}</span>
-          <ReplaceButton
-            use={edge}
-            current={transition}
-            disabled={readOnly}
-            onPick={(type, variant) => timeline.replaceTransition(box.id, edge, type, variant)}
-          />
-        </div>
-      )}
+      <div className={styles.hint}>
+        <span>{t("transition.replaceHint")}</span>
+        <DeleteButton
+          disabled={readOnly}
+          onDelete={() => timeline.setTransition(box.id, edge, null)}
+        />
+      </div>
       <div className={styles.rows}>
         <DurationField
           label={t("transition.duration")}
@@ -473,19 +440,10 @@ function JoinProperties({ join: id }: { readonly join: string }) {
           <span>{t("transition.still")}</span>
         </div>
       )}
-      {media === "picture" && (
-        <div className={styles.hint}>
-          <span>{t("transition.replaceHint")}</span>
-          <ReplaceButton
-            use="join"
-            current={transition}
-            disabled={readOnly}
-            onPick={(type, variant) =>
-              update({ type, ...(variant === undefined ? { variant: null } : { variant }) })
-            }
-          />
-        </div>
-      )}
+      <div className={styles.hint}>
+        <span>{t("transition.replaceHint")}</span>
+        <DeleteButton disabled={readOnly} onDelete={() => timeline.removeJoin(id)} />
+      </div>
       <div className={styles.rows}>
         <DurationField
           label={t("transition.duration")}

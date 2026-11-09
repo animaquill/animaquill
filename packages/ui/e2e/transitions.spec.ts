@@ -7,7 +7,7 @@ import {
   type RenderPlan,
 } from "@animaquill/core";
 import { importClips } from "./project-files.ts";
-import { content, expect, findCompositor, test } from "./support.ts";
+import { content, expect, findCompositor, tab, test } from "./support.ts";
 
 /**
  * What transitions look like, as the compositor draws them from a plan it gets straight from here:
@@ -615,6 +615,27 @@ test.describe("joins on the timeline", () => {
     return (await read?.catch(() => [])) ?? [];
   }
 
+  /** Both clips selected, and a dissolve from the transitions tab between them. */
+  async function joinFromTab(page: Page): Promise<void> {
+    const [first, second] = [
+      await clipsAt(page).nth(0).boundingBox(),
+      await clipsAt(page).nth(1).boundingBox(),
+    ];
+    if (!first || !second) throw new Error("No clips");
+    await page.mouse.click(first.x + first.width / 2, first.y + first.height / 2 + 8);
+    await page.keyboard.down("Shift");
+    await page.mouse.click(second.x + second.width / 2, second.y + second.height / 2 + 8);
+    await page.keyboard.up("Shift");
+    await tab(page, "transitions").click();
+    await content(page, "transitions").getByRole("option", { name: "叠化", exact: true }).click();
+  }
+
+  /** On the block of the join on the cut, a little into the second clip. */
+  async function blockAt(page: Page): Promise<readonly [number, number]> {
+    const { x, y } = await cut(page, true);
+    return [x + 4, y];
+  }
+
   async function goTo(page: Page, time: string): Promise<void> {
     await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
     await page.getByRole("textbox", { name: "当前时间" }).fill(time);
@@ -641,19 +662,21 @@ test.describe("joins on the timeline", () => {
       },
     ]);
     const properties = content(page, "properties");
-    const seam = await cut(page);
-    await page.mouse.click(seam.x - 2, seam.y, { button: "right" });
-    await page.getByRole("menuitem", { name: "添加衔接转场" }).click();
+    await joinFromTab(page);
+    await page.mouse.click(...(await blockAt(page)));
     await expect(properties.getByText("红 → 绿")).toBeVisible();
     await expect(properties.getByLabel("叠化")).toBeVisible();
     // At the cut, half way through a dissolve of half a second around it.
     await goTo(page, "0:02/00");
     await expect.poll(() => middleOfPicture(page)).toEqual([128, 128, 0]);
 
-    // What it is changes from the menu of its block, where it is from the buttons.
+    // What it is changes from the transitions tab while it is selected, where it is from the
+    // buttons.
     const block = await cut(page, true);
-    await page.mouse.click(block.x, block.y, { button: "right" });
-    await page.getByRole("menuitemradio", { name: "向左推移" }).click();
+    await page.mouse.click(block.x, block.y);
+    await content(page, "transitions")
+      .getByRole("option", { name: "向左推移", exact: true })
+      .click();
     await expect(properties.getByLabel("向左推移")).toBeVisible();
     await properties.getByRole("button", { name: "从剪切点开始" }).click();
     await expect(properties.getByRole("button", { name: "从剪切点开始" })).toHaveAttribute(
@@ -693,12 +716,12 @@ test.describe("joins on the timeline", () => {
         source: { kind: "color", color: "#00ff00" },
       },
     ]);
-    const seam = await cut(page);
-    await page.mouse.click(seam.x - 2, seam.y, { button: "right" });
-    await page.getByRole("menuitem", { name: "添加衔接转场" }).click();
+    await joinFromTab(page);
     const second = await clipsAt(page).nth(1).boundingBox();
     if (!second) throw new Error("No clip");
     const from = { x: second.x + second.width / 2, y: second.y + second.height - 6 };
+    // Only the second one moves.
+    await page.mouse.click(from.x, from.y);
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
     await page.mouse.move(from.x + 40, from.y, { steps: 4 });

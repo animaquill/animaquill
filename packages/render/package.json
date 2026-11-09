@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./compositor": "./src/compositor.ts"
+    "./compositor": "./src/compositor.ts",
+    "./transitions": "./src/transitions/built-in.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

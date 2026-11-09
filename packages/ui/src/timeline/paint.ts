@@ -20,6 +20,7 @@ import {
   type TimelineModel,
 } from "./model.ts";
 import { paintRuler } from "./ruler.ts";
+import type { Preview } from "./gestures.ts";
 import { StagePainter, readTheme, type Theme } from "./stage-painter.ts";
 
 const ROW_INSET = 2;
@@ -224,6 +225,26 @@ export class TimelinePainter extends StagePainter {
       context.fillRect(left, top, editor.xAt(to) - left, row.height - ROW_INSET * 2 - 1);
     }
     context.globalAlpha = 1;
+    this.#paintTransitionDrop(model, preview.transitionDrop);
+  }
+
+  /** Where a transition dragged from its tab would go: what of the clips it would take, lit up. */
+  #paintTransitionDrop(model: TimelineModel, drop: Preview["transitionDrop"]): void {
+    const row = drop && model.rows.find(({ id }) => id === drop.row);
+    if (!drop || !row) return;
+    const editor = this.#editor;
+    const { context } = this;
+    const top = this.#rowTop(row) + ROW_INSET;
+    const height = row.height - ROW_INSET * 2 - 1;
+    const left = this.sharp(editor.xAt(drop.start));
+    const width = Math.max(this.sharp(editor.xAt(drop.end)) - left, TRANSITION_HANDLE);
+    context.globalAlpha = 0.35;
+    context.fillStyle = this.#theme.selected;
+    context.fillRect(left, top, width, height);
+    context.globalAlpha = 1;
+    context.strokeStyle = this.#theme.selected;
+    context.lineWidth = 2;
+    context.strokeRect(left + 1, top + 1, width - 2, height - 2);
   }
 
   #paintClip(box: ClipBox, look: ClipLook): void {
@@ -284,7 +305,7 @@ export class TimelinePainter extends StagePainter {
     const choice = editor.getSnapshot().transition;
     const chosen = choice !== undefined && !isJoinChoice(choice) && choice.clip === box.id;
     if (look.selected || look.hovered || chosen) {
-      this.#paintTransitionHandles(look, edges, left, right, top);
+      this.#paintTransitionHandles(box, look, edges, { left, right, top });
     }
     if (look.selected) {
       context.strokeStyle = this.#theme.selected;
@@ -515,17 +536,19 @@ export class TimelinePainter extends StagePainter {
 
   /** The handles at the top corners, where each transition ends. They stay inside the clip. */
   #paintTransitionHandles(
+    box: ClipBox,
     look: ClipLook,
     edges: Readonly<Record<Edge, number>>,
-    left: number,
-    right: number,
-    top: number,
+    { left, right, top }: { readonly left: number; readonly right: number; readonly top: number },
   ): void {
     const editor = this.#editor;
     if (!editor.showsTransitionHandles(look.row) || right - left < TRANSITION_HANDLE * 2) return;
     const { context } = this;
     const at = { enter: look.start + edges.enter, exit: look.end - edges.exit };
+    const joined = editor.model?.joined;
     for (const edge of EDGES) {
+      // Only an edge with a transition has a handle, and where a join is, it has its own.
+      if (edges[edge] <= 0 || joined?.has(`${box.id} ${edge}`) === true) continue;
       const middle = editor.xAt(at[edge]);
       const x = Math.min(Math.max(middle - TRANSITION_HANDLE / 2, left), right - TRANSITION_HANDLE);
       context.fillStyle = look.handle === edge ? this.#theme.selected : "#ffffff";

@@ -6,7 +6,7 @@ import { panelsOf, pruneLayout, type LayoutNode, type LayoutTabs } from "./layou
 import { layouts } from "./layouts.ts";
 
 /** Designed in docs/design/resource-panels.md, with no panel yet. */
-const STILL_TO_COME = ["explorer", "transitions", "effects"];
+const STILL_TO_COME = ["explorer", "effects"];
 
 const ready = new Set(builtinPanels.filter((panel) => !panel.planned).map((panel) => panel.type));
 const facts = { title: (type: string) => type, keepAlive: () => false };

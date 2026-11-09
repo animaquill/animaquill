@@ -4,6 +4,8 @@ import fade from "./fade.ts";
 import push from "./push.ts";
 import wipe from "./wipe.ts";
 
+export type { TransitionCode, TransitionFrame, TransitionHost } from "./code.ts";
+
 /**
  * The code of the transitions that come with the editor, by name, as the project format has them.
  * What cannot be found is drawn as a fade, which the plan says already: see `PlannedTransition`.

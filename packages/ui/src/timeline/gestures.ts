@@ -80,6 +80,8 @@ export interface Preview {
   readonly transition?: { readonly clip: string; readonly edge: Edge; readonly seconds: number };
   /** Where a join is while an edge of it is dragged, in seconds. */
   readonly join?: { readonly id: string; readonly start: number; readonly end: number };
+  /** Where a transition dragged from the transitions tab would go, in seconds on a track. */
+  readonly transitionDrop?: { readonly row: string; readonly start: number; readonly end: number };
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */
@@ -678,8 +680,8 @@ export function transitionCall(
 
 /**
  * Drags the handle at a top corner of a clip, where its transition at that edge ends, as with the
- * fades of most video editors: without a transition there yet, it pulls a fade out of the corner. It
- * goes by frames, or to what it snaps to, and never past the transition at the other edge.
+ * fades of most video editors. Only an edge with a transition has one. It goes by frames, or to what
+ * it snaps to, and never past the transition at the other edge.
  */
 export class TransitionGesture implements Gesture {
   readonly #host: GestureHost;

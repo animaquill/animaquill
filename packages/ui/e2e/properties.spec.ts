@@ -755,7 +755,7 @@ test("a key that is not on a frame any more can be reached and removed", async (
   await expect(x).toHaveValue("300");
 });
 
-test("pulls a fade out of the corner of a clip, which the properties tab sets, each a step", async ({
+test("puts a fade in on a clip from the transitions tab, which the properties tab sets, each a step", async ({
   page,
 }) => {
   await addColor(page);
@@ -764,22 +764,22 @@ test("pulls a fade out of the corner of a clip, which the properties tab sets, e
   const [red = 0, green = 0, blue = 0] = full;
   const half: Color = [red / 2, green / 2, blue / 2];
 
-  // The handle at the top left corner of the clip pulls a fade in out of it, as it did fades.
+  // With the clip selected, a fade in from the transitions tab goes at its start.
   await tab(page, "timeline").click();
   const clip = clips(page).first();
   const box = await clip.boundingBox();
   if (!box) throw new Error("no clip on screen");
-  const top = box.y + 4;
-  await page.mouse.move(box.x + 2, top);
-  await expect(content(page, "timeline").getByRole("group", { name: "时间轴" })).toHaveCSS(
-    "cursor",
-    "col-resize",
-  );
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2, top, { steps: 8 });
-  await page.mouse.up();
-
-  // What it made is selected, and the properties tab shows what a transition has, and no more.
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 8);
+  await tab(page, "transitions").click();
+  await content(page, "transitions").getByRole("option", { name: "淡入", exact: true }).click();
+  await page.getByRole("menuitem", { name: "加在开头（淡入）" }).click();
+  // Its block at the top of the clip selects it, and the properties tab shows what a transition
+  // has, and no more.
+  await tab(page, "timeline").click();
+  const after = await clip.boundingBox();
+  if (!after) throw new Error("no clip on screen");
+  // Past the button for what shows under the track, which a selected clip has at its start.
+  await page.mouse.click(after.x + Math.max(30, after.width * 0.05), after.y + 6);
   await tab(page, "properties").click();
   const transition = panel(page).getByRole("region", { name: "淡入" });
   await expect(transition).toBeVisible();

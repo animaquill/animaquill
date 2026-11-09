@@ -45,7 +45,7 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
-import { replacementItems } from "./transition-menu.ts";
+import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
@@ -649,6 +649,18 @@ function Surface({
     },
   );
 
+  /** A transition from its tab, which shows where it would go, and goes only where it can. */
+  const onTransitionDrag = (event: DragEvent<HTMLDivElement>) => {
+    const pick = transitionDrag.current();
+    const pointer = pointerOf(event, event.currentTarget);
+    if (pick && editor.showTransitionDrop(pointer, pick)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    } else {
+      event.dataTransfer.dropEffect = "none";
+    }
+  };
+
   const carriesMedia = (event: DragEvent) =>
     event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
     event.dataTransfer.types.includes(SCENE_DRAG_TYPE) ||
@@ -656,6 +668,10 @@ function Surface({
     event.dataTransfer.types.includes("Files");
 
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (event.dataTransfer.types.includes(TRANSITION_DRAG_TYPE)) {
+      onTransitionDrag(event);
+      return;
+    }
     if (!carriesMedia(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
@@ -664,6 +680,13 @@ function Surface({
 
   /** Files from the computer come in first. Several go one after the other. */
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    const pick = transitionDrag.current();
+    if (pick && event.dataTransfer.types.includes(TRANSITION_DRAG_TYPE)) {
+      event.preventDefault();
+      editor.dropTransition(pointerOf(event, event.currentTarget), pick);
+      stage.current?.focus({ preventScroll: true });
+      return;
+    }
     if (!carriesMedia(event)) return;
     event.preventDefault();
     const pointer = pointerOf(event, event.currentTarget);
@@ -708,19 +731,13 @@ function Surface({
       if (row.track.locked) return;
       const current = join.join.transition;
       const align = current.align ?? "center";
-      // What it can be instead, where it is around the cut, and taking it away.
-      const instead =
-        row.track.kind === "video"
-          ? replacementItems(t, "join", current, ({ type, variant }) =>
-              editor.updateJoin(join.id, { type, variant: variant ?? null }),
-            )
-          : [];
+      // Where it is around the cut, and taking it away. Another one takes its place from the
+      // transitions tab, see docs/design/resource-panels.md, section 3.
       showMenu({
         x,
         y,
         label: t("transition.uses.join"),
         groups: [
-          ...instead,
           JOIN_ALIGNS.map((place) => ({
             id: `align-${place}`,
             label: t(`transition.align.${place}`),
@@ -739,19 +756,11 @@ function Surface({
     } else if (hit.kind === "clip" && hit.transition && !hit.row.track.locked) {
       const { transition } = hit;
       editor.selectTransition(hit.box.id, transition);
-      const current = hit.box.clip[transition];
-      const instead =
-        hit.row.track.kind === "video" && current
-          ? replacementItems(t, transition, current, ({ type, variant }) =>
-              editor.replaceTransition(hit.box.id, transition, type, variant),
-            )
-          : [];
       showMenu({
         x,
         y,
         label: t(`transition.uses.${transition}`),
         groups: [
-          ...instead,
           [
             {
               id: "deleteTransition",
@@ -782,39 +791,6 @@ function Surface({
               },
             ]
           : [];
-      // A cut between two clips takes a join, and the edges of a clip what comes in and goes out.
-      const seam = editor.seamAt(pointer);
-      const joined = (edge: "enter" | "exit") =>
-        editor.model?.joined.has(`${hit.box.id} ${edge}`) === true;
-      const transitions =
-        hit.row.track.kind === "video"
-          ? [
-              ...(seam
-                ? [
-                    {
-                      id: "addJoin",
-                      label: t("transition.addJoin"),
-                      run: () => editor.addJoin(seam.from.id, seam.to.id),
-                      disabled:
-                        editor.model?.joined.has(`${seam.from.id} exit`) === true ||
-                        editor.model?.joined.has(`${seam.to.id} enter`) === true,
-                    },
-                  ]
-                : []),
-              {
-                id: "addEnter",
-                label: t("transition.addEnter"),
-                run: () => editor.addEdgeTransition(hit.box.id, "enter"),
-                disabled: hit.box.clip.enter !== undefined || joined("enter"),
-              },
-              {
-                id: "addExit",
-                label: t("transition.addExit"),
-                run: () => editor.addEdgeTransition(hit.box.id, "exit"),
-                disabled: hit.box.clip.exit !== undefined || joined("exit"),
-              },
-            ]
-          : [];
       showMenu({
         x,
         y,
@@ -825,7 +801,6 @@ function Surface({
             item("cut", () => editor.cutSelection()),
             item("paste", () => editor.paste(), !editor.hasClipboard),
           ],
-          ...(transitions.length > 0 ? [transitions] : []),
           ...(properties.length > 0 ? [properties] : []),
           [
             item("split", () => editor.splitAtPlayhead(), !editor.canSplit),
@@ -885,7 +860,10 @@ function Surface({
         onDoubleClick={(event) => popups.doubleClick(pointerOf(event, event.currentTarget))}
         onContextMenu={onContextMenu}
         onDragOver={onDragOver}
-        onDragLeave={() => editor.showDrop(undefined)}
+        onDragLeave={() => {
+          editor.showDrop(undefined);
+          editor.showTransitionDrop(undefined);
+        }}
         onDrop={onDrop}
       >
         <canvas ref={canvas} className={styles.canvas} />
