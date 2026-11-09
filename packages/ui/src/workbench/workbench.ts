@@ -11,8 +11,10 @@ import {
 } from "@animaquill/core";
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
-import { toSeconds } from "@animaquill/schema";
+import { formatTime, toSeconds } from "@animaquill/schema";
 import type { ProjectSummary } from "@animaquill/host";
+import { ChatSession } from "../chat/session.ts";
+import { AiSettingsStore } from "../chat/settings.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -43,6 +45,7 @@ import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
+import { frameTime } from "../timeline/frames.ts";
 import type { ImportReport } from "../transfer/import.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
@@ -166,6 +169,10 @@ export class Workbench {
   readonly resourcePages: ResourcePages;
   readonly files: FileActions;
   readonly drafts: CodeDrafts;
+  /** The AI services people set up, with their keys, which only this browser has. */
+  readonly ai: AiSettingsStore;
+  /** The chat with AI in the browser, about the open project. */
+  readonly chat: ChatSession;
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -192,9 +199,13 @@ export class Workbench {
       media: (id) => this.projectFolders?.mediaFor(id, this.#exportSince) ?? library.media(id),
     };
     this.diagnostics = new DiagnosticsRecorder(version);
+    this.ai = new AiSettingsStore(host.settings, host.keys, {
+      saveFailed: () => this.notifications.push(t("ai.saveFailed")),
+      keyFailed: () => this.notifications.push(t("ai.keyFailed")),
+    });
     const sink = host.diagnostics;
     this.#sink = sink;
-    let names: { state: unknown; found: Set<string> } | undefined;
+    let names: { state: unknown; keys: ReadonlySet<string>; found: Set<string> } | undefined;
     this.errors = new ErrorReports({
       version,
       recorder: this.diagnostics,
@@ -206,7 +217,11 @@ export class Workbench {
       secrets: () => {
         // An error can come every frame, and the project rarely changes that often.
         const state = this.session.store?.getState();
-        if (!names || names.state !== state) names = { state, found: namesIn(state) };
+        const keys = this.ai.knownKeys;
+        if (!names || names.state !== state || names.keys !== keys) {
+          // Keys of AI services must never leave, whatever an error says.
+          names = { state, keys, found: new Set([...namesIn(state), ...keys]) };
+        }
         return names.found;
       },
       device: deviceFacts,
@@ -357,6 +372,26 @@ export class Workbench {
       sceneName: (number) => t("scene.newName", { number }),
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),
+    });
+    this.chat = new ChatSession({
+      chats: host.chats,
+      ai: this.ai,
+      project: () => {
+        const { store, key } = this.session.getSnapshot();
+        return store && key !== undefined ? { store, key } : undefined;
+      },
+      subscribeProject: this.session.subscribe,
+      selection: () => {
+        const { model, selection, transition } = this.timeline.getSnapshot();
+        if (!model) return undefined;
+        return {
+          timeline: model.id,
+          playhead: formatTime(frameTime(this.timeline.frame, model.rate)),
+          clips: [...selection],
+          ...(transition && { transition }),
+        };
+      },
+      undone: (result) => this.tellUndo(result),
     });
     this.frameRate = new PreviewFrameRate(this.timeline);
     this.previewQuality = new PreviewQuality(host.settings, this.frameRate);
@@ -972,6 +1007,7 @@ export class Workbench {
       this.input.load(),
       this.previewQuality.load(),
       this.trials.load(),
+      this.ai.load(),
     ]);
     // An address of a project folder opens as one once the page is there, see `resume`.
     if (!(await this.projectFolders?.restore())) await this.session.restore();
@@ -1529,7 +1565,11 @@ export class Workbench {
   #stepThroughHistory(step: (store: ProjectStore) => UndoResult): void {
     const { store } = this.session;
     if (!store) return;
-    const result = step(store);
+    this.tellUndo(step(store));
+  }
+
+  /** What taking back or doing again came to, when there is something to say about it. */
+  tellUndo(result: UndoResult): void {
     if (result.ok) {
       if (result.obstacle) this.notifications.push(this.t(`notice.undoPartly.${result.obstacle}`));
     } else if (result.error.obstacle) {

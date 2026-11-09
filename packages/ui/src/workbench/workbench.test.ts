@@ -1246,3 +1246,19 @@ describe("the report of how it runs", () => {
     expect(JSON.stringify(report)).not.toContain("秘密");
   });
 });
+
+describe("keys of AI services", () => {
+  it("never get into a report of an error, or into what happened before it", async () => {
+    const { workbench } = setup();
+    await create(workbench, "报告");
+    const key = "sk-ant-api03-SECRETSECRET0123456789";
+    const id = workbench.ai.add("anthropic", "Anthropic") as string;
+    await workbench.ai.setKey(id, key);
+    workbench.errors.capture("window", new Error(`401 invalid x-api-key: ${key}`));
+    workbench.errors.capture("window", new Error(`Fetch "${key}" failed`));
+    const report = JSON.stringify(workbench.errors.getSnapshot());
+    expect(report).not.toContain("SECRETSECRET");
+    // How the editor runs is told by what happened, which never has a key in it.
+    expect(JSON.stringify(workbench.diagnostics.trail.entries())).not.toContain("SECRETSECRET");
+  });
+});

@@ -118,6 +118,11 @@ import { codeUsingAsset } from "./scene-plan.ts";
 
 export interface CommandDefinition<P = unknown> {
   readonly type: string;
+  /**
+   * What it does, in one sentence for people: AI picks commands by it, and the command palette can
+   * show it.
+   */
+  readonly description: string;
   readonly params: z.ZodType<P>;
   readonly run: (draft: Draft, params: P) => unknown;
   /** Can run on a project with a locked tag: the way to take the tag off again. */
@@ -130,11 +135,12 @@ export interface CommandDefinition<P = unknown> {
 
 function define<S extends z.ZodType>(
   type: string,
+  description: string,
   params: S,
   run: (draft: Draft, params: z.output<S>) => unknown,
   options: Pick<CommandDefinition, "whileLocked" | "userOnly" | "userOnlyParams"> = {},
 ): CommandDefinition {
-  return { type, params, run: run as CommandDefinition["run"], ...options };
+  return { type, description, params, run: run as CommandDefinition["run"], ...options };
 }
 
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
@@ -463,16 +469,27 @@ const TrackChanges = z
 const MarkerChanges = Marker.omit({ id: true }).partial();
 
 export const COMMANDS: readonly CommandDefinition[] = [
-  define("project.rename", z.strictObject({ name: z.string().min(1) }), (draft, { name }) => {
-    draft.set(["manifest", "name"], name);
-  }),
+  define(
+    "project.rename",
+    "给项目改名。",
+    z.strictObject({ name: z.string().min(1) }),
+    (draft, { name }) => {
+      draft.set(["manifest", "name"], name);
+    },
+  ),
 
-  define("project.setFrameRate", z.strictObject({ fps: Rate }), (draft, { fps }) => {
-    draft.set(["manifest", "fps"], fps);
-  }),
+  define(
+    "project.setFrameRate",
+    "设置项目的帧率，时间轴的标尺按它数帧。",
+    z.strictObject({ fps: Rate }),
+    (draft, { fps }) => {
+      draft.set(["manifest", "fps"], fps);
+    },
+  ),
 
   define(
     "project.setTags",
+    "设置项目的标签，包括锁定项目的标签。",
     z.strictObject({ tags: ProjectManifest.shape.tags.unwrap() }),
     (draft, { tags }) => {
       draft.set(["manifest", "tags"], tags);
@@ -482,6 +499,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "asset.add",
+    "在项目里登记一个素材文件（路径、类型、存放方式），不会上传文件本身。",
     z.strictObject({ id: Id.optional(), asset: Asset }),
     (draft, { id, asset }) => {
       const key = id ?? newId("asset");
@@ -497,6 +515,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
    */
   define(
     "asset.update",
+    "改素材的名字和标签，或在文件移动、替换后改它的路径和文件信息，用它的片段不变。",
     z.strictObject({
       asset: Id,
       changes: z.strictObject({
@@ -528,6 +547,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   /** `withUses` takes the clips that use it along, in the same step, see `removeUses`. */
   define(
     "asset.remove",
+    "删除一个素材；withUses 为 true 时连同用它的片段一起删，否则还有片段在用时拒绝。",
     z.strictObject({ asset: Id, withUses: z.boolean().optional() }),
     (draft, { asset, withUses }) => {
       if (!entryOf(draft.state.assets, asset)) fail("not-found", `没有这个素材：${asset}`);
@@ -541,20 +561,56 @@ export const COMMANDS: readonly CommandDefinition[] = [
     },
   ),
 
-  define("scene.add", SceneAdd, addScene),
-  define("scene.update", SceneUpdate, updateScene),
-  define("scene.remove", SceneRemove, removeScene),
-  define("sound.add", SoundAdd, addSound),
-  define("sound.update", SoundUpdate, updateSound),
-  define("sound.remove", SoundRemove, removeSound),
+  define("scene.add", "新建一个 HTML 场景（代码生成的画面），连同它的文件。", SceneAdd, addScene),
+  define(
+    "scene.update",
+    "改场景的清单，比如名字、入口文件、参数和预设。",
+    SceneUpdate,
+    updateScene,
+  ),
+  define(
+    "scene.remove",
+    "删除一个场景和它的文件；withUses 为 true 时连同用它的片段一起删。",
+    SceneRemove,
+    removeScene,
+  ),
+  define("sound.add", "新建一个代码生成的声音，连同它的文件。", SoundAdd, addSound),
+  define(
+    "sound.update",
+    "改代码生成的声音的清单，比如名字、入口文件、参数和输出。",
+    SoundUpdate,
+    updateSound,
+  ),
+  define(
+    "sound.remove",
+    "删除一个代码生成的声音和它的文件；withUses 为 true 时连同用它的片段一起删。",
+    SoundRemove,
+    removeSound,
+  ),
   /** Clips that use an asset, scene or sound use another one of the same kind instead. */
-  define("source.replace", SourceReplace, replaceSource),
-  define("file.write", FileWrite, writeFile),
-  define("file.remove", FileRemove, removeFile),
-  define("file.rename", FileRename, renameFile),
+  define(
+    "source.replace",
+    "让用某个素材、场景或声音的片段全部改用另一个同类的。",
+    SourceReplace,
+    replaceSource,
+  ),
+  define(
+    "file.write",
+    "写入项目里的一个代码文件（场景、声音或共用代码），整份替换。",
+    FileWrite,
+    writeFile,
+  ),
+  define(
+    "file.remove",
+    "删除项目里的一个代码文件，场景和声音的入口文件不能删。",
+    FileRemove,
+    removeFile,
+  ),
+  define("file.rename", "把项目里的一个代码文件改名或移到别的路径。", FileRename, renameFile),
 
   define(
     "timeline.rename",
+    "给时间轴改名。",
     z.strictObject({ timeline: Id, name: z.string().min(1) }),
     (draft, { timeline, name }) => {
       timelineOf(draft, timeline);
@@ -564,6 +620,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "section.add",
+    "在时间轴上加一个段落（时间轴由段落首尾相接组成），可以指定放在哪个段落前面。",
     z.strictObject({
       timeline: Id,
       id: Id.optional(),
@@ -585,6 +642,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "section.update",
+    "改段落的时长或名字。",
     z.strictObject({
       timeline: Id,
       section: Id,
@@ -602,6 +660,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "section.remove",
+    "删除一个段落，时间轴至少要留一个。",
     z.strictObject({ timeline: Id, section: Id }),
     (draft, { timeline, section }) => {
       const { sections } = timelineOf(draft, timeline);
@@ -613,6 +672,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "track.add",
+    "加一条轨道（video、audio 或 caption），可以指定放在哪条轨道前面。",
     z.strictObject({
       timeline: Id,
       id: Id.optional(),
@@ -634,6 +694,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "track.update",
+    "改轨道的名字、隐藏、静音、独奏、锁定、分组或声音角色。",
     z.strictObject({ timeline: Id, track: Id, changes: TrackChanges }),
     (draft, { timeline, track, changes }) => {
       const current = trackOf(timelineOf(draft, timeline), track);
@@ -648,6 +709,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "track.move",
+    "改轨道的顺序：移到某条轨道前面，不写就移到最后。",
     z.strictObject({ timeline: Id, track: Id, before: Id.optional() }),
     (draft, { timeline, track, before }) => {
       const target = timelineOf(draft, timeline);
@@ -657,21 +719,27 @@ export const COMMANDS: readonly CommandDefinition[] = [
     },
   ),
 
-  define("track.remove", z.strictObject({ timeline: Id, track: Id }), (draft, params) => {
-    const { timeline, track } = params;
-    const target = timelineOf(draft, timeline);
-    trackOf(target, track);
-    for (const clip of Object.values(target.clips)) {
-      if (clip.track === track) draft.delete(clipPath(timeline, clip.id));
-    }
-    for (const [id, join] of Object.entries(target.joins ?? {})) {
-      if (join.track === track) draft.delete(joinPath(timeline, id));
-    }
-    draft.delete(trackPath(timeline, track));
-  }),
+  define(
+    "track.remove",
+    "删除一条轨道和上面的全部片段。",
+    z.strictObject({ timeline: Id, track: Id }),
+    (draft, params) => {
+      const { timeline, track } = params;
+      const target = timelineOf(draft, timeline);
+      trackOf(target, track);
+      for (const clip of Object.values(target.clips)) {
+        if (clip.track === track) draft.delete(clipPath(timeline, clip.id));
+      }
+      for (const [id, join] of Object.entries(target.joins ?? {})) {
+        if (join.track === track) draft.delete(joinPath(timeline, id));
+      }
+      draft.delete(trackPath(timeline, track));
+    },
+  ),
 
   define(
     "clip.add",
+    "在轨道上放一个片段（素材、场景、声音、字幕等）；默认不能和已有片段重叠，overlap 为 overwrite 时盖掉重叠的部分。",
     z.strictObject({
       timeline: Id,
       track: Id,
@@ -712,6 +780,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "clip.remove",
+    "删除一个或几个片段。",
     z.strictObject({ timeline: Id, clips: z.array(Id).min(1) }),
     (draft, { timeline, clips }) => {
       const target = timelineOf(draft, timeline);
@@ -723,6 +792,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   /** Transitions at the edges of a clip have a command of their own, `clip.setTransition`. */
   define(
     "clip.update",
+    "改片段自己的字段，比如名字、开头、时长、内容、offset、循环和隐藏；转场、效果和属性用各自的命令。",
     z.strictObject({
       timeline: Id,
       clip: Id,
@@ -776,6 +846,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
    */
   define(
     "clip.setTransition",
+    "给片段的开头（enter）或结尾（exit）加上、换掉或去掉转场，null 表示去掉。",
     z
       .strictObject({
         timeline: Id,
@@ -815,17 +886,35 @@ export const COMMANDS: readonly CommandDefinition[] = [
   ),
 
   /** Puts a join on the cut between two clips, see join-edits.ts. */
-  define("join.add", JoinAdd, addJoin, { userOnlyParams: ["copied"] }),
-  define("effect.add", EffectAdd, addEffect),
-  define("effect.remove", EffectRemove, removeEffects),
-  define("effect.move", EffectMove, moveEffect),
-  define("effect.update", EffectUpdate, updateEffect),
-  define("join.update", JoinUpdate, updateJoin),
-  define("join.remove", JoinRemove, removeJoins),
+  define("join.add", "在两个首尾相接的片段之间加衔接转场。", JoinAdd, addJoin, {
+    userOnlyParams: ["copied"],
+  }),
+  define(
+    "effect.add",
+    "给片段加一个效果，可以指定放在效果列表的哪里和参数的初始值。",
+    EffectAdd,
+    addEffect,
+  ),
+  define("effect.remove", "去掉片段上的效果。", EffectRemove, removeEffects),
+  define(
+    "effect.move",
+    "调整效果在片段效果列表里的位置，先后顺序会影响结果。",
+    EffectMove,
+    moveEffect,
+  ),
+  define(
+    "effect.update",
+    "打开或关闭效果，或改它在片段里生效的开始和结束时间。",
+    EffectUpdate,
+    updateEffect,
+  ),
+  define("join.update", "改衔接转场的类型、时长、对齐、速度曲线或参数。", JoinUpdate, updateJoin),
+  define("join.remove", "删除衔接转场。", JoinRemove, removeJoins),
 
   /** Several clips move in one step, because the place one of them leaves is free for another. */
   define(
     "clip.move",
+    "把一个或几个片段移到新的开始时间或别的轨道，一步完成。",
     z.strictObject({
       timeline: Id,
       clips: z
@@ -878,6 +967,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   /** Moves the edges of a clip, which is different from changing its numbers: see trimClip. */
   define(
     "clip.trim",
+    "修剪片段的开头或结尾：移动边缘，画面内容留在时间轴原来的位置。",
     z.strictObject({ timeline: Id, clip: Id, start: Time.optional(), end: Time.optional() }),
     (draft, { timeline, clip, start, end }) => {
       const target = timelineOf(draft, timeline);
@@ -906,6 +996,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
    */
   define(
     "clip.split",
+    "在时间轴上的某个时刻把片段切成两段，链接在一起的片段一起切。",
     z.strictObject({
       timeline: Id,
       clip: Id,
@@ -944,6 +1035,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "clip.setProperty",
+    "把片段的一个属性整个设成一个值，也可以是带关键帧的动画。",
     z.strictObject({ timeline: Id, clip: Id, path: PropertyPath, value: PropertyValue }),
     (draft, { timeline, clip, path, value }) => {
       const owner = { clip };
@@ -953,6 +1045,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "clip.clearProperty",
+    "去掉片段的一个属性，回到默认值。",
     z.strictObject({ timeline: Id, clip: Id, path: PropertyPath }),
     (draft, { timeline, clip, path }) => {
       editProperties(draft, timeline, [{ owner: { clip }, path, op: "clear" }]);
@@ -962,6 +1055,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   /** Everything people, tools and AI do to properties, in one step however much it is. */
   define(
     "property.edit",
+    "一步里批量改片段的属性和关键帧：写值、加删移关键帧、改插值、整个设置或清除。",
     z.strictObject({ timeline: Id, edits: z.array(PropertyEdit).min(1) }),
     (draft, { timeline, edits }) => {
       editProperties(draft, timeline, edits);
@@ -974,12 +1068,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
    */
   define(
     "property.rename",
+    "给片段属性的路径改名，关键帧和各个版本里的值一起移过去，用在代码里的对象改名之后。",
     z.strictObject({ timeline: Id, renames: z.array(PropertyRename).min(1) }),
     (draft, { timeline, renames }) => ({ renamed: renameProperties(draft, timeline, renames) }),
   ),
 
   define(
     "marker.add",
+    "在时间轴上加一个标记。",
     z.strictObject({ timeline: Id, marker: Marker.extend({ id: Id.optional() }) }),
     (draft, { timeline, marker }) => {
       timelineOf(draft, timeline);
@@ -991,6 +1087,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   define(
     "marker.update",
+    "改标记的时间、名字等。",
     z.strictObject({ timeline: Id, marker: Id, changes: MarkerChanges }),
     (draft, { timeline, marker, changes }) => {
       if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
@@ -1002,11 +1099,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
     },
   ),
 
-  define("marker.remove", z.strictObject({ timeline: Id, marker: Id }), (draft, params) => {
-    const { timeline, marker } = params;
-    if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
-      fail("not-found", `没有这个标记：${marker}`);
-    }
-    draft.delete([...timelinePath(timeline), "markers", marker]);
-  }),
+  define(
+    "marker.remove",
+    "删除一个标记。",
+    z.strictObject({ timeline: Id, marker: Id }),
+    (draft, params) => {
+      const { timeline, marker } = params;
+      if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
+        fail("not-found", `没有这个标记：${marker}`);
+      }
+      draft.delete([...timelinePath(timeline), "markers", marker]);
+    },
+  ),
 ];

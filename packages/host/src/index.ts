@@ -1,3 +1,4 @@
+export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
 export { chromeRefuses, isRefusedByChrome } from "./chrome-names.ts";
 export {
   MAX_NAME_LENGTH,
@@ -33,6 +34,13 @@ export interface Host {
   readonly caches?: WorkCache;
   /** Which windows have which projects open. Without it every window is on its own. */
   readonly presence?: ProjectPresence;
+  /**
+   * Keys of AI services that people set up, on this device only: not in projects, not synced, and
+   * never in a report. Without it keys last as long as the page.
+   */
+  readonly keys?: KeyStore;
+  /** Conversations with AI in the browser, by project. Without it they last as long as the page. */
+  readonly chats?: ChatStore;
 }
 
 /**
@@ -109,6 +117,46 @@ export interface WorkCache {
   /** Resolves to undefined when nothing is kept under this key. */
   read(key: string): Promise<unknown>;
   write(key: string, value: unknown): Promise<void>;
+}
+
+/**
+ * Keys of AI services, by the service people set up. They stay apart from everything else, so that
+ * nothing that reads settings, projects or reports can come across them.
+ */
+export interface KeyStore {
+  /** Where they are, to tell people: the name of the database in the browser. */
+  readonly where: string | undefined;
+  read(service: string): Promise<string | undefined>;
+  /** The services that have a key. */
+  list(): Promise<readonly string[]>;
+  write(service: string, key: string): Promise<void>;
+  remove(service: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+export interface SavedChatSummary {
+  readonly id: string;
+  readonly project: string;
+  /** What it is about, for people to find it again. */
+  readonly title: string;
+  /** Milliseconds since 1970. */
+  readonly updatedAt: number;
+}
+
+/** A conversation as it was kept. What was said is the editor's to read, see `readEntry`. */
+export interface SavedChat extends SavedChatSummary {
+  readonly entries: readonly unknown[];
+}
+
+/** Conversations with AI by project. Only so many of a project are kept, the oldest go first. */
+export interface ChatStore {
+  /** Newest first, without what was said. */
+  list(project: string): Promise<readonly SavedChatSummary[]>;
+  load(project: string, id: string): Promise<SavedChat | undefined>;
+  save(chat: SavedChat): Promise<void>;
+  remove(project: string, id: string): Promise<void>;
+  /** All of a project, for a project that is gone. */
+  forget(project: string): Promise<void>;
 }
 
 /** Receives what people chose to send: how the editor runs, or what went wrong in it. */

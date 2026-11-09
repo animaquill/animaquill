@@ -1,0 +1,419 @@
+import { failureOf } from "@animaquill/agent";
+import type {
+  AssistantEntry,
+  ChatEntry,
+  ConversationSnapshot,
+  TaskOutcome,
+  ToolCallEntry,
+  ToolEntry,
+} from "@animaquill/agent";
+import { Check, LoaderCircle, Plus, Square, X } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import { useTranslation } from "react-i18next";
+import { useProject, useSession, useWorkbench } from "../app/context.ts";
+import styles from "./ChatPanel.module.css";
+
+const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
+const noop = () => () => {};
+const ARGS_SUMMARY = 90;
+/** How close to the bottom still counts as reading the newest. */
+const STICK_PX = 24;
+
+/** What people and AI said, by task: each message of people starts one. */
+interface TaskGroup {
+  readonly task: string;
+  readonly entries: readonly ChatEntry[];
+}
+
+function groupsOf(entries: readonly ChatEntry[]): TaskGroup[] {
+  const groups: { task: string; entries: ChatEntry[] }[] = [];
+  for (const entry of entries) {
+    if (entry.role === "user") groups.push({ task: entry.task, entries: [entry] });
+    else groups.at(-1)?.entries.push(entry);
+  }
+  return groups;
+}
+
+const READ_TOOLS = new Set(["project_overview", "timeline_read", "selection_read", "file_read"]);
+
+/**
+ * How an earlier task ended, as far as what was kept says: only a failure or a stop leave a mark.
+ * The limit of tools does not, as its answer looks like any other.
+ */
+function keptOutcome(group: TaskGroup): TaskOutcome | undefined {
+  const last = group.entries.findLast((entry) => entry.role === "assistant");
+  if (last?.role !== "assistant") return undefined;
+  if (last.end === "stopped") return { task: group.task, end: "stopped" };
+  if (last.end === "failed") {
+    return { task: group.task, end: "failed", failure: failureOf(last.error ?? "") };
+  }
+  return undefined;
+}
+
+/** A command by its type, as people know it from the command system. */
+const commandOf = (tool: string) => tool.replaceAll("_", ".");
+
+function summaryOf(args: Readonly<Record<string, unknown>>): string {
+  const text = JSON.stringify(args);
+  return text.length > ARGS_SUMMARY ? `${text.slice(0, ARGS_SUMMARY)}…` : text;
+}
+
+/** The chat with AI in the browser, about the open project. */
+export function ChatPanel() {
+  const { chat, ai, layout } = useWorkbench();
+  const { t } = useTranslation();
+  const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const conversation = snapshot.conversation;
+  const talk = useSyncExternalStore(
+    conversation?.subscribe ?? noop,
+    conversation?.getSnapshot ?? (() => NO_CONVERSATION),
+  );
+  const { store } = useSession();
+  // What a task can take back changes with every change of the project.
+  useProject(store);
+  const [text, setText] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+  const current = ai.current;
+
+  // New words come in at the bottom, where people read, unless they scrolled up to read before.
+  const stick = useRef(true);
+  useEffect(() => {
+    const list = listRef.current;
+    if (list && stick.current) list.scrollTop = list.scrollHeight;
+  });
+
+  const send = () => {
+    const message = text;
+    if (!message.trim() || talk.running) return;
+    setText("");
+    void chat.send(message);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      send();
+    }
+  };
+
+  if (settings.services.length === 0) {
+    return (
+      <div className={styles.panel}>
+        <div className={styles.none}>
+          <p>{t("chat.noServices")}</p>
+          <button type="button" onClick={() => layout.openPanel("settings")}>
+            {t("chat.setUp")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const groups = groupsOf(talk.entries);
+  return (
+    <div className={styles.panel} data-testid="chat">
+      <div className={styles.bar}>
+        <select
+          aria-label={t("chat.service")}
+          value={settings.current ?? ""}
+          onChange={(event) => ai.choose(event.target.value)}
+        >
+          {settings.services.map((service) => (
+            <option key={service.id} value={service.id}>
+              {service.name}
+            </option>
+          ))}
+        </select>
+        {current && <ModelPicker key={current.id} />}
+        <button
+          type="button"
+          title={t("chat.newConversation")}
+          aria-label={t("chat.newConversation")}
+          disabled={talk.running !== undefined}
+          onClick={() => chat.newConversation()}
+        >
+          <Plus size={14} />
+        </button>
+        {snapshot.saved.length > 0 && (
+          <select
+            className={styles.history}
+            aria-label={t("chat.history")}
+            value=""
+            disabled={talk.running !== undefined}
+            onChange={(event) => {
+              if (event.target.value) void chat.open(event.target.value);
+            }}
+          >
+            <option value="">{t("chat.history")}</option>
+            {snapshot.saved.map((saved) => (
+              <option key={saved.id} value={saved.id}>
+                {saved.id === snapshot.id ? "· " : ""}
+                {saved.title || t("chat.untitled")}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      <div
+        className={styles.list}
+        ref={listRef}
+        onScroll={(event) => {
+          const list = event.currentTarget;
+          stick.current = list.scrollHeight - list.scrollTop - list.clientHeight < STICK_PX;
+        }}
+      >
+        {groups.length === 0 && <p className={styles.empty}>{t("chat.empty")}</p>}
+        {groups.map((group, index) => (
+          <TaskView
+            key={group.task}
+            group={group}
+            running={talk.running?.task === group.task ? talk.running : undefined}
+            outcome={index === groups.length - 1 ? talk.last : undefined}
+            maxToolCalls={settings.maxToolCalls}
+          />
+        ))}
+      </div>
+
+      {snapshot.hold && (
+        <p className={styles.hold} role="alert">
+          {t(`chat.hold.${snapshot.hold}`)}
+        </p>
+      )}
+      <div className={styles.compose}>
+        <textarea
+          aria-label={t("chat.placeholder")}
+          placeholder={t("chat.placeholder")}
+          value={text}
+          rows={3}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        {talk.running ? (
+          <button type="button" className={styles.stop} onClick={() => chat.stop()}>
+            <Square size={12} /> {t("chat.stop")}
+          </button>
+        ) : (
+          <button type="button" disabled={!text.trim()} onClick={send}>
+            {t("chat.send")}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The model of the current service, picked from what it has or typed. */
+function ModelPicker() {
+  const { ai } = useWorkbench();
+  const { t } = useTranslation();
+  useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const service = ai.current;
+  if (!service) return null;
+  const models = ai.modelsFor(service.id);
+  const listId = `chat-models-${service.id}`;
+  return (
+    <>
+      <input
+        className={styles.model}
+        aria-label={t("chat.model")}
+        list={listId}
+        key={service.model}
+        defaultValue={service.model}
+        placeholder={t("ai.modelPlaceholder")}
+        spellCheck={false}
+        onFocus={() => void ai.loadKnown(service.kind)}
+        onBlur={(event) => {
+          const model = event.target.value.trim();
+          if (model !== service.model) ai.update(service.id, { model });
+        }}
+        onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
+      />
+      <datalist id={listId}>
+        {models.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.name}
+          </option>
+        ))}
+      </datalist>
+    </>
+  );
+}
+
+function TaskView({
+  group,
+  running,
+  outcome,
+  maxToolCalls,
+}: {
+  readonly group: TaskGroup;
+  readonly running: ConversationSnapshot["running"];
+  readonly outcome: TaskOutcome | undefined;
+  readonly maxToolCalls: number;
+}) {
+  const { chat } = useWorkbench();
+  const { t } = useTranslation();
+  const results = new Map<string, ToolEntry>();
+  for (const entry of group.entries) if (entry.role === "tool") results.set(entry.call, entry);
+  const changes = [...results.values()].filter(
+    (result) => result.ok && !READ_TOOLS.has(result.name),
+  ).length;
+  const undo = running ? undefined : chat.undoState(group.task);
+
+  return (
+    <div className={styles.task} data-testid="chat-task">
+      {group.entries.map((entry, index) => {
+        if (entry.role === "user") {
+          return (
+            <div key={index} className={styles.user}>
+              {entry.text}
+            </div>
+          );
+        }
+        if (entry.role === "assistant") {
+          return <AnswerView key={index} entry={entry} results={results} running={running} />;
+        }
+        return null;
+      })}
+      {running && (
+        <div className={styles.answer} aria-live="polite">
+          {running.text ? (
+            <p className={styles.text}>{running.text}</p>
+          ) : (
+            !running.tool && (
+              <p className={styles.muted}>
+                <LoaderCircle size={12} className={styles.spin} /> {t("chat.thinking")}
+              </p>
+            )
+          )}
+        </div>
+      )}
+      {(() => {
+        const shown = outcome ?? (running ? undefined : keptOutcome(group));
+        return shown && <OutcomeView outcome={shown} maxToolCalls={maxToolCalls} />;
+      })()}
+      {undo && (
+        <div className={styles.undo}>
+          {changes > 0 && (
+            <span className={styles.muted}>{t("chat.changes", { count: changes })}</span>
+          )}
+          <button
+            type="button"
+            onClick={() =>
+              undo === "undo" ? chat.undoTask(group.task) : chat.redoTask(group.task)
+            }
+          >
+            {undo === "undo" ? t("chat.undoTask") : t("chat.redoTask")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnswerView({
+  entry,
+  results,
+  running,
+}: {
+  readonly entry: AssistantEntry;
+  readonly results: ReadonlyMap<string, ToolEntry>;
+  readonly running: ConversationSnapshot["running"];
+}) {
+  return (
+    <div className={styles.answer}>
+      {entry.text && <p className={styles.text}>{entry.text}</p>}
+      {entry.calls.map((call) => (
+        <ToolView
+          key={call.id}
+          call={call}
+          result={results.get(call.id)}
+          active={running?.tool?.id === call.id}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ToolView({
+  call,
+  result,
+  active,
+}: {
+  readonly call: ToolCallEntry;
+  readonly result: ToolEntry | undefined;
+  readonly active: boolean;
+}) {
+  const { t } = useTranslation();
+  const failed = result !== undefined && !result.ok;
+  const [open, setOpen] = useState(false);
+  const shown = open || failed;
+  const label = READ_TOOLS.has(call.name)
+    ? t(`chat.tool.${call.name}` as "chat.tool.file_read")
+    : commandOf(call.name);
+  const state =
+    result === undefined ? (active ? "running" : "waiting") : result.ok ? "ok" : "failed";
+  return (
+    <div className={styles.tool} data-state={state} data-testid="chat-tool">
+      <button
+        type="button"
+        className={styles.toolHead}
+        onClick={() => setOpen(!open)}
+        aria-expanded={shown}
+      >
+        <span className={styles.toolIcon}>
+          {state === "ok" && <Check size={12} aria-label={t("chat.toolOk")} />}
+          {state === "failed" && <X size={12} aria-label={t("chat.toolFailed")} />}
+          {(state === "running" || state === "waiting") && (
+            <LoaderCircle size={12} className={styles.spin} aria-label={t("chat.running")} />
+          )}
+        </span>
+        <span className={styles.toolName}>{label}</span>
+        <span className={styles.toolArgs}>{summaryOf(call.args)}</span>
+      </button>
+      {shown && (
+        <div className={styles.toolBody}>
+          <div className={styles.muted}>{t("chat.args")}</div>
+          <pre>{JSON.stringify(call.args, undefined, 2)}</pre>
+          {result && (
+            <>
+              <div className={styles.muted}>{t("chat.result")}</div>
+              <pre>{result.text}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OutcomeView({
+  outcome,
+  maxToolCalls,
+}: {
+  readonly outcome: TaskOutcome;
+  readonly maxToolCalls: number;
+}) {
+  const { t } = useTranslation();
+  switch (outcome.end) {
+    case "stopped":
+      return <p className={styles.notice}>{t("chat.stopped")}</p>;
+    case "limit":
+      return <p className={styles.notice}>{t("chat.limit", { count: maxToolCalls })}</p>;
+    case "length":
+      return <p className={styles.notice}>{t("chat.length")}</p>;
+    case "failed": {
+      const failure = outcome.failure;
+      return (
+        <div className={styles.failure} role="alert" data-testid="chat-failure">
+          <p>{t(`chat.failed.${failure?.kind ?? "other"}`)}</p>
+          {failure?.message && (
+            <p className={styles.muted}>{t("chat.detail", { message: failure.message })}</p>
+          )}
+        </div>
+      );
+    }
+    default:
+      return null;
+  }
+}

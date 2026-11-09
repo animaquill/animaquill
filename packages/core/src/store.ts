@@ -777,6 +777,16 @@ export class ProjectStore {
     return this.#stepBack(origin, "undone", "done");
   }
 
+  /** Whether undoOrigin() has anything to take back. The log lives as long as this store. */
+  canUndoOrigin(origin: Origin): boolean {
+    return origin !== USER && (this.#undo.get(origin)?.done.length ?? 0) > 0;
+  }
+
+  /** Whether redoOrigin() has anything to do again. */
+  canRedoOrigin(origin: Origin): boolean {
+    return origin !== USER && (this.#undo.get(origin)?.undone.length ?? 0) > 0;
+  }
+
   /** The project as files. Documents that became invalid stay out and are reported. */
   exportFiles(): { files: Map<string, string>; problems: readonly Problem[] } {
     const { project, problems } = stateToProject(this.#state);

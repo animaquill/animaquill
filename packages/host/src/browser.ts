@@ -1,3 +1,4 @@
+import { browserChats, browserKeys } from "./ai.ts";
 import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
@@ -734,9 +735,14 @@ export function createBrowserHost(
   const trials = createPlaces(TRIALS, projects, database, locks, windowMemory);
   const drafts = createPlaces(DRAFTS, projects, database, locks, windowMemory);
   const exports = createExportStore(database, locks);
+  const chats = browserChats(database);
   // What an export kept of a project that is gone would only take room on the disk.
   const forget = async (project: string) => {
-    await Promise.all([trials.forget(project), drafts.forget(project)]);
+    await Promise.all([
+      trials.forget(project),
+      drafts.forget(project),
+      chats.forget(project).catch(() => {}),
+    ]);
     for (const saved of await exports.list(project).catch(() => [])) {
       // One that a window is at is that window's to finish or give up.
       const release = await exports.claim(saved.id);
@@ -769,5 +775,7 @@ export function createBrowserHost(
     exports,
     caches: createWorkCache(database),
     presence: browserPresence(locks),
+    keys: browserKeys(database),
+    chats,
   };
 }

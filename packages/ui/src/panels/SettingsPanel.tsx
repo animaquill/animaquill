@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import { AiServicesSettings } from "../chat/AiServicesSettings.tsx";
 import styles from "./SettingsPanel.module.css";
 
 /** Preferences that all windows share. What belongs to a tab stays on that tab. */
@@ -26,6 +27,7 @@ export function SettingsPanel() {
           )}
         </span>
       </label>
+      <AiServicesSettings />
     </div>
   );
 }

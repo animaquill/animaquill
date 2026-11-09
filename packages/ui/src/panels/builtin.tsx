@@ -26,6 +26,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { ChatPanel } from "../chat/ChatPanel.tsx";
 import { CodePanel } from "../code/CodePanel.tsx";
 import { FilesPanel } from "../code/FilesPanel.tsx";
 import { ProblemsPanel } from "../problems/ProblemsPanel.tsx";
@@ -71,6 +72,7 @@ function planned(
     | "transitions"
     | "effects"
     | "explorer"
+    | "chat"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -176,7 +178,14 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "right",
     component: PropertiesPanel,
   },
-  planned("chat", "right", MessagesSquare, { keepAlive: true }),
+  {
+    type: "chat",
+    title: (t) => t("panel.chat.title"),
+    icon: MessagesSquare,
+    area: "right",
+    component: ChatPanel,
+    keepAlive: true,
+  },
   planned("history", "right", History),
   planned("notes", "right", BookOpen),
   planned("annotations", "right", MessageSquareText),

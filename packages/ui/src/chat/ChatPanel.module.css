@@ -1,0 +1,244 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.none {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  color: var(--aq-text-muted);
+  text-align: center;
+}
+
+.panel button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.panel button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.panel button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.panel select,
+.panel input,
+.panel textarea {
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+
+.bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.bar select {
+  max-width: 40%;
+}
+
+.panel .history {
+  max-width: 30%;
+}
+
+.model {
+  flex: 1;
+  min-width: 96px;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  overflow: auto;
+}
+
+.empty {
+  color: var(--aq-text-muted);
+}
+
+.task {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.user {
+  align-self: flex-end;
+  max-width: 90%;
+  padding: 6px 8px;
+  color: var(--aq-text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--aq-bg-input);
+  border-radius: 6px;
+}
+
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.tool {
+  border-left: 2px solid var(--aq-border);
+}
+
+.tool[data-state="failed"] {
+  border-left-color: var(--aq-danger);
+}
+
+.panel .toolHead {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 6px;
+  text-align: left;
+  background: none;
+}
+
+.toolIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.tool[data-state="ok"] .toolIcon {
+  color: var(--aq-accent);
+}
+
+.tool[data-state="failed"] .toolIcon {
+  color: var(--aq-danger);
+}
+
+.toolName {
+  flex: none;
+  color: var(--aq-text-strong);
+}
+
+.toolArgs {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.toolBody {
+  padding: 2px 8px 4px;
+}
+
+.toolBody pre {
+  max-height: 200px;
+  margin: 2px 0 4px;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notice,
+.hold {
+  margin: 0;
+  color: var(--aq-warning);
+}
+
+.hold {
+  flex: none;
+  padding: 4px 8px;
+}
+
+.failure {
+  padding: 4px 6px;
+  color: var(--aq-text);
+  border-left: 2px solid var(--aq-danger);
+}
+
+.failure p {
+  margin: 0;
+}
+
+.undo {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.compose {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: flex-end;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.compose textarea {
+  flex: 1;
+  resize: none;
+}
+
+.panel .stop {
+  color: var(--aq-text-strong);
+  background: var(--aq-danger);
+}
+
+.spin {
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

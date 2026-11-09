@@ -124,6 +124,8 @@ test("the status bar has the project on the left and what goes on now on the rig
 });
 
 test("a tab can be dragged into another group", async ({ page }) => {
+  // Chat shares the group of properties. Without it there, properties is the only tab of its group.
+  await tab(page, "chat").click({ button: "middle" });
   await dragTab(page, "properties", ...(await intoStrip(page, "timeline")));
   await expect(group(page, "timeline").locator('[data-tab="properties"]')).toBeVisible();
   // It was the only tab of its group, which goes with it.
@@ -364,6 +366,7 @@ const EVERY_TAB = [
   "preview",
   "code",
   "properties",
+  "chat",
 ];
 const EVERY_TAB_BELOW = ["timeline", "keyframes", "problems"];
 
