@@ -130,17 +130,6 @@ function laterKeys(animation: Animation, by: Rational): Animation {
 export const laterValue = (value: PropertyValue, by: Rational): PropertyValue =>
   isAnimation(value) ? laterKeys(value, by) : value;
 
-const laterProperties = <T extends Readonly<Record<string, PropertyValue>>>(
-  properties: T,
-  by: Rational,
-): T =>
-  Object.fromEntries(
-    Object.entries(properties).map(([path, value]) => [
-      path,
-      isAnimation(value) ? laterKeys(value, by) : value,
-    ]),
-  ) as T;
-
 /**
  * Moves everything on the clock of a clip later. Only needed when a clip grows past the point where
  * its clock reads zero, which is the one thing its clock cannot do by itself.
@@ -150,14 +139,6 @@ function moveClockForward(draft: Draft, timeline: string, clip: ClipState, by: R
   const path = clipPath(timeline, clip.id);
   for (const [name, value] of Object.entries(clip.properties ?? {})) {
     if (isAnimation(value)) draft.set([...path, "properties", name], laterKeys(value, by));
-  }
-  if (clip.effects) {
-    const effects = clip.effects.map((effect) =>
-      effect.properties
-        ? { ...effect, properties: laterProperties(effect.properties, by) }
-        : effect,
-    );
-    draft.set([...path, "effects"], effects);
   }
   const { source } = clip;
   if (source.kind === "caption" && Array.isArray(source.words)) {
@@ -203,7 +184,7 @@ export const looksLikeClockMoved = (was: ClipState, now: ClipState): boolean =>
 type ClipChanges = NonNullable<Overrides["clips"]>[string];
 
 /** What the versions of a timeline change about a clip. */
-function forEachOverride(
+export function forEachOverride(
   draft: Draft,
   timeline: string,
   clip: string,

@@ -7,6 +7,11 @@ import {
   type ClipState,
   type TreeNode,
 } from "@animaquill/core";
+import { isAnimation, type PropertyValue } from "@animaquill/schema";
+
+/** The plain values of a property, with keys or without. */
+const valuesOf = (value: PropertyValue) =>
+  isAnimation(value) ? value.keys.map((key) => key.value) : [value];
 
 /** A property that keys without an object can go to. */
 export interface Connection {
@@ -48,6 +53,12 @@ export function connectionsFor(
       const { spec } = child;
       if (spec.path === path || entryOf(properties, spec.path) !== undefined) return;
       if (compileChannel(stored, spec.type) === undefined) return;
+      // Any text is a choice to a channel, but only one of its options is one to the property.
+      if (
+        spec.options &&
+        !valuesOf(stored).every((value) => spec.options?.includes(value as string))
+      )
+        return;
       found.push({ path: spec.path, label: [...above, nameOf(child)].join(" › ") });
       return;
     }

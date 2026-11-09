@@ -10,6 +10,7 @@ import {
   ProjectManifest,
   PropertyPath,
   PropertyValue,
+  RETIRED_PROPERTIES,
   Rate,
   Time,
   Track,
@@ -50,12 +51,25 @@ import {
   type Span,
 } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
+import {
+  EffectAdd,
+  EffectMove,
+  EffectRemove,
+  EffectUpdate,
+  addEffect,
+  checkEffectWrite,
+  moveEffect,
+  removeEffects,
+  updateEffect,
+} from "./effect-edits.ts";
 import { JoinAdd, JoinRemove, JoinUpdate, addJoin, removeJoins, updateJoin } from "./join-edits.ts";
 import { joinedEndsOf, takenAt, type JoinedEnds } from "./joins.ts";
 import {
   clipEnd,
+  clipFileOf,
   clipOffset,
   clipStart,
+  clipStateOf,
   entryOf,
   orderedSections,
   orderedTracks,
@@ -134,8 +148,7 @@ const apart = (joins: readonly string[]) =>
   joins.length > 0 ? { joinsRemoved: joins } : undefined;
 
 function checkClip(clip: ClipState): void {
-  const { track: _track, ...rest } = clip;
-  const result = Clip.safeParse(rest);
+  const result = Clip.safeParse(clipFileOf(clip));
   if (!result.success) {
     const issue = result.error.issues[0];
     fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
@@ -265,6 +278,7 @@ export function checkWrite(
   before: PropertyValue | undefined,
   after: PropertyValue,
 ): void {
+  if (RETIRED_PROPERTIES.includes(path)) fail("invalid-value", `没有这个属性：${path}，裁切是效果`);
   const result = KnownProperties.safeParse({ [path]: after });
   if (!result.success) {
     const issue = result.error.issues[0];
@@ -299,6 +313,7 @@ function editProperties(draft: Draft, timeline: string, edits: readonly Property
         draft.delete(where);
       } else {
         checkWrite(path, saved, value);
+        checkEffectWrite(clip, path, value);
         draft.set(where, value);
       }
     }
@@ -652,7 +667,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const id = clip.id ?? newId("clip");
       if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
-      const added = { ...clip, id, track };
+      const added = clipStateOf({ ...clip, id }, track);
       const together = joinsTogether(target);
       makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
       draft.set(clipPath(timeline, id), added);
@@ -773,6 +788,10 @@ export const COMMANDS: readonly CommandDefinition[] = [
 
   /** Puts a join on the cut between two clips, see join-edits.ts. */
   define("join.add", JoinAdd, addJoin, { userOnlyParams: ["copied"] }),
+  define("effect.add", EffectAdd, addEffect),
+  define("effect.remove", EffectRemove, removeEffects),
+  define("effect.move", EffectMove, moveEffect),
+  define("effect.update", EffectUpdate, updateEffect),
   define("join.update", JoinUpdate, updateJoin),
   define("join.remove", JoinRemove, removeJoins),
 

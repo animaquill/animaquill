@@ -1,6 +1,8 @@
+import { builtInEffect, effectPath } from "@animaquill/schema/effects";
 import { BUILT_IN_PROPERTIES } from "@animaquill/schema/properties";
-import { bezierProgress, clampToUnit, numberAt, type Channel } from "./curve.ts";
-import type { PlannedTransition, RenderLayer, RenderPlan } from "./render-plan.ts";
+import type { Value } from "@animaquill/schema";
+import { bezierProgress, clampToUnit, numberAt, sample, type Channel } from "./curve.ts";
+import type { PlannedEffect, PlannedTransition, RenderLayer, RenderPlan } from "./render-plan.ts";
 
 /**
  * How the world ends up on the picture. The editor page and the compositor both work with these, so
@@ -369,4 +371,52 @@ export function missingTransitionAt(
       time >= transition.start - TIME_TOLERANCE &&
       time < transition.end - TIME_TOLERANCE,
   );
+}
+
+/** How a layer goes onto what is below it, at a moment. See `blend` in the project format. */
+export type BlendMode = "normal" | "multiply" | "screen" | "overlay" | "darken" | "lighten" | "add";
+
+const BLEND_MODES: ReadonlySet<string> = new Set(
+  (BUILT_IN_PROPERTIES["blend"]?.options ?? []) as readonly string[],
+);
+
+/** The blend mode of a layer at a moment, `normal` where it says nothing that is one. */
+export function blendAt(layer: Pick<RenderLayer, "channels" | "offset" | "start">, time: number) {
+  const channel = layer.channels["blend"];
+  const value = channel ? sample(channel, clockOf(layer, time)) : undefined;
+  return (typeof value === "string" && BLEND_MODES.has(value) ? value : "normal") as BlendMode;
+}
+
+/** What an effect of a layer takes at a moment, by parameter, and whether that changes anything. */
+export interface EffectValues {
+  readonly values: Readonly<Record<string, Value>>;
+  /** Every parameter is at its default, where an effect leaves the picture as it is. */
+  readonly idle: boolean;
+}
+
+/**
+ * What an effect of a layer takes at a moment: each parameter from its channel, or else its default.
+ * A number past the limits of its parameter counts as the limit.
+ */
+export function effectValuesAt(
+  layer: Pick<RenderLayer, "channels" | "offset" | "start">,
+  effect: PlannedEffect,
+  time: number,
+): EffectValues {
+  const spec = effect.missing ? undefined : builtInEffect(effect.type);
+  const clock = clockOf(layer, time);
+  const values: Record<string, Value> = {};
+  let idle = true;
+  for (const parameter of spec?.properties ?? []) {
+    const channel = layer.channels[effectPath(effect.id, parameter.path)];
+    let value = channel ? sample(channel, clock) : parameter.default;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) value = parameter.default;
+      else value = Math.min(Math.max(value, parameter.min ?? -Infinity), parameter.max ?? Infinity);
+    }
+    if (value === undefined) continue;
+    values[parameter.path] = value;
+    if (value !== parameter.default) idle = false;
+  }
+  return { values, idle };
 }

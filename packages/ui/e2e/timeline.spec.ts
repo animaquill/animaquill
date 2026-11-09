@@ -437,6 +437,36 @@ test.describe("zooming and scrolling", () => {
     expect(after.y).toBeLessThan(before.y);
   });
 
+  test("goes up and down with the wheel over the track headers, along over the time", async ({
+    page,
+  }) => {
+    const header = trackHeader(page, "音频 1");
+    for (let index = 0; index < 8; index++) {
+      await panel(page).getByRole("button", { name: "添加轨道" }).click();
+      await page.getByRole("menuitem", { name: "视频轨道" }).click();
+    }
+    await expect(trackHeader(page, "视频 9")).toBeVisible();
+    await panel(page).getByRole("button", { name: "放大" }).click();
+    await panel(page).getByRole("button", { name: "放大" }).click();
+    await settle(page);
+    const sideways = panel(page).getByRole("scrollbar", { name: "时间轴横向滚动条" });
+    const before = await boxOf(header);
+    const area = await boxOf(stage(page));
+    // Over the headers, left of the time.
+    await page.mouse.move(area.x - 60, area.y + area.height / 2);
+    await page.mouse.wheel(0, 300);
+    await settle(page);
+    const down = await boxOf(header);
+    expect(down.y).toBeLessThan(before.y);
+    await expect(sideways).toHaveAttribute("aria-valuenow", "0");
+    // Over the time the same wheel goes along.
+    await page.mouse.move(...(await middleOf(stage(page))));
+    await page.mouse.wheel(0, 300);
+    await settle(page);
+    await expect(sideways).not.toHaveAttribute("aria-valuenow", "0");
+    expect((await boxOf(header)).y).toBe(down.y);
+  });
+
   test("keeps the view through a reload", async ({ page }) => {
     await stage(page).focus();
     await page.keyboard.press("=");
@@ -1030,6 +1060,29 @@ test.describe("a trackpad", () => {
     const before = await boxOf(header);
     await swipe(page, 0, 9);
     await expect.poll(async () => (await boxOf(header)).y).toBeLessThan(before.y);
+  });
+
+  test("moves both ways at once, in any direction, without keeping to an axis", async ({
+    page,
+  }) => {
+    await panel(page).getByRole("button", { name: "放大" }).click();
+    await panel(page).getByRole("button", { name: "放大" }).click();
+    await settle(page);
+    const header = trackHeader(page, "音频 1");
+    const sideways = panel(page).getByRole("scrollbar", { name: "时间轴横向滚动条" });
+    const before = await boxOf(header);
+    // Slanted steps that are not whole, as fingers take them.
+    await swipe(page, 6.5, 4.5);
+    await expect.poll(async () => (await boxOf(header)).y).toBeLessThan(before.y);
+    await expect(sideways).not.toHaveAttribute("aria-valuenow", "0");
+    const across = Number(await sideways.getAttribute("aria-valuenow"));
+    const down = (await boxOf(header)).y;
+    // And back the other way, straight away.
+    await swipe(page, -3.5, -2.5);
+    await expect.poll(async () => (await boxOf(header)).y).toBeGreaterThan(down);
+    await expect
+      .poll(async () => Number(await sideways.getAttribute("aria-valuenow")))
+      .toBeLessThan(across);
   });
 
   test("zooms with a pinch", async ({ page }) => {

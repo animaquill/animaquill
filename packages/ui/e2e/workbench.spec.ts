@@ -355,7 +355,7 @@ test("reset brings back the design of the current layout only", async ({ page })
   await expect(tab(page, "code")).toHaveCount(0);
 });
 
-const EVERY_TAB = ["files", "assets", "transitions", "preview", "code", "properties"];
+const EVERY_TAB = ["files", "assets", "transitions", "effects", "preview", "code", "properties"];
 const EVERY_TAB_BELOW = ["timeline", "keyframes", "problems"];
 
 test("closing everything leaves a way back", async ({ page }) => {

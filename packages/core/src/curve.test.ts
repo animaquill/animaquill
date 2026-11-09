@@ -751,12 +751,12 @@ describe("what goes into a sandbox", () => {
 
   it.each([
     ["curve.ts", ["@animaquill/schema/properties", "@animaquill/schema/time"]],
-    ["view.ts", ["./curve.ts", "@animaquill/schema/properties"]],
+    ["view.ts", ["./curve.ts", "@animaquill/schema/effects", "@animaquill/schema/properties"]],
   ])("%s only needs what does not bring in Yjs and Zod", (file, allowed) => {
     expect(importsOf(read(file)).toSorted()).toEqual(allowed);
   });
 
-  it.each(["properties.ts", "time.ts"])("neither does %s of the schema", (file) => {
+  it.each(["effects.ts", "properties.ts", "time.ts"])("neither does %s of the schema", (file) => {
     expect(importsOf(read(`../../schema/src/${file}`))).toEqual([]);
   });
 });

@@ -211,6 +211,7 @@
       "transition": "“{{name}}”的转场这一版的编辑器还不能显示，预览里看到的淡入淡出不是它。要导出，先在时间轴上选中它，右键更换成编辑器自带的转场，或者按 Delete 删掉。",
       "join": "“{{name}}”和后一个片段之间的衔接转场这一版的编辑器还不能显示，预览里看到的叠化不是它。要导出，先在时间轴上选中它，右键更换成编辑器自带的衔接转场，或者按 Delete 删掉。",
       "soundTransition": "“{{name}}”的声音转场这一版的编辑器还不能播放，预览里听不到它。要导出，先在时间轴上选中它按 Delete 删掉。",
+      "effect": "“{{name}}”有这一版的编辑器不认识的效果，预览里跳过了它。要导出，先在属性选项卡的“效果”里关掉或删掉它。",
       "sceneClosed": "“{{name}}”没有运行起来。",
       "sceneOff": "场景没有运行。先在预览里重新运行场景，再导出。",
       "sceneUnsupported": "这个浏览器不能捕获场景，有场景的画面不能导出。请用 Chrome 或 Edge 157 以上的版本。",
@@ -480,6 +481,10 @@
       "title": "转场",
       "hint": "内置和项目里的转场，拖到时间轴上，或者选中片段再点。"
     },
+    "effects": {
+      "title": "效果",
+      "hint": "内置的效果，拖到时间轴的片段上，或者选中片段再点。"
+    },
     "notes": {
       "title": "经验库",
       "hint": "项目关联的经验，AI 工作时会参考。"
@@ -633,7 +638,20 @@
         "rotation": "旋转"
       },
       "opacity": "不透明度",
+      "blend": "混合模式",
       "fit": "适应方式",
+      "effect": {
+        "brightness": "亮度",
+        "contrast": "对比度",
+        "saturation": "饱和度",
+        "temperature": "色温",
+        "tint": "色调",
+        "radius": "半径",
+        "left": "左",
+        "top": "上",
+        "right": "右",
+        "bottom": "下"
+      },
       "audio": {
         "volume": "音量"
       },
@@ -655,6 +673,15 @@
         "contain": "完整显示",
         "cover": "铺满",
         "fixed": "固定大小"
+      },
+      "blend": {
+        "normal": "正常",
+        "multiply": "正片叠底",
+        "screen": "滤色",
+        "overlay": "叠加",
+        "darken": "变暗",
+        "lighten": "变亮",
+        "add": "相加"
       }
     }
   },
@@ -721,7 +748,7 @@
       "rowsShorter": "降低轨道高度",
       "toggleMultiSelecting": "切换多选",
       "play": "播放或暂停",
-      "toggleProperties": "展开或收起片段的属性"
+      "toggleProperties": "展开或收起片段的关键帧"
     },
     "color": "纯色片段",
     "scene": "场景",
@@ -789,8 +816,8 @@
     "rateHint": "标尺和片段落点按它走。导出时每个画幅可以用自己的帧率。",
     "axes": "轨道\\时间",
     "timeFormat": "格式：(小时):分:秒/帧，小时为 0 时省略。",
-    "openProperties": "展开属性",
-    "closeProperties": "收起属性",
+    "openProperties": "展开关键帧",
+    "closeProperties": "收起关键帧",
     "joinsRemoved": "{{count}} 个衔接转场两边的片段分开了，衔接转场已删除。撤销可以恢复。"
   },
   "input": {
@@ -1244,7 +1271,8 @@
     "pendingPartial": "未确定",
     "objects": {
       "params": "参数",
-      "elements": "元素"
+      "elements": "元素",
+      "effects": "效果"
     },
     "connect": {
       "action": "连接到…",
@@ -1708,5 +1736,50 @@
       "exit": "加在结尾（{{name}}）",
       "both": "两头都加"
     }
+  },
+  "effectPanel": {
+    "search": "搜索效果",
+    "types": {
+      "color": "调色",
+      "blur": "模糊",
+      "shape": "变形"
+    },
+    "tags": {
+      "brightness": "调色、明暗",
+      "contrast": "调色、明暗",
+      "saturation": "调色、鲜艳",
+      "temperature": "调色、冷暖",
+      "blur": "柔和、虚化",
+      "crop": "裁剪、边缘"
+    },
+    "hint": {
+      "nothing": "拖到时间轴的片段上，加在它的效果列表最后。也可以先选中片段再点。",
+      "clips": "点一个效果，加在选中的 {{count}} 个片段的效果列表最后。"
+    },
+    "why": {
+      "locked": "选中的片段在锁定的轨道上，不能改",
+      "sound": "声音片段这一版还不能加效果",
+      "caption": "字幕片段这一版还不能加效果",
+      "unknown": "这一版的编辑器还不能用这个效果"
+    }
+  },
+  "effect": {
+    "names": {
+      "brightness": "亮度",
+      "contrast": "对比度",
+      "saturation": "饱和度",
+      "temperature": "色温",
+      "blur": "模糊",
+      "crop": "裁切"
+    },
+    "section": "效果",
+    "on": "启用{{name}}",
+    "remove": "删除{{name}}",
+    "reorder": "拖动来调整{{name}}的顺序，或者用上下方向键",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "missing": "这一版的编辑器不认识这个效果，预览里跳过它，导出会停在这里。",
+    "off": "已关闭",
+    "mark": "{{count}} 个效果"
   }
 }

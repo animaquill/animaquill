@@ -883,18 +883,36 @@ test.describe("with changes written right away", () => {
     const box = await clips(page).first().boundingBox();
     if (!box) throw new Error("no clip");
     const rowHere = timeline.getByRole("treeitem", { name: "纯色", exact: true });
-    // It shows on what is selected, which a clip is right after adding it.
-    await page.mouse.click(box.x + 13, box.y + 14);
+    // It shows on what is selected, which a clip is right after adding it, at its bottom left.
+    const button = { x: box.x + 13, y: box.y + box.height - 10 };
+    // The top left is where the name is, and a click there only selects.
+    await page.mouse.click(box.x + 13, box.y + 10);
+    await expect(rowHere).toHaveCount(0);
+    await page.mouse.click(button.x, button.y);
     await expect(rowHere).toBeVisible();
-    await page.mouse.click(box.x + 13, box.y + 14);
+    await timeline.screenshot({ path: test.info().outputPath("expander-open.png") });
+    await page.mouse.click(button.x, button.y);
     await expect(rowHere).toHaveCount(0);
 
     await page.mouse.click(box.x + 100, box.y + 30, { button: "right" });
-    await page.getByRole("menuitem", { name: "展开属性" }).click();
+    await page.getByRole("menuitem", { name: "展开关键帧" }).click();
     await expect(rowHere).toBeVisible();
     await page.mouse.click(box.x + 100, box.y + 30, { button: "right" });
-    await page.getByRole("menuitem", { name: "收起属性" }).click();
+    await page.getByRole("menuitem", { name: "收起关键帧" }).click();
     await expect(rowHere).toHaveCount(0);
+
+    // U does the same, and the command palette calls it what it is.
+    await page.mouse.click(box.x + 100, box.y + 30);
+    await page.keyboard.press("u");
+    await expect(rowHere).toBeVisible();
+    await page.keyboard.press("u");
+    await expect(rowHere).toHaveCount(0);
+    await page.keyboard.press("Control+Shift+KeyP");
+    await page.getByRole("combobox", { name: "命令面板" }).fill("展开或收起片段的关键帧");
+    const palette = page.getByRole("dialog", { name: "命令面板" });
+    await expect(palette.getByRole("option", { name: /展开或收起片段的关键帧/ })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(rowHere).toBeVisible();
   });
 
   test("the menu of a key has what can be done with it", async ({ page }) => {
@@ -1071,6 +1089,11 @@ test.describe("a project written by hand", () => {
     await open(page, "纯色");
     await open(page, "未连接");
     await expect(row(page, "param.title")).toBeVisible();
+    // Down to these rows, below those of the clip itself.
+    const list = await panel(page).getByRole("tree").boundingBox();
+    if (!list) throw new Error("no list");
+    await page.mouse.move(list.x + 40, list.y + 40);
+    await page.mouse.wheel(0, 400);
     // Words can be written in their row.
     await expect(row(page, "param.title").getByRole("textbox")).toHaveValue("你好");
     await expect(row(page, "param.visible")).toContainText("开");
@@ -1116,12 +1139,13 @@ test.describe("a project written by hand", () => {
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await expect(keys(page, "param.visible")).toHaveCount(3);
     expect(await timesOf(keys(page, "param.visible"))).toEqual(["0:00/00", "0:01/00", "0:02/00"]);
-    const choice = panel(page).getByRole("combobox", { name: "blend" });
+    // The blend mode is a property of the clip itself now, with a name, in its row.
+    const choice = panel(page).getByRole("combobox", { name: "混合模式" });
     await expect(choice).toHaveValue("normal");
     await choice.selectOption("multiply");
-    await expect(keys(page, "blend")).toHaveCount(3);
+    await expect(keys(page, "混合模式")).toHaveCount(3);
     await page.keyboard.press("Control+z");
-    await expect(keys(page, "blend")).toHaveCount(2);
+    await expect(keys(page, "混合模式")).toHaveCount(2);
 
     // Taller, it still has its values from key to key, and nothing to ease.
     await panel(page).getByRole("button", { name: "加高 param.visible 这一行" }).click();

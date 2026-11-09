@@ -1,4 +1,4 @@
-import { ProjectStore, clipEnd, orderedTracks, type ClipState } from "@animaquill/core";
+import { ProjectStore, clipEnd, effectsOf, orderedTracks, type ClipState } from "@animaquill/core";
 import { formatTime, parseTime, toSeconds } from "@animaquill/schema";
 import type { SettingsStore } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -3325,5 +3325,72 @@ describe("telling the screen", () => {
     const before = editor.model;
     store.execute({ type: "project.rename", params: { name: "新名字" } });
     expect(editor.model).toBe(before);
+  });
+});
+
+describe("effects from their tab", () => {
+  /** a and b on the picture, a sound under them. */
+  async function clips() {
+    const context = await setup();
+    const { addClip, video, audio } = context;
+    addClip("a", 2, 3, video);
+    addClip("b", 6, 3, video);
+    addClip("s", 2, 3, audio);
+    return context;
+  }
+
+  const listOf = (clip: ClipState | undefined) =>
+    clip
+      ? effectsOf(clip).map(({ type, enabled }) => (enabled === false ? `${type} off` : type))
+      : [];
+
+  it("go last on the clip they are dropped on, which lights up all of it, and not on sound", async () => {
+    const { editor, at, main, audio } = await clips();
+    expect(editor.showEffectDrop(at(2.5, audio))).toBe(false);
+    expect(editor.preview).toBeUndefined();
+    expect(editor.showEffectDrop(at(5.5))).toBe(false);
+    expect(editor.showEffectDrop(at(3))).toBe(true);
+    expect(editor.preview?.transitionDrop).toMatchObject({ start: 2, end: 5 });
+    expect(editor.dropEffect(at(3), "blur")).toBe(true);
+    expect(editor.dropEffect(at(4.9), "crop")).toBe(true);
+    expect(editor.preview).toBeUndefined();
+    expect(listOf(main().clips["a"])).toEqual(["blur", "crop"]);
+    expect([...editor.getSnapshot().selection]).toEqual(["a"]);
+  });
+
+  it("go on every clip selected with a click, in one step, and say why where they cannot", async () => {
+    const { editor, main, store } = await clips();
+    expect(editor.effectProblem("blur")).toBe("nothing");
+    editor.selectOnly("s");
+    expect(editor.effectProblem("blur")).toBe("sound");
+    editor.selectOnly("a");
+    editor.addToSelection("b");
+    editor.addToSelection("s");
+    expect(editor.effectProblem("blur")).toBeUndefined();
+    expect(editor.effectProblem("plugin.glow")).toBe("unknown");
+    expect(editor.attachEffect("brightness")).toBe(true);
+    expect(listOf(main().clips["a"])).toEqual(["brightness"]);
+    expect(listOf(main().clips["b"])).toEqual(["brightness"]);
+    store.undo();
+    expect(listOf(main().clips["a"])).toEqual([]);
+    expect(listOf(main().clips["b"])).toEqual([]);
+  });
+
+  it("move, turn off and go from the list of a clip, and not on a locked track", async () => {
+    const { editor, main, store, video } = await clips();
+    editor.selectOnly("a");
+    editor.attachEffect("blur");
+    editor.attachEffect("crop");
+    const [blur, crop] = effectsOf(main().clips["a"] as ClipState).map(({ id }) => id);
+    expect(editor.moveEffect("a", crop as string, 0)).toBe(true);
+    expect(listOf(main().clips["a"])).toEqual(["crop", "blur"]);
+    expect(editor.setEffectEnabled("a", blur as string, false)).toBe(true);
+    expect(listOf(main().clips["a"])).toEqual(["crop", "blur off"]);
+    store.execute({
+      type: "track.update",
+      params: { timeline: "main", track: video, changes: { locked: true } },
+    });
+    expect(editor.removeEffect("a", crop as string)).toBe(false);
+    expect(editor.effectProblem("blur")).toBe("locked");
   });
 });

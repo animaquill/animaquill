@@ -7,6 +7,8 @@ import type { RenderLayer, RenderPlan } from "@animaquill/core";
 import {
   TIME_TOLERANCE,
   boxOf,
+  clockOf,
+  effectValuesAt,
   fitIn,
   layerMatrix,
   multiply,
@@ -15,6 +17,8 @@ import {
   type Matrix,
 } from "@animaquill/core/view";
 import { Composer, type Context2D } from "./compose.ts";
+import { effectInputSize } from "./effects/size.ts";
+import { EffectRunner, type EffectStep } from "./effects/run.ts";
 import { showsAt } from "./cursor.ts";
 import { FrameLoop, type PendingFrame } from "./frame-loop.ts";
 import type { Corners } from "./transitions/code.ts";
@@ -391,6 +395,12 @@ function paint(
   const box = boxOf(layer, seconds, source.kind === "scene" ? undefined : picture, stage);
   if (box.width <= 0 || box.height <= 0) return undefined;
   const toPicture = multiply(view, layerMatrix(layer, seconds, box));
+  const steps = effectStepsAt(layer, seconds);
+  if (steps.length > 0) {
+    if (!canUse(toPicture)) return undefined;
+    paintWithEffects(target, layer, picture, toPicture, box, steps, seconds, opacity, operation);
+    return cornersOf(toPicture, box);
+  }
   target.globalCompositeOperation = operation;
   target.globalAlpha = Math.min(opacity, 1);
   if (picture) {
@@ -411,6 +421,65 @@ function paint(
 
 /** Draws transitions, which takes pictures of their own for the layers they are about. */
 const composer = new Composer();
+/** Runs effects, which take pictures of their own for the clips they are on. */
+const effects = new EffectRunner();
+
+/** The effects of a layer that change something at a moment, in their order. */
+function effectStepsAt(layer: RenderLayer, seconds: number): readonly EffectStep[] {
+  if (!layer.effects) return [];
+  return layer.effects.flatMap((effect): EffectStep[] => {
+    if (effect.missing) return [];
+    const { values, idle } = effectValuesAt(layer, effect, seconds);
+    return idle ? [] : [{ effect, values }];
+  });
+}
+
+/**
+ * A clip with effects: what it shows goes into a picture as large as its box is on the picture,
+ * the effects work on that one after the other, and what they made goes where the box goes, see
+ * `effectInputSize`. Its clock and how many pixels a unit of its box takes go along.
+ */
+function paintWithEffects(
+  target: Context2D,
+  layer: RenderLayer,
+  picture: Picture | undefined,
+  toPicture: Matrix,
+  box: { readonly width: number; readonly height: number },
+  steps: readonly EffectStep[],
+  seconds: number,
+  opacity: number,
+  operation: GlobalCompositeOperation,
+): void {
+  const size = effectInputSize(toPicture, box, canvas);
+  const input = effects.input(size.width, size.height);
+  const scaleX = size.width / box.width;
+  const scaleY = size.height / box.height;
+  const fromBox: Matrix = [scaleX, 0, 0, scaleY, 0, 0];
+  const { source } = layer;
+  if (picture) {
+    const { source: part, matrix } = fitIn(layer.fit, picture, box);
+    input.context.setTransform(...multiply(fromBox, matrix));
+    picture.draw(input.context, part.x, part.y, part.width, part.height);
+  } else if (source.kind === "color") {
+    input.context.setTransform(...fromBox);
+    input.context.fillStyle = source.color;
+    input.context.fillRect(0, 0, box.width, box.height);
+  }
+  input.context.setTransform(1, 0, 0, 1, 0, 0);
+  const pixelRatio = Math.sqrt(scaleX * scaleY);
+  const made = effects.run(steps, input.canvas, { time: clockOf(layer, seconds), pixelRatio });
+  try {
+    target.setTransform(...multiply(toPicture, [1 / scaleX, 0, 0, 1 / scaleY, 0, 0]));
+    target.globalCompositeOperation = operation;
+    target.globalAlpha = Math.min(opacity, 1);
+    target.drawImage(made.canvas, 0, 0);
+  } finally {
+    target.globalAlpha = 1;
+    target.globalCompositeOperation = "source-over";
+    made.done();
+    effects.giveBack(input);
+  }
+}
 
 /** A transition at this moment that this editor cannot do, which a picture that goes out must not have. */
 function missingJoinAt(shown: RenderPlan, seconds: number): string | undefined {
@@ -463,9 +532,22 @@ function paintAll(
   draw.fillRect(0, 0, canvas.width, canvas.height);
   const view = viewMatrix(shown, seconds);
   const pictureOfLayer = new Map(showing.map((layer, index) => [layer, pictures[index]]));
-  composer.compose(draw, shown, showing, seconds, (target, layer, opacity, operation) =>
-    paint(target, layer, pictureOfLayer.get(layer), view, seconds, shown.stage, opacity, operation),
-  );
+  try {
+    composer.compose(draw, shown, showing, seconds, (target, layer, opacity, operation) =>
+      paint(
+        target,
+        layer,
+        pictureOfLayer.get(layer),
+        view,
+        seconds,
+        shown.stage,
+        opacity,
+        operation,
+      ),
+    );
+  } finally {
+    effects.end();
+  }
 }
 
 /** Whether time goes on by itself, from what the editor says, see "play". */

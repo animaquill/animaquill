@@ -113,16 +113,12 @@ const DESCRIBED: Readonly<Record<string, Described>> = {
     options: ["cover", "contain", "fixed"],
     animatable: false,
   },
+  /** How the picture of the clip goes onto what is below it, see the project format. */
   blend: {
     type: "choice",
     default: "normal",
     options: ["normal", "multiply", "screen", "overlay", "darken", "lighten", "add"],
   },
-  /** Shares of the media. */
-  "crop.left": { ...ratio, default: 0 },
-  "crop.top": { ...ratio, default: 0 },
-  "crop.right": { ...ratio, default: 0 },
-  "crop.bottom": { ...ratio, default: 0 },
   /** Playback speed: 2 is twice as fast. Keys on it make a speed ramp. */
   "time.speed": { type: "number", default: 1, min: 0 },
   /** 0 leaves the sound as it is. */
@@ -158,6 +154,7 @@ const VISUAL_PATHS = [
   "transform.scale",
   "transform.rotation",
   "opacity",
+  "blend",
   "fit",
 ];
 
@@ -213,8 +210,28 @@ export const ELEMENT_PROPERTIES: Readonly<Record<"html" | "svg", readonly Proper
   svg: elementSpecs(["x", "y", "scale", "rotation", "opacity", "fill", "stroke"]),
 };
 
-/** Properties that are not built in but come from the content of a clip. */
-export const OPEN_PROPERTY_PREFIXES = ["param.", "object.", "element.", "caption."] as const;
+/**
+ * Properties that are not built in but come from the content of a clip, or from its effects: those
+ * of an effect are `effect.<id>.<parameter>`, see effects.ts.
+ */
+export const OPEN_PROPERTY_PREFIXES = [
+  "param.",
+  "object.",
+  "element.",
+  "caption.",
+  "effect.",
+] as const;
+
+/**
+ * Built-in properties that the format had once and has no more: cropping is an effect now. A file
+ * that still has them opens without them, see the project format.
+ */
+export const RETIRED_PROPERTIES: readonly string[] = [
+  "crop.left",
+  "crop.top",
+  "crop.right",
+  "crop.bottom",
+];
 
 export const isKnownProperty = (path: string): boolean =>
   Object.hasOwn(BUILT_IN_PROPERTIES, path) ||
@@ -223,7 +240,15 @@ export const isKnownProperty = (path: string): boolean =>
 /** What is wrong with a plain value of a built-in property, or undefined when it is fine. */
 export function propertyValueProblem(path: string, value: unknown): string | undefined {
   if (!Object.hasOwn(BUILT_IN_PROPERTIES, path)) return undefined;
-  const spec = BUILT_IN_PROPERTIES[path] as PropertySpec;
+  return specValueProblem(BUILT_IN_PROPERTIES[path] as PropertySpec, value, path);
+}
+
+/** What is wrong with a plain value for a description, said about `path`, or undefined. */
+export function specValueProblem(
+  spec: PropertySpec,
+  value: unknown,
+  path = spec.path,
+): string | undefined {
   switch (spec.type) {
     case "number":
     case "angle":

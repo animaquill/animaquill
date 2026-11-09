@@ -28,8 +28,12 @@ export {
 export { AUTO_REACH, hasAutoTangents, withAutoTangents } from "./tangents.ts";
 export { CommandError, Draft, type ClipFact } from "./draft.ts";
 export {
+  EFFECTS_OBJECT_ID,
+  EFFECT_OBJECT_TYPES,
   SCENE_OBJECT_TYPES,
   describeClip,
+  effectObjectId,
+  effectObjectsOf,
   nameKeyOf,
   paramTextOf,
   naturalSizeOf,
@@ -105,6 +109,9 @@ export {
   buildRenderPlan,
   channelOf,
   channelsOf,
+  layerSpecOf,
+  plannedEffects,
+  type PlannedEffect,
   contentOf,
   effectiveProperties,
   firstValue,
@@ -272,8 +279,12 @@ export {
 } from "./read-folder.ts";
 export {
   clipEnd,
+  clipFileOf,
   clipOffset,
   clipStart,
+  clipStateOf,
+  effectsOf,
+  effectStates,
   entryOf,
   orderedSections,
   orderedTracks,
@@ -285,7 +296,9 @@ export {
   timelineLength,
   timelineToState,
   trackKindFor,
+  type ClipEffect,
   type ClipState,
+  type EffectState,
   type ExportedProject,
   type ProjectState,
   type SectionState,

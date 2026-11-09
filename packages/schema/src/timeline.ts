@@ -15,19 +15,48 @@ import { JOIN_ALIGNS, SPEED_CURVE_REACH } from "./transitions.ts";
 import {
   KnownProperties,
   MediaRef,
-  Properties,
   PropertyPath,
   PropertyValue,
   StringRef,
   checkProperty,
+  withoutRetired,
 } from "./values.ts";
 
-/** A built-in or plugin effect, for pictures and sounds alike. Its values can have keys. */
-export const Effect = z.strictObject({
+/**
+ * A built-in or plugin effect, for pictures and sounds alike. What it takes are properties of what
+ * it is on, `effect.<id>.<parameter>`, so they can have keys like any other: see effects.ts. They
+ * used to be in the effect itself, which a file can still have, and reading it drops them.
+ */
+const EffectFields = z.strictObject({
+  /** Unique among the effects of what it is on. */
   id: Id,
+  /** One that comes with the editor, or with a plugin, which has a dot. */
   type: ExtensionName,
+  /** Off, it does nothing, and keeps its place and its values. */
   enabled: z.boolean().optional(),
-  properties: Properties.optional(),
+});
+
+export const Effect = z.preprocess(
+  (value: unknown) =>
+    typeof value === "object" && value !== null && !Array.isArray(value) && "properties" in value
+      ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "properties"))
+      : value,
+  EffectFields,
+);
+
+/** Effects in the order they work, each id once. */
+const Effects = z.array(Effect).superRefine((effects, context) => {
+  const seen = new Set<string>();
+  effects.forEach((effect, index) => {
+    if (seen.has(effect.id)) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "id"],
+        message: `效果 ID 重复：${effect.id}`,
+      });
+    }
+    seen.add(effect.id);
+  });
 });
 
 const Text = z.union([z.string(), StringRef]);
@@ -168,7 +197,7 @@ export const Clip = z.strictObject({
   link: Id.optional(),
   sectionFit: SectionFit.optional(),
   properties: KnownProperties.optional(),
-  effects: z.array(Effect).optional(),
+  effects: Effects.optional(),
 });
 
 /**
@@ -256,7 +285,7 @@ const AudioTrack = z.strictObject({
   clips: Clips,
   joins: Joins.optional(),
   properties: KnownProperties.optional(),
-  effects: z.array(Effect).optional(),
+  effects: Effects.optional(),
   sends: z.array(Send).optional(),
   /** A bus. Without one the track goes to the master. */
   output: Id.optional(),
@@ -276,7 +305,7 @@ export const Bus = z.strictObject({
   name: z.string().optional(),
   muted: z.boolean().optional(),
   properties: KnownProperties.optional(),
-  effects: z.array(Effect).optional(),
+  effects: Effects.optional(),
   sends: z.array(Send).optional(),
   output: Id.optional(),
 });
@@ -285,7 +314,7 @@ export const Bus = z.strictObject({
 export const Mix = z.strictObject({
   buses: z.array(Bus).optional(),
   master: z
-    .strictObject({ properties: KnownProperties.optional(), effects: z.array(Effect).optional() })
+    .strictObject({ properties: KnownProperties.optional(), effects: Effects.optional() })
     .optional(),
 });
 
@@ -383,7 +412,7 @@ const ClipChanges = z.strictObject({
   hidden: Change(z.boolean()).optional(),
   source: Change(ClipSource).optional(),
   properties: z
-    .record(PropertyPath, Change(PropertyValue))
+    .preprocess(withoutRetired, z.record(PropertyPath, Change(PropertyValue)))
     .overwrite(sortKeys)
     .superRefine((properties, context) => {
       for (const [path, { value }] of Object.entries(properties)) {

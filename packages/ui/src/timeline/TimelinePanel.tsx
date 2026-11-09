@@ -28,6 +28,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from "react";
+import { effectsOf } from "@animaquill/core";
 import { JOIN_ALIGNS, mediaOfTrack } from "@animaquill/schema";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
@@ -45,6 +46,7 @@ import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
 import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
+import { EFFECT_DRAG_TYPE, effectDrag } from "./effect-drag.ts";
 import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
@@ -537,6 +539,13 @@ function TrackHeaders({
 /** What is on the canvas, for those who cannot see it. */
 function ClipList({ editor }: { editor: TimelineEditor }) {
   const { t } = useTranslation();
+  /** What the mark of a clip with effects says, as the canvas shows it. */
+  const effectsMark = (box: ClipBox) => {
+    const count = effectsOf(box.clip).length;
+    return count === 0
+      ? {}
+      : { "data-effects": count, "aria-description": t("effect.mark", { count }) };
+  };
   const labelOf = useClipLabel();
   const trackNameOf = useTrackName();
   const [clips, setClips] = useState<readonly VisibleClip[]>([]);
@@ -580,6 +589,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
             start: timecode(box.start),
             end: timecode(box.end),
           })}
+          {...effectsMark(box)}
           style={{ left, top, width, height }}
         />
       ))}
@@ -661,6 +671,17 @@ function Surface({
     }
   };
 
+  /** An effect from its tab, which lights up the clip it would go on, and goes only on one. */
+  const onEffectDrag = (event: DragEvent<HTMLDivElement>) => {
+    const pointer = pointerOf(event, event.currentTarget);
+    if (effectDrag.current() !== undefined && editor.showEffectDrop(pointer)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    } else {
+      event.dataTransfer.dropEffect = "none";
+    }
+  };
+
   const carriesMedia = (event: DragEvent) =>
     event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
     event.dataTransfer.types.includes(SCENE_DRAG_TYPE) ||
@@ -670,6 +691,10 @@ function Surface({
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (event.dataTransfer.types.includes(TRANSITION_DRAG_TYPE)) {
       onTransitionDrag(event);
+      return;
+    }
+    if (event.dataTransfer.types.includes(EFFECT_DRAG_TYPE)) {
+      onEffectDrag(event);
       return;
     }
     if (!carriesMedia(event)) return;
@@ -684,6 +709,13 @@ function Surface({
     if (pick && event.dataTransfer.types.includes(TRANSITION_DRAG_TYPE)) {
       event.preventDefault();
       editor.dropTransition(pointerOf(event, event.currentTarget), pick);
+      stage.current?.focus({ preventScroll: true });
+      return;
+    }
+    const effect = effectDrag.current();
+    if (effect !== undefined && event.dataTransfer.types.includes(EFFECT_DRAG_TYPE)) {
+      event.preventDefault();
+      editor.dropEffect(pointerOf(event, event.currentTarget), effect);
       stage.current?.focus({ preventScroll: true });
       return;
     }
@@ -863,6 +895,7 @@ function Surface({
         onDragLeave={() => {
           editor.showDrop(undefined);
           editor.showTransitionDrop(undefined);
+          editor.showEffectDrop(undefined);
         }}
         onDrop={onDrop}
       >

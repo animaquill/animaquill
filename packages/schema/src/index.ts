@@ -1,5 +1,16 @@
-export { Color, Duration, Id, LanguageId, Rate, RelativePath, Time, newId } from "./basics.ts";
+export {
+  Color,
+  Duration,
+  ExtensionName,
+  Id,
+  LanguageId,
+  Rate,
+  RelativePath,
+  Time,
+  newId,
+} from "./basics.ts";
 export { checkProject } from "./check.ts";
+export * from "./effects.ts";
 export { createProject, createTimeline, type NewProject } from "./create.ts";
 export * from "./documents.ts";
 export { stringifyDocument } from "./json.ts";
@@ -29,8 +40,10 @@ export {
   VECTOR_COMPONENTS,
   VECTOR_LENGTHS,
   cannotHaveKeys,
+  RETIRED_PROPERTIES,
   isAnimation,
   isKnownProperty,
+  specValueProblem,
   type ObjectDescriptor,
   type PropertySpec,
   type ValueType,

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { Id, RelativePath, Time, sortKeys } from "./basics.ts";
-import { isAnimation, isKnownProperty, propertyValueProblem } from "./properties.ts";
+import {
+  RETIRED_PROPERTIES,
+  isAnimation,
+  isKnownProperty,
+  propertyValueProblem,
+} from "./properties.ts";
 import { compare, parseTime } from "./time.ts";
 
 /** A file of the project, by its entry in assets.json, or a file of a linked library. */
@@ -134,14 +139,32 @@ export function checkProperty(
   }
 }
 
-/** Properties of clips, tracks and buses, which the editor knows. Effects define their own. */
-export const KnownProperties = Properties.superRefine((properties, context) => {
-  for (const [path, value] of Object.entries(properties)) {
-    checkProperty(path, value, (message) => {
-      context.addIssue({ code: "custom", path: [path], message });
-    });
-  }
-});
+/**
+ * Properties without those that the format had once, see `RETIRED_PROPERTIES`: a file that still
+ * has them opens without them. Anything else stays as it is.
+ */
+export function withoutRetired(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  if (!RETIRED_PROPERTIES.some((path) => Object.hasOwn(value, path))) return value;
+  const rest: Record<string, unknown> = { ...value };
+  for (const path of RETIRED_PROPERTIES) delete rest[path];
+  return rest;
+}
+
+/**
+ * Properties of clips, tracks and buses, which the editor knows, and those of their effects, which
+ * their effects describe: see effects.ts.
+ */
+export const KnownProperties = z.preprocess(
+  withoutRetired,
+  Properties.superRefine((properties, context) => {
+    for (const [path, value] of Object.entries(properties)) {
+      checkProperty(path, value, (message) => {
+        context.addIssue({ code: "custom", path: [path], message });
+      });
+    }
+  }),
+);
 
 export type Value = z.output<typeof Value>;
 export type Key = z.output<typeof Key>;

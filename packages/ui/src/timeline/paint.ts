@@ -1,5 +1,5 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
-import { bezierProgress, type ClipState } from "@animaquill/core";
+import { bezierProgress, effectsOf, type ClipState } from "@animaquill/core";
 import type { Transition, TransitionRef, TransitionUse } from "@animaquill/schema";
 import {
   EXPANDER_SIZE,
@@ -29,6 +29,9 @@ const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
 const LABEL_PLATE_PADDING = 3;
 const EDGE_HANDLE = 6;
+/** The mark of a clip with effects. */
+const EFFECTS_MARK_WIDTH = 16;
+const EFFECTS_MARK_HEIGHT = 12;
 const TRANSITION_HANDLE = 8;
 /** Over what fades, darker the less of the clip shows, as the line says. */
 const FADE_SHADE = "#00000066";
@@ -286,11 +289,11 @@ export class TimelinePainter extends StagePainter {
         look.start === box.start ? row.joins.find(({ to }) => to.id === box.id) : undefined;
       const intoClip = Math.max(edges.enter, join ? join.end - box.start : 0);
       const entering = intoClip > 0 ? editor.xAt(look.start + intoClip) - left : 0;
-      const room = Math.max(expander === undefined ? 0 : EXPANDER_SIZE, entering);
-      this.#paintLabel(box, left, top, width, height, fill, room);
+      this.#paintLabel(box, left, top, width, height, fill, entering);
     }
     this.#paintTransitions(box, look, edges, { left, right, top, height, width });
-    if (expander !== undefined) this.#paintExpander(box, expander, top, fill);
+    if (expander !== undefined) this.#paintExpander(box, expander, top + height, fill);
+    this.#paintEffectsMark(box, { right, top, height, width }, expander);
     // Too narrow for words it should still show, and on any clip it stays out of the way.
     if (this.#hasFailed(box.clip)) {
       context.fillStyle = this.#theme.failed;
@@ -653,12 +656,45 @@ export class TimelinePainter extends StagePainter {
     return sound ? this.#theme.sound : this.#theme.picture;
   }
 
-  /** Says whether what belongs to a clip shows under its track. It stays with the name. */
-  #paintExpander(box: ClipBox, x: number, top: number, fill: string): void {
+  /**
+   * Says that a clip has effects: a small `fx` at its bottom right, dimmed when all of them are off.
+   * A clip too narrow for it goes without, as it does without its name.
+   */
+  #paintEffectsMark(
+    box: ClipBox,
+    { right, top, height, width }: { right: number; top: number; height: number; width: number },
+    expander: number | undefined,
+  ): void {
+    const effects = effectsOf(box.clip);
+    if (effects.length === 0 || width < EFFECTS_MARK_WIDTH + 6 || height < 14) return;
+    const { context } = this;
+    const x = right - EFFECTS_MARK_WIDTH - 3;
+    // The button at the bottom left comes first.
+    if (expander !== undefined && expander + EXPANDER_SIZE + 2 > x) return;
+    const y = top + height - EFFECTS_MARK_HEIGHT - 3;
+    context.save();
+    context.globalAlpha *= effects.some(({ enabled }) => enabled !== false) ? 1 : 0.5;
+    context.fillStyle = "#000000b3";
+    context.beginPath();
+    context.roundRect(x, y, EFFECTS_MARK_WIDTH, EFFECTS_MARK_HEIGHT, 3);
+    context.fill();
+    context.fillStyle = "#ffffff";
+    context.font = "italic 600 10px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("fx", x + EFFECTS_MARK_WIDTH / 2, y + EFFECTS_MARK_HEIGHT / 2 + 0.5);
+    context.restore();
+  }
+
+  /**
+   * Says whether the keys of a clip show under its track, at its bottom left: the top has its name
+   * and the blocks of its transitions.
+   */
+  #paintExpander(box: ClipBox, x: number, bottom: number, fill: string): void {
     const { context } = this;
     const open = this.#editor.extras?.isOpen(box) === true;
     const middle = x + EXPANDER_SIZE / 2;
-    const y = top + 12;
+    const y = bottom - 10;
     context.save();
     if (box.clip.source.kind === "video" && this.#stripOf(box.clip) !== undefined) {
       context.fillStyle = "#000000a6";

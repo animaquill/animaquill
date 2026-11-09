@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./effects": "./src/effects.ts",
     "./properties": "./src/properties.ts",
     "./time": "./src/time.ts"
   },

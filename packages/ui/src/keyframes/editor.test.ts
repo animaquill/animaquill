@@ -2176,19 +2176,23 @@ describe("keys on the timeline", () => {
     const row = timeline.model?.rows.find(({ id }) => id === video);
     const pointer = {
       x: Math.max(timeline.xAt(box.start), 0) + 12,
-      y: RULER_HEIGHT - timeline.scrollY + (row?.top ?? 0) + 12,
+      // At the bottom left of the clip.
+      y: RULER_HEIGHT - timeline.scrollY + (row?.top ?? 0) + (row?.height ?? 0) - 12,
       shift: false,
       alt: false,
       mod: false,
     };
-    return { ...setting, pointer };
+    // The top left is where the name is.
+    const top = { ...pointer, y: pointer.y - (row?.height ?? 0) + 24 };
+    return { ...setting, pointer, top };
   }
 
   it("the button on a clip only shows on what is selected or open", async () => {
-    const { timeline, box, inTimeline, pointer } = await closedWithButton();
+    const { timeline, box, inTimeline, pointer, top } = await closedWithButton();
     expect(timeline.hitAt(pointer)).not.toHaveProperty("expander");
     timeline.selectOnly("a");
     expect(timeline.hitAt(pointer)).toMatchObject({ kind: "clip", expander: true });
+    expect(timeline.hitAt(top)).not.toHaveProperty("expander");
     timeline.clearSelection();
     inTimeline.toggle(box);
     expect(timeline.hitAt(pointer)).toMatchObject({ kind: "clip", expander: true });
@@ -2576,7 +2580,8 @@ describe("fingers", () => {
     expect(timeline.hitAt(edge)).toMatchObject({ kind: "clip", edge: "start" });
     const button = timeline.expanderAt(left, timeline.xAt(box.end) - left);
     if (button === undefined) throw new Error("no button");
-    expect(timeline.hitAt({ ...edge, x: button + 4 })).toMatchObject({ expander: true });
+    const bottom = RULER_HEIGHT - timeline.scrollY + row.top + row.height - 10;
+    expect(timeline.hitAt({ ...edge, x: button + 4, y: bottom })).toMatchObject({ expander: true });
     expect(keyframes.inTimeline.canOpen(box)).toBe(true);
   });
 });

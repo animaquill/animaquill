@@ -1,6 +1,7 @@
 import {
   buildRenderPlan,
   channelOf,
+  layerSpecOf,
   fitOf,
   isSceneOwned,
   samePlan,
@@ -20,7 +21,7 @@ import {
   type SceneSetup,
   type ToCompositor,
 } from "@animaquill/render";
-import { BUILT_IN_PROPERTIES, type PropertyValue } from "@animaquill/schema";
+import type { PropertyValue } from "@animaquill/schema";
 import type { DiagnosticsRecorder } from "../diagnostics/recorder.ts";
 import type { MediaLibrary } from "../media/library.ts";
 import type { StandIn, StandIns } from "../proxy/proxies.ts";
@@ -73,9 +74,12 @@ type ShownValues = ReturnType<PreviewedValues["get"]>;
 
 const NOTHING_SHOWN: PreviewedValues = new Map();
 
-/** A property the way the compositor gets it. Null when it has nothing to go on. */
-function channelFor(path: string, value: PropertyValue | undefined) {
-  const spec = Object.hasOwn(BUILT_IN_PROPERTIES, path) ? BUILT_IN_PROPERTIES[path] : undefined;
+/**
+ * A property the way the compositor gets it: one that is built in, or one of an effect of the
+ * layer. Null when it has nothing to go on.
+ */
+function channelFor(layer: RenderLayer, path: string, value: PropertyValue | undefined) {
+  const spec = layerSpecOf(layer, path);
   return (value !== undefined && spec && channelOf(value, spec.type)) || null;
 }
 
@@ -100,7 +104,7 @@ function changesOf(
       // The scene works these out itself, so they go as the clip would store them.
       content[path] = (shown ? value : layer.content[path]) ?? null;
       forScene = true;
-    } else channels[path] = shown ? channelFor(path, value) : (layer.channels[path] ?? null);
+    } else channels[path] = shown ? channelFor(layer, path, value) : (layer.channels[path] ?? null);
   }
   if (!changed) return undefined;
   return { channels, ...(fit === undefined ? {} : { fit }), ...(forScene && { content }) };

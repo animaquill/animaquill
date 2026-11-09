@@ -80,7 +80,7 @@ describe("what a clip with a picture offers", () => {
   });
 
   it("leaves out what the compositor does not do yet", () => {
-    for (const path of ["blend", "crop.left", "time.speed"]) expect(paths).not.toContain(path);
+    for (const path of ["crop.left", "time.speed"]) expect(paths).not.toContain(path);
   });
 
   it("can cross into a sandbox and into a tool as it is", () => {

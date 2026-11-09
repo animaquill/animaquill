@@ -3,7 +3,7 @@
   "clips": {
     "clip_interview": {
       "properties": {
-        "crop.left": {
+        "effect.fx_crop.left": {
           "value": {
             "keys": [
               { "time": "0", "value": 0.2 },

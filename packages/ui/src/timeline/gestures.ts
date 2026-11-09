@@ -1,5 +1,6 @@
 import {
   clipEnd,
+  clipFileOf,
   clipOffset,
   clipStart,
   longestJoin,
@@ -18,6 +19,7 @@ import {
   rational,
   subtract,
   toSeconds,
+  type Clip,
   type Rational,
 } from "@animaquill/schema";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
@@ -1079,7 +1081,7 @@ export class EndGesture implements Gesture {
   }
 }
 
-export type ClipCopy = Omit<ClipState, "track">;
+export type ClipCopy = Clip;
 
 /**
  * The joins on the cuts between clips of a timeline that are all in a set, as they are: what comes
@@ -1118,7 +1120,9 @@ export function copiedJoins(
 /** Clips as new clips. Copies that were linked stay linked to each other, not to the originals. */
 export function copiesOf(clips: readonly ClipState[]): readonly ClipCopy[] {
   const links = new Map<string, string>();
-  return clips.map(({ track: _track, ...clip }) => {
+  return clips.map((state) => {
+    // As a file has it: that is what `clip.add` takes, effects and all.
+    const clip = clipFileOf(state);
     const { link } = clip;
     if (link === undefined) return { ...clip, id: newId("clip") };
     if (!links.has(link)) links.set(link, newId("link"));

@@ -3,6 +3,8 @@ import {
   CLIP_VISUAL,
   ELEMENT_PROPERTIES,
   SCENE_VISUAL,
+  builtInEffect,
+  effectPath,
   toSeconds,
   type MediaRef,
   type ObjectDescriptor,
@@ -11,7 +13,14 @@ import {
   type Value,
   type ValueType,
 } from "@animaquill/schema";
-import { clipOffset, clipStart, entryOf, type ClipState, type ProjectState } from "./model.ts";
+import {
+  clipOffset,
+  clipStart,
+  effectsOf,
+  entryOf,
+  type ClipState,
+  type ProjectState,
+} from "./model.ts";
 import {
   aliasPathsOf,
   elementPath,
@@ -33,9 +42,62 @@ const WITH_A_PICTURE = new Set(["video", "image", "color"]);
  * edited or animated apart from what the scene of a clip declares and registers: see `describeClip`.
  */
 export function objectsOf(clip: ClipState): readonly ObjectDescriptor[] {
-  if (clip.source.kind === "scene") return [SCENE_VISUAL];
+  if (clip.source.kind === "scene") return withEffects(clip, [SCENE_VISUAL]);
   if (clip.source.kind === "sound") return [CLIP_SOUND];
-  return WITH_A_PICTURE.has(clip.source.kind) ? [CLIP_VISUAL] : [];
+  return WITH_A_PICTURE.has(clip.source.kind) ? withEffects(clip, [CLIP_VISUAL]) : [];
+}
+
+/** The types of the objects of effects: what holds them, and each of them by the type of effect. */
+export const EFFECT_OBJECT_TYPES = { effects: "clip.effects", prefix: "effect." } as const;
+
+/** Where the effects of a clip are in its tree. */
+export const EFFECTS_OBJECT_ID = "effects";
+
+/** The object of an effect of a clip, by the id of the effect. */
+export const effectObjectId = (effect: string): string => `effect.${effect}`;
+
+const effectObjects = new WeakMap<object, readonly ObjectDescriptor[]>();
+
+/**
+ * The effects of a clip, as objects: one that holds them, and one for each, in their order, with
+ * what each takes. One that this editor does not know describes nothing, so its values show as
+ * values that nothing describes.
+ */
+export function effectObjectsOf(clip: ClipState): readonly ObjectDescriptor[] {
+  const { effects } = clip;
+  if (!effects) return [];
+  const known = effectObjects.get(effects);
+  if (known) return known;
+  const list = effectsOf(clip);
+  const objects: ObjectDescriptor[] =
+    list.length === 0
+      ? []
+      : [
+          { id: EFFECTS_OBJECT_ID, type: EFFECT_OBJECT_TYPES.effects, properties: [] },
+          ...list.map(({ id, type }): ObjectDescriptor => {
+            const spec = builtInEffect(type);
+            return {
+              id: effectObjectId(id),
+              type: `${EFFECT_OBJECT_TYPES.prefix}${type}`,
+              parent: EFFECTS_OBJECT_ID,
+              properties: (spec?.properties ?? []).map((parameter): PropertySpec => ({
+                ...parameter,
+                path: effectPath(id, parameter.path),
+              })),
+            };
+          }),
+        ];
+  effectObjects.set(effects, objects);
+  return objects;
+}
+
+/** What the editor knows of a clip, with its effects after it. */
+function withEffects(
+  clip: ClipState,
+  objects: readonly ObjectDescriptor[],
+): readonly ObjectDescriptor[] {
+  const effects = effectObjectsOf(clip);
+  return effects.length === 0 ? objects : [...objects, ...effects];
 }
 
 /** What a scene registered, and whether it ran with what a clip holds. */
@@ -276,7 +338,9 @@ export function describeClip(
   const found =
     scene && registry?.registrationOf(scene.revision, (path) => paramTextOf(clip, path));
   const registration = found?.registration;
-  const { objects, renames } = withRenames(clip, resolvedOf(manifest, registration));
+  const renamed = withRenames(clip, resolvedOf(manifest, registration));
+  const { renames } = renamed;
+  const objects = withEffects(clip, renamed.objects);
   // What ran with other parameters shows what there probably is, and says nothing about the rest.
   let ran: SceneRun = "never";
   if (found) ran = found.exact && found.registration.complete ? "complete" : "partial";
@@ -288,8 +352,8 @@ export function describeClip(
  * whatever the ids of the elements are.
  */
 export function nameKeyOf(path: string): string {
-  const element = /^element\.[^.]+\.([^.]+)$/.exec(path);
-  return element ? `element.${element[1]}` : path;
+  const element = /^(element|effect)\.[^.]+\.([^.]+)$/.exec(path);
+  return element ? `${element[1]}.${element[2]}` : path;
 }
 
 /** How large the media of a clip is, as far as the project knows. */

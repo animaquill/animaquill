@@ -1,5 +1,14 @@
 import type { PlannedTransition, RenderJoin, RenderLayer, RenderPlan } from "@animaquill/core";
-import { fadeLeftAt, isFade, opacityAt, progressAt, shownAt, showsAt } from "@animaquill/core/view";
+import {
+  blendAt,
+  fadeLeftAt,
+  isFade,
+  opacityAt,
+  progressAt,
+  shownAt,
+  showsAt,
+  type BlendMode,
+} from "@animaquill/core/view";
 import { codeOf } from "./transitions/built-in.ts";
 import type { Corners, TransitionFrame, TransitionUse } from "./transitions/code.ts";
 
@@ -24,6 +33,8 @@ interface Drawn {
   readonly box: Corners | null;
   /** How much of it shows, for a fade out that comes after something else. */
   readonly alpha: number;
+  /** How it goes onto the picture: its blend mode, see `operationOf`. */
+  readonly operation: GlobalCompositeOperation;
   /** Lets its canvas go for something else in this frame, once nothing needs what is on it. */
   readonly done: () => void;
 }
@@ -43,7 +54,7 @@ interface Buffer {
  * Things to draw on that a frame takes and gives back, which the next frames take again. What no
  * frame took for a while goes, with its memory.
  */
-class Pool<T> {
+export class Pool<T> {
   #all: T[] = [];
   #free: T[] = [];
   /** The frame each one was last taken in. */
@@ -88,6 +99,32 @@ class Pool<T> {
       (a, b) => (this.#taken.get(a) ?? 0) - (this.#taken.get(b) ?? 0),
     );
   }
+}
+
+/** What the canvas calls a blend mode of the format. `add` adds up colors and their coverage. */
+const OPERATIONS: Readonly<Record<BlendMode, GlobalCompositeOperation>> = {
+  normal: "source-over",
+  multiply: "multiply",
+  screen: "screen",
+  overlay: "overlay",
+  darken: "darken",
+  lighten: "lighten",
+  add: "lighter",
+};
+
+export const operationOf = (mode: BlendMode): GlobalCompositeOperation => OPERATIONS[mode];
+
+/**
+ * How what a join makes goes onto the picture: as both of its sides do when they agree, and as
+ * normal otherwise. A side that is not there agrees with anything.
+ */
+function joinedBlend(
+  sides: readonly (RenderLayer | undefined)[],
+  seconds: number,
+): GlobalCompositeOperation {
+  const modes = new Set(sides.flatMap((layer) => (layer ? [blendAt(layer, seconds)] : [])));
+  const [only] = modes;
+  return modes.size === 1 && only ? operationOf(only) : "source-over";
 }
 
 /** Transitions that run into each other on a track: what one makes is the side before of the next. */
@@ -202,7 +239,7 @@ export class Composer {
         if (joined.has(layer.id)) return;
         black = false;
         if (!this.#needsPicture(layer, seconds)) {
-          paintLayer(target, layer, shownAt(layer, seconds));
+          paintLayer(target, layer, shownAt(layer, seconds), operationOf(blendAt(layer, seconds)));
           return;
         }
         this.#composite(target, this.#own(layer, seconds, paintLayer));
@@ -243,13 +280,15 @@ export class Composer {
       if (from) paintLayer(onto, from, shownAt(from, seconds) * (1 - progress), "lighter");
       if (to) paintLayer(onto, to, shownAt(to, seconds) * progress, "lighter");
     };
-    if (black) {
+    const operation = joinedBlend(sides, seconds);
+    // Adding onto black is putting over black, which is no other blend mode.
+    if (black && operation === "source-over") {
       addUp(target);
       return true;
     }
     const buffer = this.#buffer();
     addUp(buffer.context);
-    this.#composite(target, this.#drawnOf(buffer, null));
+    this.#composite(target, { ...this.#drawnOf(buffer, null), operation });
     return true;
   }
 
@@ -266,7 +305,14 @@ export class Composer {
     };
     let current = ownOf((chain[0] as RenderJoin).from);
     for (const join of chain) current = this.#run(join, "join", current, ownOf(join.to), seconds);
-    return current;
+    const sides = [(chain[0] as RenderJoin).from, ...chain.map(({ to }) => to)];
+    return {
+      ...current,
+      operation: joinedBlend(
+        sides.map((id) => layers.get(id)),
+        seconds,
+      ),
+    };
   }
 
   /**
@@ -283,13 +329,16 @@ export class Composer {
     const fadesNow = exit !== undefined && isFade(exit) && !entersOtherwise;
     if (exit && fadesNow) alpha *= fadeLeftAt(exit, seconds);
     const buffer = this.#buffer();
-    const box = alpha > 0 ? (paintLayer(buffer.context, layer, alpha) ?? null) : null;
+    // Over nothing on a picture of its own: its blend mode counts where that picture goes.
+    const box =
+      alpha > 0 ? (paintLayer(buffer.context, layer, alpha, "source-over") ?? null) : null;
     let drawn = this.#drawnOf(buffer, box);
+    const operation = operationOf(blendAt(layer, seconds));
     if (enter && entersOtherwise) drawn = this.#run(enter, "enter", this.#empty(), drawn, seconds);
     if (exit && !isFade(exit)) drawn = this.#run(exit, "exit", drawn, this.#empty(), seconds);
     else if (exit && !fadesNow)
       drawn = { ...drawn, alpha: drawn.alpha * fadeLeftAt(exit, seconds) };
-    return drawn;
+    return { ...drawn, operation };
   }
 
   /**
@@ -329,7 +378,13 @@ export class Composer {
       to.done();
     }
     const pool = this.#instances.get(type);
-    return { canvas: instance.canvas, box: null, alpha: 1, done: () => pool?.give(instance) };
+    return {
+      canvas: instance.canvas,
+      box: null,
+      alpha: 1,
+      operation: "source-over",
+      done: () => pool?.give(instance),
+    };
   }
 
   /** A picture with all of it showing as it does, which is what code gets. */
@@ -346,10 +401,11 @@ export class Composer {
   #composite(target: Context2D, drawn: Drawn): void {
     if (drawn.alpha > 0) {
       target.setTransform(1, 0, 0, 1, 0, 0);
-      target.globalCompositeOperation = "source-over";
+      target.globalCompositeOperation = drawn.operation;
       target.globalAlpha = Math.min(drawn.alpha, 1);
       target.drawImage(drawn.canvas, 0, 0);
       target.globalAlpha = 1;
+      target.globalCompositeOperation = "source-over";
     }
     drawn.done();
   }
@@ -361,11 +417,17 @@ export class Composer {
   #empty(): Drawn {
     this.#nothingTaken = this.#frame;
     const nothing = (this.#nothing ??= new OffscreenCanvas(1, 1));
-    return { canvas: nothing, box: null, alpha: 1, done: () => {} };
+    return { canvas: nothing, box: null, alpha: 1, operation: "source-over", done: () => {} };
   }
 
   #drawnOf(buffer: Buffer, box: Corners | null): Drawn {
-    return { canvas: buffer.canvas, box, alpha: 1, done: () => this.#buffers.give(buffer) };
+    return {
+      canvas: buffer.canvas,
+      box,
+      alpha: 1,
+      operation: "source-over",
+      done: () => this.#buffers.give(buffer),
+    };
   }
 
   /** A clear canvas as large as the picture, for this frame. */

@@ -78,6 +78,7 @@ export function describeFailure(
   }
   if (failure.reason === "transition") return t("export.failure.transition", { name, ...plain });
   if (failure.reason === "not-done") {
+    if (failure.use === "effect") return t("export.failure.effect", { name, ...plain });
     if (failure.media === "sound") return t("export.failure.soundTransition", { name, ...plain });
     const key = failure.use === "join" ? "export.failure.join" : "export.failure.transition";
     return t(key, { name, ...plain });

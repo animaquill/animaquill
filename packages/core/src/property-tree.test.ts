@@ -180,6 +180,7 @@ describe("the tree of a clip", () => {
       "transform.scale",
       "transform.rotation",
       "opacity",
+      "blend",
     ]);
   });
 

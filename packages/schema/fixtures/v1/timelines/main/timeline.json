@@ -74,7 +74,14 @@
           "link": "link_interview",
           "sectionFit": "hold",
           "properties": {
-            "crop.left": 0.1,
+            "effect.fx_blur.radius": {
+              "keys": [
+                { "time": "0", "value": 0 },
+                { "time": "1", "value": 12 }
+              ]
+            },
+            "effect.fx_crop.left": 0.1,
+            "effect.fx_grade.strength": 0.4,
             "fit": "cover",
             "time.speed": {
               "keys": [
@@ -84,24 +91,9 @@
             }
           },
           "effects": [
-            {
-              "id": "fx_blur",
-              "type": "blur",
-              "properties": {
-                "radius": {
-                  "keys": [
-                    { "time": "0", "value": 0 },
-                    { "time": "1", "value": 12 }
-                  ]
-                }
-              }
-            },
-            {
-              "id": "fx_grade",
-              "type": "plugin.film-grade",
-              "enabled": false,
-              "properties": { "strength": 0.4 }
-            }
+            { "id": "fx_crop", "type": "crop" },
+            { "id": "fx_blur", "type": "blur" },
+            { "id": "fx_grade", "type": "plugin.film-grade", "enabled": false }
           ]
         },
         {
@@ -243,12 +235,14 @@
           }
         }
       ],
+      "properties": {
+        "effect.fx_duck.amount": 0.75,
+        "effect.fx_duck.attack": 0.02,
+        "effect.fx_duck.release": 0.3,
+        "effect.fx_duck.track": "track_voice"
+      },
       "effects": [
-        {
-          "id": "fx_duck",
-          "type": "duck",
-          "properties": { "amount": 0.75, "attack": 0.02, "release": 0.3, "track": "track_voice" }
-        }
+        { "id": "fx_duck", "type": "duck" }
       ],
       "sends": [
         {
@@ -290,23 +284,21 @@
       {
         "id": "bus_room",
         "name": "房间混响",
+        "properties": {
+          "effect.fx_room.mix": 0.3,
+          "effect.fx_room.seconds": 1.8,
+          "effect.fx_room.seed": 3
+        },
         "effects": [
-          {
-            "id": "fx_room",
-            "type": "reverb",
-            "properties": { "mix": 0.3, "seconds": 1.8, "seed": 3 }
-          }
+          { "id": "fx_room", "type": "reverb" }
         ],
         "output": "bus_music"
       }
     ],
     "master": {
+      "properties": { "effect.fx_limit.ceiling": -1, "effect.fx_limit.release": 0.1 },
       "effects": [
-        {
-          "id": "fx_limit",
-          "type": "limiter",
-          "properties": { "ceiling": -1, "release": 0.1 }
-        }
+        { "id": "fx_limit", "type": "limiter" }
       ]
     }
   }

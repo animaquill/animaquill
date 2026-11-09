@@ -1,4 +1,4 @@
-import { SCENE_OBJECT_TYPES } from "@animaquill/core";
+import { EFFECT_OBJECT_TYPES, SCENE_OBJECT_TYPES } from "@animaquill/core";
 import type { ObjectDescriptor, PropertySpec } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
@@ -20,6 +20,7 @@ import { inspectSelection, keyEdit, writeEdit, type Blocked, type Selected } fro
 import { groupOf, nameOf, textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
 import { placeOf, PropertyRows } from "./rows.ts";
+import { EffectsSection } from "./EffectsSection.tsx";
 import { TransitionProperties } from "./TransitionProperties.tsx";
 
 type ClipSelected = Extract<Selected, { kind: "clip" }>;
@@ -367,7 +368,25 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
   const byId = new Map(objects.map((object) => [object.id, object]));
   const { kind } = box.clip.source;
   const kindName = textOf(t, `timeline.kind.${kind}`, kind);
-  const shown = objects.filter((object) => object.properties.length > 0);
+  const isEffect = (object: ObjectDescriptor) =>
+    object.type === EFFECT_OBJECT_TYPES.effects ||
+    object.type?.startsWith(EFFECT_OBJECT_TYPES.prefix) === true;
+  const shown = objects.filter((object) => object.properties.length > 0 && !isEffect(object));
+  const effectRows = new Map(
+    objects
+      .filter((object) => isEffect(object) && object.properties.length > 0)
+      .map((object) => [
+        object.id,
+        <Section
+          key={`${box.id} ${object.id}`}
+          rows={rows}
+          clip={box.id}
+          object={object}
+          name={undefined}
+          eager
+        />,
+      ]),
+  );
   return (
     <>
       <header className={styles.header}>
@@ -388,6 +407,12 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
             eager={index < EAGER_SECTIONS}
           />
         ))}
+        <EffectsSection
+          clip={box.clip}
+          objects={objects}
+          readOnly={blocked === "locked" || blocked === "comparing"}
+          rows={effectRows}
+        />
       </div>
     </>
   );

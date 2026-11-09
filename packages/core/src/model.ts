@@ -39,10 +39,83 @@ type OmitFromEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : n
 export type TrackState = OmitFromEach<Track, "clips" | "joins"> & { readonly order: number };
 
 /**
- * A clip in the live model. Clips sit next to each other and name their track, so moving a clip to
- * another track changes one field, and someone changing it at the same time loses nothing.
+ * An effect of a clip in the live model, by its id. Its fields sit flat in the clip (see
+ * structure.ts), and two people at once can leave one without a type: that is no effect, and it
+ * stays out of the files until it is whole again. What it takes are properties of the clip.
  */
-export type ClipState = Clip & { readonly track: string };
+export interface EffectState {
+  readonly type?: string;
+  readonly enabled?: boolean;
+  /** Effects have an order, a map of them does not. */
+  readonly order?: number;
+}
+
+/** An effect as files have it. */
+export type ClipEffect = NonNullable<Clip["effects"]>[number];
+
+/**
+ * A clip in the live model. Clips sit next to each other and name their track, so moving a clip to
+ * another track changes one field, and someone changing it at the same time loses nothing. Its
+ * effects are by id, see `EffectState`.
+ */
+export type ClipState = Omit<Clip, "effects"> & {
+  readonly track: string;
+  readonly effects?: Readonly<Record<string, EffectState>>;
+};
+
+const NO_EFFECTS: readonly ClipEffect[] = [];
+const listed = new WeakMap<object, readonly ClipEffect[]>();
+
+/**
+ * The effects of a clip in the order they work, as files have them: only whole ones. Clips that do
+ * not change keep their list.
+ */
+export function effectsOf(clip: Pick<ClipState, "effects">): readonly ClipEffect[] {
+  const { effects } = clip;
+  if (!effects) return NO_EFFECTS;
+  const known = listed.get(effects);
+  if (known) return known;
+  const list = Object.entries(effects)
+    .filter(([, effect]) => typeof effect.type === "string")
+    .toSorted(
+      ([a, first], [b, second]) =>
+        (first.order ?? 0) - (second.order ?? 0) || (a < b ? -1 : a > b ? 1 : 0),
+    )
+    .map(([id, { type, enabled }]): ClipEffect => ({
+      id,
+      type: type as string,
+      ...(enabled === undefined ? {} : { enabled }),
+    }));
+  listed.set(effects, list);
+  return list;
+}
+
+/** Effects as files have them, by id, in their order, the way the live model keeps them. */
+export function effectStates(
+  effects: readonly ClipEffect[] | undefined,
+): Readonly<Record<string, EffectState>> | undefined {
+  if (!effects || effects.length === 0) return undefined;
+  return Object.fromEntries(
+    effects.map(({ id, type, enabled }, order) => [
+      id,
+      { type, ...(enabled === undefined ? {} : { enabled }), order },
+    ]),
+  );
+}
+
+/** A clip as files have it, apart from its track. */
+export function clipFileOf(clip: Omit<ClipState, "track"> & { readonly track?: string }): Clip {
+  const { track: _track, effects: _effects, ...rest } = clip;
+  const effects = effectsOf(clip);
+  return { ...rest, ...(effects.length > 0 ? { effects: [...effects] } : {}) } as Clip;
+}
+
+/** A clip of a file in the live model, on a track. */
+export function clipStateOf(clip: Clip, track: string): ClipState {
+  const { effects, ...rest } = clip;
+  const states = effectStates(effects);
+  return { ...rest, track, ...(states ? { effects: states } : {}) };
+}
 
 /**
  * What a join is, apart from where it is: which transition, how long, how it goes, and where around
@@ -116,7 +189,7 @@ export function timelineToState(
     const { clips: trackClips, ...rest } = track;
     const { joins: trackJoins, ...head } = rest as typeof rest & { joins?: readonly Join[] };
     tracks[track.id] = { ...head, order };
-    for (const clip of trackClips) clips[clip.id] = { ...clip, track: track.id };
+    for (const clip of trackClips) clips[clip.id] = clipStateOf(clip, track.id);
     for (const { id, from, to, ...transition } of trackJoins ?? []) {
       joins[id] = { track: track.id, from, to, transition };
     }
@@ -252,7 +325,7 @@ const FALLBACK_SECTION = { id: "section-recovered", duration: "1" };
 export function stateToTimeline(state: TimelineState): unknown {
   const tracks = orderedTracks(state).map((head) => {
     const { order: _order, ...track } = head;
-    return { ...track, clips: [] as ClipState[], joins: [] as Join[] };
+    return { ...track, clips: [] as Clip[], joins: [] as Join[] };
   });
   const find = (id: string) => tracks.find((track) => track.id === id);
 
@@ -268,8 +341,7 @@ export function stateToTimeline(state: TimelineState): unknown {
       } as unknown as (typeof tracks)[number];
       tracks.push(track);
     }
-    const { track: _track, ...rest } = clip;
-    track.clips.push(rest as ClipState);
+    track.clips.push(clipFileOf(clip));
   }
   for (const [id, { track: owner, from, to, transition }] of Object.entries(state.joins ?? {})) {
     // Only some of a join is no join. A join on a track that is gone has nowhere to be.

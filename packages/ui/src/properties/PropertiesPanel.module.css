@@ -477,3 +477,97 @@
 .row[data-tried] .keyed {
   color: var(--aq-trial);
 }
+
+.effects {
+  margin-top: 6px;
+}
+
+.effectList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.effect {
+  position: relative;
+  margin: 2px 0 6px;
+  border-radius: 4px;
+}
+
+.effect[data-off] .row {
+  opacity: 0.55;
+}
+
+.effect[data-dragged] {
+  opacity: 0.5;
+}
+
+.effect[data-drop="before"]::before,
+.effect[data-drop="after"]::after {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: var(--aq-accent);
+  content: "";
+}
+
+.effect[data-drop="before"]::before {
+  top: -3px;
+}
+
+.effect[data-drop="after"]::after {
+  bottom: -3px;
+}
+
+.effectHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.effectGrip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--aq-text-muted);
+  cursor: grab;
+}
+
+.effectGrip[aria-disabled] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.effectGrip:focus-visible {
+  outline: 1px solid var(--aq-accent);
+}
+
+.effectToggle {
+  margin: 0;
+}
+
+.effectName {
+  flex: 1;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.effectOff,
+.effectMissing {
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.effectMissing {
+  margin: 0 0 4px 22px;
+}

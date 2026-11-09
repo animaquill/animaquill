@@ -1,4 +1,5 @@
 import {
+  EFFECT_OBJECT_TYPES,
   SCENE_OBJECT_TYPES,
   canMix,
   channelOf,
@@ -43,6 +44,7 @@ import {
 import type { TFunction } from "i18next";
 import { inspectProperty, type InspectedProperty } from "../properties/inspect.ts";
 import { groupOf, nameOf, partNameOf, textOf } from "../properties/names.ts";
+import { effectName } from "../resources/effects.ts";
 import { ClipDescriptions, SceneRegistrations } from "../properties/registrations.ts";
 import type { TrialSession } from "../properties/trial.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
@@ -636,6 +638,10 @@ export class KeyframeEditor {
         const { type } = node.object;
         if (type === SCENE_OBJECT_TYPES.params) return t("keyframes.objects.params");
         if (type === SCENE_OBJECT_TYPES.elements) return t("keyframes.objects.elements");
+        if (type === EFFECT_OBJECT_TYPES.effects) return t("keyframes.objects.effects");
+        if (type?.startsWith(EFFECT_OBJECT_TYPES.prefix)) {
+          return effectName(t, type.slice(EFFECT_OBJECT_TYPES.prefix.length));
+        }
         return node.object.name ?? node.object.id;
       }
       case "group":

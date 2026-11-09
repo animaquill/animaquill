@@ -41,6 +41,13 @@ import {
   type TransitionDrop,
   type TransitionPick,
 } from "./transition-place.ts";
+import {
+  effectCalls,
+  effectContext,
+  effectDropAt,
+  effectProblem,
+  type EffectContext,
+} from "./effect-place.ts";
 import { sceneTemplate } from "./scene-template.ts";
 import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
@@ -368,6 +375,13 @@ export class TimelineEditor implements TouchTarget {
   #rememberTimer: ReturnType<typeof setTimeout> | undefined;
   #extras: RowExtras | undefined;
   #roomBelow = NO_ROOM_BELOW;
+  #effectContext:
+    | {
+        readonly model: TimelineModel | undefined;
+        readonly selection: ReadonlySet<string>;
+        readonly context: EffectContext;
+      }
+    | undefined;
   #attachContext:
     | {
         readonly model: TimelineModel | undefined;
@@ -1761,6 +1775,101 @@ export class TimelineEditor implements TouchTarget {
     return calls.length > 0 && this.#run(calls);
   }
 
+  /* Effects from the effects tab, see docs/design/resource-panels.md, section 4. */
+
+  /** The clip that an effect dragged here would go on, or nothing where none can take it. */
+  effectDropAt(pointer: Pointer): ClipBox | undefined {
+    const { model } = this;
+    if (!model || pointer.y < RULER_HEIGHT || this.#pixelsPerSecond <= 0) return undefined;
+    return effectDropAt(rowAt(model, this.laneAt(pointer.y)), this.timeAt(pointer.x))?.box;
+  }
+
+  /**
+   * Lights up the clip that an effect dragged here would go on, or nothing with no pointer. Says
+   * whether it can go there.
+   */
+  showEffectDrop(pointer: Pointer | undefined): boolean {
+    const { model } = this;
+    const box = pointer ? this.effectDropAt(pointer) : undefined;
+    const row = box && model?.rowOfClip.get(box.id);
+    const next = box && row && { row: row.id, start: box.start, end: box.end };
+    const was = this.#preview?.transitionDrop;
+    const same =
+      was === next ||
+      (was !== undefined &&
+        next !== undefined &&
+        was.row === next.row &&
+        was.start === next.start &&
+        was.end === next.end);
+    if (!same) {
+      this.#preview = next && { transitionDrop: next };
+      this.#viewEmitter.emit();
+    }
+    return next !== undefined;
+  }
+
+  /** Puts an effect last on the clip it was dropped on, in one step, and selects that clip. */
+  dropEffect(pointer: Pointer, type: string): boolean {
+    const { model } = this;
+    const box = model && this.effectDropAt(pointer);
+    this.showEffectDrop(undefined);
+    if (!model || !box || !this.#run(effectCalls(model, [box], type))) return false;
+    this.#setSelection(new Set([box.id]));
+    return true;
+  }
+
+  /** What a click on an effect in the tab is about: the clips selected. */
+  get effectContext(): EffectContext {
+    const { model, selection } = this.#snapshot;
+    const known = this.#effectContext;
+    if (known && known.model === model && known.selection === selection) return known.context;
+    const context = effectContext(model, selection);
+    this.#effectContext = { model, selection, context };
+    return context;
+  }
+
+  /** Why a click on an effect would do nothing with what is selected, or nothing when it would. */
+  effectProblem(type: string) {
+    return effectProblem(this.effectContext, type);
+  }
+
+  /** Puts an effect last on every clip selected that can take one, in one step. */
+  attachEffect(type: string): boolean {
+    const { model } = this;
+    const context = this.effectContext;
+    if (!model || effectProblem(context, type) !== undefined) return false;
+    return this.#run(effectCalls(model, context.boxes, type));
+  }
+
+  /** Whether the effects of a clip can change: it is there, and its track is not locked. */
+  canChangeEffects(clip: string): boolean {
+    return this.#changeable([clip], this.model).length > 0;
+  }
+
+  /** Takes an effect off a clip, with what it took, in one step. */
+  removeEffect(clip: string, effect: string): boolean {
+    const { model } = this;
+    if (!model || !this.canChangeEffects(clip)) return false;
+    const params = { timeline: model.id, clip, effects: [effect] };
+    return this.#run([{ type: "effect.remove", params }]);
+  }
+
+  /** Moves an effect of a clip to a place in its list, counted without it, in one step. */
+  moveEffect(clip: string, effect: string, index: number): boolean {
+    const { model } = this;
+    if (!model || !this.canChangeEffects(clip)) return false;
+    const params = { timeline: model.id, clip, effect, index: Math.max(index, 0) };
+    return this.#run([{ type: "effect.move", params }]);
+  }
+
+  /** Turns an effect of a clip on or off, in one step. */
+  setEffectEnabled(clip: string, effect: string, enabled: boolean): boolean {
+    const { model } = this;
+    if (!model || !this.canChangeEffects(clip)) return false;
+    const params = { timeline: model.id, clip, effect, enabled };
+    return this.#run([{ type: "effect.update", params }]);
+  }
+
   /** Changes a join in one step, see `join.update`. */
   updateJoin(join: string, changes: Readonly<Record<string, unknown>>): boolean {
     const { model } = this;
@@ -1797,7 +1906,9 @@ export class TimelineEditor implements TouchTarget {
     const left = this.xAt(box.start);
     const at = this.expanderAt(left, this.xAt(box.end) - left);
     const inside = at !== undefined && x >= at && x < at + EXPANDER_SIZE;
-    return inside && this.laneAt(y) - row.top <= EXPANDER_HEIGHT && this.showsExpander(box);
+    // At the bottom left of the clip, out of the way of its name and of what is at its top.
+    const fromBottom = row.top + row.height - this.laneAt(y);
+    return inside && fromBottom <= EXPANDER_HEIGHT && this.showsExpander(box);
   }
 
   /** What the pointer is over, and how it should look. */

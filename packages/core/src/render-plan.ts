@@ -1,6 +1,12 @@
 import {
+  BUILT_IN_PROPERTIES,
   CLIP_VISUAL,
   add,
+  builtInEffect,
+  effectOfPath,
+  effectPath,
+  findEffect,
+  parameterOf,
   edgeLength,
   findTransition,
   isAnimation,
@@ -11,6 +17,7 @@ import {
   type Animation,
   type Asset,
   type MediaRef,
+  type PropertySpec,
   type PropertyValue,
   type SpeedCurve,
   type TransitionMedia,
@@ -26,6 +33,7 @@ import {
   clipEnd,
   clipOffset,
   clipStart,
+  effectsOf,
   entryOf,
   orderedTracks,
   type ClipState,
@@ -120,6 +128,21 @@ export interface RenderJoin extends PlannedTransition {
   readonly to: string;
 }
 
+/**
+ * An effect ready to be drawn: which one, in its place in the list. What it takes are channels of
+ * its layer, `effect.<id>.<parameter>`, so that they change like any other while people drag. Only
+ * those that are on are in the plan.
+ */
+export interface PlannedEffect {
+  readonly id: string;
+  readonly type: string;
+  /**
+   * This editor cannot do it. The preview goes on without it, and an export stops wherever the
+   * layer shows, so that no file says something else than the project.
+   */
+  readonly missing?: true;
+}
+
 export interface RenderLayer {
   readonly id: string;
   /** Seconds on the timeline. */
@@ -138,8 +161,13 @@ export interface RenderLayer {
    * its start: it does that on its own clock, see the project format. Without it, its own.
    */
   readonly shows?: { readonly from: number; readonly to: number };
-  /** What changes over time, on the clock of the clip: `transform.*` and `opacity`. */
+  /**
+   * What changes over time, on the clock of the clip: `transform.*`, `opacity`, `blend`, and what
+   * its effects take, `effect.<id>.<parameter>`.
+   */
   readonly channels: Channels;
+  /** In the order they work, on what the clip shows in its box. Without it, none. */
+  readonly effects?: readonly PlannedEffect[];
   /**
    * What the content works out by itself, as the clip stores it: a scene gets its `param.*`,
    * `element.*` and `object.*`. Only the scene knows what types those are, see `describeClip`, so
@@ -211,15 +239,52 @@ export function channelOf(value: PropertyValue, type: ValueType): Channel | unde
 
 const VISUAL_SPECS = CLIP_VISUAL.properties.filter(({ animatable }) => animatable !== false);
 
-/** What a compositor reads from the properties of a clip. */
-export function channelsOf(properties: Properties): Channels {
+/**
+ * What a compositor reads from the properties of a clip, with what its effects take. A value that
+ * is not of the type of its property does nothing, and the default counts.
+ */
+export function channelsOf(
+  properties: Properties,
+  effects: readonly PlannedEffect[] = [],
+): Channels {
   const channels: Record<string, Channel> = {};
-  for (const { path, type } of VISUAL_SPECS) {
-    const value = properties[path];
+  const put = (path: string, type: ValueType) => {
+    const value = entryOf(properties, path);
     const channel = value === undefined ? undefined : channelOf(value, type);
     if (channel) channels[path] = channel;
+  };
+  for (const { path, type } of VISUAL_SPECS) put(path, type);
+  for (const { id, type, missing } of effects) {
+    const spec = missing ? undefined : builtInEffect(type);
+    for (const parameter of spec?.properties ?? []) {
+      put(effectPath(id, parameter.path), parameter.type);
+    }
   }
   return channels;
+}
+
+/** What describes a property of a layer, for its channel: built in, or one of its effects. */
+export function layerSpecOf(
+  layer: Pick<RenderLayer, "effects">,
+  path: string,
+): PropertySpec | undefined {
+  if (Object.hasOwn(BUILT_IN_PROPERTIES, path)) return BUILT_IN_PROPERTIES[path];
+  const of = effectOfPath(path);
+  const effect = of && layer.effects?.find(({ id }) => id === of.effect);
+  const spec = effect && !effect.missing ? builtInEffect(effect.type) : undefined;
+  return spec && of ? parameterOf(spec, of.parameter) : undefined;
+}
+
+const NO_PLANNED: readonly PlannedEffect[] = [];
+
+/** The effects of a clip that are on, as a compositor draws them. Only pictures have them so far. */
+export function plannedEffects(clip: ClipState): readonly PlannedEffect[] {
+  const planned = effectsOf(clip).flatMap(({ id, type, enabled }): PlannedEffect[] => {
+    if (enabled === false) return [];
+    const found = findEffect(type, "picture");
+    return [found.kind === "built-in" ? { id, type } : { id, type, missing: true }];
+  });
+  return planned.length > 0 ? planned : NO_PLANNED;
 }
 
 /** The one value of what cannot have keys: only a hand-written project can have them anyway. */
@@ -312,7 +377,8 @@ function plannedJoin(join: JoinInEffect): RenderJoin {
 export interface TransitionNotDone {
   /** The clip that it is at, and for a join the clip before it. */
   readonly clip: string;
-  readonly use: TransitionUse;
+  /** Where it is, or `effect` for an effect of the clip that this editor cannot do. */
+  readonly use: TransitionUse | "effect";
   readonly media: TransitionMedia;
   /** Seconds on the timeline. */
   readonly start: number;
@@ -334,6 +400,11 @@ export function transitionsNotDone(
   const found: TransitionNotDone[] = [];
   const heard = new Set(audio?.sounds.map(({ id }) => id));
   for (const layer of plan.layers) {
+    if (layer.effects?.some(({ missing }) => missing)) {
+      const start = layer.shows?.from ?? layer.start;
+      const end = layer.shows?.to ?? layer.end;
+      found.push({ clip: layer.id, use: "effect", media: "picture", start, end });
+    }
     for (const use of EDGES) {
       const transition = layer[use];
       if (!transition?.missing) continue;
@@ -381,6 +452,7 @@ export function contentOf(properties: Properties): Readonly<Record<string, Prope
 }
 
 interface BuiltLayer {
+  readonly effects: ClipState["effects"];
   readonly asset: Asset | undefined;
   readonly scene: SceneSource | undefined;
   readonly properties: Properties;
@@ -418,6 +490,7 @@ function layerOf(
   const joined = `${joins.enter} ${joins.exit} ${joins.from} ${joins.to}`;
   const known = built.get(clip);
   if (
+    known?.effects === clip.effects &&
     known?.asset === asset &&
     known?.scene === scene &&
     known?.properties === properties &&
@@ -431,6 +504,7 @@ function layerOf(
   const start = toSeconds(clipStart(clip));
   const end = toSeconds(clipEnd(clip));
   const shows = joins.from !== undefined || joins.to !== undefined;
+  const effects = plannedEffects(clip);
   const layer: RenderLayer | undefined = source && {
     id: clip.id,
     start,
@@ -442,10 +516,11 @@ function layerOf(
     ...(enter && { enter }),
     ...(exit && { exit }),
     ...(shows && { shows: { from: joins.from ?? start, to: joins.to ?? end } }),
-    channels: channelsOf(properties),
+    channels: channelsOf(properties, effects),
+    ...(effects.length > 0 && { effects }),
     ...(scene && { content: contentOf(properties) }),
   };
-  built.set(clip, { asset, scene, properties, joined, layer });
+  built.set(clip, { effects: clip.effects, asset, scene, properties, joined, layer });
   return layer;
 }
 

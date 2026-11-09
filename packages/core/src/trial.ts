@@ -6,6 +6,7 @@ import {
   ZERO,
   add,
   compare,
+  effectOfPath,
   formatTime,
   isAnimation,
   parseTime,
@@ -18,6 +19,15 @@ import { laterValue, looksLikeClockMoved } from "./clip-edits.ts";
 import { checkWrite } from "./commands.ts";
 import { CommandError, fail, type ClipFact } from "./draft.ts";
 import { clipEnd, clipOffset, clipStart, entryOf, type ClipState } from "./model.ts";
+
+/**
+ * Whether what a property is about is on its clip: what an effect takes only counts while the
+ * effect is there. Without it, what people tried waits, as it does for a clip that went.
+ */
+function hasOwner(clip: ClipState, path: string): boolean {
+  const of = effectOfPath(path);
+  return of === undefined || typeof entryOf(clip.effects, of.effect)?.type === "string";
+}
 import { deepEqual } from "./patch.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
 import { convertedValue, type Conversion } from "./rename.ts";
@@ -744,7 +754,7 @@ export class Trial {
       const { clip: id, path, base, value, moved, asideSince } = entry.data;
       const clip = entryOf(clips, id);
       const saved = clip && this.#saved(clip, path);
-      const isUsable = clip !== undefined && moved === undefined;
+      const isUsable = clip !== undefined && moved === undefined && hasOwner(clip, path);
       if (!canHold(path, saved, value)) dropped += 1;
       else if (asideSince !== undefined && asideSince < oldest && !isUsable) stale += 1;
       else if (isUsable && deepEqual(value, saved)) stale += 1;
@@ -821,10 +831,10 @@ export class Trial {
     const shown: Entries = new Map();
     const waiting: { readonly clip: string; readonly path: string; readonly since: number }[] = [];
     for (const [clip, held] of this.#entries) {
-      const isThere = entryOf(clips, clip) !== undefined;
+      const state = entryOf(clips, clip);
       for (const [path, change] of held) {
         const { asideSince, ...plain } = change;
-        if (isThere && change.moved === undefined) {
+        if (state && change.moved === undefined && hasOwner(state, path)) {
           const usable = asideSince === undefined ? change : plain;
           if (usable !== change) put(next, clip, path, usable);
           put(shown, clip, path, usable);

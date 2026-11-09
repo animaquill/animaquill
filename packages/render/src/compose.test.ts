@@ -274,3 +274,36 @@ describe("the memory of transitions", () => {
     expect(canvases.filter(({ width }) => width === 1).length).toBe(0);
   });
 });
+
+describe("blend modes", () => {
+  const still = (value: unknown) => ({ kind: "still", value }) as const;
+  const blended = (id: string, mode: string, more: Partial<RenderLayer> = {}) =>
+    layer(id, 0, 2, { channels: { blend: still(mode) } as RenderLayer["channels"], ...more });
+
+  /** How each layer went onto what it was drawn on. */
+  function operations(plan: RenderPlan, seconds: number) {
+    const found: string[] = [];
+    new Composer().compose(
+      new FakeCanvas(4, 4).getContext() as unknown as CanvasRenderingContext2D,
+      plan,
+      plan.layers,
+      seconds,
+      (_on, drawn, _opacity, operation) => {
+        found.push(`${drawn.id} ${operation}`);
+        return undefined;
+      },
+    );
+    return found;
+  }
+
+  it("draw a layer straight onto the picture the way it says, add as lighter", () => {
+    const plan = planOf([blended("A", "multiply"), blended("B", "add"), layer("C", 0, 2)], []);
+    expect(operations(plan, 1)).toEqual(["A multiply", "B lighter", "C source-over"]);
+  });
+
+  it("draw a layer with a transition onto a picture of its own first, and not blended there", () => {
+    const enter = edge("wipe", 0, 1);
+    const plan = planOf([blended("A", "screen", { enter })], []);
+    expect(operations(plan, 0.5)).toEqual(["A source-over"]);
+  });
+});

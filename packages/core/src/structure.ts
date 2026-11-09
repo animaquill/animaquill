@@ -63,7 +63,12 @@ const CONTAINERS: Tree = {
     [ANY]: {
       sections: { [ANY]: fields },
       tracks: { [ANY]: withProperties },
-      clips: { [ANY]: withProperties },
+      /**
+       * The effects of a clip sit flat in its map, each field on its own: `effects/<id>/type`,
+       * `enabled` and `order`. Two people can add, turn off and move effects of the same clip at
+       * the same time, and what they take is in `properties`, as `effect.<id>.<parameter>`.
+       */
+      clips: { [ANY]: { properties, effects: flat({ [ANY]: flat() }) } },
       /**
        * Documents from before joins have no map for them, and two people who both made the first
        * one would lose what is in one of the two. So joins sit flat in the map of their timeline,
@@ -78,7 +83,9 @@ const CONTAINERS: Tree = {
 
 /**
  * What documents can still have that is no part of a project any more: the fades of clips and the
- * transitions of a timeline, from before transitions came as they are now (2026-11-08). They stay
+ * transitions of a timeline, from before transitions came as they are now (2026-11-08). The effects
+ * of a clip were one list under `effects` before they sat flat (2026-11-09): that key holds no map,
+ * and reading it finds nothing, so it needs nothing here. They stay
  * in the document, where a page that is still open from before goes on writing them, and nothing
  * reads them. Everything under one of these is gone as well.
  */

@@ -7,7 +7,7 @@ import type { Pointer } from "./gestures.ts";
 import type { StagePainter } from "./stage-painter.ts";
 import { TouchController, type TouchTarget } from "./touch.ts";
 import styles from "./TimelinePanel.module.css";
-import { WheelInterpreter } from "./wheel.ts";
+import { WheelInterpreter, wheelInputOf } from "./wheel.ts";
 
 /** How close to the edge a drag has to be to scroll, and how fast it gets, in pixels per second. */
 const SCROLL_ZONE = 32;
@@ -147,25 +147,12 @@ export function useStage(
     const onWheel = (event: Event) => {
       if (!(event instanceof WheelEvent)) return;
       event.preventDefault();
-      const { wheelDeltaX, wheelDeltaY } = event as WheelEvent & {
-        wheelDeltaX: number;
-        wheelDeltaY: number;
-      };
-      const action = wheel.read(
-        {
-          deltaX: event.deltaX,
-          deltaY: event.deltaY,
-          lines: event.deltaMode === WheelEvent.DOM_DELTA_LINE,
-          wheelDelta: wheelDeltaY || wheelDeltaX,
-          ctrl: event.ctrlKey || event.metaKey,
-          alt: event.altKey,
-          shift: event.shiftKey,
-          time: event.timeStamp,
-        },
-        input.wheelDevice,
-      );
-      if (wheel.device) input.notice(wheel.device);
       const box = stageElement.getBoundingClientRect();
+      // What is left of the time is the headers, which are a list that goes up and down.
+      const onStage = event.target instanceof Node && stageElement.contains(event.target);
+      const area = !onStage && event.clientX < box.left ? "headers" : "time";
+      const action = wheel.read(wheelInputOf(event), input.wheelDevice, area);
+      if (wheel.device) input.notice(wheel.device);
       if (action.kind === "zoom") editor.zoomAround(event.clientX - box.left, action.factor);
       else if (action.kind === "zoomRows") {
         editor.zoomRowsAround(event.clientY - box.top, action.factor);

@@ -8,6 +8,7 @@ import { RULER_HEIGHT } from "../timeline/editor.ts";
 import { pointerOf, useStage } from "../timeline/stage.ts";
 import timelineStyles from "../timeline/TimelinePanel.module.css";
 import { ToolButton } from "../timeline/ToolButton.tsx";
+import { WheelInterpreter, wheelInputOf } from "../timeline/wheel.ts";
 import { ZoomBar } from "../timeline/ZoomBar.tsx";
 import { KeyList } from "./KeyList.tsx";
 import { InterpBubble, useKeyPopups } from "./KeyPopups.tsx";
@@ -17,10 +18,6 @@ import styles from "./KeyframesPanel.module.css";
 import type { KeyframesView } from "./view.ts";
 
 const RANGES: readonly ListRange[] = ["here", "all", "keyed"];
-/** What a wheel that counts in lines goes by. */
-const LINE_HEIGHT = 16;
-/** How much the wheel changes the height of rows, as for zooming on the timeline. */
-const ROW_ZOOM = 0.002;
 
 function Toolbar({ view }: { view: KeyframesView }) {
   const { keyframes } = view;
@@ -156,23 +153,25 @@ function List({ view }: { view: KeyframesView }) {
     return keyframes.subscribeView(follow);
   }, [keyframes, view]);
 
-  // A list goes up and down, whatever the wheel does next to it. Not passive: Ctrl would zoom the page.
+  // The rows are the headers of the keys, and the wheel does what it does over the headers of the
+  // tracks: see `WheelInterpreter`. Not passive: Ctrl would zoom the page.
   useLayoutEffect(() => {
     const element = list.current;
+    const wheel = new WheelInterpreter();
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE;
-      const delta = event.deltaY * (lines ? LINE_HEIGHT : 1);
-      // As over the headers of the timeline, Ctrl and Shift change the height of rows.
-      if ((event.ctrlKey || event.metaKey || event.altKey) && event.shiftKey) {
+      const action = wheel.read(wheelInputOf(event), input.wheelDevice, "headers");
+      if (wheel.device) input.notice(wheel.device);
+      if (action.kind === "scroll") {
+        view.setScroll(view.scrollX + action.dx, view.scrollY + action.dy);
+      } else {
         const box = element?.getBoundingClientRect();
-        const y = event.clientY - (box?.top ?? 0) + RULER_HEIGHT;
-        view.zoomRowsAround(y, Math.exp(-(delta || event.deltaX) * ROW_ZOOM));
-      } else view.setScroll(view.scrollX, view.scrollY + delta);
+        view.zoomRowsAround(event.clientY - (box?.top ?? 0) + RULER_HEIGHT, action.factor);
+      }
     };
     element?.addEventListener("wheel", onWheel, { passive: false });
     return () => element?.removeEventListener("wheel", onWheel);
-  }, [view]);
+  }, [view, input]);
 
   return (
     <div className={timelineStyles.headers} style={{ width: listWidth }}>

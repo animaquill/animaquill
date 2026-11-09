@@ -338,6 +338,49 @@ export function randomCommand(
       },
     }),
     () => ({ type: "join.remove", params: { timeline, joins: [join] } }),
+    // Effects: two people often pick the same id, which only one of them gets, and change what an
+    // effect takes while somebody else takes it away.
+    () => ({
+      type: "effect.add",
+      params: {
+        timeline,
+        clip,
+        id: random.pick(["fx1", "fx2", "fx3"]),
+        type: random.pick(["brightness", "blur", "crop"]),
+        ...(random.chance(0.3) && { index: 0 }),
+      },
+    }),
+    () => ({
+      type: "effect.remove",
+      params: { timeline, clip, effects: [random.pick(["fx1", "fx2", "fx3"])] },
+    }),
+    () => ({
+      type: "effect.move",
+      params: { timeline, clip, effect: random.pick(["fx1", "fx2", "fx3"]), index: random.int(3) },
+    }),
+    () => ({
+      type: "effect.update",
+      params: {
+        timeline,
+        clip,
+        effect: random.pick(["fx1", "fx2", "fx3"]),
+        enabled: random.chance(0.5),
+      },
+    }),
+    () => ({
+      type: "property.edit",
+      params: {
+        timeline,
+        edits: [
+          {
+            owner: { clip },
+            path: random.pick(["effect.fx1.brightness", "effect.fx2.radius", "effect.fx3.left"]),
+            value: random.int(10) / 10,
+            ...(random.chance(0.5) ? { op: "setKey", time: random.pick(MOMENTS) } : { op: "set" }),
+          },
+        ],
+      },
+    }),
     () => ({
       type: "clip.add",
       params: {

@@ -1,5 +1,6 @@
 import {
   Blend,
+  Sparkles,
   BookOpen,
   CodeXml,
   Diamond,
@@ -38,6 +39,7 @@ import { AssetsPanel } from "./AssetsPanel.tsx";
 import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
+import { EffectsPanel } from "./EffectsPanel.tsx";
 import { TransitionsPanel } from "./TransitionsPanel.tsx";
 import styles from "./Placeholder.module.css";
 
@@ -65,6 +67,7 @@ function planned(
     | "keyframes"
     | "exports"
     | "transitions"
+    | "effects"
   >,
   area: PanelArea,
   icon: PanelDefinition["icon"],
@@ -114,6 +117,13 @@ export const builtinPanels: readonly PanelDefinition[] = [
     icon: Blend,
     area: "left",
     component: TransitionsPanel,
+  },
+  {
+    type: "effects",
+    title: (t) => t("panel.effects.title"),
+    icon: Sparkles,
+    area: "left",
+    component: EffectsPanel,
   },
   {
     type: "preview",

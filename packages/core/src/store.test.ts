@@ -1592,18 +1592,15 @@ describe("editing clips on the timeline", () => {
 
     it("lets a picture grow forward, moving its keys along", () => {
       const words = [{ text: "你好", time: "1" }];
-      const effects = [
-        { id: "fx", type: "blur", properties: { radius: { keys: [{ time: "1", value: 2 }] } } },
-      ];
-      const { store } = withClips([
-        { id: "a", start: "2", duration: "5", properties: animated, effects },
-      ]);
+      const effects = [{ id: "fx", type: "blur" }];
+      const properties = { ...animated, "effect.fx.radius": { keys: [{ time: "1", value: 2 }] } };
+      const { store } = withClips([{ id: "a", start: "2", duration: "5", properties, effects }]);
       success(trim(store, "a", { start: "0.5" }));
       expect(spanOf(store, "a")).toEqual(["0.5", "6.5", undefined]);
       const keys = (property(store, "opacity", "a") as { keys: { time: string }[] }).keys;
       expect(keys.map(({ time }) => time)).toEqual(["2.5", "4.5"]);
-      expect(clip(store, "a")?.effects?.[0]?.properties).toEqual({
-        radius: { keys: [{ time: "2.5", value: 2 }] },
+      expect(property(store, "effect.fx.radius", "a")).toEqual({
+        keys: [{ time: "2.5", value: 2 }],
       });
 
       const caption = ProjectStore.create(createProject({ name: "字幕" }));
@@ -1633,12 +1630,11 @@ describe("editing clips on the timeline", () => {
     });
 
     it("copes with values that are lists", () => {
-      const effects = [{ id: "fx", type: "tint", properties: { color: [1, 0, 0] } }];
-      const { store } = withClips([
-        { id: "a", start: "5", duration: "2", effects, properties: { "param.points": [1, 2, 3] } },
-      ]);
+      const effects = [{ id: "fx", type: "tint" }];
+      const properties = { "effect.fx.color": [1, 0, 0], "param.points": [1, 2, 3] };
+      const { store } = withClips([{ id: "a", start: "5", duration: "2", effects, properties }]);
       success(trim(store, "a", { start: "4" }));
-      expect(clip(store, "a")?.effects?.[0]?.properties).toEqual({ color: [1, 0, 0] });
+      expect(property(store, "effect.fx.color", "a")).toEqual([1, 0, 0]);
       expect(property(store, "param.points", "a")).toEqual([1, 2, 3]);
     });
 
@@ -4567,6 +4563,8 @@ function withoutRetired(state: any): any {
     for (const piece of Object.values(each.clips) as any[]) {
       delete piece.fadeIn;
       delete piece.fadeOut;
+      // Effects were one list with what they took inside, from before they sat flat (2026-11-09).
+      if (Array.isArray(piece.effects)) delete piece.effects;
     }
   }
   return now;
@@ -4968,11 +4966,14 @@ describe("a real document from when versions and translations had maps of their 
       document.sections.section_body = { duration: { value: "18", base: "20" } };
     });
     const before = READS_NOW.timelines.main.overrides["format.vertical"];
+    // Cropping is an effect now, and a file written back no longer has the property of before.
+    const { "crop.left": _cropped, ...interview } = before.clips.clip_interview.properties;
     expect(version(reopened(store), "format.vertical")).toEqual({
       ...before,
       sections: { ...before.sections, section_body: { duration: { value: "18", base: "20" } } },
       clips: {
         ...before.clips,
+        clip_interview: { properties: interview },
         clip_title: {
           properties: {
             ...before.clips.clip_title.properties,
@@ -5293,11 +5294,14 @@ describe("a real document from when versions and translations had maps of their 
       document.sections.section_body = { duration: { value: "18", base: "20" } };
     });
     const before = READS_NOW.timelines.main.overrides["format.vertical"];
+    // Cropping is an effect now, and a file written back no longer has the property of before.
+    const { "crop.left": _cropped, ...interview } = before.clips.clip_interview.properties;
     expect(version(reopened(store), "format.vertical")).toEqual({
       ...before,
       sections: { ...before.sections, section_body: { duration: { value: "18", base: "20" } } },
       clips: {
         ...before.clips,
+        clip_interview: { properties: interview },
         clip_title: {
           properties: {
             ...before.clips.clip_title.properties,
