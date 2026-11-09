@@ -124,18 +124,38 @@
 
 .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
   > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([role="separator"]:hover)
+    :has([data-edge="strip"]:hover)
   )
   > * {
-  width: var(--aq-strip-width);
+  width: var(--aq-strip-peek, var(--aq-strip-width));
   transition-delay: 0.15s;
+}
+
+/*
+ * While the names are out, their edge is the one to drag, and the edge of the strip under them is
+ * not there. Coming in over the edge of the strip leaves the names in, for dragging that edge.
+ */
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
+    :has([data-edge="strip"]:hover)
+  )
+  [data-edge="strip"] {
+  display: none;
+}
+
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
+    :has([data-edge="strip"]:hover)
+  )
+  [data-edge="names"] {
+  display: block;
 }
 
 .dv-groupview-header-left:has(
     > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
   )
   > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([role="separator"]:hover)
+    :has([data-edge="strip"]:hover)
   )
   > * {
   box-shadow: 8px 0 12px -8px rgb(0 0 0 / 70%);
@@ -145,7 +165,7 @@
     > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
   )
   > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([role="separator"]:hover)
+    :has([data-edge="strip"]:hover)
   )
   > * {
   box-shadow: -8px 0 12px -8px rgb(0 0 0 / 70%);

@@ -16,7 +16,12 @@ function groupOn(id: string, side: "top" | "left" | "right" = "left") {
 describe("strips down a side", () => {
   it("show only icons, with names under the mouse, unless told otherwise", () => {
     const strips = new TabStrips();
-    expect(strips.lookOf(groupOn("a"))).toEqual({ pinned: false, peek: true, width: undefined });
+    expect(strips.lookOf(groupOn("a"))).toEqual({
+      pinned: false,
+      peek: true,
+      width: undefined,
+      peekWidth: undefined,
+    });
     expect(strips.isPinned(groupOn("a"))).toBe(false);
     expect(strips.isPinned(groupOn("b", "top"))).toBe(true);
   });
@@ -39,7 +44,7 @@ describe("strips down a side", () => {
     const a = groupOn("a");
     strips.setWidth(a, true, 180);
     strips.setWidth(a, false);
-    expect(strips.lookOf(a)).toEqual({ pinned: false, peek: true, width: 180 });
+    expect(strips.lookOf(a)).toMatchObject({ pinned: false, peek: true, width: 180 });
     strips.setPinned(a, true);
     expect(strips.lookOf(a).width).toBe(180);
   });
@@ -67,6 +72,20 @@ describe("strips down a side", () => {
   });
 });
 
+describe("names that come out", () => {
+  it("have a width of their own, which leaves the strip as it is", () => {
+    const strips = new TabStrips();
+    const a = groupOn("a");
+    strips.setWidth(a, true, 150);
+    strips.setPinned(a, false);
+    strips.setPeekWidth(a, 220.6);
+    expect(strips.lookOf(a)).toEqual({ pinned: false, peek: true, width: 150, peekWidth: 221 });
+    expect(strips.looksOf([a])).toEqual({ a: { width: 150, peekWidth: 221 } });
+    strips.setPeekWidth(a, 1);
+    expect(strips.lookOf(a).peekWidth).toBe(MIN_WIDTH);
+  });
+});
+
 describe("a strip that was clicked", () => {
   it("rests until told otherwise, only when it shows icons, and is not saved", () => {
     const strips = new TabStrips();
@@ -90,10 +109,13 @@ describe("saved looks", () => {
   it("keep what they can use", () => {
     expect(
       parseLooks({
-        a: { pinned: true, peek: false, width: 150.4 },
+        a: { pinned: true, peek: false, width: 150.4, peekWidth: 200 },
         b: { pinned: "yes", width: 99999 },
       }),
-    ).toEqual({ a: { pinned: true, peek: false, width: 150 }, b: { width: MAX_WIDTH } });
+    ).toEqual({
+      a: { pinned: true, peek: false, width: 150, peekWidth: 200 },
+      b: { width: MAX_WIDTH },
+    });
   });
 
   it.each([

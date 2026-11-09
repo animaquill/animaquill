@@ -10,12 +10,15 @@ export interface SavedLook {
   readonly peek?: false;
   /** How wide a pinned strip is, in pixels. The default width when left out. */
   readonly width?: number;
+  /** How wide the names of a strip of icons come out, in pixels. As if pinned when left out. */
+  readonly peekWidth?: number;
 }
 
 export interface StripLook {
   readonly pinned: boolean;
   readonly peek: boolean;
   readonly width: number | undefined;
+  readonly peekWidth: number | undefined;
 }
 
 /** As wide as an icon of a strip with some room around it. Matches `--aq-strip-icons`. */
@@ -35,11 +38,13 @@ export function parseLooks(value: unknown): Record<string, SavedLook> | undefine
   const looks: Record<string, SavedLook> = {};
   for (const [id, look] of Object.entries(value)) {
     if (typeof look !== "object" || look === null) return undefined;
-    const { pinned, peek, width } = look as Record<string, unknown>;
+    const { pinned, peek, width, peekWidth } = look as Record<string, unknown>;
     looks[id] = {
       ...(pinned === true && { pinned: true as const }),
       ...(peek === false && { peek: false as const }),
       ...(typeof width === "number" && Number.isFinite(width) && { width: clampWidth(width) }),
+      ...(typeof peekWidth === "number" &&
+        Number.isFinite(peekWidth) && { peekWidth: clampWidth(peekWidth) }),
     };
   }
   return looks;
@@ -67,7 +72,12 @@ export class TabStrips {
 
   lookOf(group: DockviewGroupPanel): StripLook {
     const look = this.#looks.get(group.id) ?? {};
-    return { pinned: look.pinned === true, peek: look.peek !== false, width: look.width };
+    return {
+      pinned: look.pinned === true,
+      peek: look.peek !== false,
+      width: look.width,
+      peekWidth: look.peekWidth,
+    };
   }
 
   /** Tabs across the top always show their names. */
@@ -109,6 +119,11 @@ export class TabStrips {
     return this.#resting === group.id;
   }
 
+  /** How wide the names of a strip of icons come out, as dragging the edge they come out to says. */
+  setPeekWidth(group: DockviewGroupPanel, width: number): void {
+    this.#set(group, { peekWidth: clampWidth(width) });
+  }
+
   /** Quietly: the group is gone, and its going is a change of its own. */
   forget(id: string): void {
     this.#looks.delete(id);
@@ -133,13 +148,17 @@ export class TabStrips {
   #set(group: DockviewGroupPanel, change: Partial<StripLook>): void {
     const before = this.lookOf(group);
     const now = { ...before, ...change };
-    if (now.pinned === before.pinned && now.peek === before.peek && now.width === before.width) {
-      return;
-    }
+    const same =
+      now.pinned === before.pinned &&
+      now.peek === before.peek &&
+      now.width === before.width &&
+      now.peekWidth === before.peekWidth;
+    if (same) return;
     this.#looks.set(group.id, {
       ...(now.pinned && { pinned: true as const }),
       ...(!now.peek && { peek: false as const }),
       ...(now.width !== undefined && { width: now.width }),
+      ...(now.peekWidth !== undefined && { peekWidth: now.peekWidth }),
     });
     this.#changed();
   }

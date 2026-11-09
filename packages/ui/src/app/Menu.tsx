@@ -30,6 +30,8 @@ interface MenuProps {
   /** What the button shows, when that is more than the label. The label still names it. */
   readonly trigger?: ReactNode;
   readonly triggerClassName?: string | undefined;
+  /** Which edge of the button the menu lines up with. The end, near the end of the window. */
+  readonly align?: "start" | "end";
   /** Asked when the menu opens, so that what is possible right now is what it shows. */
   readonly groups: () => readonly (readonly MenuItem[])[];
 }
@@ -119,7 +121,7 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
   );
 });
 
-export function Menu({ label, trigger, triggerClassName, groups }: MenuProps) {
+export function Menu({ label, trigger, triggerClassName, align, groups }: MenuProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -151,7 +153,14 @@ export function Menu({ label, trigger, triggerClassName, groups }: MenuProps) {
       >
         {trigger ?? label}
       </button>
-      {open && <MenuList label={label} groups={groups()} onClose={close} />}
+      {open && (
+        <MenuList
+          label={label}
+          groups={groups()}
+          className={align === "end" ? styles.end : undefined}
+          onClose={close}
+        />
+      )}
     </div>
   );
 }

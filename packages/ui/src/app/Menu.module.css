@@ -31,6 +31,11 @@
   box-shadow: var(--aq-shadow);
 }
 
+.end {
+  right: 0;
+  left: auto;
+}
+
 .popup {
   position: fixed;
   top: 0;

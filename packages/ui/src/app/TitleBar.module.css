@@ -35,8 +35,17 @@
   margin-left: auto;
 }
 
+/* In the middle, where it is found without looking for it. */
+.middle {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .search {
   display: flex;
+  justify-content: space-between;
+  min-width: 260px;
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
@@ -58,13 +67,6 @@
   opacity: 0.8;
 }
 
-/* In the middle, where it is found without looking for it. */
-.layout {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
 .layoutButton {
   display: flex;
   align-items: center;
@@ -79,6 +81,10 @@
 
 /* What is being tried has to stay in sight, and the search is still there as a button. */
 @media (max-width: 1200px) {
+  .search {
+    min-width: 0;
+  }
+
   .search kbd,
   .search span {
     display: none;

@@ -55,24 +55,7 @@ export function TitleBar() {
       {MENUS.map((menu) => (
         <Menu key={menu} label={t(`menu.${menu}`)} groups={() => menuOf(menu)} />
       ))}
-      {store && (
-        <div className={styles.layout}>
-          <Menu
-            label={t("layout.current", { name: layoutName })}
-            triggerClassName={styles.layoutButton}
-            trigger={
-              <>
-                <LayoutDashboard size={14} />
-                <span>{layoutName}</span>
-                <ChevronDown size={12} />
-              </>
-            }
-            groups={() => menuOf("layout")}
-          />
-        </div>
-      )}
-      <div className={styles.end}>
-        {store && <TrialStatus />}
+      <div className={styles.middle}>
         <button
           type="button"
           className={styles.search}
@@ -84,6 +67,24 @@ export function TitleBar() {
           <span>{t("palette.title")}</span>
           {paletteShortcut && <kbd aria-hidden="true">{paletteShortcut}</kbd>}
         </button>
+      </div>
+      <div className={styles.end}>
+        {store && <TrialStatus />}
+        {store && (
+          <Menu
+            label={t("layout.current", { name: layoutName })}
+            triggerClassName={styles.layoutButton}
+            trigger={
+              <>
+                <LayoutDashboard size={14} />
+                <span>{layoutName}</span>
+                <ChevronDown size={12} />
+              </>
+            }
+            groups={() => menuOf("layout")}
+            align="end"
+          />
+        )}
       </div>
     </header>
   );

@@ -16,12 +16,25 @@
   cursor: col-resize;
 }
 
-.marks[data-strip="left"] .edge {
+.marks[data-strip="left"] .edge[data-edge="strip"] {
   right: -3px;
 }
 
-.marks[data-strip="right"] .edge {
+.marks[data-strip="right"] .edge[data-edge="strip"] {
   left: -3px;
+}
+
+/* Where the names come out to, from the outer edge of the strip. Only there while they are out. */
+.marks[data-strip="left"] .edge[data-edge="names"] {
+  left: calc(var(--aq-strip-peek, var(--aq-strip-width)) - 3px);
+}
+
+.marks[data-strip="right"] .edge[data-edge="names"] {
+  right: calc(var(--aq-strip-peek, var(--aq-strip-width)) - 3px);
+}
+
+.edge[data-edge="names"] {
+  display: none;
 }
 
 .edge:hover,

@@ -83,6 +83,21 @@ test("opens with the editing layout", async ({ page }) => {
   await expect(page.locator("footer").getByRole("button", { name: "测试项目" })).toBeVisible();
 });
 
+test("the title bar has the search in the middle and the layouts on the right", async ({
+  page,
+}) => {
+  const bar = await box(page.locator("header").first());
+  const search = await box(page.getByRole("button", { name: "命令面板" }));
+  expect(Math.abs(search.x + search.width / 2 - (bar.x + bar.width / 2))).toBeLessThan(2);
+  const layouts = await box(layoutMenu(page, "剪辑"));
+  expect(layouts.x).toBeGreaterThan(search.x + search.width);
+  expect(layouts.x + layouts.width).toBeGreaterThan(bar.x + bar.width - 20);
+  // Its menu opens towards the window, not past its edge.
+  await layoutMenu(page, "剪辑").click();
+  const menu = await box(page.getByRole("menu"));
+  expect(menu.x + menu.width).toBeLessThanOrEqual(bar.x + bar.width);
+});
+
 test("the status bar has the project on the left and what goes on now on the right", async ({
   page,
 }) => {
@@ -832,7 +847,11 @@ test.describe("tabs down a side", () => {
     const handle = await box(edge(page, "timeline"));
     const outer = (await box(group(page, "timeline"))).x;
     const y = handle.y + handle.height / 2;
-    await page.mouse.move(handle.x + handle.width / 2, y);
+    // From the content onto the edge: the names stay in, and the edge is that of the strip.
+    await page.mouse.move(handle.x + 40, y);
+    await page.mouse.move(handle.x + handle.width / 2, y, { steps: 4 });
+    await page.waitForTimeout(300);
+    expect(await widthOf(page, "timeline")).toBeLessThan(50);
     await page.mouse.down();
     // Out past where names fit: pinned, as wide as dragged, already while dragging.
     await page.mouse.move(outer + 200, y, { steps: 10 });
@@ -860,6 +879,44 @@ test.describe("tabs down a side", () => {
     await away(page);
     await tab(page, "timeline").click({ button: "right" });
     await expect(check(page, "钉住选项卡")).toHaveAttribute("aria-checked", "false");
+  });
+
+  test("make the names that come out wider by their own edge, and stay icons", async ({ page }) => {
+    const namesEdge = group(page, "timeline").getByRole("separator", { name: "展开时的宽度" });
+    const saved = await savedLayout(page);
+    const icon = await box(tab(page, "timeline"));
+    const outer = (await box(group(page, "timeline"))).x;
+    await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(100);
+    const out = await widthOf(page, "timeline");
+    // While the names are out, the edge of the strip under them is not there to catch the mouse.
+    await expect(edge(page, "timeline")).toBeHidden();
+    const at = await box(namesEdge);
+    expect(at.x + at.width / 2).toBeCloseTo(outer + out, -1);
+
+    const y = at.y + at.height / 2;
+    await page.mouse.move(at.x + at.width / 2, y, { steps: 4 });
+    await page.mouse.down();
+    await page.mouse.move(outer + 240, y, { steps: 10 });
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(230);
+    await page.mouse.up();
+    await waitForSave(page, saved);
+
+    // Still only icons when the mouse is gone, and not pinned.
+    await away(page);
+    await expect.poll(() => widthOf(page, "timeline")).toBeLessThan(50);
+    await tab(page, "timeline").click({ button: "right" });
+    await expect(check(page, "钉住选项卡")).toHaveAttribute("aria-checked", "false");
+    await page.keyboard.press("Escape");
+
+    // And as wide as dragged when they come out, also after a reload.
+    await page.reload();
+    await expect(tab(page, "timeline")).toBeVisible();
+    await away(page);
+    const again = await settledBox(tab(page, "timeline"));
+    await page.mouse.move(again.x + again.width / 2, again.y + again.height / 2);
+    await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(230);
+    expect(await widthOf(page, "timeline")).toBeLessThan(250);
   });
 
   test("remember their side, and whether names show and come out", async ({ page }) => {
