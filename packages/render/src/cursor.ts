@@ -53,6 +53,13 @@ export class VideoCursor<Frame extends TimedFrame> {
   #samples: AsyncGenerator<Frame, void, unknown> | undefined;
   #current: Frame | undefined;
   #next: Frame | undefined;
+  /**
+   * From where on what is being read is right, undefined while nothing is. A read starts with the
+   * last frame at or before where it starts, and where there is none, as before the first frame of
+   * a file that starts a little late, with the first frame after it: starting over for a moment in
+   * between finds nothing else, so it does not. Once it went on, only its current frame counts.
+   */
+  #since: number | undefined;
   /** Whether decoding started over since it was last asked. */
   #cold = false;
   /** Getting ready and drawing can ask at once, and a generator takes one question at a time. */
@@ -86,6 +93,8 @@ export class VideoCursor<Frame extends TimedFrame> {
     this.#samples = this.#source.samples(seconds);
     this.#current = await this.#pull();
     this.#next = await this.#pull();
+    // Only a read that got this far is one to go on from: one that failed starts over.
+    if (round === this.#round) this.#since = Math.min(seconds, this.#current?.timestamp ?? seconds);
   }
 
   #inTurn<T>(work: () => Promise<T>): Promise<T> {
@@ -147,20 +156,25 @@ export class VideoCursor<Frame extends TimedFrame> {
   }
 
   async #moveTo(seconds: number, round: number): Promise<Frame | undefined> {
-    const current = this.#current;
-    const behind = current === undefined || seconds + TIME_TOLERANCE < current.timestamp;
+    // Asked for a moment before the first frame of a file again, as for every frame that is drawn
+    // or gets ready while a clip at the start of its file comes up, a read must not start over:
+    // each time is another decoder that decodes from a keyframe, for the same frame.
+    const since = this.#since;
+    const behind = since === undefined || seconds + TIME_TOLERANCE < since;
     const farAhead = this.#next && seconds - this.#next.timestamp > MAX_WALK_SECONDS;
     if (behind || farAhead) await this.#restart(seconds, round);
     // A frame that starts at this moment is the one that shows, also with a float a little short.
     while (this.#next && this.#next.timestamp <= seconds + TIME_TOLERANCE) {
       this.#current?.close();
       this.#current = this.#next;
+      this.#since = this.#current.timestamp;
       this.#next = await this.#pull();
     }
     return this.#current;
   }
 
   async #release(): Promise<void> {
+    this.#since = undefined;
     this.#current?.close();
     this.#next?.close();
     this.#current = undefined;

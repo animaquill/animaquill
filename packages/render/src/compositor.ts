@@ -24,6 +24,7 @@ import { videoPicture, type Picture } from "./picture.ts";
 import { videoLayerFrame, type VideoLayerParts } from "./video-layer.ts";
 import { placeholderPicture } from "./placeholder.ts";
 import { SceneLayers } from "./scenes.ts";
+import { SlowVideos } from "./slow-videos.ts";
 import { SoundJobs } from "./sounds.ts";
 import { failureOf, FileArrivals, stillPictures, StillFailed } from "./still.ts";
 import type {
@@ -263,8 +264,11 @@ async function pictureOf(layer: RenderLayer, frame: PendingFrame): Promise<Pictu
     const bitmap = await imageOf(source.file, file);
     return bitmap && imagePicture(bitmap);
   }
+  const startedAt = performance.now();
   const read = await videoLayerFrame(videoParts, layer, source.file, file, frame);
   if (!read) return undefined;
+  const standIn = read.video.standsFor !== undefined;
+  frame.videos.push({ file: source.file, ms: performance.now() - startedAt, standIn });
   if (read.cold) frame.cold.push(coldClipOf(layer, read.video));
   return read.sample && videoPicture(read.sample, read.video.standsFor);
 }
@@ -464,15 +468,35 @@ function paintAll(
   );
 }
 
+/** Whether time goes on by itself, from what the editor says, see "play". */
+let playing = false;
+/** Videos that decode too slowly while playing, which the editor hears of once each. */
+const slowVideos = new SlowVideos();
+
+/** How long a frame of the project lasts. */
+function frameMsOf(shown: RenderPlan | undefined): number {
+  const fps = shown?.scenes.fps;
+  return fps && fps.num > 0 && fps.den > 0 ? (1000 * fps.den) / fps.num : 1000 / 30;
+}
+
 /** One frame at a time, see `FrameLoop`. */
 const loop = new FrameLoop({
   layers: () => plan?.layers ?? [],
   draw: drawFrame,
   prepare: getReady,
   giveUpFor: (seconds) => reads.giveUpFor(plan?.layers ?? [], seconds),
-  drew(timing, newPlace) {
+  drew(timing, newPlace, frame) {
     if (newPlace) paintedAt.push(performance.now());
     if (recording) timings.push(timing);
+    // Moving the playhead starts decoding over anyway: only time going on says how it keeps up.
+    if (!playing || frame.jumped || frame.videos.length === 0) return;
+    const played = {
+      at: performance.now(),
+      frameMs: frameMsOf(plan),
+      behindMs: timing.behindMs,
+      videos: frame.videos,
+    };
+    for (const id of slowVideos.note(played)) send({ type: "slow-video", id });
   },
   wait(milliseconds, run) {
     const timer = setTimeout(run, milliseconds);
@@ -761,6 +785,9 @@ function handle(data: ToCompositor): void {
     send({ type: "focus-checked", request: data.request });
     return;
   }
+  // Scenes follow time with these too.
+  if (data.type === "play") playing = true;
+  else if (data.type === "pause") playing = false;
   if (sounds.handle(data)) return;
   if (scenes.handle(data)) return;
   if (data.type === "strip") {

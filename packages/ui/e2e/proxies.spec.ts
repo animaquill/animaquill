@@ -1,9 +1,10 @@
 /**
- * Proxies of large videos in a project folder, the way people meet them: made by themselves in the
- * folder of the project, what the preview decodes unless its quality is full, at the same frame as
- * the video, never what an export gets, made again when people take them away, stopped when people
- * say so, and nothing that a reload halfway leaves is ever taken for one. The project is a folder
- * on the real disk that gets dropped in, see `folder-support.ts`.
+ * Proxies of large videos in a project folder, the way people meet them: made in the folder of the
+ * project when people ask, from the menu of the video or when the preview offers it because the
+ * video decodes too slowly, what the preview decodes unless its quality is full, at the same frame
+ * as the video, never what an export gets, made again when people take them away, stopped when
+ * people say so, and nothing that a reload halfway leaves is ever taken for one. The project is a
+ * folder on the real disk that gets dropped in, see `folder-support.ts`.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,6 +67,15 @@ async function goTo(page: Page, time: string) {
   await page.keyboard.press("Enter");
 }
 
+/** Asks for the proxy of the video, from its menu in the assets panel, as people do. */
+async function askForProxy(page: Page) {
+  await tab(page, "assets").click();
+  await content(page, "assets").getByRole("listitem").filter({ hasText: "数字.mp4" }).click({
+    button: "right",
+  });
+  await page.getByRole("menuitem", { name: "生成代理文件" }).click();
+}
+
 async function quality(page: Page, name: string) {
   await content(page, "preview").getByRole("button", { name: "预览画质" }).click();
   await page.getByRole("radio", { name: new RegExp(`^${name}`) }).click();
@@ -111,6 +121,10 @@ test.describe("the proxy of a large video", () => {
   }) => {
     const { disk, hash } = await numbered(page);
     await openProject(page, disk);
+    // Nothing gets made until people ask.
+    await expect.poll(() => kindIn(page, hash)).toBe("none");
+    expect(inFolder(disk)).toEqual([]);
+    await askForProxy(page);
     await expect.poll(() => kindIn(page, hash), { timeout: 60_000 }).toBe("ready");
     const facts = await factsOf(readFileSync(proxyPath(disk, hash)));
     expect(facts).toMatchObject({ codec: "avc", width: 160, height: 90 });
@@ -140,6 +154,7 @@ test.describe("the proxy of a large video", () => {
   }) => {
     const { disk, hash } = await numbered(page);
     await openProject(page, disk);
+    await askForProxy(page);
     await expect.poll(() => kindIn(page, hash), { timeout: 60_000 }).toBe("ready");
     await goTo(page, "0:01/15");
     await expect.poll(() => shown(page)).toEqual({ index: 90, standIns: "1", green: false });
@@ -199,6 +214,7 @@ test.describe("the proxy of a large video", () => {
     await page.goto("/?proxyFrameMs=40");
     const { disk, hash } = await numbered(page);
     await openProject(page, disk);
+    await askForProxy(page);
     await expect.poll(() => kindIn(page, hash), { timeout: 60_000 }).toBe("ready");
     await expect.poll(async () => (await shown(page)).standIns).toBe("1");
     rmSync(join(disk, ".animaquill"), { recursive: true });
@@ -216,6 +232,7 @@ test.describe("the proxy of a large video", () => {
     await page.goto("/?proxyFrameMs=60");
     const { disk, hash } = await numbered(page);
     await openProject(page, disk);
+    await askForProxy(page);
     const status = page
       .getByRole("contentinfo")
       .getByRole("status")
@@ -226,11 +243,60 @@ test.describe("the proxy of a large video", () => {
     await expect(status).toHaveCount(0);
     await expect.poll(() => inFolder(disk)).toEqual([]);
     expect((await shown(page)).standIns).toBe("0");
-    await tab(page, "assets").click();
-    await content(page, "assets").getByRole("listitem").filter({ hasText: "数字.mp4" }).click({
-      button: "right",
+    await askForProxy(page);
+    await expect.poll(() => kindIn(page, hash), { timeout: 60_000 }).toBe("ready");
+    expect(inFolder(disk)).toEqual([proxyName(hash, SPEC)]);
+  });
+
+  test("is offered when the video decodes too slowly to keep up, and made when people say so", async ({
+    page,
+  }) => {
+    // The decoder of the preview takes longer for each frame than a frame lasts, as 4K can: two
+    // frames of the video for each of the project, 40 milliseconds each.
+    await page.addInitScript(() => {
+      if (window === window.top || typeof VideoDecoder === "undefined") return;
+      const Real = VideoDecoder;
+      window.VideoDecoder = class extends Real {
+        constructor(init: VideoDecoderInit) {
+          let line: Promise<unknown> = Promise.resolve();
+          super({
+            ...init,
+            output: (decoded) => {
+              line = line
+                .then(() => new Promise((resolve) => setTimeout(resolve, 40)))
+                .then(() => {
+                  if (this.state === "closed") decoded.close();
+                  else init.output(decoded);
+                });
+            },
+          });
+          Object.assign(this, { aqLine: () => line });
+        }
+
+        override async flush() {
+          await super.flush();
+          await (this as unknown as { aqLine: () => Promise<unknown> }).aqLine();
+        }
+      };
     });
-    await page.getByRole("menuitem", { name: "生成代理文件" }).click();
+    const { disk, hash } = projectWith(await encodeIn(page, VIDEO, 360), {
+      seconds: 6,
+      format: FORMAT,
+      shape: VIDEO,
+    });
+    await openProject(page, disk);
+    await expect.poll(() => kindIn(page, hash)).toBe("none");
+    const preview = content(page, "preview");
+    await preview.getByRole("button", { name: "播放", exact: true }).click();
+    const offer = page.getByRole("status").filter({ hasText: "“数字.mp4”解码太慢" });
+    await expect(offer).toBeVisible({ timeout: 30_000 });
+    // Unless it got to the end meanwhile.
+    const pause = preview.getByRole("button", { name: "暂停", exact: true });
+    if (await pause.isVisible()) await pause.click();
+    // Nothing gets made before people say so.
+    expect(await kindIn(page, hash)).toBe("none");
+    await offer.getByRole("button", { name: "生成代理", exact: true }).click();
+    await expect(offer).toHaveCount(0);
     await expect.poll(() => kindIn(page, hash), { timeout: 60_000 }).toBe("ready");
     expect(inFolder(disk)).toEqual([proxyName(hash, SPEC)]);
   });
@@ -249,6 +315,7 @@ test.describe("the proxy of a large video", () => {
     };
     for (const [path, text] of Object.entries(theirs)) writeFileSync(join(disk, path), text);
     await openProject(page, disk);
+    await askForProxy(page);
     await expect
       .poll(async () => (await stateIn(page, hash)).percent ?? 0, { timeout: 30_000 })
       .toBeGreaterThan(20);
@@ -256,9 +323,11 @@ test.describe("the proxy of a large video", () => {
     expect(inFolder(disk)).not.toContain(name);
     expect(inFolder(disk)).toContain(partOf(name));
     expect((await shown(page)).standIns).toBe("0");
-    // The page goes away in the middle of it, and comes back.
+    // The page goes away in the middle of it, and comes back, where people ask again.
     await page.reload();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => kindIn(page, hash)).toBe("none");
+    await askForProxy(page);
     // Whatever is at its name from now on is a whole proxy.
     const seen: number[] = [];
     await expect

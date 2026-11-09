@@ -274,6 +274,12 @@ export type FromCompositor =
   | { readonly type: "sound-problem"; readonly request: number; readonly problem: SceneProblem }
   /** It looked at who took the keyboard. */
   | { readonly type: "focus-checked"; readonly request: number }
+  /**
+   * While playing, the preview cannot keep up because this video, by the id of its file, decodes
+   * too slowly, see `SlowVideos`: a proxy would help. Once for each video. Never for a copy that
+   * stands in for one.
+   */
+  | { readonly type: "slow-video"; readonly id: string }
   /** Scenes must stay away from there, also in the next compositor. */
   | { readonly type: "origin-retired"; readonly origin: string }
   | { readonly type: "pong"; readonly nonce: number }

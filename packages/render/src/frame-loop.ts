@@ -2,6 +2,7 @@ import type { RenderLayer } from "@animaquill/core";
 import { comesUpAfter, showsAt } from "./cursor.ts";
 import type { ColdClip, FrameTiming } from "./index.ts";
 import { GiveUpTimer, type Wait } from "./patience.ts";
+import type { VideoRead } from "./slow-videos.ts";
 
 /** A frame on its way to the screen. */
 export class PendingFrame {
@@ -12,6 +13,8 @@ export class PendingFrame {
   decodeMs = 0;
   /** Clips that had to start decoding at a keyframe for it. */
   readonly cold: ColdClip[] = [];
+  /** How long the picture of each video took, see `SlowVideos`. */
+  readonly videos: VideoRead[] = [];
   readonly #jumps: number;
   readonly #loop: FrameLoop;
 
@@ -40,7 +43,7 @@ export interface FrameLoopParts {
   /** Gives up reads that do not lead to a moment, see `VideoReads`. Says which clips gave up. */
   giveUpFor(seconds: number): readonly string[];
   /** After each frame that was not given up, and whether it showed a new place. */
-  drew(timing: FrameTiming, newPlace: boolean): void;
+  drew(timing: FrameTiming, newPlace: boolean, frame: PendingFrame): void;
   wait: Wait;
   now(): number;
 }
@@ -149,6 +152,7 @@ export class FrameLoop {
           ...(frame.cold.length > 0 && { coldClips: frame.cold }),
         },
         newPlace,
+        frame,
       );
       this.#abandoned = 0;
     } while (this.#again);

@@ -1,7 +1,8 @@
 /**
- * The proxies of a project folder, as the editor keeps them: made where a video needs one, under a
- * name of their own until they are whole, waiting while something plays, stopped when people say,
- * made again when they went away, and nothing outside their folder is ever touched.
+ * The proxies of a project folder, as the editor keeps them: made where a video needs one and
+ * people asked for it, under a name of their own until they are whole, waiting while something
+ * plays, stopped when people say, made again when they went away, used wherever they are there,
+ * and nothing outside their folder is ever touched.
  */
 import { ProjectStore } from "@animaquill/core";
 import type { LocalFolder } from "@animaquill/host";
@@ -98,6 +99,7 @@ async function setup({
   maker = fakeMaker(),
   compared = true,
   missing = false,
+  asked = true,
   check = async (file, spec) => (await file.text()) === proxyText(spec),
 }: {
   content?: string;
@@ -108,6 +110,8 @@ async function setup({
   compared?: boolean;
   /** Whether the project has another video, whose file is not there. */
   missing?: boolean;
+  /** Whether people ask for the proxy of the video right away, which is what gets it made. */
+  asked?: boolean;
   /** Whether a file is a whole proxy, see `ProxyFilesOptions.check`. */
   check?: (file: Blob, spec: ProxySpec) => Promise<boolean>;
 } = {}) {
@@ -176,6 +180,7 @@ async function setup({
     lookEveryMs: 60_000,
   });
   opened.push(proxies);
+  if (asked) proxies.make(hash);
   const name = proxyName(hash, SPEC);
   return {
     disk,
@@ -205,6 +210,68 @@ async function setup({
 const stateOf = (proxies: ProxyFiles, hash: string) => proxies.getSnapshot().states.get(hash);
 
 describe("the proxy of a video", () => {
+  it("is not made until people ask, and then made", async () => {
+    const { proxies, hash, maker, inFolder } = await setup({ asked: false });
+    await proxies.settled();
+    expect(stateOf(proxies, hash)).toEqual({ kind: "none" });
+    expect(maker.made).toEqual([]);
+    expect(inFolder()).toEqual([]);
+    proxies.make(hash);
+    await proxies.settled();
+    expect(stateOf(proxies, hash)).toEqual({ kind: "ready" });
+    expect(maker.made).toHaveLength(1);
+  });
+
+  it("that is in the folder is used without asking", async () => {
+    const { disk, name } = await setup({ asked: false });
+    disk.write(`${ROOT}/${PROXY_FOLDER}/${name}`, proxyText(SPEC));
+    const { proxies, hash, maker } = await setup({ disk, asked: false });
+    await proxies.settled();
+    expect(stateOf(proxies, hash)).toEqual({ kind: "ready" });
+    expect(maker.made).toEqual([]);
+  });
+
+  it("is offered once while the project is open, and not when it is on its way or there", async () => {
+    const { proxies, hash } = await setup({ asked: false });
+    await proxies.settled();
+    const shown: string[] = [];
+    proxies.offer(hash, () => shown.push("first"));
+    proxies.offer(hash, () => shown.push("again"));
+    expect(shown).toEqual(["first"]);
+    const other = await setup({ asked: false });
+    await other.proxies.settled();
+    other.proxies.make(other.hash);
+    other.proxies.offer(other.hash, () => shown.push("on its way"));
+    await other.proxies.settled();
+    other.proxies.offer(other.hash, () => shown.push("there"));
+    expect(shown).toEqual(["first"]);
+  });
+
+  it("is offered once the video was looked at, where that comes later", async () => {
+    const { proxies, hash } = await setup({ asked: false });
+    const shown: string[] = [];
+    // Right after the project opened, before its videos were looked at.
+    proxies.offer(hash, () => shown.push("offered"));
+    expect(shown).toEqual([]);
+    await proxies.settled();
+    expect(shown).toEqual(["offered"]);
+  });
+
+  it("is not offered where another window makes them", async () => {
+    const { proxies, hash } = await setup({ asked: false, writes: false });
+    await proxies.settled();
+    const shown: string[] = [];
+    proxies.offer(hash, () => shown.push("offered"));
+    expect(shown).toEqual([]);
+  });
+
+  it("asked for before the video was looked at gets made", async () => {
+    const { proxies, hash } = await setup({ asked: false });
+    proxies.make(hash);
+    await proxies.settled();
+    expect(stateOf(proxies, hash)).toEqual({ kind: "ready" });
+  });
+
   it("is made in the folder of proxies, under a name of its own until it is whole", async () => {
     const { proxies, maker, hash, name, disk, proxyOnDisk, inFolder } = await setup({
       maker: (() => {
@@ -449,6 +516,10 @@ describe("making proxies", () => {
       params: { asset: "asset_video", changes: { hash } },
     });
     expect(result.ok).toBe(true);
+    await proxies.settled();
+    // Another video, which gets one once people ask for it too.
+    expect(stateOf(proxies, hash)).toEqual({ kind: "none" });
+    proxies.make(hash);
     await proxies.settled();
     const fresh = proxyName(hash, SPEC);
     expect(stateOf(proxies, hash)).toEqual({ kind: "ready" });

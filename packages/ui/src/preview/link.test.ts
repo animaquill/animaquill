@@ -47,12 +47,14 @@ function setup(
     handles,
     diagnostics = new DiagnosticsRecorder("test"),
     standIns,
+    onSlowVideo,
   }: {
     files?: Map<string, Blob>;
     registrations?: SceneRegistrations;
     handles?: SceneHandles;
     diagnostics?: DiagnosticsRecorder;
     standIns?: StandIns;
+    onSlowVideo?: (hash: string) => void;
   } = {},
 ) {
   const restored: ((hash: string) => void)[] = [];
@@ -156,6 +158,7 @@ function setup(
     registrations,
     handles,
     standIns,
+    onSlowVideo,
   );
   links.push(link);
   const hello = () => {
@@ -950,7 +953,9 @@ describe("a video with a stand-in", () => {
       () => () => {},
       () => ({}),
     );
-    const context = setup(undefined, { files, standIns, diagnostics });
+    const slow: string[] = [];
+    const onSlowVideo = (hash: string) => void slow.push(hash);
+    const context = setup(undefined, { files, standIns, diagnostics, onSlowVideo });
     context.run({ type: "asset.add", params: { id: "v", asset } });
     context.clip("vc", { start: "6", source: { kind: "video", media: { asset: "v" } } });
     context.hello();
@@ -960,7 +965,7 @@ describe("a video with a stand-in", () => {
     };
     const lastFile = () => context.ofType("file").at(-1);
     const asks = () => context.fromCompositor({ type: "needs", id: "sha256-v" });
-    return { ...context, files, give, failed, lastFile, asks, diagnostics };
+    return { ...context, files, give, failed, lastFile, asks, diagnostics, slow };
   }
 
   const proxy = new Blob(["代理"]);
@@ -1023,6 +1028,20 @@ describe("a video with a stand-in", () => {
     const made = new Blob(["新的代理"]);
     give({ file: made, ...size });
     await vi.waitFor(() => expect(lastFile()?.file).toBe(made));
+  });
+
+  it("passes on that the video decodes too slowly, and nothing of that about a stand-in", async () => {
+    const { give, lastFile, asks, fromCompositor, slow } = withVideo();
+    asks();
+    await vi.waitFor(() => expect(lastFile()).toBeDefined());
+    fromCompositor({ type: "slow-video", id: "sha256-v" });
+    expect(slow).toEqual(["sha256-v"]);
+    give({ file: proxy, ...size });
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    fromCompositor({ type: "slow-video", id: "sha256-v" });
+    // And nothing about a file the compositor never got.
+    fromCompositor({ type: "slow-video", id: "sha256-other" });
+    expect(slow).toEqual(["sha256-v"]);
   });
 
   it("hears nothing about a stand-in that the compositor does not decode any more", async () => {

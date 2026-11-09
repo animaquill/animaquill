@@ -1,10 +1,12 @@
 /**
- * The proxies of the open project where it is a folder, see the decision of 2026-11-09: a smaller
- * copy of each video that is larger than the project or has more frames, which the preview plays
+ * The proxies of the open project where it is a folder, see the decisions of 2026-11-09: a smaller
+ * copy of a video that is larger than the project or has more frames, which the preview plays
  * instead while its quality is not full, so that a laptop keeps up with 4K at 60 frames. They are
- * in the project folder, see `ProxyFolder`, made one at a time away from the page while nothing
- * plays, and found again when the project opens. Only the window that writes the folder makes
- * them; the others find what it made. An export never gets one.
+ * in the project folder, see `ProxyFolder`, and found again when the project opens. One gets made
+ * only when people ask, from the menu of the video or when the preview offers it because the
+ * video decodes too slowly, see `offer`: one at a time, away from the page, while nothing plays.
+ * Only the window that writes the folder makes them; the others find what it made. An export never
+ * gets one.
  */
 import type { ProjectStore } from "@animaquill/core";
 import type { LocalFolder, LocalGrowingFile } from "@animaquill/host";
@@ -30,11 +32,13 @@ import {
 export type ProxyState =
   /** Looking whether the folder has it. */
   | { readonly kind: "checking" }
+  /** The folder has none, and nobody asked for one. */
+  | { readonly kind: "none" }
   /** It waits for its turn, or for the window that writes the folder to make it. */
   | { readonly kind: "waiting" }
   | { readonly kind: "making"; readonly percent: number }
   | { readonly kind: "ready" }
-  /** People stopped it. It is made once they ask, or when the project opens again. */
+  /** People stopped it. It is made once they ask again. */
   | { readonly kind: "stopped" }
   /**
    * It could not be made, or the preview could not read it ("preview"): then the video plays until
@@ -175,6 +179,12 @@ interface Opened {
   readonly entries: Map<string, Entry>;
   /** What each video is like, by hash, once found out. */
   readonly facts: Map<string, VideoFacts>;
+  /** Videos people asked a proxy for while the project is open, which gets made whenever missing. */
+  readonly wanted: Set<string>;
+  /** Videos whose proxy was offered while the project is open: once is enough. */
+  readonly offered: Set<string>;
+  /** Offers that wait until it is known whether their video needs a proxy, see `offer`. */
+  readonly offers: Map<string, () => void>;
   job: Job | undefined;
   /** Whether what is of no use in the folder of proxies went, which happens once each time. */
   tidied: boolean;
@@ -291,6 +301,8 @@ export class ProxyFiles implements StandIns {
   stop(hash?: string): void {
     const open = this.#open;
     if (!open) return;
+    if (hash === undefined) open.wanted.clear();
+    else open.wanted.delete(hash);
     for (const entry of open.entries.values()) {
       if (hash !== undefined && entry.hash !== hash) continue;
       const { kind } = entry.state;
@@ -304,16 +316,50 @@ export class ProxyFiles implements StandIns {
     this.#changed();
   }
 
-  /** Makes the proxy of this file after all, after it was stopped or failed. */
+  /**
+   * Makes the proxy of this file, as people ask: also one that was stopped or failed, and one of a
+   * video that is still being looked at. It gets made again whenever it goes missing, until the
+   * project closes or people stop it.
+   */
   make(hash: string): void {
     const open = this.#open;
-    const entry = open?.entries.get(hash);
-    if (!open || !entry) return;
-    if (entry.state.kind !== "stopped" && entry.state.kind !== "failed") return;
+    if (!open) return;
+    open.wanted.add(hash);
+    const entry = open.entries.get(hash);
+    if (!entry) return;
+    const { kind } = entry.state;
+    if (kind !== "none" && kind !== "stopped" && kind !== "failed") return;
     entry.failures = 0;
     entry.state = { kind: "waiting" };
     this.#changed();
     this.#pump(open);
+  }
+
+  /**
+   * Offers people the proxy of this video, as the preview found that it decodes too slowly to keep
+   * up: `show` gets called where it needs one, there is none and none is on its way, now or once
+   * the video was looked at, which can take a moment after the project opened. Once while the
+   * project is open, and only in the window that makes them.
+   */
+  offer(hash: string, show: () => void): void {
+    const open = this.#open;
+    if (!open || !open.writes || open.offered.has(hash)) return;
+    open.offers.set(hash, show);
+    this.#offer(open);
+  }
+
+  /** The offers whose videos are known now, see `offer`. */
+  #offer(open: Opened): void {
+    for (const [hash, show] of open.offers) {
+      const kind = open.entries.get(hash)?.state.kind;
+      if (kind === undefined || kind === "checking") continue;
+      open.offers.delete(hash);
+      if ((kind !== "none" && kind !== "stopped") || !open.writes || open.offered.has(hash)) {
+        continue;
+      }
+      open.offered.add(hash);
+      show();
+    }
   }
 
   /** Looks at the folder again right away, as when the window comes to the front. */
@@ -396,6 +442,9 @@ export class ProxyFiles implements StandIns {
       file: (hash) => project.file(hash),
       entries: new Map(),
       facts: new Map(),
+      wanted: new Set(),
+      offered: new Set(),
+      offers: new Map(),
       job: undefined,
       tidied: false,
       tidying: false,
@@ -587,7 +636,7 @@ export class ProxyFiles implements StandIns {
       found = await open.place.find(entry.name);
     } catch {
       // The folder cannot be looked at now: it gets looked at again.
-      if (entry.state.kind === "checking") entry.state = { kind: "waiting" };
+      if (entry.state.kind === "checking") entry.state = this.#missing(open, entry);
       this.#changed();
       return;
     }
@@ -603,12 +652,20 @@ export class ProxyFiles implements StandIns {
     if (found && open.writes) await open.place.remove(entry.name).catch(() => {});
     if (entry.state.kind === "checking" || entry.state.kind === "ready") {
       entry.file = undefined;
-      entry.state = { kind: "waiting" };
+      entry.state = this.#missing(open, entry);
     }
     this.#changed();
   }
 
-  /** What the folder has now: what went away gets made again, what another window made is used. */
+  /** A proxy the folder does not have gets made where people asked for it, and only there. */
+  #missing(open: Opened, entry: Entry): ProxyState {
+    return open.wanted.has(entry.hash) ? { kind: "waiting" } : { kind: "none" };
+  }
+
+  /**
+   * What the folder has now: what went away and people asked for gets made again, and what another
+   * window made, or people put there, is used.
+   */
   async #look(open: Opened): Promise<void> {
     for (const entry of open.entries.values()) {
       if (open.closed || open.job?.entry === entry) continue;
@@ -620,7 +677,7 @@ export class ProxyFiles implements StandIns {
         entry.state = { kind: "checking" };
         this.#changed();
         await this.#find(open, entry);
-      } else if (kind === "waiting" && !open.writes) {
+      } else if ((kind === "waiting" && !open.writes) || kind === "none") {
         await this.#find(open, entry);
       }
     }
@@ -746,5 +803,6 @@ export class ProxyFiles implements StandIns {
     if (isSame) return;
     this.#snapshot = snapshot;
     this.#emitter.emit();
+    if (open) this.#offer(open);
   }
 }

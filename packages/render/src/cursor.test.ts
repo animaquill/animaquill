@@ -33,7 +33,7 @@ class FakeRead {
 
   constructor(source: FakeSource, seconds: number) {
     this.#source = source;
-    this.#index = Math.floor(seconds / STEP);
+    this.#index = Math.max(Math.floor((seconds - source.first) / STEP), 0);
   }
 
   get waiting(): boolean {
@@ -42,7 +42,7 @@ class FakeRead {
 
   #frame(): IteratorResult<FakeFrame, void> {
     if (this.#index > LAST) return { value: undefined, done: true };
-    const value = new FakeFrame(this.#index * STEP, this.#source.open);
+    const value = new FakeFrame(this.#source.first + this.#index * STEP, this.#source.open);
     this.#index += 1;
     return { value, done: false };
   }
@@ -73,6 +73,8 @@ class FakeSource implements FrameSource<FakeFrame> {
   readonly open = new Set<FakeFrame>();
   readonly reads: FakeRead[] = [];
   instant = false;
+  /** When the first frame starts, which is a little after the start of some files. */
+  first = 0;
 
   samples(seconds: number): AsyncGenerator<FakeFrame, void, unknown> {
     const read = new FakeRead(this, seconds);
@@ -129,6 +131,42 @@ describe("reading a video", () => {
     expect(source.open.size).toBe(2);
     await cursor.close();
     expect(source.open.size).toBe(0);
+  });
+});
+
+describe("a file whose first frame comes a little after its start", () => {
+  it("stays on that frame before it, without starting over each time", async () => {
+    const { source, cursor } = setup();
+    source.first = 0.1;
+    for (let ask = 0; ask < 5; ask += 1) expect((await cursor.at(0))?.timestamp).toBe(0.1);
+    expect((await cursor.at(0.05))?.timestamp).toBe(0.1);
+    expect((await cursor.at(0.4))?.timestamp).toBe(0.35);
+    expect(source.reads).toHaveLength(1);
+  });
+
+  it("starts over for a moment before where its read started", async () => {
+    const { source, cursor } = setup();
+    source.first = 0.1;
+    await cursor.at(0.05);
+    expect((await cursor.at(0))?.timestamp).toBe(0.1);
+    expect(source.reads).toHaveLength(2);
+  });
+
+  it("still starts over for a frame it went past", async () => {
+    const { source, cursor } = setup();
+    source.first = 0.1;
+    await cursor.at(0);
+    await cursor.at(0.4);
+    expect((await cursor.at(0.2))?.timestamp).toBe(0.1);
+    expect(source.reads).toHaveLength(2);
+  });
+
+  it("does not read again past the end of what there is", async () => {
+    const { source, cursor } = setup();
+    const end = (LAST + 10) * STEP;
+    expect(await cursor.at(end)).toBeUndefined();
+    expect(await cursor.at(end)).toBeUndefined();
+    expect(source.reads).toHaveLength(1);
   });
 });
 

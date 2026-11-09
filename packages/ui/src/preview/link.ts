@@ -157,6 +157,7 @@ export class PreviewLink {
   readonly #registered = new Map<string, { readonly revision: string; readonly params: string }>();
   readonly #handles: SceneHandles | undefined;
   readonly #standIns: StandIns | undefined;
+  readonly #onSlowVideo: ((hash: string) => void) | undefined;
   /**
    * What the compositor got for each video it asked for, by id: the stand-in, or undefined for the
    * video itself. A file that comes later takes the place of the one before.
@@ -200,7 +201,10 @@ export class PreviewLink {
     handles?: SceneHandles,
     /** Smaller copies of videos, which the preview decodes in their place unless at full quality. */
     standIns?: StandIns,
+    /** A video, by its hash, decodes too slowly for the preview to keep up while it plays. */
+    onSlowVideo?: (hash: string) => void,
   ) {
+    this.#onSlowVideo = onSlowVideo;
     this.#registrations = registrations;
     this.#handles = handles;
     this.#standIns = standIns;
@@ -361,6 +365,11 @@ export class PreviewLink {
       void this.#sendFile(data.id);
     } else if (data.type === "cannot-decode") {
       this.#onProblem(data.id);
+    } else if (data.type === "slow-video") {
+      // About the video itself: what stands in for it is as good as it gets.
+      if (this.#sent.has(data.id) && this.#sent.get(data.id) === undefined) {
+        this.#onSlowVideo?.(data.id);
+      }
     } else if (data.type === "stand-in-failed") {
       const sent = this.#sent.get(data.id);
       // About a stand-in that another file took the place of already, as it was on its way.

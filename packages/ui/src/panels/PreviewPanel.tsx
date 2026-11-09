@@ -11,6 +11,7 @@ import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
 import { NO_PROGRESS } from "../folder/assets.ts";
+import { offerProxy } from "../proxy/offer.ts";
 
 /**
  * The compositor. A new one of these is the only way out of one that hangs: going to another address
@@ -36,6 +37,20 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
       warned.add(file);
     };
     const compositor = new URL(compositorUrl, location.href).origin;
+    const onSlowVideo = (hash: string) =>
+      offerProxy(
+        {
+          proxies,
+          store,
+          quality: () => previewQuality.getSnapshot().choice,
+          notify: (message, actions) => notifications.push(message, { stays: true, actions }),
+          words: {
+            text: (name) => t("proxy.offer.text", { name, interpolation: { escapeValue: false } }),
+            make: t("proxy.offer.make"),
+          },
+        },
+        hash,
+      );
     const link = new PreviewLink(
       element,
       timeline,
@@ -57,6 +72,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
       registrations,
       sceneHandles,
       proxies,
+      onSlowVideo,
     );
     onLink(link);
     // The compositor says hello once it has loaded, so the link has to listen first.

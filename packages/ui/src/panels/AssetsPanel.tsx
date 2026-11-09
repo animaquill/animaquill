@@ -317,12 +317,16 @@ export function AssetsPanel() {
           {assets.map(([id, asset]) => {
             const { hash } = asset;
             const proxy = hash === undefined ? undefined : proxySnapshot.states.get(hash);
-            // What people can do about the proxy of a video that has one.
+            // What people can do about the proxy of a video that needs one. It gets made where
+            // this window writes the folder, so another window that does has the say.
+            const canMake = !proxySnapshot.elsewhere;
             const proxyItems: MenuItem[] =
               proxies && hash !== undefined && proxy
-                ? proxy.kind === "stopped" || proxy.kind === "failed"
-                  ? [{ id: "proxy", label: t("proxy.make"), run: () => proxies.make(hash) }]
-                  : proxy.kind === "ready"
+                ? proxy.kind === "none" || proxy.kind === "stopped" || proxy.kind === "failed"
+                  ? canMake
+                    ? [{ id: "proxy", label: t("proxy.make"), run: () => proxies.make(hash) }]
+                    : []
+                  : proxy.kind === "ready" || proxy.kind === "checking"
                     ? []
                     : [{ id: "proxy", label: t("proxy.stop"), run: () => proxies.stop(hash) }]
                 : [];
@@ -358,7 +362,7 @@ export function AssetsPanel() {
               >
                 <div className={styles.thumbnail}>
                   <Thumbnail key={restored} id={id} asset={asset} />
-                  {proxy && proxy.kind !== "checking" && (
+                  {proxy && proxy.kind !== "checking" && proxy.kind !== "none" && (
                     <ProxyBadge state={proxy} snapshot={proxySnapshot} />
                   )}
                   {lengthOf(asset) && <span className={styles.length}>{lengthOf(asset)}</span>}

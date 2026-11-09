@@ -126,6 +126,8 @@ describe("the proxy of a video in a project folder", () => {
       new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
     ]);
     const hash = store.getState().assets?.[id as string]?.hash as string;
+    // People ask for it, as from the menu of the video.
+    workbench.proxies?.make(hash);
     await vi.waitFor(() =>
       expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "ready" }),
     );
@@ -147,6 +149,7 @@ describe("the proxy of a video in a project folder", () => {
       new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
     ]);
     const hash = store.getState().assets?.[id as string]?.hash as string;
+    workbench.proxies?.make(hash);
     await vi.waitFor(() => expect(workbench.proxies?.standInFor(hash)).toBeDefined());
     expect(await workbench.proxies?.standInFor(hash)?.file.text()).toBe("代理 960x540");
     // What exports and the rest of the editor read the files of a project with.
@@ -156,10 +159,11 @@ describe("the proxy of a video in a project folder", () => {
   });
 
   it("is in a report: whether there is one, and the quality that decides whether it is used", async () => {
-    const { workbench } = await newFolderProject();
+    const { workbench, store } = await newFolderProject();
     const [id] = await workbench.media.importFiles([
       new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
     ]);
+    workbench.proxies?.make(store.getState().assets?.[id as string]?.hash as string);
     await vi.waitFor(() =>
       expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "ready" }),
     );
@@ -186,12 +190,25 @@ describe("the proxy of a video in a project folder", () => {
     expect(JSON.stringify(project)).not.toContain("大.mp4");
   });
 
+  it("is not made until people ask for it", async () => {
+    const { disk, workbench } = await newFolderProject();
+    const [id] = await workbench.media.importFiles([
+      new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
+    ]);
+    await vi.waitFor(() =>
+      expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "none" }),
+    );
+    await workbench.proxies?.settled();
+    expect(disk.has(`${ROOT}/${PROXY_FOLDER}`)).toBe(false);
+  });
+
   it("of a video that came into the folder outside stays when the project opens again", async () => {
     const { browser, disk, workbench, store } = await newFolderProject();
     const [id] = await workbench.media.importFiles([
       new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
     ]);
     const first = store.getState().assets?.[id as string]?.hash as string;
+    workbench.proxies?.make(first);
     await vi.waitFor(() => expect(workbench.proxies?.stateOf(id as string)).toEqual(READY));
     await workbench.proxies?.settled();
     await workbench.projectFolders?.close();
