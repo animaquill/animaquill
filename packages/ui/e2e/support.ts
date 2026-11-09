@@ -182,14 +182,19 @@ export const test = base.extend<{
       if (!folders) {
         await page.addInitScript(() => {
           if (window !== window.top) return;
-          localStorage.setItem("animaquill.projectsInBrowser", "yes");
+          // A scene opened directly has no origin and no storage: its sandbox works.
+          try {
+            localStorage.setItem("animaquill.projectsInBrowser", "yes");
+          } catch {}
         });
       }
       if (!trying) {
         // This runs in every frame, and the sandbox of the compositor has no storage.
         await page.addInitScript(() => {
           if (window !== window.top) return;
-          localStorage.setItem("animaquill.trial", '{"version":1,"enabled":false}');
+          try {
+            localStorage.setItem("animaquill.trial", '{"version":1,"enabled":false}');
+          } catch {}
         });
       }
       if (quality !== "auto") {
