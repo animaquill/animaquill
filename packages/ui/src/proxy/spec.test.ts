@@ -2,10 +2,13 @@ import { isSafePath } from "@animaquill/host";
 import { describe, expect, it } from "vitest";
 import {
   PROXY_FOLDER,
+  RECIPE,
+  digestOf,
   isMadeHere,
   partOf,
   proxyEncoders,
   proxyName,
+  proxyOf,
   proxySpecFor,
   rateOf,
 } from "./spec.ts";
@@ -77,6 +80,19 @@ describe("the proxy of a video", () => {
     expect(proxyName("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAA", spec)).not.toBe(name);
     for (const each of [name, ntsc, partOf(ntsc)]) {
       expect(isSafePath(`${PROXY_FOLDER}/${each}`)).toBe(true);
+    }
+  });
+
+  it("says by its name which file it is of and how it was made", () => {
+    const spec = { width: 960, height: 540, fps: rateOf("30000/1001") };
+    const name = proxyName(HASH, spec);
+    expect(proxyOf(name)).toEqual({ digest: digestOf(HASH), recipe: RECIPE });
+    expect(proxyOf(name.replace("-v1.mp4", "-v0.mp4"))).toEqual({
+      digest: digestOf(HASH),
+      recipe: "v0",
+    });
+    for (const other of [partOf(name), `${name}.crswap`, "笔记.txt", "a.mp4"]) {
+      expect(proxyOf(other)).toBeUndefined();
     }
   });
 

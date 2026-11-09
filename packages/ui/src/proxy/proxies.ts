@@ -15,9 +15,12 @@ import { Emitter } from "../workbench/emitter.ts";
 import { ProxyFolder } from "./folder.ts";
 import type { ProxyJob, ProxyMaker } from "./maker.ts";
 import {
+  RECIPE,
+  digestOf,
   pictureOf,
   proxyEncoders,
   proxyName,
+  proxyOf,
   proxySpecFor,
   type ProxySpec,
   type VideoFacts,
@@ -33,7 +36,11 @@ export type ProxyState =
   | { readonly kind: "ready" }
   /** People stopped it. It is made once they ask, or when the project opens again. */
   | { readonly kind: "stopped" }
-  | { readonly kind: "failed"; readonly reason: ProxyFailure | "write" };
+  /**
+   * It could not be made, or the preview could not read it ("preview"): then the video plays until
+   * people ask for it again, or the project opens again.
+   */
+  | { readonly kind: "failed"; readonly reason: ProxyFailure | "write" | "preview" };
 
 /** What the preview gets in place of a video. */
 export interface StandIn {
@@ -47,7 +54,10 @@ export interface StandIn {
 export interface StandIns {
   /** The proxy of a file of a video, by its hash, while there is one that can be used. */
   standInFor(hash: string): StandIn | undefined;
-  /** The preview could not read the proxy it got: it is not used, and is made again. */
+  /**
+   * The preview could not read the proxy it got: the video plays instead for the rest of the time
+   * the project is open, and a proxy that is not whole goes.
+   */
   failed(hash: string): void;
   subscribe(listener: () => void): () => void;
 }
@@ -85,6 +95,12 @@ export interface ProxyProject {
   readonly writes: boolean;
   /** Whether another window of this browser writes the folder, and makes them. */
   readonly elsewhere?: boolean;
+  /**
+   * Whether this window compared the folder with the project since it writes it, see
+   * `FolderSnapshot.compared`. Until then the project may not have what the folder has, such as a
+   * video that came in from outside, whose proxy would go.
+   */
+  readonly compared?: boolean;
   /** The file of a video by its hash, while it is that file. */
   file(hash: string): Promise<Blob | undefined>;
 }
@@ -128,8 +144,6 @@ interface Entry {
   state: ProxyState;
   /** The proxy, while it is ready. */
   file: File | undefined;
-  /** A file of the proxy that the preview could not read: it does not get used again. */
-  broken: { readonly size: number; readonly lastModified: number } | undefined;
   failures: number;
   /** How making it went, where this window made it. */
   made: ProxyMade | undefined;
@@ -155,16 +169,17 @@ interface Opened {
   folder: LocalFolder;
   writes: boolean;
   elsewhere: boolean;
+  compared: boolean;
   file: (hash: string) => Promise<Blob | undefined>;
   /** By the hash of the file of a video. */
   readonly entries: Map<string, Entry>;
   /** What each video is like, by hash, once found out. */
   readonly facts: Map<string, VideoFacts>;
   job: Job | undefined;
-  /** Whether what crashes and older projects left in the folder of proxies is gone. */
+  /** Whether what is of no use in the folder of proxies went, which happens once each time. */
   tidied: boolean;
-  /** Videos whose proxies are not known, so that tidying would take theirs too. */
-  unknown: number;
+  /** While it goes: nothing gets made meanwhile, or it would look like what a crash left. */
+  tidying: boolean;
   reconciling: Promise<void> | undefined;
   again: boolean;
   /** What is on its way, for `settled`. */
@@ -252,20 +267,24 @@ export class ProxyFiles implements StandIns {
     const open = this.#open;
     const entry = open?.entries.get(hash);
     if (!open || entry?.state.kind !== "ready" || !entry.file) return;
-    const { size, lastModified } = entry.file;
-    entry.broken = { size, lastModified };
     entry.file = undefined;
-    entry.state = { kind: "waiting" };
+    entry.state = { kind: "failed", reason: "preview" };
     this.#changed();
-    if (open.writes) {
-      this.#track(
-        open,
-        open.place
-          .remove(entry.name)
-          .catch(() => {})
-          .then(() => this.#pump(open)),
-      );
-    }
+    if (open.writes) this.#track(open, this.#removeIfBroken(open, entry));
+  }
+
+  /**
+   * Takes away a proxy that is not whole, as one that went bad on the disk. One that is whole stays
+   * for the next time: what the preview could not read may have been something else.
+   */
+  async #removeIfBroken(open: Opened, entry: Entry): Promise<void> {
+    const found = await open.place.find(entry.name).catch(() => undefined);
+    if (!found || open.closed) return;
+    if (await this.#check(found, entry.spec).catch(() => false)) return;
+    // Unless people asked for a new one meanwhile, which takes its place.
+    const isStill = () => open.entries.get(entry.hash) === entry && entry.state.kind === "failed";
+    if (open.closed || !isStill()) return;
+    await open.place.remove(entry.name).catch(() => {});
   }
 
   /** Stops making the proxy of this file, or all of them, until people ask again. */
@@ -345,6 +364,9 @@ export class ProxyFiles implements StandIns {
       open.elsewhere = project.elsewhere === true;
       this.#changed();
     }
+    // As it is now: a window that writes the folder again compares it again first.
+    const isNowCompared = !open.compared && project.compared === true;
+    open.compared = project.compared === true;
     if (open.folder !== project.folder) {
       open.folder = project.folder;
       this.#track(open, this.#look(open));
@@ -358,6 +380,7 @@ export class ProxyFiles implements StandIns {
       this.#changed();
       if (project.writes) this.#track(open, this.#begin(open));
     }
+    if (isNowCompared) this.#track(open, this.#tidyThenPump(open));
   }
 
   #start(project: ProxyProject): void {
@@ -369,12 +392,13 @@ export class ProxyFiles implements StandIns {
       folder: project.folder,
       writes: project.writes,
       elsewhere: project.elsewhere === true,
+      compared: project.compared === true,
       file: (hash) => project.file(hash),
       entries: new Map(),
       facts: new Map(),
       job: undefined,
       tidied: false,
-      unknown: 0,
+      tidying: false,
       reconciling: undefined,
       again: false,
       busy: new Set(),
@@ -423,14 +447,53 @@ export class ProxyFiles implements StandIns {
   /** Once the project is open, and once this window writes the folder. */
   async #begin(open: Opened): Promise<void> {
     await this.#reconcile(open);
-    if (open.closed || !open.writes) return;
-    // Before anything gets made: what crashes left would be taken for it.
-    if (!open.tidied && open.unknown === 0) {
-      open.tidied = true;
-      const keep = new Set([...open.entries.values()].map(({ name }) => name));
-      await open.place.tidy(keep);
-    }
+    await this.#tidyThenPump(open);
+  }
+
+  async #tidyThenPump(open: Opened): Promise<void> {
+    await this.#tidy(open);
     this.#pump(open);
+  }
+
+  /**
+   * Takes away what is of no use in the folder of proxies, see `#isUseless`, once each time the
+   * project opens: where this window writes the folder, once the folder and the project were
+   * compared and all videos were looked at, and while nothing is on its way: a proxy on its way
+   * looks like what a crash left. Proxies get made before, and only wait while it runs.
+   */
+  async #tidy(open: Opened): Promise<void> {
+    if (open.closed || !open.writes || !open.compared || open.tidied || open.tidying) return;
+    // Once all videos were looked at, and while nothing is on its way.
+    if (open.reconciling || open.job) return;
+    open.tidying = true;
+    try {
+      await open.place.tidy((name) => this.#isUseless(open, name));
+      open.tidied = true;
+    } finally {
+      open.tidying = false;
+    }
+  }
+
+  /**
+   * Whether a file the editor made in the folder of proxies is of no use any more: what writing a
+   * proxy left, one made another way, and one of a file that no video of the project has, or of
+   * another size or rate than its video needs now. What was made of a video that cannot be read
+   * now stays: it may well be back.
+   */
+  #isUseless(open: Opened, name: string): boolean {
+    const proxy = proxyOf(name);
+    if (!proxy) return true;
+    if (proxy.recipe !== RECIPE) return true;
+    const hash = Object.values(open.store.getState().assets ?? {}).find(
+      (asset) =>
+        asset.kind === "video" &&
+        asset.hash !== undefined &&
+        asset.storage !== "remote" &&
+        digestOf(asset.hash) === proxy.digest,
+    )?.hash;
+    if (hash === undefined) return true;
+    if (!open.facts.has(hash)) return false;
+    return open.entries.get(hash)?.name !== name;
   }
 
   /** One at a time, and once more when asked for meanwhile. */
@@ -449,6 +512,7 @@ export class ProxyFiles implements StandIns {
       .catch((error: unknown) => console.warn("The proxies could not be looked at", error))
       .finally(() => {
         open.reconciling = undefined;
+        this.#track(open, this.#tidyThenPump(open));
       });
     return open.reconciling;
   }
@@ -466,11 +530,9 @@ export class ProxyFiles implements StandIns {
     for (const entry of open.entries.values()) {
       if (!hashes.has(entry.hash)) this.#drop(open, entry);
     }
-    let unknown = 0;
     for (const hash of hashes) {
       const facts = await this.#factsOf(open, hash);
       if (open.closed) return;
-      if (!facts) unknown += 1;
       const spec = facts && picture && proxySpecFor(facts, picture);
       const name = spec && proxyName(hash, spec);
       const known = open.entries.get(hash);
@@ -484,7 +546,6 @@ export class ProxyFiles implements StandIns {
         shows: { width: facts.width, height: facts.height },
         state: { kind: "checking" },
         file: undefined,
-        broken: undefined,
         failures: 0,
         made: undefined,
       };
@@ -493,7 +554,6 @@ export class ProxyFiles implements StandIns {
       await this.#find(open, entry);
       this.#pump(open);
     }
-    open.unknown = unknown;
   }
 
   /** What a video is like, found out once from its file. Undefined while there is no file. */
@@ -532,8 +592,7 @@ export class ProxyFiles implements StandIns {
       return;
     }
     if (open.closed || open.entries.get(entry.hash) !== entry) return;
-    const isBroken = found && entry.broken && sameStat(entry.broken, found);
-    if (found && !isBroken && (await this.#check(found, entry.spec).catch(() => false))) {
+    if (found && (await this.#check(found, entry.spec).catch(() => false))) {
       if (open.entries.get(entry.hash) !== entry || open.job?.entry === entry) return;
       entry.file = found;
       entry.state = { kind: "ready" };
@@ -570,7 +629,7 @@ export class ProxyFiles implements StandIns {
 
   /** Starts the next proxy, where this window writes, nothing else is on its way, and nothing plays. */
   #pump(open: Opened): void {
-    if (open.closed || !open.writes || !open.tidied || open.job || this.#playing) return;
+    if (open.closed || !open.writes || open.tidying || open.job || this.#playing) return;
     const next = [...open.entries.values()].find(({ state }) => state.kind === "waiting");
     if (next) this.#track(open, this.#make(open, next));
   }
@@ -618,7 +677,6 @@ export class ProxyFiles implements StandIns {
       if (job.stop) throw new DOMException("Stopped", "AbortError");
       const file = await open.place.commit(entry.name);
       entry.file = file;
-      entry.broken = undefined;
       entry.failures = 0;
       entry.made = result.timing && { seconds: result.sourceDuration, ...result.timing };
       entry.state = { kind: "ready" };
@@ -630,7 +688,10 @@ export class ProxyFiles implements StandIns {
       else if (job.stop) entry.state = { kind: "waiting" };
       else {
         console.warn("A proxy could not be made", error);
-        if (reason === "encoder") this.#noHardware = true;
+        // Only where the graphics card is known to have failed at it.
+        if (error instanceof ProxyFailed && error.acceleration === "hardware") {
+          this.#noHardware = true;
+        }
         entry.failures += 1;
         entry.state =
           mayPass(reason) && entry.failures < TRIES
@@ -640,7 +701,8 @@ export class ProxyFiles implements StandIns {
     } finally {
       if (open.job === job) open.job = undefined;
       this.#changed();
-      this.#pump(open);
+      // What waited for nothing to be on its way, then the next one.
+      this.#track(open, this.#tidyThenPump(open));
     }
   }
 

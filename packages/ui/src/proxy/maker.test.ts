@@ -1,7 +1,7 @@
 /**
  * Making proxies in a worker, through a worker of these tests that speaks the same: what it writes
  * comes to the page in turn, it waits while something plays, it stops when asked, and a worker that
- * does not load makes none.
+ * breaks or does not load gives way to a new one, a few times.
  */
 import { ProxyFailed } from "@animaquill/media/proxy";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,12 +17,27 @@ const asked: ProxyOrder[] = [];
  * A worker that answers as proxy-worker.ts does: two writes, the second only once the first is
  * written, then done, or what `fails` says. Or one that does not load.
  */
-function fakeWorker({ loads = true, fails }: { loads?: boolean; fails?: string } = {}) {
+function fakeWorker({
+  loads = true,
+  fails,
+  acceleration,
+  breaks = 0,
+}: {
+  loads?: boolean;
+  fails?: string;
+  /** Where the encoder that `fails` ran. */
+  acceleration?: "hardware" | "software";
+  /** How many of the workers break as soon as they get something to make. */
+  breaks?: number;
+} = {}) {
   const workers: FakeWorker[] = [];
   class FakeWorker extends EventTarget {
+    readonly #breaks: boolean;
+
     constructor() {
       super();
       workers.push(this);
+      this.#breaks = workers.length <= breaks;
       if (!loads) {
         setTimeout(() => this.dispatchEvent(Object.assign(new Event("error"), { message: "no" })));
       }
@@ -31,6 +46,12 @@ function fakeWorker({ loads = true, fails }: { loads?: boolean; fails?: string }
     postMessage(order: ProxyOrder) {
       asked.push(order);
       if (!loads) return;
+      if (this.#breaks) {
+        setTimeout(() =>
+          this.dispatchEvent(Object.assign(new Event("error"), { message: "坏了" })),
+        );
+        return;
+      }
       if (order.kind === "make") setTimeout(() => this.#write(order.job, 0));
       if (order.kind === "written") setTimeout(() => this.#next(order.job, order.write));
     }
@@ -54,7 +75,13 @@ function fakeWorker({ loads = true, fails }: { loads?: boolean; fails?: string }
       }
       this.answer(
         fails
-          ? { kind: "failed", job, reason: fails as never, message: "它说的" }
+          ? {
+              kind: "failed",
+              job,
+              reason: fails as never,
+              message: "它说的",
+              ...(acceleration && { acceleration }),
+            }
           : {
               kind: "done",
               job,
@@ -157,6 +184,28 @@ describe("making a proxy in a worker", () => {
     await expect(job.done).rejects.toEqual(new ProxyFailed("unreadable"));
   });
 
+  it("says where the encoder ran that failed", async () => {
+    fakeWorker({ fails: "encoder", acceleration: "hardware" });
+    const job = workerProxyMaker().make({
+      file: new Blob(["视频"]),
+      spec: SPEC,
+      encoders: [],
+      write: async () => {},
+    });
+    await expect(job.done).rejects.toMatchObject({ reason: "encoder", acceleration: "hardware" });
+  });
+
+  it("makes none where the browser has no workers", async () => {
+    vi.stubGlobal("Worker", undefined);
+    const job = workerProxyMaker().make({
+      file: new Blob(["视频"]),
+      spec: SPEC,
+      encoders: [],
+      write: async () => {},
+    });
+    await expect(job.done).rejects.toEqual(new ProxyFailed("unsupported"));
+  });
+
   it("stops when the file does not take what it makes", async () => {
     fakeWorker();
     const job = workerProxyMaker().make({
@@ -169,19 +218,43 @@ describe("making a proxy in a worker", () => {
     await vi.waitFor(() => expect(asked.at(-1)).toMatchObject({ kind: "cancel" }));
   });
 
-  it("makes none where the worker does not load, which takes nothing else down", async () => {
+  it("makes none where workers do not load, after a few tries", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    fakeWorker({ loads: false });
+    const { workers } = fakeWorker({ loads: false });
     const maker = workerProxyMaker();
-    const job = maker.make({ file: new Blob([]), spec: SPEC, encoders: [], write: async () => {} });
-    await expect(job.done).rejects.toEqual(new ProxyFailed("unsupported"));
-    // The next one does not try again.
-    const next = maker.make({
-      file: new Blob([]),
-      spec: SPEC,
-      encoders: [],
-      write: async () => {},
-    });
-    await expect(next.done).rejects.toEqual(new ProxyFailed("unsupported"));
+    const make = () =>
+      maker.make({ file: new Blob([]), spec: SPEC, encoders: [], write: async () => {} });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(make().done).rejects.toMatchObject({ reason: "encoder" });
+    }
+    // The next ones do not try again, and fail as the last ones did: the browser may well be able to.
+    await expect(make().done).rejects.toMatchObject({ reason: "encoder" });
+    await expect(make().done).rejects.toMatchObject({ reason: "encoder" });
+    expect(workers).toHaveLength(3);
+  });
+
+  it("starts another worker after one broke, and stops trying after a few", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { workers } = fakeWorker({ breaks: 1 });
+    const maker = workerProxyMaker();
+    const make = () =>
+      maker.make({ file: new Blob(["视频"]), spec: SPEC, encoders: [], write: async () => {} });
+    // What was on its way may make it on the next go, which ProxyFiles gives it.
+    await expect(make().done).rejects.toMatchObject({ name: "ProxyFailed", reason: "encoder" });
+    expect(await make().done).toMatchObject({ frames: 90 });
+    expect(workers).toHaveLength(2);
+  });
+
+  it("makes none once workers kept breaking", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { workers } = fakeWorker({ breaks: 100 });
+    const maker = workerProxyMaker();
+    const make = () =>
+      maker.make({ file: new Blob(["视频"]), spec: SPEC, encoders: [], write: async () => {} });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(make().done).rejects.toMatchObject({ reason: "encoder" });
+    }
+    await expect(make().done).rejects.toMatchObject({ name: "ProxyFailed", reason: "encoder" });
+    expect(workers).toHaveLength(3);
   });
 });

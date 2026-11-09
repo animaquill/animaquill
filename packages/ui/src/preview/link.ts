@@ -164,6 +164,9 @@ export class PreviewLink {
   readonly #sent = new Map<string, Blob | undefined>();
   /** Stand-ins the compositor could not read: the video goes instead, until another one comes. */
   readonly #failedStandIns = new Map<string, Blob>();
+  /** Which stand-in each id got last, see "stand-in-failed": one before that is over already. */
+  readonly #serials = new Map<string, number>();
+  #serial = 0;
   /** Goes up with each file sent for an id, so that one that took a while does not come after. */
   readonly #sending = new Map<string, number>();
   /** Which clip was last asked to say where its objects are. */
@@ -360,8 +363,9 @@ export class PreviewLink {
       this.#onProblem(data.id);
     } else if (data.type === "stand-in-failed") {
       const sent = this.#sent.get(data.id);
-      if (!sent) return;
-      // The video itself goes instead, and the stand-in gets made again.
+      // About a stand-in that another file took the place of already, as it was on its way.
+      if (!sent || this.#serials.get(data.id) !== data.serial) return;
+      // The video itself goes instead, as long as the project is open, see `StandIns.failed`.
       this.#failedStandIns.set(data.id, sent);
       this.#standIns?.failed(data.id);
       void this.#sendFile(data.id, true);
@@ -544,8 +548,11 @@ export class PreviewLink {
   }
 
   #sendStandIn(id: string, { file, width, height }: StandIn): void {
+    this.#serial += 1;
+    const serial = this.#serial;
     this.#sent.set(id, file);
-    this.#send({ type: "file", id, file, standIn: { width, height } });
+    this.#serials.set(id, serial);
+    this.#send({ type: "file", id, file, standIn: { width, height, serial } });
     this.#diagnostics.note("video.file", { proxy: true, width, height });
   }
 

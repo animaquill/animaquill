@@ -38,9 +38,16 @@ export interface ProxyMaker {
 const cancelled = () => new DOMException("The proxy was not wanted any more", "AbortError");
 
 /**
- * Makes proxies in a worker of its own, which starts with the first one. Where the browser does not
- * let the page have one, every proxy fails as "unsupported": decoding a long video on the page itself
- * would get in the way of everything.
+ * Workers that may break, each taking down what it had on its way, before no other one is started:
+ * something keeps them from working here, as a policy that does not let the page have one.
+ */
+const MAX_BROKEN_WORKERS = 3;
+
+/**
+ * Makes proxies in a worker of its own, which starts with the first one. A worker that breaks fails
+ * what it had on its way, and the next proxy gets a new one, a few times: after that, every proxy
+ * fails as the last ones did. Where the browser does not let the page have one, every proxy fails as
+ * "unsupported": decoding a long video on the page itself would get in the way of everything.
  */
 export function workerProxyMaker({
   frameMs,
@@ -49,7 +56,10 @@ export function workerProxyMaker({
   readonly frameMs?: number | undefined;
 } = {}): ProxyMaker {
   let worker: Worker | undefined;
-  let broken = typeof Worker === "undefined";
+  /** Why no worker gets started any more, for every proxy after that. */
+  let refusal = typeof Worker === "undefined" ? new ProxyFailed("unsupported") : undefined;
+  /** How many workers broke so far. */
+  let losses = 0;
   let next = 0;
   const jobs = new Map<
     number,
@@ -63,17 +73,24 @@ export function workerProxyMaker({
   const send = (target: Worker, order: ProxyOrder, transfer: Transferable[] = []) =>
     target.postMessage(order, transfer);
 
-  const lose = (reason: unknown) => {
-    broken = true;
-    worker?.terminate();
+  /** A worker broke, and what it had on its way with it. The next proxy gets a new one. */
+  const lose = (target: Worker, message: string) => {
+    if (worker !== target) return;
+    target.terminate();
     worker = undefined;
+    losses += 1;
+    if (losses >= MAX_BROKEN_WORKERS) {
+      refusal = new ProxyFailed("encoder", {
+        cause: `Workers for proxies kept breaking: ${message}`,
+      });
+    }
     const lost = [...jobs.values()];
     jobs.clear();
-    for (const job of lost) job.reject(reason);
+    for (const job of lost) job.reject(new ProxyFailed("encoder", { cause: message }));
   };
 
   const started = (): Worker | undefined => {
-    if (broken) return undefined;
+    if (refusal) return undefined;
     if (worker) return worker;
     try {
       worker = new Worker(new URL("./proxy-worker.ts", import.meta.url), {
@@ -82,7 +99,7 @@ export function workerProxyMaker({
       });
     } catch (error) {
       console.warn("Proxies cannot be made in this browser", error);
-      broken = true;
+      refusal = new ProxyFailed("unsupported", { cause: error });
       return undefined;
     }
     const own = worker;
@@ -109,21 +126,23 @@ export function workerProxyMaker({
           jobs.delete(answer.job);
           job.resolve(answer.result);
           break;
-        case "failed":
+        case "failed": {
           jobs.delete(answer.job);
+          const { reason, message, acceleration } = answer;
           job.reject(
-            answer.reason === "cancelled"
+            reason === "cancelled"
               ? cancelled()
-              : new ProxyFailed(answer.reason, { cause: answer.message }),
+              : new ProxyFailed(reason, { cause: message, ...(acceleration && { acceleration }) }),
           );
           break;
+        }
       }
     });
     own.addEventListener("error", (event) => {
       // It did not load, or broke: none of what it had comes.
       event.preventDefault();
       console.warn("The worker for proxies stopped", event.message);
-      lose(new ProxyFailed("unsupported", { cause: event.message }));
+      lose(own, event.message);
     });
     return own;
   };
@@ -139,7 +158,7 @@ export function workerProxyMaker({
       const target = started();
       const job = next++;
       if (!target) {
-        reject(new ProxyFailed("unsupported"));
+        reject(refusal ?? new ProxyFailed("unsupported"));
         return { done, pause() {}, resume() {}, cancel() {} };
       }
       jobs.set(job, { request, resolve, reject });

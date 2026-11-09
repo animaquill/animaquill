@@ -134,11 +134,35 @@ export type ProxyFailure =
 export class ProxyFailed extends Error {
   override readonly name = "ProxyFailed";
   readonly reason: ProxyFailure;
+  /**
+   * For "encoder": whether the encoder was asked to run on the graphics card or on the processor,
+   * see `encoderFailure`. Unknown for anything else.
+   */
+  readonly acceleration: "hardware" | "software" | undefined;
 
-  constructor(reason: ProxyFailure, options?: { readonly cause?: unknown }) {
+  constructor(
+    reason: ProxyFailure,
+    options?: { readonly cause?: unknown; readonly acceleration?: "hardware" | "software" },
+  ) {
     super(`No proxy: ${reason}`, options);
     this.reason = reason;
+    this.acceleration = options?.acceleration;
   }
+}
+
+/**
+ * A failure of the encoder of this config, which says where it was asked to run, so that the
+ * graphics card can be left out of the next ones where it failed.
+ */
+export function encoderFailure(config: VideoEncoderConfig, cause: unknown): ProxyFailed {
+  const { hardwareAcceleration } = config;
+  const acceleration =
+    hardwareAcceleration === "prefer-hardware"
+      ? ("hardware" as const)
+      : hardwareAcceleration === "prefer-software"
+        ? ("software" as const)
+        : undefined;
+  return new ProxyFailed("encoder", { cause, ...(acceleration && { acceleration }) });
 }
 
 export interface ProxyControl {
@@ -301,6 +325,7 @@ export async function makeProxy(
     const sourceDuration = await track.computeDuration();
     const config = await firstSupported(encoders);
     if (!config) throw new ProxyFailed("unsupported");
+    const encoderFailed = (cause: unknown) => encoderFailure(config, cause);
     const fps = shape.fps.num / shape.fps.den;
     const opened = await VideoFileWriter.start(sink, { codec: "avc", frameRate: fps });
     writer = opened;
@@ -331,14 +356,14 @@ export async function makeProxy(
           });
       },
       error(error) {
-        failure ??= new ProxyFailed("encoder", { cause: error });
+        failure ??= encoderFailed(error);
       },
     });
     encoder = current;
     try {
       current.configure({ ...config, width: shape.width, height: shape.height });
     } catch (error) {
-      throw new ProxyFailed("encoder", { cause: error });
+      throw encoderFailed(error);
     }
     const shrinker = new Shrinker(shape.width, shape.height);
     const sampleSink = new VideoSampleSink(track);
@@ -383,7 +408,7 @@ export async function makeProxy(
         try {
           current.encode(frame, { keyFrame: key });
         } catch (error) {
-          throw failure ?? new ProxyFailed("encoder", { cause: error });
+          throw failure ?? encoderFailed(error);
         } finally {
           frame.close();
         }
@@ -405,7 +430,7 @@ export async function makeProxy(
     }
     if (frames === 0) throw new ProxyFailed("unreadable");
     await current.flush().catch((error: unknown) => {
-      throw failure ?? new ProxyFailed("encoder", { cause: error });
+      throw failure ?? encoderFailed(error);
     });
     await writes;
     if (failure) throw failure;

@@ -965,6 +965,9 @@ describe("a video with a stand-in", () => {
 
   const proxy = new Blob(["代理"]);
   const size = { width: 3840, height: 2160 };
+  /** Which stand-in the compositor got with a file, which it says when it cannot read it. */
+  const serialOf = (message: Extract<ToCompositor, { type: "file" }> | undefined) =>
+    (message?.standIn as { serial?: number } | undefined)?.serial ?? -1;
 
   it("is decoded in place of the video at its size, unless the quality is full", async () => {
     const { give, lastFile, asks, quality } = withVideo();
@@ -1010,7 +1013,7 @@ describe("a video with a stand-in", () => {
     give({ file: proxy, ...size });
     asks();
     await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
-    fromCompositor({ type: "stand-in-failed", id: "sha256-v" });
+    fromCompositor({ type: "stand-in-failed", id: "sha256-v", serial: serialOf(lastFile()) });
     expect(failed).toEqual(["sha256-v"]);
     await vi.waitFor(() => expect(lastFile()?.file).not.toBe(proxy));
     // The same one again is not taken.
@@ -1020,6 +1023,24 @@ describe("a video with a stand-in", () => {
     const made = new Blob(["新的代理"]);
     give({ file: made, ...size });
     await vi.waitFor(() => expect(lastFile()?.file).toBe(made));
+  });
+
+  it("hears nothing about a stand-in that the compositor does not decode any more", async () => {
+    const { give, lastFile, asks, failed, fromCompositor } = withVideo();
+    give({ file: proxy, ...size });
+    asks();
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(proxy));
+    const before = serialOf(lastFile());
+    const made = new Blob(["新的代理"]);
+    give({ file: made, ...size });
+    await vi.waitFor(() => expect(lastFile()?.file).toBe(made));
+    // About the one before, which the compositor had while the new one was on its way.
+    fromCompositor({ type: "stand-in-failed", id: "sha256-v", serial: before });
+    await new Promise((done) => setTimeout(done, 20));
+    expect(failed).toEqual([]);
+    expect(lastFile()?.file).toBe(made);
+    fromCompositor({ type: "stand-in-failed", id: "sha256-v", serial: serialOf(lastFile()) });
+    expect(failed).toEqual(["sha256-v"]);
   });
 
   it("is not sent for what the compositor did not ask for, nor for pictures", async () => {

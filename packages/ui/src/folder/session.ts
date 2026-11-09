@@ -176,6 +176,12 @@ export interface FolderSnapshot {
    * it: should the browser go away now, people may have to look at the folder themselves.
    */
   readonly unrecorded: boolean;
+  /**
+   * This window writes the folder, and compared it with the project since it started to: the
+   * project has what changed in the folder meanwhile, as far as it could take that in. Until then
+   * what the project says may be what the browser kept from before.
+   */
+  readonly compared: boolean;
 }
 
 /** Changes from the folder that came in, as one change of the project. */
@@ -532,6 +538,11 @@ class Turn {
     this.ended = new Promise((resolve) => {
       this.#end = resolve;
     });
+  }
+
+  /** Whether this turn is over, see `ended`. */
+  get isOver(): boolean {
+    return this.#dead;
   }
 
   get #folder(): LocalFolder {
@@ -1825,6 +1836,8 @@ export class FolderSession {
   #unpark = () => {};
   /** The last turn left the folder written, but not noted down, see `FolderSnapshot.unrecorded`. */
   #unrecorded = false;
+  /** The turn that compared the folder with the project, see `FolderSnapshot.compared`. */
+  #compared: Turn | undefined;
   readonly #emitter = new Emitter();
   readonly #mergeListeners = new Set<(merge: FolderMerge) => void>();
   #snapshot: FolderSnapshot = {
@@ -1834,6 +1847,7 @@ export class FolderSession {
     blocked: [],
     writtenAt: undefined,
     unrecorded: false,
+    compared: false,
   };
   readonly #stop: readonly (() => void)[];
 
@@ -2008,6 +2022,11 @@ export class FolderSession {
       this.#turn = turn;
       this.#setRole("writing");
       await turn.start();
+      // Only where it got to compare them: one that failed before is over already.
+      if (!turn.isOver) {
+        this.#compared = turn;
+        this.#refresh();
+      }
       ready();
       await Promise.race([claim.lost, turn.ended, this.#closed]);
       turn.stop();
@@ -2113,6 +2132,7 @@ export class FolderSession {
     const blocked = turn?.blocked ?? [];
     const writtenAt = turn?.writtenAt ?? this.#snapshot.writtenAt;
     const unrecorded = turn ? turn.unrecorded : this.#unrecorded;
+    const compared = turn !== undefined && this.#compared === turn;
     const before = this.#snapshot;
     const isSameTrouble =
       before.trouble === trouble ||
@@ -2125,13 +2145,22 @@ export class FolderSession {
       isSameTrouble &&
       before.writtenAt === writtenAt &&
       before.unrecorded === unrecorded &&
+      before.compared === compared &&
       before.blocked.length === blocked.length &&
       before.blocked.every(
         (file, index) =>
           file.path === blocked[index]?.path && file.problems === blocked[index]?.problems,
       );
     if (isSame) return;
-    this.#snapshot = { role: this.#role, status, trouble, blocked, writtenAt, unrecorded };
+    this.#snapshot = {
+      role: this.#role,
+      status,
+      trouble,
+      blocked,
+      writtenAt,
+      unrecorded,
+      compared,
+    };
     this.#emitter.emit();
   }
 }

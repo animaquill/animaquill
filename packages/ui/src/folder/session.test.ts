@@ -511,6 +511,47 @@ describe("what is kept about the folder", () => {
     expect(clipName(next.store, "clip_title")).toBe("关之前");
     expect(noteText(browser)).toBe("关着时改的");
   });
+
+  it("says it compared the folder with the project only once it took in what changed meanwhile", async () => {
+    const browser = new TestBrowser();
+    const first = await browser.open();
+    await first.session.close();
+    await first.project.close();
+    editOnDisk(browser.disk, NOTES, (document) => {
+      document.notes[0].text = "关着时改的";
+    });
+    const next = await browser.open({ start: false });
+    const seen: { role: string; compared: boolean; note: string | undefined }[] = [];
+    next.session.subscribe(() => {
+      const { role, compared } = next.session.getSnapshot();
+      seen.push({ role, compared, note: next.store.getState().notes?.["note_1"]?.text });
+    });
+    expect(next.session.getSnapshot().compared).toBe(false);
+    await next.session.start();
+    // It writes the folder before it compared it, while the project may not have what changed.
+    expect(seen.find(({ role }) => role === "writing")?.compared).toBe(false);
+    expect(seen.find(({ compared }) => compared)).toEqual({
+      role: "writing",
+      compared: true,
+      note: "关着时改的",
+    });
+    expect(next.session.getSnapshot().compared).toBe(true);
+  });
+
+  it("does not say it compared the folder with the project where it could not", async () => {
+    const browser = new TestBrowser();
+    // What the browser keeps about the folder cannot be read: nothing can be compared.
+    browser.faults.bases = true;
+    const { session } = await browser.open({ start: false });
+    const seen: boolean[] = [];
+    session.subscribe(() => void seen.push(session.getSnapshot().compared));
+    await session.start();
+    await browser.settle();
+    expect(seen).not.toContain(true);
+    browser.faults.bases = false;
+    await browser.settle(30_000);
+    expect(session.getSnapshot()).toMatchObject({ role: "writing", compared: true });
+  });
 });
 
 describe("the place of the folder", () => {
@@ -596,6 +637,19 @@ describe("windows of one browser", () => {
     renameClip(second.store, "clip_title", "接手以后");
     await browser.settle();
     expect(clipIn(JSON.parse(textOn(browser.disk, MAIN)), "clip_title").name).toBe("接手以后");
+  });
+
+  it("say they compared the folder with the project only while they write it", async () => {
+    const browser = new TestBrowser();
+    const first = await browser.open();
+    const second = await browser.open();
+    expect(first.session.getSnapshot()).toMatchObject({ role: "writing", compared: true });
+    expect(second.session.getSnapshot()).toMatchObject({ role: "waiting", compared: false });
+    browser.disk.sleep(first.folders);
+    renameClip(second.store, "clip_title", "抢过来");
+    await browser.settle();
+    expect(second.session.getSnapshot()).toMatchObject({ role: "writing", compared: true });
+    expect(first.session.getSnapshot()).toMatchObject({ role: "waiting", compared: false });
   });
 
   it("take over from one that sleeps, which keeps nothing after that", async () => {

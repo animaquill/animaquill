@@ -140,9 +140,14 @@ export type ToCompositor =
       /**
        * The file is a smaller copy of a video, a proxy, to decode in its place: it shows at the size
        * the video shows at, so that the picture is the same apart from its sharpness. Only for the
-       * preview. Another file for the id, also the video itself, takes its place.
+       * preview. Another file for the id, also the video itself, takes its place. `serial` says
+       * which stand-in this is, for "stand-in-failed".
        */
-      readonly standIn?: { readonly width: number; readonly height: number };
+      readonly standIn?: {
+        readonly width: number;
+        readonly height: number;
+        readonly serial: number;
+      };
     }
   /** What it asked for with `needs` is not there, so that waiting for it is over. */
   | { readonly type: "no-file"; readonly id: string }
@@ -219,8 +224,11 @@ export type FromCompositor =
   /** It needs this file. Nothing leaves the sandbox on its own, and nothing comes in by itself. */
   | { readonly type: "needs"; readonly id: string }
   | { readonly type: "cannot-decode"; readonly id: string }
-  /** A stand-in for a video, see "file", cannot be read: the video itself should come instead. */
-  | { readonly type: "stand-in-failed"; readonly id: string }
+  /**
+   * A stand-in for a video, see "file", cannot be read: the video itself should come instead. Of the
+   * stand-in with this serial, which may be one the editor sent another file in place of already.
+   */
+  | { readonly type: "stand-in-failed"; readonly id: string; readonly serial: number }
   /** It needs this scene, in this state. */
   | { readonly type: "needs-scene"; readonly scene: string; readonly revision: string }
   | { readonly type: "scene-status"; readonly layer: string; readonly status: SceneStatus }

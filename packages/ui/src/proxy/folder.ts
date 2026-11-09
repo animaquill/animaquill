@@ -71,12 +71,12 @@ export class ProxyFolder {
   }
 
   /**
-   * Takes away what the editor made in the folder of proxies that is not one of `keep`: proxies of
-   * files the project does not have any more, of another size of the project, and what crashes left
-   * of proxies on their way. What is in use stays. Resolves to what went. Never call this while a
-   * proxy is on its way: it would take that away too.
+   * Takes away what the editor made in the folder of proxies that is of no use any more, as
+   * `isUseless` says of each name, such as what crashes left of proxies on their way. Nothing else
+   * there is ever taken away. What is in use stays. Resolves to what went. Never call this while a
+   * proxy is on its way: what it writes looks like what a crash leaves.
    */
-  async tidy(keep: ReadonlySet<string>): Promise<readonly string[]> {
+  async tidy(isUseless: (name: string) => boolean): Promise<readonly string[]> {
     let folder: LocalFolder;
     try {
       folder = await (await this.#root().inside(".animaquill")).inside("proxies");
@@ -87,7 +87,7 @@ export class ProxyFolder {
     const removed: string[] = [];
     try {
       for await (const path of folder.list()) {
-        if (path.includes("/") || !isMadeHere(path) || keep.has(path)) continue;
+        if (path.includes("/") || !isMadeHere(path) || !isUseless(path)) continue;
         try {
           await folder.remove(path);
           removed.push(path);

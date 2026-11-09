@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { KEY_SECONDS, pickFrames, type PickedFrame, type TimedSample } from "./proxy.ts";
+import {
+  KEY_SECONDS,
+  encoderFailure,
+  pickFrames,
+  type PickedFrame,
+  type TimedSample,
+} from "./proxy.ts";
 
 interface Sample extends TimedSample {
   readonly index: number;
@@ -148,5 +154,23 @@ describe("the frames of a proxy", () => {
   it("are none of a video without frames", async () => {
     const { iterable } = video([]);
     expect(await all(pickFrames(iterable, THIRTY))).toEqual([]);
+  });
+});
+
+describe("a failure of the encoder", () => {
+  it("says whether the graphics card or the processor was asked to do it", () => {
+    const config = { codec: "avc1.42001f", width: 960, height: 540 };
+    expect(
+      encoderFailure({ ...config, hardwareAcceleration: "prefer-hardware" }, "坏了"),
+    ).toMatchObject({
+      name: "ProxyFailed",
+      reason: "encoder",
+      acceleration: "hardware",
+      cause: "坏了",
+    });
+    const software = encoderFailure({ ...config, hardwareAcceleration: "prefer-software" }, "坏了");
+    expect(software.acceleration).toBe("software");
+    // Where the browser chose, nobody knows.
+    expect(encoderFailure(config, "坏了").acceleration).toBeUndefined();
   });
 });

@@ -19,7 +19,7 @@ export const MAX_SHORT = 720;
 const FASTER_BY = 0.01;
 
 /** A proxy made another way gets another name, so that old ones are not taken for new ones. */
-const RECIPE = "v1";
+export const RECIPE = "v1";
 
 /** What a video is like as it shows: after turning it the way it says. */
 export interface VideoFacts {
@@ -85,7 +85,7 @@ export function proxySpecFor(video: VideoFacts, picture: PictureFacts): ProxySpe
 }
 
 /** What a hash of a file looks like in a name: hex, which no system mixes up by case. */
-function digestOf(hash: string): string {
+export function digestOf(hash: string): string {
   const base64 = hash
     .replace(/^sha256-/, "")
     .replaceAll("-", "+")
@@ -116,6 +116,19 @@ export function proxyName(hash: string, { width, height, fps }: ProxySpec): stri
 
 /** Where a proxy is written until it is whole and checked, see `ProxyFolder`. */
 export const partOf = (name: string): string => `${name}.part`;
+
+const PROXY = /^([0-9a-f]{24})-\d+x\d+-\d+(?:_\d+)?-(v\d+)\.mp4$/;
+
+/**
+ * What the name of a proxy says: which file it is of, see `digestOf`, and how it was made. Undefined
+ * for anything else, such as one on its way, see `partOf`.
+ */
+export function proxyOf(
+  name: string,
+): { readonly digest: string; readonly recipe: string } | undefined {
+  const [, digest, recipe] = PROXY.exec(name) ?? [];
+  return digest === undefined || recipe === undefined ? undefined : { digest, recipe };
+}
 
 const MADE = /^[0-9a-f]{24}-\d+x\d+-\d+(?:_\d+)?-v\d+\.mp4(?:\.part)?(?:\.\d+)?(?:\.crswap)?$/;
 

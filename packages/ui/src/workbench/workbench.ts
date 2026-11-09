@@ -493,6 +493,8 @@ export class Workbench {
         folder: session.folder,
         writes: open.snapshot.role === "writing",
         elsewhere: open.snapshot.role === "waiting",
+        // What the project says about its videos holds once the folder was compared with it.
+        compared: open.snapshot.compared,
         // Where the project says the file of a video is, while it is that file. Nothing that
         // looks for it shows as waiting: the preview does not wait for a proxy.
         async file(hash) {

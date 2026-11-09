@@ -21,6 +21,7 @@ import type { Corners } from "./transitions/code.ts";
 import { VideoReads } from "./reads.ts";
 import { withChannels } from "./plan.ts";
 import { videoPicture, type Picture } from "./picture.ts";
+import { videoLayerFrame, type VideoLayerParts } from "./video-layer.ts";
 import { placeholderPicture } from "./placeholder.ts";
 import { SceneLayers } from "./scenes.ts";
 import { SoundJobs } from "./sounds.ts";
@@ -73,7 +74,7 @@ interface VideoFile {
   readonly width: number;
   readonly height: number;
   /** How large the video shows that this file is a smaller copy of, see "file". */
-  readonly standsFor?: { readonly width: number; readonly height: number } | undefined;
+  readonly standsFor?: StandsFor | undefined;
 }
 
 /**
@@ -118,8 +119,14 @@ let plan: RenderPlan | undefined;
 /** The plan without what somebody is only trying out. A scene does not start over for that. */
 let settledPlan: RenderPlan | undefined;
 const files = new Map<string, Blob>();
-/** Files that stand in for a video, by id, with how large that video shows, see "file". */
-const standIns = new Map<string, { readonly width: number; readonly height: number }>();
+/** What a file that stands in for a video stands in for, see "file". */
+interface StandsFor {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Files that stand in for a video, by id, with how large that video shows and which one each is. */
+const standIns = new Map<string, StandsFor & { readonly serial: number }>();
 /** Stand-ins that could not be read, which the editor heard of once. */
 const failedStandIns = new Set<Blob>();
 const arrivals = new FileArrivals();
@@ -182,7 +189,8 @@ function cannotDecode(
   }
   if (files.get(id) !== file || isLetGo(error) || failedStandIns.has(file)) return;
   failedStandIns.add(file);
-  send({ type: "stand-in-failed", id });
+  // Of the file the id reads, which is the one the editor sent last.
+  send({ type: "stand-in-failed", id, serial: standIns.get(id)?.serial ?? -1 });
 }
 
 async function openVideo(
@@ -210,7 +218,8 @@ function videoOf(id: string, file: Blob): Promise<VideoFile | undefined> {
   // One of a file before this one, which nothing reads any more.
   void known?.video.then((video) => video?.input.dispose());
   // Along with the file it came with: the next file for the id comes with its own.
-  const standsFor = standIns.get(id);
+  const standIn = standIns.get(id);
+  const standsFor = standIn && { width: standIn.width, height: standIn.height };
   const video = openVideo(id, file, standsFor).catch((error: unknown) => {
     cannotDecode(id, file, standsFor, error);
     return undefined;
@@ -245,7 +254,6 @@ function scenePictureOf({ id }: RenderLayer): Picture | undefined {
 }
 
 async function pictureOf(layer: RenderLayer, frame: PendingFrame): Promise<Picture | undefined> {
-  const { seconds } = frame;
   const { source } = layer;
   if (source.kind === "color") return undefined;
   if (source.kind === "scene") return scenePictureOf(layer);
@@ -255,21 +263,22 @@ async function pictureOf(layer: RenderLayer, frame: PendingFrame): Promise<Pictu
     const bitmap = await imageOf(source.file, file);
     return bitmap && imagePicture(bitmap);
   }
-  const video = await videoOf(source.file, file);
-  // Opening the file takes a while, and the playhead does not wait for it.
-  if (frame.jumped) frame.givenUp = true;
-  if (!video || frame.givenUp) return undefined;
-  let read: Awaited<ReturnType<typeof reads.frameAt>>;
-  try {
-    read = await reads.frameAt(layer, source.file, video.sink, seconds);
-  } catch (error) {
-    // A stand-in that cannot be read, such as one that went away, gives way to the video.
-    if (video.standsFor) cannotDecode(source.file, file, video.standsFor, error);
-    throw error;
-  }
-  if (read.cold) frame.cold.push(coldClipOf(layer, video));
-  return read.frame && videoPicture(read.frame, video.standsFor);
+  const read = await videoLayerFrame(videoParts, layer, source.file, file, frame);
+  if (!read) return undefined;
+  if (read.cold) frame.cold.push(coldClipOf(layer, read.video));
+  return read.sample && videoPicture(read.sample, read.video.standsFor);
 }
+
+/** What reading the frame of a video layer needs, see `videoLayerFrame`. */
+const videoParts: VideoLayerParts<VideoFile, VideoSample> = {
+  fileOf: (id) => files.get(id),
+  videoOf,
+  frameAt: (layer, id, video, seconds) => reads.frameAt(layer, id, video.sink, seconds),
+  readFailed(id, file, video, error) {
+    // A stand-in that cannot be read, such as one that went away, gives way to the video.
+    if (video.standsFor) cannotDecode(id, file, video.standsFor, error);
+  },
+};
 
 /** Gets a clip that starts soon ready, see `FrameLoop`. */
 async function getReady(layer: RenderLayer, seconds: number): Promise<void> {
@@ -813,8 +822,10 @@ function handle(data: ToCompositor): void {
     const { standIn } = data;
     const isOtherSize =
       wasStandIn?.width !== standIn?.width || wasStandIn?.height !== standIn?.height;
-    if (standIn) standIns.set(data.id, { width: standIn.width, height: standIn.height });
-    else standIns.delete(data.id);
+    if (standIn) {
+      const { width, height, serial } = standIn;
+      standIns.set(data.id, { width, height, serial });
+    } else standIns.delete(data.id);
     // The same content in another file, as after the file changed on the disk: the old one cannot
     // be read any more. The same file of a disk again, as when it is sent twice, is nothing new.
     // A stand-in and its video are other files, and the picture goes on at the same moment.

@@ -36,6 +36,8 @@ export type ProxyAnswer =
       readonly job: number;
       readonly reason: ProxyFailed["reason"] | "cancelled";
       readonly message: string;
+      /** Where the encoder ran, for a failure of it, see `ProxyFailed.acceleration`. */
+      readonly acceleration?: "hardware" | "software";
     };
 
 /** Progress is worth telling this often, about. */
@@ -107,7 +109,8 @@ async function make(order: Extract<ProxyOrder, { kind: "make" }>): Promise<void>
         ? error.reason
         : "encoder";
     const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-    answer({ kind: "failed", job: id, reason, message });
+    const acceleration = error instanceof ProxyFailed ? error.acceleration : undefined;
+    answer({ kind: "failed", job: id, reason, message, ...(acceleration && { acceleration }) });
   } finally {
     jobs.delete(id);
   }
