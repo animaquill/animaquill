@@ -7,7 +7,7 @@
  * browser keeps of its project: the log, the bases, what is being tried. Copies of a folder have the
  * same project id, and must not share any of that. One folder has one record at most.
  */
-import { INCOMPLETE_FILE, ProjectStore, isNoneOfIt } from "@animaquill/core";
+import { INCOMPLETE_FILE, ProjectStore, isNoneOfIt, isProjectFile } from "@animaquill/core";
 import {
   newNameFor,
   type FolderRecord,
@@ -27,7 +27,7 @@ import {
   type ImportReport,
   type ProjectFolder,
 } from "../transfer/import.ts";
-import { formatVersionOf, isProjectFile, projectIdOf } from "./project-files.ts";
+import { formatVersionOf, projectIdOf } from "./project-files.ts";
 
 /** What a folder that people chose or dropped holds, for opening it. */
 export type FolderLook =

@@ -5,7 +5,7 @@
  * See the design of local projects, section 5.
  */
 import type { ProjectStore } from "@animaquill/core";
-import { isNoneOfIt } from "@animaquill/core";
+import { isNoneOfIt, isProjectFile } from "@animaquill/core";
 import {
   FolderError,
   isRefusedByChrome,
@@ -18,7 +18,6 @@ import {
 import { isSameHash, type HashOptions } from "@animaquill/media";
 import type { Asset } from "@animaquill/schema";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
-import { isProjectFile } from "./project-files.ts";
 
 /** Where files that people bring in go, in the folder of a project. */
 export const ASSETS_FOLDER = "assets";

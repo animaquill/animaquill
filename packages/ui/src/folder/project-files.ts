@@ -1,52 +1,22 @@
-import { MAX_SOURCE_BYTES, isNoneOfIt, isSourceFile, isToolFolder } from "@animaquill/core";
+import {
+  MAX_SOURCE_BYTES,
+  isDocument,
+  isProjectFile,
+  isProjectFolder,
+  isSourceFile,
+} from "@animaquill/core";
 import type { WatchOptions } from "@animaquill/host";
-import { MANIFEST_FILE, documentSchema, parseDocument } from "@animaquill/schema";
+import { documentSchema, parseDocument } from "@animaquill/schema";
 
 /**
- * Which files of a folder are the project's, as the format has them: its documents, and the code of
- * its scenes and sounds. The editor reads, writes and takes away only these, and leaves everything
- * else as it is: notes, a README, .git, what belongs to tools. Media files of assets come with the
- * next step, see the plan of phase 5.
+ * What the editor needs to know about the files of a project folder, besides which files are the
+ * project's: that is the format's, in core (`isProjectFile`, `writeRank`), which a platform that saves
+ * projects to Git uses as well.
  */
-export const isDocument = (path: string): boolean => documentSchema(path) !== undefined;
-
-export const isProjectFile = (path: string): boolean =>
-  !isNoneOfIt(path) && (isDocument(path) || isSourceFile(path));
-
-/** Folders that can have files of the project in them. */
-const PROJECT_FOLDER = /^(?:timelines|scenes|sounds|code|locales)(?:\/|$)/;
-
-const isProjectFolder = (path: string): boolean =>
-  PROJECT_FOLDER.test(path) && !path.split("/").some(isToolFolder);
 
 /** What a watch of the project folder, and listing it, look at. */
 export const includes: WatchOptions["includes"] = (path, kind) =>
   kind === "folder" ? isProjectFolder(path) : isProjectFile(path);
-
-/**
- * In which turn a file gets written: what others refer to first, so that a program that reads the
- * folder in the middle sees at most a reference that is not there yet. Code, assets, libraries and
- * strings, then what scenes and sounds are, then timelines, then their versions and the notes on
- * them, and animaquill.json last. Taking files away goes the other way round.
- */
-export function writeRank(path: string): number {
-  if (path === MANIFEST_FILE) return 4;
-  if (path === "notes.json" || /^timelines\/[^/]+\/overrides\//.test(path)) return 3;
-  if (/^timelines\/[^/]+\/timeline\.json$/.test(path)) return 2;
-  if (/^(?:scenes|sounds)\/[^/]+\/(?:scene|sound)\.json$/.test(path)) return 1;
-  return 0;
-}
-
-/** Files in turns, see `writeRank`: each turn is a list of paths that can go at the same time. */
-export function inRanks(paths: Iterable<string>, reverse = false): string[][] {
-  const ranks = new Map<number, string[]>();
-  for (const path of paths) {
-    const rank = writeRank(path);
-    ranks.set(rank, [...(ranks.get(rank) ?? []), path]);
-  }
-  const order = [...ranks.keys()].toSorted((a, b) => (reverse ? b - a : a - b));
-  return order.map((rank) => (ranks.get(rank) ?? []).toSorted());
-}
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 

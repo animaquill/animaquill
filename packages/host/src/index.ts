@@ -109,11 +109,177 @@ export interface CloudAccess {
   syncer(key: string): FolderWriter;
   /** How the windows of this browser tell each other about the sync of a project. */
   line(key: string): CloudLine | undefined;
+  /**
+   * Saving projects of the platform to a Git repository of the person, where the platform does that:
+   * it archives what it has of a project into the repository by itself. Without it, there is none.
+   */
+  readonly repository?: RepositoryAccess;
 }
 
 /** Nobody is signed in to the platform. */
 export class CloudSignedOut extends Error {
   override readonly name = "CloudSignedOut";
+}
+
+/** A repository people can choose to save a project to, as the platform lists them. */
+export interface RepositoryChoice {
+  /** Its number on the Git platform, which stays as it is renamed. */
+  readonly id: number;
+  readonly owner: string;
+  readonly name: string;
+  readonly fullName: string;
+  readonly private: boolean;
+  /** Whether the person may write to it. */
+  readonly pushable: boolean;
+  /** As far as the Git platform tells: an empty one can look not empty, never the other way. */
+  readonly empty: boolean;
+  readonly archived: boolean;
+  /** Another project of the platform is saved there. */
+  readonly linked: boolean;
+}
+
+export interface RepositoryList {
+  readonly repositories: readonly RepositoryChoice[];
+  readonly page: number;
+  /** There is another page. */
+  readonly more: boolean;
+  /** Where people choose which repositories the platform may touch. */
+  readonly manageUrl: string;
+}
+
+/** A new private repository, or one people have: a public one only with `confirmPublic`. */
+export type RepositoryLink =
+  | { readonly create: { readonly name: string } }
+  | { readonly existing: { readonly id: number }; readonly confirmPublic?: boolean };
+
+/** Why archiving stopped until people do something about it. */
+export type RepositoryPause =
+  /** Files of the project were changed in the repository, see `RepositoryStatus.diverged`. */
+  | "diverged"
+  /** The repository is gone, or the platform may not touch it any more. */
+  | "gone"
+  | "uninstalled"
+  | "suspended"
+  /** The repository is archived, and so read-only. */
+  | "archived"
+  /** The platform may not move the branch, as a protected branch: `detail` says what it said. */
+  | "protected"
+  /** The repository is on another account now than the one it was linked on. */
+  | "transferred"
+  /** animaquill.json is not what the format says. */
+  | "manifest"
+  /** What would be saved does not read as a project. */
+  | "invalid";
+
+/** The repository of a project, and how archiving into it goes. Times are milliseconds since 1970. */
+export interface RepositoryStatus {
+  readonly repository?: {
+    readonly id: number;
+    readonly owner: string;
+    readonly name: string;
+    readonly fullName: string;
+    readonly private: boolean;
+    readonly branch: string;
+    /** Where people see it. */
+    readonly url: string;
+    readonly createdHere: boolean;
+    readonly linkedAt: number;
+  };
+  /** "none": no repository; "ready": archiving goes as it should; "paused": see `reason`. */
+  readonly state: "none" | "ready" | "paused";
+  readonly reason?: RepositoryPause | (string & {});
+  /** A short word about the pause, or about the last failure, from the platform. */
+  readonly detail?: string;
+  /** An archive is waiting or running. */
+  readonly archiving: boolean;
+  readonly lastArchive?: {
+    readonly sha: string;
+    readonly seq: number;
+    readonly at: number;
+    /** "first", "auto" or "manual". */
+    readonly kind: string;
+    readonly changed: number;
+    readonly removed: number;
+    readonly url: string;
+  };
+  /** Documents the last archive could not write: the repository has an older version of them. */
+  readonly kept?: readonly string[];
+  /** Since when changes wait to be archived, and when they are due. */
+  readonly dirtySince?: number;
+  readonly nextAt?: number;
+  /** After failing: when it is tried again, and how many failed in a row. */
+  readonly retryAt?: number;
+  readonly failures?: number;
+  /** For "diverged": which files changed, on which commit: what `archiveNow` with `replace` writes over. */
+  readonly diverged?: { readonly sha: string; readonly files: readonly string[] };
+  /** The update of the project the platform has, and the one the repository has. */
+  readonly head: number;
+  readonly archivedSeq: number;
+}
+
+/**
+ * Saving the projects of a platform to Git repositories (on AnimaQuill Cloud, GitHub): the platform
+ * archives what it has of a project, when people stop for a while and now and then while they go on,
+ * see `RepositoryStatus`. Projects are named by their id on the platform, `CloudLink.project`. What
+ * the platform refuses rejects with `RepositoryRefused`; nobody signed in with `CloudSignedOut`.
+ */
+export interface RepositoryAccess {
+  /** A page of the repositories people can choose, from 1. */
+  list(page?: number): Promise<RepositoryList>;
+  /** Saves a project to a repository from now on: the first archive follows at once. */
+  link(project: string, choice: RepositoryLink): Promise<RepositoryStatus>;
+  status(project: string): Promise<RepositoryStatus>;
+  /**
+   * Archives now. Also goes on after a pause; for "diverged" only with `replace`, the commit people
+   * saw the changed files on, which the archive then writes over (never forced: it goes on top).
+   */
+  archiveNow(project: string, options?: { readonly replace?: string }): Promise<RepositoryStatus>;
+}
+
+/** What the platform says when it refuses something about repositories. */
+export type RepositoryRefusal =
+  | "notInstalled"
+  | "nameTaken"
+  | "hasProject"
+  | "linkedElsewhere"
+  | "notPushable"
+  | "public"
+  | "notFound"
+  | "invalidName"
+  | "alreadyLinked"
+  | "notLinked"
+  | "diverged"
+  | "busy"
+  | "invalid"
+  | "unavailable";
+
+/**
+ * The platform did not do what was asked: always one of the codes of `RepositoryRefusal`, also where
+ * no answer came ("unavailable") or the answer was not one of them.
+ */
+export class RepositoryRefused extends Error {
+  override readonly name = "RepositoryRefused";
+  readonly code: RepositoryRefusal;
+  /** For "hasProject": what of a project is there. */
+  readonly files: readonly string[] | undefined;
+  /** For "diverged": what changed, see `RepositoryStatus.diverged`. */
+  readonly diverged: RepositoryStatus["diverged"];
+  /** For "busy": seconds to wait. */
+  readonly retryAfter: number | undefined;
+  constructor(
+    code: RepositoryRefusal,
+    more: {
+      readonly files?: readonly string[];
+      readonly diverged?: RepositoryStatus["diverged"];
+      readonly retryAfter?: number;
+    } = {},
+  ) {
+    super(`The platform refused: ${code}`);
+    this.code = code;
+    this.files = more.files;
+    this.diverged = more.diverged;
+    this.retryAfter = more.retryAfter;
+  }
 }
 
 export type { CloudClose, CloudConnection } from "./sync-protocol.ts";

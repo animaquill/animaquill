@@ -246,6 +246,14 @@ export {
   type TrialSaved,
 } from "./trial.ts";
 export { isSourceFile } from "./import-file.ts";
+export {
+  PROJECT_FOLDERS,
+  inRanks,
+  isDocument,
+  isProjectFile,
+  isProjectFolder,
+  writeRank,
+} from "./project-files.ts";
 export type {
   BaseOf,
   FileChange,

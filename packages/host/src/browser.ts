@@ -735,6 +735,8 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
  */
 export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
+export { browserRepository, statusOf } from "./repository.ts";
+export type { BrowserRepositoryOptions } from "./repository.ts";
 
 export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
 

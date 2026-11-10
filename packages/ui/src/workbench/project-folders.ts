@@ -5,7 +5,7 @@
  * `FolderSession`. What is in a folder and what this browser keeps of it is `FolderProjects`; this
  * is the part that asks people and tells them.
  */
-import { INCOMPLETE_FILE, isNoneOfIt, type ProjectStore } from "@animaquill/core";
+import { INCOMPLETE_FILE, isNoneOfIt, isProjectFile, type ProjectStore } from "@animaquill/core";
 import {
   FolderError,
   type AccessAnswer,
@@ -36,7 +36,6 @@ import {
   type MoveResult,
   type MoveStep,
 } from "../folder/move.ts";
-import { isProjectFile } from "../folder/project-files.ts";
 import {
   FolderProjects,
   type FolderLook,

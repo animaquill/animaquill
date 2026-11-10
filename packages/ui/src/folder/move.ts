@@ -19,7 +19,7 @@
  * `FolderMove.release`. Nothing here asks people anything or touches the page: that is
  * `ProjectFolders`.
  */
-import { INCOMPLETE_FILE, ProjectStore, type CommandCall } from "@animaquill/core";
+import { INCOMPLETE_FILE, ProjectStore, inRanks, type CommandCall } from "@animaquill/core";
 import {
   FolderError,
   MAX_NAME_LENGTH,
@@ -50,7 +50,6 @@ import type { TFunction } from "i18next";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
 import { ImportRefused, readProjectFolder, type ProjectFolder } from "../transfer/import.ts";
 import { FolderAssets } from "./assets.ts";
-import { inRanks } from "./project-files.ts";
 
 /** Where a project goes, as people chose it, see `FolderProjects.placeFor`. */
 export interface MovePlace {

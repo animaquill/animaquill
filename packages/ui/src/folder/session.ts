@@ -1,5 +1,8 @@
 import {
   folderBatch,
+  inRanks,
+  isDocument,
+  isProjectFile,
   type FileChange,
   type MergeConflict,
   type MergeResult,
@@ -24,10 +27,7 @@ import { hashText } from "@animaquill/media";
 import { CURRENT_FORMAT_VERSION, MANIFEST_FILE, type Problem } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
 import {
-  inRanks,
   includes,
-  isDocument,
-  isProjectFile,
   isTooLarge,
   looksDamaged,
   formatVersionOf,
