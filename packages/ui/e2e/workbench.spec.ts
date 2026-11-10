@@ -91,7 +91,24 @@ test("the title bar has the search in the middle and the layouts on the right", 
   expect(Math.abs(search.x + search.width / 2 - (bar.x + bar.width / 2))).toBeLessThan(2);
   const layouts = await box(layoutMenu(page, "剪辑"));
   expect(layouts.x).toBeGreaterThan(search.x + search.width);
-  expect(layouts.x + layouts.width).toBeGreaterThan(bar.x + bar.width - 20);
+  // Right of it only the account of the platform, where the editor has one (it can come a moment
+  // later, so everything is measured at once).
+  const end = await page
+    .locator("header")
+    .first()
+    .getByRole("button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const { left, right } = button.getBoundingClientRect();
+        return { name: button.getAttribute("aria-label") ?? button.textContent ?? "", left, right };
+      }),
+    );
+  const layoutButton = end.find(({ name }) => name === "布局：剪辑");
+  if (!layoutButton) throw new Error("No layout menu");
+  const after = end.filter(({ left }) => left >= layoutButton.right - 1);
+  for (const { name } of after) expect(name).toMatch(/^(登录|账号：.*)$/);
+  const last = after.at(-1) ?? layoutButton;
+  expect(last.right).toBeGreaterThan(bar.x + bar.width - 20);
   // Its menu opens towards the window, not past its edge.
   await layoutMenu(page, "剪辑").click();
   const menu = await box(page.getByRole("menu"));

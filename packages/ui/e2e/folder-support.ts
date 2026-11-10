@@ -136,9 +136,13 @@ export async function drop(
 export const footer = (page: Page) => page.locator("footer");
 export const dialog = (page: Page) => page.getByRole("dialog");
 
-/** A project with code asks once, the first time it comes into this browser. */
+/**
+ * A project with code asks once, the first time it comes into this browser. It asks once the whole
+ * folder is read, after the page loaded and looked at the folder: on a busy machine that takes as
+ * long as saving does.
+ */
 export async function agreeToCode(page: Page) {
-  await expect(dialog(page)).toContainText("这个项目含有脚本");
+  await expect(dialog(page)).toContainText("这个项目含有脚本", { timeout: 10_000 });
   await dialog(page).getByRole("button", { name: "知道了，打开项目" }).click();
 }
 

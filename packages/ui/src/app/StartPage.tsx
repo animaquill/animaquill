@@ -204,7 +204,8 @@ export function StartPage() {
   const { projectFolders } = workbench;
   const { t } = useTranslation();
   const [projects, setProjects] = useState<readonly ProjectSummary[]>();
-  const [records, setRecords] = useState<readonly FolderRecord[]>([]);
+  /** Undefined until they are read: "no projects yet" waits for them too. */
+  const [records, setRecords] = useState<readonly FolderRecord[]>();
   const [statuses, setStatuses] = useState<ReadonlyMap<string, FolderStatus>>(new Map());
   const [copies, setCopies] = useState<ReadonlyMap<string, number>>(new Map());
   /** The folders this browser knows cannot be read: nobody can tell its projects from them then. */
@@ -247,11 +248,15 @@ export function StartPage() {
 
   // The log of a project folder is in the browser too, but it is no project of the browser. Where
   // the folders cannot be read, nothing tells them apart: then none of them shows.
-  const inFolders = new Set(records.map(({ id }) => id));
+  const inFolders = new Set(records?.map(({ id }) => id));
   const inBrowser = foldersFailed
     ? []
     : projects?.filter(({ id, folder }) => folder !== true && !inFolders.has(id));
-  const nothing = projects !== undefined && inBrowser?.length === 0 && records.length === 0;
+  // Without folders here there are none to wait for.
+  const nothing =
+    projects !== undefined &&
+    inBrowser?.length === 0 &&
+    (projectFolders ? records?.length === 0 : true);
 
   return (
     <main className={styles.page}>
@@ -300,7 +305,12 @@ export function StartPage() {
             {t("project.listFailed")}
           </p>
         )}
-        <RecentFolders records={records} statuses={statuses} copies={copies} refresh={refresh} />
+        <RecentFolders
+          records={records ?? []}
+          statuses={statuses}
+          copies={copies}
+          refresh={refresh}
+        />
 
         {inBrowser && inBrowser.length > 0 && (
           <h2>{projectFolders ? t("folder.browserProjects") : t("project.recent")}</h2>
@@ -345,7 +355,7 @@ export function StartPage() {
         <p className={styles.muted}>
           {projectFolders ? t("folder.localHint") : t("folder.unsupported")}
         </p>
-        <UnfinishedExports projects={projects ?? []} records={records} />
+        <UnfinishedExports projects={projects ?? []} records={records ?? []} />
       </div>
     </main>
   );

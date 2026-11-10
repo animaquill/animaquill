@@ -62,7 +62,7 @@ test.describe("files and code", () => {
     await open(page, { "main.js": "let a = 1;\n" });
     await tab(page, "files").click();
     await expect(row(page, "main.js")).toBeVisible();
-    await page.keyboard.press("Alt+2");
+    await page.keyboard.press("Alt+Shift+2");
     await expect(tab(page, "code")).toBeVisible();
     expect(asked.filter((url) => /monaco/i.test(url))).toEqual([]);
     await openFile(page, "main.js");
@@ -427,7 +427,7 @@ test.describe("saving a scene", () => {
     await openWith(page, { "index.html": COLOR("#f00") });
     await expect.poll(() => isColor(page, RED)).toBe(true);
     await goTo(page, "0:05/00");
-    await page.keyboard.press("Alt+2");
+    await page.keyboard.press("Alt+Shift+2");
     await openFile(page, "index.html");
     await replaceAll(page, COLOR("#00f"));
     await expect.poll(() => isColor(page, RED)).toBe(true);
@@ -447,7 +447,7 @@ test.describe("saving a scene", () => {
     await goTo(page, "0:05/00");
     const at = (x: number) => colorAt(page, x, 540);
     await expect.poll(async () => distance(await at(1010), RED)).toBeLessThan(8);
-    await page.keyboard.press("Alt+2");
+    await page.keyboard.press("Alt+Shift+2");
     await openFile(page, "index.html");
     await replaceAll(page, slide("#00f"));
     await save(page);
@@ -471,7 +471,7 @@ test.describe("saving a scene", () => {
       `const color = "${color}";\ndocument.documentElement.style.background = color;\n`;
     await openWith(page, { "index.html": good, "main.js": js("#f00") });
     await expect.poll(() => isColor(page, RED)).toBe(true);
-    await page.keyboard.press("Alt+2");
+    await page.keyboard.press("Alt+Shift+2");
     await openFile(page, "main.js");
     await replaceAll(page, `const color = "#00f";\nconst = 1;\n`);
     await save(page);
@@ -520,7 +520,7 @@ test.describe("saving a scene", () => {
   test("keeps up with several saves in a row", async ({ page }) => {
     await openWith(page, { "index.html": COLOR("#f00") });
     await expect.poll(() => isColor(page, RED)).toBe(true);
-    await page.keyboard.press("Alt+2");
+    await page.keyboard.press("Alt+Shift+2");
     await openFile(page, "index.html");
     for (const color of ["#0f0", "#ff0", "#0ff", "#f0f", "#fff", "#00f"]) {
       await replaceAll(page, COLOR(color));
