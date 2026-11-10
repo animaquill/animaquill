@@ -1,5 +1,7 @@
 import { isMadeFile } from "@animaquill/host";
 import type {
+  ChangeSource,
+  LogEntry,
   ProjectPresence,
   ExportPiece,
   ExportStore,
@@ -80,6 +82,9 @@ export class MemoryTrials implements TrialStore {
 /** For tests: keeps projects in memory, and windows on the same project hear each other. */
 export class MemoryLibrary implements ProjectLibrary {
   readonly updates = new Map<string, Uint8Array[]>();
+  /** Where each update is in its log, and who made it, by the update, see `LogEntry`. */
+  readonly entries = new WeakMap<Uint8Array, { mark: number; source: ChangeSource | undefined }>();
+  #nextMark = 1;
   readonly summaries = new Map<string, ProjectSummary>();
   readonly listeners = new Map<string, Set<(update: Uint8Array) => void>>();
   readonly files = new Map<string, Blob>();
@@ -107,8 +112,30 @@ export class MemoryLibrary implements ProjectLibrary {
     if (this.failing) throw new Error("quota");
     if (this.summaries.has(id)) throw new Error("taken");
     this.summaries.set(id, { id, name, updatedAt: 1, ...(folder && { folder: true }) });
-    this.updates.set(id, [state]);
+    this.updates.set(id, [this.#marked(state, undefined)]);
     this.instances.set(id, this.#nextInstance++);
+  }
+
+  /** An update as a new entry of a log, see `entries`. */
+  #marked(update: Uint8Array, source: ChangeSource | undefined): Uint8Array {
+    // The same bytes can come twice, as another window's update does: each one is an entry.
+    const entry = this.entries.has(update) ? update.slice() : update;
+    this.entries.set(entry, { mark: this.#nextMark++, source });
+    return entry;
+  }
+
+  /** The entries of a log after a mark, see `ProjectLog.entries`. */
+  #entriesOf(id: string, after: number): LogEntry[] {
+    return (this.updates.get(id) ?? []).flatMap((update) => {
+      // What a test put in the log by hand gets its mark when it is first read.
+      let entry = this.entries.get(update);
+      if (!entry) {
+        entry = { mark: this.#nextMark++, source: undefined };
+        this.entries.set(update, entry);
+      }
+      if (entry.mark <= after) return [];
+      return [{ update, mark: entry.mark, source: entry.source }];
+    });
   }
 
   async receive({
@@ -147,18 +174,30 @@ export class MemoryLibrary implements ProjectLibrary {
         this.duringLoad?.();
         return updates;
       },
-      append: async (update, name) => {
+      entries: async (after = 0) => {
+        const entries = this.#entriesOf(id, after);
+        // Reading all of it is what opening a project does, as `load`.
+        if (after === 0) this.duringLoad?.();
+        return entries;
+      },
+      append: async (update, name, source) => {
         if (this.failing) throw new Error("quota");
         const summary = this.summaries.get(id);
         if (!summary || this.instances.get(id) !== instance) throw new Error("gone");
         await this.duringAppend?.();
         this.summaries.set(id, { ...summary, name });
-        this.updates.get(id)?.push(update);
+        this.updates.get(id)?.push(this.#marked(update, source));
         for (const listener of listeners) if (!own.has(listener)) listener(update);
       },
-      compact: async (merge) => {
+      compact: async (merge, { through } = {}) => {
         this.compactions += 1;
-        this.updates.set(id, [merge(this.updates.get(id) ?? [])]);
+        const all = this.updates.get(id) ?? [];
+        const markOf = (update: Uint8Array) => this.entries.get(update)?.mark ?? 0;
+        const merging = all.filter((update) => through === undefined || markOf(update) <= through);
+        if (merging.length < 2 && through !== undefined) return;
+        const staying = all.filter((update) => !merging.includes(update));
+        const merged = this.#marked(merge(merging), { kind: "merged" });
+        this.updates.set(id, [...staying, merged]);
       },
       listen: (listener) => {
         listeners.add(listener);

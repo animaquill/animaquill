@@ -36,13 +36,18 @@ function answering(line: BroadcastChannel | undefined): () => void {
 /** Without Web Locks every window writes: there is nothing that could keep them apart. */
 const ALONE: WriterClaim = { lost: new Promise(() => {}), release: () => {} };
 
+/**
+ * The turn of a window of this browser to write a folder, or to do something else that only one
+ * window may do at a time, under a `prefix` of its own, such as syncing a project with a platform.
+ */
 export function browserFolderWriter(
   folder: string,
   locks: () => LockManager | undefined,
   channel: Channel = (name) =>
     typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(name),
+  prefix = PREFIX,
 ): FolderWriter {
-  const name = `${PREFIX}${folder}`;
+  const name = `${prefix}${folder}`;
   /**
    * The turn, as the lock gives it. Resolves to undefined where `ifAvailable` finds that another
    * window has it.

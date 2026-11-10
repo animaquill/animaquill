@@ -22,6 +22,7 @@ import {
 } from "./merge-files.ts";
 import { projectToState, stateToProject, type ProjectState } from "./model.ts";
 import { NOBODY, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
+import { cloudOrigin } from "./sync.ts";
 import { Mutator, getIn, type Patch } from "./patch.ts";
 import { danglingAt } from "./references.ts";
 import {
@@ -45,6 +46,20 @@ const MAX_HISTORY = 1000;
 const MAX_UNDO = 500;
 /** How many batches of files from the folder can still be taken back, see mergeFiles(). */
 export const MAX_BATCHES = 20;
+
+/** Something an update wrote, at its place in the project, as Yjs has it, see `checkWritten`. */
+export interface WrittenKey {
+  readonly path: Path;
+  readonly raw: unknown;
+}
+
+/** What `applyChecked` took in. */
+export interface CheckedChange {
+  /** What it changed, as an update, or undefined when the project had all of it. */
+  readonly delta: Uint8Array | undefined;
+  /** Every key it wrote that shows, for `checkWritten`. */
+  readonly written: readonly WrittenKey[];
+}
 
 export interface CommandCall {
   readonly type: string;
@@ -476,6 +491,8 @@ export class ProjectStore {
   #written: Written = UNWRITTEN;
   /** The change being written here, which already knows what it wrote. */
   #writing: Y.Transaction | undefined;
+  /** What an update from elsewhere writes, while `applyChecked` takes it in. */
+  #watching: { readonly origin: Origin; readonly written: WrittenKey[] } | undefined;
   #change: LocalChange | undefined;
   /** The last number an undo entry got. */
   #serial = 0;
@@ -537,6 +554,121 @@ export class ProjectStore {
   }
 
   /**
+   * Takes in changes from the platform, as its update with this number there. They count as changes
+   * of somebody else, as from another window, and still reach `onLocalUpdate`: this browser has to
+   * keep them, while whoever sends changes to the platform must not send them back. Resolves to
+   * false when one of them could not be read: then nothing says the project has what came up to
+   * `seq`.
+   */
+  applyCloud(updates: readonly Uint8Array[], seq: number): boolean {
+    if (updates.length === 0) return true;
+    const before = this.missingKey;
+    const origin = cloudOrigin(seq);
+    // One change of the project, however many updates: as one entry of the log, and drawn once.
+    let damaged = 0;
+    this.doc.transact(() => {
+      damaged = applyAll(this.doc, updates, origin);
+    }, origin);
+    // Only what these leave waiting holds the project back: a gap it had before and went on
+    // without, as of a damaged log, stays one it goes on without.
+    if (this.missingKey !== before) this.#isSettled = false;
+    this.#show();
+    return damaged === 0;
+  }
+
+  /**
+   * Takes in an update from elsewhere as `origin`, for a copy that checks what it takes, such as the
+   * working copy on a platform. Resolves to what it changed, as an update of its own, or undefined
+   * when the project had all of it. Throws what Yjs throws for a damaged update: check updates with
+   * `checkUpdate` first, as a damaged one can leave a part of itself behind.
+   */
+  applyChecked(update: Uint8Array, origin: Origin): CheckedChange {
+    let delta: Uint8Array | undefined;
+    const onUpdate = (made: Uint8Array, from: unknown) => {
+      if (from === origin) delta = made;
+    };
+    const watching = { origin, written: [] as WrittenKey[] };
+    this.#watching = watching;
+    this.doc.on("update", onUpdate);
+    try {
+      this.#isSettled = false;
+      Y.applyUpdate(this.doc, update, origin);
+    } finally {
+      this.doc.off("update", onUpdate);
+      this.#watching = undefined;
+      this.#show();
+    }
+    return { delta, written: watching.written };
+  }
+
+  /** What this project has, as Yjs counts it, see `isAhead`. */
+  stateVector(): Uint8Array {
+    return Y.encodeStateVector(this.doc);
+  }
+
+  /**
+   * What this project has that a copy with this state vector does not, as one update: only what is
+   * whole, never a change that waits for one that is not here. It always has everything that was
+   * taken away, which a state vector does not show.
+   */
+  diffSince(stateVector: Uint8Array): Uint8Array {
+    return this.#withoutWaiting(() => Y.encodeStateAsUpdate(this.doc, stateVector));
+  }
+
+  /** Whether this project has every piece of an update in it, not waiting for anything. */
+  hasAllOf(update: Uint8Array): boolean {
+    try {
+      // Up to where each client goes: also one whose first piece in it is not its first one.
+      const { to } = Y.parseUpdateMeta(update);
+      const mine = Y.decodeStateVector(Y.encodeStateVector(this.doc));
+      for (const [client, clock] of to) if (clock > (mine.get(client) ?? 0)) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The whole project as one update, without what waits for a change that is not here. */
+  encodeWhole(): Uint8Array {
+    return this.#withoutWaiting(() => Y.encodeStateAsUpdate(this.doc));
+  }
+
+  /** Everything that was taken away in this project, as an update that has nothing else. */
+  deletions(): Uint8Array {
+    return this.#withoutWaiting(() =>
+      Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(this.doc)),
+    );
+  }
+
+  /**
+   * What waits for a change that has not come, as a key that stays the same while that does, or
+   * undefined when nothing waits.
+   */
+  get missingKey(): string | undefined {
+    const { pendingStructs, pendingDs } = this.doc.store;
+    if (pendingStructs === null && pendingDs === null) return undefined;
+    const missing = pendingStructs ? [...pendingStructs.missing].toSorted(([a], [b]) => a - b) : [];
+    return JSON.stringify([missing, pendingDs === null ? 0 : pendingDs.length]);
+  }
+
+  /**
+   * Yjs adds what waits for a missing change to everything it encodes. A copy elsewhere would wait
+   * for it as well, forever, where the change is gone for good, as from a damaged log.
+   */
+  #withoutWaiting<T>(run: () => T): T {
+    const { store } = this.doc;
+    const { pendingStructs, pendingDs } = store;
+    store.pendingStructs = null;
+    store.pendingDs = null;
+    try {
+      return run();
+    } finally {
+      store.pendingStructs = pendingStructs;
+      store.pendingDs = pendingDs;
+    }
+  }
+
+  /**
    * Takes in all there is of a project. What is still missing now is not coming, and the project
    * goes on with what it has: a damaged log must not lock people out of their work.
    */
@@ -562,10 +694,15 @@ export class ProjectStore {
     return this.encodeState();
   }
 
-  /** Calls back with every change made here, for saving and for sending to others. */
-  onLocalUpdate(listener: (update: Uint8Array) => void): () => void {
+  /**
+   * Calls back with every change made here, for saving and for sending to others, with who made it.
+   * Changes from the platform come here too, see `applyCloud`, but not those of other windows.
+   */
+  onLocalUpdate(listener: (update: Uint8Array, origin: Origin) => void): () => void {
     const onUpdate = (update: Uint8Array, origin: unknown) => {
-      if (origin !== REMOTE && origin !== LOAD) listener(update);
+      if (origin !== REMOTE && origin !== LOAD) {
+        listener(update, typeof origin === "string" ? origin : NOBODY);
+      }
     };
     this.doc.on("update", onUpdate);
     return () => this.doc.off("update", onUpdate);
@@ -1160,9 +1297,11 @@ export class ProjectStore {
       if (transaction !== this.#writing) writes.put(path, written);
     };
 
+    const watching = this.#watching?.origin === transaction.origin ? this.#watching : undefined;
     for (const event of events) {
       const base = event.path.map(String);
       if (event.target instanceof Y.Text) {
+        watching?.written.push({ path: base, raw: event.target });
         mutator.set(base, event.target.toString());
         remember(base);
         if (!isLoad) this.#markWrite(base, write, false);
@@ -1171,6 +1310,8 @@ export class ProjectStore {
       const target = event.target as Y.Map<unknown>;
       event.changes.keys.forEach((change, key) => {
         const { path, value } = readChange(this.#root, target, base, key);
+        if (watching && change.action !== "delete")
+          watching.written.push({ path, raw: target.get(key) });
         if (path.includes(UNSAFE_KEY) || isRetired(path)) return;
         const removed = value === undefined;
         if (removed) mutator.delete(path);

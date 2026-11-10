@@ -15,13 +15,7 @@ import { entryOf, type ProjectState } from "./model.ts";
 import { isInUse } from "./references.ts";
 import { removeUses } from "./resource-edits.ts";
 
-declare const TextEncoder: new () => { encode(text: string): Uint8Array };
-
-/** A browser handles more than this badly, and a file that size is not code anybody writes. */
-export const MAX_SOURCE_BYTES = 32 * 1024 ** 2;
-
-/** Bytes per character at the most, in UTF-8. */
-const MOST_BYTES_PER_CHARACTER = 3;
+import { isTooLargeSource } from "./source-size.ts";
 
 /** Folders a project folder keeps out of what it brings along, see the format. */
 const isKeptOut = (part: string) => part.startsWith(".") || part === "node_modules";
@@ -53,10 +47,7 @@ function assertOwnerExists(state: ProjectState, path: string): void {
 }
 
 function assertSize(path: string, text: string): void {
-  if (text.length * MOST_BYTES_PER_CHARACTER <= MAX_SOURCE_BYTES) return;
-  if (new TextEncoder().encode(text).length > MAX_SOURCE_BYTES) {
-    fail("file-too-large", `文件不能超过 32 MiB：${path}`);
-  }
+  if (isTooLargeSource(text)) fail("file-too-large", `文件不能超过 8 MiB：${path}`);
 }
 
 /** Where the folder of a scene or sound keeps what it is, which is no file anybody writes. */

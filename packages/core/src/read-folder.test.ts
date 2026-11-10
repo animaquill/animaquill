@@ -20,7 +20,7 @@ import {
   type ReadOnlyFolder,
   type ReadableFile,
 } from "./read-folder.ts";
-import { MAX_SOURCE_BYTES } from "./scene-edits.ts";
+import { MAX_SOURCE_BYTES } from "./source-size.ts";
 
 /** A file that says how large it is, and is not there to be read: as a video would be. */
 interface Sized {

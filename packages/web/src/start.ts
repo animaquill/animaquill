@@ -11,11 +11,12 @@ export interface EditorSite {
   /** Shown in the status bar, so that a report can say which build it is about. */
   readonly version: string;
   /**
-   * What the deployment adds to the browser's host, such as an account or a place for reports.
-   * Without them there is nothing to sign in to, and reports are files people pass on themselves:
-   * everything on this computer works the same.
+   * What the deployment adds to the browser's host, such as an account, a place for reports, or a
+   * platform to keep projects in step with. Without them there is nothing to sign in to, reports are
+   * files people pass on themselves, and projects stay in the browser and its folders: everything on
+   * this computer works the same.
    */
-  readonly host?: Pick<Host, "account" | "diagnostics">;
+  readonly host?: Pick<Host, "account" | "diagnostics" | "cloud">;
 }
 
 /** Starts the editor as the page of a web app. */

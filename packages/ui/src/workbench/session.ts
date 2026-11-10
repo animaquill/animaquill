@@ -1,5 +1,19 @@
-import { ProjectStore, mergeUpdates } from "@animaquill/core";
-import type { ProjectAddress, ProjectLibrary, ProjectLog, ProjectSummary } from "@animaquill/host";
+import {
+  ProjectStore,
+  cloudSeqOf,
+  isEmptyUpdate,
+  mergeUpdates,
+  sourceKindOf,
+  type Origin,
+} from "@animaquill/core";
+import type {
+  ChangeSource,
+  LogEntry,
+  ProjectAddress,
+  ProjectLibrary,
+  ProjectLog,
+  ProjectSummary,
+} from "@animaquill/host";
 import { CURRENT_FORMAT_VERSION, createProject } from "@animaquill/schema";
 import { Emitter } from "./emitter.ts";
 
@@ -36,6 +50,51 @@ export interface SessionSnapshot {
   readonly save: SaveState;
 }
 
+/** A change on its way into the log, with who made it. */
+interface Unsaved {
+  readonly update: Uint8Array;
+  readonly source: ChangeSource;
+}
+
+/**
+ * Whether two changes in a row can be one entry of the log. What came from a platform in a row is
+ * one, with the number of the last: thousands of them, after a while away, are one write.
+ */
+const isSameSource = (a: ChangeSource, b: ChangeSource) =>
+  a.kind === b.kind && a.window === b.window && (a.kind === "cloud" || a.seq === b.seq);
+
+/** What syncing a project with a platform needs of its log, see `ProjectSession.journal`. */
+export interface Journal {
+  /** What the log has after a mark, see `ProjectLog.entries`. Undefined where the host keeps no marks. */
+  entries(after?: number): Promise<readonly LogEntry[]> | undefined;
+  /** Hears that something new is in the log: from this window, or from another one. */
+  onChange(listener: () => void): () => void;
+  /** Resolves once every change made so far is in the log, to whether it is. */
+  saved(): Promise<boolean>;
+  /** Takes in what the log has that the project does not, see `ProjectSession.readLog`. */
+  readLog(): Promise<void>;
+  /** How many entries of the log could not be read when the project opened here. */
+  damaged(): number;
+  /**
+   * Puts into the log, as one entry, what the project has and a window that opened from a log that
+   * lost something does not, by its state vector: it gets that from there.
+   */
+  refill(theirs: Uint8Array): Promise<void>;
+}
+
+export interface SessionOptions {
+  /** Which window this is, for who made a change, see `ChangeSource.window`. */
+  readonly window?: string;
+  /**
+   * How far the log of a project may be made shorter when it opens: up to this mark, see
+   * `ProjectLog.compact`, or all of it when this says undefined. What a platform does not have yet
+   * has to stay as it is.
+   */
+  readonly compactThrough?: (key: string) => Promise<number | undefined>;
+  /** For tests: how long a log gets before it is made shorter when the project opens. */
+  readonly compactAfter?: number;
+}
+
 export interface SessionMessages {
   createFailed(): void;
   notFound(): void;
@@ -56,20 +115,82 @@ export class ProjectSession {
   readonly #address: ProjectAddress;
   readonly #messages: SessionMessages;
   readonly #emitter = new Emitter();
+  readonly #options: SessionOptions;
   #snapshot: SessionSnapshot = { save: "saved" };
   #log: ProjectLog | undefined;
   #stop: (() => void)[] = [];
   /** Writing happens one step at a time, in order. */
   #queue: Promise<void> = Promise.resolve();
-  #unsaved: Uint8Array[] = [];
+  #unsaved: Unsaved[] = [];
   #retry: ReturnType<typeof setTimeout> | undefined;
   #catchingUp = false;
   #readAgain = false;
+  /** The last update of a platform that the project has, as far as this window knows, see `cloudSeq`. */
+  #cloudSeq: number | undefined;
+  readonly #journalListeners = new Set<() => void>();
 
-  constructor(projects: ProjectLibrary, address: ProjectAddress, messages: SessionMessages) {
+  constructor(
+    projects: ProjectLibrary,
+    address: ProjectAddress,
+    messages: SessionMessages,
+    options: SessionOptions = {},
+  ) {
     this.#projects = projects;
     this.#address = address;
     this.#messages = messages;
+    this.#options = options;
+  }
+
+  /**
+   * The last update of the platform that the open project has, which every change made here from
+   * now on says it was made on, see `ChangeSource.seq`. Whoever knows tells, such as the window that
+   * syncs. Undefined while the project is not connected to one.
+   */
+  get cloudSeq(): number | undefined {
+    return this.#cloudSeq;
+  }
+
+  set cloudSeq(seq: number | undefined) {
+    this.#cloudSeq = seq === undefined ? undefined : Math.max(this.#cloudSeq ?? 0, seq);
+  }
+
+  /** The log of the open project, as syncing it with a platform needs it. */
+  readonly journal: Journal = {
+    entries: (after) => this.#log?.entries?.(after),
+    onChange: (listener) => {
+      this.#journalListeners.add(listener);
+      return () => this.#journalListeners.delete(listener);
+    },
+    saved: () => this.trySave(),
+    readLog: () => this.readLog(),
+    damaged: () => this.#damaged,
+    refill: (theirs) =>
+      new Promise<void>((resolve, reject) => {
+        const log = this.#log;
+        const { store } = this.#snapshot;
+        if (!log || !store) {
+          resolve();
+          return;
+        }
+        this.#enqueue(async () => {
+          try {
+            // Only what that window lacks: the log does not grow by the whole project each time.
+            const missing = store.diffSince(theirs);
+            if (!isEmptyUpdate(missing)) {
+              await log.append(missing, store.getState().manifest.name, { kind: "merged" });
+            }
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }),
+  };
+  /** See `Journal.damaged`. */
+  #damaged = 0;
+
+  #journalChanged(): void {
+    for (const listener of this.#journalListeners) listener();
   }
 
   subscribe = this.#emitter.subscribe;
@@ -171,6 +292,7 @@ export class ProjectSession {
     this.#log?.close();
     this.#log = undefined;
     this.#unsaved = [];
+    this.#cloudSeq = undefined;
     this.#address.write(undefined);
     this.#snapshot = { save: "saved" };
     this.#emitter.emit();
@@ -185,7 +307,11 @@ export class ProjectSession {
     // every later change of that window, which only make sense on top of it.
     const early: Uint8Array[] = [];
     const stopEarly = log.listen((update) => early.push(update));
-    const updates = await log.load();
+    // With where each is, where the host keeps that: what comes after the last one is not made
+    // shorter now, whatever happens meanwhile, such as the project getting connected elsewhere.
+    const entries = await log.entries?.();
+    const updates = entries ? entries.map((entry) => entry.update) : await log.load();
+    const lastMark = entries?.at(-1)?.mark;
     if (updates.length === 0) {
       // Other failures keep the address, so that a reload tries again. This one never will work.
       this.#address.write(undefined);
@@ -201,20 +327,33 @@ export class ProjectSession {
     }
     stopEarly();
     store.applyUpdates(early);
+    this.#damaged = damaged;
     if (damaged > 0) this.#messages.damaged();
 
     this.#log = log;
     keys.set(store, id);
     this.#stop = [
-      store.onLocalUpdate((update) => this.#save(update)),
-      log.listen((update) => this.#receive(store, log, update)),
+      store.onLocalUpdate((update, origin) => this.#save(update, origin)),
+      log.listen((update) => {
+        this.#receive(store, log, update);
+        this.#journalChanged();
+      }),
     ];
     this.#address.write(id);
     this.#snapshot = { store, key: id, save: "saved" };
     this.#emitter.emit();
     this.#catchUp(store, log);
-    if (updates.length >= COMPACT_AFTER) {
-      this.#enqueue(() => log.compact((all) => store.mergeWith(all)));
+    if (updates.length >= (this.#options.compactAfter ?? COMPACT_AFTER)) {
+      this.#enqueue(async () => {
+        const allowed = await this.#options.compactThrough?.(id);
+        const through =
+          allowed === undefined
+            ? lastMark
+            : lastMark === undefined
+              ? allowed
+              : Math.min(allowed, lastMark);
+        await log.compact((all) => store.mergeWith(all), through === undefined ? {} : { through });
+      });
     }
     return true;
   }
@@ -240,29 +379,59 @@ export class ProjectSession {
     this.#emitter.emit();
   }
 
-  #save(update: Uint8Array): void {
-    this.#unsaved.push(update);
+  /** Who made a change, as the log keeps it, see `ChangeSource`. */
+  #sourceOf(origin: Origin): ChangeSource {
+    const kind = sourceKindOf(origin);
+    const window = this.#options.window;
+    const seq = kind === "cloud" ? cloudSeqOf(origin) : this.#cloudSeq;
+    if (kind === "cloud" && seq !== undefined) this.cloudSeq = seq;
+    return {
+      kind,
+      ...(window !== undefined && kind !== "cloud" && { window }),
+      at: Date.now(),
+      ...(seq !== undefined && { seq }),
+    };
+  }
+
+  #save(update: Uint8Array, origin: Origin): void {
+    this.#unsaved.push({ update, source: this.#sourceOf(origin) });
     if (this.#snapshot.save !== "failed") this.#setSave("saving");
     this.#enqueue(() => this.#flush());
   }
 
+  /**
+   * Writes what waits, as few entries as it takes: changes in a row of the same maker are one. Each
+   * maker keeps its own, so that whoever sends them on can tell who made what.
+   */
   async #flush(): Promise<void> {
     const log = this.#log;
     const { store } = this.#snapshot;
     if (!log || !store || this.#unsaved.length === 0) return;
-    const batch = this.#unsaved;
-    this.#unsaved = [];
-    const update = batch.length === 1 ? (batch[0] as Uint8Array) : mergeUpdates(batch);
-    try {
-      await log.append(update, store.getState().manifest.name);
-    } catch (error) {
-      console.warn("Change could not be saved", error);
-      this.#unsaved = [update, ...this.#unsaved];
-      if (this.#snapshot.save !== "failed") this.#messages.saveFailed();
-      this.#setSave("failed");
-      clearTimeout(this.#retry);
-      this.#retry = setTimeout(() => void this.trySave(), RETRY_AFTER_MS);
-      return;
+    while (this.#unsaved.length > 0) {
+      const first = this.#unsaved[0] as Unsaved;
+      let count = 1;
+      while (count < this.#unsaved.length) {
+        if (!isSameSource((this.#unsaved[count] as Unsaved).source, first.source)) break;
+        count += 1;
+      }
+      const run = this.#unsaved.slice(0, count);
+      const update =
+        run.length === 1 ? first.update : mergeUpdates(run.map((unsaved) => unsaved.update));
+      const { source } = run.at(-1) as Unsaved;
+      try {
+        await log.append(update, store.getState().manifest.name, source);
+      } catch (error) {
+        console.warn("Change could not be saved", error);
+        // What came meanwhile stays behind it, in order.
+        this.#unsaved = [{ update, source }, ...this.#unsaved.slice(count)];
+        if (this.#snapshot.save !== "failed") this.#messages.saveFailed();
+        this.#setSave("failed");
+        clearTimeout(this.#retry);
+        this.#retry = setTimeout(() => void this.trySave(), RETRY_AFTER_MS);
+        return;
+      }
+      this.#unsaved = this.#unsaved.slice(count);
+      this.#journalChanged();
     }
     clearTimeout(this.#retry);
     const recovered = this.#snapshot.save === "failed";

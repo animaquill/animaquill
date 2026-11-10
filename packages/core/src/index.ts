@@ -152,7 +152,7 @@ export {
   type PlacedJoin,
   type WholeJoin,
 } from "./joins.ts";
-export { MAX_SOURCE_BYTES } from "./scene-edits.ts";
+export { MAX_SOURCE_BYTES, isTooLargeSource } from "./source-size.ts";
 export {
   sceneFilesOf,
   sceneSourceOf,
@@ -310,12 +310,37 @@ export {
 } from "./model.ts";
 export type { Patch } from "./patch.ts";
 export {
+  VALUE_LIMIT,
+  checkWhole,
+  checkWritten,
+  isProjectSource,
+  ruleAt,
+  type ChangeFault,
+} from "./check-change.ts";
+export {
+  EMPTY_UPDATE,
+  PROJECT_ROOT,
+  checkUpdate,
+  piecesOf,
+  type Pieces,
+  cloudOrigin,
+  cloudSeqOf,
+  hasDeletionsOf,
+  isAhead,
+  isEmptyUpdate,
+  sourceKindOf,
+  stateVectorOfUpdate,
+  type SourceKind,
+  type UpdateFault,
+} from "./sync.ts";
+export {
   MAX_BATCHES,
   ProjectStore,
   USER,
   aiTask,
   folderBatch,
   mergeUpdates,
+  type CheckedChange,
   type CommandCall,
   type CommandFailure,
   type CommandOutcome,
@@ -328,6 +353,7 @@ export {
   type MergeOptions,
   type MergeResult,
   type UndoObstacle,
+  type WrittenKey,
   type UndoResult,
   type Origin,
 } from "./store.ts";

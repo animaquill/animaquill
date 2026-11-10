@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
-    "./memory": "./src/memory-disk.ts"
+    "./memory": "./src/memory-disk.ts",
+    "./sync": "./src/sync-protocol.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

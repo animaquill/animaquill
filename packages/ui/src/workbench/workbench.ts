@@ -19,7 +19,9 @@ import {
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
 import { formatTime, toSeconds } from "@animaquill/schema";
-import type { ProjectSummary } from "@animaquill/host";
+import { newSyncId, type ProjectSummary } from "@animaquill/host";
+import { CloudProjects } from "../cloud/projects.ts";
+import type { CloudEnvironment, CloudTiming } from "../cloud/session.ts";
 import { ChatSession } from "../chat/session.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
@@ -88,6 +90,9 @@ export interface WorkbenchOptions {
   readonly soundLimitMs?: number;
   /** For tests: how long a project folder waits, see `FolderTiming`. */
   readonly folderTiming?: Partial<FolderTiming>;
+  /** For tests: how long syncing with the platform waits, and the world it waits in. */
+  readonly cloudTiming?: Partial<CloudTiming>;
+  readonly cloudEnvironment?: CloudEnvironment;
   /** What finds out hashes of files in project folders, in a worker where the page has one. */
   readonly hasher?: Hasher;
   /**
@@ -164,6 +169,13 @@ export class Workbench {
   readonly projects: ProjectLibrary;
   /** The account people have where the editor is hosted, where it has accounts: see `Host.account`. */
   readonly account: AccountAccess | undefined;
+  /** Which window this is, for who made a change, see `ChangeSource.window`. */
+  readonly windowId = newSyncId();
+  /**
+   * Whether the open project syncs with the platform, where the editor is hosted on one: see
+   * `Host.cloud` and `CloudProjects`.
+   */
+  readonly cloud: CloudProjects | undefined;
   /** The page is going away on purpose, with everything kept, see `leavePage`. */
   #leavingPage = false;
   #leavingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -281,15 +293,35 @@ export class Workbench {
     });
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
-    this.session = new ProjectSession(host.projects, host.address, {
-      createFailed: () => this.notifications.push(t("notice.projectCreateFailed")),
-      notFound: () => this.notifications.push(t("notice.projectNotFound")),
-      openFailed: () => this.notifications.push(t("notice.projectOpenFailed")),
-      tooNew: () => this.notifications.push(t("notice.projectTooNew")),
-      damaged: () => this.notifications.push(t("notice.projectDamaged")),
-      saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
-      saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
-    });
+    // A platform is for whoever is signed in to it: without an account, there is none.
+    const cloud = host.account ? host.cloud : undefined;
+    this.session = new ProjectSession(
+      host.projects,
+      host.address,
+      {
+        createFailed: () => this.notifications.push(t("notice.projectCreateFailed")),
+        notFound: () => this.notifications.push(t("notice.projectNotFound")),
+        openFailed: () => this.notifications.push(t("notice.projectOpenFailed")),
+        tooNew: () => this.notifications.push(t("notice.projectTooNew")),
+        damaged: () => this.notifications.push(t("notice.projectDamaged")),
+        saveFailed: () => this.notifications.push(t("notice.projectSaveFailed")),
+        saveRecovered: () => this.notifications.push(t("notice.projectSaveRecovered")),
+      },
+      {
+        window: this.windowId,
+        // What the platform does not have yet stays as it is in the log: it goes from there.
+        ...(cloud && {
+          compactThrough: async (key: string) => {
+            try {
+              const link = await cloud.links.get(key);
+              return link ? link.pushed : undefined;
+            } catch {
+              return 0;
+            }
+          },
+        }),
+      },
+    );
     this.registrations = new SceneRegistrations(host.caches);
     let open = this.session.store;
     this.registrations.open(open && projectKeyOf(open));
@@ -459,7 +491,10 @@ export class Workbench {
         changeProject: (next) => this.#changeProject(next),
         warnAboutCode: (report) => this.transfer.warnAboutCode(report),
         noteArrival: (report) => this.#noteImport(report),
-        letGo: (id) => this.videos.letGoOfProject(id),
+        letGo: async (id) => {
+          await this.videos.letGoOfProject(id);
+          await this.cloud?.forget(id);
+        },
         showProblems: () => this.layout.openPanel("problems"),
         assetFiles: {
           useNewFile: (asset) => this.media.useNewFile(asset),
@@ -471,6 +506,34 @@ export class Workbench {
         ...(host.presence && { presence: host.presence }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
+    this.cloud =
+      cloud &&
+      new CloudProjects({
+        cloud,
+        session: this.session,
+        projects: host.projects,
+        folderOf: (key) =>
+          this.projectFolders?.getSnapshot().open?.record.id === key
+            ? (this.projectFolders.session?.folder ??
+              this.projectFolders.getSnapshot().open?.record.folder)
+            : undefined,
+        isFolder: (key) => this.projectFolders?.holds(key) === true,
+        account: host.account,
+        dialogs: this.dialogs,
+        notifications: this.notifications,
+        t,
+        window: this.windowId,
+        editor: version,
+        signIn: () => this.signIn(),
+        openProject: (id) => this.openProject(id),
+        ...(options.cloudTiming && { timing: options.cloudTiming }),
+        ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
+      });
+    if (this.cloud) {
+      const follow = () => void this.cloud?.follow();
+      this.session.subscribe(follow);
+      this.projectFolders?.subscribe(follow);
+    }
     this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders);
     this.#keepPresence(host);
     this.proxies =
@@ -1423,6 +1486,7 @@ export class Workbench {
       // What its exports kept goes with it, which only happens once this window lets go of them.
       await this.videos.letGoOfProject(project.id);
       await this.session.remove(project.id);
+      await this.cloud?.forget(project.id);
       // What another window is at stays with it, which people should know.
       const left = (await this.videos.unfinished()).filter((each) => each.project === project.id);
       if (left.length > 0) {
@@ -1560,6 +1624,8 @@ export class Workbench {
       if (!leave) return false;
     }
     await this.layout.detach();
+    // What the platform does not have yet stays in the log, for whoever syncs next.
+    await this.cloud?.close();
     // The folder gets what is waiting first, and the next window gets to write it.
     await this.projectFolders?.close();
     await this.session.close();
@@ -1644,6 +1710,29 @@ export class Workbench {
       menu: { name: "file", group: "folder" },
       enabled: isOpen,
     });
+    const cloud = this.cloud;
+    if (cloud) {
+      this.actions.register({
+        id: "cloud.connect",
+        title: (t) => t("cloud.connectAction"),
+        run: () => void cloud.connect(),
+        menu: { name: "file", group: "cloud" },
+        enabled: () => cloud.canConnect,
+      });
+      this.actions.register({
+        id: "cloud.disconnect",
+        title: (t) => t("cloud.disconnectAction"),
+        run: () => void cloud.disconnect(),
+        menu: { name: "file", group: "cloud" },
+        enabled: () => cloud.canDisconnect,
+      });
+      this.actions.register({
+        id: "cloud.open",
+        title: (t) => t("cloud.openAction"),
+        run: () => void cloud.openFromCloud(),
+        menu: { name: "file", group: "cloud" },
+      });
+    }
     this.actions.register({
       id: "project.exportVideo",
       title: (t) => t("export.video.action"),

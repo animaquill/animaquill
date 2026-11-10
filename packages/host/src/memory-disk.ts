@@ -1173,3 +1173,5 @@ export class MemoryDisk {
 /** For tests: folders on a disk in memory, the way a new page in Chrome has them. */
 export const memoryFolders = (disk: MemoryDisk, timing?: Partial<WatchTiming>): LocalFolders =>
   disk.folders(timing);
+
+export { MemoryWriters, type WriterPage } from "./folder-writer.ts";

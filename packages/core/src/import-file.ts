@@ -7,6 +7,7 @@ import {
   Notes,
   Overrides,
   ProjectManifest,
+  RelativePath,
   SceneManifest,
   SoundManifest,
   Timeline,
@@ -28,6 +29,7 @@ import {
   type TimelineState,
 } from "./model.ts";
 import { USER } from "./origin.ts";
+import { isTooLargeSource } from "./source-size.ts";
 import { deepEqual } from "./patch.ts";
 import type { Path } from "./structure.ts";
 
@@ -235,6 +237,21 @@ export function readDocument(
 /** Plans what a valid file changes, and says what is wrong with one that is not. */
 export function planDocument(draft: Draft, path: string, text: string): readonly Problem[] {
   if (isSourceFile(path)) {
+    // What the format has, as everything that writes a file keeps to: a platform takes no other.
+    if (!RelativePath.safeParse(path).success) {
+      const message = `文件名不能这样写：${path}。要写成项目内的相对路径，不能用 ..、反斜杠或绝对路径`;
+      return [{ severity: "error", code: "invalid-name", file: path, message }];
+    }
+    if (isTooLargeSource(text)) {
+      return [
+        {
+          severity: "error",
+          code: "file-too-large",
+          file: path,
+          message: "代码文件不能超过 8 MiB",
+        },
+      ];
+    }
     if (draft.state.files[path] !== text) draft.setText(["files", path], text);
     return [];
   }

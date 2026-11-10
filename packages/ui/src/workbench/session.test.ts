@@ -451,6 +451,42 @@ describe("saving", () => {
     expect(nameOf(session)).toBe("名字 198");
   });
 
+  it("merges only what the log had when the project opened, whatever comes meanwhile (link race)", async () => {
+    const { session, library } = setup();
+    await session.create("新项目");
+    const id = idOf(session);
+    for (let i = 0; i < 5; i++) {
+      rename(session, `名字 ${i}`);
+      await settled(session);
+    }
+    // A window opens, and asks what it may merge: nothing says yet, as before a link is made.
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const asked: number[] = [];
+    const late = new ProjectSession(library, memoryAddress(), setup().messages, {
+      compactAfter: 3,
+      compactThrough: async () => {
+        asked.push(asked.length);
+        await gate;
+        return undefined;
+      },
+    });
+    await late.open(id);
+    // Meanwhile the project got connected, and changes came after, which have to go as they are.
+    rename(session, "连上之后");
+    await settled(session);
+    const after = (await (await library.open(id)).entries?.())?.at(-1);
+    open();
+    await settled(late);
+    expect(asked).toHaveLength(1);
+    expect(library.compactions).toBe(1);
+    const entries = (await (await library.open(id)).entries?.()) ?? [];
+    expect(entries.some((entry) => entry.mark === after?.mark)).toBe(true);
+    await late.close();
+  });
+
   it("leaves a short log alone", async () => {
     const { session, library } = setup();
     await session.create("新项目");

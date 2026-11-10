@@ -7,8 +7,10 @@ import { isMadeFile } from "./index.ts";
 import { browserLocalFolders } from "./local-folders.ts";
 import { browserPresence } from "./presence.ts";
 import type {
+  ChangeSource,
   Host,
   IncomingProject,
+  LogEntry,
   MediaStore,
   ProjectAddress,
   ProjectLibrary,
@@ -68,7 +70,12 @@ interface UpdateRecord {
   readonly seq?: number;
   readonly project: string;
   readonly update: Uint8Array;
+  /** Who made it, see `ChangeSource`. Records of older editors have none. */
+  readonly source?: ChangeSource;
 }
+
+/** What the log puts together when it gets shorter, see `ProjectLog.compact`. */
+const MERGED: ChangeSource = { kind: "merged" };
 
 interface PlaceRecord {
   readonly project: string;
@@ -191,13 +198,45 @@ function openLog(
       const records = await resultOf<UpdateRecord[]>(index.getAll(id));
       return records.map((record) => record.update);
     },
-    async append(update, name) {
+    async entries(after = 0) {
+      const transaction = (await database()).transaction(UPDATES);
+      const index = transaction.objectStore(UPDATES).index(BY_PROJECT);
+      // The index has the records of a project in the order they came in: from the first one after
+      // the mark on, and nothing of other projects.
+      const found: LogEntry[] = [];
+      await new Promise<void>((resolve, reject) => {
+        const request = index.openCursor(IDBKeyRange.only(id));
+        let isFirst = true;
+        request.addEventListener("error", () => reject(request.error));
+        request.addEventListener("success", () => {
+          const cursor = request.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          const record = cursor.value as UpdateRecord;
+          const mark = record.seq as number;
+          if (isFirst && after > 0 && mark <= after) {
+            isFirst = false;
+            cursor.continuePrimaryKey(id, after + 1);
+            return;
+          }
+          isFirst = false;
+          if (mark > after) found.push({ update: record.update, source: record.source, mark });
+          cursor.continue();
+        });
+      });
+      return found;
+    },
+    async append(update, name, source) {
       // "strict" waits for the disk, so that a power cut cannot take back what looks saved. Slow
       // writes do no harm: changes that arrive in the meantime go along with the next one.
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
         durability: "strict",
       });
-      transaction.objectStore(UPDATES).add({ project: id, update } satisfies UpdateRecord);
+      transaction
+        .objectStore(UPDATES)
+        .add({ project: id, update, ...(source && { source }) } satisfies UpdateRecord);
       const projects = transaction.objectStore(PROJECTS);
       const read = projects.get(id);
       read.addEventListener("success", () => {
@@ -211,17 +250,20 @@ function openLog(
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
       channel?.postMessage(update);
     },
-    async compact(merge) {
+    async compact(merge, { through } = {}) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
       const updates = transaction.objectStore(UPDATES);
       const owner = transaction.objectStore(PROJECTS).get(id);
       const read = updates.index(BY_PROJECT).getAll(id);
       read.addEventListener("success", () => {
-        const records = read.result as UpdateRecord[];
+        // What is not on a platform yet stays as it is, see `ProjectLog.compact`.
+        const records = (read.result as UpdateRecord[]).filter(
+          (record) => through === undefined || (record.seq as number) <= through,
+        );
         if (records.length < 2 || !isOurs(owner.result as ProjectRecord | undefined)) return;
         const merged = merge(records.map((record) => record.update));
         for (const record of records) updates.delete(record.seq as number);
-        updates.add({ project: id, update: merged } satisfies UpdateRecord);
+        updates.add({ project: id, update: merged, source: MERGED } satisfies UpdateRecord);
       });
       await committed(transaction);
     },
@@ -691,6 +733,9 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
  * Says that projects stay in this browser here, as where it cannot write folders, see `LocalFolders`.
  * Tests of everything else set it, as a page cannot answer the browser's dialog for a folder.
  */
+export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts";
+export type { BrowserCloudOptions } from "./cloud.ts";
+
 export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
 
 function keepsProjectsHere(storage: () => Storage): boolean {

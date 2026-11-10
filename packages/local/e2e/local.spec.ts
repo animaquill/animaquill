@@ -215,6 +215,13 @@ test.describe("the editor on this computer", () => {
       await expect(tab(page, "preview")).toBeVisible();
       await expect(page.getByRole("button", { name: /登录|账号/ })).toHaveCount(0);
       await expect(page.locator("header").getByText(/登录/)).toHaveCount(0);
+      // Nor a platform to keep projects in step with.
+      await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+      await expect(
+        page.getByRole("menu").getByRole("menuitem", { name: /导出/ }).first(),
+      ).toBeVisible();
+      await expect(page.getByRole("menu").getByRole("menuitem", { name: /云端/ })).toHaveCount(0);
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "帮助" }).click();
       await page.getByRole("menuitem", { name: "运行情况" }).click();
       const panel = content(page, "performance");

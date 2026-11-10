@@ -1,4 +1,26 @@
+import type { CloudConnection } from "./sync-protocol.ts";
+
 export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
+export { MemoryCloudLinks } from "./cloud.ts";
+export {
+  SYNC_CLOSE,
+  SYNC_KINDS,
+  SYNC_LIMITS,
+  SYNC_MESSAGE_BYTES,
+  SYNC_PROTOCOL,
+  Reassembler,
+  encodeSyncMessage,
+  framesOf,
+  newSyncId,
+  packChecked,
+  readSyncClientMessage,
+  readSyncServerMessage,
+  unpackChecked,
+  type SyncClientMessage,
+  type SyncKind,
+  type SyncRejection,
+  type SyncServerMessage,
+} from "./sync-protocol.ts";
 export { chromeRefuses, isRefusedByChrome } from "./chrome-names.ts";
 export {
   MAX_NAME_LENGTH,
@@ -47,8 +69,127 @@ export interface Host {
    * in to. Either way everything on this computer works the same, signed in or not.
    */
   readonly account?: AccountAccess;
+  /**
+   * The platform that projects can be connected to, where the editor is hosted on one: changes go
+   * there as they happen, and come from there. Only with `account`, which is how people get to it.
+   * Without it projects stay on this computer, which is everything they need.
+   */
+  readonly cloud?: CloudAccess;
 }
 
+/** A project on the platform, as people find it in a list. */
+export interface CloudProjectSummary {
+  /** Its id on the platform. */
+  readonly id: string;
+  readonly name: string;
+  /** Milliseconds since 1970. */
+  readonly updatedAt: number;
+}
+
+/**
+ * Where projects sync to: a platform, as the host reaches it. The editor runs the protocol over the
+ * connections, see `SyncClientMessage`, and keeps its records here.
+ */
+export interface CloudAccess {
+  /** The platform, as an address such as https://platform.example: what .animaquill/cloud.json names. */
+  readonly platform: string;
+  /** A new connection for syncing a project. */
+  connect(): CloudConnection;
+  /**
+   * The projects on the platform of whoever is signed in, most recently changed first. Rejects when
+   * the platform cannot say, with a `CloudSignedOut` when nobody is signed in.
+   */
+  list(): Promise<readonly CloudProjectSummary[]>;
+  /** Which projects of this browser are connected, and how far they got. */
+  readonly links: CloudLinks;
+  /**
+   * Which window of this browser syncs a project, by the key the browser keeps it by, see
+   * `CloudLink.key`: one at a time, as only one window writes a folder.
+   */
+  syncer(key: string): FolderWriter;
+  /** How the windows of this browser tell each other about the sync of a project. */
+  line(key: string): CloudLine | undefined;
+}
+
+/** Nobody is signed in to the platform. */
+export class CloudSignedOut extends Error {
+  override readonly name = "CloudSignedOut";
+}
+
+export type { CloudClose, CloudConnection } from "./sync-protocol.ts";
+
+/** What windows of this browser say to each other, as structured clones. */
+export interface CloudLine {
+  post(message: unknown): void;
+  listen(listener: (message: unknown) => void): () => void;
+  close(): void;
+}
+
+/** How a link moves forward, see `CloudLinks.update`. */
+export interface CloudLinkChange {
+  readonly seq?: number;
+  readonly digest?: string;
+  readonly pushed?: number;
+  readonly syncedAt?: number;
+  /** The project is on the platform now: it is not `creating` any more. */
+  readonly made?: true;
+}
+
+/** That a project of this browser is connected to a project of the platform. */
+export interface CloudLink {
+  /** What this browser keeps the project by: its id, or the number of its folder, see `FolderRecord.id`. */
+  readonly key: string;
+  /** The platform, see `CloudAccess.platform`. */
+  readonly platform: string;
+  /** The id of the project on the platform. */
+  readonly project: string;
+  /** Every update of the platform up to this number is in the log of the project here. */
+  readonly seq: number;
+  /**
+   * What the platform said stands for its updates up to `seq`, see "welcome" of the protocol: where
+   * the platform has another one for that number, it came back from a backup.
+   */
+  readonly digest?: string;
+  /** Every change in the log up to this mark is on the platform, see `LogEntry.mark`. */
+  readonly pushed: number;
+  /** Milliseconds since 1970. */
+  readonly linkedAt: number;
+  /** When the project was last in step with the platform, in milliseconds since 1970. */
+  readonly syncedAt?: number;
+  /**
+   * The project is not on the platform yet, as far as this browser knows: the first connection makes
+   * it there, with what the project is then, see `SyncClientMessage` "hello".
+   */
+  readonly creating?: true;
+}
+
+export interface CloudLinks {
+  get(key: string): Promise<CloudLink | undefined>;
+  /** Keeps a link, in place of the one with the same key. */
+  put(link: CloudLink): Promise<void>;
+  /**
+   * Moves a link to `project` forward, never back, as two windows can both have been the one that
+   * syncs: `seq` with its `digest`, `pushed`, `syncedAt`, and `made` once the project is on the
+   * platform, see `creating`. Resolves to false, and changes nothing, when there is no such link:
+   * one that another window took away, or made for another project, stays as it is.
+   */
+  update(key: string, project: string, change: CloudLinkChange): Promise<boolean>;
+  /**
+   * Puts a link to `project` back to where the platform is after it came back from a backup: `seq`
+   * and `digest` as they are now, and `pushed` back to the start, so that everything goes again.
+   * Resolves to false when there is no such link.
+   */
+  reset(
+    key: string,
+    project: string,
+    to: { readonly seq: number; readonly digest: string; readonly pushed: number },
+  ): Promise<boolean>;
+  remove(key: string): Promise<void>;
+  /** The links to a project of a platform: more than one means a copy of a folder, see the design, 7.5. */
+  withProject(platform: string, project: string): Promise<readonly CloudLink[]>;
+  /** What this browser is called on the platform: a number of its own, the same every time. */
+  device(): Promise<string>;
+}
 /** How the last sign-in ended, when this page is where it came back to. */
 export type SignInOutcome =
   | "signedIn"
@@ -390,22 +531,62 @@ export interface KeptFile {
 }
 
 /**
+ * Who made a change in the log of a project, for whoever sends it on, such as to a platform. The
+ * host keeps it as it is.
+ */
+export interface ChangeSource {
+  /**
+   * "user", "folder", "ai" and "other" as the editor tells them apart; "cloud" for what came from
+   * the platform, and "merged" for what the log put together when it got shorter, see `compact`.
+   */
+  readonly kind: string;
+  /** Which window made it. */
+  readonly window?: string;
+  /** When, in milliseconds since 1970. */
+  readonly at?: number;
+  /**
+   * For "cloud": its number on the platform. For a change of a window: the last update of the
+   * platform that the window had when it made it.
+   */
+  readonly seq?: number;
+}
+
+/** An update in the log of a project, where it is in there, and who made it. */
+export interface LogEntry {
+  readonly update: Uint8Array;
+  /** Undefined for what was written without saying, as by an older editor. */
+  readonly source: ChangeSource | undefined;
+  /** Where it is: what comes later has a larger mark. */
+  readonly mark: number;
+}
+
+/**
  * One open project, as a list of binary updates that only the editor understands. Every change is
  * appended right away, so that a crash loses nothing. The order of updates does not matter.
  */
 export interface ProjectLog {
   load(): Promise<readonly Uint8Array[]>;
   /**
+   * What is in the log after a mark, oldest first, with who made it. Hosts that keep no marks do not
+   * have this: then nothing can tell what of a log is on a platform, and syncing compares instead.
+   */
+  entries?(after?: number): Promise<readonly LogEntry[]>;
+  /**
    * Rejects when the project is gone, for example because another window removed it. That stays so
    * when another project comes in with the same id: it is not the one this log belongs to.
    */
-  append(update: Uint8Array, name: string): Promise<void>;
+  append(update: Uint8Array, name: string, source?: ChangeSource): Promise<void>;
   /**
    * Replaces all updates with what `merge` makes of them, in one step. Updates that another window
    * writes at the same moment are part of it or stay, so nothing gets lost. `merge` has to be
-   * synchronous, because the step cannot wait.
+   * synchronous, because the step cannot wait. With `through`, only the updates up to that mark go
+   * into it, see `LogEntry.mark`, and the rest stay as they are: what is not on a platform yet. What
+   * it makes is a "merged" change, see `ChangeSource`.
    */
-  compact(merge: (updates: readonly Uint8Array[]) => Uint8Array): Promise<void>;
+  compact(
+    merge: (updates: readonly Uint8Array[]) => Uint8Array,
+    options?: { readonly through?: number },
+  ): Promise<void>;
   /** Updates from other windows on the same project. Returns how to stop listening. */
   listen(listener: (update: Uint8Array) => void): () => void;
   close(): void;

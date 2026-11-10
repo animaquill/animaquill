@@ -434,7 +434,7 @@ function unreadable(path: string, disk: Extract<Disk, { kind: "unreadable" }>): 
   const message =
     disk.code === "not-text"
       ? "这个文件不是 UTF-8 文本，编辑器读不懂，没有并入，也不会写回"
-      : "代码文件不能超过 32 MiB，没有并入，也不会写回";
+      : "代码文件不能超过 8 MiB，没有并入，也不会写回";
   return { severity: "error", code: disk.code, file: path, message };
 }
 

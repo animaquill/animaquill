@@ -10,7 +10,7 @@ import {
   type Project,
 } from "@animaquill/schema";
 import { isSourceFile } from "./import-file.ts";
-import { MAX_SOURCE_BYTES } from "./scene-edits.ts";
+import { MAX_SOURCE_BYTES } from "./source-size.ts";
 
 declare const TextDecoder: new (
   label: "utf-8",

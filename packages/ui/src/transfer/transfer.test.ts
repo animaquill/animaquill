@@ -382,7 +382,14 @@ describe("exporting", () => {
 
   it("does not let a path a zip file cannot have stop the export", async () => {
     const window = await projectWithFiles();
-    window.session.store?.importFile("code/a\\b.js", "export {};", { origin: USER });
+    // Nothing writes such a path any more, but a project from before can have one.
+    const store = window.session.store as ProjectStore;
+    store.importFile("code/ok.js", "export {};", { origin: USER });
+    type Files = { get(key: string): unknown; set(key: string, value: unknown): void };
+    const files = store.doc.getMap("project").get("files") as Files;
+    const Text = (files.get("code/ok.js") as { constructor: new (text: string) => unknown })
+      .constructor;
+    store.doc.transact(() => files.set("code/a\\b.js", new Text("export {};")), "other");
     const save = vi.fn<(file: Blob, name: string) => void>();
     window.next.target = zipTarget("我的项目", save);
     const exporting = window.transfer.exportProject();
@@ -1061,8 +1068,17 @@ describe("scene files", () => {
   it("say so at the export already when they are too large to come back", async () => {
     const window = setup();
     await window.session.create("我的项目");
-    window.session.store?.importFile("code/huge.js", "x".repeat(33 * 1024 ** 2), { origin: USER });
-    window.session.store?.importFile("code/small.js", "x", { origin: USER });
+    const store = window.session.store as ProjectStore;
+    store.importFile("code/small.js", "x", { origin: USER });
+    // Nothing writes a file this large any more, but a project from before can have one.
+    type Files = { get(key: string): unknown; set(key: string, value: unknown): void };
+    const files = store.doc.getMap("project").get("files") as Files;
+    const Text = (files.get("code/small.js") as { constructor: new (text: string) => unknown })
+      .constructor;
+    store.doc.transact(
+      () => files.set("code/huge.js", new Text("x".repeat(33 * 1024 ** 2))),
+      "other",
+    );
     const { target, notice } = await exportTo(window);
 
     expect(notice.title).toBe("导出完成");

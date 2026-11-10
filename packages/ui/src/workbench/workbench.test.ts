@@ -1436,3 +1436,20 @@ describe("leaving the page to sign in", () => {
     expect(workbench.leavingPage).toBe(false);
   });
 });
+
+describe("a platform to keep projects in step with", () => {
+  it("is there only with an account, which is how people get to it", async () => {
+    const { MemoryPlatform, TestCloudBrowser } = await import("../cloud/cloud-support.ts");
+    const cloud = new TestCloudBrowser(new MemoryPlatform(), "ada").access({
+      isAlive: () => true,
+      asleep: false,
+    });
+    const without = setup(noFolders, { cloud });
+    expect(without.workbench.cloud).toBeUndefined();
+    expect(without.workbench.actions.get("cloud.connect")).toBeUndefined();
+    const { account } = fakeAccount();
+    const withAccount = setup(noFolders, { cloud, account });
+    expect(withAccount.workbench.cloud).toBeDefined();
+    expect(withAccount.workbench.actions.get("cloud.connect")).toBeDefined();
+  });
+});

@@ -1,7 +1,21 @@
-import { Circle, CircleAlert, CircleX, Download, Pause, TriangleAlert, X } from "lucide-react";
+import {
+  Circle,
+  CircleAlert,
+  CircleX,
+  Cloud,
+  CloudCheck,
+  CloudOff,
+  CloudSync,
+  Download,
+  Pause,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import type { TFunction } from "i18next";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
+import type { CloudSnapshot } from "../cloud/session.ts";
 import type { FolderTrouble } from "../folder/session.ts";
 import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
 import type { InputChoice } from "../workbench/input-mode.ts";
@@ -365,6 +379,120 @@ function FolderSaveStatus({ open }: { open: OpenFolder }) {
   );
 }
 
+const NO_CLOUD: CloudProjectsSnapshot = { kind: "none" };
+const noCloud = () => NO_CLOUD;
+const NO_SYNC: CloudSnapshot = {
+  state: "starting",
+  problem: undefined,
+  here: false,
+  syncedAt: undefined,
+  pending: 0,
+  retryAt: undefined,
+  seq: 0,
+};
+const noSync = () => NO_SYNC;
+
+/**
+ * Whether the open project is in step with the platform: online, reconnecting or offline, and
+ * nothing at all for a project that is not connected, see the design of syncing, 2. What waits and
+ * when it last was in step shows on hovering; what keeps it from syncing, and the one thing that
+ * helps, right there.
+ */
+function CloudStatus() {
+  const workbench = useWorkbench();
+  const { cloud } = workbench;
+  const { t } = useTranslation();
+  const outer = useSyncExternalStore(
+    cloud?.subscribe ?? noSubscription,
+    cloud?.getSnapshot ?? noCloud,
+  );
+  const session = outer.kind === "linked" ? outer.session : undefined;
+  const snapshot = useSyncExternalStore(
+    session?.subscribe ?? noSubscription,
+    session?.getSnapshot ?? noSync,
+  );
+  if (!cloud || outer.kind === "none") return null;
+  if (outer.kind === "detached") {
+    return (
+      <Tip name={t("cloud.status.detached")} usage={t(`cloud.${outer.reason}Message`)}>
+        <button type="button" className={styles.name} onClick={() => void cloud.resolveDetached()}>
+          <CloudOff size={12} />
+          {t("cloud.status.detached")}
+        </button>
+      </Tip>
+    );
+  }
+  const { state, problem, here, syncedAt, pending, retryAt } = snapshot;
+  const text = t(`cloud.status.${state}`);
+  const about = [
+    syncedAt === undefined
+      ? t("cloud.about.neverSynced")
+      : t("cloud.about.lastSynced", { time: writtenWhen.format(syncedAt) }),
+    pending > 0 ? t("cloud.about.pending", { count: pending }) : t("cloud.about.noPending"),
+    ...(state === "offline" ? [t("cloud.about.offline")] : []),
+    ...(retryAt !== undefined && state === "reconnecting"
+      ? [t("cloud.about.retry", { time: writtenWhen.format(retryAt) })]
+      : []),
+    ...(here ? [] : [t("cloud.about.elsewhere")]),
+    ...(problem
+      ? [
+          problem.kind === "rejected"
+            ? t("cloud.problem.rejected", { reason: t(`cloud.reason.${problem.reason}`) })
+            : t(`cloud.problem.${problem.kind}`),
+        ]
+      : []),
+  ].join(" · ");
+  const fix =
+    problem?.kind === "signed-out"
+      ? { label: t("cloud.fix.signIn"), run: () => void workbench.signIn() }
+      : problem?.kind === "outdated"
+        ? { label: t("cloud.fix.reload"), run: () => location.reload() }
+        : problem && problem.kind !== "unsupported"
+          ? { label: t("cloud.fix.retry"), run: () => session?.resume() }
+          : undefined;
+  // What the platform will not take stays here: the project can go on without the platform.
+  const letGo =
+    problem?.kind === "rejected" || problem?.kind === "diverged" || problem?.kind === "missing"
+      ? { label: t("cloud.fix.disconnect"), run: () => void cloud.resolveStuck() }
+      : undefined;
+  const isTrouble = state === "paused";
+  const Icon =
+    state === "online"
+      ? pending > 0
+        ? CloudSync
+        : CloudCheck
+      : state === "offline" || isTrouble
+        ? CloudOff
+        : state === "reconnecting"
+          ? CloudSync
+          : Cloud;
+  return (
+    <>
+      <Tip name={text} usage={about}>
+        <span
+          className={isTrouble ? styles.failed : undefined}
+          role="status"
+          aria-label={`${t("cloud.statusLabel")}：${text}`}
+          data-cloud={state}
+        >
+          <Icon size={12} />
+          {text}
+        </span>
+      </Tip>
+      {fix && (
+        <button type="button" className={styles.name} onClick={fix.run}>
+          {fix.label}
+        </button>
+      )}
+      {letGo && (
+        <button type="button" className={styles.name} onClick={letGo.run}>
+          {letGo.label}
+        </button>
+      )}
+    </>
+  );
+}
+
 /** The size the project is made at, which is what an export gets. */
 function SizeStatus({ width, height }: { width: number; height: number }) {
   const { t } = useTranslation();
@@ -423,6 +551,7 @@ export function StatusBar() {
           {saveText}
         </span>
       )}
+      {project && <CloudStatus />}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
       {project && <OperationStatus />}

@@ -2,7 +2,7 @@ import { createProject, readProject, type SceneManifest } from "@animaquill/sche
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { orderedTracks } from "./model.ts";
-import { MAX_SOURCE_BYTES } from "./scene-edits.ts";
+import { MAX_SOURCE_BYTES } from "./source-size.ts";
 import { ProjectStore, USER, aiTask, type CommandCall, type CommandResult } from "./store.ts";
 
 const manifest: SceneManifest = { name: "标题", entry: "index.html", runtime: 1 };

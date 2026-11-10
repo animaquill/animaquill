@@ -24,11 +24,9 @@ import { USER } from "./origin.ts";
 import { deepEqual, getIn, settled, type Patch } from "./patch.ts";
 import { isNoneOfIt } from "./read-folder.ts";
 import { danglingAt } from "./references.ts";
-import { MAX_SOURCE_BYTES } from "./scene-edits.ts";
+import { isTooLargeSource } from "./source-size.ts";
 import { assetsNamedIn, codeUsingAsset } from "./scene-plan.ts";
 import { isContainer, isStanding, type Path } from "./structure.ts";
-
-declare const TextEncoder: new () => { encode(text: string): Uint8Array };
 
 /** A file of the project folder that changed, as whoever looks after the folder sees it. */
 export interface FileChange {
@@ -310,12 +308,7 @@ const NO_TIMELINE: TimelineState = {
   overrides: {},
 };
 
-/** Bytes per character at the most, in UTF-8. */
-const MOST_BYTES_PER_CHARACTER = 3;
-
-const isTooLarge = (text: string) =>
-  text.length * MOST_BYTES_PER_CHARACTER > MAX_SOURCE_BYTES &&
-  new TextEncoder().encode(text).length > MAX_SOURCE_BYTES;
+const isTooLarge = isTooLargeSource;
 
 /**
  * Editors on Windows like to put a byte order mark in front of a document, which JSON does not
@@ -336,7 +329,7 @@ interface Reading {
 function readText(state: ProjectState, path: string, place: Place, text: string): Reading {
   if (place.kind === "source") {
     if (!isTooLarge(text)) return { value: text, problems: [] };
-    const message = "代码文件不能超过 32 MiB";
+    const message = "代码文件不能超过 8 MiB";
     return { problems: [{ severity: "error", code: "file-too-large", file: path, message }] };
   }
   const owner = place.at[1] as string;

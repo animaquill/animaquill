@@ -22,7 +22,8 @@
     "format:check": "prettier --check --cache --cache-strategy content .",
     "test": "vitest run",
     "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:platform": "vitest run --config vitest.platform.config.ts",
     "e2e": "pnpm --filter @animaquill/ui --filter @animaquill/scene --filter animaquill --workspace-concurrency=1 e2e",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm test:platform"
   }
 }
