@@ -1,0 +1,28 @@
+{
+  "name": "@animaquill/web",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sites": "./src/sites.ts",
+    "./vite": "./src/vite.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@animaquill/host": "workspace:*",
+    "@animaquill/render": "workspace:*",
+    "@animaquill/scene": "workspace:*",
+    "@animaquill/ui": "workspace:*",
+    "@vitejs/plugin-react": "6.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

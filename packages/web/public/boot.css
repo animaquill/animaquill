@@ -1,0 +1,28 @@
+/* Shown until the editor starts, and stays if it cannot. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #181818;
+}
+
+.boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  color: #9d9d9d;
+  font:
+    13px/1.6 "Segoe UI",
+    "Microsoft YaHei",
+    "PingFang SC",
+    sans-serif;
+  text-align: center;
+}
+
+.boot p {
+  margin: 0;
+}

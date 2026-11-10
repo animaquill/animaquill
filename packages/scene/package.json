@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./vite": "./src/vite.ts",
-    "./page": "./page/scene.html"
+    "./page": "./page/scene.html",
+    "./policy": "./src/policy.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
