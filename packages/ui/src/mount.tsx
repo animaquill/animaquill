@@ -81,6 +81,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     workbench.keyframes.flush();
     // What is in the log is safe, and the folder should have it too, should the page not come back.
     void workbench.projectFolders?.flush();
+    void workbench.chat.flush();
   };
   document.addEventListener("visibilitychange", save);
 

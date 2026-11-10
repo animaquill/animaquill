@@ -43,7 +43,10 @@ export interface ChatSessionOptions {
   readonly fake?: () => FakeEndpoint | undefined;
 }
 
-/** How long changes wait before the conversation is written, so that a stream is a few writes. */
+/**
+ * How long changes wait before the conversation is written while a task runs, so that a stream is a
+ * few writes. Once the task ends it is written right away.
+ */
 const SAVE_DELAY_MS = 500;
 const TITLE_LENGTH = 40;
 
@@ -120,11 +123,18 @@ export class ChatSession {
     });
     const chatId = id ?? newChatId();
     let known = conversation.getSnapshot().entries;
+    let running = conversation.running;
     this.#stopWatching = conversation.subscribe(() => {
       const now = conversation.getSnapshot().entries;
-      if (now === known) return;
-      known = now;
-      this.#saveSoon(chatId, now);
+      if (now !== known) {
+        known = now;
+        this.#saveSoon(chatId, now);
+      }
+      // A task that ended has its last answer on the screen: people may leave right after reading
+      // it, before a write that waits would come.
+      const was = running;
+      running = conversation.running;
+      if (was && !running) void this.flush();
     });
     this.#set({ conversation, id: chatId, hold: undefined });
   }

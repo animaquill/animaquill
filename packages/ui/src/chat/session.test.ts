@@ -117,6 +117,20 @@ describe("the chat", () => {
     expect(chat.getSnapshot().saved).toHaveLength(1);
   });
 
+  it("keeps the last answer as soon as the task ends, for people who leave right after", async () => {
+    // Nothing that waits gets to run: what is kept, is kept when the task ends.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { chat, chats, fake } = setup();
+      fake({ fake: [{ calls: [addMarker("1")] }, { text: "加好了" }] });
+      await chat.send("加一个标记");
+      const kept = await chats.load("p1", chat.getSnapshot().id as string);
+      expect(kept?.entries.at(-1)).toMatchObject({ role: "assistant", text: "加好了" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops a task when the project goes, and does not touch the next one", async () => {
     const { chat, fake, open, markers } = setup();
     const second = ProjectStore.create(createProject({ name: "第二个" }));

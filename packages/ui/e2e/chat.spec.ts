@@ -147,6 +147,9 @@ function expectedInConsole(problems: string[]) {
 }
 
 test("AI changes the timeline, and the whole task goes back in one step", async ({ page }) => {
+  // Setting up a service, a task of three rounds, taking it back and doing it again, and a reload:
+  // on a busy machine that is more than the half a minute a test gets.
+  test.setTimeout(60_000);
   const requests: Request[] = [];
   await page.route(ANTHROPIC, async (route) => {
     const request = route.request();
@@ -182,7 +185,10 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   await setUpService(page);
   await send(page, "加一个蓝色片段");
 
-  await expect(chat(page).getByText("加了一个蓝色片段和一个标记。")).toBeVisible();
+  // Three rounds with the service, the first after its library loads: more than a moment when busy.
+  await expect(chat(page).getByText("加了一个蓝色片段和一个标记。")).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(clips(page)).toHaveCount(1);
   const tools = chat(page).getByTestId("chat-tool");
   await expect(tools).toHaveCount(3);
@@ -211,6 +217,16 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   await tab(page, "chat").click();
   await expect(chat(page).getByText("加了一个蓝色片段和一个标记。")).toBeVisible();
   expect(await page.content()).not.toContain("SECRET");
+});
+
+test("keeps the last answer when the page goes right after it came", async ({ page }) => {
+  await page.route(ANTHROPIC, (route) => answer(route, [{ text: "这是最后一句。" }]));
+  await setUpService(page);
+  await send(page, "说一句话");
+  await expect(chat(page).getByText("这是最后一句。")).toBeVisible();
+  await page.reload();
+  await tab(page, "chat").click();
+  await expect(chat(page).getByText("这是最后一句。")).toBeVisible();
 });
 
 test("stopping ends the task right away, and the chat goes on", async ({ page }) => {

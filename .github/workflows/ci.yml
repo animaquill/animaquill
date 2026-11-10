@@ -35,3 +35,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm e2e
+      # The traces of what failed, which a failure that does not come again needs to be understood.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results
+          path: packages/*/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
