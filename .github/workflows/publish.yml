@@ -1,0 +1,43 @@
+name: Publish
+
+# Publishes the npm package `animaquill` (packages/local, `npx animaquill`) when a version tag such as
+# v0.3.35 is pushed, under that version. It uses npm trusted publishing (OIDC): the package's settings
+# on npmjs.com name this repository and this file, so no npm token is stored anywhere.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@9bbca1e9dc2902adb87e8780fe5c98796985a62d # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Publish
+        working-directory: packages/local
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          case "$version" in
+            '' | *[!0-9.]*) echo "not a version tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
+          esac
+          if [ "$(npm view "animaquill@$version" version 2>/dev/null)" = "$version" ]; then
+            echo "animaquill@$version is on npm already"
+            exit 0
+          fi
+          npm pkg set version="$version"
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          npm publish "$RUNNER_TEMP/animaquill-$version.tgz" --access public

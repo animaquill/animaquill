@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "description": "AnimaQuill 视频编辑器，在自己的电脑上用 Chrome 或 Edge 打开",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/animaquill/animaquill.git",
+    "directory": "packages/local"
+  },
   "type": "module",
   "bin": {
     "animaquill": "dist/cli.js"
