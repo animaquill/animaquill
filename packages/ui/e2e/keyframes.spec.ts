@@ -103,10 +103,18 @@ const keyPlaces = (page: Page) =>
 
 /**
  * All of the timeline in view, so that keys have room to go. What fits is what the tab measured, so
- * that waits for the tab to have its size, and what is read after it for the keys to follow.
+ * that waits for the tab to have its size, and what is read after it for the keys to follow. The tab
+ * measures itself when the page draws, after its box changed: a busy machine draws later, and the
+ * box is read without drawing, so one frame more makes sure the tab has its size too.
  */
 const showAll = async (page: Page) => {
   await settled(() => stage(page).boundingBox());
+  await page.evaluate(
+    () =>
+      new Promise<void>((drawn) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => drawn())),
+      ),
+  );
   await panel(page).getByRole("button", { name: "显示全部" }).click();
   await settled(() => keyPlaces(page));
 };

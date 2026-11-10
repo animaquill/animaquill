@@ -8,7 +8,7 @@ test("mixing a long MP3 piece by piece only looks for the place once", async ({
 }) => {
   test.skip(!devPage, needsDevPage("window.aqAudio"));
   test.setTimeout(240_000);
-  const timings = await page.evaluate(async () => {
+  const pieces = await page.evaluate(async () => {
     // An hour of silent MPEG-1 Layer III frames, 128 kbit/s, 44.1 kHz, stereo, without a Xing frame.
     const FRAME = 417;
     const frames = Math.ceil((3600 * 44_100) / 1152);
@@ -16,7 +16,35 @@ test("mixing a long MP3 piece by piece only looks for the place once", async ({
     for (let index = 0; index < frames; index += 1) {
       bytes.set([0xff, 0xfb, 0x90, 0x00], index * FRAME);
     }
-    const file = new Blob([bytes], { type: "audio/mpeg" });
+    /**
+     * The file, counting what gets read of it. Without an index, finding a place in an MP3 means
+     * reading it from its start up to there, so how much is read says whether it looked again. Time
+     * would say so too, but a busy machine takes as long for ten seconds of sound now and then.
+     */
+    let read = 0;
+    const counted = <T extends Blob>(part: T): T =>
+      Object.assign(part, {
+        stream: () =>
+          Blob.prototype.stream.call(part).pipeThrough(
+            new TransformStream<Uint8Array, Uint8Array>({
+              transform(chunk, controller) {
+                read += chunk.byteLength;
+                controller.enqueue(chunk);
+              },
+            }),
+          ),
+        arrayBuffer: async () => {
+          const data = await Blob.prototype.arrayBuffer.call(part);
+          read += data.byteLength;
+          return data;
+        },
+      });
+    class CountedFile extends Blob {
+      override slice(start?: number, end?: number, type?: string): Blob {
+        return counted(super.slice(start, end, type));
+      }
+    }
+    const file = counted(new CountedFile([bytes], { type: "audio/mpeg" }));
     // The module as the development page has it, to mix without an editor around it.
     const { aqAudio } = window as unknown as {
       aqAudio: () => Promise<typeof import("../../audio/src/index.ts")>;
@@ -24,34 +52,20 @@ test("mixing a long MP3 piece by piece only looks for the place once", async ({
     const audio = await aqAudio();
     const sound = { id: "music", file: "music", start: 0, end: 3600, offset: 0, gain: 1 };
     const mixer = new audio.SoundMixer({ sounds: [sound] }, { fileOf: async () => file });
-    const out: { at: number; ms: number; longestTaskMs: number }[] = [];
+    const out: { at: number; read: number; ms: number }[] = [];
     // One piece after the other, as an export mixes them: only the first finds its place.
     for (const at of [3560, 3570, 3580, 3590]) {
-      let longest = 0;
-      let last = performance.now();
-      const watch = setInterval(() => {
-        const now = performance.now();
-        longest = Math.max(longest, now - last);
-        last = now;
-      }, 0);
+      const before = read;
       const started = performance.now();
       await mixer.mix(at, 480_000);
-      out.push({
-        at,
-        ms: Math.round(performance.now() - started),
-        longestTaskMs: Math.round(longest),
-      });
-      clearInterval(watch);
+      out.push({ at, read: read - before, ms: Math.round(performance.now() - started) });
     }
-    return out;
+    return { size: bytes.length, out };
   });
-  console.log("ten seconds of the mix, by where it starts:", JSON.stringify(timings));
-  const later = timings.slice(1);
-  expect(Math.max(...later.map(({ ms }) => ms))).toBeLessThan((timings[0]?.ms ?? 0) / 2 + 100);
-  // Looking for the place again would take about as long as the first time. Next to other browsers
-  // a piece alone can take a little longer than 100 ms now and then.
-  const first = timings[0]?.longestTaskMs ?? 0;
-  expect(Math.max(...later.map(({ longestTaskMs }) => longestTaskMs))).toBeLessThan(
-    Math.max(100, first / 4),
-  );
+  console.log("ten seconds of the mix, by where it starts:", JSON.stringify(pieces));
+  const [first, ...later] = pieces.out;
+  // Finding the place read the file up to there, nearly all of it.
+  expect(first?.read).toBeGreaterThan(pieces.size / 2);
+  // Each piece after it reads only its own ten seconds, and what comes right after them.
+  for (const { read } of later) expect(read).toBeLessThan(pieces.size / 10);
 });

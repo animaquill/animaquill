@@ -25,6 +25,15 @@ async function box(locator: Locator) {
   return value;
 }
 
+/** Until what is on its way by a transition in it got there, such as names that come out. */
+const transitionsOver = (locator: Locator) =>
+  locator.evaluate(async (element) => {
+    const moving = element
+      .getAnimations({ subtree: true })
+      .filter((animation) => animation instanceof CSSTransition);
+    await Promise.allSettled(moving.map(({ finished }) => finished));
+  });
+
 /** The layout follows the window a moment later, so measuring right away can give the old place. */
 async function settledBox(locator: Locator) {
   let before = "";
@@ -917,6 +926,8 @@ test.describe("tabs down a side", () => {
     const outer = (await box(group(page, "timeline"))).x;
     await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
     await expect.poll(() => widthOf(page, "timeline")).toBeGreaterThan(100);
+    // They grow out with a transition: on a busy machine, past 100 can still be on the way.
+    await transitionsOver(group(page, "timeline"));
     const out = await widthOf(page, "timeline");
     // While the names are out, the edge of the strip under them is not there to catch the mouse.
     await expect(edge(page, "timeline")).toBeHidden();

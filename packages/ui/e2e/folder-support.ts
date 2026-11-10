@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
-import { expect, tab } from "./support.ts";
+import { editorReady, expect, tab } from "./support.ts";
 
 declare global {
   interface Window {
@@ -117,13 +117,15 @@ export const putPrivate = (page: Page, root: string, files: Record<string, strin
 
 /**
  * Drops folders or files of the disk on the page, as people drag them in from their files: where
- * `at` says, or somewhere in the middle.
+ * `at` says, or somewhere in the middle. Not before the editor is there, also right after a reload:
+ * a page without it does not take what is dropped, and the drop is lost without a word.
  */
 export async function drop(
   page: Page,
   paths: string | readonly string[],
   at: { readonly x: number; readonly y: number } = { x: 300, y: 300 },
 ) {
+  await editorReady(page);
   const client = await page.context().newCDPSession(page);
   const files = typeof paths === "string" ? [paths] : [...paths];
   const data = { items: [], files, dragOperationsMask: 1 };

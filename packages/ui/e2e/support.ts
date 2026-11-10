@@ -101,6 +101,15 @@ export async function compositor(page: Page): Promise<Frame> {
   return found as Frame;
 }
 
+/**
+ * Waits until the editor is on the page. `page.goto` and `page.reload` are over at the load event,
+ * and the editor comes after that: it starts once what the browser keeps is read, see
+ * `mountEditor`. Until it shows, nothing of it listens, so what a test drops in goes nowhere, and
+ * the hooks of the development page are not there yet. On a busy machine that takes a while.
+ */
+export const editorReady = (page: Page) =>
+  expect(page.locator("header").first()).toBeVisible({ timeout: 0 });
+
 /** Creates a project the way people do. */
 export async function createProject(page: Page, name = "测试项目") {
   await page.getByRole("button", { name: "新建项目" }).click();
@@ -211,6 +220,7 @@ export const test = base.extend<{
         }, quality);
       }
       await page.goto("/");
+      await editorReady(page);
       if (withProject) await createProject(page);
       await use(problems);
       expect(problems).toEqual([]);

@@ -169,6 +169,44 @@ async function openList(page: Page): Promise<void> {
   await expect(list(page)).toBeVisible();
 }
 
+/**
+ * Keeps the export that runs in this page from getting past a frame, however fast this machine
+ * encodes, as a computer that stopped would: the compositor gets no request for that frame or any
+ * after it. Its window, where it has one, sends from a page of its own. Ends with the page. The
+ * projects here have 30 frames a second.
+ */
+const holdAt = (page: Page, frame: number) =>
+  page.evaluate(
+    (seconds) => {
+      const hold = (realm: typeof globalThis) => {
+        const { prototype } = realm.MessagePort;
+        const send = prototype.postMessage;
+        prototype.postMessage = function (this: MessagePort, message: unknown, ...rest: never[]) {
+          const asked = message as { type?: unknown; seconds?: unknown } | null;
+          const held =
+            asked?.type === "encode-frame" &&
+            typeof asked.seconds === "number" &&
+            asked.seconds >= seconds;
+          if (!held) send.call(this, message, ...rest);
+        };
+      };
+      hold(window);
+      const windows = (
+        window as unknown as {
+          documentPictureInPicture?: { requestWindow(options: unknown): Promise<Window> };
+        }
+      ).documentPictureInPicture;
+      if (!windows) return;
+      const request = windows.requestWindow.bind(windows);
+      windows.requestWindow = async (options) => {
+        const opened = await request(options);
+        hold(opened as unknown as typeof globalThis);
+        return opened;
+      };
+    },
+    frame / 30 - 1e-6,
+  );
+
 /** For people to look at what it looks like: the list does not say whether it looks right. */
 const shot = (page: Page, name: string) =>
   page.screenshot({ path: test.info().outputPath(`${name}.png`) });
@@ -274,11 +312,16 @@ test.describe("the line of exports", () => {
   test("is still there after a reload, and goes on with all of it", async ({ page }) => {
     test.setTimeout(180_000);
     await open(page, projectFolder(20));
+    // Past the place to go on from at frame 300, and not done when the page goes. Going by how far
+    // it says it is, a fast machine got to the end, or the next export, before the page went.
+    await holdAt(page, 400);
     await startExport(page);
     await expect.poll(() => percentOf(page)).toBeGreaterThanOrEqual(0);
     await startExport(page, { 画幅: "竖屏（360×640，30 帧）" });
     await expect(footer(page)).toContainText("后面还有 1 个");
-    await expect.poll(() => percentOf(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(55);
+    // The one in line is kept for after a reload a moment after it shows in line.
+    await expect.poll(() => keptExports(page)).toMatchObject({ exports: 2 });
+    await expect.poll(() => percentOf(page), { timeout: 60_000 }).toBe(66);
     const asked = page.waitForEvent("dialog");
     page.once("dialog", (question) => void question.accept());
     await page.reload();
