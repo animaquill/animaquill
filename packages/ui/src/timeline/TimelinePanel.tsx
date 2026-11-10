@@ -48,6 +48,7 @@ import type { ClipBox, Row, TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
 import { effectName } from "../resources/effects.ts";
 import { EFFECT_NAMES_SEPARATOR, effectBandOf } from "./effect-band.ts";
+import { mediaDrag } from "./media-drag.ts";
 import { EFFECT_DRAG_TYPE, effectDrag } from "./effect-drag.ts";
 import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
@@ -539,6 +540,34 @@ function TrackHeaders({
 }
 
 /** What is on the canvas, for those who cannot see it. */
+/**
+ * Says where what is dragged here from elsewhere would land, as the canvas shows it: the track of
+ * its first clip, or the new one it would make, when it starts, and what it would overwrite.
+ */
+function DropStatus({ editor }: { editor: TimelineEditor }) {
+  const { t } = useTranslation();
+  const trackNameOf = useTrackName();
+  const preview = useEditorView(editor, () => editor.preview);
+  const model = editor.model;
+  const first = preview?.adding?.[0];
+  let text = "";
+  if (model && first) {
+    const row = model.rows.find(({ id }) => id === first.row);
+    const others = model.rows.filter(({ track, gone }) => track.kind === first.kind && !gone);
+    const newTrack = t(`timeline.track.${first.kind}`, { number: others.length + 1 });
+    const track = row ? trackNameOf(row) : t("timeline.dropNewTrack", { track: newTrack });
+    const start = formatTimecode(Math.round(first.start * model.rate.fps), model.rate);
+    const covered = preview?.covered?.length ?? 0;
+    text = t("timeline.dropAt", { track, start });
+    if (covered > 0) text += t("timeline.dropOver", { count: covered });
+  }
+  return (
+    <p className={styles.dropStatus} role="status" data-drop={first ? "" : undefined}>
+      {text}
+    </p>
+  );
+}
+
 function ClipList({ editor }: { editor: TimelineEditor }) {
   const { t } = useTranslation();
   /** What the band of a clip with effects says, as the canvas shows it. */
@@ -565,9 +594,13 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const update = () => setClips(editor.visibleClips(CLIP_LIST_LIMIT));
+    // At most this often: a view that keeps changing, as while something lights up, still shows.
     const later = () => {
-      clearTimeout(timer);
-      timer = setTimeout(update, CLIP_LIST_DELAY_MS);
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        update();
+      }, CLIP_LIST_DELAY_MS);
     };
     update();
     const stop = editor.subscribeView(later);
@@ -601,7 +634,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
             end: timecode(box.end),
           })}
           {...effectsMark(box)}
-          data-flash={editor.flashOf(box.id) > 0 || undefined}
+          data-flash={editor.flashesOn(box.id) || undefined}
           style={{ left, top, width, height }}
         />
       ))}
@@ -649,6 +682,8 @@ function Surface({
           (transition, use, row) =>
             transitionName(t, transition, use, mediaOfTrack(row.track.kind)),
           (types) => types.map((type) => effectName(t, type)).join(EFFECT_NAMES_SEPARATOR),
+          (kind, number) =>
+            t("timeline.dropNewTrack", { track: t(`timeline.track.${kind}`, { number }) }),
           (context, theme, sharp) => {
             painter.paint(context, theme, sharp);
             lanes.paintRanges(context, theme);
@@ -714,7 +749,7 @@ function Surface({
     if (!carriesMedia(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
-    editor.showDrop(pointerOf(event, event.currentTarget));
+    editor.showDrop(pointerOf(event, event.currentTarget), mediaDrag.current());
   };
 
   /** Files from the computer come in first. Several go one after the other. */
@@ -735,9 +770,10 @@ function Surface({
     }
     if (!carriesMedia(event)) return;
     event.preventDefault();
-    const pointer = pointerOf(event, event.currentTarget);
-    const place = { lane: editor.laneAt(pointer.y), seconds: editor.timeAt(pointer.x) };
+    // Where the preview showed it, snapped as it was.
+    const place = editor.dropPlaceAt(pointerOf(event, event.currentTarget));
     editor.showDrop(undefined);
+    mediaDrag.end();
     const dragged = event.dataTransfer.getData(ASSET_DRAG_TYPE);
     if (dragged) {
       editor.addAsset(dragged, place);
@@ -915,6 +951,7 @@ function Surface({
       >
         <canvas ref={canvas} className={styles.canvas} />
         <ClipList editor={editor} />
+        <DropStatus editor={editor} />
         <KeyList area={lanes} />
         {model.boxes.size === 0 && <p className={styles.hint}>{t("timeline.emptyHint")}</p>}
         <div

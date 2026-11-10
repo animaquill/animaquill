@@ -160,7 +160,9 @@ export function DockArea() {
    */
   const pressStrip = (event: PointerEvent) => {
     const target = event.target as Element;
-    if (target.closest('[role="tab"]') && target.closest(HEADER)) strips.rest(groupAt(target));
+    // Not for the close button of a tab: the names would go in, and the button with them.
+    const onTab = target.closest('[role="tab"]') && !target.closest("button");
+    if (onTab && target.closest(HEADER)) strips.rest(groupAt(target));
     if (event.button !== 0 || !target.closest(HEADER)) return;
     if (target.closest('[role="tab"], [role="separator"], button')) return;
     const group = groupAt(target);

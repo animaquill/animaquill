@@ -37,6 +37,8 @@ const EFFECT_BAND_THIN = 4;
 const EFFECT_BAND_MIN_CLIP = 34;
 const EFFECT_BAND_LABEL_MIN = 20;
 const TRANSITION_HANDLE = 8;
+/** How tall a track that a drop would make shows, before it is there: as rows of its kind are. */
+const NEW_TRACK_HEIGHT = { video: 52, audio: 44 } as const;
 /** Over what fades, darker the less of the clip shows, as the line says. */
 const FADE_SHADE = "#00000066";
 const FADE_LINE = "#ffffffd9";
@@ -122,6 +124,8 @@ export class TimelinePainter extends StagePainter {
   readonly #peaksOf: (clip: ClipState) => Uint8Array | undefined;
   readonly #stripOf: (clip: ClipState) => ClipStrip | undefined;
   readonly #hasFailed: (clip: ClipState) => boolean;
+  /** What a track that a drop would make is called, as a new track of its kind. */
+  readonly #newTrackName: (kind: "video" | "audio", number: number) => string;
   /** Draws what is under the clips of a track, over the rest. */
   readonly #below: BelowPainter | undefined;
   /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
@@ -136,6 +140,7 @@ export class TimelinePainter extends StagePainter {
     hasFailed: (clip: ClipState) => boolean,
     transitionLabelOf: TransitionLabel,
     effectNamesOf: (types: readonly string[]) => string,
+    newTrackName: (kind: "video" | "audio", number: number) => string,
     below?: BelowPainter,
   ) {
     super(canvas);
@@ -146,6 +151,7 @@ export class TimelinePainter extends StagePainter {
     this.#peaksOf = peaksOf;
     this.#stripOf = stripOf;
     this.#hasFailed = hasFailed;
+    this.#newTrackName = newTrackName;
     this.#below = below;
   }
 
@@ -249,7 +255,64 @@ export class TimelinePainter extends StagePainter {
       context.fillRect(left, top, editor.xAt(to) - left, row.height - ROW_INSET * 2 - 1);
     }
     context.globalAlpha = 1;
+    this.#paintAdding(model, preview.adding);
     this.#paintTransitionDrop(model, preview.transitionDrop);
+  }
+
+  /**
+   * Where what is dragged here from elsewhere would land: each clip it makes, as long as it is, on
+   * its track, outlined. On a new track it shows where that track would come in, with its name.
+   */
+  #paintAdding(model: TimelineModel, adding: Preview["adding"]): void {
+    if (!adding) return;
+    const editor = this.#editor;
+    const { context } = this;
+    for (const part of adding) {
+      const left = this.sharp(editor.xAt(part.start));
+      const width = Math.max(this.sharp(editor.xAt(part.end)) - left, 2);
+      const row = part.row === undefined ? undefined : model.rows.find(({ id }) => id === part.row);
+      let top: number;
+      let height: number;
+      let label = part.label;
+      if (row) {
+        top = this.#rowTop(row) + ROW_INSET;
+        height = row.height - ROW_INSET * 2 - 1;
+      } else {
+        // A new track of pictures comes in on top of the others, one of sound under all.
+        const first = model.rows.find(({ track }) => track.kind === part.kind);
+        const lane = part.kind === "video" && first ? first.top : model.height;
+        const line = this.sharp(RULER_HEIGHT - editor.scrollY + lane);
+        height = Math.round(NEW_TRACK_HEIGHT[part.kind] * model.rowScale);
+        top = part.kind === "video" && first ? line - height : line;
+        context.fillStyle = this.#theme.selected;
+        context.fillRect(0, line - 1, editor.width, 2);
+        const number = model.rows.filter(({ track, gone }) => track.kind === part.kind && !gone);
+        const name = this.#newTrackName(part.kind, number.length + 1);
+        label = label ? `${name} · ${label}` : name;
+      }
+      context.save();
+      context.globalAlpha = 0.55;
+      context.fillStyle = part.kind === "audio" ? this.#theme.sound : this.#theme.picture;
+      context.beginPath();
+      context.roundRect(left, top, width, height, CLIP_RADIUS);
+      context.fill();
+      context.globalAlpha = 1;
+      context.strokeStyle = this.#theme.selected;
+      context.lineWidth = 2;
+      context.setLineDash([5, 3]);
+      context.beginPath();
+      context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);
+      context.stroke();
+      context.setLineDash([]);
+      if (width >= LABEL_MIN_WIDTH && label) {
+        context.beginPath();
+        context.rect(left, top, width, height);
+        context.clip();
+        context.fillStyle = "#ffffff";
+        context.fillText(label, left + LABEL_PADDING, top + Math.min(height / 2, 12));
+      }
+      context.restore();
+    }
   }
 
   /** Where a transition dragged from its tab would go: what of the clips it would take, lit up. */
@@ -351,9 +414,9 @@ export class TimelinePainter extends StagePainter {
 
   /**
    * The transitions at the edges of a clip: a block at the top with its name, as long as it is.
-   * Under a fade, what does not show is shaded, as far as the line says, which goes the way its
-   * speed curve does, as the fades of most video editors look. One that does not do what it says
-   * is drawn as a warning.
+   * Under it, its speed curve: how far it has got over its time, as the fades of most video editors
+   * look, and what does not show yet is shaded. Every transition draws it, whatever it does with
+   * its progress. One that does not do what it says is drawn as a warning.
    */
   #paintTransitions(
     box: ClipBox,
@@ -385,9 +448,7 @@ export class TimelinePainter extends StagePainter {
         edge === "enter"
           ? [left, Math.min(editor.xAt(look.start + seconds), right)]
           : [Math.max(editor.xAt(look.end - seconds), left), right];
-      if (transition.type === "fade") {
-        this.#paintFade(edge, transition, { from, to, top, bottom: top + height });
-      }
+      this.#paintCurve(edge, transition, { from, to, top, bottom: top + height });
       const works = !box.clip[edge] || (model !== undefined && edgeWorks(model, box, edge));
       const isChosen =
         chosen !== undefined &&
@@ -403,6 +464,8 @@ export class TimelinePainter extends StagePainter {
         chosen: isChosen,
         works,
       });
+      const lit = editor.flashOf("edges", `${box.id}:${edge}`);
+      if (lit > 0) this.#paintLit(lit, from, top, Math.max(to - from, 4), TRANSITION_BAND);
     }
     context.restore();
   }
@@ -433,6 +496,8 @@ export class TimelinePainter extends StagePainter {
         const right = Math.max(editor.xAt(span.end), left + 1);
         const isChosen = isJoinChoice(choice) && choice.join === join.id;
         const isHovered = hovered.kind === "join" && hovered.join.id === join.id;
+        const bottom = top + row.height - ROW_INSET * 2 - 1;
+        this.#paintCurve("join", join.join.transition, { from: left, to: right, top, bottom });
         this.#paintBlock({
           from: left,
           to: right,
@@ -448,6 +513,8 @@ export class TimelinePainter extends StagePainter {
           },
         });
         if (isChosen && !row.track.locked) this.#paintJoinHandles(join, left, right, top);
+        const lit = editor.flashOf("joins", join.id);
+        if (lit > 0) this.#paintLit(lit, left, top, Math.max(right - left, 4), TRANSITION_BAND);
       }
     }
   }
@@ -488,9 +555,13 @@ export class TimelinePainter extends StagePainter {
     }
   }
 
-  /** The line of a fade, from nothing at the edge of the clip to all of it, along its speed curve. */
-  #paintFade(
-    edge: Edge,
+  /**
+   * The speed curve of a transition: its progress over its time, from nothing at the edge of the
+   * clip to all of it, with what does not show yet shaded. A join goes the way the clip it brings
+   * in does.
+   */
+  #paintCurve(
+    edge: Edge | "join",
     transition: Transition,
     { from, to, top, bottom }: { from: number; to: number; top: number; bottom: number },
   ): void {
@@ -500,7 +571,7 @@ export class TimelinePainter extends StagePainter {
     for (let step = 0; step <= CURVE_STEPS; step++) {
       const share = step / CURVE_STEPS;
       const progress = curve ? Math.min(Math.max(bezierProgress(...curve, share), 0), 1) : share;
-      const shown = edge === "enter" ? progress : 1 - progress;
+      const shown = edge === "exit" ? 1 - progress : progress;
       points.push([from + (to - from) * share, bottom - (bottom - top) * shown]);
     }
     context.fillStyle = FADE_SHADE;
@@ -731,23 +802,38 @@ export class TimelinePainter extends StagePainter {
     context.restore();
   }
 
-  /** Lights up a clip that something just happened to, fading away, see `TimelineEditor.flash`. */
+  /** Lights up a clip, or its band of effects, that something just happened to, fading away. */
   #paintFlash(
     box: ClipBox,
     { left, top, height, width }: { left: number; top: number; height: number; width: number },
   ): void {
-    const share = this.#editor.flashOf(box.id);
-    if (share <= 0) return;
+    const editor = this.#editor;
+    const whole = editor.flashOf("clips", box.id);
+    if (whole > 0) this.#paintLit(whole, left, top, width, height);
+    const band = editor.flashOf("bands", box.id);
+    if (band > 0) {
+      const size = height >= EFFECT_BAND_MIN_CLIP ? EFFECT_BAND_HEIGHT : EFFECT_BAND_THIN;
+      this.#paintLit(band, left, top + height - size, width, size);
+    }
+  }
+
+  /**
+   * The one way something that was just added lights up, fading away over `FLASH_MS`: a clip, the
+   * block of a transition or a join, or the band of effects of a clip.
+   */
+  #paintLit(share: number, left: number, top: number, width: number, height: number): void {
     const { context } = this;
     context.save();
-    context.globalAlpha *= share * 0.55;
+    context.globalAlpha *= share * 0.4;
     context.fillStyle = "#ffffff";
     context.beginPath();
     context.roundRect(left, top, width, height, CLIP_RADIUS);
     context.fill();
     context.globalAlpha = Math.min(share * 1.5, 1);
-    context.strokeStyle = this.#theme.effect;
+    context.strokeStyle = this.#theme.flash;
     context.lineWidth = 2;
+    context.beginPath();
+    context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);
     context.stroke();
     context.restore();
   }

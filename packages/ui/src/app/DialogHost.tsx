@@ -182,9 +182,17 @@ function Dialog({ request }: { request: QuestionRequest }) {
           <section key={title} className={styles.list}>
             <h3>{title}</h3>
             <ul>
-              {items.map((item, index) => (
-                <li key={`${index}:${item}`}>{item}</li>
-              ))}
+              {items.map((item, index) =>
+                typeof item === "string" ? (
+                  <li key={`${index}:${item}`}>{item}</li>
+                ) : (
+                  <li key={`${index}:${item.label}`}>
+                    <button type="button" className={styles.link} onClick={item.show}>
+                      {item.label}
+                    </button>
+                  </li>
+                ),
+              )}
             </ul>
           </section>
         ))}

@@ -1,7 +1,7 @@
 import type { IDockviewPanelProps } from "dockview-react";
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../app/context.ts";
+import { PanelShownContext, useWorkbench } from "../app/context.ts";
 import styles from "./PanelHost.module.css";
 import type { PanelParams } from "./toDockview.ts";
 
@@ -37,10 +37,18 @@ class PanelBoundary extends Component<BoundaryProps, { failed: boolean }> {
   }
 }
 
-export function PanelHost({ params }: IDockviewPanelProps<PanelParams>) {
+export function PanelHost({ api, params }: IDockviewPanelProps<PanelParams>) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
   const definition = workbench.panels.get(params.type);
+  // Behind another tab a panel stays, without its element on the page: coming back is opening it.
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const listening = api.onDidVisibilityChange(({ isVisible }) => {
+      if (isVisible) setShown((times) => times + 1);
+    });
+    return () => listening.dispose();
+  }, [api]);
 
   if (!definition) {
     return (
@@ -64,7 +72,9 @@ export function PanelHost({ params }: IDockviewPanelProps<PanelParams>) {
           })
         }
       >
-        <Content />
+        <PanelShownContext.Provider value={shown}>
+          <Content />
+        </PanelShownContext.Provider>
       </PanelBoundary>
     </div>
   );

@@ -247,15 +247,30 @@ test("takes away something in use only after saying where, and with its clips", 
   await item(page, "配音.wav").click({ button: "right" });
   await page.getByRole("menuitem", { name: "删除…" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("还有 1 处在用它，删除会把这些片段一起删掉");
-  await expect(dialog.getByRole("listitem")).toHaveText(["旁白，0:00"]);
+  // It says plainly that the clips go too, and where they are, with Cancel ready for Enter.
+  await expect(dialog.getByRole("heading", { level: 2 })).toHaveText(
+    "删除“配音.wav”和用到它的 1 处？",
+  );
+  await expect(dialog).toContainText("时间轴上有 1 处用到它，删除会把这些片段一起删掉。可以撤销。");
+  await expect(dialog.getByRole("button", { name: "取消" })).toBeFocused();
+  const together = dialog.getByRole("button", { name: "一起删除" });
+  await expect(together).toHaveClass(/danger/);
+  const place = dialog.getByRole("listitem");
+  await expect(place).toHaveText([/^.+ · 音频 1 · 旁白，0:00$/]);
   await dialog.screenshot(shot("explorer-remove.png"));
+  // A click on a place shows it on the timeline, and the dialog stays.
+  await place.getByRole("button").click();
+  await expect(dialog).toBeVisible();
+  await expect(clips(page).and(page.locator('[aria-selected="true"]'))).toHaveAttribute(
+    "aria-label",
+    /^旁白，/,
+  );
   await dialog.getByRole("button", { name: "取消" }).click();
   await expect(item(page, "配音.wav")).toBeVisible();
 
   await item(page, "配音.wav").click({ button: "right" });
   await page.getByRole("menuitem", { name: "删除…" }).click();
-  await dialog.getByRole("button", { name: "删除", exact: true }).click();
+  await dialog.getByRole("button", { name: "一起删除" }).click();
   await expect(item(page, "配音.wav")).toHaveCount(0);
   await tab(page, "timeline").click();
   await expect(clips(page)).toHaveCount(3);

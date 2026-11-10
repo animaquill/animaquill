@@ -82,6 +82,17 @@ export interface Preview {
   readonly transition?: { readonly clip: string; readonly edge: Edge; readonly seconds: number };
   /** Where a join is while an edge of it is dragged, in seconds. */
   readonly join?: { readonly id: string; readonly start: number; readonly end: number };
+  /**
+   * The clips that something dragged here from elsewhere would make, where they would land: on a
+   * track by its id, or on a new track of their kind without one.
+   */
+  readonly adding?: readonly {
+    readonly kind: "video" | "audio";
+    readonly row: string | undefined;
+    readonly start: number;
+    readonly end: number;
+    readonly label: string;
+  }[];
   /** Where a transition dragged from the transitions tab would go, in seconds on a track. */
   readonly transitionDrop?: { readonly row: string; readonly start: number; readonly end: number };
 }

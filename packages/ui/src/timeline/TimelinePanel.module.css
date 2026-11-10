@@ -303,6 +303,17 @@
 }
 
 /* Clips are drawn on a canvas. This is the same list for screen readers, in the same places. */
+/* Heard, not seen: the canvas shows the same. */
+.dropStatus {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+
 .clipList {
   position: absolute;
   inset: 0;

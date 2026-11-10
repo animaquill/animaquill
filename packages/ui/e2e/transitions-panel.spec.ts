@@ -206,6 +206,85 @@ test("go on what is selected with a click: in at the start, out at the end, betw
   await expect(properties(page).getByRole("region", { name: "闪入" })).toBeVisible();
 });
 
+test("keep what was used recently where it is until the tab is opened again", async ({ page }) => {
+  await open(page);
+  const recent = panel(page).getByRole("group", { name: "最近用过" });
+  await page.mouse.click(...xy(await onClip(page, 2, 0.5)));
+  // What was not there comes in at the front.
+  await item(page, "擦入").click();
+  await expect(recent.getByRole("option")).toHaveText(["擦入"]);
+  await panel(page)
+    .getByRole("group", { name: "出转场" })
+    .getByRole("option", { name: "推出" })
+    .click();
+  await expect(recent.getByRole("option")).toHaveText(["推出", "擦入"]);
+  // What is there stays where it is, under the mouse.
+  await recent.getByRole("option", { name: "擦入" }).click();
+  await expect(recent.getByRole("option")).toHaveText(["推出", "擦入"]);
+  await page.waitForTimeout(300);
+  await expect(recent.getByRole("option")).toHaveText(["推出", "擦入"]);
+
+  // Opened again, it goes by what was used last.
+  await tab(page, "effects").click();
+  await expect(content(page, "effects")).toBeVisible();
+  await tab(page, "transitions").click();
+  await expect(recent.getByRole("option")).toHaveText(["擦入", "推出"]);
+  // And after a reload as well.
+  await recent.getByRole("option", { name: "推出" }).click();
+  await expect(recent.getByRole("option")).toHaveText(["擦入", "推出"]);
+  await page.reload();
+  await tab(page, "transitions").click();
+  await expect(recent.getByRole("option")).toHaveText(["推出", "擦入"]);
+});
+
+test("say what a click did, light it up, and shake with the reason when it did nothing", async ({
+  page,
+}) => {
+  await open(page);
+  // Nothing selected: the transition shakes a little and says why.
+  await item(page, "擦入").click();
+  await expect(item(page, "擦入")).toHaveAttribute("data-shake", "");
+  await expect(panel(page).locator("[data-notice]")).toHaveText(
+    "先在时间轴上选中片段，或者把转场拖到片段上",
+  );
+  await expect(panel(page).locator("[data-failed]")).toBeVisible();
+  // Two clips selected: on the start of each, which it says, and they light up.
+  await page.mouse.click(...xy(await onClip(page, 0, 0.5)));
+  await page.keyboard.down("Shift");
+  await page.mouse.click(...xy(await onClip(page, 2, 0.5)));
+  await page.keyboard.up("Shift");
+  await item(page, "擦入").click();
+  await expect(item(page, "擦入")).not.toHaveAttribute("data-shake");
+  await expect(item(page, "擦入")).toContainText("✓ 已加到 2 个片段的开头");
+  await expect(panel(page).locator("[data-notice]")).toHaveText("擦入已加到 2 个片段的开头");
+  await expect(clips(page).nth(0)).toHaveAttribute("data-flash", "true");
+  await expect(clips(page).nth(2)).toHaveAttribute("data-flash", "true");
+  await expect(clips(page).nth(1)).not.toHaveAttribute("data-flash");
+  await panel(page).screenshot(shot("transition-added.png"));
+  await content(page, "timeline").screenshot(shot("transition-added-flash.png"));
+  await item(page, "推出").click();
+  await expect(item(page, "推出")).toContainText("✓ 已加到 2 个片段的结尾");
+
+  // Effects say it the same way. Their tab has the sign of effects, fx, not a sparkle of AI.
+  await expect(tab(page, "effects").locator('svg[data-icon="fx"]')).toBeVisible();
+  await tab(page, "effects").screenshot(shot("effects-tab-icon.png"));
+  await tab(page, "effects").click();
+  const effects = content(page, "effects");
+  const blur = effects.getByRole("option", { name: "模糊", exact: true }).first();
+  await blur.click();
+  await expect(blur).toContainText("✓ 已加到 2 个片段");
+  await expect(clips(page).nth(0)).toHaveAttribute("data-flash", "true");
+  await effects.screenshot(shot("effect-added.png"));
+  // With nothing selected it shakes, and says why.
+  const last = await boxOf(clips(page).nth(2));
+  await page.mouse.click(last.x - last.width / 6, last.y + last.height / 2);
+  await blur.click();
+  await expect(blur).toHaveAttribute("data-shake", "");
+  await expect(effects.locator("[data-notice]")).toHaveText(
+    "先在时间轴上选中片段，或者把效果拖到片段上",
+  );
+});
+
 test("take the place of one, as long as it was, and go with Delete or a button", async ({
   page,
 }) => {
@@ -262,6 +341,75 @@ test("work from the keyboard: arrows move, Enter puts one on", async ({ page }) 
   await page.keyboard.press("Enter");
   await chooseAt(page, await onTop(page, 2, 0.08));
   await expect(properties(page).getByRole("region", { name: "淡入" })).toBeVisible();
+});
+
+/** The color of the timeline at a place on the page, as it is drawn. */
+async function timelineColor(page: Page, x: number, y: number): Promise<readonly number[]> {
+  return page.evaluate(
+    ([left, top]) => {
+      const canvas = document
+        .elementsFromPoint(left, top)
+        .find((element): element is HTMLCanvasElement => element instanceof HTMLCanvasElement);
+      if (!canvas) return [];
+      const box = canvas.getBoundingClientRect();
+      const ratio = canvas.width / box.width;
+      const data = canvas
+        .getContext("2d")
+        ?.getImageData((left - box.left) * ratio, (top - box.top) * ratio, 1, 1).data;
+      return data ? [...data].slice(0, 3) : [];
+    },
+    [x, y] as const,
+  );
+}
+
+test("draw the speed curve of each one on its clip, as fades have, joins as well", async ({
+  page,
+}) => {
+  const gray = { kind: "color", color: "#a0a0a0" };
+  // A curve that hardly moves at first, and then makes up for it.
+  const late = [0.7, 0, 1, 0.5];
+  await importClips(page, 10, [
+    { id: "a", name: "一", start: "0", duration: "3", source: gray },
+    { id: "b", name: "二", start: "3", duration: "3", source: gray },
+    {
+      id: "c",
+      name: "三",
+      start: "7",
+      duration: "3",
+      source: gray,
+      enter: { type: "wipe", duration: "1" },
+      exit: { type: "push", duration: "1", curve: late },
+    },
+  ]);
+  await expect(clips(page)).toHaveCount(3);
+  // A wipe between the first two, a second long.
+  await tab(page, "transitions").click();
+  const cut = await boxOf(clips(page).nth(0));
+  await drag(page, "擦除", { x: cut.x + cut.width - 1, y: cut.y + cut.height / 2 });
+  const duration = properties(page).getByRole("textbox", { name: "时长" });
+  await duration.fill("1");
+  await duration.press("Enter");
+  await expect(duration).toHaveValue("0:01/00");
+  await content(page, "timeline").screenshot(shot("transition-curves.png"));
+  const box = await boxOf(clips(page).nth(2));
+  const second = box.width / 3;
+  /** A place on the timeline by its time, at a share of the height of the clips from the bottom. */
+  const at = (time: number, up: number) =>
+    timelineColor(page, box.x + (time - 7) * second, box.y + box.height * (1 - up));
+  const sum = (color: readonly number[]) => color.reduce((total, value) => total + value, 0);
+  const plain = sum(await at(8.5, 0.4));
+  expect(plain).toBeGreaterThan(400);
+  const shaded = async (time: number, up: number) => sum(await at(time, up)) < plain * 0.8;
+
+  // A wipe in: little of it in early on, which is shaded above the line, most of it late.
+  expect(await shaded(7.1, 0.4)).toBe(true);
+  expect(await shaded(7.9, 0.4)).toBe(false);
+  // A push out along its curve: half way it has hardly started, so most of the clip still shows.
+  expect(await shaded(9.5, 0.6)).toBe(false);
+  expect(await shaded(9.9, 0.6)).toBe(true);
+  // A wipe between two clips goes the way the one it brings in does.
+  expect(await shaded(2.6, 0.4)).toBe(true);
+  expect(await shaded(3.4, 0.4)).toBe(false);
 });
 
 /** The color of the picture at a place, as shares of its width and height. */

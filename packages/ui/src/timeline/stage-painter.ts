@@ -26,6 +26,8 @@ export interface Theme {
   readonly warning: string;
   /** The band of a clip with effects. */
   readonly effect: string;
+  /** The outline of what was just added, for a moment. */
+  readonly flash: string;
 }
 
 export function readTheme(element: Element): Theme {
@@ -57,6 +59,7 @@ export function readTheme(element: Element): Theme {
     handle: color("handle"),
     warning: style.getPropertyValue("--aq-warning").trim(),
     effect: color("effect"),
+    flash: color("flash"),
   };
 }
 

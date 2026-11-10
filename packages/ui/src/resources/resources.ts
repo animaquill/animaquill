@@ -93,6 +93,35 @@ export interface BrowseOptions {
   readonly firstType?: string | undefined;
 }
 
+/** What of some resources shows as used recently, the most recent first. */
+function recentOf<T>(resources: readonly Resource<T>[], recent: readonly string[]) {
+  const byId = new Map(resources.map((resource) => [resource.id, resource]));
+  return recent
+    .flatMap((id) => {
+      const resource = byId.get(id);
+      return resource ? [resource] : [];
+    })
+    .slice(0, RECENT_SHOWN);
+}
+
+/** The ids that a list shows as used recently, in the order it shows them. */
+export const recentShown = <T>(
+  resources: readonly Resource<T>[],
+  { query, recent }: Pick<BrowseOptions, "query" | "recent">,
+): readonly string[] =>
+  recentOf(query.trim() ? browseFound(resources, query.trim()) : resources, recent).map(
+    ({ id }) => id,
+  );
+
+/** What fits what people typed, the best first. */
+function browseFound<T>(resources: readonly Resource<T>[], typed: string): readonly Resource<T>[] {
+  const scored = resources.flatMap((resource) => {
+    const score = scoreOf(resource, typed);
+    return score === undefined ? [] : [{ resource, score }];
+  });
+  return scored.toSorted((a, b) => b.score - a.score).map(({ resource }) => resource);
+}
+
 /**
  * The groups of resources that people see: what was used recently, then by where they are, by
  * their tags (one can be in several) or by their type. A query keeps those that fit, the best ones
@@ -103,21 +132,8 @@ export function browse<T>(
   { query, grouping, recent, types = [], firstType }: BrowseOptions,
 ): readonly ResourceGroup<T>[] {
   const typed = query.trim();
-  let found: readonly Resource<T>[] = resources;
-  if (typed) {
-    const scored = resources.flatMap((resource) => {
-      const score = scoreOf(resource, typed);
-      return score === undefined ? [] : [{ resource, score }];
-    });
-    found = scored.toSorted((a, b) => b.score - a.score).map(({ resource }) => resource);
-  }
-  const byId = new Map(found.map((resource) => [resource.id, resource]));
-  const recentItems = recent
-    .flatMap((id) => {
-      const resource = byId.get(id);
-      return resource ? [resource] : [];
-    })
-    .slice(0, RECENT_SHOWN);
+  const found = typed ? browseFound(resources, typed) : resources;
+  const recentItems = recentOf(found, recent);
   const groups: ResourceGroup<T>[] = [];
   if (recentItems.length > 0) {
     groups.push({ id: "recent", key: { kind: "recent" }, items: recentItems });
@@ -166,4 +182,35 @@ export function browse<T>(
 /** Recent use, the most recent first: what was used goes to the front, and the oldest go. */
 export function usedNow(recent: readonly string[], id: string, limit: number): readonly string[] {
   return [id, ...recent.filter((known) => known !== id)].slice(0, limit);
+}
+
+/**
+ * Recent use in the order an open list keeps, so that what people click does not move under the
+ * mouse: what was used since `before` and is not among what the list shows (`showing`) comes first,
+ * the most recent first; the rest stays in the order the list had (`order`), and what it did not
+ * have goes after that. The list takes the order of `after` as it is when it is opened again.
+ */
+export function steadyRecent(
+  order: readonly string[],
+  before: readonly string[],
+  after: readonly string[],
+  showing: ReadonlySet<string>,
+): readonly string[] {
+  const was = new Map(before.map((id, index) => [id, index]));
+  // Used since: new, or now in front of something that was in front of it. What was dropped
+  // leaves the rest in the order they were.
+  const used = new Set<string>();
+  let behind = Number.POSITIVE_INFINITY;
+  for (let index = after.length - 1; index >= 0; index--) {
+    const id = after[index] as string;
+    const place = was.get(id);
+    if (place === undefined || place > behind) used.add(id);
+    if (place !== undefined) behind = Math.min(behind, place);
+  }
+  const fresh = after.filter((id) => used.has(id) && !showing.has(id));
+  const placed = new Set(fresh);
+  const kept = new Set(after);
+  const rest = order.filter((id) => kept.has(id) && !placed.has(id));
+  for (const id of rest) placed.add(id);
+  return [...fresh, ...rest, ...after.filter((id) => !placed.has(id))];
 }

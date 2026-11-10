@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { describe, expect, it } from "vitest";
 import zhCN from "../i18n/zh-CN.json";
 import { ResourceHabits } from "./habits.ts";
-import { browse, type Resource } from "./resources.ts";
+import { browse, steadyRecent, usedNow, type Resource } from "./resources.ts";
 import { loopShare } from "./transition-preview.ts";
 import { builtInTransitions } from "./transitions.ts";
 
@@ -72,6 +72,54 @@ describe("browsing resources", () => {
     const byTag = browse(list, { query: "运动", grouping: "type", recent: [], types });
     expect(shape(byTag)).toEqual([["type:transition.enter", ["推入"]]]);
     expect(browse(list, { query: "没有", grouping: "type", recent: [], types })).toEqual([]);
+  });
+});
+
+describe("what was used recently, in a list that is open", () => {
+  /** Uses some ids one after the other, as people do, and gives the order the list keeps. */
+  const use = (order: readonly string[], ids: readonly string[], shows = 3) => {
+    let saved = order;
+    let kept = order;
+    for (const id of ids) {
+      const next = usedNow(saved, id, 40);
+      kept = steadyRecent(kept, saved, next, new Set(kept.slice(0, shows)));
+      saved = next;
+    }
+    return { kept, saved };
+  };
+
+  it("leaves what shows where it is when it is used again", () => {
+    const { kept, saved } = use(["a", "b", "c", "d"], ["c", "b", "a"]);
+    expect(kept).toEqual(["a", "b", "c", "d"]);
+    expect(saved).toEqual(["a", "b", "c", "d"]);
+    expect(use(["a", "b", "c", "d"], ["c"]).kept).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("puts what was not there in front, the most recent first", () => {
+    expect(use(["a", "b", "c"], ["x"]).kept).toEqual(["x", "a", "b", "c"]);
+    expect(use(["a", "b", "c"], ["x", "y"]).kept).toEqual(["y", "x", "a", "b", "c"]);
+    // Used before, but too long ago to show: it comes to the front as well.
+    expect(use(["a", "b", "c", "d", "e"], ["e"]).kept).toEqual(["e", "a", "b", "c", "d"]);
+    // In front now, it shows, and stays there.
+    expect(use(["a", "b", "c"], ["x", "b", "x"]).kept).toEqual(["x", "a", "b", "c"]);
+  });
+
+  it("takes several uses at once, and what another window drops or adds", () => {
+    const before = ["a", "b", "c", "d"];
+    // Two uses seen together: d of what did not show, b of what did.
+    expect(steadyRecent(before, before, ["b", "d", "a", "c"], new Set(["a", "b", "c"]))).toEqual([
+      "d",
+      "a",
+      "b",
+      "c",
+    ]);
+    // Gone from what was saved, gone from the list; what another window used comes in front.
+    expect(steadyRecent(before, before, ["a", "c", "d", "z"], new Set(["a", "b"]))).toEqual([
+      "z",
+      "a",
+      "c",
+      "d",
+    ]);
   });
 });
 

@@ -11,6 +11,7 @@ import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
 import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
+import { OperationStatus } from "./OperationStatus.tsx";
 import styles from "./StatusBar.module.css";
 import { Tip } from "./Tip.tsx";
 
@@ -424,6 +425,7 @@ export function StatusBar() {
       )}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
+      {project && <OperationStatus />}
       {project && <ProxyStatus />}
       <VideoExportStatus />
       <RecordingStatus />

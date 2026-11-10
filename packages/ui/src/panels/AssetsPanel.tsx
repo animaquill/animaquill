@@ -13,6 +13,9 @@ import {
 } from "../resources/project-resources.ts";
 import { resourceTypeName } from "../resources/type-names.ts";
 import type { Resource } from "../resources/resources.ts";
+import { useNotice } from "../resources/notice.ts";
+import { formatTimecode, type FrameRate } from "../timeline/frames.ts";
+import { mediaDrag } from "../timeline/media-drag.ts";
 import styles from "./AssetsPanel.module.css";
 
 /** What a drag from this list carries. */
@@ -26,6 +29,13 @@ const DRAG_TYPES: Readonly<Record<ProjectItem["kind"], string>> = {
   sound: SOUND_DRAG_TYPE,
 };
 
+/** A moment as people read it, without the frame when it is on a whole second: 0:12. */
+function shortTimecode(frame: number, rate: FrameRate | undefined): string {
+  if (!rate) return "";
+  const full = formatTimecode(frame, rate);
+  return frame % rate.nominal === 0 ? full.replace(/\/\d+$/, "") : full;
+}
+
 /** Whether a resource of the project can go onto the timeline: fonts are used by captions and scenes. */
 export const canDragProjectItem = (item: ProjectItem): boolean =>
   !(item.kind === "asset" && item.asset.kind === "font");
@@ -34,6 +44,7 @@ export const canDragProjectItem = (item: ProjectItem): boolean =>
 export function startProjectItemDrag(item: ProjectItem, event: DragEvent<HTMLElement>): void {
   event.dataTransfer.setData(DRAG_TYPES[item.kind], item.id);
   event.dataTransfer.effectAllowed = "copy";
+  mediaDrag.start({ kind: item.kind, id: item.id });
 }
 
 const noSubscription = () => () => {};
@@ -64,6 +75,7 @@ export function AssetsPanel() {
   );
   const [reading] = progress.reading;
   const [over, setOver] = useState(false);
+  const [notice, say] = useNotice();
 
   const resources = useMemo(
     () =>
@@ -78,12 +90,22 @@ export function AssetsPanel() {
   const unavailable = ({ data }: Resource<ProjectItem>) =>
     canDragProjectItem(data) ? undefined : { reason: t("assetPanel.why.font"), draggable: false };
 
+  /** A click puts it at the playhead, and says where it went, or why it did not. */
   const addToTimeline = (resource: Resource<ProjectItem>) => {
     const { data } = resource;
-    if (data.kind === "asset") timeline.addAsset(data.id);
-    else if (data.kind === "scene") timeline.addScene(data.id);
-    else timeline.addSound(data.id);
+    const added = timeline.addMedia({ kind: data.kind, id: data.id });
+    if (!added) {
+      say(resource.id, t("assetPanel.failed"), undefined, true);
+      return;
+    }
     habits.used(resource.id);
+    const where = t("assetPanel.added", {
+      tracks: added.tracks
+        .map(({ kind, number, name }) => name ?? t(`timeline.track.${kind}`, { number }))
+        .join("、"),
+      start: shortTimecode(added.frame, timeline.model?.rate),
+    });
+    say(resource.id, `${resource.name}${where}`, `✓ ${where}`);
   };
 
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
@@ -155,6 +177,7 @@ export function AssetsPanel() {
           unavailable={unavailable}
           Icon={ProjectIcon}
           onActivate={addToTimeline}
+          notice={notice}
           onDragStart={(resource, event) => startProjectItemDrag(resource.data, event)}
           onDragEnd={(resource, dropped) => {
             if (dropped) habits.used(resource.id);

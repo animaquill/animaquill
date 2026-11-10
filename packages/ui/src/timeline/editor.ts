@@ -72,11 +72,14 @@ import {
   type ClipCopy,
   type Gesture,
   type GestureHost,
+  type CoveredSpan,
   type Placed,
   type Pointer,
   type Preview,
 } from "./gestures.ts";
+import { snapPointsOf } from "./snap.ts";
 import {
+  EDGES,
   NO_ROOM_BELOW,
   buildModel,
   canHaveTransitions,
@@ -156,8 +159,85 @@ export type Tool = "select" | "razor";
 
 /** Where something dragged here goes. */
 export interface DropPlace {
-  readonly lane: number;
+  /** Distance from the top of the first row, or nothing for the first track of the kind. */
+  readonly lane?: number;
   readonly seconds: number;
+  /** How close in seconds it snaps to the edges of clips, the playhead and the ends. */
+  readonly snap?: number;
+}
+
+/** Something of the project that people put on the timeline, by what it is. */
+export interface MediaPick {
+  readonly kind: "asset" | "scene" | "sound";
+  readonly id: string;
+}
+
+/** Where something went on the timeline, for saying so. */
+export interface MediaAdded {
+  readonly clips: readonly string[];
+  /** The tracks it went on, in the order of its clips, a new one with the number it got. */
+  readonly tracks: readonly {
+    readonly kind: "video" | "audio";
+    readonly number: number;
+    readonly name?: string;
+  }[];
+  /** In seconds, and as the frame it starts on. */
+  readonly start: number;
+  readonly frame: number;
+}
+
+interface MediaPart {
+  readonly kind: "video" | "audio";
+  readonly source: Readonly<Record<string, unknown>> & { readonly kind: string };
+}
+
+/** What putting something on the timeline makes, before where. */
+interface MediaWhat {
+  readonly parts: readonly MediaPart[];
+  readonly duration: Rational;
+  readonly name?: string;
+  readonly properties?: Readonly<Record<string, number>>;
+  /** Commands that go first in the same step, such as adding the scene it shows. */
+  readonly before: readonly CommandCall[];
+}
+
+type MediaWhere = DropPlace | "free" | "playhead";
+
+/** Where it would land, see `TimelineEditor.#planMedia`. */
+interface MediaPlan {
+  readonly parts: readonly (MediaPart & { readonly row: Row | undefined })[];
+  readonly at: Rational;
+  readonly duration: Rational;
+  readonly overwriting: boolean;
+  /** Where it snapped, or touches what it went after. */
+  readonly line?: number;
+}
+
+/** What a click on a transition did: how many edges of clips and joins got it. */
+export interface TransitionsAttached {
+  readonly edges: number;
+  readonly joins: number;
+  /** It took the place of the one that was selected. */
+  readonly replaced: boolean;
+}
+
+/** What lights up for a moment after it was added, see `TimelineEditor.flash`. */
+export interface FlashTargets {
+  /** Whole clips. */
+  readonly clips?: ReadonlySet<string>;
+  /** The transitions at edges of clips, as `${clip}:${edge}`. */
+  readonly edges?: ReadonlySet<string>;
+  readonly joins?: ReadonlySet<string>;
+  /** The bands of effects of clips. */
+  readonly bands?: ReadonlySet<string>;
+}
+
+const nameOf = ({ track }: Row) => (track.name === undefined ? {} : { name: track.name });
+
+/** The track that a new one of a kind gets: numbered after those there are. */
+function newTrackOf(model: TimelineModel, kind: "video" | "audio") {
+  const known = model.rows.filter(({ track, gone }) => track.kind === kind && !gone);
+  return { kind, number: known.length + 1 };
 }
 
 export type Hit =
@@ -353,7 +433,7 @@ export class TimelineEditor implements TouchTarget {
   readonly #chosen = new Emitter();
   readonly #addedEmitter = new Emitter();
   #added: AddedEffects | undefined;
-  #flash: { readonly clips: ReadonlySet<string>; readonly share: number } | undefined;
+  #flash: { readonly targets: FlashTargets; readonly share: number } | undefined;
   #flashTimer: ReturnType<typeof setTimeout> | undefined;
   #snapshot: TimelineSnapshot = {
     model: undefined,
@@ -1273,114 +1353,123 @@ export class TimelineEditor implements TouchTarget {
    * Puts a file on the timeline: a video with sound as two linked clips, in one step, which end up
    * selected. Dropped at a place, what is there stays and the clips go after it, unless people
    * overwrite, on the track there or else on one that can take them. Without a place, as with a
-   * click in the assets tab, they go right at the playhead, see `#freeRow`.
+   * click in the assets tab, they go right at the playhead, see `#freeRow`. Says where they went,
+   * or nothing when they did not.
    */
-  addAsset(assetId: string, place?: DropPlace): void {
+  addAsset(assetId: string, place?: DropPlace): MediaAdded | undefined {
+    return this.addMedia({ kind: "asset", id: assetId }, place);
+  }
+
+  /** Puts a scene on the timeline, at a place or else at the playhead, as `addAsset` does. */
+  addScene(scene: string, place?: DropPlace): MediaAdded | undefined {
+    return this.addMedia({ kind: "scene", id: scene }, place);
+  }
+
+  /** Puts a sound on the timeline, at a place or else at the playhead, as `addAsset` does. */
+  addSound(sound: string, place?: DropPlace): MediaAdded | undefined {
+    return this.addMedia({ kind: "sound", id: sound }, place);
+  }
+
+  /** Puts something of the project on the timeline, at a place or else at the playhead. */
+  addMedia(pick: MediaPick, place?: DropPlace): MediaAdded | undefined {
     const { model } = this;
-    const asset = this.#store?.getState().assets?.[assetId];
-    if (!model || !asset) return;
-    const { rate } = model;
-    const seconds = place?.seconds ?? frameSeconds(this.#frame, rate);
-    const start = frameTime(frameAt(Math.max(seconds, 0), rate), rate);
+    const what = model && this.#mediaOf(model, pick, []);
+    if (!model || !what) return undefined;
+    return this.#putMedia(model, what, place ?? "free");
+  }
+
+  /** A new scene from the template, on the timeline right away, to see it move and to change it. */
+  createScene(place?: DropPlace): MediaAdded | undefined {
+    const { model } = this;
+    const state = this.#store?.getState();
+    if (!model || !state) return undefined;
+    const number = Object.keys(state.scenes).length + 1;
+    const name = this.#messages.sceneName?.(number) ?? `Scene ${number}`;
+    const scene = newId("scene");
+    const before = [{ type: "scene.add", params: { id: scene, ...sceneTemplate(name) } }];
+    const what = this.#codeMedia(model, { kind: "scene", scene }, name, before);
+    return this.#putMedia(model, what, place ?? "playhead");
+  }
+
+  /** A new sound from the template, on the timeline right away, to hear it and to change it. */
+  createSound(place?: DropPlace): MediaAdded | undefined {
+    const { model } = this;
+    const state = this.#store?.getState();
+    if (!model || !state) return undefined;
+    const number = Object.keys(state.sounds).length + 1;
+    const name = this.#messages.soundName?.(number) ?? `Sound ${number}`;
+    const words = this.#messages.soundWords?.() ?? { duration: "Length", seed: "Seed" };
+    const sound = newId("sound");
+    const before = [{ type: "sound.add", params: { id: sound, ...soundTemplate(name, words) } }];
+    const what = this.#codeMedia(model, { kind: "sound", sound }, name, before);
+    return this.#putMedia(model, what, place ?? "playhead");
+  }
+
+  /**
+   * Where a drop at a pointer goes: the place under it, and how close it snaps, which the preview
+   * and the drop both go by, so that it lands where it showed.
+   */
+  dropPlaceAt(pointer: Pointer): DropPlace {
+    return {
+      lane: this.laneAt(pointer.y),
+      seconds: this.timeAt(pointer.x),
+      snap: this.#snapReach(pointer),
+    };
+  }
+
+  #snapReach(pointer: Pointer): number {
+    return this.#snapshot.snapping && !pointer.alt && this.#pixelsPerSecond > 0
+      ? SNAP_REACH / this.#pixelsPerSecond
+      : 0;
+  }
+
+  /** What putting something on the timeline makes: its clips, how long, and what comes first. */
+  #mediaOf(model: TimelineModel, pick: MediaPick, before: readonly CommandCall[]) {
+    const state = this.#store?.getState();
+    if (!state) return undefined;
+    if (pick.kind === "scene") {
+      const known = state.scenes[pick.id];
+      return known && this.#codeMedia(model, { kind: "scene", scene: pick.id }, known.name, before);
+    }
+    if (pick.kind === "sound") {
+      const known = state.sounds[pick.id];
+      return known && this.#codeMedia(model, { kind: "sound", sound: pick.id }, known.name, before);
+    }
+    const asset = state.assets?.[pick.id];
+    if (!asset) return undefined;
     const known = asset.info?.duration;
-    const frames = known ? Math.floor(toSeconds(parseTime(known)) * rate.fps) : 0;
-    const duration = frames > 0 ? frameTime(frames, rate) : this.#newClipDuration(model);
-    const media = { asset: assetId };
-    const parts = [
+    const frames = known ? Math.floor(toSeconds(parseTime(known)) * model.rate.fps) : 0;
+    const duration = frames > 0 ? frameTime(frames, model.rate) : this.#newClipDuration(model);
+    const media = { asset: pick.id };
+    const parts: MediaPart[] = [
       ...(asset.kind === "audio"
         ? []
         : [{ kind: "video" as const, source: { kind: asset.kind, media } }]),
       ...(asset.kind === "audio" || asset.info?.hasAudio
         ? [{ kind: "audio" as const, source: { kind: "audio", media } }]
         : []),
-    ].map((part) => ({
-      ...part,
-      row: place
-        ? this.#rowForNew(model, part.kind, place.lane)
-        : this.#freeRow(model, part.kind, start, add(start, duration)),
-    }));
-
-    const placed = parts.flatMap(({ row }): Placed[] => {
-      if (!row) return [];
-      const end = add(start, duration);
-      return [
-        {
-          row,
-          start: toSeconds(start),
-          end: toSeconds(end),
-          exactStart: () => start,
-          exactEnd: () => end,
-        },
-      ];
-    });
-    // Without a place the rows are free where it goes, and nothing gets overwritten.
-    const overwriting = place !== undefined && this.#snapshot.overwriting;
-    const shift = overwriting || !place ? undefined : freeShift(placed, new Set(), 1);
-    const at = shift ? add(start, shift.exact()) : start;
-    const link = parts.length > 1 ? { link: newId("link") } : {};
-    const trackCalls: CommandCall[] = [];
-    const ids: string[] = [];
-    const calls = parts.map(({ kind, source, row }) => {
-      let track = row?.id;
-      if (!track) {
-        track = newId("track");
-        trackCalls.push({ type: "track.add", params: { timeline: model.id, id: track, kind } });
-      }
-      const id = newId("clip");
-      ids.push(id);
-      return {
-        type: "clip.add",
-        params: {
-          timeline: model.id,
-          track,
-          clip: {
-            id,
-            ...(asset.name === undefined ? {} : { name: asset.name }),
-            start: formatTime(at),
-            duration: formatTime(duration),
-            source,
-            ...link,
-          },
-          ...(overwriting ? { overlap: "overwrite" } : {}),
-        },
-      };
-    });
-    if (this.#run([...trackCalls, ...calls])) this.#select(new Set(ids));
+    ];
+    return { parts, duration, before, ...(asset.name === undefined ? {} : { name: asset.name }) };
   }
 
-  /** Puts a scene on the timeline, at a place or else at the playhead, as `addAsset` does. */
-  addScene(scene: string, place?: DropPlace): void {
-    const known = this.#store?.getState().scenes[scene];
-    if (known) this.#placeCode({ kind: "scene", scene }, known.name, place ?? "free", []);
-  }
-
-  /** A new scene from the template, on the timeline right away, to see it move and to change it. */
-  createScene(place?: DropPlace): void {
-    const state = this.#store?.getState();
-    if (!state) return;
-    const number = Object.keys(state.scenes).length + 1;
-    const name = this.#messages.sceneName?.(number) ?? `Scene ${number}`;
-    const scene = newId("scene");
-    const params = { id: scene, ...sceneTemplate(name) };
-    this.#placeCode({ kind: "scene", scene }, name, place, [{ type: "scene.add", params }]);
-  }
-
-  /** Puts a sound on the timeline, at a place or else at the playhead, as `addAsset` does. */
-  addSound(sound: string, place?: DropPlace): void {
-    const known = this.#store?.getState().sounds[sound];
-    if (known) this.#placeCode({ kind: "sound", sound }, known.name, place ?? "free", []);
-  }
-
-  /** A new sound from the template, on the timeline right away, to hear it and to change it. */
-  createSound(place?: DropPlace): void {
-    const state = this.#store?.getState();
-    if (!state) return;
-    const number = Object.keys(state.sounds).length + 1;
-    const name = this.#messages.soundName?.(number) ?? `Sound ${number}`;
-    const words = this.#messages.soundWords?.() ?? { duration: "Length", seed: "Seed" };
-    const sound = newId("sound");
-    const params = { id: sound, ...soundTemplate(name, words) };
-    this.#placeCode({ kind: "sound", sound }, name, place, [{ type: "sound.add", params }]);
+  #codeMedia(
+    model: TimelineModel,
+    source:
+      | { readonly kind: "scene"; readonly scene: string }
+      | { readonly kind: "sound"; readonly sound: string },
+    name: string,
+    before: readonly CommandCall[],
+  ): MediaWhat {
+    const sound =
+      source.kind === "sound" ? this.#soundClip(model, source.sound, before) : undefined;
+    const kind = source.kind === "sound" ? ("audio" as const) : ("video" as const);
+    return {
+      parts: [{ kind, source }],
+      duration: sound?.duration ?? this.#newClipDuration(model),
+      name,
+      before,
+      ...(sound?.properties && { properties: sound.properties }),
+    };
   }
 
   /**
@@ -1406,69 +1495,174 @@ export class TimelineEditor implements TouchTarget {
   }
 
   /**
-   * Along with `before`, it is one step. At a place or at the playhead, what is there stays and it
-   * goes after that, unless people overwrite. "free" is right at the playhead, see `#freeRow`.
+   * Where something would land. At a place: on the track there or else the first one of its kind
+   * that can take it, snapped to what is near, and after what is there unless people overwrite.
+   * "free" is right at the playhead, see `#freeRow`, and "playhead" there on the first track.
+   * Without a track that can take a part, it goes on a new one.
    */
-  #placeCode(
-    source:
-      | { readonly kind: "scene"; readonly scene: string }
-      | { readonly kind: "sound"; readonly sound: string },
-    name: string,
-    place: DropPlace | "free" | undefined,
-    before: readonly CommandCall[],
-  ): void {
-    const { model } = this;
-    if (!model) return;
+  #planMedia(model: TimelineModel, what: MediaWhat, where: MediaWhere): MediaPlan {
     const { rate } = model;
-    const free = place === "free";
-    const dropped = free ? undefined : place;
-    const seconds = dropped?.seconds ?? frameSeconds(this.#frame, rate);
-    const start = frameTime(frameAt(Math.max(seconds, 0), rate), rate);
-    const sound =
-      source.kind === "sound" ? this.#soundClip(model, source.sound, before) : undefined;
-    const duration = sound?.duration ?? this.#newClipDuration(model);
-    const kind = source.kind === "sound" ? "audio" : "video";
-    const end = add(start, duration);
-    const row = free
-      ? this.#freeRow(model, kind, start, end)
-      : this.#rowForNew(model, kind, dropped?.lane);
-    const placed: Placed[] = row
-      ? [
-          {
-            row,
-            start: toSeconds(start),
-            end: toSeconds(end),
-            exactStart: () => start,
-            exactEnd: () => end,
-          },
-        ]
-      : [];
+    const dropped = typeof where === "object" ? where : undefined;
+    const free = where === "free";
+    const seconds = Math.max(dropped?.seconds ?? frameSeconds(this.#frame, rate), 0);
+    let start = frameTime(frameAt(seconds, rate), rate);
+    let line: number | undefined;
+    const within = dropped?.snap ?? 0;
+    if (within > 0) {
+      const points = snapPointsOf(model, this.#frame, new Set());
+      const length = toSeconds(what.duration);
+      const byStart = points.nearest(seconds, within);
+      const byEnd = points.nearest(seconds + length, within);
+      const startGap = byStart ? Math.abs(byStart.seconds - seconds) : Number.POSITIVE_INFINITY;
+      const endGap = byEnd ? Math.abs(byEnd.seconds - seconds - length) : Number.POSITIVE_INFINITY;
+      if (byEnd && endGap < startGap && compare(byEnd.exact(), what.duration) >= 0) {
+        start = subtract(byEnd.exact(), what.duration);
+        line = byEnd.seconds;
+      } else if (byStart) {
+        start = byStart.exact();
+        line = byStart.seconds;
+      }
+    }
+    const end = add(start, what.duration);
+    const parts = what.parts.map((part) => ({
+      ...part,
+      row: free
+        ? this.#freeRow(model, part.kind, start, end)
+        : this.#rowForNew(model, part.kind, dropped?.lane),
+    }));
+    const placed = parts.flatMap(({ row }): Placed[] =>
+      row
+        ? [
+            {
+              row,
+              start: toSeconds(start),
+              end: toSeconds(end),
+              exactStart: () => start,
+              exactEnd: () => end,
+            },
+          ]
+        : [],
+    );
+    // Right at the playhead the rows are free where it goes, and nothing gets overwritten.
     const overwriting = !free && this.#snapshot.overwriting;
     const shift = overwriting || free ? undefined : freeShift(placed, new Set(), 1);
     const at = shift ? add(start, shift.exact()) : start;
-    const track = row?.id ?? newId("track");
-    const id = newId("clip");
-    const calls: CommandCall[] = [
-      ...before,
-      ...(row ? [] : [{ type: "track.add", params: { timeline: model.id, id: track, kind } }]),
-      {
+    if (shift && shift.seconds > 0) line = shift.contact;
+    return {
+      parts,
+      at,
+      duration: what.duration,
+      overwriting,
+      ...(line === undefined ? {} : { line }),
+    };
+  }
+
+  /** Puts it where `#planMedia` says, in one step, selects what it made and says where it went. */
+  #putMedia(model: TimelineModel, what: MediaWhat, where: MediaWhere): MediaAdded | undefined {
+    const plan = this.#planMedia(model, what, where);
+    const link = plan.parts.length > 1 ? { link: newId("link") } : {};
+    const trackCalls: CommandCall[] = [];
+    const ids: string[] = [];
+    const tracks: MediaAdded["tracks"][number][] = [];
+    const calls = plan.parts.map(({ kind, source, row }): CommandCall => {
+      let track = row?.id;
+      if (!track) {
+        track = newId("track");
+        trackCalls.push({ type: "track.add", params: { timeline: model.id, id: track, kind } });
+      }
+      tracks.push(row ? { kind, number: row.number, ...nameOf(row) } : newTrackOf(model, kind));
+      const id = newId("clip");
+      ids.push(id);
+      return {
         type: "clip.add",
         params: {
           timeline: model.id,
           track,
           clip: {
             id,
-            name,
-            start: formatTime(at),
-            duration: formatTime(duration),
+            ...(what.name === undefined ? {} : { name: what.name }),
+            start: formatTime(plan.at),
+            duration: formatTime(plan.duration),
             source,
-            ...(sound?.properties && { properties: sound.properties }),
+            ...(what.properties && { properties: what.properties }),
+            ...link,
           },
-          ...(overwriting ? { overlap: "overwrite" } : {}),
+          ...(plan.overwriting ? { overlap: "overwrite" } : {}),
         },
-      },
-    ];
-    if (this.#run(calls)) this.#select(new Set([id]));
+      };
+    });
+    if (!this.#run([...what.before, ...trackCalls, ...calls])) return undefined;
+    this.#select(new Set(ids));
+    const from = toSeconds(plan.at);
+    const to = toSeconds(add(plan.at, plan.duration));
+    this.#bringIntoView(from, to, ids);
+    this.flash({ clips: new Set(ids) });
+    return { clips: ids, tracks, start: from, frame: frameAt(from, model.rate) };
+  }
+
+  /**
+   * Where something dragged from elsewhere would go, or nothing when it left again. Knowing what it
+   * is, the clips it would make show where they would land: on which track or a new one, as long as
+   * they are, snapped, with what they would overwrite. Files from the computer show the moment.
+   */
+  showDrop(pointer: Pointer | undefined, pick?: MediaPick): void {
+    const { model } = this;
+    if (!model) return;
+    const what = pointer && pick ? this.#mediaOf(model, pick, []) : undefined;
+    if (pointer && what) {
+      const plan = this.#planMedia(model, what, this.dropPlaceAt(pointer));
+      const from = toSeconds(plan.at);
+      const to = toSeconds(add(plan.at, plan.duration));
+      const covered: CoveredSpan[] = [];
+      const adding = plan.parts.map(({ kind, row }) => {
+        if (row && plan.overwriting) {
+          forEachBetween(row, from, to, (other) => {
+            const left = Math.max(from, other.start);
+            const right = Math.min(to, other.end);
+            if (right > left) covered.push({ row, from: left, to: right });
+          });
+        }
+        return { kind, row: row?.id, start: from, end: to, label: what.name ?? "" };
+      });
+      this.#preview = {
+        adding,
+        covered,
+        ...(plan.line === undefined ? {} : { snap: plan.line }),
+      };
+      this.#viewEmitter.emit();
+      return;
+    }
+    const seconds =
+      pointer && frameSeconds(frameAt(this.timeAt(pointer.x), model.rate), model.rate);
+    this.#preview = seconds === undefined ? undefined : { snap: Math.max(seconds, 0) };
+    this.#viewEmitter.emit();
+  }
+
+  /**
+   * Scrolls so that what was just added is in the middle, when it is not in sight already: across
+   * by its time, and down to its first track. The playhead stays where it is.
+   */
+  #bringIntoView(from: number, to: number, clips: readonly string[]): void {
+    const model = this.model;
+    if (!model || this.#width === 0 || this.#pixelsPerSecond === 0) return;
+    let x = this.#scrollX;
+    let y = this.#scrollY;
+    const left = this.xAt(from);
+    const right = this.xAt(to);
+    if (right < 0 || left > this.#width)
+      x = ((from + to) / 2) * this.#pixelsPerSecond - this.#width / 2;
+    const rows = clips.flatMap((id) => {
+      const row = model.rowOfClip.get(id);
+      return row ? [row] : [];
+    });
+    const first = rows[0];
+    if (first) {
+      const visible = this.#height - RULER_HEIGHT;
+      const top = first.top - this.#scrollY;
+      const bottom = top + first.height;
+      if (bottom <= 0 || top >= visible) y = first.top + first.height / 2 - visible / 2;
+    }
+    this.setScroll(x, y);
   }
 
   /**
@@ -1505,16 +1699,6 @@ export class TimelineEditor implements TouchTarget {
     const pointed = lane === undefined ? undefined : rowAt(model, lane);
     if (usable(pointed)) return pointed;
     return model.rows.filter(usable).toSorted((a, b) => a.number - b.number)[0];
-  }
-
-  /** Where something dragged from elsewhere would go, or nothing when it left again. */
-  showDrop(pointer: Pointer | undefined): void {
-    const { model } = this;
-    if (!model) return;
-    const seconds =
-      pointer && frameSeconds(frameAt(this.timeAt(pointer.x), model.rate), model.rate);
-    this.#preview = seconds === undefined ? undefined : { snap: Math.max(seconds, 0) };
-    this.#viewEmitter.emit();
   }
 
   /** Tracks of a kind that can change places, top to bottom. */
@@ -1820,6 +2004,7 @@ export class TimelineEditor implements TouchTarget {
     this.showTransitionDrop(undefined);
     const made = model && drop && dropCalls(model, drop, pick);
     if (!made || !this.#run(made.calls)) return false;
+    this.#transitionsLit(made.calls);
     const { chosen } = made;
     if ("join" in chosen) this.selectJoin(chosen.join);
     else this.selectTransition(chosen.clip, chosen.edge);
@@ -1854,11 +2039,57 @@ export class TimelineEditor implements TouchTarget {
    * get it at their start or their end, and pairs of them that touch get it between them. Says
    * whether anything changed.
    */
-  attachTransition(pick: TransitionPick, use: TransitionUse): boolean {
+  attachTransition(pick: TransitionPick, use: TransitionUse): TransitionsAttached | undefined {
     const { model } = this;
-    if (!model) return false;
+    if (!model) return undefined;
+    const replaced = this.attachContext.kind === "edge" || this.attachContext.kind === "join";
     const calls = attachCalls(model, this.attachContext, use, pick);
-    return calls.length > 0 && this.#run(calls);
+    if (calls.length === 0 || !this.#run(calls)) return undefined;
+    const targets = this.#transitionsLit(calls);
+    return { edges: targets.edges.size, joins: targets.joins.size, replaced };
+  }
+
+  /**
+   * Lights up the transitions that some commands put on, and brings the first into view when none
+   * of them can be seen.
+   */
+  #transitionsLit(calls: readonly CommandCall[]) {
+    const edges = new Set<string>();
+    const joins = new Set<string>();
+    for (const { type, params } of calls) {
+      const values = params as Readonly<Record<string, unknown>>;
+      if (type === "clip.setTransition") {
+        for (const edge of EDGES)
+          if (edge in values) edges.add(`${String(values["clip"])}:${edge}`);
+      } else if (type === "join.add") {
+        joins.add(String(values["id"]));
+      } else if (type === "join.update") {
+        joins.add(String(values["join"]));
+      }
+    }
+    this.flash({ edges, joins });
+    const model = this.model;
+    const spans = [
+      ...[...edges].flatMap((key) => {
+        const [clip = "", edge] = key.split(":");
+        const box = model?.boxes.get(clip);
+        if (!box) return [];
+        const seconds = edgesOf(box.clip)[edge as Edge];
+        const span: [number, number] =
+          edge === "enter" ? [box.start, box.start + seconds] : [box.end - seconds, box.end];
+        return [{ clip, span }];
+      }),
+      ...[...joins].flatMap((id) => {
+        const join = model?.joins.get(id);
+        return join
+          ? [{ clip: join.from.id, span: [join.start, join.end] as [number, number] }]
+          : [];
+      }),
+    ];
+    const seen = spans.some(({ clip, span: [from, to] }) => this.#inSight(from, to, clip));
+    const first = spans[0];
+    if (!seen && first) this.#bringIntoView(...first.span, [first.clip]);
+    return { edges, joins };
   }
 
   /* Effects from the effects tab, see docs/design/resource-panels.md, section 4. */
@@ -1914,7 +2145,28 @@ export class TimelineEditor implements TouchTarget {
   #effectsAdded(added: ReadonlyMap<string, string>): void {
     this.#added = { effects: added, at: (this.#added?.at ?? 0) + 1, time: Date.now() };
     this.#addedEmitter.emit();
-    this.flash(new Set(added.keys()));
+    this.flash({ bands: new Set(added.keys()) });
+    this.#showClips([...added.keys()]);
+  }
+
+  /** Brings the first of some clips into view, when none of them can be seen. */
+  #showClips(clips: readonly string[]): void {
+    const boxes = clips.flatMap((id) => {
+      const box = this.model?.boxes.get(id);
+      return box ? [box] : [];
+    });
+    if (boxes.some((box) => this.#inSight(box.start, box.end, box.id))) return;
+    const first = boxes[0];
+    if (first) this.#bringIntoView(first.start, first.end, [first.id]);
+  }
+
+  /** Whether some of a time on the track of a clip can be seen. */
+  #inSight(from: number, to: number, clip: string): boolean {
+    const row = this.model?.rowOfClip.get(clip);
+    if (!row) return false;
+    const top = row.top - this.#scrollY;
+    const across = this.xAt(to) > 0 && this.xAt(from) < this.#width;
+    return across && top + row.height > 0 && top < this.#height - RULER_HEIGHT;
   }
 
   /** Effects that clicks or drops put on clips last, by clip, and a number that tells two apart. */
@@ -1928,13 +2180,13 @@ export class TimelineEditor implements TouchTarget {
    * Lights up clips for a moment, going from bright to nothing over `FLASH_MS`: something just
    * happened to them. See `flashOf`.
    */
-  flash(clips: ReadonlySet<string>): void {
+  flash(targets: FlashTargets): void {
     clearTimeout(this.#flashTimer);
     const began = Date.now();
-    this.#flash = { clips, share: 1 };
+    this.#flash = { targets, share: 1 };
     const step = () => {
       const share = 1 - (Date.now() - began) / FLASH_MS;
-      this.#flash = share > 0 ? { clips, share } : undefined;
+      this.#flash = share > 0 ? { targets, share } : undefined;
       this.#viewEmitter.emit();
       if (share > 0) this.#flashTimer = setTimeout(step, FLASH_STEP_MS);
     };
@@ -1942,10 +2194,25 @@ export class TimelineEditor implements TouchTarget {
     this.#flashTimer = setTimeout(step, FLASH_STEP_MS);
   }
 
-  /** How bright a clip is lit up now, from 1 down to 0 for not at all. */
-  flashOf(clip: string): number {
+  /**
+   * How bright something is lit up now, from 1 down to 0 for not at all: a whole clip, the
+   * transition at an edge of it, a join, or the band of effects of a clip.
+   */
+  flashOf(what: keyof FlashTargets, id: string): number {
     const flash = this.#flash;
-    return flash?.clips.has(clip) ? flash.share : 0;
+    return flash?.targets[what]?.has(id) ? flash.share : 0;
+  }
+
+  /** Whether something of a clip is lit up now: all of it, its band, or a transition at an edge. */
+  flashesOn(clip: string): boolean {
+    const targets = this.#flash?.targets;
+    if (!targets) return false;
+    const { clips, bands, edges } = targets;
+    return (
+      clips?.has(clip) === true ||
+      bands?.has(clip) === true ||
+      EDGES.some((edge) => edges?.has(`${clip}:${edge}`) === true)
+    );
   }
 
   /** What a click on an effect in the tab is about: the clips selected. */

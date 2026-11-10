@@ -60,7 +60,14 @@ export type FormAnswer = Readonly<Record<string, string>>;
 
 export interface DialogDetail {
   readonly title: string;
-  readonly items: readonly string[];
+  /** Each a line, or a line to click, which shows something without closing the dialog. */
+  readonly items: readonly (string | DialogDetailLink)[];
+}
+
+export interface DialogDetailLink {
+  readonly label: string;
+  /** What a click on it shows, such as where on the timeline it is. */
+  readonly show: () => void;
 }
 
 export interface ProgressOptions {

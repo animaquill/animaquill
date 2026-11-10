@@ -1438,16 +1438,16 @@ describe("transitions from their tab", () => {
     // One between two clips is never greyed out: a click says how it goes.
     expect(editor.attachProblem("join", fade)).toBe("joinHow");
     expect(greysOut(editor.attachProblem("join", fade))).toBe(false);
-    expect(editor.attachTransition(fade, "join")).toBe(false);
-    expect(editor.attachTransition(push, "enter")).toBe(true);
+    expect(editor.attachTransition(fade, "join")).toBeUndefined();
+    expect(editor.attachTransition(push, "enter")).toBeDefined();
     const pushed = { type: "push", duration: "0.5" };
     expect(main().clips["c"]?.enter).toEqual(pushed);
     expect(main().clips["c"]).not.toHaveProperty("exit");
-    expect(editor.attachTransition(push, "exit")).toBe(true);
+    expect(editor.attachTransition(push, "exit")).toBeDefined();
     expect(main().clips["c"]?.exit).toEqual(pushed);
     // The clip stays selected, so another click puts another one in their place.
     expect([...editor.getSnapshot().selection]).toEqual(["c"]);
-    expect(editor.attachTransition(fade, "exit")).toBe(true);
+    expect(editor.attachTransition(fade, "exit")).toBeDefined();
     expect(main().clips["c"]?.exit).toEqual({ type: "fade", duration: "0.5" });
     store.undo();
     expect(main().clips["c"]?.exit).toEqual(pushed);
@@ -1463,14 +1463,17 @@ describe("transitions from their tab", () => {
     editor.addToSelection("b");
     editor.addToSelection("c");
     expect(editor.attachContext).toMatchObject({ kind: "clips" });
-    expect(editor.attachTransition(fade, "enter")).toBe(true);
+    expect(editor.attachTransition(fade, "enter")).toEqual({ edges: 3, joins: 0, replaced: false });
+    expect(editor.flashOf("edges", "b:enter")).toBe(1);
+    expect(editor.flashesOn("b")).toBe(true);
     for (const id of ["a", "b", "c"]) {
       expect(main().clips[id]?.enter).toEqual({ type: "fade", duration: "0.5" });
     }
     store.undo();
     expect(main().clips["b"]).not.toHaveProperty("enter");
-    expect(editor.attachTransition(push, "join")).toBe(true);
+    expect(editor.attachTransition(push, "join")).toMatchObject({ edges: 0, joins: 1 });
     const joins = Object.values(main().joins ?? {});
+    expect(editor.flashOf("joins", Object.keys(main().joins ?? {})[0] ?? "")).toBe(1);
     expect(joins.map(({ from, to, transition }) => [from, to, transition])).toEqual([
       ["a", "b", { type: "push", duration: "0.5" }],
     ]);
@@ -1484,14 +1487,14 @@ describe("transitions from their tab", () => {
     editor.selectTransition("a", "enter");
     expect(editor.attachProblem("exit", fade)).toBe("chosenEnter");
     expect(editor.attachProblem("join", fade)).toBe("joinHow");
-    expect(editor.attachTransition(push, "enter")).toBe(true);
+    expect(editor.attachTransition(push, "enter")).toBeDefined();
     // In the place of another, it keeps the length and goes with its own defaults.
     expect(main().clips["a"]?.enter).toEqual({ type: "push", duration: "1.5" });
     // The same one again changes nothing.
-    expect(editor.attachTransition(push, "enter")).toBe(false);
+    expect(editor.attachTransition(push, "enter")).toBeUndefined();
     editor.updateTrack(video, { locked: true });
     expect(editor.attachProblem("enter", fade)).toBe("locked");
-    expect(editor.attachTransition(fade, "enter")).toBe(false);
+    expect(editor.attachTransition(fade, "enter")).toBeUndefined();
   });
 
   it("say why they cannot go on what is selected", async () => {
@@ -2844,6 +2847,78 @@ describe("changing the project from the keyboard and menus", () => {
       expect(clips().find(({ start }) => start === "6")?.track).toBe(video);
     });
 
+    it("shows where a drop lands, snapped, and lands right there", async () => {
+      const { editor, clips, addClip, at, audio, video } = await withAssets();
+      addClip("x", 0, 4);
+      const reach = editor.dropPlaceAt(at(1)).snap ?? 0;
+      expect(reach).toBeGreaterThan(0);
+      // A little after the end of x: the start snaps to it.
+      const near = at(4 + reach / 2);
+      editor.showDrop(near, { kind: "asset", id: "film" });
+      const shown = editor.preview?.adding ?? [];
+      expect(shown.map(({ kind, row, start, end }) => [kind, row, start, end])).toEqual([
+        ["video", video, 4, 6],
+        ["audio", audio, 4, 6],
+      ]);
+      expect(editor.preview?.snap).toBe(4);
+      editor.showDrop(undefined);
+      expect(editor.preview).toBeUndefined();
+      editor.addAsset("film", editor.dropPlaceAt(near));
+      expect(
+        clips()
+          .filter(({ id }) => id !== "x")
+          .map(({ start, track }) => [start, track]),
+      ).toEqual([
+        ["4", video],
+        ["4", audio],
+      ]);
+    });
+
+    it("snaps its end too, and not with Alt, and says what it would overwrite", async () => {
+      const { editor, addClip, at, video } = await withAssets();
+      addClip("x", 4, 2);
+      // A clip of two seconds ending a little before x: its end goes to the start of x.
+      const reach = editor.dropPlaceAt(at(1)).snap ?? 0;
+      editor.showDrop(at(2 - reach / 2), { kind: "asset", id: "mute" });
+      expect(editor.preview?.adding?.[0]).toMatchObject({ row: video, start: 2, end: 4 });
+      editor.showDrop(at(2 - reach / 2, video, { alt: true }), { kind: "asset", id: "mute" });
+      expect(editor.preview?.adding?.[0]?.start).toBeLessThan(2);
+      // Overwriting, it stays where it is, over what it would cover.
+      if (!editor.getSnapshot().overwriting) editor.toggleOverwriting();
+      editor.showDrop(at(5), { kind: "asset", id: "mute" });
+      expect(editor.preview?.adding?.[0]).toMatchObject({ row: video, start: 5, end: 7 });
+      expect(editor.preview?.covered?.map(({ from, to }) => [from, to])).toEqual([[5, 6]]);
+      // Without one of its kind that can take it, a new track.
+      editor.updateTrack(video, { locked: true });
+      editor.showDrop(at(8), { kind: "asset", id: "mute" });
+      expect(editor.preview?.adding?.[0]).toMatchObject({ kind: "video", row: undefined });
+    });
+
+    it("says where a click put it, lights it up and scrolls to it", async () => {
+      const { editor, video } = await withAssets();
+      vi.useFakeTimers();
+      try {
+        // Zoomed in on the start, the end of the timeline is far out of sight.
+        for (let step = 0; step < 12; step++) editor.zoomAround(0, 2);
+        editor.seek(frameAt(9, editor.model?.rate as never));
+        editor.setScroll(0, 0);
+        expect(editor.xAt(9)).toBeGreaterThan(editor.width);
+        const added = editor.addAsset("pic");
+        expect(added).toMatchObject({ start: 9, tracks: [{ kind: "video", number: 1 }] });
+        const [clip = ""] = added?.clips ?? [];
+        expect(editor.flashOf("clips", clip)).toBe(1);
+        expect(editor.flashesOn(clip)).toBe(true);
+        expect(editor.model?.rowOfClip.get(clip)?.id).toBe(video);
+        // It is in the middle now, and the playhead stayed.
+        expect(Math.abs(editor.xAt(11.5) - editor.width / 2)).toBeLessThan(2);
+        expect(editor.frame).toBe(frameAt(9, editor.model?.rate as never));
+        vi.advanceTimersByTime(FLASH_MS * 2);
+        expect(editor.flashesOn(clip)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("makes a track when there is none", async () => {
       const { editor, clips, audio, main } = await withAssets();
       editor.removeTrack(audio);
@@ -3498,13 +3573,13 @@ describe("effects from their tab", () => {
         expect(added?.effects.get(clip)).toBe(ids[1]);
       }
       // The clips light up for a moment, and the light goes.
-      expect(editor.flashOf("a")).toBe(1);
-      expect(editor.flashOf("s")).toBe(0);
+      expect(editor.flashOf("bands", "a")).toBe(1);
+      expect(editor.flashOf("bands", "s")).toBe(0);
       vi.advanceTimersByTime(FLASH_MS / 2);
-      expect(editor.flashOf("b")).toBeGreaterThan(0);
-      expect(editor.flashOf("b")).toBeLessThan(1);
+      expect(editor.flashOf("bands", "b")).toBeGreaterThan(0);
+      expect(editor.flashOf("bands", "b")).toBeLessThan(1);
       vi.advanceTimersByTime(FLASH_MS);
-      expect(editor.flashOf("b")).toBe(0);
+      expect(editor.flashOf("bands", "b")).toBe(0);
       store.undo();
       expect(listOf(main().clips["a"])).toEqual(["blur"]);
     } finally {

@@ -1,4 +1,10 @@
-import { usesOf, type MissingResource, type ResourceUse, missingIn } from "@animaquill/core";
+import {
+  missingIn,
+  orderedTracks,
+  usesOf,
+  type MissingResource,
+  type ResourceUse,
+} from "@animaquill/core";
 import { describeMissing, describeMissingEffect, parseTime, toSeconds } from "@animaquill/schema";
 import { FileQuestion, Library } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -99,20 +105,31 @@ export function useResourceActions() {
     const state = store?.getState();
     if (!state) return;
     const uses = usesOf(state, { kind: item.kind, id: item.id });
-    const confirmed = await dialogs.confirm({
-      title: t("explorer.remove.title", { name: resource.name }),
-      message:
-        uses.length > 0
-          ? t("explorer.remove.inUse", { count: uses.length })
-          : t("explorer.remove.message"),
-      confirm: t("explorer.remove.confirm"),
-      danger: true,
-      ...(uses.length > 0 && {
-        details: [
-          { title: t("explorer.remove.uses"), items: uses.map((use) => labelOfUse(t, state, use)) },
-        ],
-      }),
-    });
+    // Used somewhere, it says how much goes with it, and where, each place a click away.
+    const confirmed = await dialogs.confirm(
+      uses.length > 0
+        ? {
+            title: t("explorer.remove.inUseTitle", { name: resource.name, count: uses.length }),
+            message: t("explorer.remove.inUse", { count: uses.length }),
+            confirm: t("explorer.remove.confirmWithUses"),
+            danger: true,
+            details: [
+              {
+                title: t("explorer.remove.uses"),
+                items: uses.map((use) => ({
+                  label: placeOfUse(t, state, use),
+                  show: () => workbench.goToUse(use),
+                })),
+              },
+            ],
+          }
+        : {
+            title: t("explorer.remove.title", { name: resource.name }),
+            message: t("explorer.remove.message"),
+            confirm: t("explorer.remove.confirm"),
+            danger: true,
+          },
+    );
     if (!confirmed) return;
     const params = { [item.kind]: item.id, ...(uses.length > 0 && { withUses: true }) };
     if (!run(`${item.kind}.remove`, params)) return;
@@ -323,6 +340,22 @@ function labelOfUse(t: TFunction, state: Parameters<typeof usesOf>[0], use: Reso
   return use.version === undefined
     ? place
     : t("explorer.uses.version", { place, version: use.version });
+}
+
+/** Where a resource is used, with the timeline and the track: "主时间轴 · 视频 1 · 红，0:03". */
+function placeOfUse(t: TFunction, state: Parameters<typeof usesOf>[0], use: ResourceUse): string {
+  const timeline = state.timelines[use.timeline];
+  const clip = use.clip === undefined ? undefined : timeline?.clips[use.clip];
+  const track = clip && timeline?.tracks[clip.track];
+  const parts = [timeline?.name ?? use.timeline];
+  if (timeline && track) {
+    const number = orderedTracks(timeline)
+      .filter(({ kind }) => kind === track.kind)
+      .findIndex(({ id }) => id === track.id);
+    parts.push(track.name ?? t(`timeline.track.${track.kind}`, { number: number + 1 }));
+  }
+  parts.push(labelOfUse(t, state, use));
+  return parts.join(" · ");
 }
 
 /** The details of a resource: what it is, where it is used, and what can be done with it. */

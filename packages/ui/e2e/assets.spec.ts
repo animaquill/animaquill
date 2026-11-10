@@ -163,6 +163,113 @@ test("can be dragged to a track", async ({ page }) => {
   expect(clip.x).toBeGreaterThan(area.x + 250);
 });
 
+/** Holds a drag of an asset over a place of the timeline, and does `meanwhile` there. */
+async function dragOver(
+  page: Page,
+  from: Locator,
+  to: { x: number; y: number },
+  meanwhile: () => Promise<void>,
+) {
+  const start = await boxOf(from);
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(start.x + start.width / 2 + 10, start.y + start.height / 2 + 10, {
+    steps: 3,
+  });
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.mouse.move(to.x + 1, to.y, { steps: 2 });
+  await meanwhile();
+  await page.mouse.up();
+}
+
+/** What the timeline has drawn, kept, for looking at after the drop. */
+const keepCanvas = (page: Page) =>
+  timeline(page)
+    .locator("canvas")
+    .first()
+    .evaluate((canvas: HTMLCanvasElement) => {
+      const copy = document.createElement("canvas");
+      copy.width = canvas.width;
+      copy.height = canvas.height;
+      copy.getContext("2d")?.drawImage(canvas, 0, 0);
+      (window as unknown as { kept: HTMLCanvasElement }).kept = copy;
+    });
+
+/** The color of what was kept at a place on the page. */
+const keptColor = (page: Page, x: number, y: number) =>
+  timeline(page)
+    .locator("canvas")
+    .first()
+    .evaluate(
+      (canvas: HTMLCanvasElement, [left, top]) => {
+        const kept = (window as unknown as { kept: HTMLCanvasElement }).kept;
+        const box = canvas.getBoundingClientRect();
+        const ratio = canvas.width / box.width;
+        const data = kept
+          .getContext("2d")
+          ?.getImageData((left - box.left) * ratio, (top - box.top) * ratio, 1, 1).data;
+        return data ? [...data].slice(0, 3) : [];
+      },
+      [x, y] as const,
+    );
+
+test("shows where a drag lands, snapped and over what, and lands right there", async ({ page }) => {
+  await importFiles(page, files.image, files.sound);
+  await items(page).filter({ hasText: "封面.png" }).dblclick();
+  await expect(clips(page)).toHaveCount(1);
+  const picture = await boxOf(clips(page).first());
+  const status = timeline(page).locator("[role=status][data-drop]");
+
+  // Sound dropped a few pixels after the picture: on the sound track, its start on the end of it.
+  const sound = items(page).filter({ hasText: "配音.wav" });
+  const near = { x: picture.x + picture.width + 4, y: picture.y + picture.height / 2 };
+  await dragOver(page, sound, near, async () => {
+    await expect(status).toHaveText("松手放到音频 1，0:05/00");
+    await keepCanvas(page);
+    await timeline(page).screenshot(shot("drop-preview.png"));
+  });
+  await expect(status).toHaveCount(0);
+  await expect(clips(page)).toHaveCount(2);
+  const landed = clips(page).nth(1);
+  await expect(landed).toHaveAttribute("aria-label", /^配音\.wav，音频 1，0:05\/00 到/);
+  await timeline(page).screenshot(shot("drop-landed.png"));
+  // What the preview drew is where the clip is now: inside it, and not before it.
+  const clip = await boxOf(landed);
+  const lane = await keptColor(page, clip.x - 12, clip.y + clip.height / 2);
+  const ghost = await keptColor(page, clip.x + clip.width / 2, clip.y + clip.height / 2);
+  const differs = (a: readonly number[], b: readonly number[]) =>
+    a.some((value, index) => Math.abs(value - (b[index] ?? 0)) > 24);
+  expect(differs(ghost, lane)).toBe(true);
+  const after = await keptColor(page, clip.x + clip.width + 12, clip.y + clip.height / 2);
+  expect(differs(after, lane)).toBe(false);
+
+  // Overwriting, it stays where the mouse is, and says what it would cover.
+  await timeline(page).getByRole("button", { name: "覆盖模式" }).click();
+  const middle = { x: picture.x + picture.width / 2, y: picture.y + picture.height / 2 };
+  await dragOver(page, items(page).filter({ hasText: "封面.png" }), middle, async () => {
+    await expect(status).toContainText("松手放到视频 1，0:02");
+    await expect(status).toContainText("会覆盖 1 处");
+    await timeline(page).screenshot(shot("drop-overwrite.png"));
+  });
+  await expect(clips(page).and(page.locator('[aria-selected="true"]')).first()).toHaveAttribute(
+    "aria-label",
+    /^封面\.png，视频 1，0:02/,
+  );
+});
+
+test("says where a click put it, and lights it up on the timeline", async ({ page }) => {
+  await importFiles(page, files.image);
+  const item = items(page).first();
+  await item.click();
+  await expect(clips(page)).toHaveCount(1);
+  await expect(clips(page).first()).toHaveAttribute("data-flash", "true");
+  await expect(item).toContainText("✓ 已加到 视频 1，0:00");
+  await expect(assets(page).locator("[data-notice]")).toHaveText("封面.png已加到 视频 1，0:00");
+  await assets(page).screenshot(shot("assets-added.png"));
+  await timeline(page).screenshot(shot("assets-added-flash.png"));
+  await expect(clips(page).first()).not.toHaveAttribute("data-flash");
+});
+
 test("a clip cannot grow past the end of its file", async ({ page }) => {
   await importFiles(page, files.sound);
   await items(page).first().dblclick();
@@ -193,7 +300,7 @@ test("is looked after in the explorer, which asks before a file in use goes", as
   await expect(details.getByRole("heading", { name: "封面.png" })).toBeVisible();
   await details.getByRole("button", { name: "删除…" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("还有 1 处在用它");
+  await expect(dialog).toContainText("时间轴上有 1 处用到它");
   await dialog.getByRole("button", { name: "取消" }).click();
   await tab(page, "assets").click();
   await expect(items(page)).toHaveCount(1);

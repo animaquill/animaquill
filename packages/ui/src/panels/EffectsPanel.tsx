@@ -1,5 +1,4 @@
 import type { EffectCategory } from "@animaquill/schema";
-import { Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
@@ -8,6 +7,7 @@ import { PREVIEW_HEIGHT, PREVIEW_WIDTH } from "../resources/transition-preview.t
 import { STILL_SWING, effectPreviews, swingAt } from "../resources/effect-preview.ts";
 import { EFFECT_RESOURCE_TYPES, builtInEffects, type EffectItem } from "../resources/effects.ts";
 import { useNotice } from "../resources/notice.ts";
+import { FxIcon } from "./FxIcon.tsx";
 import type { Resource } from "../resources/resources.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { EFFECT_DRAG_TYPE, effectDrag } from "../timeline/effect-drag.ts";
@@ -45,7 +45,7 @@ export function EffectIcon({ resource, playing }: ResourceIconProps<EffectItem>)
     };
   }, [type, playing]);
 
-  if (!drawn) return <Sparkles size={24} aria-hidden />;
+  if (!drawn) return <FxIcon size={24} />;
   return <canvas ref={canvas} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} aria-hidden />;
 }
 
@@ -96,10 +96,14 @@ export function EffectsPanel() {
       onActivate={(resource) => {
         // Each click is one more, also where it is already: people can stack the same effect.
         const count = timeline.attachEffect(resource.data.type);
-        if (count === 0) return;
+        if (count === 0) {
+          const problem = timeline.effectProblem(resource.data.type) ?? "failed";
+          say(resource.id, t(`effectPanel.why.${problem}`), undefined, true);
+          return;
+        }
         habits.used(resource.id);
         const added = t("effectPanel.added", { count });
-        say(resource.id, t("effectPanel.addedLong", { name: resource.name, count }), added);
+        say(resource.id, t("effectPanel.addedLong", { name: resource.name, count }), `✓ ${added}`);
       }}
       notice={notice}
       onDragStart={(resource, event) => startEffectDrag(resource.data, event)}

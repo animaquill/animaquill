@@ -995,6 +995,35 @@ test.describe("tabs down a side", () => {
     await expect(content(page, "assets")).toBeVisible();
   });
 
+  test("close with their button once their names are out, and not while only icons show", async ({
+    page,
+  }) => {
+    await away(page);
+    const close = group(page, "timeline").getByRole("button", { name: "关闭 问题" });
+    const icon = await settledBox(tab(page, "problems"));
+    await expect(close).toBeHidden();
+    // With names turned off, the mouse over an icon is no place for a button either.
+    await rightClickEmptyPart(page, "timeline");
+    await check(page, "鼠标悬停时展开").click();
+    await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await page.waitForTimeout(400);
+    await expect(close).toBeHidden();
+    await rightClickEmptyPart(page, "timeline");
+    await check(page, "鼠标悬停时展开").click();
+
+    await away(page);
+    await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await expect.poll(() => widthOf(page, "problems")).toBeGreaterThan(100);
+    await expect(close).toBeVisible();
+    await group(page, "timeline").screenshot({
+      path: test.info().outputPath("strip-close-button.png"),
+    });
+    const button = await box(close);
+    await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
+    await expect(tab(page, "problems")).toHaveCount(0);
+    await expect(tab(page, "timeline")).toBeVisible();
+  });
+
   test("switch with the arrow keys while the tabs have the focus", async ({ page }) => {
     await tabButton(page, "files").focus();
     await page.keyboard.press("ArrowDown");

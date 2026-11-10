@@ -115,6 +115,22 @@
   margin-top: 2px;
 }
 
+/* A line that shows where something is, and leaves the dialog open. */
+.link {
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.link:hover,
+.link:focus-visible {
+  text-decoration: underline;
+}
+
 .content .detail {
   overflow: hidden;
   font-size: 12px;

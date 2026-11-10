@@ -103,14 +103,32 @@ export function TransitionsPanel() {
     return { reason: t(`transitionPanel.why.${problem}`), draggable: true };
   };
 
+  /** A click says what it did, on the transition and under the list, or why it did nothing. */
   const onActivate = (resource: Resource<TransitionItem>) => {
     const { pick, use } = resource.data;
     const problem = timeline.attachProblem(use, pick);
-    if (problem === "joinHow" || problem === "nothing") {
-      say(resource.id, t(`transitionPanel.why.${problem}`));
+    if (problem) {
+      say(resource.id, t(`transitionPanel.why.${problem}`), undefined, true);
       return;
     }
-    if (timeline.attachTransition(pick, use)) habits.used(resource.id);
+    if (isChosen(context, resource.data)) {
+      say(resource.id, t("transitionPanel.already"));
+      return;
+    }
+    const done = timeline.attachTransition(pick, use);
+    if (!done) {
+      say(resource.id, t("transitionPanel.failed"), undefined, true);
+      return;
+    }
+    habits.used(resource.id);
+    const what = done.replaced
+      ? t("transitionPanel.replaced")
+      : done.joins > 0
+        ? t("transitionPanel.addedJoins", { count: done.joins })
+        : t(use === "exit" ? "transitionPanel.addedEnd" : "transitionPanel.addedStart", {
+            count: done.edges,
+          });
+    say(resource.id, `${resource.name}${what}`, `✓ ${what}`);
   };
 
   return (

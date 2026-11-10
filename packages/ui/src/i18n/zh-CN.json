@@ -707,6 +707,9 @@
     "hide": "隐藏 {{track}}",
     "mute": "静音 {{track}}",
     "emptyHint": "把素材拖到这里，或者点上方的“纯色片段”",
+    "dropNewTrack": "新建{{track}}",
+    "dropAt": "松手放到{{track}}，{{start}}",
+    "dropOver": "，会覆盖 {{count}} 处",
     "missing": "这个项目没有能打开的时间轴。",
     "track": {
       "video": "视频 {{number}}",
@@ -827,6 +830,113 @@
     "openProperties": "展开关键帧",
     "closeProperties": "收起关键帧",
     "joinsRemoved": "{{count}} 个衔接转场两边的片段分开了，衔接转场已删除。撤销可以恢复。"
+  },
+  "operations": {
+    "label": "上次的操作",
+    "none": "还没有操作",
+    "usage": "上一步做了什么。点开看最近的操作，可以撤销到其中一步",
+    "title": "最近的操作",
+    "listLabel": "最近的操作",
+    "source": {
+      "you": "你",
+      "ai": "AI",
+      "folder": "外部文件",
+      "other": "其他窗口"
+    },
+    "ai": "AI：改了 {{count}} 处",
+    "folder": "外部文件：并入 {{count}} 个文件",
+    "other": "其他窗口的改动",
+    "property": "改了{{name}}",
+    "properties": "改了 {{count}} 个属性",
+    "unknown": "改动",
+    "undoTo": "撤销到这里",
+    "undoThis": "撤销这次",
+    "redo": "重做",
+    "redoThis": "重做这次",
+    "undone": "已撤销",
+    "why": {
+      "other": "其他窗口的改动要在那个窗口撤销",
+      "gone": "这一步已经不能撤销了",
+      "originGone": "这次的改动已经不能撤销了",
+      "redoFirst": "先重做后撤销的那几步"
+    },
+    "command": {
+      "project": {
+        "rename": "改项目名",
+        "setFrameRate": "改帧率",
+        "setTags": "改标签"
+      },
+      "asset": {
+        "add": "添加素材",
+        "update": "改素材",
+        "remove": "删除素材"
+      },
+      "scene": {
+        "add": "新建场景",
+        "update": "改场景",
+        "remove": "删除场景"
+      },
+      "sound": {
+        "add": "新建声音",
+        "update": "改声音",
+        "remove": "删除声音"
+      },
+      "source": {
+        "replace": "替换素材"
+      },
+      "file": {
+        "write": "改代码",
+        "remove": "删除文件",
+        "rename": "文件改名",
+        "import": "导入文件",
+        "merge": "并入文件"
+      },
+      "timeline": {
+        "rename": "改时间轴名"
+      },
+      "section": {
+        "add": "添加段落",
+        "update": "改段落",
+        "remove": "删除段落"
+      },
+      "track": {
+        "add": "添加轨道",
+        "update": "改轨道",
+        "move": "移动轨道",
+        "remove": "删除轨道"
+      },
+      "clip": {
+        "add": "添加片段",
+        "remove": "删除片段",
+        "update": "改片段",
+        "setTransition": "设置转场",
+        "move": "移动片段",
+        "trim": "修剪片段",
+        "split": "切割片段",
+        "setProperty": "改属性",
+        "clearProperty": "清除属性"
+      },
+      "join": {
+        "add": "添加衔接转场",
+        "update": "改衔接转场",
+        "remove": "删除衔接转场"
+      },
+      "effect": {
+        "add": "添加效果",
+        "remove": "删除效果",
+        "move": "调整效果顺序",
+        "update": "改效果"
+      },
+      "property": {
+        "edit": "改属性",
+        "rename": "属性改名"
+      },
+      "marker": {
+        "add": "添加标记",
+        "update": "改标记",
+        "remove": "删除标记"
+      }
+    }
   },
   "input": {
     "label": "输入方式",
@@ -1793,7 +1903,13 @@
       "use": "这个转场不能用在这里",
       "joinHow": "衔接转场要拖到两段之间，或者先选中相邻的两段",
       "nothing": "先在时间轴上选中片段，或者把转场拖到片段上"
-    }
+    },
+    "addedStart": "已加到 {{count}} 个片段的开头",
+    "addedEnd": "已加到 {{count}} 个片段的结尾",
+    "addedJoins": "已加到 {{count}} 处接缝",
+    "replaced": "已换上",
+    "already": "选中的就是这个转场",
+    "failed": "没能加上，时间轴上的东西可能刚变了，再试一次"
   },
   "effectPanel": {
     "search": "搜索效果",
@@ -1814,7 +1930,9 @@
       "locked": "选中的片段在锁定的轨道上，不能改",
       "sound": "声音片段这一版还不能加效果",
       "caption": "字幕片段这一版还不能加效果",
-      "unknown": "这一版的编辑器还不能用这个效果"
+      "unknown": "这一版的编辑器还不能用这个效果",
+      "nothing": "先在时间轴上选中片段，或者把效果拖到片段上",
+      "failed": "没能加上，时间轴上的东西可能刚变了，再试一次"
     },
     "added": "已加到 {{count}} 个片段",
     "addedLong": "{{name}}已加到 {{count}} 个片段"
@@ -1850,6 +1968,8 @@
     "why": {
       "font": "字体在字幕和场景里用，不能放到时间轴上"
     },
+    "added": "已加到 {{tracks}}，{{start}}",
+    "failed": "没能加到时间轴上，再试一次",
     "missing": "文件找不到",
     "length": "时长 {{length}}"
   },
@@ -1944,9 +2064,11 @@
     "remove": {
       "title": "删除“{{name}}”？",
       "message": "删除后项目里就没有它了。可以撤销。",
-      "inUse": "还有 {{count}} 处在用它，删除会把这些片段一起删掉。可以撤销。",
-      "uses": "在用它的地方",
-      "confirm": "删除"
+      "inUseTitle": "删除“{{name}}”和用到它的 {{count}} 处？",
+      "inUse": "时间轴上有 {{count}} 处用到它，删除会把这些片段一起删掉。可以撤销。",
+      "uses": "用到它的地方（点一下在时间轴上看）",
+      "confirm": "删除",
+      "confirmWithUses": "一起删除"
     },
     "swap": {
       "title": "把“{{name}}”换成别的资源",

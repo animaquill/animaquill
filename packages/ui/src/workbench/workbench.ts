@@ -55,6 +55,7 @@ import { KeybindingService } from "./keybindings.ts";
 import type { Platform } from "./keys.ts";
 import { LayoutController, type LayoutChoice, type LayoutPreset } from "./layout.ts";
 import { Notifications } from "./notifications.ts";
+import { OperationLog, type Operation } from "./operations.ts";
 import { CommandPalette } from "./palette.ts";
 import { ResourceHabits } from "../resources/habits.ts";
 import { ExplorerState, nodeOfResource } from "../resources/explorer.ts";
@@ -122,6 +123,8 @@ export class Workbench {
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
   readonly trials: TrialSession;
+  /** What changed the project lately, for the status bar, and taking it back from there. */
+  readonly operations: OperationLog;
   readonly properties: PropertyWriter;
   readonly keyframes: KeyframeEditor;
   /** What scenes say about where the objects of their code are, for the handles on the picture. */
@@ -497,6 +500,7 @@ export class Workbench {
       keepFailed: () => this.notifications.push(t("notice.trialKeepFailed")),
       keepRecovered: () => this.notifications.push(t("notice.trialKeepRecovered")),
     });
+    this.operations = new OperationLog(this.session);
     this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
       commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
       comparing: () => this.notifications.push(t("notice.comparing")),
@@ -1570,13 +1574,65 @@ export class Workbench {
 
   /** What taking back or doing again came to, when there is something to say about it. */
   tellUndo(result: UndoResult): void {
+    const message = this.#undoMessage(result);
+    if (message !== undefined) this.notifications.push(message);
+  }
+
+  #undoMessage(result: UndoResult): string | undefined {
     if (result.ok) {
-      if (result.obstacle) this.notifications.push(this.t(`notice.undoPartly.${result.obstacle}`));
-    } else if (result.error.obstacle) {
-      this.notifications.push(this.t(`notice.undoBlocked.${result.error.obstacle}`));
-    } else {
-      this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
+      return result.obstacle ? this.t(`notice.undoPartly.${result.obstacle}`) : undefined;
     }
+    if (result.error.obstacle) return this.t(`notice.undoBlocked.${result.error.obstacle}`);
+    return this.t("notice.commandFailed", { message: result.error.message });
+  }
+
+  /**
+   * Takes back what people did here, one step after the other as undo does, up to and with
+   * `operation`. What is tried out goes back in between where it came in, as with undo. Stops at
+   * the first step that is kept from going back, and says why.
+   */
+  undoTo(operation: Operation): string | undefined {
+    const { store } = this.session;
+    if (!store || !this.operations.canUndoTo(operation)) return undefined;
+    // Each round takes one step, of the store or of what is tried out, and there are only so many.
+    for (let round = 0; round < 2000 && store.lastStep >= operation.step; round++) {
+      if (this.trials.undoesFirst) {
+        this.trials.undo();
+        continue;
+      }
+      const before = store.lastStep;
+      const result = store.undo();
+      const message = this.#undoMessage(result);
+      if (message !== undefined) return message;
+      if (store.lastStep === before) break;
+    }
+    return undefined;
+  }
+
+  /** Does again what people here took back last, as redo does. */
+  redoLast(): string | undefined {
+    const { store } = this.session;
+    if (!store) return undefined;
+    if (this.trials.redoesFirst) {
+      this.trials.redo();
+      return undefined;
+    }
+    return this.#undoMessage(store.redo());
+  }
+
+  /** Takes back an AI task or a batch of files as a whole, or does it again. */
+  undoOperation(operation: Operation, direction: "undo" | "redo"): string | undefined {
+    const { store } = this.session;
+    if (!store || operation.origin === undefined) return undefined;
+    // What came from the folder goes back the way its notice takes it, which keeps the folder's.
+    if (operation.source === "folder" && direction === "undo") {
+      if (this.projectFolders?.undoBatch(operation.origin)) return undefined;
+    }
+    const result =
+      direction === "undo"
+        ? store.undoOrigin(operation.origin)
+        : store.redoOrigin(operation.origin);
+    return this.#undoMessage(result);
   }
 
   #registerEditActions(): void {

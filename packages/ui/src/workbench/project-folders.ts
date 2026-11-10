@@ -160,6 +160,8 @@ interface OpeningFiles {
 
 /** More than anybody reads: what of the folder did not come in, since the project opened. */
 const MAX_LISTED = 200;
+/** Batches of files that can be taken back from elsewhere than their notice, see `undoBatch`. */
+const MAX_KNOWN_BATCHES = 50;
 /** What of a value the folder had is shown, at most. */
 const MAX_SHOWN = 4000;
 /** A dialog is no place for thousands of lines. */
@@ -216,6 +218,8 @@ export class ProjectFolders {
   #snapshot = NOTHING;
   /** What of the folder did not come in, and why, as problems. */
   #notes: readonly Listed[] = [];
+  /** What came in from the folder, by origin, for taking it back later. */
+  readonly #batches = new Map<string, { store: ProjectStore; merge: FolderMerge }>();
   /** Files of assets that are not right, as problems. */
   #assetNotes: readonly Listed[] = [];
   /** The same as they were found, for the explorer. */
@@ -1538,9 +1542,29 @@ export class ProjectFolders {
     }
   }
 
+  /**
+   * Takes back a batch of files that came in, from elsewhere than its notice, as the notice does:
+   * what the folder has now is kept first. False when this window does not know the batch.
+   */
+  undoBatch(origin: string): boolean {
+    const known = this.#batches.get(origin);
+    if (!known) return false;
+    void this.#undo(known.store, known.merge);
+    return true;
+  }
+
   #merged(store: ProjectStore, merge: FolderMerge): void {
     const { notifications, t } = this.#options;
     const { files, conflicts, problems } = merge;
+    if (files.length > 0) {
+      this.#batches.delete(merge.origin);
+      this.#batches.set(merge.origin, { store, merge });
+      // The store forgets all but the last few batches, and so does this.
+      for (const old of this.#batches.keys()) {
+        if (this.#batches.size <= MAX_KNOWN_BATCHES) break;
+        this.#batches.delete(old);
+      }
+    }
     if (files.length === 0 && conflicts.length === 0 && problems.length === 0) return;
     const partly = conflicts.length > 0 || problems.length > 0;
     const message =

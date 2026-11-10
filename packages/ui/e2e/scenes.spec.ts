@@ -697,8 +697,8 @@ test.describe("a new scene", () => {
     await page.getByRole("menuitem", { name: "详细信息" }).click();
     const details = content(page, "code").getByRole("region", { name: "详情" });
     await details.getByRole("button", { name: "删除…" }).click();
-    await expect(page.getByRole("dialog")).toContainText("还有 1 处在用它");
-    await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText("时间轴上有 1 处用到它");
+    await page.getByRole("dialog").getByRole("button", { name: "一起删除" }).click();
     await tab(page, "timeline").click();
     await expect(clips(page)).toHaveCount(0);
     await page.keyboard.press("Control+z");

@@ -1,6 +1,5 @@
 import {
   Blend,
-  Sparkles,
   BookOpen,
   CodeXml,
   Diamond,
@@ -26,6 +25,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { FxIcon } from "./FxIcon.tsx";
 import { ChatPanel } from "../chat/ChatPanel.tsx";
 import { CodePanel } from "../code/CodePanel.tsx";
 import { FilesPanel } from "../code/FilesPanel.tsx";
@@ -133,7 +133,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
   {
     type: "effects",
     title: (t) => t("panel.effects.title"),
-    icon: Sparkles,
+    icon: FxIcon,
     area: "left",
     component: EffectsPanel,
   },

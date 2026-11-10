@@ -240,6 +240,10 @@
   color: var(--aq-text);
 }
 
+.status[data-failed] {
+  color: var(--aq-warning);
+}
+
 /* What a click just did, over the picture of what was clicked, for a moment. */
 .badge {
   position: absolute;
@@ -250,13 +254,13 @@
   overflow: hidden;
   color: var(--aq-on-accent);
   font-size: 11px;
-  white-space: nowrap;
+  line-height: 1.3;
   text-align: center;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   background: var(--aq-accent);
   border-radius: 3px;
   pointer-events: none;
-  animation: badge 1.6s ease-out forwards;
+  animation: badge 2.2s ease-out forwards;
 }
 
 @keyframes badge {

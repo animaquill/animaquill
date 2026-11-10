@@ -13,8 +13,17 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
-import { useWorkbench } from "../app/context.ts";
-import { GROUPINGS, browse, type GroupKey, type Grouping, type Resource } from "./resources.ts";
+import { usePanelShown, useWorkbench } from "../app/context.ts";
+import { useNotice } from "./notice.ts";
+import {
+  GROUPINGS,
+  browse,
+  recentShown,
+  steadyRecent,
+  type GroupKey,
+  type Grouping,
+  type Resource,
+} from "./resources.ts";
 import styles from "./ResourceBrowser.module.css";
 
 /** Why a resource cannot be used where people are now. */
@@ -80,6 +89,8 @@ export interface Notice {
   readonly text: string;
   /** Short, on the resource itself, such as how many clips it went on. Without it, only below. */
   readonly badge?: string;
+  /** It says why a click did nothing: the resource shakes a little. */
+  readonly failed?: boolean;
   readonly at: number;
 }
 
@@ -114,6 +125,18 @@ function verticalNeighbor(options: readonly HTMLElement[], from: number, down: b
   return best;
 }
 
+const SHAKE: Keyframe[] = [
+  { transform: "translateX(0)" },
+  { transform: "translateX(-4px)" },
+  { transform: "translateX(4px)" },
+  { transform: "translateX(-3px)" },
+  { transform: "translateX(2px)" },
+  { transform: "translateX(0)" },
+];
+
+const reducedMotion = () =>
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 /**
  * A list of resources to find and use, the same in every tab that has them: a search, a choice of
  * grouping, groups that close, what was used recently first, moving previews, and what cannot be
@@ -123,7 +146,11 @@ function verticalNeighbor(options: readonly HTMLElement[], from: number, down: b
 export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
   const { tab, label, resources, types, firstType, defaultGrouping, typeName } = props;
   const { unavailable, isCurrent, Icon, onActivate, canDrag, onDragStart, onDragEnd } = props;
-  const { selected, onSelect, revealed, empty, notice } = props;
+  const { selected, onSelect, revealed, empty } = props;
+  // A click on what cannot be used here says why, as the tab says what its clicks did.
+  const [refusal, refuse] = useNotice();
+  const notice =
+    props.notice && (!refusal || props.notice.at > refusal.at) ? props.notice : refusal;
   const { t } = useTranslation();
   const workbench = useWorkbench();
   const { resourceHabits: habits } = workbench;
@@ -138,9 +165,27 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
   const list = useRef<HTMLElement>(null);
   const id = useId();
 
+  // What was used goes first when the tab is opened again; until then a click on what shows as used
+  // recently leaves it where it is, and only what was not there comes in at the front.
+  const shownTimes = usePanelShown();
+  const [steady, setSteady] = useState({
+    times: shownTimes,
+    saved: saved.recent,
+    order: saved.recent,
+  });
+  let recent = steady.order;
+  if (steady.times !== shownTimes) {
+    recent = saved.recent;
+    setSteady({ times: shownTimes, saved: saved.recent, order: recent });
+  } else if (steady.saved !== saved.recent) {
+    const showing = new Set(recentShown(resources, { query, recent: steady.order }));
+    recent = steadyRecent(steady.order, steady.saved, saved.recent, showing);
+    setSteady({ times: shownTimes, saved: saved.recent, order: recent });
+  }
+
   const groups = useMemo(
-    () => browse(resources, { query, grouping, recent: saved.recent, types, firstType }),
-    [resources, query, grouping, saved.recent, types, firstType],
+    () => browse(resources, { query, grouping, recent, types, firstType }),
+    [resources, query, grouping, recent, types, firstType],
   );
   // What is in a closed group is not on the page, so the keys do not go there either.
   const entries: readonly Entry<T>[] = useMemo(
@@ -235,8 +280,23 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     optionsOnPage()[index]?.scrollIntoView?.({ block: "nearest" });
   };
 
+  // What could not be used shakes a little, each time, where it is in the list.
+  useEffect(() => {
+    if (!notice?.failed || reducedMotion()) return;
+    const items = list.current?.querySelectorAll<HTMLElement>(
+      `[data-resource="${CSS.escape(notice.resource)}"]`,
+    );
+    for (const item of items ?? []) {
+      item.animate(SHAKE, { duration: 320, easing: "ease-out" });
+    }
+  }, [notice]);
+
   const activate = (resource: Resource<T>, element: HTMLElement) => {
-    if (unavailable(resource)) return;
+    const off = unavailable(resource);
+    if (off) {
+      refuse(resource.id, off.reason, undefined, true);
+      return;
+    }
     onActivate(resource, element.getBoundingClientRect());
   };
 
@@ -382,6 +442,9 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                         aria-current={isCurrent?.(resource) ? true : undefined}
                         aria-describedby={off ? reasonId : undefined}
                         className={styles.item}
+                        data-shake={
+                          notice?.failed && notice.resource === resource.id ? "" : undefined
+                        }
                         data-resource={resource.id}
                         title={off ? `${resource.name}：${off.reason}` : resource.name}
                         draggable={
@@ -445,7 +508,12 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
           </p>
         )}
       </section>
-      <p className={styles.status} role="status" data-notice={notice ? "" : undefined}>
+      <p
+        className={styles.status}
+        role="status"
+        data-notice={notice ? "" : undefined}
+        data-failed={notice?.failed ? "" : undefined}
+      >
         {notice ? notice.text : why ? why.reason : ""}
       </p>
       {menu && (
