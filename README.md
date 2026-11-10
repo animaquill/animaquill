@@ -43,3 +43,7 @@ pnpm e2e     # 浏览器测试
 ## 许可证
 
 [GNU Affero General Public License v3.0](LICENSE)
+
+## 名称和图标
+
+“AnimaQuill”这个名称和图标是项目的商标。代码按 AGPL-3.0 许可证可以自由使用、修改和分发；二次发布修改后的版本时，请换掉名称和图标，不要让人误以为是官方版本。
