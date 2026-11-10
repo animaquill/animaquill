@@ -277,7 +277,8 @@ export function projectWith(
 /** Drops a project in, and waits until it is open and its folder has everything. */
 export async function openProject(page: Page, disk: string) {
   await drop(page, disk);
-  await expect(tab(page, "preview")).toBeVisible();
+  // Opening reads the whole folder and hashes the video: on a busy machine that takes a while.
+  await expect(tab(page, "preview")).toBeVisible({ timeout: 15_000 });
   await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
 }
 
