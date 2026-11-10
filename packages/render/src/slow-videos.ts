@@ -8,7 +8,7 @@ export interface VideoRead {
   readonly standIn: boolean;
 }
 
-/** A frame that reached the screen while playing, as far as videos go. */
+/** A frame asked for while playing that reached the screen, as far as videos go. */
 export interface PlayedFrame {
   /** When it reached the screen, in milliseconds on any clock that goes on. */
   readonly at: number;
@@ -41,19 +41,38 @@ interface Seen {
  *   project by the time it was drawn, and getting the picture of that video alone took at least
  *   that long. A keyframe to start from at a cut, or getting the next clip ready at the same time,
  *   is part of that: a proxy makes both cheaper.
- * - The time the picture waited for each frame counts: a video decodes too slowly when, over the
- *   last two seconds of playing it, frames late because of it took at least half of the time. That
- *   is a stutter that goes on, not a cut now and then, also where so few frames come that they
- *   cannot be counted.
+ * - The time the picture waited for each frame counts, since the frame before it while playing: a
+ *   video decodes too slowly when, over the last two seconds of playing it, frames late because of
+ *   it took at least half of the time. That is a stutter that goes on, not a cut now and then, also
+ *   where so few frames come that they cannot be counted, and where one frame alone took longer
+ *   than two seconds, as on a busy computer.
+ * - Playing starts over after a pause, or after somebody moved the playhead: what came before says
+ *   nothing about how it keeps up now. Whoever feeds this says so, see `startOver`. A frame asked
+ *   for while playing counts also when playing stopped before it reached the screen.
  * - Each video is said once. A copy that stands in for a video is the best there is already.
  */
 export class SlowVideos {
   /** The last frames of each video while playing, by file. */
   readonly #recent = new Map<string, Seen[]>();
   readonly #said = new Set<string>();
+  /** When the frame before reached the screen, while playing since then. */
+  #lastAt: number | undefined;
 
-  /** Takes in a frame, and says which videos turned out to decode too slowly with it. */
+  /** Playing starts again, or the playhead moved: the next frame is the first of a new stretch. */
+  startOver(): void {
+    this.#recent.clear();
+    this.#lastAt = undefined;
+  }
+
+  /**
+   * Takes in a frame that was asked for while playing, also one without videos, and says
+   * which videos turned out to decode too slowly with it.
+   */
   note({ at, frameMs, behindMs, videos }: PlayedFrame): string[] {
+    // However long ago the frame before was: a frame that took longer than the window waited all
+    // that time, and that is what counts most.
+    const span = this.#lastAt === undefined ? frameMs : at - this.#lastAt;
+    this.#lastAt = at;
     const slowest = new Map<string, number>();
     for (const { file, ms, standIn } of videos) {
       if (standIn || this.#said.has(file)) continue;
@@ -62,12 +81,10 @@ export class SlowVideos {
     const slow: string[] = [];
     const behind = behindMs >= frameMs;
     for (const [file, ms] of slowest) {
-      // What is older than the window says nothing any more, as from before a pause.
+      // What is older than the window says nothing any more.
       const recent = (this.#recent.get(file) ?? []).filter(
         (seen) => seen.at > at - SLOW_RULES.windowMs,
       );
-      const before = recent.at(-1);
-      const span = before ? at - before.at : frameMs;
       recent.push({ at, span, late: behind && ms >= frameMs });
       this.#recent.set(file, recent);
       const seen = recent.reduce((sum, { span: each }) => sum + each, 0);

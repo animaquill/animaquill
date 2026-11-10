@@ -40,6 +40,31 @@ describe("videos that decode too slowly to keep up", () => {
     expect(said).toEqual(["4k"]);
   });
 
+  it("are said also when each frame takes longer than the two seconds, as on a busy computer", () => {
+    const slow = new SlowVideos();
+    // As the preview of a slow video went on a busy machine: four frames in six seconds.
+    const gaps = [FRAME_MS, 1135, 3888, 432];
+    const said = play(slow, gaps.length, (index) => {
+      const gap = gaps[index] ?? 0;
+      return { gap, behindMs: gap, videos: [read("4k", gap - 4)] };
+    });
+    expect(said).toEqual(["4k"]);
+  });
+
+  it("count the time since the frame before, also when that one had no video", () => {
+    const slow = new SlowVideos();
+    // The video keeps up, then something else plays for a second and a half, and then the video is
+    // late once by a few frames: that was a moment, not the second and a half.
+    const said = play(slow, 56, (index) =>
+      index < 10
+        ? { gap: FRAME_MS, behindMs: 0, videos: [read("4k", 5)] }
+        : index < 55
+          ? { gap: FRAME_MS, behindMs: 0, videos: [] }
+          : { gap: 100, behindMs: 100, videos: [read("4k", 90)] },
+    );
+    expect(said).toEqual([]);
+  });
+
   it("are not said before a second and a half of playing", () => {
     const slow = new SlowVideos();
     const said = play(slow, 10, () => ({ gap: 100, behindMs: 100, videos: [read("4k", 90)] }));
@@ -74,6 +99,7 @@ describe("videos that decode too slowly to keep up", () => {
     const late = () => ({ gap: 300, behindMs: 300, videos: [read("4k", 300)] });
     expect(play(slow, 3, late)).toEqual([]);
     // Played again a minute later: what came before the pause is no part of it.
+    slow.startOver();
     expect(play(slow, 3, late, 60_000)).toEqual([]);
   });
 

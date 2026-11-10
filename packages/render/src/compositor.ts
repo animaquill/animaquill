@@ -555,6 +555,11 @@ function paintAll(
 let playing = false;
 /** Videos that decode too slowly while playing, which the editor hears of once each. */
 const slowVideos = new SlowVideos();
+/**
+ * Frames asked for while time went on. One that took so long that playing stopped meanwhile, as at
+ * the end of the timeline, says the most about how the preview keeps up.
+ */
+const askedWhilePlaying = new WeakSet<PendingFrame>();
 
 /** How long a frame of the project lasts. */
 function frameMsOf(shown: RenderPlan | undefined): number {
@@ -565,14 +570,21 @@ function frameMsOf(shown: RenderPlan | undefined): number {
 /** One frame at a time, see `FrameLoop`. */
 const loop = new FrameLoop({
   layers: () => plan?.layers ?? [],
-  draw: drawFrame,
+  draw(frame) {
+    if (playing) askedWhilePlaying.add(frame);
+    return drawFrame(frame);
+  },
   prepare: getReady,
   giveUpFor: (seconds) => reads.giveUpFor(plan?.layers ?? [], seconds),
   drew(timing, newPlace, frame) {
     if (newPlace) paintedAt.push(performance.now());
     if (recording) timings.push(timing);
+    if (!askedWhilePlaying.has(frame)) return;
     // Moving the playhead starts decoding over anyway: only time going on says how it keeps up.
-    if (!playing || frame.jumped || frame.videos.length === 0) return;
+    if (frame.jumped) {
+      slowVideos.startOver();
+      return;
+    }
     const played = {
       at: performance.now(),
       frameMs: frameMsOf(plan),
@@ -869,8 +881,11 @@ function handle(data: ToCompositor): void {
     return;
   }
   // Scenes follow time with these too.
-  if (data.type === "play") playing = true;
-  else if (data.type === "pause") playing = false;
+  if (data.type === "play") {
+    // Playing again after a pause: what came before says nothing about now.
+    if (!playing) slowVideos.startOver();
+    playing = true;
+  } else if (data.type === "pause") playing = false;
   if (sounds.handle(data)) return;
   if (scenes.handle(data)) return;
   if (data.type === "strip") {
@@ -925,6 +940,7 @@ function handle(data: ToCompositor): void {
   } else if (data.type === "channels") {
     if (plan) plan = withChannels(plan, data.layer, data);
   } else if (data.type === "seek") {
+    if (data.jump) slowVideos.startOver();
     loop.seek(data.seconds, data.jump);
   } else {
     const before = files.get(data.id);

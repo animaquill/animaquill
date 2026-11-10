@@ -310,6 +310,55 @@ test.describe("the proxy of a large video", () => {
     expect(inFolder(disk)).toEqual([proxyName(hash, SPEC)]);
   });
 
+  test("is offered also when one frame takes longer than playing lasts, as on a busy computer", async ({
+    page,
+  }) => {
+    // The decoder of the preview keeps up, but halfway through the video it is held up once for
+    // two and a half seconds, as a busy computer can: the frame of the project asked for then
+    // reaches the screen only after playing got to the end, and it took longer than the two seconds
+    // the preview goes by.
+    await page.addInitScript(() => {
+      if (window === window.top || typeof VideoDecoder === "undefined") return;
+      const Real = VideoDecoder;
+      window.VideoDecoder = class extends Real {
+        constructor(init: VideoDecoderInit) {
+          let line: Promise<unknown> = Promise.resolve();
+          let heldUp = false;
+          super({
+            ...init,
+            output: (decoded) => {
+              const ms = !heldUp && decoded.timestamp >= 1_500_000 ? 2500 : 0;
+              if (ms > 0) heldUp = true;
+              line = line
+                .then(() => new Promise((resolve) => setTimeout(resolve, ms)))
+                .then(() => {
+                  if (this.state === "closed") decoded.close();
+                  else init.output(decoded);
+                });
+            },
+          });
+          Object.assign(this, { aqLine: () => line });
+        }
+
+        override async flush() {
+          await super.flush();
+          await (this as unknown as { aqLine: () => Promise<unknown> }).aqLine();
+        }
+      };
+    });
+    const { disk, hash } = projectWith(await encodeIn(page, VIDEO, 180), {
+      seconds: 3,
+      format: FORMAT,
+      shape: VIDEO,
+    });
+    await openProject(page, disk);
+    await expect.poll(() => kindIn(page, hash)).toBe("none");
+    await content(page, "preview").getByRole("button", { name: "播放", exact: true }).click();
+    const offer = page.getByRole("status").filter({ hasText: "“数字.mp4”解码太慢" });
+    await expect(offer).toBeVisible({ timeout: 30_000 });
+    expect(await kindIn(page, hash)).toBe("none");
+  });
+
   test("is never what a reload halfway, or a file that is no proxy, leaves", async ({ page }) => {
     await page.goto("/?proxyFrameMs=60");
     const { disk, hash } = await numbered(page);

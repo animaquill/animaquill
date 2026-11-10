@@ -35,6 +35,12 @@ export interface EditorOptions {
   readonly onWorkbench?: (workbench: Workbench) => void;
 }
 
+/**
+ * Said on the window once the editor takes what is dropped on the page. What runs on the page before
+ * the editor can hold back drops until then, as the page of the web app does.
+ */
+const EDITOR_HERE = "animaquill-editor";
+
 /** Starts the editor in an element. Returns how to remove it again. */
 export async function mountEditor(element: HTMLElement, options: EditorOptions) {
   const i18n = await createI18n();
@@ -107,6 +113,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   window.addEventListener("dragover", keepFiles);
   window.addEventListener("drop", openDropped);
+  // The page may hold back drops until now, so that a file dropped early does not replace it.
+  window.dispatchEvent(new Event(EDITOR_HERE));
 
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {

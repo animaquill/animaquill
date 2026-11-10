@@ -107,6 +107,37 @@ test.describe("the editor on this computer", () => {
     await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
   });
 
+  test("keeps a file dropped on it before the editor is there from taking the page away", async ({
+    page,
+  }) => {
+    // The editor's code takes a while to come, and what the page shows meanwhile says it starts.
+    let arrive = () => {};
+    const arrived = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    await page.route(/\/assets\/.*\.js$/, async (route) => {
+      await arrived;
+      await route.continue();
+    });
+    await page.goto("/", { waitUntil: "commit" });
+    await expect(page.getByText("正在启动 AnimaQuill")).toBeVisible();
+    // A browser opens what is dropped where nothing takes it, instead of the page. The drops a test
+    // can make never do that, so this asks the page whether it takes them, as a browser does.
+    const taken = await page.evaluate(() =>
+      ["dragover", "drop"].map((type) => {
+        const data = new DataTransfer();
+        data.items.add(new File(["x"], "片子.mp4", { type: "video/mp4" }));
+        const event = new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true });
+        return !document.body.dispatchEvent(event);
+      }),
+    );
+    expect(taken).toEqual([true, true]);
+    arrive();
+    await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
+    // Once it is there, what is dropped is the editor's: a folder opens as a project.
+    await newProjectOnDisk(page);
+  });
+
   test("is where localhost leads", async ({ page }) => {
     const { port } = new URL(page.url());
     await page.goto(`http://localhost:${port}/`);

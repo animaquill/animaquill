@@ -9,6 +9,7 @@ function setup({
   secrets = [] as string[],
   sends = true,
   names = vi.fn(() => secrets),
+  now = (): number => 5000,
 } = {}) {
   const recorder = new DiagnosticsRecorder(
     "0.3.6",
@@ -22,7 +23,7 @@ function setup({
     origins: () => [SITE],
     secrets: names,
     device: () => ({ cores: 8 }),
-    now: () => 5000,
+    now,
   });
   return { recorder, reports, send, names };
 }
@@ -197,6 +198,21 @@ describe("storms", () => {
     expect(reports.getSnapshot().errors.length).toBeLessThanOrEqual(20);
     const storm = recorder.trail.entries().find(({ kind }) => kind === "error.storm");
     expect(storm?.times).toBe(180);
+  });
+
+  it("are over once a second went by", () => {
+    let at = 5000;
+    const { recorder, reports } = setup({ now: () => at });
+    for (let column = 1; column <= 30; column++) reports.capture("window", thrown("many", column));
+    expect(reports.getSnapshot().errors).toHaveLength(20);
+    at += 999;
+    reports.capture("window", thrown("many", 31));
+    expect(reports.getSnapshot().errors).toHaveLength(20);
+    at += 2;
+    for (let column = 32; column <= 40; column++) reports.capture("window", thrown("many", column));
+    expect(reports.getSnapshot().errors).toHaveLength(29);
+    const storm = recorder.trail.entries().find(({ kind }) => kind === "error.storm");
+    expect(storm?.times).toBe(11);
   });
 });
 

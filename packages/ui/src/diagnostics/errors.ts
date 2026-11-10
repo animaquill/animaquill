@@ -99,6 +99,7 @@ export interface ErrorReportsOptions {
   /** Names people gave things that are open now, such as the project and its files. */
   readonly secrets: () => Iterable<string>;
   readonly device: () => Readonly<Record<string, Value>>;
+  /** Milliseconds on a clock that goes on, for when errors came and how many came in a second. */
   readonly now?: () => number;
 }
 
@@ -231,7 +232,7 @@ export class ErrorReports {
     const raw = typeof described.message === "string" ? described.message : "";
     // Before anything that costs: these come in storms of their own.
     if (HARMLESS.some((pattern) => pattern.test(raw))) return;
-    const now = performance.now();
+    const now = this.#now();
     if (now - this.#second > 1000) {
       this.#second = now;
       this.#inSecond = 0;

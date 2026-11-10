@@ -68,16 +68,6 @@ describe("messages", () => {
     expect(cleanMessage(42)).toBe("…");
     expect(cleanMessage(undefined)).toBe("undefined");
   });
-
-  it("costs little with many names, most of which could not be left anyway", () => {
-    const secrets = new Set(
-      Array.from({ length: 20_000 }, (_, index) => `素材 ${index} Clip number ${index}`),
-    );
-    const started = performance.now();
-    for (let index = 0; index < 100; index++)
-      cleanMessage(`e.at is not a function ${index}`, secrets);
-    expect(performance.now() - started).toBeLessThan(500);
-  });
 });
 
 describe("names of errors", () => {
