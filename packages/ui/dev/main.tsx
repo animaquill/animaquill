@@ -2,6 +2,7 @@ import { createBrowserHost } from "@animaquill/host/browser";
 import { Bug, Frame } from "lucide-react";
 import { useState } from "react";
 import { mountEditor, type PanelDefinition } from "../src/index.ts";
+import { fakeAccount } from "./account.ts";
 
 function CrashTest() {
   const [crashed, setCrashed] = useState(false);
@@ -78,7 +79,11 @@ const diagnostics = {
   },
 };
 
-const host = { ...createBrowserHost(), diagnostics };
+/** An account to sign in to, for the tests of the account menu: the development page has none. */
+const account =
+  new URLSearchParams(location.search).get("account") === "fake" ? fakeAccount() : undefined;
+
+const host = { ...createBrowserHost(), diagnostics, ...(account && { account }) };
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
   await mountEditor(root, {

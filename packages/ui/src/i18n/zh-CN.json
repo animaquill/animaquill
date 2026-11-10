@@ -6,7 +6,14 @@
     "crashed": "编辑器遇到了问题",
     "crashedHint": "可以重新加载。如果还是这样，先恢复默认布局。",
     "reload": "重新加载",
-    "resetAndReload": "恢复默认布局并重新加载"
+    "resetAndReload": "恢复默认布局并重新加载",
+    "leaveBusyTitle": "现在不能离开页面",
+    "leaveBusyMessage": "正在导入、导出或者把项目移到文件夹，离开页面会打断它。等它完成以后再试。",
+    "leaveUnsavedTitle": "有内容还没存好",
+    "leaveUnsavedMessage": "有改动、试改或者没保存的代码还没能存进浏览器。现在离开，回来时可能找不回它们。留在这里的话会继续尝试保存。",
+    "leaveFolderTitle": "项目文件夹还没写好",
+    "leaveFolderMessage": "改动都已经存在浏览器里，回到这个页面后会接着写进项目文件夹。在那之前，文件夹里还没有这些改动。",
+    "leaveAnyway": "仍然离开"
   },
   "menu": {
     "file": "文件",
@@ -2178,6 +2185,27 @@
       "timeline_read": "读时间轴",
       "selection_read": "读选中内容",
       "file_read": "读文件"
+    }
+  },
+  "account": {
+    "signIn": "登录",
+    "signInHint": "用 GitHub 账号登录，以后可以把项目存到 GitHub。不登录也能照常编辑。",
+    "menu": "账号：{{name}}",
+    "name": "账号：{{name}}",
+    "appInstalled": "GitHub App：已安装",
+    "installApp": "GitHub App：去安装",
+    "install": "去安装",
+    "signOut": "退出登录",
+    "signedIn": "已登录：{{name}}",
+    "signedInWithoutApp": "已登录：{{name}}。要把项目存到 GitHub，还要在你的 GitHub 账号上安装 AnimaQuill 的 GitHub App。",
+    "signedOut": "已退出登录。",
+    "signOutFailed": "没能退出登录：连不上服务器，请稍后再试。",
+    "outcome": {
+      "cancelled": "登录取消了。",
+      "failed": "登录没有成功，请再试一次。",
+      "expired": "登录超时了，请再试一次。",
+      "busy": "登录太频繁了，请过几分钟再试。",
+      "unavailable": "现在不能登录，请稍后再试。"
     }
   }
 }

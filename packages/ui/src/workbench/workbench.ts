@@ -1,4 +1,11 @@
-import type { DiagnosticsSink, Host, ProjectLibrary } from "@animaquill/host";
+import type {
+  AccountAccess,
+  AccountSnapshot,
+  DiagnosticsSink,
+  Host,
+  ProjectLibrary,
+  SignInOutcome,
+} from "@animaquill/host";
 import type { TFunction } from "i18next";
 import {
   clipEnd,
@@ -104,6 +111,9 @@ function saveReport(report: unknown, name: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** How long the page may take to go once it is ready to, see `Workbench.leavePage`. */
+const LEAVING_MS = 10_000;
+
 export class Workbench {
   readonly t: TFunction;
   readonly version: string;
@@ -152,6 +162,11 @@ export class Workbench {
   readonly errors: ErrorReports;
   readonly #sink: DiagnosticsSink | undefined;
   readonly projects: ProjectLibrary;
+  /** The account people have where the editor is hosted, where it has accounts: see `Host.account`. */
+  readonly account: AccountAccess | undefined;
+  /** The page is going away on purpose, with everything kept, see `leavePage`. */
+  #leavingPage = false;
+  #leavingTimer: ReturnType<typeof setTimeout> | undefined;
   /** When the last export began, see `exporting` in the constructor. */
   #exportSince = 0;
   /** Where the page with the compositor is. A site of its own keeps it apart from the editor. */
@@ -201,6 +216,7 @@ export class Workbench {
       ...this.projects,
       media: (id) => this.projectFolders?.mediaFor(id, this.#exportSince) ?? library.media(id),
     };
+    this.account = host.account;
     this.diagnostics = new DiagnosticsRecorder(version);
     this.ai = new AiSettingsStore(host.settings, host.keys, {
       saveFailed: () => this.notifications.push(t("ai.saveFailed")),
@@ -1015,6 +1031,129 @@ export class Workbench {
     ]);
     // An address of a project folder opens as one once the page is there, see `resume`.
     if (!(await this.projectFolders?.restore())) await this.session.restore();
+    // Who is signed in comes when it comes: the editor does not wait for it.
+    if (this.account) void this.#followAccount(this.account);
+  }
+
+  /** Asks who is signed in, and says how a sign-in ended when it brought this page here. */
+  async #followAccount(account: AccountAccess): Promise<void> {
+    await account.refresh();
+    const outcome = account.takeOutcome();
+    if (outcome) this.#tellSignIn(outcome, account.getSnapshot());
+  }
+
+  #tellSignIn(outcome: SignInOutcome, snapshot: AccountSnapshot): void {
+    const { t } = this;
+    if (outcome !== "signedIn") {
+      this.notifications.push(t(`account.outcome.${outcome}`));
+      return;
+    }
+    if (snapshot.status !== "signedIn") return;
+    const words = { name: snapshot.name, interpolation: { escapeValue: false } };
+    if (snapshot.appInstalled) {
+      this.notifications.push(t("account.signedIn", words));
+      return;
+    }
+    // Saving to GitHub needs the App on the account, which people may not want yet: they get to
+    // say when, and everything else works meanwhile.
+    this.notifications.push(t("account.signedInWithoutApp", words), {
+      stays: true,
+      actions: [{ label: t("account.install"), run: () => void this.installApp() }],
+    });
+  }
+
+  /**
+   * Whether the page is going away on purpose, with everything kept: the browser need not ask
+   * people whether to leave. See `leavePage`.
+   */
+  get leavingPage(): boolean {
+    return this.#leavingPage;
+  }
+
+  /**
+   * Gets the page ready to go away for a moment and come back to this project, as signing in does:
+   * what is not saved yet, what is being tried, code that is not saved, and what this window keeps
+   * of itself all go where a reload finds them. Resolves to false when something would stop halfway,
+   * such as an export, or people would rather stay with what could not be kept.
+   */
+  async leavePage(): Promise<boolean> {
+    const { t } = this;
+    const exporting = this.videos.getSnapshot() !== undefined;
+    if (this.transfer.running || exporting || this.projectFolders?.moving === true) {
+      await this.dialogs.confirm({
+        title: t("app.leaveBusyTitle"),
+        message: t("app.leaveBusyMessage"),
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+      return false;
+    }
+    // A number that is still being typed is part of what people mean to keep.
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLInputElement) {
+      if (document.activeElement.matches('[role="spinbutton"]')) document.activeElement.blur();
+    }
+    this.timeline.flush();
+    this.keyframes.flush();
+    const [saved, tried, typed] = await Promise.all([
+      this.session.trySave(),
+      this.trials.settle(),
+      this.drafts.settle(),
+      this.layout.flush(),
+    ]);
+    // What is saved goes into the project folder too, should the page not come back.
+    const written = await (this.projectFolders?.flush() ?? Promise.resolve(true)).catch(
+      (error: unknown) => {
+        console.warn("The project folder could not be written before leaving", error);
+        return false;
+      },
+    );
+    if (!saved || !tried || !typed) {
+      const leave = await this.dialogs.confirm({
+        title: t("app.leaveUnsavedTitle"),
+        message: t("app.leaveUnsavedMessage"),
+        confirm: t("app.leaveAnyway"),
+        danger: true,
+      });
+      if (!leave) return false;
+    } else if (!written) {
+      // The browser has all of it, and the folder gets it from there once the page is back; until
+      // then the folder is behind, which matters to whoever looks at it meanwhile.
+      const leave = await this.dialogs.confirm({
+        title: t("app.leaveFolderTitle"),
+        message: t("app.leaveFolderMessage"),
+        confirm: t("app.leaveAnyway"),
+      });
+      if (!leave) return false;
+    }
+    this.#leavingPage = true;
+    // Should the page stay after all, it asks again before going.
+    clearTimeout(this.#leavingTimer);
+    this.#leavingTimer = setTimeout(() => (this.#leavingPage = false), LEAVING_MS);
+    return true;
+  }
+
+  /** Signs in where the editor is hosted: the page goes and comes back, see `leavePage`. */
+  async signIn(): Promise<void> {
+    const { account } = this;
+    if (account && (await this.leavePage())) account.signIn();
+  }
+
+  /** Installs the GitHub App on the account: the page goes and comes back, see `leavePage`. */
+  async installApp(): Promise<void> {
+    const { account } = this;
+    if (account && (await this.leavePage())) account.installApp();
+  }
+
+  async signOut(): Promise<void> {
+    const { account, t } = this;
+    if (!account) return;
+    try {
+      await account.signOut();
+      this.notifications.push(t("account.signedOut"));
+    } catch (error) {
+      console.warn("Signing out failed", error);
+      this.notifications.push(t("account.signOutFailed"));
+    }
   }
 
   /**

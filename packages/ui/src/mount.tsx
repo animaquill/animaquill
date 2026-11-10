@@ -78,8 +78,12 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   document.addEventListener("visibilitychange", save);
 
-  // People come back from their files, where they may have taken proxies away.
-  const lookAgain = () => void workbench.proxies?.lookAgain();
+  // People come back from their files, where they may have taken proxies away, and perhaps from
+  // another tab, where they signed in or out.
+  const lookAgain = () => {
+    void workbench.proxies?.lookAgain();
+    void workbench.account?.refresh();
+  };
   window.addEventListener("focus", lookAgain);
 
   // A dialog has to be answered first: nothing behind it should change in the meantime.
@@ -106,6 +110,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
+    // It goes on purpose, with everything kept or people having said so, see `leavePage`.
+    if (workbench.leavingPage) return;
     const { code, session, transfer, trials, videos, projectFolders } = workbench;
     // An export that stops halfway can go on after a reload, but its sound has to catch up first.
     const exporting = videos.getSnapshot() !== undefined;

@@ -1,5 +1,11 @@
 import { ProjectStore, aiTask, orderedTracks } from "@animaquill/core";
-import type { FolderAccess, Host } from "@animaquill/host";
+import type {
+  AccountAccess,
+  AccountSnapshot,
+  FolderAccess,
+  Host,
+  SignInOutcome,
+} from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryTarget, memorySource } from "../transfer/memory-folder.ts";
@@ -23,12 +29,13 @@ const noFolders: FolderAccess = {
   savesInBrowser: false,
 };
 
-function setup(folders = noFolders) {
+function setup(folders = noFolders, more: Partial<Host> = {}) {
   const library = new MemoryLibrary();
   const trials = new MemoryTrials();
   const drafts = new MemoryTrials();
   const values = new Map<string, unknown>();
   const host: Host = {
+    ...more,
     projects: library,
     address: memoryAddress(),
     windowMemory: memoryWindow(),
@@ -86,8 +93,8 @@ afterEach(() => {
 });
 
 /** A project with one clip, and a window that is trying something out on it. */
-async function trying(folders = noFolders) {
-  const context = setup(folders);
+async function trying(folders = noFolders, more: Partial<Host> = {}) {
+  const context = setup(folders, more);
   const { workbench } = context;
   await create(workbench, "试改");
   const store = workbench.session.store as ProjectStore;
@@ -1260,5 +1267,172 @@ describe("keys of AI services", () => {
     expect(report).not.toContain("SECRETSECRET");
     // How the editor runs is told by what happened, which never has a key in it.
     expect(JSON.stringify(workbench.diagnostics.trail.entries())).not.toContain("SECRETSECRET");
+  });
+});
+
+/** An account where the editor is hosted, which notes what the editor asks of it. */
+function fakeAccount(snapshot: AccountSnapshot = { status: "signedOut" }, outcome?: SignInOutcome) {
+  const asked: string[] = [];
+  let current = snapshot;
+  let told = outcome;
+  const account: AccountAccess & { failing: boolean } = {
+    failing: false,
+    subscribe: () => () => {},
+    getSnapshot: () => current,
+    refresh: async () => {},
+    takeOutcome() {
+      const taken = told;
+      told = undefined;
+      return taken;
+    },
+    signIn: () => void asked.push("signIn"),
+    installApp: () => void asked.push("installApp"),
+    async signOut() {
+      asked.push("signOut");
+      if (account.failing) throw new Error("offline");
+      current = { status: "signedOut" };
+    },
+  };
+  return { account, asked };
+}
+
+describe("leaving the page to sign in", () => {
+  it("keeps what is being tried first, and the project with its address", async () => {
+    const { account, asked } = fakeAccount();
+    const { workbench, trials, id } = await trying(noFolders, { account });
+    // Keeping takes a moment, and the page must not go before it is done.
+    let keptWhenLeaving: unknown;
+    trials.duringSave = () => new Promise((done) => setTimeout(done, 30));
+    workbench.properties.commit([
+      { owner: { clip: "c" }, path: "transform.x", op: "write", time: "1", value: 20 },
+    ]);
+    const signIn = account.signIn;
+    account.signIn = () => {
+      keptWhenLeaving = structuredClone([...(trials.kept.get(id)?.values() ?? [])]);
+      signIn();
+    };
+    await workbench.signIn();
+    expect(asked).toEqual(["signIn"]);
+    expect(JSON.stringify(keptWhenLeaving)).toContain("20");
+    expect(workbench.leavingPage).toBe(true);
+    expect(workbench.trials.notKept).toBe(false);
+    // Nothing closed: the page comes back to this project.
+    expect(workbench.session.store?.getState().manifest.id).toBe(id);
+    expect(countOf(workbench)).toBe(1);
+  });
+
+  it("keeps code that is not saved first, without saving it, and without asking", async () => {
+    const { account, asked } = fakeAccount();
+    const { workbench, drafts } = setup(noFolders, { account });
+    await create(workbench, "项目");
+    const store = workbench.session.store as ProjectStore;
+    const id = store.getState().manifest.id;
+    store.execute({ type: "file.write", params: { path: "code/a.js", text: "one" } });
+    workbench.code.open("code/a.js");
+    drafts.duringSave = () => new Promise((done) => setTimeout(done, 30));
+    let keptWhenLeaving: unknown;
+    const signIn = account.signIn;
+    account.signIn = () => {
+      keptWhenLeaving = structuredClone([...(drafts.kept.get(id)?.values() ?? [])]);
+      signIn();
+    };
+    workbench.code.edit("code/a.js", "mine");
+    await workbench.signIn();
+    expect(workbench.dialogs.getSnapshot()).toBeUndefined();
+    expect(asked).toEqual(["signIn"]);
+    expect(JSON.stringify(keptWhenLeaving)).toContain("mine");
+    expect(store.exportFiles().files.get("code/a.js")).toBe("one");
+    expect(workbench.code.hasUnsaved).toBe(true);
+  });
+
+  it("asks before leaving what could not be saved, and stays when told to", async () => {
+    const { account, asked } = fakeAccount();
+    const { workbench, library } = setup(noFolders, { account });
+    await create(workbench, "一");
+    await failToSave(workbench, library);
+    const leaving = workbench.signIn();
+    expect((await dialogOf(workbench))?.title).toBe("app.leaveUnsavedTitle");
+    workbench.dialogs.answer(false);
+    await leaving;
+    expect(asked).toEqual([]);
+    expect(workbench.leavingPage).toBe(false);
+
+    const again = workbench.signIn();
+    await dialogOf(workbench);
+    workbench.dialogs.answer(true);
+    await again;
+    expect(asked).toEqual(["signIn"]);
+    expect(workbench.leavingPage).toBe(true);
+    library.failing = false;
+    await workbench.session.trySave();
+  });
+
+  it("does not leave while something would stop halfway, such as bringing a project in", async () => {
+    const { account, asked } = fakeAccount();
+    const { workbench } = setup(noFolders, { account });
+    await create(workbench, "一");
+    vi.spyOn(workbench.transfer, "running", "get").mockReturnValue(true);
+    const leaving = workbench.installApp();
+    const dialog = await dialogOf(workbench);
+    expect(dialog).toMatchObject({ title: "app.leaveBusyTitle", noticeOnly: true });
+    workbench.dialogs.answer(true);
+    await leaving;
+    expect(asked).toEqual([]);
+    expect(workbench.leavingPage).toBe(false);
+  });
+
+  it("says how the sign-in that brought the page here ended, and offers the App where it is missing", async () => {
+    const { account, asked } = fakeAccount(
+      { status: "signedIn", name: "octo", appInstalled: false },
+      "signedIn",
+    );
+    const { workbench } = setup(noFolders, { account });
+    await workbench.load();
+    await vi.waitFor(() => expect(notices(workbench)).toEqual(["account.signedInWithoutApp"]));
+    const [notice] = workbench.notifications.getSnapshot();
+    expect(notice?.actions?.map((action) => action.label)).toEqual(["account.install"]);
+    notice?.actions?.[0]?.run();
+    await vi.waitFor(() => expect(asked).toEqual(["installApp"]));
+  });
+
+  it("says nothing more once the App is there, and what went wrong when it did", async () => {
+    const installed = setup(noFolders, {
+      account: fakeAccount({ status: "signedIn", name: "octo", appInstalled: true }, "signedIn")
+        .account,
+    });
+    await installed.workbench.load();
+    await vi.waitFor(() => expect(notices(installed.workbench)).toEqual(["account.signedIn"]));
+    const failed = setup(noFolders, { account: fakeAccount(undefined, "expired").account });
+    await failed.workbench.load();
+    await vi.waitFor(() => expect(notices(failed.workbench)).toEqual(["account.outcome.expired"]));
+    const nothing = setup(noFolders, { account: fakeAccount().account });
+    await nothing.workbench.load();
+    await Promise.resolve();
+    expect(notices(nothing.workbench)).toEqual([]);
+  });
+
+  it("signs out without leaving, and says when that did not work", async () => {
+    const { account, asked } = fakeAccount({
+      status: "signedIn",
+      name: "octo",
+      appInstalled: true,
+    });
+    const { workbench } = setup(noFolders, { account });
+    account.failing = true;
+    await workbench.signOut();
+    expect(notices(workbench)).toEqual(["account.signOutFailed"]);
+    account.failing = false;
+    await workbench.signOut();
+    expect(notices(workbench)).toEqual(["account.signOutFailed", "account.signedOut"]);
+    expect(asked).toEqual(["signOut", "signOut"]);
+    expect(workbench.leavingPage).toBe(false);
+  });
+
+  it("is not there without accounts", async () => {
+    const { workbench } = setup();
+    expect(workbench.account).toBeUndefined();
+    await workbench.signIn();
+    await workbench.signOut();
+    expect(workbench.leavingPage).toBe(false);
   });
 });

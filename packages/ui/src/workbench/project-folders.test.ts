@@ -648,3 +648,45 @@ describe("a dropped folder", () => {
     });
   });
 });
+
+describe("leaving the page for a moment, as signing in does", () => {
+  async function inFolder() {
+    const browser = browserOf();
+    browser.disk.folder("文档/新的");
+    const workbench = windowOf(browser);
+    browser.disk.chooseNext("文档/新的");
+    const creating = workbench.newProject();
+    await answer(workbench, "我的片子");
+    await creating;
+    await written(workbench);
+    return { browser, workbench };
+  }
+
+  it("goes once the folder has everything, without asking", async () => {
+    const { browser, workbench } = await inFolder();
+    workbench.session.store?.execute({ type: "project.rename", params: { name: "改过" } });
+    expect(await workbench.leavePage()).toBe(true);
+    expect(workbench.dialogs.getSnapshot()).toBeUndefined();
+    expect(manifestOn(browser.disk, "文档/新的").name).toBe("改过");
+  });
+
+  it("asks when the folder could not be written, and stays when people say so", async () => {
+    const { browser, workbench } = await inFolder();
+    browser.disk.failWrites("文档/新的/animaquill.json", { times: 1000 });
+    workbench.session.store?.execute({ type: "project.rename", params: { name: "写不进去" } });
+    const leaving = workbench.leavePage();
+    expect(await answer(workbench, false)).toMatchObject({
+      kind: "confirm",
+      title: "app.leaveFolderTitle",
+    });
+    expect(await leaving).toBe(false);
+    expect(workbench.leavingPage).toBe(false);
+    // Saved in the browser all the same: that is what the folder gets when it can.
+    expect(workbench.session.hasUnsavedChanges).toBe(false);
+
+    const again = workbench.leavePage();
+    await answer(workbench, true);
+    expect(await again).toBe(true);
+    expect(workbench.leavingPage).toBe(true);
+  });
+});

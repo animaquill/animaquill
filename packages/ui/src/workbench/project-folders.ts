@@ -530,9 +530,12 @@ export class ProjectFolders {
     else this.#setWaiting({ record, status });
   }
 
-  /** Writes what is waiting, right away: for Ctrl+S, and for a page that goes to the background. */
-  async flush(): Promise<void> {
-    await this.#current?.session.flush();
+  /**
+   * Writes what is waiting, right away: for Ctrl+S, and for a page that goes to the background.
+   * Resolves to whether the folder has everything now, also when no project folder is open.
+   */
+  async flush(): Promise<boolean> {
+    return (await this.#current?.session.flush()) ?? true;
   }
 
   /** Writes what is waiting, and lets go of the folder, for the next project or the start page. */

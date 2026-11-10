@@ -41,6 +41,59 @@ export interface Host {
   readonly keys?: KeyStore;
   /** Conversations with AI in the browser, by project. Without it they last as long as the page. */
   readonly chats?: ChatStore;
+  /**
+   * The account people have where the editor is hosted, such as a platform that keeps projects on
+   * GitHub. Without it, as on the development page and in the desktop app, there is nothing to sign
+   * in to. Either way everything on this computer works the same, signed in or not.
+   */
+  readonly account?: AccountAccess;
+}
+
+/** How the last sign-in ended, when this page is where it came back to. */
+export type SignInOutcome =
+  | "signedIn"
+  /** People said no where they were asked. */
+  | "cancelled"
+  | "failed"
+  /** It took too long, or was done already. */
+  | "expired"
+  /** Too many tries for now. */
+  | "busy"
+  /** Signing in cannot work here right now. */
+  | "unavailable";
+
+export type AccountSnapshot =
+  /** Not known yet, or the host could not find out. */
+  | { readonly status: "unknown" }
+  | { readonly status: "signedOut" }
+  | {
+      readonly status: "signedIn";
+      /** What people know the account by, such as the login on GitHub. */
+      readonly name: string;
+      /** An https address of the account's picture. */
+      readonly picture?: string;
+      /** Whether the GitHub App is installed on the account, which saving projects to GitHub needs. */
+      readonly appInstalled: boolean;
+    };
+
+/**
+ * Signing in and out, where the host has accounts. The host knows how; the editor only shows where
+ * things are and asks for them. Signing in and installing the App leave the page and come back to
+ * it, to the same project: the editor keeps everything first, see `Workbench.leavePage`.
+ */
+export interface AccountAccess {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): AccountSnapshot;
+  /** Asks again, such as when people come back to the window. Never rejects. */
+  refresh(): Promise<void>;
+  /** How the sign-in that brought this page here ended, once, and then undefined. */
+  takeOutcome(): SignInOutcome | undefined;
+  /** Leaves the page to sign in, and comes back to this page as it is now. */
+  signIn(): void;
+  /** Leaves the page to install the GitHub App on the account, and comes back. */
+  installApp(): void;
+  /** Rejects when the host could not be reached: people are then still signed in. */
+  signOut(): Promise<void>;
 }
 
 /**
