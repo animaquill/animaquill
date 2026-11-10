@@ -648,6 +648,7 @@
         "temperature": "色温",
         "tint": "色调",
         "radius": "半径",
+        "edge": "边缘",
         "left": "左",
         "top": "上",
         "right": "右",
@@ -683,6 +684,12 @@
         "darken": "变暗",
         "lighten": "变亮",
         "add": "相加"
+      },
+      "effect": {
+        "edge": {
+          "extend": "重复边缘",
+          "transparent": "透明"
+        }
       }
     }
   },

@@ -18,7 +18,7 @@ test.setTimeout(600_000);
 
 const still = (value: unknown) => ({ kind: "still", value }) as const;
 
-const EFFECTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+const EFFECTS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   brightness: { brightness: 0.3 },
   contrast: { contrast: 0.3 },
   saturation: { saturation: 0.5 },
@@ -27,7 +27,16 @@ const EFFECTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   crop: { left: 0.1, right: 0.1 },
 };
 
-function planOf([width, height]: readonly [number, number], types: readonly string[]): RenderPlan {
+/** Other values of an effect, measured on their own: the blur repeats the edge at first. */
+const VARIANTS: Readonly<Record<string, readonly [string, Readonly<Record<string, unknown>>]>> = {
+  "blur, transparent edge": ["blur", { radius: 20, edge: "transparent" }],
+};
+
+function planOf(
+  [width, height]: readonly [number, number],
+  types: readonly string[],
+  values: Readonly<Record<string, Readonly<Record<string, unknown>>>> = EFFECTS,
+): RenderPlan {
   // It moves, so that every frame is another picture and gets drawn.
   const moving = {
     keys: [
@@ -37,7 +46,7 @@ function planOf([width, height]: readonly [number, number], types: readonly stri
   };
   const channels: Record<string, unknown> = { "transform.x": compileChannel(moving, "number") };
   for (const type of types) {
-    for (const [name, value] of Object.entries(EFFECTS[type] ?? {})) {
+    for (const [name, value] of Object.entries(values[type] ?? {})) {
       channels[`effect.${type}.${name}`] = still(value);
     }
   }
@@ -118,13 +127,16 @@ for (const [name, size] of Object.entries(SIZES)) {
   test(`effects at ${name}, against none`, async ({ page }) => {
     test.skip(name === "4K" && !process.env["AQ_PERF_4K"], "4K only when asked for: AQ_PERF_4K=1");
     const lines = [`${name}`];
-    const cases: readonly (readonly [string, readonly string[]])[] = [
+    const cases: readonly (readonly [string, readonly string[], typeof EFFECTS?])[] = [
       ["none", []],
       ...Object.keys(EFFECTS).map((type) => [type, [type]] as const),
+      ...Object.entries(VARIANTS).map(
+        ([label, [type, values]]) => [label, [type], { [type]: values }] as const,
+      ),
       ["all six", Object.keys(EFFECTS)],
     ];
-    for (const [label, types] of cases) {
-      const times = await stills(page, planOf(size, types), 12);
+    for (const [label, types, values] of cases) {
+      const times = await stills(page, planOf(size, types, values), 12);
       const median = quantile(times, 0.5);
       const found = { median: round(median), p90: round(quantile(times, 0.9)) };
       lines.push(`${label} ${JSON.stringify(found)}`);

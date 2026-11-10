@@ -1,4 +1,4 @@
-import { componentSpecOf, componentsOf, withComponent } from "@animaquill/core";
+import { componentSpecOf, componentsOf, nameKeyOf, withComponent } from "@animaquill/core";
 import type { Value, ValueType } from "@animaquill/schema";
 import {
   useEffect,
@@ -60,7 +60,7 @@ function ChoiceControl({ row, label, readOnly, onCommit }: ControlProps) {
     >
       {spec.options?.map((option) => (
         <option key={option} value={option}>
-          {textOf(t, `property.choice.${spec.path}.${option}`, option)}
+          {textOf(t, `property.choice.${nameKeyOf(spec.path)}.${option}`, option)}
         </option>
       ))}
     </select>

@@ -259,6 +259,10 @@ function checkEffects(track: Track, trackPath: string, file: string, problems: P
         problems.push(warning("effect-property", file, where, `效果没有这个参数：${property}`));
         continue;
       }
+      if (isAnimation(value) && parameter.animatable === false) {
+        const message = `${property} 不能打关键帧，这里只用第一个关键帧的值`;
+        problems.push(warning("not-animatable", file, where, message));
+      }
       const values = isAnimation(value) ? value.keys.map((key) => key.value) : [value];
       const problem = values
         .map((item) => specValueProblem(parameter, item, property))

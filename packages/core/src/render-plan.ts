@@ -255,8 +255,10 @@ export function channelsOf(
   effects: readonly PlannedEffect[] = [],
 ): Channels {
   const channels: Record<string, Channel> = {};
-  const put = (path: string, type: ValueType) => {
-    const value = entryOf(properties, path);
+  const put = (path: string, type: ValueType, animatable = true) => {
+    const stored = entryOf(properties, path);
+    // Keys on what cannot have them come only from a hand-written file: the first one counts.
+    const value = animatable ? stored : firstValue(stored);
     const channel = value === undefined ? undefined : channelOf(value, type);
     if (channel) channels[path] = channel;
   };
@@ -264,7 +266,7 @@ export function channelsOf(
   for (const { id, type, missing } of effects) {
     const spec = missing ? undefined : builtInEffect(type);
     for (const parameter of spec?.properties ?? []) {
-      put(effectPath(id, parameter.path), parameter.type);
+      put(effectPath(id, parameter.path), parameter.type, parameter.animatable !== false);
     }
   }
   return channels;

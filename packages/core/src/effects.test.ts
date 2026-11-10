@@ -108,6 +108,35 @@ describe("the format", () => {
       "effect-property tracks.0.clips.0.properties.effect.b.nothing",
     ]);
   });
+
+  it("has a blur repeat its edge unless it says transparent, which is the same at every moment", () => {
+    const keys = {
+      keys: [
+        { time: "0", value: "transparent" },
+        { time: "2", value: "extend" },
+      ],
+    };
+    const { store } = withClip([{ id: "b", type: "blur" }], { "effect.b.edge": keys });
+    const { project } = readProject(store.exportFiles().files);
+    const codes = checkProject(project as never)
+      .filter(({ path }) => path?.includes("effect.b"))
+      .map(({ code }) => code);
+    expect(codes).toEqual(["not-animatable"]);
+    const layer = buildRenderPlan(store.getState(), "main")?.layers[0];
+    if (!layer) throw new Error("no layer");
+    // Only the first key counts, at every moment.
+    for (const time of [0, 3]) {
+      expect(effectValuesAt(layer, { id: "b", type: "blur" }, time).values).toEqual({
+        radius: 0,
+        edge: "transparent",
+      });
+    }
+    const plain = { ...layer, channels: {} };
+    expect(effectValuesAt(plain, { id: "b", type: "blur" }, 0)).toEqual({
+      values: { radius: 0, edge: "extend" },
+      idle: true,
+    });
+  });
 });
 
 describe("the commands", () => {
@@ -172,6 +201,10 @@ describe("the commands", () => {
     expect(failure(edit("effect.a.left", 1))).toBe("not-found");
     expect(failure(edit("effect.gone.radius", 1))).toBe("not-found");
     expect(failure(edit("crop.left", 0.1))).toBe("invalid-value");
+    // How a blur takes its edge is one value for the whole clip, out of those it has.
+    expect(failure(edit("effect.a.edge", "transparent"))).toBe("ok");
+    expect(failure(edit("effect.a.edge", "extend", "setKey"))).toBe("not-animatable");
+    expect(failure(edit("effect.a.edge", "mirror"))).toBe("invalid-value");
   });
 
   it("move, turn off and take away, with what it took, and undo brings all of it back", () => {
@@ -493,7 +526,10 @@ describe("the tree of what can have keys", () => {
       ["effect.a", "effect.crop", "effects"],
       ["effect.b", "effect.blur", "effects"],
     ]);
-    expect(objects[3]?.properties.map(({ path }) => path)).toEqual(["effect.b.radius"]);
+    expect(objects[3]?.properties.map(({ path }) => path)).toEqual([
+      "effect.b.radius",
+      "effect.b.edge",
+    ]);
   });
 });
 

@@ -417,6 +417,53 @@ test.describe("in the properties tab", () => {
     await expect(node("半径")).toBeVisible();
     await content(page, "keyframes").screenshot(shot("effects-keyframes.png"));
   });
+
+  test("blur a clip that fills the picture to its edges, unless their edge is transparent", async ({
+    page,
+  }) => {
+    await importClips(page, 4, [
+      {
+        id: "a",
+        name: "白",
+        start: "0",
+        duration: "4",
+        source: { kind: "color", color: "#ffffff" },
+        effects: [{ id: "b", type: "blur" }],
+        properties: { "effect.b.radius": 40 },
+      },
+    ]);
+    await page.mouse.click(...xy(await onClip(page, 0)));
+    await tab(page, "properties").click();
+    const compositor = await findCompositor(page);
+    if (!compositor) throw new Error("No compositor");
+    /** The red of the preview at its left edge and in its middle. */
+    const edgeAndMiddle = () =>
+      compositor.evaluate(() => {
+        const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+        const context = canvas.getContext("2d");
+        const at = (x: number) => context?.getImageData(x, canvas.height >> 1, 1, 1).data[0] ?? 0;
+        return [at(0), at(canvas.width >> 1)] as const;
+      });
+    // Repeating the edge is what a blur does at first: the edge is as bright as the middle.
+    const edge = effectsOn(page).nth(0).getByRole("combobox", { name: "边缘" });
+    await expect(edge).toHaveValue("extend");
+    await expect(edge.locator("option:checked")).toHaveText("重复边缘");
+    await expect.poll(edgeAndMiddle).toEqual([255, 255]);
+    await properties(page).screenshot(shot("effects-blur-edge.png"));
+    await content(page, "preview").screenshot(shot("effects-blur-extend.png"));
+    // It has no keys: it is the same for the whole clip.
+    await expect(
+      effectsOn(page)
+        .nth(0)
+        .getByRole("group", { name: "边缘", exact: true })
+        .getByRole("button", { name: "添加关键帧" }),
+    ).toHaveCount(0);
+    // Transparent around the box: the edge goes dark, as before.
+    await edge.selectOption("transparent");
+    await expect.poll(async () => (await edgeAndMiddle())[0]).toBeLessThan(170);
+    expect((await edgeAndMiddle())[1]).toBe(255);
+    await content(page, "preview").screenshot(shot("effects-blur-transparent.png"));
+  });
 });
 
 /* What effects do to the picture, from plans that go straight to the compositor. */
@@ -590,8 +637,39 @@ test.describe("the picture", () => {
       .toBeLessThan(200);
   });
 
+  test("of a blur repeats the edge of the box, and is transparent around it when it says so", async ({
+    page,
+  }) => {
+    const blur = (edge?: string) => ({
+      id: "b",
+      type: "blur",
+      values: { radius: 40, ...(edge && { edge }) },
+    });
+    const white = (edge?: string) => planOf([colorLayer("w", "#ffffff", [blur(edge)])]);
+    // Each edge and corner is as bright as the middle, to the last bit.
+    const sides: readonly (readonly [number, number])[] = [
+      [0, HEIGHT / 2],
+      [WIDTH - 1, HEIGHT / 2],
+      [WIDTH / 2, 0],
+      [WIDTH / 2, HEIGHT - 1],
+      [0, 0],
+      [WIDTH - 1, HEIGHT - 1],
+    ];
+    await expectPixels(
+      page,
+      white(),
+      [...sides, MIDDLE].map(([x, y]) => [x, y, [255, 255, 255]] as const),
+      0,
+    );
+    // Transparent: the edges go towards the black below, half way, and the corners further.
+    await show(page, white("transparent"));
+    await expect.poll(async () => (await pixel(page, 0, HEIGHT / 2))[0] ?? 255).toBeLessThan(150);
+    expect((await pixel(page, 0, 0))[0] ?? 255).toBeLessThan(90);
+    expect((await pixel(page, ...MIDDLE))[0]).toBe(255);
+  });
+
   test("of a clip box half as large has its blur half as wide, in the box", async ({ page }) => {
-    const blur = { id: "b", type: "blur", values: { radius: 30 } };
+    const blur = { id: "b", type: "blur", values: { radius: 30, edge: "transparent" } };
     const scaled = (scale: number) =>
       planOf([
         colorLayer("a", "#ffffff", [blur], {

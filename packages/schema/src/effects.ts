@@ -71,12 +71,24 @@ export const BUILT_IN_EFFECTS: Readonly<Record<string, EffectSpec>> = {
     category: "color",
     properties: [amount("temperature"), amount("tint")],
   },
-  /** A Gaussian blur, in world units of the clip box: a smaller clip gets less blurred. */
+  /**
+   * A Gaussian blur, in world units of the clip box: a smaller clip gets less blurred. What is
+   * outside the box is its edge pixels over again, so that a picture that fills the stage keeps its
+   * edges, or transparent, which softens the edges of the box too. Which one is how the clip is
+   * made, not something that changes halfway through, so it has no keys.
+   */
   blur: {
     media: ["picture"],
     category: "blur",
     properties: [
       { path: "radius", type: "number", unit: "world", default: 0, min: 0, softMax: 100 },
+      {
+        path: "edge",
+        type: "choice",
+        default: "extend",
+        options: ["extend", "transparent"],
+        animatable: false,
+      },
     ],
   },
   /** Takes shares of the clip box away at its sides, which become transparent. */
