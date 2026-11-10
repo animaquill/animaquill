@@ -40,4 +40,10 @@ jobs:
           fi
           npm pkg set version="$version"
           pnpm pack --pack-destination "$RUNNER_TEMP"
-          npm publish "$RUNNER_TEMP/animaquill-$version.tgz" --access public
+          package="$RUNNER_TEMP/animaquill-$version.tgz"
+          # The trusted publisher may be allowed to stage only (npm's default): the version then waits
+          # under Staged Packages on npmjs.com until a maintainer approves it with 2FA.
+          if ! npm publish "$package"; then
+            npm stage publish "$package"
+            echo "::warning::animaquill@$version is staged: approve it on npmjs.com under Staged Packages"
+          fi
