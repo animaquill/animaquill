@@ -3,6 +3,7 @@ import {
   CircleAlert,
   CircleX,
   Cloud,
+  CloudAlert,
   CloudCheck,
   CloudOff,
   CloudSync,
@@ -16,6 +17,8 @@ import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
 import type { CloudSnapshot } from "../cloud/session.ts";
+import { pauseText } from "../cloud/repository-text.ts";
+import type { RepositoryWatchSnapshot } from "../cloud/repository-watch.ts";
 import type { FolderTrouble } from "../folder/session.ts";
 import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
 import type { InputChoice } from "../workbench/input-mode.ts";
@@ -26,6 +29,7 @@ import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { OperationStatus } from "./OperationStatus.tsx";
+import { RepositoryStatus } from "./RepositoryStatus.tsx";
 import styles from "./StatusBar.module.css";
 import { Tip } from "./Tip.tsx";
 
@@ -391,6 +395,14 @@ const NO_SYNC: CloudSnapshot = {
   seq: 0,
 };
 const noSync = () => NO_SYNC;
+const NO_WATCH: RepositoryWatchSnapshot = {
+  status: undefined,
+  checkedAt: undefined,
+  trouble: undefined,
+  hurrying: false,
+  archiveAt: undefined,
+};
+const noWatch = () => NO_WATCH;
 
 /**
  * Whether the open project is in step with the platform: online, reconnecting or offline, and
@@ -411,6 +423,12 @@ function CloudStatus() {
     session?.subscribe ?? noSubscription,
     session?.getSnapshot ?? noSync,
   );
+  const repository = outer.kind === "linked" ? outer.repository : undefined;
+  const archive = useSyncExternalStore(
+    repository?.subscribe ?? noSubscription,
+    repository?.getSnapshot ?? noWatch,
+  ).status;
+  const [anchor, setAnchor] = useState<DOMRect>();
   if (!cloud || outer.kind === "none") return null;
   if (outer.kind === "detached") {
     return (
@@ -441,7 +459,14 @@ function CloudStatus() {
             : t(`cloud.problem.${problem.kind}`),
         ]
       : []),
-  ].join(" · ");
+  ];
+  // Archiving into GitHub that paused needs people, as syncing that stopped does.
+  const archivePaused = archive?.state === "paused";
+  const archiveAbout = archivePaused
+    ? `${t("repository.status.barPaused")}：${pauseText(archive, t).reason}`
+    : archive?.state === "none"
+      ? t("repository.status.barNone")
+      : undefined;
   const fix =
     problem?.kind === "signed-out"
       ? { label: t("cloud.fix.signIn"), run: () => void workbench.signIn() }
@@ -457,28 +482,57 @@ function CloudStatus() {
       : undefined;
   const isTrouble = state === "paused";
   const Icon =
-    state === "online"
-      ? pending > 0
-        ? CloudSync
-        : CloudCheck
-      : state === "offline" || isTrouble
-        ? CloudOff
-        : state === "reconnecting"
-          ? CloudSync
-          : Cloud;
+    state === "offline" || isTrouble
+      ? CloudOff
+      : archivePaused
+        ? CloudAlert
+        : state === "online"
+          ? pending > 0
+            ? CloudSync
+            : CloudCheck
+          : state === "reconnecting"
+            ? CloudSync
+            : Cloud;
+  const label = [text, ...(archivePaused ? [t("repository.status.barPaused")] : [])].join(" · ");
   return (
     <>
-      <Tip name={text} usage={about}>
-        <span
-          className={isTrouble ? styles.failed : undefined}
-          role="status"
-          aria-label={`${t("cloud.statusLabel")}：${text}`}
+      <Tip name={text} usage={[...about, ...(archiveAbout ? [archiveAbout] : [])].join(" · ")}>
+        <button
+          type="button"
+          className={`${styles.name} ${isTrouble || archivePaused ? styles.failed : ""}`}
+          aria-haspopup="dialog"
+          aria-label={`${t("cloud.statusLabel")}：${label}`}
           data-cloud={state}
+          {...(archive && { "data-archive": archive.state })}
+          onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
         >
           <Icon size={12} />
-          {text}
-        </span>
+          {label}
+        </button>
       </Tip>
+      {anchor && (
+        <Bubble
+          anchor={anchor}
+          title={t("cloud.details")}
+          className={styles.cloudBubble}
+          onClose={() => setAnchor(undefined)}
+        >
+          <section className={styles.cloudSync} aria-label={t("cloud.syncHeading")}>
+            <h4>{t("cloud.syncHeading")}</h4>
+            <p className={isTrouble ? styles.failed : undefined}>{text}</p>
+            {about.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </section>
+          {repository && (
+            <RepositoryStatus
+              watch={repository}
+              notSent={pending > 0}
+              close={() => setAnchor(undefined)}
+            />
+          )}
+        </Bubble>
+      )}
       {fix && (
         <button type="button" className={styles.name} onClick={fix.run}>
           {fix.label}

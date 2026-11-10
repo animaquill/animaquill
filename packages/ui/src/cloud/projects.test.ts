@@ -11,6 +11,7 @@ import { Notifications } from "../workbench/notifications.ts";
 import { ProjectSession, type SessionMessages } from "../workbench/session.ts";
 import { MemoryPlatform, TestCloudBrowser, TestTime } from "./cloud-support.ts";
 import { CLOUD_FILE, CloudProjects, readCloudFile } from "./projects.ts";
+import { FakeRepositories, TestWindow } from "./repository-support.ts";
 
 const t = createInstance();
 await t.init({ lng: "zh-CN", resources: { "zh-CN": { translation: zhCN } } });
@@ -63,18 +64,20 @@ function account(status: "signedIn" | "signedOut" = "signedIn") {
   return access;
 }
 
-/** Answers every dialog with what `answer` says, as people would. */
+/** Answers every dialog with what `answer` says, as people would; a promise once it settles. */
 function answering(dialogs: Dialogs, answer: (request: DialogRequest) => unknown) {
   const asked: DialogRequest[] = [];
   dialogs.subscribe(() => {
     const request = dialogs.getSnapshot();
     if (!request || request.kind === "progress" || asked.includes(request)) return;
     asked.push(request);
-    void Promise.resolve().then(() => {
-      if (dialogs.getSnapshot() === request) {
-        dialogs.answer(answer(request) as Parameters<Dialogs["answer"]>[0]);
-      }
-    });
+    void Promise.resolve()
+      .then(() => answer(request))
+      .then((value) => {
+        if (dialogs.getSnapshot() === request) {
+          dialogs.answer(value as Parameters<Dialogs["answer"]>[0]);
+        }
+      });
   });
   return asked;
 }
@@ -86,7 +89,12 @@ async function windowOf(
   {
     signedIn = true,
     folders = new Map<string, LocalFolder>(),
-  }: { signedIn?: boolean; folders?: Map<string, LocalFolder> } = {},
+    repository,
+  }: {
+    signedIn?: boolean;
+    folders?: Map<string, LocalFolder>;
+    repository?: FakeRepositories;
+  } = {},
 ) {
   const browser = new TestCloudBrowser(platform, "ada");
   const library = new MemoryLibrary();
@@ -95,8 +103,12 @@ async function windowOf(
   const notifications = new Notifications();
   const who = account(signedIn ? "signedIn" : "signedOut");
   const signIn = vi.fn(async () => {});
+  const installApp = vi.fn(() => {});
   const cloud = new CloudProjects({
-    cloud: browser.access({ isAlive: () => true, asleep: false }),
+    cloud: {
+      ...browser.access({ isAlive: () => true, asleep: false }),
+      ...(repository && { repository }),
+    },
     session,
     projects: library,
     folderOf: (key) => folders.get(key),
@@ -115,6 +127,8 @@ async function windowOf(
     },
     environment: time,
     timing: { scanMs: 5, noteMs: 20 },
+    repositoryEnvironment: new TestWindow(time),
+    installApp,
   });
   const open = async (id: string) => {
     await cloud.close();
@@ -122,7 +136,19 @@ async function windowOf(
     await cloud.follow();
   };
   windows.push({ cloud, session });
-  return { browser, library, session, dialogs, notifications, who, signIn, cloud, open, folders };
+  return {
+    browser,
+    library,
+    session,
+    dialogs,
+    notifications,
+    who,
+    signIn,
+    installApp,
+    cloud,
+    open,
+    folders,
+  };
 }
 
 const windows: { cloud: CloudProjects; session: ProjectSession }[] = [];
@@ -447,5 +473,125 @@ describe("CloudProjects", () => {
       ],
     ).toBe("w");
     expect(here.cloud.session?.getSnapshot().state).toBe("online");
+  });
+});
+
+describe("saving projects of the platform to GitHub", () => {
+  async function connected(
+    repository: FakeRepositories,
+    answer: (request: DialogRequest) => unknown,
+  ) {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const here = await windowOf(platform, time, { repository });
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    await here.open(id);
+    const asked = answering(here.dialogs, answer);
+    await here.cloud.connect();
+    await time.advance(200);
+    const link = await here.browser.links.get(id);
+    return { time, here, asked, link: link!, id };
+  }
+
+  it("asks once, right after connecting, whether to save the project to GitHub", async () => {
+    const repository = new FakeRepositories();
+    const { here, asked, link } = await connected(
+      repository,
+      (request) => request.kind !== "repository",
+    );
+    expect(asked.map((request) => request.kind)).toEqual(["confirm", "repository"]);
+    expect(asked[1]).toMatchObject({ title: "把项目存到 GitHub？" });
+    const picker = (asked[1] as Extract<DialogRequest, { kind: "repository" }>).picker;
+    // A new private one at first, by a name GitHub takes.
+    expect(picker.getSnapshot()).toMatchObject({ mode: "create", nameProblem: undefined });
+    expect(picker.asking).toBe(true);
+    expect(messagesOf(here.notifications)).toContain("已连接到云端，改动会实时同步。");
+    // Put off: the status says so, and nothing went to GitHub.
+    expect(repository.links).toEqual([]);
+    expect(here.cloud.repository?.status?.state).toBe("none");
+    expect(here.cloud.repository?.project).toBe(link.project);
+    expect(here.cloud.canSaveToGitHub).toBe(true);
+  });
+
+  it("saves to a new repository from the dialog, and archiving shows from then on", async () => {
+    const repository = new FakeRepositories();
+    const { here, link } = await connected(repository, async (request) =>
+      request.kind === "repository" ? (await request.picker.submit()) !== undefined : true,
+    );
+    expect(repository.links).toHaveLength(1);
+    expect(repository.calls).toContain(`link ${link.project}`);
+    expect(here.cloud.repository?.getSnapshot()).toMatchObject({
+      hurrying: true,
+      status: { state: "ready", archiving: true },
+    });
+    expect(here.cloud.canSaveToGitHub).toBe(false);
+  });
+
+  it("lists files written over and files taken away before going on with the editor's content", async () => {
+    const repository = new FakeRepositories();
+    const { time, here, asked, id } = await connected(repository, (request) =>
+      request.kind === "repository" ? false : request.kind === "confirm" ? true : undefined,
+    );
+    const files = here.session.store!.exportFiles().files;
+    const timeline = [...files.keys()].find((path) => path.startsWith("timelines/"))!;
+    repository.answer = {
+      ...repository.answer,
+      state: "paused",
+      reason: "diverged",
+      diverged: {
+        sha: "b".repeat(40),
+        files: ["code/new-on-github.js", timeline],
+        deleted: [],
+      },
+    };
+    await here.cloud.repository!.refresh();
+    expect(here.session.key).toBe(id);
+    await here.cloud.continueWithEditor();
+    const confirm = asked.at(-1) as Extract<DialogRequest, { kind: "confirm" }>;
+    expect(confirm).toMatchObject({
+      kind: "confirm",
+      title: "以编辑器的内容接着存？",
+      danger: true,
+    });
+    expect(confirm.details).toEqual([
+      { title: "会被覆盖的文件", items: [timeline] },
+      { title: "会被删除的文件（GitHub 上有，项目里没有）", items: ["code/new-on-github.js"] },
+    ]);
+    expect(repository.archives).toEqual([{ replace: "b".repeat(40) }]);
+    await time.advance(0);
+    expect(here.cloud.repository?.status?.state).toBe("ready");
+  });
+
+  it("goes on with nothing where people do not confirm", async () => {
+    const repository = new FakeRepositories();
+    const { here } = await connected(
+      repository,
+      (request) => request.kind !== "repository" && !(request.kind === "confirm" && request.danger),
+    );
+    repository.answer = {
+      ...repository.answer,
+      state: "paused",
+      reason: "diverged",
+      diverged: { sha: "b".repeat(40), files: ["code/a.js"], deleted: [] },
+    };
+    await here.cloud.repository!.refresh();
+    await here.cloud.continueWithEditor();
+    expect(repository.archives).toEqual([]);
+  });
+
+  it("has no repository where the platform does not save projects to GitHub", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const here = await windowOf(platform, time);
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    await here.open(id);
+    const asked = answering(here.dialogs, () => true);
+    await here.cloud.connect();
+    await time.advance(200);
+    expect(asked.map((request) => request.kind)).toEqual(["confirm"]);
+    expect(here.cloud.savesToGitHub).toBe(false);
+    expect(here.cloud.repository).toBeUndefined();
   });
 });

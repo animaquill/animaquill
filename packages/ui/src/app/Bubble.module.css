@@ -17,6 +17,10 @@
   box-shadow: var(--aq-shadow);
 }
 
+.bubble:focus {
+  outline: none;
+}
+
 /* A square turned on its corner, half of it hidden behind the window. */
 .bubble::after {
   position: absolute;

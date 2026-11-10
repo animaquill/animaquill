@@ -210,8 +210,15 @@ export interface RepositoryStatus {
   /** After failing: when it is tried again, and how many failed in a row. */
   readonly retryAt?: number;
   readonly failures?: number;
-  /** For "diverged": which files changed, on which commit: what `archiveNow` with `replace` writes over. */
-  readonly diverged?: { readonly sha: string; readonly files: readonly string[] };
+  /**
+   * For "diverged": which files changed, on which commit: what `archiveNow` with `replace` goes on
+   * top of. `deleted`: those of them the commit does not have any more, as against changed or new.
+   */
+  readonly diverged?: {
+    readonly sha: string;
+    readonly files: readonly string[];
+    readonly deleted: readonly string[];
+  };
   /** The update of the project the platform has, and the one the repository has. */
   readonly head: number;
   readonly archivedSeq: number;

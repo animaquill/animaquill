@@ -10,6 +10,8 @@ interface BubbleProps {
   readonly anchor: DOMRect;
   readonly title: string;
   readonly onClose: () => void;
+  /** For a bubble with more in it than the usual width takes. */
+  readonly className?: string | undefined;
   readonly children: ReactNode;
 }
 
@@ -17,7 +19,7 @@ interface BubbleProps {
  * A small window that points at what opened it, as the items of the status bar in VS Code have. It
  * goes away with Escape or a click elsewhere, and the focus goes back to where it was.
  */
-export function Bubble({ anchor, title, onClose, children }: BubbleProps) {
+export function Bubble({ anchor, title, onClose, className, children }: BubbleProps) {
   const root = useRef<HTMLDivElement>(null);
   const closing = useRef(onClose);
 
@@ -45,7 +47,8 @@ export function Bubble({ anchor, title, onClose, children }: BubbleProps) {
     const first = root.current?.querySelector<HTMLElement>(
       "[data-autofocus], input, button:not(:disabled)",
     );
-    first?.focus();
+    // Without anything to press yet, the bubble itself, so that Escape closes it.
+    (first ?? root.current)?.focus();
     if (first instanceof HTMLInputElement) first.select();
     const onPointerDown = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) closing.current();
@@ -60,9 +63,10 @@ export function Bubble({ anchor, title, onClose, children }: BubbleProps) {
   return createPortal(
     <div
       ref={root}
-      className={styles.bubble}
+      className={className ? `${styles.bubble} ${className}` : styles.bubble}
       role="dialog"
       aria-label={title}
+      tabIndex={-1}
       onKeyDown={(event) => {
         if (event.key === "Escape") closing.current();
       }}

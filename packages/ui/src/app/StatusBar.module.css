@@ -162,3 +162,25 @@
   border-radius: 3px;
   cursor: pointer;
 }
+
+.cloudBubble {
+  width: 320px;
+}
+
+.cloudSync {
+  display: grid;
+  gap: 4px;
+}
+
+.cloudSync h4 {
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cloudSync p {
+  margin: 0;
+  color: var(--aq-text-muted);
+  overflow-wrap: anywhere;
+}

@@ -54,7 +54,11 @@ const STATUS = {
     removed: 0,
     url: "u",
   },
-  diverged: { sha: "b".repeat(40), files: ["timelines/main/timeline.json"] },
+  diverged: {
+    sha: "b".repeat(40),
+    files: ["code/gone.js", "timelines/main/timeline.json"],
+    deleted: ["code/gone.js"],
+  },
   head: 4,
   archivedSeq: 3,
   somethingNew: true,
@@ -93,6 +97,16 @@ describe("repositories through the platform", () => {
       archivedSeq: 0,
     });
     expect(statusOf({ state: "weird", repository: { id: "x" } })).toMatchObject({ state: "none" });
+    // An older platform does not say which files went; a file it says went is one of them.
+    expect(
+      statusOf({ state: "paused", diverged: { sha: "c", files: ["a"], deleted: ["a", "b", 3] } })
+        .diverged,
+    ).toEqual({ sha: "c", files: ["a"], deleted: ["a"] });
+    expect(statusOf({ state: "paused", diverged: { sha: "c", files: ["a"] } }).diverged).toEqual({
+      sha: "c",
+      files: ["a"],
+      deleted: [],
+    });
     expect(() => statusOf("nonsense")).toThrow();
   });
 
@@ -156,7 +170,7 @@ describe("repositories through the platform", () => {
     });
     await expect(access.archiveNow("p1")).rejects.toMatchObject({
       code: "diverged",
-      diverged: { sha: "c".repeat(40), files: ["code/a.js"] },
+      diverged: { sha: "c".repeat(40), files: ["code/a.js"], deleted: [] },
     });
     await expect(access.archiveNow("p1")).rejects.toMatchObject({ code: "busy", retryAfter: 42 });
     const down = await access.status("p1").catch((error: unknown) => error);

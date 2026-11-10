@@ -1,3 +1,4 @@
+import type { RepositoryPicker } from "../cloud/repository-picker.ts";
 import { Emitter } from "./emitter.ts";
 
 export interface PromptOptions {
@@ -70,6 +71,14 @@ export interface DialogDetailLink {
   readonly show: () => void;
 }
 
+/** Choosing where a project of the platform is saved on GitHub, see `RepositoryPicker`. */
+export interface RepositoryDialogOptions {
+  readonly title: string;
+  readonly picker: RepositoryPicker;
+  /** Leaves the page to install the GitHub App, where it is not on the account. */
+  readonly installApp?: () => void;
+}
+
 export interface ProgressOptions {
   readonly title: string;
   /** The word on the button that stops it. */
@@ -109,6 +118,7 @@ export type DialogRequest =
   | ({ readonly kind: "confirm"; readonly id: number } & ConfirmOptions)
   | ({ readonly kind: "choice"; readonly id: number } & ChoiceOptions)
   | ({ readonly kind: "form"; readonly id: number } & FormOptions)
+  | ({ readonly kind: "repository"; readonly id: number } & RepositoryDialogOptions)
   | ProgressRequest;
 
 type DialogValue = string | boolean | FormAnswer | undefined;
@@ -146,6 +156,14 @@ export class Dialogs {
     return this.#ask({ kind: "form", id: this.#nextId++, ...options }) as Promise<
       FormAnswer | undefined
     >;
+  }
+
+  /**
+   * Resolves to true once the picker saved the project to a repository, and to false when people
+   * cancelled or put it off.
+   */
+  async repository(options: RepositoryDialogOptions): Promise<boolean> {
+    return (await this.#ask({ kind: "repository", id: this.#nextId++, ...options })) === true;
   }
 
   /** Stays until `close`. Like every dialog it takes the place of the one before. */

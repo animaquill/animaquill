@@ -525,6 +525,7 @@ export class Workbench {
         window: this.windowId,
         editor: version,
         signIn: () => this.signIn(),
+        installApp: () => void this.installApp(),
         openProject: (id) => this.openProject(id),
         ...(options.cloudTiming && { timing: options.cloudTiming }),
         ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
@@ -1726,6 +1727,15 @@ export class Workbench {
         menu: { name: "file", group: "cloud" },
         enabled: () => cloud.canDisconnect,
       });
+      // Only where the platform saves projects to GitHub.
+      if (cloud.savesToGitHub)
+        this.actions.register({
+          id: "cloud.saveToGitHub",
+          title: (t) => t("repository.action"),
+          run: () => void cloud.saveToGitHub(),
+          menu: { name: "file", group: "cloud" },
+          enabled: () => cloud.canSaveToGitHub,
+        });
       this.actions.register({
         id: "cloud.open",
         title: (t) => t("cloud.openAction"),

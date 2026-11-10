@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/dialogs.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./DialogHost.module.css";
+import { RepositoryDialog } from "./RepositoryDialog.tsx";
 
 /** Something that takes a while. It stays until that is over, whatever people press. */
 function Progress({ request }: { request: ProgressRequest }) {
@@ -45,7 +46,8 @@ function Progress({ request }: { request: ProgressRequest }) {
 }
 
 type FormRequest = Extract<DialogRequest, { kind: "form" }>;
-type QuestionRequest = Exclude<DialogRequest, ProgressRequest | FormRequest>;
+type RepositoryRequest = Extract<DialogRequest, { kind: "repository" }>;
+type QuestionRequest = Exclude<DialogRequest, ProgressRequest | FormRequest | RepositoryRequest>;
 
 /** Choices before something starts. A list each, because there are few options and no typing. */
 function Form({ request }: { request: FormRequest }) {
@@ -245,5 +247,6 @@ export function DialogHost() {
   if (!request) return null;
   if (request.kind === "progress") return <Progress key={request.id} request={request} />;
   if (request.kind === "form") return <Form key={request.id} request={request} />;
+  if (request.kind === "repository") return <RepositoryDialog key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }

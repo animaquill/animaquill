@@ -64,7 +64,11 @@ const choiceOf = (value: unknown): RepositoryChoice | undefined => {
 const divergedOf = (value: unknown): RepositoryStatus["diverged"] => {
   if (!isObject(value)) return undefined;
   const sha = text(value.sha);
-  return sha === undefined ? undefined : { sha, files: texts(value.files) ?? [] };
+  if (sha === undefined) return undefined;
+  const files = texts(value.files) ?? [];
+  // Only what is among the files: an older platform says nothing about it.
+  const deleted = (texts(value.deleted) ?? []).filter((path) => files.includes(path));
+  return { sha, files, deleted };
 };
 
 /** A status as the platform said it. Throws where it is not one at all. */

@@ -1,0 +1,150 @@
+import {
+  RepositoryRefused,
+  type RepositoryAccess,
+  type RepositoryChoice,
+  type RepositoryLink,
+  type RepositoryList,
+  type RepositoryStatus,
+} from "@animaquill/host";
+import type { RepositoryEnvironment } from "./repository-watch.ts";
+import type { TestTime } from "./cloud-support.ts";
+
+/**
+ * A platform that saves projects to GitHub, for tests of the editor's side of it: what it says is
+ * what a test sets, and it notes what it was asked.
+ */
+export class FakeRepositories implements RepositoryAccess {
+  answer: RepositoryStatus = { state: "none", archiving: false, head: 1, archivedSeq: 0 };
+  repositories: RepositoryChoice[] = [];
+  manageUrl = "https://github.com/settings/installations/9";
+  /** What the next call of each kind rejects with, once. */
+  readonly refuse: {
+    list?: Error;
+    link?: Error;
+    status?: Error;
+    archiveNow?: Error;
+  } = {};
+  readonly calls: string[] = [];
+  readonly links: RepositoryLink[] = [];
+  readonly archives: { readonly replace?: string }[] = [];
+  /** Repositories a page, for paging. */
+  page = 100;
+
+  #once<K extends keyof FakeRepositories["refuse"]>(kind: K): void {
+    const error = this.refuse[kind];
+    if (error) {
+      delete this.refuse[kind];
+      throw error;
+    }
+  }
+
+  async list(page = 1): Promise<RepositoryList> {
+    this.calls.push(`list ${page}`);
+    this.#once("list");
+    const start = (page - 1) * this.page;
+    return {
+      repositories: this.repositories.slice(start, start + this.page),
+      page,
+      more: start + this.page < this.repositories.length,
+      manageUrl: this.manageUrl,
+    };
+  }
+
+  async link(project: string, choice: RepositoryLink): Promise<RepositoryStatus> {
+    this.calls.push(`link ${project}`);
+    this.links.push(choice);
+    this.#once("link");
+    const chosen =
+      "create" in choice
+        ? { id: 99, owner: "ada", name: choice.create.name, private: true }
+        : this.repositories.find((each) => each.id === choice.existing.id);
+    if (!chosen) throw new RepositoryRefused("notFound");
+    this.answer = {
+      repository: {
+        id: chosen.id,
+        owner: chosen.owner,
+        name: chosen.name,
+        fullName: `${chosen.owner}/${chosen.name}`,
+        private: chosen.private,
+        branch: "main",
+        url: `https://github.com/${chosen.owner}/${chosen.name}`,
+        createdHere: "create" in choice,
+        linkedAt: 1,
+      },
+      state: "ready",
+      archiving: true,
+      head: this.answer.head,
+      archivedSeq: 0,
+    };
+    return this.answer;
+  }
+
+  async status(project: string): Promise<RepositoryStatus> {
+    this.calls.push(`status ${project}`);
+    this.#once("status");
+    return this.answer;
+  }
+
+  async archiveNow(
+    project: string,
+    options: { readonly replace?: string } = {},
+  ): Promise<RepositoryStatus> {
+    this.calls.push(`archiveNow ${project}`);
+    this.archives.push(options);
+    this.#once("archiveNow");
+    this.answer = {
+      ...this.answer,
+      state: "ready",
+      archiving: true,
+    };
+    delete (this.answer as { reason?: string }).reason;
+    delete (this.answer as { diverged?: unknown }).diverged;
+    return this.answer;
+  }
+
+  /** The worker archived what the platform has. */
+  archived(at: number): void {
+    const { reason: _, diverged: __, ...rest } = this.answer;
+    this.answer = {
+      ...rest,
+      state: "ready",
+      archiving: false,
+      archivedSeq: this.answer.head,
+      lastArchive: {
+        sha: "a".repeat(40),
+        seq: this.answer.head,
+        at,
+        kind: "manual",
+        changed: 1,
+        removed: 0,
+        url: "",
+      },
+    };
+  }
+}
+
+/** A window that can go to the back, on the clock of a test. */
+export class TestWindow implements RepositoryEnvironment {
+  visible = true;
+  readonly #time: TestTime;
+  readonly #listeners = new Set<() => void>();
+
+  constructor(time: TestTime) {
+    this.#time = time;
+  }
+
+  isVisible = () => this.visible;
+  onVisible(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+  setTimeout = (run: () => void, ms: number) => this.#time.setTimeout(run, ms);
+  clearTimeout = (timer: unknown) => this.#time.clearTimeout(timer);
+  now = () => this.#time.now();
+
+  /** The window goes to the back, or comes to the front again. */
+  show(visible: boolean): void {
+    this.visible = visible;
+    if (visible) for (const listener of this.#listeners) listener();
+  }
+}

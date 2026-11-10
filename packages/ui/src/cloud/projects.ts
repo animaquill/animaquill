@@ -16,6 +16,14 @@ import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import { DownloadFailed, download } from "./download.ts";
+import { RepositoryPicker } from "./repository-picker.ts";
+import { defaultRepositoryName, divergedOutcome } from "./repository-text.ts";
+import {
+  RepositoryWatch,
+  type ArchiveNowOutcome,
+  type RepositoryEnvironment,
+  type RepositoryTiming,
+} from "./repository-watch.ts";
 import {
   CloudSession,
   type CloudEnvironment,
@@ -66,7 +74,13 @@ const isFolderError = (error: unknown, ...reasons: readonly FolderError["reason"
 export type CloudProjectsSnapshot =
   /** The open project is not connected, and nothing says it should be. */
   | { readonly kind: "none" }
-  | { readonly kind: "linked"; readonly session: CloudSession; readonly link: CloudLink }
+  | {
+      readonly kind: "linked";
+      readonly session: CloudSession;
+      readonly link: CloudLink;
+      /** How saving it to GitHub goes, where the platform does that. */
+      readonly repository: RepositoryWatch | undefined;
+    }
   /**
    * The folder says it is a project of the platform that this browser does not sync from it: a
    * copy of a folder that this browser syncs ("copy"), or a folder from somewhere else ("foreign").
@@ -92,8 +106,12 @@ export interface CloudProjectsOptions {
   /** Signs in: the page goes and comes back. */
   readonly signIn: () => Promise<void>;
   readonly openProject: (id: string) => Promise<void>;
+  /** Leaves the page to install the GitHub App on the account, and comes back. */
+  readonly installApp?: () => void;
   readonly timing?: Partial<CloudTiming>;
   readonly environment?: CloudEnvironment;
+  readonly repositoryTiming?: Partial<RepositoryTiming>;
+  readonly repositoryEnvironment?: RepositoryEnvironment;
 }
 
 const NONE: CloudProjectsSnapshot = { kind: "none" };
@@ -118,6 +136,8 @@ export class CloudProjects {
       const session = this.session;
       if (options.account?.getSnapshot().status !== "signedIn" || !session) return;
       if (session.getSnapshot().problem?.kind === "signed-out") session.resume();
+      const repository = this.repository;
+      if (repository?.getSnapshot().trouble === "signedOut") void repository.refresh();
     });
   }
 
@@ -127,6 +147,11 @@ export class CloudProjects {
   /** The platform. */
   get platform(): string {
     return this.#options.cloud.platform;
+  }
+
+  /** How saving the open project to GitHub goes, where it syncs and the platform does that. */
+  get repository(): RepositoryWatch | undefined {
+    return this.#snapshot.kind === "linked" ? this.#snapshot.repository : undefined;
   }
 
   /** The sync of the open project, where it has one. */
@@ -285,13 +310,32 @@ export class CloudProjects {
       ...(environment && { environment }),
     });
     session.cloudSeq = link.seq;
-    this.#stopSession = sync.subscribe(() => {
+    const access = cloud.repository;
+    const repository =
+      access &&
+      new RepositoryWatch({
+        access,
+        project: link.project,
+        ...(this.#options.repositoryTiming && { timing: this.#options.repositoryTiming }),
+        ...(this.#options.repositoryEnvironment && {
+          environment: this.#options.repositoryEnvironment,
+        }),
+      });
+    const stopSync = sync.subscribe(() => {
       this.#emitter.emit();
       // Another window disconnected it: this one looks again, and finds no link.
       if (sync.getSnapshot().problem?.kind === "unlinked") void this.#unlinked(sync);
     });
-    this.#set({ kind: "linked", session: sync, link });
+    const stopRepository = repository?.subscribe(() => this.#emitter.emit());
+    this.#stopSession = () => {
+      stopSync();
+      stopRepository?.();
+      repository?.close();
+    };
+    this.#set({ kind: "linked", session: sync, link, repository });
     sync.start();
+    // A project the platform may not have yet has nothing to say about GitHub until it does.
+    if (!link.creating) repository?.start();
   }
 
   async #unlinked(sync: CloudSession): Promise<void> {
@@ -438,7 +482,138 @@ export class CloudProjects {
     if (outcome.state === "online") {
       // Only that: how far it got is the session's to note down, at the same time.
       await cloud.links.update(link.key, link.project, { made: true }).catch(() => false);
-      if (!quietly) notifications.push(t("cloud.connected"));
+      if (this.session === session) this.repository?.start();
+      if (!quietly) {
+        notifications.push(t("cloud.connected"));
+        // Once, right after connecting: a copy away from the platform, on GitHub (Q1 of the plan).
+        if (this.repository && this.session === session) await this.saveToGitHub({ asking: true });
+      }
+    }
+  }
+
+  /** Whether the platform saves projects to GitHub at all. */
+  get savesToGitHub(): boolean {
+    return this.#options.cloud.repository !== undefined;
+  }
+
+  /** Whether the open project can be saved to a repository now, or to another one in its place. */
+  get canSaveToGitHub(): boolean {
+    const repository = this.repository;
+    return repository !== undefined && repository.status?.state !== "ready";
+  }
+
+  /**
+   * Saves the open project to GitHub: a new private repository, or one people have, see
+   * `RepositoryPicker`. Also for another repository where archiving into this one paused.
+   * `asking`: right after connecting, where people can put it off.
+   */
+  async saveToGitHub({ asking = false } = {}): Promise<void> {
+    const { cloud, session, dialogs, notifications, account, t } = this.#options;
+    const snapshot = this.#snapshot;
+    const access = cloud.repository;
+    const store = session.store;
+    if (snapshot.kind !== "linked" || !snapshot.repository || !access || !store) return;
+    const watch = snapshot.repository;
+    if (watch.status?.state === "ready") {
+      notifications.push(t("repository.failure.alreadyLinked"));
+      return;
+    }
+    if (!asking && !(await this.#signedIn(t("repository.title")))) return;
+    if (this.#snapshot !== snapshot) return;
+    const { name, id } = store.getState().manifest;
+    const who = account?.getSnapshot();
+    const current = watch.status?.state === "paused" ? watch.status.repository : undefined;
+    const picker = new RepositoryPicker({
+      access,
+      project: snapshot.link.project,
+      name: defaultRepositoryName(name, id),
+      asking,
+      ...(current && { current }),
+      ...(who?.status === "signedIn" && { owner: who.name, appInstalled: who.appInstalled }),
+    });
+    void picker.refresh();
+    const installApp = this.#options.installApp;
+    const done = await dialogs.repository({
+      title: t(asking ? "repository.askTitle" : "repository.title"),
+      picker,
+      ...(installApp && { installApp }),
+    });
+    const linked = picker.getSnapshot().linked;
+    picker.close();
+    if (!done || !linked || this.#snapshot !== snapshot) return;
+    watch.take(linked, { hurry: true });
+    notifications.push(
+      t("repository.linked", {
+        name: linked.repository?.fullName ?? "",
+        interpolation: { escapeValue: false },
+      }),
+    );
+  }
+
+  /** Archives the open project now, as people ask for it. */
+  async archiveNow(): Promise<void> {
+    const repository = this.repository;
+    if (!repository) return;
+    this.#tellArchive(await repository.archiveNow());
+  }
+
+  /**
+   * People choose to go on with the editor's content where files of the project changed on GitHub
+   * (Q3 of the plan): after they saw which files get written over and which taken away, the archive
+   * goes on top of what GitHub has. Never forced: GitHub's version stays in the history.
+   */
+  async continueWithEditor(): Promise<void> {
+    const { session, dialogs, notifications, t } = this.#options;
+    const repository = this.repository;
+    const status = repository?.status;
+    const store = session.store;
+    const diverged =
+      status?.state === "paused" && status.reason === "diverged" ? status.diverged : undefined;
+    if (!repository || !diverged || !store) return;
+    const { files } = store.exportFiles();
+    const { overwritten, removed, restored } = divergedOutcome(diverged, (path) => files.has(path));
+    const details = [
+      { title: t("repository.replaceOverwritten"), items: overwritten },
+      { title: t("repository.replaceRemoved"), items: removed },
+      { title: t("repository.replaceRestored"), items: restored },
+    ].filter(({ items }) => items.length > 0);
+    const go = await dialogs.confirm({
+      title: t("repository.replaceTitle"),
+      message: t("repository.replaceMessage"),
+      confirm: t("repository.replaceConfirm"),
+      danger: true,
+      details,
+    });
+    if (!go || this.repository !== repository) return;
+    const outcome = await repository.archiveNow({ replace: diverged.sha });
+    if (outcome.kind === "refused" && outcome.code === "diverged") {
+      notifications.push(t("repository.replaceChanged"));
+      return;
+    }
+    this.#tellArchive(outcome);
+  }
+
+  /** What people should hear about "archive now": nothing where it started. */
+  #tellArchive(outcome: ArchiveNowOutcome): void {
+    const { notifications, t } = this.#options;
+    if (outcome.kind === "waiting") {
+      const seconds = Math.max(1, Math.ceil((outcome.at - Date.now()) / 1000));
+      notifications.push(t("repository.archiveWait", { count: seconds }));
+    } else if (outcome.kind === "refused") {
+      const code = outcome.code;
+      const reason =
+        code === "signedOut" ||
+        code === "busy" ||
+        code === "unavailable" ||
+        code === "notFound" ||
+        code === "alreadyLinked"
+          ? t(`repository.failure.${code}`)
+          : code === "diverged"
+            ? t("repository.pause.diverged", {
+                count: outcome.error?.diverged?.files.length ?? 0,
+              })
+            : t("repository.failure.other", { code });
+      notifications.push(t("repository.archiveFailed", { reason }));
     }
   }
 

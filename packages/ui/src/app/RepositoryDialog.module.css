@@ -1,0 +1,216 @@
+.section {
+  margin-bottom: 12px;
+}
+
+.modes {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--aq-text);
+  cursor: pointer;
+}
+
+.mode input[type] {
+  width: auto;
+  margin: 0;
+}
+
+.nameLabel {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--aq-text);
+}
+
+.nameLabel input:not([type]) {
+  margin: 0;
+}
+
+.nameLabel input[aria-invalid="true"] {
+  border-color: var(--aq-warning);
+}
+
+/* Over the dialog's own paragraphs. */
+p.hint[class],
+.hint {
+  margin: 6px 0 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+p.problem[class],
+.problem {
+  margin: 6px 0 0;
+  color: var(--aq-warning);
+  font-size: 12px;
+}
+
+p.note[class],
+.note {
+  margin: 4px 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.toolbarTitle {
+  flex: 1;
+  color: var(--aq-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toolbarLink,
+.toolbarButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.toolbarLink:hover,
+.toolbarButton:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.toolbarButton:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.choices {
+  display: grid;
+  gap: 1px;
+  max-height: 240px;
+  padding: 4px;
+  overflow: auto;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.choice:hover:not([data-unusable]) {
+  background: var(--aq-bg-hover);
+}
+
+.choice input[type] {
+  width: auto;
+  margin: 2px 0 0;
+}
+
+.choice[data-unusable] {
+  cursor: default;
+}
+
+.choice[data-unusable] .choiceName {
+  color: var(--aq-text-muted);
+  opacity: 0.7;
+}
+
+.choiceText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.choiceName {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--aq-text-strong);
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+}
+
+.reason {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.more {
+  justify-self: start;
+  margin: 4px 6px;
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  font-size: 12px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.public {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--aq-warning);
+  border-radius: 3px;
+}
+
+.public p[class],
+.public p {
+  margin: 0 0 6px;
+  color: var(--aq-warning);
+}
+
+.install {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.install p {
+  margin: 0 0 8px;
+}
+
+.install p.strong[class] {
+  color: var(--aq-text-strong);
+}
+
+.installButton {
+  padding: 4px 14px;
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
