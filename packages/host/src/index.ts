@@ -367,7 +367,9 @@ export type SignInOutcome =
   /** Too many tries for now. */
   | "busy"
   /** Signing in cannot work here right now. */
-  | "unavailable";
+  | "unavailable"
+  /** The account cannot sign in: whoever runs the platform disabled it. */
+  | "disabled";
 
 export type AccountSnapshot =
   /** Not known yet, or the host could not find out. */
