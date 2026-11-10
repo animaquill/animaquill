@@ -11,12 +11,22 @@ import {
   type TaskOutcome,
 } from "@animaquill/agent";
 import { aiTask, type ProjectStore, type UndoResult } from "@animaquill/core";
-import { memoryChats, type ChatStore, type SavedChatSummary } from "@animaquill/host";
+import {
+  memoryChats,
+  type AccountAccess,
+  type ChatStore,
+  type SavedChatSummary,
+} from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import type { AiSettingsStore } from "./settings.ts";
 
-/** Why a message cannot go out yet, before any service is asked. */
-export type ChatHold = "noProject" | "noService" | "noModel" | "relay" | "badUrl";
+/**
+ * Why a message cannot go out yet, before any service is asked. Through the relay of the platform:
+ * there is none here (`relayMissing`), it does not take the address (`relayUrl`), or nobody is
+ * signed in to the platform (`relaySignIn`).
+ */
+export type ChatHold =
+  "noProject" | "noService" | "noModel" | "badUrl" | "relayMissing" | "relayUrl" | "relaySignIn";
 
 export interface ChatSnapshot {
   /** The conversation of the open project, which is new until somebody writes in it. */
@@ -33,6 +43,8 @@ export interface ChatSnapshot {
 export interface ChatSessionOptions {
   readonly chats: ChatStore | undefined;
   readonly ai: AiSettingsStore;
+  /** The account on the platform, which the relay of AI services is only for. */
+  readonly account?: AccountAccess | undefined;
   /** The project of this window, and what this browser keeps it by. */
   readonly project: () => { readonly store: ProjectStore; readonly key: string } | undefined;
   readonly subscribeProject: (listener: () => void) => () => void;
@@ -236,14 +248,18 @@ export class ChatSession {
     if (!service || !kind) return "noService";
     if (!service.model) return "noModel";
     if (!service.baseUrl) return "badUrl";
-    // There is no relay yet. People can still try straight, which the route setting allows.
-    if (service.route === "relay") return "relay";
+    const route = ai.routeOf(service);
+    if (typeof route === "string") return route;
+    // Not known yet is worth a try: the relay says so when nobody is signed in.
+    if (route.relay && this.#options.account?.getSnapshot().status === "signedOut")
+      return "relaySignIn";
     const endpoint: Endpoint = {
       service: service.kind,
       protocol: kind.protocol,
-      baseUrl: service.baseUrl,
+      baseUrl: route.baseUrl,
       model: service.model,
       catalog: kind.catalog,
+      ...(route.relay && { relay: route.relay }),
     };
     return { endpoint, key: () => ai.keyOf(service.id) };
   }

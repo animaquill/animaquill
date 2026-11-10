@@ -23,7 +23,8 @@ export const PROTOCOLS: readonly Protocol[] = [
 
 /**
  * How the browser reaches a service: straight, or through the relay of the platform, which is for
- * services whose answers the browser may not read (no CORS). There is no relay yet.
+ * services whose answers the browser may not read (no CORS). Only where the editor is hosted on a
+ * platform, for people signed in to it: see `AiRelay` of the host.
  */
 export type Route = "direct" | "relay";
 
@@ -434,13 +435,18 @@ export async function listModels(
   protocol: Protocol,
   baseUrl: string,
   key: string,
-  options: { readonly signal?: AbortSignal; readonly fetch?: typeof fetch } = {},
+  options: {
+    readonly signal?: AbortSignal;
+    readonly fetch?: typeof fetch;
+    /** What goes with the request besides the key, such as what the relay of the platform needs. */
+    readonly headers?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<ModelList> {
   const request = listRequest(protocol, baseUrl, key);
   const send = options.fetch ?? globalThis.fetch.bind(globalThis);
   try {
     const response = await send(request.url, {
-      headers: request.headers,
+      headers: { ...request.headers, ...options.headers },
       ...(options.signal && { signal: options.signal }),
     });
     if (!response.ok) {

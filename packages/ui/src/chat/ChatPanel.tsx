@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent }
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
+import { failureText } from "./failure.ts";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
 const noop = () => () => {};
@@ -60,7 +61,8 @@ function summaryOf(args: Readonly<Record<string, unknown>>): string {
 
 /** The chat with AI in the browser, about the open project. */
 export function ChatPanel() {
-  const { chat, ai, layout } = useWorkbench();
+  const workbench = useWorkbench();
+  const { chat, ai, layout } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
@@ -178,6 +180,14 @@ export function ChatPanel() {
       {snapshot.hold && (
         <p className={styles.hold} role="alert">
           {t(`chat.hold.${snapshot.hold}`)}
+          {snapshot.hold === "relaySignIn" && workbench.account && (
+            <>
+              {" "}
+              <button type="button" onClick={() => void workbench.signIn()}>
+                {t("account.signIn")}
+              </button>
+            </>
+          )}
         </p>
       )}
       <div className={styles.compose}>
@@ -394,6 +404,7 @@ function OutcomeView({
   readonly outcome: TaskOutcome;
   readonly maxToolCalls: number;
 }) {
+  const { ai } = useWorkbench();
   const { t } = useTranslation();
   switch (outcome.end) {
     case "stopped":
@@ -403,13 +414,14 @@ function OutcomeView({
     case "length":
       return <p className={styles.notice}>{t("chat.length")}</p>;
     case "failed": {
-      const failure = outcome.failure;
+      const { advice, detail } = failureText(t, outcome.failure, {
+        relayed: outcome.relayed === true,
+        canRelay: ai.canRelay,
+      });
       return (
         <div className={styles.failure} role="alert" data-testid="chat-failure">
-          <p>{t(`chat.failed.${failure?.kind ?? "other"}`)}</p>
-          {failure?.message && (
-            <p className={styles.muted}>{t("chat.detail", { message: failure.message })}</p>
-          )}
+          <p>{advice}</p>
+          {detail && <p className={styles.muted}>{detail}</p>}
         </div>
       );
     }

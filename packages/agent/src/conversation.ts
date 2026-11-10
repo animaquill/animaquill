@@ -16,6 +16,8 @@ export interface TaskOutcome {
   readonly task: string;
   readonly end: TaskEnd;
   readonly failure?: ServiceFailure;
+  /** It went through the relay of the platform, which is what the browser could not reach. */
+  readonly relayed?: true;
 }
 
 /** What runs now: the answer so far, and the tool that is running. */
@@ -112,6 +114,8 @@ export class Conversation {
     let calls = 0;
     let attempts = 0;
     const max = target.maxToolCalls;
+    const relayed =
+      "relay" in target.endpoint && target.endpoint.relay !== undefined ? true : undefined;
     const onEvent = (event: RunEvent) => {
       const running = this.#snapshot.running;
       if (!running) return;
@@ -153,11 +157,12 @@ export class Conversation {
         task,
         end: limited ? "limit" : result.end,
         ...(result.end === "failed" && { failure: failureOf(result.error ?? "") }),
+        ...(relayed && { relayed }),
       };
     } catch (error) {
       // Loading the library can fail, such as when the network went away after an update.
       const message = error instanceof Error ? error.message : String(error);
-      outcome = { task, end: "failed", failure: failureOf(message) };
+      outcome = { task, end: "failed", failure: failureOf(message), ...(relayed && { relayed }) };
     }
     if (this.#controller === controller) this.#controller = undefined;
     this.#set({ running: undefined, last: outcome });

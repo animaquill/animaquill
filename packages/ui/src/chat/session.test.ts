@@ -1,22 +1,60 @@
 import type { FakeEndpoint } from "@animaquill/agent";
 import { ProjectStore, type UndoResult } from "@animaquill/core";
-import { memoryChats, memoryKeys, type SettingsStore } from "@animaquill/host";
+import {
+  memoryChats,
+  memoryKeys,
+  type AccountAccess,
+  type AccountSnapshot,
+  type AiRelay,
+  type SettingsStore,
+} from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatSession } from "./session.ts";
 import { AiSettingsStore } from "./settings.ts";
 
-function setup() {
+/** An account that is in whatever state a test says. */
+function accountIn(status: AccountSnapshot["status"]): AccountAccess {
+  const snapshot = (
+    status === "signedIn" ? { status, name: "someone", appInstalled: true } : { status }
+  ) as AccountSnapshot;
+  return {
+    subscribe: () => () => {},
+    getSnapshot: () => snapshot,
+    refresh: async () => {},
+    takeOutcome: () => undefined,
+    signIn: () => {},
+    installApp: () => {},
+    signOut: async () => {},
+  };
+}
+
+/** The relay of a platform, as apps/web has one: https on its port only. */
+const RELAY: AiRelay = {
+  addressOf(baseUrl) {
+    const url = new URL(baseUrl);
+    if (url.protocol !== "https:" || url.port) return undefined;
+    return `https://platform.example/relay/https/${url.hostname}${url.pathname.replace(/\/$/, "")}`;
+  },
+  headers: { "x-from-the-page": "1" },
+};
+
+function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
   const values = new Map<string, unknown>();
   const settings: SettingsStore = {
     load: async (key) => values.get(key),
     save: async (key, value) => void values.set(key, structuredClone(value)),
     listen: () => () => {},
   };
-  const ai = new AiSettingsStore(settings, memoryKeys(), {
-    saveFailed: () => {},
-    keyFailed: () => {},
-  });
+  const ai = new AiSettingsStore(
+    settings,
+    memoryKeys(),
+    {
+      saveFailed: () => {},
+      keyFailed: () => {},
+    },
+    where.relay,
+  );
   const chats = memoryChats();
   const first = ProjectStore.create(createProject({ name: "第一个" }));
   let project: { store: ProjectStore; key: string } | undefined = { store: first, key: "p1" };
@@ -26,6 +64,7 @@ function setup() {
   const chat = new ChatSession({
     chats,
     ai,
+    account: where.account,
     project: () => project,
     subscribeProject: (listener) => {
       listeners.add(listener);
@@ -75,9 +114,61 @@ describe("the chat", () => {
     await chat.send("你好");
     expect(chat.getSnapshot().hold).toBe("noModel");
     ai.update(id, { model: "deepseek-chat", route: "relay" });
+    // Nowhere to relay to, as on this computer.
     await chat.send("你好");
-    expect(chat.getSnapshot().hold).toBe("relay");
+    expect(chat.getSnapshot().hold).toBe("relayMissing");
     expect(chat.getSnapshot().conversation?.getSnapshot().entries).toEqual([]);
+  });
+
+  it("goes through the relay of the platform, for whoever is signed in to it", async () => {
+    const sent: { url: string; headers: Headers }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({ url: String(input), headers: new Headers(init?.headers ?? {}) });
+      return new Response(
+        `data: ${JSON.stringify({
+          id: "c",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "kimi-k2",
+          choices: [{ index: 0, delta: { content: "好" }, finish_reason: "stop" }],
+        })}\n\ndata: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    try {
+      const signedOut = setup({ relay: RELAY, account: accountIn("signedOut") });
+      const kimi = signedOut.ai.add("moonshot", "Kimi") as string;
+      signedOut.ai.update(kimi, { model: "kimi-k2" });
+      expect(signedOut.ai.current?.route).toBe("relay");
+      await signedOut.chat.send("你好");
+      expect(signedOut.chat.getSnapshot().hold).toBe("relaySignIn");
+      expect(sent).toEqual([]);
+
+      const { ai, chat } = setup({ relay: RELAY, account: accountIn("signedIn") });
+      const id = ai.add("moonshot", "Kimi") as string;
+      ai.update(id, { model: "kimi-k2" });
+      await ai.setKey(id, "sk-moonshot-0123456789");
+      const outcome = await chat.send("你好");
+      expect(outcome).toMatchObject({ end: "done", relayed: true });
+      expect(sent.map(({ url }) => url)).toEqual([
+        "https://platform.example/relay/https/api.moonshot.cn/v1/chat/completions",
+      ]);
+      expect(sent[0]?.headers.get("x-from-the-page")).toBe("1");
+      expect(sent[0]?.headers.get("authorization")).toBe("Bearer sk-moonshot-0123456789");
+
+      // An address the relay does not take: said before anything goes out.
+      ai.update(id, { baseUrl: "https://api.moonshot.cn:8443/v1" });
+      await chat.send("再来");
+      expect(chat.getSnapshot().hold).toBe("relayUrl");
+      expect(sent).toHaveLength(1);
+      // Straight, the relay has nothing to do with it.
+      ai.update(id, { baseUrl: "https://api.moonshot.cn/v1", route: "direct" });
+      await chat.send("直连");
+      expect(sent.at(-1)?.url).toBe("https://api.moonshot.cn/v1/chat/completions");
+      expect(sent.at(-1)?.headers.has("x-from-the-page")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("lets people take back what a task changed, and do it again", async () => {
@@ -169,6 +260,17 @@ describe("AI services", () => {
     await ai.remove(id);
     expect(ai.getSnapshot().keyed.has(id)).toBe(false);
     expect(ai.getSnapshot().services).toEqual([]);
+  });
+
+  it("start straight where there is no relay, also those that need one", () => {
+    const withRelay = setup({ relay: RELAY }).ai;
+    withRelay.add("zhipu", "智谱");
+    expect(withRelay.current?.route).toBe("relay");
+    expect(withRelay.canRelay).toBe(true);
+    const here = setup().ai;
+    here.add("zhipu", "智谱");
+    expect(here.current?.route).toBe("direct");
+    expect(here.canRelay).toBe(false);
   });
 
   it("start with what their kind has, and the first one is the one in use", () => {

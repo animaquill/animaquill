@@ -7,10 +7,11 @@ import {
   readAiSettings,
   type AiSettings,
   type ListedModel,
+  type Relayed,
   type ServiceConfig,
   type ServiceFailure,
 } from "@animaquill/agent";
-import { memoryKeys, type KeyStore, type SettingsStore } from "@animaquill/host";
+import { memoryKeys, type AiRelay, type KeyStore, type SettingsStore } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import { readSetting } from "../workbench/settings.ts";
 
@@ -20,7 +21,9 @@ const SETTINGS_KEY = "ai";
 export type ModelListing =
   | { readonly state: "loading" }
   | { readonly state: "ok"; readonly models: readonly ListedModel[] }
-  | { readonly state: "failed"; readonly failure: ServiceFailure };
+  | { readonly state: "failed"; readonly failure: ServiceFailure }
+  /** Not asked: the way to the service is not there, see `ServiceRoute`. */
+  | { readonly state: "held"; readonly hold: "relayMissing" | "relayUrl" };
 
 export interface AiSettingsSnapshot extends AiSettings {
   /** The services that have a key in this browser. */
@@ -38,6 +41,13 @@ export interface AiSettingsMessages {
   keyFailed(): void;
 }
 
+/**
+ * Where requests to a service go: straight to its address, or to the relay's for it. A string says
+ * why they cannot go through the relay: there is none here, or it does not take the address.
+ */
+export type ServiceRoute =
+  { readonly baseUrl: string; readonly relay?: Relayed } | "relayMissing" | "relayUrl";
+
 const newServiceId = () =>
   `service-${[...crypto.getRandomValues(new Uint32Array(2))].map((n) => n.toString(36)).join("")}`;
 
@@ -50,16 +60,24 @@ export class AiSettingsStore {
   readonly #settings: SettingsStore;
   readonly #keys: KeyStore;
   readonly #messages: AiSettingsMessages;
+  readonly #relay: AiRelay | undefined;
   readonly #emitter = new Emitter();
   #snapshot: AiSettingsSnapshot;
   /** What this page knows of keys, by service, so that reports can leave them out. */
   readonly #known = new Map<string, string>();
   #knownSet: ReadonlySet<string> = new Set();
 
-  constructor(settings: SettingsStore, keys: KeyStore | undefined, messages: AiSettingsMessages) {
+  constructor(
+    settings: SettingsStore,
+    keys: KeyStore | undefined,
+    messages: AiSettingsMessages,
+    /** The relay of the platform, where the editor is hosted on one. */
+    relay?: AiRelay,
+  ) {
     this.#settings = settings;
     this.#keys = keys ?? memoryKeys();
     this.#messages = messages;
+    this.#relay = relay;
     this.#snapshot = {
       ...EMPTY_AI_SETTINGS,
       keyed: new Set(),
@@ -86,6 +104,20 @@ export class AiSettingsStore {
   /** Keys this page read, for whatever must not show them. */
   get knownKeys(): ReadonlySet<string> {
     return this.#knownSet;
+  }
+
+  /** Whether services can be reached through the relay of a platform here. */
+  get canRelay(): boolean {
+    return this.#relay !== undefined;
+  }
+
+  /** Where requests to a service go, see `ServiceRoute`. */
+  routeOf(service: ServiceConfig): ServiceRoute {
+    if (service.route !== "relay") return { baseUrl: service.baseUrl };
+    if (!this.#relay) return "relayMissing";
+    const relayed = this.#relay.addressOf(service.baseUrl);
+    if (relayed === undefined) return "relayUrl";
+    return { baseUrl: service.baseUrl, relay: { baseUrl: relayed, headers: this.#relay.headers } };
   }
 
   serviceOf(id: string | undefined): ServiceConfig | undefined {
@@ -136,7 +168,8 @@ export class AiSettingsStore {
       name,
       baseUrl: found.baseUrl,
       model: "",
-      route: found.route,
+      // Where there is no relay, straight is all there is.
+      route: this.#relay ? found.route : "direct",
     };
     const now = this.#settingsNow();
     this.#save({ ...now, services: [...now.services, service], current: now.current ?? id });
@@ -217,14 +250,21 @@ export class AiSettingsStore {
     await this.#refreshKeyed();
   }
 
-  /** Asks the service which models it has, with its key. */
+  /** Asks the service which models it has, with its key, the way the chat reaches it. */
   async fetchModels(id: string): Promise<void> {
     const service = this.serviceOf(id);
     const kind = service && kindOf(service.kind);
     if (!service || !kind) return;
+    const route = this.routeOf(service);
+    if (typeof route === "string") {
+      this.#setListing(id, { state: "held", hold: route });
+      return;
+    }
     this.#setListing(id, { state: "loading" });
     const key = (await this.keyOf(id)) ?? "";
-    const listed = await listModels(kind.protocol, service.baseUrl, key);
+    const listed = await listModels(kind.protocol, route.relay?.baseUrl ?? route.baseUrl, key, {
+      ...(route.relay && { headers: route.relay.headers }),
+    });
     this.#setListing(
       id,
       listed.ok

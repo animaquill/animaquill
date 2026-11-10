@@ -4,11 +4,13 @@ import {
   checkBaseUrl,
   kindOf,
   type ServiceConfig,
+  type ServiceFailure,
 } from "@animaquill/agent";
 import { useId, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import styles from "./AiServicesSettings.module.css";
+import { failureText } from "./failure.ts";
 
 /** The AI services people bring, in the settings: each with its address, key and model. */
 export function AiServicesSettings() {
@@ -209,9 +211,15 @@ function ServiceCard({ service }: { readonly service: ServiceConfig }) {
         <p className={styles.help}>{t("ai.fetchedModels", { count: listing.models.length })}</p>
       )}
       {listing?.state === "failed" && (
+        <FailedListing
+          failure={listing.failure}
+          relayed={service.route === "relay"}
+          canRelay={ai.canRelay}
+        />
+      )}
+      {listing?.state === "held" && (
         <p className={styles.warning} data-testid="ai-models-failed">
-          {t(`chat.failed.${listing.failure.kind}`)}{" "}
-          {t("chat.detail", { message: listing.failure.message })}
+          {t(`chat.hold.${listing.hold}`)}
         </p>
       )}
 
@@ -224,13 +232,44 @@ function ServiceCard({ service }: { readonly service: ServiceConfig }) {
           }
         >
           <option value="direct">{t("ai.routeDirect")}</option>
-          <option value="relay">{t("ai.routeRelay")}</option>
+          {/* Where there is none, people who chose it can still see that and change it. */}
+          <option value="relay" disabled={!ai.canRelay}>
+            {ai.canRelay ? t("ai.routeRelay") : t("ai.routeRelayNone")}
+          </option>
         </select>
       </label>
-      {service.route === "relay" && <p className={styles.warning}>{t("ai.routeRelayHint")}</p>}
+      {service.route === "relay" &&
+        (ai.canRelay ? (
+          <p className={styles.help} data-testid="ai-relay-hint">
+            {t("ai.routeRelayHint")}
+          </p>
+        ) : (
+          <p className={styles.warning} data-testid="ai-relay-hint">
+            {t("ai.routeRelayMissing")}
+          </p>
+        ))}
+      {service.route === "direct" && kind?.route === "relay" && (
+        <p className={styles.warning}>
+          {ai.canRelay ? t("ai.needsRelay") : t("ai.needsRelayLocal")}
+        </p>
+      )}
       {service.route === "direct" && kind && !kind.tested && !kind.custom && (
-        <p className={styles.help}>{t("ai.untested")}</p>
+        <p className={styles.help}>{ai.canRelay ? t("ai.untested") : t("ai.untestedLocal")}</p>
       )}
     </div>
+  );
+}
+
+function FailedListing(props: {
+  readonly failure: ServiceFailure;
+  readonly relayed: boolean;
+  readonly canRelay: boolean;
+}) {
+  const { t } = useTranslation();
+  const { advice, detail } = failureText(t, props.failure, props);
+  return (
+    <p className={styles.warning} data-testid="ai-models-failed">
+      {advice} {detail}
+    </p>
   );
 }

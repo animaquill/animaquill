@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
     "./memory": "./src/memory-disk.ts",
-    "./sync": "./src/sync-protocol.ts"
+    "./sync": "./src/sync-protocol.ts",
+    "./relay": "./src/relay.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

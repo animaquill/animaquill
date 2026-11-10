@@ -230,10 +230,15 @@ export class Workbench {
     };
     this.account = host.account;
     this.diagnostics = new DiagnosticsRecorder(version);
-    this.ai = new AiSettingsStore(host.settings, host.keys, {
-      saveFailed: () => this.notifications.push(t("ai.saveFailed")),
-      keyFailed: () => this.notifications.push(t("ai.keyFailed")),
-    });
+    this.ai = new AiSettingsStore(
+      host.settings,
+      host.keys,
+      {
+        saveFailed: () => this.notifications.push(t("ai.saveFailed")),
+        keyFailed: () => this.notifications.push(t("ai.keyFailed")),
+      },
+      host.aiRelay,
+    );
     const sink = host.diagnostics;
     this.#sink = sink;
     let names: { state: unknown; keys: ReadonlySet<string>; found: Set<string> } | undefined;
@@ -427,6 +432,7 @@ export class Workbench {
     this.chat = new ChatSession({
       chats: host.chats,
       ai: this.ai,
+      account: host.account,
       project: () => {
         const { store, key } = this.session.getSnapshot();
         return store && key !== undefined ? { store, key } : undefined;

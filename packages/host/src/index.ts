@@ -1,6 +1,8 @@
+import type { AiRelay } from "./relay.ts";
 import type { CloudConnection } from "./sync-protocol.ts";
 
 export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
+export { RELAY_REFUSALS, relayRefusalIn, type AiRelay, type RelayRefusal } from "./relay.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
 export {
   SYNC_CLOSE,
@@ -63,6 +65,12 @@ export interface Host {
   readonly keys?: KeyStore;
   /** Conversations with AI in the browser, by project. Without it they last as long as the page. */
   readonly chats?: ChatStore;
+  /**
+   * The relay of AI services of the platform the editor is hosted on, for services that do not let a
+   * page read their answers: see `AiRelay`. Without it, as on this computer, services can only be
+   * reached straight.
+   */
+  readonly aiRelay?: AiRelay;
   /**
    * The account people have where the editor is hosted, such as a platform that keeps projects on
    * GitHub. Without it, as on the development page and in the desktop app, there is nothing to sign

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatEntry, ToolEntry } from "./entries.ts";
-import { runTask, type FakeEndpoint, type RunEvent, type ToolSpec } from "./pi.ts";
+import { runTask, type Endpoint, type FakeEndpoint, type RunEvent, type ToolSpec } from "./pi.ts";
 
 const echo: ToolSpec = {
   name: "marker_add",
@@ -165,5 +165,122 @@ describe("the wrapper of pi", () => {
     const endpoint: FakeEndpoint = { fake: [{ text: "接着来" }] };
     const { done } = run(endpoint, { history });
     expect(await done).toEqual({ end: "done" });
+  });
+});
+
+describe("a service through the relay of the platform", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** What an OpenAI-compatible service streams for an answer. */
+  const streamed = (words: readonly string[]) =>
+    [
+      ...words.map(
+        (word) =>
+          `data: ${JSON.stringify({
+            id: "c",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "kimi-k2",
+            choices: [{ index: 0, delta: { content: word }, finish_reason: null }],
+          })}\n\n`,
+      ),
+      `data: ${JSON.stringify({
+        id: "c",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "kimi-k2",
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      })}\n\n`,
+      "data: [DONE]\n\n",
+    ].join("");
+
+  it("goes to the relay, with what it needs, and is still the service it is", async () => {
+    const sent: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      sent.push({
+        url,
+        headers: new Headers(init?.headers ?? (input instanceof Request ? input.headers : {})),
+        body: JSON.parse(String(init?.body ?? "{}")),
+      });
+      return new Response(streamed(["你好", "，世界"]), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const endpoint: Endpoint = {
+      service: "moonshot",
+      protocol: "openai-completions",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2",
+      catalog: "moonshotai-cn",
+      relay: {
+        baseUrl: "https://platform.example/api/llm-relay/https/api.moonshot.cn/v1",
+        headers: { "x-animaquill": "1" },
+      },
+    };
+    const events: RunEvent[] = [];
+    const result = await runTask({
+      endpoint,
+      key: async () => "sk-moonshot-0123456789",
+      system: "test",
+      tools: [echo],
+      history: [],
+      prompt: "你好",
+      signal: new AbortController().signal,
+      onEvent: (event) => events.push(event),
+    });
+    expect(result).toEqual({ end: "done" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.url).toBe(
+      "https://platform.example/api/llm-relay/https/api.moonshot.cn/v1/chat/completions",
+    );
+    expect(sent[0]?.headers.get("x-animaquill")).toBe("1");
+    expect(sent[0]?.headers.get("authorization")).toBe("Bearer sk-moonshot-0123456789");
+    // Moonshot's ways, which pi knows from its address: max_tokens, and no store.
+    expect(sent[0]?.body).toHaveProperty("max_tokens");
+    expect(sent[0]?.body).not.toHaveProperty("max_completion_tokens");
+    expect(sent[0]?.body).not.toHaveProperty("store");
+    const entry = events.find((event) => event.type === "entry");
+    expect(entry?.type === "entry" && entry.entry).toMatchObject({
+      role: "assistant",
+      text: "你好，世界",
+      service: "moonshot",
+    });
+  });
+
+  it("goes straight without it, with nothing of the relay", async () => {
+    const sent: { url: string; headers: Headers }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({
+        url: input instanceof Request ? input.url : String(input),
+        headers: new Headers(init?.headers ?? {}),
+      });
+      return new Response(streamed(["好"]), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const result = await runTask({
+      endpoint: {
+        service: "deepseek",
+        protocol: "openai-completions",
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-chat",
+        catalog: "deepseek",
+      },
+      key: async () => "sk-deepseek-0123456789",
+      system: "test",
+      tools: [],
+      history: [],
+      prompt: "你好",
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(result).toEqual({ end: "done" });
+    expect(sent[0]?.url).toBe("https://api.deepseek.com/chat/completions");
+    expect(sent[0]?.headers.has("x-animaquill")).toBe(false);
   });
 });

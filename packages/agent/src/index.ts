@@ -24,7 +24,7 @@ export {
   type ToolEntry,
   type UserEntry,
 } from "./entries.ts";
-export type { Endpoint, FakeAnswer, FakeEndpoint, ToolSpec } from "./pi.ts";
+export type { Endpoint, FakeAnswer, FakeEndpoint, Relayed, ToolSpec } from "./pi.ts";
 export { SYSTEM_PROMPT } from "./prompt.ts";
 export { HIDDEN_KEY, withoutKeys } from "./secrets.ts";
 export {

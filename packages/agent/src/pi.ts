@@ -51,6 +51,18 @@ export interface Endpoint {
   readonly model: string;
   /** What pi knows about the models of this kind of service, by pi's name for it. */
   readonly catalog?: string | undefined;
+  /**
+   * Where the requests go instead, for a service reached through the relay of the platform: the
+   * relay's address for `baseUrl`, and what has to go with every request. The service is still the
+   * same one: pi tells services apart by their address, which the relay's keeps in it.
+   */
+  readonly relay?: Relayed | undefined;
+}
+
+/** A service through the relay of the platform, see `Endpoint.relay`. */
+export interface Relayed {
+  readonly baseUrl: string;
+  readonly headers: Readonly<Record<string, string>>;
 }
 
 /** One step of a pretend service, for tests: what it answers to the next request. */
@@ -392,9 +404,20 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       tools,
       messages: messagesOf(options.history) as AgentMessage[],
     },
-    streamFn: (request, context, streamOptions) =>
-      // Retrying is for people to decide: a failure shows right away.
-      models.streamSimple(request, context, { ...streamOptions, maxRetries: 0 }),
+    streamFn: (request, context, streamOptions) => {
+      // Through the relay, only where requests go changes, and what goes with them.
+      const relay = isFake(endpoint) ? undefined : endpoint.relay;
+      return models.streamSimple(
+        relay ? { ...request, baseUrl: relay.baseUrl } : request,
+        context,
+        {
+          ...streamOptions,
+          ...(relay && { headers: { ...streamOptions?.headers, ...relay.headers } }),
+          // Retrying is for people to decide: a failure shows right away.
+          maxRetries: 0,
+        },
+      );
+    },
     getApiKey: async () => {
       key = await options.key();
       // Some servers of one's own need no key, and their libraries still want one.
