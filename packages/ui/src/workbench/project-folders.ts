@@ -55,6 +55,7 @@ import {
   type FolderSnapshot,
   type FolderTiming,
 } from "../folder/session.ts";
+import type { FolderChoice, FolderRefusal, NewFormat } from "../cloud/create.ts";
 import type { Hasher } from "../media/hasher.ts";
 import type { ProblemList } from "../problems/list.ts";
 import { downloadFrom, downloadableItems, type HereOf } from "../storage/places.ts";
@@ -609,8 +610,54 @@ export class ProjectFolders {
   async create(): Promise<void> {
     const name = await this.#askName();
     if (!name) return;
+    await this.createNamed(name);
+  }
+
+  /**
+   * Makes a new project of this name in a folder people choose, see `create`. Has to be called
+   * right after people did something: the browser only asks for a folder then.
+   */
+  async createNamed(name: string, format?: NewFormat): Promise<void> {
     const folder = await this.#choose();
-    if (folder) await this.#createIn(folder, name);
+    if (folder) await this.#createIn(folder, name, format);
+  }
+
+  /**
+   * Asks for a folder for a new project of the platform, see `CloudCreate`, and where in it the
+   * project goes, by the rules of a new project, see the design, 3.2: an empty folder takes it, one
+   * with other things in it gets a folder of the project's name inside, and one that is a project,
+   * is inside one, or has an export that stopped halfway takes none. Nothing is asked: the dialog
+   * that makes the project says what it is. Has to be called right after people did something.
+   * Undefined where they changed their mind.
+   */
+  async chooseForNew(name: string): Promise<FolderChoice | FolderRefusal | undefined> {
+    let folder: LocalFolder | undefined;
+    try {
+      folder = await this.#options.folders.choose();
+    } catch (error) {
+      console.warn("A folder could not be chosen", error);
+      return "failed";
+    }
+    if (!folder) return undefined;
+    try {
+      const place = await this.projects.placeFor(folder, name);
+      switch (place.kind) {
+        case "empty":
+          return { folder, inside: undefined };
+        case "other":
+          return { folder, inside: place.inside };
+        case "project":
+        case "known":
+          return "project";
+        case "inside":
+          return "inside";
+        case "incomplete":
+          return "incomplete";
+      }
+    } catch (error) {
+      console.warn("What is in a folder could not be read", error);
+      return "failed";
+    }
   }
 
   /** Asks for a folder, and opens the project in it. */
@@ -810,17 +857,18 @@ export class ProjectFolders {
    * go on. This asks for a folder, so it has to run right after people did something. Resolves to
    * whether it moved.
    */
-  async moveToFolder(key: string): Promise<boolean> {
+  async moveToFolder(key: string, chosen?: FolderChoice): Promise<boolean> {
     if (this.#moving) return false;
     this.#moving = true;
     try {
-      return await this.#moveToFolder(key);
+      return await this.#moveToFolder(key, chosen);
     } finally {
       this.#moving = false;
     }
   }
 
-  async #moveToFolder(key: string): Promise<boolean> {
+  /** `given`: the folder people chose already, and where in it, as for a new project of the platform. */
+  async #moveToFolder(key: string, given?: FolderChoice): Promise<boolean> {
     const { session, projects, presence, dialogs, notifications, t } = this.#options;
     const open = session.key === key ? session.store : undefined;
     // Other windows that have it open go on with the folder once it moved, see `followMove`.
@@ -835,7 +883,7 @@ export class ProjectFolders {
       if (!go) return false;
     }
     // The browser asks only right after people did something, so that comes next.
-    const chosen = await this.#choose();
+    const chosen = given?.folder ?? (await this.#choose());
     if (!chosen) return false;
     let loaded: LoadedProject | undefined;
     try {
@@ -858,7 +906,7 @@ export class ProjectFolders {
         await this.#refusedMove(name, refusal);
         return false;
       }
-      const place = await this.#placeFor(chosen, name);
+      const place = given ?? (await this.#placeFor(chosen, name));
       if (!place) return false;
       const progress = dialogs.progress({
         title: t("folder.move.title", { name }),
@@ -1292,13 +1340,13 @@ export class ProjectFolders {
     }
   }
 
-  async #createIn(folder: LocalFolder, name: string): Promise<void> {
+  async #createIn(folder: LocalFolder, name: string, format?: NewFormat): Promise<void> {
     const { notifications, t } = this.#options;
     const place = await this.#placeFor(folder, name, (project) => this.#openChosen(project));
     if (!place) return;
     let record: FolderRecord;
     try {
-      record = await this.projects.create(name, folder, place.inside);
+      record = await this.projects.create(name, folder, place.inside, format);
     } catch (error) {
       console.warn("A project could not be made in a folder", error);
       notifications.push(t("folder.createFailed"));

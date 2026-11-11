@@ -110,3 +110,84 @@ p.message[data-tone="attention"] {
 p.message[data-tone="done"] {
   color: var(--aq-text-strong);
 }
+
+/* What kind of project a new one is: a line each, with what it means under its name. */
+.kinds {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.kind,
+.withFolder {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* Over the dialog's own rule for its boxes, which are as wide as the dialog. */
+.kinds .kind input[type],
+label.withFolder input[type] {
+  flex: none;
+  width: auto;
+  margin: 2px 0 0;
+}
+
+.kind[data-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.kindWords,
+.withFolder > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.kindLabel {
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.kindAbout {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.withFolder {
+  margin: 4px 0 12px;
+}
+
+/* The shape and frame rate of a new project, in one line where it fits. */
+.format {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 8px 0 4px;
+}
+
+.format label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--aq-text);
+}
+
+.format select {
+  margin: 0;
+}
+
+div.format input.size {
+  width: 72px;
+  margin: 0;
+}
+
+p.formatProblem[class] {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--aq-warning);
+  font-size: 12px;
+}

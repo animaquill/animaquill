@@ -1,11 +1,14 @@
 import type {
   AccountAccess,
   AccountSnapshot,
+  CloudAccess,
   DiagnosticsSink,
   Host,
   LocalFolder,
   ProjectLibrary,
   SignInOutcome,
+  StoragePersistence,
+  WindowMemory,
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import {
@@ -13,15 +16,24 @@ import {
   clipOffset,
   clipStart,
   projectFrameRate,
+  ProjectStore,
   type ClipState,
-  type ProjectStore,
   type UndoResult,
 } from "@animaquill/core";
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
-import { formatTime, toSeconds } from "@animaquill/schema";
+import { createProject, formatTime, toSeconds } from "@animaquill/schema";
 import { newSyncId, type ProjectSummary } from "@animaquill/host";
 import type { ConnectTiming } from "../cloud/connect.ts";
+import {
+  CloudCreate,
+  takeCreateIntent,
+  tidyCreated,
+  type CreateContent,
+  type CreateIntent,
+  type NewFormat,
+} from "../cloud/create.ts";
+import { loadPinyin } from "../cloud/repository-name.ts";
 import type { PanelActionId } from "../cloud/panel.ts";
 import { CloudProjects } from "../cloud/projects.ts";
 import type { CloudEnvironment, CloudTiming } from "../cloud/session.ts";
@@ -59,7 +71,7 @@ import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import { frameTime } from "../timeline/frames.ts";
-import type { ImportReport } from "../transfer/import.ts";
+import { keepFiles, type ImportReport, type PreparedProject } from "../transfer/import.ts";
 import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
@@ -209,6 +221,13 @@ export class Workbench {
   readonly cloudKnown = new Flag();
   /** The start page is asked to show its projects of the platform, see `openCloudProjects`. */
   readonly cloudColumn = new Flag();
+  /** Whether the browser keeps what the editor stores, see `Host.persistence`. */
+  readonly persistence: StoragePersistence | undefined;
+  /** The platform, where the editor is hosted on one and has accounts. */
+  readonly #platform: CloudAccess | undefined;
+  /** For tests only: new projects can stay in this browser, see `Host.projectsHereForTests`. */
+  readonly #projectsHere: boolean;
+  readonly #memory: WindowMemory;
   /** The page is going away on purpose, with everything kept, see `leavePage`. */
   #leavingPage = false;
   #leavingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -333,6 +352,10 @@ export class Workbench {
     this.resourceHabits = new ResourceHabits(host.settings);
     // A platform is for whoever is signed in to it: without an account, there is none.
     const cloud = host.account ? host.cloud : undefined;
+    this.#platform = cloud;
+    this.persistence = host.persistence;
+    this.#projectsHere = host.projectsHereForTests === true;
+    this.#memory = host.windowMemory;
     this.session = new ProjectSession(
       host.projects,
       host.address,
@@ -587,6 +610,7 @@ export class Workbench {
         ],
         ...(this.projectFolders && { moveToFolder: (key: string) => this.moveToFolder(key) }),
         memory: host.windowMemory,
+        ...(host.persistence && { persistence: host.persistence }),
         leaving: () => this.leavingPage,
         ...(options.cloudTiming && { timing: options.cloudTiming }),
         ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
@@ -604,6 +628,8 @@ export class Workbench {
       this.projectFolders?.subscribe(follow);
       // What taking a copy out of this browser left behind, should it have stopped halfway.
       void this.cloud.tidy();
+      // And what making a project of the platform left there, should the page have gone halfway.
+      if (cloud) void tidyCreated(cloud, host.windowMemory);
     }
     this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders, () =>
       this.here(),
@@ -1316,6 +1342,17 @@ export class Workbench {
   async resume(): Promise<void> {
     await this.projectFolders?.resume();
     this.#resumeConnect();
+    this.#resumeCreate();
+  }
+
+  /**
+   * Once the page is back from signing in or installing the App, which the dialog that makes a new
+   * project of the platform sent it to: the dialog comes back with what people chose.
+   */
+  #resumeCreate(): void {
+    if (!this.#platform) return;
+    const intent = takeCreateIntent(this.#memory, Date.now());
+    if (intent) void this.#showCreate(this.#newCreate({ intent }));
   }
 
   /** The folder of the open project, where it is one and its folder is there. */
@@ -1479,22 +1516,155 @@ export class Workbench {
       case "reload":
         location.reload();
         break;
+      case "moveToFolder":
+        void this.moveToFolder();
+        break;
+      case "saveCopy":
+        void this.exportProject();
+        break;
     }
   }
 
-  /** In a folder people choose, where the browser can write folders: see `ProjectFolders.create`. */
+  /**
+   * A new project, see the design of the start page (docs/design/start-and-cloud.md of AnimaQuill
+   * Cloud), 3: a project of this computer, which is a folder people choose, or a project of the
+   * platform, see `CloudCreate`, in one dialog that asks which. No new project is only in this
+   * browser: the browser can clear it at any time. Where the editor is hosted on no platform there
+   * is only the folder, and a browser that cannot write folders cannot make a project then. Tests
+   * still make projects in this browser, see `Host.projectsHereForTests`.
+   */
   async newProject(): Promise<void> {
+    if (this.#platform) {
+      await this.#showCreate(this.#newCreate({}));
+      return;
+    }
     if (this.projectFolders) {
       await this.projectFolders.create();
       return;
     }
-    const { t } = this;
-    const name = await this.dialogs.prompt({
-      title: t("project.nameLabel"),
-      value: t("project.defaultName"),
-      confirm: t("project.create"),
+    if (this.#projectsHere) {
+      const { t } = this;
+      const name = await this.dialogs.prompt({
+        title: t("project.nameLabel"),
+        value: t("project.defaultName"),
+        confirm: t("project.create"),
+      });
+      if (name) await this.#createHere(name);
+      return;
+    }
+    await this.dialogs.confirm({
+      title: this.t("project.new"),
+      message: this.t("newProject.unsupported"),
+      confirm: this.t("dialog.close"),
+      noticeOnly: true,
     });
-    if (name) await this.#changeProject(() => this.session.create(name));
+  }
+
+  /** For tests only: a project in this browser, see `Host.projectsHereForTests`. */
+  async #createHere(name: string, format?: NewFormat): Promise<void> {
+    await this.#changeProject(() => this.session.create(name, format));
+    // Made here on purpose: nothing is said about it being only here as it opens.
+    const { key } = this.session;
+    if (key !== undefined) this.cloud?.noteToldOnlyHere(key);
+  }
+
+  /** The dialog that makes a new project, see `CloudCreate`. */
+  #newCreate({
+    intent,
+    imported,
+  }: {
+    readonly intent?: CreateIntent;
+    readonly imported?: PreparedProject;
+  }): CloudCreate {
+    const cloud = this.#platform;
+    const folders = this.projectFolders;
+    const { t } = this;
+    const content = (name: string, format: NewFormat): CreateContent => {
+      // What is imported keeps its own formats.
+      const project = imported
+        ? { ...imported.project, manifest: { ...imported.project.manifest, name } }
+        : createProject({ name, format });
+      const store = ProjectStore.create(project, imported?.sources);
+      const made = { state: store.encodeWhole(), projectId: store.getState().manifest.id };
+      store.destroy();
+      return made;
+    };
+    return new CloudCreate({
+      ...(cloud && { cloud }),
+      ...(cloud?.repository && { access: cloud.repository }),
+      ...(this.account && { account: this.account }),
+      name: imported?.project.manifest.name ?? t("project.defaultName"),
+      content,
+      ...(imported && { imported: true }),
+      ...(folders && {
+        createLocal: (name: string, format: NewFormat) => folders.createNamed(name, format),
+        chooseFolder: (name: string) => folders.chooseForNew(name),
+      }),
+      ...(this.#projectsHere && {
+        createHere: (name: string, format: NewFormat) => this.#createHere(name, format),
+      }),
+      pinyin: loadPinyin,
+      keep: async (project, made) =>
+        (await this.cloud?.keepUploaded(
+          project,
+          made,
+          imported && ((incoming) => keepFiles(imported, incoming.media)),
+        )) ?? undefined,
+      open: async (key, folder) => {
+        await this.openProject(key);
+        const opened = this.session.key === key;
+        const inFolder =
+          opened && folder !== undefined && folders !== undefined
+            ? await folders.moveToFolder(key, folder)
+            : false;
+        return { opened, inFolder };
+      },
+      ...(this.cloud && { projects: this.cloud }),
+      signIn: () => this.signIn(),
+      installApp: () => this.installApp(),
+      leaving: () => this.leavingPage,
+      memory: this.#memory,
+      ...(intent && { intent }),
+      window: this.windowId,
+      editor: this.version,
+    });
+  }
+
+  /**
+   * Shows the dialog that makes a new project until it is over. Another dialog can take its place
+   * while the steps run, as moving the new project into its folder does: it comes back once that
+   * is over, to say how the rest goes.
+   */
+  async #showCreate(create: CloudCreate, imported?: PreparedProject): Promise<void> {
+    const { t } = this;
+    try {
+      for (;;) {
+        await this.dialogs.create({
+          title: t(imported ? "newProject.importTitle" : "newProject.title"),
+          create,
+          ...(imported && { imported: true }),
+        });
+        if (!create.isWorking) break;
+        await create.whenIdle();
+        const { phase } = create.getSnapshot();
+        // Something else asks people now, or there is nothing left to say.
+        if (this.dialogs.getSnapshot() !== undefined) break;
+        if (phase !== "archiving" && phase !== "done" && phase !== "choosing") break;
+      }
+    } finally {
+      create.close();
+    }
+    const { key } = create.getSnapshot();
+    if (imported && key !== undefined && this.session.key === key) {
+      const report: ImportReport = {
+        id: key,
+        name: this.session.store?.getState().manifest.name ?? imported.project.manifest.name,
+        copied: false,
+        ...imported.report,
+      };
+      this.#noteImport(report);
+      await this.transfer.announceImport(report);
+    }
   }
 
   /**
@@ -1572,8 +1742,21 @@ export class Workbench {
     return this.projectFolders.moveToFolder(id);
   }
 
-  /** The open project stays open until the new one is there, so a failure costs nothing. */
+  /**
+   * The open project stays open until the new one is there, so a failure costs nothing. Where the
+   * editor is hosted on a platform, what is imported becomes a new project of the platform, see
+   * `CloudCreate`: no new project is only in this browser. Only a browser that cannot write folders
+   * imports at all: elsewhere a project folder opens as it is.
+   */
   async importProject(): Promise<void> {
+    if (this.#platform && !this.#projectsHere) {
+      await this.#importToCloud();
+      return;
+    }
+    if (!this.#projectsHere && !this.projectFolders) {
+      await this.newProject();
+      return;
+    }
     this.diagnostics.mark("import", { step: "start" });
     const report = await this.transfer
       .importProject()
@@ -1583,6 +1766,38 @@ export class Workbench {
     await this.openProject(report.id);
     if (this.session.key === report.id) this.#noteImport(report);
     await this.transfer.announceImport(report);
+  }
+
+  /** A project folder people choose, as a new project of the platform, see `importProject`. */
+  async #importToCloud(): Promise<void> {
+    const { account, t } = this;
+    // Signing in leaves the page, and what was read goes with it: first that, then the folder.
+    if (account) {
+      await account.refresh();
+      if (account.getSnapshot().status !== "signedIn") {
+        const answer = await this.dialogs.choose({
+          title: t("newProject.importTitle"),
+          message: t("newProject.signInToImport"),
+          choices: [{ id: "signIn", label: t("account.signIn"), kind: "primary" }],
+        });
+        if (answer === "signIn") await this.signIn();
+        return;
+      }
+    }
+    this.diagnostics.mark("import", { step: "start" });
+    const prepared = await this.transfer
+      .prepareImport()
+      .finally(() => this.diagnostics.mark("import", { step: "end" }));
+    if (!prepared) return;
+    const report: ImportReport = {
+      id: "",
+      name: prepared.project.manifest.name,
+      copied: false,
+      ...prepared.report,
+    };
+    // Before it opens, as for every project that comes in: its code runs as soon as it is open.
+    await this.transfer.warnAboutCode(report);
+    await this.#showCreate(this.#newCreate({ imported: prepared }), prepared);
   }
 
   async renameProject(): Promise<void> {

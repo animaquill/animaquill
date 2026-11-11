@@ -9,9 +9,11 @@ import {
   type CloudLink,
   type CloudLinkRepository,
   type FolderRecords,
+  type IncomingProject,
   type LocalFolder,
   type LogEntry,
   type ProjectLibrary,
+  type StoragePersistence,
   type WindowMemory,
 } from "@animaquill/host";
 import { isSameHash } from "@animaquill/media";
@@ -66,8 +68,13 @@ const isFolderError = (error: unknown, ...reasons: readonly FolderError["reason"
   error instanceof FolderError && reasons.includes(error.reason);
 
 export type CloudProjectsSnapshot =
-  /** The open project is not connected, and nothing says it should be. */
-  | { readonly kind: "none" }
+  /**
+   * The open project is not connected, and nothing says it should be. `local: "browser"`: it is
+   * only in this browser, without a folder and without the platform, as projects were made
+   * before every new one was a folder or a project of the platform, see the design of the start
+   * page, 7: the browser can clear it at any time, and people are told so.
+   */
+  | { readonly kind: "none"; readonly local?: "browser" }
   | {
       readonly kind: "linked";
       readonly session: CloudSession;
@@ -235,6 +242,11 @@ export interface CloudProjectsOptions {
   readonly showConnect?: () => Promise<void> | void;
   /** What this window remembers through a reload: what connecting was at when the page left. */
   readonly memory?: WindowMemory;
+  /**
+   * Whether the browser keeps what the editor stores, and asks for that, see `StoragePersistence`:
+   * asked once a project of the platform is only in this browser.
+   */
+  readonly persistence?: StoragePersistence;
   /** Whether the page is going away on purpose now, as after `signIn`, see `Workbench.leavePage`. */
   readonly leaving?: () => boolean;
   readonly timing?: Partial<CloudTiming>;
@@ -245,6 +257,10 @@ export interface CloudProjectsOptions {
 }
 
 const NONE: CloudProjectsSnapshot = { kind: "none" };
+/** A project that is only in this browser, without the platform: see `CloudProjectsSnapshot`. */
+const ONLY_HERE: CloudProjectsSnapshot = { kind: "none", local: "browser" };
+/** Where the window remembers which projects only in this browser it told people about. */
+const TOLD_KEY = "cloud.onlyHereTold";
 
 /** What people hear where a project could not begin to connect. */
 const LINK_REFUSALS = {
@@ -472,7 +488,75 @@ export class CloudProjects {
     }
     // Whatever the folder has in `.animaquill/` says nothing about it: a folder without a link of
     // this browser is a project of this computer only.
-    this.#set(NONE);
+    if (isFolder) {
+      this.#set(NONE);
+      return;
+    }
+    // Only in this browser, with nothing else that has it: people hear that once.
+    this.#set(ONLY_HERE);
+    this.#tellOnlyHere(key, store.getState().manifest.name);
+  }
+
+  /** Whether people were told about a project that is only in this browser, by its key. */
+  #told(): string[] {
+    try {
+      const kept: unknown = JSON.parse(this.#options.memory?.read(TOLD_KEY) || "[]");
+      return Array.isArray(kept)
+        ? kept.filter((key): key is string => typeof key === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Notes that people know a project is only in this browser, as one that a test made there on
+   * purpose: nothing more is said about it as it opens.
+   */
+  noteToldOnlyHere(key: string): void {
+    const told = this.#told();
+    if (told.includes(key)) return;
+    this.#options.memory?.write(TOLD_KEY, JSON.stringify([...told.slice(-50), key]));
+  }
+
+  #tellOnlyHere(key: string, name: string): void {
+    const { notifications, t } = this.#options;
+    if (this.#told().includes(key)) return;
+    this.noteToldOnlyHere(key);
+    notifications.push(
+      t("cloud.onlyHere.notice", { name, interpolation: { escapeValue: false } }),
+      {
+        stays: true,
+      },
+    );
+  }
+
+  /**
+   * Whether the browser keeps what the editor stores until people clear it, as far as it said:
+   * undefined where it was not asked, or cannot say. Asked once a project of the platform is only in
+   * this browser, see `#keepStored`.
+   */
+  get persisted(): boolean | undefined {
+    return this.#persisted;
+  }
+
+  #persisted: boolean | undefined;
+  #askedToKeep = false;
+
+  /**
+   * Asks the browser to keep what it stores until people clear it, the first time a project of the
+   * platform is only in this browser here, see R-ST-9: otherwise it may clear it when its disk is
+   * nearly full, with changes that did not get to the platform yet. Where it says no, people hear
+   * it once, and the panel says it.
+   */
+  async #keepStored(): Promise<void> {
+    const { persistence, notifications, t } = this.#options;
+    if (!persistence || this.#askedToKeep) return;
+    this.#askedToKeep = true;
+    const isKept = (await persistence.persisted()) || (await persistence.persist());
+    this.#persisted = isKept;
+    this.#emitter.emit();
+    if (!isKept) notifications.push(t("cloud.persist.refused"));
   }
 
   /**
@@ -581,6 +665,7 @@ export class CloudProjects {
       local: this.#options.isFolder(link.key) ? "folder" : "browser",
     });
     this.#remember(link, { name });
+    if (!this.#options.isFolder(link.key)) void this.#keepStored();
     sync.start();
     // A project the platform may not have yet has nothing to say about GitHub until it does.
     if (!link.creating) repository?.start();
@@ -1209,7 +1294,8 @@ export class CloudProjects {
       void this.follow();
       return false;
     }
-    this.#set(NONE);
+    // A folder is a project of this computer again; a copy in the browser is only there now.
+    this.#set(this.#options.isFolder(key) ? NONE : ONLY_HERE);
     this.#tell();
     if (!quietly) notifications.push(t("cloud.disconnected"));
     return true;
@@ -1352,8 +1438,19 @@ export class CloudProjects {
    * to the key of the copy, also where another window made one meanwhile, or to undefined after
    * saying why there is none.
    */
-  async #keep(project: string, downloaded: Downloaded): Promise<string | undefined> {
-    const { cloud, projects, account, notifications, t } = this.#options;
+  async #keep(
+    project: string,
+    downloaded: Downloaded,
+    {
+      quietly = false,
+      bring,
+    }: {
+      readonly quietly?: boolean;
+      readonly bring?: (incoming: IncomingProject) => Promise<void>;
+    } = {},
+  ): Promise<string | undefined> {
+    const { cloud, projects, account, t } = this.#options;
+    const notifications = quietly ? { push: () => {} } : this.#options.notifications;
     const { store } = ProjectStore.fromUpdates([downloaded.state]);
     if (!store) {
       notifications.push(t("cloud.downloadFailed"));
@@ -1401,6 +1498,7 @@ export class CloudProjects {
         // next time takes the place of. The other way round it would leave a project that looks
         // like one of this browser only.
         await cloud.links.put(link);
+        await bring?.(incoming);
         await incoming.finish(downloaded.state);
       } catch (error) {
         await incoming.abandon().catch(() => {});
@@ -1426,6 +1524,20 @@ export class CloudProjects {
       notifications.push(t("cloud.downloadFailed"));
       return undefined;
     }
+  }
+
+  /**
+   * Keeps a project that was just made on the platform, see `CloudCreate`, as a copy in this
+   * browser that syncs: the same as one that is opened from there. `bring` puts the files of its
+   * assets in, as for one that was imported, before it appears. Resolves to its key, or to
+   * undefined where it could not be kept: the project is on the platform either way.
+   */
+  keepUploaded(
+    project: string,
+    made: Downloaded,
+    bring?: (incoming: IncomingProject) => Promise<void>,
+  ): Promise<string | undefined> {
+    return this.#keep(project, made, { quietly: true, ...(bring && { bring }) });
   }
 
   /**

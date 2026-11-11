@@ -248,6 +248,16 @@ function BrowserProjects({
               <span className={styles.name}>{project.name}</span>
               <span className={styles.time}>{agoText(project.updatedAt, now, t)}</span>
             </span>
+            {/* Not safe: the browser can clear it at any time. On its own line, not over the page. */}
+            <span className={styles.about}>
+              <span
+                className={`${styles.mark} ${styles.warning}`}
+                data-mark="onlyHere"
+                title={t("start.hint.onlyHere")}
+              >
+                {t("start.mark.onlyHere")}
+              </span>
+            </span>
           </button>
           {projectFolders && (
             <button
@@ -556,7 +566,11 @@ export function StartPage() {
             )}
             {!projectFolders && nothing && <p className={styles.muted}>{t("project.none")}</p>}
             <p className={styles.muted}>
-              {projectFolders ? t("folder.localHint") : t("folder.unsupported")}
+              {projectFolders
+                ? t("folder.localHint")
+                : hasCloud
+                  ? t("folder.unsupported")
+                  : t("newProject.unsupported")}
             </p>
           </section>
           {hasCloud && <CloudColumn lists={lists} now={now} refresh={refresh} />}

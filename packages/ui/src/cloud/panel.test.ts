@@ -509,3 +509,71 @@ describe("the status of the platform in a project", () => {
     ).not.toHaveProperty("archive");
   });
 });
+
+describe("a project only in this browser, without the platform (the design of the start page, 7)", () => {
+  const onlyHere = (more: Partial<PanelInput> = {}): PanelInput => ({
+    kind: "none",
+    local: "browser",
+    name: "原子",
+    canMoveToFolder: true,
+    now: NOW,
+    ...more,
+  });
+
+  it("says that it is not safe, and gives the ways out", () => {
+    const panel = cloudPanel(onlyHere(), t);
+    expect(panel).toMatchObject({ level: "attention", bar: "只在浏览器里", opens: "panel" });
+    expect(panel.rows.map((row) => row.text)).toEqual([
+      "这个项目只在浏览器里，不安全，浏览器清理数据时会丢",
+    ]);
+    expect(panel.rows[0]?.actions.map((action) => action.label)).toEqual([
+      "移到文件夹…",
+      "连接到云端…",
+      "另存一份…",
+    ]);
+    // Where the browser cannot write folders, there is no folder to move it to.
+    const without = cloudPanel(onlyHere({ canMoveToFolder: false }), t);
+    expect(without.rows[0]?.actions.map((action) => action.id)).toEqual(["connect", "saveCopy"]);
+  });
+
+  it("is what the open project is, as `CloudProjects` says it", () => {
+    const snapshot: CloudProjectsSnapshot = { kind: "none", local: "browser" };
+    const input = panelInputOf(snapshot, { name: "原子", canMoveToFolder: false, now: NOW });
+    expect(input).toMatchObject({ kind: "none", local: "browser" });
+    // A folder that is not connected is "仅本机", as before.
+    expect(
+      cloudPanel(
+        panelInputOf({ kind: "none" }, { name: "原子", canMoveToFolder: false, now: NOW }),
+        t,
+      ).bar,
+    ).toBe("仅本机");
+  });
+});
+
+describe("a project of the platform only in this browser, and what the browser keeps (R-ST-9)", () => {
+  const direct = (more: Partial<PanelInput> = {}): PanelInput => ({
+    ...linked({ local: "browser" }),
+    ...more,
+  });
+  const notesOf = (panel: CloudPanel) => panel.rows.find((row) => row.id === "local")?.notes ?? [];
+
+  it("says where the browser did not say it keeps it", () => {
+    expect(notesOf(cloudPanel(direct({ persisted: true }), t))).toEqual([]);
+    expect(notesOf(cloudPanel(direct(), t))).toEqual([]);
+    expect(notesOf(cloudPanel(direct({ persisted: false }), t))).toEqual([
+      "浏览器没有答应长期保存：磁盘紧张时可能清掉还没同步的改动。",
+    ]);
+  });
+
+  it("says in Safari, with changes that did not get to the platform, to sync or install it", () => {
+    const pending = sync({ pending: 2 });
+    const safari = notesOf(cloudPanel(direct({ clearsWhenIdle: true, sync: pending }), t));
+    expect(safari.some((note) => note.includes("Safari 会在 7 天"))).toBe(true);
+    // Nothing that is not on the platform: nothing to lose.
+    expect(notesOf(cloudPanel(direct({ clearsWhenIdle: true }), t))).toEqual([]);
+    // Kept for good: Safari does not clear it.
+    expect(
+      notesOf(cloudPanel(direct({ clearsWhenIdle: true, persisted: true, sync: pending }), t)),
+    ).toEqual([]);
+  });
+});

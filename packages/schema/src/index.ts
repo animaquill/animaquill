@@ -12,7 +12,15 @@ export {
 } from "./basics.ts";
 export { checkProject } from "./check.ts";
 export * from "./effects.ts";
-export { createProject, createTimeline, type NewProject } from "./create.ts";
+export {
+  FORMAT_SHAPES,
+  NEW_FRAME_RATES,
+  createProject,
+  createTimeline,
+  newFormat,
+  type FormatShape,
+  type NewProject,
+} from "./create.ts";
 export * from "./documents.ts";
 export { stringifyDocument } from "./json.ts";
 export {

@@ -10,8 +10,10 @@ import {
   ImportRefused,
   bringIn,
   pointingAtNothing,
+  prepareProject,
   readProjectFolder,
   type ImportReport,
+  type PreparedProject,
   type ProjectFolder,
 } from "./import.ts";
 
@@ -275,6 +277,42 @@ export class ProjectTransfer {
     );
     if (typeof report !== "function") return report;
     await report();
+    return undefined;
+  }
+
+  /**
+   * Reads a project folder people choose and checks the files of its assets, as `importProject`
+   * does, without keeping anything: for a project that is made of it elsewhere, as a new project of
+   * the platform, see `CloudCreate`. Undefined where people stopped, or it could not be read, which
+   * they were told.
+   */
+  async prepareImport(): Promise<PreparedProject | undefined> {
+    const t = this.#t;
+    const source = await this.#choose(t("transfer.importFailed"), () => this.#askForSource());
+    if (!source) return undefined;
+    const folder = await this.#importStep(
+      source,
+      t("transfer.reading", { folder: source.name }),
+      async (options) => {
+        const found = await readProjectFolder(source, t, options);
+        options.signal.throwIfAborted();
+        return found;
+      },
+    );
+    if (typeof folder === "function") {
+      await folder();
+      return undefined;
+    }
+    if (folder.lost.length > 0 && !(await this.#agreeToLose(folder, source.name))) {
+      this.#notifications.push(t("transfer.importCancelled"));
+      return undefined;
+    }
+    const { name } = folder.project.manifest;
+    const prepared = await this.#importStep(source, t("transfer.importing", { name }), (options) =>
+      prepareProject(folder, options),
+    );
+    if (typeof prepared !== "function") return prepared;
+    await prepared();
     return undefined;
   }
 

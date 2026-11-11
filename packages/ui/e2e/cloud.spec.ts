@@ -94,14 +94,15 @@ async function newInFolder(page: Page, name: string, folder: string) {
   }, folder);
   await page.getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
-  await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
+  await page.getByRole("radio", { name: /^本地项目/ }).check();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
 }
 
 /** Connects the open project through the dialog, with a new repository of this name. */
 async function connect(page: Page, repository: string) {
-  await cloudStatus(page).click();
+  await chooseFrom(page, "文件", "云端…");
   const connecting = connectDialog(page);
   await connecting.getByRole("textbox", { name: "仓库名" }).fill(repository);
   await connecting.getByRole("button", { name: "连接到云端" }).click();
@@ -125,7 +126,7 @@ test.describe("the start page", () => {
     await expect(cloudColumn(page)).toHaveAttribute("data-cloud-list", "ready");
     await expect(
       cloudColumn(page).getByText(
-        "云端还没有项目。打开一个项目，用文件菜单里的“云端…”把它连上去。",
+        "云端还没有项目。新建一个云端项目，或者打开一个项目，用文件菜单里的“云端…”把它连上去。",
       ),
     ).toBeVisible();
   });
@@ -332,11 +333,11 @@ test.describe("connecting a project", () => {
   }) => {
     await arrive(page, { signedIn: false, installed: false });
     await createProject(page);
-    await expect(cloudStatus(page)).toHaveText("仅本机");
+    await expect(cloudStatus(page)).toHaveText("只在浏览器里");
     await cloudStatus(page).hover();
-    await expect(page.getByText(/这个项目只在这台电脑上。点开可以把它连接到云端/)).toBeVisible();
+    await expect(page.getByText(/这个项目只在浏览器里，不安全/)).toBeVisible();
     await shot(page, "panel-local");
-    await cloudStatus(page).click();
+    await chooseFrom(page, "文件", "云端…");
 
     const connecting = connectDialog(page);
     await expect(connecting).toHaveAccessibleName("把“测试项目”连接到云端");
@@ -359,7 +360,7 @@ test.describe("connecting a project", () => {
     await shot(page, "connect-choose");
     // Giving up before anything was made leaves nothing behind.
     await connectDialog(page).getByRole("button", { name: "取消" }).click();
-    await expect(cloudStatus(page)).toHaveText("仅本机");
+    await expect(cloudStatus(page)).toHaveText("只在浏览器里");
     expect(await withLab(page, (lab) => lab.platform.projects.size)).toBe(0);
   });
 
@@ -431,7 +432,7 @@ test.describe("connecting a project", () => {
       return id;
     });
     await createProject(page);
-    await cloudStatus(page).click();
+    await chooseFrom(page, "文件", "云端…");
     const connecting = connectDialog(page);
     const name = connecting.getByRole("textbox", { name: "仓库名" });
     // The name the dialog put there is taken: it moves on to one that is free, and says so.
@@ -483,7 +484,7 @@ test.describe("connecting a project", () => {
       repositories.archiveMs = 2500;
     });
     await createProject(page);
-    await cloudStatus(page).click();
+    await chooseFrom(page, "文件", "云端…");
     const connecting = connectDialog(page);
     await connecting.getByRole("textbox", { name: "仓库名" }).fill("my-film");
     await expect(connecting.getByText("会建在你的 GitHub 账号下：octo/my-film")).toBeVisible();
@@ -518,7 +519,7 @@ test.describe("connecting a project", () => {
       lab.repositories.refuseLink = "unavailable";
     });
     await createProject(page);
-    await cloudStatus(page).click();
+    await chooseFrom(page, "文件", "云端…");
     const connecting = connectDialog(page);
     await connecting.getByRole("textbox", { name: "仓库名" }).fill("my-film");
     await connecting.getByRole("button", { name: "连接到云端" }).click();
@@ -532,7 +533,7 @@ test.describe("connecting a project", () => {
     // Giving up now takes the project off the platform again: nothing is left halfway.
     await connecting.getByRole("button", { name: "取消" }).click();
     await expect(connecting).toHaveCount(0);
-    await expect(cloudStatus(page)).toHaveText("仅本机");
+    await expect(cloudStatus(page)).toHaveText("只在浏览器里");
     expect(
       await withLab(page, ({ platform }) => [platform.projects.size, platform.removed.length]),
     ).toEqual([0, 1]);
@@ -574,6 +575,56 @@ test.describe("connecting a project", () => {
     await expect(cloudStatus(page)).toHaveText("云端项目");
     // Closing the dialog before that would have taken nothing away.
     expect(await withLab(page, (lab) => lab.platform.removed)).toEqual([]);
+  });
+});
+
+test.describe("making a new project", () => {
+  const making = (page: Page) => page.locator("dialog[data-create-phase]");
+
+  test("makes one of the platform in one press, in the shape people chose, its repository in pinyin", async ({
+    page,
+  }) => {
+    await arrive(page);
+    await page.getByRole("button", { name: "新建项目" }).click();
+    const box = making(page);
+    await expect(box).toHaveAccessibleName("新建项目");
+    await box.getByRole("radio", { name: /^云端项目/ }).check();
+    await box.getByRole("textbox", { name: "项目名称" }).fill("原子是什么");
+    await box.getByRole("combobox", { name: "画幅" }).selectOption("portrait");
+    await expect(box.getByRole("textbox", { name: "仓库名" })).toHaveValue("yuan-zi-shi-shen-me");
+    await expect(box.getByText("这个名字可以用")).toBeVisible();
+    await shot(page, "new-cloud");
+    await box.getByRole("button", { name: "新建", exact: true }).click();
+    await expect(box).toHaveAttribute("data-create-phase", /archiving|done/);
+    await expect(box.locator('[data-step="place"]')).toHaveAttribute("data-state", "done");
+    await shot(page, "new-cloud-steps");
+    await box.getByRole("button", { name: /^(关闭|完成)$/ }).click();
+    await expect(page).toHaveTitle("原子是什么 - AnimaQuill");
+    await expect(cloudStatus(page)).toHaveText("云端项目");
+    await expect(page.getByLabel("项目分辨率：1080×1920")).toBeVisible();
+    expect(
+      await withLab(page, ({ platform }) =>
+        [...platform.projects.values()].map((each) => each.name),
+      ),
+    ).toEqual(["原子是什么"]);
+  });
+
+  test("custom size, checked as the format says", async ({ page }) => {
+    await arrive(page);
+    await page.getByRole("button", { name: "新建项目" }).click();
+    const box = making(page);
+    await box.getByRole("combobox", { name: "画幅" }).selectOption("custom");
+    await box.getByRole("textbox", { name: "宽" }).fill("0");
+    await expect(box.getByText("宽和高要填正整数（像素）。")).toBeVisible();
+    await expect(box.getByRole("button", { name: "新建", exact: true })).toBeDisabled();
+    await box.getByRole("textbox", { name: "宽" }).fill("1280");
+    await box.getByRole("textbox", { name: "高" }).fill("720");
+    await box.getByRole("combobox", { name: "帧率" }).selectOption("60");
+    await shot(page, "new-custom");
+    // The kind for tests, which people never see: a project in this browser.
+    await box.getByRole("button", { name: "新建", exact: true }).click();
+    await expect(page.getByLabel("项目分辨率：1280×720")).toBeVisible();
+    await expect(footer(page).getByText("60 帧")).toBeVisible();
   });
 });
 

@@ -83,6 +83,34 @@ export interface Host {
    * Without it projects stay on this computer, which is everything they need.
    */
   readonly cloud?: CloudAccess;
+  /**
+   * Whether the browser keeps what the editor stores in it until people clear it themselves, and
+   * asks for that, see `StoragePersistence`. Without it nothing is known about it.
+   */
+  readonly persistence?: StoragePersistence;
+  /**
+   * For tests only: a new project can stay in this browser, with no folder and no platform, as a
+   * test cannot answer the browser's dialog for a folder. People get no such projects any more:
+   * one only in a browser goes when the browser clears what it stores. Missing for everyone else.
+   */
+  readonly projectsHereForTests?: true;
+}
+
+/**
+ * Whether the browser may clear what the editor stores in it by itself, as when the disk is nearly
+ * full: a project of the platform that is only in this browser, and changes that did not get to the
+ * platform yet, would go with it.
+ */
+export interface StoragePersistence {
+  /** Whether the browser said it keeps what the editor stores until people clear it. Never rejects. */
+  persisted(): Promise<boolean>;
+  /** Asks the browser to keep it so. Resolves to whether it does now. Never rejects. */
+  persist(): Promise<boolean>;
+  /**
+   * The browser clears what a page stores once people did not visit it for days, as Safari does
+   * after seven, unless it keeps it for good or the page is installed as an app.
+   */
+  readonly clearsWhenIdle: boolean;
 }
 
 /**

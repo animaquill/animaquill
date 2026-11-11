@@ -14,7 +14,7 @@ import type {
   ProjectLog,
   ProjectSummary,
 } from "@animaquill/host";
-import { CURRENT_FORMAT_VERSION, createProject } from "@animaquill/schema";
+import { CURRENT_FORMAT_VERSION, createProject, type NewProject } from "@animaquill/schema";
 import { Emitter } from "./emitter.ts";
 
 /**
@@ -250,8 +250,9 @@ export class ProjectSession {
   }
 
   /** Resolves to whether the project was created and opened. */
-  async create(name: string): Promise<boolean> {
-    const store = ProjectStore.create(createProject({ name }));
+  /** `format`: the first format of the project, see `newFormat`; the usual one without it. */
+  async create(name: string, format?: NewProject["format"]): Promise<boolean> {
+    const store = ProjectStore.create(createProject({ name, ...(format && { format }) }));
     const { id } = store.getState().manifest;
     const state = store.encodeState();
     store.destroy();

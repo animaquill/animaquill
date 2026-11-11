@@ -46,7 +46,9 @@ test.describe("without a project", () => {
   });
 
   test("says where projects are kept", async ({ page }) => {
-    await expect(page.getByText("项目存在浏览器里，清除浏览器数据会删掉它们")).toBeVisible();
+    await expect(
+      page.getByText("这个浏览器不能打开电脑上的文件夹。本机版请用 Edge 或 Chrome。"),
+    ).toBeVisible();
   });
 
   test("offers only what makes sense", async ({ page }) => {

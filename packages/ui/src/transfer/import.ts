@@ -8,7 +8,7 @@ import {
   type LostPart,
   type ReadOnlyFolder,
 } from "@animaquill/core";
-import type { FolderFile, ProjectLibrary, SourceFolder } from "@animaquill/host";
+import type { FolderFile, MediaStore, ProjectLibrary, SourceFolder } from "@animaquill/host";
 import { hashFile, isSameHash } from "@animaquill/media";
 import { newId, type Problem, type Project } from "@animaquill/schema";
 import type { TFunction } from "i18next";
@@ -205,6 +205,153 @@ export interface BringInOptions extends ReadOptions {
 }
 
 /**
+ * A project read from a folder, with the files of its assets checked, before any of it is kept
+ * anywhere: what `bringIn` keeps in this browser, and what a new project of the platform is made
+ * of, see `CloudCreate`. The assets say the hash and size of the file that was read.
+ */
+export interface PreparedProject {
+  readonly project: Project;
+  readonly sources: Readonly<Record<string, string>>;
+  /** The files to keep, by the hash the project finds them by. */
+  readonly files: readonly { readonly hash: string; readonly file: File; readonly label: string }[];
+  /** What people have to know, see `ImportReport`. */
+  readonly report: Omit<ImportReport, "id" | "name" | "copied">;
+}
+
+/**
+ * Reads the files of the assets of a project found in a folder, and checks them: one whose content
+ * is not what the project says stays out, as damaged. Nothing is kept: see `keepFiles`, which says
+ * how far it got on its own.
+ */
+export async function prepareProject(
+  folder: ProjectFolder,
+  {
+    signal,
+    onStep,
+    withFiles = true,
+    media,
+  }: ReadOptions & {
+    readonly withFiles?: boolean;
+    /** Keeps each file right as it is checked, as `keepFiles` does, where it is to be kept now. */
+    readonly media?: MediaStore;
+  } = {},
+): Promise<PreparedProject> {
+  const { project, sources, files, skipped, lost, warnings } = folder;
+  const assets = { ...project.assets?.assets };
+  const found = [];
+  for (const [assetId, asset] of withFiles ? Object.entries(assets) : []) {
+    const file = await files.get(asset.path)?.read();
+    if (file) found.push({ id: assetId, asset, file });
+  }
+  const total = found.reduce((sum, { file }) => sum + file.size, 0);
+  let done = 0;
+  const kept: { hash: string; file: File; label: string }[] = [];
+  const stored = new Set<string>();
+  const damaged = new Map<string, string>();
+  for (const { id: assetId, asset, file } of found) {
+    const before = done;
+    const label = asset.name ?? asset.path;
+    const step = (bytes: number) => onStep?.({ file: label, done: before + bytes, total });
+    step(0);
+    // A folder cloned without Git LFS has the pointer to the file in its place: the file is not
+    // here, as for one that is missing, and can come from where it is kept, see below.
+    const { hash: known, size } = asset;
+    if (known !== undefined && (await isPointerTo(file, { hash: known, size }))) {
+      done += file.size;
+      continue;
+    }
+    const hash = await hashFile(file, { ...(signal ? { signal } : {}), onProgress: step });
+    if (asset.hash !== undefined && !isSameHash(asset.hash, hash)) {
+      damaged.set(assetId, label);
+    } else {
+      // A project finds a file by the hash it has written down, however a tool wrote that.
+      const stamp = asset.hash ?? hash;
+      if (!stored.has(stamp)) {
+        kept.push({ hash: stamp, file, label });
+        if (media) await keepFile(media, stamp, file, { ...(signal && { signal }) });
+      }
+      stored.add(stamp);
+      assets[assetId] = { ...asset, hash: stamp, size: file.size };
+    }
+    done += file.size;
+    step(0);
+    signal?.throwIfAborted();
+  }
+  // Another asset can have brought in the same content from a place of its own.
+  const isCovered = (assetId: string, hash: string | undefined) =>
+    damaged.has(assetId) || (hash !== undefined && stored.has(hash));
+  const notHere = withFiles
+    ? Object.entries(assets).filter(([assetId, asset]) => !isCovered(assetId, asset.hash))
+    : [];
+  // What can come from where it is kept is not missing, see `elsewhereFile`.
+  const missing: string[] = [];
+  const elsewhere: ElsewhereFile[] = [];
+  for (const [, asset] of notHere) {
+    const label = asset.name ?? asset.path;
+    const there = elsewhereFile(asset, label);
+    if (there) elsewhere.push(there);
+    else missing.push(label);
+  }
+  return {
+    project: project.assets ? { ...project, assets: { assets } } : project,
+    sources,
+    files: kept,
+    report: {
+      missing,
+      elsewhere,
+      damaged: [...damaged.values()],
+      skipped,
+      lost: lost.map(({ consequence }) => consequence),
+      warnings,
+      runsCode: project.scenes.size + project.sounds.size > 0,
+    },
+  };
+}
+
+/**
+ * Keeps the files of a prepared project, see `prepareProject`, and reads each back: people may throw
+ * the folder away once this is over, so what is kept has to be all of it. Rejects where it is not.
+ */
+export async function keepFiles(
+  prepared: PreparedProject,
+  media: MediaStore,
+  { signal, onStep }: ReadOptions = {},
+): Promise<void> {
+  // Every file is written and read back.
+  const total = prepared.files.reduce((sum, { file }) => sum + file.size, 0);
+  let done = 0;
+  for (const { hash, file, label } of prepared.files) {
+    const before = done;
+    await keepFile(media, hash, file, {
+      ...(signal && { signal }),
+      onProgress: (bytes) => onStep?.({ file: label, done: before + bytes, total }),
+    });
+    done += file.size;
+  }
+}
+
+/** Keeps one file by its hash, and reads it back: what was kept has to be the file. */
+async function keepFile(
+  media: MediaStore,
+  hash: string,
+  file: File,
+  {
+    signal,
+    onProgress,
+  }: { readonly signal?: AbortSignal; readonly onProgress?: (bytes: number) => void },
+): Promise<void> {
+  await media.put(hash, file);
+  const kept = await media.get(hash);
+  const keptHash =
+    kept &&
+    (await hashFile(kept, { ...(signal && { signal }), ...(onProgress && { onProgress }) }));
+  if (keptHash === undefined || !isSameHash(keptHash, hash)) {
+    throw new Error(`What this browser kept of ${file.name} is not the file`);
+  }
+  signal?.throwIfAborted();
+}
+
+/**
  * Makes a new project of a folder. It only ever appears as a whole: until the last step nobody sees
  * it, and however this ends, projects that were there before stay as they are.
  */
@@ -213,7 +360,7 @@ export async function bringIn(
   projects: ProjectLibrary,
   { copyName, key, signal, onStep }: BringInOptions,
 ): Promise<ImportReport> {
-  const { project, sources, files, skipped, lost, warnings } = folder;
+  const { project } = folder;
   let { id, name } = project.manifest;
   let incoming = await projects.receive({ id: key ?? id, name, ...(key && { folder: true }) });
   const copied = incoming === undefined && key === undefined;
@@ -225,99 +372,22 @@ export async function bringIn(
   if (!incoming) throw new Error(`The new id ${key ?? id} is taken`);
 
   try {
-    const assets = { ...project.assets?.assets };
-    const found = [];
     // A project that stays in its folder reads its files from there: nothing comes into the browser.
-    for (const [assetId, asset] of key === undefined ? Object.entries(assets) : []) {
-      const file = await files.get(asset.path)?.read();
-      if (file) found.push({ id: assetId, asset, file });
-    }
-    // Every file is read twice: to check it, and to check what this browser kept of it.
-    const total = found.reduce((sum, { file }) => sum + file.size * 2, 0);
-
-    let done = 0;
-    const stored = new Set<string>();
-    const damaged = new Map<string, string>();
-    for (const { id: assetId, asset, file } of found) {
-      const before = done;
-      const label = asset.name ?? asset.path;
-      const step = (bytes: number) => onStep?.({ file: label, done: before + bytes, total });
-      step(0);
-      // A folder cloned without Git LFS has the pointer to the file in its place: the file is not
-      // here, as for one that is missing, and can come from where it is kept, see below.
-      const { hash: known, size } = asset;
-      if (known !== undefined && (await isPointerTo(file, { hash: known, size }))) {
-        done += file.size * 2;
-        continue;
-      }
-      const hash = await hashFile(file, { ...(signal ? { signal } : {}), onProgress: step });
-      if (asset.hash !== undefined && !isSameHash(asset.hash, hash)) {
-        damaged.set(assetId, label);
-      } else {
-        // A project finds a file by the hash it has written down, however a tool wrote that.
-        const stamp = asset.hash ?? hash;
-        if (!stored.has(stamp)) {
-          await incoming.media.put(stamp, file);
-          // People may throw the folder away once this is over: what is kept has to be all of it.
-          const kept = await incoming.media.get(stamp);
-          const keptHash =
-            kept &&
-            (await hashFile(kept, {
-              ...(signal ? { signal } : {}),
-              onProgress: (bytes) => step(file.size + bytes),
-            }));
-          if (keptHash === undefined || !isSameHash(keptHash, hash)) {
-            throw new Error(`What this browser kept of ${label} is not the file`);
-          }
-        }
-        stored.add(stamp);
-        assets[assetId] = { ...asset, hash: stamp, size: file.size };
-      }
-      done += file.size * 2;
-      step(0);
-      signal?.throwIfAborted();
-    }
-
-    // Another asset can have brought in the same content from a place of its own.
-    const isCovered = (assetId: string, hash: string | undefined) =>
-      damaged.has(assetId) || (hash !== undefined && stored.has(hash));
-    const notHere =
-      key === undefined
-        ? Object.entries(assets).filter(([assetId, asset]) => !isCovered(assetId, asset.hash))
-        : [];
-    // What can come from where it is kept is not missing, see `elsewhereFile`.
-    const missing: string[] = [];
-    const elsewhere: ElsewhereFile[] = [];
-    for (const [, asset] of notHere) {
-      const label = asset.name ?? asset.path;
-      const kept = elsewhereFile(asset, label);
-      if (kept) elsewhere.push(kept);
-      else missing.push(label);
-    }
-
+    const options = { ...(signal && { signal }), ...(onStep && { onStep }) };
+    // Each file is kept as soon as it is checked: what stopped halfway has what it got to.
+    const prepared = await prepareProject(folder, {
+      ...options,
+      withFiles: key === undefined,
+      media: incoming.media,
+    });
     const store = ProjectStore.create(
-      {
-        ...project,
-        manifest: { ...project.manifest, id, name },
-        ...(project.assets ? { assets: { assets } } : {}),
-      },
-      sources,
+      { ...prepared.project, manifest: { ...prepared.project.manifest, id, name } },
+      prepared.sources,
     );
     const state = store.encodeState();
     store.destroy();
     await incoming.finish(state);
-    return {
-      id: key ?? id,
-      name,
-      copied,
-      missing,
-      elsewhere,
-      damaged: [...damaged.values()],
-      skipped,
-      lost: lost.map(({ consequence }) => consequence),
-      warnings,
-      runsCode: project.scenes.size + project.sounds.size > 0,
-    };
+    return { id: key ?? id, name, copied, ...prepared.report };
   } catch (error) {
     await incoming.abandon().catch((failure: unknown) => {
       // The host cleans up the next time, and the project does not exist either way.

@@ -305,18 +305,31 @@ test.describe("a browser that cannot write folders", () => {
     await page.reload();
   });
 
-  test("says that projects stay in the browser, and has no way to move one", async ({ page }) => {
+  test("makes no project there, and has no way to move one it has from before", async ({
+    page,
+  }) => {
     await expect(
-      page.getByText(
-        "这个浏览器不能直接打开电脑上的文件夹，项目存在浏览器里，清除浏览器数据会删掉它们。用 Chrome 或 Edge 可以把项目放在文件夹里。",
-      ),
+      page.getByText("这个浏览器不能打开电脑上的文件夹。本机版请用 Edge 或 Chrome。"),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "打开项目文件夹…" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "导入项目文件夹" })).toBeVisible();
     await expect(page.getByText("也可以把项目文件夹拖到这里")).toHaveCount(0);
 
-    // A new project is one of the browser, as before.
+    // Nothing can keep a new project here: the local version needs a browser that opens folders.
+    await page.getByRole("button", { name: "新建项目" }).click();
+    await expect(dialog(page)).toContainText(
+      "这个浏览器不能打开电脑上的文件夹。本机版请用 Edge 或 Chrome。",
+    );
+    await dialog(page).getByRole("button", { name: "关闭" }).click();
+    await expect(tab(page, "preview")).toHaveCount(0);
+
+    // One from before, in the browser, still opens, and still goes out as a file.
+    await page.evaluate(() => localStorage.setItem("animaquill.projectsInBrowser", "yes"));
+    await page.reload();
     await createProject(page, NAME);
+    await page.evaluate(() => localStorage.removeItem("animaquill.projectsInBrowser"));
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "移到文件夹…" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "导入项目文件夹" })).toBeVisible();

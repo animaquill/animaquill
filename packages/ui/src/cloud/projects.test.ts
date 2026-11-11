@@ -1933,3 +1933,118 @@ describe("what a link remembers for lists", () => {
     expect(repository.links).toHaveLength(2);
   });
 });
+
+describe("a project only in this browser, without the platform (the design of the start page, 7)", () => {
+  it("is told apart from a folder, and people hear once that it is not safe", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const here = await windowOf(platform, time);
+    here.world.tellOnlyHere = true;
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    await here.open(id);
+    expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
+    expect(
+      messagesOf(here.notifications).filter((text) => text.includes("只在这个浏览器里")),
+    ).toHaveLength(1);
+    await here.cloud.close();
+    await here.session.close();
+    await here.open(id);
+    expect(
+      messagesOf(here.notifications).filter((text) => text.includes("只在这个浏览器里")),
+    ).toHaveLength(1);
+    // Once it is connected, it is not only here any more.
+    const link = await connectNow(here.cloud);
+    expect(here.cloud.getSnapshot().kind).toBe("linked");
+    // ...and it is again once connecting is given up on.
+    await time.advance(100);
+    const outcome = here.cloud.abandonConnect(link);
+    await time.advance(5000);
+    expect(await outcome).toBe("cancelled");
+    expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
+  });
+
+  it("says nothing about one that was made there on purpose, as tests do", async () => {
+    const time = new TestTime();
+    const here = await windowOf(new MemoryPlatform(), time);
+    here.world.tellOnlyHere = true;
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    here.cloud.noteToldOnlyHere(id);
+    await here.open(id);
+    expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
+    expect(messagesOf(here.notifications)).toEqual([]);
+  });
+
+  it("is no such project where it is a folder", async () => {
+    const disk = new MemoryDisk();
+    disk.folder("atom", { quietly: true });
+    disk.chooseNext("atom");
+    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
+    const here = await windowOf(new MemoryPlatform(), new TestTime(), {
+      folders: new Map([["本机1", folder]]),
+    });
+    const { state } = fixtureState();
+    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
+    await here.open("本机1");
+    expect(here.cloud.getSnapshot()).toEqual({ kind: "none" });
+    expect(messagesOf(here.notifications)).toEqual([]);
+  });
+});
+
+describe("asking the browser to keep what it stores (R-ST-9)", () => {
+  const persistence = (answer: boolean) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      persistence: {
+        persisted: async () => {
+          asked.push("persisted");
+          return false;
+        },
+        persist: async () => {
+          asked.push("persist");
+          return answer;
+        },
+        clearsWhenIdle: false,
+      },
+    };
+  };
+
+  it("asks once a project of the platform is only in this browser, and says so where it says no", async () => {
+    const time = new TestTime();
+    const { asked, persistence: kept } = persistence(false);
+    const here = await windowOf(new MemoryPlatform(), time, { persistence: kept });
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    here.cloud.noteToldOnlyHere(id);
+    await here.open(id);
+    // Not for a project that is not of the platform.
+    expect(asked).toEqual([]);
+    await connectNow(here.cloud);
+    await time.advance(10);
+    expect(asked).toEqual(["persisted", "persist"]);
+    expect(here.cloud.persisted).toBe(false);
+    expect(messagesOf(here.notifications).some((text) => text.includes("长期保存"))).toBe(true);
+    // Once.
+    await here.cloud.close();
+    await here.open(id);
+    await time.advance(10);
+    expect(asked).toEqual(["persisted", "persist"]);
+  });
+
+  it("says nothing where the browser keeps it", async () => {
+    const time = new TestTime();
+    const { asked, persistence: kept } = persistence(true);
+    const here = await windowOf(new MemoryPlatform(), time, { persistence: kept });
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    here.cloud.noteToldOnlyHere(id);
+    await here.open(id);
+    await connectNow(here.cloud);
+    await time.advance(10);
+    expect(asked).toEqual(["persisted", "persist"]);
+    expect(here.cloud.persisted).toBe(true);
+    expect(messagesOf(here.notifications)).toEqual([]);
+  });
+});

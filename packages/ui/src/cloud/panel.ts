@@ -20,6 +20,9 @@ import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
  * out is one level, the word of the status bar, the rows of the panel, and what people can do.
  *
  * - Not connected: "仅本机", and a click opens the dialog that connects it.
+ * - Only in this browser, without the platform, as projects were made before (the design, 7):
+ *   "只在浏览器里", as something to do something about, and the panel says why that is not safe
+ *   and the ways out: into a folder, to the platform, a copy as a file.
  * - Connected and in step: "☁ 已同步". A project of the platform that was opened without a folder
  *   says "☁ 云端项目" then, has a row that says it is only in this browser, with "下载到文件夹…",
  *   and "从这个浏览器移除…" in place of "断开云端…".
@@ -60,7 +63,11 @@ export type PanelActionId =
   | "reload"
   /** Tries syncing again, see `CloudSession.resume`. */
   | "retry"
-  | "resolveStuck";
+  | "resolveStuck"
+  /** Moves a project that is only in this browser into a folder, see `FolderMove`. */
+  | "moveToFolder"
+  /** Saves a copy of the project as a file, see `exportProject`. */
+  | "saveCopy";
 
 export interface PanelAction {
   readonly id: PanelActionId;
@@ -100,8 +107,18 @@ export interface CloudPanel {
 export interface PanelInput {
   /** Whether the open project syncs, see `CloudProjectsSnapshot`. */
   readonly kind: CloudProjectsSnapshot["kind"];
-  /** For "linked": where the project is on this computer. */
+  /**
+   * Where the project is on this computer. For "none", "browser" is a project only in this browser,
+   * without the platform.
+   */
   readonly local?: "folder" | "browser";
+  /**
+   * Whether the browser keeps what it stores until people clear it, as it said, see
+   * `CloudProjects.persisted`: false where it said no, undefined where nothing is known.
+   */
+  readonly persisted?: boolean;
+  /** The browser clears what a page stores after days without a visit, see `StoragePersistence`. */
+  readonly clearsWhenIdle?: boolean;
   /**
    * For "linked": whether the project is on the platform, as far as this window knows, see
    * `CloudProjectsSnapshot`. False: connecting it is not finished. Taken to be where nothing says.
@@ -122,9 +139,10 @@ export interface PanelInput {
 /** What the panel needs, from what `CloudProjects` says and what it holds says right now. */
 export function panelInputOf(
   snapshot: CloudProjectsSnapshot,
-  more: Pick<PanelInput, "name" | "canMoveToFolder" | "now">,
+  more: Pick<PanelInput, "name" | "canMoveToFolder" | "now" | "persisted" | "clearsWhenIdle">,
 ): PanelInput {
-  if (snapshot.kind === "none") return { kind: "none", ...more };
+  if (snapshot.kind === "none")
+    return { kind: "none", ...(snapshot.local && { local: snapshot.local }), ...more };
   const archive = snapshot.repository?.getSnapshot();
   return {
     kind: "linked",
@@ -236,6 +254,29 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     actions: more.actions ?? [],
   });
 
+  // Only in this browser, with nothing else that has it: not safe, and the ways out.
+  if (input.kind === "none" && input.local === "browser") {
+    return {
+      level: "attention",
+      bar: t("cloud.panel.bar.onlyHere"),
+      opens: "panel",
+      title,
+      rows: [
+        row("local", t("cloud.onlyHere.text"), {
+          notes: [t("cloud.onlyHere.note")],
+          tone: "attention",
+          actions: actions([
+            ...(input.canMoveToFolder ? (["moveToFolder"] as const) : []),
+            "connect",
+            "saveCopy",
+          ]),
+        }),
+      ],
+      actions: [],
+      sync: undefined,
+      archive: undefined,
+    };
+  }
   // A linked project always says how syncing goes: one that does not is taken to be not connected.
   if (input.kind === "none" || !input.sync) {
     return {
@@ -403,8 +444,19 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
 
   // ---- where it is on this computer
   if (isDirect) {
+    const notes = [
+      // The browser may clear it when its disk is nearly full: what did not get to the platform
+      // would go with it.
+      ...(input.persisted === false ? [t("cloud.persist.note")] : []),
+      // Safari clears it after seven days without a visit, unless it keeps it for good.
+      ...(input.clearsWhenIdle && input.persisted !== true && pending > 0
+        ? [t("cloud.persist.idle")]
+        : []),
+    ];
     rows.push(
       row("local", t("cloud.panel.local.browser"), {
+        notes,
+        ...(notes.length > 0 && { tone: "attention" as const }),
         ...(input.canMoveToFolder && { actions: [action("downloadToFolder")] }),
       }),
     );

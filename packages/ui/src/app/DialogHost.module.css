@@ -10,6 +10,23 @@
   box-shadow: var(--aq-shadow);
 }
 
+/* A dialog taller than the window scrolls, in a low window too: nothing is out of reach. */
+.wide {
+  max-height: calc(100dvh - 112px);
+  overflow: auto;
+}
+
+@media (max-height: 640px) {
+  .dialog,
+  .wide {
+    margin-top: 16px;
+  }
+
+  .wide {
+    max-height: calc(100dvh - 32px);
+  }
+}
+
 .wide {
   width: min(560px, calc(100vw - 32px));
 }

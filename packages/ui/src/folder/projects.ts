@@ -17,7 +17,12 @@ import {
   type ProjectLibrary,
   type SourceFolder,
 } from "@animaquill/host";
-import { CURRENT_FORMAT_VERSION, MANIFEST_FILE, createProject } from "@animaquill/schema";
+import {
+  CURRENT_FORMAT_VERSION,
+  MANIFEST_FILE,
+  createProject,
+  type NewProject,
+} from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { TransferStep } from "../transfer/export.ts";
 import {
@@ -225,12 +230,17 @@ export class FolderProjects {
    * Makes a new project in a folder that people chose, as it says where: in it, or in a new folder
    * of that name in it. The editor writes its files once it is open.
    */
-  async create(name: string, chosen: LocalFolder, inside?: string): Promise<FolderRecord> {
+  async create(
+    name: string,
+    chosen: LocalFolder,
+    inside?: string,
+    format?: NewProject["format"],
+  ): Promise<FolderRecord> {
     const folder = inside === undefined ? chosen : await chosen.inside(inside, { create: true });
     if (await this.#folders.records.find(folder)) {
       throw new Error("This browser knows that folder as the folder of another project");
     }
-    const store = ProjectStore.create(createProject({ name }));
+    const store = ProjectStore.create(createProject({ name, ...(format && { format }) }));
     const { id: project } = store.getState().manifest;
     const state = store.encodeState();
     store.destroy();

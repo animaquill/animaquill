@@ -29,12 +29,14 @@ const noFolders: FolderAccess = {
   savesInBrowser: false,
 };
 
-function setup(folders = noFolders, more: Partial<Host> = {}) {
+function setup(folders = noFolders, more: Partial<Host> = {}, { here = true } = {}) {
   const library = new MemoryLibrary();
   const trials = new MemoryTrials();
   const drafts = new MemoryTrials();
   const values = new Map<string, unknown>();
   const host: Host = {
+    // Projects in this browser, as tests make them, see `Host.projectsHereForTests`.
+    ...(here && { projectsHereForTests: true as const }),
     ...more,
     projects: library,
     address: memoryAddress(),
@@ -1488,5 +1490,18 @@ describe("a platform to keep projects in step with", () => {
     const withAccount = setup(noFolders, { cloud, account });
     expect(withAccount.workbench.cloud).toBeDefined();
     expect(withAccount.workbench.actions.get("cloud.connect")).toBeDefined();
+  });
+});
+
+describe("a new project where nothing can keep it (the design of the start page, 3)", () => {
+  it("is none in a browser that cannot open folders, without a platform, outside of tests", async () => {
+    const { workbench, library } = setup(noFolders, {}, { here: false });
+    const making = workbench.newProject();
+    const asked = await dialogOf(workbench);
+    expect(asked).toMatchObject({ kind: "confirm", message: "newProject.unsupported" });
+    workbench.dialogs.answer(true);
+    await making;
+    expect(await library.list()).toEqual([]);
+    expect(workbench.session.store).toBeUndefined();
   });
 });

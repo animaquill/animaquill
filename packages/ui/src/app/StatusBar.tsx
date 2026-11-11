@@ -371,6 +371,18 @@ function FolderSaveStatus({ open }: { open: OpenFolder }) {
 }
 
 const NO_CLOUD: CloudProjectsSnapshot = { kind: "none" };
+
+/** Whether the browser keeps what it stores, for the panel, see `PanelInput.persisted`. */
+const storedOf = (workbench: {
+  cloud: { persisted: boolean | undefined } | undefined;
+  persistence: { clearsWhenIdle: boolean } | undefined;
+}) => {
+  const persisted = workbench.cloud?.persisted;
+  return {
+    ...(persisted !== undefined && { persisted }),
+    ...(workbench.persistence?.clearsWhenIdle && { clearsWhenIdle: true }),
+  };
+};
 const noCloud = () => NO_CLOUD;
 const noSnapshot = () => undefined;
 /** How often the times in the panel move on while it is open. */
@@ -426,6 +438,7 @@ function CloudPanelBubble({
     panelInputOf(snapshot, {
       name,
       canMoveToFolder: workbench.projectFolders !== undefined,
+      ...storedOf(workbench),
       now,
     }),
     t,
@@ -490,6 +503,7 @@ function CloudStatus({ name }: { name: string }) {
     panelInputOf(outer, {
       name,
       canMoveToFolder: workbench.projectFolders !== undefined,
+      ...storedOf(workbench),
       now,
     }),
     t,

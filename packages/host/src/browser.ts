@@ -18,6 +18,7 @@ import type {
   ProjectSummary,
   MadeFile,
   SettingsStore,
+  StoragePersistence,
   WindowPlace,
   WindowPlaces,
   WindowMemory,
@@ -791,7 +792,37 @@ export type { BrowserLfsOptions } from "./lfs.ts";
 export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
 export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
 
+/**
+ * For tests only: projects stay in this browser, as where it cannot write folders, and a new one can
+ * be made there, see `Host.projectsHereForTests`. Tests of everything that is not about folders set
+ * it, as a page cannot answer the browser's dialog for a folder.
+ */
 export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
+
+/**
+ * Whether the browser keeps what the editor stores, as `navigator.storage` says, see
+ * `StoragePersistence`. Safari is the one that clears it after seven days without a visit: no
+ * interface says so, so its name does, and an installed app is not cleared.
+ */
+export function browserPersistence(): StoragePersistence | undefined {
+  const storage = typeof navigator === "undefined" ? undefined : navigator.storage;
+  if (!storage || typeof storage.persisted !== "function") return undefined;
+  const agent = navigator.userAgent;
+  const isSafari =
+    /Safari\//.test(agent) &&
+    !/Chrome\/|Chromium\/|CriOS\/|FxiOS\/|EdgiOS\/|Edg\/|Android/.test(agent);
+  const isInstalled =
+    (navigator as { standalone?: boolean }).standalone === true ||
+    (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches);
+  return {
+    persisted: () => storage.persisted().catch(() => false),
+    persist: () =>
+      typeof storage.persist === "function"
+        ? storage.persist().catch(() => false)
+        : Promise.resolve(false),
+    clearsWhenIdle: isSafari && !isInstalled,
+  };
+}
 
 function keepsProjectsHere(storage: () => Storage): boolean {
   try {
@@ -860,6 +891,7 @@ export function createBrowserHost(
       ).catch(() => {});
     }
   };
+  const persistence = browserPersistence();
   const localFolders = keepsProjectsHere(storage)
     ? undefined
     : browserLocalFolders(database, locks);
@@ -870,6 +902,8 @@ export function createBrowserHost(
     windowMemory,
     folders: browserFolders(),
     ...(localFolders && { localFolders }),
+    ...(!localFolders && keepsProjectsHere(storage) && { projectsHereForTests: true as const }),
+    ...(persistence && { persistence }),
     trials: trials.store,
     drafts: drafts.store,
     exports,

@@ -9,6 +9,7 @@ import type {
   CloudAccess,
   CloudLink,
   LocalFolder,
+  StoragePersistence,
   WindowMemory,
 } from "@animaquill/host";
 import { createInstance } from "i18next";
@@ -104,7 +105,10 @@ export async function windowOf(
     library = new MemoryLibrary(),
     memory = memoryWindow(),
     overrides = {},
+    persistence,
   }: {
+    /** Whether the browser keeps what it stores, see `CloudProjectsOptions.persistence`. */
+    persistence?: StoragePersistence;
     signedIn?: boolean;
     folders?: Map<string, LocalFolder>;
     repository?: FakeRepositories;
@@ -143,8 +147,12 @@ export async function windowOf(
     moved: [] as string[],
     /** Whether the page goes away once it was asked to, see `CloudProjectsOptions.leaving`. */
     leaving: true,
+    /** Opening a project only in this browser says that it is not safe, see `CloudProjects`. */
+    tellOnlyHere: false,
   };
   const open = async (id: string) => {
+    // Tests make projects in the browser on purpose: only those about it hear that it is not safe.
+    if (!world.tellOnlyHere) cloud.noteToldOnlyHere(id);
     await cloud.close();
     await session.open(id);
     await cloud.follow();
@@ -187,6 +195,7 @@ export async function windowOf(
     },
     isActive: () => world.active,
     memory,
+    ...(persistence && { persistence }),
     leaving: () => world.leaving,
     connectTiming: { patienceMs: 2000, checkMs: 50 },
     account: who,

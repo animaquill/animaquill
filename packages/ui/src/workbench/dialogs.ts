@@ -1,4 +1,5 @@
 import type { CloudConnect } from "../cloud/connect.ts";
+import type { CloudCreate } from "../cloud/create.ts";
 import type { RepositoryPicker } from "../cloud/repository-picker.ts";
 import { Emitter } from "./emitter.ts";
 
@@ -87,6 +88,14 @@ export interface ConnectDialogOptions {
   readonly connect: CloudConnect;
 }
 
+/** Making a new project: of this computer, or of the platform, see `CloudCreate`. */
+export interface CreateDialogOptions {
+  readonly title: string;
+  readonly create: CloudCreate;
+  /** What is made is a project that people imported, see `Workbench.importProject`. */
+  readonly imported?: boolean;
+}
+
 export interface ProgressOptions {
   readonly title: string;
   /** The word on the button that stops it. */
@@ -128,6 +137,7 @@ export type DialogRequest =
   | ({ readonly kind: "form"; readonly id: number } & FormOptions)
   | ({ readonly kind: "repository"; readonly id: number } & RepositoryDialogOptions)
   | ({ readonly kind: "connect"; readonly id: number } & ConnectDialogOptions)
+  | ({ readonly kind: "create"; readonly id: number } & CreateDialogOptions)
   | ProgressRequest;
 
 type DialogValue = string | boolean | FormAnswer | undefined;
@@ -182,6 +192,14 @@ export class Dialogs {
    */
   async connect(options: ConnectDialogOptions): Promise<void> {
     await this.#ask({ kind: "connect", id: this.#nextId++, ...options });
+  }
+
+  /**
+   * Stays until the dialog answers, as it does once making the project is over or given up, see
+   * `CloudCreate.cancel`, or another dialog takes its place.
+   */
+  async create(options: CreateDialogOptions): Promise<void> {
+    await this.#ask({ kind: "create", id: this.#nextId++, ...options });
   }
 
   /** Stays until `close`. Like every dialog it takes the place of the one before. */

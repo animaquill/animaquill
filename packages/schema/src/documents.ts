@@ -28,7 +28,8 @@ const SafeArea = z.strictObject({
   left: z.number().min(0).max(1),
 });
 
-const Format = z.strictObject({
+/** A size and frame rate the project is made in and exported at, see `ProjectManifest.formats`. */
+export const ProjectFormat = z.strictObject({
   id: Id,
   name: z.string().min(1),
   width: z.number().int().positive(),
@@ -67,7 +68,7 @@ export const ProjectManifest = z
      * Without it, the first format decides.
      */
     fps: Rate.optional(),
-    formats: z.array(Format).min(1),
+    formats: z.array(ProjectFormat).min(1),
     /** The first one opens by default. */
     timelines: z.array(Id).min(1),
     fonts: z.array(Font).optional(),
