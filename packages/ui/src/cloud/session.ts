@@ -463,7 +463,10 @@ export class CloudSession {
     if (this.#started || this.#closed) return;
     this.#started = true;
     this.#stops.push(
-      this.#journal.onChange(() => {
+      this.#journal.onChange((elsewhere) => {
+        // What another window wrote may have changed what the link says waits, as the start page
+        // does when it renames a project: the next count is noted whatever this one noted last.
+        if (elsewhere && this.#claim) this.#notedPending = Number.NaN;
         this.#scanSoon();
         this.#maybeTakeOver();
       }),
@@ -1333,11 +1336,22 @@ export class CloudSession {
     if (this.#phase !== "ready" && this.#seen > this.#pushed) {
       // Without a connection, only what is new since the last look: a long time offline makes a
       // long log, and it is read again as a whole once there is a connection.
-      const added = (await this.#journal.entries(this.#seen)) ?? [];
-      this.#seen = added.at(-1)?.mark ?? this.#seen;
-      this.#pending += added.filter((entry) => !isPushed(entry)).length;
+      if (this.#acked.size > 0) {
+        // What the platform took just before the connection went is not waiting any more: all of
+        // it is counted again, once.
+        const entries = (await this.#journal.entries(this.#pushed)) ?? [];
+        this.#seen = Math.max(this.#seen, entries.at(-1)?.mark ?? 0);
+        this.#pending = entries.filter((entry) => !this.#isThere(entry)).length;
+        this.#pass(entries);
+      } else {
+        const added = (await this.#journal.entries(this.#seen)) ?? [];
+        this.#seen = added.at(-1)?.mark ?? this.#seen;
+        this.#pending += added.filter((entry) => !isPushed(entry)).length;
+      }
       this.#set({ pending: this.#pending });
-      if (this.#pending !== this.#notedPending) this.#noteSoon();
+      if (this.#pushed > this.#notedPushed || this.#pending !== this.#notedPending) {
+        this.#noteSoon();
+      }
       return;
     }
     const entries = (await this.#journal.entries(this.#pushed)) ?? [];
@@ -1468,6 +1482,22 @@ export class CloudSession {
     if (!this.#claim) return;
     const entries = (await this.#journal.entries(this.#pushed)) ?? [];
     this.#pending = entries.filter((entry) => !this.#isThere(entry)).length;
+    this.#pass(entries);
+  }
+
+  /**
+   * Moves `pushed` over what is on the platform at the start of `entries`, in a row: what it took
+   * is then not counted again by whoever reads the link, as the start page does before it takes a
+   * copy away. Never over anything it may not have.
+   */
+  #pass(entries: readonly LogEntry[]): void {
+    let pushed = this.#pushed;
+    for (const entry of entries) {
+      if (!this.#isThere(entry)) break;
+      pushed = entry.mark;
+      this.#acked.delete(entry.mark);
+    }
+    this.#pushed = Math.max(this.#pushed, pushed);
   }
 
   // ---- noting down how far it got

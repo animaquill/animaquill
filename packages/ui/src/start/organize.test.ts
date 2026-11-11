@@ -15,13 +15,13 @@ const group = (id: string, name: string, more: Partial<ProjectGroup> = {}): Proj
   ...more,
 });
 
-function organizerOf(kept: ProjectOrganizer = memoryOrganizer()) {
+function organizerOf(kept: ProjectOrganizer = memoryOrganizer(), name = "g") {
   let clock = 100;
   let ids = 0;
   const organizer = new StartOrganizer({
     organizer: kept,
     now: () => (clock += 1),
-    newId: () => `g${(ids += 1)}`,
+    newId: () => `${name}${(ids += 1)}`,
   });
   // Listening is what has it read and keep up.
   organizer.subscribe(() => {});
@@ -65,10 +65,10 @@ describe("organising projects", () => {
   it("stars and unstars, and keeps when a project was opened", async () => {
     const kept = memoryOrganizer();
     const organizer = organizerOf(kept);
-    await organizer.star("a", true);
+    await organizer.star({ key: "a" }, true);
     await organizer.noteOpened("b");
-    await organizer.star("a", false);
-    await organizer.star("b", true);
+    await organizer.star({ key: "a" }, false);
+    await organizer.star({ key: "b" }, true);
     await settled();
     const { marks } = organizer.getSnapshot();
     expect(marks.get("a")).toMatchObject({ starredAt: null });
@@ -112,9 +112,9 @@ describe("organising projects", () => {
   it("takes a group away, and its projects are in none from then on, and stay", async () => {
     const organizer = organizerOf();
     await organizer.createGroup("工作");
-    await organizer.moveToGroup("a", "g1");
-    await organizer.moveToGroup("b", "g1");
-    await organizer.moveToGroup("b", undefined);
+    await organizer.moveToGroup({ key: "a" }, "g1");
+    await organizer.moveToGroup({ key: "b" }, "g1");
+    await organizer.moveToGroup({ key: "b" }, undefined);
     await settled();
     let cards = composeCards(lists, organizer.getSnapshot());
     expect(cards.map((card) => [card.name, card.group])).toEqual([
@@ -136,6 +136,45 @@ describe("organising projects", () => {
     expect(cards.every((card) => card.group === undefined)).toBe(true);
   });
 
+  it("keeps the star of a project of the platform with its account, and where this browser keeps it", async () => {
+    const kept = memoryOrganizer();
+    const organizer = organizerOf(kept);
+    await organizer.star({ key: "cloud:p", also: "f", account: "user-ada" }, true);
+    await organizer.moveToGroup({ key: "cloud:p", also: "f", account: "user-ada" }, "g");
+    const { marks } = await kept.read();
+    expect(marks.get("cloud:p")).toMatchObject({
+      starredAt: expect.any(Number),
+      group: "g",
+      account: "user-ada",
+    });
+    expect(marks.get("f")).toMatchObject({ starredAt: expect.any(Number), group: "g" });
+    expect(marks.get("f")?.account).toBeUndefined();
+  });
+
+  it("makes one group of a name that two windows make at once", async () => {
+    const kept = memoryOrganizer();
+    const one = organizerOf(kept);
+    const other = organizerOf(kept, "h");
+    await settled();
+    // Neither has seen what the other made.
+    const [first, second] = await Promise.all([one.createGroup("工作"), other.createGroup("工作")]);
+    expect([first, second]).toContainEqual({ problem: "taken" });
+    expect((await kept.read()).groups.filter((each) => !each.deleted)).toHaveLength(1);
+  });
+
+  it("does not bring back a group that another window took away later", async () => {
+    const kept = memoryOrganizer();
+    const one = organizerOf(kept);
+    await one.createGroup("工作");
+    await settled();
+    const other = organizerOf(kept);
+    await settled();
+    expect(await one.deleteGroup("g1")).toBe(true);
+    // The other window renames it from what it saw before.
+    expect(await other.renameGroup("g1", "工作 2")).toBeUndefined();
+    expect((await kept.read()).groups).toMatchObject([{ id: "g1", deleted: true }]);
+  });
+
   it("lists projects as they are where nothing can be read or kept", async () => {
     const broken: ProjectOrganizer = {
       read: () => Promise.reject(new Error("blocked")),
@@ -147,7 +186,7 @@ describe("organising projects", () => {
     const organizer = organizerOf(broken);
     await settled();
     expect(organizer.getSnapshot()).toMatchObject({ failed: true, groups: [] });
-    expect(await organizer.star("a", true)).toBe(false);
+    expect(await organizer.star({ key: "a" }, true)).toBe(false);
     expect(await organizer.createGroup("工作")).toBeUndefined();
   });
 });

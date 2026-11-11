@@ -59,6 +59,22 @@ async function chooseFrom(page: Page, menu: string, item: string) {
 
 const close = (page: Page) => chooseFrom(page, "文件", "关闭项目");
 
+/** How many changes the projects of this browser have in their logs. */
+const updatesIn = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        const open = indexedDB.open("animaquill");
+        open.onsuccess = () => {
+          const request = open.result.transaction("updates").objectStore("updates").count();
+          request.onsuccess = () => {
+            open.result.close();
+            resolve(request.result);
+          };
+        };
+      }),
+  );
+
 /** A new project in a folder of that name, through the dialog, as people make one. */
 async function newInFolder(page: Page, name: string, folder: string) {
   await page.evaluate((chosen) => {
@@ -427,6 +443,45 @@ test.describe("the start page in a browser without folders", () => {
     await shot(page, "13-local-no-folders");
     await openCard(page, "旧项目");
     await expect(page).toHaveTitle("旧项目 - AnimaQuill");
+  });
+
+  test("renames once, however the field is left, and says once why a locked one cannot be", async ({
+    page,
+  }) => {
+    await arrive(page, { cloud: false });
+    await createProject(page, "片头");
+    await page.evaluate(() => (window as unknown as { aqSave: () => Promise<void> }).aqSave());
+    const before = await updatesIn(page);
+    await close(page);
+    await cardMenu(page, "片头", "重命名…");
+    const field = page.getByRole("textbox", { name: "“片头”的新名字" });
+    await field.fill("开场");
+    // Enter, and at once out of the field, while what Enter does is still being kept.
+    await field.evaluate((element: HTMLInputElement) => {
+      element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      element.blur();
+    });
+    await expect(projectCard(page, "开场")).toBeVisible();
+    expect(await updatesIn(page)).toBe(before + 1);
+
+    // Locked: nothing changes, and it says so once, where the name was typed.
+    await openCard(page, "开场");
+    await page.evaluate(() =>
+      (window as unknown as { aqExecute: (call: unknown) => unknown }).aqExecute({
+        type: "project.setTags",
+        params: { tags: [{ name: "定稿", locked: true }] },
+      }),
+    );
+    await page.evaluate(() => (window as unknown as { aqSave: () => Promise<void> }).aqSave());
+    await close(page);
+    await cardMenu(page, "开场", "重命名…");
+    await page.getByRole("textbox", { name: "“开场”的新名字" }).fill("改不了");
+    await page.keyboard.press("Enter");
+    const locked = "这个项目锁定了，不能改名。打开项目解除锁定以后再改。";
+    await expect(page.getByRole("alert").filter({ hasText: locked })).toHaveCount(1);
+    await expect(page.getByText(locked)).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(projectCard(page, "开场")).toBeVisible();
   });
 
   test("renames a project from its card, also in a window that has it open", async ({

@@ -30,13 +30,20 @@ test.use({
 });
 
 test.describe("a project folder", () => {
-  test("is where a new project goes, and gets all of it", async ({ page }) => {
+  test("is where a new project goes, and gets all of it", async ({ page, devPage }) => {
     await installChosen(page);
     await page.reload();
     await page.getByRole("button", { name: "新建项目" }).click();
-    await expect(dialog(page)).toContainText("下一步选一个放项目的文件夹");
     await page.getByRole("textbox", { name: "项目名称" }).fill("新的片子");
-    await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
+    if (devPage) {
+      // No platform: the name, and then the folder.
+      await expect(dialog(page)).toContainText("下一步选一个放项目的文件夹");
+      await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
+    } else {
+      // The site asks which kind first: nobody is signed in, so one of this computer.
+      await expect(page.getByRole("radio", { name: /^本地项目/ })).toBeChecked();
+      await page.getByRole("button", { name: "新建", exact: true }).click();
+    }
     await expect(tab(page, "preview")).toBeVisible();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     await expect

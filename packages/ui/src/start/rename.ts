@@ -21,6 +21,8 @@ export type RenameOutcome =
   | "unreadable"
   /** It is of a newer editor, which this one must not write to. */
   | "tooNew"
+  /** It is locked, see the tags of a project: nothing about it changes until it is unlocked. */
+  | "locked"
   /** The name is not one a project can have, or the log could not be written. */
   | "failed";
 
@@ -62,6 +64,7 @@ export async function renameUnopened(
     const stop = store.onLocalUpdate((update) => made.push(update));
     const result = store.execute({ type: "project.rename", params: { name: wanted } });
     stop();
+    if (!result.ok && result.error.code === "project-locked") return "locked";
     if (!result.ok || made.length === 0) return "failed";
     // As a window that had every update of the platform the link says the log has, see
     // `ChangeSource.seq`.

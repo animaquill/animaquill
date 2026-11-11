@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { dialog, footer, installChosen, privateText } from "./folder-support.ts";
 import { cardMenu, cardMenuItems, projectCard, sidebar } from "./start-support.ts";
-import { content, createProject, expect, resourcesIn, tab, test } from "./support.ts";
+import { content, createProject, expect, needsDevPage, resourcesIn, tab, test } from "./support.ts";
 
 test.use({
   folders: true,
@@ -307,7 +307,11 @@ test.describe("a browser that cannot write folders", () => {
 
   test("makes no project there, and has no way to move one it has from before", async ({
     page,
+    devPage,
   }) => {
+    // Where the editor runs on this computer: the site has a platform, and such a browser makes
+    // projects of the platform there, see deployment-create.spec.ts of AnimaQuill Cloud.
+    test.skip(!devPage, needsDevPage("no platform"));
     await expect(
       page.getByText("这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"),
     ).toBeVisible();

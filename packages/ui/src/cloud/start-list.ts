@@ -89,6 +89,8 @@ export interface LocalRow {
   readonly repositoryUrl: string | undefined;
   /** It can be taken away on the platform: see `CloudRow.deletable`. */
   readonly deletable: boolean;
+  /** Whose project of the platform it is, see `CloudLink.owner`, where that is known. */
+  readonly owner: string | undefined;
 }
 
 /** A project of the platform that has no folder on this computer. */
@@ -113,6 +115,8 @@ export interface CloudRow {
   readonly copy: string;
   /** It can be taken away on the platform: it has no repository, see `CloudAccess.remove`. */
   readonly deletable: boolean;
+  /** Whose it is, see `CloudLink.owner`: whoever is signed in for what the list has. */
+  readonly owner: string | undefined;
 }
 
 export interface StartLists {
@@ -221,6 +225,7 @@ export function composeStartList(input: StartInput): StartLists {
       updatedAt: times.length > 0 ? Math.max(...times) : undefined,
       repositoryUrl: onPlatform?.repository?.url || undefined,
       deletable: input.canDelete && onPlatform?.attention === "noRepository",
+      owner: onPlatform ? (account ?? link?.owner) : link?.owner,
     };
   });
 
@@ -271,6 +276,7 @@ export function composeStartList(input: StartInput): StartLists {
         needsSignIn: false,
         copy: summary.copy ?? "live",
         deletable: input.canDelete && summary.attention === "noRepository",
+        owner: account ?? copy?.link.owner,
       };
     });
   // What this browser has and the list does not: all of it while there is no list.
@@ -291,6 +297,7 @@ export function composeStartList(input: StartInput): StartLists {
       needsSignIn: listed === "signedOut",
       copy: "live",
       deletable: false,
+      owner: link.owner,
     }));
 
   return {

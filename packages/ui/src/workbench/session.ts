@@ -67,8 +67,12 @@ const isSameSource = (a: ChangeSource, b: ChangeSource) =>
 export interface Journal {
   /** What the log has after a mark, see `ProjectLog.entries`. Undefined where the host keeps no marks. */
   entries(after?: number): Promise<readonly LogEntry[]> | undefined;
-  /** Hears that something new is in the log: from this window, or from another one. */
-  onChange(listener: () => void): () => void;
+  /**
+   * Hears that something new is in the log: from this window, or from another one, which
+   * `elsewhere` says. Another window can write to the log without having the project open, as the
+   * start page does when it renames one.
+   */
+  onChange(listener: (elsewhere: boolean) => void): () => void;
   /** Resolves once every change made so far is in the log, to whether it is. */
   saved(): Promise<boolean>;
   /** Takes in what the log has that the project does not, see `ProjectSession.readLog`. */
@@ -127,7 +131,7 @@ export class ProjectSession {
   #readAgain = false;
   /** The last update of a platform that the project has, as far as this window knows, see `cloudSeq`. */
   #cloudSeq: number | undefined;
-  readonly #journalListeners = new Set<() => void>();
+  readonly #journalListeners = new Set<(elsewhere: boolean) => void>();
 
   constructor(
     projects: ProjectLibrary,
@@ -189,8 +193,8 @@ export class ProjectSession {
   /** See `Journal.damaged`. */
   #damaged = 0;
 
-  #journalChanged(): void {
-    for (const listener of this.#journalListeners) listener();
+  #journalChanged(elsewhere = false): void {
+    for (const listener of this.#journalListeners) listener(elsewhere);
   }
 
   subscribe = this.#emitter.subscribe;
@@ -337,7 +341,7 @@ export class ProjectSession {
       store.onLocalUpdate((update, origin) => this.#save(update, origin)),
       log.listen((update) => {
         this.#receive(store, log, update);
-        this.#journalChanged();
+        this.#journalChanged(true);
       }),
     ];
     this.#address.write(id);

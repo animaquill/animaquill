@@ -4,7 +4,7 @@ import type { CloudConnection } from "./sync-protocol.ts";
 export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
 export { RELAY_REFUSALS, relayRefusalIn, type AiRelay, type RelayRefusal } from "./relay.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
-export { memoryOrganizer, mergeMarks } from "./organizer.ts";
+export { groupNameKey, groupTime, memoryOrganizer, mergeMarks, starTime } from "./organizer.ts";
 export {
   SYNC_CLOSE,
   SYNC_KINDS,
@@ -120,17 +120,31 @@ export interface ProjectMarks {
   readonly openedAt?: number;
   /** When people starred it; null where they took the star away again. */
   readonly starredAt?: number | null;
+  /** When the star was last given or taken away; `at` for what was kept before this was. */
+  readonly starAt?: number;
   /** The id of its group, see `ProjectGroup`; null where people took it out of its group. */
   readonly group?: string | null;
+  /** When it last went into a group or out of one; `at` for what was kept before this was. */
+  readonly groupAt?: number;
   /**
-   * When the star or the group was last changed, in milliseconds since 1970: what merging goes by.
-   * Opening the project does not move it.
+   * Whose project of the platform it is, see `AccountSnapshot.id`, for marks kept by `cloud:` and
+   * its id: an account takes over only those of its own projects.
+   */
+  readonly account?: string;
+  /**
+   * When the star or the group was last changed, in milliseconds since 1970. Opening the project
+   * does not move it. Each of the two goes by its own time, see `starAt` and `groupAt`.
    */
   readonly at: number;
 }
 
-/** What changes of the marks of a project: what is missing stays as it is. */
-export type ProjectMarksChange = Partial<Omit<ProjectMarks, "at">> & { readonly at: number };
+/**
+ * What changes of the marks of a project, at `at`: what is missing stays as it is, and so does a
+ * star or a group that was changed later than `at` already, as by another window.
+ */
+export type ProjectMarksChange = Partial<
+  Pick<ProjectMarks, "openedAt" | "starredAt" | "group" | "account">
+> & { readonly at: number };
 
 /**
  * A group of projects on the start page: one level, a project in one at most. Not called a folder,
@@ -151,6 +165,9 @@ export interface ProjectGroup {
   readonly deleted?: true;
 }
 
+/** What came of keeping a group, see `ProjectOrganizer.putGroup`. */
+export type PutGroupOutcome = "kept" | "older" | { readonly taken: string };
+
 /** Everything that is kept about how projects are organised. */
 export interface OrganizerContent {
   /** By what each project is kept by, see `ProjectMarks`. */
@@ -168,8 +185,13 @@ export interface ProjectOrganizer {
   read(): Promise<OrganizerContent>;
   /** Changes what is given of the marks of a project, see `ProjectMarksChange`. */
   mark(project: string, change: ProjectMarksChange): Promise<void>;
-  /** Keeps a group, in place of the one with the same id. */
-  putGroup(group: ProjectGroup): Promise<void>;
+  /**
+   * Keeps a group, in place of the one with the same id, in one step with what another window does:
+   * "older" where that one was changed later than `group.at` already, as taken away in another
+   * window, and nothing changes; `taken` where another group that is there has this name, whatever
+   * the case or width of its letters, and nothing changes either.
+   */
+  putGroup(group: ProjectGroup): Promise<PutGroupOutcome>;
   /** Forgets the marks of a project, as one that is gone. */
   forget(project: string): Promise<void>;
   /** What any window changed, also this one. Returns how to stop listening. */

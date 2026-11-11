@@ -68,6 +68,19 @@ describe("renaming a project that is not open", () => {
     expect(await renameUnopened("p", "新名字", { projects: failing })).toBe("failed");
   });
 
+  it("says that a locked project cannot be renamed, which trying again does not change", async () => {
+    const projects = new MemoryLibrary();
+    const store = ProjectStore.create(createProject({ name: "定稿" }));
+    expect(
+      store.execute({ type: "project.setTags", params: { tags: [{ name: "定稿", locked: true }] } })
+        .ok,
+    ).toBe(true);
+    await projects.create({ id: "p", name: "定稿" }, store.encodeState());
+    store.destroy();
+    expect(await renameUnopened("p", "新名字", { projects })).toBe("locked");
+    expect(await (await projects.open("p")).entries?.()).toHaveLength(1);
+  });
+
   it("renames what the list of folders shows of a folder, which gets the name when it opens", async () => {
     const projects = await libraryWith("f", "片头", true);
     const record: FolderRecord = {

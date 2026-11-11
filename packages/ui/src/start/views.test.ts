@@ -32,6 +32,7 @@ const card = (
   updatedAt: 1,
   starred: false,
   group: undefined,
+  owner: undefined,
   durationMs: undefined,
   source: { kind: "browser", summary: { id: name, name, updatedAt: 1 }, known: true },
   ...more,

@@ -1,6 +1,11 @@
-import type { ProjectGroup, ProjectMarksChange, ProjectOrganizer } from "@animaquill/host";
+import {
+  groupNameKey,
+  type ProjectGroup,
+  type ProjectMarksChange,
+  type ProjectOrganizer,
+} from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
-import { NOTHING_ORGANIZED, shownGroups, type Organized } from "./cards.ts";
+import { NOTHING_ORGANIZED, shownGroups, type MarksTarget, type Organized } from "./cards.ts";
 
 /**
  * How people organise their projects on the start page, see the design of the start page
@@ -27,12 +32,9 @@ export function groupNameProblem(
   const wanted = name.trim();
   if (wanted === "") return "empty";
   if ([...wanted].length > MAX_GROUP_NAME) return "tooLong";
-  const key = wanted.normalize("NFKC").toLocaleLowerCase("zh-CN");
+  const key = groupNameKey(wanted);
   const isTaken = groups.some(
-    (group) =>
-      !group.deleted &&
-      group.id !== except &&
-      group.name.normalize("NFKC").toLocaleLowerCase("zh-CN") === key,
+    (group) => !group.deleted && group.id !== except && groupNameKey(group.name) === key,
   );
   return isTaken ? "taken" : undefined;
 }
@@ -129,13 +131,32 @@ export class StartOrganizer {
     );
   }
 
-  star(marksKey: string, starred: boolean): Promise<boolean> {
-    return this.#mark(marksKey, { starredAt: starred ? this.#now() : null });
+  /** Kept where `target` says, both places at the same time, see `MarksTarget`. */
+  async #markTarget(
+    target: MarksTarget,
+    change: Pick<ProjectMarksChange, "starredAt" | "group">,
+  ): Promise<boolean> {
+    const at = this.#now();
+    const write = async (key: string, more: Partial<ProjectMarksChange>) => {
+      await this.#organizer.mark(key, { ...change, ...more, at });
+    };
+    try {
+      await write(target.key, target.account === undefined ? {} : { account: target.account });
+      if (target.also !== undefined) await write(target.also, {});
+      return true;
+    } catch (error) {
+      console.warn("How a project is organised could not be kept", error);
+      return false;
+    }
+  }
+
+  star(target: MarksTarget, starred: boolean): Promise<boolean> {
+    return this.#markTarget(target, { starredAt: starred ? this.#now() : null });
   }
 
   /** Into a group by its id, or out of any with undefined. */
-  moveToGroup(marksKey: string, group: string | undefined): Promise<boolean> {
-    return this.#mark(marksKey, { group: group ?? null });
+  moveToGroup(target: MarksTarget, group: string | undefined): Promise<boolean> {
+    return this.#markTarget(target, { group: group ?? null });
   }
 
   /** What is wrong with a name for a new group, or for `group` as it is renamed. */
@@ -158,12 +179,16 @@ export class StartOrganizer {
       scope: "browser",
       at: this.#now(),
     };
+    let outcome;
     try {
-      await this.#organizer.putGroup(group);
+      outcome = await this.#organizer.putGroup(group);
     } catch (error) {
       console.warn("A group could not be kept", error);
       return undefined;
     }
+    // Another window made one of that name a moment ago.
+    if (typeof outcome === "object") return { problem: "taken" };
+    if (outcome !== "kept") return undefined;
     // Shown at once, before every window hears of it.
     this.#snapshot = {
       ...this.#snapshot,
@@ -179,7 +204,8 @@ export class StartOrganizer {
     if (!group) return undefined;
     const problem = this.nameProblem(name, id);
     if (problem) return problem;
-    return this.#putGroup({ ...group, name: name.trim(), at: this.#now() });
+    const outcome = await this.#putGroup({ ...group, name: name.trim(), at: this.#now() });
+    return outcome === "taken" ? "taken" : outcome;
   }
 
   /**
@@ -192,10 +218,15 @@ export class StartOrganizer {
     return (await this.#putGroup({ ...group, deleted: true, at: this.#now() })) === true;
   }
 
-  async #putGroup(group: ProjectGroup): Promise<true | undefined> {
+  /**
+   * Resolves to true once it is kept; to "taken" where another window gave a group that name a
+   * moment ago, and to undefined where it could not be kept, or another window changed it later.
+   */
+  async #putGroup(group: ProjectGroup): Promise<true | "taken" | undefined> {
     try {
-      await this.#organizer.putGroup(group);
-      return true;
+      const outcome = await this.#organizer.putGroup(group);
+      if (typeof outcome === "object") return "taken";
+      return outcome === "kept" ? true : undefined;
     } catch (error) {
       console.warn("A group could not be kept", error);
       return undefined;

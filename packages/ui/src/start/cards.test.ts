@@ -19,6 +19,8 @@ import {
   coverColorOf,
   gitHubAddress,
   initialOf,
+  marksTargetOf,
+  NOTHING_ORGANIZED,
   shownGroups,
   type CardContext,
   type Organized,
@@ -180,6 +182,48 @@ describe("the cards of the start page", () => {
       // A group that was taken away leads nowhere.
       ["年会开场", false, undefined, "cloud:p-remote"],
       ["旧项目", true, undefined, "old"],
+    ]);
+  });
+
+  it("keep the star and the group of a folder that was disconnected, as they were last", () => {
+    // Connected, it was starred and moved; both are kept where the folder is kept too.
+    const organized = {
+      marks: new Map([
+        ["cloud:p-vlog", { starredAt: 40, starAt: 40, group: "g-work", groupAt: 41, at: 41 }],
+        ["f-cloud", { starredAt: 40, starAt: 40, group: "g-work", groupAt: 41, at: 41 }],
+        // From before it was connected, which no longer counts.
+        ["f-local", { starredAt: null, starAt: 5, at: 5 }],
+      ]),
+      groups: [group("g-work", "工作")],
+    };
+    const connected = composeCards(listsOf(EVERYTHING), organized);
+    expect(byName(connected, "旅行 Vlog")).toMatchObject({ starred: true, group: "g-work" });
+    const disconnected = composeCards(
+      listsOf({ ...EVERYTHING, links: [link("k-here", "p-launch")] }),
+      organized,
+    );
+    expect(byName(disconnected, "旅行 Vlog")).toMatchObject({
+      kind: "local",
+      starred: true,
+      group: "g-work",
+    });
+    // Whatever was changed last counts, of either.
+    const later = composeCards(listsOf(EVERYTHING), {
+      ...organized,
+      marks: new Map([...organized.marks, ["f-cloud", { starredAt: null, starAt: 50, at: 50 }]]),
+    });
+    expect(byName(later, "旅行 Vlog")).toMatchObject({ starred: false, group: "g-work" });
+  });
+
+  it("say where a star goes, with whose project of the platform it is", () => {
+    const cards = composeCards(listsOf(EVERYTHING), NOTHING_ORGANIZED);
+    expect(cards.map(marksTargetOf)).toEqual([
+      { key: "f-local" },
+      { key: "cloud:p-vlog", also: "f-cloud", account: "user-ada" },
+      { key: "cloud:p-launch", also: "k-here", account: "user-ada" },
+      // Never opened here: whose it is, as the list of whoever is signed in has it.
+      { key: "cloud:p-remote", account: "user-ada" },
+      { key: "old" },
     ]);
   });
 

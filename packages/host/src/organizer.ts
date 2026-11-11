@@ -1,5 +1,6 @@
 import type {
   OrganizerContent,
+  PutGroupOutcome,
   ProjectGroup,
   ProjectMarks,
   ProjectMarksChange,
@@ -22,25 +23,74 @@ interface MarksRecord extends ProjectMarks {
   readonly project: string;
 }
 
+/** Marks kept before the star and the group had times of their own: `at` is the time of both. */
+const isOld = (marks: ProjectMarks) => marks.starAt === undefined && marks.groupAt === undefined;
+/** When the star of a project was last changed. */
+export const starTime = (marks: ProjectMarks | undefined) =>
+  marks === undefined ? -Infinity : (marks.starAt ?? (isOld(marks) ? marks.at : -Infinity));
+/** When the group of a project was last changed. */
+export const groupTime = (marks: ProjectMarks | undefined) =>
+  marks === undefined ? -Infinity : (marks.groupAt ?? (isOld(marks) ? marks.at : -Infinity));
+
 /**
- * The fields of `change` over those of `before`: what is missing stays as it was. Only the star and
- * the group move `at` on, as only they are ever merged with another copy: when a project was opened
+ * The fields of `change` over those of `before`: what is missing stays as it was, and so does a
+ * star or a group changed later than the change, see `ProjectMarksChange`. Only the star and the
+ * group move `at` on, as only they are ever merged with another copy: when a project was opened
  * here is of this browser alone.
  */
 export function mergeMarks(
   before: ProjectMarks | undefined,
   change: ProjectMarksChange,
 ): ProjectMarks {
+  const isStar = change.starredAt !== undefined && change.at >= starTime(before);
+  const isGroup = change.group !== undefined && change.at >= groupTime(before);
   const openedAt = change.openedAt ?? before?.openedAt;
-  const starredAt = change.starredAt === undefined ? before?.starredAt : change.starredAt;
-  const group = change.group === undefined ? before?.group : change.group;
-  const isOrganized = change.starredAt !== undefined || change.group !== undefined;
+  const starredAt = isStar ? change.starredAt : before?.starredAt;
+  const starAt = isStar ? change.at : before?.starAt;
+  const group = isGroup ? change.group : before?.group;
+  const groupAt = isGroup ? change.at : before?.groupAt;
+  const account = change.account ?? before?.account;
+  const at =
+    before === undefined
+      ? change.at
+      : isStar || isGroup
+        ? Math.max(before.at, change.at)
+        : before.at;
   return {
     ...(openedAt !== undefined && { openedAt }),
     ...(starredAt !== undefined && { starredAt }),
+    ...(starAt !== undefined && { starAt }),
     ...(group !== undefined && { group }),
-    at: isOrganized || before === undefined ? change.at : before.at,
+    ...(groupAt !== undefined && { groupAt }),
+    ...(account !== undefined && { account }),
+    at,
   };
+}
+
+/** What two names of groups are the same by: whatever the case and width of their letters. */
+export const groupNameKey = (name: string): string =>
+  name.trim().normalize("NFKC").toLocaleLowerCase("zh-CN");
+
+/** Whether `group` may take the place of `before`, among `all`, see `ProjectOrganizer.putGroup`. */
+function decideGroup(
+  before: ProjectGroup | undefined,
+  group: ProjectGroup,
+  all: readonly ProjectGroup[],
+): PutGroupOutcome {
+  if (before && before.at > group.at) return "older";
+  // One taken away stays so: nothing that went before brings it back.
+  if (before?.deleted && !group.deleted) return "older";
+  if (group.deleted) return "kept";
+  const key = groupNameKey(group.name);
+  const other = all.find(
+    (each) => each.id !== group.id && !each.deleted && groupNameKey(each.name) === key,
+  );
+  return other ? { taken: other.id } : "kept";
+}
+
+/** What is kept of a project, without what it is kept by. */
+function marksOf({ project: _project, ...marks }: MarksRecord): ProjectMarks {
+  return marks;
 }
 
 const resultOf = <T>(request: IDBRequest<T>) =>
@@ -145,7 +195,7 @@ export function browserOrganizer(
         resultOf(transaction.objectStore(GROUPS).getAll() as IDBRequest<ProjectGroup[]>),
       ]);
       return {
-        marks: new Map(marks.map((kept) => [kept.project, mergeMarks(undefined, kept)])),
+        marks: new Map(marks.map((kept) => [kept.project, marksOf(kept)])),
         groups,
       };
     },
@@ -158,8 +208,24 @@ export function browserOrganizer(
           store.put({ project, ...mergeMarks(request.result, change) });
         });
       }),
-    putGroup: (group) =>
-      write([GROUPS], (transaction) => transaction.objectStore(GROUPS).put(group)),
+    async putGroup(group) {
+      let outcome: PutGroupOutcome = "kept";
+      await write([GROUPS], (transaction) => {
+        const store = transaction.objectStore(GROUPS);
+        // All of them, read and written in one go: another window that keeps one meanwhile waits.
+        const request = store.getAll() as IDBRequest<ProjectGroup[]>;
+        request.addEventListener("success", () => {
+          const all = request.result;
+          outcome = decideGroup(
+            all.find((each) => each.id === group.id),
+            group,
+            all,
+          );
+          if (outcome === "kept") store.put(group);
+        });
+      });
+      return outcome;
+    },
     forget: (project) =>
       write([MARKS], (transaction) => transaction.objectStore(MARKS).delete(project)),
     listen(listener) {
@@ -188,8 +254,12 @@ export function memoryOrganizer(): ProjectOrganizer {
       changed();
     },
     async putGroup(group) {
-      groups.set(group.id, group);
-      changed();
+      const outcome = decideGroup(groups.get(group.id), group, [...groups.values()]);
+      if (outcome === "kept") {
+        groups.set(group.id, group);
+        changed();
+      }
+      return outcome;
     },
     async forget(project) {
       marks.delete(project);

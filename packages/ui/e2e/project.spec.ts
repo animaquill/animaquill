@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { cardMenu, noProjects, projectCard, sidebar } from "./start-support.ts";
-import { content, createProject, expect, layoutMenu, tab, test } from "./support.ts";
+import { content, createProject, expect, layoutMenu, needsDevPage, tab, test } from "./support.ts";
 
 const statusName = (page: Page, name: string) =>
   page.locator("footer").getByRole("button", { name, exact: true });
@@ -45,7 +45,10 @@ test.describe("without a project", () => {
     await expect(page.getByRole("button", { name: /^布局：/ })).toHaveCount(0);
   });
 
-  test("says where projects are kept", async ({ page }) => {
+  test("says where projects are kept", async ({ page, devPage }) => {
+    // On this computer, with no platform: the site asks people to sign in instead, see
+    // deployment-start.spec.ts of AnimaQuill Cloud.
+    test.skip(!devPage, needsDevPage("no platform"));
     await expect(
       page.getByText("这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"),
     ).toBeVisible();
@@ -87,7 +90,10 @@ test.describe("without a project", () => {
     await expect(sidebar(page)).toHaveCount(0);
   });
 
-  test("suggests a name, and needs one", async ({ page }) => {
+  test("suggests a name, and needs one", async ({ page, devPage }) => {
+    // Where there is no platform, the name is all a new project needs here. The dialog of the
+    // site is tested in deployment-create.spec.ts of AnimaQuill Cloud.
+    test.skip(!devPage, needsDevPage("no platform"));
     await page.getByRole("button", { name: "新建项目" }).click();
     const input = page.getByRole("textbox", { name: "项目名称" });
     await expect(input).toHaveValue("未命名项目");

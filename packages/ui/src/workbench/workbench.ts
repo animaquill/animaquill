@@ -96,7 +96,7 @@ import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import { StartHabits } from "../start/habits.ts";
 import { StartOrganizer } from "../start/organize.ts";
-import { renameUnopened } from "../start/rename.ts";
+import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
 export interface WorkbenchOptions {
@@ -1750,22 +1750,18 @@ export class Workbench {
   }
 
   /**
-   * Renames a project from the start page, without opening it, see `renameUnopened`. Resolves to
-   * whether it is called that now; says why not otherwise.
+   * Renames a project from the start page, without opening it, see `renameUnopened`. Whoever
+   * asked says what came of it.
    */
-  async renameUnopened(key: string, name: string): Promise<boolean> {
+  async renameUnopened(key: string, name: string): Promise<RenameOutcome> {
     const outcome = await renameUnopened(key, name, {
       projects: this.projects,
       ...(this.projectFolders && { records: this.projectFolders.projects.records }),
       ...(this.#platform && { links: this.#platform.links }),
       window: this.windowId,
     });
-    if (outcome === "renamed" || outcome === "unchanged") {
-      await this.start.refresh();
-      return true;
-    }
-    this.notifications.push(this.t(`start.rename.${outcome}`));
-    return false;
+    if (outcome === "renamed") await this.start.refresh();
+    return outcome;
   }
 
   /**

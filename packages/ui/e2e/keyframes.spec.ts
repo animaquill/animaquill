@@ -1068,6 +1068,16 @@ for (const [how, hide] of Object.entries(hidingTimeline)) {
   });
 }
 
+/**
+ * Closes what the page says in its corner, over the lanes: that the project is here, and on the
+ * site, which keeps projects in the browser for tests, that the browser may clear them.
+ */
+async function dismissNotices(page: Page) {
+  const close = page.getByRole("status").getByRole("button", { name: "关闭", exact: true });
+  await expect(close.first()).toBeVisible();
+  while ((await close.count()) > 0) await close.first().click();
+}
+
 test.describe("a project written by hand", () => {
   test.use({ withProject: false, trying: false });
 
@@ -1091,7 +1101,7 @@ test.describe("a project written by hand", () => {
       },
     ]);
     // It says that the project is here, right over the lanes.
-    await page.getByRole("button", { name: "关闭", exact: true }).click();
+    await dismissNotices(page);
     await animate(page);
     await showAll(page);
     await open(page, "纯色");
@@ -1135,7 +1145,7 @@ test.describe("a project written by hand", () => {
         },
       },
     ]);
-    await page.getByRole("button", { name: "关闭", exact: true }).click();
+    await dismissNotices(page);
     await animate(page);
     await showAll(page);
     await open(page, "纯色");

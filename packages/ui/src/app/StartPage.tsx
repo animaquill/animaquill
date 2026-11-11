@@ -33,12 +33,15 @@ import {
   cardActions,
   cardPlace,
   cardStatus,
+  cloudMarksKey,
   composeCards,
   coverColorOf,
   DANGEROUS,
   gitHubAddress,
   initialOf,
+  marksTargetOf,
   type CardAction,
+  type MarksTarget,
   type ProjectCard,
 } from "../start/cards.ts";
 import {
@@ -57,6 +60,7 @@ import {
   type StartSection,
   type ViewId,
 } from "../start/views.ts";
+import type { RenameOutcome } from "../start/rename.ts";
 import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
 import type { Workbench } from "../workbench/workbench.ts";
 import { useWorkbench } from "./context.ts";
@@ -245,12 +249,15 @@ function GroupItem({
             if (outcome === true) {
               setRenaming(false);
               setProblem(undefined);
-            } else if (outcome === undefined) {
+              return true;
+            }
+            if (outcome === undefined) {
               notifications.push(t("start.group.failed"));
               setRenaming(false);
-            } else {
-              setProblem(t(`start.group.problem.${outcome}`));
+              return true;
             }
+            setProblem(t(`start.group.problem.${outcome}`));
+            return false;
           }}
         />
       </div>
@@ -322,7 +329,8 @@ function NameInput({
   label: string;
   initial: string;
   problem: string | undefined;
-  onCommit: (name: string) => Promise<void> | void;
+  /** Resolves to whether it is over: where not, people can change the name and try again. */
+  onCommit: (name: string) => Promise<boolean>;
   onCancel: () => void;
   className?: string | undefined;
 }) {
@@ -340,7 +348,11 @@ function NameInput({
       onCancel();
       return;
     }
-    void onCommit(value);
+    // Once: Enter, and then leaving the field while it is being kept, would do it twice.
+    isDone.current = true;
+    void onCommit(value).then((isOver) => {
+      if (!isOver) isDone.current = false;
+    });
   };
   return (
     <span className={`${styles.nameInput} ${className ?? ""}`}>
@@ -457,15 +469,14 @@ function Sidebar({
               }}
               onCommit={async (name) => {
                 const made = await organizer.createGroup(name);
-                if (made === undefined) {
-                  notifications.push(t("start.group.failed"));
-                  setCreating(false);
-                } else if ("problem" in made) {
+                if (made !== undefined && "problem" in made) {
                   setProblem(t(`start.group.problem.${made.problem}`));
-                } else {
-                  setCreating(false);
-                  setProblem(undefined);
+                  return false;
                 }
+                if (made === undefined) notifications.push(t("start.group.failed"));
+                setCreating(false);
+                setProblem(undefined);
+                return true;
               }}
             />
           </div>
@@ -598,7 +609,7 @@ interface CardsProps {
 interface CardActions {
   open(card: ProjectCard): void;
   run(card: ProjectCard, action: CardAction, at: HTMLElement | null): void;
-  rename(card: ProjectCard, name: string): Promise<boolean>;
+  rename(card: ProjectCard, name: string): Promise<RenameOutcome>;
   renaming: string | undefined;
   stopRenaming(): void;
   star(card: ProjectCard): void;
@@ -702,9 +713,14 @@ function CardItem({
         actions.stopRenaming();
       }}
       onCommit={async (next) => {
-        const done = await actions.rename(card, next);
-        if (done) actions.stopRenaming();
-        else setProblem(t("start.rename.failed"));
+        const outcome = await actions.rename(card, next);
+        if (outcome === "renamed" || outcome === "unchanged") {
+          actions.stopRenaming();
+          return true;
+        }
+        // Said once, where people typed it.
+        setProblem(t(`start.rename.${outcome}`));
+        return false;
       }}
     />
   ) : (
@@ -874,12 +890,13 @@ function useCardActions(
     renaming,
     stopRenaming: () => setRenaming(undefined),
     rename: async (card, name) => {
-      if (card.key === undefined) return false;
+      if (card.key === undefined) return "failed";
       return workbench.renameUnopened(card.key, name);
     },
     star: (card) => {
-      if (card.marksKey === undefined) return;
-      void workbench.organizer.star(card.marksKey, !card.starred).then((done) => {
+      const target = marksTargetOf(card);
+      if (!target) return;
+      void workbench.organizer.star(target, !card.starred).then((done) => {
         if (!done) workbench.notifications.push(t("start.group.markFailed"));
       });
     },
@@ -1085,22 +1102,32 @@ export function StartPage() {
       const key = workbench.session.key;
       if (into !== undefined && key !== undefined && key !== before && kind !== "open") {
         const link = await cloud?.linkOf(key).catch(() => undefined);
-        await organizer.moveToGroup(link ? `cloud:${link.project}` : key, into);
+        const signedIn = workbench.account?.getSnapshot();
+        const account = link?.owner ?? (signedIn?.status === "signedIn" ? signedIn.id : undefined);
+        const target: MarksTarget = link
+          ? {
+              key: cloudMarksKey(link.project),
+              also: key,
+              ...(account !== undefined && { account }),
+            }
+          : { key };
+        await organizer.moveToGroup(target, into);
       }
       refresh();
     });
   };
   const dropOnGroup = (cardId: string, into: string) => {
     const card = cards.find((each) => each.id === cardId);
-    if (card?.marksKey === undefined) return;
-    void organizer.moveToGroup(card.marksKey, into).then((done) => {
+    const target = card && marksTargetOf(card);
+    if (!target) return;
+    void organizer.moveToGroup(target, into).then((done) => {
       if (!done) workbench.notifications.push(t("start.group.markFailed"));
     });
   };
   const pickGroup = (card: ProjectCard): MenuItem[][] => {
-    const marksKey = card.marksKey as string;
+    const target = marksTargetOf(card) as MarksTarget;
     const move = (into: string | undefined) =>
-      void organizer.moveToGroup(marksKey, into).then((done) => {
+      void organizer.moveToGroup(target, into).then((done) => {
         if (!done) workbench.notifications.push(t("start.group.markFailed"));
       });
     return [

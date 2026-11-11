@@ -1,4 +1,11 @@
-import type { FolderStatus, ProjectGroup, ProjectMarks, ProjectSummary } from "@animaquill/host";
+import {
+  groupTime,
+  starTime,
+  type FolderStatus,
+  type ProjectGroup,
+  type ProjectMarks,
+  type ProjectSummary,
+} from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { httpsLink } from "../app/links.ts";
 import {
@@ -56,6 +63,8 @@ export interface ProjectCard {
   readonly starred: boolean;
   /** The id of its group, one that is there. */
   readonly group: string | undefined;
+  /** Whose project of the platform it is, see `ProjectMarks.account`, where that is known. */
+  readonly owner: string | undefined;
   /** How long its main timeline is, in milliseconds, where that is known. */
   readonly durationMs: number | undefined;
   /** What it came from. */
@@ -78,6 +87,28 @@ export interface Organized {
 
 export const NOTHING_ORGANIZED: Organized = { marks: new Map(), groups: [] };
 
+/** Where a star or a group of a card is kept, see `StartOrganizer.star`. */
+export interface MarksTarget {
+  readonly key: string;
+  /**
+   * What this browser keeps a project of the platform by, which is written too: a folder that is
+   * disconnected later, or a copy that the platform no longer has, keeps how it was organised.
+   */
+  readonly also?: string;
+  /** Whose project of the platform it is. */
+  readonly account?: string;
+}
+
+/** Where the star and the group of a card go, or undefined where it cannot be organised. */
+export function marksTargetOf(card: ProjectCard): MarksTarget | undefined {
+  if (card.marksKey === undefined) return undefined;
+  return {
+    key: card.marksKey,
+    ...(card.key !== undefined && card.key !== card.marksKey && { also: card.key }),
+    ...(card.owner !== undefined && { account: card.owner }),
+  };
+}
+
 /** The groups people see: those not taken away, by name. */
 export function shownGroups(groups: readonly ProjectGroup[]): ProjectGroup[] {
   return groups
@@ -95,21 +126,38 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
   const { marks } = organized;
   const groups = new Set(organized.groups.filter((group) => !group.deleted).map(({ id }) => id));
   /**
-   * The star and the group: of the project of the platform where that says anything, and of what
-   * this browser keeps it by otherwise, as for a folder that was organised before it was connected.
+   * The star and the group, each as it was last changed: kept by the project of the platform, or
+   * by what this browser keeps it by, as for a folder organised before it was connected, or one
+   * that was disconnected since. Both are written while it is connected, see `marksTargetOf`.
    */
-  const organizing = (key: string | undefined, project: string | undefined, mark?: CloudMark) => {
+  const organizing = (
+    key: string | undefined,
+    project: string | undefined,
+    mark: CloudMark | undefined,
+    owner: string | undefined,
+  ) => {
     if (mark?.kind === "otherAccount") {
-      return { marksKey: undefined, starred: false, group: undefined };
+      return { marksKey: undefined, starred: false, group: undefined, owner: undefined };
     }
     const own = key === undefined ? undefined : marks.get(key);
     const cloud = project === undefined ? undefined : marks.get(cloudMarksKey(project));
-    const starredAt = cloud?.starredAt === undefined ? own?.starredAt : cloud.starredAt;
-    const group = cloud?.group === undefined ? own?.group : cloud.group;
+    /** Of the two that say something of it, the one that said it last; the platform's at a tie. */
+    const later = <K extends "starredAt" | "group">(
+      field: K,
+      time: (marks: ProjectMarks | undefined) => number,
+    ): ProjectMarks[K] | undefined => {
+      const saying = [cloud, own].filter((each) => each?.[field] !== undefined);
+      const [first, second] = saying;
+      if (!first) return undefined;
+      return (!second || time(first) >= time(second) ? first : second)[field];
+    };
+    const starredAt = later("starredAt", starTime);
+    const group = later("group", groupTime);
     return {
       marksKey: project === undefined ? key : cloudMarksKey(project),
       starred: starredAt !== undefined && starredAt !== null,
       group: group !== undefined && group !== null && groups.has(group) ? group : undefined,
+      owner: project === undefined ? undefined : owner,
     };
   };
   const openedOf = (key: string | undefined) =>
@@ -123,7 +171,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       name: row.name,
       key: row.key,
       project: row.project,
-      ...organizing(row.key, row.project, row.mark),
+      ...organizing(row.key, row.project, row.mark, row.owner),
       openedAt: latest(row.openedAt, openedOf(row.key)),
       updatedAt: row.updatedAt,
       durationMs: undefined,
@@ -138,7 +186,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       name: row.name,
       key: row.key,
       project: row.project,
-      ...organizing(row.key, row.project, row.mark),
+      ...organizing(row.key, row.project, row.mark, row.owner),
       // A copy from before this was noted was opened here at some point: when it last changed is
       // the best there is to go by.
       openedAt: here ? (openedOf(row.key) ?? row.updatedAt) : undefined,
@@ -153,7 +201,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
     name: summary.name,
     key: summary.id,
     project: undefined,
-    ...organizing(summary.id, undefined),
+    ...organizing(summary.id, undefined, undefined, undefined),
     openedAt: openedOf(summary.id) ?? summary.updatedAt,
     updatedAt: summary.updatedAt,
     durationMs: undefined,
