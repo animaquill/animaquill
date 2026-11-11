@@ -10,6 +10,24 @@
   padding: 72px 0 32px;
 }
 
+/* With the projects of the platform next to those of this computer. */
+.content[data-columns="2"] {
+  width: min(1040px, calc(100% - 32px));
+}
+
+/* Side by side where there is room for both, one under the other in a narrow window. */
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  gap: 0 40px;
+  align-items: start;
+}
+
+.column {
+  min-width: 0;
+  outline: none;
+}
+
 .content h1 {
   display: flex;
   align-items: center;
@@ -83,9 +101,8 @@
 .project {
   display: flex;
   flex: 1;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
   padding: 6px 8px;
   color: var(--aq-text);
@@ -96,10 +113,109 @@
   cursor: pointer;
 }
 
+/* The name, and at the end of the line when it was opened, or what a click does. */
+.line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
 .name {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Where it is and how it stands with the platform: smaller, and onto the next line when long. */
+.about {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  min-width: 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.about > span {
+  overflow-wrap: anywhere;
+}
+
+.about > span + span::before {
+  margin-right: 6px;
+  color: var(--aq-text-muted);
+  content: "·";
+}
+
+.warning {
+  color: var(--aq-warning);
+}
+
+/* How it stands with the platform, with the cloud in front where it is on it. */
+.mark {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mark svg {
+  margin-right: 3px;
+}
+
+/* A project of the platform: its words, and at the end of the line what a click does. */
+.cloudProject {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.openWord {
+  flex: none;
+  color: var(--aq-accent);
+  font-size: 12px;
+}
+
+/* What the column of the platform says in place of a list, with the one thing to press. */
+.say {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 8px;
+  color: var(--aq-text-muted);
+}
+
+.say > span {
+  flex: 1 1 220px;
+}
+
+.more {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.more:hover,
+.more[aria-expanded="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
 }
 
 .time {
@@ -178,19 +294,10 @@
   margin: 8px 0 0;
 }
 
-.folder {
-  flex: none;
-  max-width: 40%;
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .again {
   flex: none;
   padding: 2px 8px;
+  white-space: nowrap;
   color: var(--aq-accent);
   background: none;
   border: 0;
@@ -200,4 +307,11 @@
 
 .again:hover {
   background: var(--aq-bg-hover);
+}
+
+/* While a project of the platform is on its way here, or being taken away. */
+.project:disabled,
+.again:disabled {
+  cursor: default;
+  opacity: 0.6;
 }

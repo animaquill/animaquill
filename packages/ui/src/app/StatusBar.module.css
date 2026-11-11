@@ -33,6 +33,13 @@
   background: var(--aq-bg-hover);
 }
 
+/* How the project stands with the platform: a cloud in front of the words where it is on it. */
+.cloud {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .info {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -161,26 +168,4 @@
   border: 0;
   border-radius: 3px;
   cursor: pointer;
-}
-
-.cloudBubble {
-  width: 320px;
-}
-
-.cloudSync {
-  display: grid;
-  gap: 4px;
-}
-
-.cloudSync h4 {
-  margin: 0;
-  color: var(--aq-text-strong);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.cloudSync p {
-  margin: 0;
-  color: var(--aq-text-muted);
-  overflow-wrap: anywhere;
 }

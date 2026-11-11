@@ -23,7 +23,7 @@ import type { ProjectSession } from "../workbench/session.ts";
 import { CloudConnect, takeIntent, type ConnectTiming } from "./connect.ts";
 import { DownloadFailed, download, type Downloaded } from "./download.ts";
 import { RepositoryPicker } from "./repository-picker.ts";
-import { defaultRepositoryName, divergedOutcome, pathList } from "./repository-text.ts";
+import { connectRepositoryName, divergedOutcome, pathList } from "./repository-text.ts";
 import {
   RepositoryWatch,
   type ArchiveNowOutcome,
@@ -781,45 +781,18 @@ export class CloudProjects {
   }
 
   /**
-   * Connects the open project to the platform, as a new project there whose first version is what
-   * the project is now, see the design, 7.2. A folder that names another project of the platform
-   * becomes a new one too, with `replace`. People say yes first, and are asked about GitHub once it
-   * is there; `CloudConnect` does all of that in one dialog, see `beginConnect`.
-   */
-  async connect({ replace = false } = {}): Promise<void> {
-    const { session, dialogs, notifications, t } = this.#options;
-    const key = session.key;
-    const store = session.store;
-    if (!key || !store) return;
-    if (this.#snapshot.kind === "linked") {
-      notifications.push(t("cloud.alreadyConnected"));
-      return;
-    }
-    if (!(await this.#signedIn(t("cloud.connectTitle", { name: store.getState().manifest.name }))))
-      return;
-    const words = { name: store.getState().manifest.name, interpolation: { escapeValue: false } };
-    const go = await dialogs.confirm({
-      title: t(replace ? "cloud.newTitle" : "cloud.connectTitle", words),
-      message: t("cloud.connectMessage"),
-      confirm: t(replace ? "cloud.newConfirm" : "cloud.connectConfirm"),
-    });
-    if (!go || session.store !== store) return;
-    const begun = await this.beginLink();
-    if (typeof begun === "string") {
-      notifications.push(t(LINK_REFUSALS[begun]));
-      return;
-    }
-    void this.#tellWhenConnected(begun.link);
-  }
-
-  /**
-   * Makes the open project, which is not connected, a new project of the platform: in the dialog
-   * that does all of it, repository included, where there is one, see `beginConnect`.
+   * Makes the open project, which is not connected, a new project of the platform, as people chose:
+   * in the dialog that does all of it, repository included, where there is one, see
+   * `beginConnect`; where the platform saves no projects to repositories, it only goes there.
    */
   async #connectAnew(): Promise<void> {
-    const { showConnect, cloud, account } = this.#options;
-    if (showConnect && cloud.repository && account) await showConnect();
-    else await this.connect({ replace: true });
+    const { showConnect, cloud, account, notifications, t } = this.#options;
+    if (showConnect && cloud.repository && account) {
+      await showConnect();
+      return;
+    }
+    const begun = await this.beginLink();
+    if (typeof begun === "string") notifications.push(t(LINK_REFUSALS[begun]));
   }
 
   /**
@@ -953,16 +926,6 @@ export class CloudProjects {
       .update(link.key, link.project, { made: true })
       .catch(() => false);
     open()?.repository?.start();
-  }
-
-  /** Says once that the first connection got there, and asks about GitHub. */
-  async #tellWhenConnected(link: CloudLink): Promise<void> {
-    const { notifications, t } = this.#options;
-    const session = this.session;
-    if (!session || !(await this.#whenOnline(link))) return;
-    notifications.push(t("cloud.connected"));
-    // Once, right after connecting: a copy away from the platform, on GitHub (Q1 of the plan).
-    if (this.repository && this.session === session) await this.saveToGitHub({ asking: true });
   }
 
   /**
@@ -1130,12 +1093,6 @@ export class CloudProjects {
     return this.#options.cloud.repository !== undefined;
   }
 
-  /** Whether the open project can be saved to a repository now, or to another one in its place. */
-  get canSaveToGitHub(): boolean {
-    const repository = this.repository;
-    return repository !== undefined && repository.status?.state !== "ready";
-  }
-
   /**
    * Whether the open project can go to another repository than the one it has: at any time, see
    * the design of the start page, 4.
@@ -1145,47 +1102,33 @@ export class CloudProjects {
   }
 
   /**
-   * Has the open project saved to another repository from now on, also while archiving into the
-   * one it has goes as it should: what was archived there stays there.
+   * Has the open project saved to another repository from now on: a new private one, or one people
+   * have, see `RepositoryPicker`. Where archiving into the one it has paused, and also while it
+   * goes as it should: what was archived there stays there. The first repository of a project is
+   * chosen where it is connected, see `beginConnect`.
    */
   async switchRepository(): Promise<void> {
-    if (this.canSwitchRepository) await this.saveToGitHub({ switching: true });
-  }
-
-  /**
-   * Saves the open project to GitHub: a new private repository, or one people have, see
-   * `RepositoryPicker`. Also for another repository where archiving into this one paused, and
-   * with `switching` at any time. `asking`: right after connecting, where people can put it off.
-   */
-  async saveToGitHub({ asking = false, switching = false } = {}): Promise<void> {
     const { cloud, session, dialogs, notifications, account, t } = this.#options;
     const snapshot = this.#snapshot;
     const access = cloud.repository;
     const store = session.store;
-    if (snapshot.kind !== "linked" || !snapshot.repository || !access || !store) return;
+    const key = session.key;
+    if (snapshot.kind !== "linked" || !snapshot.repository || !access || !store || !key) return;
     const watch = snapshot.repository;
-    const isReady = watch.status?.state === "ready";
-    if (isReady && !switching) {
-      notifications.push(t("repository.failure.alreadyLinked"));
-      return;
-    }
-    const title = t(
-      asking ? "repository.askTitle" : switching ? "repository.switchTitle" : "repository.title",
-    );
-    if (!asking && !(await this.#signedIn(title))) return;
+    const current = watch.status?.repository;
+    if (!current) return;
+    const title = t("repository.switchTitle");
+    if (!(await this.#signedIn(title))) return;
     if (!this.#isStill(snapshot)) return;
-    const { name, id } = store.getState().manifest;
+    const folder = this.#options.isFolder(key) ? this.#options.folderOf(key) : undefined;
     const who = account?.getSnapshot();
-    const current =
-      watch.status?.state === "paused" || switching ? watch.status?.repository : undefined;
     const picker = new RepositoryPicker({
       access,
       project: snapshot.link.project,
-      name: defaultRepositoryName(name, id),
-      asking,
+      name: connectRepositoryName(folder?.name, store.getState().manifest.name),
       // Only where the platform would say no otherwise: one that paused takes another as it is.
-      ...(isReady && { switching: true }),
-      ...(current && { current }),
+      ...(watch.status?.state === "ready" && { switching: true }),
+      current,
       ...(who?.status === "signedIn" && { owner: who.name, appInstalled: who.appInstalled }),
     });
     void picker.refresh();
@@ -1396,42 +1339,6 @@ export class CloudProjects {
     await this.#options.cloud.links.remove(key).catch((error: unknown) => {
       console.warn("The link of a project that is gone stays for now", error);
     });
-  }
-
-  /**
-   * Asks which project of the platform to open, and opens it, see `openCloudProject`: for a
-   * computer of a moment, or a browser that cannot write folders (the design, 7.5).
-   */
-  async openFromCloud(): Promise<void> {
-    const { cloud, dialogs, notifications, t } = this.#options;
-    if (!(await this.#signedIn(t("cloud.openTitle")))) return;
-    let list;
-    try {
-      list = await cloud.list();
-    } catch (error) {
-      console.warn("The projects on the platform could not be listed", error);
-      notifications.push(t("cloud.listFailed"));
-      return;
-    }
-    if (list.length === 0) {
-      notifications.push(t("cloud.nothingThere"));
-      return;
-    }
-    const answer = await dialogs.form({
-      title: t("cloud.openTitle"),
-      notes: [t("cloud.openNote")],
-      fields: [
-        {
-          id: "project",
-          label: t("cloud.openField"),
-          options: list.map((project) => ({ id: project.id, label: project.name })),
-          value: list[0]?.id ?? "",
-        },
-      ],
-      confirm: t("cloud.openConfirm"),
-    });
-    const chosen = list.find((project) => project.id === answer?.["project"]);
-    if (chosen) await this.openCloudProject(chosen.id, chosen);
   }
 
   /**

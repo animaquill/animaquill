@@ -161,7 +161,8 @@ test.describe("a project of the browser", () => {
       .poll(async () => JSON.parse((await privateText(page, "选的/animaquill.json")) ?? "{}").name)
       .toBe("搬家以后");
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await expect(page.getByRole("menuitem", { name: "移到文件夹…" })).toBeDisabled();
+    // A folder is where a project goes already: its menu does not have this.
+    await expect(page.getByRole("menuitem", { name: "移到文件夹…" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     // After a reload it is the folder too.
     await page.reload();
@@ -329,7 +330,7 @@ test.describe("a browser that cannot write folders", () => {
     await dialog(page).getByRole("button", { name: "关闭" }).click();
 
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
     await expect(browserProjects(page)).toHaveCount(1);
     await expect(page.getByRole("button", { name: /移到文件夹/ })).toHaveCount(0);
   });

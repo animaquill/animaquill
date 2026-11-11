@@ -47,7 +47,7 @@ export function fakeAccount(): AccountAccess {
       const state = read();
       show(
         state.signedIn
-          ? { status: "signedIn", name: "octo", appInstalled: state.installed }
+          ? { status: "signedIn", id: "user-octo", name: "octo", appInstalled: state.installed }
           : { status: "signedOut" },
       );
     },

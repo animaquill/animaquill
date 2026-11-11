@@ -208,7 +208,10 @@ export class KeybindingService {
     const ids = [this.ownerOf(combo, panel), this.ownerOf(combo)];
     return ids
       .map((id) => (id === undefined ? undefined : this.#actions.get(id)))
-      .find((action) => action !== undefined && action.enabled?.() !== false);
+      .find(
+        (action) =>
+          action !== undefined && action.enabled?.() !== false && action.visible?.() !== false,
+      );
   }
 
   #adopt(saved: SavedKeybindings): void {

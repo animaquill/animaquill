@@ -1,24 +1,9 @@
-import {
-  Circle,
-  CircleAlert,
-  CircleX,
-  Cloud,
-  CloudAlert,
-  CloudCheck,
-  CloudOff,
-  CloudSync,
-  Download,
-  Pause,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { Circle, CircleAlert, CircleX, Download, Pause, TriangleAlert, X } from "lucide-react";
 import type { TFunction } from "i18next";
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { cloudPanel, panelInputOf } from "../cloud/panel.ts";
 import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
-import type { CloudSnapshot } from "../cloud/session.ts";
-import { pauseText } from "../cloud/repository-text.ts";
-import type { RepositoryWatchSnapshot } from "../cloud/repository-watch.ts";
 import type { FolderTrouble } from "../folder/session.ts";
 import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
 import type { InputChoice } from "../workbench/input-mode.ts";
@@ -28,8 +13,10 @@ import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
 import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
+import { CloudPanelBody } from "./CloudPanel.tsx";
+import { CloudText, withoutCloud } from "./CloudText.tsx";
+import panelStyles from "./CloudPanel.module.css";
 import { OperationStatus } from "./OperationStatus.tsx";
-import { RepositoryStatus } from "./RepositoryStatus.tsx";
 import styles from "./StatusBar.module.css";
 import { Tip } from "./Tip.tsx";
 
@@ -385,163 +372,158 @@ function FolderSaveStatus({ open }: { open: OpenFolder }) {
 
 const NO_CLOUD: CloudProjectsSnapshot = { kind: "none" };
 const noCloud = () => NO_CLOUD;
-const NO_SYNC: CloudSnapshot = {
-  state: "starting",
-  problem: undefined,
-  here: false,
-  syncedAt: undefined,
-  pending: 0,
-  retryAt: undefined,
-  seq: 0,
-};
-const noSync = () => NO_SYNC;
-const NO_WATCH: RepositoryWatchSnapshot = {
-  status: undefined,
-  checkedAt: undefined,
-  trouble: undefined,
-  hurrying: false,
-  archiveAt: undefined,
-};
-const noWatch = () => NO_WATCH;
+const noSnapshot = () => undefined;
+/** How often the times in the panel move on while it is open. */
+const TICK_MS = 15_000;
+const SECOND_MS = 1000;
+/** An answer older than this is asked again as the panel opens: people look for what is new. */
+const FRESH_MS = 3000;
 
 /**
- * Whether the open project is in step with the platform: online, reconnecting or offline, and
- * nothing at all for a project that is not connected, see the design of syncing, 2. What waits and
- * when it last was in step shows on hovering; what keeps it from syncing, and the one thing that
- * helps, right there.
+ * The panel of the platform, while it is open: what it says moves on with the time, and the
+ * platform is asked once more about the repository as it opens.
  */
-function CloudStatus() {
+function CloudPanelBubble({
+  snapshot,
+  name,
+  button,
+}: {
+  snapshot: CloudProjectsSnapshot;
+  name: string;
+  /** What it points at. */
+  button: RefObject<HTMLButtonElement | null>;
+}) {
   const workbench = useWorkbench();
-  const { cloud } = workbench;
+  const { t } = useTranslation();
+  const [anchor] = useState(() => button.current?.getBoundingClientRect());
+  const [now, setNow] = useState(() => Date.now());
+  const repository = snapshot.kind === "linked" ? snapshot.repository : undefined;
+  // What the panel says is worked out from the time it is given: a count of seconds, as until
+  // the next archive may go, needs it every second.
+  const isCounting = repository?.getSnapshot().archiveAt !== undefined;
+
+  const session = snapshot.kind === "linked" ? snapshot.session : undefined;
+  // The time moves on with the clock, and with every word from the platform: what it says
+  // happened just now must not look as if it were still to come.
+  useEffect(() => {
+    const move = () => setNow(Date.now());
+    const timer = setInterval(move, isCounting ? SECOND_MS : TICK_MS);
+    const stops = [repository?.subscribe(move), session?.subscribe(move)];
+    return () => {
+      clearInterval(timer);
+      for (const stop of stops) stop?.();
+    };
+  }, [isCounting, repository, session]);
+  // Only as it opens.
+  useEffect(() => {
+    if (!repository) return;
+    const { checkedAt } = repository.getSnapshot();
+    if (checkedAt === undefined || Date.now() - checkedAt > FRESH_MS) void repository.refresh();
+  }, [repository]);
+
+  if (!anchor) return null;
+  const panel = cloudPanel(
+    panelInputOf(snapshot, {
+      name,
+      canMoveToFolder: workbench.projectFolders !== undefined,
+      now,
+    }),
+    t,
+  );
+  return (
+    <Bubble
+      anchor={anchor}
+      title={panel.title}
+      className={panelStyles.bubble}
+      onClose={() => workbench.cloudPanel.set(false)}
+    >
+      <CloudPanelBody panel={panel} run={(id) => workbench.runCloudAction(id)} />
+    </Bubble>
+  );
+}
+
+/**
+ * How the open project stands with the platform, in one item, see `cloudPanel` and the design of
+ * the start page, 4: "仅本机" for a project that is not connected, which a click connects, and
+ * for any other how syncing and archiving go, which a click opens the panel for. Nothing at all
+ * where the editor is hosted on no platform.
+ */
+function CloudStatus({ name }: { name: string }) {
+  const workbench = useWorkbench();
+  const { cloud, cloudPanel: shown } = workbench;
   const { t } = useTranslation();
   const outer = useSyncExternalStore(
     cloud?.subscribe ?? noSubscription,
     cloud?.getSnapshot ?? noCloud,
   );
+  // What the panel says comes from these two as well: it follows each of them.
   const session = outer.kind === "linked" ? outer.session : undefined;
-  const snapshot = useSyncExternalStore(
-    session?.subscribe ?? noSubscription,
-    session?.getSnapshot ?? noSync,
-  );
+  useSyncExternalStore(session?.subscribe ?? noSubscription, session?.getSnapshot ?? noSnapshot);
   const repository = outer.kind === "linked" ? outer.repository : undefined;
-  const archive = useSyncExternalStore(
+  useSyncExternalStore(
     repository?.subscribe ?? noSubscription,
-    repository?.getSnapshot ?? noWatch,
-  ).status;
-  const [anchor, setAnchor] = useState<DOMRect>();
-  if (!cloud || outer.kind === "none") return null;
-  if (outer.kind === "detached") {
-    return (
-      <Tip name={t("cloud.status.detached")} usage={t(`cloud.${outer.reason}Message`)}>
-        <button type="button" className={styles.name} onClick={() => void cloud.resolveDetached()}>
-          <CloudOff size={12} />
-          {t("cloud.status.detached")}
-        </button>
-      </Tip>
-    );
-  }
-  const { state, problem, here, syncedAt, pending, retryAt } = snapshot;
-  const text = t(`cloud.status.${state}`);
-  const about = [
-    syncedAt === undefined
-      ? t("cloud.about.neverSynced")
-      : t("cloud.about.lastSynced", { time: writtenWhen.format(syncedAt) }),
-    pending > 0 ? t("cloud.about.pending", { count: pending }) : t("cloud.about.noPending"),
-    ...(state === "offline" ? [t("cloud.about.offline")] : []),
-    ...(retryAt !== undefined && state === "reconnecting"
-      ? [t("cloud.about.retry", { time: writtenWhen.format(retryAt) })]
-      : []),
-    ...(here ? [] : [t("cloud.about.elsewhere")]),
-    ...(problem
-      ? [
-          problem.kind === "rejected"
-            ? t("cloud.problem.rejected", { reason: t(`cloud.reason.${problem.reason}`) })
-            : t(`cloud.problem.${problem.kind}`),
-        ]
-      : []),
-  ];
-  // Archiving into GitHub that paused needs people, as syncing that stopped does.
-  const archivePaused = archive?.state === "paused";
-  const archiveAbout = archivePaused
-    ? `${t("repository.status.barPaused")}：${pauseText(archive, t).reason}`
-    : archive?.state === "none"
-      ? t("repository.status.barNone")
-      : undefined;
-  const fix =
-    problem?.kind === "signed-out"
-      ? { label: t("cloud.fix.signIn"), run: () => void workbench.signIn() }
-      : problem?.kind === "outdated"
-        ? { label: t("cloud.fix.reload"), run: () => location.reload() }
-        : problem && problem.kind !== "unsupported"
-          ? { label: t("cloud.fix.retry"), run: () => session?.resume() }
-          : undefined;
-  // What the platform will not take stays here: the project can go on without the platform.
-  const letGo =
-    problem?.kind === "rejected" || problem?.kind === "diverged" || problem?.kind === "missing"
-      ? { label: t("cloud.fix.disconnect"), run: () => void cloud.resolveStuck() }
-      : undefined;
-  const isTrouble = state === "paused";
-  const Icon =
-    state === "offline" || isTrouble
-      ? CloudOff
-      : archivePaused
-        ? CloudAlert
-        : state === "online"
-          ? pending > 0
-            ? CloudSync
-            : CloudCheck
-          : state === "reconnecting"
-            ? CloudSync
-            : Cloud;
-  const label = [text, ...(archivePaused ? [t("repository.status.barPaused")] : [])].join(" · ");
+    repository?.getSnapshot ?? noSnapshot,
+  );
+  const open = useSyncExternalStore(shown.subscribe, shown.getSnapshot);
+  // Until the project was looked at, nothing says how it stands: "仅本机" could be wrong.
+  const known = useSyncExternalStore(
+    workbench.cloudKnown.subscribe,
+    workbench.cloudKnown.getSnapshot,
+  );
+  const button = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  // The item says nothing that moves with the time: only the panel does.
+  const [now] = useState(() => Date.now());
+  // A press outside the panel closes it, also one on this item: the click that follows must not
+  // open it again. This hears the press before the panel does, as it listens since before.
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      wasOpen.current =
+        shown.getSnapshot() && button.current?.contains(event.target as Node) === true;
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [shown]);
+
+  if (!cloud || !known) return null;
+  const panel = cloudPanel(
+    panelInputOf(outer, {
+      name,
+      canMoveToFolder: workbench.projectFolders !== undefined,
+      now,
+    }),
+    t,
+  );
+  const about =
+    panel.opens === "connect"
+      ? t("cloud.panel.about.local")
+      : [
+          ...panel.rows.map((row) => `${row.label}：${row.text}`),
+          t("cloud.panel.about.panel"),
+        ].join(" · ");
   return (
     <>
-      <Tip name={text} usage={[...about, ...(archiveAbout ? [archiveAbout] : [])].join(" · ")}>
+      <Tip name={withoutCloud(panel.bar)} usage={about}>
         <button
+          ref={button}
           type="button"
-          className={`${styles.name} ${isTrouble || archivePaused ? styles.failed : ""}`}
+          className={`${styles.name} ${styles.cloud} ${panel.level === "attention" ? styles.failed : ""}`}
           aria-haspopup="dialog"
-          aria-label={`${t("cloud.statusLabel")}：${label}`}
-          data-cloud={state}
-          {...(archive && { "data-archive": archive.state })}
-          onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
+          aria-label={`${t("cloud.statusLabel")}：${withoutCloud(panel.bar)}`}
+          data-cloud-level={panel.level}
+          {...(panel.sync && { "data-cloud": panel.sync })}
+          {...(panel.archive && { "data-archive": panel.archive })}
+          onClick={() => {
+            if (panel.opens === "connect") void workbench.connectToCloud();
+            else shown.set(!wasOpen.current);
+            wasOpen.current = false;
+          }}
         >
-          <Icon size={12} />
-          {label}
+          <CloudText text={panel.bar} />
         </button>
       </Tip>
-      {anchor && (
-        <Bubble
-          anchor={anchor}
-          title={t("cloud.details")}
-          className={styles.cloudBubble}
-          onClose={() => setAnchor(undefined)}
-        >
-          <section className={styles.cloudSync} aria-label={t("cloud.syncHeading")}>
-            <h4>{t("cloud.syncHeading")}</h4>
-            <p className={isTrouble ? styles.failed : undefined}>{text}</p>
-            {about.map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-          </section>
-          {repository && (
-            <RepositoryStatus
-              watch={repository}
-              notSent={pending > 0}
-              close={() => setAnchor(undefined)}
-            />
-          )}
-        </Bubble>
-      )}
-      {fix && (
-        <button type="button" className={styles.name} onClick={fix.run}>
-          {fix.label}
-        </button>
-      )}
-      {letGo && (
-        <button type="button" className={styles.name} onClick={letGo.run}>
-          {letGo.label}
-        </button>
+      {open && panel.opens === "panel" && (
+        <CloudPanelBubble snapshot={outer} name={name} button={button} />
       )}
     </>
   );
@@ -605,7 +587,7 @@ export function StatusBar() {
           {saveText}
         </span>
       )}
-      {project && <CloudStatus />}
+      {project && <CloudStatus name={project.manifest.name} />}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
       {project && <OperationStatus />}

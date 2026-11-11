@@ -86,7 +86,10 @@ export class CommandPalette {
     };
     const candidates = this.#actions
       .list()
-      .filter((action) => action.palette !== false && action.enabled?.() !== false);
+      .filter(
+        (action) =>
+          action.palette !== false && action.enabled?.() !== false && action.visible?.() !== false,
+      );
 
     if (!query.trim()) {
       return candidates

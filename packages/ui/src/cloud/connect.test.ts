@@ -20,6 +20,7 @@ import { CLOUD_FILE } from "./projects.ts";
 import {
   answering,
   closeWindows,
+  connectNow,
   fixtureState,
   messagesOf,
   t,
@@ -1605,7 +1606,7 @@ describe("a project that is on the platform without a repository", () => {
     const set = await setUp();
     const { time, here, id } = set;
     answering(here.dialogs, (request) => request.kind !== "repository");
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     expect(here.cloud.repository?.status?.state).toBe("none");
     const project = (await here.browser.links.get(id))?.project ?? "";

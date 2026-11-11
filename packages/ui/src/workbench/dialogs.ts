@@ -1,3 +1,4 @@
+import type { CloudConnect } from "../cloud/connect.ts";
 import type { RepositoryPicker } from "../cloud/repository-picker.ts";
 import { Emitter } from "./emitter.ts";
 
@@ -79,6 +80,13 @@ export interface RepositoryDialogOptions {
   readonly installApp?: () => void;
 }
 
+/** Connecting the open project to the platform in one dialog, see `CloudConnect`. */
+export interface ConnectDialogOptions {
+  /** What it is called as it opens: the dialog says the same, and follows what it finds out. */
+  readonly title: string;
+  readonly connect: CloudConnect;
+}
+
 export interface ProgressOptions {
   readonly title: string;
   /** The word on the button that stops it. */
@@ -119,6 +127,7 @@ export type DialogRequest =
   | ({ readonly kind: "choice"; readonly id: number } & ChoiceOptions)
   | ({ readonly kind: "form"; readonly id: number } & FormOptions)
   | ({ readonly kind: "repository"; readonly id: number } & RepositoryDialogOptions)
+  | ({ readonly kind: "connect"; readonly id: number } & ConnectDialogOptions)
   | ProgressRequest;
 
 type DialogValue = string | boolean | FormAnswer | undefined;
@@ -164,6 +173,15 @@ export class Dialogs {
    */
   async repository(options: RepositoryDialogOptions): Promise<boolean> {
     return (await this.#ask({ kind: "repository", id: this.#nextId++, ...options })) === true;
+  }
+
+  /**
+   * Stays until the dialog answers, which it does once connecting is over or given up, see
+   * `CloudConnect.cancel`. Another dialog that takes its place ends it too: whoever asked looks at
+   * what the connection came to then.
+   */
+  async connect(options: ConnectDialogOptions): Promise<void> {
+    await this.#ask({ kind: "connect", id: this.#nextId++, ...options });
   }
 
   /** Stays until `close`. Like every dialog it takes the place of the one before. */

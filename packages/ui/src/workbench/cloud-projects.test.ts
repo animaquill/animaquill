@@ -114,9 +114,8 @@ async function onPlatform(platform: MemoryPlatform) {
   const there = first.window();
   expect(await there.session.create("片子")).toBe(true);
   there.session.store?.execute(write("code/动画.js", "const a = 1;\n"));
-  const connecting = there.cloud?.connect();
-  await answerNext(there, "confirm", true);
-  await connecting;
+  // As the first step of the dialog that connects it does.
+  expect(await there.cloud?.beginLink()).toMatchObject({ isNew: true });
   await online(there);
   const key = there.session.key as string;
   const project = (await first.links.get(key))?.project as string;

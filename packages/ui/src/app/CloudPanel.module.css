@@ -1,0 +1,113 @@
+/* The bubble of the status bar, wide enough for a row with its name in front. */
+.bubble {
+  width: 360px;
+  max-width: calc(100vw - 12px);
+}
+
+.rows {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 8px;
+}
+
+.row dt {
+  color: var(--aq-text-muted);
+}
+
+.row dd {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+}
+
+.text,
+.note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.text {
+  color: var(--aq-text-strong);
+}
+
+.row[data-tone="attention"] .text {
+  color: var(--aq-warning);
+}
+
+.note {
+  color: var(--aq-text-muted);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  color: var(--aq-match);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.buttons,
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.buttons {
+  margin-top: 2px;
+}
+
+.footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.buttons button,
+.footer button {
+  padding: 3px 10px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.buttons button:hover:not(:disabled),
+.footer button:hover:not(:disabled) {
+  background: var(--aq-bg-hover);
+}
+
+.buttons .primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.buttons .primary:hover:not(:disabled) {
+  background: var(--aq-accent);
+  filter: brightness(1.1);
+}
+
+/* Takes something away: it says so in its colour, and asks before it does. */
+.footer .danger {
+  color: var(--aq-danger);
+}
+
+.buttons button:disabled,
+.footer button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

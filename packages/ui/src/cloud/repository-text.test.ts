@@ -3,21 +3,17 @@ import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
 import zhCN from "../i18n/zh-CN.json" with { type: "json" };
 import {
-  archiveStateText,
   choiceNote,
   connectRepositoryName,
-  defaultRepositoryName,
   divergedOutcome,
   goneKind,
   keptText,
-  lastArchiveText,
   linkedProjectOf,
   momentText,
   nameProblem,
   nextRepositoryName,
   pauseDetail,
   pauseText,
-  repositoryText,
   unusableAdvice,
   unusableReason,
   unusableText,
@@ -33,7 +29,6 @@ const t = i18n.t;
 
 /** 2026-11-10 14:05 where the tests run. */
 const NOW = new Date(2026, 10, 10, 14, 5, 30).getTime();
-const MINUTE = 60_000;
 
 const REPOSITORY: NonNullable<RepositoryStatus["repository"]> = {
   id: 7,
@@ -78,46 +73,6 @@ describe("how saving to GitHub reads", () => {
     expect(momentText(NOW + 20_000, NOW, t)).toBe("14:05");
   });
 
-  it("says when it last archived, and that it never did", () => {
-    const last = { sha: "a", seq: 5, kind: "manual", changed: 1, removed: 0, url: "" };
-    expect(lastArchiveText(status({ lastArchive: { ...last, at: NOW - 5000 } }), NOW, t)).toBe(
-      "上次存档：刚刚",
-    );
-    expect(
-      lastArchiveText(
-        status({ lastArchive: { ...last, at: new Date(2026, 10, 10, 13, 2).getTime() } }),
-        NOW,
-        t,
-      ),
-    ).toBe("上次存档：13:02");
-    expect(lastArchiveText(status(), NOW, t)).toBe("还没存过档");
-  });
-
-  it("says what archiving does now: done, waiting for a quiet moment, running, failed", () => {
-    expect(archiveStateText(status(), NOW, t)).toBe("改动都已存档");
-    const waiting = { head: 7, dirtySince: NOW - MINUTE };
-    expect(archiveStateText(status({ ...waiting, nextAt: NOW + 3 * MINUTE }), NOW, t)).toBe(
-      "有新改动，约 3 分钟后存档",
-    );
-    expect(archiveStateText(status({ ...waiting, nextAt: NOW + 10_000 }), NOW, t)).toBe(
-      "有新改动，约 1 分钟后存档",
-    );
-    expect(archiveStateText(status({ ...waiting, nextAt: NOW - 10_000 }), NOW, t)).toBe(
-      "有新改动，马上存档",
-    );
-    expect(archiveStateText(status({ ...waiting, archiving: true }), NOW, t)).toBe("正在存档…");
-    expect(
-      archiveStateText(
-        status({ ...waiting, failures: 2, retryAt: new Date(2026, 10, 10, 14, 9).getTime() }),
-        NOW,
-        t,
-      ),
-    ).toBe("上次没存成，14:09 再试");
-    expect(
-      archiveStateText({ state: "none", archiving: false, head: 3, archivedSeq: 0 }, NOW, t),
-    ).toBe("还没存到 GitHub。存进你自己的 GitHub 仓库，云端之外多一份。");
-  });
-
   it("says why archiving paused and what helps, for every reason the platform has", () => {
     const reasons = {
       diverged: "GitHub 上有人改了项目的 2 个文件",
@@ -139,7 +94,6 @@ describe("how saving to GitHub reads", () => {
       const { reason: said, fix } = pauseText(paused, t);
       expect(said).toBe(words);
       expect(fix.length).toBeGreaterThan(4);
-      expect(archiveStateText(paused, NOW, t)).toBe(`存档暂停：${words}`);
     }
     // One of a newer platform says what it is.
     expect(pauseText(status({ state: "paused", reason: "conflicts" }), t)).toEqual({
@@ -156,7 +110,6 @@ describe("how saving to GitHub reads", () => {
       reason: "仓库在 GitHub 上被删除了",
       fix: "换一个仓库，项目会重新存一份进去。云端的项目和本机的内容都还在。",
     });
-    expect(archiveStateText(gone("deleted"), NOW, t)).toBe("存档暂停：仓库在 GitHub 上被删除了");
     // Out of what the App may reach: putting it back there is, and archiving goes on by itself.
     expect(pauseText(gone("unauthorized"), t)).toEqual({
       reason: "AnimaQuill 不能再访问这个仓库",
@@ -204,11 +157,6 @@ describe("how saving to GitHub reads", () => {
     expect(keptText(status({ kept: many }), t)).toBe(
       "这些文件这次没存进去，GitHub 上还是旧的一版：code/a.js、code/b.js、code/c.js、code/d.js、code/e.js 等 7 个",
     );
-  });
-
-  it("names the repository and whether it is private", () => {
-    expect(repositoryText(REPOSITORY, t)).toBe("仓库：ada/film（私有）");
-    expect(repositoryText({ ...REPOSITORY, private: false }, t)).toBe("仓库：ada/film（公开）");
   });
 
   it("says why a repository cannot be chosen", () => {
@@ -284,14 +232,6 @@ describe("how saving to GitHub reads", () => {
     expect(nameProblem("..")).toBe("dots");
     expect(nameProblem("film.git")).toBe("dotGit");
     expect(nameProblem("a".repeat(101))).toBe("tooLong");
-  });
-
-  it("names a new repository after the project where GitHub takes the name, and by its id otherwise", () => {
-    expect(defaultRepositoryName("My Film", "project_x7k2m9q4ab")).toBe("my-film");
-    expect(defaultRepositoryName("我的片子", "project_x7k2m9q4ab")).toBe("project_x7k2m9q4ab");
-    expect(defaultRepositoryName("片子 2", "project_x7k2m9q4ab")).toBe("project_x7k2m9q4ab");
-    expect(defaultRepositoryName("...", "project_x7k2m9q4ab")).toBe("project_x7k2m9q4ab");
-    expect(nameProblem(defaultRepositoryName("x", "本机1"))).toBeUndefined();
   });
 
   it("tells files written over from files taken away, where people go on with the editor's content", () => {

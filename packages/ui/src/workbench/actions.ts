@@ -26,6 +26,11 @@ export interface Action {
   readonly palette?: false;
   /** Whether it can run right now. Menus grey it out, the palette leaves it out. */
   readonly enabled?: () => boolean;
+  /**
+   * Whether it has a place here at all, as moving a project into a folder has only for a project
+   * of the browser. Menus and the palette leave out what has none; its keys do nothing then.
+   */
+  readonly visible?: () => boolean;
   /** The panel it belongs to. Its keys only work there, so that panels can use the same keys. */
   readonly scope?: string;
   /** Keeps running while the key is held down, like moving through frames. */
@@ -86,11 +91,11 @@ export class ActionRegistry {
     return this.#entries.flatMap((entry) => (typeof entry === "function" ? entry() : [entry]));
   }
 
-  /** The groups of a menu, in the order they first appeared. */
+  /** The groups of a menu, in the order they first appeared, without what has no place now. */
   menu(name: string): readonly (readonly Action[])[] {
     const groups = new Map<string, Action[]>();
     for (const action of this.list()) {
-      if (action.menu?.name !== name) continue;
+      if (action.menu?.name !== name || action.visible?.() === false) continue;
       const group = groups.get(action.menu.group);
       if (group) group.push(action);
       else groups.set(action.menu.group, [action]);

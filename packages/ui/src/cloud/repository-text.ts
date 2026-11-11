@@ -117,51 +117,12 @@ export function pauseDetail(
   return undefined;
 }
 
-/**
- * How archiving goes, in one line: running, waiting for changes to settle, done, or paused. For a
- * project that is not saved to GitHub, that it is not.
- */
-export function archiveStateText(status: RepositoryStatus, now: number, t: TFunction): string {
-  if (status.state === "none") return t("repository.status.none");
-  if (status.state === "paused")
-    return t("repository.status.paused", { reason: pauseText(status, t).reason, ...plain });
-  if (status.archiving) return t("repository.status.archiving");
-  if (status.retryAt !== undefined && (status.failures ?? 0) > 0)
-    return t("repository.status.retry", { time: momentText(status.retryAt, now, t) });
-  if (status.dirtySince !== undefined || status.head > status.archivedSeq) {
-    if (status.nextAt === undefined || status.nextAt <= now)
-      return t("repository.status.waitingSoon");
-    return t("repository.status.waiting", {
-      count: Math.max(1, Math.ceil((status.nextAt - now) / 60_000)),
-    });
-  }
-  return t("repository.status.upToDate");
-}
-
-export function lastArchiveText(status: RepositoryStatus, now: number, t: TFunction): string {
-  const last = status.lastArchive;
-  return last
-    ? t("repository.status.last", { time: momentText(last.at, now, t) })
-    : t("repository.status.never");
-}
-
 /** The files the last archive could not write, or undefined where it wrote them all. */
 export function keptText(status: RepositoryStatus, t: TFunction): string | undefined {
   const kept = status.kept ?? [];
   return kept.length === 0
     ? undefined
     : t("repository.status.kept", { files: pathList(kept), ...plain });
-}
-
-export function repositoryText(
-  repository: NonNullable<RepositoryStatus["repository"]>,
-  t: TFunction,
-): string {
-  return t("repository.status.repository", {
-    name: repository.fullName,
-    visibility: t(repository.private ? "repository.private" : "repository.public"),
-    ...plain,
-  });
 }
 
 /** What the platform said about a repository people tried to choose, or asked about. */
@@ -261,22 +222,6 @@ export function nameProblem(name: string): NameProblem | undefined {
   if (name === "." || name === "..") return "dots";
   if (/\.git$/i.test(name)) return "dotGit";
   return undefined;
-}
-
-/**
- * The name a new repository gets at first: the project's name where GitHub takes it as it is, in
- * lower case with dashes for spaces, and otherwise its id, as names are mostly Chinese.
- */
-export function defaultRepositoryName(name: string, id: string): string {
-  const slug = name
-    .trim()
-    .toLowerCase()
-    .replaceAll(/\s+/g, "-")
-    .replaceAll(/-{2,}/g, "-")
-    .replaceAll(/^[-.]+|[-.]+$/g, "");
-  if (slug.length > 0 && nameProblem(slug) === undefined) return slug;
-  const fallback = id.replaceAll(/[^A-Za-z0-9._-]/g, "-").slice(0, 100);
-  return nameProblem(fallback) === undefined ? fallback : "animaquill-project";
 }
 
 /** A name as GitHub takes one for a repository: lower case, dashes for spaces, or undefined. */

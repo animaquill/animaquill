@@ -53,9 +53,24 @@ export function Bubble({ anchor, title, onClose, className, children }: BubblePr
     const onPointerDown = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) closing.current();
     };
+    // What had the focus in here can lose it without anything else getting it, as a button that
+    // cannot be pressed any more once it was: Escape closes the bubble all the same.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const active = document.activeElement;
+      const isLost =
+        active === null ||
+        active === document.body ||
+        (active instanceof HTMLButtonElement &&
+          active.disabled &&
+          root.current?.contains(active) === true);
+      if (isLost) closing.current();
+    };
     window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
       if (opener instanceof HTMLElement) opener.focus({ preventScroll: true });
     };
   }, []);

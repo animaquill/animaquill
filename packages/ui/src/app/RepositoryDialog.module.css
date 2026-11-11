@@ -108,17 +108,26 @@ p.note[class],
   border-radius: 3px;
 }
 
-.choice {
+/* A repository, and next to it the way out where it cannot be chosen. */
+.choiceRow {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 5px 6px;
   border-radius: 3px;
-  cursor: pointer;
 }
 
-.choice:hover:not([data-unusable]) {
+.choiceRow:hover:not([data-unusable]) {
   background: var(--aq-bg-hover);
+}
+
+.choice {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 6px;
+  cursor: pointer;
 }
 
 .choice input[type] {
@@ -126,13 +135,35 @@ p.note[class],
   margin: 2px 0 0;
 }
 
-.choice[data-unusable] {
+.choiceRow[data-unusable] .choice {
   cursor: default;
 }
 
-.choice[data-unusable] .choiceName {
+.choiceRow[data-unusable] .choiceName {
   color: var(--aq-text-muted);
   opacity: 0.7;
+}
+
+.openLinked {
+  flex: none;
+  margin: 4px 6px 0 0;
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.openLinked:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.openLinked:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .choiceText {

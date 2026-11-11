@@ -14,6 +14,7 @@ import {
   account,
   answering,
   closeWindows,
+  connectNow,
   fixtureState,
   messagesOf,
   t,
@@ -35,30 +36,15 @@ describe("CloudProjects", () => {
     expect(here.cloud.getSnapshot().kind).toBe("none");
     const asked = answering(here.dialogs, () => true);
 
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
 
-    expect(asked.map((request) => request.kind)).toEqual(["confirm"]);
+    // Nothing to ask: whoever began it asked people already, as the dialog that connects it does.
+    expect(asked).toEqual([]);
     expect(here.cloud.session?.getSnapshot().state).toBe("online");
     const link = await here.browser.links.get(id);
     expect(link?.creating).toBeUndefined();
     expect(platform.projects.get(link?.project ?? "")?.head).toBe(1);
-    expect(messagesOf(here.notifications)).toContain("已连接到云端，改动会实时同步。");
-  });
-
-  it("asks people to sign in first, and connects nothing until then", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const here = await windowOf(platform, time, { signedIn: false });
-    const { id, state } = fixtureState();
-    await here.library.create({ id, name: "原子" }, state);
-    await here.open(id);
-    const asked = answering(here.dialogs, () => "signIn");
-    await here.cloud.connect();
-    expect(asked.map((request) => request.kind)).toEqual(["choice"]);
-    expect(here.signIn).toHaveBeenCalledOnce();
-    expect(await here.browser.links.get(id)).toBeUndefined();
-    expect(platform.projects.size).toBe(0);
   });
 
   it("goes on with a project whose first version may not have got there, after a reload", async () => {
@@ -98,7 +84,7 @@ describe("CloudProjects", () => {
     await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
     await here.open("本机1");
     answering(here.dialogs, (request) => (request.kind === "choice" ? "new" : true));
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const link = await here.browser.links.get("本机1");
     const file = readCloudFile(disk.text(`原子/${CLOUD_FILE}`));
@@ -158,7 +144,7 @@ describe("CloudProjects", () => {
     await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
     await here.open("本机1");
     answering(here.dialogs, () => true);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const link = await here.browser.links.get("本机1");
     await here.cloud.disconnect();
@@ -177,7 +163,7 @@ describe("CloudProjects", () => {
     await here.open(id);
     let choice = "new";
     const asked = answering(here.dialogs, (request) => (request.kind === "choice" ? choice : true));
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const first = (await here.browser.links.get(id))?.project;
     // The platform will not take the next change, ever.
@@ -190,7 +176,9 @@ describe("CloudProjects", () => {
     });
     await here.cloud.resolveStuck();
     await time.advance(500);
-    expect(asked.map((request) => request.kind)).toEqual(["confirm", "choice", "confirm"]);
+    // Where the platform saves no projects to repositories, there is no dialog to ask for: people
+    // chose a new project, and that is what it becomes.
+    expect(asked.map((request) => request.kind)).toEqual(["choice"]);
     const second = (await here.browser.links.get(id))?.project;
     expect(second).toBeDefined();
     expect(second).not.toBe(first);
@@ -276,7 +264,7 @@ describe("CloudProjects", () => {
     const asked = answering(here.dialogs, (request) =>
       request.kind === "choice" ? choice : request.kind !== "repository",
     );
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const first = (await here.browser.links.get("本机1"))?.project;
     expect(platform.projects.has(first ?? "")).toBe(true);
@@ -333,7 +321,7 @@ describe("CloudProjects", () => {
     await here.library.create({ id, name: "原子" }, state);
     await here.open(id);
     answering(here.dialogs, () => true);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const before = await here.browser.links.get(id);
     expect(before?.creating).toBeUndefined();
@@ -364,7 +352,7 @@ describe("CloudProjects", () => {
     await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
     await here.open("本机1");
     const asked = answering(here.dialogs, () => true);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const before = await here.browser.links.get("本机1");
     await here.cloud.close();
@@ -404,13 +392,13 @@ describe("CloudProjects", () => {
     await first.library.create({ id, name: "原子" }, state);
     await first.open(id);
     answering(first.dialogs, () => true);
-    await first.cloud.connect();
+    await connectNow(first.cloud);
     await time.advance(200);
     const project = (await first.browser.links.get(id))?.project ?? "";
 
     const second = await windowOf(platform, time);
-    answering(second.dialogs, (request) => (request.kind === "form" ? { project } : true));
-    await second.cloud.openFromCloud();
+    answering(second.dialogs, () => true);
+    await second.cloud.openCloudProject(project);
     await time.advance(200);
     // Kept by its id on the platform, which is its own: the id in the project is not.
     expect(second.session.key).toBe(project);
@@ -466,7 +454,7 @@ describe("CloudProjects", () => {
     await b.session.open(id);
     await time.advance(10);
     expect(b.cloud.getSnapshot().kind).toBe("none");
-    await a.cloud.connect();
+    await connectNow(a.cloud);
     await time.advance(500);
     // The other window heard of it, and shows what the window that syncs says.
     expect(b.cloud.getSnapshot().kind).toBe("linked");
@@ -499,7 +487,7 @@ describe("CloudProjects", () => {
     await here.library.create({ id, name: "原子" }, state);
     await here.open(id);
     answering(here.dialogs, () => true);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     // The session ends on the platform: it closes the connection, saying so.
     platform.signOut("ada");
@@ -540,50 +528,16 @@ describe("saving projects of the platform to GitHub", () => {
     await here.library.create({ id, name: "原子" }, state);
     await here.open(id);
     const asked = answering(here.dialogs, answer);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     const link = await here.browser.links.get(id);
     return { time, here, asked, link: link!, id };
   }
 
-  it("asks once, right after connecting, whether to save the project to GitHub", async () => {
-    const repository = new FakeRepositories();
-    const { here, asked, link } = await connected(
-      repository,
-      (request) => request.kind !== "repository",
-    );
-    expect(asked.map((request) => request.kind)).toEqual(["confirm", "repository"]);
-    expect(asked[1]).toMatchObject({ title: "把项目存到 GitHub？" });
-    const picker = (asked[1] as Extract<DialogRequest, { kind: "repository" }>).picker;
-    // A new private one at first, by a name GitHub takes.
-    expect(picker.getSnapshot()).toMatchObject({ mode: "create", nameProblem: undefined });
-    expect(picker.asking).toBe(true);
-    expect(messagesOf(here.notifications)).toContain("已连接到云端，改动会实时同步。");
-    // Put off: the status says so, and nothing went to GitHub.
-    expect(repository.links).toEqual([]);
-    expect(here.cloud.repository?.status?.state).toBe("none");
-    expect(here.cloud.repository?.project).toBe(link.project);
-    expect(here.cloud.canSaveToGitHub).toBe(true);
-  });
-
-  it("saves to a new repository from the dialog, and archiving shows from then on", async () => {
-    const repository = new FakeRepositories();
-    const { here, link } = await connected(repository, async (request) =>
-      request.kind === "repository" ? (await request.picker.submit()) !== undefined : true,
-    );
-    expect(repository.links).toHaveLength(1);
-    expect(repository.calls).toContain(`link ${link.project}`);
-    expect(here.cloud.repository?.getSnapshot()).toMatchObject({
-      hurrying: true,
-      status: { state: "ready", archiving: true },
-    });
-    expect(here.cloud.canSaveToGitHub).toBe(false);
-  });
-
   it("lists files written over and files taken away before going on with the editor's content", async () => {
     const repository = new FakeRepositories();
     const { time, here, asked, id } = await connected(repository, (request) =>
-      request.kind === "repository" ? false : request.kind === "confirm" ? true : undefined,
+      request.kind === "confirm" ? true : undefined,
     );
     const files = here.session.store!.exportFiles().files;
     const timeline = [...files.keys()].find((path) => path.startsWith("timelines/"))!;
@@ -619,7 +573,7 @@ describe("saving projects of the platform to GitHub", () => {
     const repository = new FakeRepositories();
     const { here } = await connected(
       repository,
-      (request) => request.kind !== "repository" && !(request.kind === "confirm" && request.danger),
+      (request) => !(request.kind === "confirm" && request.danger),
     );
     repository.answer = {
       ...repository.answer,
@@ -640,9 +594,9 @@ describe("saving projects of the platform to GitHub", () => {
     await here.library.create({ id, name: "原子" }, state);
     await here.open(id);
     const asked = answering(here.dialogs, () => true);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
-    expect(asked.map((request) => request.kind)).toEqual(["confirm"]);
+    expect(asked).toEqual([]);
     expect(here.cloud.savesToGitHub).toBe(false);
     expect(here.cloud.repository).toBeUndefined();
   });
@@ -658,7 +612,7 @@ async function onPlatform(platform: MemoryPlatform, time: TestTime) {
   await first.library.create({ id, name: "原子" }, state);
   await first.open(id);
   answering(first.dialogs, () => true);
-  await first.cloud.connect();
+  await connectNow(first.cloud);
   await time.advance(200);
   const project = (await first.browser.links.get(id))?.project ?? "";
   expect(platform.projects.has(project)).toBe(true);
@@ -1026,7 +980,7 @@ describe("taking the copy of a project out of this browser", () => {
     platform.faults.silent = true;
     await here.open(id);
     answering(here.dialogs, () => true);
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     expect((await here.browser.links.get(id))?.creating).toBe(true);
     await here.cloud.close();
@@ -1869,9 +1823,7 @@ describe("what a link remembers for lists", () => {
     const { id, state } = fixtureState();
     await here.library.create({ id, name: "原子" }, state);
     await here.open(id);
-    // People put the question about GitHub off.
-    answering(here.dialogs, (request) => request.kind !== "repository");
-    await here.cloud.connect();
+    await connectNow(here.cloud);
     await time.advance(200);
     // Connected, and the platform said that it has no repository.
     expect(await here.browser.links.get(id)).toMatchObject({
@@ -1903,12 +1855,14 @@ describe("what a link remembers for lists", () => {
     const asked = answering(here.dialogs, async (request) =>
       request.kind === "repository" ? (await request.picker.submit()) !== undefined : true,
     );
-    await here.cloud.connect();
+    const link = await connectNow(here.cloud);
     await time.advance(200);
+    expect(here.cloud.canSwitchRepository).toBe(false);
+    // Its first repository, as the dialog that connects it gets it.
+    repository.answer = await repository.link(link.project, { create: { name: "atom" } });
     repository.archived(time.now());
     await here.cloud.repository?.refresh();
     expect(here.cloud.repository?.status?.state).toBe("ready");
-    expect(here.cloud.canSaveToGitHub).toBe(false);
     expect(here.cloud.canSwitchRepository).toBe(true);
 
     asked.splice(0);

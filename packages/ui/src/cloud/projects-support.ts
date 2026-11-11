@@ -7,6 +7,7 @@ import type {
   AccountAccess,
   AccountSnapshot,
   CloudAccess,
+  CloudLink,
   LocalFolder,
   WindowMemory,
 } from "@animaquill/host";
@@ -234,6 +235,16 @@ export async function closeWindows(): Promise<void> {
 export const track = (window: { cloud: CloudProjects; session: ProjectSession }): void => {
   windows.push(window);
 };
+
+/**
+ * Connects the open project of a window as the first step of the dialog that connects it does,
+ * without the dialog, see `CloudProjects.beginLink`: for tests that need a project of the platform.
+ */
+export async function connectNow(cloud: CloudProjects): Promise<CloudLink> {
+  const begun = await cloud.beginLink();
+  if (typeof begun === "string") throw new Error(`The project did not begin to connect: ${begun}`);
+  return begun.link;
+}
 
 export const messagesOf = (notifications: Notifications) =>
   notifications.getSnapshot().map((notification) => notification.message);

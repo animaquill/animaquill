@@ -83,7 +83,23 @@ const diagnostics = {
 const account =
   new URLSearchParams(location.search).get("account") === "fake" ? fakeAccount() : undefined;
 
-const host = { ...createBrowserHost(), diagnostics, ...(account && { account }) };
+/**
+ * A platform in this tab to connect projects to, for the tests of the start page, the dialog that
+ * connects a project and the panel of the platform, see dev/cloud.ts: `?cloud=fake`, with the fake
+ * account. Loaded only then: it is made of what the unit tests have.
+ */
+const fake =
+  account && new URLSearchParams(location.search).get("cloud") === "fake"
+    ? (await import("./cloud.ts")).fakeCloud(account)
+    : undefined;
+if (fake) Object.assign(window, { aqCloud: fake.lab });
+
+const host = {
+  ...createBrowserHost(),
+  diagnostics,
+  ...(account && { account }),
+  ...(fake && { cloud: fake.cloud }),
+};
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
   await mountEditor(root, {

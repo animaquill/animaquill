@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardE
 import { useTranslation } from "react-i18next";
 import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/dialogs.ts";
 import { useWorkbench } from "./context.ts";
+import { ConnectDialog } from "./ConnectDialog.tsx";
 import styles from "./DialogHost.module.css";
 import { RepositoryDialog } from "./RepositoryDialog.tsx";
 
@@ -47,7 +48,11 @@ function Progress({ request }: { request: ProgressRequest }) {
 
 type FormRequest = Extract<DialogRequest, { kind: "form" }>;
 type RepositoryRequest = Extract<DialogRequest, { kind: "repository" }>;
-type QuestionRequest = Exclude<DialogRequest, ProgressRequest | FormRequest | RepositoryRequest>;
+type ConnectRequest = Extract<DialogRequest, { kind: "connect" }>;
+type QuestionRequest = Exclude<
+  DialogRequest,
+  ProgressRequest | FormRequest | RepositoryRequest | ConnectRequest
+>;
 
 /** Choices before something starts. A list each, because there are few options and no typing. */
 function Form({ request }: { request: FormRequest }) {
@@ -248,5 +253,6 @@ export function DialogHost() {
   if (request.kind === "progress") return <Progress key={request.id} request={request} />;
   if (request.kind === "form") return <Form key={request.id} request={request} />;
   if (request.kind === "repository") return <RepositoryDialog key={request.id} request={request} />;
+  if (request.kind === "connect") return <ConnectDialog key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }

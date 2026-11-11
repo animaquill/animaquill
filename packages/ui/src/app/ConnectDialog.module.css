@@ -1,0 +1,112 @@
+/* What connecting gives, as a short list. Over the dialog's own paragraphs. */
+.about p[class],
+.about p {
+  margin: 0 0 4px;
+}
+
+.about ul {
+  margin: 0 0 12px;
+  padding: 0 0 0 18px;
+  color: var(--aq-text-muted);
+}
+
+.about li + li {
+  margin-top: 2px;
+}
+
+.choice {
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+}
+
+.choice legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--aq-text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+p.result[class] {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 12px;
+  color: var(--aq-text-strong);
+  overflow-wrap: anywhere;
+}
+
+.result span {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+/* The steps, one a line, each with how far it is. */
+.steps {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  list-style: none;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--aq-text-muted);
+}
+
+.steps svg {
+  flex: none;
+}
+
+.steps li[data-state="running"],
+.steps li[data-state="done"] {
+  color: var(--aq-text);
+}
+
+.steps li[data-state="done"] svg {
+  color: var(--aq-accent);
+}
+
+.steps li[data-state="failed"] {
+  color: var(--aq-warning);
+}
+
+.stepState {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.spin {
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+p.message[class] {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+p.message[data-tone="attention"] {
+  color: var(--aq-warning);
+}
+
+p.message[data-tone="done"] {
+  color: var(--aq-text-strong);
+}

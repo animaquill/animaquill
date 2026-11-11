@@ -204,10 +204,10 @@ test.describe("with a project", () => {
 
   test("goes back to the start page, which lists the project", async ({ page }) => {
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
     await expect(page.getByRole("button", { name: /^测试项目/ })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
   });
 
   test("opens again from the start page, with the layout it had", async ({ page }) => {
@@ -297,7 +297,7 @@ test.describe("with a project", () => {
     await expect(statusName(other, "测试项目")).toBeVisible();
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
     await other.close();
   });
 
@@ -318,7 +318,7 @@ test.describe("with a project", () => {
     expect(new URL(opened).searchParams.get("project")).toMatch(/^project_/);
 
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
     expect(new URL(page.url()).search).toBe("");
 
     await page.getByRole("button", { name: /^测试项目/ }).click();
@@ -442,7 +442,7 @@ test.describe("when saving fails", () => {
 
     await chooseFrom(page, "文件", "关闭项目");
     await page.getByRole("button", { name: "仍然离开" }).click();
-    await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
   });
 
   test("warns before leaving the page", async ({ page }) => {
@@ -603,7 +603,7 @@ test("a crash of the whole editor leaves a way out of the project", async ({ pag
   await expect(page.getByRole("alert")).toContainText("编辑器遇到了问题");
 
   await page.getByRole("button", { name: "回到开始页" }).click();
-  await expect(page.getByRole("heading", { name: "最近的项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^让编辑器崩溃/ })).toBeVisible();
   // React reports the error it caught, which is exactly what this test provokes.
   const others = problems.filter((text) => !text.includes("Crash on request"));

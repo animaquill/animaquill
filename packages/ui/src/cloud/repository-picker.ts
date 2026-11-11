@@ -100,8 +100,6 @@ export interface RepositoryPickerOptions {
    */
   readonly switching?: boolean;
   readonly precheck?: PickerPrecheck;
-  /** Right after connecting the project: people can put it off ("以后再说"). */
-  readonly asking?: boolean;
   /** The repository the project goes to now, where archiving into it paused: another one instead. */
   readonly current?: NonNullable<RepositoryStatus["repository"]>;
   /** Who the new repository belongs to, as people know the account. */
@@ -143,7 +141,6 @@ const KEEPS_OUT: ReadonlySet<string> = new Set<RepositoryRefusal>([
 ]);
 
 export class RepositoryPicker {
-  readonly asking: boolean;
   readonly current: RepositoryPickerOptions["current"];
   readonly #access: RepositoryAccess;
   readonly #project: RepositoryPickerOptions["project"];
@@ -171,7 +168,6 @@ export class RepositoryPicker {
     this.#switching = options.switching === true;
     this.#precheck = options.precheck;
     this.#baseName = options.name;
-    this.asking = options.asking === true;
     this.current = options.current;
     this.#snapshot = {
       mode: "create",

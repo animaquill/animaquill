@@ -3,6 +3,7 @@ import type {
   AccountSnapshot,
   DiagnosticsSink,
   Host,
+  LocalFolder,
   ProjectLibrary,
   SignInOutcome,
 } from "@animaquill/host";
@@ -20,8 +21,11 @@ import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
 import { formatTime, toSeconds } from "@animaquill/schema";
 import { newSyncId, type ProjectSummary } from "@animaquill/host";
+import type { ConnectTiming } from "../cloud/connect.ts";
+import type { PanelActionId } from "../cloud/panel.ts";
 import { CloudProjects } from "../cloud/projects.ts";
 import type { CloudEnvironment, CloudTiming } from "../cloud/session.ts";
+import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
@@ -60,6 +64,7 @@ import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
+import { Flag } from "./flag.ts";
 import { InputMode } from "./input-mode.ts";
 import { KeybindingService } from "./keybindings.ts";
 import type { Platform } from "./keys.ts";
@@ -94,6 +99,8 @@ export interface WorkbenchOptions {
   /** For tests: how long syncing with the platform waits, and the world it waits in. */
   readonly cloudTiming?: Partial<CloudTiming>;
   readonly cloudEnvironment?: CloudEnvironment;
+  /** For tests: how long the dialog that connects a project waits, see `ConnectTiming`. */
+  readonly connectTiming?: Partial<ConnectTiming>;
   /** What finds out hashes of files in project folders, in a worker where the page has one. */
   readonly hasher?: Hasher;
   /**
@@ -184,6 +191,24 @@ export class Workbench {
    * `Host.cloud` and `CloudProjects`.
    */
   readonly cloud: CloudProjects | undefined;
+  /**
+   * What the start page lists: the projects on this computer, and those of the platform where the
+   * editor is hosted on one, see `StartList`.
+   */
+  readonly start: StartList;
+  /**
+   * Whether the panel of the platform shows, see `cloudPanel`: the status bar has it, and the menu
+   * opens it there.
+   */
+  readonly cloudPanel = new Flag();
+  /**
+   * Whether it is known how the open project stands with the platform: `CloudProjects` looked at
+   * it, and at its folder where it is one. Until then nothing says "仅本机", and nothing connects
+   * it: a project that is connected would get a second link.
+   */
+  readonly cloudKnown = new Flag();
+  /** The start page is asked to show its projects of the platform, see `openCloudProjects`. */
+  readonly cloudColumn = new Flag();
   /** The page is going away on purpose, with everything kept, see `leavePage`. */
   #leavingPage = false;
   #leavingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -527,11 +552,7 @@ export class Workbench {
         cloud,
         session: this.session,
         projects: host.projects,
-        folderOf: (key) =>
-          this.projectFolders?.getSnapshot().open?.record.id === key
-            ? (this.projectFolders.session?.folder ??
-              this.projectFolders.getSnapshot().open?.record.folder)
-            : undefined,
+        folderOf: (key) => this.#folderOf(key),
         isFolder: (key) => this.projectFolders?.holds(key) === true,
         account: host.account,
         dialogs: this.dialogs,
@@ -543,6 +564,8 @@ export class Workbench {
         // As a promise, like signing in: whoever asked hears when leaving is over, and whether
         // people stayed after all.
         installApp: () => this.installApp(),
+        // "连成另一个云端项目" is the dialog that connects a project in one go, see `connectToCloud`.
+        showConnect: () => this.connectToCloud(),
         openProject: (id) => this.openProject(id),
         ...(host.localFolders && { records: host.localFolders.records }),
         ...(host.presence && {
@@ -567,9 +590,16 @@ export class Workbench {
         leaving: () => this.leavingPage,
         ...(options.cloudTiming && { timing: options.cloudTiming }),
         ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
+        ...(options.connectTiming && { connectTiming: options.connectTiming }),
       });
+    this.start = new StartList({
+      projects: host.projects,
+      ...(host.localFolders && { records: host.localFolders.records }),
+      ...(cloud && { cloud }),
+      ...(host.account && { account: host.account }),
+    });
     if (this.cloud) {
-      const follow = () => void this.cloud?.follow();
+      const follow = () => void this.#followCloud();
       this.session.subscribe(follow);
       this.projectFolders?.subscribe(follow);
       // What taking a copy out of this browser left behind, should it have stopped halfway.
@@ -1285,6 +1315,174 @@ export class Workbench {
    */
   async resume(): Promise<void> {
     await this.projectFolders?.resume();
+    this.#resumeConnect();
+  }
+
+  /** The folder of the open project, where it is one and its folder is there. */
+  #folderOf(key: string): LocalFolder | undefined {
+    const folders = this.projectFolders;
+    const open = folders?.getSnapshot().open;
+    return open?.record.id === key ? (folders?.session?.folder ?? open.record.folder) : undefined;
+  }
+
+  /**
+   * Has `CloudProjects` look at the open project, and notes whether what it says counts, see
+   * `cloudKnown`: a folder that is not there yet is looked at once it is. Resolves to that.
+   */
+  async #followCloud(): Promise<boolean> {
+    const { cloud } = this;
+    if (!cloud) return false;
+    const { key } = this.session;
+    const isThere = () =>
+      key !== undefined &&
+      this.session.key === key &&
+      this.session.store !== undefined &&
+      (this.projectFolders?.holds(key) !== true || this.#folderOf(key) !== undefined);
+    const wasThere = isThere();
+    if (!wasThere) this.cloudKnown.set(false);
+    await cloud.follow();
+    const isKnown = wasThere && isThere();
+    // Another project meanwhile has a look of its own.
+    if (this.session.key === key) this.cloudKnown.set(isKnown);
+    return isKnown;
+  }
+
+  /**
+   * "云端…": how the open project stands with the platform. One that is not connected gets the
+   * dialog that connects it; any other the panel, which the status bar shows.
+   */
+  showCloud(): void {
+    void this.#showCloud();
+  }
+
+  async #showCloud(): Promise<void> {
+    const { cloud } = this;
+    if (!cloud || !(await this.#followCloud())) return;
+    if (cloud.getSnapshot().kind === "none") await this.connectToCloud();
+    else this.cloudPanel.set(true);
+  }
+
+  /**
+   * Connects the open project to the platform in one dialog, see `CloudConnect`: the project goes
+   * there, gets its repository, and is archived for the first time. For one that is on the
+   * platform without a repository the dialog does what is missing; one that has its repository
+   * gets the panel. `resume`: only where the page left in the middle of it, as to sign in.
+   */
+  async connectToCloud({ resume = false } = {}): Promise<void> {
+    const { cloud } = this;
+    // Not before it is known whether the project is connected: the dialog would connect one
+    // that is, a second time.
+    if (!cloud || !(await this.#followCloud())) return;
+    const snapshot = cloud.getSnapshot();
+    // Whether it has a repository is not known yet: the dialog would ask for one it has.
+    if (snapshot.kind === "linked" && cloud.isOnPlatform && !snapshot.repository?.status)
+      await snapshot.repository?.refresh();
+    const connect = cloud.beginConnect({ resume });
+    if (!connect) {
+      if (resume) return;
+      // Its repository is there: the panel says how it goes. A platform that saves no projects
+      // to repositories has no such dialog, and nothing to connect a project with here.
+      if (cloud.getSnapshot().kind === "linked") this.cloudPanel.set(true);
+      return;
+    }
+    this.cloudPanel.set(false);
+    try {
+      await this.dialogs.connect({
+        title: this.t(
+          connect.getSnapshot().repositoryOnly
+            ? "cloud.connect.repositoryTitle"
+            : "cloud.connect.title",
+          { name: connect.name, interpolation: { escapeValue: false } },
+        ),
+        connect,
+      });
+    } finally {
+      // Over, or another dialog took its place: what it made stays as it is then, for people to
+      // go on with from the panel.
+      connect.close();
+    }
+  }
+
+  /**
+   * Once the page is back from signing in or installing the App, which the dialog that connects a
+   * project sent it to: the dialog comes back with what people chose, as soon as that project is
+   * open again, which a folder is once people let the browser read it.
+   */
+  #resumeConnect(): void {
+    const { cloud } = this;
+    if (!cloud) return;
+    let stops: (() => void)[] = [];
+    const look = () => {
+      const { key, store } = this.session;
+      if (!key || !store) return;
+      if (this.projectFolders?.holds(key) && !this.#folderOf(key)) return;
+      for (const stop of stops.splice(0)) stop();
+      void this.connectToCloud({ resume: true });
+    };
+    stops = [
+      this.session.subscribe(look),
+      ...(this.projectFolders ? [this.projectFolders.subscribe(look)] : []),
+    ];
+    look();
+  }
+
+  /** "打开云端的项目…": the start page, at its projects of the platform. */
+  async openCloudProjects(): Promise<void> {
+    await this.closeProject();
+    if (!this.session.store) this.cloudColumn.set(true);
+  }
+
+  /** What people press in the panel of the platform, see `cloudPanel`. */
+  runCloudAction(id: PanelActionId): void {
+    const { cloud } = this;
+    if (!cloud) return;
+    // These show how they go in the panel itself; the others ask something, or leave.
+    if (id !== "archiveNow" && id !== "retry") this.cloudPanel.set(false);
+    switch (id) {
+      case "connect":
+      case "chooseRepository":
+      case "finishConnect":
+        void this.connectToCloud();
+        break;
+      case "switchRepository":
+        void cloud.switchRepository();
+        break;
+      case "disconnect":
+        void cloud.disconnect();
+        break;
+      case "removeFromBrowser": {
+        const { key } = this.session;
+        if (key !== undefined) void cloud.removeFromBrowser(key);
+        break;
+      }
+      case "downloadToFolder":
+        void this.moveToFolder();
+        break;
+      case "archiveNow":
+        void cloud.archiveNow();
+        break;
+      case "continueWithEditor":
+        void cloud.continueWithEditor();
+        break;
+      case "resolveStuck":
+        void cloud.resolveStuck();
+        break;
+      case "resolveDetached":
+        void cloud.resolveDetached();
+        break;
+      case "retry":
+        cloud.session?.resume();
+        break;
+      case "signIn":
+        void this.signIn();
+        break;
+      case "installApp":
+        void this.installApp();
+        break;
+      case "reload":
+        location.reload();
+        break;
+    }
   }
 
   /** In a folder people choose, where the browser can write folders: see `ProjectFolders.create`. */
@@ -1697,6 +1895,7 @@ export class Workbench {
       if (!leave) return false;
     }
     await this.layout.detach();
+    this.cloudPanel.set(false);
     // What the platform does not have yet stays in the log, for whoever syncs next.
     await this.cloud?.close();
     // The folder gets what is waiting first, and the next window gets to write it.
@@ -1767,13 +1966,16 @@ export class Workbench {
       });
     } else {
       const folders = this.projectFolders;
+      const canMove = () => isOpen() && !folders.holds(this.session.key);
       this.actions.register({
         id: "project.moveToFolder",
         title: (t) => t("folder.move.action"),
         run: () => void this.moveToFolder(),
         menu: { name: "file", group: "folder" },
-        // Only a project of the browser: a folder is where a project goes already.
-        enabled: () => isOpen() && !folders.holds(this.session.key),
+        // Only a project of the browser: a folder is where a project goes already, and the menu
+        // of one does not have this at all.
+        enabled: canMove,
+        visible: canMove,
       });
     }
     this.actions.register({
@@ -1785,35 +1987,52 @@ export class Workbench {
     });
     const cloud = this.cloud;
     if (cloud) {
+      // The menu has two ways to the platform: its projects, and how the open one stands with it.
+      // Everything else is in the panel, and in the command palette by the ids it always had.
+      this.actions.register({
+        id: "cloud.open",
+        title: (t) => t("cloud.openAction"),
+        run: () => void this.openCloudProjects(),
+        menu: { name: "file", group: "cloud" },
+      });
+      this.actions.register({
+        id: "cloud.panel",
+        title: (t) => t("cloud.panelAction"),
+        run: () => this.showCloud(),
+        menu: { name: "file", group: "cloud" },
+        enabled: isOpen,
+      });
       this.actions.register({
         id: "cloud.connect",
         title: (t) => t("cloud.connectAction"),
-        run: () => void cloud.connect(),
-        menu: { name: "file", group: "cloud" },
-        enabled: () => cloud.canConnect,
+        run: () => void this.connectToCloud(),
+        enabled: () => cloud.canConnect && cloud.savesToGitHub && this.cloudKnown.getSnapshot(),
       });
       this.actions.register({
         id: "cloud.disconnect",
         title: (t) => t("cloud.disconnectAction"),
         run: () => void cloud.disconnect(),
-        menu: { name: "file", group: "cloud" },
-        enabled: () => cloud.canDisconnect,
+        // A project of the platform that is only in this browser goes out of the browser instead.
+        enabled: () => {
+          const snapshot = cloud.getSnapshot();
+          return snapshot.kind === "linked" && snapshot.local === "folder";
+        },
       });
-      // Only where the platform saves projects to GitHub.
+      // Only where the platform saves projects to GitHub: another repository, or the first one
+      // for a project from before every project of the platform had one.
       if (cloud.savesToGitHub)
         this.actions.register({
           id: "cloud.saveToGitHub",
-          title: (t) => t("repository.action"),
-          run: () => void cloud.saveToGitHub(),
-          menu: { name: "file", group: "cloud" },
-          enabled: () => cloud.canSaveToGitHub,
+          title: (t) =>
+            t(
+              cloud.canSwitchRepository
+                ? "cloud.panel.action.switchRepository"
+                : "cloud.panel.action.chooseRepository",
+            ),
+          run: () =>
+            void (cloud.canSwitchRepository ? cloud.switchRepository() : this.connectToCloud()),
+          enabled: () => cloud.canDisconnect,
         });
-      this.actions.register({
-        id: "cloud.open",
-        title: (t) => t("cloud.openAction"),
-        run: () => void cloud.openFromCloud(),
-        menu: { name: "file", group: "cloud" },
-      });
     }
     this.actions.register({
       id: "project.exportVideo",
