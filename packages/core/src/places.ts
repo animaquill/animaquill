@@ -147,13 +147,25 @@ const agrees = (place: Place, asset: Asset): boolean =>
 
 /**
  * What an asset is to say itself, so that it reads as `wanted` with a place that agrees with that:
- * the same object where it does already, and what it said itself about where its file is.
+ * the same object where it does already, and what it said itself about where its file is. That is
+ * about the file it had then: of another file, or of the same one with another size, the asset
+ * says it is only here, and the place says the rest. The asset has to hold on its own, because its
+ * place can go while the asset stays, as when one window takes the asset away and another one
+ * changes it at the same time: then it must not say of a file what was said of another one.
  */
 function withoutPlace(body: Asset | undefined, place: Place, wanted: Asset): Asset {
   if (!body) return wanted;
   if (deepEqual(withPlace(body, place), wanted)) return body;
   const { url: _url, ...rest } = wanted;
-  const own = { ...rest, storage: body.storage, ...(body.url !== undefined && { url: body.url }) };
+  const isSameFile =
+    body.hash !== undefined &&
+    wanted.hash !== undefined &&
+    isSameHash(body.hash, wanted.hash) &&
+    body.size === wanted.size;
+  const own: Asset =
+    isElsewhere(body.storage) && !isSameFile
+      ? { ...rest, storage: "local" }
+      : { ...rest, storage: body.storage, ...(body.url !== undefined && { url: body.url }) };
   return Asset.safeParse(own).success ? own : wanted;
 }
 

@@ -8,7 +8,15 @@ import {
 } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { sample } from "./curve.ts";
-import { FUZZ, openUnlocked, randomCommand, randomFrom, replica, sync } from "./fuzz-support.ts";
+import {
+  FUZZ,
+  openUnlocked,
+  randomCommand,
+  randomFrom,
+  replica,
+  seedIds,
+  sync,
+} from "./fuzz-support.ts";
 import type { ProjectState } from "./model.ts";
 import { deepEqual } from "./patch.ts";
 import { buildRenderPlan } from "./render-plan.ts";
@@ -17,6 +25,7 @@ import { clockOf } from "./view.ts";
 
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work on two devices, seed %i", FUZZ, (seed) => {
   it("a curve is always one that can be read", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     for (let round = 0; round < 300; round++) {
@@ -36,6 +45,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("random work on two devices, seed %i", F
   });
 
   it("converges, and always gives valid files", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const a = openUnlocked();
     const b = replica(a);
@@ -83,6 +93,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
     ];
 
     it("never loses what either of them wrote", () => {
+      seedIds(seed);
       const random = randomFrom(seed);
       const a = ProjectStore.create(createProject({ name: "并发" }));
       const main = () => a.getState().timelines["main"];
@@ -159,6 +170,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys through cuts and trims, seed %i", 
   }
 
   it("what is left shows the same on every frame", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = ProjectStore.create(createProject({ name: "关键帧" }));
     const main = () => store.getState().timelines["main"];
@@ -206,6 +218,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   FUZZ,
   (seed) => {
     it("comes back exactly, and goes forward exactly", () => {
+      seedIds(seed);
       const random = randomFrom(seed);
       const store = openUnlocked();
       for (let round = 0; round < 300; round++) {
@@ -281,6 +294,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   FUZZ,
   (seed) => {
     it("goes by who wrote what, never by the value", () => {
+      seedIds(seed);
       const random = randomFrom(seed);
       const store = ProjectStore.create(createProject({ name: "模型" }));
       const track = Object.values(store.getState().timelines["main"]?.tracks ?? {})[0]?.id;
@@ -375,6 +389,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   FUZZ,
   (seed) => {
     it("never leaves anything pointing at nothing", () => {
+      seedIds(seed);
       const random = randomFrom(seed);
       const store = openUnlocked();
       expect(danglingIn(store.getState())).toEqual([]);

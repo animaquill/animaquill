@@ -41,8 +41,22 @@ let inside = false;
 
 const emit = Y.Doc.prototype.emit as (this: Y.Doc, name: string, args: unknown[]) => void;
 
+/**
+ * A document that is no part of the test: it takes none of the client ids that a test can seed (see
+ * `seedIds` of fuzz-support.ts), so that a seed goes the same way with these checks as without.
+ */
+function unseededDoc(): Doc {
+  const seeded = Object.getOwnPropertyDescriptor(Y.Doc.prototype, "clientID");
+  if (seeded) Reflect.deleteProperty(Y.Doc.prototype, "clientID");
+  try {
+    return new Y.Doc() as Doc;
+  } finally {
+    if (seeded) Object.defineProperty(Y.Doc.prototype, "clientID", seeded);
+  }
+}
+
 const copyOf = (parts: readonly Uint8Array[]): ProjectStore => {
-  const doc = new Y.Doc() as Doc;
+  const doc = unseededDoc();
   doc[SHADOW] = true;
   for (const part of parts) Y.applyUpdate(doc, part);
   return new ProjectStore(doc);

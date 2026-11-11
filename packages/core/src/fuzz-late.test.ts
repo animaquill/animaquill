@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { FUZZ, openUnlocked, randomCommand, randomFrom, replica } from "./fuzz-support.ts";
+import { FUZZ, openUnlocked, randomCommand, randomFrom, replica, seedIds } from "./fuzz-support.ts";
 import { ProjectStore } from "./store.ts";
 
 describe.each([1, 2, 3, 4])("updates that arrive late and out of order, seed %i", FUZZ, (seed) => {
   it("leave no holes, whatever people do in the meantime", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const stores = [openUnlocked()];
     stores.push(replica(stores[0] as ProjectStore), replica(stores[0] as ProjectStore));

@@ -6,6 +6,7 @@ import {
   randomEdit,
   randomFrom,
   replica,
+  seedIds,
   sync,
   type Random,
 } from "./fuzz-support.ts";
@@ -114,6 +115,7 @@ const randomClipOf = (store: ProjectStore, random: ReturnType<typeof randomFrom>
 
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (seed) => {
   it("saving comes to the same as writing right away, whatever happens to the clips", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const direct = openUnlocked();
     const tried = replica(direct);
@@ -157,6 +159,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   });
 
   it("going back and forth shows exactly what was there", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const trial = new Trial(store, "main");
@@ -186,6 +189,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   });
 
   it("what people try wins, whatever others do at the same time", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const other = replica(store);
@@ -246,6 +250,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   }
 
   it("going back and forward comes to exactly the same, whatever happened to the clips", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const trial = new Trial(store, "main");
@@ -272,6 +277,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
     ["without saving", false],
     ["with saving", true],
   ])("going all the way back and forward comes to the same as well, %s", (_, saving) => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const trial = new Trial(store, "main");
@@ -290,6 +296,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   });
 
   it("a reload brings back all of it, whatever the state", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const trial = new Trial(store, "main");
@@ -307,6 +314,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   });
 
   it("what is shown can always be saved", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const trial = new Trial(store, "main");
@@ -328,6 +336,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   });
 
   it("AI working on the same clips takes nothing away from going back and forward", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const trial = new Trial(store, "main");
@@ -358,6 +367,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("trying things out, seed %i", FUZZ, (see
   });
 
   it("going back and forward holds while another window takes things back as well", () => {
+    seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
     const other = replica(store);

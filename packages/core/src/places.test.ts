@@ -379,6 +379,68 @@ describe("what people change of an asset while an upload writes down where its f
   }
 });
 
+/**
+ * An asset holds on its own: its place goes where one window takes the asset away while another one
+ * changes it, and the asset comes back with that change, without the place. What it says itself is
+ * then all there is. The first is what `fuzz-places.test.ts` found (seed 5); the second the same
+ * with another file, of which the asset would say what was said of the one before.
+ */
+describe("an asset whose place goes while it changes in another window", () => {
+  for (const [first, second] of [
+    [1, 2],
+    [2, 1],
+  ] as const) {
+    it(`says nothing of its file that it cannot back up (${first}, ${second})`, () => {
+      // assets.json said the file is in LFS, and people took it back to here only.
+      const store = fromFile({ ...file, storage: "lfs" });
+      success(setStorage(store, { storage: "local", hash: HASH }, { origin: USER }));
+      const changing = twin(store, first);
+      const removing = twin(store, second);
+      // An assets.json comes in that leaves out the size, as a file only here may.
+      const { size: _size, ...unsized } = file;
+      const text = JSON.stringify({ assets: { a: unsized } });
+      success(changing.importFile(ASSETS, text, { origin: USER }));
+      success(removing.execute({ type: "asset.remove", params: { asset: "a" } }));
+      sync(changing, removing);
+      for (const each of [changing, removing]) {
+        expect(each.getState().places).toBeUndefined();
+        // Not in LFS without the size, which another computer checks the file by.
+        expect(placed(each)).toEqual(unsized);
+        expect(inFile(each)).toEqual(unsized);
+      }
+    });
+
+    it(`never says of a file where another one went (${first}, ${second})`, () => {
+      const store = fromFile({ ...file, storage: "platform" });
+      const keeping = twin(store, first);
+      const replacing = twin(store, second);
+      const removing = twin(store, 3);
+      // People keep the file here only, while another computer says another file is in LFS.
+      success(setStorage(keeping, { storage: "local", hash: HASH }, { origin: USER }));
+      // Of the same size: only the hash tells the two files apart.
+      const other = { ...file, hash: OTHER, storage: "lfs" };
+      success(
+        replacing.importFile(ASSETS, JSON.stringify({ assets: { a: other } }), { origin: USER }),
+      );
+      sync(keeping, replacing);
+      sync(keeping, removing);
+      // The file from before comes back, as a tool writes it, and the asset goes in another window.
+      success(
+        keeping.importFile(ASSETS, JSON.stringify({ assets: { a: file } }), { origin: USER }),
+      );
+      success(removing.execute({ type: "asset.remove", params: { asset: "a" } }));
+      sync(keeping, removing);
+      sync(keeping, replacing);
+      for (const each of [keeping, replacing, removing]) {
+        expect(each.getState().places).toBeUndefined();
+        // Nobody ever said this file is in LFS.
+        expect(placed(each)).toEqual(file);
+        expect(elsewhereOf(each.getState(), "a")).toBeUndefined();
+      }
+    });
+  }
+});
+
 describe("a place, as an asset reads with it", () => {
   it("says nothing where the asset has another size than the file it was written down for", () => {
     const store = withAsset();

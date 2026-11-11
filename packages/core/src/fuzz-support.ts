@@ -15,7 +15,8 @@ export type Random = ReturnType<typeof randomFrom>;
 /**
  * New ids from a seed instead of from chance, until the test is over: `newId` takes its bytes from
  * `crypto.getRandomValues`, and ids that differ from run to run make a seed do something else each
- * time, because what gets picked goes by sorted ids.
+ * time, because what gets picked goes by sorted ids. The same goes for Yjs documents, see
+ * `seedClients`.
  */
 export function seedIds(seed: number): void {
   const random = randomFrom(seed);
@@ -23,9 +24,51 @@ export function seedIds(seed: number): void {
     if (array instanceof Uint8Array) array.forEach((_, index) => (array[index] = random.int(256)));
     return array;
   });
+  seedClients(seed);
   onTestFinished(() => {
     vi.restoreAllMocks();
   });
+}
+
+/**
+ * Client ids of the Yjs documents made until the test is over, from a seed instead of from chance.
+ * Where two documents wrote one key at the same time, the one with the larger client id wins when
+ * they meet, so with ids that differ from run to run a seed fails only now and then. Yjs draws the
+ * id in the constructor of a document, with a `crypto` of its own that cannot be mocked: what it
+ * draws goes to this setter, which puts an id from the seed in its place, as the document's own
+ * property. Anything set after that, as Yjs does where another document has the same id, goes to
+ * that property, as without this. Documents that are made in the same order get the same ids, also
+ * those that the tests do not make themselves, as in `ProjectStore.create`.
+ */
+function seedClients(seed: number): void {
+  const start = Math.imul(seed, 0x9e3779b9);
+  let made = 0;
+  Object.defineProperty(Y.Doc.prototype, "clientID", {
+    configurable: true,
+    set(this: Y.Doc, _drawn: number) {
+      made += 1;
+      Object.defineProperty(this, "clientID", {
+        value: scramble(start + made),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  });
+  onTestFinished(() => {
+    Reflect.deleteProperty(Y.Doc.prototype, "clientID");
+  });
+}
+
+/**
+ * One 32-bit number for another, each for a different one, with no order kept: from numbers one
+ * after the other, as `randomFrom` gives them, which of two documents wins would mostly be the same.
+ */
+function scramble(value: number): number {
+  let x = value >>> 0;
+  x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
+  x = Math.imul(x ^ (x >>> 15), 0x846ca68b);
+  return (x ^ (x >>> 16)) >>> 0;
 }
 
 export function randomFrom(seed: number) {

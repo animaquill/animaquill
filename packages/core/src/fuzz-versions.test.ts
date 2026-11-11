@@ -1,6 +1,14 @@
 import { readProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import { FUZZ, openUnlocked, randomFrom, replica, sync, type Random } from "./fuzz-support.ts";
+import {
+  FUZZ,
+  openUnlocked,
+  randomFrom,
+  replica,
+  seedIds,
+  sync,
+  type Random,
+} from "./fuzz-support.ts";
 import { deepEqual, getIn } from "./patch.ts";
 import { ProjectStore, USER, aiTask, type Origin } from "./store.ts";
 
@@ -98,6 +106,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
   FUZZ,
   (seed) => {
     it("never loses what either of them wrote", () => {
+      seedIds(seed);
       const random = randomFrom(seed);
       const a = openUnlocked();
       const b = replica(a);
@@ -139,6 +148,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
     });
 
     it("converges with undo and redo, and always gives valid files", () => {
+      seedIds(seed);
       const random = randomFrom(seed);
       const a = openUnlocked();
       const b = replica(a);

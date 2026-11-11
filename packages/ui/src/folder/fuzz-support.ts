@@ -14,7 +14,7 @@
 import { ProjectStore, readFolder } from "@animaquill/core";
 import { MANIFEST_FILE } from "@animaquill/schema";
 import { expect } from "vitest";
-import { randomFrom, type Random } from "../../../core/src/fuzz-support.ts";
+import { randomFrom, seedIds, type Random } from "../../../core/src/fuzz-support.ts";
 import {
   CODE,
   MAIN,
@@ -267,6 +267,7 @@ const isAlive = (window: TestWindow) => !window.dead;
 
 /** One random run: what happens, and what has to be true in the end. */
 export async function fuzzFolder(seed: number, steps = 150): Promise<void> {
+  seedIds(seed);
   const random = randomFrom(seed);
   const system = random.chance(0.5) ? "windows" : "linux";
   const files = fixture();
