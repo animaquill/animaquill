@@ -508,6 +508,44 @@ describe("another file for an asset", () => {
     expect(asset).not.toHaveProperty("url");
   });
 
+  /**
+   * Of one content there is one size: a file of another size is another file, even with the hash
+   * the asset had. What the asset said itself about where its file is, as an asset from another
+   * computer does, was said of the file of the size before.
+   */
+  it("is only here also where only its size changed", () => {
+    for (const where of [
+      { storage: "lfs" },
+      { storage: "platform" },
+      { storage: "remote", url: URL },
+    ]) {
+      const store = fromFile({ ...file, ...where });
+      const resized = { asset: "a", changes: { size: 5 } };
+      success(store.execute({ type: "asset.update", params: resized }));
+      expect(inFile(store), where.storage).toEqual({ ...file, size: 5 });
+      expect(elsewhereOf(store.getState(), "a")).toBeUndefined();
+      // The size from before comes back with undo, and so does where the file is.
+      expect(store.undo().ok).toBe(true);
+      expect(inFile(store)).toEqual({ ...file, ...where });
+    }
+  });
+
+  it("is only here also where only its size changed, where an upload wrote down the place", () => {
+    const store = withAsset();
+    uploaded(store, "platform");
+    const resized = { asset: "a", changes: { size: 5 } };
+    success(store.execute({ type: "asset.update", params: resized }));
+    expect(inFile(store)).toEqual({ ...file, size: 5 });
+    expect(elsewhereOf(store.getState(), "a")).toBeUndefined();
+  });
+
+  it("is the same file where the size it says is the one it had", () => {
+    const store = fromFile({ ...file, storage: "lfs" });
+    const same = { asset: "a", changes: { size: 3, name: "改名" } };
+    success(store.execute({ type: "asset.update", params: same }));
+    expect(inFile(store)).toEqual({ ...file, name: "改名", storage: "lfs" });
+  });
+
   it("is no other file when only the way the hash is written changed", () => {
     const store = fromFile({ ...file, storage: "lfs" });
     success(
@@ -671,6 +709,74 @@ describe("assets.json that changed in the project folder", () => {
     expect(inFile(store)).toEqual({ ...file, hash: OTHER, size: 5, storage: "lfs" });
   });
 
+  /**
+   * The same file on both sides, which the asset itself says is elsewhere, as one that came from
+   * another computer: where the folder leaves out the size, the asset still has to have it, for
+   * other computers to get the file by its hash and check it by its size. Without it a cloud space
+   * is not even what the format takes.
+   */
+  describe("keeps the size of a file said to be elsewhere, where the folder left it out", () => {
+    for (const where of [
+      { storage: "lfs" },
+      { storage: "platform" },
+      { storage: "remote", url: URL },
+    ]) {
+      const said = { ...file, ...where };
+
+      it(`where the folder had it too (${where.storage})`, () => {
+        const store = fromFile(said);
+        const result = merge(store, baseOf(store), (asset) => {
+          delete asset.size;
+          asset.name = "外面改的";
+        });
+        if (where.storage === "platform") {
+          // The folder's file itself is not what the format takes: it waits, and nothing changes.
+          expect(result.files).toMatchObject([{ path: ASSETS, status: "blocked" }]);
+          expect(inFile(store)).toEqual(said);
+          return;
+        }
+        expect(result.files).toMatchObject([{ path: ASSETS, status: "merged" }]);
+        expect(result.conflicts).toEqual([]);
+        expect(inFile(store)).toEqual({ ...said, name: "外面改的" });
+        expect(elsewhereOf(store.getState(), "a")).toBe(where.storage);
+      });
+
+      it(`where it came after what the folder has (${where.storage})`, () => {
+        const store = withAsset();
+        const base = baseOf(store);
+        // Another computer says where the file is, and that comes here.
+        const text = JSON.stringify({ assets: { a: said } });
+        success(store.importFile(ASSETS, text, { origin: USER }));
+        const result = merge(store, base, (asset) => delete asset.size);
+        expect(result.files).toMatchObject([{ path: ASSETS, status: "merged" }]);
+        expect(result.conflicts).toEqual([]);
+        expect(inFile(store)).toEqual(said);
+        expect(elsewhereOf(store.getState(), "a")).toBe(where.storage);
+      });
+    }
+  });
+
+  it("says a file from there is only here, where only its size changed", () => {
+    for (const where of [
+      { storage: "lfs" },
+      { storage: "platform" },
+      { storage: "remote", url: URL },
+    ]) {
+      const said = { ...file, ...where };
+      const store = fromFile(said);
+      const result = merge(store, baseOf(store), (asset) => (asset.size = 5));
+      expect(result.conflicts).toEqual([]);
+      expect(inFile(store), where.storage).toEqual({ ...file, size: 5 });
+      expect(elsewhereOf(store.getState(), "a")).toBeUndefined();
+      // Also where the editor said where the file is after what the folder has.
+      const other = withAsset();
+      const base = baseOf(other);
+      success(other.importFile(ASSETS, JSON.stringify({ assets: { a: said } }), { origin: USER }));
+      merge(other, base, (asset) => (asset.size = 5));
+      expect(inFile(other), where.storage).toEqual({ ...file, size: 5 });
+    }
+  });
+
   it("keeps the file of the editor, where both have another one, and says so", () => {
     const store = withAsset();
     const base = baseOf(store);
@@ -715,24 +821,45 @@ describe("assets.json that changed in the project folder", () => {
     expect(inFile(store)).toMatchObject({ storage: "lfs", hash: HASH });
   });
 
-  it("changes nothing of where a file is when the folder's assets.json has to wait", () => {
+  it("keeps where the file of the editor is, where the folder says another place of it", () => {
     const store = withAsset();
     const base = baseOf(store);
     uploaded(store, "platform");
-    // Each side on its own is fine; together the asset would be in the cloud space without a size.
+    // Each side on its own is fine; field by field the asset would be in the cloud space at an
+    // address, without a size, which nobody said: the editor's file stays as a whole.
     const result = merge(store, base, (asset) => {
       asset.storage = "remote";
       asset.url = "https://bucket.example.com/a.mp4";
       delete asset.size;
+      asset.name = "外面改的";
     });
-    expect(result.files).toMatchObject([{ path: ASSETS, status: "blocked" }]);
+    expect(result.files).toMatchObject([{ path: ASSETS, status: "merged" }]);
+    expect(result.conflicts).toEqual([
+      { file: ASSETS, path: ["assets", "a", "storage"], theirs: "remote" },
+    ]);
     expect(store.getState().places?.["a"]).toEqual({
       storage: "platform",
       hash: HASH,
       size: 3,
       owner: OWNER,
     });
-    expect(inFile(store)).toEqual({ ...file, storage: "platform" });
+    expect(inFile(store)).toEqual({ ...file, name: "外面改的", storage: "platform" });
+  });
+
+  it("says so, also where no one field of the place was changed on both sides", () => {
+    const at = (url: string) => ({ ...file, storage: "remote", url });
+    const store = fromFile(at(URL));
+    const base = baseOf(store);
+    const moved = "https://bucket.example.com/moved.mp4";
+    success(
+      store.importFile(ASSETS, JSON.stringify({ assets: { a: at(moved) } }), { origin: USER }),
+    );
+    // The folder says LFS and leaves the address there: field by field, LFS at the new address.
+    const result = merge(store, base, (asset) => (asset.storage = "lfs"));
+    expect(result.conflicts).toEqual([
+      { file: ASSETS, path: ["assets", "a", "storage"], theirs: "lfs" },
+    ]);
+    expect(inFile(store)).toEqual(at(moved));
   });
 
   it("keeps where the file went, when that came after what the folder has", () => {

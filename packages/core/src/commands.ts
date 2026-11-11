@@ -533,8 +533,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
   /**
    * What an asset is called and found by, and where its file is and what it is: for a file that
    * moved or was replaced, as people agreed. Clips stay on the asset. No tags at all takes them away.
-   * Another file is only here: what the asset said about where else its file was is about the one
-   * before.
+   * Another file, by its hash or its size, is only here: what the asset said about where else its
+   * file was is about the one before.
    */
   define(
     "asset.update",
@@ -559,8 +559,10 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const merged: Record<string, unknown> = { ...found, ...defined };
       if (changes.tags?.length === 0) delete merged.tags;
       const before = found?.hash;
+      // Of one content there is one size: another size is another file, also with the same hash.
       const isAnotherFile =
-        before !== undefined && changes.hash !== undefined && !isSameHash(before, changes.hash);
+        (before !== undefined && changes.hash !== undefined && !isSameHash(before, changes.hash)) ||
+        (changes.size !== undefined && changes.size !== found?.size);
       if (isAnotherFile && found && isElsewhere(found.storage)) {
         merged.storage = "local";
         delete merged.url;

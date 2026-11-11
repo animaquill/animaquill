@@ -469,7 +469,9 @@ const isSameContent = (a: unknown, b: unknown): boolean =>
  * An asset, as merges go: its own fields one by one, and its file as a whole, from the side that has
  * another one, see `FILE_FIELDS`. Where both have another file, the editor's stays, and that is a
  * conflict. Where the folder has another file and says of it what was said of the one before, that
- * is about the one before: the new file is only here, as when people replace a file.
+ * is about the one before: the new file is only here, as when people replace a file. Where both have
+ * the same one, its fields merge one by one, as long as that says no more than a side did, see
+ * `sameFile`.
  */
 function mergeAsset(
   path: Path,
@@ -496,14 +498,16 @@ function mergeAsset(
     conflicts.push({ path: [...path, "hash"], theirs: theirsNow });
     file = assetPart(ours, true);
   } else {
-    file =
-      mergeEntries(
-        path,
-        assetPart(base, true),
-        assetPart(ours, true),
-        assetPart(theirs, true),
-        conflicts,
-      ) ?? {};
+    const [before = {}, editor = {}, folder = {}] = [base, ours, theirs].map((value) =>
+      assetPart(value, true),
+    );
+    const found = conflicts.length;
+    const merged = mergeEntries(path, before, editor, folder, conflicts) ?? {};
+    const checked = sameFile(merged, before, editor, folder);
+    if (checked === undefined && conflicts.length === found) {
+      conflicts.push({ path: [...path, "storage"], theirs: folder.storage });
+    }
+    file = checked ?? editor;
   }
   const rest = mergeEntries(
     path,
@@ -513,6 +517,32 @@ function mergeAsset(
     conflicts,
   );
   return { ...rest, ...file };
+}
+
+/** Whether two sides say the same about where a file is. */
+const isSamePlace = (a: Plain, b: Plain): boolean => a.storage === b.storage && a.url === b.url;
+
+/**
+ * The file of an asset, merged field by field where all three sides have one content, as it is to
+ * be: what says a file is elsewhere has to have been said of that file, as one side has it, with
+ * the size it had there, for other computers to get the file by its hash and check it by its size.
+ * Where it is said is the side that said it anew, or the base, where nobody did. That side's size
+ * goes with it where the merge left the size out, as the folder can for a file only here: one
+ * content has one size. Another size than that is another file, which is only here, as when people
+ * replace a file. Undefined where the merge put together a place that no side said: both changed
+ * where the file is, each in another way, and the editor's file is to stay as a whole, `editor`.
+ */
+function sameFile(merged: Plain, base: Plain, editor: Plain, folder: Plain): Plain | undefined {
+  if (typeof merged.storage !== "string" || !isElsewhere(merged.storage)) return merged;
+  const saying =
+    [editor, folder].find((side) => !isSamePlace(side, base) && isSamePlace(side, merged)) ??
+    (isSamePlace(base, merged) ? base : undefined);
+  if (!saying) return undefined;
+  if (merged.size === undefined && saying.size !== undefined)
+    return { ...merged, size: saying.size };
+  if (merged.size === saying.size) return merged;
+  const { url: _url, ...rest } = merged;
+  return { ...rest, storage: "local" };
 }
 
 /**

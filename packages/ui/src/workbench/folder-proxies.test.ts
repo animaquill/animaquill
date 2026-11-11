@@ -9,6 +9,7 @@ import type { ProxyResult } from "@animaquill/media/proxy";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProxyMaker } from "../proxy/maker.ts";
 import { PROXY_FOLDER, proxyName } from "../proxy/spec.ts";
+import type { Workbench } from "./workbench.ts";
 import type { FolderBases, LocalFolders } from "@animaquill/host";
 import { memoryFolders } from "@animaquill/host/memory";
 import {
@@ -100,6 +101,15 @@ const maker: ProxyMaker = {
   },
 };
 
+/**
+ * Until what was asked for is done, however long that takes: the video is looked at a moment after
+ * it came in, see `SETTLE_MS`, and then its proxy gets made. A machine that is busy can take longer
+ * than `vi.waitFor` waits for all of that, and the proxy is still on its way then.
+ */
+async function madeAll(workbench: Workbench): Promise<void> {
+  await workbench.proxies?.settled();
+}
+
 /** A new project in a folder, open in a window that makes proxies, with all of it in the folder. */
 async function newFolderProject() {
   const browser = browserOf();
@@ -128,9 +138,8 @@ describe("the proxy of a video in a project folder", () => {
     const hash = store.getState().assets?.[id as string]?.hash as string;
     // People ask for it, as from the menu of the video.
     workbench.proxies?.make(hash);
-    await vi.waitFor(() =>
-      expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "ready" }),
-    );
+    await madeAll(workbench);
+    expect(workbench.proxies?.stateOf(id as string)).toEqual(READY);
     const name = proxyName(hash, { width: 960, height: 540, fps: { num: 30, den: 1 } });
     expect(disk.names(`${ROOT}/${PROXY_FOLDER}`)).toEqual([name]);
     expect(disk.text(`${ROOT}/.animaquill/.gitignore`)).toBe("*\n");
@@ -150,7 +159,8 @@ describe("the proxy of a video in a project folder", () => {
     ]);
     const hash = store.getState().assets?.[id as string]?.hash as string;
     workbench.proxies?.make(hash);
-    await vi.waitFor(() => expect(workbench.proxies?.standInFor(hash)).toBeDefined());
+    await madeAll(workbench);
+    expect(workbench.proxies?.standInFor(hash)).toBeDefined();
     expect(await workbench.proxies?.standInFor(hash)?.file.text()).toBe("代理 960x540");
     // What exports and the rest of the editor read the files of a project with.
     expect(await (await workbench.projects.media(key).get(hash))?.text()).toBe("4K 视频");
@@ -164,9 +174,8 @@ describe("the proxy of a video in a project folder", () => {
       new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
     ]);
     workbench.proxies?.make(store.getState().assets?.[id as string]?.hash as string);
-    await vi.waitFor(() =>
-      expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "ready" }),
-    );
+    await madeAll(workbench);
+    expect(workbench.proxies?.stateOf(id as string)).toEqual(READY);
     // What a report says about the screen, which there is none of here.
     vi.stubGlobal("screen", { width: 1920, height: 1080 });
     vi.stubGlobal("devicePixelRatio", 1);
@@ -195,10 +204,8 @@ describe("the proxy of a video in a project folder", () => {
     const [id] = await workbench.media.importFiles([
       new File(["4K 视频"], "大.mp4", { type: "video/mp4" }),
     ]);
-    await vi.waitFor(() =>
-      expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "none" }),
-    );
-    await workbench.proxies?.settled();
+    await madeAll(workbench);
+    expect(workbench.proxies?.stateOf(id as string)).toEqual({ kind: "none" });
     expect(disk.has(`${ROOT}/${PROXY_FOLDER}`)).toBe(false);
   });
 
@@ -209,8 +216,8 @@ describe("the proxy of a video in a project folder", () => {
     ]);
     const first = store.getState().assets?.[id as string]?.hash as string;
     workbench.proxies?.make(first);
-    await vi.waitFor(() => expect(workbench.proxies?.stateOf(id as string)).toEqual(READY));
-    await workbench.proxies?.settled();
+    await madeAll(workbench);
+    expect(workbench.proxies?.stateOf(id as string)).toEqual(READY);
     await workbench.projectFolders?.close();
     // Another program brings in a second video, with its proxy, as another computer made it.
     const second = new TextEncoder().encode("另一个 4K 视频");

@@ -136,15 +136,20 @@ describe("checkUpdate", () => {
     }
   });
 
-  it("counts what is inside of plain values: few structs can hold millions of them", () => {
+  it("counts what is inside of plain values: few structs can hold more than a copy takes", () => {
     const doc = new Y.Doc();
     const project = doc.getMap(PROJECT_ROOT);
-    const many = Array.from({ length: 330_000 }, () => ({}));
+    // What it counts is what matters, not how many: more than `most` is enough, and quick to make.
+    const many = Array.from({ length: 20_000 }, () => ({}));
     const update = write(doc, () => {
       for (let index = 0; index < 15; index++) project.set(`v${index}`, many);
     });
-    expect(piecesOf(update)).toEqual({ structs: 15, values: 15 * 330_001 });
+    const counted = { structs: 15, values: 15 * 20_001 };
+    expect(piecesOf(update)).toEqual(counted);
     expect(checkUpdate(update, { most: 200_000 })).toBe("too-large");
+    // Not by the structs, which are few: by the values inside of them.
+    expect(checkUpdate(update, { most: counted.values })).toBe("too-large");
+    expect(checkUpdate(update, { most: counted.structs + counted.values })).toBeUndefined();
   });
 
   it("knows a change of too many pieces before reading them, also where it says more than it has", () => {

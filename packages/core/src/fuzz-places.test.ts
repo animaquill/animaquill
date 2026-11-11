@@ -22,9 +22,13 @@ const BOUND: Readonly<Record<string, object>> = {
   remote: { url: URL },
 };
 
-/** Where an upload put a content, or where a file said it is: nothing else may ever be said. */
+/**
+ * Where an upload put a content, or where a file said it is, and how large it was: nothing else may
+ * ever be said, as another computer gets the file by its hash and checks it by its size.
+ */
 interface Put {
   readonly hash: string;
+  readonly size: number | undefined;
   readonly storage: string;
   readonly url: string | undefined;
 }
@@ -58,13 +62,19 @@ describe.each([1, 2, 3, 4, 5, 6])("where files are kept, seed %i", FUZZ, (seed) 
     const folders = stores.map(written);
     /** By asset: what may be said of where its files are. */
     const puts = new Map<string, Put[]>(IDS.map((id) => [id, []]));
-    const put = (id: string, hash: string, storage: string, url?: string) =>
-      puts.get(id)?.push({ hash, storage, url });
+    const put = (
+      id: string,
+      hash: string,
+      size: number | undefined,
+      storage: string,
+      url?: string,
+    ) => puts.get(id)?.push({ hash, size, storage, url });
     const isPut = (id: string, asset: Asset) =>
       asset.hash !== undefined &&
       (puts.get(id) ?? []).some(
         (each) =>
           isSameHash(each.hash, asset.hash as string) &&
+          each.size === asset.size &&
           each.storage === asset.storage &&
           each.url === asset.url,
       );
@@ -87,7 +97,7 @@ describe.each([1, 2, 3, 4, 5, 6])("where files are kept, seed %i", FUZZ, (seed) 
         const result = store.execute({ type: "asset.setStorage", params }, { origin: STORAGE });
         if (result.ok) {
           uploads += 1;
-          put(id, hash, storage, storage === "remote" ? URL : undefined);
+          put(id, hash, asset.size, storage, storage === "remote" ? URL : undefined);
         }
       } else if (chance < 30) {
         if (asset?.hash) {
@@ -100,8 +110,9 @@ describe.each([1, 2, 3, 4, 5, 6])("where files are kept, seed %i", FUZZ, (seed) 
           : { tags: [`t${random.int(9)}`] };
         store.execute({ type: "asset.update", params: { asset: id, changes } });
       } else if (chance < 48) {
-        // People take another file for the asset.
-        const changes = { hash: fresh(), size: 3 + random.int(5) };
+        // People take another file for the asset, now and then one that only its size tells apart.
+        const size = 3 + random.int(5);
+        const changes = random.chance(0.7) ? { hash: fresh(), size } : { size };
         store.execute({ type: "asset.update", params: { asset: id, changes } });
       } else if (chance < 62) {
         // Something changes assets.json in the folder, from what the window last wrote there.
@@ -109,7 +120,7 @@ describe.each([1, 2, 3, 4, 5, 6])("where files are kept, seed %i", FUZZ, (seed) 
         const document = base === undefined ? undefined : JSON.parse(base);
         const there = document?.assets[id];
         if (base === undefined || !there) continue;
-        const kind = random.int(4);
+        const kind = random.int(7);
         if (kind === 0) Object.assign(there, { hash: fresh(), size: 3 + random.int(5) });
         // A file only here needs no size: an upload of it meanwhile still knows it.
         else if (kind === 1 && there.storage === "local") delete there.size;
@@ -117,7 +128,22 @@ describe.each([1, 2, 3, 4, 5, 6])("where files are kept, seed %i", FUZZ, (seed) 
           // Another computer uploaded another file and says so.
           Object.assign(there, { hash: fresh(), size: 3, storage: "lfs" });
           delete there.url;
-          put(id, there.hash, "lfs");
+          put(id, there.hash, 3, "lfs");
+        } else if (kind === 3) {
+          // Something leaves out the size, whatever it says of where the file is: an asset that
+          // says it is in the cloud space is then not what the format takes.
+          delete there.size;
+        } else if (kind === 4 && there.size !== undefined) {
+          // Another computer uploaded this same file and says so, as it then comes here by syncing.
+          const storage = random.pick(["lfs", "platform", "remote"]) as string;
+          const url = storage === "remote" ? URL : undefined;
+          Object.assign(there, { storage });
+          if (url === undefined) delete there.url;
+          else there.url = url;
+          put(id, there.hash, there.size, storage, url);
+        } else if (kind === 5) {
+          // Another size for the same hash: another file all the same.
+          there.size = 3 + random.int(5);
         } else there.name = `f${random.int(9)}`;
         const batch: FileChange[] = [{ path: ASSETS, base, text: JSON.stringify(document) }];
         const files = store.exportFiles().files;
