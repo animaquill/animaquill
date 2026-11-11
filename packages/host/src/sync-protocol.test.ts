@@ -63,4 +63,9 @@ describe("the copies of a project in the sync protocol", () => {
     expect(SYNC_CLOSE.rebuilt).toBe(4409);
     expect(new Set(codes).size).toBe(codes.length);
   });
+
+  it("has a way of its own to say that the project was deleted", () => {
+    expect(SYNC_CLOSE.deleted).toBe(4410);
+    expect(Object.values(SYNC_CLOSE).filter((code) => code === 4410)).toHaveLength(1);
+  });
 });

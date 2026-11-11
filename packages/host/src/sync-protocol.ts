@@ -60,6 +60,13 @@ export const SYNC_CLOSE = {
    * window has is of another copy, see `generation` of "hello", and cannot go on with this one.
    */
   rebuilt: 4409,
+  /**
+   * The project was deleted on the platform, also from another computer, and is not there any more:
+   * said to a window that is connected to it when it goes, and to one that says hello for it while
+   * the platform keeps its id (a week). Only to an editor that knows this code: an older one hears
+   * `missing`, as before.
+   */
+  deleted: 4410,
   /** The editor is too old for the platform: reload. */
   outdated: 4426,
   /** Too many connections or messages: come back later. */
