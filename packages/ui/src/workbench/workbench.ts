@@ -5,6 +5,8 @@ import type {
   DiagnosticsSink,
   Host,
   LocalFolder,
+  MakingNotes,
+  MediaStore,
   ProjectLibrary,
   SignInOutcome,
   StoragePersistence,
@@ -228,6 +230,8 @@ export class Workbench {
   /** For tests only: new projects can stay in this browser, see `Host.projectsHereForTests`. */
   readonly #projectsHere: boolean;
   readonly #memory: WindowMemory;
+  /** Which projects of the platform windows of this browser are making, see `Host.making`. */
+  readonly #making: MakingNotes | undefined;
   /** The page is going away on purpose, with everything kept, see `leavePage`. */
   #leavingPage = false;
   #leavingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -356,6 +360,7 @@ export class Workbench {
     this.persistence = host.persistence;
     this.#projectsHere = host.projectsHereForTests === true;
     this.#memory = host.windowMemory;
+    this.#making = host.making;
     this.session = new ProjectSession(
       host.projects,
       host.address,
@@ -629,7 +634,7 @@ export class Workbench {
       // What taking a copy out of this browser left behind, should it have stopped halfway.
       void this.cloud.tidy();
       // And what making a project of the platform left there, should the page have gone halfway.
-      if (cloud) void tidyCreated(cloud, host.windowMemory);
+      if (cloud && host.making) void tidyCreated(cloud, host.making);
     }
     this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders, () =>
       this.here(),
@@ -1604,12 +1609,15 @@ export class Workbench {
         createHere: (name: string, format: NewFormat) => this.#createHere(name, format),
       }),
       pinyin: loadPinyin,
-      keep: async (project, made) =>
-        (await this.cloud?.keepUploaded(
-          project,
-          made,
-          imported && ((incoming) => keepFiles(imported, incoming.media)),
-        )) ?? undefined,
+      keep: async (project, made, received) =>
+        (await this.cloud?.keepUploaded(project, made, received)) ?? undefined,
+      ...(imported &&
+        this.cloud && {
+          receive: (project: string, name: string) =>
+            this.cloud?.receiveFor(project, name) ?? Promise.resolve(undefined),
+          bring: (media: MediaStore) => keepFiles(imported, media),
+        }),
+      ...(this.#making && { making: this.#making }),
       open: async (key, folder) => {
         await this.openProject(key);
         const opened = this.session.key === key;

@@ -1993,7 +1993,7 @@ describe("a project only in this browser, without the platform (the design of th
 });
 
 describe("asking the browser to keep what it stores (R-ST-9)", () => {
-  const persistence = (answer: boolean) => {
+  const persistence = (answer: boolean, before = false) => {
     const asked: string[] = [];
     return {
       asked,
@@ -2006,6 +2006,7 @@ describe("asking the browser to keep what it stores (R-ST-9)", () => {
           asked.push("persist");
           return answer;
         },
+        wasAsked: () => asked.includes("persist") || before,
         clearsWhenIdle: false,
       },
     };
@@ -2045,6 +2046,20 @@ describe("asking the browser to keep what it stores (R-ST-9)", () => {
     await time.advance(10);
     expect(asked).toEqual(["persisted", "persist"]);
     expect(here.cloud.persisted).toBe(true);
+    expect(messagesOf(here.notifications)).toEqual([]);
+  });
+
+  it("says nothing where this browser was asked before, by any page", async () => {
+    const time = new TestTime();
+    const { persistence: kept } = persistence(false, true);
+    const here = await windowOf(new MemoryPlatform(), time, { persistence: kept });
+    const { id, state } = fixtureState();
+    await here.library.create({ id, name: "原子" }, state);
+    await here.open(id);
+    await connectNow(here.cloud);
+    await time.advance(10);
+    // The panel still says it; only the notice is not given again.
+    expect(here.cloud.persisted).toBe(false);
     expect(messagesOf(here.notifications)).toEqual([]);
   });
 });

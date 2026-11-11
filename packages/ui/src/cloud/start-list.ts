@@ -113,6 +113,12 @@ export interface StartLists {
   readonly cloud: readonly CloudRow[];
   /** The projects that are only in this browser, the most recently changed first. */
   readonly browser: readonly ProjectSummary[];
+  /**
+   * Whether those are known to be only in this browser, without the platform, see the design of
+   * the start page, 7: not where the links of this browser cannot be read, as any of them may be
+   * a copy of a project of the platform then.
+   */
+  readonly browserKnown: boolean;
 }
 
 export interface StartInput {
@@ -269,6 +275,7 @@ export function composeStartList(input: StartInput): StartLists {
     cloud: [...fromList, ...remembered],
     // What is no copy of a project of the platform, and whatever else would show nowhere.
     browser: inBrowser.filter((summary) => !copies.has(summary.id)),
+    browserKnown: platform === undefined || input.links !== undefined,
   };
 }
 
@@ -350,6 +357,7 @@ const NOTHING: StartListSnapshot = {
   local: [],
   cloud: [],
   browser: [],
+  browserKnown: false,
   cloudState: "none",
   failed: { projects: false, folders: false, links: false },
 };

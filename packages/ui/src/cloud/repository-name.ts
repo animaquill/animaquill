@@ -74,8 +74,12 @@ export function repositoryNameOf(
   let joined = "";
   for (const word of words) {
     const next = joined ? `${joined}-${word}` : word;
-    // Only whole words: a name cut in the middle of a syllable reads wrong.
-    if (next.length > MOST) break;
+    // Only whole words: a name cut in the middle of a syllable reads wrong. A first word that is
+    // too long by itself is cut all the same: it is still more of the name than a day is.
+    if (next.length > MOST) {
+      if (!joined) joined = word.slice(0, MOST);
+      break;
+    }
     joined = next;
   }
   if (joined === "" || nameProblem(joined) !== undefined) return `animaquill-${dayOf(now)}`;

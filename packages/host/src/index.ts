@@ -89,11 +89,53 @@ export interface Host {
    */
   readonly persistence?: StoragePersistence;
   /**
+   * Which projects of the platform windows of this browser began to make and that have no
+   * repository yet, see `MakingNotes`. Without it nothing is noted, and a page that goes away
+   * halfway leaves such a project for people to take away.
+   */
+  readonly making?: MakingNotes;
+  /**
    * For tests only: a new project can stay in this browser, with no folder and no platform, as a
    * test cannot answer the browser's dialog for a folder. People get no such projects any more:
    * one only in a browser goes when the browser clears what it stores. Missing for everyone else.
    */
   readonly projectsHereForTests?: true;
+}
+
+/**
+ * The projects of the platform that windows of this browser began to make, by their id there,
+ * until each has its repository: what a window that went away halfway left behind, which another
+ * window takes away, see `tidyCreated` in the editor. Shared by every window of the browser; a
+ * window that is making one holds it, and only what nobody holds is left behind.
+ */
+export interface MakingNotes {
+  /** What is noted. Never rejects: nothing where it cannot be read. */
+  list(): readonly string[];
+  note(project: string): void;
+  forget(project: string): void;
+  /**
+   * Holds `project` for this window until the returned function runs, or the page goes away.
+   * Resolves once it is held; to a function that does nothing where nothing can be held.
+   */
+  hold(project: string): Promise<() => void>;
+  /** Whether a window holds `project` now. True where that cannot be told: it may. */
+  isHeld(project: string): Promise<boolean>;
+}
+
+/** For tests, and where nothing else keeps them: notes and holds in memory, shared by who has it. */
+export function memoryMakingNotes(): MakingNotes {
+  const noted = new Set<string>();
+  const held = new Set<string>();
+  return {
+    list: () => [...noted],
+    note: (project) => void noted.add(project),
+    forget: (project) => void noted.delete(project),
+    hold: async (project) => {
+      held.add(project);
+      return () => void held.delete(project);
+    },
+    isHeld: async (project) => held.has(project),
+  };
 }
 
 /**
@@ -104,8 +146,16 @@ export interface Host {
 export interface StoragePersistence {
   /** Whether the browser said it keeps what the editor stores until people clear it. Never rejects. */
   persisted(): Promise<boolean>;
-  /** Asks the browser to keep it so. Resolves to whether it does now. Never rejects. */
+  /**
+   * Asks the browser to keep it so, once for this browser: after that it says what it said then.
+   * Resolves to whether it does now. Never rejects.
+   */
   persist(): Promise<boolean>;
+  /**
+   * Whether the browser was asked before, by any page of this site: people heard about what it
+   * said then, and are not told again.
+   */
+  wasAsked(): boolean;
   /**
    * The browser clears what a page stores once people did not visit it for days, as Safari does
    * after seven, unless it keeps it for good or the page is installed as an app.

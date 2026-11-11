@@ -485,6 +485,23 @@ function setUp(who = account(ADA)) {
   return { list, links, world, who };
 }
 
+describe("projects only in this browser (the design of the start page, 7)", () => {
+  it("are marked as such only where the links of this browser can be read", () => {
+    const projects = [kept("p1", "旧的"), kept("p2", "云端的副本")];
+    const known = composeStartList(input({ projects, links: [link("p2", "cloud-2")] }));
+    expect(known.browser.map(({ id }) => id)).toEqual(["p1"]);
+    expect(known.browserKnown).toBe(true);
+    // Unreadable: any of them may be a copy of a project of the platform, so none is said to be
+    // only here.
+    const unread = composeStartList(input({ projects, links: undefined }));
+    expect(unread.browserKnown).toBe(false);
+    // Without a platform there is nothing else they could be.
+    expect(
+      composeStartList(input({ projects, links: undefined, platform: undefined })).browserKnown,
+    ).toBe(true);
+  });
+});
+
 describe("StartList", () => {
   it("shows what this computer has at once, and the platform's list when it comes", async () => {
     const { list, links, world } = setUp();

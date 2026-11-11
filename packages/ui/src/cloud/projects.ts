@@ -553,10 +553,12 @@ export class CloudProjects {
     const { persistence, notifications, t } = this.#options;
     if (!persistence || this.#askedToKeep) return;
     this.#askedToKeep = true;
+    // Once for this browser, whichever page asked: people heard what it said then.
+    const wasAsked = persistence.wasAsked();
     const isKept = (await persistence.persisted()) || (await persistence.persist());
     this.#persisted = isKept;
     this.#emitter.emit();
-    if (!isKept) notifications.push(t("cloud.persist.refused"));
+    if (!isKept && !wasAsked) notifications.push(t("cloud.persist.refused"));
   }
 
   /**
@@ -1443,10 +1445,11 @@ export class CloudProjects {
     downloaded: Downloaded,
     {
       quietly = false,
-      bring,
+      received,
     }: {
       readonly quietly?: boolean;
-      readonly bring?: (incoming: IncomingProject) => Promise<void>;
+      /** The copy on its way in already, see `receiveFor`. */
+      readonly received?: { readonly key: string; readonly incoming: IncomingProject };
     } = {},
   ): Promise<string | undefined> {
     const { cloud, projects, account, t } = this.#options;
@@ -1460,8 +1463,8 @@ export class CloudProjects {
     store.destroy();
     try {
       // By its id on the platform, which is its own: the id in the project is not.
-      let key = project;
-      let incoming = await projects.receive({ id: key, name });
+      let key = received?.key ?? project;
+      let incoming = received?.incoming ?? (await projects.receive({ id: key, name }));
       if (!incoming) {
         // Another window may have brought it in meanwhile: that copy is the one.
         const { folders, browsers } = await this.#copiesOf(project);
@@ -1498,7 +1501,6 @@ export class CloudProjects {
         // next time takes the place of. The other way round it would leave a project that looks
         // like one of this browser only.
         await cloud.links.put(link);
-        await bring?.(incoming);
         await incoming.finish(downloaded.state);
       } catch (error) {
         await incoming.abandon().catch(() => {});
@@ -1528,16 +1530,35 @@ export class CloudProjects {
 
   /**
    * Keeps a project that was just made on the platform, see `CloudCreate`, as a copy in this
-   * browser that syncs: the same as one that is opened from there. `bring` puts the files of its
-   * assets in, as for one that was imported, before it appears. Resolves to its key, or to
+   * browser that syncs: the same as one that is opened from there. `received`: the copy on its
+   * way in already, with the files of its assets, as for one that was imported, see `receiveFor`.
+   * Resolves to its key, or to
    * undefined where it could not be kept: the project is on the platform either way.
    */
   keepUploaded(
     project: string,
     made: Downloaded,
-    bring?: (incoming: IncomingProject) => Promise<void>,
+    received?: { readonly key: string; readonly incoming: IncomingProject },
   ): Promise<string | undefined> {
-    return this.#keep(project, made, { quietly: true, ...(bring && { bring }) });
+    return this.#keep(project, made, { quietly: true, ...(received && { received }) });
+  }
+
+  /**
+   * Begins to bring in the copy in this browser of a project that is about to be made on the
+   * platform, by its id there, unseen until `keepUploaded` keeps it: what is imported puts the
+   * files of its assets there before anything goes to the platform. A number of its own where this
+   * browser keeps another project by that id. Undefined where it cannot.
+   */
+  async receiveFor(
+    project: string,
+    name: string,
+  ): Promise<{ readonly key: string; readonly incoming: IncomingProject } | undefined> {
+    const { projects } = this.#options;
+    for (const key of [project, newSyncId()]) {
+      const incoming = await projects.receive({ id: key, name });
+      if (incoming) return { key, incoming };
+    }
+    return undefined;
   }
 
   /**

@@ -17,6 +17,7 @@ import type {
   ProjectLog,
   ProjectSummary,
   MadeFile,
+  MakingNotes,
   SettingsStore,
   StoragePersistence,
   WindowPlace,
@@ -804,9 +805,11 @@ export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
  * `StoragePersistence`. Safari is the one that clears it after seven days without a visit: no
  * interface says so, so its name does, and an installed app is not cleared.
  */
-export function browserPersistence(): StoragePersistence | undefined {
-  const storage = typeof navigator === "undefined" ? undefined : navigator.storage;
-  if (!storage || typeof storage.persisted !== "function") return undefined;
+export function browserPersistence(
+  local: () => Storage = () => localStorage,
+): StoragePersistence | undefined {
+  if (typeof navigator === "undefined") return undefined;
+  const storage = navigator.storage as StorageManager | undefined;
   const agent = navigator.userAgent;
   const isSafari =
     /Safari\//.test(agent) &&
@@ -814,13 +817,88 @@ export function browserPersistence(): StoragePersistence | undefined {
   const isInstalled =
     (navigator as { standalone?: boolean }).standalone === true ||
     (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches);
+  const asked = () => {
+    try {
+      return local().getItem(PERSIST_ASKED_KEY) === "yes";
+    } catch {
+      return false;
+    }
+  };
   return {
-    persisted: () => storage.persisted().catch(() => false),
-    persist: () =>
-      typeof storage.persist === "function"
-        ? storage.persist().catch(() => false)
-        : Promise.resolve(false),
+    // A browser without the interface keeps nothing for good: Safari before 15.2.
+    persisted: async () =>
+      typeof storage?.persisted === "function" ? storage.persisted().catch(() => false) : false,
+    persist: async () => {
+      if (typeof storage?.persist !== "function") return false;
+      if (asked())
+        return typeof storage.persisted === "function"
+          ? storage.persisted().catch(() => false)
+          : false;
+      try {
+        local().setItem(PERSIST_ASKED_KEY, "yes");
+      } catch {
+        // Asked again next time, then.
+      }
+      return storage.persist().catch(() => false);
+    },
+    wasAsked: asked,
     clearsWhenIdle: isSafari && !isInstalled,
+  };
+}
+
+/** Where this browser remembers that it was asked to keep what the site stores, see `persist`. */
+const PERSIST_ASKED_KEY = "animaquill.persistAsked";
+
+/** Where the projects of the platform that windows began to make are noted, see `MakingNotes`. */
+const MAKING_KEY = "animaquill.cloud.making";
+
+/** The notes in local storage, and the holds as locks: a page that goes away lets go of them. */
+export function browserMakingNotes(
+  local: () => Storage = () => localStorage,
+  locks: () => LockManager | undefined = () => navigator.locks,
+): MakingNotes {
+  const read = (): string[] => {
+    try {
+      const kept: unknown = JSON.parse(local().getItem(MAKING_KEY) || "[]");
+      return Array.isArray(kept) ? kept.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  const write = (ids: readonly string[]) => {
+    try {
+      local().setItem(MAKING_KEY, JSON.stringify(ids));
+    } catch (error) {
+      console.warn("What is being made on the platform could not be noted", error);
+    }
+  };
+  const lockOf = (project: string) => `${PREFIX}making.${project}`;
+  return {
+    list: read,
+    note: (project) => write([...read().filter((id) => id !== project), project]),
+    forget: (project) => write(read().filter((id) => id !== project)),
+    hold: async (project) => {
+      const manager = locks();
+      if (!manager) return () => {};
+      return new Promise<() => void>((resolve, reject) => {
+        manager
+          .request(lockOf(project), () => new Promise<void>((release) => resolve(release)))
+          .catch(reject);
+      });
+    },
+    isHeld: async (project) => {
+      const manager = locks();
+      if (!manager) return true;
+      try {
+        return await manager.request(
+          lockOf(project),
+          { ifAvailable: true },
+          (lock) => lock === null,
+        );
+      } catch {
+        return true;
+      }
+    },
   };
 }
 
@@ -891,7 +969,8 @@ export function createBrowserHost(
       ).catch(() => {});
     }
   };
-  const persistence = browserPersistence();
+  const persistence = browserPersistence(storage);
+  const making = browserMakingNotes(storage, locks);
   const localFolders = keepsProjectsHere(storage)
     ? undefined
     : browserLocalFolders(database, locks);
@@ -904,6 +983,7 @@ export function createBrowserHost(
     ...(localFolders && { localFolders }),
     ...(!localFolders && keepsProjectsHere(storage) && { projectsHereForTests: true as const }),
     ...(persistence && { persistence }),
+    making,
     trials: trials.store,
     drafts: drafts.store,
     exports,

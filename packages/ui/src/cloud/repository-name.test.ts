@@ -29,6 +29,11 @@ describe("the name of a new repository, from the name of the project", () => {
     expect(repositoryNameOf("原子", undefined, day)).toBe("animaquill-20261111");
   });
 
+  it("cuts a first word that is too long by itself, rather than giving up on the name", () => {
+    expect(repositoryNameOf("x".repeat(150), toPinyin, day)).toBe("x".repeat(100));
+    expect(repositoryNameOf(`${"y".repeat(120)} 原子`, toPinyin, day)).toBe("y".repeat(100));
+  });
+
   it("is always a name GitHub takes, and no longer than it takes", () => {
     const long = repositoryNameOf("原子".repeat(80), toPinyin, day);
     expect(long.length).toBeLessThanOrEqual(100);

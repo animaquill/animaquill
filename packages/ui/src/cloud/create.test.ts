@@ -1,5 +1,12 @@
 import { ProjectStore } from "@animaquill/core";
-import { RepositoryRefused, SYNC_CLOSE, type CloudAccess, type CloudClose } from "@animaquill/host";
+import {
+  RepositoryRefused,
+  SYNC_CLOSE,
+  memoryMakingNotes,
+  newSyncId,
+  type CloudAccess,
+  type CloudClose,
+} from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import {
   cpSync,
@@ -27,6 +34,7 @@ import {
   type CreateContent,
 } from "./create.ts";
 import { closeWindows, t, windowOf } from "./projects-support.ts";
+import { upload as uploadTo } from "./upload.ts";
 import { loadPinyin } from "./repository-name.ts";
 import { FakeRepositories } from "./repository-support.ts";
 
@@ -60,6 +68,7 @@ async function setUp(options: NonNullable<Parameters<typeof windowOf>[2]> = {}) 
   const repository = new FakeRepositories();
   repository.platform = platform;
   const memory = memoryWindow();
+  const making = memoryMakingNotes();
   const here = await windowOf(platform, time, { repository, memory, ...options });
   const access: CloudAccess = {
     ...here.browser.access({ isAlive: () => true, asleep: false }),
@@ -73,7 +82,7 @@ async function setUp(options: NonNullable<Parameters<typeof windowOf>[2]> = {}) 
       account: here.who,
       name: "原子是什么",
       content: fresh,
-      keep: (project, result) => here.cloud.keepUploaded(project, result),
+      keep: (project, result, received) => here.cloud.keepUploaded(project, result, received),
       open: async (key) => {
         await here.open(key);
         opened.push(key);
@@ -83,13 +92,14 @@ async function setUp(options: NonNullable<Parameters<typeof windowOf>[2]> = {}) 
       signIn: here.signIn,
       installApp: here.installApp,
       memory,
+      making,
       window: "w",
       editor: "test",
       checkMs: 50,
       environment: time,
       ...more,
     });
-  return { time, platform, repository, here, access, memory, createOf, opened };
+  return { time, platform, repository, here, access, memory, making, createOf, opened };
 }
 
 type World = Awaited<ReturnType<typeof setUp>>;
@@ -123,7 +133,7 @@ const onPlatform = ({ platform }: World) => [...platform.projects.keys()];
 describe("making a project of the platform", () => {
   it("makes it there, gives it its repository, keeps it here and opens it, in one press", async () => {
     const world = await setUp();
-    const { time, platform, repository, here, createOf, opened, memory } = world;
+    const { time, platform, repository, here, createOf, opened } = world;
     const create = createOf();
     expect(create.kinds).toEqual(["cloud"]);
     expect(create.getSnapshot()).toMatchObject({
@@ -156,7 +166,7 @@ describe("making a project of the platform", () => {
     expect(create.getSnapshot()).toMatchObject({ phase: "archiving", problem: undefined });
     expect(stepsOf(create)).toBe("done done done running");
     // Whole: nothing is left to tidy away.
-    expect(memory.read("cloud.created")).toBe("[]");
+    expect(world.making.list()).toEqual([]);
     expect(create.takesBack).toBe(false);
 
     repository.archived(time.now());
@@ -215,7 +225,7 @@ describe("making a project of the platform", () => {
       expect(onPlatform(world)).toEqual([]);
       // The id is taken away for good: a hello still on its way makes nothing.
       expect(platform.deleted.size).toBe(1);
-      expect(world.memory.read("cloud.created")).toBe("[]");
+      expect(world.making.list()).toEqual([]);
       await expectNothingOnlyHere(world);
     });
 
@@ -241,7 +251,7 @@ describe("making a project of the platform", () => {
 
     it("where the repository cannot be made", async () => {
       const world = await setUp();
-      const { time, platform, repository, createOf, memory } = world;
+      const { time, platform, repository, createOf } = world;
       const create = createOf();
       await time.advance(100);
       repository.refuse.link = new RepositoryRefused("unavailable");
@@ -254,7 +264,7 @@ describe("making a project of the platform", () => {
       const [project] = onPlatform(world);
       expect(project).toBeDefined();
       // A page that goes away now leaves it for the next start page to take away.
-      expect(JSON.parse(memory.read("cloud.created") ?? "[]")).toEqual([project]);
+      expect(world.making.list()).toEqual([project]);
       expect(await world.here.library.list()).toEqual([]);
 
       // Trying again goes on with the same project: it is not made twice.
@@ -310,7 +320,7 @@ describe("making a project of the platform", () => {
 
     it("stays where the platform cannot say that the project is gone, until people let go", async () => {
       const world = await setUp();
-      const { time, platform, repository, createOf, memory } = world;
+      const { time, platform, repository, createOf } = world;
       const create = createOf();
       await time.advance(100);
       repository.refuse.link = new RepositoryRefused("unavailable");
@@ -325,11 +335,11 @@ describe("making a project of the platform", () => {
       await time.advance(100);
       expect(await forced).toBe("closed");
       // Left for the next start page, which takes it away once the platform is there.
-      expect(JSON.parse(memory.read("cloud.created") ?? "[]")).toEqual([project]);
+      expect(world.making.list()).toEqual([project]);
       platform.faults.unreachable = false;
-      await tidyCreated(world.access, memory);
+      await tidyCreated(world.access, world.making);
       expect(onPlatform(world)).toEqual([]);
-      expect(memory.read("cloud.created")).toBe("[]");
+      expect(world.making.list()).toEqual([]);
     });
 
     it("does not take back a project once it has its repository", async () => {
@@ -358,9 +368,10 @@ describe("making a project of the platform", () => {
 
     it("between the platform and the repository: a project without one, which the next start page takes away", async () => {
       const world = await setUp();
-      const { time, platform, repository, createOf, memory, access } = world;
+      const { time, platform, repository, createOf, access } = world;
       // One that another page or computer is making right now, without a repository yet either.
-      const other = createOf({ memory: memoryWindow() });
+      // Of another browser, whose notes this one does not have.
+      const other = createOf({ making: memoryMakingNotes() });
       await time.advance(100);
       repository.refuse.link = new RepositoryRefused("unavailable");
       await submit(other, time);
@@ -377,14 +388,14 @@ describe("making a project of the platform", () => {
       expect(await world.here.library.list()).toEqual([]);
 
       // The next page of this window.
-      await tidyCreated(access, memory);
+      await tidyCreated(access, world.making);
       expect(onPlatform(world)).toEqual([elsewhere]);
       expect(platform.removed).toEqual([mine]);
     });
 
     it("between the repository and this browser: a whole project, to open from the platform", async () => {
       const world = await setUp();
-      const { time, createOf, memory, access } = world;
+      const { time, createOf, access } = world;
       let keep: () => void = () => {};
       const create = createOf({
         keep: () =>
@@ -400,8 +411,8 @@ describe("making a project of the platform", () => {
       await working;
       expect(onPlatform(world)).toHaveLength(1);
       await expectNothingOnlyHere(world);
-      expect(memory.read("cloud.created")).toBe("[]");
-      await tidyCreated(access, memory);
+      expect(world.making.list()).toEqual([]);
+      await tidyCreated(access, world.making);
       expect(onPlatform(world)).toHaveLength(1);
     });
 
@@ -539,8 +550,8 @@ describe("making a project of the platform", () => {
       name: prepared.project.manifest.name,
       content,
       imported: true,
-      keep: (project, result) =>
-        here.cloud.keepUploaded(project, result, (incoming) => keepFiles(prepared, incoming.media)),
+      receive: (project, name) => here.cloud.receiveFor(project, name),
+      bring: (media) => keepFiles(prepared, media),
     });
     // Only a project of the platform: nothing new is only in this browser.
     expect(create.getSnapshot().kind).toBe("cloud");
@@ -677,5 +688,132 @@ describe("what a new project is like", () => {
     create.picker?.setName("mine");
     create.setName("别的");
     expect(create.picker?.getSnapshot().name).toBe("mine");
+  });
+});
+
+describe("what the independent review found", () => {
+  /** As the platform: no repository for a project that is not there. */
+  const strict = (world: World) => {
+    const link = world.repository.link.bind(world.repository);
+    world.repository.link = async (project, choice) => {
+      if (!world.platform.projects.has(project)) throw new RepositoryRefused("notFound");
+      return link(project, choice);
+    };
+  };
+
+  it("leaves the project another window of the browser is making, as a duplicated tab", async () => {
+    const world = await setUp();
+    const { time, platform, repository, access, making, createOf } = world;
+    strict(world);
+    const create = createOf();
+    await time.advance(100);
+    repository.refuse.link = new RepositoryRefused("unavailable");
+    await submit(create, time);
+    const [project] = onPlatform(world);
+    // The other tab tidies what the browser noted: this one is still making it.
+    await tidyCreated(access, making);
+    expect(platform.projects.has(project!)).toBe(true);
+    await submit(create, time);
+    expect(create.getSnapshot().phase).toBe("archiving");
+    expect(onPlatform(world)).toEqual([project]);
+    expect(making.list()).toEqual([]);
+  });
+
+  it("takes away what a closed window left halfway, from another window", async () => {
+    const world = await setUp();
+    const { time, repository, access, making, createOf } = world;
+    const create = createOf();
+    await time.advance(100);
+    repository.refuse.link = new RepositoryRefused("unavailable");
+    await submit(create, time);
+    // The tab is closed: what it held, it lets go of.
+    create.close();
+    await tidyCreated(access, making);
+    expect(onPlatform(world)).toEqual([]);
+    expect(making.list()).toEqual([]);
+  });
+
+  it("makes the project anew where it is gone from the platform before it had its repository", async () => {
+    const world = await setUp();
+    const { time, platform, repository, createOf } = world;
+    strict(world);
+    const create = createOf();
+    await time.advance(100);
+    repository.refuse.link = new RepositoryRefused("unavailable");
+    await submit(create, time);
+    const [first] = onPlatform(world);
+    platform.remove("ada", first!);
+    await submit(create, time);
+    expect(create.getSnapshot().problem).toEqual({ step: "upload", code: "undone" });
+    expect(createProblemText(create.getSnapshot().problem!, t.t)).toContain("重新开始");
+    // Not stuck: the next press makes it under a new id.
+    await submit(create, time);
+    expect(create.getSnapshot().phase).toBe("archiving");
+    const [second] = onPlatform(world);
+    expect(second).not.toBe(first);
+    expect(platform.repositories.has(second!)).toBe(true);
+  });
+
+  it("keeps an id the platform's list does not have yet from being made later", async () => {
+    const world = await setUp();
+    const { time, platform, access, making } = world;
+    const project = newSyncId();
+    // A page that went away while its first version was on its way.
+    making.note(project);
+    await tidyCreated(access, making);
+    expect(making.list()).toEqual([]);
+    expect(platform.deleted.has(project)).toBe(true);
+    const content = fresh("Atom");
+    const late = uploadTo(access, {
+      project,
+      state: content.state,
+      create: { name: "Atom", projectId: content.projectId },
+      window: "w0",
+      editor: "test",
+    });
+    await time.advance(500);
+    await expect(late.done).rejects.toMatchObject({ code: "missing" });
+    expect(platform.projects.has(project)).toBe(false);
+  });
+
+  it("makes nothing where the files of an imported project cannot be kept here", async () => {
+    const world = await setUp();
+    const { time, platform, repository, here, createOf, making } = world;
+    const create = createOf({
+      imported: true,
+      receive: (project, name) => here.cloud.receiveFor(project, name),
+      bring: async () => {
+        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      },
+    });
+    await time.advance(100);
+    await submit(create, time);
+    expect(create.getSnapshot()).toMatchObject({
+      phase: "choosing",
+      problem: { step: "files", code: "quota" },
+    });
+    expect(createProblemText(create.getSnapshot().problem!, t.t)).toContain("空间不够");
+    expect(onPlatform(world)).toEqual([]);
+    expect(platform.deleted.size).toBe(0);
+    expect(repository.links).toEqual([]);
+    expect(await here.library.list()).toEqual([]);
+    expect(making.list()).toEqual([]);
+    expect(create.takesBack).toBe(false);
+  });
+
+  it("does not change the name of the repository once people pressed", async () => {
+    const world = await setUp();
+    let loaded: (toPinyin: (text: string) => string[]) => void = () => {};
+    const create = world.createOf({
+      pinyin: () => new Promise((resolve) => (loaded = resolve)),
+      chooseFolder: () => new Promise(() => {}),
+    });
+    const before = create.picker?.getSnapshot().name;
+    create.setWithFolder(true);
+    await world.time.advance(100);
+    void create.submit();
+    loaded((text) => [...text].map(() => "zi"));
+    await world.time.advance(10);
+    expect(create.picker?.getSnapshot().name).toBe(before);
   });
 });

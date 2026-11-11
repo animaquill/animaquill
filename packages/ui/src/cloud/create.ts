@@ -2,7 +2,10 @@ import {
   newSyncId,
   type AccountAccess,
   type CloudAccess,
+  type IncomingProject,
   type LocalFolder,
+  type MakingNotes,
+  type MediaStore,
   type RepositoryAccess,
   type RepositoryStatus,
   type WindowMemory,
@@ -39,11 +42,13 @@ import { UploadFailed, upload, type Upload } from "./upload.ts";
  *    page; what the dialog was at goes into what the window remembers, see `takeCreateIntent`.
  *    Where people want a folder too, it is chosen in the press that goes on: the browser only asks
  *    then. Choosing none is changing one's mind: nothing is made.
- * 1. "upload": the project, made in memory, goes to the platform in one connection, see `upload`.
- *    Nothing is in this browser yet. The id of the project there is noted in what the window
- *    remembers until it has its repository: a page that goes away right here leaves a project
- *    without a repository on the platform, which the next start page takes away, see
- *    `tidyCreated`, and nothing else does.
+ * 1. "upload": an imported project comes into this browser first, unseen, with the files of its
+ *    assets, see `CloudCreateOptions.receive`: where there is no room for them, nothing is made.
+ *    Then the project, made in memory, goes to the platform in one connection, see `upload`. Its
+ *    id there is noted for the whole browser until it has its repository, and held by this window
+ *    while it makes it, see `MakingNotes`: a page that goes away right here leaves a project
+ *    without a repository on the platform, which the next page takes away, see `tidyCreated`,
+ *    and nothing else does. A project that is gone from the platform meanwhile is made anew.
  * 2. "repository": as the dialog that connects a project, see `RepositoryPicker`.
  * 3. "place": the project is whole now, and comes into this browser as a copy that syncs, see
  *    `CloudProjects.keepUploaded`, and into the folder where people chose one. Nothing is taken
@@ -98,7 +103,15 @@ export type CreateProblem =
       /** "browser": it could not come into this browser. "folder": not into the folder. */
       readonly code: "browser" | "folder";
     }
-  | { readonly step: "name" };
+  | { readonly step: "name" }
+  | {
+      /**
+       * The files of the assets of an imported project could not be put in this browser, which
+       * comes before anything else: nothing was made. "quota": there is no room for them.
+       */
+      readonly step: "files";
+      readonly code: "quota" | "failed";
+    };
 
 export interface CreateSnapshot {
   readonly kind: CreateKind;
@@ -152,8 +165,6 @@ export interface CreateIntent {
 
 /** Where the window remembers what the dialog was at, see `Host.windowMemory`. */
 const INTENT_KEY = "cloud.create";
-/** Where the window remembers the projects it is making on the platform, see `tidyCreated`. */
-const CREATED_KEY = "cloud.created";
 /** After this long people are doing something else. */
 const INTENT_MS = 30 * 60_000;
 /** How long a connection that was told to close has to be closed for good before the project goes. */
@@ -198,33 +209,20 @@ export function takeCreateIntent(memory: WindowMemory, now: number): CreateInten
   }
 }
 
-/** The projects of the platform this window began to make and that have no repository yet. */
-function createdOf(memory: WindowMemory): string[] {
-  try {
-    const kept: unknown = JSON.parse(memory.read(CREATED_KEY) || "[]");
-    return Array.isArray(kept) ? kept.filter((id): id is string => typeof id === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function noteCreated(memory: WindowMemory, project: string, isMade: boolean): void {
-  const rest = createdOf(memory).filter((id) => id !== project);
-  memory.write(CREATED_KEY, JSON.stringify(isMade ? [...rest, project] : rest));
-}
-
 /**
- * Takes away what making a project of the platform left behind in this window, as where the page
- * went away before the project had its repository: only projects this window noted that it began
- * to make, and only those the platform says have no repository. Every other project without one
- * stays, as another page or another computer may be making it right now. Once after the page
- * loaded, before anything is made. Never rejects.
+ * Takes away what making a project of the platform left behind, as where a page went away before
+ * the project had its repository: only projects a window of this browser noted that it began to
+ * make, see `MakingNotes`, and that no window is making now; and only where the platform has no
+ * repository for them. One the platform's list does not have yet is taken away all the same: the
+ * platform keeps its id from being used, so a request to make it that is still on its way makes
+ * nothing. Every other project without a repository stays, as another computer may be making it.
+ * Once after the page loaded. Never rejects.
  */
 export async function tidyCreated(
   cloud: Pick<CloudAccess, "list" | "remove">,
-  memory: WindowMemory,
+  making: MakingNotes,
 ): Promise<void> {
-  const noted = createdOf(memory);
+  const noted = making.list();
   if (noted.length === 0 || !cloud.remove) return;
   let listed: Awaited<ReturnType<CloudAccess["list"]>>;
   try {
@@ -234,19 +232,27 @@ export async function tidyCreated(
     return;
   }
   for (const project of noted) {
+    if (await making.isHeld(project)) continue;
     const summary = listed.find((each) => each.id === project);
-    let isOver = summary === undefined || summary.attention !== "noRepository";
-    if (!isOver) {
-      try {
-        // "missing" and "hasRepository" are as good: nothing is left to take away.
-        await cloud.remove(project);
-        isOver = true;
-      } catch (error) {
-        console.warn("A project that was not made to the end stays on the platform for now", error);
-      }
+    if (summary && summary.attention !== "noRepository") {
+      making.forget(project);
+      continue;
     }
-    if (isOver) noteCreated(memory, project, false);
+    try {
+      // "missing" and "hasRepository" are as good: nothing is left to take away.
+      await cloud.remove(project);
+      making.forget(project);
+    } catch (error) {
+      console.warn("A project that was not made to the end stays on the platform for now", error);
+    }
   }
+}
+
+/** A copy in this browser on its way in, see `CloudCreateOptions.receive`. */
+export interface Received {
+  /** What this browser keeps it by. */
+  readonly key: string;
+  readonly incoming: IncomingProject;
 }
 
 /** A project to make, as it is before anything of it is anywhere. */
@@ -290,9 +296,23 @@ export interface CloudCreateOptions {
   readonly chooseFolder?: (name: string) => Promise<FolderChoice | FolderRefusal | undefined>;
   /**
    * Keeps what the platform has of the new project as a copy in this browser that syncs, see
-   * `CloudProjects.keepUploaded`. Resolves to its key, or to undefined where it could not.
+   * `CloudProjects.keepUploaded`, in what `receive` began where it did. Resolves to its key, or to
+   * undefined where it could not.
    */
-  readonly keep: (project: string, made: Downloaded) => Promise<string | undefined>;
+  readonly keep: (
+    project: string,
+    made: Downloaded,
+    received?: Received,
+  ) => Promise<string | undefined>;
+  /**
+   * For an imported project: begins to bring the copy in this browser in, by the id of the project
+   * on the platform, unseen until it is kept, see `CloudProjects.receiveFor`; undefined where it
+   * cannot. `bring` puts the files of its assets there, before anything is made on the platform.
+   */
+  readonly receive?: (project: string, name: string) => Promise<Received | undefined>;
+  readonly bring?: (media: MediaStore) => Promise<void>;
+  /** The projects of the platform that windows of this browser are making, see `tidyCreated`. */
+  readonly making?: MakingNotes;
   /**
    * Opens the copy, and moves it into the folder people chose, where they did. Resolves to whether
    * it is open, and whether it is in the folder.
@@ -382,6 +402,10 @@ export class CloudCreate {
   /** The steps run, until they stop: see `whenIdle`. */
   #working: Promise<void> | undefined;
   #stopArchive: (() => void) | undefined;
+  /** Lets go of the project this window is making, see `MakingNotes.hold`. */
+  #release: (() => void) | undefined;
+  /** The copy in this browser of an imported project, with its files, on its way in. */
+  #received: Received | undefined;
 
   constructor(options: CloudCreateOptions) {
     this.#options = options;
@@ -473,7 +497,8 @@ export class CloudCreate {
   /** The repository is called after the project, until people name it themselves. */
   #nameRepository(): void {
     const picker = this.picker;
-    if (!picker || picker.getSnapshot().nameTouched || this.#isBegun()) return;
+    // Not once people pressed: the name they saw is the one that goes.
+    if (!picker || picker.getSnapshot().nameTouched || this.#isBegun() || this.#working) return;
     const name = repositoryNameOf(this.#snapshot.name, this.#toPinyin, this.#env.now());
     if (name !== picker.getSnapshot().name) picker.setName(name, { touched: false });
   }
@@ -746,13 +771,16 @@ export class CloudCreate {
   }
 
   async #toPlatform(name: string, format: NewFormat): Promise<boolean> {
-    const { cloud, memory, content } = this.#options;
+    const { cloud, content } = this.#options;
     if (!cloud) return false;
-    this.#step("upload", "running");
     // The same id on every try: where an answer did not come back, the platform has it already.
     this.#project ??= newSyncId();
     const project = this.#project;
-    if (memory) noteCreated(memory, project, true);
+    // What is imported comes here first, files and all: where it cannot, nothing is made.
+    if (!(await this.#bringHere(project, name))) return false;
+    if (this.#closed || this.#snapshot.cancelling) return false;
+    this.#step("upload", "running");
+    await this.#note(project);
     const made = content(name, format);
     const stop = new AbortController();
     const sending = upload(cloud, {
@@ -777,8 +805,8 @@ export class CloudCreate {
       if (problem.step === "upload" && problem.code === "signedOut") this.#signedOut();
       // The platform would not make it under this id: the next try makes it anew.
       if (problem.step === "upload" && problem.code === "undone") {
-        if (memory) noteCreated(memory, project, false);
-        this.#project = undefined;
+        this.#startAnew();
+        this.#set({ steps: { ...WAITING } });
       }
       this.#stopAt(problem);
       return false;
@@ -795,7 +823,10 @@ export class CloudCreate {
 
   #stopAt(problem: CreateProblem): void {
     if (this.#snapshot.cancelling) return;
-    const step = problem.step === "folder" || problem.step === "name" ? undefined : problem.step;
+    const step =
+      problem.step === "folder" || problem.step === "name" || problem.step === "files"
+        ? undefined
+        : problem.step;
     this.#set({
       phase: "choosing",
       problem,
@@ -818,15 +849,88 @@ export class CloudCreate {
       if (this.#closed) return false;
       if (now?.repository) return this.#linked(now);
     }
+    if (failure === "notFound" && (await this.#isGone(project))) {
+      // Not on the platform any more, as where another window took it away: it is made anew.
+      if (this.#closed) return false;
+      this.#startAnew();
+      this.#set({ steps: { ...WAITING } });
+      this.#stopAt({ step: "upload", code: "undone" });
+      return false;
+    }
     if (failure === "signedOut") this.#signedOut();
     this.#stopAt({ step: "repository", code: failure ?? "choice" });
     return false;
   }
 
+  /** Whether the platform's list says that it does not have `project`; false where it cannot say. */
+  async #isGone(project: string): Promise<boolean> {
+    try {
+      const listed = (await this.#options.cloud?.list()) ?? [];
+      return !listed.some((each) => each.id === project);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Notes that this window makes `project`, and holds it, before anything of it goes there. */
+  async #note(project: string): Promise<void> {
+    const { making } = this.#options;
+    if (!making || this.#release) return;
+    making.note(project);
+    this.#release = await making.hold(project);
+  }
+
+  /** Nothing is left of `project` to take away: it is whole, or gone. */
+  #forget(project: string | undefined): void {
+    if (project) this.#options.making?.forget(project);
+    this.#release?.();
+    this.#release = undefined;
+  }
+
+  /** The project is not there: everything of it goes, and the next try makes one under a new id. */
+  #startAnew(): void {
+    this.#forget(this.#project);
+    void this.#received?.incoming.abandon().catch(() => {});
+    this.#received = undefined;
+    this.#project = undefined;
+    this.#made = undefined;
+  }
+
+  /**
+   * For an imported project: its copy in this browser begins to come in, with the files of its
+   * assets, before anything goes to the platform. Resolves to whether it did, or there is nothing
+   * to do; where it did not, the snapshot says why, and nothing was made.
+   */
+  async #bringHere(project: string, name: string): Promise<boolean> {
+    const { receive, bring } = this.#options;
+    if (!receive || this.#received) return true;
+    this.#step("upload", "running");
+    let received: Received | undefined;
+    try {
+      received = await receive(project, name);
+      if (!received) throw new Error("Nothing to bring the project in with");
+      await bring?.(received.incoming.media);
+    } catch (error) {
+      console.warn("The files of the imported project could not be kept here", error);
+      void received?.incoming.abandon().catch(() => {});
+      const isFull = (error as { name?: unknown } | null)?.name === "QuotaExceededError";
+      // Nothing went to the platform: nothing is there to take back.
+      this.#project = undefined;
+      this.#stopAt({ step: "files", code: isFull ? "quota" : "failed" });
+      this.#set({ steps: { ...WAITING } });
+      return false;
+    }
+    if (this.#closed || this.#snapshot.cancelling) {
+      void received.incoming.abandon().catch(() => {});
+      return false;
+    }
+    this.#received = received;
+    return true;
+  }
+
   #linked(status: RepositoryStatus): true {
     // Whole now: nothing is taken back from here on, and nothing is left to tidy away.
-    const { memory } = this.#options;
-    if (memory && this.#project) noteCreated(memory, this.#project, false);
+    this.#forget(this.#project);
     this.#set({
       linked: status,
       problem: undefined,
@@ -843,7 +947,9 @@ export class CloudCreate {
     const made = this.#made;
     if (!project || !made) return;
     this.#step("place", "running");
-    const key = this.#snapshot.key ?? (await this.#options.keep(project, made));
+    const key = this.#snapshot.key ?? (await this.#options.keep(project, made, this.#received));
+    // Kept, or let go of: either way it is not this dialog's any more.
+    this.#received = undefined;
     if (!key) {
       this.#set({
         phase: "done",
@@ -925,7 +1031,7 @@ export class CloudCreate {
     if (this.#snapshot.cancelling) return "unconfirmed";
     if (!this.takesBack) return this.#over();
     const project = this.#project;
-    const { cloud, memory } = this.#options;
+    const { cloud } = this.#options;
     this.#set({ cancelling: true, unconfirmed: false });
     // What is on its way stops, and is over before the platform is asked: a request to make it
     // that is still on its way would make it after the platform took it away.
@@ -967,7 +1073,9 @@ export class CloudCreate {
       return "unconfirmed";
     }
     // Gone, or people let go: what is left the next start page takes away.
-    if (outcome !== "unknown" && memory && project) noteCreated(memory, project, false);
+    if (outcome !== "unknown") this.#forget(project);
+    void this.#received?.incoming.abandon().catch(() => {});
+    this.#received = undefined;
     this.#set({ cancelling: false, unconfirmed: false, phase: "cancelled" });
     return this.#over();
   }
@@ -1011,6 +1119,13 @@ export class CloudCreate {
     this.#stopArchive?.();
     this.#stopArchive = undefined;
     this.picker?.close();
+    // What is not whole yet is left for whoever tidies, see `tidyCreated`.
+    this.#release?.();
+    this.#release = undefined;
+    if (!this.#working) {
+      void this.#received?.incoming.abandon().catch(() => {});
+      this.#received = undefined;
+    }
     if (!this.#left) this.#options.memory?.write(INTENT_KEY, "");
   }
 }
@@ -1026,6 +1141,8 @@ export function createProblemText(problem: CreateProblem, t: TFunction): string 
       return t(`newProject.place.${problem.code}`);
     case "name":
       return t("newProject.nameEmpty");
+    case "files":
+      return t(`newProject.files.${problem.code}`);
     case "upload":
       if (problem.code === "undone") return t("newProject.undone");
       return connectProblemText(problem, t);

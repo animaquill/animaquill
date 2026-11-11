@@ -225,10 +225,13 @@ function LocalProjects({
 /** The projects that are only in this browser: old ones, and those of a browser without folders. */
 function BrowserProjects({
   projects,
+  known,
   now,
   refresh,
 }: {
   projects: readonly ProjectSummary[];
+  /** They are known to be only here, see `StartLists.browserKnown`. */
+  known: boolean;
   now: number;
   refresh: () => void;
 }) {
@@ -249,15 +252,17 @@ function BrowserProjects({
               <span className={styles.time}>{agoText(project.updatedAt, now, t)}</span>
             </span>
             {/* Not safe: the browser can clear it at any time. On its own line, not over the page. */}
-            <span className={styles.about}>
-              <span
-                className={`${styles.mark} ${styles.warning}`}
-                data-mark="onlyHere"
-                title={t("start.hint.onlyHere")}
-              >
-                {t("start.mark.onlyHere")}
+            {known && (
+              <span className={styles.about}>
+                <span
+                  className={`${styles.mark} ${styles.warning}`}
+                  data-mark="onlyHere"
+                  title={t("start.hint.onlyHere")}
+                >
+                  {t("start.mark.onlyHere")}
+                </span>
               </span>
-            </span>
+            )}
           </button>
           {projectFolders && (
             <button
@@ -560,7 +565,12 @@ export function StartPage() {
             {(browser.length > 0 || (!projectFolders && hasCloud)) && <h2>{t("start.browser")}</h2>}
             {browser.length > 0 && (
               <>
-                <BrowserProjects projects={browser} now={now} refresh={refresh} />
+                <BrowserProjects
+                  projects={browser}
+                  known={lists.browserKnown}
+                  now={now}
+                  refresh={refresh}
+                />
                 {projectFolders && <p className={styles.muted}>{t("folder.browserHint")}</p>}
               </>
             )}
