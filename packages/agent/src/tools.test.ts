@@ -29,6 +29,13 @@ describe("command tools", () => {
     const allowed = COMMANDS.filter((command) => !command.userOnly);
     expect(tools.map((tool) => tool.name)).toEqual(allowed.map((c) => toolName(c.type)));
     expect(tools.map((tool) => tool.name)).not.toContain("project_setTags");
+    // AI cannot tell where a file is, and where it goes is for people to choose.
+    expect(tools.map((tool) => tool.name)).not.toContain("asset_setStorage");
+    const add = tools.find(({ name }) => name === "asset_add");
+    expect(add?.description).not.toMatch(/存放/);
+    const parameters = JSON.stringify(add?.parameters);
+    expect(parameters).toContain('"enum":["local","git"]');
+    expect(parameters).not.toMatch(/"(lfs|platform|remote)"/);
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
       expect(tool.description.length).toBeGreaterThan(4);

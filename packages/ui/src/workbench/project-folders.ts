@@ -5,7 +5,13 @@
  * `FolderSession`. What is in a folder and what this browser keeps of it is `FolderProjects`; this
  * is the part that asks people and tells them.
  */
-import { INCOMPLETE_FILE, isNoneOfIt, isProjectFile, type ProjectStore } from "@animaquill/core";
+import {
+  INCOMPLETE_FILE,
+  isNoneOfIt,
+  isProjectFile,
+  placedAsset,
+  type ProjectStore,
+} from "@animaquill/core";
 import {
   FolderError,
   type AccessAnswer,
@@ -51,6 +57,7 @@ import {
 } from "../folder/session.ts";
 import type { Hasher } from "../media/hasher.ts";
 import type { ProblemList } from "../problems/list.ts";
+import { downloadFrom, downloadableItems, type HereOf } from "../storage/places.ts";
 import type { ImportRefused, ImportReport } from "../transfer/import.ts";
 import { formatSize } from "../transfer/transfer.ts";
 import type { ConfirmOptions, DialogDetail, Dialogs, ProgressDialog } from "./dialogs.ts";
@@ -111,6 +118,8 @@ export interface ProjectFoldersOptions {
   /** What happens to the files of assets, see `MediaLibrary`. */
   readonly assetFiles: AssetFileActions;
   readonly hasher?: Hasher;
+  /** Where the project is, for what a file that is not here can be downloaded from. */
+  readonly here?: HereOf;
   readonly timing?: Partial<FolderTiming>;
   /** Which windows have which projects open, which a move into a folder has to know. */
   readonly presence?: ProjectPresence;
@@ -137,8 +146,12 @@ interface Current {
   readonly stop: () => void;
   /** The watch of the files of the assets, of the folder that it watches. */
   assetWatch?: { readonly folder: LocalFolder; readonly stop: () => void };
-  /** The assets of the project, as the files were last compared with. */
+  /**
+   * The assets of the project and where their files are kept, as the files were last compared
+   * with: a file that is not here is missing, or can be downloaded from where it is kept.
+   */
   checkedAssets?: unknown;
+  checkedPlaces?: unknown;
   checkTimer?: ReturnType<typeof setTimeout>;
   checking?: Promise<void> | undefined;
   checkAgain?: boolean;
@@ -351,7 +364,9 @@ export class ProjectFolders {
       return current.checking;
     }
     current.checkAgain = false;
-    current.checkedAssets = current.store.getState().assets;
+    const { assets, places } = current.store.getState();
+    current.checkedAssets = assets;
+    current.checkedPlaces = places;
     current.checking = current.assets
       .check(current.store)
       .catch((error: unknown): readonly AssetIssue[] => {
@@ -363,7 +378,7 @@ export class ProjectFolders {
         const { t } = this.#options;
         // Written somewhere new without its files: they are where the project was before.
         const leftBehind =
-          current.relocated && issues.some(({ kind }) => kind === "missing")
+          current.relocated && issues.some(({ kind }) => kind === "missing" || kind === "elsewhere")
             ? [
                 {
                   severity: "warning" as const,
@@ -372,9 +387,24 @@ export class ProjectFolders {
                 },
               ]
             : [];
+        // Many files that can come from where they are kept are one line, not one each.
+        const elsewhere = issues.filter(({ kind }) => kind === "elsewhere");
+        const together =
+          elsewhere.length > 1
+            ? [
+                {
+                  severity: "warning" as const,
+                  text: t("folder.asset.elsewhereMany", { count: elsewhere.length }),
+                  origin: t("folder.origin"),
+                },
+              ]
+            : [];
         this.#assetNotes = [
           ...leftBehind,
-          ...issues.map((issue) => this.#assetProblem(current, issue)),
+          ...together,
+          ...issues
+            .filter(({ kind }) => kind !== "elsewhere" || elsewhere.length === 1)
+            .map((issue) => this.#assetProblem(current, issue)),
         ];
         this.#assetIssues = issues;
         this.#changed();
@@ -422,6 +452,12 @@ export class ProjectFolders {
           run: () => after(assetFiles.useNewFile(issue.asset)),
         },
       };
+    }
+    if (issue.kind === "elsewhere") {
+      const here = this.#options.here?.();
+      const url = placedAsset(current.store.getState(), issue.asset, here)?.url;
+      const download = downloadFrom(t, issue.storage, url);
+      return { ...base, text: t("folder.asset.elsewhere", { download }) };
     }
     if (issue.hidden !== undefined) {
       return { ...base, text: t("folder.asset.hidden", { name: issue.hidden }) };
@@ -940,6 +976,7 @@ export class ProjectFolders {
         bases: folders.bases,
         browser: projects.media(record.id),
         ...(hasher && { hasher }),
+        ...(this.#options.here && { here: this.#options.here }),
       });
     let loaded: LoadedProject | undefined;
     try {
@@ -1008,13 +1045,21 @@ export class ProjectFolders {
   /** Says that the project is the folder now, and what the browser still keeps of its files. */
   async #moved(
     name: string,
-    { record, missing, damaged, renamed, copies }: Extract<MoveResult, { kind: "moved" }>,
+    {
+      record,
+      missing,
+      elsewhere,
+      damaged,
+      renamed,
+      copies,
+    }: Extract<MoveResult, { kind: "moved" }>,
   ) {
     const { dialogs, t } = this.#options;
     const title = t("folder.move.movedTitle");
     const message = t("folder.move.moved", { name, folder: record.folder.name });
     const details = [
       listOf(t, t("folder.move.missing"), missing),
+      listOf(t, t("folder.move.elsewhere"), downloadableItems(t, elsewhere)),
       listOf(t, t("folder.move.damaged"), damaged),
       listOf(
         t,
@@ -1466,6 +1511,7 @@ export class ProjectFolders {
       // What the editor makes of the files stays in the browser.
       browser: this.#options.projects.media(record.id),
       ...(this.#options.hasher && { hasher: this.#options.hasher }),
+      ...(this.#options.here && { here: this.#options.here }),
       onChanged: (paths) => {
         const current = this.#current;
         if (current?.assets !== assets) return;
@@ -1528,9 +1574,13 @@ export class ProjectFolders {
         this.#changed();
       }),
       folderSession.onMerge((merge) => this.#merged(store, merge)),
-      // What the project says about its assets changed, as after an import or a merge.
+      // What the project says about its assets changed, as after an import or a merge, or where
+      // their files are kept, as after an upload.
       store.subscribe(() => {
-        if (store.getState().assets !== current.checkedAssets) this.#checkSoon(current);
+        const state = store.getState();
+        if (state.assets !== current.checkedAssets || state.places !== current.checkedPlaces) {
+          this.#checkSoon(current);
+        }
       }),
     );
     this.#current = current;

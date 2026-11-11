@@ -535,10 +535,7 @@ export class ProxyFiles implements StandIns {
     if (proxy.recipe !== RECIPE) return true;
     const hash = Object.values(open.store.getState().assets ?? {}).find(
       (asset) =>
-        asset.kind === "video" &&
-        asset.hash !== undefined &&
-        asset.storage !== "remote" &&
-        digestOf(asset.hash) === proxy.digest,
+        asset.kind === "video" && asset.hash !== undefined && digestOf(asset.hash) === proxy.digest,
     )?.hash;
     if (hash === undefined) return true;
     if (!open.facts.has(hash)) return false;
@@ -571,10 +568,10 @@ export class ProxyFiles implements StandIns {
     const state = open.store.getState();
     const picture = pictureOf(state);
     const hashes = new Set<string>();
+    // Also of a video that is kept somewhere else: its file is kept here as well, as people keep
+    // it. Where it is not here, there is nothing to make one of.
     for (const asset of Object.values(state.assets ?? {})) {
-      if (asset.kind === "video" && asset.hash !== undefined && asset.storage !== "remote") {
-        hashes.add(asset.hash);
-      }
+      if (asset.kind === "video" && asset.hash !== undefined) hashes.add(asset.hash);
     }
     for (const entry of open.entries.values()) {
       if (!hashes.has(entry.hash)) this.#drop(open, entry);

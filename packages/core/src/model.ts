@@ -12,9 +12,13 @@ import {
   ZERO,
   add,
   fromSeconds,
+  downloadableFrom,
   isAnimation,
+  isSameHash,
   parseTime,
+  type Asset,
   type Clip,
+  type Elsewhere,
   type Join,
   type MediaRef,
   type Problem,
@@ -25,6 +29,7 @@ import {
   type Value,
 } from "@animaquill/schema";
 import type { z } from "zod";
+import type { Place } from "./places.ts";
 
 type Note = Notes["notes"][number];
 type Section = Timeline["sections"][number];
@@ -168,7 +173,14 @@ export interface TimelineState {
  */
 export interface ProjectState {
   readonly manifest: ProjectManifest;
+  /**
+   * What each asset says itself. Where its file is kept can be in `places` as well, which counts
+   * for as long as the asset has the content that was written down for: read the asset with
+   * `placedAsset`, as files have it, to know where its file is.
+   */
   readonly assets?: Assets["assets"];
+  /** Where the file of an asset is kept, by the id of the asset, see structure.ts. */
+  readonly places?: Readonly<Record<string, Place>>;
   readonly libraries?: Libraries;
   readonly lock?: LibrariesLock;
   readonly notes?: Readonly<Record<string, Note>>;
@@ -185,6 +197,120 @@ export const entryOf = <T>(
   map: Readonly<Record<string, T>> | undefined,
   id: string,
 ): T | undefined => (map && Object.hasOwn(map, id) ? map[id] : undefined);
+
+/**
+ * Where the project is, as far as places go: what a place has to be bound to, to count here. The
+ * repository the project is kept in, by its id on GitHub; who is signed in to the platform, by the
+ * id of the person there; and the storages of the person set up on this computer. Where nobody says
+ * where here is (undefined), every place counts as it is; where something is not known here, the
+ * places bound to it do not count: a copy of the project in another repository, somebody else, or a
+ * computer without that storage cannot get the file from there.
+ */
+export interface Here {
+  readonly repo?: string | undefined;
+  readonly owner?: string | undefined;
+  readonly stores?: readonly string[] | undefined;
+}
+
+/** Whether a place counts here, see `Here`. */
+export function isBoundHere(place: Place, here: Here | undefined): boolean {
+  if (here === undefined) return true;
+  switch (place.storage) {
+    case "lfs":
+      return place.repo !== undefined && place.repo === here.repo;
+    case "platform":
+      return place.owner !== undefined && place.owner === here.owner;
+    case "remote":
+      return place.store === undefined || (here.stores ?? []).includes(place.store);
+    default:
+      return true;
+  }
+}
+
+/**
+ * An asset as files have it: where its file is kept is what its place says, while that is about
+ * the file the asset has, the same content of the same size, and counts here, see `Here`. A place
+ * that knows the size of a file says it for an asset that does not. A place that would leave the
+ * asset without what another computer needs to get the file, see `downloadableFrom`, says nothing.
+ * The same object where the place says nothing else.
+ */
+export function withPlace(asset: Asset, place: Place | undefined, here?: Here): Asset {
+  if (!place || asset.hash === undefined || !isSameHash(place.hash, asset.hash)) return asset;
+  if (place.size !== undefined && asset.size !== undefined && place.size !== asset.size) {
+    return asset;
+  }
+  if (!isBoundHere(place, here)) return asset;
+  const size = asset.size ?? place.size;
+  if (place.storage === asset.storage && place.url === asset.url && size === asset.size) {
+    return asset;
+  }
+  const { url: _url, size: _size, ...rest } = asset;
+  const placed: Asset = {
+    ...rest,
+    storage: place.storage,
+    ...(place.url !== undefined && { url: place.url }),
+    ...(size !== undefined && { size }),
+  };
+  if (place.storage !== "local" && downloadableFrom(placed) === undefined) return asset;
+  return placed;
+}
+
+/** An asset of a project as files have it, see `withPlace`. */
+export const placedAsset = (
+  state: Pick<ProjectState, "assets" | "places">,
+  id: string,
+  here?: Here,
+): Asset | undefined => {
+  const asset = entryOf(state.assets, id);
+  return asset && withPlace(asset, entryOf(state.places, id), here);
+};
+
+/**
+ * Where else than here the file of an asset can be downloaded from, see `downloadableFrom`, for this
+ * computer to get it where it does not have the file: undefined for a file that is only here, in
+ * the person's own Git, or that nothing could check.
+ */
+export function elsewhereOf(
+  state: Pick<ProjectState, "assets" | "places">,
+  id: string,
+  here?: Here,
+): Elsewhere | undefined {
+  const asset = placedAsset(state, id, here);
+  return asset && downloadableFrom(asset);
+}
+
+const placedBy = new WeakMap<
+  object,
+  {
+    readonly places: object;
+    readonly here: Here | undefined;
+    readonly assets: Assets["assets"];
+  }
+>();
+
+/**
+ * All assets of a project as files have them, see `withPlace`. The same object as long as the
+ * assets, their places and here are, and the assets themselves where no place says anything else.
+ */
+export function placedAssets(
+  state: Pick<ProjectState, "assets" | "places">,
+  here?: Here,
+): Assets["assets"] | undefined {
+  const { assets, places } = state;
+  if (!assets || !places) return assets;
+  const known = placedBy.get(assets);
+  if (known?.places === places && known.here === here) return known.assets;
+  let changed = false;
+  const placed: Record<string, Asset> = {};
+  for (const [id, asset] of Object.entries(assets)) {
+    const each = withPlace(asset, entryOf(places, id), here);
+    changed ||= each !== asset;
+    placed[id] = each;
+  }
+  const result = changed ? placed : assets;
+  placedBy.set(assets, { places, here, assets: result });
+  return result;
+}
 
 const byId = <T extends { readonly id: string }>(items: readonly T[] | undefined) =>
   Object.fromEntries((items ?? []).map((item) => [item.id, item]));
@@ -402,7 +528,8 @@ export interface ExportedProject {
   readonly problems: readonly Problem[];
 }
 
-export function stateToProject(state: ProjectState): ExportedProject {
+/** The project as files have it, with where the files of its assets are as counts `here`. */
+export function stateToProject(state: ProjectState, here?: Here): ExportedProject {
   const problems: Problem[] = [];
   const check = <T>(file: string, schema: z.ZodType<T>, value: unknown): T | undefined => {
     const result = schema.safeParse(value);
@@ -450,7 +577,10 @@ export function stateToProject(state: ProjectState): ExportedProject {
 
   const project: Project = {
     manifest,
-    ...optional("assets", state.assets && check("assets.json", Assets, { assets: state.assets })),
+    ...optional(
+      "assets",
+      state.assets && check("assets.json", Assets, { assets: placedAssets(state, here) }),
+    ),
     ...optional(
       "libraries",
       state.libraries && check("libraries.json", Libraries, state.libraries),

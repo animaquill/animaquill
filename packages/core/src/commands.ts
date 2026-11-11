@@ -24,6 +24,8 @@ import {
   describeMissing,
   describeUnsupported,
   findTransition,
+  isElsewhere,
+  isSameHash,
   isSupported,
   mediaOfTrack,
   newId,
@@ -89,7 +91,9 @@ import {
   type TimelineState,
   type TrackState,
 } from "./model.ts";
+import { STORAGE, type Origin } from "./origin.ts";
 import { deepEqual } from "./patch.ts";
+import { StorageChange, setStorage } from "./places.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
 import { PropertyRename, convertedValue, movesOf } from "./rename.ts";
 import { isInUse } from "./references.ts";
@@ -129,6 +133,11 @@ export interface CommandDefinition<P = unknown> {
   readonly whileLocked?: boolean;
   /** Only people can do this, never an AI task. */
   readonly userOnly?: boolean;
+  /**
+   * Who else than people can do what only people can: a part of the editor that is no person, such
+   * as the uploads that write down where files went. Never an AI task.
+   */
+  readonly alsoBy?: readonly Origin[];
   /** Only people can use these parameters. */
   readonly userOnlyParams?: readonly string[];
 }
@@ -138,7 +147,7 @@ function define<S extends z.ZodType>(
   description: string,
   params: S,
   run: (draft: Draft, params: z.output<S>) => unknown,
-  options: Pick<CommandDefinition, "whileLocked" | "userOnly" | "userOnlyParams"> = {},
+  options: Pick<CommandDefinition, "whileLocked" | "userOnly" | "alsoBy" | "userOnlyParams"> = {},
 ): CommandDefinition {
   return { type, description, params, run: run as CommandDefinition["run"], ...options };
 }
@@ -450,6 +459,14 @@ function moveProperties(
   }
 }
 
+/** What `asset.add` takes: an asset of a file only here (the default), or in the person's own Git. */
+const AddedAsset = z.strictObject({
+  ...Asset.shape,
+  storage: z
+    .enum(["local", "git"], { error: "登记素材时只能是 local 或 git：放到别处要等上传完成后记下" })
+    .default("local"),
+});
+
 const ClipFields = Clip.omit({ id: true });
 const ClipInput = ClipFields.extend({ id: Id.optional() });
 const ClearableField = z.enum(["name", "offset", "loop", "hidden", "draft", "link", "sectionFit"]);
@@ -497,10 +514,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     { whileLocked: true, userOnly: true },
   ),
 
+  /**
+   * An asset of a file only here, or in the person's own Git: where else a file is kept, uploads
+   * write down once it got there (`asset.setStorage`), and files say.
+   */
   define(
     "asset.add",
-    "在项目里登记一个素材文件（路径、类型、存放方式），不会上传文件本身。",
-    z.strictObject({ id: Id.optional(), asset: Asset }),
+    "在项目里登记一个素材文件：名字、类型和它在项目里的路径。不会上传文件本身。",
+    z.strictObject({ id: Id.optional(), asset: AddedAsset }),
     (draft, { id, asset }) => {
       const key = id ?? newId("asset");
       if (entryOf(draft.state.assets, key)) fail("id-taken", `这个 ID 已经有素材了：${key}`);
@@ -512,6 +533,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
   /**
    * What an asset is called and found by, and where its file is and what it is: for a file that
    * moved or was replaced, as people agreed. Clips stay on the asset. No tags at all takes them away.
+   * Another file is only here: what the asset said about where else its file was is about the one
+   * before.
    */
   define(
     "asset.update",
@@ -535,6 +558,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
       );
       const merged: Record<string, unknown> = { ...found, ...defined };
       if (changes.tags?.length === 0) delete merged.tags;
+      const before = found?.hash;
+      const isAnotherFile =
+        before !== undefined && changes.hash !== undefined && !isSameHash(before, changes.hash);
+      if (isAnotherFile && found && isElsewhere(found.storage)) {
+        merged.storage = "local";
+        delete merged.url;
+      }
       const next = Asset.safeParse(merged);
       if (!next.success) {
         fail("invalid-value", `素材的新内容不对：${next.error.issues[0]?.message ?? ""}`);
@@ -558,7 +588,23 @@ export const COMMANDS: readonly CommandDefinition[] = [
         fail("asset-in-use", "还有片段或版本在用这个素材，要先换掉或删除它们");
       }
       draft.delete(["assets", asset]);
+      draft.delete(["places", asset]);
     },
+  ),
+
+  /**
+   * Where the file of an asset is kept besides here, for the content it has now, which `hash` has
+   * to be: an upload writes it down once the file got there and was checked, as `STORAGE`, which is
+   * nothing to undo. People only take it back to `local`, which they can undo. AI cannot do either:
+   * it cannot tell where a file is, and where it goes is for people to choose. It only writes down
+   * where the file is, never changes what the project shows, so it can happen while it is locked.
+   */
+  define(
+    "asset.setStorage",
+    "记下素材文件放在哪里：上传完成后由上传记下 lfs、platform 或 remote；用户把它改回只在本机（local）。",
+    StorageChange,
+    setStorage,
+    { whileLocked: true, userOnly: true, alsoBy: [STORAGE] },
   ),
 
   define("scene.add", "新建一个 HTML 场景（代码生成的画面），连同它的文件。", SceneAdd, addScene),

@@ -5,7 +5,7 @@
  * See the design of local projects, section 5.
  */
 import type { ProjectStore } from "@animaquill/core";
-import { isNoneOfIt, isProjectFile } from "@animaquill/core";
+import { elsewhereOf, isNoneOfIt, isProjectFile } from "@animaquill/core";
 import {
   FolderError,
   isRefusedByChrome,
@@ -16,8 +16,9 @@ import {
   type MediaStore,
 } from "@animaquill/host";
 import { isSameHash, type HashOptions } from "@animaquill/media";
-import type { Asset } from "@animaquill/schema";
+import type { Asset, Elsewhere } from "@animaquill/schema";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
+import type { HereOf } from "../storage/places.ts";
 
 /** Where files that people bring in go, in the folder of a project. */
 export const ASSETS_FOLDER = "assets";
@@ -51,6 +52,16 @@ export type AssetIssue =
       readonly kind: "changed";
       readonly asset: string;
       readonly path: string;
+    }
+  | {
+      /**
+       * Nothing at its path, and nowhere else in the folder or the browser, but the file is kept
+       * somewhere else, which it can be downloaded from: nothing is missing.
+       */
+      readonly kind: "elsewhere";
+      readonly asset: string;
+      readonly path: string;
+      readonly storage: Elsewhere;
     };
 
 /** Files read through for their hashes right now, which takes a while for a large video. */
@@ -81,6 +92,8 @@ export interface FolderAssetsOptions {
   readonly onProgress?: (progress: AssetProgress) => void;
   /** The clock, for tests. */
   readonly now?: () => number;
+  /** Where the project is, for what a file that is not here can be downloaded from. */
+  readonly here?: HereOf;
 }
 
 /** How fine the times of files can be, as on a FAT drive: a file changed within it may change again unseen. */
@@ -400,7 +413,9 @@ export class FolderAssets {
   /**
    * Compares every asset of the project with its file: what is not there, and what another file
    * took the place of. A missing one may be somewhere else in the folder, as after people moved it,
-   * which is the file of the same size and hash.
+   * which is the file of the same size and hash. The file of an asset that is kept somewhere else
+   * as well is here too, as people keep it: only where it is not, it can be downloaded instead, see
+   * `elsewhereOf`, and is not missing.
    */
   async check(store: ProjectStore): Promise<readonly AssetIssue[]> {
     const issues: AssetIssue[] = [];
@@ -409,22 +424,28 @@ export class FolderAssets {
       readonly path: string;
       readonly hash: string;
       readonly size: number;
+      readonly elsewhere: Elsewhere | undefined;
     }[] = [];
-    const all = Object.entries(store.getState().assets ?? {});
+    const state = store.getState();
+    const all = Object.entries(state.assets ?? {});
+    /** What is not here, but somewhere else that it can come from, or else missing. */
+    const notHere = (asset: string, path: string, elsewhere: Elsewhere | undefined): AssetIssue =>
+      elsewhere
+        ? { kind: "elsewhere", asset, path, storage: elsewhere }
+        : { kind: "missing", asset, path };
     try {
-      for (const [index, [asset, { path, hash, size, storage }]] of all.entries()) {
+      for (const [index, [asset, { path, hash, size }]] of all.entries()) {
         this.#checked = { done: index, total: all.length };
         this.#progressed();
-        // What is somewhere else on purpose has no file here.
-        if (storage === "remote") continue;
         const found = await this.fileAt(path);
         if (found.kind === "unknown") continue;
         if (found.kind === "missing") {
+          const elsewhere = elsewhereOf(state, asset, this.#options.here?.());
           const hidden = path.split("/").find(isRefusedByChrome);
           if (hidden !== undefined) issues.push({ kind: "missing", asset, path, hidden });
           else if (hash !== undefined && size !== undefined)
-            missing.push({ asset, path, hash, size });
-          else issues.push({ kind: "missing", asset, path });
+            missing.push({ asset, path, hash, size, elsewhere });
+          else issues.push(notHere(asset, path, elsewhere));
           continue;
         }
         if (hash !== undefined && !isSameHash(hash, found.hash)) {
@@ -437,9 +458,15 @@ export class FolderAssets {
     }
     if (missing.length > 0) {
       const places = await this.#lookFor(missing, store);
-      for (const { asset, path, hash } of missing) {
+      for (const { asset, path, hash, elsewhere } of missing) {
         const found = places.get(hash);
         const copy = await this.#options.browser.get(hash).catch(() => undefined);
+        // A file that is here after all, somewhere else in the folder or in the browser, is better
+        // than one to download.
+        if (found === undefined && !copy) {
+          issues.push(notHere(asset, path, elsewhere));
+          continue;
+        }
         issues.push({
           kind: "missing",
           asset,

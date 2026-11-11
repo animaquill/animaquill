@@ -27,6 +27,7 @@ import {
 import * as Y from "yjs";
 import { z } from "zod";
 import { isSourceFile } from "./import-file.ts";
+import { Place } from "./places.ts";
 import { isTooLargeSource } from "./source-size.ts";
 import { flatParts, isRetired, type Path } from "./structure.ts";
 
@@ -239,6 +240,9 @@ export function ruleAt(path: Path): Rule | undefined {
     case "assets":
       if (key === undefined) return LEVEL;
       return rest.length === 0 && isId(key) ? valueRule(by(Asset)) : undefined;
+    case "places":
+      if (key === undefined) return LEVEL;
+      return rest.length === 0 && isId(key) ? valueRule(by(Place)) : undefined;
     case "notes":
       if (key === undefined) return LEVEL;
       return rest.length === 0 && isId(key) ? valueRule(by(NOTE)) : undefined;

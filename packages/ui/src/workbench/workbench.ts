@@ -56,6 +56,7 @@ import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
 import { frameTime } from "../timeline/frames.ts";
 import type { ImportReport } from "../transfer/import.ts";
+import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
@@ -134,6 +135,13 @@ export class Workbench {
   readonly explorer = new ExplorerState();
   /** Which assets of the open project have no file, for the explorer and the assets tab. */
   readonly missingFiles: MissingFileWatch;
+  /**
+   * Where the open project is, as far as the places of files go, see `Here`: the repository it is
+   * kept in, and who is signed in. Nothing says that yet, which takes every place as it is written
+   * down: the uploads tell, once there are any (step 14.2③). Files the editor writes go by every
+   * place all the same, as merges of the folder do.
+   */
+  readonly here: HereOf = () => undefined;
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
@@ -502,6 +510,7 @@ export class Workbench {
           await this.cloud?.forget(id);
         },
         showProblems: () => this.layout.openPanel("problems"),
+        here: () => this.here(),
         assetFiles: {
           useNewFile: (asset) => this.media.useNewFile(asset),
           usePlace: (asset, path) => this.media.usePlace(asset, path),
@@ -541,7 +550,9 @@ export class Workbench {
       this.session.subscribe(follow);
       this.projectFolders?.subscribe(follow);
     }
-    this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders);
+    this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders, () =>
+      this.here(),
+    );
     this.#keepPresence(host);
     this.proxies =
       this.projectFolders && options.proxyMaker
@@ -997,7 +1008,7 @@ export class Workbench {
   }
 
   /** An import says all of this once. The list is where it can still be found afterwards. */
-  #noteImport({ missing, damaged, skipped, lost, warnings }: ImportReport): void {
+  #noteImport({ missing, elsewhere, damaged, skipped, lost, warnings }: ImportReport): void {
     const { t } = this;
     const origin = t("problems.origin.import");
     const said = (kind: "missing" | "damaged" | "skipped", names: readonly string[]) =>
@@ -1009,6 +1020,23 @@ export class Workbench {
     this.problems.noteImport([
       ...lost.map((text) => ({ severity: "warning" as const, text, origin })),
       ...said("missing", missing),
+      // Many files that can come from where they are kept are one line, not one each.
+      ...(elsewhere.length > 1
+        ? [
+            {
+              severity: "warning" as const,
+              text: t("problems.import.elsewhereMany", { count: elsewhere.length }),
+              origin,
+            },
+          ]
+        : elsewhere.map(({ name, storage, url }) => ({
+            severity: "warning" as const,
+            text: t("problems.import.elsewhere", {
+              name,
+              download: downloadFrom(t, storage, url),
+            }),
+            origin,
+          }))),
       ...said("damaged", damaged),
       ...said("skipped", skipped),
       ...warnings.map(({ severity, message, file, path }) => ({

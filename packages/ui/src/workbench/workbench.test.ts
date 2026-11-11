@@ -1043,6 +1043,43 @@ describe("problems", () => {
     await importing;
     expect(workbench.problems.getSnapshot().warnings).toBeGreaterThan(0);
   });
+
+  it("of an import say in one line that files can come from where they are kept, also many", async () => {
+    const said = async (count: number) => {
+      const store = ProjectStore.create(createProject({ name: "文件夹里的项目" }));
+      const files = store.exportFiles().files;
+      const hash = "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=";
+      const kept = (id: number) => ({
+        kind: "image",
+        path: `assets/${id}.png`,
+        storage: "platform",
+        hash,
+        size: 0,
+      });
+      const assets = Object.fromEntries(
+        Array.from({ length: count }, (_, id) => [`kept${id}`, kept(id)]),
+      );
+      const gone = { kind: "image", path: "assets/gone.png", storage: "local" };
+      files.set("assets.json", JSON.stringify({ assets: { ...assets, gone } }));
+      const { workbench } = setup({
+        ...noFolders,
+        chooseSource: async () => memorySource("文件夹", files),
+      });
+      const importing = workbench.importProject();
+      await vi.waitFor(() => expect(workbench.problems.getSnapshot().imported).toBe(true));
+      workbench.dialogs.answer(true);
+      await importing;
+      return workbench.problems.getSnapshot().problems.map(({ text }) => text);
+    };
+    expect(await said(1)).toEqual(
+      expect.arrayContaining(["problems.import.missing", "problems.import.elsewhere"]),
+    );
+    const many = await said(5);
+    expect(many.filter((text) => text.startsWith("problems.import.elsewhere"))).toEqual([
+      "problems.import.elsewhereMany",
+    ]);
+    expect(many).toContain("problems.import.missing");
+  });
 });
 
 describe("moving projects", () => {

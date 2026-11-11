@@ -2,11 +2,13 @@ import {
   INCOMPLETE_FILE,
   MAX_SOURCE_BYTES,
   isSourceFile,
+  placedAsset,
   type ProjectStore,
 } from "@animaquill/core";
 import type { MediaStore, TargetFolder } from "@animaquill/host";
 import { hashFile, isSameHash } from "@animaquill/media";
 import { MANIFEST_FILE, readProject, type Problem } from "@animaquill/schema";
+import { elsewhereFile, type ElsewhereFile } from "../storage/places.ts";
 
 /**
  * Lies in a folder for as long as an export is going on, and reading a folder knows it: should the
@@ -34,6 +36,8 @@ export interface ExportOptions {
 export interface ExportReport {
   /** Assets whose files this host does not have, so they are not in the folder. */
   readonly missing: readonly string[];
+  /** Of those, the ones that can come from where they are kept, see `elsewhereFile`. */
+  readonly elsewhere: readonly ElsewhereFile[];
   /** Files left out because their path is the path of something else, at least on some disks. */
   readonly clashing: readonly string[];
   /** Files left out because a file cannot have that path here. */
@@ -68,7 +72,8 @@ export async function exportProject(
 ): Promise<ExportReport> {
   // One moment in time: what happens to the project from here on is not part of this export.
   const { files, problems } = store.exportFiles();
-  const { assets = {} } = store.getState();
+  const state = store.getState();
+  const { assets = {} } = state;
 
   /** What goes where. On some disks a second file would quietly replace the first. */
   const places = new Map<string, Copy | undefined>(
@@ -88,6 +93,7 @@ export async function exportProject(
   }
 
   const missing: string[] = [];
+  const elsewhere: ElsewhereFile[] = [];
   const copies: Copy[] = [];
   for (const [id, asset] of Object.entries(assets)) {
     const label = asset.name ?? asset.path ?? id;
@@ -97,8 +103,12 @@ export async function exportProject(
     if (other && other.path === asset.path && (await isSameFile(other, asset.hash))) continue;
     const { hash } = asset;
     const file = hash === undefined ? undefined : await media.get(hash);
-    if (!file || hash === undefined) missing.push(label);
-    else if (places.has(place)) clashing.push(label);
+    if (!file || hash === undefined) {
+      const placed = placedAsset(state, id);
+      const kept = placed && elsewhereFile(placed, label);
+      if (kept) elsewhere.push(kept);
+      else missing.push(label);
+    } else if (places.has(place)) clashing.push(label);
     else {
       const copy = { path: asset.path, file, label, hash };
       places.set(place, copy);
@@ -138,6 +148,7 @@ export async function exportProject(
   const errors = readProject(readable).problems.filter(({ severity }) => severity === "error");
   return {
     missing,
+    elsewhere,
     clashing,
     refused: refused.map(({ label }) => label),
     tooLarge: documents

@@ -1,6 +1,7 @@
 import {
   missingIn,
   orderedTracks,
+  placedAsset,
   usesOf,
   type MissingResource,
   type ResourceUse,
@@ -18,6 +19,7 @@ import type { ResourceIconProps } from "../resources/ResourceBrowser.tsx";
 import { parseTags, type ProjectItem } from "../resources/project-resources.ts";
 import type { Resource } from "../resources/resources.ts";
 import { resourceTypeName } from "../resources/type-names.ts";
+import { downloadFrom } from "../storage/places.ts";
 import { formatSize } from "../transfer/transfer.ts";
 import { textOf } from "../properties/names.ts";
 import { EffectIcon } from "./EffectsPanel.tsx";
@@ -405,7 +407,11 @@ function ResourceDetails({
         t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } }),
       ]);
       const file = missing.get(item.id);
-      if (file) {
+      if (file?.elsewhere) {
+        const url = state && placedAsset(state, item.id, workbench.here())?.url;
+        const download = downloadFrom(t, file.elsewhere, url);
+        problems.push(t("explorer.elsewhere", { path: file.path, download }));
+      } else if (file) {
         problems.push(
           t("explorer.missing.file", { path: file.path, interpolation: { escapeValue: false } }),
         );

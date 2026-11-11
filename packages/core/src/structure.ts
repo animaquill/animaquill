@@ -53,6 +53,15 @@ const version = flat({ sections: flat(), clips: flat({ [ANY]: flat({ properties 
 const CONTAINERS: Tree = {
   manifest: fields,
   assets: flat(),
+  /**
+   * Where the file of an asset is kept, by the id of the asset, as `asset.setStorage` wrote it
+   * down: what an upload says once the file got there, or people to keep it here only. An asset is
+   * one value, and uploads finish while people rename it, also on another computer: this sits next
+   * to it, so that neither change takes the other one away. It only counts for the file it was
+   * written down for, and where it is bound to, see places.ts and `withPlace`. Files have it in the
+   * asset, as `storage` and `url`.
+   */
+  places: flat(),
   notes: flat(),
   scenes: fields,
   sounds: fields,

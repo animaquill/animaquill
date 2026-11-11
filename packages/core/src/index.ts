@@ -294,9 +294,13 @@ export {
   clipStateOf,
   effectsOf,
   effectStates,
+  elsewhereOf,
   entryOf,
+  isBoundHere,
   orderedSections,
   orderedTracks,
+  placedAsset,
+  placedAssets,
   projectFrameRate,
   projectToState,
   sourceLength,
@@ -305,10 +309,12 @@ export {
   timelineLength,
   timelineToState,
   trackKindFor,
+  withPlace,
   type ClipEffect,
   type ClipState,
   type EffectState,
   type ExportedProject,
+  type Here,
   type ProjectState,
   type SectionState,
   type TimelineState,
@@ -317,6 +323,7 @@ export {
   type TrackState,
 } from "./model.ts";
 export type { Patch } from "./patch.ts";
+export { Place } from "./places.ts";
 export {
   VALUE_LIMIT,
   checkWhole,
@@ -344,6 +351,7 @@ export {
 export {
   MAX_BATCHES,
   ProjectStore,
+  STORAGE,
   USER,
   aiTask,
   folderBatch,

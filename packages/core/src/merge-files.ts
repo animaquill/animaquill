@@ -3,6 +3,8 @@ import {
   LanguageId,
   MANIFEST_FILE,
   RelativePath,
+  isElsewhere,
+  isSameHash,
   retiredFadesIn,
   type Libraries,
   type Overrides,
@@ -16,12 +18,14 @@ import {
   entryOf,
   orderedSections,
   orderedTracks,
+  placedAssets,
   stateToProject,
   type ProjectState,
   type TimelineState,
 } from "./model.ts";
 import { USER } from "./origin.ts";
 import { deepEqual, getIn, settled, type Patch } from "./patch.ts";
+import { writeAssets } from "./places.ts";
 import { isNoneOfIt } from "./read-folder.ts";
 import { danglingAt } from "./references.ts";
 import { isTooLargeSource } from "./source-size.ts";
@@ -235,6 +239,8 @@ function fileOf(path: Path): string {
     case "manifest":
       return MANIFEST_FILE;
     case "assets":
+    // Where the file of an asset is kept is in its entry in assets.json, see `writeAssets`.
+    case "places":
       return "assets.json";
     case "libraries":
       return "libraries.json";
@@ -292,11 +298,11 @@ function withoutVersions(timeline: TimelineState | undefined): Timeline | undefi
   return rest;
 }
 
-/** What the project holds of a file. */
-const valueIn = (state: ProjectState, { kind, at }: Place): unknown =>
-  kind === "timeline"
-    ? withoutVersions(entryOf(state.timelines, at[1] as string))
-    : getIn(state, at);
+/** What the project holds of a file, as the file has it: assets with where their files are. */
+function valueIn(state: ProjectState, { kind, at }: Place): unknown {
+  if (kind === "timeline") return withoutVersions(entryOf(state.timelines, at[1] as string));
+  return kind === "assets" ? placedAssets(state) : getIn(state, at);
+}
 
 /** Only so that a version can be read when its timeline is not there. */
 const NO_TIMELINE: TimelineState = {
@@ -437,7 +443,76 @@ function mergeChanged(
     conflicts.push({ path, theirs });
     return ours;
   }
+  if (path.length === 2 && path[0] === "assets")
+    return mergeAsset(path, base, ours, theirs, conflicts);
   return mergeEntries(path, base, ours, theirs, conflicts);
+}
+
+/**
+ * What goes with the file of an asset: another file is of another size, and somewhere else. Where
+ * it is kept is about the content that `hash` says, so these come from one side as a whole.
+ */
+const FILE_FIELDS: readonly string[] = ["hash", "size", "storage", "url"];
+
+const assetPart = (value: unknown, keep: boolean): Plain =>
+  Object.fromEntries(
+    Object.entries(isPlain(value) ? value : {}).filter(
+      ([key]) => FILE_FIELDS.includes(key) === keep,
+    ),
+  );
+
+/** Whether two hashes say one content, also both none, however a tool wrote them. */
+const isSameContent = (a: unknown, b: unknown): boolean =>
+  a === b || (typeof a === "string" && typeof b === "string" && isSameHash(a, b));
+
+/**
+ * An asset, as merges go: its own fields one by one, and its file as a whole, from the side that has
+ * another one, see `FILE_FIELDS`. Where both have another file, the editor's stays, and that is a
+ * conflict. Where the folder has another file and says of it what was said of the one before, that
+ * is about the one before: the new file is only here, as when people replace a file.
+ */
+function mergeAsset(
+  path: Path,
+  base: unknown,
+  ours: unknown,
+  theirs: unknown,
+  conflicts: Found[],
+): Plain {
+  const [was, mine, theirsNow] = [base, ours, theirs].map((value) => fieldOf(value, "hash"));
+  const isOurs = !isSameContent(was, mine);
+  const isTheirs = !isSameContent(was, theirsNow);
+  let file: Plain;
+  if (isTheirs && !isOurs) {
+    file = assetPart(theirs, true);
+    const before = assetPart(base, true);
+    const isSaid = file.storage !== before.storage || file.url !== before.url;
+    if (!isSaid && typeof file.storage === "string" && isElsewhere(file.storage)) {
+      delete file.url;
+      file.storage = "local";
+    }
+  } else if (isOurs && !isTheirs) {
+    file = assetPart(ours, true);
+  } else if (isOurs && isTheirs && !isSameContent(mine, theirsNow)) {
+    conflicts.push({ path: [...path, "hash"], theirs: theirsNow });
+    file = assetPart(ours, true);
+  } else {
+    file =
+      mergeEntries(
+        path,
+        assetPart(base, true),
+        assetPart(ours, true),
+        assetPart(theirs, true),
+        conflicts,
+      ) ?? {};
+  }
+  const rest = mergeEntries(
+    path,
+    assetPart(base, false),
+    assetPart(ours, false),
+    assetPart(theirs, false),
+    conflicts,
+  );
+  return { ...rest, ...file };
 }
 
 /**
@@ -679,6 +754,10 @@ function put(draft: Draft, { kind, at }: Place, value: unknown): boolean {
     }
     return true;
   }
+  if (kind === "assets") {
+    writeAssets(draft, value as ProjectState["assets"]);
+    return true;
+  }
   const owner = entryOf(draft.state.timelines, at[1] as string);
   if (kind === "overrides" && !owner) return value === undefined;
   if (kind === "timeline" && value !== undefined) {
@@ -756,6 +835,8 @@ function named(state: ProjectState, path: Path): string {
       return id ? `项目的${FIELD_NAMES[id] ?? ` ${id}`}` : "项目信息";
     case "assets":
       return id ? ofField(`素材“${nameIn(state.assets, id)}”`) : "素材表";
+    case "places":
+      return id ? `素材“${nameIn(state.assets, id)}”的存放位置` : "素材表";
     case "notes":
       return id ? ofField(`批注“${id}”`) : "批注";
     case "libraries":
@@ -1015,6 +1096,7 @@ function partOf(state: ProjectState, places: readonly Place[]): ProjectState {
   for (const { kind, at } of places) {
     const id = at[1] as string;
     if (kind === "assets" && state.assets) part.assets = state.assets;
+    if (kind === "assets" && state.places) part.places = state.places;
     if (kind === "libraries" && state.libraries) part.libraries = state.libraries;
     if (kind === "lock" && state.lock) part.lock = state.lock;
     if (kind === "notes" && state.notes) part.notes = state.notes;
@@ -1419,7 +1501,8 @@ export function planMerge(
   /** Whether the project holds what a file has, which is asked more than once. See `isSame`. */
   const sameAsFile = new Map<Doc, { readonly held: unknown; readonly same: boolean }>();
   const holdsFile = (state: ProjectState, doc: Doc) => {
-    const held = getIn(state, doc.at);
+    // Assets as the file has them, with their places: the same object while neither changed.
+    const held = doc.kind === "assets" ? placedAssets(state) : getIn(state, doc.at);
     const was = sameAsFile.get(doc);
     if (was && was.held === held && typeof held === "object") return was.same;
     const same = isSame(doc, valueIn(state, doc), doc.next);

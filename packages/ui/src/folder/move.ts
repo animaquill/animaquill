@@ -19,7 +19,13 @@
  * `FolderMove.release`. Nothing here asks people anything or touches the page: that is
  * `ProjectFolders`.
  */
-import { INCOMPLETE_FILE, ProjectStore, inRanks, type CommandCall } from "@animaquill/core";
+import {
+  INCOMPLETE_FILE,
+  ProjectStore,
+  inRanks,
+  placedAsset,
+  type CommandCall,
+} from "@animaquill/core";
 import {
   FolderError,
   MAX_NAME_LENGTH,
@@ -48,6 +54,7 @@ import {
 } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
+import { elsewhereFile, type ElsewhereFile } from "../storage/places.ts";
 import { ImportRefused, readProjectFolder, type ProjectFolder } from "../transfer/import.ts";
 import { FolderAssets } from "./assets.ts";
 
@@ -148,6 +155,8 @@ export type MoveResult =
       readonly record: FolderRecord;
       /** Assets whose files were not in the browser before, so that the folder does not have them. */
       readonly missing: readonly string[];
+      /** Of those, the ones that can come from where they are kept, see `elsewhereFile`. */
+      readonly elsewhere: readonly ElsewhereFile[];
       /** Assets whose files the browser had as something else: the folder does not have them. */
       readonly damaged: readonly string[];
       /** Assets whose files went to paths of their own, which the project took in one step. */
@@ -243,6 +252,7 @@ interface Plan {
   readonly copies: readonly Copy[];
   readonly covered: readonly Covered[];
   readonly missing: readonly string[];
+  readonly elsewhere: readonly ElsewhereFile[];
   readonly renames: readonly Rename[];
 }
 
@@ -794,6 +804,7 @@ export class FolderMove {
       kind: "moved",
       record: settled,
       missing: plan.missing,
+      elsewhere: plan.elsewhere,
       damaged: [...trail.damaged.values()],
       renamed: plan.renames,
       copies,
@@ -860,6 +871,7 @@ export class FolderMove {
     const copies: Copy[] = [];
     const covered: Covered[] = [];
     const missing: string[] = [];
+    const elsewhere: ElsewhereFile[] = [];
     for (const [id, asset] of Object.entries(state.assets ?? {})) {
       const { path, hash } = asset;
       const label = asset.name ?? path ?? id;
@@ -883,7 +895,10 @@ export class FolderMove {
       }
       const file = hash === undefined ? undefined : await media.get(hash);
       if (!file || hash === undefined) {
-        missing.push(label);
+        const placed = placedAsset(state, id);
+        const kept = placed && elsewhereFile(placed, label);
+        if (kept) elsewhere.push(kept);
+        else missing.push(label);
         continue;
       }
       places.set(place, { path, hash });
@@ -894,7 +909,7 @@ export class FolderMove {
     if (clashing.size > 0) {
       return { refusal: { kind: "clashing", paths: [...clashing].toSorted() } };
     }
-    return { files, sizes, copies, covered, missing, renames };
+    return { files, sizes, copies, covered, missing, elsewhere, renames };
   }
 
   /**

@@ -4224,7 +4224,9 @@ describe("taking back what something else came to depend on", () => {
       const { assets } = store.getState();
       rewrite(store, "assets.json", without("studio-loop"));
       const broken = store.getState();
-      const asset = assets?.["studio-loop"];
+      // Its file again, here: what people bring in is only here, wherever it was before.
+      const { url: _url, ...before } = assets?.["studio-loop"] ?? {};
+      const asset = { ...before, storage: "local" };
       success(store.execute({ type: "asset.add", params: { id: "studio-loop", asset } }));
       expect(store.getState()).not.toEqual(broken);
       taken(store.undo());

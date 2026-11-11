@@ -19,13 +19,17 @@
     "narration-en": {
       "kind": "audio",
       "path": "assets/voice/en.flac",
-      "storage": "lfs",
+      "storage": "platform",
+      "hash": "sha256-UaRlWzVDiJrgB8CHNeq2VDHD-J0Xdq2jP9bQj0Ie4mI=",
+      "size": 1534208,
       "info": { "duration": "26", "sampleRate": 48000, "channels": 1 }
     },
     "narration-zh": {
       "kind": "audio",
       "path": "assets/voice/zh.flac",
       "storage": "lfs",
+      "hash": "sha256-6bOrTGQvq9OQLIpDEjsqX_0xemtgGl_19ESFUq4taEg=",
+      "size": 1180672,
       "info": { "duration": "20", "sampleRate": 48000, "channels": 1 }
     },
     "raw-footage": { "kind": "video", "path": "assets/raw.mov", "storage": "local" },

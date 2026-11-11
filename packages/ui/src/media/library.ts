@@ -305,13 +305,13 @@ export class MediaLibrary {
 
   /**
    * Whether this browser has the file of an asset, for a project that is kept in the browser: one
-   * can come in without its files. Those of a project folder are up to `ProjectFolders`.
+   * can come in without its files. Those of a project folder are up to `ProjectFolders`. A file
+   * that is kept somewhere else too is kept here as well, so where it is says nothing about this.
    */
   async hasFile(assetId: string): Promise<boolean> {
     const store = this.#store;
     const asset = store?.getState().assets?.[assetId];
     if (!store || !asset) return false;
-    if (asset.storage === "remote") return true;
     if (asset.hash === undefined) return false;
     return (await this.#media(store).get(asset.hash)) !== undefined;
   }

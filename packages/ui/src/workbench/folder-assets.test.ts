@@ -3,7 +3,7 @@
  * in, which go into the folder and never into the browser, using what is in the folder already,
  * and what happens when files change, move or go away outside.
  */
-import type { ProjectStore } from "@animaquill/core";
+import { STORAGE, type ProjectStore } from "@animaquill/core";
 import { hashFile } from "@animaquill/media";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fixture, putProject } from "../folder/folder-support.ts";
@@ -306,6 +306,31 @@ describe("the files of the assets of a project folder", () => {
     await vi.waitFor(() => expect(folderProblems(workbench)).toEqual([]), { timeout: 3000 });
   });
 
+  it("can come from where an upload put them, and are missing once people keep them here only", async () => {
+    const { disk, workbench, store } = await newFolderProject();
+    const [id] = await workbench.media.importFiles([new File(["红色的视频"], "红色.webm")]);
+    const hash = assetOf(store, id)?.hash as string;
+    disk.remove(`${ROOT}/assets/红色.webm`);
+    await vi.waitFor(() => expect(folderProblems(workbench)).toHaveLength(1), { timeout: 3000 });
+    expect(folderProblems(workbench)[0]).toMatchObject({ text: "folder.asset.missing" });
+    // Only where the file is kept changes: that is enough to look again.
+    const params = { asset: id, storage: "platform", hash, owner: "u-1" };
+    expect(store.execute({ type: "asset.setStorage", params }, { origin: STORAGE }).ok).toBe(true);
+    await vi.waitFor(
+      () =>
+        expect(folderProblems(workbench)[0]?.text).toBe(
+          'folder.asset.elsewhere {"download":"storage.download.platform"}',
+        ),
+      { timeout: 3000 },
+    );
+    const here = { asset: id, storage: "local", hash };
+    expect(store.execute({ type: "asset.setStorage", params: here }).ok).toBe(true);
+    await vi.waitFor(
+      () => expect(folderProblems(workbench)[0]?.text).toBe("folder.asset.missing"),
+      { timeout: 3000 },
+    );
+  });
+
   it("are looked at again once the editor may get at the folder again", async () => {
     const { disk, workbench, store } = await newFolderProject();
     await workbench.media.importFiles([new File(["红色的视频"], "红色.webm")]);
@@ -429,13 +454,21 @@ describe("a project folder that comes into this browser", () => {
       if (asset.hash) expect(await media.get(asset.hash)).toBeUndefined();
     }
     await workbench.projectFolders?.assetsChecked();
-    const missing = folderProblems(workbench).map(({ file }) => file);
-    // raw.mov is there, and the one somewhere else on purpose is not listed.
-    expect(missing).toEqual(
-      expect.arrayContaining(["assets/interview.mp4", "assets/voice/en.flac"]),
-    );
-    expect(missing).not.toContain("assets/raw.mov");
-    expect(missing).not.toContain("assets/loop.wav");
+    const problems = folderProblems(workbench);
+    const listed = new Map(problems.map(({ file, text }) => [file, text]));
+    // raw.mov is there. Of what is not, a file only here, or one that nothing could check where it
+    // would come from (an address alone), is missing.
+    expect(listed.has("assets/raw.mov")).toBe(false);
+    for (const path of ["assets/fonts/sans.woff2", "assets/logo.svg", "assets/loop.wav"]) {
+      expect(listed.get(path), path).toBe("folder.asset.missing");
+    }
+    // What can come from where it is kept is no file of its own on the list: all of it is one line.
+    for (const path of ["assets/interview.mp4", "assets/voice/zh.flac", "assets/voice/en.flac"]) {
+      expect(listed.has(path), path).toBe(false);
+    }
+    expect(problems.filter(({ file }) => file === undefined).map(({ text }) => text)).toEqual([
+      'folder.asset.elsewhereMany {"count":3}',
+    ]);
     // It reads the one that is there from the folder.
     const hash = store.getState().assets?.["raw-footage"]?.hash as string;
     expect(await (await workbench.projects.media(key).get(hash))?.text()).toBe("原始素材");

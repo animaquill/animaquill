@@ -195,8 +195,18 @@ describe("a project of the browser that moves into a folder", () => {
     const result = await moveIt(context, key);
     expect(result.kind).toBe("moved");
     if (result.kind !== "moved") return;
-    expect(result.missing).toContain("采访");
-    expect(result.missing).toHaveLength(7);
+    // Of those, what can come from where it is kept is said apart, with where that is.
+    expect(result.missing).toEqual([
+      "assets/fonts/sans.woff2",
+      "assets/logo.svg",
+      "assets/raw.mov",
+      "assets/loop.wav",
+    ]);
+    expect(result.elsewhere).toEqual([
+      { name: "采访", storage: "lfs" },
+      { name: "assets/voice/en.flac", storage: "platform" },
+      { name: "assets/voice/zh.flac", storage: "lfs" },
+    ]);
     expect(result.copies).toBe(0);
     const onDisk = filesOf(context.disk, `${PLACE}/片子`);
     for (const [path, text] of files) expect(onDisk.get(path), path).toBe(text);

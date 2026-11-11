@@ -291,6 +291,7 @@
     "exported": "项目保存到了你选的位置，文件夹叫“{{folder}}”。在别的浏览器或电脑上用“导入项目文件夹”选择它，就能把项目带过去。",
     "exportedArchive": "这个浏览器不能写入文件夹，项目打包成了“{{folder}}”，正在下载。解压后用“导入项目文件夹”选择解压出来的文件夹，就能把项目带回来。",
     "exportMissing": "这些素材的文件不在这个浏览器里，没有导出",
+    "exportElsewhere": "这些素材的文件不在这个浏览器里，没有导出，可以从它们存放的地方下载",
     "exportClashing": "这些文件的路径和项目里别的文件相同，有的系统不分大小写，会互相覆盖，所以没有导出",
     "exportRefused": "浏览器不允许这样的名字写进文件夹，这些文件没有导出",
     "exportProblems": "这些内容有问题，这个文件夹再导入时可能被拒绝，或者要跳过一部分",
@@ -345,6 +346,8 @@
     "importHint": "用到这些素材的片段暂时没有画面或声音。在资源管理器的“缺失的资源”里重新找到文件，或者在素材面板里导入同样的文件，就能补上。",
     "copyName": "{{name}}（副本）",
     "importMissing": "这些素材的文件不在文件夹里",
+    "importElsewhere": "这些素材的文件不在文件夹里，可以从它们存放的地方下载",
+    "elsewhereItem": "{{name}}：{{download}}",
     "importDamaged": "这些素材的文件和项目记录的内容不一样，可能损坏了，没有导入",
     "importLost": "这些内容没有带入",
     "importLostHint": "这个项目是不完整的，原来的文件夹先不要删。",
@@ -1343,6 +1346,8 @@
     },
     "import": {
       "missing": "素材的文件不在文件夹里：{{name}}",
+      "elsewhere": "素材的文件不在文件夹里，{{download}}：{{name}}",
+      "elsewhereMany": "{{count}} 个素材的文件不在文件夹里，可以从它们存放的地方下载。资源管理器里每个素材都写着从哪里下载。",
       "damaged": "素材的文件和项目记录的内容不一样，没有导入：{{name}}",
       "skipped": "项目用不上这个文件，没有带进来：{{name}}"
     },
@@ -1740,6 +1745,8 @@
     "removeLikeEditor": "按编辑器删掉它（先备份）",
     "asset": {
       "missing": "素材文件不在这里了。把它放回原处，或者重新拖进来。",
+      "elsewhere": "素材文件不在这台电脑上，{{download}}。",
+      "elsewhereMany": "{{count}} 个素材的文件不在这台电脑上，可以从它们存放的地方下载。资源管理器里每个素材都写着从哪里下载。",
       "hidden": "素材文件读不到，可能是因为名字里的“{{name}}”Chrome 不让网页看到。在电脑上给它改个名字，再拖进来。",
       "moved": "素材文件不在这里了，但在 {{found}} 找到了一模一样的文件。",
       "usePlace": "改用这个位置",
@@ -1814,6 +1821,7 @@
       "release": "释放 {{size}}",
       "keep": "先留着",
       "missing": "这些素材的文件移之前就不在浏览器里，文件夹里也没有",
+      "elsewhere": "这些素材的文件移之前就不在浏览器里，文件夹里也没有，可以从它们存放的地方下载",
       "damaged": "这些素材在浏览器里的文件坏了，和项目记下的不一样，没有写进文件夹",
       "renamed": "这些素材文件的路径在文件夹里不能用，换了路径（撤销可以改回来）",
       "renamedItem": "{{from}} → {{to}}",
@@ -1978,6 +1986,7 @@
     "added": "已加到 {{tracks}}，{{start}}",
     "failed": "没能加到时间轴上，再试一次",
     "missing": "文件找不到",
+    "elsewhere": "可以下载",
     "length": "时长 {{length}}"
   },
   "resourcePage": {
@@ -2093,6 +2102,7 @@
       "sound": "项目里没有这个声音了（{{id}}），但还有片段在用。",
       "library": "素材库“{{library}}”里的 {{item}}：这一版还不能用素材库。"
     },
+    "elsewhere": "这台电脑上没有这个文件：{{path}}。{{download}}。",
     "missingName": {
       "asset": "不在了的素材 {{id}}",
       "scene": "不在了的场景 {{id}}",
@@ -2449,5 +2459,13 @@
     "replaceChanged": "GitHub 上的文件又变了，请再看一下再决定。",
     "archiveFailed": "没能开始存档：{{reason}}",
     "archiveWait": "1 分钟内只能存一次档，{{count}} 秒后自动存。"
+  },
+  "storage": {
+    "download": {
+      "lfs": "可以从 GitHub 大文件存储下载",
+      "platform": "可以从云端空间下载",
+      "remote": "可以从 {{host}} 下载",
+      "remoteUnknown": "可以从它的网址下载"
+    }
   }
 }

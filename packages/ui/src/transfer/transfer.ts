@@ -2,6 +2,7 @@ import type { FolderAccess, ProjectLibrary, SourceFolder, TargetFolder } from "@
 import type { Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { DialogDetail, Dialogs, ProgressDialog } from "../workbench/dialogs.ts";
+import { downloadableItems } from "../storage/places.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { INCOMPLETE_FILE, exportProject, type ExportReport, type TransferStep } from "./export.ts";
@@ -206,13 +207,14 @@ export class ProjectTransfer {
 
   async #announceExport(target: TargetFolder, report: ExportReport) {
     const t = this.#t;
-    const { missing, clashing, refused, tooLarge, problems } = report;
+    const { missing, elsewhere, clashing, refused, tooLarge, problems } = report;
     const message =
       target.kind === "archive"
         ? t("transfer.exportedArchive", { folder: target.name })
         : t("transfer.exported", { folder: target.name });
     const left = [
       this.#list(t("transfer.exportMissing"), missing),
+      this.#list(t("transfer.exportElsewhere"), downloadableItems(t, elsewhere)),
       this.#list(t("transfer.exportClashing"), clashing),
       this.#list(t("transfer.exportRefused"), refused),
       this.#list(t("transfer.exportProblems"), problems.map(this.#describe)),
@@ -384,10 +386,11 @@ export class ProjectTransfer {
 
   async announceImport(report: ImportReport): Promise<void> {
     const t = this.#t;
-    const { name, copied, missing, damaged, skipped, lost, warnings } = report;
+    const { name, copied, missing, elsewhere, damaged, skipped, lost, warnings } = report;
     const details = [
       this.#list(t("transfer.importLost"), lost),
       this.#list(t("transfer.importMissing"), missing),
+      this.#list(t("transfer.importElsewhere"), downloadableItems(t, elsewhere)),
       this.#list(t("transfer.importDamaged"), damaged),
       this.#list(t("transfer.importSkipped"), skipped),
       this.#list(t("transfer.importWarnings"), warnings.map(this.#describe)),

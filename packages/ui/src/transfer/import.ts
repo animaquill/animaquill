@@ -12,6 +12,7 @@ import type { FolderFile, ProjectLibrary, SourceFolder } from "@animaquill/host"
 import { hashFile, isSameHash } from "@animaquill/media";
 import { newId, type Problem, type Project } from "@animaquill/schema";
 import type { TFunction } from "i18next";
+import { elsewhereFile, type ElsewhereFile } from "../storage/places.ts";
 import type { TransferStep } from "./export.ts";
 
 /** What a project still points at when something it needs stayed out. */
@@ -177,8 +178,10 @@ export interface ImportReport {
   readonly name: string;
   /** There was a project with this id, which stayed as it is, so this one has an id of its own. */
   readonly copied: boolean;
-  /** Assets whose file is not in the folder. */
+  /** Assets whose file is not in the folder, nor anywhere else. */
   readonly missing: readonly string[];
+  /** Assets whose file is not in the folder, but kept somewhere else, to download from there. */
+  readonly elsewhere: readonly ElsewhereFile[];
   /** Assets whose file is not the one the project knows, and stayed out. */
   readonly damaged: readonly string[];
   /** Files the project has no place for. */
@@ -271,12 +274,19 @@ export async function bringIn(
     // Another asset can have brought in the same content from a place of its own.
     const isCovered = (assetId: string, hash: string | undefined) =>
       damaged.has(assetId) || (hash !== undefined && stored.has(hash));
-    const missing =
+    const notHere =
       key === undefined
-        ? Object.entries(assets)
-            .filter(([assetId, asset]) => !isCovered(assetId, asset.hash))
-            .map(([, asset]) => asset.name ?? asset.path)
+        ? Object.entries(assets).filter(([assetId, asset]) => !isCovered(assetId, asset.hash))
         : [];
+    // What can come from where it is kept is not missing, see `elsewhereFile`.
+    const missing: string[] = [];
+    const elsewhere: ElsewhereFile[] = [];
+    for (const [, asset] of notHere) {
+      const label = asset.name ?? asset.path;
+      const kept = elsewhereFile(asset, label);
+      if (kept) elsewhere.push(kept);
+      else missing.push(label);
+    }
 
     const store = ProjectStore.create(
       {
@@ -294,6 +304,7 @@ export async function bringIn(
       name,
       copied,
       missing,
+      elsewhere,
       damaged: [...damaged.values()],
       skipped,
       lost: lost.map(({ consequence }) => consequence),

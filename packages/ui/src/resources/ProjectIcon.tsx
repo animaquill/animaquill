@@ -197,8 +197,8 @@ function AssetPicture({ id, asset, playing }: { id: string; asset: Asset; playin
 
 /**
  * The picture of a resource of the project, with how long it plays, how its proxy is and whether
- * its file is missing. Under the pointer a video goes through its frames and a sound shows where it
- * would be.
+ * its file is missing, or not here but somewhere it can be downloaded from. Under the pointer a
+ * video goes through its frames and a sound shows where it would be.
  */
 export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem>) {
   const { t } = useTranslation();
@@ -217,14 +217,19 @@ export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem
   const { asset, id } = item;
   const proxy = asset.hash === undefined ? undefined : proxySnapshot.states.get(asset.hash);
   const length = lengthOf(asset);
-  const gone = missing.has(id);
+  const file = missing.get(id);
   return (
     <>
       <AssetPicture key={restored} id={id} asset={asset} playing={playing} />
       {proxy && proxy.kind !== "checking" && proxy.kind !== "none" && (
         <ProxyBadge state={proxy} snapshot={proxySnapshot} />
       )}
-      {gone && <span className={styles.missing}>{t("assetPanel.missing")}</span>}
+      {file &&
+        (file.elsewhere ? (
+          <span className={styles.elsewhere}>{t("assetPanel.elsewhere")}</span>
+        ) : (
+          <span className={styles.missing}>{t("assetPanel.missing")}</span>
+        ))}
       {length && <span className={styles.length}>{length}</span>}
     </>
   );

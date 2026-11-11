@@ -53,3 +53,15 @@
   background: color-mix(in srgb, var(--aq-danger) 75%, #000);
   border-radius: 2px;
 }
+
+/* Not here, but kept somewhere else, which it can be downloaded from: nothing is missing. */
+.elsewhere {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  padding: 0 3px;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+  background: color-mix(in srgb, var(--aq-accent) 70%, #000);
+  border-radius: 2px;
+}

@@ -1,3 +1,4 @@
+import { USER } from "@animaquill/core";
 import { hashFile } from "@animaquill/media";
 import type { Asset } from "@animaquill/schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -144,6 +145,26 @@ describe("another file for an asset", () => {
     knowFile(await hashFile(CONTENT));
     expect(await library.hasFile("cover")).toBe(false);
     expect(await library.hasFile("nothing")).toBe(false);
+    await library.importFiles([CONTENT]);
+    expect(await library.hasFile("cover")).toBe(true);
+  });
+
+  it("does not take a file kept somewhere else for one that is here", async () => {
+    const { library, store } = await setup();
+    const url = "https://storage.example.com/cover.png";
+    const hash = await hashFile(CONTENT);
+    // Only files say where else a file is, and uploads.
+    const asset = {
+      kind: "image",
+      path: "assets/cover.png",
+      storage: "remote",
+      url,
+      hash,
+      size: 18,
+    };
+    const text = JSON.stringify({ assets: { cover: asset } });
+    expect(store.importFile("assets.json", text, { origin: USER }).ok).toBe(true);
+    expect(await library.hasFile("cover")).toBe(false);
     await library.importFiles([CONTENT]);
     expect(await library.hasFile("cover")).toBe(true);
   });

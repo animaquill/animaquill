@@ -708,4 +708,16 @@ describe("the sample project", () => {
     const written = new Map([...writeProject(reading.project), ...Object.entries(reading.sources)]);
     expect(written).toEqual(texts);
   });
+
+  it("keeps all its assets where one is in Git LFS without its hash and size, as it was before", async () => {
+    const fixture = loadFixture("v1");
+    const document = JSON.parse(fixture.get("assets.json") as string);
+    delete document.assets["narration-zh"].hash;
+    delete document.assets["narration-zh"].size;
+    fixture.set("assets.json", JSON.stringify(document));
+    const reading = await read(fixture);
+    expect(reading.lost).toEqual([]);
+    expect(reading.project.assets?.assets["narration-zh"]).toMatchObject({ storage: "lfs" });
+    expect(Object.keys(reading.project.assets?.assets ?? {})).toHaveLength(7);
+  });
 });

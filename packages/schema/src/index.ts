@@ -2,6 +2,7 @@ export {
   Color,
   Duration,
   ExtensionName,
+  HttpsUrl,
   Id,
   LanguageId,
   Rate,

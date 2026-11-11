@@ -20,8 +20,8 @@ import {
   type MergedFile,
   type MergeMemory,
 } from "./merge-files.ts";
-import { projectToState, stateToProject, type ProjectState } from "./model.ts";
-import { NOBODY, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
+import { projectToState, stateToProject, type Here, type ProjectState } from "./model.ts";
+import { NOBODY, STORAGE, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
 import { cloudOrigin } from "./sync.ts";
 import { Mutator, getIn, type Patch } from "./patch.ts";
 import { danglingAt } from "./references.ts";
@@ -37,7 +37,7 @@ import {
 } from "./structure.ts";
 import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
 
-export { USER, aiTask, folderBatch, type Origin };
+export { STORAGE, USER, aiTask, folderBatch, type Origin };
 
 const LOAD = "load";
 const REMOTE = "remote";
@@ -456,6 +456,11 @@ const PROJECT_LOCKED: CommandFailure = {
   message: "项目有不可编辑的标签，要先移除标签",
 };
 const NOTHING_TO_UNDO: CommandFailure = { code: "nothing-to-undo", message: "没有可以撤销的步骤" };
+/** What keeps no undo log only writes down where files are, see `STORAGE`. */
+const STORAGE_ONLY: CommandFailure = {
+  code: "storage-only",
+  message: "上传只记下文件放在哪里，不改文件",
+};
 const ONE_AT_A_TIME: CommandFailure = {
   code: "one-at-a-time",
   message: "自己的改动一步一步撤销",
@@ -779,6 +784,7 @@ export class ProjectStore {
   importFile(path: string, text: string, options: ImportOptions): ImportResult {
     // Code that does not say who wrote the file gets nothing that only a person can do.
     const origin = (options as ImportOptions | undefined)?.origin ?? NOBODY;
+    if (origin === STORAGE) return { ok: false, error: STORAGE_ONLY };
     const given = { ...options, origin };
     let told: readonly Problem[] = [];
     const result = this.#commit(["file.import"], origin, given, (draft) => {
@@ -812,6 +818,8 @@ export class ProjectStore {
     }
     // Code that does not say who changed the files gets nothing that only a person can do.
     const origin = (options as MergeOptions | undefined)?.origin ?? NOBODY;
+    if (origin === STORAGE)
+      return { ok: false, error: STORAGE_ONLY, files: unmergedFiles(changes) };
     const given = { origin, ...(options?.dryRun === true && { dryRun: true }) };
     let merge: FileMerge = { files: [], problems: [], conflicts: [], kept: [], held: [] };
     const result = this.#commit(["file.merge"], origin, given, (draft) => {
@@ -924,9 +932,16 @@ export class ProjectStore {
     return origin !== USER && (this.#undo.get(origin)?.undone.length ?? 0) > 0;
   }
 
-  /** The project as files. Documents that became invalid stay out and are reported. */
-  exportFiles(): { files: Map<string, string>; problems: readonly Problem[] } {
-    const { project, problems } = stateToProject(this.#state);
+  /**
+   * The project as files. Documents that became invalid stay out and are reported. Where the files
+   * of assets are kept goes by what counts `here`, see `Here`: everything that is written down,
+   * where that is not said.
+   */
+  exportFiles(options: { readonly here?: Here } = {}): {
+    files: Map<string, string>;
+    problems: readonly Problem[];
+  } {
+    const { project, problems } = stateToProject(this.#state, options.here);
     const files = writeProject(project);
     for (const [path, text] of Object.entries(this.#state.files)) files.set(path, text);
     // What is written is often the base of the next merge, see `rememberWritten`.
@@ -969,8 +984,16 @@ export class ProjectStore {
 
   #runCommand(command: CommandDefinition, call: CommandCall, draft: Draft): unknown {
     if (!command.whileLocked) this.#assertUnlocked(draft);
-    if (command.userOnly && draft.origin !== USER) {
+    const isAlsoBy = (command.alsoBy ?? []).includes(draft.origin);
+    if (command.userOnly && draft.origin !== USER && !isAlsoBy) {
       throw new CommandError("user-only", `只有用户能运行这个命令：${command.type}`);
+    }
+    // What keeps no undo log only does what it is there for.
+    if (draft.origin === STORAGE && !isAlsoBy) {
+      throw new CommandError(
+        STORAGE_ONLY.code,
+        `${STORAGE_ONLY.message}，不能运行：${command.type}`,
+      );
     }
     const params = command.params.safeParse(call.params ?? {});
     if (!params.success) {
@@ -1057,9 +1080,10 @@ export class ProjectStore {
     const write = { revision: this.#revision, origin };
     for (const { path } of patches) this.#markWrite(path, write, false);
 
+    // Where uploads put files is nothing to undo, see `STORAGE`: that keeps no log.
     if (takesBack) {
       takesBack.to.push(entry);
-    } else {
+    } else if (origin !== STORAGE) {
       const log = this.#logOf(origin);
       log.done.push(entry);
       log.undone = [];

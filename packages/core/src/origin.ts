@@ -18,3 +18,10 @@ export const folderBatch = (batch: string): Origin => `folder:${batch}`;
 
 /** What did not say where it comes from. That is no person either. */
 export const NOBODY: Origin = "nobody";
+
+/**
+ * Uploads, as they write down where the file of an asset is kept once it got there and was checked,
+ * see `asset.setStorage`. That is no person, and nothing to undo: taking it back would say something
+ * about the file that is not so. Only uploads use it, and they write nothing else.
+ */
+export const STORAGE: Origin = "storage";

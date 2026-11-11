@@ -1108,7 +1108,12 @@ test.describe("a browser that cannot write to folders", () => {
 
     const report = dialog(page);
     await expect(report.getByRole("heading", { name: "项目已导入" })).toBeVisible();
-    await expect(report.getByText("这些素材的文件不在文件夹里（7）")).toBeVisible();
+    // Of the seven files the example has none, three can come from where they are kept.
+    await expect(report.getByText("这些素材的文件不在文件夹里（4）")).toBeVisible();
+    await expect(
+      report.getByText("这些素材的文件不在文件夹里，可以从它们存放的地方下载（3）"),
+    ).toBeVisible();
+    await expect(report.getByText("采访：可以从 GitHub 大文件存储下载")).toBeVisible();
     await expect(report.getByText("AGENTS.md")).toBeVisible();
     await closeDialog(page);
     await expect(page.locator("footer").getByRole("button", { name: "原子是什么" })).toBeVisible();

@@ -56,6 +56,7 @@
 - 命令要经得起一次处理几千个片段：不要在循环里再扫一遍全部片段，先按轨道排序。
 - 浮点时间只用来画和找位置。切不切、有没有空位这类判断用精确时间，否则片段边缘会判断错。
 - 判断属性是不是动画用 `isAnimation`：数组也有 `keys`。
+- 素材放在哪（`storage`、`url`）：文件里写在素材里；Yjs 里上传记下的放在素材旁边的 `places`（`structure.ts`），记着当时的 `hash`、`size` 和绑定在哪里（`repo`、`owner`、`store`）：只对那份内容算数，和别处同时改名、改标签互不覆盖，文件换了、大小不对、绑定的不是这里（`Here`）都不算数。读放在哪一律用 `placedAsset`、`placedAssets` 或 `elsewhereOf`，不要直接读 `state.assets[id].storage`；能不能下载看 `downloadableFrom`（要有 hash 和 size）。`asset.setStorage` 只有上传（来源 `STORAGE`，不进撤销，也不能做别的，文件导入和合并也不收）能写 `lfs`、`platform`、`remote`，用户只能改回 `local`，AI 不能用；`asset.add` 只收 `local` 和 `git`。文件导入和合并 assets.json 走 `writeAssets`，合并时素材的 `hash`、`size`、`storage`、`url` 跟着 hash 整组取一边（`mergeAsset`）。编辑器写文件和合并文件要按同一个 `Here`。改这些要跑 `fuzz-places.test.ts`。
 - 会挪动片段边缘的命令（移动、修剪、改时长、覆盖着放下）开头用 `joinsTogether` 记下首尾相接的衔接转场，最后用 `followJoins`：两边还相接就跟着走（包括换轨道），分开了就同一步删掉，结果里写 `joinsRemoved`。文件导入和多人同时改造成的分开不删，留给问题列表。衔接转场在哪里生效、各占两边多少，都用 `core/src/joins.ts`，不要自己算。
 
 ## 项目格式

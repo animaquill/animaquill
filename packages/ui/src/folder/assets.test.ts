@@ -2,7 +2,7 @@
  * The files of the assets of a project folder: found by their paths, hashed once for each size and
  * time, copied in under their own names, compared with what the project says, and watched.
  */
-import { ProjectStore } from "@animaquill/core";
+import { ProjectStore, STORAGE, USER } from "@animaquill/core";
 import type { LocalFolder, LocalFolders } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { hashFile } from "@animaquill/media";
@@ -45,11 +45,12 @@ async function setup(options: Partial<Omit<FolderAssetsOptions, "folder" | "key"
     ...options,
   });
   const store = ProjectStore.create(createProject({ name: "原子" }));
+  /** An asset, as assets.json says it: only files say where else a file is, and uploads. */
   const add = (id: string, asset: Partial<Asset> & { path: string }) => {
-    const result = store.execute({
-      type: "asset.add",
-      params: { id, asset: { kind: "video", storage: "local", ...asset } },
-    });
+    const text = store.exportFiles().files.get("assets.json") ?? '{ "assets": {} }';
+    const document = JSON.parse(text);
+    document.assets[id] = { kind: "video", storage: "local", ...asset };
+    const result = store.importFile("assets.json", JSON.stringify(document), { origin: USER });
     expect(result.ok).toBe(true);
   };
   return { disk, folders, folder, library, assets, store, add };
@@ -307,6 +308,7 @@ describe("comparing the files with the project", () => {
       hash: await hashFile(new Blob([bytes("原来的")])),
     });
     add("missing", { path: "assets/missing.webm" });
+    // An address alone is not enough to get it from there: nothing checks what comes.
     add("remote", {
       path: "assets/loop.wav",
       kind: "audio",
@@ -316,6 +318,68 @@ describe("comparing the files with the project", () => {
     expect(await assets.check(store)).toEqual([
       { kind: "changed", asset: "changed", path: "assets/changed.webm" },
       { kind: "missing", asset: "missing", path: "assets/missing.webm" },
+      { kind: "missing", asset: "remote", path: "assets/loop.wav" },
+    ]);
+  });
+
+  it("uses the file of an asset that is kept somewhere else as well, where it is here", async () => {
+    const { disk, assets, store, add } = await setup();
+    const fine = await hashFile(new Blob([bytes("好的")]));
+    disk.write(`${ROOT}/assets/fine.webm`, "好的");
+    disk.write(`${ROOT}/assets/changed.webm`, "换过的");
+    add("fine", { path: "assets/fine.webm", storage: "lfs", hash: fine, size: 6 });
+    add("changed", { path: "assets/changed.webm", storage: "platform", hash: fine, size: 6 });
+    expect(await assets.check(store)).toEqual([
+      { kind: "changed", asset: "changed", path: "assets/changed.webm" },
+    ]);
+  });
+
+  it("says where the file of an asset can come from, where it is not here, not that it is missing", async () => {
+    const { assets, store, add } = await setup();
+    const hash = await hashFile(new Blob([bytes("别处")]));
+    add("lfs", { path: "assets/a.webm", storage: "lfs", hash, size: 6 });
+    add("platform", { path: "assets/b.webm", storage: "platform", hash, size: 6 });
+    const url = "https://example.com/c";
+    add("remote", { path: "assets/c.webm", storage: "remote", url, hash, size: 6 });
+    const issues = await assets.check(store);
+    expect(issues.toSorted((a, b) => a.asset.localeCompare(b.asset))).toEqual([
+      { kind: "elsewhere", asset: "lfs", path: "assets/a.webm", storage: "lfs" },
+      { kind: "elsewhere", asset: "platform", path: "assets/b.webm", storage: "platform" },
+      { kind: "elsewhere", asset: "remote", path: "assets/c.webm", storage: "remote" },
+    ]);
+  });
+
+  it("says that a file is missing that cannot be checked where it would come from", async () => {
+    const { assets, store, add } = await setup();
+    // In Git LFS as projects from before had it, without the hash or the size.
+    add("old", { path: "assets/old.webm", storage: "lfs" });
+    expect(await assets.check(store)).toEqual([
+      { kind: "missing", asset: "old", path: "assets/old.webm" },
+    ]);
+  });
+
+  it("goes by where an upload put the file, as the project has it", async () => {
+    const { assets, store, add } = await setup();
+    const hash = await hashFile(new Blob([bytes("传上去了")]));
+    add("a", { path: "assets/a.webm", hash, size: 12 });
+    expect(await assets.check(store)).toEqual([
+      { kind: "missing", asset: "a", path: "assets/a.webm" },
+    ]);
+    const params = { asset: "a", storage: "platform", hash, owner: "u-1" };
+    expect(store.execute({ type: "asset.setStorage", params }, { origin: STORAGE }).ok).toBe(true);
+    expect(await assets.check(store)).toEqual([
+      { kind: "elsewhere", asset: "a", path: "assets/a.webm", storage: "platform" },
+    ]);
+  });
+
+  it("finds a file that is kept somewhere else as well where people moved it", async () => {
+    const { disk, assets, store, add } = await setup();
+    const content = "挪过来的";
+    disk.write(`${ROOT}/素材/挪过来.webm`, content);
+    const hash = await hashFile(new Blob([bytes(content)]));
+    add("moved", { path: "assets/moved.webm", storage: "lfs", hash, size: bytes(content).length });
+    expect(await assets.check(store)).toEqual([
+      { kind: "missing", asset: "moved", path: "assets/moved.webm", found: "素材/挪过来.webm" },
     ]);
   });
 

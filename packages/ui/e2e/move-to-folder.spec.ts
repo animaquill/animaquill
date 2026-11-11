@@ -271,8 +271,12 @@ test.describe("a project of the browser", () => {
     await chooseFrom(page, "文件", "移到文件夹…");
     const done = dialog(page);
     await expect(done.getByRole("heading", { name: "已移到文件夹" })).toBeVisible();
-    await expect(done).toContainText("这些素材的文件移之前就不在浏览器里，文件夹里也没有（7）");
-    await expect(done).toContainText("采访");
+    await expect(done).toContainText("这些素材的文件移之前就不在浏览器里，文件夹里也没有（4）");
+    // What can come from where it is kept says from where.
+    await expect(done).toContainText(
+      "这些素材的文件移之前就不在浏览器里，文件夹里也没有，可以从它们存放的地方下载（3）",
+    );
+    await expect(done).toContainText("采访：可以从 GitHub 大文件存储下载");
     await done.getByRole("button", { name: "关闭" }).click();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     expect(await privateText(page, "选的/scenes/title/index.html")).toBe(

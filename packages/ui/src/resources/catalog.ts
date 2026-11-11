@@ -5,6 +5,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { builtInEffects, type EffectItem } from "./effects.ts";
+import { isMissing } from "./missing-files.ts";
 import { projectResources, type ProjectItem } from "./project-resources.ts";
 import type { Resource } from "./resources.ts";
 import { builtInTransitions, type TransitionItem } from "./transitions.ts";
@@ -81,7 +82,10 @@ export interface ResourceCatalog {
   readonly effects: readonly Resource<ExplorerItem>[];
   /** What the project has itself. */
   readonly own: readonly Resource<ExplorerItem>[];
-  /** Assets whose file is missing, then what clips use that is not there at all. */
+  /**
+   * Assets whose file is missing, then what clips use that is not there at all. Files that are not
+   * here but kept somewhere else are not missing, see `MissingFile.elsewhere`.
+   */
   readonly gone: readonly Resource<ExplorerItem>[];
   readonly byId: ReadonlyMap<string, Resource<ExplorerItem>>;
 }
@@ -128,7 +132,9 @@ export function useResourceCatalog({ missing: withMissing = true } = {}): Resour
     () => [
       ...own.filter(
         ({ data }) =>
-          data.kind === "project" && data.item.kind === "asset" && missing.has(data.item.id),
+          data.kind === "project" &&
+          data.item.kind === "asset" &&
+          isMissing(missing.get(data.item.id)),
       ),
       ...references.map((each) => missingResource(t, each)),
     ],

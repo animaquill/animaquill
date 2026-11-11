@@ -15,6 +15,7 @@ import {
   documentSchema,
   parseDocument,
   retiredFadesIn,
+  type Asset,
   type Problem,
   type PropertyValue,
 } from "@animaquill/schema";
@@ -24,11 +25,13 @@ import {
   entryOf,
   orderedSections,
   orderedTracks,
+  placedAssets,
   timelineToState,
   type ProjectState,
   type TimelineState,
 } from "./model.ts";
 import { USER } from "./origin.ts";
+import { anotherFileIsHere, writeAssets } from "./places.ts";
 import { isTooLargeSource } from "./source-size.ts";
 import { deepEqual } from "./patch.ts";
 import type { Path } from "./structure.ts";
@@ -256,6 +259,20 @@ export function planDocument(draft: Draft, path: string, text: string): readonly
     return [];
   }
   const { at, value, problems } = readDocument(draft.state, draft.origin, path, text);
-  if (problems.length === 0 && at) draft.replace(at, value);
+  if (problems.length > 0 || !at) return problems;
+  if (at[0] !== "assets") {
+    draft.replace(at, value);
+    return problems;
+  }
+  // A file has where each file of an asset is kept in the asset, a project also next to it. Another
+  // file of an asset is only here, unless the file says where it is, see `anotherFileIsHere`.
+  const known = placedAssets(draft.state);
+  const wanted = Object.fromEntries(
+    Object.entries(value as Readonly<Record<string, Asset>>).map(([id, asset]) => [
+      id,
+      anotherFileIsHere(entryOf(known, id), asset),
+    ]),
+  );
+  writeAssets(draft, wanted);
   return problems;
 }

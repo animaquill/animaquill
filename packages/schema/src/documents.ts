@@ -116,23 +116,105 @@ export const ResourceTags = z
   .max(30, "最多 30 个标签")
   .refine((tags) => new Set(tags).size === tags.length, "标签不能重复");
 
+/**
+ * The SHA-256 of the content of a file: `sha256-` and the digest in URL-safe base64, with the `=`
+ * at the end. Other tools may write it in plain base64 or in hexadecimal, see `isSameHash`.
+ */
+export const AssetHash = z.string().regex(/^sha256-[A-Za-z0-9+/=_-]+$/, "要写成 sha256-…");
+
+declare const atob: (data: string) => string;
+
+const HASH_PREFIX = "sha256-";
+const DIGEST_BYTES = 32;
+
+/** The digest a hash stands for, in lower-case hexadecimal, whatever a tool wrote it as. */
+function digestOf(hash: string): string | undefined {
+  if (!hash.startsWith(HASH_PREFIX)) return undefined;
+  const text = hash.slice(HASH_PREFIX.length);
+  if (/^[0-9a-fA-F]{64}$/.test(text)) return text.toLowerCase();
+  try {
+    const bytes = atob(text.replaceAll("-", "+").replaceAll("_", "/"));
+    if (bytes.length !== DIGEST_BYTES) return undefined;
+    return [...bytes].map((byte) => byte.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether two hashes of files stand for the same content. The format is public, so one can come
+ * from a tool that writes hexadecimal, or base64 with or without padding.
+ */
+export function isSameHash(a: string, b: string): boolean {
+  const digest = digestOf(a);
+  return digest !== undefined && digest === digestOf(b);
+}
+
+/**
+ * Where the file of an asset is kept. The editor keeps the file in the project folder as well, on
+ * the computer it came in on: this says where else it is, for other computers to get it from.
+ *
+ * - `local`: nowhere else. What the editor writes for a file that comes in.
+ * - `lfs`: in Git LFS of the repository the project is kept in, which has a pointer file at the
+ *   path of the asset. The pointer is made of `hash` and `size`, which the editor always writes;
+ *   projects from before 2026-11-10 can be without them, and then the file cannot be downloaded.
+ * - `platform`: in the cloud space of the platform that the project syncs with, found by `hash`. It
+ *   needs `hash` and `size`.
+ * - `remote`: at `url`, such as in the person's own object storage. The file of a private bucket
+ *   only comes to an address signed with the keys on that person's computer: others see where it
+ *   is, not the file.
+ * - `git`: an ordinary file of the person's own Git repository. The editor never writes it, and a
+ *   platform that keeps the project in Git leaves the file alone.
+ *
+ * The editor only says `lfs`, `platform` or `remote` once the file got there and was checked, see
+ * `asset.setStorage`.
+ */
+export const AssetStorage = z.enum(["git", "lfs", "local", "platform", "remote"]);
+
+/**
+ * Where the editor puts a file for other computers, which they can download it from: the person's
+ * own Git is up to the person.
+ */
+export type Elsewhere = "lfs" | "platform" | "remote";
+
+export const isElsewhere = (storage: string): storage is Elsewhere =>
+  storage === "lfs" || storage === "platform" || storage === "remote";
+
+/**
+ * Where else than here the file of an asset can be downloaded from: where it is kept, with the
+ * content known to check what comes by, `hash` and `size`. Undefined for a file only here, in the
+ * person's own Git, or that nothing could check, such as an `lfs` asset of a project from before.
+ */
+export function downloadableFrom(
+  asset: Pick<Asset, "storage" | "url" | "hash" | "size">,
+): Elsewhere | undefined {
+  const { storage } = asset;
+  if (!isElsewhere(storage) || asset.hash === undefined || asset.size === undefined) {
+    return undefined;
+  }
+  return storage === "remote" && asset.url === undefined ? undefined : storage;
+}
+
+/**
+ * What a value of `storage` needs besides, see `AssetStorage`. Not `lfs`: projects from before
+ * 2026-11-10 have it without, and the format goes on taking them.
+ */
+const STORAGE_NEEDS: Readonly<Record<string, readonly ("hash" | "size" | "url")[]>> = {
+  platform: ["hash", "size"],
+  remote: ["url"],
+};
+
 export const Asset = z
   .strictObject({
     name: z.string().optional(),
     kind: z.enum(["video", "audio", "image", "font", "model", "other"]),
     /** Where the file is, or would be, inside the project. */
     path: RelativePath,
-    /**
-     * git and lfs travel with the repository. local stays on one computer, remote is in the
-     * person's own object storage: the repository only holds this entry.
-     */
-    storage: z.enum(["git", "lfs", "local", "remote"]),
+    storage: AssetStorage,
+    /** Where a `remote` file is. */
     url: HttpsUrl.optional(),
     /** Caches and exports know by this whether the content changed. */
-    hash: z
-      .string()
-      .regex(/^sha256-[A-Za-z0-9+/=_-]+$/, "要写成 sha256-…")
-      .optional(),
+    hash: AssetHash.optional(),
     size: z.number().int().nonnegative().optional(),
     info: MediaInfo.optional(),
     license: z.string().optional(),
@@ -140,7 +222,22 @@ export const Asset = z
     /** Free words for finding it, such as 片头 or 竖屏可用. See `ResourceTags`. */
     tags: ResourceTags.optional(),
   })
-  .refine((asset) => asset.storage !== "remote" || asset.url, "remote 素材要写 url");
+  .superRefine((asset, context) => {
+    const needs = Object.hasOwn(STORAGE_NEEDS, asset.storage) ? STORAGE_NEEDS[asset.storage] : [];
+    for (const field of needs ?? []) {
+      if (asset[field] !== undefined) continue;
+      const message = `${asset.storage} 素材要写 ${field}`;
+      context.addIssue({ code: "custom", path: [field], message });
+    }
+  })
+  // The same in the published JSON Schema, which has no other way to say it.
+  .meta({
+    allOf: Object.entries(STORAGE_NEEDS).map(([storage, fields]) => ({
+      if: { properties: { storage: { const: storage } }, required: ["storage"] },
+      // oxlint-disable-next-line unicorn/no-thenable -- it is what JSON Schema calls it
+      then: { required: fields },
+    })),
+  });
 
 /** assets.json: every file a project uses, so that renaming one breaks nothing. */
 export const Assets = z.strictObject({

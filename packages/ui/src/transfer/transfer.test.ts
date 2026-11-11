@@ -665,7 +665,19 @@ describe("importing", () => {
     expect(report?.name).toBe("原子是什么");
 
     expect(report?.skipped).toEqual(["AGENTS.md", "制作笔记/分镜.md"]);
-    expect(report?.missing).toHaveLength(7);
+    // What can come from where it is kept is not missing. An address alone is not enough: nothing
+    // could check what came from there.
+    expect(report?.missing).toEqual([
+      "assets/fonts/sans.woff2",
+      "assets/logo.svg",
+      "assets/raw.mov",
+      "assets/loop.wav",
+    ]);
+    expect(report?.elsewhere).toEqual([
+      { name: "采访", storage: "lfs" },
+      { name: "assets/voice/en.flac", storage: "platform" },
+      { name: "assets/voice/zh.flac", storage: "lfs" },
+    ]);
 
     const { target } = await exportTo(window, new MemoryTarget());
     // All of it comes out as it went in, apart from what the project has no place for.
@@ -906,6 +918,36 @@ describe("files that are missing or different", () => {
     await announcing;
     expect(notice.details?.[0]?.items).toEqual(["采访.mp4"]);
     expect(notice.message).toContain("“缺失的资源”里重新找到文件");
+  });
+
+  it("says of a file it does not have where it can come from, when it exports", async () => {
+    const window = setup();
+    const hash = await hashFile(CONTENT);
+    const asset = { name: "采访.mp4", hash, size: CONTENT.size, storage: "platform" } as const;
+    await importFrom(window, withAsset(asset));
+    const { notice } = await exportTo(window);
+    expect(notice.details?.map(({ title }) => title)).toEqual([
+      "这些素材的文件不在这个浏览器里，没有导出，可以从它们存放的地方下载（1）",
+    ]);
+    expect(notice.details?.[0]?.items).toEqual(["采访.mp4：可以从云端空间下载"]);
+  });
+
+  it("says which files can come from where they are kept, and calls none of them missing", async () => {
+    const window = setup();
+    const hash = await hashFile(CONTENT);
+    const asset = { name: "采访.mp4", hash, size: CONTENT.size, storage: "platform" } as const;
+    const report = await importFrom(window, withAsset(asset));
+    expect(report?.missing).toEqual([]);
+    expect(report?.elsewhere).toEqual([{ name: "采访.mp4", storage: "platform" }]);
+
+    const announcing = window.transfer.announceImport(report as never);
+    const notice = await window.readDialog();
+    await announcing;
+    expect(notice.details?.[0]).toEqual({
+      title: "这些素材的文件不在文件夹里，可以从它们存放的地方下载（1）",
+      items: ["采访.mp4：可以从云端空间下载"],
+    });
+    expect(notice.message).not.toContain("缺失的资源");
   });
 
   it("does not take in a file that is not the file the project knows", async () => {
