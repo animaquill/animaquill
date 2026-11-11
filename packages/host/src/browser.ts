@@ -282,13 +282,54 @@ function refuseUnmade(name: string): void {
   if (!isMadeFile(name)) throw new Error(`Only files the editor made can go this way: ${name}`);
 }
 
+/** How much of a file a copy reads at a time, see `ownCopy`. */
+const COPY_PART_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The bytes of a file, in a blob of their own. Where its database is in memory, as in a private
+ * window, IndexedDB keeps a file people chose as a reference to the file on their disk: once that
+ * goes, moves or changes, what was kept cannot be read any more, and the project has lost it. A
+ * copy is the browser's own, whatever happens to the file. It is read part by part, so that a large
+ * video never is in memory here as a whole: the browser keeps the parts, on its disk where it can.
+ */
+async function ownCopy(file: Blob): Promise<Blob> {
+  const parts: Blob[] = [];
+  for (let at = 0; at < file.size; at += COPY_PART_BYTES) {
+    parts.push(new Blob([await file.slice(at, at + COPY_PART_BYTES).arrayBuffer()]));
+  }
+  return new Blob(parts, { type: file.type });
+}
+
+/**
+ * Whether what a record holds can still be read. A file kept as a reference before `ownCopy`, as in
+ * a private window, cannot once the file on the disk went or changed: that is a file the project
+ * does not have, which people can bring in again, not one that fails wherever it is used.
+ */
+async function canRead(file: Blob): Promise<boolean> {
+  try {
+    await file.slice(0, 1).arrayBuffer();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function openMedia(database: () => Promise<IDBDatabase>, project: string): MediaStore {
   return {
     async put(hash, file) {
+      const copy = await ownCopy(file);
       const transaction = (await database()).transaction(MEDIA, "readwrite");
       const used = isMadeFile(hash) ? { usedAt: Date.now() } : {};
-      transaction.objectStore(MEDIA).put({ project, hash, file, ...used } satisfies MediaRecord);
+      transaction
+        .objectStore(MEDIA)
+        .put({ project, hash, file: copy, ...used } satisfies MediaRecord);
       await committed(transaction);
+      // What is kept now is what comes back, as large as the file was.
+      const read = (await database()).transaction(MEDIA).objectStore(MEDIA).get([project, hash]);
+      const kept = (await resultOf<MediaRecord | undefined>(read))?.file;
+      if (!kept || kept.size !== file.size || !(await canRead(kept))) {
+        throw new Error(`The file ${hash} was not kept as it is`);
+      }
     },
     async listMade() {
       const transaction = (await database()).transaction(MEDIA);
@@ -317,7 +358,10 @@ function openMedia(database: () => Promise<IDBDatabase>, project: string): Media
       const transaction = (await database()).transaction(MEDIA);
       const request = transaction.objectStore(MEDIA).get([project, hash]);
       const record = await resultOf<MediaRecord | undefined>(request);
-      return record?.file;
+      if (!record) return undefined;
+      if (await canRead(record.file)) return record.file;
+      console.warn("A file kept in this browser cannot be read any more", hash);
+      return undefined;
     },
   };
 }

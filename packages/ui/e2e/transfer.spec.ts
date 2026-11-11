@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFolder as readInNode } from "@animaquill/core";
 import { diskFolder } from "@animaquill/core/disk-folder";
-import { writeProject } from "@animaquill/schema";
+import { createProject as createNewProject, writeProject } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { chromeRefuses } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
@@ -1282,5 +1283,150 @@ test.describe("without a project", () => {
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "另存一份…" })).toBeDisabled();
     await expect(page.getByRole("menuitem", { name: "导入项目文件夹" })).toBeEnabled();
+  });
+});
+
+test.describe("a project brought into a window that keeps nothing on the disk", () => {
+  // As a private window: its databases are in memory, where the browser keeps a file people chose
+  // as a reference to it on their disk, unless the editor keeps a copy of its own.
+  test.use({ withProject: false });
+
+  const hashOf = (bytes: Buffer) =>
+    `sha256-${createHash("sha256").update(bytes).digest("base64").replaceAll("+", "-").replaceAll("/", "_")}`;
+  const RED = hashOf(files.video.buffer);
+
+  /** A project folder on the disk with the red video, on the timeline from the start. */
+  function folderWithVideo(): string {
+    const project = writeProject(createNewProject({ name: "带走的项目" }));
+    const path = "timelines/main/timeline.json";
+    const timeline = JSON.parse(project.get(path) as string) as {
+      tracks: { clips: unknown[] }[];
+    };
+    (timeline.tracks[0] as { clips: unknown[] }).clips = [
+      {
+        id: "clip",
+        start: "0",
+        duration: "1",
+        source: { kind: "video", media: { asset: "video" } },
+      },
+    ];
+    project.set(path, JSON.stringify(timeline));
+    const asset = {
+      name: "红色.webm",
+      kind: "video",
+      path: "assets/红色.webm",
+      storage: "local",
+      hash: RED,
+      size: files.video.buffer.length,
+    };
+    project.set("assets.json", JSON.stringify({ assets: { video: asset } }));
+    const disk = join(mkdtempSync(join(tmpdir(), "animaquill-")), "带走的项目");
+    for (const [name, text] of project) {
+      mkdirSync(dirname(join(disk, name)), { recursive: true });
+      writeFileSync(join(disk, name), text);
+    }
+    mkdirSync(join(disk, "assets"));
+    writeFileSync(join(disk, "assets/红色.webm"), files.video.buffer);
+    return disk;
+  }
+
+  /**
+   * What each file people brought in hashes to, as this browser reads it now, or why it cannot be
+   * read. Pictures and the like the editor makes of them are no part of it.
+   */
+  const keptFiles = (page: Page) =>
+    page.evaluate(async () => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const open = indexedDB.open("animaquill");
+        open.onsuccess = () => resolve(open.result);
+        open.addEventListener("error", () => reject(open.error));
+      });
+      const records = await new Promise<{ hash: string; file: Blob }[]>((resolve) => {
+        const request = database.transaction("media").objectStore("media").getAll();
+        request.onsuccess = () => resolve(request.result);
+      });
+      database.close();
+      const brought = records.filter(({ hash }) => hash.startsWith("sha256-"));
+      return Promise.all(
+        brought.map(async ({ hash, file }) => {
+          try {
+            const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+            let text = "";
+            for (const byte of new Uint8Array(digest)) text += String.fromCharCode(byte);
+            return {
+              hash,
+              reads: `sha256-${btoa(text).replaceAll("+", "-").replaceAll("/", "_")}`,
+            };
+          } catch (error) {
+            return { hash, reads: (error as Error).name };
+          }
+        }),
+      );
+    });
+
+  test("keeps its files when people throw the folder away right after", async ({ page }) => {
+    const folder = folderWithVideo();
+    await importFromStart(page, folder);
+    await expect(page.getByText("“带走的项目”已导入。")).toBeVisible();
+    rmSync(folder, { recursive: true, force: true });
+    expect(await keptFiles(page)).toEqual([{ hash: RED, reads: RED }]);
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect.poll(() => isRed(page)).toBe(true);
+  });
+
+  test("lists a file it kept before only as a reference, once that is gone, and takes it again", async ({
+    page,
+  }) => {
+    await importFromStart(page, folderWithVideo());
+    await expect(page.getByText("“带走的项目”已导入。")).toBeVisible();
+    await expect.poll(() => isRed(page)).toBe(true);
+    // What an editor before this one kept in such a window: the file people chose, on their disk.
+    const elsewhere = join(mkdtempSync(join(tmpdir(), "animaquill-")), "红色.webm");
+    writeFileSync(elsewhere, files.video.buffer);
+    await page.evaluate(() => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.id = "aq-earlier";
+      document.body.append(input);
+    });
+    await page.setInputFiles("#aq-earlier", elsewhere);
+    await page.evaluate(
+      (hash) =>
+        new Promise<void>((resolve, reject) => {
+          const file = (document.querySelector("#aq-earlier") as HTMLInputElement).files?.[0];
+          const open = indexedDB.open("animaquill");
+          open.onsuccess = () => {
+            const store = open.result.transaction("media", "readwrite").objectStore("media");
+            const all = store.getAll();
+            all.onsuccess = () => {
+              const record = (all.result as { project: string; hash: string }[]).find(
+                (each) => each.hash === hash,
+              );
+              store.put({ ...record, file });
+              store.transaction.oncomplete = () => {
+                open.result.close();
+                resolve();
+              };
+            };
+          };
+          open.addEventListener("error", () => reject(open.error));
+        }),
+      RED,
+    );
+    rmSync(elsewhere);
+    expect(await keptFiles(page)).toEqual([{ hash: RED, reads: "NotFoundError" }]);
+
+    await page.reload();
+    await expect(tab(page, "preview")).toBeVisible();
+    await expect(page.getByText("有素材在这个浏览器里解不了或者找不到")).toBeVisible();
+    await expect.poll(() => isRed(page)).toBe(false);
+
+    await tab(page, "assets").click();
+    const chooser = page.waitForEvent("filechooser");
+    await content(page, "assets").getByRole("button", { name: "导入" }).click();
+    await (await chooser).setFiles([files.video]);
+    await expect.poll(() => isRed(page)).toBe(true);
+    expect(await keptFiles(page)).toEqual([{ hash: RED, reads: RED }]);
   });
 });

@@ -636,9 +636,13 @@ export interface MadeFile {
 
 /** The files of a project. They are kept by their content, so a file only exists once. */
 export interface MediaStore {
-  /** Rejects when there is no room. A made file counts as used now. */
+  /**
+   * Keeps a copy of the bytes, never a reference to where they came from: people may delete or move
+   * the file right after. Resolves once the copy is kept. Rejects when there is no room. A made
+   * file counts as used now.
+   */
   put(hash: string, file: Blob): Promise<void>;
-  /** Resolves to undefined when this host does not have the file. */
+  /** Resolves to undefined when this host does not have the file, or cannot read it any more. */
   get(hash: string): Promise<Blob | undefined>;
   /** The made files of the project, see `isMadeFile`. Nothing else shows up here. */
   listMade(): Promise<readonly MadeFile[]>;

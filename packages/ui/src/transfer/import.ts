@@ -229,7 +229,7 @@ export async function bringIn(
       const file = await files.get(asset.path)?.read();
       if (file) found.push({ id: assetId, asset, file });
     }
-    // Every file is read twice: to check it, and to store it.
+    // Every file is read twice: to check it, and to check what this browser kept of it.
     const total = found.reduce((sum, { file }) => sum + file.size * 2, 0);
 
     let done = 0;
@@ -246,7 +246,20 @@ export async function bringIn(
       } else {
         // A project finds a file by the hash it has written down, however a tool wrote that.
         const stamp = asset.hash ?? hash;
-        if (!stored.has(stamp)) await incoming.media.put(stamp, file);
+        if (!stored.has(stamp)) {
+          await incoming.media.put(stamp, file);
+          // People may throw the folder away once this is over: what is kept has to be all of it.
+          const kept = await incoming.media.get(stamp);
+          const keptHash =
+            kept &&
+            (await hashFile(kept, {
+              ...(signal ? { signal } : {}),
+              onProgress: (bytes) => step(file.size + bytes),
+            }));
+          if (keptHash === undefined || !isSameHash(keptHash, hash)) {
+            throw new Error(`What this browser kept of ${label} is not the file`);
+          }
+        }
         stored.add(stamp);
         assets[assetId] = { ...asset, hash: stamp, size: file.size };
       }
