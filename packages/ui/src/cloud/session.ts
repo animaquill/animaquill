@@ -157,6 +157,11 @@ export type CloudProblem =
   | { readonly kind: "missing" }
   /** The project here and the one on the platform do not fit together any more. */
   | { readonly kind: "diverged" }
+  /**
+   * The platform made the project again from its repository: what this browser has is of the copy
+   * before, see `CloudLink.generation`, and cannot go on with the new one.
+   */
+  | { readonly kind: "rebuilt" }
   /** This browser cannot keep what syncing needs. */
   | { readonly kind: "unsupported" }
   /** Another window of this browser disconnected the project. */
@@ -230,6 +235,14 @@ const kindOf = (kind: string): SyncKind =>
 
 const isPushed = (entry: LogEntry) => NOT_PUSHED.has(entry.source?.kind ?? "other");
 
+/**
+ * Whether an entry of the log is on the platform by what it is: what came from there, and what the
+ * log put together of entries that were. Any other entry after `CloudLink.pushed` is a change the
+ * platform may not have: what syncing sends, and what whoever takes the project out of this
+ * browser has to count.
+ */
+export const isOnPlatform = (entry: LogEntry): boolean => isPushed(entry);
+
 const problemOf = (code: number): CloudProblem | undefined => {
   switch (code) {
     case SYNC_CLOSE.signedOut:
@@ -239,6 +252,8 @@ const problemOf = (code: number): CloudProblem | undefined => {
       return { kind: "missing" };
     case SYNC_CLOSE.outdated:
       return { kind: "outdated" };
+    case SYNC_CLOSE.rebuilt:
+      return { kind: "rebuilt" };
     case SYNC_CLOSE.protocol:
       return { kind: "rejected", reason: "malformed" };
     case SYNC_CLOSE.tooLarge:
@@ -297,6 +312,11 @@ export class CloudSession {
   #digest: string;
   /** ...as noted down. */
   #notedSeq: number;
+  /** Which working copy of the platform the log is of, see `CloudLink.generation`. */
+  readonly #generation: number;
+  /** Whether the link says which one: one from before does not, until the platform said. */
+  #generationNoted: boolean;
+  #generationToNote: number | undefined;
   /** The platform came back from a backup: the link starts over once the log has what came. */
   #resetPending = false;
   /**
@@ -317,6 +337,8 @@ export class CloudSession {
   readonly #sent = new Set<number>();
   /** How many changes the last look at the log found that the platform does not have. */
   #pending = 0;
+  /** ...as the link has it, for lists of projects, see `CloudLink.pending`. */
+  #notedPending: number;
   #syncedAt: number | undefined;
 
   #claim: WriterClaim | undefined;
@@ -378,6 +400,10 @@ export class CloudSession {
     this.#notedSeq = link.seq;
     this.#pushed = link.pushed;
     this.#notedPushed = link.pushed;
+    this.#notedPending = link.pending ?? 0;
+    // A link from before copies were told apart is of the first, as every project was then.
+    this.#generation = link.generation ?? 1;
+    this.#generationNoted = link.generation !== undefined;
     this.#syncedAt = link.syncedAt;
     this.#line = cloud.line(link.key);
     this.#snapshot = {
@@ -472,6 +498,15 @@ export class CloudSession {
     this.resume();
   }
 
+  /**
+   * Notes down how far it got now, rather than in a moment, see `CloudLink.pushed`: for whoever
+   * reads the link next, as before the copy of a project goes out of this browser.
+   */
+  async flush(): Promise<void> {
+    if (this.#closed) return;
+    await this.#enqueue(() => this.#note()).catch(() => {});
+  }
+
   #wakeAll(): void {
     for (const wake of this.#sleepers) wake();
   }
@@ -487,12 +522,18 @@ export class CloudSession {
     this.#wakeAll();
     this.#env.clearTimeout(this.#scanTimer);
     this.#env.clearTimeout(this.#noteTimer);
-    await this.#work.catch(() => {});
-    await this.#note().catch(() => {});
-    this.#claim?.release();
-    this.#claim = undefined;
-    this.#line?.close();
-    this.#set({ state: "closed", here: false });
+    try {
+      await this.#work.catch(() => {});
+      // What still waits here is what a list of projects says about this one from now on. This
+      // window is still the one that syncs, see `#run`: what the next one counts comes after.
+      await this.#countPending().catch(() => {});
+      await this.#note().catch(() => {});
+    } finally {
+      this.#claim?.release();
+      this.#claim = undefined;
+      this.#line?.close();
+      this.#set({ state: "closed", here: false });
+    }
   }
 
   #set(change: Partial<CloudSnapshot>): void {
@@ -557,9 +598,11 @@ export class CloudSession {
           this.#unpause = resolve;
         });
       }
+      // A window that stops syncing keeps its turn until it noted down how far it got, and what
+      // still waits, see `close`: the next one goes on from there.
+      if (this.#closed) return;
       claim.release();
       this.#claim = undefined;
-      if (this.#closed) return;
       this.#set({ here: false });
     }
   }
@@ -582,6 +625,8 @@ export class CloudSession {
     }
     this.#pushed = Math.max(this.#pushed, link.pushed);
     this.#notedPushed = Math.max(this.#notedPushed, link.pushed);
+    this.#notedPending = link.pending ?? 0;
+    if (link.generation !== undefined) this.#generationNoted = true;
     if (link.syncedAt !== undefined) this.#syncedAt = Math.max(this.#syncedAt ?? 0, link.syncedAt);
     this.#set({ seq: this.#seq, syncedAt: this.#syncedAt });
     return true;
@@ -853,6 +898,7 @@ export class CloudSession {
       project: this.#project,
       after,
       ...(after > 0 && { digest: this.#digest }),
+      generation: this.#generation,
       device,
       window: this.#window,
       editor: this.#editor,
@@ -903,6 +949,14 @@ export class CloudSession {
     switch (message.t) {
       case "welcome":
         this.#env.clearTimeout(this.#helloTimer);
+        if (message.generation !== undefined && message.generation !== this.#generation) {
+          // Another copy of the project than the one this log is of: the two are different
+          // documents, and putting them together would take away changes of either at random. The
+          // platform closes on its own for that; this is for one that did not.
+          this.#end?.({ kind: "pause", problem: { kind: "rebuilt" } });
+          return;
+        }
+        if (!this.#generationNoted) this.#generationToNote = message.generation;
         this.#phase = "catching-up";
         this.#headAtWelcome = message.head;
         // The project is there: the first version is not to be made again.
@@ -1152,6 +1206,7 @@ export class CloudSession {
       this.#seen = added.at(-1)?.mark ?? this.#seen;
       this.#pending += added.filter((entry) => !isPushed(entry)).length;
       this.#set({ pending: this.#pending });
+      if (this.#pending !== this.#notedPending) this.#noteSoon();
       return;
     }
     const entries = (await this.#journal.entries(this.#pushed)) ?? [];
@@ -1172,7 +1227,7 @@ export class CloudSession {
     this.#pushed = Math.max(this.#pushed, pushed);
     this.#pending = waiting.length;
     this.#set({ pending: waiting.length });
-    if (this.#pushed > this.#notedPushed) this.#noteSoon();
+    if (this.#pushed > this.#notedPushed || this.#pending !== this.#notedPending) this.#noteSoon();
     if (this.#phase !== "ready" || this.#repairFirst) return;
     const fresh = waiting.filter((entry) => !this.#sent.has(entry.mark));
     for (const batch of this.#batches(fresh)) this.#pushEntries(batch);
@@ -1271,6 +1326,18 @@ export class CloudSession {
     });
   }
 
+  /**
+   * Counts what the log has that the platform does not, as far as this window knows, once more
+   * before it stops syncing: the last look at the log can be a moment old.
+   */
+  async #countPending(): Promise<void> {
+    if (!this.#claim) return;
+    const entries = (await this.#journal.entries(this.#pushed)) ?? [];
+    this.#pending = entries.filter(
+      (entry) => !isPushed(entry) && !this.#acked.has(entry.mark),
+    ).length;
+  }
+
   // ---- noting down how far it got
 
   #noteSoon(): void {
@@ -1294,7 +1361,17 @@ export class CloudSession {
     const pushed = this.#pushed;
     const syncedAt = this.#syncedAt;
     const isReset = this.#resetPending;
-    if (!isReset && seq === this.#notedSeq && pushed === this.#notedPushed) return;
+    // Only the window that syncs counts what waits: the others show what it says.
+    const pending = this.#claim ? this.#pending : this.#notedPending;
+    const generation = this.#generationToNote;
+    if (
+      !isReset &&
+      seq === this.#notedSeq &&
+      pushed === this.#notedPushed &&
+      pending === this.#notedPending &&
+      generation === undefined
+    )
+      return;
     // What waits for an update that has not come is not all there.
     const saved =
       seq > this.#notedSeq || isReset
@@ -1316,11 +1393,18 @@ export class CloudSession {
         ...(saved && seq > this.#notedSeq && { seq, digest }),
         ...(pushed > this.#notedPushed && { pushed }),
         ...(syncedAt !== undefined && { syncedAt }),
+        ...(pending !== this.#notedPending && { pending }),
+        ...(generation !== undefined && { generation }),
       };
       if (Object.keys(change).length === 0) return;
       isThere = await this.#cloud.links.update(this.#key, this.#project, change);
       if (isThere && change.seq !== undefined) this.#notedSeq = change.seq;
       if (isThere && change.pushed !== undefined) this.#notedPushed = change.pushed;
+      if (isThere && change.pending !== undefined) this.#notedPending = change.pending;
+      if (isThere && change.generation !== undefined) {
+        this.#generationNoted = true;
+        this.#generationToNote = undefined;
+      }
     }
     // Another window disconnected the project: this one stops too.
     if (!isThere) this.#end?.({ kind: "pause", problem: { kind: "unlinked" } });

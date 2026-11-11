@@ -1,13 +1,14 @@
 import {
   RepositoryRefused,
   type RepositoryAccess,
+  type RepositoryCheck,
   type RepositoryChoice,
   type RepositoryLink,
   type RepositoryList,
   type RepositoryStatus,
 } from "@animaquill/host";
 import type { RepositoryEnvironment } from "./repository-watch.ts";
-import type { TestTime } from "./cloud-support.ts";
+import type { MemoryPlatform, TestTime } from "./cloud-support.ts";
 
 /**
  * A platform that saves projects to GitHub, for tests of the editor's side of it: what it says is
@@ -20,6 +21,7 @@ export class FakeRepositories implements RepositoryAccess {
   /** What the next call of each kind rejects with, once. */
   readonly refuse: {
     list?: Error;
+    check?: Error;
     link?: Error;
     status?: Error;
     archiveNow?: Error;
@@ -29,6 +31,14 @@ export class FakeRepositories implements RepositoryAccess {
   readonly archives: { readonly replace?: string }[] = [];
   /** Repositories a page, for paging. */
   page = 100;
+  /** Names of repositories the person has already, which a new one cannot take. */
+  readonly taken = new Set<string>();
+  /** What a check says about a repository people have, by its id, where that is not a yes. */
+  readonly checks = new Map<number, RepositoryCheck>();
+  /** What was checked, in order. */
+  readonly checked: RepositoryLink[] = [];
+  /** The platform whose projects these repositories are of: it hears which project has one. */
+  platform: MemoryPlatform | undefined;
 
   #once<K extends keyof FakeRepositories["refuse"]>(kind: K): void {
     const error = this.refuse[kind];
@@ -50,15 +60,42 @@ export class FakeRepositories implements RepositoryAccess {
     };
   }
 
+  async check(choice: RepositoryLink): Promise<RepositoryCheck> {
+    this.calls.push("check");
+    this.checked.push(choice);
+    this.#once("check");
+    if ("create" in choice) {
+      return this.taken.has(choice.create.name.toLowerCase())
+        ? { ok: false, reason: "nameTaken" }
+        : { ok: true };
+    }
+    const said = this.checks.get(choice.existing.id);
+    if (said) return said;
+    const chosen = this.repositories.find((each) => each.id === choice.existing.id);
+    if (!chosen) return { ok: false, reason: "notFound" };
+    if (!chosen.private && choice.confirmPublic !== true) return { ok: false, reason: "public" };
+    return { ok: true };
+  }
+
   async link(project: string, choice: RepositoryLink): Promise<RepositoryStatus> {
     this.calls.push(`link ${project}`);
     this.links.push(choice);
     this.#once("link");
+    if ("create" in choice && this.taken.has(choice.create.name.toLowerCase()))
+      throw new RepositoryRefused("nameTaken");
+    // Another repository in place of one that archives as it should only where people say so.
+    if (this.answer.state === "ready" && choice.switch !== true)
+      throw new RepositoryRefused("alreadyLinked");
     const chosen =
       "create" in choice
         ? { id: 99, owner: "ada", name: choice.create.name, private: true }
         : this.repositories.find((each) => each.id === choice.existing.id);
     if (!chosen) throw new RepositoryRefused("notFound");
+    this.platform?.repositories.set(project, {
+      id: chosen.id,
+      owner: chosen.owner,
+      name: chosen.name,
+    });
     this.answer = {
       repository: {
         id: chosen.id,

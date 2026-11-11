@@ -85,13 +85,59 @@ export interface Host {
   readonly cloud?: CloudAccess;
 }
 
-/** A project on the platform, as people find it in a list. */
+/**
+ * A project on the platform, as people find it in a list: what the platform keeps about it for
+ * good, apart from its working copy. Times are milliseconds since 1970. Only the first three are
+ * always there: a platform can say less, and what it does not say is not known.
+ */
 export interface CloudProjectSummary {
   /** Its id on the platform. */
   readonly id: string;
   readonly name: string;
-  /** Milliseconds since 1970. */
+  /** When it last changed. */
   readonly updatedAt: number;
+  readonly createdAt?: number;
+  /**
+   * Whether the platform has its working copy: "live" where it does, which is what a platform that
+   * says nothing means; "released" where only its repository has the project now; "restoring"
+   * while it comes back from there. An editor can only open a "live" one, and takes a word it does
+   * not know as one it cannot open yet.
+   */
+  readonly copy?: "live" | "released" | "restoring" | (string & {});
+  /** Bytes: of its documents and code as the platform keeps them, and of its assets when last archived. */
+  readonly size?: {
+    readonly documents: number;
+    /** `elsewhere`: how many of them can be downloaded from where they are kept. */
+    readonly assets?: {
+      readonly count: number;
+      readonly bytes: number;
+      readonly elsewhere: number;
+    };
+  };
+  /** The repository it is saved to, as the platform last knew it. Missing: none, or not said. */
+  readonly repository?: {
+    /** Its number on the Git platform, which stays as it is renamed. */
+    readonly id: number;
+    readonly owner: string;
+    readonly name: string;
+    readonly fullName: string;
+    readonly private: boolean;
+    /** Where people see it. */
+    readonly url: string;
+    readonly state: "ready" | "paused";
+    /** Why archiving paused, see `RepositoryPause`. */
+    readonly reason?: string;
+    /** When the platform last looked at the repository. */
+    readonly checkedAt?: number;
+  };
+  /** How far archiving got. `behind`: the platform has changes that are not archived yet. */
+  readonly archive?: { readonly at?: number; readonly seq: number; readonly behind: boolean };
+  /**
+   * What people have to do something about: it has no repository yet ("noRepository"), archiving
+   * into its repository paused ("repository"), changes of the repository clash with the project's
+   * ("conflicts"), or files of the repository could not be taken in ("blocked").
+   */
+  readonly attention?: "noRepository" | "repository" | "conflicts" | "blocked" | (string & {});
 }
 
 /**
@@ -117,6 +163,16 @@ export interface CloudAccess {
   syncer(key: string): FolderWriter;
   /** How the windows of this browser tell each other about the sync of a project. */
   line(key: string): CloudLine | undefined;
+  /**
+   * Takes away a project of the platform that is not saved to a repository, with all the platform
+   * has of it: one that connecting made and people gave up on, or one from before projects of the
+   * platform always had a repository. Nothing on this computer changes. Resolves to "removed"; to
+   * "missing" when the platform has no such project of whoever is signed in, which comes to the
+   * same; and to "hasRepository" for one that is saved to a repository, which stays. Rejects when
+   * the platform could not say, with a `CloudSignedOut` when nobody is signed in: the project may
+   * still be there then. Missing where the platform takes no projects away.
+   */
+  remove?(project: string): Promise<"removed" | "missing" | "hasRepository">;
   /**
    * Saving projects of the platform to a Git repository of the person, where the platform does that:
    * it archives what it has of a project into the repository by itself. Without it, there is none.
@@ -150,6 +206,8 @@ export interface RepositoryChoice {
   readonly archived: boolean;
   /** Another project of the platform is saved there. */
   readonly linked: boolean;
+  /** Which one, where it is a project of whoever is signed in. */
+  readonly linkedProject?: { readonly id: string; readonly name: string };
 }
 
 export interface RepositoryList {
@@ -161,10 +219,45 @@ export interface RepositoryList {
   readonly manageUrl: string;
 }
 
-/** A new private repository, or one people have: a public one only with `confirmPublic`. */
+/**
+ * A new private repository, or one people have: a public one only with `confirmPublic`. With
+ * `switch` it takes the place of the repository the project is saved to now, also while archiving
+ * into that one goes as it should: what was archived there stays there.
+ */
 export type RepositoryLink =
-  | { readonly create: { readonly name: string } }
-  | { readonly existing: { readonly id: number }; readonly confirmPublic?: boolean };
+  | { readonly create: { readonly name: string }; readonly switch?: boolean }
+  | {
+      readonly existing: { readonly id: number };
+      readonly confirmPublic?: boolean;
+      readonly switch?: boolean;
+    };
+
+/**
+ * Whether a repository could take a project, asked before anything is made, see
+ * `RepositoryAccess.check`. Not `ok`: the name of a new one is taken ("nameTaken") or not one
+ * GitHub takes ("invalidName"); one people have holds a project already ("hasProject", with what of
+ * it is there), is the repository of another project of the platform ("linkedElsewhere", with which
+ * one where it is the person's), cannot be written ("notPushable"), is public, which people have
+ * to say yes to ("public"), or is not there ("notFound"); or the GitHub App is not on the account
+ * ("notInstalled"). A platform can say a reason this editor does not know.
+ */
+export type RepositoryCheck =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | "nameTaken"
+        | "invalidName"
+        | "hasProject"
+        | "linkedElsewhere"
+        | "notPushable"
+        | "public"
+        | "notFound"
+        | "notInstalled"
+        | (string & {});
+      readonly files?: readonly string[];
+      readonly project?: { readonly id: string; readonly name: string };
+    };
 
 /** Why archiving stopped until people do something about it. */
 export type RepositoryPause =
@@ -247,6 +340,12 @@ export interface RepositoryStatus {
 export interface RepositoryAccess {
   /** A page of the repositories people can choose, from 1. */
   list(page?: number): Promise<RepositoryList>;
+  /**
+   * Whether a repository could take a project, without making or linking anything: for telling
+   * people before they go on. What it finds is the answer, see `RepositoryCheck`; it rejects only
+   * where the platform could not look, as the other calls do.
+   */
+  check(choice: RepositoryLink): Promise<RepositoryCheck>;
   /** Saves a project to a repository from now on: the first archive follows at once. */
   link(project: string, choice: RepositoryLink): Promise<RepositoryStatus>;
   status(project: string): Promise<RepositoryStatus>;
@@ -283,6 +382,8 @@ export class RepositoryRefused extends Error {
   readonly code: RepositoryRefusal;
   /** For "hasProject": what of a project is there. */
   readonly files: readonly string[] | undefined;
+  /** For "linkedElsewhere": the project the repository is of, where it is the person's own. */
+  readonly project: { readonly id: string; readonly name: string } | undefined;
   /** For "diverged": what changed, see `RepositoryStatus.diverged`. */
   readonly diverged: RepositoryStatus["diverged"];
   /** For "busy": seconds to wait. */
@@ -291,6 +392,7 @@ export class RepositoryRefused extends Error {
     code: RepositoryRefusal,
     more: {
       readonly files?: readonly string[];
+      readonly project?: { readonly id: string; readonly name: string };
       readonly diverged?: RepositoryStatus["diverged"];
       readonly retryAfter?: number;
     } = {},
@@ -298,6 +400,7 @@ export class RepositoryRefused extends Error {
     super(`The platform refused: ${code}`);
     this.code = code;
     this.files = more.files;
+    this.project = more.project;
     this.diverged = more.diverged;
     this.retryAfter = more.retryAfter;
   }
@@ -489,7 +592,14 @@ export interface CloudLine {
   close(): void;
 }
 
-/** How a link moves forward, see `CloudLinks.update`. */
+/** The repository of a project of the platform, as a link remembers it, see `CloudLink.repository`. */
+export interface CloudLinkRepository {
+  /** Its number on the Git platform, which stays as it is renamed. */
+  readonly id: number;
+  readonly fullName: string;
+}
+
+/** How a link moves forward, and what it remembers from now on, see `CloudLinks.update`. */
 export interface CloudLinkChange {
   readonly seq?: number;
   readonly digest?: string;
@@ -497,6 +607,13 @@ export interface CloudLinkChange {
   readonly syncedAt?: number;
   /** The project is on the platform now: it is not `creating` any more. */
   readonly made?: true;
+  /** See `CloudLink.generation`: only for a link that does not say which one yet. */
+  readonly generation?: number;
+  readonly pending?: number;
+  readonly name?: string;
+  /** Null: the platform said the project has none. */
+  readonly repository?: CloudLinkRepository | null;
+  readonly owner?: string;
 }
 
 /** That a project of this browser is connected to a project of the platform. */
@@ -525,17 +642,46 @@ export interface CloudLink {
    * it there, with what the project is then, see `SyncClientMessage` "hello".
    */
   readonly creating?: true;
+  /**
+   * Which working copy of the platform the log here is of, see "hello" of the protocol: the
+   * platform can make a project again from its repository, and that is another document, which
+   * this log cannot go on with. A link from before these were told apart does not say: the first.
+   */
+  readonly generation?: number;
+  /**
+   * What follows is only remembered for showing the project in a list while the platform cannot be
+   * asked, or nobody is signed in: none of it decides anything, and a link from before does not
+   * have it. What the project was called when it was last seen.
+   */
+  readonly name?: string;
+  /**
+   * The repository it is saved to, as the platform last said: null where it said there is none,
+   * and missing where it never said.
+   */
+  readonly repository?: CloudLinkRepository | null;
+  /** Whose project it is on the platform, see `AccountSnapshot.id`. */
+  readonly owner?: string;
+  /**
+   * How many changes of this browser the platform did not have, when the window that syncs last
+   * counted: a hint, for marking the project in a list. Whoever takes the project out of this
+   * browser has to read its log, see `CloudProjects.removeFromBrowser` in the editor.
+   */
+  readonly pending?: number;
 }
 
 export interface CloudLinks {
   get(key: string): Promise<CloudLink | undefined>;
+  /** Every link this browser keeps, in no order: for a list of projects, see `CloudLink.name`. */
+  list(): Promise<readonly CloudLink[]>;
   /** Keeps a link, in place of the one with the same key. */
   put(link: CloudLink): Promise<void>;
   /**
    * Moves a link to `project` forward, never back, as two windows can both have been the one that
    * syncs: `seq` with its `digest`, `pushed`, `syncedAt`, and `made` once the project is on the
-   * platform, see `creating`. Resolves to false, and changes nothing, when there is no such link:
-   * one that another window took away, or made for another project, stays as it is.
+   * platform, see `creating`. `generation` only where the link does not say one. What a link
+   * remembers for lists (`pending`, `name`, `repository`, `owner`) is replaced by what is given.
+   * Resolves to false, and changes nothing, when there is no such link: one that another window
+   * took away, or made for another project, stays as it is.
    */
   update(key: string, project: string, change: CloudLinkChange): Promise<boolean>;
   /**
@@ -575,6 +721,12 @@ export type AccountSnapshot =
   | { readonly status: "signedOut" }
   | {
       readonly status: "signedIn";
+      /**
+       * What the host knows the person by, which stays as they rename the account: projects of a
+       * platform say whose they are by it, see `CloudLink.owner`. Missing where the host does not
+       * say.
+       */
+      readonly id?: string;
       /** What people know the account by, such as the login on GitHub. */
       readonly name: string;
       /** An https address of the account's picture. */

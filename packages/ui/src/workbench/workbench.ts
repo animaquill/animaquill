@@ -542,6 +542,22 @@ export class Workbench {
         signIn: () => this.signIn(),
         installApp: () => void this.installApp(),
         openProject: (id) => this.openProject(id),
+        ...(host.localFolders && { records: host.localFolders.records }),
+        ...(host.presence && {
+          others: async (key: string) => (await host.presence?.others(key)) ?? 0,
+        }),
+        closeProject: async () => {
+          await this.closeProject();
+          return this.session.store === undefined;
+        },
+        // What its exports kept goes with it, which only happens once this window lets go of them.
+        removeLocal: async (key) => {
+          await this.videos.letGoOfProject(key);
+          await host.projects.remove(key);
+        },
+        ...(this.projectFolders && { moveToFolder: (key: string) => this.moveToFolder(key) }),
+        memory: host.windowMemory,
+        leaving: () => this.leavingPage,
         ...(options.cloudTiming && { timing: options.cloudTiming }),
         ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
       });
@@ -1509,6 +1525,19 @@ export class Workbench {
     if (await this.#isFolder(project.id)) {
       this.notifications.push(t("folder.move.removeIsFolder", { name: project.name }));
       return false;
+    }
+    if (this.cloud) {
+      // The copy of a project of the platform: what did not get there is nowhere else, and that
+      // is looked at first, see `CloudProjects.removeFromBrowser`.
+      let isCopy: boolean;
+      try {
+        isCopy = (await this.cloud.linkOf(project.id)) !== undefined;
+      } catch (error) {
+        console.warn("Whether the project is one of the platform could not be read", error);
+        this.notifications.push(t("notice.projectRemoveFailed"));
+        return false;
+      }
+      if (isCopy) return this.cloud.removeFromBrowser(project.id);
     }
     const confirmed = await this.dialogs.confirm({
       title: t("project.removeTitle", { name: project.name }),

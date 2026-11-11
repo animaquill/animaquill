@@ -13,6 +13,13 @@
  * Every update of the platform has a number, and a digest that stands for it and every update
  * before it. A window keeps both: when the platform comes back from a backup, the same number can
  * stand for another update, and the digest says so, see "welcome".
+ *
+ * A platform can let go of the working copy of a project that is archived, and make it again from
+ * the archive: that is another document, with the same content, and what a window has of the one
+ * before cannot go on with it. So the copies of a project are counted, its `generation`, from 1:
+ * "hello" says which one the window has, "welcome" which one the platform has, and a platform that
+ * has another one closes with `SYNC_CLOSE.rebuilt`. A window or a platform from before this says
+ * none, which the other takes as it always did.
  */
 
 /** The version of the protocol. A platform that speaks another one closes with `SYNC_CLOSE.outdated`. */
@@ -48,6 +55,11 @@ export const SYNC_CLOSE = {
   forbidden: 4403,
   /** No such project, or not one of whoever is signed in. */
   missing: 4404,
+  /**
+   * The platform made the project again from its archive since the window last had it: what the
+   * window has is of another copy, see `generation` of "hello", and cannot go on with this one.
+   */
+  rebuilt: 4409,
   /** The editor is too old for the platform: reload. */
   outdated: 4426,
   /** Too many connections or messages: come back later. */
@@ -114,7 +126,9 @@ export type SyncClientMessage =
    * The first message, for one project: the updates after `after` come back, then "synced". The
    * window says the digest it has for `after`, see "welcome". With `create`, the payload is the whole
    * project, which becomes the first version of a new one with this id, or which the platform
-   * compares with what it has, when it has the project already.
+   * compares with what it has, when it has the project already. `generation`: which working copy
+   * of the project what the window has is of, from 1; a window that has nothing of it yet, as one
+   * that opens it from the platform, says none.
    */
   | {
       readonly t: "hello";
@@ -122,6 +136,7 @@ export type SyncClientMessage =
       readonly project: string;
       readonly after: number;
       readonly digest?: string;
+      readonly generation?: number;
       readonly device: string;
       readonly window: string;
       readonly editor: string;
@@ -151,13 +166,14 @@ export type SyncServerMessage =
    * The project is there, at `head`, whose digest is `digest`. `reset`: the platform does not have
    * what the window says it had at `after` (the platform came back from a backup, or the window
    * says it has more than there is): what came after comes from the start, and the window sends
-   * again what it has of its own.
+   * again what it has of its own. `generation`: which working copy of the project this is.
    */
   | {
       readonly t: "welcome";
       readonly head: number;
       readonly digest: string;
       readonly reset: boolean;
+      readonly generation?: number;
     }
   /** An update of the platform. "snapshot" is the whole project up to `seq`. */
   | {
@@ -367,6 +383,7 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         !isToken(h["project"]) ||
         !isCount(h["after"]) ||
         (h["digest"] !== undefined && !isDigest(h["digest"])) ||
+        (h["generation"] !== undefined && !isCount(h["generation"])) ||
         !isToken(h["device"]) ||
         !isToken(h["window"]) ||
         !isText(h["editor"], 64) ||
@@ -379,6 +396,7 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         project: h["project"],
         after: h["after"],
         ...(typeof h["digest"] === "string" && { digest: h["digest"] }),
+        ...(typeof h["generation"] === "number" && { generation: h["generation"] }),
         device: h["device"],
         window: h["window"],
         editor: h["editor"],
@@ -428,9 +446,20 @@ export function readSyncServerMessage(data: Uint8Array | Parsed): SyncServerMess
   const { header: h, payload } = parts;
   switch (h["t"]) {
     case "welcome":
-      if (!isCount(h["head"]) || !isDigest(h["digest"]) || typeof h["reset"] !== "boolean")
+      if (
+        !isCount(h["head"]) ||
+        !isDigest(h["digest"]) ||
+        typeof h["reset"] !== "boolean" ||
+        (h["generation"] !== undefined && !isCount(h["generation"]))
+      )
         return undefined;
-      return { t: "welcome", head: h["head"], digest: h["digest"], reset: h["reset"] };
+      return {
+        t: "welcome",
+        head: h["head"],
+        digest: h["digest"],
+        reset: h["reset"],
+        ...(typeof h["generation"] === "number" && { generation: h["generation"] }),
+      };
     case "update":
       if (
         !isCount(h["seq"]) ||

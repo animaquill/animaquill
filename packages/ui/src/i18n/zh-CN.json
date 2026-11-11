@@ -2245,6 +2245,42 @@
       "disabled": "这个账号已停用，不能登录。"
     }
   },
+  "start": {
+    "local": "这台电脑上的项目",
+    "cloud": "云端的项目",
+    "browser": "浏览器里的项目",
+    "mark": {
+      "local": "仅本机",
+      "linked": "☁ 已连云端",
+      "linkedRepository": "☁ 已连云端 · {{repository}}",
+      "attention": "☁ 要处理",
+      "noRepository": "还差一步：选仓库",
+      "otherAccount": "是另一个账号的云端项目"
+    },
+    "hint": {
+      "repository": "仓库的存档停下了。打开项目，在云端面板里处理。",
+      "conflicts": "GitHub 上的改动和项目里的改动冲突了。打开项目处理。",
+      "blocked": "GitHub 上有文件没能并进来。打开项目处理。",
+      "missing": "云端的列表里没有这个项目，可能已经删除。打开项目后可以断开云端，或者连成另一个云端项目。",
+      "other": "云端有事要处理。打开项目，在云端面板里看。",
+      "noRepository": "这个项目已经在云端，还没选仓库。打开项目接着选。",
+      "otherAccount": "它连着的云端项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
+      "stale": "云端的列表读不出来，这是这个浏览器上次记下的情况。"
+    },
+    "pending": "有改动还没同步",
+    "openedHere": "在这个浏览器里打开过",
+    "afterSignIn": "登录后继续同步",
+    "notLive": "要先从仓库取回",
+    "cloudSignedOut": "登录后可以打开你存在云端的项目。",
+    "cloudUnreadable": "云端的项目列表读不出来，下面是这个浏览器里缓存过的，可以离线打开。列表不是最新的。",
+    "cloudLoading": "正在读取云端的项目…",
+    "cloudEmpty": "云端还没有项目。打开一个项目，用“云端…”把它连上去。",
+    "open": "打开",
+    "download": "下载到文件夹…",
+    "openOnGitHub": "在 GitHub 上打开",
+    "removeHere": "清掉这个浏览器里的缓存…",
+    "deleteCloud": "删除云端项目…"
+  },
   "cloud": {
     "connectAction": "连接到云端…",
     "disconnectAction": "断开云端连接…",
@@ -2265,6 +2301,8 @@
     "copyMessage": "它记着的云端项目，已经由这个浏览器里的另一个文件夹连着。复制出来的这份当作新项目：可以断开，也可以连成另一个云端项目。原来那份不受影响。",
     "foreignTitle": "这个文件夹连着云端项目",
     "foreignMessage": "这个浏览器没有和这个文件夹同步过，可能是换了浏览器或清除过浏览器数据。直接接上会让内容重复，所以先不同步：可以断开，也可以连成另一个云端项目。",
+    "browserTitle": "这个云端项目在浏览器里已经有一份",
+    "browserMessage": "这个文件夹记着的云端项目，这个浏览器已经直接打开过，浏览器里留着它的一份。一个云端项目在一个浏览器里只能有一份，所以这个文件夹先不同步：可以断开，也可以连成另一个云端项目。浏览器里的那一份不受影响，在开始页“云端的项目”里。",
     "letGo": "断开",
     "makeNew": "连成另一个云端项目",
     "letGoDone": "这个文件夹已经断开云端。",
@@ -2283,7 +2321,6 @@
     "nothingThere": "云端还没有项目。先在一个项目里用“连接到云端”。",
     "downloading": "正在从云端下载项目",
     "downloadFailed": "没能从云端下载项目，请稍后再试。",
-    "alreadyHere": "这个浏览器里已经有“{{name}}”，但它没有连着这个云端项目，所以没有打开。",
     "status": {
       "starting": "云端：准备中",
       "connecting": "云端：正在连接",
@@ -2301,6 +2338,7 @@
       "outdated": "编辑器比平台旧，刷新页面后继续同步。改动都留在本机。",
       "missing": "云端找不到这个项目，或者它不是你的。改动都留在本机。",
       "diverged": "本机和云端的内容对不上，同步已暂停。改动都留在本机。",
+      "rebuilt": "云端的这个项目已经从仓库重新取回，这个浏览器里的这一份接不上了，同步已暂停。改动都留在本机。请刷新页面更新编辑器后再处理。",
       "unsupported": "这个浏览器存不了同步需要的记录，不能同步。",
       "unlinked": "这个项目在另一个窗口断开了云端连接。"
     },
@@ -2337,11 +2375,190 @@
     "stuckMessage": "云端不接受这个项目里的一个改动，或者找不到这个项目。改动都在本机。可以先在编辑器里改掉出问题的地方（比如删掉太大的文件），再以现在的项目重新同步；也可以断开云端连接，项目只留在本机；或者把现在的项目连成一个新的云端项目，原来那个云端项目不受影响。",
     "resync": "以现在的项目重新同步",
     "details": "云端",
-    "syncHeading": "实时同步"
+    "syncHeading": "实时同步",
+    "open": {
+      "failed": "读不出这个浏览器里的记录，没能打开云端的项目，请稍后再试。",
+      "busy": "这个云端项目正在另一个窗口里打开，稍等一下再试。",
+      "notLive": "这个云端项目要先从仓库取回，这一版编辑器还做不了。请刷新页面后再试。",
+      "restoring": "正在从仓库取回项目…",
+      "restoringLong": "从仓库取回项目花的时间比预期长，请稍后再打开。",
+      "gone": "云端的列表里已经没有这个项目了。"
+    },
+    "download": {
+      "already": "这个云端项目在这台电脑上已经有文件夹了，直接打开它。",
+      "chooseTitle": "把“{{name}}”放进文件夹",
+      "chooseMessage": "项目已经从云端打开。接下来选一个文件夹，文档和代码会写进去，之后它就是这个文件夹里的项目，照常和云端同步。素材文件以后再下载。",
+      "choose": "选文件夹…",
+      "later": "先不放"
+    },
+    "remove": {
+      "title": "从这个浏览器移除“{{name}}”？",
+      "message": "只移除这个浏览器里的这一份，云端的项目不受影响，以后可以再打开。",
+      "confirm": "移除",
+      "unsyncedTitle": "“{{name}}”还有内容只在这个浏览器里",
+      "unsynced": "有 {{count}} 个改动还没同步到云端。",
+      "notThere": "这个项目还没传到云端。",
+      "unknown": "没法确认这个浏览器里的改动是否都已同步到云端。",
+      "files": "有 {{count}} 个素材文件只在这个浏览器里，别处下载不到：{{files}}。",
+      "lost": "现在移除，这些内容就没有了。",
+      "keepFiles": "素材文件可以先用“下载到文件夹…”留一份。",
+      "open": "打开项目让它同步",
+      "wait": "先留着，等它同步",
+      "anyway": "仍然移除",
+      "openElsewhere": "这个浏览器的其他窗口还开着这个项目。先关掉那些窗口，再移除。",
+      "failed": "没能从这个浏览器移除，可以再试一次。",
+      "done": "已从这个浏览器移除“{{name}}”。云端的项目还在。"
+    },
+    "delete": {
+      "title": "删除云端项目“{{name}}”？",
+      "message": "云端的这个项目会删掉，不能恢复。它还没有仓库，所以云端之外没有存档。这台电脑上的文件夹和浏览器里的那一份不会动，以后只在本机。",
+      "confirm": "删除云端项目",
+      "hasRepository": "这个云端项目已经有仓库，不能在这里删除。",
+      "failed": "没能删除云端项目，请稍后再试。",
+      "done": "已删除云端项目“{{name}}”。"
+    },
+    "connect": {
+      "title": "把“{{name}}”连接到云端",
+      "replaceTitle": "把“{{name}}”连成另一个云端项目",
+      "repositoryTitle": "给“{{name}}”选仓库",
+      "aboutHeading": "连上以后：",
+      "aboutSync": "在别的电脑或浏览器上打开这个项目，改动实时同步",
+      "aboutArchive": "文档和代码自动存进你的 GitHub 仓库（停手 5 分钟，或连续编辑 30 分钟存一次）",
+      "aboutAssets": "素材不上传，放在哪以后一个个选",
+      "repositoryOnly": "这个项目已经在云端，还差一步：选一个仓库，文档和代码会自动存进去。",
+      "need": {
+        "account": "正在确认登录状态…",
+        "signIn": "要先登录。登录时页面会离开一下，再回到这里，项目里的改动都会留着。",
+        "installApp": "要先在你的 GitHub 账号上安装 AnimaQuill 的 GitHub App，AnimaQuill 才能往你的仓库里存。",
+        "installAdvice": "安装时建议选“只授权选定的仓库”（Only select repositories），这样 AnimaQuill 只能碰你选的仓库；在这里新建的仓库会自动加进去。装好会回到这里。"
+      },
+      "signIn": "登录",
+      "install": "去安装…",
+      "repository": "仓库",
+      "checking": "正在检查…",
+      "nameOk": "这个名字可以用",
+      "repositoryOk": "这个仓库可以用",
+      "nameMoved": "你的 GitHub 上已经有同名的仓库，所以换成了这个名字，可以再改。",
+      "submit": "连接到云端",
+      "submitRepository": "存进这个仓库",
+      "retry": "再试一次",
+      "finish": "完成",
+      "close": "关闭",
+      "step": {
+        "upload": "上传项目",
+        "create": "新建仓库",
+        "existing": "关联仓库",
+        "archive": "第一次存档"
+      },
+      "stepState": {
+        "waiting": "等待",
+        "running": "进行中",
+        "done": "完成",
+        "failed": "没有成功"
+      },
+      "problem": {
+        "notSaved": "有改动还没存好，稍等一下再试。",
+        "unsupported": "这个浏览器存不了同步需要的记录，不能连接云端。",
+        "folderNotReady": "项目文件夹还没打开好，稍后再试。",
+        "failed": "浏览器里的记录写不进去，没能开始。可以再试一次。",
+        "offline": "浏览器没有网络，项目还没传到云端。联网后会自动接着传，传好后再点“连接到云端”。",
+        "unreachable": "暂时连不上平台，项目还没传到云端。正在自动重试，传好后再点“连接到云端”。",
+        "signedOut": "登录已过期。重新登录后回到这里，接着连接。",
+        "outdated": "编辑器比平台旧，刷新页面后再连接。",
+        "tooLarge": "项目的文档和代码太大，云端存不下。删掉太大的文件后再试。",
+        "quota": "超过了你在云端能存的项目数或大小。删掉不用的云端项目后再试。",
+        "rejected": "云端没有接受这个项目（{{reason}}）。",
+        "stopped": "上传停下了，再试一次。",
+        "choice": "仓库这里要改一下，改好再试。",
+        "retrying": "第一次存档还没成功，平台会自动再试。项目已经连上云端，实时同步照常；可以关掉这个对话框，在云端面板里看。",
+        "paused": "第一次存档先停着：{{reason}}。项目已经连上云端，实时同步照常。{{fix}}"
+      },
+      "archiving": "项目已经连上云端。第一次存档正在进行，可以关掉这个对话框，它会在后台完成。",
+      "done": "已连接到云端，第一次存档也完成了。",
+      "cancelling": "正在取消…",
+      "unconfirmed": "现在连不上平台，没法确认云端刚建的项目已经删掉，所以还没有取消。可以稍后再取消；也可以现在就断开，那样云端可能留下一个没有仓库的项目，以后能在开始页“云端的项目”里删除。",
+      "cancelLater": "先不取消",
+      "cancelForce": "现在就断开",
+      "kept": "云端已经给这个项目关联了仓库，所以没有取消。它会照常同步和存档。"
+    },
+    "panel": {
+      "title": "云端 · {{name}}",
+      "bar": {
+        "local": "仅本机",
+        "synced": "☁ 已同步",
+        "direct": "☁ 云端项目",
+        "syncing": "☁ 正在同步",
+        "syncingPending": "☁ 正在同步，{{count}} 个改动待发",
+        "connecting": "☁ 正在连接",
+        "offline": "☁ 离线",
+        "offlinePending": "☁ 离线，{{count}} 个改动待发",
+        "attention": "☁ 要处理"
+      },
+      "row": {
+        "repository": "仓库",
+        "sync": "同步",
+        "archive": "存档",
+        "local": "本机"
+      },
+      "repository": {
+        "value": "{{name}}（{{visibility}}）",
+        "none": "还差一步：选仓库",
+        "checking": "正在查…",
+        "signedOut": "登录后才能看到",
+        "unknown": "暂时查不到",
+        "stale": "暂时查不到最新的情况，这是之前查到的。"
+      },
+      "sync": {
+        "online": "在线，改动都已发送",
+        "onlinePending": "在线，{{count}} 个改动待发",
+        "connecting": "正在连接…",
+        "reconnecting": "连不上平台，正在重试",
+        "reconnectingAt": "连不上平台，{{time}} 再试",
+        "offline": "离线，联网后自动接着同步",
+        "offlinePending": "离线，{{count}} 个改动待发，联网后自动发送",
+        "pending": "{{count}} 个改动待发",
+        "elsewhere": "由这个浏览器的另一个窗口同步",
+        "detached": "这个文件夹记着一个云端项目，但这个浏览器没有和它同步"
+      },
+      "archive": {
+        "last": "{{time}} 存过",
+        "lastJustNow": "刚刚存过",
+        "never": "还没存过档",
+        "upToDate": "改动都已存档",
+        "waiting": "有新改动，约 {{count}} 分钟后再存",
+        "waitingSoon": "有新改动，马上存",
+        "archiving": "正在存档…",
+        "retry": "上次没存成，{{time}} 再试",
+        "paused": "存档先停着：{{reason}}",
+        "archiveAt": "1 分钟内只能存一次档，{{count}} 秒后自动存",
+        "notSent": "还有改动没发到云端，发过去以后才会存。"
+      },
+      "local": {
+        "browser": "没有文件夹，项目放在这个浏览器里"
+      },
+      "action": {
+        "connect": "连接到云端…",
+        "chooseRepository": "选仓库…",
+        "switchRepository": "换一个仓库…",
+        "disconnect": "断开云端…",
+        "removeFromBrowser": "从这个浏览器移除…",
+        "downloadToFolder": "下载到文件夹…",
+        "archiveNow": "现在存档",
+        "openOnGitHub": "在 GitHub 上打开",
+        "signIn": "登录",
+        "reload": "刷新页面",
+        "retry": "重试",
+        "resolveStuck": "处理…",
+        "resolveDetached": "处理…",
+        "continueWithEditor": "以编辑器的内容接着存…",
+        "installApp": "去安装…"
+      }
+    }
   },
   "repository": {
     "action": "存到 GitHub…",
     "title": "存到 GitHub",
+    "switchTitle": "换一个仓库",
     "askTitle": "把项目存到 GitHub？",
     "askIntro": "云端之外，你自己的 GitHub 仓库里也会有一份项目。",
     "intro": "项目的文档和代码会存进这个仓库，不含素材。你停手 5 分钟、或者连续编辑 30 分钟时自动存一次，也可以随时“现在存档”。素材放在哪由你一个个选，默认只在这台电脑上。",
@@ -2358,7 +2575,9 @@
       "tooLong": "仓库名最多 100 个字符。",
       "characters": "仓库名只能用英文字母、数字和 - _ .，不能有空格或中文。",
       "dots": "仓库名不能是 . 或 ..。",
-      "dotGit": "仓库名不能以 .git 结尾。"
+      "dotGit": "仓库名不能以 .git 结尾。",
+      "taken": "你的 GitHub 上已经有叫这个名字的仓库了，换一个名字。",
+      "refused": "GitHub 不接受这个仓库名，换一个名字。"
     },
     "create": "新建并存档",
     "useExisting": "存进这个仓库",
@@ -2378,8 +2597,12 @@
       "linked": "已经存着另一个项目",
       "current": "现在存进的就是这个仓库",
       "hasProject": "根目录已经有项目的文件：{{files}}",
-      "notFound": "找不到了，可能已删除或不在授权范围里"
+      "notFound": "找不到了，可能已删除或不在授权范围里",
+      "linkedProject": "已经是云端项目“{{name}}”的仓库",
+      "restoreLater": "以后可以从这个仓库恢复成云端项目"
     },
+    "openLinked": "打开那个项目",
+    "keepsFiles": "这个仓库里已有的其他文件不会动。",
     "publicWarning": "这是公开仓库，任何人都能看到存进去的文档和代码。",
     "publicConfirm": "我知道，存进这个公开仓库",
     "notInstalled": "要先在你的 GitHub 账号上安装 AnimaQuill 的 GitHub App，才能存到 GitHub。",

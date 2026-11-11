@@ -4,15 +4,20 @@ import { describe, expect, it } from "vitest";
 import zhCN from "../i18n/zh-CN.json" with { type: "json" };
 import {
   archiveStateText,
+  choiceNote,
+  connectRepositoryName,
   defaultRepositoryName,
   divergedOutcome,
   keptText,
   lastArchiveText,
+  linkedProjectOf,
   momentText,
   nameProblem,
+  nextRepositoryName,
   pauseDetail,
   pauseText,
   repositoryText,
+  unusableAdvice,
   unusableReason,
   unusableText,
 } from "./repository-text.ts";
@@ -192,6 +197,50 @@ describe("how saving to GitHub reads", () => {
     expect(unusableText("hasProject", there, t)).toBe(
       "根目录已经有项目的文件：animaquill.json、timelines",
     );
+  });
+
+  it("says whose repository one is already, and what a project found in one can become", () => {
+    const linked = choice({ linked: true, linkedProject: { id: "p9", name: "片头动画" } });
+    expect(linkedProjectOf(linked, undefined)).toEqual({ id: "p9", name: "片头动画" });
+    expect(unusableAdvice(linked, "linked", undefined, t)).toBe("已经是云端项目“片头动画”的仓库");
+    // As the platform said when people tried it.
+    const refusal = { code: "linkedElsewhere" as const, project: { id: "p8", name: "年会视频" } };
+    expect(linkedProjectOf(choice(), refusal)).toEqual({ id: "p8", name: "年会视频" });
+    expect(unusableAdvice(choice(), "linked", refusal, t)).toBe("已经是云端项目“年会视频”的仓库");
+    // Somebody else's project: only that it is taken.
+    expect(linkedProjectOf(choice({ linked: true }), undefined)).toBeUndefined();
+    expect(unusableAdvice(choice({ linked: true }), "linked", undefined, t)).toBe(
+      "已经存着另一个项目",
+    );
+    expect(
+      unusableAdvice(choice(), "hasProject", { code: "hasProject", files: ["animaquill.json"] }, t),
+    ).toBe("根目录已经有项目的文件：animaquill.json。以后可以从这个仓库恢复成云端项目");
+    expect(unusableAdvice(choice(), "archived", undefined, t)).toBe("在 GitHub 上已归档，只能读");
+    // A repository with other files in it keeps them.
+    expect(choiceNote(choice({ empty: false }), t)).toBe("这个仓库里已有的其他文件不会动。");
+    expect(choiceNote(choice({ empty: true }), t)).toBeUndefined();
+  });
+
+  it("names the repository of a project that connects after its folder, then after itself", () => {
+    expect(connectRepositoryName("atom", "原子是什么")).toBe("atom");
+    expect(connectRepositoryName("My Film 2", "原子是什么")).toBe("my-film-2");
+    // A folder with a name GitHub does not take: the project's own.
+    expect(connectRepositoryName("原子", "Atoms Demo")).toBe("atoms-demo");
+    expect(connectRepositoryName(undefined, "Atoms Demo")).toBe("atoms-demo");
+    // Neither: a name that always works.
+    expect(connectRepositoryName("原子", "原子是什么")).toBe("animaquill-project");
+    expect(connectRepositoryName(undefined, "...")).toBe("animaquill-project");
+    expect(connectRepositoryName("film.git", "x.git")).toBe("animaquill-project");
+    expect(nameProblem(connectRepositoryName("a".repeat(120), "b"))).toBeUndefined();
+  });
+
+  it("tries the next name where one is taken, a few times over", () => {
+    expect(nextRepositoryName("atom", 1)).toBe("atom-2");
+    expect(nextRepositoryName("atom", 2)).toBe("atom-3");
+    expect(nextRepositoryName("atom", 8)).toBe("atom-9");
+    expect(nextRepositoryName("atom", 9)).toBeUndefined();
+    // A name that would get too long is no name to try.
+    expect(nextRepositoryName("a".repeat(99), 1)).toBeUndefined();
   });
 
   it("checks a repository name as GitHub does", () => {

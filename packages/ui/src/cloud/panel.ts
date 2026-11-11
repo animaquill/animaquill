@@ -1,0 +1,413 @@
+import type { RepositoryStatus } from "@animaquill/host";
+import type { TFunction } from "i18next";
+import type { CloudProjectsSnapshot } from "./projects.ts";
+import { keptText, knownPause, momentText, pauseDetail, pauseText } from "./repository-text.ts";
+import type { RepositoryWatchSnapshot } from "./repository-watch.ts";
+import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
+
+/**
+ * The one place in a project that says how it stands with the platform, see the design of the
+ * start page (docs/design/start-and-cloud.md of AnimaQuill Cloud), 4: a status in the status bar,
+ * and the panel it opens. Three things go into it: whether the project is connected and where it
+ * is on this computer, how syncing goes, and how archiving into its repository goes. What comes
+ * out is one level, the word of the status bar, the rows of the panel, and what people can do.
+ *
+ * - Not connected: "仅本机", and a click opens the dialog that connects it.
+ * - Connected and in step: "☁ 已同步". A project of the platform that was opened without a folder
+ *   says "☁ 云端项目" then, has a row that says it is only in this browser, with "下载到文件夹…",
+ *   and "从这个浏览器移除…" in place of "断开云端…".
+ * - Without a network, or with changes on their way: "☁ 离线，3 个改动待发".
+ * - Something people have to do: "☁ 要处理". Syncing stopped, archiving paused, or the project
+ *   has no repository yet, as one from before every project of the platform had one.
+ *
+ * No DOM, and nothing of it is kept: the same input says the same thing.
+ */
+
+export type PanelLevel =
+  /** Not connected. */
+  | "none"
+  | "ok"
+  /** On its way: connecting, changes not sent yet, no network. It gets there by itself. */
+  | "busy"
+  /** People have to do something. */
+  | "attention";
+
+/** What people can do from the panel: whoever shows it runs it, see `CloudProjects`. */
+export type PanelActionId =
+  /** Opens the dialog that connects the project, see `CloudProjects.beginConnect`. */
+  | "connect"
+  /** The same dialog, for a project of the platform that has no repository yet. */
+  | "chooseRepository"
+  | "switchRepository"
+  | "disconnect"
+  | "removeFromBrowser"
+  | "downloadToFolder"
+  | "archiveNow"
+  | "continueWithEditor"
+  | "installApp"
+  | "signIn"
+  | "reload"
+  /** Tries syncing again, see `CloudSession.resume`. */
+  | "retry"
+  | "resolveStuck"
+  | "resolveDetached";
+
+export interface PanelAction {
+  readonly id: PanelActionId;
+  readonly label: string;
+  readonly enabled: boolean;
+  /** What people most likely want, or what takes something away. */
+  readonly kind?: "primary" | "danger";
+}
+
+export interface PanelRow {
+  readonly id: "repository" | "sync" | "archive" | "local";
+  readonly label: string;
+  readonly text: string;
+  /** Lines below it: what helps, and what else there is to know. */
+  readonly notes: readonly string[];
+  readonly tone: "plain" | "attention";
+  /** Where people see it, as the repository on GitHub. */
+  readonly link?: { readonly label: string; readonly url: string };
+  readonly actions: readonly PanelAction[];
+}
+
+export interface CloudPanel {
+  readonly level: PanelLevel;
+  /** The word of the status bar. */
+  readonly bar: string;
+  /** What a click on the status opens: the dialog that connects the project, or the panel. */
+  readonly opens: "connect" | "panel";
+  readonly title: string;
+  readonly rows: readonly PanelRow[];
+  /** What the panel ends with. */
+  readonly actions: readonly PanelAction[];
+  /** How syncing and archiving are, as the status says them to whatever reads the page. */
+  readonly sync: CloudState | undefined;
+  readonly archive: RepositoryStatus["state"] | undefined;
+}
+
+export interface PanelInput {
+  /** Whether the open project syncs, see `CloudProjectsSnapshot`. */
+  readonly kind: CloudProjectsSnapshot["kind"];
+  /** For "linked": where the project is on this computer. */
+  readonly local?: "folder" | "browser";
+  /** For "detached": why the folder does not sync. */
+  readonly reason?: "copy" | "browser" | "foreign";
+  /** For "linked": how syncing goes. */
+  readonly sync?: CloudSnapshot;
+  /** For "linked": how archiving goes. Undefined where the platform saves no projects to repositories. */
+  readonly archive?: RepositoryWatchSnapshot;
+  /** What the project is called. */
+  readonly name: string;
+  /** This browser can write folders, so that a project that is only in it can move into one. */
+  readonly canMoveToFolder: boolean;
+  /** Milliseconds since 1970. */
+  readonly now: number;
+}
+
+/** What the panel needs, from what `CloudProjects` says and what it holds says right now. */
+export function panelInputOf(
+  snapshot: CloudProjectsSnapshot,
+  more: Pick<PanelInput, "name" | "canMoveToFolder" | "now">,
+): PanelInput {
+  if (snapshot.kind === "none") return { kind: "none", ...more };
+  if (snapshot.kind === "detached") return { kind: "detached", reason: snapshot.reason, ...more };
+  const archive = snapshot.repository?.getSnapshot();
+  return {
+    kind: "linked",
+    local: snapshot.local,
+    sync: snapshot.session.getSnapshot(),
+    ...(archive && { archive }),
+    ...more,
+  };
+}
+
+const plain = { interpolation: { escapeValue: false } } as const;
+
+/** What helps with a pause of archiving, the most likely first. Another repository is always there. */
+const PAUSE_ACTIONS: Readonly<Record<string, readonly PanelActionId[]>> = {
+  diverged: ["continueWithEditor"],
+  gone: ["archiveNow"],
+  uninstalled: ["installApp"],
+  suspended: ["archiveNow"],
+  archived: ["archiveNow"],
+  protected: ["archiveNow"],
+  transferred: [],
+  manifest: ["archiveNow"],
+  invalid: ["archiveNow"],
+};
+
+/** What helps where syncing waits for people. */
+const syncActions = (problem: CloudProblem | undefined): readonly PanelActionId[] => {
+  switch (problem?.kind) {
+    case undefined:
+    case "unsupported":
+      return [];
+    case "signed-out":
+      return ["signIn"];
+    case "outdated":
+    case "rebuilt":
+      return ["reload"];
+    case "rejected":
+    case "diverged":
+    case "missing":
+      // What the platform will not take stays here: the project can go on without it.
+      return ["retry", "resolveStuck"];
+    default:
+      return ["retry"];
+  }
+};
+
+/** When the project was last archived, and what comes next, in one line. */
+function archiveText(
+  status: RepositoryStatus,
+  archiveAt: number | undefined,
+  now: number,
+  t: TFunction,
+): string {
+  const { lastArchive: last } = status;
+  const before = !last
+    ? undefined
+    : last.at <= now && now - last.at < 60_000
+      ? t("cloud.panel.archive.lastJustNow")
+      : t("cloud.panel.archive.last", { time: momentText(last.at, now, t) });
+  let next: string | undefined;
+  if (archiveAt !== undefined) {
+    const count = Math.max(1, Math.ceil((archiveAt - now) / 1000));
+    next = t("cloud.panel.archive.archiveAt", { count });
+  } else if (status.archiving) next = t("cloud.panel.archive.archiving");
+  else if (status.retryAt !== undefined && (status.failures ?? 0) > 0)
+    next = t("cloud.panel.archive.retry", { time: momentText(status.retryAt, now, t) });
+  else if (status.dirtySince !== undefined || status.head > status.archivedSeq) {
+    next =
+      status.nextAt === undefined || status.nextAt <= now
+        ? t("cloud.panel.archive.waitingSoon")
+        : t("cloud.panel.archive.waiting", {
+            count: Math.max(1, Math.ceil((status.nextAt - now) / 60_000)),
+          });
+  }
+  if (before && next) return `${before}。${next}`;
+  return before ?? next ?? t("cloud.panel.archive.never");
+}
+
+export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
+  const { now } = input;
+  const title = t("cloud.panel.title", { name: input.name, ...plain });
+  const action = (
+    id: PanelActionId,
+    more: { readonly enabled?: boolean; readonly kind?: "primary" | "danger" } = {},
+  ): PanelAction => ({
+    id,
+    label: t(`cloud.panel.action.${id}`),
+    enabled: more.enabled ?? true,
+    ...(more.kind && { kind: more.kind }),
+  });
+  /** The first is what people most likely want. */
+  const actions = (ids: readonly PanelActionId[]): PanelAction[] =>
+    ids.map((id, index) => action(id, index === 0 ? { kind: "primary" } : {}));
+  const row = (
+    id: PanelRow["id"],
+    text: string,
+    more: Partial<Pick<PanelRow, "notes" | "tone" | "link" | "actions">> = {},
+  ): PanelRow => ({
+    id,
+    label: t(`cloud.panel.row.${id}`),
+    text,
+    notes: more.notes ?? [],
+    tone: more.tone ?? "plain",
+    ...(more.link && { link: more.link }),
+    actions: more.actions ?? [],
+  });
+
+  if (input.kind === "none") {
+    return {
+      level: "none",
+      bar: t("cloud.panel.bar.local"),
+      opens: "connect",
+      title,
+      rows: [],
+      actions: [action("connect", { kind: "primary" })],
+      sync: undefined,
+      archive: undefined,
+    };
+  }
+  if (input.kind === "detached" || !input.sync) {
+    const reason = input.reason ?? "foreign";
+    return {
+      level: "attention",
+      bar: t("cloud.panel.bar.attention"),
+      opens: "panel",
+      title,
+      rows: [
+        row("sync", t("cloud.panel.sync.detached"), {
+          notes: [t(`cloud.${reason}Message`)],
+          tone: "attention",
+          actions: actions(["resolveDetached"]),
+        }),
+      ],
+      actions: [],
+      sync: undefined,
+      archive: undefined,
+    };
+  }
+
+  const { state, problem, pending, here, retryAt } = input.sync;
+  const watch = input.archive;
+  const status = watch?.status;
+  const repository = status?.repository;
+  const isDirect = input.local === "browser";
+  const isStuck = state === "paused";
+  const isPaused = status?.state === "paused";
+  // One from before every project of the platform had a repository, or one whose connecting
+  // stopped halfway.
+  const lacksRepository = status?.state === "none";
+  const isAway = state === "offline" || state === "reconnecting";
+
+  const level: PanelLevel =
+    isStuck || isPaused || lacksRepository
+      ? "attention"
+      : state === "online" && pending === 0
+        ? "ok"
+        : "busy";
+  const bar =
+    level === "attention"
+      ? t("cloud.panel.bar.attention")
+      : isAway
+        ? pending > 0
+          ? t("cloud.panel.bar.offlinePending", { count: pending })
+          : t("cloud.panel.bar.offline")
+        : state !== "online"
+          ? t("cloud.panel.bar.connecting")
+          : pending > 0
+            ? t("cloud.panel.bar.syncingPending", { count: pending })
+            : t(isDirect ? "cloud.panel.bar.direct" : "cloud.panel.bar.synced");
+
+  const rows: PanelRow[] = [];
+
+  // ---- the repository
+  if (watch) {
+    if (repository) {
+      const isStale = watch.trouble !== undefined && watch.trouble !== "signedOut";
+      rows.push(
+        row(
+          "repository",
+          t("cloud.panel.repository.value", {
+            name: repository.fullName,
+            visibility: t(repository.private ? "repository.private" : "repository.public"),
+            ...plain,
+          }),
+          {
+            ...(isStale && { notes: [t("cloud.panel.repository.stale")] }),
+            ...(repository.url && {
+              link: { label: t("cloud.panel.action.openOnGitHub"), url: repository.url },
+            }),
+          },
+        ),
+      );
+    } else if (lacksRepository) {
+      rows.push(
+        row("repository", t("cloud.panel.repository.none"), {
+          tone: "attention",
+          actions: actions(["chooseRepository"]),
+        }),
+      );
+    } else {
+      rows.push(
+        row(
+          "repository",
+          watch.trouble === "signedOut"
+            ? t("cloud.panel.repository.signedOut")
+            : watch.trouble
+              ? t("cloud.panel.repository.unknown")
+              : t("cloud.panel.repository.checking"),
+        ),
+      );
+    }
+  }
+
+  // ---- syncing
+  const syncText = isStuck
+    ? problem
+      ? problem.kind === "rejected"
+        ? t("cloud.problem.rejected", { reason: t(`cloud.reason.${problem.reason}`), ...plain })
+        : t(`cloud.problem.${problem.kind}`)
+      : t("cloud.status.paused")
+    : state === "online"
+      ? pending > 0
+        ? t("cloud.panel.sync.onlinePending", { count: pending })
+        : t("cloud.panel.sync.online")
+      : state === "offline"
+        ? pending > 0
+          ? t("cloud.panel.sync.offlinePending", { count: pending })
+          : t("cloud.panel.sync.offline")
+        : state === "reconnecting"
+          ? retryAt === undefined
+            ? t("cloud.panel.sync.reconnecting")
+            : t("cloud.panel.sync.reconnectingAt", { time: momentText(retryAt, now, t) })
+          : t("cloud.panel.sync.connecting");
+  rows.push(
+    row("sync", syncText, {
+      notes: [
+        ...(state === "reconnecting" && pending > 0
+          ? [t("cloud.panel.sync.pending", { count: pending })]
+          : []),
+        ...(here || isStuck ? [] : [t("cloud.panel.sync.elsewhere")]),
+      ],
+      ...(isStuck && { tone: "attention" as const, actions: actions(syncActions(problem)) }),
+    }),
+  );
+
+  // ---- archiving
+  if (watch && status && repository) {
+    if (isPaused) {
+      const { reason, fix } = pauseText(status, t);
+      const detail = pauseDetail(status, t);
+      const kept = keptText(status, t);
+      rows.push(
+        row("archive", t("cloud.panel.archive.paused", { reason, ...plain }), {
+          notes: [fix, ...(detail ? [detail] : []), ...(kept ? [kept] : [])],
+          tone: "attention",
+          actions: actions(PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]),
+        }),
+      );
+    } else {
+      const kept = keptText(status, t);
+      const isBusy = status.archiving || watch.archiveAt !== undefined;
+      rows.push(
+        row("archive", archiveText(status, watch.archiveAt, now, t), {
+          notes: [
+            ...(kept ? [kept] : []),
+            // An archive is of what the platform has: what did not get there yet is not in it.
+            ...(pending > 0 ? [t("cloud.panel.archive.notSent")] : []),
+          ],
+          actions: [action("archiveNow", { enabled: !isBusy })],
+        }),
+      );
+    }
+  }
+
+  // ---- where it is on this computer
+  if (isDirect) {
+    rows.push(
+      row("local", t("cloud.panel.local.browser"), {
+        ...(input.canMoveToFolder && { actions: [action("downloadToFolder")] }),
+      }),
+    );
+  }
+
+  return {
+    level,
+    bar,
+    opens: "panel",
+    title,
+    rows,
+    actions: [
+      // Another repository at any time, not only where archiving paused.
+      ...(repository ? [action("switchRepository")] : []),
+      action(isDirect ? "removeFromBrowser" : "disconnect", { kind: "danger" }),
+    ],
+    sync: state,
+    archive: status?.state,
+  };
+}

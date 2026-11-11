@@ -23,17 +23,30 @@ export class DownloadFailed extends Error {
   }
 }
 
+/** A project as it came from the platform, see `download`. */
+export interface Downloaded {
+  /** All of it, as one update. */
+  readonly state: Uint8Array;
+  /** The number of its last update there, and what the platform said stands for all up to it. */
+  readonly head: number;
+  readonly digest: string;
+  /** Which working copy of the platform this is, where the platform says, see `CloudLink.generation`. */
+  readonly generation: number | undefined;
+}
+
 /**
- * All of a project on the platform, as one update, and the number of its last update there: what
- * opening it in this browser starts from. The same protocol as syncing, from nothing.
+ * All of a project on the platform, as one update, with the number of its last update there and
+ * its digest: what opening it in this browser starts from, and where syncing goes on from. The
+ * same protocol as syncing, from nothing: it says no `generation`, as it has none.
  */
 export async function download(
   cloud: CloudAccess,
   project: string,
   who: { readonly window: string; readonly editor: string; readonly signal?: AbortSignal },
-): Promise<{ readonly state: Uint8Array; readonly head: number }> {
+): Promise<Downloaded> {
   const connection = cloud.connect();
   const updates: Uint8Array[] = [];
+  let generation: number | undefined;
   try {
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -61,6 +74,7 @@ export async function download(
           fail(new DownloadFailed("The platform said something that makes no sense"));
           return;
         }
+        if (message.t === "welcome") generation = message.generation;
         if (message.t === "update") updates.push(message.payload);
         if (message.t !== "synced") return;
         const { store } = ProjectStore.fromUpdates(updates);
@@ -69,7 +83,12 @@ export async function download(
           return;
         }
         clearTimeout(timer);
-        resolve({ state: store.encodeState(), head: message.head });
+        resolve({
+          state: store.encodeState(),
+          head: message.head,
+          digest: message.digest,
+          generation,
+        });
         store.destroy();
       });
       void (async () => {

@@ -2,13 +2,16 @@ import {
   CloudSignedOut,
   RepositoryRefused,
   type RepositoryAccess,
+  type RepositoryCheck,
   type RepositoryChoice,
+  type RepositoryLink,
   type RepositoryRefusal,
   type RepositoryStatus,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import {
   nameProblem,
+  nextRepositoryName,
   unusableReason,
   type ChoiceRefusal,
   type NameProblem,
@@ -22,6 +25,12 @@ import {
  *
  * What the list cannot tell, such as a project at the top of a repository, the platform says when
  * people try it: the repository then shows as one that cannot be chosen, with why.
+ *
+ * With `precheck`, as where connecting a project chooses its repository (the design of the start
+ * page, 3), the platform is asked about what people chose before they go on, a moment after they
+ * stopped typing: a name that is taken shows at the name, a repository that cannot take the project
+ * in the list, as if they had tried. A name people did not type themselves moves on to one that is
+ * free: "atom-2", "atom-3". Where the platform cannot say, nothing shows, and trying tells.
  */
 
 export type PickerMode = "create" | "existing";
@@ -49,18 +58,43 @@ export interface PickerSnapshot {
   readonly refused: ReadonlyMap<number, ChoiceRefusal>;
   /** A repository is being made or linked. */
   readonly working: boolean;
+  /** The platform is being asked about what people chose, or will be in a moment, see `precheck`. */
+  readonly checking: boolean;
+  /** The platform said that what people chose now can take the project. */
+  readonly checked: boolean;
+  /** People typed the name themselves: it stays as they typed it, also where it is taken. */
+  readonly nameTouched: boolean;
   /** Why the last try did not go, where that is not about one repository. */
   readonly failure: RepositoryRefusal | "signedOut" | undefined;
   /** What the platform said once the project was saved to a repository. */
   readonly linked: RepositoryStatus | undefined;
 }
 
+/** Asking the platform about what people chose before they go on, see `RepositoryPicker`. */
+export interface PickerPrecheck {
+  /** How long after the last change the platform is asked. */
+  readonly delayMs?: number;
+  /** Whether asking makes sense now: not while nobody is signed in. */
+  readonly canAsk?: () => boolean;
+  readonly setTimeout?: (run: () => void, ms: number) => unknown;
+  readonly clearTimeout?: (timer: unknown) => void;
+}
+
 export interface RepositoryPickerOptions {
   readonly access: RepositoryAccess;
-  /** The project, by its id on the platform. */
-  readonly project: string;
+  /**
+   * The project, by its id on the platform: as a function where it is only known once people go
+   * on, as for a project that connecting puts on the platform first.
+   */
+  readonly project: string | (() => string | undefined);
   /** The name a new repository gets at first. */
   readonly name: string;
+  /**
+   * In place of the repository the project is saved to now, also while archiving into that one
+   * goes as it should, see `RepositoryLink.switch`.
+   */
+  readonly switching?: boolean;
+  readonly precheck?: PickerPrecheck;
   /** Right after connecting the project: people can put it off ("以后再说"). */
   readonly asking?: boolean;
   /** The repository the project goes to now, where archiving into it paused: another one instead. */
@@ -89,21 +123,50 @@ const codeOf = (error: unknown): RepositoryRefusal | "signedOut" =>
       ? error.code
       : "unavailable";
 
+/** How long after the last change the platform is asked about it, see `PickerPrecheck`. */
+const CHECK_DELAY_MS = 400;
+
+/** A name GitHub does not take, as the platform found when it was asked. */
+const REFUSED_NAME = { nameProblem: "refused" } as const;
+
+/** What the platform says about a repository people have that keeps it from being chosen. */
+const KEEPS_OUT: ReadonlySet<string> = new Set<RepositoryRefusal>([
+  "hasProject",
+  "linkedElsewhere",
+  "notPushable",
+  "notFound",
+]);
+
 export class RepositoryPicker {
   readonly asking: boolean;
   readonly current: RepositoryPickerOptions["current"];
   readonly owner: string | undefined;
   readonly #access: RepositoryAccess;
-  readonly #project: string;
+  readonly #project: RepositoryPickerOptions["project"];
+  readonly #switching: boolean;
+  readonly #precheck: PickerPrecheck | undefined;
   readonly #emitter = new Emitter();
   #snapshot: PickerSnapshot;
   /** Only the last list asked for counts. */
   #listTurn = 0;
+  /** ...and only the last question about what people chose. */
+  #checkTurn = 0;
+  #checkTimer: unknown;
+  /** The name as it was given, which the names tried after it build on, and how many were tried. */
+  #baseName: string;
+  #nameTries = 1;
+  /** Repositories the platform found public where the list did not say so. */
+  readonly #public = new Set<number>();
+  /** Whoever waits for the question about what people chose to be answered, see `settled`. */
+  #waiting: (() => void)[] = [];
   #closed = false;
 
   constructor(options: RepositoryPickerOptions) {
     this.#access = options.access;
     this.#project = options.project;
+    this.#switching = options.switching === true;
+    this.#precheck = options.precheck;
+    this.#baseName = options.name;
     this.asking = options.asking === true;
     this.current = options.current;
     this.owner = options.owner;
@@ -117,6 +180,9 @@ export class RepositoryPicker {
       publicConfirmed: false,
       refused: new Map(),
       working: false,
+      checking: false,
+      checked: false,
+      nameTouched: false,
       failure: undefined,
       linked: undefined,
     };
@@ -128,20 +194,39 @@ export class RepositoryPicker {
   #set(change: Partial<PickerSnapshot>): void {
     if (this.#closed) return;
     this.#snapshot = { ...this.#snapshot, ...change };
+    if (!this.#snapshot.checking) this.#answerWaiting();
     this.#emitter.emit();
+  }
+
+  #answerWaiting(): void {
+    for (const resolve of this.#waiting.splice(0)) resolve();
   }
 
   close(): void {
     this.#closed = true;
+    this.#clearCheckTimer();
+    this.#answerWaiting();
   }
 
   setMode(mode: PickerMode): void {
     this.#set({ mode, failure: undefined });
     if (mode === "existing" && this.#snapshot.list.state === "idle") void this.refresh();
+    this.#checkSoon();
   }
 
-  setName(name: string): void {
-    this.#set({ name, nameProblem: nameProblem(name.trim()), failure: undefined });
+  /** A name as people type it. `touched: false` for one the dialog puts there itself. */
+  setName(name: string, { touched = true } = {}): void {
+    if (!touched) {
+      this.#baseName = name;
+      this.#nameTries = 1;
+    }
+    this.#set({
+      name,
+      nameProblem: nameProblem(name.trim()),
+      failure: undefined,
+      nameTouched: touched,
+    });
+    this.#checkSoon();
   }
 
   /** Why a repository of the list cannot be chosen, or undefined where it can. */
@@ -153,6 +238,7 @@ export class RepositoryPicker {
     const choice = this.#snapshot.list.repositories.find((each) => each.id === id);
     if (!choice || this.unusable(choice)) return;
     this.#set({ selected: id, publicConfirmed: false, failure: undefined });
+    this.#checkSoon(0);
   }
 
   confirmPublic(yes: boolean): void {
@@ -164,6 +250,19 @@ export class RepositoryPicker {
     return list.repositories.find((each) => each.id === selected);
   }
 
+  /**
+   * The name is not the one it was at first: that one is taken, and people did not type this one
+   * themselves, see `precheck`.
+   */
+  get nameMovedOn(): boolean {
+    return !this.#snapshot.nameTouched && this.#nameTries > 1;
+  }
+
+  /** Whether people have to say yes to a repository being public before it can be chosen. */
+  isPublic(choice: RepositoryChoice): boolean {
+    return !choice.private || this.#public.has(choice.id);
+  }
+
   /** Whether what people chose can go to the platform as it is. */
   get canSubmit(): boolean {
     const snapshot = this.#snapshot;
@@ -171,7 +270,129 @@ export class RepositoryPicker {
     if (snapshot.mode === "create") return snapshot.nameProblem === undefined;
     const choice = this.selectedChoice;
     if (!choice || this.unusable(choice)) return false;
-    return choice.private || snapshot.publicConfirmed;
+    return !this.isPublic(choice) || snapshot.publicConfirmed;
+  }
+
+  // ---- asking the platform before people go on
+
+  /** Resolves once nothing is being asked about what people chose, see `precheck`. */
+  settled(): Promise<void> {
+    if (!this.#snapshot.checking || this.#closed) return Promise.resolve();
+    return new Promise((resolve) => this.#waiting.push(resolve));
+  }
+
+  /** Asks about what people chose again, as once someone is signed in, see `PickerPrecheck.canAsk`. */
+  recheck(): void {
+    this.#checkSoon(0);
+  }
+
+  #clearCheckTimer(): void {
+    const clear =
+      this.#precheck?.clearTimeout ??
+      ((timer: unknown) => clearTimeout(timer as ReturnType<typeof setTimeout>));
+    clear(this.#checkTimer);
+    this.#checkTimer = undefined;
+  }
+
+  /** What to ask the platform about: nothing where what people chose cannot go as it is anyway. */
+  #toCheck(): RepositoryLink | undefined {
+    const snapshot = this.#snapshot;
+    if (snapshot.notInstalled || snapshot.working || snapshot.linked) return undefined;
+    if (snapshot.mode === "create") {
+      const name = snapshot.name.trim();
+      return nameProblem(name) === undefined ? { create: { name } } : undefined;
+    }
+    const choice = this.selectedChoice;
+    if (!choice || this.unusable(choice)) return undefined;
+    // That it is public people see in the list: what else is wrong with it is worth knowing first.
+    return { existing: { id: choice.id }, ...(this.isPublic(choice) && { confirmPublic: true }) };
+  }
+
+  #checkSoon(delayMs = this.#precheck?.delayMs ?? CHECK_DELAY_MS): void {
+    const precheck = this.#precheck;
+    if (!precheck || this.#closed) return;
+    this.#clearCheckTimer();
+    const turn = ++this.#checkTurn;
+    const asked = this.#toCheck();
+    if (!asked || precheck.canAsk?.() === false) {
+      if (this.#snapshot.checking || this.#snapshot.checked)
+        this.#set({ checking: false, checked: false });
+      return;
+    }
+    this.#set({ checking: true, checked: false });
+    const later = precheck.setTimeout ?? ((run, ms) => setTimeout(run, ms));
+    this.#checkTimer = later(() => {
+      this.#checkTimer = undefined;
+      void this.#check(turn, asked);
+    }, delayMs);
+  }
+
+  async #check(turn: number, asked: RepositoryLink): Promise<void> {
+    if (turn !== this.#checkTurn || this.#closed) return;
+    let said: RepositoryCheck;
+    try {
+      said = await this.#access.check(asked);
+    } catch (error) {
+      if (turn !== this.#checkTurn) return;
+      // The platform could not say: nothing shows, and trying tells.
+      const code = codeOf(error);
+      this.#set({
+        checking: false,
+        ...(code === "signedOut" && { failure: code }),
+        ...(code === "notInstalled" && { notInstalled: true }),
+      });
+      return;
+    }
+    if (turn !== this.#checkTurn) return;
+    if (said.ok) {
+      this.#set({ checking: false, checked: true });
+      return;
+    }
+    if (said.reason === "notInstalled") {
+      this.#set({ checking: false, notInstalled: true });
+      return;
+    }
+    if ("create" in asked) {
+      if (said.reason === "nameTaken") this.#nameTaken();
+      else this.#set({ checking: false, ...(said.reason === "invalidName" && REFUSED_NAME) });
+      return;
+    }
+    const { id } = asked.existing;
+    if (KEEPS_OUT.has(said.reason)) {
+      const refused = new Map(this.#snapshot.refused);
+      refused.set(id, {
+        code: said.reason as RepositoryRefusal,
+        ...(said.files && { files: said.files }),
+        ...(said.project && { project: said.project }),
+      });
+      const isSelected = this.#snapshot.selected === id;
+      this.#set({
+        checking: false,
+        refused,
+        ...(isSelected && { selected: undefined, publicConfirmed: false }),
+      });
+      return;
+    }
+    // Public after all, which the list did not say: people have to say yes first.
+    if (said.reason === "public") this.#public.add(id);
+    this.#set({ checking: false, ...(said.reason === "public" && { publicConfirmed: false }) });
+  }
+
+  /**
+   * The person has a repository of this name already. A name they did not type themselves moves on
+   * to the next one, which is asked about in turn; one they typed says so.
+   */
+  #nameTaken(): void {
+    const next = this.#snapshot.nameTouched
+      ? undefined
+      : nextRepositoryName(this.#baseName, this.#nameTries);
+    if (next === undefined) {
+      this.#set({ checking: false, nameProblem: "taken" });
+      return;
+    }
+    this.#nameTries += 1;
+    this.#snapshot = { ...this.#snapshot, name: next, nameProblem: nameProblem(next) };
+    this.#checkSoon(0);
   }
 
   /**
@@ -204,9 +425,8 @@ export class RepositoryPicker {
                 (choice) => !before.repositories.some((each) => each.id === choice.id),
               ),
             ];
-      const selected = repositories.some((each) => each.id === this.#snapshot.selected)
-        ? this.#snapshot.selected
-        : undefined;
+      const chosen = this.#snapshot.selected;
+      const selected = repositories.some((each) => each.id === chosen) ? chosen : undefined;
       this.#set({
         list: {
           state: "ready",
@@ -218,6 +438,8 @@ export class RepositoryPicker {
         notInstalled: false,
         selected,
       });
+      // What was chosen is not in the list any more: nothing is left to ask about.
+      if (selected !== chosen) this.#checkSoon(0);
     } catch (error) {
       if (turn !== this.#listTurn) return;
       const code = codeOf(error);
@@ -236,30 +458,35 @@ export class RepositoryPicker {
   async submit(): Promise<RepositoryStatus | undefined> {
     if (!this.canSubmit) return undefined;
     const snapshot = this.#snapshot;
+    const project = typeof this.#project === "function" ? this.#project() : this.#project;
+    if (project === undefined) return undefined;
     const choice = snapshot.mode === "existing" ? this.selectedChoice : undefined;
-    this.#set({ working: true, failure: undefined });
+    const instead = this.#switching ? { switch: true } : {};
+    // What is being asked about it is beside the point now: the platform says as it does it.
+    this.#clearCheckTimer();
+    this.#checkTurn += 1;
+    this.#set({ working: true, checking: false, failure: undefined });
     try {
       const status = await this.#access.link(
-        this.#project,
+        project,
         choice
-          ? { existing: { id: choice.id }, ...(!choice.private && { confirmPublic: true }) }
-          : { create: { name: snapshot.name.trim() } },
+          ? {
+              existing: { id: choice.id },
+              ...(this.isPublic(choice) && { confirmPublic: true }),
+              ...instead,
+            }
+          : { create: { name: snapshot.name.trim() }, ...instead },
       );
       this.#set({ working: false, linked: status });
       return status;
     } catch (error) {
       const code = codeOf(error);
-      const about =
-        choice &&
-        (code === "hasProject" ||
-          code === "linkedElsewhere" ||
-          code === "notPushable" ||
-          code === "notFound");
-      if (choice && about) {
+      if (choice && KEEPS_OUT.has(code)) {
         const refused = new Map(this.#snapshot.refused);
         refused.set(choice.id, {
-          code,
+          code: code as RepositoryRefusal,
           ...(error instanceof RepositoryRefused && error.files && { files: error.files }),
+          ...(error instanceof RepositoryRefused && error.project && { project: error.project }),
         });
         this.#set({ working: false, refused, selected: undefined, publicConfirmed: false });
       } else {
@@ -267,6 +494,8 @@ export class RepositoryPicker {
           working: false,
           ...(code === "notInstalled" ? { notInstalled: true } : { failure: code }),
         });
+        // A name that got taken meanwhile: where people did not type it, the next one is found.
+        if (code === "nameTaken" && !choice) this.#checkSoon(0);
       }
       return undefined;
     }

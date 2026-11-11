@@ -783,6 +783,8 @@ export { browserRepository, statusOf } from "./repository.ts";
 export type { BrowserRepositoryOptions } from "./repository.ts";
 export { browserLfs, uploadOf } from "./lfs.ts";
 export type { BrowserLfsOptions } from "./lfs.ts";
+export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
+export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
 
 export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
 

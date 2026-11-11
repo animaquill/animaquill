@@ -660,3 +660,139 @@ describe("the sources the log keeps", () => {
     await session.close();
   });
 });
+
+describe("what a link says about a project while nobody syncs it", () => {
+  it("notes how many changes wait for the platform, as they come and as they go", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    await time.advance(200);
+    expect((await first.links.get(id))?.pending ?? 0).toBe(0);
+
+    // Without the platform people work on: what waits is noted while they do, not only when the
+    // window closes in an orderly way, which a closing tab does not.
+    platform.faults.silent = true;
+    platform.drop();
+    expect(a.store.execute(writeFile("code/one.js", "1")).ok).toBe(true);
+    await time.advance(500);
+    expect(a.store.execute(writeFile("code/two.js", "2")).ok).toBe(true);
+    await time.advance(500);
+    expect((await first.links.get(id))?.pending).toBe(2);
+
+    // Back online they go, and the link says that nothing waits.
+    platform.faults.silent = false;
+    platform.drop();
+    await time.advance(60_000);
+    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    expect((await first.links.get(id))?.pending).toBe(0);
+  });
+
+  it("counts once more as it stops, so that the last change is not missed", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    await time.advance(200);
+    platform.faults.silent = true;
+    platform.drop();
+    await time.advance(10);
+    // Right before the project closes: nothing looked at the log since.
+    expect(a.store.execute(writeFile("code/last.js", "x")).ok).toBe(true);
+    expect(await a.session.trySave()).toBe(true);
+    await a.cloud.close();
+    expect((await first.links.get(id))?.pending).toBe(1);
+  });
+
+  it("leaves the count to the window that syncs", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    const b = await first.open(id, time);
+    opened.push(b);
+    await time.advance(200);
+    expect(b.cloud.getSnapshot().here).toBe(false);
+    platform.faults.silent = true;
+    platform.drop();
+    expect(b.store.execute(writeFile("code/b.js", "b")).ok).toBe(true);
+    await time.advance(1500);
+    // The window that syncs saw it in the log, and noted it down.
+    expect(a.cloud.getSnapshot().pending).toBe(1);
+    expect((await first.links.get(id))?.pending).toBe(1);
+    // The other one closes, and says nothing of its own about it.
+    first.links.links.set(id, { ...(first.links.links.get(id) as CloudLink), pending: 7 });
+    await b.cloud.close();
+    expect((await first.links.get(id))?.pending).toBe(7);
+  });
+});
+
+describe("the copies of a project on the platform", () => {
+  it("says which copy its log is of, and notes it for a link from before", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    await time.advance(200);
+    // The link said none, as one from before: the first, which is what the platform has.
+    expect(platform.projects.get(CLOUD_ID)?.generation).toBe(1);
+    expect((await first.links.get(id))?.generation).toBe(1);
+    expect(a.cloud.getSnapshot().state).toBe("online");
+  });
+
+  it("stops where the platform has another copy than the one the log is of", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    await time.advance(200);
+    expect(a.store.execute(writeFile("code/mine.js", "mine")).ok).toBe(true);
+    await time.advance(200);
+    // The platform made the project again from its repository: another document, as far as
+    // syncing goes, whatever it holds.
+    const project = platform.projects.get(CLOUD_ID);
+    if (!project) throw new Error("not on the platform");
+    project.generation = 2;
+    platform.drop();
+    expect(a.store.execute(writeFile("code/later.js", "later")).ok).toBe(true);
+    await time.advance(60_000);
+    expect(a.cloud.getSnapshot()).toMatchObject({
+      state: "paused",
+      problem: { kind: "rebuilt" },
+    });
+    // Nothing of the copy before went into the new one, and the link is as it was.
+    expect(platform.workingCopy(CLOUD_ID).getState().files["code/later.js"]).toBeUndefined();
+    expect((await first.links.get(id))?.generation).toBe(1);
+    // Everything is still here.
+    expect(textOf(a.store, "code/later.js")).toBe("later");
+  });
+
+  it("stops as well where a platform says so only in its welcome", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const { id, state } = fixtureState();
+    const browser = new Browser(platform, "ada");
+    await browser.project(id, state, { generation: 3 });
+    // A platform that does not close by itself: one from before would not look at what the
+    // window says. This one is made to answer as if it had not.
+    const connect = platform.connect.bind(platform);
+    platform.connect = (user, tag) => {
+      const connection = connect(user, tag);
+      const send = connection.send.bind(connection);
+      return {
+        ...connection,
+        send: (data) => {
+          const length = new DataView(data.buffer, data.byteOffset).getUint32(0);
+          const header = JSON.parse(new TextDecoder().decode(data.subarray(4, 4 + length)));
+          if (header.t !== "hello") return send(data);
+          delete header.generation;
+          const head = new TextEncoder().encode(JSON.stringify(header));
+          const out = new Uint8Array(4 + head.length + data.length - 4 - length);
+          new DataView(out.buffer).setUint32(0, head.length);
+          out.set(head, 4);
+          out.set(data.subarray(4 + length), 4 + head.length);
+          send(out);
+        },
+      };
+    };
+    const a = await browser.open(id, time, { create: true });
+    opened.push(a);
+    await time.advance(500);
+    // The platform made it as its first copy; the log here says it is of the third.
+    expect(platform.projects.get(CLOUD_ID)?.generation).toBe(1);
+    expect(a.cloud.getSnapshot()).toMatchObject({ state: "paused", problem: { kind: "rebuilt" } });
+    expect(a.store.execute(writeFile("code/x.js", "x")).ok).toBe(true);
+    await time.advance(5000);
+    expect(platform.workingCopy(CLOUD_ID).getState().files["code/x.js"]).toBeUndefined();
+  });
+});

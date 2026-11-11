@@ -20,7 +20,10 @@ import type {
  * an update, which only the editor understands.
  */
 
-/** Keeps what a change of a link may move forward, and never back, see `CloudLinks.update`. */
+/**
+ * Keeps what a change of a link may move forward, and never back, see `CloudLinks.update`. What a
+ * link only remembers for lists is as the last one said.
+ */
 const forward = (link: CloudLink, change: CloudLinkChange): CloudLink => {
   const { creating: _creating, ...made } = link;
   const next: CloudLink = change.made ? made : link;
@@ -33,6 +36,13 @@ const forward = (link: CloudLink, change: CloudLinkChange): CloudLink => {
     ...(change.syncedAt !== undefined && {
       syncedAt: Math.max(link.syncedAt ?? 0, change.syncedAt),
     }),
+    // The log of a link is of one copy of the project, and stays that: only a link that never said.
+    ...(change.generation !== undefined &&
+      link.generation === undefined && { generation: change.generation }),
+    ...(change.pending !== undefined && { pending: change.pending }),
+    ...(change.name !== undefined && { name: change.name }),
+    ...(change.repository !== undefined && { repository: change.repository }),
+    ...(change.owner !== undefined && { owner: change.owner }),
   };
 };
 
@@ -52,6 +62,11 @@ export class MemoryCloudLinks implements CloudLinks {
     if (this.failing) throw new Error("blocked");
     const link = this.links.get(key);
     return link && { ...link };
+  }
+
+  async list() {
+    if (this.failing) throw new Error("blocked");
+    return [...this.links.values()].map((link) => ({ ...link }));
   }
 
   async put(link: CloudLink) {
@@ -184,6 +199,11 @@ export function browserCloudLinks(factory: () => IDBFactory = () => indexedDB): 
       );
       return record && linkOf(record);
     },
+    async list() {
+      const transaction = (await database()).transaction(LINKS);
+      const records = await resultOf<LinkRecord[]>(transaction.objectStore(LINKS).getAll());
+      return records.map(linkOf);
+    },
     async put(link) {
       // "strict": a link says where the changes of a project go, and has to be there after a crash.
       const transaction = (await database()).transaction(LINKS, "readwrite", {
@@ -300,6 +320,8 @@ export interface BrowserCloudOptions {
   readonly syncUrl: () => string;
   /** The projects of whoever is signed in, see `CloudAccess.list`. */
   readonly list: () => Promise<readonly CloudProjectSummary[]>;
+  /** Takes a project without a repository away, where the platform does, see `CloudAccess.remove`. */
+  readonly remove?: NonNullable<CloudAccess["remove"]>;
   /** Saving its projects to repositories, where the platform does, see `browserRepository`. */
   readonly repository?: RepositoryAccess;
   /** Sending files of assets into the large file storage of repositories, see `browserLfs`. */
@@ -318,6 +340,7 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     links: browserCloudLinks(options.database),
     syncer: (key) => browserFolderWriter(key, locks, undefined, "animaquill.cloud-sync."),
     line: (key) => broadcastLine(`animaquill.cloud.${key}`),
+    ...(options.remove && { remove: options.remove }),
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),
   };

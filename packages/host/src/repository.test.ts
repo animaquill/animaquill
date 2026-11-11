@@ -151,6 +151,104 @@ describe("repositories through the platform", () => {
     expect(sent[0]!.url).toBe("https://platform.example/api/github/repositories?page=2");
   });
 
+  test("says which project of the person a repository is saved for already", async () => {
+    const { access } = platform(() =>
+      Response.json({
+        repositories: [
+          {
+            id: 1,
+            owner: "octo",
+            name: "a",
+            linked: true,
+            linkedProject: { id: "p9", name: "片头动画" },
+          },
+          // Somebody else's project: the platform does not say which.
+          { id: 2, owner: "octo", name: "b", linked: true },
+          { id: 3, owner: "octo", name: "c", linked: true, linkedProject: { name: "no id" } },
+        ],
+      }),
+    );
+    const { repositories } = await access.list();
+    expect(repositories.map((each) => each.linkedProject)).toEqual([
+      { id: "p9", name: "片头动画" },
+      undefined,
+      undefined,
+    ]);
+  });
+
+  test("asks whether a repository could take a project, before anything is made", async () => {
+    const answers: Response[] = [
+      Response.json({ ok: true }),
+      Response.json({ ok: false, reason: "nameTaken" }),
+      Response.json({ ok: false, reason: "hasProject", files: ["animaquill.json", 3] }),
+      Response.json({
+        ok: false,
+        reason: "linkedElsewhere",
+        project: { id: "p9", name: "片头动画" },
+      }),
+      Response.json({ ok: false, reason: "somethingNew" }),
+    ];
+    const { access, sent } = platform(() => answers.shift() as Response);
+    expect(await access.check({ create: { name: "atom" } })).toEqual({ ok: true });
+    expect(await access.check({ create: { name: "atom" } })).toEqual({
+      ok: false,
+      reason: "nameTaken",
+    });
+    expect(await access.check({ existing: { id: 7 }, confirmPublic: true })).toEqual({
+      ok: false,
+      reason: "hasProject",
+      files: ["animaquill.json"],
+    });
+    expect(await access.check({ existing: { id: 8 } })).toEqual({
+      ok: false,
+      reason: "linkedElsewhere",
+      project: { id: "p9", name: "片头动画" },
+    });
+    // A reason of a newer platform is still a no.
+    expect(await access.check({ existing: { id: 9 } })).toEqual({
+      ok: false,
+      reason: "somethingNew",
+    });
+    expect(sent[0]).toMatchObject({
+      method: "POST",
+      url: "https://platform.example/api/github/repositories/check",
+      headers: { "x-animaquill": "1", "content-type": "application/json" },
+      body: { create: { name: "atom" } },
+    });
+    expect(sent[2]!.body).toEqual({ existing: { id: 7 }, confirmPublic: true });
+  });
+
+  test("rejects a check where the platform could not look, as the other calls do", async () => {
+    const answers: Response[] = [
+      Response.json({ error: "signedOut" }, { status: 401 }),
+      Response.json({ error: "busy" }, { status: 429, headers: { "retry-after": "7" } }),
+      Response.json({ error: "unavailable" }, { status: 503 }),
+      // A platform from before has no such route.
+      Response.json({ message: "Route not found", error: "Not Found" }, { status: 404 }),
+      // An answer that is no check at all says nothing either way.
+      Response.json({ ok: "yes" }),
+      Response.json({ ok: false }),
+    ];
+    const { access } = platform(() => answers.shift() as Response);
+    const choice = { create: { name: "atom" } };
+    await expect(access.check(choice)).rejects.toBeInstanceOf(CloudSignedOut);
+    await expect(access.check(choice)).rejects.toMatchObject({ code: "busy", retryAfter: 7 });
+    await expect(access.check(choice)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(access.check(choice)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(access.check(choice)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(access.check(choice)).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  test("links another repository in place of the one a project has, where people say so", async () => {
+    const { access, sent } = platform(() => Response.json(STATUS));
+    await access.link("p1", { create: { name: "film-2" }, switch: true });
+    await access.link("p1", { existing: { id: 4 }, confirmPublic: true, switch: true });
+    expect(sent.map(({ body }) => body)).toEqual([
+      { create: { name: "film-2" }, switch: true },
+      { existing: { id: 4 }, confirmPublic: true, switch: true },
+    ]);
+  });
+
   test("says what the platform refuses, with what goes with it", async () => {
     const answers: Response[] = [
       Response.json({ error: "signedOut" }, { status: 401 }),
@@ -161,12 +259,17 @@ describe("repositories through the platform", () => {
       ),
       Response.json({ error: "busy" }, { status: 429, headers: { "retry-after": "42" } }),
       new Response("Bad Gateway", { status: 502 }),
+      Response.json(
+        { error: "linkedElsewhere", project: { id: "p9", name: "片头动画" } },
+        { status: 409 },
+      ),
     ];
     const { access } = platform(() => answers.shift() as Response);
     await expect(access.status("p1")).rejects.toBeInstanceOf(CloudSignedOut);
     await expect(access.link("p1", { existing: { id: 1 } })).rejects.toMatchObject({
       code: "hasProject",
       files: ["animaquill.json"],
+      project: undefined,
     });
     await expect(access.archiveNow("p1")).rejects.toMatchObject({
       code: "diverged",
@@ -176,6 +279,11 @@ describe("repositories through the platform", () => {
     const down = await access.status("p1").catch((error: unknown) => error);
     expect(down).toBeInstanceOf(RepositoryRefused);
     expect(down).toMatchObject({ code: "unavailable" });
+    // Whose repository it is already, where that is a project of the person's own.
+    await expect(access.link("p1", { existing: { id: 1 } })).rejects.toMatchObject({
+      code: "linkedElsewhere",
+      project: { id: "p9", name: "片头动画" },
+    });
   });
   test("a network that fails, or an answer the platform did not mean, is one of the agreed refusals", async () => {
     const offline = browserRepository({

@@ -12,6 +12,7 @@ import {
   type ProjectStore as Store,
 } from "@animaquill/core";
 import {
+  CloudSignedOut,
   MemoryCloudLinks,
   Reassembler,
   SYNC_CLOSE,
@@ -24,6 +25,7 @@ import {
   type CloudClose,
   type CloudConnection,
   type CloudLine,
+  type CloudProjectSummary,
   type SyncClientMessage,
   type SyncRejection,
   type SyncServerMessage,
@@ -46,6 +48,10 @@ interface PlatformProject {
   readonly id: string;
   readonly owner: string;
   readonly projectId: string;
+  /** What it was called when it was made, for the list. */
+  readonly name: string;
+  /** Which working copy this is, see `CloudLink.generation`: a test makes it another one. */
+  generation: number;
   head: number;
   digest: string;
   /** What came after the snapshot, which is all there is before it was made. */
@@ -78,6 +84,16 @@ export interface PlatformFaults {
   line?: { readonly time: TestTime; readonly bytesPerSecond: number };
   /** Frames that every connection gets first, as from a platform that sends what it should not. */
   first?: readonly Uint8Array[];
+  /** The list of projects cannot be read, and none can be taken away: the platform is not there. */
+  unreachable?: boolean;
+}
+
+/** The repository a project of the platform is saved to, as a test says. */
+export interface PlatformRepository {
+  readonly id: number;
+  readonly owner: string;
+  readonly name: string;
+  readonly state?: "ready" | "paused";
 }
 
 /** What stands for an update and all before it, as the platform makes it: any digest will do. */
@@ -104,6 +120,12 @@ export class MemoryPlatform {
   compactAfter = 40;
   /** Users whose sessions ended: their connections close, saying so. */
   readonly signedOut = new Set<string>();
+  /** The repositories projects are saved to, by project: one that has none can be taken away. */
+  readonly repositories = new Map<string, PlatformRepository>();
+  /** What else the list says about a project, by project, as a test sets it. */
+  readonly listed = new Map<string, Partial<CloudProjectSummary>>();
+  /** Projects that were taken away, in order. */
+  readonly removed: string[] = [];
   /** Repairs that brought the platform something it did not have, see "check". */
   effectiveRepairs = 0;
   /** What the platform turned away, by why. */
@@ -212,6 +234,53 @@ export class MemoryPlatform {
 
   signIn(user: string): void {
     this.signedOut.delete(user);
+  }
+
+  /** The projects of a user as the list has them, the way `GET /api/projects` says them. */
+  list(user: string): CloudProjectSummary[] {
+    if (this.faults.unreachable) throw new Error("The platform is not there");
+    if (this.signedOut.has(user)) throw new CloudSignedOut("Nobody is signed in");
+    return [...this.projects.values()]
+      .filter((project) => project.owner === user)
+      .map((project) => {
+        const repository = this.repositories.get(project.id);
+        return {
+          id: project.id,
+          name: project.name,
+          updatedAt: project.head,
+          copy: "live",
+          ...(repository
+            ? {
+                repository: {
+                  id: repository.id,
+                  owner: repository.owner,
+                  name: repository.name,
+                  fullName: `${repository.owner}/${repository.name}`,
+                  private: true,
+                  url: `https://github.com/${repository.owner}/${repository.name}`,
+                  state: repository.state ?? "ready",
+                },
+                ...(repository.state === "paused" && { attention: "repository" }),
+              }
+            : { attention: "noRepository" }),
+          ...this.listed.get(project.id),
+        };
+      });
+  }
+
+  /** Takes a project away as `DELETE /api/projects/<id>` does: only one without a repository. */
+  remove(user: string, id: string): "removed" | "missing" | "hasRepository" {
+    if (this.faults.unreachable) throw new Error("The platform is not there");
+    if (this.signedOut.has(user)) throw new CloudSignedOut("Nobody is signed in");
+    const project = this.projects.get(id);
+    if (!project || project.owner !== user) return "missing";
+    if (this.repositories.has(id)) return "hasRepository";
+    // Its connections go first, so that nothing of it comes back.
+    for (const side of this.#sides) if (side.project === project) side.close(SYNC_CLOSE.missing);
+    this.projects.delete(id);
+    this.#working.delete(id);
+    this.removed.push(id);
+    return "removed";
   }
 
   /** Drops every connection without a word, and forgets all but what it kept. */
@@ -340,6 +409,8 @@ export class MemoryPlatform {
         id: message.project,
         owner: side.user,
         projectId: message.create.projectId,
+        name: message.create.name,
+        generation: 1,
         head: 1,
         digest,
         updates: [
@@ -363,13 +434,24 @@ export class MemoryPlatform {
       side.close(SYNC_CLOSE.missing);
       return;
     }
+    // What the window has is of another copy of the project than the one that is here now.
+    if (message.generation !== undefined && message.generation !== project.generation) {
+      side.close(SYNC_CLOSE.rebuilt);
+      return;
+    }
     side.project = project;
     const known = message.after > 0 ? this.#digestAt(project, message.after) : "";
     const reset =
       message.after > project.head ||
       (known !== undefined && message.digest !== undefined && message.digest !== known);
     const after = reset ? 0 : created ? project.head : message.after;
-    this.#send(side, { t: "welcome", head: project.head, digest: project.digest, reset });
+    this.#send(side, {
+      t: "welcome",
+      head: project.head,
+      digest: project.digest,
+      reset,
+      generation: project.generation,
+    });
     const oldest = project.updates[0]?.seq ?? project.head + 1;
     if (after < project.head && after + 1 < oldest) {
       // What came after is not there one by one any more: all of it at once.
@@ -546,10 +628,8 @@ export class TestCloudBrowser {
     return {
       platform: "https://platform.test",
       connect: () => this.platform.connect(this.user, this.tag),
-      list: async () =>
-        [...this.platform.projects.values()]
-          .filter((project) => project.owner === this.user)
-          .map((project) => ({ id: project.id, name: project.projectId, updatedAt: 0 })),
+      list: async () => this.platform.list(this.user),
+      remove: async (project) => this.platform.remove(this.user, project),
       links: this.links,
       syncer: (key) => this.writers.writer(`cloud.${key}`, page),
       line: (key) => this.lines.line(key),

@@ -1,7 +1,9 @@
+import { count, isObject, optional, projectOf, text, texts } from "./answers.ts";
 import {
   CloudSignedOut,
   RepositoryRefused,
   type RepositoryAccess,
+  type RepositoryCheck,
   type RepositoryChoice,
   type RepositoryList,
   type RepositoryRefusal,
@@ -14,6 +16,8 @@ import {
  * platform answers JSON, and `{ error: <code> }` for what it refuses, see `RepositoryRefused`.
  *
  * - `GET  <api>/github/repositories?page=`
+ * - `POST <api>/github/repositories/check` with a `RepositoryLink`: always answers 200 where it
+ *   could look, with a `RepositoryCheck`
  * - `POST <api>/projects/<project>/repository` with a `RepositoryLink`
  * - `GET  <api>/projects/<project>/repository`
  * - `POST <api>/projects/<project>/archive`, with `{ replace }` or nothing
@@ -28,19 +32,6 @@ export interface BrowserRepositoryOptions {
   readonly changeHeaders?: Readonly<Record<string, string>>;
   readonly fetch?: typeof fetch;
 }
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const text = (value: unknown): string | undefined =>
-  typeof value === "string" ? value : undefined;
-const count = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined;
-const texts = (value: unknown): string[] | undefined =>
-  Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : undefined;
-const optional = <K extends string, T>(key: K, value: T | undefined) =>
-  (value === undefined ? {} : { [key]: value }) as { [P in K]?: T };
 
 const choiceOf = (value: unknown): RepositoryChoice | undefined => {
   if (!isObject(value)) return undefined;
@@ -58,6 +49,24 @@ const choiceOf = (value: unknown): RepositoryChoice | undefined => {
     empty: value.empty === true,
     archived: value.archived === true,
     linked: value.linked === true,
+    ...optional("linkedProject", projectOf(value.linkedProject)),
+  };
+};
+
+/**
+ * What a check came to, as the platform said it. Only `ok: true` is a yes: an answer that is not
+ * one says nothing either way, which is no reason to keep people from trying.
+ */
+export const checkOf = (value: unknown): RepositoryCheck | undefined => {
+  if (!isObject(value)) return undefined;
+  if (value.ok === true) return { ok: true };
+  const reason = text(value.reason);
+  if (value.ok !== false || reason === undefined) return undefined;
+  return {
+    ok: false,
+    reason,
+    ...optional("files", texts(value.files)),
+    ...optional("project", projectOf(value.project)),
   };
 };
 
@@ -180,6 +189,7 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
     const retryAfter = Number(response.headers.get("retry-after"));
     throw new RepositoryRefused(codeOf(response.status, answer.error), {
       ...optional("files", texts(answer.files)),
+      ...optional("project", projectOf(answer.project)),
       ...optional("diverged", divergedOf(answer.diverged)),
       ...optional(
         "retryAfter",
@@ -206,6 +216,12 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
         more: list.more === true,
         manageUrl: text(list.manageUrl) ?? "",
       };
+    },
+    async check(choice) {
+      const said = checkOf(await call("POST", "/github/repositories/check", choice));
+      // An answer that is no check at all, as from a gateway: the platform could not say.
+      if (!said) throw new RepositoryRefused("unavailable");
+      return said;
     },
     async link(project, choice) {
       return statusOf(await call("POST", projectPath(project, "repository"), choice));

@@ -142,11 +142,13 @@ export function repositoryText(
   });
 }
 
-/** What the platform said about a repository people tried to choose. */
+/** What the platform said about a repository people tried to choose, or asked about. */
 export interface ChoiceRefusal {
   readonly code: RepositoryRefusal;
   /** For "hasProject": what of a project is there. */
   readonly files?: readonly string[];
+  /** For "linkedElsewhere": the project it is the repository of, where it is the person's own. */
+  readonly project?: { readonly id: string; readonly name: string };
 }
 
 export type UnusableReason =
@@ -183,7 +185,51 @@ export function unusableText(
   return t(`repository.unusable.${reason}`);
 }
 
-export type NameProblem = "empty" | "tooLong" | "characters" | "dots" | "dotGit";
+/**
+ * The project of the platform a repository is saved for already, where the list or the platform
+ * said which and it is the person's own: people can open that one instead.
+ */
+export const linkedProjectOf = (
+  choice: RepositoryChoice,
+  refusal: ChoiceRefusal | undefined,
+): { readonly id: string; readonly name: string } | undefined =>
+  choice.linkedProject ?? refusal?.project;
+
+/**
+ * Why a repository cannot be chosen, with the way out where there is one, as the dialog that
+ * connects a project says it (the design of the start page, 5): whose repository it is already,
+ * and that a project found in it can become a project of the platform later.
+ */
+export function unusableAdvice(
+  choice: RepositoryChoice,
+  reason: UnusableReason,
+  refusal: ChoiceRefusal | undefined,
+  t: TFunction,
+): string {
+  if (reason === "linked") {
+    const project = linkedProjectOf(choice, refusal);
+    if (project) return t("repository.unusable.linkedProject", { name: project.name, ...plain });
+  }
+  const text = unusableText(reason, refusal, t);
+  return reason === "hasProject" ? `${text}。${t("repository.unusable.restoreLater")}` : text;
+}
+
+/**
+ * What people should know about a repository they can choose: one that has files keeps them, as
+ * archives only write the project's own.
+ */
+export const choiceNote = (choice: RepositoryChoice, t: TFunction): string | undefined =>
+  choice.empty ? undefined : t("repository.keepsFiles");
+
+export type NameProblem =
+  | "empty"
+  | "tooLong"
+  | "characters"
+  | "dots"
+  | "dotGit"
+  /** As the platform found when it was asked: the person has one of that name, or GitHub takes none like it. */
+  | "taken"
+  | "refused";
 
 /** What GitHub does not take as a repository name, as the platform checks it too. */
 export function nameProblem(name: string): NameProblem | undefined {
@@ -209,6 +255,42 @@ export function defaultRepositoryName(name: string, id: string): string {
   if (slug.length > 0 && nameProblem(slug) === undefined) return slug;
   const fallback = id.replaceAll(/[^A-Za-z0-9._-]/g, "-").slice(0, 100);
   return nameProblem(fallback) === undefined ? fallback : "animaquill-project";
+}
+
+/** A name as GitHub takes one for a repository: lower case, dashes for spaces, or undefined. */
+function slugOf(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replaceAll(/\s+/g, "-")
+    .replaceAll(/-{2,}/g, "-")
+    .replaceAll(/^[-.]+|[-.]+$/g, "");
+  return slug.length > 0 && nameProblem(slug) === undefined ? slug : undefined;
+}
+
+/** What a new repository is called where neither the folder nor the project has a name GitHub takes. */
+export const FALLBACK_REPOSITORY_NAME = "animaquill-project";
+
+/**
+ * The name a new repository gets at first where connecting a project chooses it (the design of the
+ * start page, 3): the name of the project's folder where GitHub takes it, then the project's own,
+ * and otherwise a name that always works. People can change it.
+ */
+export const connectRepositoryName = (folder: string | undefined, project: string): string =>
+  slugOf(folder) ?? slugOf(project) ?? FALLBACK_REPOSITORY_NAME;
+
+/** How many names are tried in a row for one that is taken: up to "-9". */
+export const MOST_NAME_TRIES = 9;
+
+/**
+ * The next name to try where one is taken: "atom", then "atom-2", "atom-3". Undefined once enough
+ * were tried, or where the name would get too long.
+ */
+export function nextRepositoryName(base: string, tried: number): string | undefined {
+  if (tried >= MOST_NAME_TRIES) return undefined;
+  const next = `${base}-${tried + 1}`;
+  return nameProblem(next) === undefined ? next : undefined;
 }
 
 /**
