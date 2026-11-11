@@ -7,6 +7,7 @@ import {
   projectOf,
   text,
   texts,
+  unusableOf,
   withinTime,
 } from "./answers.ts";
 import {
@@ -130,6 +131,7 @@ export const statusOf = (value: unknown): RepositoryStatus => {
     state,
     ...optional("reason", text(value.reason)),
     ...optional("gone", goneOf(value.gone)),
+    ...optional("unusable", unusableOf(value.unusable)),
     ...optional("detail", text(value.detail)),
     archiving: value.archiving === true,
     ...(last &&

@@ -68,4 +68,23 @@ describe("the copies of a project in the sync protocol", () => {
     expect(SYNC_CLOSE.deleted).toBe(4410);
     expect(Object.values(SYNC_CLOSE).filter((code) => code === 4410)).toHaveLength(1);
   });
+
+  it("has a way of its own to say that the project cannot be edited", () => {
+    expect(SYNC_CLOSE.unusable).toBe(4412);
+    expect(Object.values(SYNC_CLOSE).filter((code) => code === 4412)).toHaveLength(1);
+  });
+
+  it("says that a window only reads the project, which a window from before does not", () => {
+    expect(readSyncClientMessage(encodeSyncMessage({ ...hello, readOnly: true }))).toEqual({
+      ...hello,
+      readOnly: true,
+    });
+    // Saying it does not is saying nothing.
+    const notSaid = readSyncClientMessage(encodeSyncMessage({ ...hello, readOnly: false }));
+    expect(notSaid).toEqual(hello);
+    expect(notSaid).not.toHaveProperty("readOnly");
+    const { payload: _payload, ...header } = hello;
+    for (const wrong of ["true", 1, null])
+      expect(readSyncClientMessage(frame({ ...header, readOnly: wrong }))).toBeUndefined();
+  });
 });

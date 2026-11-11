@@ -56,9 +56,10 @@ const FULL = {
     state: "paused",
     reason: "gone",
     checkedAt: 150,
+    unusable: { reason: "gone", since: 150, deleteAt: 150 + 7 * 86_400_000 },
   },
   archive: { at: 180, seq: 9, behind: true },
-  attention: "repository",
+  attention: "unusable",
 };
 
 describe("the list of projects of the platform", () => {
@@ -88,6 +89,14 @@ describe("the list of projects of the platform", () => {
         attention: null,
       }),
     ).toEqual({ id: "p1", name: "原子", updatedAt: 5 });
+    // That a repository cannot be used says why, since when, and until when, or nothing.
+    for (const unusable of [{ reason: "gone", since: 1 }, { since: 1, deleteAt: 2 }, "gone"])
+      expect(
+        projectSummaryOf({
+          ...FULL,
+          repository: { ...FULL.repository, unusable },
+        })?.repository,
+      ).not.toHaveProperty("unusable");
     // A repository says at least which one it is; the rest has something to fall back on.
     expect(
       projectSummaryOf({

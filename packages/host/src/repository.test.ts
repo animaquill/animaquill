@@ -113,6 +113,12 @@ describe("repositories through the platform", () => {
   test("reads whether a repository that is gone was deleted, or is out of what the App may reach", () => {
     const paused = { state: "paused", reason: "gone", head: 1, archivedSeq: 1, archiving: false };
     expect(statusOf({ ...paused, gone: "deleted" }).gone).toBe("deleted");
+    // And that it cannot be used, so the project cannot be edited, since when and until when.
+    const unusable = { reason: "gone", since: 10, deleteAt: 20 };
+    expect(statusOf({ ...paused, unusable }).unusable).toEqual(unusable);
+    expect(statusOf({ ...paused, unusable: { reason: "gone", since: 10 } })).not.toHaveProperty(
+      "unusable",
+    );
     expect(statusOf({ ...paused, gone: "unauthorized" }).gone).toBe("unauthorized");
     // A platform that cannot tell says nothing, and neither does one from before it could.
     expect(statusOf(paused)).not.toHaveProperty("gone");

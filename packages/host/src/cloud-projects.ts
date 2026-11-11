@@ -5,6 +5,7 @@ import {
   isProjectId,
   optional,
   text,
+  unusableOf,
   withinTime,
 } from "./answers.ts";
 import { CloudSignedOut, type CloudAccess, type CloudProjectSummary } from "./index.ts";
@@ -53,6 +54,7 @@ const repositoryOf = (value: unknown): Repository | undefined => {
     state: value.state === "paused" ? "paused" : "ready",
     ...optional("reason", text(value.reason)),
     ...optional("checkedAt", count(value.checkedAt)),
+    ...optional("unusable", unusableOf(value.unusable)),
   };
 };
 

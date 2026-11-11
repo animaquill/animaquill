@@ -67,6 +67,18 @@ export const SYNC_CLOSE = {
    * `missing`, as before.
    */
   deleted: 4410,
+  /**
+   * The project cannot be edited now, as the repository it is saved to cannot be used (deleted,
+   * taken out of what the platform may touch, moved to another account, the platform's access to
+   * the account taken away or suspended): the reason says which, as the platform names the pause
+   * of its archiving ("gone", "transferred", "uninstalled", "suspended"). The platform takes no
+   * change of it, and lets the project go a while later unless the repository can be used again.
+   * Said to a window that is connected to it when that is found, and to one that says hello for it
+   * meanwhile. Also, with the reason "released", to a window that asks to read it (`readOnly` of
+   * "hello") where the platform has nothing of it any more. Only to an editor that knows this code:
+   * an older one hears `missing`.
+   */
+  unusable: 4412,
   /** The editor is too old for the platform: reload. */
   outdated: 4426,
   /** Too many connections or messages: come back later. */
@@ -135,7 +147,9 @@ export type SyncClientMessage =
    * project, which becomes the first version of a new one with this id, or which the platform
    * compares with what it has, when it has the project already. `generation`: which working copy
    * of the project what the window has is of, from 1; a window that has nothing of it yet, as one
-   * that opens it from the platform, says none.
+   * that opens it from the platform, says none. `readOnly`: the window only reads the project, as
+   * to keep a copy of it, also one that cannot be edited (`SYNC_CLOSE.unusable`): it sends no
+   * change, and does not count as opening it. A platform from before this takes it as any window.
    */
   | {
       readonly t: "hello";
@@ -148,6 +162,7 @@ export type SyncClientMessage =
       readonly window: string;
       readonly editor: string;
       readonly create?: { readonly name: string; readonly projectId: string };
+      readonly readOnly?: boolean;
       readonly payload: Uint8Array;
     }
   /**
@@ -394,7 +409,8 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         !isToken(h["device"]) ||
         !isToken(h["window"]) ||
         !isText(h["editor"], 64) ||
-        !isCreate
+        !isCreate ||
+        (h["readOnly"] !== undefined && typeof h["readOnly"] !== "boolean")
       )
         return undefined;
       return {
@@ -410,6 +426,7 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         ...(create && {
           create: { name: create["name"] as string, projectId: create["projectId"] as string },
         }),
+        ...(h["readOnly"] === true && { readOnly: true }),
         payload,
       };
     }

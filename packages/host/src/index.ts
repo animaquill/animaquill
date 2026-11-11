@@ -207,15 +207,19 @@ export interface CloudProjectSummary {
     readonly reason?: string;
     /** When the platform last looked at the repository. */
     readonly checkedAt?: number;
+    /** The repository cannot be used, and the project cannot be edited: see `RepositoryUnusable`. */
+    readonly unusable?: RepositoryUnusable;
   };
   /** How far archiving got. `behind`: the platform has changes that are not archived yet. */
   readonly archive?: { readonly at?: number; readonly seq: number; readonly behind: boolean };
   /**
    * What people have to do something about: it has no repository yet ("noRepository"), archiving
-   * into its repository paused ("repository"), changes of the repository clash with the project's
-   * ("conflicts"), or files of the repository could not be taken in ("blocked").
+   * into its repository paused ("repository"), its repository cannot be used, and so neither can
+   * the project ("unusable", see `repository.unusable`), changes of the repository clash with the
+   * project's ("conflicts"), or files of the repository could not be taken in ("blocked").
    */
-  readonly attention?: "noRepository" | "repository" | "conflicts" | "blocked" | (string & {});
+  readonly attention?:
+    "noRepository" | "repository" | "unusable" | "conflicts" | "blocked" | (string & {});
 }
 
 /**
@@ -359,6 +363,19 @@ export type RepositoryPause =
   /** What would be saved does not read as a project. */
   | "invalid";
 
+/**
+ * The repository of a project cannot be used: deleted, taken out of what the platform may touch,
+ * moved to another account, or the platform's access to the account taken away or suspended
+ * (`reason`, as the pause of archiving says it). The project cannot be edited meanwhile, and the
+ * platform takes it away at `deleteAt` unless the repository can be used again before: counted from
+ * when the platform first found it so (`since`). Times are milliseconds since 1970.
+ */
+export interface RepositoryUnusable {
+  readonly reason: RepositoryPause | (string & {});
+  readonly since: number;
+  readonly deleteAt: number;
+}
+
 /** The repository of a project, and how archiving into it goes. Times are milliseconds since 1970. */
 export interface RepositoryStatus {
   readonly repository?: {
@@ -382,6 +399,8 @@ export interface RepositoryStatus {
    * reach. Missing where it cannot tell.
    */
   readonly gone?: "deleted" | "unauthorized";
+  /** The repository cannot be used, and the project cannot be edited: see `RepositoryUnusable`. */
+  readonly unusable?: RepositoryUnusable;
   /** A short word about the pause, or about the last failure, from the platform. */
   readonly detail?: string;
   /** An archive is waiting or running. */

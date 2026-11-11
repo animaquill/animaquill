@@ -1,3 +1,5 @@
+import type { RepositoryUnusable } from "./index.ts";
+
 /**
  * Reading what a platform answered, field by field: a platform of another version can say more, or
  * less, and nothing it says is taken for what it should be before it was looked at.
@@ -67,3 +69,16 @@ export async function withinTime<T>(
     clearTimeout(timer);
   }
 }
+
+/**
+ * That the repository of a project cannot be used, as the platform says it, see
+ * `RepositoryUnusable`: undefined where it does not, or says it in a way that cannot be read.
+ */
+export const unusableOf = (value: unknown): RepositoryUnusable | undefined => {
+  if (!isObject(value)) return undefined;
+  const reason = text(value.reason);
+  const since = count(value.since);
+  const deleteAt = count(value.deleteAt);
+  if (reason === undefined || since === undefined || deleteAt === undefined) return undefined;
+  return { reason, since, deleteAt };
+};
