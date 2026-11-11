@@ -80,6 +80,15 @@ export interface LocalRow {
   readonly project: string | undefined;
   /** Changes of this browser may not be on the platform yet, see `CloudLink.pending`: a hint. */
   readonly pending: boolean;
+  /**
+   * When it last changed, as far as this browser knows: in its log here, or on the platform, the
+   * later of the two. Undefined where neither says.
+   */
+  readonly updatedAt: number | undefined;
+  /** Where its repository is, as the platform's list says: an https address or nothing. */
+  readonly repositoryUrl: string | undefined;
+  /** It can be taken away on the platform: see `CloudRow.deletable`. */
+  readonly deletable: boolean;
 }
 
 /** A project of the platform that has no folder on this computer. */
@@ -193,8 +202,13 @@ export function composeStartList(input: StartInput): StartLists {
       : { kind: "linked", repository: link.repository?.fullName, stale: true };
   };
 
+  const keptOf = new Map(kept.map((summary) => [summary.id, summary]));
   const local = records.map((record): LocalRow => {
     const link = linkOf.get(record.id);
+    const onPlatform = link && summaryOf.get(link.project);
+    const times = [keptOf.get(record.id)?.updatedAt, onPlatform?.updatedAt].filter(
+      (at): at is number => at !== undefined,
+    );
     return {
       key: record.id,
       record,
@@ -204,6 +218,9 @@ export function composeStartList(input: StartInput): StartLists {
       mark: platform === undefined ? undefined : markOf(link),
       project: link?.project,
       pending: isPending(link),
+      updatedAt: times.length > 0 ? Math.max(...times) : undefined,
+      repositoryUrl: onPlatform?.repository?.url || undefined,
+      deletable: input.canDelete && onPlatform?.attention === "noRepository",
     };
   });
 
@@ -234,8 +251,14 @@ export function composeStartList(input: StartInput): StartLists {
       const copy = copyOf.get(summary.id);
       return {
         project: summary.id,
-        // Where the list could not say what it is called, what this browser knows of its copy.
-        name: summary.name || copy?.summary.name || copy?.link.name || "",
+        // What the copy here is called where it has changes the platform does not have yet, as one
+        // renamed on the start page; and where the list could not say what it is called.
+        name:
+          (copy && isPending(copy.link) && copy.summary.name) ||
+          summary.name ||
+          copy?.summary.name ||
+          copy?.link.name ||
+          "",
         repository: summary.repository && {
           fullName: summary.repository.fullName,
           url: summary.repository.url || undefined,

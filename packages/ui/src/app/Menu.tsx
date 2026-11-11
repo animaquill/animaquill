@@ -23,6 +23,8 @@ export interface MenuItem {
   readonly checked?: boolean;
   readonly shortcut?: string;
   readonly disabled?: boolean;
+  /** It takes something away, which shows. */
+  readonly danger?: boolean;
 }
 
 interface MenuProps {
@@ -91,7 +93,7 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
             <button
               key={item.id}
               type="button"
-              className={styles.item}
+              className={item.danger ? `${styles.item} ${styles.danger}` : styles.item}
               role={roleOf(item)}
               {...((item.selected ?? item.checked) === undefined
                 ? {}

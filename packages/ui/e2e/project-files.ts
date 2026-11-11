@@ -33,7 +33,9 @@ export async function importClips(
       writeFileSync(join(folder, name), text);
     }
     const chooser = page.waitForEvent("filechooser");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    // From the file menu: the start page offers only new projects.
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menu").getByRole("menuitem", { name: "导入项目文件夹" }).click();
     await (await chooser).setFiles(folder);
     await expect(tab(page, "preview")).toBeVisible({ timeout: 120_000 });
   } finally {

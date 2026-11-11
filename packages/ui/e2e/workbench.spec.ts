@@ -323,7 +323,7 @@ test.describe("several windows", () => {
     await chooseLayout(page, "动画");
     await waitForSave(page, before);
 
-    await waiting.getByRole("button", { name: /^测试项目/ }).click();
+    await waiting.getByRole("link", { name: /^测试项目/ }).click();
     await expect(tab(waiting, "preview")).toBeVisible();
     await expect(layoutMenu(waiting, "动画")).toBeVisible();
   });

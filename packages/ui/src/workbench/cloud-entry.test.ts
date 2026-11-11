@@ -5,6 +5,7 @@
  * `CloudConnect` and `cloudPanel` have tests of their own; these are about what the workbench
  * makes of them.
  */
+import { memoryOrganizer } from "@animaquill/host";
 import type { FolderAccess, Host } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -62,6 +63,7 @@ function windowOn(
     projects: library,
     address: memoryAddress(),
     windowMemory: memoryWindow(),
+    organizer: memoryOrganizer(),
     settings: {
       load: async (key) => values.get(key),
       save: async (key, value) => void values.set(key, value),

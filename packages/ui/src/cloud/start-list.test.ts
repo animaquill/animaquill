@@ -346,6 +346,18 @@ describe("the lists of the start page", () => {
     expect(lists.cloud[0]).toMatchObject({ copy: "live", deletable: false });
   });
 
+  it("calls a copy with changes the platform does not have yet what it is called here", () => {
+    const lists = composeStartList(
+      input({
+        projects: [kept("k1", "改了名的"), kept("k2", "这里的旧名字")],
+        links: [link("k1", "p1", { pending: 1 }), link("k2", "p2")],
+        listed: [listed("p1", "云端的名字"), listed("p2", "云端的新名字")],
+      }),
+    );
+    // Renamed here, as on the start page; renamed elsewhere, which the platform has first.
+    expect(lists.cloud.map((row) => row.name)).toEqual(["改了名的", "云端的新名字"]);
+  });
+
   it("hides nothing: a link to nothing says nothing, and a second copy is a project of the browser", () => {
     const lists = composeStartList(
       input({

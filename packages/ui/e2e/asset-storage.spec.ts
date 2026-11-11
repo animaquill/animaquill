@@ -176,7 +176,9 @@ test.describe("a project in this browser", () => {
     const folder = projectOnDisk();
     try {
       const chooser = page.waitForEvent("filechooser");
-      await page.getByRole("button", { name: "导入项目文件夹" }).click();
+      // The file menu has it on the start page, which offers only new projects.
+      await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+      await page.getByRole("menu").getByRole("menuitem", { name: "导入项目文件夹" }).click();
       await (await chooser).setFiles(folder);
       const report = page.getByRole("dialog");
       await expect(report).toContainText("云端.webm：可以从云端空间下载", { timeout: 120_000 });

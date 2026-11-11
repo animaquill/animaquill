@@ -94,6 +94,9 @@ import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
+import { StartHabits } from "../start/habits.ts";
+import { StartOrganizer } from "../start/organize.ts";
+import { renameUnopened } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
 export interface WorkbenchOptions {
@@ -210,6 +213,11 @@ export class Workbench {
    * editor is hosted on one, see `StartList`.
    */
   readonly start: StartList;
+  /** How people organise their projects on the start page, see `StartOrganizer`. */
+  readonly organizer: StartOrganizer;
+  /** How each view of the start page is sorted and shown, see `StartHabits`. */
+  readonly startHabits: StartHabits;
+  readonly #address: Host["address"];
   /**
    * Whether the panel of the platform shows, see `cloudPanel`: the status bar has it, and the menu
    * opens it there.
@@ -354,6 +362,8 @@ export class Workbench {
     });
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
+    this.startHabits = new StartHabits(host.settings);
+    this.#address = host.address;
     // A platform is for whoever is signed in to it: without an account, there is none.
     const cloud = host.account ? host.cloud : undefined;
     this.#platform = cloud;
@@ -640,6 +650,8 @@ export class Workbench {
       this.here(),
     );
     this.#keepPresence(host);
+    this.organizer = new StartOrganizer({ organizer: host.organizer });
+    this.#noteOpened();
     this.proxies =
       this.projectFolders && options.proxyMaker
         ? this.#proxiesOf(this.projectFolders, options.proxyMaker)
@@ -1206,6 +1218,7 @@ export class Workbench {
       this.keybindings.load(),
       this.palette.load(),
       this.resourceHabits.load(),
+      this.startHabits.load(),
       this.timeline.load(),
       this.keyframes.load(),
       this.input.load(),
@@ -1538,9 +1551,12 @@ export class Workbench {
    * is only the folder, and a browser that cannot write folders cannot make a project then. Tests
    * still make projects in this browser, see `Host.projectsHereForTests`.
    */
-  async newProject(): Promise<void> {
+  async newProject(kind?: "local" | "cloud"): Promise<void> {
     if (this.#platform) {
-      await this.#showCreate(this.#newCreate({}));
+      const create = this.#newCreate({});
+      // From "新建云端项目" or "新建本地项目" of the start page: that one is chosen already.
+      if (kind) create.setKind(kind);
+      await this.#showCreate(create);
       return;
     }
     if (this.projectFolders) {
@@ -1710,6 +1726,46 @@ export class Workbench {
   /** Back to the start page. */
   async closeProject(): Promise<void> {
     await this.#changeProject();
+  }
+
+  /** Notes when each project was opened in this browser, for "最近打开" of the start page. */
+  #noteOpened(): void {
+    let noted: string | undefined;
+    const follow = () => {
+      const { key } = this.session;
+      if (key === noted) return;
+      noted = key;
+      if (key !== undefined) void this.organizer.noteOpened(key);
+    };
+    this.session.subscribe(follow);
+    follow();
+  }
+
+  /**
+   * The address of a window that opens what this browser keeps by `key`, for a link that opens it
+   * in a new tab; undefined where the host has none.
+   */
+  linkTo(key: string): string | undefined {
+    return this.#address.linkTo?.(key);
+  }
+
+  /**
+   * Renames a project from the start page, without opening it, see `renameUnopened`. Resolves to
+   * whether it is called that now; says why not otherwise.
+   */
+  async renameUnopened(key: string, name: string): Promise<boolean> {
+    const outcome = await renameUnopened(key, name, {
+      projects: this.projects,
+      ...(this.projectFolders && { records: this.projectFolders.projects.records }),
+      ...(this.#platform && { links: this.#platform.links }),
+      window: this.windowId,
+    });
+    if (outcome === "renamed" || outcome === "unchanged") {
+      await this.start.refresh();
+      return true;
+    }
+    this.notifications.push(this.t(`start.rename.${outcome}`));
+    return false;
   }
 
   /**
@@ -1978,6 +2034,7 @@ export class Workbench {
       await this.videos.letGoOfProject(project.id);
       await this.session.remove(project.id);
       await this.cloud?.forget(project.id);
+      await this.organizer.forget(project.id);
       // What another window is at stays with it, which people should know.
       const left = (await this.videos.unfinished()).filter((each) => each.project === project.id);
       if (left.length > 0) {

@@ -1,4 +1,5 @@
 import { ProjectStore, aiTask, orderedTracks } from "@animaquill/core";
+import { memoryOrganizer } from "@animaquill/host";
 import type {
   AccountAccess,
   AccountSnapshot,
@@ -41,6 +42,7 @@ function setup(folders = noFolders, more: Partial<Host> = {}, { here = true } = 
     projects: library,
     address: memoryAddress(),
     windowMemory: memoryWindow(),
+    organizer: memoryOrganizer(),
     settings: {
       load: async (key) => values.get(key),
       save: async (key, value) => void values.set(key, value),

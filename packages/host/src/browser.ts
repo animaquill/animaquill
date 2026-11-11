@@ -5,6 +5,7 @@ import { browserFolders } from "./folders.ts";
 import { dropTarget } from "./growing.ts";
 import { isMadeFile } from "./index.ts";
 import { browserLocalFolders } from "./local-folders.ts";
+import { browserOrganizer } from "./organizer.ts";
 import { browserPresence } from "./presence.ts";
 import type {
   ChangeSource,
@@ -757,6 +758,13 @@ const address: ProjectAddress = {
     else url.searchParams.set(PROJECT_PARAM, id);
     history.replaceState(history.state, "", url);
   },
+  linkTo(id) {
+    // What else the address says, such as which site this is, stays as it is.
+    const url = new URL(location.href);
+    url.hash = "";
+    url.searchParams.set(PROJECT_PARAM, id);
+    return url.href;
+  },
 };
 
 /** Session storage has the lifetime of a tab, and a duplicated tab starts with a copy of it. */
@@ -785,6 +793,7 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
  * Tests of everything else set it, as a page cannot answer the browser's dialog for a folder.
  */
 export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts";
+export { browserOrganizer } from "./organizer.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";
 export type { BrowserRepositoryOptions } from "./repository.ts";
@@ -991,5 +1000,6 @@ export function createBrowserHost(
     presence: browserPresence(locks),
     keys: browserKeys(database),
     chats,
+    organizer: browserOrganizer(database),
   };
 }

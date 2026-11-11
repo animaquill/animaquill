@@ -83,7 +83,9 @@ export function projectFolder(
 /** Up to what the editor says about the code in a project. The page has to be on the start page. */
 export async function chooseFolder(page: Page, folder: string): Promise<void> {
   const chooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "导入项目文件夹" }).click();
+  // From the file menu: the start page offers only new projects.
+  await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: "导入项目文件夹" }).click();
   await (await chooser).setFiles(folder);
 }
 

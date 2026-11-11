@@ -264,7 +264,7 @@ test.describe("files and code", () => {
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "全部保存" }).click();
     await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
-    await page.getByRole("button", { name: "场景项目" }).first().click();
+    await page.getByRole("link", { name: /^场景项目/ }).click();
     await expect(tab(page, "preview")).toBeVisible();
     await openFile(page, "a.js");
     await expect(lines(page)).toContainText("xone");

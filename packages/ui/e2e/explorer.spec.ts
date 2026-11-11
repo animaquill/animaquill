@@ -110,7 +110,9 @@ async function open(page: Page) {
     writeFileSync(join(folder, "assets/cover.png"), PNG);
     writeFileSync(join(folder, "assets/voice.wav"), wav(2));
     const chooser = page.waitForEvent("filechooser");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    // The file menu has it on the start page, which offers only new projects.
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menu").getByRole("menuitem", { name: "导入项目文件夹" }).click();
     await (await chooser).setFiles(folder);
     // The file that is not there is said once.
     const report = page.getByRole("dialog");

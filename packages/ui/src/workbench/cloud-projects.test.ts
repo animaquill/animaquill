@@ -3,6 +3,7 @@
  * into a folder, and taken out of the browser. See `CloudProjects` for what each of them does, and
  * `FolderMove` for the move into a folder, which is the real one here.
  */
+import { memoryOrganizer } from "@animaquill/host";
 import type { FolderAccess, Host, ProjectSummary } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +58,7 @@ function browserOn(platform: MemoryPlatform, { folders = true } = {}) {
       projects: library,
       address: memoryAddress(),
       windowMemory: memoryWindow(),
+      organizer: memoryOrganizer(),
       settings: {
         load: async (key) => values.get(key),
         save: async (key, value) => void values.set(key, value),

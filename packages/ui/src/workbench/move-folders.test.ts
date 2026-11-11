@@ -4,6 +4,7 @@
  * keeps of the project afterwards. See `FolderMove` for what moving does.
  */
 import { INCOMPLETE_FILE, orderedTracks, type ProjectStore } from "@animaquill/core";
+import { memoryOrganizer } from "@animaquill/host";
 import type { FolderAccess, Host } from "@animaquill/host";
 import { hashFile } from "@animaquill/media";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -495,6 +496,7 @@ describe("a browser that cannot write folders", () => {
       projects: new MemoryLibrary(),
       address: memoryAddress(),
       windowMemory: memoryWindow(),
+      organizer: memoryOrganizer(),
       settings: {
         load: async (key) => values.get(key),
         save: async (key, value) => void values.set(key, value),

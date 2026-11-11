@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { dialog, footer, installChosen, privateText } from "./folder-support.ts";
+import { cardMenu, cardMenuItems, projectCard, sidebar } from "./start-support.ts";
 import { content, createProject, expect, resourcesIn, tab, test } from "./support.ts";
 
 test.use({
@@ -101,7 +102,10 @@ const copiesOf = (page: Page, key: string) =>
     key,
   );
 
-const browserProjects = (page: Page) => page.getByRole("listitem").filter({ hasText: NAME });
+const browserProjects = (page: Page) => projectCard(page, NAME);
+/** The card of the project once it is a folder. */
+const asFolder = (page: Page) =>
+  page.getByRole("link", { name: new RegExp(`^${NAME}.*本地 · 选的`) });
 
 test.describe("a project of the browser", () => {
   test("moves from the start page into the folder people choose, and opens as that folder", async ({
@@ -109,8 +113,8 @@ test.describe("a project of the browser", () => {
   }) => {
     const key = await projectOfTheBrowser(page);
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
-    await page.getByRole("button", { name: `把“${NAME}”移到文件夹…` }).click();
+    await expect(sidebar(page)).toBeVisible();
+    await cardMenu(page, NAME, "移到文件夹…");
 
     const done = dialog(page);
     await expect(done.getByRole("heading", { name: "已移到文件夹" })).toBeVisible();
@@ -119,10 +123,8 @@ test.describe("a project of the browser", () => {
     await done.getByRole("button", { name: "先留着" }).click();
 
     // It is a project folder now, listed as one, and no project of the browser any more.
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: new RegExp(`${NAME}.*文件夹：选的`) }),
-    ).toBeVisible();
+    await expect(page.locator('main li[data-kind="onlyHere"]')).toHaveCount(0);
+    await expect(asFolder(page)).toBeVisible();
     const files = await privateFiles(page, "选的");
     expect(Object.keys(files)).toEqual(
       expect.arrayContaining(["animaquill.json", "assets.json", "timelines/main/timeline.json"]),
@@ -131,7 +133,7 @@ test.describe("a project of the browser", () => {
     expect(Object.keys(files)).not.toContain("导出未完成.txt");
     expect(await copiesOf(page, key)).toBe(2);
 
-    await page.getByRole("button", { name: new RegExp(`${NAME}.*文件夹：选的`) }).click();
+    await asFolder(page).click();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     expect(keyOf(page)).toBe(key);
     await tab(page, "assets").click();
@@ -196,8 +198,8 @@ test.describe("a project of the browser", () => {
     expect(await copiesOf(page, key)).toBe(2);
     expect(Object.keys(await privateFiles(page, "选的"))).toContain("导出未完成.txt");
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
-    await expect(page.getByRole("button", { name: `把“${NAME}”移到文件夹…` })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
+    expect(await cardMenuItems(page, NAME)).toContain("移到文件夹…");
   });
 
   test("moves while another window has it open, which goes on with the folder", async ({
@@ -238,18 +240,16 @@ test.describe("a project of the browser", () => {
     await chooseFrom(page, "文件", "移到文件夹…");
     await dialog(page).getByRole("button", { name: "先留着" }).click();
     await chooseFrom(page, "文件", "关闭项目");
-    const release = page.getByRole("button", { name: /^释放副本/ });
-    await expect(release).toBeVisible();
-    await release.click();
+    await cardMenu(page, NAME, "释放浏览器里的副本…");
     await expect(dialog(page)).toContainText("文件夹里的素材文件不受影响");
     await dialog(page)
       .getByRole("button", { name: /^释放 / })
       .click();
     await expect(page.getByText(/^释放了 /)).toBeVisible();
-    await expect(release).toHaveCount(0);
+    expect(await cardMenuItems(page, NAME)).not.toContain("释放浏览器里的副本…");
     expect(await copiesOf(page, key)).toBe(0);
     // The project has its files from the folder.
-    await page.getByRole("button", { name: new RegExp(`${NAME}.*文件夹：选的`) }).click();
+    await asFolder(page).click();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     await tab(page, "problems").click();
     await expect(content(page, "problems")).not.toContainText("素材文件");
@@ -259,7 +259,7 @@ test.describe("a project of the browser", () => {
     await projectsInBrowser(page, true);
     const folder = fileURLToPath(new URL("../../schema/fixtures/v1", import.meta.url));
     const chooser = page.waitForEvent("filechooser");
-    await page.getByRole("button", { name: "导入项目文件夹" }).click();
+    await chooseFrom(page, "文件", "导入项目文件夹");
     await (await chooser).setFiles(folder);
     await dialog(page).getByRole("button", { name: "知道了，打开项目" }).click();
     await expect(dialog(page).getByRole("heading", { name: "项目已导入" })).toBeVisible();
@@ -309,10 +309,9 @@ test.describe("a browser that cannot write folders", () => {
     page,
   }) => {
     await expect(
-      page.getByText("这个浏览器不能打开电脑上的文件夹。本机版请用 Edge 或 Chrome。"),
+      page.getByText("这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "打开项目文件夹…" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "导入项目文件夹" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^打开文件夹/ })).toHaveCount(0);
     await expect(page.getByText("也可以把项目文件夹拖到这里")).toHaveCount(0);
 
     // Nothing can keep a new project here: the local version needs a browser that opens folders.
@@ -343,8 +342,8 @@ test.describe("a browser that cannot write folders", () => {
     await dialog(page).getByRole("button", { name: "关闭" }).click();
 
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
     await expect(browserProjects(page)).toHaveCount(1);
-    await expect(page.getByRole("button", { name: /移到文件夹/ })).toHaveCount(0);
+    expect(await cardMenuItems(page, NAME)).not.toContain("移到文件夹…");
   });
 });

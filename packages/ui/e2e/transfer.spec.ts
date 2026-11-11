@@ -9,6 +9,7 @@ import { createProject as createNewProject, writeProject } from "@animaquill/sch
 import type { Page } from "@playwright/test";
 import { chromeRefuses } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
+import { cardMenu, noProjects } from "./start-support.ts";
 import { content, createProject, expect, resourcesIn, tab, test } from "./support.ts";
 
 const PNG = Buffer.from(
@@ -203,11 +204,10 @@ async function chooseFolder(page: Page, folder: string, start: () => Promise<unk
 const openAnyway = (page: Page) =>
   dialog(page).getByRole("button", { name: "知道了，打开项目" }).click();
 
-const importButton = (page: Page) => page.getByRole("button", { name: "导入项目文件夹" });
 const importFrom = (page: Page, folder: string) =>
   chooseFolder(page, folder, () => startImport(page));
-const importFromStart = (page: Page, folder: string) =>
-  chooseFolder(page, folder, () => importButton(page).click());
+/** From the start page: the file menu has it there, as the page offers only new projects. */
+const importFromStart = importFrom;
 
 /** Lets a test get at a folder on the disk the way a page does, which a dialog does not allow. */
 async function holdRealFolder(page: Page, folder: string) {
@@ -308,10 +308,9 @@ async function renameTo(page: Page, name: string) {
 
 async function removeProject(page: Page, name: string) {
   await chooseFrom(page, "文件", "关闭项目");
-  await page.getByRole("listitem").filter({ hasText: name }).hover();
-  await page.getByRole("button", { name: `删除 ${name}` }).click();
+  await cardMenu(page, name, "删除…");
   await dialog(page).getByRole("button", { name: "删除" }).click();
-  await expect(page.getByText("还没有项目")).toBeVisible();
+  await noProjects(page);
 }
 
 /** The colour in the middle of the picture, of the preview: making thumbnails has a frame too. */
@@ -465,7 +464,7 @@ test.describe("a project that travels", () => {
 
     await chooseFrom(page, "文件", "关闭项目");
     await expect(page.getByRole("listitem")).toHaveCount(2);
-    await page.getByRole("button", { name: /^原来的项目/ }).click();
+    await page.getByRole("link", { name: /^原来的项目/ }).click();
     await expect(page.locator("footer").getByRole("button", { name: "原来的项目" })).toBeVisible();
     await tab(page, "timeline").click();
     await expect(clips(page)).toHaveCount(3);
@@ -580,7 +579,7 @@ test.describe("a project that travels", () => {
         }),
     );
     await page.reload();
-    await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(page);
     await importFromStart(page, folder);
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
     const { projects, media } = await stored(page);
@@ -615,10 +614,9 @@ test.describe("a project that travels", () => {
 
     const other = await context.newPage();
     await other.goto("/");
-    await other.getByRole("listitem").filter({ hasText: "备份之后改过" }).hover();
-    await other.getByRole("button", { name: "删除 备份之后改过" }).click();
+    await cardMenu(other, "备份之后改过", "删除…");
     await dialog(other).getByRole("button", { name: "删除" }).click();
-    await expect(other.getByText("还没有项目")).toBeVisible();
+    await noProjects(other);
 
     // The first window finds out by saving.
     await renameTo(page, "删除之后改的");
@@ -991,14 +989,14 @@ test.describe("a project on its way in", () => {
 
     const other = await context.newPage();
     await other.goto("/");
-    await expect(other.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(other);
     await other.close();
 
     await dialog(page).getByRole("button", { name: "取消" }).click();
     await page.evaluate(() => window.release?.());
     await expect(page.getByText("导入已取消，现有的项目没有改动。")).toBeVisible();
     await expect.poll(() => stored(page)).toEqual({ projects: [], media: 0, updates: 0 });
-    await expect(page.getByText("还没有项目")).toBeVisible();
+    await noProjects(page);
   });
 
   test("leaves nothing for good when the page goes away", async ({ page, context }) => {
@@ -1009,7 +1007,7 @@ test.describe("a project on its way in", () => {
     const next = await context.newPage();
     await installFolders(next);
     await next.goto("/");
-    await expect(next.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(next);
     await importFromStart(next, folder);
     await expect(next.getByText("“测试项目”已导入。")).toBeVisible();
     await expect(tab(next, "preview")).toBeVisible();
@@ -1260,7 +1258,7 @@ test.describe("the question the browser asks about uploading", () => {
   test("is explained while people choose a folder", async ({ page }) => {
     const hint = page.getByText("浏览器接下来会问是否“上传”，这只是读取，文件不会离开这台电脑。");
     const opening = page.waitForEvent("filechooser");
-    await importButton(page).click();
+    await startImport(page);
     const chooser = await opening;
     await expect(hint).toBeVisible();
 
@@ -1284,7 +1282,6 @@ test.describe("without a project", () => {
   test.use({ withProject: false });
 
   test("offers to import, not to export", async ({ page }) => {
-    await expect(page.getByRole("button", { name: "导入项目文件夹" })).toBeVisible();
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "另存一份…" })).toBeDisabled();
     await expect(page.getByRole("menuitem", { name: "导入项目文件夹" })).toBeEnabled();

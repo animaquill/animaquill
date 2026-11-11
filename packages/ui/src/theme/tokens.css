@@ -19,11 +19,29 @@
   --aq-warning: #cca700;
   --aq-trial: #e2c08d;
   --aq-danger: #c72e2e;
+  /* What takes something away, as text on a dark background. */
+  --aq-danger-text: #ff8a8a;
   --aq-bg-input: #313131;
   --aq-shadow: 0 2px 8px #0000008c;
   --aq-scrollbar: #79797966;
   --aq-scrollbar-hover: #646464b3;
   --aq-scrollbar-active: #bfbfbf66;
+
+  /* The start page: a raised surface, the signs of the two kinds of projects, and the colors a
+     project without a cover gets, chosen by its id, see start/cards.ts. */
+  --aq-bg-raised: #252526;
+  --aq-cloud: #4da3ff;
+  --aq-local: #ffb44a;
+  --aq-star: #ffb44a;
+  --aq-cover-text: #ffffffd9;
+  --aq-cover-1: #2d4a7a;
+  --aq-cover-2: #2d6b55;
+  --aq-cover-3: #7a3d2d;
+  --aq-cover-4: #5a3d7a;
+  --aq-cover-5: #6b5a2d;
+  --aq-cover-6: #2d5f6b;
+  --aq-cover-7: #6b2d4f;
+  --aq-cover-8: #3d5a2d;
 
   --aq-timeline-background: #161616;
   --aq-timeline-lane: #1c1c1c;

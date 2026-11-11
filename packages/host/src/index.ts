@@ -4,6 +4,7 @@ import type { CloudConnection } from "./sync-protocol.ts";
 export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
 export { RELAY_REFUSALS, relayRefusalIn, type AiRelay, type RelayRefusal } from "./relay.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
+export { memoryOrganizer, mergeMarks } from "./organizer.ts";
 export {
   SYNC_CLOSE,
   SYNC_KINDS,
@@ -100,6 +101,79 @@ export interface Host {
    * one only in a browser goes when the browser clears what it stores. Missing for everyone else.
    */
   readonly projectsHereForTests?: true;
+  /**
+   * How people organise their projects on the start page, in this browser: which they starred, which
+   * group each is in, and when each was last opened here, see `ProjectOrganizer`.
+   */
+  readonly organizer: ProjectOrganizer;
+}
+
+/**
+ * How people organise a project on the start page, see the design of the start page
+ * (docs/design/start-and-cloud.md of AnimaQuill Cloud), 6.6. Kept by the number this browser keeps a
+ * project by (a folder, see `FolderRecord.id`, or a project of the browser), or by `cloud:` and the
+ * id of a project of the platform. Each field is the last that was said of it, at `at`: an account
+ * that keeps them too can merge them, field by field.
+ */
+export interface ProjectMarks {
+  /** When it was last opened in this browser: only ever by the number this browser keeps it by. */
+  readonly openedAt?: number;
+  /** When people starred it; null where they took the star away again. */
+  readonly starredAt?: number | null;
+  /** The id of its group, see `ProjectGroup`; null where people took it out of its group. */
+  readonly group?: string | null;
+  /**
+   * When the star or the group was last changed, in milliseconds since 1970: what merging goes by.
+   * Opening the project does not move it.
+   */
+  readonly at: number;
+}
+
+/** What changes of the marks of a project: what is missing stays as it is. */
+export type ProjectMarksChange = Partial<Omit<ProjectMarks, "at">> & { readonly at: number };
+
+/**
+ * A group of projects on the start page: one level, a project in one at most. Not called a folder,
+ * which is one on the computer.
+ */
+export interface ProjectGroup {
+  /** Made at random when the group is, and never changes. */
+  readonly id: string;
+  readonly name: string;
+  /**
+   * Whose it is: a copy of a group of an account, or one of this browser, made while nobody was
+   * signed in, or where there is no account at all.
+   */
+  readonly scope: { readonly account: string } | "browser";
+  /** When it was last changed, in milliseconds since 1970. */
+  readonly at: number;
+  /** Taken away. It stays, so that a copy elsewhere that has it is not taken for a new one. */
+  readonly deleted?: true;
+}
+
+/** Everything that is kept about how projects are organised. */
+export interface OrganizerContent {
+  /** By what each project is kept by, see `ProjectMarks`. */
+  readonly marks: ReadonlyMap<string, ProjectMarks>;
+  /** Including those taken away, see `ProjectGroup.deleted`. */
+  readonly groups: readonly ProjectGroup[];
+}
+
+/**
+ * Where the start page keeps how people organise their projects, in this browser. Shared by every
+ * window of it. Rejects where it cannot be read or written: the start page then lists projects as
+ * they are, without stars or groups.
+ */
+export interface ProjectOrganizer {
+  read(): Promise<OrganizerContent>;
+  /** Changes what is given of the marks of a project, see `ProjectMarksChange`. */
+  mark(project: string, change: ProjectMarksChange): Promise<void>;
+  /** Keeps a group, in place of the one with the same id. */
+  putGroup(group: ProjectGroup): Promise<void>;
+  /** Forgets the marks of a project, as one that is gone. */
+  forget(project: string): Promise<void>;
+  /** What any window changed, also this one. Returns how to stop listening. */
+  listen(listener: () => void): () => void;
 }
 
 /**
@@ -1008,6 +1082,11 @@ export interface DiagnosticsSink {
 export interface ProjectAddress {
   read(): string | undefined;
   write(id: string | undefined): void;
+  /**
+   * The address of a window that shows this project, for a link that opens it in a new tab. Missing
+   * where a window cannot be asked for a project that way.
+   */
+  linkTo?(id: string): string;
 }
 
 /**

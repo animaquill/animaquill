@@ -1,21 +1,6 @@
-import type { FolderStatus } from "@animaquill/host";
 import type { TFunction } from "i18next";
-import {
-  cloudRowNotes,
-  markHint,
-  markText,
-  type CloudRow,
-  type LocalRow,
-} from "../cloud/start-list.ts";
-import { httpsLink } from "./links.ts";
 
-/**
- * What the lines of the start page say and offer, from what `StartList` found, see the design of
- * the start page (docs/design/start-and-cloud.md of AnimaQuill Cloud), 2. No DOM, so that tests
- * read what people read.
- */
-
-const plain = { interpolation: { escapeValue: false } } as const;
+/** How the start page says when things were, see `start/cards.ts` for what else it says. */
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -49,93 +34,11 @@ export function agoText(at: number, now: number, t: TFunction): string {
     : t("start.ago.dayOfYear", { year: when.getFullYear(), day });
 }
 
-export interface LocalRowView {
-  /** Where it is: its folder, or that the folder cannot be found, or cannot be read. */
-  readonly place: string;
-  /** How it stands with the platform, or undefined where the editor is hosted on none. */
-  readonly mark: string | undefined;
-  /** What the mark means, for hovering. */
-  readonly hint: string | undefined;
-  /** People have to do something about it on the platform. */
-  readonly attention: boolean;
-  /** The folder is not where it was: it can be found again, or what the browser has saved elsewhere. */
-  readonly gone: boolean;
-}
-
-/** `status`: how its folder is, once that is known; looking can take a while, as on a network. */
-export function localRowView(
-  row: LocalRow,
-  status: FolderStatus | undefined,
-  t: TFunction,
-): LocalRowView {
-  const { mark } = row;
-  return {
-    place:
-      status === undefined || status === "ready"
-        ? t("folder.folderLabel", { folder: row.folder, ...plain })
-        : t(`folder.recentStatus.${status}`),
-    mark:
-      mark === undefined
-        ? undefined
-        : // Changes that the platform may not have yet say so on the line, as for its own projects.
-          row.pending && mark.kind === "linked"
-          ? `${markText(mark, t)} · ${t("start.pending")}`
-          : markText(mark, t),
-    hint: mark && markHint(mark, t),
-    attention: mark?.kind === "attention" || mark?.kind === "noRepository",
-    gone: status === "gone",
-  };
-}
-
-/** What "更多" of a project of the platform offers. */
-export type CloudRowMore = "openOnGitHub" | "removeHere" | "deleteCloud";
-
-export interface CloudRowView {
-  /** What the line says under the name, in order: its repository, when it changed, and what else. */
-  readonly about: readonly string[];
-  /** What people have to do about it, where there is something: "☁ 要处理", "还差一步：选仓库". */
-  readonly mark: string | undefined;
-  readonly hint: string | undefined;
-  /** "下载到文件夹…" is there: this browser can write folders. */
-  readonly download: boolean;
-  readonly more: readonly CloudRowMore[];
-  /** Where "在 GitHub 上打开" goes: the platform's word, and only an https address. */
-  readonly address: string | undefined;
-}
-
-export interface CloudRowContext {
-  readonly now: number;
-  /** This browser can write folders. */
-  readonly canDownload: boolean;
-}
-
-export function cloudRowView(
-  row: CloudRow,
-  { now, canDownload }: CloudRowContext,
-  t: TFunction,
-): CloudRowView {
-  const { mark } = row;
-  // That it is connected goes without saying here; only what is not as it should be shows.
-  const isPlain = mark.kind === "linked" || mark.kind === "local";
-  const address = httpsLink(row.repository?.url);
-  return {
-    about: [
-      ...(row.repository ? [row.repository.fullName] : []),
-      ...(row.updatedAt === undefined
-        ? []
-        : [t("start.changed", { time: agoText(row.updatedAt, now, t), ...plain })]),
-      ...cloudRowNotes(row, t),
-    ],
-    mark: isPlain ? undefined : markText(mark, t),
-    hint: markHint(mark, t),
-    download: canDownload,
-    more: [
-      ...(address ? (["openOnGitHub"] as const) : []),
-      // What it says before anything goes is the removing's to say: that the platform may not
-      // have the project, or that it cannot tell.
-      ...(row.key !== undefined ? (["removeHere"] as const) : []),
-      ...(row.deletable ? (["deleteCloud"] as const) : []),
-    ],
-    address,
-  };
+/** How long a timeline is, as on a card: "0:42", "6:15", "1:02:03". */
+export function durationText(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = String(seconds % 60).padStart(2, "0");
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }

@@ -2,6 +2,7 @@
  * Windows of a browser in memory, with a disk of project folders, for tests of the workbench: each
  * window has a workbench, and they share the disk, the log of projects and the address.
  */
+import { memoryOrganizer } from "@animaquill/host";
 import type { FolderAccess, Host, LocalFolders } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { MANIFEST_FILE } from "@animaquill/schema";
@@ -41,6 +42,7 @@ export function browserOf(disk = new MemoryDisk()) {
     localFolders: memoryFolders(disk),
     /** Which windows have which projects open: every window of the browser shares it. */
     presence: new MemoryPresence(),
+    organizer: memoryOrganizer(),
   };
 }
 
@@ -66,6 +68,7 @@ export function windowOf(
     projects: browser.library,
     address: browser.address,
     windowMemory: memoryWindow(),
+    organizer: browser.organizer,
     settings: {
       load: async (key) => values.get(key),
       save: async (key, value) => void values.set(key, value),

@@ -1,317 +1,1043 @@
+/*
+ * The start page, "作品墙": a side bar of views and groups, and the view on the right. The sizes
+ * follow the mock-up the people who use it chose; the colors are those of the theme.
+ */
+
 .page {
-  min-height: 0;
-  overflow: auto;
-  background: var(--aq-bg-panel);
-}
-
-.content {
-  width: min(560px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 72px 0 32px;
-}
-
-/* With the projects of the platform next to those of this computer. */
-.content[data-columns="2"] {
-  width: min(1040px, calc(100% - 32px));
-}
-
-/* Side by side where there is room for both, one under the other in a narrow window. */
-.columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
-  gap: 0 40px;
-  align-items: start;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 0;
+  background: var(--aq-bg-chrome);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
-.column {
-  min-width: 0;
-  outline: none;
+/* ---- the side bar */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  padding: 20px 16px;
+  overflow-y: auto;
+  background: var(--aq-bg-panel);
+  border-right: 1px solid var(--aq-border);
 }
 
-.content h1 {
+.newProject {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: none;
+  min-height: 44px;
+  color: var(--aq-on-accent);
+  font-weight: 600;
+  background: var(--aq-accent);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.newProject:hover {
+  filter: brightness(1.1);
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.blockLabel {
+  padding: 0 12px 4px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.navItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.navItem[data-drop] {
+  outline: 2px solid var(--aq-accent);
+  outline-offset: -2px;
+  background: var(--aq-bg-hover);
+}
+
+.navButton {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  color: var(--aq-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.navButton:hover {
+  background: var(--aq-bg-hover);
+}
+
+.navButton[aria-current="page"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.navIcon {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.navButton[aria-current="page"] .navIcon {
+  color: var(--aq-text-strong);
+}
+
+.navName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The menu of a group shows where people point, and where it has the focus. */
+.navItem > div:last-child {
+  position: absolute;
+  right: 4px;
+}
+
+.navMore {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: var(--aq-bg-panel);
+  border-radius: 6px;
+  opacity: 0;
+}
+
+.navItem:hover .navMore,
+.navMore:focus-visible,
+.navMore[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.navItem:hover .count {
+  visibility: hidden;
+}
+
+.newGroup {
+  color: var(--aq-text-muted);
+}
+
+.nameInput {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nameInput input {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-accent);
+  border-radius: 6px;
+  outline: 0;
+}
+
+.nameInput input[aria-invalid="true"] {
+  border-color: var(--aq-danger-text);
+}
+
+.problem {
+  color: var(--aq-danger-text);
+  font-size: 12px;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-top: auto;
+  padding: 12px;
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  color: var(--aq-on-accent);
+  font-weight: 600;
+  background: var(--aq-timeline-picture);
+  border-radius: 50%;
+}
+
+.accountWords {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.accountName {
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountState {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+/* ---- the view */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+  min-height: 0;
+  padding: 28px 32px 40px;
+  overflow-y: auto;
+  outline: none;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.head h1 {
+  flex: 1 1 200px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  font-size: 24px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.filters {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--aq-bg-panel);
+  border-radius: 10px;
+}
+
+.filters button {
+  min-height: 34px;
+  padding: 0 14px;
+  color: var(--aq-text);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.filters button:hover {
+  color: var(--aq-text-strong);
+}
+
+.filters button[aria-pressed="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-input);
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  color: var(--aq-text-muted);
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.search:focus-within {
+  border-color: var(--aq-accent);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
+.sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 0 12px;
+  color: var(--aq-text);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+}
+
+.display {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+}
+
+.display button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 40px;
+  color: var(--aq-text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.display button[aria-pressed="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+/* ---- making projects */
+
+.newCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+}
+
+.newCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  color: var(--aq-text);
+  text-align: left;
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+
+.newCard[data-new="open"] {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--aq-timeline-tick);
+}
+
+.newCard:hover:enabled {
+  background: var(--aq-bg-raised);
+  border-color: var(--aq-timeline-tick);
+}
+
+.newCard:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.newIcon {
+  flex: none;
+  color: var(--aq-text);
+}
+
+.newCard[data-new="cloud"] .newIcon {
+  color: var(--aq-cloud);
+}
+
+.newCard[data-new="local"] .newIcon {
+  color: var(--aq-local);
+}
+
+.newWords {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.newTitle {
+  color: var(--aq-text-strong);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.newAbout {
+  color: var(--aq-text);
+}
+
+.newCard:disabled .newAbout {
+  color: var(--aq-text-muted);
+}
+
+/* With nothing to show yet: the ways to begin, large, in the middle. */
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 0 8px;
+  text-align: center;
+}
+
+.welcome h2 {
   margin: 0;
   color: var(--aq-text-strong);
   font-size: 28px;
   font-weight: 600;
 }
 
-.content h1 svg {
-  color: var(--aq-accent);
+.welcome > p {
+  margin: 0 0 24px;
 }
 
-.tagline {
-  margin: 4px 0 24px;
-  color: var(--aq-text-muted);
+.newCards[data-large] {
+  width: min(100%, 980px);
+  text-align: left;
 }
 
-.actions {
+.newCards[data-large] .newCard {
+  flex-direction: column;
+  gap: 16px;
+  min-height: 180px;
+  padding: 24px;
+}
+
+.newCards[data-large] .newTitle {
+  font-size: 18px;
+}
+
+.remote {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.create,
-.bringIn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  color: var(--aq-on-accent);
-  background: var(--aq-accent);
-  border: 0;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.bringIn {
-  color: var(--aq-text);
-  background: var(--aq-bg-input);
-}
-
-.bringIn:hover {
-  background: var(--aq-bg-hover);
-}
-
-.content h2 {
-  margin: 28px 0 8px;
-  color: var(--aq-text);
-  font-size: 13px;
+.remote h2 {
+  margin: 8px 0 0;
+  color: var(--aq-text-strong);
+  font-size: 18px;
   font-weight: 600;
 }
 
-.list {
+.remote > p {
   margin: 0 0 16px;
+}
+
+/* ---- the projects as cards */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 24px 20px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.list li {
-  display: flex;
-  align-items: center;
-  border-radius: 3px;
-}
-
-.list li:hover {
-  background: var(--aq-bg-hover);
-}
-
-.project {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
+.card {
+  position: relative;
   min-width: 0;
-  padding: 6px 8px;
+}
+
+/* A card with its menu open is over those after it. */
+.card:focus-within,
+.row:focus-within {
+  z-index: 2;
+}
+
+.cardLink {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
   color: var(--aq-text);
+  font: inherit;
   text-align: left;
+  text-decoration: none;
   background: none;
   border: 0;
-  border-radius: 3px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
-/* The name, and at the end of the line when it was opened, or what a click does. */
-.line {
+.cardLink:focus-visible {
+  outline: 2px solid var(--aq-accent);
+  outline-offset: 3px;
+}
+
+.cardLink[aria-disabled="true"] {
+  cursor: progress;
+}
+
+.cover {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 20% 15%, #ffffff1f, transparent 60%),
+    var(--cover, var(--aq-cover-1));
+  border-radius: 10px;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.cardLink:hover .cover {
+  box-shadow:
+    0 0 0 1px #ffffff2e,
+    0 10px 24px #00000066;
+  transform: translateY(-2px);
+}
+
+.initial {
+  color: var(--aq-cover-text);
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.duration {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  color: var(--aq-text-strong);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  background: var(--aq-overlay-halo);
+  border-radius: 4px;
+}
+
+.words {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
 .name {
   overflow: hidden;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.status > span {
+  white-space: nowrap;
+}
+
+.statusText {
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Where it is and how it stands with the platform: smaller, and onto the next line when long. */
-.about {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 6px;
-  min-width: 0;
-  color: var(--aq-text-muted);
-  font-size: 12px;
+.when {
+  flex: none;
 }
 
-.about > span {
-  overflow-wrap: anywhere;
+.placeIcon {
+  flex: none;
 }
 
-.about > span + span::before {
-  margin-right: 6px;
-  color: var(--aq-text-muted);
-  content: "·";
+.placeIcon[data-place="cloud"] {
+  color: var(--aq-cloud);
 }
 
-.warning {
+.placeIcon[data-place="folder"] {
+  color: var(--aq-local);
+}
+
+.status[data-tone="warning"] .statusText,
+.status[data-tone="warning"] .placeIcon {
   color: var(--aq-warning);
 }
 
-/* How it stands with the platform, with the cloud in front where it is on it. */
-.mark {
-  display: inline-flex;
+/* Only in this browser: it stands out, as the browser can take it at any time. */
+.card[data-kind="onlyHere"] .status[data-tone="warning"] .statusText {
+  padding: 0 6px;
+  color: var(--aq-bg-chrome);
+  font-weight: 600;
+  background: var(--aq-warning);
+  border-radius: 4px;
+}
+
+.star,
+.moreButton {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--aq-text-strong);
+  background: var(--aq-overlay-halo);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.card .star {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.card .more {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.card .moreButton {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.card:hover .star,
+.card:hover .moreButton,
+.card:focus-within .star,
+.card:focus-within .moreButton,
+.star:focus-visible,
+.moreButton:focus-visible,
+.moreButton[aria-expanded="true"],
+.star[aria-pressed="true"] {
+  opacity: 1;
+}
+
+.star[aria-pressed="true"] svg {
+  color: var(--aq-star);
+  fill: var(--aq-star);
+}
+
+.star:hover,
+.moreButton:hover {
+  background: #000000d0;
+}
+
+/* The menu of a card is wider than the plain one: it says what it does. */
+.more [role="menu"] {
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 10px;
+}
+
+.more [role^="menuitem"] {
+  min-height: 34px;
+  border-radius: 6px;
+}
+
+/* ---- the projects as a list */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--aq-border);
+}
+
+.rowHead,
+.row > .cardLink {
+  display: grid;
+  grid-template-columns: minmax(180px, 2.2fr) minmax(120px, 1.4fr) minmax(140px, 1.6fr) 110px;
   align-items: center;
+  gap: 16px;
 }
 
-.mark svg {
-  margin-right: 3px;
+.rows[data-duration] .rowHead,
+.rows[data-duration] .row > .cardLink {
+  grid-template-columns: minmax(180px, 2.2fr) minmax(120px, 1.4fr) minmax(140px, 1.6fr) 72px 110px;
 }
 
-/* A project of the platform: its words, and at the end of the line what a click does. */
-.cloudProject {
-  flex-direction: row;
+.rowHead {
+  padding: 8px 88px 8px 12px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.row:hover {
+  background: var(--aq-bg-panel);
+}
+
+.row > .cardLink {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  padding: 6px 12px;
+  border-radius: 0;
+}
+
+.row > .cardLink:focus-visible {
+  outline-offset: -2px;
+}
+
+.cellName {
+  display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.words {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
 }
 
-.openWord {
+.swatch {
+  display: grid;
+  place-items: center;
   flex: none;
-  color: var(--aq-accent);
+  width: 40px;
+  height: 24px;
+  color: var(--aq-cover-text);
   font-size: 12px;
+  font-weight: 600;
+  background: var(--cover, var(--aq-cover-1));
+  border-radius: 4px;
 }
 
-/* What the column of the platform says in place of a list, with the one thing to press. */
-.say {
+.cell {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row .star,
+.row .moreButton {
+  color: var(--aq-text-muted);
+  background: transparent;
+}
+
+.row .star {
+  opacity: 0;
+}
+
+.row:hover .star,
+.row:focus-within .star,
+.row .star[aria-pressed="true"] {
+  opacity: 1;
+}
+
+.row .more {
+  margin-right: 8px;
+}
+
+.row .star:hover,
+.row .moreButton:hover,
+.row .moreButton[aria-expanded="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.renameInput {
+  max-width: 100%;
+}
+
+/* ---- what the view says */
+
+.muted {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.empty {
+  margin: 24px 0;
+  color: var(--aq-text-muted);
+  text-align: center;
+}
+
+.note {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-  margin: 0 0 8px;
-  color: var(--aq-text-muted);
+  margin: 0;
+  color: var(--aq-text);
 }
 
-.say > span {
-  flex: 1 1 220px;
-}
-
-.more {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  margin-right: 4px;
-  padding: 0;
-  color: var(--aq-text-muted);
-  background: none;
-  border: 0;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.more:hover,
-.more[aria-expanded="true"] {
-  color: var(--aq-text-strong);
-  background: var(--aq-bg-hover);
-}
-
-.time {
-  flex: none;
-  color: var(--aq-text-muted);
-  font-size: 12px;
-}
-
-.remove {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  margin-right: 4px;
-  padding: 0;
-  color: var(--aq-text-muted);
-  background: none;
-  border: 0;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-
-.list li:hover .remove,
-.remove:focus-visible {
-  opacity: 1;
-}
-
-.remove:hover {
-  color: var(--aq-text-strong);
-  background: var(--aq-bg-hover);
-}
-
-.failed {
-  margin: 16px 0 0;
+.warningText {
   color: var(--aq-warning);
 }
 
-.muted {
-  margin: 16px 0 0;
-  color: var(--aq-text-muted);
-  font-size: 12px;
-}
-
-.unfinished {
+.notice {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: 16px;
+  padding: 36px 16px;
+  text-align: center;
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 12px;
 }
 
-.unfinished .name {
-  flex: 1;
-  overflow-wrap: anywhere;
+.notice p {
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 16px;
 }
 
-.dropHint {
-  align-self: center;
-  color: var(--aq-text-muted);
-  font-size: 12px;
-}
-
-.waiting {
-  margin: 20px 0 0;
-  padding: 12px;
-  background: var(--aq-bg-input);
-  border-radius: 4px;
-}
-
-.waiting p {
-  margin: 0 0 8px;
-}
-
-.waiting .muted {
-  margin: 8px 0 0;
-}
-
-.again {
-  flex: none;
-  padding: 2px 8px;
-  white-space: nowrap;
-  color: var(--aq-accent);
-  background: none;
+.primary,
+.secondary,
+.quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  color: var(--aq-on-accent);
+  font: inherit;
+  background: var(--aq-accent);
   border: 0;
-  border-radius: 3px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
-.again:hover {
+.secondary,
+.quiet {
+  color: var(--aq-text);
+  background: var(--aq-bg-input);
+}
+
+.secondary:hover,
+.quiet:hover {
   background: var(--aq-bg-hover);
 }
 
-/* While a project of the platform is on its way here, or being taken away. */
-.project:disabled,
-.again:disabled {
-  cursor: default;
-  opacity: 0.6;
+.waiting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 16px;
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 10px;
+}
+
+.waiting p {
+  margin: 0;
+}
+
+.exports {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exportList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--aq-border);
+}
+
+.exportList li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.exportName {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- a narrow window: the side bar goes on top */
+
+@media (max-width: 720px) {
+  .page {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .nav {
+    flex: none;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    overflow: auto hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--aq-border);
+  }
+
+  .newProject {
+    padding: 0 14px;
+    white-space: nowrap;
+  }
+
+  .block {
+    flex-direction: row;
+    flex: none;
+    gap: 4px;
+  }
+
+  .blockLabel,
+  .account,
+  .navMore {
+    display: none;
+  }
+
+  .navButton {
+    flex: none;
+    min-height: 36px;
+    white-space: nowrap;
+  }
+
+  .navName {
+    overflow: visible;
+  }
+
+  .main {
+    flex: none;
+    gap: 20px;
+    padding: 20px 16px 32px;
+    overflow: visible;
+  }
+
+  .tools {
+    width: 100%;
+  }
+
+  .search {
+    flex: 1 1 160px;
+    width: auto;
+  }
+
+  /* Making a project takes little room over the projects: three tiles in a row. */
+  .newCards:not([data-large]) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .newCards:not([data-large]) .newCard {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 6px;
+    text-align: center;
+  }
+
+  .newCards:not([data-large]) .newTitle {
+    font-size: 13px;
+  }
+
+  .newCards:not([data-large]) .newAbout {
+    display: none;
+  }
+
+  .newCards[data-large] .newCard {
+    min-height: 0;
+    flex-direction: row;
+    padding: 16px;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 12px;
+  }
+
+  .initial {
+    font-size: 28px;
+  }
+
+  .welcome {
+    padding-top: 8px;
+  }
+
+  .welcome h2 {
+    font-size: 22px;
+  }
+
+  .rowHead {
+    display: none;
+  }
+
+  .row > .cardLink {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .row .cell:not(:nth-child(3)) {
+    display: none;
+  }
 }

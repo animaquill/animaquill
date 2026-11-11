@@ -49,7 +49,7 @@ test.describe("a project folder", () => {
     await page.reload();
     const files = exampleProject();
     await putPrivate(page, "选的", files);
-    await page.getByRole("button", { name: "打开项目文件夹…" }).click();
+    await page.getByRole("button", { name: /^打开文件夹/ }).click();
     await agreeToCode(page);
     await expect(tab(page, "preview")).toBeVisible();
     await expect(footer(page).getByText("原子是什么")).toBeVisible();
@@ -156,10 +156,10 @@ test.describe("the list of project folders", () => {
       };
     });
     await page.reload();
-    await expect(page.getByRole("button", { name: /原子是什么.*文件夹/ })).toBeVisible({
+    await expect(page.getByRole("link", { name: /^原子是什么.*本地 · / })).toBeVisible({
       timeout: 4000,
     });
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toHaveCount(0);
+    await expect(page.locator('main li[data-kind="onlyHere"]')).toHaveCount(0);
   });
 
   test("opens one by its address after its log went, once the page can ask about its code", async ({

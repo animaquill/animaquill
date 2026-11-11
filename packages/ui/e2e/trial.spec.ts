@@ -14,6 +14,7 @@ import {
   typeInto,
 } from "./property-helpers.ts";
 import { content, expect, tab, test } from "./support.ts";
+import { sidebar } from "./start-support.ts";
 
 const RED = [255, 0, 0] as const;
 
@@ -820,15 +821,15 @@ test("leaving asks, and what stays for the next time comes back", async ({ page 
 
   await chooseFrom(page, "文件", "关闭项目");
   await dialog(page).getByRole("button", { name: "保留到下次" }).click();
-  await expect(page.getByText("浏览器里的项目")).toBeVisible();
+  await expect(sidebar(page)).toBeVisible();
   await expect(bar(page)).toHaveCount(0);
 
-  await page.getByRole("button", { name: "测试项目" }).first().click();
+  await page.getByRole("link", { name: /^测试项目/ }).click();
   await expect(count(page)).toHaveText("试改 1 处");
   await chooseFrom(page, "文件", "关闭项目");
   await dialog(page).getByRole("button", { name: "放弃" }).click();
-  await expect(page.getByText("浏览器里的项目")).toBeVisible();
-  await page.getByRole("button", { name: "测试项目" }).first().click();
+  await expect(sidebar(page)).toBeVisible();
+  await page.getByRole("link", { name: /^测试项目/ }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await expect(clips(page)).toHaveCount(1);
   await expect(bar(page)).toHaveCount(0);
@@ -839,8 +840,8 @@ test("leaving can save, and nothing is left to ask about after that", async ({ p
   await typeInto(field(page, "位置 X"), "100");
   await chooseFrom(page, "文件", "关闭项目");
   await dialog(page).getByRole("button", { name: "保存" }).click();
-  await expect(page.getByText("浏览器里的项目")).toBeVisible();
-  await page.getByRole("button", { name: "测试项目" }).first().click();
+  await expect(sidebar(page)).toBeVisible();
+  await page.getByRole("link", { name: /^测试项目/ }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await expect(bar(page)).toHaveCount(0);
   await tab(page, "timeline").click();

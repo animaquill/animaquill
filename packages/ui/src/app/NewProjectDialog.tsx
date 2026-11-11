@@ -8,6 +8,7 @@ import styles from "./ConnectDialog.module.css";
 import { createView } from "./create-view.ts";
 import { useWorkbench } from "./context.ts";
 import host from "./DialogHost.module.css";
+import own from "./NewProjectDialog.module.css";
 import picker from "./RepositoryDialog.module.css";
 import { RepositoryFields } from "./RepositoryFields.tsx";
 
@@ -89,7 +90,7 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
   return (
     <dialog
       ref={dialog}
-      className={host.wide}
+      className={`${host.wide} ${own.dialog}`}
       aria-label={view.title}
       data-create-phase={snapshot.phase}
       data-create-kind={kind}
@@ -126,9 +127,18 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         </label>
 
         {view.kinds.length > 0 && (
-          <div className={styles.kinds} role="radiogroup" aria-label={t("newProject.kindLabel")}>
+          <div
+            className={`${styles.kinds} ${own.kinds}`}
+            role="radiogroup"
+            aria-label={t("newProject.kindLabel")}
+          >
             {view.kinds.map(({ id, label, about, disabled }) => (
-              <label key={id} className={styles.kind} data-disabled={disabled}>
+              <label
+                key={id}
+                className={`${styles.kind} ${own.kind}`}
+                data-disabled={disabled}
+                data-checked={kind === id || undefined}
+              >
                 <input
                   type="radio"
                   name="project-kind"
@@ -146,7 +156,7 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         )}
 
         {view.format && (
-          <div className={styles.format}>
+          <div className={`${styles.format} ${own.format}`}>
             <label>
               <span>{t("newProject.format.label")}</span>
               <select
@@ -254,7 +264,7 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         )}
 
         {view.withFolder !== undefined && view.body !== "result" && (
-          <label className={styles.withFolder}>
+          <label className={`${styles.withFolder} ${own.withFolder}`}>
             <input
               type="checkbox"
               checked={view.withFolder}

@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { cardMenu, noProjects, projectCard, sidebar } from "./start-support.ts";
 import { content, createProject, expect, layoutMenu, tab, test } from "./support.ts";
 
 const statusName = (page: Page, name: string) =>
@@ -38,8 +39,7 @@ test.describe("without a project", () => {
   test.use({ withProject: false });
 
   test("shows the start page, not empty panels", async ({ page }) => {
-    await expect(page.getByRole("heading", { name: "AnimaQuill" })).toBeVisible();
-    await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(page);
     await expect(page.getByText("未打开项目")).toBeVisible();
     await expect(tab(page, "preview")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^布局：/ })).toHaveCount(0);
@@ -47,7 +47,7 @@ test.describe("without a project", () => {
 
   test("says where projects are kept", async ({ page }) => {
     await expect(
-      page.getByText("这个浏览器不能打开电脑上的文件夹。本机版请用 Edge 或 Chrome。"),
+      page.getByText("这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"),
     ).toBeVisible();
   });
 
@@ -65,18 +65,18 @@ test.describe("without a project", () => {
   test("does nothing on shortcuts that need a project", async ({ page }) => {
     await page.keyboard.press("Alt+Shift+Digit2");
     await page.keyboard.press("Control+KeyZ");
-    await expect(page.getByRole("heading", { name: "AnimaQuill" })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
   });
 
   test("says so when the address names a project that is not there", async ({ page }) => {
     await page.goto("/?from=mail&project=project_missing#top");
     await expect(page.getByText("没有找到这个项目")).toBeVisible();
-    await expect(page.getByText("还没有项目")).toBeVisible();
+    await noProjects(page);
     expect(new URL(page.url()).search).toBe("?from=mail");
     expect(new URL(page.url()).hash).toBe("#top");
 
     await page.reload();
-    await expect(page.getByText("还没有项目")).toBeVisible();
+    await noProjects(page);
     await expect(page.getByText("没有找到这个项目")).toHaveCount(0);
   });
 
@@ -84,7 +84,7 @@ test.describe("without a project", () => {
     await createProject(page, "我的第一个项目");
     await expect(statusName(page, "我的第一个项目")).toBeVisible();
     await expect(page).toHaveTitle("我的第一个项目 - AnimaQuill");
-    await expect(page.getByRole("heading", { name: "AnimaQuill" })).toHaveCount(0);
+    await expect(sidebar(page)).toHaveCount(0);
   });
 
   test("suggests a name, and needs one", async ({ page }) => {
@@ -102,7 +102,7 @@ test.describe("without a project", () => {
     await page.getByRole("button", { name: "新建项目" }).click();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(page);
   });
 
   test("leaves Enter to the input method during composition", async ({ page }) => {
@@ -206,16 +206,16 @@ test.describe("with a project", () => {
 
   test("goes back to the start page, which lists the project", async ({ page }) => {
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^测试项目/ })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
+    await expect(page.getByRole("link", { name: /^测试项目/ })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
   });
 
   test("opens again from the start page, with the layout it had", async ({ page }) => {
     await tab(page, "assets").click({ button: "middle" });
     await chooseFrom(page, "文件", "关闭项目");
-    await page.getByRole("button", { name: /^测试项目/ }).click();
+    await page.getByRole("link", { name: /^测试项目/ }).click();
     await expect(tab(page, "preview")).toBeVisible();
     await expect(tab(page, "assets")).toHaveCount(0);
   });
@@ -227,7 +227,7 @@ test.describe("with a project", () => {
     await page.keyboard.press("Enter");
     await expect(statusName(page, "项目二")).toBeVisible();
     await chooseFrom(page, "文件", "关闭项目");
-    await page.getByRole("button", { name: /^项目一/ }).click();
+    await page.getByRole("link", { name: /^项目一/ }).click();
     await expect(statusName(page, "项目一")).toBeVisible();
   });
 
@@ -243,28 +243,25 @@ test.describe("with a project", () => {
 
   test("asks before removing a project, and can be talked out of it", async ({ page }) => {
     await chooseFrom(page, "文件", "关闭项目");
-    const row = page.getByRole("listitem").filter({ hasText: "测试项目" });
-    await row.hover();
-    await page.getByRole("button", { name: "删除 测试项目" }).click();
+    const row = projectCard(page, "测试项目");
+    await cardMenu(page, "测试项目", "删除…");
     await expect(page.getByText("不能恢复")).toBeVisible();
     await expect(page.getByRole("button", { name: "取消" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(row).toBeVisible();
 
-    await row.hover();
-    await page.getByRole("button", { name: "删除 测试项目" }).click();
+    await cardMenu(page, "测试项目", "删除…");
     await page.getByRole("button", { name: "删除", exact: true }).click();
     await expect(row).toHaveCount(0);
-    await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(page);
     await page.reload();
-    await expect(page.getByText("还没有项目，新建一个开始吧。")).toBeVisible();
+    await noProjects(page);
   });
 
   test("does not remove a project by pressing Enter once more", async ({ page }) => {
     await chooseFrom(page, "文件", "关闭项目");
-    const row = page.getByRole("listitem").filter({ hasText: "测试项目" });
-    await row.hover();
-    await page.getByRole("button", { name: "删除 测试项目" }).click();
+    const row = projectCard(page, "测试项目");
+    await cardMenu(page, "测试项目", "删除…");
     await page.keyboard.press("Enter");
     await expect(row).toBeVisible();
   });
@@ -295,11 +292,11 @@ test.describe("with a project", () => {
     await chooseFrom(page, "文件", "关闭项目");
     const other = await context.newPage();
     await other.goto("/");
-    await other.getByRole("button", { name: /^测试项目/ }).click();
+    await other.getByRole("link", { name: /^测试项目/ }).click();
     await expect(statusName(other, "测试项目")).toBeVisible();
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
     await other.close();
   });
 
@@ -310,7 +307,7 @@ test.describe("with a project", () => {
     await saved(page);
     const other = await context.newPage();
     await other.goto("/");
-    await expect(other.getByRole("button", { name: /^测试项目/ })).toBeVisible();
+    await expect(other.getByRole("link", { name: /^测试项目/ })).toBeVisible();
     await expect(tab(other, "preview")).toHaveCount(0);
     await other.close();
   });
@@ -320,10 +317,10 @@ test.describe("with a project", () => {
     expect(new URL(opened).searchParams.get("project")).toMatch(/^project_/);
 
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
     expect(new URL(page.url()).search).toBe("");
 
-    await page.getByRole("button", { name: /^测试项目/ }).click();
+    await page.getByRole("link", { name: /^测试项目/ }).click();
     await expect(tab(page, "preview")).toBeVisible();
     expect(page.url()).toBe(opened);
   });
@@ -335,15 +332,14 @@ test.describe("with a project", () => {
     await saved(page);
     const other = await context.newPage();
     await other.goto("/");
-    await other.getByRole("listitem").filter({ hasText: "测试项目" }).hover();
-    await other.getByRole("button", { name: "删除 测试项目" }).click();
+    await cardMenu(other, "测试项目", "删除…");
     await other.getByRole("button", { name: "删除", exact: true }).click();
-    await expect(other.getByText("还没有项目")).toBeVisible();
+    await noProjects(other);
     await other.close();
 
     await page.reload();
     await expect(page.getByText("没有找到这个项目")).toBeVisible();
-    await expect(page.getByText("还没有项目")).toBeVisible();
+    await noProjects(page);
   });
 
   test("shows changes from another window of the same project", async ({ page, context }) => {
@@ -444,7 +440,7 @@ test.describe("when saving fails", () => {
 
     await chooseFrom(page, "文件", "关闭项目");
     await page.getByRole("button", { name: "仍然离开" }).click();
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
   });
 
   test("warns before leaving the page", async ({ page }) => {
@@ -527,7 +523,7 @@ test.describe("when the data is out of reach", () => {
     });
     await page.goto("/");
     await expect(page.getByRole("alert")).toContainText("项目列表读不出来");
-    await expect(page.getByText("还没有项目")).toHaveCount(0);
+    await expect(page.getByText("这里还没有项目。")).toHaveCount(0);
   });
 
   test("steps aside for a newer version that upgrades the data", async ({ page }) => {
@@ -552,10 +548,9 @@ test.describe("when the data is out of reach", () => {
     await saved(page);
     const other = await context.newPage();
     await other.goto("/");
-    await other.getByRole("listitem").filter({ hasText: "测试项目" }).hover();
-    await other.getByRole("button", { name: "删除 测试项目" }).click();
+    await cardMenu(other, "测试项目", "删除…");
     await other.getByRole("button", { name: "删除", exact: true }).click();
-    await expect(other.getByText("还没有项目")).toBeVisible();
+    await noProjects(other);
     await other.close();
 
     await renameTo(page, "项目已经没了");
@@ -605,8 +600,8 @@ test("a crash of the whole editor leaves a way out of the project", async ({ pag
   await expect(page.getByRole("alert")).toContainText("编辑器遇到了问题");
 
   await page.getByRole("button", { name: "回到开始页" }).click();
-  await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^让编辑器崩溃/ })).toBeVisible();
+  await expect(sidebar(page)).toBeVisible();
+  await expect(page.getByRole("link", { name: /^让编辑器崩溃/ })).toBeVisible();
   // React reports the error it caught, which is exactly what this test provokes.
   const others = problems.filter((text) => !text.includes("Crash on request"));
   problems.splice(0, problems.length, ...others);
@@ -614,7 +609,7 @@ test("a crash of the whole editor leaves a way out of the project", async ({ pag
 
 test("the panels still work after a project was closed and opened", async ({ page }) => {
   await chooseFrom(page, "文件", "关闭项目");
-  await page.getByRole("button", { name: /^测试项目/ }).click();
+  await page.getByRole("link", { name: /^测试项目/ }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await page.keyboard.press("Alt+Shift+Digit2");
   await expect(tab(page, "keyframes")).toBeVisible();

@@ -36,8 +36,6 @@
     "remove": "删除",
     "nameLabel": "项目名称",
     "defaultName": "未命名项目",
-    "none": "还没有项目，新建一个开始吧。",
-    "removeButton": "删除 {{name}}",
     "removeTitle": "删除“{{name}}”？",
     "removeWarning": "项目会从这个浏览器里删除，不能恢复。",
     "saved": "已保存",
@@ -1620,7 +1618,6 @@
     "chooseHint": "下一步选一个放项目的文件夹，也可以在里面新建一个。浏览器不允许直接选“文档”“桌面”“下载”本身，选它们里面的文件夹就可以。",
     "chooseFolder": "选文件夹…",
     "openAction": "打开项目文件夹…",
-    "dropHint": "也可以把项目文件夹拖到这里",
     "droppedNoFolder": "拖进来的不是文件夹。要打开项目，请把项目的文件夹拖进来。",
     "failed": "文件夹打不开，可以再试一次。",
     "blocked": "浏览器不允许访问“{{name}}”的文件夹，可能是浏览器的设置或者公司的策略。",
@@ -1668,7 +1665,6 @@
     "removeTitle": "从列表移除“{{name}}”？",
     "removeMessage": "文件夹和里面的项目不受影响，以后可以再打开。这个浏览器里记下的东西会清掉，包括还没写进文件夹的改动和试改。",
     "remove": "从列表移除",
-    "removeButton": "从列表移除 {{name}}",
     "removeFailed": "没能从列表移除，可以再试一次。",
     "merged": "外面改了 {{count}} 个文件，已并入。",
     "mergedWithConflicts": "外面改了 {{count}} 个文件，已并入。有 {{conflicts}} 处两边都改了，保留了编辑器里的。",
@@ -1722,9 +1718,6 @@
       "blocked": "浏览器不允许访问"
     },
     "folderLabel": "文件夹：{{folder}}",
-    "browserHint": "这些项目存在浏览器里，清除浏览器数据会删除它们。",
-    "unsupported": "这个浏览器不能打开电脑上的文件夹，只能用云端项目。想把项目放在文件夹里，请换用 Edge 或 Chrome。",
-    "localHint": "项目就是电脑上的一个文件夹：改动会写进去，别的程序在外面改了也会并进来。",
     "recordsFailed": "这个浏览器记下的项目文件夹读不出来，项目没有打开。数据没有改动，可以刷新页面再试。",
     "removeOnlyCopy": "文件夹现在找不到，或者还有改动没写进去：这个浏览器里的就是唯一的一份。移除以后找不回来。",
     "isProjectElsewhere": "这里不能新建项目，请换一个文件夹。",
@@ -1789,7 +1782,6 @@
     },
     "move": {
       "action": "移到文件夹…",
-      "button": "把“{{name}}”移到文件夹…",
       "othersTitle": "另外还有 {{count}} 个窗口开着“{{name}}”",
       "othersMessage": "移到文件夹以后，这些窗口会接着用文件夹里的项目，试改和没保存的代码都还在。也可以先关掉它们再移。",
       "othersConfirm": "一起切换",
@@ -1848,8 +1840,6 @@
       },
       "releaseTitle": "释放“{{name}}”在浏览器里的副本？",
       "releaseMessage": "这些是移到文件夹之前存在浏览器里的素材文件，占 {{size}}。文件夹里的素材文件不受影响；文件夹里找不到或者不一样的，副本会留着。",
-      "releaseShort": "释放副本 {{size}}",
-      "copiesHint": "浏览器里还留着这个项目素材文件的副本，占 {{size}}",
       "released": "释放了 {{size}}。",
       "releasedMissing": "有 {{count}} 个素材文件在文件夹里找不到，或者和项目记下的不一样，它们的副本先留着。",
       "releasedUnused": "还有 {{count}} 个是项目现在没用到的素材，撤销时可能还要用，项目关掉以后再释放。",
@@ -2244,9 +2234,17 @@
     }
   },
   "start": {
-    "local": "这台电脑上的项目",
-    "cloud": "云端的项目",
-    "browser": "浏览器里的项目",
+    "sidebar": "项目分类",
+    "block": {
+      "projects": "我的项目",
+      "groups": "分组"
+    },
+    "view": {
+      "recent": "最近打开",
+      "all": "全部项目",
+      "starred": "收藏",
+      "exports": "没完成的导出"
+    },
     "ago": {
       "now": "刚刚",
       "minutes": "{{count}} 分钟前",
@@ -2256,7 +2254,6 @@
       "day": "{{month}}月{{day}}日",
       "dayOfYear": "{{year}}年{{day}}"
     },
-    "changed": "{{time}}改过",
     "mark": {
       "local": "仅本机",
       "linked": "☁ 已连云端",
@@ -2275,8 +2272,138 @@
       "noRepository": "这个项目已经在云端，还没选仓库。打开项目接着选。",
       "otherAccount": "它连着的云端项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
       "stale": "云端的列表读不出来，这是这个浏览器上次记下的情况。",
-      "onlyHere": "浏览器清理数据时会丢。打开后可以移到文件夹、连接到云端，或者另存一份。"
+      "onlyHere": "浏览器清理数据时会丢。在菜单里可以移到文件夹、连接到云端，或者另存一份。"
     },
+    "status": {
+      "local": "本地 · {{folder}}",
+      "cloud": "云端 · {{what}}",
+      "withFolder": "文件夹也有一份",
+      "onlyBrowser": "只在这个浏览器里",
+      "notHere": "这台电脑还没打开过",
+      "fromGitHub": "打开时从 GitHub 取回",
+      "attention": "要处理",
+      "noRepository": "还差一步：选仓库",
+      "otherAccount": "是另一个账号的",
+      "afterSignIn": "登录后继续同步",
+      "pending": "有改动还没同步",
+      "inBrowser": "在这个浏览器里"
+    },
+    "place": {
+      "local": "本地 · {{folder}}",
+      "cloud": "云端 · {{where}}",
+      "browser": "只在浏览器里",
+      "noRepository": "还没有仓库"
+    },
+    "filter": {
+      "label": "筛选",
+      "all": "全部",
+      "cloud": "云端",
+      "local": "本地"
+    },
+    "sort": {
+      "label": "排序：{{sort}}",
+      "opened": "按最近打开",
+      "updated": "按最近修改",
+      "name": "按名称"
+    },
+    "display": {
+      "label": "显示方式",
+      "cards": "卡片",
+      "list": "列表"
+    },
+    "search": "搜索项目",
+    "new": {
+      "label": "新建",
+      "cloud": "新建云端项目",
+      "cloudAbout": "自动同步，存到你的 GitHub 仓库，可以用云端 AI，换一台电脑接着做。",
+      "local": "新建本地项目",
+      "localAbout": "只放在这台电脑的文件夹里，不同步。以后可以连接到云端。",
+      "open": "打开文件夹",
+      "openAbout": "打开这台电脑上已有的项目文件夹。也可以把文件夹拖进来。",
+      "unsupported": "这个浏览器不能打开电脑上的文件夹，请换用 Edge 或 Chrome。"
+    },
+    "welcome": "欢迎使用 AnimaQuill",
+    "welcomeAbout": "新建一个项目开始，或者打开电脑上已有的项目文件夹。",
+    "welcomeCloudOnly": "新建一个云端项目开始。",
+    "remote": "你的云端项目",
+    "remoteAbout": "这些项目在你的云端，这台电脑还没打开过。点开就能接着做。",
+    "empty": {
+      "view": "这里还没有项目。",
+      "starred": "还没有收藏的项目。点卡片上的星就能收藏。",
+      "group": "这个分组里还没有项目。把卡片拖到左边的分组上，或者在卡片菜单里选“移到分组…”。",
+      "filter": "这里没有这一类的项目。",
+      "search": "没有名字里有“{{search}}”的项目。"
+    },
+    "notice": {
+      "signInOrSwitch": "登录后使用，或者换用 Edge、Chrome。",
+      "localUnsupported": "这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"
+    },
+    "account": {
+      "ready": "云端可用",
+      "cloudOnly": "这个浏览器不能打开文件夹，只能用云端项目",
+      "signedOut": "登录后可以用云端项目",
+      "unknown": "正在确认登录状态…"
+    },
+    "card": {
+      "star": "收藏“{{name}}”",
+      "unstar": "取消收藏“{{name}}”",
+      "duration": "时长 {{duration}}",
+      "renameLabel": "“{{name}}”的新名字"
+    },
+    "menu": {
+      "open": "打开",
+      "rename": "重命名…",
+      "star": "收藏",
+      "unstar": "取消收藏",
+      "moveToGroup": "移到分组…",
+      "connect": "连接到云端…",
+      "linkFolder": "关联文件夹…",
+      "disconnect": "断开云端…",
+      "removeHere": "从这个浏览器移除…",
+      "openOnGitHub": "在 GitHub 上打开",
+      "deleteCloud": "删除云端项目…",
+      "findAgain": "重新找到…",
+      "saveElsewhere": "存到新位置…",
+      "releaseCopies": "释放浏览器里的副本…",
+      "removeFromList": "从列表移除",
+      "moveToFolder": "移到文件夹…",
+      "saveCopy": "另存一份…",
+      "delete": "删除…"
+    },
+    "group": {
+      "new": "新建分组",
+      "nameLabel": "分组名称",
+      "more": "分组“{{name}}”的操作",
+      "rename": "重命名…",
+      "delete": "删除…",
+      "moveTitle": "把“{{name}}”移到分组",
+      "none": "不放在分组里",
+      "newEntry": "新建分组…",
+      "deleteTitle": "删除分组“{{name}}”？",
+      "deleteMessage": "只删除这个分组。里面的项目不会被删除，回到“不在分组里”。",
+      "deleteConfirm": "删除分组",
+      "problem": {
+        "empty": "分组要有名字。",
+        "tooLong": "分组名最长 60 个字。",
+        "taken": "已经有叫这个名字的分组了。"
+      },
+      "failed": "分组没能保存，请稍后再试。",
+      "markFailed": "没能保存，请稍后再试。"
+    },
+    "rename": {
+      "unreadable": "项目读不出来，没有改名。",
+      "tooNew": "这个项目是更新版本的编辑器做的，这一版不能改它的名字。请刷新页面更新编辑器。",
+      "failed": "没能改名，请稍后再试。"
+    },
+    "list": {
+      "name": "名称",
+      "place": "在哪里",
+      "status": "状态",
+      "duration": "时长",
+      "changed": "上次修改",
+      "opened": "上次打开"
+    },
+    "projects": "项目",
     "pending": "有改动还没同步",
     "openedHere": "在这个浏览器里打开过",
     "afterSignIn": "登录后继续同步",
@@ -2284,18 +2411,9 @@
     "cloudSignedOut": "登录后可以打开你存在云端的项目。",
     "cloudUnreadable": "云端的项目列表读不出来，下面是这个浏览器里缓存过的，可以离线打开。列表不是最新的。",
     "cloudLoading": "正在读取云端的项目…",
-    "cloudEmpty": "云端还没有项目。新建一个云端项目，或者打开一个项目，用文件菜单里的“云端…”把它连上去。",
     "signIn": "登录",
     "readAgain": "再读一次",
-    "open": "打开",
-    "openNamed": "打开“{{name}}”",
-    "download": "下载到文件夹…",
-    "downloadNamed": "把“{{name}}”下载到文件夹…",
-    "more": "“{{name}}”的更多操作",
-    "localEmpty": "这台电脑上还没有项目。新建一个，或者打开一个项目文件夹。",
-    "openOnGitHub": "在 GitHub 上打开",
-    "removeHere": "从这个浏览器移除…",
-    "deleteCloud": "删除云端项目…"
+    "more": "“{{name}}”的更多操作"
   },
   "cloud": {
     "connectAction": "连接到云端…",
@@ -2311,11 +2429,11 @@
     "letGo": "断开",
     "makeNew": "连成另一个云端项目",
     "disconnectTitle": "断开云端？",
-    "disconnectMessage": "这个项目以后不再和云端同步，这台电脑上的项目不受影响。云端的项目还在，会出现在开始页“云端的项目”里，以后可以再打开，或者下载到文件夹。",
-    "disconnectPending": "还有改动没发到云端，断开后它们只在这台电脑上。这个项目以后不再和云端同步。云端的项目还在，会出现在开始页“云端的项目”里。",
+    "disconnectMessage": "这个项目以后不再和云端同步，这台电脑上的项目不受影响。云端的项目还在，开始页上照样能看到，以后可以再打开，或者关联文件夹。",
+    "disconnectPending": "还有改动没发到云端，断开后它们只在这台电脑上。这个项目以后不再和云端同步。云端的项目还在，开始页上照样能看到。",
     "disconnect": "断开",
     "disconnectFailed": "没能断开：浏览器里的记录改不了。",
-    "disconnected": "已断开云端。云端的项目还在，在开始页“云端的项目”里。",
+    "disconnected": "已断开云端。云端的项目还在，开始页上照样能看到。",
     "openTitle": "打开云端的项目",
     "downloading": "正在从云端下载项目",
     "downloadFailed": "没能从云端下载项目，请稍后再试。",
@@ -2468,7 +2586,7 @@
       "archiving": "项目已经连上云端。第一次存档正在进行，可以关掉这个对话框，它会在后台完成。",
       "done": "已连接到云端，第一次存档也完成了。",
       "cancelling": "正在取消…",
-      "unconfirmed": "没法确认云端刚建的项目已经删掉（现在连不上平台，或者登录的账号换过了），所以还没有取消。可以稍后再取消；也可以现在就断开，那样云端可能留下一个没有仓库的项目，以后能在开始页“云端的项目”里删除。",
+      "unconfirmed": "没法确认云端刚建的项目已经删掉（现在连不上平台，或者登录的账号换过了），所以还没有取消。可以稍后再取消；也可以现在就断开，那样云端可能留下一个没有仓库的项目，以后能在开始页上删除。",
       "cancelLater": "先不取消",
       "cancelForce": "现在就断开",
       "kept": "云端已经给这个项目关联了仓库，所以没有取消。它会照常同步和存档。",
@@ -2714,7 +2832,7 @@
       "failed": "选的文件夹读不出来。请换一个再试。"
     },
     "place": {
-      "browser": "云端项目已经建好，但没能放进这个浏览器。可以在开始页的“云端的项目”里打开它。",
+      "browser": "云端项目已经建好，但没能放进这个浏览器。可以在开始页上打开它。",
       "folder": "云端项目已经建好，但没能放进文件夹，现在只在这个浏览器里。以后可以在云端面板里“下载到文件夹…”。"
     },
     "undone": "云端没有建成：这次新建之前已经取消过。再点一次“新建”，重新开始。",

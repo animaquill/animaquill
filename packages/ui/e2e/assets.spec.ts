@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
 import { content, expect, resourcesIn, tab, tabScrolls, test } from "./support.ts";
+import { cardMenu } from "./start-support.ts";
 
 const assets = (page: Page) => content(page, "assets");
 const items = (page: Page) => resourcesIn(page, "assets");
@@ -327,7 +328,7 @@ test("the files of a project go with it", async ({ page }) => {
   expect(await count()).toBe(1);
   await page.getByRole("banner").getByRole("button", { name: "文件" }).click();
   await page.getByRole("menuitem", { name: "关闭项目" }).click();
-  await page.getByRole("button", { name: /^删除/ }).click();
+  await cardMenu(page, "测试项目", "删除…");
   await page.getByRole("dialog").getByRole("button", { name: "删除" }).click();
   await expect.poll(count).toBe(0);
 });

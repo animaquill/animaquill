@@ -1,0 +1,414 @@
+import type { FolderStatus, ProjectGroup, ProjectMarks, ProjectSummary } from "@animaquill/host";
+import type { TFunction } from "i18next";
+import { httpsLink } from "../app/links.ts";
+import {
+  markHint,
+  type CloudMark,
+  type CloudRow,
+  type LocalRow,
+  type StartLists,
+} from "../cloud/start-list.ts";
+
+/**
+ * The cards of the start page, see the design of the start page (docs/design/start-and-cloud.md of
+ * AnimaQuill Cloud), 6.3: every project once, as `StartList` found it, with how people organised
+ * it, see `ProjectOrganizer`. What each card says and offers is worked out here, without the DOM,
+ * so that tests read what people read.
+ */
+
+export type CardKind =
+  /** A folder on this computer, not connected. */
+  | "local"
+  /** A folder on this computer, connected to a project of the platform. */
+  | "cloudFolder"
+  /** A project of the platform with a copy in this browser, and no folder. */
+  | "cloudHere"
+  /** A project of the platform that this browser has nothing of. */
+  | "cloudRemote"
+  /** Only in this browser, with no folder and no platform: from before, or of a test. */
+  | "onlyHere";
+
+const CLOUD_KINDS: ReadonlySet<CardKind> = new Set(["cloudFolder", "cloudHere", "cloudRemote"]);
+
+export const isCloudKind = (kind: CardKind): boolean => CLOUD_KINDS.has(kind);
+
+/** Where the star and the group of a project of the platform are kept, see `ProjectMarks`. */
+export const cloudMarksKey = (project: string): string => `cloud:${project}`;
+
+export interface ProjectCard {
+  /** One card per project: the key this browser keeps it by, or `cloud:` and its id on the platform. */
+  readonly id: string;
+  readonly kind: CardKind;
+  readonly name: string;
+  /** What this browser keeps it by, see `CloudLink.key`: what its address says. */
+  readonly key: string | undefined;
+  /** Its id on the platform. */
+  readonly project: string | undefined;
+  /**
+   * Where its star and its group are kept, see `ProjectMarks`. Undefined: it cannot be organised,
+   * as a project of another account.
+   */
+  readonly marksKey: string | undefined;
+  /** When it was last opened in this browser. Undefined: never, as far as this browser knows. */
+  readonly openedAt: number | undefined;
+  /** When it last changed, as far as anything here says. */
+  readonly updatedAt: number | undefined;
+  readonly starred: boolean;
+  /** The id of its group, one that is there. */
+  readonly group: string | undefined;
+  /** How long its main timeline is, in milliseconds, where that is known. */
+  readonly durationMs: number | undefined;
+  /** What it came from. */
+  readonly source:
+    | { readonly kind: "local"; readonly row: LocalRow }
+    | { readonly kind: "cloud"; readonly row: CloudRow }
+    | {
+        readonly kind: "browser";
+        readonly summary: ProjectSummary;
+        /** It is known to be only here, see `StartLists.browserKnown`. */
+        readonly known: boolean;
+      };
+}
+
+export interface Organized {
+  readonly marks: ReadonlyMap<string, ProjectMarks>;
+  /** The groups there are, without those taken away. */
+  readonly groups: readonly ProjectGroup[];
+}
+
+export const NOTHING_ORGANIZED: Organized = { marks: new Map(), groups: [] };
+
+/** The groups people see: those not taken away, by name. */
+export function shownGroups(groups: readonly ProjectGroup[]): ProjectGroup[] {
+  return groups
+    .filter((group) => group.deleted !== true)
+    .toSorted((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+}
+
+const latest = (...times: (number | undefined)[]): number | undefined => {
+  const known = times.filter((at): at is number => at !== undefined);
+  return known.length > 0 ? Math.max(...known) : undefined;
+};
+
+/** The cards of every project there is, in no particular order: views sort them. */
+export function composeCards(lists: StartLists, organized: Organized): ProjectCard[] {
+  const { marks } = organized;
+  const groups = new Set(organized.groups.filter((group) => !group.deleted).map(({ id }) => id));
+  /**
+   * The star and the group: of the project of the platform where that says anything, and of what
+   * this browser keeps it by otherwise, as for a folder that was organised before it was connected.
+   */
+  const organizing = (key: string | undefined, project: string | undefined, mark?: CloudMark) => {
+    if (mark?.kind === "otherAccount") {
+      return { marksKey: undefined, starred: false, group: undefined };
+    }
+    const own = key === undefined ? undefined : marks.get(key);
+    const cloud = project === undefined ? undefined : marks.get(cloudMarksKey(project));
+    const starredAt = cloud?.starredAt === undefined ? own?.starredAt : cloud.starredAt;
+    const group = cloud?.group === undefined ? own?.group : cloud.group;
+    return {
+      marksKey: project === undefined ? key : cloudMarksKey(project),
+      starred: starredAt !== undefined && starredAt !== null,
+      group: group !== undefined && group !== null && groups.has(group) ? group : undefined,
+    };
+  };
+  const openedOf = (key: string | undefined) =>
+    key === undefined ? undefined : marks.get(key)?.openedAt;
+
+  const local = lists.local.map((row): ProjectCard => {
+    const linked = row.project !== undefined;
+    return {
+      id: row.key,
+      kind: linked ? "cloudFolder" : "local",
+      name: row.name,
+      key: row.key,
+      project: row.project,
+      ...organizing(row.key, row.project, row.mark),
+      openedAt: latest(row.openedAt, openedOf(row.key)),
+      updatedAt: row.updatedAt,
+      durationMs: undefined,
+      source: { kind: "local", row },
+    };
+  });
+  const cloud = lists.cloud.map((row): ProjectCard => {
+    const here = row.key !== undefined;
+    return {
+      id: row.key ?? cloudMarksKey(row.project),
+      kind: here ? "cloudHere" : "cloudRemote",
+      name: row.name,
+      key: row.key,
+      project: row.project,
+      ...organizing(row.key, row.project, row.mark),
+      // A copy from before this was noted was opened here at some point: when it last changed is
+      // the best there is to go by.
+      openedAt: here ? (openedOf(row.key) ?? row.updatedAt) : undefined,
+      updatedAt: row.updatedAt,
+      durationMs: undefined,
+      source: { kind: "cloud", row },
+    };
+  });
+  const browser = lists.browser.map((summary): ProjectCard => ({
+    id: summary.id,
+    kind: "onlyHere",
+    name: summary.name,
+    key: summary.id,
+    project: undefined,
+    ...organizing(summary.id, undefined),
+    openedAt: openedOf(summary.id) ?? summary.updatedAt,
+    updatedAt: summary.updatedAt,
+    durationMs: undefined,
+    source: { kind: "browser", summary, known: lists.browserKnown },
+  }));
+  return [...local, ...cloud, ...browser];
+}
+
+// ---- what a card says
+
+export type StatusTone = "plain" | "warning";
+
+export interface CardStatus {
+  /** Where it is, for the small sign before the line. */
+  readonly place: "cloud" | "folder" | "browser";
+  /** The line under the name, such as "本地 · intro" or "云端 · 只在这个浏览器里". */
+  readonly text: string;
+  readonly tone: StatusTone;
+  /** What the line means and what people can do, for hovering. */
+  readonly hint: string | undefined;
+}
+
+const plain = { interpolation: { escapeValue: false } } as const;
+
+/** What a project of the platform needs people to do, on the line in place of where it is. */
+function cloudTrouble(
+  mark: CloudMark,
+  { pending, needsSignIn }: { readonly pending: boolean; readonly needsSignIn: boolean },
+  t: TFunction,
+): string | undefined {
+  switch (mark.kind) {
+    case "attention":
+      return t("start.status.attention");
+    case "noRepository":
+      return t("start.status.noRepository");
+    case "otherAccount":
+      return t("start.status.otherAccount");
+    default:
+      if (needsSignIn) return t("start.status.afterSignIn");
+      return pending ? t("start.status.pending") : undefined;
+  }
+}
+
+/**
+ * The line of a card. `folder`: how its folder is, once that is known; looking can take a while,
+ * as on a network.
+ */
+export function cardStatus(
+  card: ProjectCard,
+  folder: FolderStatus | undefined,
+  t: TFunction,
+): CardStatus {
+  const { source } = card;
+  if (source.kind === "browser") {
+    return source.known
+      ? {
+          place: "browser",
+          text: t("start.mark.onlyHere"),
+          tone: "warning",
+          hint: t("start.hint.onlyHere"),
+        }
+      : { place: "browser", text: t("start.status.inBrowser"), tone: "plain", hint: undefined };
+  }
+  if (source.kind === "local") {
+    const { row } = source;
+    const isGone = folder === "gone" || folder === "blocked";
+    if (card.kind === "local" || row.mark === undefined) {
+      return isGone
+        ? {
+            place: "folder",
+            text: t(`folder.recentStatus.${folder}`),
+            tone: "warning",
+            hint: undefined,
+          }
+        : {
+            place: "folder",
+            text: t("start.status.local", { folder: row.folder, ...plain }),
+            tone: "plain",
+            hint: t("folder.folderLabel", { folder: row.folder, ...plain }),
+          };
+    }
+    const trouble = isGone
+      ? t(`folder.recentStatus.${folder}`)
+      : cloudTrouble(row.mark, { pending: row.pending, needsSignIn: false }, t);
+    return {
+      place: "cloud",
+      text: t("start.status.cloud", {
+        what: trouble ?? t("start.status.withFolder"),
+        ...plain,
+      }),
+      tone: trouble === undefined ? "plain" : "warning",
+      hint: markHint(row.mark, t) ?? t("folder.folderLabel", { folder: row.folder, ...plain }),
+    };
+  }
+  const { row } = source;
+  const trouble = cloudTrouble(row.mark, row, t);
+  const where =
+    row.key !== undefined
+      ? t("start.status.onlyBrowser")
+      : row.copy === "live"
+        ? t("start.status.notHere")
+        : t("start.status.fromGitHub");
+  return {
+    place: "cloud",
+    text: t("start.status.cloud", { what: trouble ?? where, ...plain }),
+    tone: trouble === undefined ? "plain" : "warning",
+    hint: markHint(row.mark, t),
+  };
+}
+
+/** Where a project is, for the column of the list: its repository, or its folder. */
+export function cardPlace(card: ProjectCard, t: TFunction): string {
+  const { source } = card;
+  if (source.kind === "browser") return t("start.place.browser");
+  if (source.kind === "local") {
+    const { row } = source;
+    const repository =
+      row.mark?.kind === "linked" || row.mark?.kind === "attention"
+        ? row.mark.repository
+        : undefined;
+    return card.kind === "local"
+      ? t("start.place.local", { folder: row.folder, ...plain })
+      : t("start.place.cloud", { where: repository ?? row.folder, ...plain });
+  }
+  return t("start.place.cloud", {
+    where: source.row.repository?.fullName ?? t("start.place.noRepository"),
+    ...plain,
+  });
+}
+
+// ---- what a card offers
+
+export type CardAction =
+  | "open"
+  | "rename"
+  | "star"
+  | "unstar"
+  | "moveToGroup"
+  | "connect"
+  | "linkFolder"
+  | "disconnect"
+  | "removeHere"
+  | "openOnGitHub"
+  | "deleteCloud"
+  | "findAgain"
+  | "saveElsewhere"
+  | "releaseCopies"
+  | "removeFromList"
+  | "moveToFolder"
+  | "saveCopy"
+  | "delete";
+
+export interface CardContext {
+  /** The editor is hosted on a platform. */
+  readonly hasPlatform: boolean;
+  /** This browser can write folders. */
+  readonly canFolders: boolean;
+  /** How its folder is, where it has one and that is known. */
+  readonly folder: FolderStatus | undefined;
+  /** Bytes of copies of its files that this browser keeps and can let go of, see `releaseCopies`. */
+  readonly copies: number;
+}
+
+/** Where "在 GitHub 上打开" goes: only an https address. */
+export function gitHubAddress(card: ProjectCard): string | undefined {
+  const { source } = card;
+  if (source.kind === "local") return httpsLink(source.row.repositoryUrl);
+  if (source.kind === "cloud") return httpsLink(source.row.repository?.url);
+  return undefined;
+}
+
+/**
+ * What the menu of a card offers, in groups: only what works now, see the design, 6.3. What every
+ * card has first, then what is of its kind.
+ */
+export function cardActions(card: ProjectCard, context: CardContext): CardAction[][] {
+  const { hasPlatform, canFolders } = context;
+  // Only a folder has a status, and copies of files people brought in.
+  const isFolder = card.source.kind === "local";
+  const folder = isFolder ? context.folder : undefined;
+  const copies = isFolder ? context.copies : 0;
+  const isGone = folder === "gone" || folder === "blocked";
+  const when = (isThere: boolean, ...actions: CardAction[]): CardAction[] =>
+    isThere ? actions : [];
+  const github = when(gitHubAddress(card) !== undefined, "openOnGitHub");
+  const deletable = when(
+    card.source.kind !== "browser" && card.source.row.deletable,
+    "deleteCloud",
+  );
+  const common: CardAction[] = [
+    "open",
+    // One that this browser has nothing of has to change on the platform: not yet.
+    ...when(card.kind !== "cloudRemote", "rename"),
+    ...when(card.marksKey !== undefined, card.starred ? "unstar" : "star", "moveToGroup"),
+  ];
+  const folderGone = when(isGone, "findAgain", "saveElsewhere");
+  const kept = when(copies > 0, "releaseCopies");
+  const groups = (): CardAction[][] => {
+    switch (card.kind) {
+      case "local":
+        return [
+          common,
+          [...when(hasPlatform && !isGone, "connect"), ...folderGone, ...kept],
+          ["removeFromList"],
+        ];
+      case "cloudFolder":
+        return [
+          common,
+          [...when(!isGone, "disconnect"), ...folderGone, ...github, ...kept],
+          ["removeFromList", ...deletable],
+        ];
+      case "cloudHere":
+        return [
+          common,
+          [...when(canFolders, "linkFolder"), ...github],
+          ["removeHere", ...deletable],
+        ];
+      case "cloudRemote":
+        return [common, [...when(canFolders, "linkFolder"), ...github], deletable];
+      case "onlyHere":
+        return [
+          common,
+          [...when(canFolders, "moveToFolder"), ...when(hasPlatform, "connect"), "saveCopy"],
+          ["delete"],
+        ];
+    }
+  };
+  return groups().filter((group) => group.length > 0);
+}
+
+/** Menu items that take something away, which show as such. */
+export const DANGEROUS: ReadonlySet<CardAction> = new Set(["deleteCloud", "delete"]);
+
+// ---- what a card looks like without a cover
+
+/** How many colors there are for a project without a cover, see `--aq-cover-1` and on. */
+export const COVER_COLORS = 8;
+
+/**
+ * Which color a project without a cover gets, 1 to `COVER_COLORS`: always the same one for it,
+ * wherever it is listed, by its id on the platform or what this browser keeps it by.
+ */
+export function coverColorOf(card: ProjectCard): number {
+  const of = card.project ?? card.id;
+  // FNV-1a: cheap, and the same in every browser.
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < of.length; index += 1) {
+    hash ^= of.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return ((hash >>> 0) % COVER_COLORS) + 1;
+}
+
+/** The first letter of its name, for the picture of a project without a cover. */
+export function initialOf(name: string): string {
+  const [first] = [...name.trim()];
+  return first === undefined ? "?" : first.toLocaleUpperCase("zh-CN");
+}

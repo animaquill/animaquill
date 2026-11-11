@@ -1,5 +1,14 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { dialog, footer, installChosen } from "./folder-support.ts";
+import {
+  cardMenu,
+  cardMenuItems,
+  openCard,
+  projectCard,
+  showView,
+  sidebar,
+  statusOf,
+} from "./start-support.ts";
 import { createProject, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
 
 /**
@@ -71,10 +80,8 @@ const panel = (page: Page) => page.getByRole("dialog", { name: /^云端 · / });
 const row = (page: Page, id: string) => panel(page).locator(`[data-cloud-row="${id}"]`);
 const connectDialog = (page: Page) => page.locator("dialog[data-connect-phase]");
 const step = (page: Page, id: string) => connectDialog(page).locator(`[data-step="${id}"]`);
-const localColumn = (page: Page) => page.getByRole("region", { name: "这台电脑上的项目" });
-const cloudColumn = (page: Page) => page.getByRole("region", { name: "云端的项目" });
-const cloudRow = (page: Page, name: string) =>
-  cloudColumn(page).getByRole("listitem").filter({ hasText: name });
+/** How the start page has the list of the platform: "ready", "signedOut", "unreadable"… */
+const cloudList = (page: Page) => page.locator("[data-cloud-list]").first();
 
 async function chooseFrom(page: Page, menu: string, item: string) {
   await page.locator("header").getByRole("button", { name: menu, exact: true }).click();
@@ -117,18 +124,16 @@ test.describe("the start page", () => {
     page,
   }) => {
     await arrive(page, { signedIn: false });
-    const column = cloudColumn(page);
-    await expect(column).toHaveAttribute("data-cloud-list", "signedOut");
-    await expect(column.getByText("登录后可以打开你存在云端的项目。")).toBeVisible();
-    await shot(page, "start-signed-out");
-    // Signing in from there comes back with the list.
-    await column.getByRole("button", { name: "登录", exact: true }).click();
-    await expect(cloudColumn(page)).toHaveAttribute("data-cloud-list", "ready");
+    await expect(cloudList(page)).toHaveAttribute("data-cloud-list", "signedOut");
+    // This browser cannot write folders: the platform is all there is.
     await expect(
-      cloudColumn(page).getByText(
-        "云端还没有项目。新建一个云端项目，或者打开一个项目，用文件菜单里的“云端…”把它连上去。",
-      ),
+      page.getByRole("main").getByText("登录后使用，或者换用 Edge、Chrome。"),
     ).toBeVisible();
+    await shot(page, "start-signed-out");
+    // Signing in from there comes back with the list, and nothing on it yet.
+    await page.getByRole("main").getByRole("button", { name: "登录", exact: true }).click();
+    await expect(cloudList(page)).toHaveAttribute("data-cloud-list", "ready");
+    await expect(page.getByRole("region", { name: "欢迎使用 AnimaQuill" })).toBeVisible();
   });
 
   test("opens a project of the platform as it is, keeps it in step, and takes it out of the browser again", async ({
@@ -141,12 +146,10 @@ test.describe("the start page", () => {
       return first;
     });
     await chooseFrom(page, "文件", "打开云端的项目…");
-    const line = cloudRow(page, "片头动画");
-    await expect(line).toContainText("octo/opening");
-    await expect(line).toContainText("2 天前改过");
-    await expect(cloudRow(page, "半截的")).toContainText("还差一步：选仓库");
+    await expect(statusOf(page, "片头动画")).toHaveText(/^云端 · 这台电脑还没打开过.*2 天前/);
+    await expect(statusOf(page, "半截的")).toHaveText(/^云端 · 还差一步：选仓库/);
 
-    await line.getByRole("button", { name: "打开“片头动画”" }).click();
+    await openCard(page, "片头动画");
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
     await expect(cloudStatus(page)).toHaveText("云端项目");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
@@ -173,29 +176,27 @@ test.describe("the start page", () => {
 
     // Back on the start page it shows once, as opened here, and goes out of the browser again.
     await chooseFrom(page, "文件", "关闭项目");
-    const opened = cloudRow(page, "片头动画 第二版");
-    await expect(opened).toContainText("在这个浏览器里打开过");
+    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^云端 · 只在这个浏览器里/);
     // Once: it is a project of the platform, not one of this browser as well.
-    await expect(page.getByRole("list", { name: "浏览器里的项目" })).toHaveCount(0);
-    await opened.getByRole("button", { name: "“片头动画 第二版”的更多操作" }).click();
-    await page.getByRole("menuitem", { name: "从这个浏览器移除…" }).click();
+    await expect(projectCard(page, "片头动画 第二版")).toHaveCount(1);
+    await expect(page.locator('main li[data-kind="onlyHere"]')).toHaveCount(0);
+    await cardMenu(page, "片头动画 第二版", "从这个浏览器移除…");
     const asked = dialog(page);
     await expect(asked).toContainText("只移除这个浏览器里的这一份，云端的项目不受影响");
     await asked.getByRole("button", { name: "移除", exact: true }).click();
     await expect(
       page.getByText("已从这个浏览器移除“片头动画 第二版”。云端的项目还在。"),
     ).toBeVisible();
-    await expect(cloudRow(page, "片头动画 第二版")).not.toContainText("在这个浏览器里打开过");
+    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^云端 · 这台电脑还没打开过/);
 
     // One without a repository can be deleted there, after people read what goes and what stays.
-    await cloudRow(page, "半截的").getByRole("button", { name: "“半截的”的更多操作" }).click();
-    await page.getByRole("menuitem", { name: "删除云端项目…" }).click();
+    await cardMenu(page, "半截的", "删除云端项目…");
     const deleting = page.getByRole("dialog", { name: "删除云端项目“半截的”？" });
     await expect(deleting).toContainText("它还没有仓库，所以云端之外没有存档");
     await expect(deleting).toContainText("这台电脑上的文件夹和浏览器里的那一份不会动");
     await shot(page, "start-delete-cloud");
     await deleting.getByRole("button", { name: "删除云端项目" }).click();
-    await expect(cloudRow(page, "半截的")).toHaveCount(0);
+    await expect(projectCard(page, "半截的")).toHaveCount(0);
     expect(await withLab(page, (lab) => lab.platform.removed.length)).toBe(1);
   });
 
@@ -205,7 +206,7 @@ test.describe("the start page", () => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("年会视频", { repository: "annual" }));
     await chooseFrom(page, "文件", "打开云端的项目…");
-    await cloudRow(page, "年会视频").getByRole("button", { name: "打开“年会视频”" }).click();
+    await openCard(page, "年会视频");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     // The platform stops answering, and people go on.
     await withLab(page, ({ platform }) => {
@@ -216,10 +217,8 @@ test.describe("the start page", () => {
     await expect(page).toHaveTitle("年会视频 改过 - AnimaQuill");
     await chooseFrom(page, "文件", "关闭项目");
 
-    const line = cloudRow(page, "年会视频");
-    await expect(line).toContainText("有改动还没同步");
-    await line.getByRole("button", { name: /的更多操作$/ }).click();
-    await page.getByRole("menuitem", { name: "从这个浏览器移除…" }).click();
+    await expect(statusOf(page, "年会视频 改过")).toHaveText(/^云端 · 有改动还没同步/);
+    await cardMenu(page, "年会视频 改过", "从这个浏览器移除…");
     const asked = page.getByRole("dialog", { name: /还有内容只在这个浏览器里$/ });
     await expect(asked).toContainText("有 1 个改动还没同步到云端。现在移除，这些内容就没有了。");
     await expect(asked.getByRole("button", { name: "打开项目让它同步" })).toBeVisible();
@@ -227,30 +226,29 @@ test.describe("the start page", () => {
     await shot(page, "start-remove-unsynced");
     await asked.getByRole("button", { name: "取消" }).click();
     // It stays, with what is only here.
-    await expect(cloudRow(page, "年会视频")).toContainText("在这个浏览器里打开过");
+    await expect(statusOf(page, "年会视频 改过")).toHaveText(/^云端 · 有改动还没同步/);
   });
 
   test("lists what this browser has where the platform's list cannot be read", async ({ page }) => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("年会视频", { repository: "annual" }));
     await chooseFrom(page, "文件", "打开云端的项目…");
-    await cloudRow(page, "年会视频").getByRole("button", { name: "打开“年会视频”" }).click();
+    await openCard(page, "年会视频");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     await withLab(page, (lab) => {
       lab.platform.faults.unreachable = true;
     });
     await chooseFrom(page, "文件", "关闭项目");
-    const column = cloudColumn(page);
-    await expect(column).toHaveAttribute("data-cloud-list", "unreadable");
-    await expect(column.getByText(/云端的项目列表读不出来.*列表不是最新的。/)).toBeVisible();
-    await expect(cloudRow(page, "年会视频")).toContainText("在这个浏览器里打开过");
+    await expect(cloudList(page)).toHaveAttribute("data-cloud-list", "unreadable");
+    await expect(page.getByText(/云端的项目列表读不出来.*列表不是最新的。/)).toBeVisible();
+    await expect(statusOf(page, "年会视频")).toHaveText(/^云端 · 只在这个浏览器里/);
     await shot(page, "start-unreadable");
     // It opens without the platform, and reads the list again when asked.
     await withLab(page, (lab) => {
       lab.platform.faults.unreachable = false;
     });
-    await column.getByRole("button", { name: "再读一次" }).click();
-    await expect(column).toHaveAttribute("data-cloud-list", "ready");
+    await page.getByRole("main").getByRole("button", { name: "再读一次" }).click();
+    await expect(cloudList(page)).toHaveAttribute("data-cloud-list", "ready");
   });
 });
 
@@ -284,46 +282,41 @@ test.describe("the start page, with projects in folders", () => {
       lab.seed("年会视频", { repository: "annual", ago: 5 * 3_600_000 });
     });
     await chooseFrom(page, "文件", "关闭项目");
-    const local = localColumn(page).getByRole("listitem");
-    await expect(local).toHaveCount(2);
-    await expect(local.filter({ hasText: "原子是什么" })).toContainText("已连云端 · octo/atom");
-    await expect(local.filter({ hasText: "产品介绍" })).toContainText("仅本机");
-    // The one that is a folder here shows there, and not among those of the platform.
-    await expect(cloudColumn(page).getByRole("listitem")).toHaveCount(2);
-    await expect(cloudRow(page, "原子是什么")).toHaveCount(0);
-    await expect(
-      cloudRow(page, "片头动画").getByRole("button", { name: "下载到文件夹…" }),
-    ).toBeVisible();
-    await shot(page, "start-two-columns");
+    await showView(page, "全部项目");
+    await expect(page.getByRole("main").locator("li[data-project]")).toHaveCount(4);
+    await expect(statusOf(page, "原子是什么")).toHaveText(/^云端 · 文件夹也有一份/);
+    await expect(statusOf(page, "产品介绍")).toHaveText(/^本地 · intro/);
+    // The one that is a folder here shows as that, and once.
+    await expect(projectCard(page, "原子是什么")).toHaveCount(1);
+    await page.getByRole("group", { name: "筛选" }).getByRole("button", { name: "云端" }).click();
+    await expect(page.getByRole("main").locator("li[data-project]")).toHaveCount(3);
+    expect(await cardMenuItems(page, "片头动画")).toContain("关联文件夹…");
+    await shot(page, "start-cloud-filter");
 
-    // In a narrow window the two lists are one under the other, and nothing is cut off.
+    // In a narrow window the side bar is on top, and nothing is cut off.
     await page.setViewportSize({ width: 520, height: 900 });
-    const [left, right] = await Promise.all([
-      localColumn(page).boundingBox(),
-      cloudColumn(page).boundingBox(),
+    const [bar, view] = await Promise.all([
+      sidebar(page).boundingBox(),
+      page.getByRole("main").boundingBox(),
     ]);
-    expect(right!.y).toBeGreaterThan(left!.y + left!.height - 1);
-    expect(right!.x + right!.width).toBeLessThanOrEqual(520);
+    expect(view!.y).toBeGreaterThan(bar!.y + bar!.height - 1);
+    expect(view!.x + view!.width).toBeLessThanOrEqual(520);
     await shot(page, "start-narrow");
     await page.setViewportSize({ width: 1440, height: 900 });
 
-    // Downloading one into a folder makes it a project of this computer that syncs.
+    // Linking one with a folder makes it a project of this computer that syncs.
     await page.evaluate(() => {
       window.chosenFolder = "opening";
     });
-    await cloudRow(page, "片头动画")
-      .getByRole("button", { name: "把“片头动画”下载到文件夹…" })
-      .click();
+    await cardMenu(page, "片头动画", "关联文件夹…");
     const moved = page.getByRole("dialog", { name: "已移到文件夹" });
     await expect(moved).toBeVisible({ timeout: 15_000 });
     await moved.getByRole("button").last().click();
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
     await expect(cloudStatus(page)).toHaveText("已同步");
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(
-      localColumn(page).getByRole("listitem").filter({ hasText: "片头动画" }),
-    ).toContainText("已连云端 · octo/opening");
-    await expect(cloudRow(page, "片头动画")).toHaveCount(0);
+    await expect(statusOf(page, "片头动画")).toHaveText(/^云端 · 文件夹也有一份/);
+    await expect(projectCard(page, "片头动画")).toHaveCount(1);
   });
 });
 
@@ -554,9 +547,7 @@ test.describe("connecting a project", () => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("旧的云端项目"));
     await chooseFrom(page, "文件", "打开云端的项目…");
-    await cloudRow(page, "旧的云端项目")
-      .getByRole("button", { name: "打开“旧的云端项目”" })
-      .click();
+    await openCard(page, "旧的云端项目");
     await expect(cloudStatus(page)).toHaveText("要处理");
     await cloudStatus(page).click();
     await expect(row(page, "repository")).toContainText("还差一步：选仓库");
@@ -682,12 +673,23 @@ test.describe("the panel of the platform", () => {
     // Disconnecting says where the project of the platform is from then on.
     await panel(page).getByRole("button", { name: "断开云端…" }).click();
     const asked = page.getByRole("dialog", { name: "断开云端？" });
-    await expect(asked).toContainText("云端的项目还在，会出现在开始页“云端的项目”里");
+    await expect(asked).toContainText("云端的项目还在，开始页上照样能看到");
     await shot(page, "panel-disconnect");
     await asked.getByRole("button", { name: "断开", exact: true }).click();
     await expect(cloudStatus(page)).toHaveText("仅本机");
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(cloudRow(page, "改过名字")).toContainText("octo/my-film");
+    // Its folder is a project of this computer; the one of the platform is there as well.
+    await showView(page, "全部项目");
+    await expect(
+      page.locator('main li[data-kind="cloudRemote"]').filter({ hasText: "改过名字" }),
+    ).toHaveCount(1);
+    await page
+      .getByRole("group", { name: "显示方式" })
+      .getByRole("button", { name: "列表" })
+      .click();
+    await expect(page.locator('main li[data-kind="cloudRemote"]')).toContainText(
+      "云端 · octo/my-film",
+    );
   });
 
   test("says how many changes wait while there is no network", async ({ page, context }) => {
@@ -768,7 +770,8 @@ test.describe("where the editor is hosted on no platform", () => {
   test("the start page and the menu say nothing about one", async ({ page }) => {
     await page.goto("/");
     await editorReady(page);
-    await expect(page.getByRole("region", { name: "云端的项目" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^新建云端项目/ })).toHaveCount(0);
+    await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
     await createProject(page);
     await expect(footer(page).locator("[data-cloud-level]")).toHaveCount(0);
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
@@ -776,7 +779,7 @@ test.describe("where the editor is hosted on no platform", () => {
     await expect(page.getByRole("menuitem", { name: "打开云端的项目…" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(page.getByRole("heading", { name: "浏览器里的项目" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^测试项目/ })).toBeVisible();
+    await expect(sidebar(page)).toBeVisible();
+    await expect(page.getByRole("link", { name: /^测试项目/ })).toBeVisible();
   });
 });
