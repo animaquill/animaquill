@@ -479,35 +479,9 @@ describe("the status of the platform in a project", () => {
     });
   });
 
-  it("says that a folder names a project of the platform that this browser does not sync it with", () => {
-    const panel = cloudPanel(
-      { kind: "detached", reason: "browser", name: "原子是什么", canMoveToFolder: true, now: NOW },
-      t,
-    );
-    expect(panel).toMatchObject({ level: "attention", bar: "☁ 要处理", opens: "panel" });
-    expect(panel.rows).toHaveLength(1);
-    expect(panel.rows[0]).toMatchObject({
-      id: "sync",
-      text: "这个文件夹记着一个云端项目，但这个浏览器没有和它同步",
-      tone: "attention",
-    });
-    expect(panel.rows[0]?.notes[0]).toContain("一个云端项目在一个浏览器里只能有一份");
-    expect(ids(panel)).toEqual({ rows: { sync: ["resolveDetached"] }, bottom: [] });
-    const copy = cloudPanel(
-      { kind: "detached", reason: "copy", name: "原子是什么", canMoveToFolder: true, now: NOW },
-      t,
-    );
-    expect(copy.rows[0]?.notes[0]).toContain("复制出来的这份当作新项目");
-  });
-
   it("is put together from what `CloudProjects` says and what it holds says right now", () => {
     const more = { name: "原子是什么", canMoveToFolder: false, now: NOW };
     expect(panelInputOf({ kind: "none" }, more)).toEqual({ kind: "none", ...more });
-    expect(panelInputOf({ kind: "detached", project: "p", reason: "copy" }, more)).toEqual({
-      kind: "detached",
-      reason: "copy",
-      ...more,
-    });
     const said = sync({ state: "offline", pending: 1 });
     const archive = watch();
     const snapshot = {

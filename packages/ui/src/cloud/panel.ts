@@ -60,8 +60,7 @@ export type PanelActionId =
   | "reload"
   /** Tries syncing again, see `CloudSession.resume`. */
   | "retry"
-  | "resolveStuck"
-  | "resolveDetached";
+  | "resolveStuck";
 
 export interface PanelAction {
   readonly id: PanelActionId;
@@ -108,8 +107,6 @@ export interface PanelInput {
    * `CloudProjectsSnapshot`. False: connecting it is not finished. Taken to be where nothing says.
    */
   readonly made?: boolean;
-  /** For "detached": why the folder does not sync. */
-  readonly reason?: "copy" | "browser" | "foreign";
   /** For "linked": how syncing goes. */
   readonly sync?: CloudSnapshot;
   /** For "linked": how archiving goes. Undefined where the platform saves no projects to repositories. */
@@ -128,7 +125,6 @@ export function panelInputOf(
   more: Pick<PanelInput, "name" | "canMoveToFolder" | "now">,
 ): PanelInput {
   if (snapshot.kind === "none") return { kind: "none", ...more };
-  if (snapshot.kind === "detached") return { kind: "detached", reason: snapshot.reason, ...more };
   const archive = snapshot.repository?.getSnapshot();
   return {
     kind: "linked",
@@ -240,7 +236,8 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     actions: more.actions ?? [],
   });
 
-  if (input.kind === "none") {
+  // A linked project always says how syncing goes: one that does not is taken to be not connected.
+  if (input.kind === "none" || !input.sync) {
     return {
       level: "none",
       bar: t("cloud.panel.bar.local"),
@@ -252,26 +249,6 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       archive: undefined,
     };
   }
-  if (input.kind === "detached" || !input.sync) {
-    const reason = input.reason ?? "foreign";
-    return {
-      level: "attention",
-      bar: t("cloud.panel.bar.attention"),
-      opens: "panel",
-      title,
-      rows: [
-        row("sync", t("cloud.panel.sync.detached"), {
-          notes: [t(`cloud.${reason}Message`)],
-          tone: "attention",
-          actions: actions(["resolveDetached"]),
-        }),
-      ],
-      actions: [],
-      sync: undefined,
-      archive: undefined,
-    };
-  }
-
   const { state, problem, pending, here, retryAt } = input.sync;
   const watch = input.archive;
   const status = watch?.status;

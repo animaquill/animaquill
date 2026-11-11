@@ -16,7 +16,7 @@ import {
   type ConnectIntent,
 } from "./connect.ts";
 import { cloudPanel, panelInputOf } from "./panel.ts";
-import { CLOUD_FILE } from "./projects.ts";
+import { OLD_CLOUD_FILE } from "./projects.ts";
 import {
   answering,
   closeWindows,
@@ -838,10 +838,10 @@ describe("giving up on connecting", () => {
     repository.refuse.link = new RepositoryRefused("unavailable");
     await submit(connect, time);
     expect(connect.getSnapshot().problem).toEqual({ step: "repository", code: "unavailable" });
-    // Halfway: on the platform, without a repository, and the folder says so.
+    // Halfway: on the platform, without a repository. The folder says nothing of it.
     const project = (await here.browser.links.get(id))?.project ?? "";
     expect(platform.projects.has(project)).toBe(true);
-    expect(disk.has(`${path}/${CLOUD_FILE}`)).toBe(true);
+    expect(disk.has(`${path}/${OLD_CLOUD_FILE}`)).toBe(false);
     expect(connect.takesBack).toBe(true);
 
     expect(await connect.cancel()).toBe("cancelled");
@@ -851,7 +851,6 @@ describe("giving up on connecting", () => {
     expect(platform.removed).toEqual([project]);
     // And the project is one of this computer only again, in every way.
     expect(await here.browser.links.get(id)).toBeUndefined();
-    expect(disk.has(`${path}/${CLOUD_FILE}`)).toBe(false);
     expect(here.cloud.getSnapshot().kind).toBe("none");
     expect(here.session.key).toBe(id);
     here.session.store?.execute({ type: "file.write", params: { path: "code/a.js", text: "a" } });

@@ -320,7 +320,7 @@ function broadcastLine(name: string): CloudLine | undefined {
 }
 
 export interface BrowserCloudOptions {
-  /** The platform, as an address: what .animaquill/cloud.json names. */
+  /** The platform, as an address: what a `CloudLink` names. */
   readonly platform: string;
   /** Where the WebSocket for syncing is. */
   readonly syncUrl: () => string;

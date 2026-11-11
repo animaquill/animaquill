@@ -1467,9 +1467,6 @@ export class Workbench {
       case "resolveStuck":
         void cloud.resolveStuck();
         break;
-      case "resolveDetached":
-        void cloud.resolveDetached();
-        break;
       case "retry":
         cloud.session?.resume();
         break;

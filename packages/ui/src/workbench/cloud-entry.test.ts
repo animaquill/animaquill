@@ -357,11 +357,18 @@ describe("“云端…”", () => {
 describe("what the panel's buttons do", () => {
   it("asks before it disconnects, and says where the project of the platform is from then on", async () => {
     const platform = new MemoryPlatform();
-    const { workbench, links } = windowOn(platform);
+    const { workbench, links, disk } = windowOn(platform, { folders: true });
     expect(await workbench.session.create("片子")).toBe(true);
+    // Only a folder disconnects: a project in the browser has nowhere to stay without the platform.
+    disk.chooseNext("文档/片子");
+    const moving = workbench.moveToFolder();
+    await vi.waitFor(() => expect(workbench.dialogs.getSnapshot()?.kind).toBe("confirm"));
+    workbench.dialogs.answer(false);
+    expect(await moving).toBe(true);
     const key = workbench.session.key as string;
     await connected(workbench);
     const project = (await links.get(key))?.project as string;
+    await vi.waitFor(() => expect(workbench.cloud?.canDisconnect).toBe(true));
 
     workbench.cloudPanel.set(true);
     workbench.runCloudAction("disconnect");

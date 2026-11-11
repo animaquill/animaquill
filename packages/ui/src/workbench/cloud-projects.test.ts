@@ -7,7 +7,7 @@ import type { FolderAccess, Host, ProjectSummary } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryPlatform, TestCloudBrowser } from "../cloud/cloud-support.ts";
-import { CLOUD_FILE, readCloudFile } from "../cloud/projects.ts";
+import { OLD_CLOUD_FILE } from "../cloud/projects.ts";
 import { account } from "../cloud/projects-support.ts";
 import { filesOf } from "../folder/folder-support.ts";
 import type { DialogRequest } from "./dialogs.ts";
@@ -144,14 +144,11 @@ describe("a project of the platform, downloaded into a folder", () => {
     const onDisk = filesOf(browser.disk, "文档/下载");
     expect(onDisk.get("code/动画.js")).toBe("const a = 1;\n");
     expect(onDisk.has("animaquill.json")).toBe(true);
-    // The folder says which project of the platform it is, and the same link goes on.
+    // The same link goes on, and the folder says nothing of it.
     await vi.waitFor(() =>
-      expect(readCloudFile(browser.disk.text(`文档/下载/${CLOUD_FILE}`))).toEqual({
-        platform: "https://platform.test",
-        project,
-      }),
+      expect(workbench.cloud?.getSnapshot()).toMatchObject({ kind: "linked", local: "folder" }),
     );
-    expect(workbench.cloud?.getSnapshot()).toMatchObject({ kind: "linked", local: "folder" });
+    expect(browser.disk.has(`文档/下载/${OLD_CLOUD_FILE}`)).toBe(false);
     expect((await browser.links.get(project))?.project).toBe(project);
     expect([...browser.library.summaries.keys()]).toEqual([project]);
     await online(workbench);

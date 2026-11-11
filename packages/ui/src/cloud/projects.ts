@@ -43,11 +43,10 @@ import {
  * one, and open one from there, see docs/design/local-projects.md 7.2 and 7.5. The open project
  * syncs through a `CloudSession`; this decides whether it does.
  *
- * A project in a folder says in `.animaquill/cloud.json` which project of the platform it is, so that
- * the folder knows it wherever it goes. What counts is the link this browser keeps, though: only a
- * log that came from that project can go on with it, see `CloudLink`. A folder whose file names a
- * project that this browser did not connect it to is a copy of a folder that is, or one from another
- * browser: people choose to let it go, or to make it a project of its own on the platform.
+ * Which project of the platform a folder is linked to, this browser alone knows: by its link, see
+ * `CloudLink`, and nothing in the folder says so. Only a log that came from that project can go on
+ * with it. A folder copied somewhere else, or opened in another browser, is a project of that
+ * computer only, see docs/design/start-and-cloud.md of AnimaQuill Cloud, 2.
  *
  * A project of the platform can also be opened without a folder, see the design of the start page
  * (docs/design/start-and-cloud.md of AnimaQuill Cloud), 1: it is kept in this browser then, by its
@@ -56,30 +55,12 @@ import {
  * copy out of the browser reads its log first, as what did not get to the platform is nowhere else.
  */
 
-/** Where a folder says which project of the platform it is. */
-export const CLOUD_FILE = ".animaquill/cloud.json";
-/** Keeps .animaquill out of Git, without changing the .gitignore of the project. */
-const IGNORE_FILE = ".animaquill/.gitignore";
-
-/** What .animaquill/cloud.json says. */
-export interface CloudFile {
-  readonly platform: string;
-  readonly project: string;
-}
-
-export const cloudFileText = (file: CloudFile): string =>
-  `${JSON.stringify({ version: 1, platform: file.platform, project: file.project }, null, 2)}\n`;
-
-export function readCloudFile(text: string): CloudFile | undefined {
-  try {
-    const value = JSON.parse(text) as { platform?: unknown; project?: unknown };
-    if (typeof value.platform !== "string" || typeof value.project !== "string") return undefined;
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(value.project)) return undefined;
-    return { platform: value.platform, project: value.project };
-  } catch {
-    return undefined;
-  }
-}
+/**
+ * Where older editors had a folder say which project of the platform it is. Nothing reads it
+ * any more: a folder that this browser links takes it away when it opens, and other folders keep
+ * theirs, as an older page in another browser may still go by it.
+ */
+export const OLD_CLOUD_FILE = ".animaquill/cloud.json";
 
 const isFolderError = (error: unknown, ...reasons: readonly FolderError["reason"][]) =>
   error instanceof FolderError && reasons.includes(error.reason);
@@ -105,16 +86,6 @@ export type CloudProjectsSnapshot =
        * of the platform that was opened without one.
        */
       readonly local: "folder" | "browser";
-    }
-  /**
-   * The folder says it is a project of the platform that this browser does not sync from it: a
-   * copy of a folder that this browser syncs ("copy"), a folder of a project that this browser has
-   * a copy of its own of ("browser"), or a folder from somewhere else ("foreign").
-   */
-  | {
-      readonly kind: "detached";
-      readonly project: string;
-      readonly reason: "copy" | "browser" | "foreign";
     };
 
 /** Why a project could not begin to connect, see `CloudProjects.beginLink`. */
@@ -319,8 +290,6 @@ export class CloudProjects {
   /** One look at a time, and only the last one counts. */
   #turn = 0;
   #following: Promise<void> = Promise.resolve();
-  /** Folders whose question people put off, by key, so that it comes once per page. */
-  readonly #asked = new Set<string>();
   #stopSession: (() => void) | undefined;
   /**
    * What the link of the open project remembers for lists, as it was last kept, see
@@ -403,13 +372,12 @@ export class CloudProjects {
 
   /**
    * A folder project whose folder was not there at the last look: one that waited for it, or one
-   * that syncs and moved into a folder just now, which has to say so there.
+   * that syncs and moved into a folder just now.
    */
   #waitsForFolder(): boolean {
     const key = this.#key;
     return (
       key !== undefined &&
-      this.#snapshot.kind !== "detached" &&
       this.#options.isFolder(key) &&
       this.#folderLooked !== key &&
       this.#options.folderOf(key) !== undefined
@@ -473,10 +441,8 @@ export class CloudProjects {
     if (folder) this.#folderLooked = key;
     const linked = this.#snapshot;
     if (linked.kind === "linked") {
-      // It syncs already, and is a folder now, as after it moved into one: the folder says which
-      // project of the platform it is from here on.
+      // It syncs already, and is a folder now, as after it moved into one.
       if (!folder) return;
-      await this.#sayInFolder(folder, linked.link);
       const now = this.#snapshot;
       if (now.kind === "linked" && now.session === linked.session && now.local !== "folder") {
         this.#set({ ...now, local: "folder" });
@@ -497,52 +463,34 @@ export class CloudProjects {
       }
       return;
     }
-    const file = folder ? await this.#readFile(folder) : undefined;
     if (turn !== this.#turn) return;
     if (link && link.platform === cloud.platform) {
-      if (folder && (file?.project !== link.project || file.platform !== cloud.platform)) {
-        // The browser's link is what counts; the folder says so again, as a folder that was moved
-        // into, or lost its file.
-        await this.#writeFile(folder, link).catch((error: unknown) => {
-          console.warn("The folder could not say which project of the platform it is", error);
-        });
-      }
+      if (folder) this.#dropOldFile(folder);
       this.#start(link, store);
       if (link.creating) void this.#whenOnline(link);
       return;
     }
-    if (file && file.platform === cloud.platform) {
-      const reason = await this.#whyDetached(key, file.project);
-      if (turn !== this.#turn) return;
-      this.#set({ kind: "detached", project: file.project, reason });
-      if (!this.#asked.has(key)) {
-        this.#asked.add(key);
-        void this.resolveDetached();
-      }
-      return;
-    }
+    // Whatever the folder has in `.animaquill/` says nothing about it: a folder without a link of
+    // this browser is a project of this computer only.
     this.#set(NONE);
   }
 
   /**
-   * Why a folder that names a project of the platform does not sync with it here: this browser has
-   * that project as another folder already, or as a copy of its own, or not at all. A link whose
-   * project this browser does not keep any more says nothing.
+   * Takes the file of older editors out of a folder that this browser links, see `OLD_CLOUD_FILE`.
+   * Nothing waits for it, and nothing is said where it stays: it is not read either way.
    */
-  async #whyDetached(key: string, project: string): Promise<"copy" | "browser" | "foreign"> {
-    try {
-      const { folders, browsers } = await this.#copiesOf(project);
-      if (folders.some((link) => link.key !== key)) return "copy";
-      if (browsers.some((link) => link.key !== key)) return "browser";
-    } catch (error) {
-      console.warn("What this browser has of the project of a folder could not be read", error);
-    }
-    return "foreign";
+  #dropOldFile(folder: LocalFolder): void {
+    void folder.remove(OLD_CLOUD_FILE).catch((error: unknown) => {
+      if (!isFolderError(error, "missing", "refused", "denied")) {
+        console.warn("The file of older editors stays in the folder", error);
+      }
+    });
   }
 
   /**
    * The copies this browser has of a project of the platform, by their links: folders, and copies
-   * in the browser. A link to a project that this browser does not keep any more is neither.
+   * in the browser. One at most, as opening, downloading and connecting go by this; a link to a
+   * project that this browser does not keep any more is neither.
    */
   async #copiesOf(
     project: string,
@@ -562,35 +510,6 @@ export class CloudProjects {
       kept.some((summary) => summary.id === link.key && summary.folder !== true),
     );
     return { folders, browsers };
-  }
-
-  /** Has the folder of a project that syncs say which project of the platform it is. */
-  async #sayInFolder(folder: LocalFolder, link: CloudLink): Promise<void> {
-    const file = await this.#readFile(folder);
-    if (file?.project === link.project && file.platform === link.platform) return;
-    await this.#writeFile(folder, link).catch((error: unknown) => {
-      console.warn("The folder could not say which project of the platform it is", error);
-    });
-  }
-
-  async #readFile(folder: LocalFolder): Promise<CloudFile | undefined> {
-    try {
-      return readCloudFile(await folder.readText(CLOUD_FILE));
-    } catch (error) {
-      if (!isFolderError(error, "missing", "not-text", "refused")) {
-        console.warn("What the folder says about the platform could not be read", error);
-      }
-      return undefined;
-    }
-  }
-
-  async #writeFile(folder: LocalFolder, link: CloudLink): Promise<void> {
-    try {
-      await folder.write(IGNORE_FILE, "*\n", { expected: "absent" });
-    } catch (error) {
-      if (!isFolderError(error, "changed")) throw error;
-    }
-    await folder.write(CLOUD_FILE, cloudFileText(link));
   }
 
   #start(link: CloudLink, store: ProjectStore): void {
@@ -761,8 +680,14 @@ export class CloudProjects {
     return this.#options.session.store !== undefined && this.#snapshot.kind !== "linked";
   }
 
+  /**
+   * Whether the open project can let go of the platform and stay here as a project of this computer
+   * only: a folder that syncs. A copy that is only in this browser has nowhere to stay, see
+   * `removeFromBrowser`.
+   */
   get canDisconnect(): boolean {
-    return this.#snapshot.kind === "linked";
+    const snapshot = this.#snapshot;
+    return snapshot.kind === "linked" && snapshot.local === "folder";
   }
 
   /** Makes sure someone is signed in, or asks people to. Resolves to whether someone is. */
@@ -869,13 +794,7 @@ export class CloudProjects {
     this.#turn += 1;
     this.#key = key;
     this.#store = store;
-    if (folder) {
-      this.#folderLooked = key;
-      await this.#writeFile(folder, link).catch((error: unknown) => {
-        // Next time the project opens, the folder gets it from the link.
-        console.warn("The folder could not say which project of the platform it is", error);
-      });
-    }
+    if (folder) this.#folderLooked = key;
     this.#start(link, store);
     this.#tell();
     // Whoever asked may be gone by the time the project gets there, as a dialog that was closed.
@@ -1217,49 +1136,15 @@ export class CloudProjects {
     }
   }
 
-  /** People choose what to do with a folder that names a project of the platform, see `detached`. */
-  async resolveDetached(): Promise<void> {
-    const { dialogs, t, session } = this.#options;
-    const snapshot = this.#snapshot;
-    const key = session.key;
-    if (snapshot.kind !== "detached" || !key) return;
-    const answer = await dialogs.choose({
-      title: t(`cloud.${snapshot.reason}Title`),
-      message: t(`cloud.${snapshot.reason}Message`),
-      choices: [
-        { id: "disconnect", label: t("cloud.letGo") },
-        { id: "new", label: t("cloud.makeNew"), kind: "primary" },
-      ],
-    });
-    if (session.key !== key || !this.#isStill(snapshot)) return;
-    if (answer === "new") await this.#connectAnew();
-    else if (answer === "disconnect") await this.#forgetFile(key);
-  }
-
-  /** Takes the file that names a project of the platform out of the folder. */
-  async #forgetFile(key: string): Promise<void> {
-    const { notifications, t } = this.#options;
-    const folder = this.#options.folderOf(key);
-    if (!folder) return;
-    try {
-      await folder.remove(CLOUD_FILE);
-      this.#set(NONE);
-      notifications.push(t("cloud.letGoDone"));
-    } catch (error) {
-      console.warn("The folder could not let go of the platform", error);
-      notifications.push(t("cloud.letGoFailed"));
-    }
-  }
-
   /**
-   * Stops syncing the open project, and forgets that it was connected: here, and in its folder. The
-   * project on the platform stays as it is.
+   * Stops syncing the open project, and forgets that it was connected: its folder stays, as a project
+   * of this computer only. The project on the platform stays as it is.
    */
   async disconnect(): Promise<void> {
     const { session, dialogs, t } = this.#options;
     const key = session.key;
     const snapshot = this.#snapshot;
-    if (!key || snapshot.kind !== "linked") return;
+    if (!key || !this.canDisconnect || snapshot.kind !== "linked") return;
     const go = await dialogs.confirm({
       title: t("cloud.disconnectTitle"),
       message: t(
@@ -1308,8 +1193,8 @@ export class CloudProjects {
   }
 
   /**
-   * Stops syncing, and forgets the link: here, in the folder, and in the other windows. Resolves
-   * to whether the link is gone. `quietly`: whoever asked says what came of it.
+   * Stops syncing, and forgets the link: here, and in the other windows. Resolves to whether the
+   * link is gone. `quietly`: whoever asked says what came of it.
    */
   async #unlink(key: string, { quietly = false } = {}): Promise<boolean> {
     const { cloud, notifications, t } = this.#options;
@@ -1324,10 +1209,6 @@ export class CloudProjects {
       void this.follow();
       return false;
     }
-    const folder = this.#options.isFolder(key) ? this.#options.folderOf(key) : undefined;
-    await folder?.remove(CLOUD_FILE).catch((error: unknown) => {
-      console.warn("The folder still says which project of the platform it was", error);
-    });
     this.#set(NONE);
     this.#tell();
     if (!quietly) notifications.push(t("cloud.disconnected"));
@@ -1940,7 +1821,7 @@ export class CloudProjects {
    * it is gone.
    */
   async deleteFromCloud(project: string, name: string): Promise<boolean> {
-    const { cloud, session, dialogs, notifications, records, t } = this.#options;
+    const { cloud, session, dialogs, notifications, t } = this.#options;
     if (!cloud.remove) return false;
     const words = { name, interpolation: { escapeValue: false } };
     if (!(await this.#signedIn(t("cloud.delete.title", words)))) return false;
@@ -1987,11 +1868,6 @@ export class CloudProjects {
       }
       await this.forget(link.key);
       this.#tellAbout(link.key);
-      const record = await records?.get(link.key).catch(() => undefined);
-      // Its folder says so too, where it can be written without asking.
-      if (record && (await record.folder.status().catch(() => "gone")) === "ready") {
-        await record.folder.remove(CLOUD_FILE).catch(() => {});
-      }
     }
     notifications.push(t("cloud.delete.done", words));
     return true;

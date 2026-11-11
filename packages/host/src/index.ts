@@ -145,7 +145,7 @@ export interface CloudProjectSummary {
  * connections, see `SyncClientMessage`, and keeps its records here.
  */
 export interface CloudAccess {
-  /** The platform, as an address such as https://platform.example: what .animaquill/cloud.json names. */
+  /** The platform, as an address such as https://platform.example: what a `CloudLink` names. */
   readonly platform: string;
   /** A new connection for syncing a project. */
   connect(): CloudConnection;
@@ -715,7 +715,10 @@ export interface CloudLinks {
     to: { readonly seq: number; readonly digest: string; readonly pushed: number },
   ): Promise<boolean>;
   remove(key: string): Promise<void>;
-  /** The links to a project of a platform: more than one means a copy of a folder, see the design, 7.5. */
+  /**
+   * The links to a project of a platform. A browser keeps one copy of a project at most, so one link
+   * counts; others are of copies that went, until they are tidied away.
+   */
   withProject(platform: string, project: string): Promise<readonly CloudLink[]>;
   /** What this browser is called on the platform: a number of its own, the same every time. */
   device(): Promise<string>;
