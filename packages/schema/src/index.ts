@@ -15,6 +15,15 @@ export * from "./effects.ts";
 export { createProject, createTimeline, type NewProject } from "./create.ts";
 export * from "./documents.ts";
 export { stringifyDocument } from "./json.ts";
+export {
+  LFS_POINTER_MAX_BYTES,
+  LFS_POINTER_VERSION,
+  isLfsPointerOf,
+  lfsOidOf,
+  lfsPointer,
+  readLfsPointer,
+  type LfsObjectId,
+} from "./lfs.ts";
 export { jsonSchemas } from "./json-schema.ts";
 export { MIGRATIONS, migrateProject, type Migration, type MigrationResult } from "./migrate.ts";
 export {

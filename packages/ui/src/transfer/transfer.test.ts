@@ -4,6 +4,7 @@ import { hashFile } from "@animaquill/media";
 import {
   createProject,
   documentSchema,
+  lfsPointer,
   readProject,
   stringifyDocument,
   type Asset,
@@ -963,6 +964,24 @@ describe("files that are missing or different", () => {
     expect(assetsOf(window)["clip"]?.hash).toBe(hash);
     expect(await window.library.media(idOf(window)).get(hash)).toBeUndefined();
     expect(window.library.files.size).toBe(0);
+  });
+
+  it("takes the pointer of Git LFS to a file, as a clone without Git LFS has it, for a file that is not there, not for a damaged one", async () => {
+    const window = setup();
+    const hash = await hashFile(CONTENT);
+    const asset = { name: "采访.mp4", hash, size: CONTENT.size, storage: "lfs" } as const;
+    const pointer = lfsPointer(hash, CONTENT.size)!;
+    const report = await importFrom(window, withAsset(asset, [["assets/a.mp4", pointer]]));
+    expect(report?.damaged).toEqual([]);
+    expect(report?.missing).toEqual([]);
+    expect(report?.elsewhere).toEqual([{ name: "采访.mp4", storage: "lfs" }]);
+    expect(await window.library.media(idOf(window)).get(hash)).toBeUndefined();
+    expect(window.library.files.size).toBe(0);
+    // The pointer to another file is another file.
+    const other = setup();
+    const wrong = lfsPointer(await hashFile(new Blob(["别的内容"])), CONTENT.size)!;
+    const damaged = await importFrom(other, withAsset(asset, [["assets/a.mp4", wrong]]));
+    expect(damaged?.damaged).toEqual(["采访.mp4"]);
   });
 
   it("reads a file piece by piece, however large it is", async () => {

@@ -9,6 +9,7 @@ import type {
   CloudLink,
   CloudLinks,
   CloudProjectSummary,
+  LfsAccess,
   RepositoryAccess,
 } from "./index.ts";
 
@@ -301,6 +302,8 @@ export interface BrowserCloudOptions {
   readonly list: () => Promise<readonly CloudProjectSummary[]>;
   /** Saving its projects to repositories, where the platform does, see `browserRepository`. */
   readonly repository?: RepositoryAccess;
+  /** Sending files of assets into the large file storage of repositories, see `browserLfs`. */
+  readonly lfs?: LfsAccess;
   readonly database?: () => IDBFactory;
   readonly locks?: () => LockManager | undefined;
 }
@@ -316,5 +319,6 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     syncer: (key) => browserFolderWriter(key, locks, undefined, "animaquill.cloud-sync."),
     line: (key) => broadcastLine(`animaquill.cloud.${key}`),
     ...(options.repository && { repository: options.repository }),
+    ...(options.lfs && { lfs: options.lfs }),
   };
 }

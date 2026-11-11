@@ -18,7 +18,7 @@ import {
 import { isSameHash, type HashOptions } from "@animaquill/media";
 import type { Asset, Elsewhere } from "@animaquill/schema";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
-import type { HereOf } from "../storage/places.ts";
+import { isPointerTo, type HereOf } from "../storage/places.ts";
 
 /** Where files that people bring in go, in the folder of a project. */
 export const ASSETS_FOLDER = "assets";
@@ -415,7 +415,8 @@ export class FolderAssets {
    * took the place of. A missing one may be somewhere else in the folder, as after people moved it,
    * which is the file of the same size and hash. The file of an asset that is kept somewhere else
    * as well is here too, as people keep it: only where it is not, it can be downloaded instead, see
-   * `elsewhereOf`, and is not missing.
+   * `elsewhereOf`, and is not missing. The pointer of Git LFS to the file, as a folder cloned
+   * without Git LFS has, is no other file: the file is not here, see `isPointerTo`.
    */
   async check(store: ProjectStore): Promise<readonly AssetIssue[]> {
     const issues: AssetIssue[] = [];
@@ -449,7 +450,11 @@ export class FolderAssets {
           continue;
         }
         if (hash !== undefined && !isSameHash(hash, found.hash)) {
-          issues.push({ kind: "changed", asset, path });
+          if (await isPointerTo(found.file, { hash, size })) {
+            // As for a file that is not there, but not looked for in the folder or the browser:
+            // what is found there could not go back to its place, which the pointer takes.
+            issues.push(notHere(asset, path, elsewhereOf(state, asset, this.#options.here?.())));
+          } else issues.push({ kind: "changed", asset, path });
         }
       }
     } finally {

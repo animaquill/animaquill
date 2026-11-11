@@ -638,6 +638,45 @@ describe("assets.json that comes in", () => {
     expect(inFile(store)).toEqual({ ...file, hash: OTHER, size: 5, storage: "platform" });
   });
 
+  /**
+   * Of one content there is one size: a file that only changes the size, and leaves what was said
+   * of where the file is, says that of the file of the size before. Nobody put a file of the new
+   * size anywhere.
+   */
+  it("says a file is only here, where it changed only its size and left what was said of the one before", () => {
+    // Where an upload wrote the place down, and where the asset said it itself.
+    for (const where of [
+      { storage: "lfs" },
+      { storage: "platform" },
+      { storage: "remote", url: URL },
+    ]) {
+      const uploadedThere = withAsset();
+      uploaded(uploadedThere, where.storage);
+      for (const store of [uploadedThere, fromFile({ ...file, ...where })]) {
+        expect(inFile(store), where.storage).toMatchObject({ ...where, size: 3 });
+        const text = rewrite(store, (asset) => (asset.size = 5));
+        success(store.importFile(ASSETS, text, { origin: USER }));
+        expect(inFile(store), where.storage).toEqual({ ...file, size: 5 });
+        expect(elsewhereOf(store.getState(), "a"), where.storage).toBeUndefined();
+        expect(store.getState().places, where.storage).toBeUndefined();
+        // The size from before comes back with undo, and so does where the file is.
+        expect(store.undo().ok).toBe(true);
+        expect(inFile(store), where.storage).toMatchObject({ ...where, size: 3 });
+      }
+    }
+  });
+
+  it("keeps where the file is, where the size it says is the one it had, or it says none", () => {
+    const store = fromFile({ ...file, storage: "lfs" });
+    const same = rewrite(store, (asset) => Object.assign(asset, { size: 3, name: "改名" }));
+    success(store.importFile(ASSETS, same, { origin: USER }));
+    expect(inFile(store)).toEqual({ ...file, name: "改名", storage: "lfs" });
+    // Another size, and where that file is, said anew: it holds, as for another hash.
+    const anew = rewrite(store, (asset) => Object.assign(asset, { size: 5, storage: "platform" }));
+    success(store.importFile(ASSETS, anew, { origin: USER }));
+    expect(inFile(store)).toEqual({ ...file, name: "改名", size: 5, storage: "platform" });
+  });
+
   it("leaves the place of an asset it takes away, which says nothing without it", () => {
     const store = withAsset();
     uploaded(store);

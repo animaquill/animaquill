@@ -6,7 +6,7 @@ import { ProjectStore, STORAGE, USER } from "@animaquill/core";
 import type { LocalFolder, LocalFolders } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { hashFile } from "@animaquill/media";
-import { createProject, type Asset } from "@animaquill/schema";
+import { createProject, lfsPointer, type Asset } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { hasherHere, type Hasher } from "../media/hasher.ts";
 import { MemoryLibrary } from "../workbench/memory-library.ts";
@@ -346,6 +346,37 @@ describe("comparing the files with the project", () => {
       { kind: "elsewhere", asset: "lfs", path: "assets/a.webm", storage: "lfs" },
       { kind: "elsewhere", asset: "platform", path: "assets/b.webm", storage: "platform" },
       { kind: "elsewhere", asset: "remote", path: "assets/c.webm", storage: "remote" },
+    ]);
+  });
+
+  it("takes the pointer of Git LFS to the file, as a clone without Git LFS has it, for a file that is not here, not for another file", async () => {
+    const { disk, assets, store, add } = await setup();
+    const content = "一段大视频";
+    const hash = await hashFile(new Blob([bytes(content)]));
+    const size = bytes(content).length;
+    const pointer = lfsPointer(hash, size)!;
+    disk.write(`${ROOT}/assets/a.webm`, pointer);
+    add("a", { path: "assets/a.webm", storage: "lfs", hash, size });
+    // Kept nowhere else, as far as the project knows: missing.
+    disk.write(`${ROOT}/assets/b.webm`, pointer);
+    add("b", { path: "assets/b.webm", hash, size });
+    // An asset that does not know its size goes by the content.
+    disk.write(`${ROOT}/assets/c.webm`, pointer);
+    add("c", { path: "assets/c.webm", storage: "lfs", hash });
+    // The pointer to another file, or of another size, is another file.
+    const other = await hashFile(new Blob([bytes("另一段")]));
+    disk.write(`${ROOT}/assets/d.webm`, lfsPointer(other, size)!);
+    add("d", { path: "assets/d.webm", storage: "lfs", hash, size });
+    disk.write(`${ROOT}/assets/e.webm`, lfsPointer(hash, size + 1)!);
+    add("e", { path: "assets/e.webm", storage: "lfs", hash, size });
+    const issues = await assets.check(store);
+    expect(issues.toSorted((a, b) => a.asset.localeCompare(b.asset))).toEqual([
+      { kind: "elsewhere", asset: "a", path: "assets/a.webm", storage: "lfs" },
+      { kind: "missing", asset: "b", path: "assets/b.webm" },
+      // Not downloadable without its size, as files from before have it: not there all the same.
+      { kind: "missing", asset: "c", path: "assets/c.webm" },
+      { kind: "changed", asset: "d", path: "assets/d.webm" },
+      { kind: "changed", asset: "e", path: "assets/e.webm" },
     ]);
   });
 

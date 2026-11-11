@@ -122,6 +122,12 @@ export interface CloudAccess {
    * it archives what it has of a project into the repository by itself. Without it, there is none.
    */
   readonly repository?: RepositoryAccess;
+  /**
+   * Sending the files of assets into the large file storage (Git LFS) of the repository a project is
+   * saved to, through the platform: it takes a file in pieces, checks it, and passes it on. Without
+   * it, there is none.
+   */
+  readonly lfs?: LfsAccess;
 }
 
 /** Nobody is signed in to the platform. */
@@ -294,6 +300,183 @@ export class RepositoryRefused extends Error {
     this.files = more.files;
     this.diverged = more.diverged;
     this.retryAfter = more.retryAfter;
+  }
+}
+
+/** How sending a file into the large file storage of a repository goes, see `LfsAccess`. */
+export type LfsUploadState =
+  /** The storage has the file already: nothing to send. */
+  | "present"
+  /**
+   * The platform takes pieces of the file, the next one at `received`. Once `received` is `size`,
+   * all of it is there and the platform reads it through for its hash, which no piece waits for:
+   * `state` says how that went.
+   */
+  | "receiving"
+  /** The platform has all of it, checked against its hash, and passes it on soon. */
+  | "received"
+  /** The platform passes it on now. */
+  | "pushing"
+  /** The storage has the file. */
+  | "done"
+  /** It did not get there, see `LfsUpload.error`. Sending it again starts anew. */
+  | "failed"
+  /**
+   * Nothing came for a day, not all of it came within three days of its start, or the platform
+   * could not pass it on for a day. Sending it again starts anew.
+   */
+  | "expired";
+
+/** Why a file did not get into the storage. */
+export type LfsFailure =
+  /**
+   * What came is not the file of its hash, as when it changed while it was sent; or the storage has
+   * a file of this hash that is not as large as the file was said to be, which `begin` finds out at
+   * once. Either way, the file is to be looked at again: its hash and its size.
+   */
+  | "changed"
+  /** The large file storage of the account has no room left. */
+  | "githubQuota"
+  /** The file is larger than the storage takes. */
+  | "tooLarge"
+  /** The repository is not there to the platform any more, or the platform may not touch it. */
+  | "gone"
+  /** Given up, see `LfsAccess.cancel`. */
+  | "cancelled"
+  /** What the platform had of it is gone. */
+  | "lost"
+  /** The storage said no to it, for a reason that `detail` says. */
+  | "refused"
+  | (string & {});
+
+/** A file on its way into the large file storage of a repository, as the platform has it. */
+export interface LfsUpload {
+  /** What the platform knows it by. Undefined for "present": there is nothing to send. */
+  readonly id?: string;
+  readonly state: LfsUploadState;
+  /**
+   * The repository the file goes into, by its id on GitHub: what the place of the asset is bound to
+   * once it is there, see `Here`.
+   */
+  readonly repo: string;
+  /** The SHA-256 of the file in lower-case hexadecimal, as Git LFS names it, and its size. */
+  readonly oid: string;
+  readonly size: number;
+  /** Bytes the platform has, from the start of the file: where the next piece goes. */
+  readonly received: number;
+  /** The most bytes one piece may have. */
+  readonly chunk: number;
+  /** The fewest bytes one piece may have, but for the last one of the file, which is what is left. */
+  readonly minChunk: number;
+  /** For "failed", and "expired" after trying: why. */
+  readonly error?: LfsFailure;
+  /** A few words of the storage about it, for people, where it said any. */
+  readonly detail?: string;
+}
+
+/**
+ * Sending files into the large file storage of the repository a project of the platform is saved
+ * to, through the platform (on AnimaQuill Cloud, Git LFS of GitHub). A file goes in pieces, one
+ * after the other, and goes on from where it got after the network, the page or the computer went
+ * away: the platform says how far it got. Once it has all of the file it checks it against its
+ * hash, and passes it on by itself; the file is in the storage once the upload is "done" (or the
+ * storage had it already, "present"). Projects are named by their id on the platform,
+ * `CloudLink.project`. What the platform refuses rejects with `LfsRefused`; nobody signed in with
+ * `CloudSignedOut`.
+ *
+ * How large a piece is, is for whoever sends to choose, between `minChunk` and `chunk` of the
+ * upload, by how fast the line is: a piece counts only once all of it arrived, and the platform
+ * gives one about a minute at most, and turns away one that does not keep coming fast enough
+ * ("slow"). So pieces that take a few seconds each: the largest on a fast line, smaller ones on a
+ * slow one, and smaller still after "slow", or after a piece that got no answer. After the last
+ * piece the upload stays "receiving", with all of it received, while the platform reads it
+ * through: `state` is asked until it says something else.
+ */
+export interface LfsAccess {
+  /**
+   * Starts sending a file: its oid (see `lfsOidOf` of the format) and size. Resolves to "present"
+   * where the storage has it; to the upload that is on its way already where there is one, from any
+   * computer, which goes on from where it got; to a new one; or to one that failed before it began
+   * ("changed"), where the storage has a file of this hash in another size.
+   */
+  begin(project: string, file: { readonly oid: string; readonly size: number }): Promise<LfsUpload>;
+  /**
+   * Sends a piece of the file, at most `chunk` bytes from `offset`, which is where the upload got
+   * (`received`): a piece the platform has already is fine too. Resolves to the upload as it is
+   * after it, also where it failed. Rejects with "offset", and what the platform has (`received`),
+   * where the piece goes somewhere else.
+   */
+  send(
+    upload: string,
+    offset: number,
+    piece: Blob,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<LfsUpload>;
+  /** The upload as it is now. */
+  state(upload: string): Promise<LfsUpload>;
+  /** Gives the upload up: what the platform has of the file goes. */
+  cancel(upload: string): Promise<void>;
+}
+
+/** What the platform says when it refuses something about sending files to the storage. */
+export type LfsRefusal =
+  /** The file is larger than the platform or the storage takes, or a piece larger than `chunk`. */
+  | "tooLarge"
+  /** Not now: try again after `retryAfter`. */
+  | "busy"
+  /** The project is not saved to a repository. */
+  | "notLinked"
+  /** The repository is not there to the platform any more, or the platform may not touch it. */
+  | "gone"
+  /** The large file storage of the account has no room left. */
+  | "githubQuota"
+  /** A piece that does not go where the upload got: see `received`. */
+  | "offset"
+  /** A piece that came too slowly, or took longer than the platform waits: send smaller ones. */
+  | "slow"
+  /**
+   * Not for this page or this person, as the platform or what is in front of it says (403): asking
+   * again changes nothing.
+   */
+  | "forbidden"
+  /**
+   * An answer that says it went well, but is no upload: a platform of another version, or something
+   * in between that answers in its place. Asking again changes nothing either.
+   */
+  | "malformed"
+  | "notFound"
+  | "invalid"
+  /** No answer, or one that says nothing of the above: the platform is not there now. Later. */
+  | "unavailable";
+
+/**
+ * The platform did not do what was asked: always one of the codes of `LfsRefusal`, also where no
+ * answer came ("unavailable") or the answer was not one of them. Only "busy", "slow", "offset" and
+ * "unavailable" are worth another try as it is; the others stay as they are until something else
+ * changes.
+ */
+export class LfsRefused extends Error {
+  override readonly name = "LfsRefused";
+  readonly code: LfsRefusal;
+  /** For "offset": the bytes the platform has, where the next piece goes. */
+  readonly received: number | undefined;
+  /** For "busy": seconds to wait. */
+  readonly retryAfter: number | undefined;
+  /** A few words of the storage, for people, where it said any. */
+  readonly detail: string | undefined;
+  constructor(
+    code: LfsRefusal,
+    more: {
+      readonly received?: number;
+      readonly retryAfter?: number;
+      readonly detail?: string;
+    } = {},
+  ) {
+    super(`The platform refused: ${code}`);
+    this.code = code;
+    this.received = more.received;
+    this.retryAfter = more.retryAfter;
+    this.detail = more.detail;
   }
 }
 

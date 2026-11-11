@@ -781,6 +781,8 @@ export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";
 export type { BrowserRepositoryOptions } from "./repository.ts";
+export { browserLfs, uploadOf } from "./lfs.ts";
+export type { BrowserLfsOptions } from "./lfs.ts";
 
 export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
 

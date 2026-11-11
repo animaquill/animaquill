@@ -127,8 +127,11 @@ declare const atob: (data: string) => string;
 const HASH_PREFIX = "sha256-";
 const DIGEST_BYTES = 32;
 
-/** The digest a hash stands for, in lower-case hexadecimal, whatever a tool wrote it as. */
-function digestOf(hash: string): string | undefined {
+/**
+ * The digest a hash stands for, in lower-case hexadecimal, whatever a tool wrote it as: what Git LFS
+ * calls the oid of the content, see lfs.ts. Undefined for what is no hash of the format.
+ */
+export function hexDigestOf(hash: string): string | undefined {
   if (!hash.startsWith(HASH_PREFIX)) return undefined;
   const text = hash.slice(HASH_PREFIX.length);
   if (/^[0-9a-fA-F]{64}$/.test(text)) return text.toLowerCase();
@@ -146,8 +149,8 @@ function digestOf(hash: string): string | undefined {
  * from a tool that writes hexadecimal, or base64 with or without padding.
  */
 export function isSameHash(a: string, b: string): boolean {
-  const digest = digestOf(a);
-  return digest !== undefined && digest === digestOf(b);
+  const digest = hexDigestOf(a);
+  return digest !== undefined && digest === hexDigestOf(b);
 }
 
 /**

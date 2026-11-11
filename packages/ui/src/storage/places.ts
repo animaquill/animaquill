@@ -1,5 +1,11 @@
 import type { Here } from "@animaquill/core";
-import { downloadableFrom, type Asset, type Elsewhere } from "@animaquill/schema";
+import {
+  LFS_POINTER_MAX_BYTES,
+  downloadableFrom,
+  isLfsPointerOf,
+  type Asset,
+  type Elsewhere,
+} from "@animaquill/schema";
 import type { TFunction } from "i18next";
 
 /**
@@ -54,3 +60,20 @@ export const downloadableItems = (t: TFunction, files: readonly ElsewhereFile[])
   files.map(({ name, storage, url }) =>
     t("transfer.elsewhereItem", { name, download: downloadFrom(t, storage, url) }),
   );
+
+/**
+ * Whether a file is the pointer of Git LFS to the file of an asset, to its hash and, where the asset
+ * knows it, its size: what a folder cloned without Git LFS has in place of the file, which is then
+ * not here, see `isLfsPointerOf`. Only a small file can be one, so a large one is not read for it.
+ */
+export async function isPointerTo(
+  file: Blob,
+  asset: { readonly hash: string; readonly size?: number | undefined },
+): Promise<boolean> {
+  if (file.size >= LFS_POINTER_MAX_BYTES) return false;
+  try {
+    return isLfsPointerOf(await file.text(), asset);
+  } catch {
+    return false;
+  }
+}

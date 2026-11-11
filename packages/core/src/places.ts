@@ -202,11 +202,15 @@ export function writeAssets(
 /**
  * An asset a file brings with another file than the asset had, `known` as files have it: where it
  * says of the new file what was said of the one before, that is about the one before. Only what
- * the file says anew holds, so the new file is only here.
+ * the file says anew holds, so the new file is only here. Another file is one of another hash, or
+ * of another size where the file says one: of one content there is one size, as for `asset.update`.
  */
 export function anotherFileIsHere(known: Asset | undefined, wanted: Asset): Asset {
   if (!known || known.hash === undefined || wanted.hash === undefined) return wanted;
-  if (isSameHash(known.hash, wanted.hash) || !isElsewhere(wanted.storage)) return wanted;
+  const isAnotherFile =
+    !isSameHash(known.hash, wanted.hash) ||
+    (wanted.size !== undefined && wanted.size !== known.size);
+  if (!isAnotherFile || !isElsewhere(wanted.storage)) return wanted;
   if (wanted.storage !== known.storage || wanted.url !== known.url) return wanted;
   const { url: _url, ...rest } = wanted;
   return { ...rest, storage: "local" };

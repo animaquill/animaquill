@@ -12,7 +12,7 @@ import type { FolderFile, ProjectLibrary, SourceFolder } from "@animaquill/host"
 import { hashFile, isSameHash } from "@animaquill/media";
 import { newId, type Problem, type Project } from "@animaquill/schema";
 import type { TFunction } from "i18next";
-import { elsewhereFile, type ElsewhereFile } from "../storage/places.ts";
+import { elsewhereFile, isPointerTo, type ElsewhereFile } from "../storage/places.ts";
 import type { TransferStep } from "./export.ts";
 
 /** What a project still points at when something it needs stayed out. */
@@ -243,6 +243,13 @@ export async function bringIn(
       const label = asset.name ?? asset.path;
       const step = (bytes: number) => onStep?.({ file: label, done: before + bytes, total });
       step(0);
+      // A folder cloned without Git LFS has the pointer to the file in its place: the file is not
+      // here, as for one that is missing, and can come from where it is kept, see below.
+      const { hash: known, size } = asset;
+      if (known !== undefined && (await isPointerTo(file, { hash: known, size }))) {
+        done += file.size * 2;
+        continue;
+      }
       const hash = await hashFile(file, { ...(signal ? { signal } : {}), onProgress: step });
       if (asset.hash !== undefined && !isSameHash(asset.hash, hash)) {
         damaged.set(assetId, label);

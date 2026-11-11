@@ -162,7 +162,11 @@ describe.each([1, 2, 3, 4, 5, 6])("where files are kept, seed %i", FUZZ, (seed) 
         const document = JSON.parse(text);
         const there = document.assets[id];
         if (!there) continue;
-        if (random.chance(0.5) && there.storage === "local") delete there.size;
+        const kind = random.int(3);
+        if (kind === 0 && there.storage === "local") delete there.size;
+        // Another size for the same hash, with what the file says of where it is left as it was:
+        // another file all the same, which nobody put anywhere.
+        else if (kind === 1) there.size = 3 + random.int(5);
         else Object.assign(there, { hash: fresh(), size: 3 });
         store.importFile(ASSETS, JSON.stringify(document), { origin: USER });
       } else if (chance < 76) {
