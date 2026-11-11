@@ -53,3 +53,47 @@ describe("the reads of a video", () => {
     expect((await reads.frameAt(layer, "video", standIn, 1.1)).frame?.from).toBe("stand-in");
   });
 });
+
+/** Frames like `sourceOf`, which keep count of the ones not closed yet. */
+function countedSourceOf(from: string): FrameSource<Frame> & { readonly open: Set<Frame> } {
+  const open = new Set<Frame>();
+  return {
+    open,
+    async *samples(seconds) {
+      for (let index = Math.max(0, Math.floor(seconds * 10)); index < 100; index += 1) {
+        const frame: Frame = { from, timestamp: index / 10, close: () => open.delete(frame) };
+        open.add(frame);
+        yield frame;
+      }
+    },
+  };
+}
+
+describe("the frames of a video", () => {
+  it("are all closed, also of a clip that is read and got ready at once for the first time", async () => {
+    const reads = new VideoReads<Frame>();
+    const video = countedSourceOf("video");
+    // Drawing a frame and getting the clip ready, as when the playhead lands near it.
+    await Promise.all([
+      reads.frameAt(layer, "video", video, 1),
+      reads.prepare(layer, "video", video, 1),
+    ]);
+    await reads.closeExcept(new Set());
+    expect(video.open.size).toBe(0);
+  });
+
+  it("are all closed when the source changes while two reads are on their way", async () => {
+    const reads = new VideoReads<Frame>();
+    const video = countedSourceOf("video");
+    const standIn = countedSourceOf("stand-in");
+    await reads.frameAt(layer, "video", video, 1);
+    await Promise.all([
+      reads.frameAt(layer, "video", standIn, 1),
+      reads.frameAt(layer, "video", standIn, 1.1),
+      reads.prepare(layer, "video", standIn, 1.2),
+    ]);
+    await reads.closeExcept(new Set());
+    expect(video.open.size).toBe(0);
+    expect(standIn.open.size).toBe(0);
+  });
+});

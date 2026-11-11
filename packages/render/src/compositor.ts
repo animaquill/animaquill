@@ -819,8 +819,11 @@ async function makeStrip(file: Blob, count: number, height: number) {
     let slot = 0;
     for await (const sample of new VideoSampleSink(track).samplesAtTimestamps(moments)) {
       if (sample) {
-        painter?.drawImage(sample.toCanvasImageSource(), slot * width, 0, width, height);
-        sample.close();
+        try {
+          painter?.drawImage(sample.toCanvasImageSource(), slot * width, 0, width, height);
+        } finally {
+          sample.close();
+        }
       }
       slot += 1;
     }

@@ -260,3 +260,61 @@ test.describe.serial("a video clip", () => {
     expect([...a, ...b]).toEqual([]);
   });
 });
+
+test("a clip that is drawn while it gets ready leaves no decoder behind", async ({ page }) => {
+  // In the compositor of the preview: decoders that are not closed, with files that are slow to
+  // read, as on a busy computer. Then getting the clip ready and drawing it wait for the same file to
+  // open, and ask for a read of it at once.
+  await page.context().addInitScript(() => {
+    if (!location.href.includes("compositor")) return;
+    const live = new Set<VideoDecoder>();
+    const Decoder = VideoDecoder;
+    const close = Decoder.prototype.close;
+    Decoder.prototype.close = function (this: VideoDecoder) {
+      live.delete(this);
+      close.call(this);
+    };
+    globalThis.VideoDecoder = class extends Decoder {
+      constructor(init: VideoDecoderInit) {
+        super(init);
+        live.add(this);
+      }
+    };
+    const slowly = () => new Promise((resolve) => setTimeout(resolve, 150));
+    const arrayBuffer = Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer = async function (this: Blob) {
+      await slowly();
+      return arrayBuffer.call(this);
+    };
+    const stream = Blob.prototype.stream;
+    Blob.prototype.stream = function (this: Blob) {
+      const reader = stream.call(this).getReader();
+      return new ReadableStream({
+        async pull(controller) {
+          await slowly();
+          const { done, value } = await reader.read();
+          if (done) controller.close();
+          else controller.enqueue(value);
+        },
+      });
+    };
+    Object.assign(globalThis, { liveDecoders: () => live.size });
+  });
+  await installSavePicker(page);
+  await page.reload();
+  await chooseFolder(page, projectWithVideo("1/30", "7/30"));
+  await expect(tab(page, "preview")).toBeVisible();
+  // Onto the clip while it opens, and then past it, where nothing reads it any more.
+  for (const time of ["0:00/05", "0:01/27"]) {
+    await page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" }).click();
+    await page.getByRole("textbox", { name: "当前时间" }).fill(time);
+    await page.keyboard.press("Enter");
+  }
+  const element = await page.locator('[data-panel="preview"] iframe').elementHandle();
+  const frame = await element?.contentFrame();
+  await expect
+    .poll(() =>
+      frame?.evaluate(() => (globalThis as unknown as { liveDecoders(): number }).liveDecoders()),
+    )
+    .toBe(0);
+});
