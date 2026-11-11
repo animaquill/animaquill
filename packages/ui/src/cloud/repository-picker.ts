@@ -46,6 +46,11 @@ export interface PickerList {
 
 export interface PickerSnapshot {
   readonly mode: PickerMode;
+  /**
+   * Who a new repository belongs to, as people know the account. Undefined until it is known who
+   * is signed in, see `setOwner`.
+   */
+  readonly owner: string | undefined;
   readonly name: string;
   readonly nameProblem: NameProblem | undefined;
   readonly list: PickerList;
@@ -140,7 +145,6 @@ const KEEPS_OUT: ReadonlySet<string> = new Set<RepositoryRefusal>([
 export class RepositoryPicker {
   readonly asking: boolean;
   readonly current: RepositoryPickerOptions["current"];
-  readonly owner: string | undefined;
   readonly #access: RepositoryAccess;
   readonly #project: RepositoryPickerOptions["project"];
   readonly #switching: boolean;
@@ -169,9 +173,9 @@ export class RepositoryPicker {
     this.#baseName = options.name;
     this.asking = options.asking === true;
     this.current = options.current;
-    this.owner = options.owner;
     this.#snapshot = {
       mode: "create",
+      owner: options.owner,
       name: options.name,
       nameProblem: nameProblem(options.name),
       list: NO_LIST,
@@ -190,6 +194,19 @@ export class RepositoryPicker {
 
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): PickerSnapshot => this.#snapshot;
+
+  /** Who a new repository belongs to, see `PickerSnapshot.owner`. */
+  get owner(): string | undefined {
+    return this.#snapshot.owner;
+  }
+
+  /**
+   * Says whose the new repository is, once that is known or as it changes: a dialog can open
+   * before the account says who is signed in, as right after the page came back from signing in.
+   */
+  setOwner(owner: string | undefined): void {
+    if (owner !== this.#snapshot.owner) this.#set({ owner });
+  }
 
   #set(change: Partial<PickerSnapshot>): void {
     if (this.#closed) return;

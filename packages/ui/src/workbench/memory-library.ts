@@ -77,6 +77,11 @@ export class MemoryTrials implements TrialStore {
       close: () => void this.held.delete(place),
     };
   }
+
+  async holds(project: string): Promise<boolean> {
+    if (this.failingToRead) throw new Error("damaged");
+    return (this.kept.get(project)?.size ?? 0) > 0;
+  }
 }
 
 /** For tests: keeps projects in memory, and windows on the same project hear each other. */

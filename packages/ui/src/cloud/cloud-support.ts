@@ -86,6 +86,8 @@ export interface PlatformFaults {
   first?: readonly Uint8Array[];
   /** The list of projects cannot be read, and none can be taken away: the platform is not there. */
   unreachable?: boolean;
+  /** Asking for the list, or to take a project away, gets no answer at all: a line that hangs. */
+  hangs?: boolean;
 }
 
 /** The repository a project of the platform is saved to, as a test says. */
@@ -126,6 +128,16 @@ export class MemoryPlatform {
   readonly listed = new Map<string, Partial<CloudProjectSummary>>();
   /** Projects that were taken away, in order. */
   readonly removed: string[] = [];
+  /**
+   * The ids of projects that were taken away, for good: no project is made under one of them
+   * again, whoever says hello with it, and whenever, as the platform keeps them.
+   */
+  readonly deleted = new Set<string>();
+  /**
+   * Asking to take away a project that is not there keeps one from being made under that id too,
+   * as the platform is going to: a hello that is still on its way then makes nothing.
+   */
+  voidsUnmade = false;
   /** Repairs that brought the platform something it did not have, see "check". */
   effectiveRepairs = 0;
   /** What the platform turned away, by why. */
@@ -141,6 +153,8 @@ export class MemoryPlatform {
     let resolveClosed: (close: CloudClose) => void = () => {};
     let isOpen = false;
     let isClosed = false;
+    /** The browser said to close: it hears and says nothing more, and what it sent arrives first. */
+    let isClosing = false;
     const closed = new Promise<CloudClose>((resolve) => {
       resolveClosed = resolve;
     });
@@ -187,7 +201,7 @@ export class MemoryPlatform {
       frames: new Reassembler(SYNC_LIMITS.update),
       deliver: (data) =>
         down.carry(data, () => {
-          if (isClosed || this.faults.silent) return;
+          if (isClosed || isClosing || this.faults.silent) return;
           toClient(data);
         }),
       close: (code) => end(code),
@@ -212,6 +226,7 @@ export class MemoryPlatform {
       opened,
       closed,
       send: (data) => {
+        if (isClosing) return;
         const copy = data.slice();
         up.carry(copy, () => {
           if (isClosed || !isOpen || this.faults.silent) return;
@@ -222,8 +237,24 @@ export class MemoryPlatform {
         toClient = (data) => listener(data.slice());
       },
       buffered: () => up.bytes(),
-      close: () => end(1000),
+      close: () => {
+        if (isClosed || isClosing) return;
+        isClosing = true;
+        // A line that died carries nothing, and the browser gives up on it by itself.
+        if (this.faults.silent) {
+          end(1000);
+          return;
+        }
+        // As a WebSocket does: what the browser sent before it closed still gets there, however
+        // long the line takes, and the platform does what it says. Only then is it closed.
+        up.carry(new Uint8Array(0), () => end(1000));
+      },
     };
+  }
+
+  /** Never, where the platform does not answer at all, see `PlatformFaults.hangs`. */
+  answers(): Promise<void> {
+    return this.faults.hangs ? new Promise(() => {}) : Promise.resolve();
   }
 
   /** The session of a user ends: their connections close, saying so, until `signIn`. */
@@ -273,13 +304,17 @@ export class MemoryPlatform {
     if (this.faults.unreachable) throw new Error("The platform is not there");
     if (this.signedOut.has(user)) throw new CloudSignedOut("Nobody is signed in");
     const project = this.projects.get(id);
-    if (!project || project.owner !== user) return "missing";
+    if (!project || project.owner !== user) {
+      if (!project && this.voidsUnmade) this.deleted.add(id);
+      return "missing";
+    }
     if (this.repositories.has(id)) return "hasRepository";
     // Its connections go first, so that nothing of it comes back.
     for (const side of this.#sides) if (side.project === project) side.close(SYNC_CLOSE.missing);
     this.projects.delete(id);
     this.#working.delete(id);
     this.removed.push(id);
+    this.deleted.add(id);
     return "removed";
   }
 
@@ -389,6 +424,11 @@ export class MemoryPlatform {
       return;
     }
     if (!project && message.create) {
+      // A project that was taken away is not made again, whoever asks.
+      if (this.deleted.has(message.project)) {
+        side.close(SYNC_CLOSE.missing);
+        return;
+      }
       if (message.payload.length > SYNC_LIMITS.state) {
         side.close(SYNC_CLOSE.tooLarge);
         return;
@@ -628,8 +668,14 @@ export class TestCloudBrowser {
     return {
       platform: "https://platform.test",
       connect: () => this.platform.connect(this.user, this.tag),
-      list: async () => this.platform.list(this.user),
-      remove: async (project) => this.platform.remove(this.user, project),
+      list: async () => {
+        await this.platform.answers();
+        return this.platform.list(this.user);
+      },
+      remove: async (project) => {
+        await this.platform.answers();
+        return this.platform.remove(this.user, project);
+      },
       links: this.links,
       syncer: (key) => this.writers.writer(`cloud.${key}`, page),
       line: (key) => this.lines.line(key),

@@ -26,7 +26,10 @@ import type {
  */
 const forward = (link: CloudLink, change: CloudLinkChange): CloudLink => {
   const { creating: _creating, ...made } = link;
-  const next: CloudLink = change.made ? made : link;
+  const kept: CloudLink = change.made ? made : link;
+  // The platform took what waited to go in one piece: nothing waits like that any more.
+  const { resync: _resync, ...settled } = kept;
+  const next: CloudLink = change.resync === null ? settled : kept;
   const isAhead = change.seq !== undefined && change.seq > link.seq;
   return {
     ...next,
@@ -40,6 +43,9 @@ const forward = (link: CloudLink, change: CloudLinkChange): CloudLink => {
     ...(change.generation !== undefined &&
       link.generation === undefined && { generation: change.generation }),
     ...(change.pending !== undefined && { pending: change.pending }),
+    ...(typeof change.resync === "number" && {
+      resync: Math.max(link.resync ?? 0, change.resync),
+    }),
     ...(change.name !== undefined && { name: change.name }),
     ...(change.repository !== undefined && { repository: change.repository }),
     ...(change.owner !== undefined && { owner: change.owner }),

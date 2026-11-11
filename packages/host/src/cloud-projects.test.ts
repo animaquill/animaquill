@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { NoAnswer } from "./answers.ts";
 import { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
 import { CloudSignedOut } from "./index.ts";
 
@@ -10,7 +11,10 @@ interface Sent {
   readonly headers: Record<string, string>;
 }
 
-const platform = (answer: (sent: Sent) => Response | Promise<Response>) => {
+const platform = (
+  answer: (sent: Sent, signal: AbortSignal | undefined) => Response | Promise<Response>,
+  timeoutMs?: number,
+) => {
   const sent: Sent[] = [];
   const projects = browserCloudProjects({
     api: (path) => `https://platform.example/api${path}`,
@@ -22,11 +26,18 @@ const platform = (answer: (sent: Sent) => Response | Promise<Response>) => {
         headers: { ...(init?.headers as Record<string, string> | undefined) },
       };
       sent.push(request);
-      return answer(request);
+      return answer(request, init?.signal ?? undefined);
     },
+    ...(timeoutMs !== undefined && { timeoutMs }),
   });
   return { projects, sent };
 };
+
+/** An answer that never comes, as on a line that hangs: only giving up ends it. */
+const hanging = (_sent: Sent, signal: AbortSignal | undefined) =>
+  new Promise<Response>((_resolve, reject) => {
+    signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+  });
 
 const FULL = {
   id: "p1",
@@ -109,25 +120,62 @@ describe("the list of projects of the platform", () => {
     ).toMatchObject({ copy: "frozen", attention: "new" });
   });
 
-  test("is no project without an id, a name and a time", () => {
+  test("is no project without an id that names a project of a platform", () => {
     expect(projectSummaryOf({ name: "原子", updatedAt: 5 })).toBeUndefined();
     expect(projectSummaryOf({ id: "", name: "原子", updatedAt: 5 })).toBeUndefined();
-    expect(projectSummaryOf({ id: "p1", updatedAt: 5 })).toBeUndefined();
-    expect(projectSummaryOf({ id: "p1", name: "原子" })).toBeUndefined();
+    expect(projectSummaryOf({ id: 5, name: "原子", updatedAt: 5 })).toBeUndefined();
+    // Nothing the sync protocol takes, so nothing that could be opened, or be a project here.
+    expect(projectSummaryOf({ id: "../x y", name: "原子", updatedAt: 5 })).toBeUndefined();
+    expect(projectSummaryOf({ id: "p".repeat(65), name: "原子", updatedAt: 5 })).toBeUndefined();
     expect(projectSummaryOf("p1")).toBeUndefined();
     expect(projectSummaryOf(null)).toBeUndefined();
   });
 
-  test("asks the platform's API, and keeps what are projects", async () => {
+  test("keeps a project whose name or time it cannot read: the platform has it all the same", () => {
+    // Whether the platform still has a project is read from the list: one that fell out of it
+    // for a field would look like one that is gone.
+    expect(projectSummaryOf({ id: "p1", updatedAt: 5 })).toEqual({
+      id: "p1",
+      name: "",
+      updatedAt: 5,
+    });
+    expect(projectSummaryOf({ id: "p1", name: "原子", updatedAt: "2026-11-11T00:00:00Z" })).toEqual(
+      { id: "p1", name: "原子", updatedAt: 0 },
+    );
+  });
+
+  test("asks the platform's API, and keeps what are projects, each once", async () => {
     const { projects, sent } = platform(() =>
-      Response.json({ projects: [FULL, { id: 5 }, { id: "p2", name: "片头", updatedAt: 9 }] }),
+      Response.json({
+        projects: [
+          FULL,
+          { id: 5 },
+          { id: "p2", name: "片头", updatedAt: 9 },
+          { id: "p1", name: "同一个项目又来一次", updatedAt: 300 },
+          { id: "not an id", name: "不是项目", updatedAt: 1 },
+        ],
+      }),
     );
     expect(await projects.list()).toEqual([FULL, { id: "p2", name: "片头", updatedAt: 9 }]);
     expect(sent).toEqual([
       { url: "https://platform.example/api/projects", method: "GET", headers: {} },
     ]);
-    const odd = platform(() => Response.json({ projects: "none" }));
-    expect(await odd.projects.list()).toEqual([]);
+    const none = platform(() => Response.json({ projects: [] }));
+    expect(await none.projects.list()).toEqual([]);
+  });
+
+  test("takes an answer that is no list for no answer, never for no projects", async () => {
+    // An empty list says that the platform has none of the projects this browser has copies of.
+    for (const body of ['{"projects":"none"}', "{}", '{"error":"unavailable"}', "[]", "null"]) {
+      const odd = platform(
+        () => new Response(body, { headers: { "content-type": "application/json" } }),
+      );
+      await expect(odd.projects.list(), body).rejects.toThrow("not a list");
+    }
+    const page = platform(
+      () => new Response("<html>登录</html>", { headers: { "content-type": "text/html" } }),
+    );
+    await expect(page.projects.list()).rejects.toThrow();
   });
 
   test("says that nobody is signed in, and rejects where the platform cannot say", async () => {
@@ -139,6 +187,30 @@ describe("the list of projects of the platform", () => {
       throw new TypeError("Failed to fetch");
     });
     await expect(offline.projects.list()).rejects.toThrow("Failed to fetch");
+  });
+
+  test("gives up on a platform that does not answer, and stops asking", async () => {
+    let given: AbortSignal | undefined;
+    const { projects } = platform((sent, signal) => {
+      given = signal;
+      return hanging(sent, signal);
+    }, 20);
+    await expect(projects.list()).rejects.toBeInstanceOf(NoAnswer);
+    expect(given?.aborted).toBe(true);
+    // Also where whatever carries the request does not hear that it should stop.
+    const deaf = platform(() => new Promise<Response>(() => {}), 20);
+    await expect(deaf.projects.list()).rejects.toBeInstanceOf(NoAnswer);
+    // An answer whose body never ends is none either.
+    const slow = platform(
+      () =>
+        ({
+          status: 200,
+          ok: true,
+          json: () => new Promise(() => {}),
+        }) as unknown as Response,
+      20,
+    );
+    await expect(slow.projects.list()).rejects.toBeInstanceOf(NoAnswer);
   });
 });
 
@@ -180,6 +252,22 @@ describe("taking a project of the platform away", () => {
     await expect(projects.remove("p1")).rejects.toThrow("409");
   });
 
+  test("takes only the platform's 204 for a project that is gone, not anything that went well", async () => {
+    // A gateway, or a page that asks people to sign in, says 200 to anything: the project is
+    // still there, and people would be told it is not.
+    const answers = [
+      new Response("<html>登录</html>", { status: 200, headers: { "content-type": "text/html" } }),
+      Response.json({ ok: true }),
+      new Response(null, { status: 202 }),
+      new Response(null, { status: 205 }),
+    ];
+    const { projects } = platform(() => answers.shift() as Response);
+    await expect(projects.remove("p1")).rejects.toThrow("200");
+    await expect(projects.remove("p1")).rejects.toThrow("200");
+    await expect(projects.remove("p1")).rejects.toThrow("202");
+    await expect(projects.remove("p1")).rejects.toThrow("205");
+  });
+
   test("says that nobody is signed in, and rejects without a network", async () => {
     const out = platform(() => Response.json({ error: "signedOut" }, { status: 401 }));
     await expect(out.projects.remove("p1")).rejects.toBeInstanceOf(CloudSignedOut);
@@ -187,5 +275,10 @@ describe("taking a project of the platform away", () => {
       throw new TypeError("Failed to fetch");
     });
     await expect(offline.projects.remove("p1")).rejects.toThrow("Failed to fetch");
+  });
+
+  test("gives up on a platform that does not answer: the project may still be there", async () => {
+    const { projects } = platform(hanging, 20);
+    await expect(projects.remove("p1")).rejects.toBeInstanceOf(NoAnswer);
   });
 });

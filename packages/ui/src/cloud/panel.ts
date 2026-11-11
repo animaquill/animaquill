@@ -1,7 +1,14 @@
 import type { RepositoryStatus } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import type { CloudProjectsSnapshot } from "./projects.ts";
-import { keptText, knownPause, momentText, pauseDetail, pauseText } from "./repository-text.ts";
+import {
+  goneKind,
+  keptText,
+  knownPause,
+  momentText,
+  pauseDetail,
+  pauseText,
+} from "./repository-text.ts";
 import type { RepositoryWatchSnapshot } from "./repository-watch.ts";
 import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
 
@@ -17,8 +24,10 @@ import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
  *   says "☁ 云端项目" then, has a row that says it is only in this browser, with "下载到文件夹…",
  *   and "从这个浏览器移除…" in place of "断开云端…".
  * - Without a network, or with changes on their way: "☁ 离线，3 个改动待发".
- * - Something people have to do: "☁ 要处理". Syncing stopped, archiving paused, or the project
- *   has no repository yet, as one from before every project of the platform had one.
+ * - Something people have to do: "☁ 要处理". Syncing stopped, archiving paused, the project
+ *   has no repository yet, as one from before every project of the platform had one, or
+ *   connecting it was not finished: it is not on the platform yet, as far as is known. The panel
+ *   says which, and has the way back to the dialog that connects it.
  *
  * No DOM, and nothing of it is kept: the same input says the same thing.
  */
@@ -38,6 +47,8 @@ export type PanelActionId =
   | "connect"
   /** The same dialog, for a project of the platform that has no repository yet. */
   | "chooseRepository"
+  /** The same dialog, for a project whose connecting stopped before it was on the platform. */
+  | "finishConnect"
   | "switchRepository"
   | "disconnect"
   | "removeFromBrowser"
@@ -92,6 +103,11 @@ export interface PanelInput {
   readonly kind: CloudProjectsSnapshot["kind"];
   /** For "linked": where the project is on this computer. */
   readonly local?: "folder" | "browser";
+  /**
+   * For "linked": whether the project is on the platform, as far as this window knows, see
+   * `CloudProjectsSnapshot`. False: connecting it is not finished. Taken to be where nothing says.
+   */
+  readonly made?: boolean;
   /** For "detached": why the folder does not sync. */
   readonly reason?: "copy" | "browser" | "foreign";
   /** For "linked": how syncing goes. */
@@ -117,6 +133,7 @@ export function panelInputOf(
   return {
     kind: "linked",
     local: snapshot.local,
+    made: snapshot.made,
     sync: snapshot.session.getSnapshot(),
     ...(archive && { archive }),
     ...more,
@@ -125,7 +142,10 @@ export function panelInputOf(
 
 const plain = { interpolation: { escapeValue: false } } as const;
 
-/** What helps with a pause of archiving, the most likely first. Another repository is always there. */
+/**
+ * What helps with a pause of archiving, the most likely first. Another repository is always
+ * there, at the end of the panel, unless it is what helps most.
+ */
 const PAUSE_ACTIONS: Readonly<Record<string, readonly PanelActionId[]>> = {
   diverged: ["continueWithEditor"],
   gone: ["archiveNow"],
@@ -262,10 +282,14 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   // One from before every project of the platform had a repository, or one whose connecting
   // stopped halfway.
   const lacksRepository = status?.state === "none";
+  // Connecting stopped before the project was on the platform: nothing is known of a repository,
+  // and nothing says that the platform has the project at all. Only where there is a dialog to
+  // go back to, which there is where the platform saves projects to repositories.
+  const isUnfinished = input.made === false && watch !== undefined;
   const isAway = state === "offline" || state === "reconnecting";
 
   const level: PanelLevel =
-    isStuck || isPaused || lacksRepository
+    isStuck || isPaused || lacksRepository || isUnfinished
       ? "attention"
       : state === "online" && pending === 0
         ? "ok"
@@ -287,7 +311,15 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
 
   // ---- the repository
   if (watch) {
-    if (repository) {
+    if (isUnfinished) {
+      rows.push(
+        row("repository", t("cloud.panel.repository.unfinished"), {
+          notes: [t("cloud.panel.repository.unfinishedNote")],
+          tone: "attention",
+          actions: actions(["finishConnect"]),
+        }),
+      );
+    } else if (repository) {
       const isStale = watch.trouble !== undefined && watch.trouble !== "signedOut";
       rows.push(
         row(
@@ -364,11 +396,16 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       const { reason, fix } = pauseText(status, t);
       const detail = pauseDetail(status, t);
       const kept = keptText(status, t);
+      // A repository that was deleted takes no archive again: another one is the way out.
+      const helps =
+        goneKind(status) === "deleted"
+          ? (["switchRepository"] as const)
+          : (PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]);
       rows.push(
         row("archive", t("cloud.panel.archive.paused", { reason, ...plain }), {
           notes: [fix, ...(detail ? [detail] : []), ...(kept ? [kept] : [])],
           tone: "attention",
-          actions: actions(PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]),
+          actions: actions(helps),
         }),
       );
     } else {
@@ -403,8 +440,12 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     title,
     rows,
     actions: [
-      // Another repository at any time, not only where archiving paused.
-      ...(repository ? [action("switchRepository")] : []),
+      // Another repository at any time, not only where archiving paused: here, unless a row
+      // says so already, as the way out of what it says.
+      ...(repository &&
+      !rows.some((each) => each.actions.some((offered) => offered.id === "switchRepository"))
+        ? [action("switchRepository")]
+        : []),
       action(isDirect ? "removeFromBrowser" : "disconnect", { kind: "danger" }),
     ],
     sync: state,

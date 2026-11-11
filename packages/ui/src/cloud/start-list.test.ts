@@ -546,6 +546,19 @@ describe("StartList", () => {
     expect(JSON.stringify([...links.links.values()])).toBe(before);
   });
 
+  it("shows a project whose name the list could not say by what this browser knows, and keeps that", async () => {
+    const { list, links, world } = setUp();
+    await links.put(link("p-annual", "p-annual", { name: "年会视频" }));
+    // The platform has the project, and what it is called did not come through.
+    world.listed = [listed("p-annual", "", { repository: repository("annual") })];
+    await list.refresh();
+    // It is there all the same: whether the platform has a project is what its list is read for.
+    expect(read(list.getSnapshot()).cloud).toEqual([
+      "年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过",
+    ]);
+    expect((await links.get("p-annual"))?.name).toBe("年会视频");
+  });
+
   it("asks the platform nothing while nobody is signed in, and reads the list once someone is", async () => {
     const who = account({ status: "signedOut" });
     const { list, links, world } = setUp(who);

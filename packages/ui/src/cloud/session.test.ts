@@ -74,8 +74,13 @@ class Browser extends TestCloudBrowser {
     const session = new ProjectSession(this.library, memoryAddress(), MESSAGES, { window: name });
     if (!(await session.open(id))) throw new Error("did not open");
     const store = session.store as ProjectStore;
-    const link = await this.links.get(id);
+    let link = await this.links.get(id);
     if (!link) throw new Error("no link");
+    if (options.create && !link.creating) {
+      // As connecting leaves it: the project is not on the platform yet, as far as the link knows.
+      link = { ...link, creating: true };
+      await this.links.put(link);
+    }
     const cloud = new CloudSession({
       store,
       journal: session.journal,
@@ -794,5 +799,201 @@ describe("the copies of a project on the platform", () => {
     expect(a.store.execute(writeFile("code/x.js", "x")).ok).toBe(true);
     await time.advance(5000);
     expect(platform.workingCopy(CLOUD_ID).getState().files["code/x.js"]).toBeUndefined();
+  });
+});
+
+describe("a change the platform does not take, and going on from the project as it is", () => {
+  it("takes what goes in one piece for sent only once the platform took it, also after a reload", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    // The platform does not take a change, and never will as it is.
+    platform.faults.rejections.push({ reason: "invalid", retry: false });
+    a.store.execute(writeFile("code/a.js", "a"));
+    await time.advance(500);
+    expect(a.cloud.getSnapshot()).toMatchObject({ state: "paused", problem: { kind: "rejected" } });
+    const before = (await first.links.get(id))?.pushed ?? 0;
+    // People say to go on from the project as it is, just as the platform goes out of reach.
+    platform.faults.silent = true;
+    platform.drop();
+    await a.cloud.resyncFromHere();
+    await time.advance(2000);
+    let link = await first.links.get(id);
+    // Nothing is taken for sent: how far the platform has the log stays where it was, and the
+    // link says what waits to go in one piece.
+    expect(link?.pushed).toBe(before);
+    expect(link?.resync).toBeGreaterThan(before);
+    expect(a.cloud.getSnapshot().pending).toBe(1);
+    // More comes after it, which waits behind it.
+    a.store.execute(writeFile("code/b.js", "b"));
+    await time.advance(1500);
+    expect(a.cloud.getSnapshot().pending).toBe(2);
+    expect((await first.links.get(id))?.pushed).toBe(before);
+
+    // The page loads again: the window that comes after knows what waits, and how.
+    await a.cloud.close();
+    await a.session.close();
+    opened.splice(opened.indexOf(a), 1);
+    const again = await first.open(id, time);
+    opened.push(again);
+    await time.advance(2000);
+    expect(again.cloud.getSnapshot().pending).toBe(2);
+    expect(platform.effectiveRepairs).toBe(0);
+    // The platform is back: what waited goes as one repair, the rest as it is, and only then
+    // does any of it count as sent.
+    platform.faults.silent = false;
+    await time.advance(40_000);
+    expect(again.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    const files = platform.workingCopy(CLOUD_ID).getState().files;
+    expect(files["code/a.js"]).toBe("a");
+    expect(files["code/b.js"]).toBe("b");
+    expect(platform.effectiveRepairs).toBe(1);
+    expect(platform.rejected).toEqual(["invalid"]);
+    link = await first.links.get(id);
+    expect(link?.pushed).toBeGreaterThan(before);
+    expect(link).not.toHaveProperty("resync");
+  });
+
+  it("goes on waiting where the platform does not take the repair either", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    platform.faults.rejections.push({ reason: "invalid", retry: false });
+    a.store.execute(writeFile("code/a.js", "a"));
+    await time.advance(500);
+    const before = (await first.links.get(id))?.pushed ?? 0;
+    // Still wrong: the repair is not taken either.
+    platform.faults.rejections.push({ reason: "invalid", retry: false });
+    await a.cloud.resyncFromHere();
+    await time.advance(5000);
+    expect(a.cloud.getSnapshot()).toMatchObject({
+      state: "paused",
+      problem: { kind: "rejected", reason: "invalid" },
+      pending: 1,
+    });
+    const link = await first.links.get(id);
+    expect(link?.pushed).toBe(before);
+    expect(link?.resync).toBeGreaterThan(before);
+    expect(platform.workingCopy(CLOUD_ID).getState().files["code/a.js"]).toBeUndefined();
+    // Asked again once it is right, it goes.
+    await a.cloud.resyncFromHere();
+    await time.advance(5000);
+    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    expect(platform.workingCopy(CLOUD_ID).getState().files["code/a.js"]).toBe("a");
+    expect(await first.links.get(id)).not.toHaveProperty("resync");
+  });
+});
+
+describe("a project that is to be made on the platform, or was", () => {
+  it("is not made again by a window that takes over, once another window saw it there", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    // Another window of the browser opened the project while it was still on its way there.
+    const b = await first.open(id, time, { create: true });
+    opened.push(b);
+    await time.advance(100);
+    expect(b.cloud.getSnapshot().here).toBe(false);
+    // The window that made it notes that it is there, as `CloudProjects` does.
+    await first.links.update(id, CLOUD_ID, { made: true });
+    // The project is taken away on the platform, and that window goes. Nothing but the editor
+    // keeps a platform that does not remember what it took away from making it again.
+    expect(platform.remove("ada", CLOUD_ID)).toBe("removed");
+    platform.deleted.clear();
+    await a.cloud.close();
+    await time.advance(40_000);
+    expect(b.cloud.getSnapshot()).toMatchObject({
+      here: true,
+      state: "paused",
+      problem: { kind: "missing" },
+    });
+    expect(b.cloud.getSnapshot().problem).not.toHaveProperty("unmade");
+    expect(platform.projects.has(CLOUD_ID)).toBe(false);
+  });
+
+  it("says that the platform would not make it, apart from one that was there and is gone", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const { id, state } = fixtureState();
+    const first = new Browser(platform, "ada");
+    await first.project(id, state);
+    // The platform was asked to take the project away before it was made, and makes none
+    // under that id.
+    platform.deleted.add(CLOUD_ID);
+    const a = await first.open(id, time, { create: true });
+    opened.push(a);
+    await time.advance(500);
+    expect(a.cloud.getSnapshot()).toMatchObject({ state: "paused" });
+    expect(a.cloud.getSnapshot().problem).toEqual({ kind: "missing", unmade: true });
+    expect(platform.projects.size).toBe(0);
+    // One that was there, and was taken away: it is missing, and nothing more.
+    const other = await start(time);
+    expect(other.platform.remove("ada", CLOUD_ID)).toBe("removed");
+    await time.advance(500);
+    expect(other.a.cloud.getSnapshot().problem).toEqual({ kind: "missing" });
+  });
+
+  it("says when nothing of it is on its way to the platform any more", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const { id, state } = fixtureState();
+    const first = new Browser(platform, "ada");
+    await first.project(id, state);
+    // A slow line: the hello that makes the project takes two seconds to get there.
+    platform.faults.line = { time, bytesPerSecond: Math.ceil(state.length / 2) };
+    const a = await first.open(id, time, { create: true });
+    expect(a.cloud.mayStillCreate).toBe(false);
+    // One that never connected has nothing on its way.
+    expect(await a.cloud.whenQuiet(1000)).toBe(true);
+    await time.advance(300);
+    expect(a.cloud.getSnapshot().state).toBe("connecting");
+    // From the first connection on, a hello that makes the project may be under way.
+    expect(a.cloud.mayStillCreate).toBe(true);
+    await a.cloud.close();
+    expect(platform.projects.size).toBe(0);
+    // Closed, and what it sent is still on its way: not quiet yet.
+    let isQuiet: boolean | undefined;
+    void a.cloud.whenQuiet(10_000).then((quiet) => {
+      isQuiet = quiet;
+    });
+    await time.advance(1000);
+    expect(isQuiet).toBeUndefined();
+    expect(await Promise.race([a.cloud.whenQuiet(0), time.advance(10).then(() => "waiting")])).toBe(
+      false,
+    );
+    await time.advance(3000);
+    // It got there, and the platform made the project: only then is the connection closed.
+    expect(isQuiet).toBe(true);
+    expect(platform.projects.has(CLOUD_ID)).toBe(true);
+
+    // Once the platform said that the project is there, nothing of this window makes it.
+    delete platform.faults.line;
+    const b = await first.open(id, time, { create: true });
+    opened.push(b);
+    await time.advance(500);
+    expect(b.cloud.getSnapshot().state).toBe("online");
+    expect(b.cloud.mayStillCreate).toBe(false);
+  });
+
+  it("says nothing more once it stopped, however long what it waited for takes", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const { id, state } = fixtureState();
+    const first = new Browser(platform, "ada");
+    await first.project(id, state);
+    // What the browser is called on the platform takes a moment to read.
+    let name: (device: string) => void = () => {};
+    first.links.device = () =>
+      new Promise<string>((resolve) => {
+        name = resolve;
+      });
+    const a = await first.open(id, time, { create: true });
+    await time.advance(100);
+    expect(a.cloud.getSnapshot().state).toBe("connecting");
+    // The window stops right then, as where people gave up on connecting.
+    const closing = a.cloud.close();
+    name("device-1");
+    await closing;
+    await time.advance(5000);
+    // Its hello never went: nothing makes the project after whoever stopped it moved on.
+    expect(platform.projects.size).toBe(0);
+    expect(await a.cloud.whenQuiet(1000)).toBe(true);
   });
 });

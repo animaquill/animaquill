@@ -1,13 +1,11 @@
 import {
   RepositoryRefused,
   SYNC_CLOSE,
-  SYNC_PROTOCOL,
-  encodeSyncMessage,
   type LocalFolder,
   type RepositoryChoice,
 } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryWindow } from "../workbench/memory-library.ts";
 import { MemoryPlatform, TestTime } from "./cloud-support.ts";
 import {
@@ -17,6 +15,7 @@ import {
   type CloudConnect,
   type ConnectIntent,
 } from "./connect.ts";
+import { cloudPanel, panelInputOf } from "./panel.ts";
 import { CLOUD_FILE } from "./projects.ts";
 import {
   answering,
@@ -394,6 +393,104 @@ describe("what has to be there before a project can connect", () => {
     connect.close();
   });
 
+  it("says whose the new repository is once it is known who is signed in", async () => {
+    const { here } = await setUp();
+    // As the page comes back from signing in: the dialog is there before the account says who.
+    here.who.set({ status: "unknown" });
+    const connect = dialogOf(here);
+    expect(connect.picker.owner).toBeUndefined();
+    const seen: (string | undefined)[] = [];
+    connect.picker.subscribe(() => seen.push(connect.picker.getSnapshot().owner));
+    here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: true });
+    // Whoever shows the picker hears of it, and reads it where it always did.
+    expect(seen[0]).toBe("ada");
+    expect(connect.picker.owner).toBe("ada");
+    expect(connect.picker.getSnapshot().owner).toBe("ada");
+    // It follows the account from then on.
+    here.who.set({ status: "signedIn", id: "user-bob", name: "bob", appInstalled: true });
+    expect(connect.picker.owner).toBe("bob");
+    here.who.set({ status: "signedOut" });
+    expect(connect.picker.owner).toBeUndefined();
+    connect.close();
+  });
+
+  it("keeps what the dialog was at where leaving says nothing about when it is over", async () => {
+    const memory = memoryWindow();
+    const { time, platform, repository, here, id } = await setUp({ memory });
+    here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: false });
+    // The page takes a moment to go: it is not leaving yet when the dialog could ask, and what
+    // leaves it for installing the App says nothing when that is over.
+    here.world.leaving = false;
+    const connect = dialogOf(here);
+    connect.picker.setName("my-film");
+    await connect.installApp();
+    expect(here.installApp).toHaveBeenCalledOnce();
+    expect(JSON.parse(memory.read("cloud.connect") ?? "null")).toMatchObject({
+      key: id,
+      name: "my-film",
+    });
+    // The dialog going away with the page does not take it back either.
+    connect.close();
+    expect(JSON.parse(memory.read("cloud.connect") ?? "null")).toMatchObject({ key: id });
+
+    // The page comes back with the App installed: the dialog opens again with what they chose.
+    const back = await windowOf(platform, time, {
+      repository,
+      memory,
+      library: here.library,
+      browser: here.browser,
+    });
+    await back.open(id);
+    const again = back.cloud.beginConnect({ resume: true });
+    expect(again?.picker.getSnapshot()).toMatchObject({ name: "my-film", nameTouched: true });
+    again?.close();
+
+    // People who stayed, and close the dialog themselves, are done with it.
+    back.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: false });
+    back.world.leaving = false;
+    const stayed = dialogOf(back);
+    await stayed.installApp();
+    expect(JSON.parse(memory.read("cloud.connect") ?? "null")).toMatchObject({ key: id });
+    expect(await stayed.cancel()).toBe("closed");
+    expect(memory.read("cloud.connect")).toBe("");
+  });
+
+  it("waits for leaving to be over where it says when, and only then for whether people stayed", async () => {
+    const memory = memoryWindow();
+    const { here, id } = await setUp({ memory });
+    here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: false });
+    // Leaving takes a moment, as with things to keep first, and says when it is over.
+    here.world.leaving = false;
+    let go = () => {};
+    here.installApp.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          go = () => {
+            here.world.leaving = true;
+            resolve();
+          };
+        }),
+    );
+    const connect = dialogOf(here);
+    const leaving = connect.installApp();
+    await Promise.resolve();
+    expect(JSON.parse(memory.read("cloud.connect") ?? "null")).toMatchObject({ key: id });
+    go();
+    await leaving;
+    // The page is on its way: what the dialog was at stays for the one that comes back.
+    expect(JSON.parse(memory.read("cloud.connect") ?? "null")).toMatchObject({ key: id });
+    connect.close();
+    expect(JSON.parse(memory.read("cloud.connect") ?? "null")).toMatchObject({ key: id });
+
+    // Over, and people stayed after all: it is forgotten.
+    here.world.leaving = false;
+    here.installApp.mockImplementation(async () => {});
+    const stayed = dialogOf(here);
+    await stayed.installApp();
+    expect(memory.read("cloud.connect")).toBe("");
+    stayed.close();
+  });
+
   it("forgets what the dialog was at where people stayed, closed it, or it was too long ago", async () => {
     const memory = memoryWindow();
     const { time, here, id } = await setUp({ signedIn: false, memory });
@@ -766,97 +863,336 @@ describe("giving up on connecting", () => {
     again.close();
   });
 
-  it("takes away a project that only got to the platform after it was asked to take it away", async () => {
+  it("asks the platform to take the project away only once what the window sent got there", async () => {
     const platform = new MemoryPlatform();
     let asked = 0;
-    const { state, id: projectId } = fixtureState();
     const { time, here, id } = await setUpWith(platform, {
       remove: async (project) => {
         asked += 1;
-        if (asked === 1) {
-          // What the window sent before it stopped was still on its way: it gets there now.
-          const late = platform.connect("ada");
-          await late.opened;
-          late.send(
-            encodeSyncMessage({
-              t: "hello",
-              v: SYNC_PROTOCOL,
-              project,
-              after: 0,
-              device: "device",
-              window: "w",
-              editor: "test",
-              create: { name: "原子", projectId },
-              payload: state,
-            }),
-          );
-          return "missing";
-        }
         return platform.remove("ada", project);
       },
     });
     const connect = dialogOf(here);
     await time.advance(100);
-    // The platform says nothing: the window is still saying hello when people give up.
-    platform.faults.silent = true;
+    // A slow line: the hello that makes the project takes three seconds to get there.
+    platform.faults.line = { time, bytesPerSecond: Math.ceil(fixtureState().state.length / 3) };
     const submitted = connect.submit();
-    await time.advance(100);
+    await time.advance(500);
     expect(here.cloud.session?.getSnapshot().state).toBe("connecting");
-    platform.faults.silent = false;
+    expect(platform.projects.size).toBe(0);
+    // People give up while it is on its way.
     const cancelled = connect.cancel();
-    await time.advance(3000);
+    await time.advance(1500);
+    // Not asked yet: the platform would say that there is no such project, and make it a moment
+    // later, with nobody left to take it away.
+    expect(asked).toBe(0);
+    expect(connect.getSnapshot().cancelling).toBe(true);
+    await time.advance(5000);
     expect(await cancelled).toBe("cancelled");
     await submitted;
-    // Asked twice: the first time it was not there yet.
-    expect(asked).toBe(2);
+    // What it sent got there, the project was made, and then taken away: the platform said so.
+    expect(platform.removed).toHaveLength(1);
     expect(platform.projects.size).toBe(0);
+    expect(await here.browser.links.get(id)).toBeUndefined();
+    expect(here.cloud.getSnapshot().kind).toBe("none");
+    // Nothing comes after it.
+    delete platform.faults.line;
+    await time.advance(60_000);
+    expect(platform.list("ada")).toEqual([]);
+  });
+
+  it("leaves nothing behind where its hello gets there after all, on a platform that keeps what it was asked to take away from being made", async () => {
+    const platform = new MemoryPlatform();
+    platform.voidsUnmade = true;
+    let asked = 0;
+    const { time, here, id } = await setUpWith(platform, {
+      remove: async (project) => {
+        asked += 1;
+        return platform.remove("ada", project);
+      },
+    });
+    const connect = dialogOf(here);
+    await time.advance(100);
+    // A line so slow that the hello is still on its way when the window stops waiting for its
+    // connection to close: nothing says when it will get there.
+    platform.faults.line = { time, bytesPerSecond: Math.ceil(fixtureState().state.length / 9) };
+    const submitted = connect.submit();
+    await time.advance(500);
+    const cancelled = connect.cancel();
+    await time.advance(7000);
+    expect(await cancelled).toBe("cancelled");
+    await submitted;
+    // Asked, and once more a moment later, as a hello may still be on its way: no such project.
+    expect(asked).toBe(2);
+    expect(platform.removed).toEqual([]);
+    expect(await here.browser.links.get(id)).toBeUndefined();
+    // The hello gets there at last, and makes nothing: the platform was asked to take that
+    // project away.
+    await time.advance(20_000);
+    expect(platform.projects.size).toBe(0);
+    delete platform.faults.line;
+    expect(platform.list("ada")).toEqual([]);
+  });
+
+  it.each([
+    ["a platform that only keeps what it took away from being made again", false],
+    ["a platform that keeps what it was asked to take away from being made", true],
+  ])(
+    "takes away what another window of the browser made of the project while this one gave up, on %s",
+    async (_, voidsUnmade) => {
+      const platform = new MemoryPlatform();
+      platform.voidsUnmade = voidsUnmade;
+      let asked = 0;
+      const { time, repository, here, id } = await setUpWith(platform, {
+        remove: async (project) => {
+          asked += 1;
+          return platform.remove("ada", project);
+        },
+      });
+      // The same project in another window of this browser.
+      const other = await windowOf(platform, time, {
+        repository,
+        browser: here.browser,
+        library: here.library,
+      });
+      await other.open(id);
+      here.world.others.set(id, 1);
+      const connect = dialogOf(here);
+      await time.advance(100);
+      // The platform does not hear this window: it is still saying hello when people give up.
+      platform.faults.silent = true;
+      const submitted = connect.submit();
+      await time.advance(100);
+      expect(here.cloud.session?.getSnapshot().state).toBe("connecting");
+      expect(other.cloud.getSnapshot().kind).toBe("linked");
+      // From here on the line is slow. The other window takes over syncing as this one stops,
+      // before it hears that the link is gone: its hello gets there most of a second later,
+      // after the platform said that there is no such project.
+      platform.faults.silent = false;
+      platform.faults.line = {
+        time,
+        bytesPerSecond: Math.ceil(fixtureState().state.length / 0.8),
+      };
+      const cancelled = connect.cancel();
+      await time.advance(5000);
+      expect(await cancelled).toBe("cancelled");
+      await submitted;
+      // Asked once more, after no window synced the project any more.
+      expect(asked).toBe(2);
+      expect(platform.removed).toHaveLength(voidsUnmade ? 0 : 1);
+      expect(platform.projects.size).toBe(0);
+      expect(await here.browser.links.get(id)).toBeUndefined();
+      expect(other.cloud.getSnapshot().kind).toBe("none");
+      delete platform.faults.line;
+      await time.advance(60_000);
+      expect(platform.list("ada")).toEqual([]);
+    },
+  );
+
+  it("waits for a link that is being made right now, and takes it back", async () => {
+    const { time, platform, here, id } = await setUp();
+    const connect = dialogOf(here);
+    await time.advance(100);
+    // Keeping the link takes a moment, and people give up right then.
+    const put = here.browser.links.put.bind(here.browser.links);
+    let release = () => {};
+    here.browser.links.put = async (link) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return put(link);
+    };
+    const submitted = connect.submit();
+    await time.advance(100);
+    expect(connect.getSnapshot().phase).toBe("working");
+    expect(await here.browser.links.get(id)).toBeUndefined();
+    // Closing the dialog now takes back what is being made: it does not just go away.
+    expect(connect.takesBack).toBe(true);
+    const cancelled = connect.cancel();
+    await time.advance(100);
+    expect(connect.getSnapshot().cancelling).toBe(true);
+    release();
+    await time.advance(100);
+    expect(await cancelled).toBe("cancelled");
+    await submitted;
+    expect(connect.getSnapshot().phase).toBe("cancelled");
+    // No link, and no project: nothing is left halfway, now or later.
+    expect(await here.browser.links.get(id)).toBeUndefined();
+    expect(here.cloud.getSnapshot().kind).toBe("none");
+    await time.advance(60_000);
+    expect(platform.projects.size).toBe(0);
+    expect(platform.list("ada")).toEqual([]);
+  });
+
+  it("makes no repository for a project that people gave up on as it got to the platform", async () => {
+    const { time, platform, repository, here, id } = await setUp();
+    const connect = dialogOf(here);
+    await time.advance(100);
+    // The project is on its way, on a slow line: it takes a second to get there.
+    platform.faults.line = { time, bytesPerSecond: fixtureState().state.length };
+    const submitted = connect.submit();
+    await time.advance(300);
+    expect(here.cloud.session?.getSnapshot().state).toBe("connecting");
+    // People give up, and that takes a moment to get going: finding out which windows have the
+    // project open.
+    let go = () => {};
+    here.world.othersWait = new Promise<void>((resolve) => {
+      go = resolve;
+    });
+    const cancelled = connect.cancel();
+    await time.advance(100);
+    expect(connect.getSnapshot().cancelling).toBe(true);
+    // Right then the project gets there after all.
+    await time.advance(3000);
+    expect(platform.projects.size).toBe(1);
+    expect(stepsOf(connect)).toBe("done waiting waiting");
+    // It is on its way out again: no repository is made for it.
+    expect(repository.calls.filter((call) => call.startsWith("link"))).toEqual([]);
+    go();
+    await time.advance(5000);
+    expect(await cancelled).toBe("cancelled");
+    await submitted;
+    expect(repository.calls.filter((call) => call.startsWith("link"))).toEqual([]);
+    expect(platform.projects.size).toBe(0);
+    expect(platform.repositories.size).toBe(0);
     expect(await here.browser.links.get(id)).toBeUndefined();
   });
 
-  it("takes away what another window of the browser made of the project while this one gave up", async () => {
+  it("does not take 'no such project' for gone where somebody else is signed in than whoever began", async () => {
     const platform = new MemoryPlatform();
-    let asked = 0;
-    const { state, id: projectId } = fixtureState();
+    // This browser reaches the platform as whoever is signed in, which changes below.
+    let user = "ada";
     const { time, repository, here, id } = await setUpWith(platform, {
-      remove: async (project) => {
-        asked += 1;
-        const outcome = platform.remove("ada", project);
-        if (asked === 1) {
-          // The other window took over syncing when this one stopped, before it heard that the
-          // link is gone: what it sent gets there right after the project was taken away, and
-          // makes it again.
-          const late = platform.connect("ada");
-          await late.opened;
-          late.send(
-            encodeSyncMessage({
-              t: "hello",
-              v: SYNC_PROTOCOL,
-              project,
-              after: 0,
-              device: "device",
-              window: "other",
-              editor: "test",
-              create: { name: "原子", projectId },
-              payload: state,
-            }),
-          );
-        }
-        return outcome;
-      },
+      connect: () => platform.connect(user),
+      remove: async (project) => platform.remove(user, project),
     });
-    here.world.others.set(id, 1);
     const connect = dialogOf(here);
     await time.advance(100);
     repository.refuse.link = new RepositoryRefused("unavailable");
     await submit(connect, time);
-    expect(platform.projects.size).toBe(1);
+    const project = (await here.browser.links.get(id))?.project ?? "";
+    expect(platform.projects.has(project)).toBe(true);
+    // Somebody else signs in: the platform says "no such project" of ada's, as of one that is
+    // gone.
+    user = "bob";
+    here.who.set({ status: "signedIn", id: "user-bob", name: "bob", appInstalled: true });
+    expect(await connect.cancel()).toBe("unconfirmed");
+    expect(connect.getSnapshot()).toMatchObject({ unconfirmed: true, cancelling: false });
+    // Nothing went: the project is ada's on the platform, and the link to it is still there.
+    expect(platform.projects.has(project)).toBe(true);
+    expect(await here.browser.links.get(id)).toMatchObject({ project, owner: "user-ada" });
+    expect(here.cloud.getSnapshot().kind).toBe("linked");
+    // Letting go all the same is theirs to say: the project stays ada's to take away.
+    expect(await connect.cancel({ force: true })).toBe("cancelled");
+    expect(await here.browser.links.get(id)).toBeUndefined();
+    expect(platform.projects.has(project)).toBe(true);
+  });
+
+  it("stops waiting for a platform that does not answer, and says that it could not make sure", async () => {
+    const { time, platform, repository, here, id } = await setUp();
+    const connect = dialogOf(here);
+    await time.advance(100);
+    repository.refuse.link = new RepositoryRefused("unavailable");
+    await submit(connect, time);
+    const project = (await here.browser.links.get(id))?.project ?? "";
+    // The line hangs: asking gets no answer, and no error either.
+    platform.faults.hangs = true;
+    const cancelled = connect.cancel();
+    await time.advance(20_000);
+    expect(connect.getSnapshot().cancelling).toBe(true);
+    await time.advance(10_000);
+    expect(await cancelled).toBe("unconfirmed");
+    expect(connect.getSnapshot()).toMatchObject({
+      phase: "choosing",
+      cancelling: false,
+      unconfirmed: true,
+    });
+    // As where it cannot be reached: connected, one step short, to give up on later.
+    expect((await here.browser.links.get(id))?.project).toBe(project);
+    platform.faults.hangs = false;
+    await time.advance(500);
+    expect(await connect.cancel()).toBe("cancelled");
+    expect(platform.projects.size).toBe(0);
+  });
+
+  it("says that connecting was given up on where the platform would not make the project, and starts anew", async () => {
+    const { time, platform, here, id } = await setUp();
+    const connect = dialogOf(here);
+    await time.advance(100);
+    // The first step stops without a network; the link stays, for the next try.
+    platform.faults.silent = true;
+    time.online = false;
+    await submit(connect, time, 40_000);
+    expect(connect.getSnapshot().problem).toEqual({ step: "upload", code: "offline" });
+    const first = (await here.browser.links.get(id))?.project ?? "";
+    // Meanwhile the platform was asked to take that project away, as by another window of the
+    // browser that gave up on connecting it: it makes none under that id.
+    platform.deleted.add(first);
+    platform.faults.silent = false;
+    time.online = true;
+    time.wake();
+    // People try again, with the link from before.
+    const again = connect.submit();
+    await time.advance(5000);
+    await again;
+    expect(connect.getSnapshot()).toMatchObject({
+      phase: "choosing",
+      problem: { step: "upload", code: "undone" },
+    });
+    expect(stepsOf(connect)).toBe("failed waiting waiting");
+    expect(await here.browser.links.get(id)).toBeUndefined();
+    expect(here.cloud.getSnapshot().kind).toBe("none");
+    expect(messagesOf(here.notifications)).toEqual([
+      "云端的项目没有建成：这次连接已经取消。项目还在这台电脑上，内容没有动，可以重新连接到云端。",
+    ]);
+    // Once more starts anew, as another project of the platform.
+    await submit(connect, time);
+    expect(stepsOf(connect)).toBe("done done running");
+    const second = (await here.browser.links.get(id))?.project ?? "";
+    expect(second).not.toBe(first);
+    expect(platform.projects.has(second)).toBe(true);
+    expect(platform.projects.has(first)).toBe(false);
+    connect.close();
+  });
+
+  it("is over once it turns out that the platform took the project away, where its answer did not come back", async () => {
+    const platform = new MemoryPlatform();
+    const { time, here, id } = await setUpWith(platform, {
+      remove: async (project) => {
+        platform.remove("ada", project);
+        throw new Error("the answer did not come back");
+      },
+    });
+    const connect = dialogOf(here);
+    await time.advance(100);
+    // The project is on its way, on a slow line, when people give up.
+    platform.faults.line = { time, bytesPerSecond: Math.ceil(fixtureState().state.length / 2) };
+    const submitted = connect.submit();
+    await time.advance(500);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const cancelled = connect.cancel();
     await time.advance(3000);
-    expect(await cancelled).toBe("cancelled");
-    // Asked once more, after no window synced the project any more.
-    expect(asked).toBe(2);
-    expect(platform.projects.size).toBe(0);
+    expect(await cancelled).toBe("unconfirmed");
+    await submitted;
+    // The platform took it away, and the dialog does not know: it says so, and stays.
+    expect(platform.removed).toHaveLength(1);
+    expect(connect.getSnapshot()).toMatchObject({ phase: "choosing", unconfirmed: true });
+    expect((await here.browser.links.get(id))?.creating).toBe(true);
+    // The window goes on connecting, and the platform does not make the project again. That
+    // is the answer: giving up came true, and nobody is left to choose what to do about a
+    // project the platform does not have.
+    await time.advance(40_000);
+    warn.mockRestore();
+    expect(connect.getSnapshot()).toMatchObject({ phase: "cancelled", unconfirmed: false });
     expect(await here.browser.links.get(id)).toBeUndefined();
+    expect(here.cloud.getSnapshot().kind).toBe("none");
+    expect(platform.projects.size).toBe(0);
+    expect(messagesOf(here.notifications)).toEqual([
+      "云端的项目没有建成：这次连接已经取消。项目还在这台电脑上，内容没有动，可以重新连接到云端。",
+    ]);
+    // The project is where it was, and its dialog is over.
+    expect(here.session.key).toBe(id);
+    expect(await connect.cancel()).toBe("closed");
   });
 
   it("stops the other windows of the browser that have the project open, and leaves nothing behind", async () => {
@@ -1029,6 +1365,228 @@ describe("giving up on connecting", () => {
   });
 });
 
+describe("a link that was there before the dialog opened", () => {
+  /** The cloud panel of the open project, as the status bar says it. */
+  const panelOf = (here: Awaited<ReturnType<typeof windowOf>>, time: TestTime) =>
+    cloudPanel(
+      panelInputOf(here.cloud.getSnapshot(), {
+        name: "原子",
+        canMoveToFolder: true,
+        now: time.now(),
+      }),
+      t.t,
+    );
+
+  /**
+   * Connecting stopped at the first step, without a network, and the dialog was closed without
+   * giving up: the link is there, and the project is not on the platform, as far as is known.
+   */
+  async function leftHalfway() {
+    const set = await setUp();
+    const { time, platform, here, id } = set;
+    const connect = dialogOf(here);
+    await time.advance(100);
+    platform.faults.silent = true;
+    time.online = false;
+    await submit(connect, time, 40_000);
+    expect(connect.getSnapshot().problem).toEqual({ step: "upload", code: "offline" });
+    connect.close();
+    const project = (await here.browser.links.get(id))?.project ?? "";
+    /** The network is back, and the project gets there by itself. */
+    const back = async () => {
+      platform.faults.silent = false;
+      time.online = true;
+      time.wake();
+      await time.advance(60_000);
+    };
+    return { ...set, project, back };
+  }
+
+  it("says in the panel that connecting is not finished, and how to go on", async () => {
+    const { time, platform, here, id, project } = await leftHalfway();
+    expect((await here.browser.links.get(id))?.creating).toBe(true);
+    expect(here.cloud.isOnPlatform).toBe(false);
+    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", made: false });
+    const panel = panelOf(here, time);
+    // Not "a project of the platform, all in step" with a repository that is "being looked for".
+    expect(panel.level).toBe("attention");
+    expect(panel.bar).toBe("☁ 要处理");
+    expect(panel.rows.find((row) => row.id === "repository")).toMatchObject({
+      text: "还没连接完",
+      notes: ["项目还没传到云端，也还没有仓库。联网后会自动接着传；点“接着连接…”把剩下的做完。"],
+      tone: "attention",
+      actions: [{ id: "finishConnect", label: "接着连接…", enabled: true, kind: "primary" }],
+    });
+    expect(platform.projects.has(project)).toBe(false);
+  });
+
+  it("notes that the project got to the platform after the dialog was closed, and looks at its repository", async () => {
+    const { time, platform, here, id, project, back } = await leftHalfway();
+    await back();
+    // Nobody waits for it any more, and it is noted all the same.
+    expect(platform.projects.has(project)).toBe(true);
+    expect(here.cloud.session?.getSnapshot().state).toBe("online");
+    expect((await here.browser.links.get(id))?.creating).toBeUndefined();
+    expect(here.cloud.isOnPlatform).toBe(true);
+    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", made: true });
+    // So its repository is looked at, and the panel says what is missing: one step.
+    expect(here.cloud.repository?.status?.state).toBe("none");
+    const panel = panelOf(here, time);
+    expect(panel.level).toBe("attention");
+    expect(panel.rows.find((row) => row.id === "repository")).toMatchObject({
+      text: "还差一步：选仓库",
+      actions: [{ id: "chooseRepository" }],
+    });
+    // And the dialog only does that step.
+    const connect = dialogOf(here);
+    expect(connect.getSnapshot()).toMatchObject({ repositoryOnly: true });
+    connect.close();
+  });
+
+  it("is not taken back by the dialog, though its project never got to the platform", async () => {
+    const { time, platform, repository, here, id, project, back } = await leftHalfway();
+    const connect = dialogOf(here);
+    await time.advance(100);
+    expect(connect.getSnapshot()).toMatchObject({ repositoryOnly: false, phase: "choosing" });
+    // Closing the dialog leaves everything as it found it.
+    expect(connect.takesBack).toBe(false);
+    expect(await connect.cancel()).toBe("closed");
+    expect((await here.browser.links.get(id))?.project).toBe(project);
+    expect(here.cloud.getSnapshot().kind).toBe("linked");
+    expect(platform.removed).toEqual([]);
+
+    // Going on from it does not make it this dialog's either: it was on its way before.
+    await back();
+    const again = dialogOf(here);
+    await time.advance(100);
+    repository.refuse.link = new RepositoryRefused("unavailable");
+    await submit(again, time);
+    expect(again.getSnapshot().problem).toEqual({ step: "repository", code: "unavailable" });
+    expect(again.takesBack).toBe(false);
+    expect(await again.cancel()).toBe("closed");
+    expect(platform.projects.has(project)).toBe(true);
+    expect(platform.removed).toEqual([]);
+    expect((await here.browser.links.get(id))?.project).toBe(project);
+  });
+
+  /**
+   * The project got to the platform as the page went away: it is there, and the link of this
+   * browser never heard of it.
+   */
+  async function madeUnheard() {
+    const set = await setUp();
+    const { time, platform, here, id } = set;
+    platform.faults.line = { time, bytesPerSecond: fixtureState().state.length };
+    const begun = await here.cloud.beginLink();
+    if (typeof begun === "string") throw new Error(begun);
+    await time.advance(300);
+    // The page goes away while the hello is on its way: it gets there, and the answer does not.
+    await here.cloud.close();
+    await here.session.close();
+    await time.advance(5000);
+    delete platform.faults.line;
+    const project = begun.link.project;
+    expect(platform.projects.has(project)).toBe(true);
+    expect((await here.browser.links.get(id))?.creating).toBe(true);
+    return { ...set, project };
+  }
+
+  it("is not taken back after the page loaded again, once its project turns out to be on the platform", async () => {
+    const { time, platform, repository, here, id, project } = await madeUnheard();
+    // The page loads again, and the dialog opens before the window is connected.
+    const again = await windowOf(platform, time, {
+      repository,
+      browser: here.browser,
+      library: here.library,
+    });
+    platform.faults.silent = true;
+    await again.open(id);
+    const connect = dialogOf(again);
+    expect(connect.getSnapshot().repositoryOnly).toBe(false);
+    expect(connect.takesBack).toBe(false);
+    platform.faults.silent = false;
+    time.wake();
+    await time.advance(40_000);
+    // Known only now: it was there all along, so only the repository is left to choose.
+    expect(connect.getSnapshot().repositoryOnly).toBe(true);
+    expect(connect.takesBack).toBe(false);
+    expect(await connect.cancel()).toBe("closed");
+    expect(platform.removed).toEqual([]);
+    expect(platform.projects.has(project)).toBe(true);
+    expect((await again.browser.links.get(id))?.project).toBe(project);
+    expect(again.cloud.session?.getSnapshot().state).toBe("online");
+  });
+
+  it("is not taken back where another computer works on its project already, however soon people give up", async () => {
+    const { time, platform, repository, here, id, project } = await madeUnheard();
+    // Another computer opened the project from the list, and changed it.
+    const elsewhere = await windowOf(platform, time);
+    expect(await elsewhere.cloud.openCloudProject(project)).toBe(true);
+    await time.advance(200);
+    elsewhere.session.store?.execute({
+      type: "file.write",
+      params: { path: "code/elsewhere.js", text: "另一台电脑上的改动" },
+    });
+    await time.advance(500);
+    // Back on this one the page loads again, and people close the dialog right away, before
+    // the window heard from the platform at all.
+    const again = await windowOf(platform, time, {
+      repository,
+      browser: here.browser,
+      library: here.library,
+    });
+    platform.faults.silent = true;
+    await again.open(id);
+    const connect = dialogOf(again);
+    expect(connect.takesBack).toBe(false);
+    expect(await connect.cancel()).toBe("closed");
+    platform.faults.silent = false;
+    time.wake();
+    await time.advance(40_000);
+    // Nothing was asked of the platform, and the project is there with what the other one did.
+    expect(platform.removed).toEqual([]);
+    expect(platform.projects.has(project)).toBe(true);
+    expect(platform.workingCopy(project).getState().files["code/elsewhere.js"]).toBe(
+      "另一台电脑上的改动",
+    );
+    expect(elsewhere.cloud.session?.getSnapshot()).toMatchObject({ state: "online" });
+    // This one caught up with it.
+    expect(again.session.store?.getState().files["code/elsewhere.js"]).toBe("另一台电脑上的改动");
+    expect((await again.browser.links.get(id))?.creating).toBeUndefined();
+  });
+
+  it("is the dialog's to take back where the dialog made it before the page left to sign in", async () => {
+    const memory = memoryWindow();
+    const { time, platform, repository, here, id } = await setUp({ memory });
+    const connect = dialogOf(here);
+    await time.advance(100);
+    // The session ended as the repository was to be made: people sign in again.
+    repository.refuse.link = new RepositoryRefused("unavailable");
+    await submit(connect, time);
+    const project = (await here.browser.links.get(id))?.project ?? "";
+    await connect.signIn();
+    connect.close();
+    // The page comes back: the same try goes on, and giving up takes back what it made.
+    const back = await windowOf(platform, time, {
+      repository,
+      memory,
+      library: here.library,
+      browser: here.browser,
+    });
+    await here.cloud.close();
+    await here.session.close();
+    await back.open(id);
+    await time.advance(200);
+    const again = back.cloud.beginConnect({ resume: true });
+    if (!again) throw new Error("no dialog");
+    expect(again.getSnapshot().repositoryOnly).toBe(true);
+    expect(again.takesBack).toBe(true);
+    expect(await again.cancel()).toBe("cancelled");
+    expect(platform.removed).toEqual([project]);
+    expect(await back.browser.links.get(id)).toBeUndefined();
+  });
+});
+
 /** As `setUp`, on a platform the test made, with something in place of what the platform does. */
 async function setUpWith(platform: MemoryPlatform, overrides: Options["overrides"]) {
   const time = new TestTime();
@@ -1120,6 +1678,12 @@ describe("how connecting reads", () => {
     expect(upload("outdated")).toBe("编辑器比平台旧，刷新页面后再连接。");
     expect(upload("tooLarge")).toBe("项目的文档和代码太大，云端存不下。删掉太大的文件后再试。");
     expect(upload("stopped")).toBe("上传停下了，再试一次。");
+    expect(upload("undone")).toBe(
+      "云端的项目没有建成：这次连接之前已经取消了。再点一次“连接到云端”，重新开始。",
+    );
+    expect(upload("missing")).toBe(
+      "云端不接这个项目：它可能是用另一个账号开始连接的。换回那个账号登录后再试。",
+    );
     const repository = (code: string) =>
       connectProblemText({ step: "repository", code } as never, t.t);
     expect(repository("choice")).toBe("仓库这里要改一下，改好再试。");

@@ -49,6 +49,9 @@ function browserOn(platform: MemoryPlatform, { folders = true } = {}) {
   const presence = new MemoryPresence();
   const cloud = new TestCloudBrowser(platform, "ada");
   const values = new Map<string, unknown>();
+  // What windows keep on projects is the browser's: one window finds what another left.
+  const trials = new MemoryTrials();
+  const drafts = new MemoryTrials();
   const window = () => {
     const host: Host = {
       projects: library,
@@ -61,8 +64,8 @@ function browserOn(platform: MemoryPlatform, { folders = true } = {}) {
       },
       folders: noFolders,
       ...(folders && { localFolders: memoryFolders(disk) }),
-      trials: new MemoryTrials(),
-      drafts: new MemoryTrials(),
+      trials,
+      drafts,
       exports: new MemoryExports(),
       presence: presence.window(),
       account: account(),
@@ -83,7 +86,7 @@ function browserOn(platform: MemoryPlatform, { folders = true } = {}) {
     opened.push(workbench);
     return workbench;
   };
-  return { disk, library, links: cloud.links, window };
+  return { disk, library, links: cloud.links, trials, drafts, window };
 }
 
 /** Waits for a question of this kind, past whatever shows progress, and answers it. */
@@ -228,6 +231,42 @@ describe("the copy of a project of the platform, in the list of projects of the 
     expect(await browser.links.get(project)).toBeUndefined();
     expect(platform.projects.has(project)).toBe(true);
     expect(notices(workbench).at(-1)).toContain("cloud.remove.done");
+  });
+
+  it("says what windows left on the copy that is not saved, which goes with it", async () => {
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform);
+    const browser = browserOn(platform, { folders: false });
+    const workbench = browser.window();
+    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
+    await online(workbench);
+    await workbench.closeProject();
+    const summary = (await browser.library.list()).find(
+      ({ id }) => id === project,
+    ) as ProjectSummary;
+    // A window that is gone left code that was typed and not saved: only this browser has it.
+    browser.drafts.kept.set(
+      project,
+      new Map([
+        ["left", { version: 1, drafts: [{ path: "code/草稿.js", text: "没保存的", base: null }] }],
+      ]),
+    );
+    const removing = workbench.removeProject(summary);
+    const asked = await answerNext(workbench, "choice", undefined);
+    expect(asked).toMatchObject({
+      title: 'cloud.remove.unsyncedTitle {"name":"片子","interpolation":{"escapeValue":false}}',
+    });
+    expect((asked as { message: string }).message).toContain("cloud.remove.leftBehind");
+    expect((asked as { message: string }).message).toContain("cloud.remove.left.drafts");
+    expect((asked as { message: string }).message).not.toContain("cloud.remove.left.trial");
+    expect(await removing).toBe(false);
+    expect(browser.library.summaries.has(project)).toBe(true);
+
+    // Opening the project brings it back as a file that is not saved, for people to keep.
+    await workbench.openProject(project);
+    await vi.waitFor(() =>
+      expect(workbench.code.drafts.map(({ path }) => path)).toEqual(["code/草稿.js"]),
+    );
   });
 
   it("leaves a project that is not connected to the rule it always had", async () => {

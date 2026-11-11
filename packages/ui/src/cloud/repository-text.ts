@@ -60,9 +60,23 @@ export function momentText(at: number, now: number, t: TFunction): string {
     : `${when.getMonth() + 1}月${when.getDate()}日 ${clock.format(when)}`;
 }
 
+/**
+ * How a repository that is not there for the platform any more is gone, see `RepositoryStatus.gone`:
+ * "deleted", "unauthorized", or undefined where the platform cannot tell, or archiving paused for
+ * something else. The two take different ways out: another repository, or putting this one back
+ * among those the GitHub App may reach.
+ */
+export const goneKind = (
+  status: Pick<RepositoryStatus, "reason" | "gone">,
+): "deleted" | "unauthorized" | undefined =>
+  knownPause(status.reason) === "gone" &&
+  (status.gone === "deleted" || status.gone === "unauthorized")
+    ? status.gone
+    : undefined;
+
 /** Why archiving paused, and what helps. */
 export function pauseText(
-  status: Pick<RepositoryStatus, "reason" | "diverged">,
+  status: Pick<RepositoryStatus, "reason" | "diverged" | "gone">,
   t: TFunction,
 ): { readonly reason: string; readonly fix: string } {
   const known = knownPause(status.reason);
@@ -70,6 +84,14 @@ export function pauseText(
     return {
       reason: t("repository.pause.diverged", { count: status.diverged?.files.length ?? 0 }),
       fix: t("repository.fix.diverged"),
+    };
+  const gone = goneKind(status);
+  if (gone === "deleted")
+    return { reason: t("repository.pause.goneDeleted"), fix: t("repository.fix.goneDeleted") };
+  if (gone === "unauthorized")
+    return {
+      reason: t("repository.pause.goneUnauthorized"),
+      fix: t("repository.fix.goneUnauthorized"),
     };
   if (known) return { reason: t(`repository.pause.${known}`), fix: t(`repository.fix.${known}`) };
   return {

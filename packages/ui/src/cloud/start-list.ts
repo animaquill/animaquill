@@ -228,7 +228,8 @@ export function composeStartList(input: StartInput): StartLists {
       const copy = copyOf.get(summary.id);
       return {
         project: summary.id,
-        name: summary.name,
+        // Where the list could not say what it is called, what this browser knows of its copy.
+        name: summary.name || copy?.summary.name || copy?.link.name || "",
         repository: summary.repository && {
           fullName: summary.repository.fullName,
           url: summary.repository.url || undefined,
@@ -352,6 +353,9 @@ const NOTHING: StartListSnapshot = {
   cloudState: "none",
   failed: { projects: false, folders: false, links: false },
 };
+
+/** What a link remembers of its project for lists, see `CloudLink.name`. */
+type Remembered = Pick<CloudLinkChange, "name" | "repository" | "owner">;
 
 const sameRepository = (a: CloudLink["repository"], b: CloudLink["repository"]): boolean =>
   a === b ||
@@ -511,8 +515,9 @@ export class StartList {
         : summary.attention === "noRepository"
           ? null
           : undefined;
-      const change: { -readonly [K in keyof CloudLinkChange]: CloudLinkChange[K] } = {};
-      if (summary.name !== link.name) change.name = summary.name;
+      const change: { -readonly [K in keyof Remembered]: Remembered[K] } = {};
+      // A name the platform's list could not say is none to remember.
+      if (summary.name !== "" && summary.name !== link.name) change.name = summary.name;
       if (repository !== undefined && !sameRepository(repository, link.repository))
         change.repository = repository;
       // Whoever is signed in has it in their list: it is theirs.

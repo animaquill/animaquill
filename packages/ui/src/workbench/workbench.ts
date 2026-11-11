@@ -540,7 +540,9 @@ export class Workbench {
         window: this.windowId,
         editor: version,
         signIn: () => this.signIn(),
-        installApp: () => void this.installApp(),
+        // As a promise, like signing in: whoever asked hears when leaving is over, and whether
+        // people stayed after all.
+        installApp: () => this.installApp(),
         openProject: (id) => this.openProject(id),
         ...(host.localFolders && { records: host.localFolders.records }),
         ...(host.presence && {
@@ -555,6 +557,11 @@ export class Workbench {
           await this.videos.letGoOfProject(key);
           await host.projects.remove(key);
         },
+        // What windows were trying out, or typed and did not save, goes with the project too.
+        leftBehind: async (key) => [
+          ...((await host.trials.holds?.(key)) ? (["trial"] as const) : []),
+          ...((await host.drafts.holds?.(key)) ? (["drafts"] as const) : []),
+        ],
         ...(this.projectFolders && { moveToFolder: (key: string) => this.moveToFolder(key) }),
         memory: host.windowMemory,
         leaving: () => this.leavingPage,
@@ -565,6 +572,8 @@ export class Workbench {
       const follow = () => void this.cloud?.follow();
       this.session.subscribe(follow);
       this.projectFolders?.subscribe(follow);
+      // What taking a copy out of this browser left behind, should it have stopped halfway.
+      void this.cloud.tidy();
     }
     this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders, () =>
       this.here(),

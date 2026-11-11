@@ -29,3 +29,41 @@ export const projectOf = (
   const id = text(value.id);
   return id === undefined || id === "" ? undefined : { id, name: text(value.name) ?? "" };
 };
+
+/** What names a project of a platform, see `newSyncId` and "hello" of the sync protocol. */
+export const isProjectId = (value: unknown): value is string =>
+  typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+
+/** How long a platform has to answer a request that only reads, or takes something away. */
+export const REQUEST_TIMEOUT_MS = 20_000;
+/** ...and one that makes something on GitHub, which the platform waits for in turn. */
+export const CHANGE_TIMEOUT_MS = 65_000;
+
+/** A platform did not answer in time. */
+export class NoAnswer extends Error {
+  override readonly name = "NoAnswer";
+}
+
+/**
+ * What `ask` comes to, or a `NoAnswer` once it took longer than `ms`: a line that hangs must not
+ * keep whoever asked waiting for good. `ask` gets a signal that aborts then, for the request to
+ * stop too; whatever it does with it, this is over by then.
+ */
+export async function withinTime<T>(
+  ms: number,
+  ask: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new NoAnswer(`No answer within ${ms} ms`));
+      controller.abort();
+    }, ms);
+  });
+  try {
+    return await Promise.race([ask(controller.signal), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

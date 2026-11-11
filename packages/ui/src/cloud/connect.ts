@@ -35,9 +35,12 @@ import type { CloudProblem, CloudSession } from "./session.ts";
  *
  * Giving up before the project has its repository takes back what the dialog made: the project
  * on the platform goes, and the link, see `CloudProjects.abandonConnect`. Nothing is left that
- * people did not ask for. A project that was on the platform before the dialog opened, as one from
- * before every project there had a repository, only gets the last two steps, and stays there
- * whatever people do here.
+ * people did not ask for. Only what this try made, though: the link it made itself, or the one it
+ * made before the page left to sign in, which what the window remembers says. A link that was
+ * there when the dialog opened is not the dialog's to take back, whether or not its project got
+ * to the platform yet: another computer may be working on that project by now. It only gets what
+ * is missing, and stays whatever people do here; so does a project from before every project of
+ * the platform had a repository.
  *
  * No DOM: the dialog shows the snapshot, and the picker's.
  */
@@ -87,7 +90,10 @@ export type ConnectProblem =
        * the other end ("unreachable"), which it gets over by itself; or the platform does not take
        * the project: nobody is signed in, the editor is too old, the project is too large or more
        * than the person may keep, or something else, see `reason`. "stopped": syncing ended, as
-       * where another window disconnected the project.
+       * where another window disconnected the project. "undone": the platform would not make the
+       * project, as connecting it was given up on before, see `CloudProblem`; the link is gone,
+       * and trying again starts anew. "missing": the same where the project may be of another
+       * account than the one that is signed in, which keeps its link.
        */
       readonly code:
         | LinkRefusal
@@ -98,6 +104,8 @@ export type ConnectProblem =
         | "tooLarge"
         | "quota"
         | "rejected"
+        | "undone"
+        | "missing"
         | "stopped";
       readonly reason?: SyncRejection;
     }
@@ -123,7 +131,9 @@ export interface ConnectSnapshot {
    * "choosing": people choose, and can go on. "working": the first two steps run. "archiving":
    * the project is connected and has its repository, and the first archive is on its way or
    * waits: the dialog can close. "done": the first archive is there. "cancelled": people gave up,
-   * and the project is one of this computer only again.
+   * and the project is one of this computer only again. That can also come true by itself, after
+   * `unconfirmed`: once it turns out that the platform took the project away after all, see
+   * `CloudProjects`. The dialog is over then, without anyone having pressed anything.
    */
   readonly phase: "choosing" | "working" | "archiving" | "done" | "cancelled";
   readonly steps: Readonly<Record<ConnectStepId, ConnectStepState>>;
@@ -227,9 +237,19 @@ const WAITING: ConnectSnapshot["steps"] = {
   archive: "waiting",
 };
 
-/** What keeps a project from getting to the platform, as the dialog says it. */
-const uploadProblemOf = (problem: CloudProblem): ConnectProblem => {
+/** Whether something says when it is over, as a promise does. */
+const isThenable = (value: unknown): value is PromiseLike<unknown> =>
+  typeof (value as { then?: unknown } | null | undefined)?.then === "function";
+
+/**
+ * What keeps a project from getting to the platform, as the dialog says it. `isOwn`: whether the
+ * project is one of whoever is signed in, as far as its link says.
+ */
+const uploadProblemOf = (problem: CloudProblem, isOwn: boolean): ConnectProblem => {
   switch (problem.kind) {
+    case "missing":
+      // The platform would not make it: given up on before, unless it is somebody else's.
+      return { step: "upload", code: problem.unmade && isOwn ? "undone" : "missing" };
     case "signed-out":
       return { step: "upload", code: "signedOut" };
     case "outdated":
@@ -263,8 +283,13 @@ export class CloudConnect {
   #closed = false;
   /** The project is on the platform, as far as this dialog knows. */
   #uploaded: boolean;
-  /** The project of the platform that this try to connect made: giving up takes it away. */
+  /**
+   * The project of the platform that this try to connect made: giving up takes it away. Only one
+   * whose link this dialog made itself, or made before the page left, see `ConnectIntent.created`.
+   */
   #created: string | undefined;
+  /** A link is being made right now: giving up waits for it, and takes it back. */
+  #beginning: Promise<unknown> | undefined;
   /** The platform said that nobody is signed in, whatever the account says: only signing in helps. */
   #sawSignedOut = false;
   /** The page was asked to leave, to sign in or to install the App. */
@@ -286,11 +311,10 @@ export class CloudConnect {
     this.name = options.name;
     this.#timing = { ...CONNECT_TIMING, ...options.timing };
     this.#env = options.environment ?? pageClock();
-    const link = this.#link();
     this.#uploaded = projects.isOnPlatform;
-    // One that is still on its way there is of this try, as far as giving up goes: it was never
-    // more than that.
-    this.#created = intent?.created ?? (link && !this.#uploaded ? link.project : undefined);
+    // A link that is there already is not of this try, however far it got: only what the window
+    // remembers of the dialog before the page left says otherwise.
+    this.#created = intent?.created;
     const who = account.getSnapshot();
     this.picker = new RepositoryPicker({
       access,
@@ -373,6 +397,8 @@ export class CloudConnect {
     const who = this.#account.getSnapshot();
     const before = this.#snapshot.need;
     const need = this.#needOf();
+    // Whose the new repository is: known only now where the dialog opened before the account was.
+    this.picker.setOwner(who.status === "signedIn" ? who.name : undefined);
     this.#set({ need, account: who.status === "signedIn" ? who.name : undefined });
     if (before === undefined || need !== undefined) return;
     // Now the platform can be asked.
@@ -395,14 +421,21 @@ export class CloudConnect {
 
   #followProjects(): void {
     if (this.#closed) return;
+    const { phase, problem, steps, unconfirmed, cancelling } = this.#snapshot;
+    // Giving up could not make sure that the project is gone, and now it is not connected any
+    // more: the platform would not make it again, see `CloudProjects`.
+    if (unconfirmed && !cancelling && this.#projects.getSnapshot().kind !== "linked")
+      void this.#seeUndone();
     // The project got to the platform after the dialog said that it could not: the step is done,
     // and going on is people's to say.
-    const { phase, problem, steps } = this.#snapshot;
     if (phase !== "choosing" || this.#uploaded) return;
     if (steps.upload === "waiting") {
       // Known only now, as right after the project opened: it is on the platform already.
       if (!this.#projects.isOnPlatform) return;
       this.#uploaded = true;
+      // It was there before this try did anything: not this try's to take back, unless the
+      // dialog made it before the page left.
+      if (this.#created !== this.#options.intent?.created) this.#created = undefined;
       this.#set({ repositoryOnly: true, steps: { ...steps, upload: "done" } });
       return;
     }
@@ -418,6 +451,25 @@ export class CloudConnect {
     });
   }
 
+  /**
+   * What giving up could not make sure of happened after all: the link of the project is gone, as
+   * where the platform would not make the project again. That is what people asked for, so the
+   * dialog is over.
+   */
+  async #seeUndone(): Promise<void> {
+    let isLinked: boolean;
+    try {
+      isLinked = (await this.#projects.linkOf(this.#key)) !== undefined;
+    } catch {
+      return;
+    }
+    const { unconfirmed, cancelling } = this.#snapshot;
+    if (this.#closed || !unconfirmed || cancelling || isLinked) return;
+    this.#set({ unconfirmed: false, phase: "cancelled" });
+    this.#left = false;
+    this.close();
+  }
+
   /** Whether what people chose can go on now. */
   get canSubmit(): boolean {
     const { phase, need, cancelling } = this.#snapshot;
@@ -430,9 +482,11 @@ export class CloudConnect {
    */
   get takesBack(): boolean {
     const { phase, linked } = this.#snapshot;
-    if (phase !== "choosing" && phase !== "working") return false;
+    if ((phase !== "choosing" && phase !== "working") || linked !== undefined) return false;
+    // A link that is being made right now is this try's as soon as it is there.
+    if (this.#beginning) return true;
     const link = this.#link();
-    return link !== undefined && linked === undefined && this.#isMine(link);
+    return link !== undefined && this.#isMine(link);
   }
 
   /** Whether the project of a link is one that this try to connect put on the platform, or was about to. */
@@ -466,8 +520,14 @@ export class CloudConnect {
     if (!go || this.#closed) return;
     this.#noteIntent();
     this.#left = true;
-    await go();
-    // People stayed after all, as with something that could not be kept.
+    const gone = go();
+    // Only what says when leaving is over can say that people stayed after all, as with something
+    // that could not be kept. Asked right away, a page that is still on its way out looks like
+    // one that stayed, and comes back without the dialog. So without a word about it, what the
+    // dialog was at is kept: for the page that comes back, or until it is too old, or until
+    // people close the dialog themselves.
+    if (!isThenable(gone)) return;
+    await gone;
     if (this.#options.leaving?.() === false) {
       this.#left = false;
       this.#forgetIntent();
@@ -506,6 +566,9 @@ export class CloudConnect {
       // Another name than the one people saw when they pressed: they look at it first.
       if (this.picker.getSnapshot().name !== name) return;
       if (!(await this.#upload())) return;
+      // People gave up while the project got there: no repository is made for one that is on
+      // its way out again.
+      if (this.#closed || this.#snapshot.cancelling) return;
       const linking = this.#linkRepository();
       this.#linking = linking;
       const isLinked = await linking;
@@ -536,14 +599,24 @@ export class CloudConnect {
     // What kept it from getting there the last time: trying again starts from that.
     const stale = this.#session()?.getSnapshot().problem;
     if (!link) {
-      const begun = await this.#projects.beginLink();
+      const beginning = this.#projects.beginLink().then((made) => {
+        // Only a link that was made just now is this try's to take back: one that turned out to
+        // be there already, as one another window made a moment ago, is not. Noted before
+        // anyone who waits for the link hears of it, see `cancel`.
+        if (typeof made !== "string" && made.isNew) this.#created = made.link.project;
+        return made;
+      });
+      this.#beginning = beginning;
+      const begun = await beginning.finally(() => {
+        this.#beginning = undefined;
+      });
+      if (typeof begun === "string") {
+        return this.#closed ? false : this.#stopAt({ step: "upload", code: begun });
+      }
+      link = begun.link;
       if (this.#closed) return false;
-      if (typeof begun === "string") return this.#stopAt({ step: "upload", code: begun });
-      link = begun;
-      this.#created = link.project;
     } else {
       // On its way since before: once more, should it wait for people.
-      this.#created ??= link.project;
       this.#session()?.resume();
     }
     const problem = await this.#whenOnline(link, stale);
@@ -591,7 +664,7 @@ export class CloudConnect {
         if (state === "online") settle(undefined);
         // Not what it stopped at before this try: that one it is getting over just now.
         else if (state === "paused" && problem && problem !== stale)
-          settle(uploadProblemOf(problem));
+          settle(uploadProblemOf(problem, this.#projects.isOwn(link)));
         else if (state === "closed") settle({ step: "upload", code: "stopped" });
         else if (state === "offline") settle({ step: "upload", code: "offline" });
         else if (state === "reconnecting" && this.#env.now() - since >= this.#timing.patienceMs)
@@ -681,26 +754,28 @@ export class CloudConnect {
   async cancel({ force = false } = {}): Promise<"closed" | "cancelled" | "kept" | "unconfirmed"> {
     if (this.#closed) return "closed";
     if (this.#snapshot.cancelling) return "unconfirmed";
-    if (!this.takesBack) {
-      this.close();
-      return "closed";
-    }
+    if (!this.takesBack) return this.#over();
     this.#set({ cancelling: true, unconfirmed: false });
-    // What a repository being made right now comes to decides what there is to take back.
+    // A link that is being made right now is there in a moment, and what a repository being made
+    // right now comes to decides what there is to take back.
+    await this.#beginning?.catch(() => {});
     await this.#linking?.catch(() => {});
     const link = this.#link();
     if (this.#closed) return "closed";
-    if (!link || this.#snapshot.linked) {
+    if (this.#snapshot.linked) {
       this.#set({ cancelling: false });
-      if (this.#snapshot.linked) return "kept";
-      this.close();
-      return "closed";
+      return "kept";
+    }
+    // Nothing of this try: no link came of it, or the one that did was there already.
+    if (!link || !this.#isMine(link)) {
+      this.#set({ cancelling: false });
+      return this.#over();
     }
     const outcome = await this.#projects.abandonConnect(link, { force });
     if (this.#closed) return outcome;
     if (outcome === "cancelled") {
       this.#set({ cancelling: false, phase: "cancelled" });
-      this.close();
+      this.#over();
       return outcome;
     }
     if (outcome === "kept") {
@@ -716,6 +791,13 @@ export class CloudConnect {
     }
     this.#set({ cancelling: false, unconfirmed: true });
     return outcome;
+  }
+
+  /** People closed the dialog themselves: it is over, and so is what it was at when a page left. */
+  #over(): "closed" {
+    this.#left = false;
+    this.close();
+    return "closed";
   }
 
   /** The dialog is over. What it was at when the page left is forgotten, unless the page is leaving. */

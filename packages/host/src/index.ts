@@ -151,7 +151,9 @@ export interface CloudAccess {
   connect(): CloudConnection;
   /**
    * The projects on the platform of whoever is signed in, most recently changed first. Rejects when
-   * the platform cannot say, with a `CloudSignedOut` when nobody is signed in.
+   * the platform cannot say, also where it does not answer for a while or answers something that
+   * is no list, with a `CloudSignedOut` when nobody is signed in. Each project is there once, by
+   * an id the sync protocol takes: whether the platform still has a project is read from this.
    */
   list(): Promise<readonly CloudProjectSummary[]>;
   /** Which projects of this browser are connected, and how far they got. */
@@ -167,10 +169,11 @@ export interface CloudAccess {
    * Takes away a project of the platform that is not saved to a repository, with all the platform
    * has of it: one that connecting made and people gave up on, or one from before projects of the
    * platform always had a repository. Nothing on this computer changes. Resolves to "removed"; to
-   * "missing" when the platform has no such project of whoever is signed in, which comes to the
-   * same; and to "hasRepository" for one that is saved to a repository, which stays. Rejects when
-   * the platform could not say, with a `CloudSignedOut` when nobody is signed in: the project may
-   * still be there then. Missing where the platform takes no projects away.
+   * "missing" when the platform has no such project of whoever is signed in: one that is gone, or
+   * one of somebody else, which the platform does not tell apart; and to "hasRepository" for one
+   * that is saved to a repository, which stays. Rejects when the platform could not say, also
+   * where it does not answer for a while, with a `CloudSignedOut` when nobody is signed in: the
+   * project may still be there then. Missing where the platform takes no projects away.
    */
   remove?(project: string): Promise<"removed" | "missing" | "hasRepository">;
   /**
@@ -295,6 +298,12 @@ export interface RepositoryStatus {
   /** "none": no repository; "ready": archiving goes as it should; "paused": see `reason`. */
   readonly state: "none" | "ready" | "paused";
   readonly reason?: RepositoryPause | (string & {});
+  /**
+   * For "gone", where the platform can tell the two apart: the repository was deleted, or the
+   * platform may not touch it any more, as after people took it out of what the GitHub App may
+   * reach. Missing where it cannot tell.
+   */
+  readonly gone?: "deleted" | "unauthorized";
   /** A short word about the pause, or about the last failure, from the platform. */
   readonly detail?: string;
   /** An archive is waiting or running. */
@@ -610,6 +619,8 @@ export interface CloudLinkChange {
   /** See `CloudLink.generation`: only for a link that does not say which one yet. */
   readonly generation?: number;
   readonly pending?: number;
+  /** See `CloudLink.resync`: never back, and null once the platform took it. */
+  readonly resync?: number | null;
   readonly name?: string;
   /** Null: the platform said the project has none. */
   readonly repository?: CloudLinkRepository | null;
@@ -649,6 +660,14 @@ export interface CloudLink {
    */
   readonly generation?: number;
   /**
+   * People said to go on from the project as it is here, where the platform did not take a change
+   * of it: the log up to this mark goes there in one piece, in place of the changes that made it,
+   * see `CloudSession.resyncFromHere` in the editor. It is there until the platform took that:
+   * `pushed` only moves over those changes then. While it is there, nothing says that the
+   * platform has what the log has after `pushed`.
+   */
+  readonly resync?: number;
+  /**
    * What follows is only remembered for showing the project in a list while the platform cannot be
    * asked, or nobody is signed in: none of it decides anything, and a link from before does not
    * have it. What the project was called when it was last seen.
@@ -677,9 +696,10 @@ export interface CloudLinks {
   put(link: CloudLink): Promise<void>;
   /**
    * Moves a link to `project` forward, never back, as two windows can both have been the one that
-   * syncs: `seq` with its `digest`, `pushed`, `syncedAt`, and `made` once the project is on the
-   * platform, see `creating`. `generation` only where the link does not say one. What a link
-   * remembers for lists (`pending`, `name`, `repository`, `owner`) is replaced by what is given.
+   * syncs: `seq` with its `digest`, `pushed`, `syncedAt`, `resync` until it is taken away with
+   * null, and `made` once the project is on the platform, see `creating`. `generation` only where
+   * the link does not say one. What a link remembers for lists (`pending`, `name`, `repository`,
+   * `owner`) is replaced by what is given.
    * Resolves to false, and changes nothing, when there is no such link: one that another window
    * took away, or made for another project, stays as it is.
    */
@@ -762,7 +782,10 @@ export interface AccountAccess {
 export interface ProjectPresence {
   /** This window has a project open, by what the browser keeps it by, until this returns. */
   enter(project: string): () => void;
-  /** How many other windows have the project open now, as far as the browser can tell. */
+  /**
+   * How many other windows have the project open now, as far as the browser can tell. Rejects
+   * where it cannot tell at all, which is not the same as none: one may have it open then.
+   */
   others(project: string): Promise<number>;
   /** Tells the other windows that a project is a folder now, see `onMoved`. */
   moved(project: string): void;
@@ -926,6 +949,12 @@ export interface WindowPlaces {
    * cannot keep anything.
    */
   open(project: string): Promise<WindowPlace>;
+  /**
+   * Whether a place on a project holds something, whichever window left it there, and whether or
+   * not a window has it now: it goes with the project when the host lets go of the project, which
+   * is what people are told before that. Missing where the host cannot tell.
+   */
+  holds?(project: string): Promise<boolean>;
 }
 
 export interface WindowPlace {

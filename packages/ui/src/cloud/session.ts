@@ -47,6 +47,10 @@ import { Emitter } from "../workbench/emitter.ts";
  *   start, and everything of this browser goes again, see `reset`.
  * - What goes is only what the log has, never what waits for a change that is not there: a log
  *   that lost something keeps that gap here, where the project goes on without it.
+ * - Where the platform does not take a change and people say to go on from the project as it is,
+ *   the log so far goes in one piece, see `resyncFromHere`. It counts as sent once the platform
+ *   took that, and not before: `CloudLink.resync` says so until then, also to whoever reads the
+ *   link to find out what is only in this browser.
  * - Without a connection everything goes on here, folder included; a connection that breaks comes
  *   back on its own, sooner when the browser is back online or the window comes back.
  *
@@ -153,8 +157,13 @@ export type CloudProblem =
   | { readonly kind: "rejected"; readonly reason: SyncRejection }
   /** The editor is older than the platform: reloading the page helps. */
   | { readonly kind: "outdated" }
-  /** The project is not on the platform, or not one of whoever is signed in. */
-  | { readonly kind: "missing" }
+  /**
+   * The project is not on the platform, or not one of whoever is signed in. `unmade`: this window
+   * was to make it there, and the platform would not: it was asked to take the project away, as
+   * where giving up on connecting got no answer, or another window gave up on it, and makes none
+   * under that id again; or the id is of a project of somebody else.
+   */
+  | { readonly kind: "missing"; readonly unmade?: true }
   /** The project here and the one on the platform do not fit together any more. */
   | { readonly kind: "diverged" }
   /**
@@ -331,6 +340,19 @@ export class CloudSession {
   /** Everything in the log up to this mark is on the platform, see `CloudLink.pushed`. */
   #pushed: number;
   #notedPushed: number;
+  /**
+   * People said to go on from the project as it is here, see `resyncFromHere`: what the log has
+   * up to this mark goes to the platform in one piece, a repair, in place of the changes that
+   * made it. Those wait, and count as sent only once the platform took the repair, see
+   * `CloudLink.resync`. While it is there, the repair goes before anything else: `#repairFirst`.
+   */
+  #resyncTo: number | undefined;
+  /** ...as the link has it. */
+  #notedResync: number | undefined;
+  /** Up to this mark the platform took what the log has in one piece: those changes are there. */
+  #covered = 0;
+  /** The repair that carries what waits up to `#resyncTo`, by the id of its message. */
+  #repairId: number | undefined;
   /** Changes after `pushed` that the platform took, by their marks. */
   readonly #acked = new Set<number>();
   /** Changes after `pushed` that are on their way, by their marks. */
@@ -348,6 +370,9 @@ export class CloudSession {
   readonly #stops: (() => void)[] = [];
 
   #connection: CloudConnection | undefined;
+  /** How many connections this window began, and when the last one of them is closed for good. */
+  #connections = 0;
+  #lastClosed: Promise<unknown> | undefined;
   /** Where the current connection is: saying hello, catching up, or there. */
   #phase: "hello" | "catching-up" | "ready" = "hello";
   #headAtWelcome = 0;
@@ -401,6 +426,9 @@ export class CloudSession {
     this.#pushed = link.pushed;
     this.#notedPushed = link.pushed;
     this.#notedPending = link.pending ?? 0;
+    this.#resyncTo = link.resync;
+    this.#notedResync = link.resync;
+    this.#repairFirst = link.resync !== undefined;
     // A link from before copies were told apart is of the first, as every project was then.
     this.#generation = link.generation ?? 1;
     this.#generationNoted = link.generation !== undefined;
@@ -480,21 +508,30 @@ export class CloudSession {
   /**
    * Goes on from the project as it is here, where syncing stopped at changes that the platform does
    * not take, and people changed what was wrong since: what the platform does not have goes as one
-   * repair, see "check", and the changes of the log so far count as sent. What it holds is the same:
-   * it only goes in one piece, not as the changes that made it. Resolves once that is set to go.
+   * repair, see "check", in place of the changes of the log so far. What it holds is the same: it
+   * only goes in one piece, not as the changes that made it. Those count as sent once the platform
+   * took the repair, and not before: until then `CloudLink.pushed` stays where it is, and the link
+   * says that they wait, see `CloudLink.resync`. A platform that does not have the project, or
+   * cannot be reached, takes nothing, and nothing is taken for sent. Resolves once that is set to go.
    */
   async resyncFromHere(): Promise<void> {
+    if (this.#closed) return;
+    // What another window wrote is part of it, once the project here has it: the repair is made
+    // of what the project has.
+    await this.#journal.readLog().catch(() => {});
     if (this.#closed || !(await this.#journal.saved())) return;
     const entries = (await this.#journal.entries(this.#pushed)) ?? [];
     const last = entries.at(-1)?.mark;
     if (last !== undefined) {
-      for (const entry of entries) this.#acked.add(entry.mark);
-      this.#pushed = Math.max(this.#pushed, last);
+      this.#resyncTo = Math.max(this.#resyncTo ?? 0, last);
       this.#seen = Math.max(this.#seen, last);
+      // The next connection compares first, and sends what the platform lacks before anything.
+      this.#repairFirst = true;
     }
     this.#oneByOne = false;
-    this.#repairFirst = false;
-    await this.#note().catch(() => {});
+    await this.#enqueue(() => this.#note()).catch(() => {});
+    // A connection that is up compared already: the next one does again, and sends the repair.
+    this.#end?.({ kind: "retry" });
     this.resume();
   }
 
@@ -507,6 +544,36 @@ export class CloudSession {
     await this.#enqueue(() => this.#note()).catch(() => {});
   }
 
+  /**
+   * Whether a hello of this window that makes the project on the platform may still be on its way
+   * there, or get there yet: it began a connection, and the platform never said that the project
+   * is there. Whoever takes the project away again has to reckon with it, see
+   * `CloudProjects.abandonConnect`.
+   */
+  get mayStillCreate(): boolean {
+    return this.#create !== undefined && this.#connections > 0;
+  }
+
+  /**
+   * Resolves once nothing of this window is on its way to the platform any more: its last
+   * connection is closed for good, so whatever it sent is there, or never will be. To true then,
+   * and to false where the connection did not say so within `ms`, as on a line that died: what it
+   * sent may still arrive. For after `close`.
+   */
+  async whenQuiet(ms: number): Promise<boolean> {
+    const closed = this.#lastClosed;
+    if (!closed) return true;
+    let timer: unknown;
+    const late = new Promise<boolean>((resolve) => {
+      timer = this.#env.setTimeout(() => resolve(false), ms);
+    });
+    try {
+      return await Promise.race([closed.then(() => true), late]);
+    } finally {
+      this.#env.clearTimeout(timer);
+    }
+  }
+
   #wakeAll(): void {
     for (const wake of this.#sleepers) wake();
   }
@@ -517,6 +584,9 @@ export class CloudSession {
     this.#closed = true;
     for (const stop of this.#stops.splice(0)) stop();
     this.#waiting?.abort();
+    // Right away, not once whatever it waits for is over: nothing more goes out on it, and what
+    // went out arrives before it is closed for good, see `whenQuiet`.
+    this.#connection?.close(1000, "");
     this.#end?.({ kind: "closed" });
     this.#unpause?.();
     this.#wakeAll();
@@ -626,6 +696,17 @@ export class CloudSession {
     this.#pushed = Math.max(this.#pushed, link.pushed);
     this.#notedPushed = Math.max(this.#notedPushed, link.pushed);
     this.#notedPending = link.pending ?? 0;
+    // The project got to the platform while another window synced: it is not to be made again.
+    // Taken away there since, it stays away, rather than come back from what this window has.
+    if (!link.creating) this.#create = undefined;
+    // What waits to go in one piece, as the window before left it, or took it there.
+    this.#notedResync = link.resync;
+    if (link.resync !== undefined) {
+      this.#resyncTo = Math.max(this.#resyncTo ?? 0, link.resync);
+    } else if (this.#resyncTo !== undefined && this.#resyncTo <= this.#pushed) {
+      this.#resyncTo = undefined;
+    }
+    if (this.#resyncTo !== undefined) this.#repairFirst = true;
     if (link.generation !== undefined) this.#generationNoted = true;
     if (link.syncedAt !== undefined) this.#syncedAt = Math.max(this.#syncedAt ?? 0, link.syncedAt);
     this.#set({ seq: this.#seq, syncedAt: this.#syncedAt });
@@ -782,6 +863,9 @@ export class CloudSession {
   async #connect(): Promise<Ending> {
     const connection = this.#cloud.connect();
     this.#connection = connection;
+    this.#connections += 1;
+    this.#lastClosed = connection.closed;
+    this.#repairId = undefined;
     this.#phase = "hello";
     this.#leftBefore = Number.POSITIVE_INFINITY;
     this.#caught = [];
@@ -828,7 +912,12 @@ export class CloudSession {
       });
     });
     void connection.closed.then(({ code }) => {
-      const problem = problemOf(code);
+      const said = problemOf(code);
+      // No such project, said to a hello that was to make it: the platform would not.
+      const problem: CloudProblem | undefined =
+        code === SYNC_CLOSE.missing && this.#create !== undefined
+          ? { kind: "missing", unmade: true }
+          : said;
       settle(
         problem
           ? { kind: "pause", problem }
@@ -880,7 +969,9 @@ export class CloudSession {
 
   async #hello(connection: CloudConnection): Promise<void> {
     const device = await this.#cloud.links.device();
-    if (this.#connection !== connection) return;
+    // A window that stopped meanwhile says nothing more: its hello would make the project on the
+    // platform after whoever stopped it asked the platform to take it away.
+    if (this.#connection !== connection || this.#closed) return;
     const create = this.#create;
     // Only what is whole: what waits for a change that is gone would wait there forever.
     const state = create ? this.#store.encodeWhole() : new Uint8Array(0);
@@ -970,6 +1061,13 @@ export class CloudSession {
           this.#seen = 0;
           this.#acked.clear();
           this.#sent.clear();
+          if (this.#covered > 0) {
+            // What went in one piece is not there any more either, and goes like that again:
+            // one by one the platform did not take it.
+            this.#resyncTo = Math.max(this.#resyncTo ?? 0, this.#covered);
+            this.#covered = 0;
+            this.#repairFirst = true;
+          }
           this.#resetPending = true;
         }
         return;
@@ -1025,6 +1123,11 @@ export class CloudSession {
           this.#sent.delete(mark);
           this.#acked.add(mark);
         }
+        if (message.id === this.#repairId) {
+          // The platform took what the log had in one piece: those changes are there now.
+          this.#repairId = undefined;
+          this.#resyncDone();
+        }
         this.#raise(message.seq, message.digest);
         this.#noteSoon();
         if (this.#inFlight.size === 0) {
@@ -1041,6 +1144,8 @@ export class CloudSession {
       case "reject": {
         const sent = this.#inFlight.get(message.id);
         this.#inFlight.delete(message.id);
+        // Not taken: what waits to go in one piece goes on waiting, see `#resyncTo`.
+        if (message.id === this.#repairId) this.#repairId = undefined;
         if (message.reason === "too-large" && (sent?.marks.length ?? 0) > 1) {
           // Each of them on its own may be small enough.
           this.#oneByOne = true;
@@ -1082,17 +1187,25 @@ export class CloudSession {
         const isMissing =
           isAhead(this.#store.stateVector(), theirs.stateVector) ||
           !hasDeletionsOf(theirs.deletions, this.#store.deletions());
+        // The platform has all the project has: also what waited to go in one piece.
+        if (!isMissing) this.#resyncDone();
         // Only what the log has: what is here and could not go into the log yet would come back as
         // something new after a crash, and twice.
         if (isMissing && (await this.#journal.saved()) && this.#phase === "ready") {
           // Something that never went, as from a log that lost an entry, or a platform that came
-          // back from a backup: it goes now.
-          this.#push(this.#store.diffSince(theirs.stateVector), {
+          // back from a backup: it goes now. What waits to go in one piece is in it, as the
+          // project has all of the log up to there, see `resyncFromHere`.
+          const id = this.#push(this.#store.diffSince(theirs.stateVector), {
             kind: "repair",
             base: message.head,
             marks: [],
             behind: true,
           });
+          if (this.#resyncTo !== undefined) this.#repairId = id;
+        } else if (isMissing && this.#resyncTo !== undefined) {
+          // It cannot go in one piece now, and may not go any other way: the next connection
+          // compares again.
+          this.#end?.({ kind: "retry" });
         } else if (this.#repairFirst) {
           this.#repairFirst = false;
           await this.#scan();
@@ -1105,6 +1218,24 @@ export class CloudSession {
       case "pong":
         return;
     }
+  }
+
+  /**
+   * The platform has what waited to go in one piece, see `#resyncTo`: those changes count as sent
+   * from here on, and `pushed` moves over them with the next look at the log.
+   */
+  #resyncDone(): void {
+    const upTo = this.#resyncTo;
+    if (upTo === undefined) return;
+    this.#resyncTo = undefined;
+    this.#covered = Math.max(this.#covered, upTo);
+    this.#scanSoon();
+    this.#noteSoon();
+  }
+
+  /** Whether the platform has an entry of the log, as far as this window knows. */
+  #isThere(entry: LogEntry): boolean {
+    return isPushed(entry) || this.#acked.has(entry.mark) || entry.mark <= this.#covered;
   }
 
   /** Takes in the updates of the catch-up that wait. False where one could not be read. */
@@ -1215,7 +1346,7 @@ export class CloudSession {
     let isContiguous = true;
     const waiting: LogEntry[] = [];
     for (const entry of entries) {
-      const done = isPushed(entry) || this.#acked.has(entry.mark);
+      const done = this.#isThere(entry);
       if (done && isContiguous) {
         pushed = entry.mark;
         this.#acked.delete(entry.mark);
@@ -1229,7 +1360,9 @@ export class CloudSession {
     this.#set({ pending: waiting.length });
     if (this.#pushed > this.#notedPushed || this.#pending !== this.#notedPending) this.#noteSoon();
     if (this.#phase !== "ready" || this.#repairFirst) return;
-    const fresh = waiting.filter((entry) => !this.#sent.has(entry.mark));
+    // What waits to go in one piece never goes one by one: the platform did not take it like that.
+    const held = this.#resyncTo ?? 0;
+    const fresh = waiting.filter((entry) => entry.mark > held && !this.#sent.has(entry.mark));
     for (const batch of this.#batches(fresh)) this.#pushEntries(batch);
     if (waiting.length === 0 && this.#inFlight.size === 0) this.#inStep();
   }
@@ -1305,11 +1438,11 @@ export class CloudSession {
       readonly marks: readonly number[];
       readonly behind: boolean;
     },
-  ): void {
+  ): number | undefined {
     if (update.length > SYNC_LIMITS.update) {
       // The platform takes no change this large: saying so beats sending it over and over.
       this.#end?.({ kind: "pause", problem: { kind: "rejected", reason: "too-large" } });
-      return;
+      return undefined;
     }
     const id = this.#nextId++;
     this.#inFlight.set(id, { marks });
@@ -1324,6 +1457,7 @@ export class CloudSession {
       behind,
       payload: update,
     });
+    return id;
   }
 
   /**
@@ -1333,9 +1467,7 @@ export class CloudSession {
   async #countPending(): Promise<void> {
     if (!this.#claim) return;
     const entries = (await this.#journal.entries(this.#pushed)) ?? [];
-    this.#pending = entries.filter(
-      (entry) => !isPushed(entry) && !this.#acked.has(entry.mark),
-    ).length;
+    this.#pending = entries.filter((entry) => !this.#isThere(entry)).length;
   }
 
   // ---- noting down how far it got
@@ -1364,11 +1496,14 @@ export class CloudSession {
     // Only the window that syncs counts what waits: the others show what it says.
     const pending = this.#claim ? this.#pending : this.#notedPending;
     const generation = this.#generationToNote;
+    // What waits to go in one piece, or null once the platform took it.
+    const resync = this.#resyncTo;
     if (
       !isReset &&
       seq === this.#notedSeq &&
       pushed === this.#notedPushed &&
       pending === this.#notedPending &&
+      resync === this.#notedResync &&
       generation === undefined
     )
       return;
@@ -1387,6 +1522,8 @@ export class CloudSession {
         this.#resetPending = false;
         this.#notedSeq = seq;
         this.#notedPushed = pushed;
+        // Starting over leaves what waits to go in one piece as the link had it.
+        if (resync !== this.#notedResync) this.#noteSoon();
       }
     } else {
       const change = {
@@ -1394,6 +1531,7 @@ export class CloudSession {
         ...(pushed > this.#notedPushed && { pushed }),
         ...(syncedAt !== undefined && { syncedAt }),
         ...(pending !== this.#notedPending && { pending }),
+        ...(resync !== this.#notedResync && { resync: resync ?? null }),
         ...(generation !== undefined && { generation }),
       };
       if (Object.keys(change).length === 0) return;
@@ -1401,6 +1539,7 @@ export class CloudSession {
       if (isThere && change.seq !== undefined) this.#notedSeq = change.seq;
       if (isThere && change.pushed !== undefined) this.#notedPushed = change.pushed;
       if (isThere && change.pending !== undefined) this.#notedPending = change.pending;
+      if (isThere && change.resync !== undefined) this.#notedResync = resync;
       if (isThere && change.generation !== undefined) {
         this.#generationNoted = true;
         this.#generationToNote = undefined;

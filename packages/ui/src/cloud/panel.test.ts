@@ -335,6 +335,100 @@ describe("the status of the platform in a project", () => {
     expect(read(direct)).toMatchObject({ bar: "☁ 要处理", actions: ["[从这个浏览器移除…]"] });
   });
 
+  it("says of a repository that is gone whether it was deleted, or is out of what the App may reach", () => {
+    const paused = (gone?: "deleted" | "unauthorized") =>
+      cloudPanel(
+        linked({
+          archive: watch(status({ state: "paused", reason: "gone", ...(gone && { gone }) })),
+        }),
+        t,
+      );
+    // Deleted: no archive goes there again, so another repository is what helps, right there.
+    const deleted = paused("deleted");
+    expect(read(deleted).rows[2]).toBe(
+      "存档  存档先停着：仓库在 GitHub 上被删除了 · 换一个仓库，项目会重新存一份进去。云端的项目和本机的内容都还在。 [换一个仓库…]",
+    );
+    expect(deleted.rows[2]?.actions).toEqual([
+      { id: "switchRepository", label: "换一个仓库…", enabled: true, kind: "primary" },
+    ]);
+    // Said once: not again at the end of the panel.
+    expect(ids(deleted)).toEqual({
+      rows: { repository: [], sync: [], archive: ["switchRepository"] },
+      bottom: ["disconnect"],
+    });
+    // Taken out of what the App may reach: putting it back is what helps, and archiving goes on.
+    const unauthorized = paused("unauthorized");
+    expect(read(unauthorized).rows[2]).toBe(
+      "存档  存档先停着：AnimaQuill 不能再访问这个仓库 · 在 GitHub 上把这个仓库加回 AnimaQuill 的授权范围，加回以后会自动接着存，也可以点“现在存档”；或者换一个仓库。 [现在存档]",
+    );
+    expect(ids(unauthorized)).toEqual({
+      rows: { repository: [], sync: [], archive: ["archiveNow"] },
+      bottom: ["switchRepository", "disconnect"],
+    });
+    // The platform cannot tell: what fits both, as before.
+    const either = paused();
+    expect(read(either).rows[2]).toBe(
+      "存档  存档先停着：仓库不见了，或者 GitHub App 不能再访问它 · 在 GitHub 上把仓库加回 App 的授权范围后点“现在存档”，或者换一个仓库。 [现在存档]",
+    );
+    expect(ids(either).bottom).toEqual(["switchRepository", "disconnect"]);
+    for (const panel of [deleted, unauthorized, either]) {
+      expect(panel).toMatchObject({ level: "attention", bar: "☁ 要处理", archive: "paused" });
+    }
+  });
+
+  it("says that connecting is not finished where the project is not on the platform yet, with the way back", () => {
+    // The first version is on its way, or waits for a network: nothing is known of a repository.
+    const waiting = cloudPanel(
+      linked({ made: false, sync: sync({ state: "offline", pending: 0 }), archive: silent() }),
+      t,
+    );
+    expect(read(waiting)).toEqual({
+      bar: "☁ 要处理",
+      level: "attention",
+      rows: [
+        "仓库  还没连接完 · 项目还没传到云端，也还没有仓库。联网后会自动接着传；点“接着连接…”把剩下的做完。 [接着连接…]",
+        "同步  离线，联网后自动接着同步",
+      ],
+      actions: ["[断开云端…]"],
+    });
+    expect(waiting.rows[0]).toMatchObject({ tone: "attention" });
+    expect(ids(waiting)).toEqual({
+      rows: { repository: ["finishConnect"], sync: [] },
+      bottom: ["disconnect"],
+    });
+    // Also while it connects, and where syncing stopped: what stopped it shows as ever.
+    const connecting = cloudPanel(
+      linked({ made: false, sync: sync({ state: "connecting" }), archive: silent() }),
+      t,
+    );
+    expect(read(connecting)).toMatchObject({ bar: "☁ 要处理", level: "attention" });
+    const stuck = cloudPanel(
+      linked({
+        made: false,
+        sync: sync({ state: "paused", problem: { kind: "signed-out" } }),
+        archive: silent(),
+      }),
+      t,
+    );
+    expect(ids(stuck).rows).toEqual({ repository: ["finishConnect"], sync: ["signIn"] });
+    // Once it is there, what is known of its repository shows, as for any project.
+    const made = cloudPanel(linked({ made: true, archive: silent() }), t);
+    expect(read(made).rows[0]).toBe("仓库  正在查…");
+    expect(read(made)).toMatchObject({ bar: "☁ 已同步", level: "ok" });
+    // A platform that saves no projects to repositories has no dialog to go back to: only how
+    // syncing goes.
+    const { archive: _archive, ...bare } = linked({
+      made: false,
+      sync: sync({ state: "connecting" }),
+    });
+    expect(read(cloudPanel(bare, t))).toEqual({
+      bar: "☁ 正在连接",
+      level: "busy",
+      rows: ["同步  正在连接…"],
+      actions: ["[断开云端…]"],
+    });
+  });
+
   it("has another repository to go to at any time, not only where archiving paused", () => {
     const ready = cloudPanel(linked(), t);
     const paused = cloudPanel(
@@ -419,17 +513,22 @@ describe("the status of the platform in a project", () => {
     const snapshot = {
       kind: "linked",
       local: "browser",
+      made: false,
       link: { key: "k", platform: "x", project: "p", seq: 1, pushed: 1, linkedAt: 1 },
       session: { getSnapshot: () => said },
       repository: { getSnapshot: () => archive },
     } as unknown as CloudProjectsSnapshot;
-    expect(panelInputOf(snapshot, more)).toEqual({
+    expect(panelInputOf(snapshot, more)).toStrictEqual({
       kind: "linked",
       local: "browser",
+      made: false,
       sync: said,
       archive,
       ...more,
     });
+    expect(panelInputOf({ ...snapshot, made: true } as CloudProjectsSnapshot, more).made).toBe(
+      true,
+    );
     const { repository: _repository, ...bare } = snapshot as unknown as Record<string, unknown>;
     expect(
       panelInputOf({ ...bare, repository: undefined } as unknown as CloudProjectsSnapshot, more),

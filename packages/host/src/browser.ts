@@ -734,6 +734,11 @@ function createPlaces(
       const release = await hold(locks, placeLock(project, place));
       return placeOf(project, place, instance, release ?? (() => {}));
     },
+    async holds(project) {
+      // Of the project that is there now: what one that went before it left is swept away.
+      const instance = (await projectOf(project))?.instance;
+      return (await keptPlaces(project, instance)).length > 0;
+    },
   };
   return {
     store,

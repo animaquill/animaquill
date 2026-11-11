@@ -91,6 +91,31 @@ describe.each([
     expect(await links.update("nothing", "project-a", { pending: 9 })).toBe(false);
     expect((await links.get("a"))?.pending).toBe(1);
   });
+
+  it("keep what waits to go in one piece until the platform took it, and only then let it go", async () => {
+    const links = create();
+    await links.put(link("a"));
+    await links.update("a", "project-a", { resync: 12 });
+    expect((await links.get("a"))?.resync).toBe(12);
+    // Never back, as two windows can both have been the one that syncs; and how far the platform
+    // has the log does not move with it.
+    await links.update("a", "project-a", { resync: 9, pending: 2 });
+    expect(await links.get("a")).toMatchObject({ resync: 12, pushed: 7, pending: 2 });
+    await links.update("a", "project-a", { resync: 15 });
+    expect((await links.get("a"))?.resync).toBe(15);
+    // Whatever else is said, it stays until it is taken away.
+    await links.update("a", "project-a", { pushed: 8, syncedAt: 5 });
+    expect((await links.get("a"))?.resync).toBe(15);
+    // The platform took it: it goes, in the same step as how far the log got.
+    await links.update("a", "project-a", { resync: null, pushed: 15 });
+    const settled = await links.get("a");
+    expect(settled).toMatchObject({ pushed: 15 });
+    expect(settled).not.toHaveProperty("resync");
+    // Coming back from a backup starts the log over, and leaves what waits in one piece.
+    await links.update("a", "project-a", { resync: 20 });
+    await links.reset("a", "project-a", { seq: 1, digest: "d1", pushed: 0 });
+    expect(await links.get("a")).toMatchObject({ resync: 20, pushed: 0, seq: 1 });
+  });
 });
 
 describe("the database of links", () => {

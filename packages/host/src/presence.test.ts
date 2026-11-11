@@ -80,6 +80,17 @@ describe("which windows have a project open", () => {
     expect(await first.others("project_a")).toBe(0);
   });
 
+  it("says that it cannot tell, rather than that no other window has the project open", async () => {
+    const locks = new Locks();
+    const manager = locks.forWindow(1);
+    // The browser has the locks, and does not say what is held.
+    const silent = { ...manager, query: async () => Promise.reject(new Error("not allowed")) };
+    const presence = browserPresence(() => silent as unknown as LockManager, channels());
+    await expect(presence.others("project_a")).rejects.toThrow("not allowed");
+    // A browser without them at all has nothing to ask: every window is on its own.
+    expect(await browserPresence(() => undefined, channels()).others("project_a")).toBe(0);
+  });
+
   it("tells the other windows that a project moved, and not itself", () => {
     const channel = channels();
     const first = browserPresence(() => undefined, channel);

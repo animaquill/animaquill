@@ -17,6 +17,9 @@ import { Emitter } from "../workbench/emitter.ts";
  *   platform counts (120 in ten minutes where it cannot tell the address).
  * - After "archive now", or a new repository, every 3 seconds until the archive is done, for at most
  *   2 minutes.
+ * - Once more, a moment after the project changed, where what the platform said last is that
+ *   everything is archived: that is of before the change, see `noteSeq`. Not for every change:
+ *   once it says that changes wait, it is right about that until they are archived.
  * - Never more than `budget` questions in ten minutes, whatever else says; a "busy" waits as long
  *   as the platform says.
  *
@@ -33,6 +36,13 @@ export interface RepositoryTiming {
   /** At most this many questions in `budgetMs`. */
   readonly budget: number;
   readonly budgetMs: number;
+  /**
+   * How long after the project changed the platform is asked again, where what it said last is
+   * of before the change, see `RepositoryWatch.noteSeq`: changes that come together count once.
+   */
+  readonly aheadMs: number;
+  /** ...and not more often than this, whatever it answers. */
+  readonly aheadEveryMs: number;
 }
 
 export const REPOSITORY_TIMING: RepositoryTiming = {
@@ -41,6 +51,8 @@ export const REPOSITORY_TIMING: RepositoryTiming = {
   hurryForMs: 120_000,
   budget: 80,
   budgetMs: 10 * 60_000,
+  aheadMs: 1500,
+  aheadEveryMs: 15_000,
 };
 
 export interface RepositoryEnvironment {
@@ -130,6 +142,11 @@ export class RepositoryWatch {
   #stopVisible: (() => void) | undefined;
   #closed = false;
   #started = false;
+  /** The last update of the platform that the project here has, as syncing says, see `noteSeq`. */
+  #seq = 0;
+  #aheadTimer: unknown;
+  /** When the platform was last asked because its word was of before a change. */
+  #aheadAskedAt: number | undefined;
 
   constructor(options: RepositoryWatchOptions) {
     this.project = options.project;
@@ -148,6 +165,50 @@ export class RepositoryWatch {
   #set(change: Partial<RepositoryWatchSnapshot>): void {
     this.#snapshot = { ...this.#snapshot, ...change };
     this.#emitter.emit();
+    // What it says now can be of before a change as well.
+    if (change.status) this.#lookAhead();
+  }
+
+  /**
+   * What syncing says: the last update of the platform that the project here has. Where that is
+   * past what the platform's last word about archiving knew of (`RepositoryStatus.head`), and
+   * that word is that everything is archived, it is of before a change: "archived just now" would
+   * stay there for up to a minute with a change waiting. The platform is asked again then, once
+   * a moment passed, so that changes that come together count once. Once it says that changes
+   * wait, it is right about that however many more come, until they are archived: nothing more
+   * is asked for those, and how long they wait is kept up with as ever.
+   */
+  noteSeq(seq: number): void {
+    if (seq <= this.#seq) return;
+    this.#seq = seq;
+    this.#lookAhead();
+  }
+
+  /** Whether the platform's last word says "all archived" of a project that changed since. */
+  #isBehind(): boolean {
+    const status = this.#snapshot.status;
+    if (!status || status.state !== "ready" || this.#seq <= status.head) return false;
+    return (
+      !status.archiving && status.dirtySince === undefined && status.head <= status.archivedSeq
+    );
+  }
+
+  #lookAhead(): void {
+    if (this.#closed || !this.#started || this.#aheadTimer !== undefined) return;
+    if (!this.#isBehind()) return;
+    const now = this.#env.now();
+    const wait = Math.max(
+      this.#timing.aheadMs,
+      this.#aheadAskedAt === undefined ? 0 : this.#aheadAskedAt + this.#timing.aheadEveryMs - now,
+    );
+    this.#aheadTimer = this.#env.setTimeout(() => {
+      this.#aheadTimer = undefined;
+      // A window in the back does not ask: coming back does. And what was asked meanwhile, as
+      // every minute, may have said it already.
+      if (this.#closed || !this.#env.isVisible() || !this.#isBehind()) return;
+      this.#aheadAskedAt = this.#env.now();
+      void this.refresh();
+    }, wait);
   }
 
   /** Asks now, and from then on as the window goes. */
@@ -164,8 +225,10 @@ export class RepositoryWatch {
     this.#stopVisible = undefined;
     this.#env.clearTimeout(this.#timer);
     this.#env.clearTimeout(this.#archiveTimer);
+    this.#env.clearTimeout(this.#aheadTimer);
     this.#timer = undefined;
     this.#archiveTimer = undefined;
+    this.#aheadTimer = undefined;
   }
 
   /** Asks the platform now, unless a question is on its way already, or it said to wait. */

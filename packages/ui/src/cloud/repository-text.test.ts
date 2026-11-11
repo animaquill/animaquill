@@ -8,6 +8,7 @@ import {
   connectRepositoryName,
   defaultRepositoryName,
   divergedOutcome,
+  goneKind,
   keptText,
   lastArchiveText,
   linkedProjectOf,
@@ -145,6 +146,37 @@ describe("how saving to GitHub reads", () => {
       reason: "conflicts",
       fix: "可以点“现在存档”再试，或者换一个仓库。",
     });
+  });
+
+  it("tells a repository that was deleted from one the App may not reach any more, where the platform can", () => {
+    const gone = (how?: string) =>
+      status({ state: "paused", reason: "gone", ...(how !== undefined && { gone: how }) } as never);
+    // Deleted: another repository is the way out, and nothing was lost of the project.
+    expect(pauseText(gone("deleted"), t)).toEqual({
+      reason: "仓库在 GitHub 上被删除了",
+      fix: "换一个仓库，项目会重新存一份进去。云端的项目和本机的内容都还在。",
+    });
+    expect(archiveStateText(gone("deleted"), NOW, t)).toBe("存档暂停：仓库在 GitHub 上被删除了");
+    // Out of what the App may reach: putting it back there is, and archiving goes on by itself.
+    expect(pauseText(gone("unauthorized"), t)).toEqual({
+      reason: "AnimaQuill 不能再访问这个仓库",
+      fix: "在 GitHub 上把这个仓库加回 AnimaQuill 的授权范围，加回以后会自动接着存，也可以点“现在存档”；或者换一个仓库。",
+    });
+    // The platform cannot tell, or says something the editor does not know: what fits both.
+    const either = {
+      reason: "仓库不见了，或者 GitHub App 不能再访问它",
+      fix: "在 GitHub 上把仓库加回 App 的授权范围后点“现在存档”，或者换一个仓库。",
+    };
+    expect(pauseText(gone(), t)).toEqual(either);
+    expect(pauseText(gone("moved"), t)).toEqual(either);
+    expect(goneKind(gone("deleted"))).toBe("deleted");
+    expect(goneKind(gone("unauthorized"))).toBe("unauthorized");
+    expect(goneKind(gone())).toBeUndefined();
+    expect(goneKind(gone("moved"))).toBeUndefined();
+    // Only for a repository that is gone: another pause says what it always said.
+    const archived = status({ state: "paused", reason: "archived", gone: "deleted" });
+    expect(goneKind(archived)).toBeUndefined();
+    expect(pauseText(archived, t).reason).toBe("仓库在 GitHub 上已归档，只能读");
   });
 
   it("shows GitHub's words for a branch it keeps still, and what is wrong with the files", () => {

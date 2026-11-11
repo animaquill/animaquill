@@ -246,9 +246,12 @@ export async function fuzzCloud(
     seq: 0,
     pushed: mark,
     linkedAt: 1,
+    // As connecting leaves it: not on the platform yet, until the first connection made it.
+    creating: true,
   });
   await first.open(id, true);
   await time.advance(200);
+  await first.links.update(id, CLOUD_ID, { made: true });
   for (const browser of browsers.slice(1)) {
     const head = platform.projects.get(CLOUD_ID)?.head ?? 0;
     await browser.library.create(

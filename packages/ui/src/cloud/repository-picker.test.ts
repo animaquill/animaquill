@@ -337,4 +337,34 @@ describe("RepositoryPicker, asking before people go on", () => {
     expect(await plain.submit()).toBeUndefined();
     expect(plain.getSnapshot().failure).toBe("alreadyLinked");
   });
+  it("says whose a new repository is, and hears who that is once it is known", () => {
+    const platform = new FakeRepositories();
+    const known = new RepositoryPicker({
+      access: platform,
+      project: "p1",
+      name: "atom",
+      owner: "ada",
+    });
+    expect(known.owner).toBe("ada");
+    expect(known.getSnapshot().owner).toBe("ada");
+    known.close();
+    // A dialog that opens before the account says who is signed in.
+    const picker = new RepositoryPicker({ access: platform, project: "p1", name: "atom" });
+    expect(picker.owner).toBeUndefined();
+    let heard = 0;
+    picker.subscribe(() => {
+      heard += 1;
+    });
+    picker.setOwner("ada");
+    expect(picker.owner).toBe("ada");
+    expect(picker.getSnapshot().owner).toBe("ada");
+    expect(heard).toBe(1);
+    // The same again is nothing to hear.
+    picker.setOwner("ada");
+    expect(heard).toBe(1);
+    picker.setOwner(undefined);
+    expect(picker.owner).toBeUndefined();
+    expect(heard).toBe(2);
+    picker.close();
+  });
 });

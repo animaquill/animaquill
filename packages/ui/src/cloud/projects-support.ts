@@ -19,7 +19,7 @@ import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-
 import { Notifications } from "../workbench/notifications.ts";
 import { ProjectSession, type SessionMessages } from "../workbench/session.ts";
 import { MemoryPlatform, TestCloudBrowser, type TestTime } from "./cloud-support.ts";
-import { CloudProjects } from "./projects.ts";
+import { CloudProjects, type LeftBehind } from "./projects.ts";
 import { TestWindow, type FakeRepositories } from "./repository-support.ts";
 
 export const t = createInstance();
@@ -126,6 +126,15 @@ export async function windowOf(
   const world = {
     /** How many other windows have a project open, by its key. */
     others: new Map<string, number>(),
+    /** Which windows have a project open cannot be told, see `CloudProjectsOptions.others`. */
+    othersFail: false,
+    /** Finding out which windows have a project open takes until this is over. */
+    othersWait: undefined as Promise<void> | undefined,
+    /** What windows left on a project that is not saved, by its key. */
+    left: new Map<string, readonly LeftBehind[]>(),
+    /** How often the dialog that connects a project was asked for, and what showing it does. */
+    shown: 0,
+    showConnect: undefined as (() => Promise<void>) | undefined,
     /** Whether people did something just now, see `CloudProjectsOptions.isActive`. */
     active: true,
     /** What moving into a folder comes to: a test that has a folder for it says so. */
@@ -156,7 +165,16 @@ export async function windowOf(
         return folder && { id, folder, project: "", name: "", openedAt: 0 };
       },
     },
-    others: async (key) => world.others.get(key) ?? 0,
+    others: async (key) => {
+      await world.othersWait;
+      if (world.othersFail) throw new Error("no word from the other windows");
+      return world.others.get(key) ?? 0;
+    },
+    leftBehind: async (key) => world.left.get(key) ?? [],
+    showConnect: async () => {
+      world.shown += 1;
+      await world.showConnect?.();
+    },
     closeProject: async () => {
       await cloud.close();
       await session.close();
@@ -198,6 +216,7 @@ export async function windowOf(
     folders,
     world,
     memory,
+    time,
   };
 }
 

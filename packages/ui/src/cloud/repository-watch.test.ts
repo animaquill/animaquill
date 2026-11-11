@@ -177,4 +177,114 @@ describe("RepositoryWatch", () => {
     const asked = platform.calls.filter((call) => call.startsWith("status")).length;
     expect(asked).toBeLessThanOrEqual(10);
   });
+  it("asks again a moment after the project changed, where its last word is that everything is archived", async () => {
+    const { time, platform, watch, asked } = setUp();
+    const archived = {
+      sha: "a".repeat(40),
+      seq: 4,
+      at: time.now(),
+      kind: "auto",
+      changed: 1,
+      removed: 0,
+      url: "",
+    };
+    platform.answer = {
+      state: "ready",
+      archiving: false,
+      head: 4,
+      archivedSeq: 4,
+      lastArchive: archived,
+    };
+    watch.start();
+    await time.advance(0);
+    expect(asked()).toBe(1);
+    // Syncing is where the platform's word is: nothing to ask.
+    watch.noteSeq(4);
+    await time.advance(10 * SECOND);
+    expect(asked()).toBe(1);
+
+    // People change something: "archived just now" is of before that. A few changes come
+    // together, and count once.
+    platform.answer = {
+      ...platform.answer,
+      head: 7,
+      dirtySince: time.now(),
+      nextAt: time.now() + 5 * MINUTE,
+    };
+    watch.noteSeq(5);
+    await time.advance(200);
+    watch.noteSeq(6);
+    watch.noteSeq(7);
+    expect(asked()).toBe(1);
+    await time.advance(1500);
+    expect(asked()).toBe(2);
+    expect(watch.getSnapshot().status).toMatchObject({ head: 7, archivedSeq: 4 });
+
+    // It says that changes wait now, which stays right however many more come: nothing more is
+    // asked for those, until the question of every minute.
+    for (let seq = 8; seq < 40; seq++) {
+      watch.noteSeq(seq);
+      await time.advance(500);
+    }
+    expect(asked()).toBe(2);
+    await time.advance(MINUTE);
+    expect(asked()).toBe(3);
+  });
+
+  it("does not ask for a change while it is in the back, paused, or has no repository", async () => {
+    const { time, window, platform, watch, asked } = setUp();
+    // No repository: nothing is archived, whatever changes.
+    watch.start();
+    await time.advance(0);
+    watch.noteSeq(9);
+    await time.advance(10 * SECOND);
+    expect(asked()).toBe(1);
+
+    // Paused: what it says is why, and a change does not make that wrong.
+    platform.answer = {
+      state: "paused",
+      reason: "gone",
+      archiving: false,
+      head: 4,
+      archivedSeq: 4,
+    };
+    await watch.refresh();
+    watch.noteSeq(10);
+    await time.advance(10 * SECOND);
+    expect(asked()).toBe(2);
+
+    // In the back nothing is asked, also not for this: coming back to the front asks.
+    platform.answer = { state: "ready", archiving: false, head: 10, archivedSeq: 10 };
+    await watch.refresh();
+    expect(asked()).toBe(3);
+    window.show(false);
+    watch.noteSeq(11);
+    await time.advance(10 * SECOND);
+    expect(asked()).toBe(3);
+    platform.answer = { ...platform.answer, head: 11, dirtySince: time.now() };
+    window.show(true);
+    await time.advance(0);
+    expect(asked()).toBe(4);
+    await time.advance(10 * SECOND);
+    expect(asked()).toBe(4);
+  });
+
+  it("does not ask over and over where the platform keeps saying what it said", async () => {
+    const { time, platform, watch, asked } = setUp();
+    // A platform whose word about archiving stays behind what syncing has.
+    platform.answer = { state: "ready", archiving: false, head: 4, archivedSeq: 4 };
+    watch.start();
+    await time.advance(0);
+    watch.noteSeq(5);
+    await time.advance(1500);
+    expect(asked()).toBe(2);
+    // Still "all archived", of before the change: asked again, but not right away.
+    await time.advance(13 * SECOND);
+    expect(asked()).toBe(2);
+    await time.advance(2 * SECOND);
+    expect(asked()).toBe(3);
+    watch.close();
+    await time.advance(MINUTE);
+    expect(asked()).toBe(3);
+  });
 });

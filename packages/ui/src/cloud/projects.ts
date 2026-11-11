@@ -1,4 +1,4 @@
-import { ProjectStore, elsewhereOf } from "@animaquill/core";
+import { ProjectStore, elsewhereOf, type Here } from "@animaquill/core";
 import {
   FolderError,
   SYNC_CLOSE,
@@ -92,6 +92,12 @@ export type CloudProjectsSnapshot =
       readonly session: CloudSession;
       /** The link as it was when syncing began here: how far it got since is the session's to say. */
       readonly link: CloudLink;
+      /**
+       * Whether the project is on the platform, as far as this window knows. Not while its first
+       * version may still be on its way there, see `CloudLink.creating`: connecting it is not
+       * finished then, and nothing is known of a repository.
+       */
+      readonly made: boolean;
       /** How saving it to GitHub goes, where the platform does that. */
       readonly repository: RepositoryWatch | undefined;
       /**
@@ -122,12 +128,22 @@ export type LinkRefusal =
   /** The link could not be kept. */
   | "failed";
 
+/** What `CloudProjects.beginLink` came to. */
+export interface BegunLink {
+  readonly link: CloudLink;
+  /** It was made just now: the project had none. Otherwise it is the one the project had. */
+  readonly isNew: boolean;
+}
+
 /** What a project of the platform is like, as whoever opens it from a list knows it. */
 export interface CloudProjectAbout {
   readonly name?: string;
   /** See `CloudProjectSummary.copy`. */
   readonly copy?: string;
 }
+
+/** What a closed window can leave on a project, see `CloudProjectsOptions.leftBehind`. */
+export type LeftBehind = "trial" | "drafts";
 
 /** What this browser has of a project that the platform may not have, see `removeFromBrowser`. */
 interface OnlyHere {
@@ -138,6 +154,46 @@ interface OnlyHere {
   readonly changes: number | "all" | "unknown";
   /** Files of its assets that this browser has, and that can be downloaded from nowhere else. */
   readonly files: readonly string[];
+  /** What closed windows left on it that is not saved. */
+  readonly left: readonly LeftBehind[];
+  /**
+   * Whether the platform has the project: "there" where its list has it; "gone" where the list
+   * does not; "unknown" where the list could not be read, as without a network or with nobody
+   * signed in; "otherAccount" where the list is that of somebody else than the project is of.
+   */
+  readonly cloud: "there" | "gone" | "unknown" | "otherAccount";
+}
+
+/** How bad it is that the platform may not have a project: more is worse. */
+const CLOUD_RANK = { there: 0, unknown: 1, otherAccount: 1, gone: 2 } as const;
+
+/** Whether nothing of a project is only in this browser, as far as could be read. */
+const isAllThere = (found: OnlyHere | undefined): found is OnlyHere =>
+  found !== undefined &&
+  found.changes === 0 &&
+  found.files.length === 0 &&
+  found.left.length === 0 &&
+  found.cloud === "there";
+
+/** What people are told where nothing could be read: changes that may not have got there. */
+const UNREAD: OnlyHere = { changes: "unknown", files: [], left: [], cloud: "unknown" };
+
+/**
+ * Whether people who said yes to losing `agreed` said yes to losing `now` as well: nothing is only
+ * here now that they were not told of. What could not be read was said to be changes that may
+ * not be on the platform, however many: not that this is the last copy, or that files go.
+ */
+function covers(agreed: OnlyHere | undefined, now: OnlyHere | undefined): boolean {
+  if (now === undefined) return agreed === undefined;
+  const said = agreed ?? UNREAD;
+  const amount = (changes: OnlyHere["changes"]) =>
+    typeof changes === "number" ? changes : Number.POSITIVE_INFINITY;
+  return (
+    amount(now.changes) <= amount(said.changes) &&
+    now.files.every((file) => said.files.includes(file)) &&
+    now.left.every((kind) => said.left.includes(kind)) &&
+    CLOUD_RANK[now.cloud] <= CLOUD_RANK[said.cloud]
+  );
 }
 
 export interface CloudProjectsOptions {
@@ -156,17 +212,23 @@ export interface CloudProjectsOptions {
   readonly window: string;
   /** The version of the editor. */
   readonly editor: string;
-  /** Signs in: the page goes and comes back. */
-  readonly signIn: () => Promise<void>;
+  /**
+   * Signs in: the page goes and comes back. A promise where the host knows when leaving is over,
+   * which is how the dialog that connects a project finds out that people stayed after all.
+   */
+  readonly signIn: () => Promise<void> | void;
   readonly openProject: (id: string) => Promise<void>;
-  /** Leaves the page to install the GitHub App on the account, and comes back. */
-  readonly installApp?: () => void;
+  /** Leaves the page to install the GitHub App on the account, and comes back. As `signIn`. */
+  readonly installApp?: () => Promise<void> | void;
   /**
    * The folders this browser knows, where it can write folders: which of the projects it keeps are
    * folders. Without it none is.
    */
   readonly records?: Pick<FolderRecords, "get">;
-  /** How many other windows of this browser have a project open, by its key. */
+  /**
+   * How many other windows of this browser have a project open, by its key. Rejects where that
+   * cannot be told: one may have it open then. Without it, no other window is taken to.
+   */
   readonly others?: (key: string) => Promise<number>;
   /**
    * Leaves the open project for the start page, as people do, with everything kept first. Resolves
@@ -188,6 +250,18 @@ export interface CloudProjectsOptions {
    * folder: it only does for a moment after a click.
    */
   readonly isActive?: () => boolean;
+  /**
+   * What windows that are closed left on a project of this browser that is not part of it, by its
+   * key: something they were trying out, code they typed and did not save, see `Host.trials` and
+   * `Host.drafts`. It goes with the project. Without it, nothing is known to be left.
+   */
+  readonly leftBehind?: (key: string) => Promise<readonly LeftBehind[]>;
+  /**
+   * Shows the dialog that connects the open project in one go, see `beginConnect`: whoever shows
+   * dialogs has it. Resolves once the dialog is over. Without it, a project that is to become a
+   * new one of the platform is asked about the way it was before, see `connect`.
+   */
+  readonly showConnect?: () => Promise<void> | void;
   /** What this window remembers through a reload: what connecting was at when the page left. */
   readonly memory?: WindowMemory;
   /** Whether the page is going away on purpose now, as after `signIn`, see `Workbench.leavePage`. */
@@ -217,6 +291,14 @@ const RESTORE_WAIT_MS = 5 * 60_000;
  * to take it away: what was on its way there may only have arrived by then, see `abandonConnect`.
  */
 const SETTLE_MS = 1500;
+/** How long a connection that was told to close has to be closed for good, see `abandonConnect`. */
+const CLOSE_WAIT_MS = 4000;
+/** How long the platform has to say that a project is gone, whatever the host waits for. */
+const REMOVE_WAIT_MS = 25_000;
+/** How long the platform has to say which projects it has, before a copy goes out of the browser. */
+const LIST_WAIT_MS = 8000;
+/** A link without a project is taken away once it is this old, see `CloudProjects.tidy`. */
+const STALE_LINK_MS = 10 * 60_000;
 
 const sameRepository = (
   a: CloudLinkRepository | null | undefined,
@@ -249,11 +331,8 @@ export class CloudProjects {
     owner?: string | undefined;
     repository?: CloudLinkRepository | null | undefined;
   } = {};
-  /**
-   * The project of the platform that the open project is known to be there as, see `isOnPlatform`:
-   * the link of the snapshot is as it was when syncing began, and may still say `creating`.
-   */
-  #made: string | undefined;
+  /** Waiting for the open project to be on the platform, by its id there, see `#whenOnline`. */
+  #arriving: { readonly project: string; readonly arrived: Promise<boolean> } | undefined;
 
   constructor(options: CloudProjectsOptions) {
     this.#options = options;
@@ -290,7 +369,14 @@ export class CloudProjects {
    */
   get isOnPlatform(): boolean {
     const snapshot = this.#snapshot;
-    return snapshot.kind === "linked" && this.#made === snapshot.link.project;
+    return snapshot.kind === "linked" && snapshot.made;
+  }
+
+  /** Whether the open project still syncs as it did when `snapshot` was taken. */
+  #isStill(snapshot: CloudProjectsSnapshot): boolean {
+    const now = this.#snapshot;
+    if (snapshot.kind !== "linked") return now === snapshot;
+    return now.kind === "linked" && now.session === snapshot.session;
   }
 
   #set(snapshot: CloudProjectsSnapshot): void {
@@ -391,12 +477,26 @@ export class CloudProjects {
       // project of the platform it is from here on.
       if (!folder) return;
       await this.#sayInFolder(folder, linked.link);
-      if (this.#snapshot === linked && linked.local !== "folder") {
-        this.#set({ ...linked, local: "folder" });
+      const now = this.#snapshot;
+      if (now.kind === "linked" && now.session === linked.session && now.local !== "folder") {
+        this.#set({ ...now, local: "folder" });
       }
       return;
     }
-    const link = await cloud.links.get(key).catch(() => undefined);
+    let link: CloudLink | undefined;
+    try {
+      link = await cloud.links.get(key);
+    } catch (error) {
+      // Not known, which is not "not connected": a folder would look like one from somewhere
+      // else, and connecting would make a second project of the platform of it. The next look
+      // reads again.
+      console.warn("The link of the project to the platform could not be read", error);
+      if (turn === this.#turn) {
+        this.#key = undefined;
+        this.#store = undefined;
+      }
+      return;
+    }
     const file = folder ? await this.#readFile(folder) : undefined;
     if (turn !== this.#turn) return;
     if (link && link.platform === cloud.platform) {
@@ -525,12 +625,16 @@ export class CloudProjects {
         }),
       });
     this.#remembered = { name: link.name, owner: link.owner, repository: link.repository };
-    this.#made = link.creating ? undefined : link.project;
+    this.#arriving = undefined;
     const stopSync = sync.subscribe(() => {
       this.#emitter.emit();
       const { state, problem } = sync.getSnapshot();
       // Another window disconnected it: this one looks again, and finds no link.
       if (problem?.kind === "unlinked") void this.#unlinked(sync);
+      // The platform would not make the project: connecting it was given up on.
+      if (problem?.kind === "missing" && problem.unmade) void this.#unmade(sync, link);
+      // What archiving says is of before a change that the platform has by now, see `noteSeq`.
+      repository?.noteSeq(sync.getSnapshot().seq);
       // The platform only lets the owner of a project sync it: whoever is signed in is the one.
       if (state === "online") this.#rememberOwner(link);
     });
@@ -553,6 +657,7 @@ export class CloudProjects {
       kind: "linked",
       session: sync,
       link,
+      made: !link.creating,
       repository,
       local: this.#options.isFolder(link.key) ? "folder" : "browser",
     });
@@ -598,6 +703,40 @@ export class CloudProjects {
     this.#key = undefined;
     this.#store = undefined;
     await this.follow();
+  }
+
+  /** The sessions whose project the platform would not make, once each, see `#unmade`. */
+  readonly #refused = new WeakSet<CloudSession>();
+
+  /**
+   * The platform would not make the project of a link that was still on its way there, see
+   * `CloudProblem`: it was asked to take the project away, and makes none under that id again.
+   * So connecting was given up on, here where the answer to that did not come back, or in another
+   * window, and this finishes it: the link goes, and the project is one of this computer only
+   * again, with everything in it, to be connected anew whenever people like. They hear that, and
+   * are not left to choose what to do about a project the platform does not have.
+   *
+   * Not where the project may be somebody else's, which the platform says the same of: the link
+   * stays then, and syncing says that the project is not there for whoever is signed in. And not
+   * for a link that says the project was on the platform: one that was there and is gone is
+   * something for people to look at.
+   */
+  async #unmade(sync: CloudSession, link: CloudLink): Promise<void> {
+    if (this.session !== sync || this.#refused.has(sync)) return;
+    this.#refused.add(sync);
+    const { cloud, notifications, t } = this.#options;
+    let kept: CloudLink | undefined;
+    try {
+      kept = await cloud.links.get(link.key);
+    } catch (error) {
+      console.warn("The link of a project that was not made could not be read", error);
+      return;
+    }
+    if (this.session !== sync) return;
+    // As it is kept now: another window may have taken it away, or found the project there.
+    if (!kept || kept.project !== link.project || !kept.creating || !this.isOwn(kept)) return;
+    if (!(await this.#unlink(link.key, { quietly: true }))) return;
+    notifications.push(t("cloud.connectUndone"));
   }
 
   async #stop(): Promise<void> {
@@ -670,21 +809,36 @@ export class CloudProjects {
       notifications.push(t(LINK_REFUSALS[begun]));
       return;
     }
-    void this.#tellWhenConnected(begun);
+    void this.#tellWhenConnected(begun.link);
+  }
+
+  /**
+   * Makes the open project, which is not connected, a new project of the platform: in the dialog
+   * that does all of it, repository included, where there is one, see `beginConnect`.
+   */
+  async #connectAnew(): Promise<void> {
+    const { showConnect, cloud, account } = this.#options;
+    if (showConnect && cloud.repository && account) await showConnect();
+    else await this.connect({ replace: true });
   }
 
   /**
    * Keeps a link from the open project to a new project of the platform, and starts syncing: the
    * first connection makes the project there, from what the open project is then. The first step
    * of connecting, which asks nobody anything. Resolves to the link, or to why there is none. A
-   * project that has a link already keeps it.
+   * project that has a link already keeps it, however soon after it opened this is asked: whether
+   * it has one is read first, and once more right before one is made; the answer says which of
+   * the two it is, see `BegunLink`. From here on it is followed until the project is on the
+   * platform, whoever asked for this and however long it takes, and the link says so then.
    */
-  async beginLink(): Promise<CloudLink | LinkRefusal> {
+  async beginLink(): Promise<BegunLink | LinkRefusal> {
     const { session, cloud, account } = this.#options;
     const key = session.key;
     const store = session.store;
     if (!key || !store) return "failed";
-    if (this.#snapshot.kind === "linked") return this.#snapshot.link;
+    await this.follow();
+    if (session.store !== store) return "failed";
+    if (this.#snapshot.kind === "linked") return { link: this.#snapshot.link, isNew: false };
     // What is in the log is what goes: all of it, and nothing that is still on its way there.
     if (!(await session.trySave())) return "notSaved";
     let entries: readonly LogEntry[] | undefined;
@@ -699,6 +853,27 @@ export class CloudProjects {
     if (session.store !== store) return "failed";
     const folder = this.#options.isFolder(key) ? this.#options.folderOf(key) : undefined;
     if (this.#options.isFolder(key) && !folder) return "folderNotReady";
+    // Once more, right before one is made: a link that is there after all, as one another window
+    // made meanwhile, or one that could not be read a moment ago, is the one to go on with. A
+    // second one would make a second project of the platform of this one.
+    let there: CloudLink | undefined;
+    try {
+      there = await cloud.links.get(key);
+    } catch (error) {
+      console.warn("Whether the project is connected already could not be read", error);
+      return "failed";
+    }
+    if (session.store !== store) return "failed";
+    if (there && there.platform === cloud.platform) {
+      await this.#stop();
+      this.#key = undefined;
+      this.#store = undefined;
+      await this.follow();
+      const now = this.getSnapshot();
+      return now.kind === "linked" && session.store === store
+        ? { link: now.link, isNew: false }
+        : "failed";
+    }
     const who = account?.getSnapshot();
     const link: CloudLink = {
       key,
@@ -730,43 +905,54 @@ export class CloudProjects {
     }
     this.#start(link, store);
     this.#tell();
-    return link;
+    // Whoever asked may be gone by the time the project gets there, as a dialog that was closed.
+    void this.#whenOnline(link);
+    return { link, isNew: true };
   }
 
   /**
    * Waits for the project of a link to be on the platform, however long that takes, and keeps that
-   * it is from then on. Resolves to whether it got there while this window synced it.
+   * it is from then on. Resolves to whether it got there while this window synced it. Whoever
+   * waits for the same project waits for the same.
    */
-  async #whenOnline(link: CloudLink): Promise<boolean> {
+  #whenOnline(link: CloudLink): Promise<boolean> {
     const session = this.session;
-    if (!session || session.project !== link.project) return false;
-    const isOnline = await new Promise<boolean>((resolve) => {
-      let stop = () => {};
-      const check = () => {
-        const { state } = session.getSnapshot();
-        if (state !== "online" && state !== "closed") return;
-        stop();
-        resolve(state === "online");
-      };
-      stop = session.subscribe(check);
-      check();
-    });
-    if (isOnline) await this.noteMade(link);
-    return isOnline;
+    if (!session || session.project !== link.project) return Promise.resolve(false);
+    if (this.#arriving?.project === link.project) return this.#arriving.arrived;
+    const arrived = (async () => {
+      const isOnline = await new Promise<boolean>((resolve) => {
+        let stop = () => {};
+        const check = () => {
+          const { state } = session.getSnapshot();
+          if (state !== "online" && state !== "closed") return;
+          stop();
+          resolve(state === "online");
+        };
+        stop = session.subscribe(check);
+        check();
+      });
+      if (isOnline) await this.noteMade(link);
+      return isOnline;
+    })();
+    this.#arriving = { project: link.project, arrived };
+    return arrived;
   }
 
   /** The project of a link is on the platform now: the link says so, and GitHub can be asked about it. */
   async noteMade(link: CloudLink): Promise<void> {
-    const isOpen = () => this.session?.project === link.project;
-    if (isOpen() && this.#made !== link.project) {
-      this.#made = link.project;
-      this.#emitter.emit();
-    }
+    const open = () => {
+      const snapshot = this.#snapshot;
+      return snapshot.kind === "linked" && snapshot.link.project === link.project
+        ? snapshot
+        : undefined;
+    };
+    const snapshot = open();
+    if (snapshot && !snapshot.made) this.#set({ ...snapshot, made: true });
     // Only that: how far it got is the session's to note down, at the same time.
     await this.#options.cloud.links
       .update(link.key, link.project, { made: true })
       .catch(() => false);
-    if (isOpen()) this.repository?.start();
+    open()?.repository?.start();
   }
 
   /** Says once that the first connection got there, and asks about GitHub. */
@@ -821,10 +1007,16 @@ export class CloudProjects {
    * Takes back a connection that connecting made and people gave up on before the project had a
    * repository: the project on the platform goes, then the link, and the project is one of this
    * computer only again. Syncing stops first, as the first connection would make the project
-   * again. "kept": the platform says it has a repository after all, so it stays connected.
-   * "unconfirmed": the platform could not say that the project is gone, as without a network; it
-   * stays connected then, without a repository, unless `force` says to let go all the same, which
-   * can leave a project without a repository on the platform for people to take away later.
+   * again, and the platform is only asked once that connection is closed for good: what it sent
+   * is there by then, and the platform does what arrived before it takes the project away. Asked
+   * any sooner, it can say that there is no such project, and make it a moment later.
+   *
+   * "kept": the platform says it has a repository after all, so it stays connected.
+   * "unconfirmed": the platform could not say that the project is gone, as without a network, or
+   * said "no such project" where the project is somebody else's, which is what it says of those
+   * too; it stays connected then, without a repository, unless `force` says to let go all the
+   * same, which can leave a project without a repository on the platform for people to take away
+   * later.
    */
   async abandonConnect(
     link: CloudLink,
@@ -833,18 +1025,16 @@ export class CloudProjects {
     const sync = this.session;
     if (this.#options.session.key !== link.key || !sync || sync.project !== link.project)
       return "unconfirmed";
-    // What a connection that was saying hello may still bring there.
-    const { state } = sync.getSnapshot();
-    const isArriving = state === "connecting" || state === "reconnecting";
-    // Another window of this browser that has the project open syncs it once this one stops, for
-    // the moment until it hears that the link is gone: it can make the project again.
-    const isElsewhere = ((await this.#options.others?.(link.key).catch(() => 0)) ?? 0) > 0;
+    // Another window of this browser that has the project open syncs it once this one stops,
+    // for the moment until it hears that the link is gone: its hello can make the project. One
+    // may have it open, where that cannot be told.
+    const isElsewhere = (await this.#othersOf(link.key)) !== 0;
     await this.#stop();
+    // And so can a hello of this window, which may be on its way still, or get there yet.
+    const mayArrive = sync.mayStillCreate;
+    await sync.whenQuiet(CLOSE_WAIT_MS);
     let outcome = await this.#takeAway(link.project);
-    if (outcome === "missing" && isArriving) {
-      await this.#wait(SETTLE_MS);
-      outcome = await this.#takeAway(link.project);
-    }
+    if (outcome === "missing" && !this.isOwn(link)) outcome = "unknown";
     const isGone = outcome === "removed" || outcome === "missing";
     if (!isGone && !(force && outcome === "unknown")) {
       // It goes on as it was: this window looks at its link again.
@@ -854,24 +1044,80 @@ export class CloudProjects {
       return outcome === "hasRepository" ? "kept" : "unconfirmed";
     }
     if (!(await this.#unlink(link.key, { quietly: true }))) return "unconfirmed";
-    if (isElsewhere) {
-      // No window syncs it any more: what one of them made of it meanwhile goes too.
+    if (isGone && (mayArrive || isElsewhere)) {
+      // Once more, now that no window syncs it, and what was on its way had time to arrive: for
+      // a platform that makes a project under an id it was asked to take away before there was
+      // one. One that keeps such an id from being used needs no more than the first time.
       await this.#wait(SETTLE_MS);
       await this.#takeAway(link.project);
     }
     return "cancelled";
   }
 
-  /** Asks the platform to take a project without a repository away. "unknown": it could not say. */
+  /**
+   * Asks the platform to take a project without a repository away. "unknown": it could not say,
+   * also where it did not answer for a while.
+   */
   async #takeAway(project: string): Promise<"removed" | "missing" | "hasRepository" | "unknown"> {
     const { cloud } = this.#options;
     if (!cloud.remove) return "unknown";
     try {
-      return await cloud.remove(project);
+      return await this.#within(REMOVE_WAIT_MS, cloud.remove(project));
     } catch (error) {
       console.warn("The platform could not say that the project is gone", error);
       return "unknown";
     }
+  }
+
+  /**
+   * What `asked` comes to, or a rejection once it took longer than `ms`: what people wait for
+   * ends, whatever the network does and whatever the host waits for.
+   */
+  #within<T>(ms: number, asked: Promise<T>): Promise<T> {
+    const environment = this.#options.environment ?? pageEnvironment();
+    return new Promise<T>((resolve, reject) => {
+      const timer = environment.setTimeout(
+        () => reject(new Error(`No answer within ${ms} ms`)),
+        ms,
+      );
+      asked.then(
+        (value) => {
+          environment.clearTimeout(timer);
+          resolve(value);
+        },
+        (error: unknown) => {
+          environment.clearTimeout(timer);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
+    });
+  }
+
+  /**
+   * How many other windows of this browser have a project open, or undefined where that cannot
+   * be told: one may have then.
+   */
+  async #othersOf(key: string): Promise<number | undefined> {
+    const { others } = this.#options;
+    if (!others) return 0;
+    try {
+      return await others(key);
+    } catch (error) {
+      console.warn("Which windows have the project open could not be told", error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Whether a link is to a project of whoever is signed in, as far as both say. The platform says
+   * the same of a project of somebody else as of one that is gone: only for one's own does "no
+   * such project" mean that it is gone. A link or an account that does not say who is taken to be
+   * the same.
+   */
+  isOwn(link: CloudLink): boolean {
+    const who = this.#options.account?.getSnapshot();
+    if (link.owner === undefined || who?.status !== "signedIn" || who.id === undefined) return true;
+    return who.id === link.owner;
   }
 
   #wait(ms: number): Promise<void> {
@@ -927,7 +1173,7 @@ export class CloudProjects {
       asking ? "repository.askTitle" : switching ? "repository.switchTitle" : "repository.title",
     );
     if (!asking && !(await this.#signedIn(title))) return;
-    if (this.#snapshot !== snapshot) return;
+    if (!this.#isStill(snapshot)) return;
     const { name, id } = store.getState().manifest;
     const who = account?.getSnapshot();
     const current =
@@ -951,7 +1197,7 @@ export class CloudProjects {
     });
     const linked = picker.getSnapshot().linked;
     picker.close();
-    if (!done || !linked || this.#snapshot !== snapshot) return;
+    if (!done || !linked || !this.#isStill(snapshot)) return;
     watch.take(linked, { hurry: true });
     notifications.push(
       t("repository.linked", {
@@ -1042,8 +1288,8 @@ export class CloudProjects {
         { id: "new", label: t("cloud.makeNew"), kind: "primary" },
       ],
     });
-    if (session.key !== key || this.#snapshot !== snapshot) return;
-    if (answer === "new") await this.connect({ replace: true });
+    if (session.key !== key || !this.#isStill(snapshot)) return;
+    if (answer === "new") await this.#connectAnew();
     else if (answer === "disconnect") await this.#forgetFile(key);
   }
 
@@ -1081,34 +1327,41 @@ export class CloudProjects {
       confirm: t("cloud.disconnect"),
       danger: true,
     });
-    if (!go || this.#snapshot !== snapshot) return;
+    if (!go || !this.#isStill(snapshot)) return;
     await this.#unlink(key);
   }
 
   /**
    * People choose what to do with a project whose syncing stopped at something the platform does
    * not take, or that it does not have: everything stays here either way. A change of its own cannot
-   * stay behind while the rest goes on, as what comes after it in Yjs builds on it.
+   * stay behind while the rest goes on, as what comes after it in Yjs builds on it. A project the
+   * platform does not have, or not as one of whoever is signed in, cannot go on from here either:
+   * there is nothing there to take what it has.
    */
   async resolveStuck(): Promise<void> {
     const { dialogs, t, session } = this.#options;
     const key = session.key;
     const snapshot = this.#snapshot;
     if (!key || snapshot.kind !== "linked") return;
+    const isMissing = snapshot.session.getSnapshot().problem?.kind === "missing";
     const answer = await dialogs.choose({
       title: t("cloud.stuckTitle"),
-      message: t("cloud.stuckMessage"),
-      choices: [
-        { id: "disconnect", label: t("cloud.letGo") },
-        { id: "new", label: t("cloud.makeNew") },
-        { id: "resync", label: t("cloud.resync"), kind: "primary" },
-      ],
+      message: t(isMissing ? "cloud.stuckMissingMessage" : "cloud.stuckMessage"),
+      choices: isMissing
+        ? [
+            { id: "disconnect", label: t("cloud.letGo") },
+            { id: "new", label: t("cloud.makeNew"), kind: "primary" },
+          ]
+        : [
+            { id: "disconnect", label: t("cloud.letGo") },
+            { id: "new", label: t("cloud.makeNew") },
+            { id: "resync", label: t("cloud.resync"), kind: "primary" },
+          ],
     });
-    if (session.key !== key || this.#snapshot !== snapshot) return;
+    if (session.key !== key || !this.#isStill(snapshot)) return;
     if (answer === "resync") await snapshot.session.resyncFromHere();
     if (answer === "disconnect" || answer === "new") await this.#unlink(key);
-    if (answer === "new" && this.getSnapshot().kind === "none")
-      await this.connect({ replace: true });
+    if (answer === "new" && this.getSnapshot().kind === "none") await this.#connectAnew();
   }
 
   /**
@@ -1442,11 +1695,60 @@ export class CloudProjects {
   }
 
   /**
-   * What this browser has of a project that the platform may not have, by reading its log and
-   * looking at its files: what taking the copy out of this browser would lose.
+   * Where the copy of a link is, as far as the places of files go, see `Here`: the repository its
+   * project is saved to, as the link last heard, and whose project it is. A file that is kept
+   * somewhere bound to anything else cannot come from there again once this copy is gone: the
+   * large file storage of another repository, the cloud space of somebody else. So does one in a
+   * storage of the person's own that is set up on a computer, as nothing says that another one
+   * has it.
    */
-  async #onlyHere(key: string, link: CloudLink): Promise<OnlyHere> {
+  #hereOf(link: CloudLink): Here {
+    const who = this.#options.account?.getSnapshot();
+    return {
+      repo: link.repository ? String(link.repository.id) : undefined,
+      owner: link.owner ?? (who?.status === "signedIn" ? who.id : undefined),
+    };
+  }
+
+  /**
+   * Whether the platform has the project of a link, as its list says right now, see
+   * `OnlyHere.cloud`. The list is the only thing that says so: a copy that synced a moment ago
+   * may be of a project that was taken away since, on another computer.
+   */
+  async #onPlatform(link: CloudLink): Promise<OnlyHere["cloud"]> {
+    try {
+      const list = await this.#within(LIST_WAIT_MS, this.#options.cloud.list());
+      if (list.some((each) => each.id === link.project)) return "there";
+      // The list is that of whoever is signed in: it says nothing of a project of somebody else.
+      return this.isOwn(link) ? "gone" : "otherAccount";
+    } catch (error) {
+      console.warn("Whether the platform still has the project could not be asked", error);
+      return "unknown";
+    }
+  }
+
+  /**
+   * What this browser has of a project that the platform may not have, by reading its log,
+   * looking at its files, and asking the platform whether the project is there: what taking the
+   * copy out of this browser would lose. `withLeft`: also what closed windows left on it, which
+   * is not asked while this window has the project open, as what it keeps there itself is its
+   * own to settle as it leaves.
+   */
+  async #onlyHere(
+    key: string,
+    link: CloudLink,
+    { withLeft }: { readonly withLeft: boolean },
+  ): Promise<OnlyHere> {
     const { projects } = this.#options;
+    // Asked while the log is read. A project that never got there is not asked about.
+    const asked: Promise<OnlyHere["cloud"]> = link.creating
+      ? Promise.resolve("unknown")
+      : this.#onPlatform(link);
+    const leaving = withLeft
+      ? Promise.resolve(this.#options.leftBehind?.(key) ?? [])
+      : Promise.resolve([]);
+    // Looked at below, or not at all where the log cannot be read.
+    leaving.catch(() => {});
     const log = await projects.open(key);
     let entries: readonly LogEntry[] | undefined;
     let updates: readonly Uint8Array[];
@@ -1456,25 +1758,30 @@ export class CloudProjects {
     } finally {
       log.close();
     }
-    // A project whose first version may not have got there is not on the platform at all.
-    const changes = link.creating
+    const waiting = entries?.filter((entry) => entry.mark > link.pushed && !isOnPlatform(entry));
+    // A project whose first version may not have got there is not on the platform at all. One
+    // that waits to go there in one piece is not there until the platform took that, whatever the
+    // log says, see `CloudLink.resync`.
+    const changes: OnlyHere["changes"] = link.creating
       ? "all"
-      : entries
-        ? entries.filter((entry) => entry.mark > link.pushed && !isOnPlatform(entry)).length
-        : "unknown";
+      : waiting === undefined || (waiting.length === 0 && link.resync !== undefined)
+        ? "unknown"
+        : waiting.length;
+    const [cloud, left] = await Promise.all([asked, leaving]);
     const { store } = ProjectStore.fromUpdates(updates);
     // Without the project nothing says which files it needs.
-    if (!store) return { changes: changes === 0 ? "unknown" : changes, files: [] };
+    if (!store) return { changes: changes === 0 ? "unknown" : changes, files: [], left, cloud };
     try {
       const state = store.getState();
       const kept = await projects.copies(key);
+      const here = this.#hereOf(link);
       const files = Object.entries(state.assets ?? {}).flatMap(([id, asset]) => {
         const { hash } = asset;
         // What can be downloaded from where it is kept comes again with the project.
-        if (hash === undefined || elsewhereOf(state, id) !== undefined) return [];
+        if (hash === undefined || elsewhereOf(state, id, here) !== undefined) return [];
         return kept.some((copy) => isSameHash(hash, copy.name)) ? [asset.path] : [];
       });
-      return { changes, files: [...new Set(files)].toSorted() };
+      return { changes, files: [...new Set(files)].toSorted(), left, cloud };
     } finally {
       store.destroy();
     }
@@ -1482,11 +1789,21 @@ export class CloudProjects {
 
   /**
    * Takes the copy of a project of the platform out of this browser: its log, the files of its
-   * assets that this browser keeps, and its link. The project on the platform stays as it is, and
-   * can be opened again. What did not get there is nowhere else, so the log is read first, and
-   * where it has changes the platform does not have, or files that can be downloaded from
-   * nowhere, people choose: open the project so that it syncs, take it away all the same, or
-   * leave it. Resolves to whether it is gone.
+   * assets that this browser keeps, what closed windows left on it, and its link. Where the
+   * platform has all of it, that is all there is to it: the project stays there, and can be
+   * opened again. Whether it does is found out first, and not taken for granted:
+   *
+   * - the log is read, for changes the platform does not have;
+   * - the files are looked at, for those that can be downloaded from nowhere;
+   * - the platform is asked whether it still has the project, as one that was taken away there,
+   *   on another computer, leaves this copy the last one;
+   * - what closed windows were trying out, or typed and did not save, counts too.
+   *
+   * Where something is only here, or could not be found out, people choose: open the project, so
+   * that it syncs or they can keep what is in it, take it away all the same, or leave it. Whatever
+   * they say, all of it is read again right before anything goes, however long they took and
+   * whichever window had the project open meanwhile, and they are asked again where there is more
+   * to lose than they were told. Resolves to whether it is gone.
    */
   async removeFromBrowser(key: string): Promise<boolean> {
     const { cloud, session, dialogs, notifications, projects, records, t } = this.#options;
@@ -1505,12 +1822,18 @@ export class CloudProjects {
     const summary = (await projects.list().catch(() => [])).find((each) => each.id === key);
     const name = summary?.name ?? link.name ?? "";
     const words = { name, interpolation: { escapeValue: false } };
-    /** A window that has it open would go on writing a log that is gone. Resolves to whether one has. */
+    /**
+     * A window that has it open would go on writing a log that is gone. Resolves to whether one
+     * has, or may have where that cannot be told, after saying so.
+     */
     const isOpenElsewhere = async (): Promise<boolean> => {
-      if (((await this.#options.others?.(key).catch(() => 0)) ?? 0) === 0) return false;
+      const others = await this.#othersOf(key);
+      if (others === 0) return false;
       await dialogs.confirm({
         title: t("cloud.remove.title", words),
-        message: t("cloud.remove.openElsewhere"),
+        message: t(
+          others === undefined ? "cloud.remove.maybeOpenElsewhere" : "cloud.remove.openElsewhere",
+        ),
         confirm: t("dialog.close"),
         noticeOnly: true,
       });
@@ -1518,17 +1841,25 @@ export class CloudProjects {
     };
     if (await isOpenElsewhere()) return false;
     const isOpen = () => session.key === key;
-    const wasOpen = isOpen();
-    if (wasOpen && !this.#options.closeProject) return false;
-    /** Asks where something is only here. Resolves to whether it may go all the same. */
+    if (isOpen() && !this.#options.closeProject) return false;
+    /** Asks where something is only here, or may be. Resolves to whether it may go all the same. */
     const mayGo = async (found: OnlyHere | undefined): Promise<boolean> => {
-      if (found && found.changes === 0 && found.files.length === 0) return true;
+      const isGone = found?.cloud === "gone";
+      // Opening it helps where it can sync, or where there is something in it to keep.
+      const syncs = !isGone && (found === undefined || found.changes !== 0);
+      const keeps = found !== undefined && (found.files.length > 0 || found.left.length > 0);
+      const helps = syncs || isGone || keeps;
+      const open = isOpen()
+        ? syncs
+          ? t("cloud.remove.wait")
+          : undefined
+        : t(syncs ? "cloud.remove.open" : "cloud.remove.openIt");
       const answer = await dialogs.choose({
-        title: t("cloud.remove.unsyncedTitle", words),
+        title: this.#onlyHereTitle(found, name),
         message: this.#onlyHereText(found),
         choices: [
-          { id: "open", label: t(isOpen() ? "cloud.remove.wait" : "cloud.remove.open") },
-          { id: "remove", label: t("cloud.remove.anyway"), kind: "danger" },
+          ...(helps && open !== undefined ? [{ id: "open", label: open }] : []),
+          { id: "remove", label: t("cloud.remove.anyway"), kind: "danger" as const },
         ],
       });
       if (answer === "open" && !isOpen()) await this.#options.openProject(key);
@@ -1537,40 +1868,44 @@ export class CloudProjects {
     /** Reads what is only here. Undefined: it could not be read, which is as much as "maybe". */
     const look = async (): Promise<OnlyHere | undefined> => {
       try {
-        if (isOpen()) {
+        const isHere = isOpen();
+        if (isHere) {
           // What this window still has to write is part of it, and what the platform took of it
           // just now is not.
           if (!(await session.trySave())) return undefined;
           await this.session?.flush();
         }
         const now = await cloud.links.get(key);
-        return now ? await this.#onlyHere(key, now) : undefined;
+        return now ? await this.#onlyHere(key, now, { withLeft: !isHere }) : undefined;
       } catch (error) {
         console.warn("Whether the platform has all of the project could not be read", error);
         return undefined;
       }
     };
-    const found = await look();
-    const isAllThere = found !== undefined && found.changes === 0 && found.files.length === 0;
-    if (isAllThere) {
+    let agreed = await look();
+    if (isAllThere(agreed)) {
       const go = await dialogs.confirm({
         title: t("cloud.remove.title", words),
         message: t("cloud.remove.message"),
         confirm: t("cloud.remove.confirm"),
       });
       if (!go) return false;
-    } else if (!(await mayGo(found))) return false;
-    if (wasOpen) {
-      if (isOpen() && !(await this.#options.closeProject?.())) return false;
+    } else if (!(await mayGo(agreed))) return false;
+    if (isOpen()) {
+      if (!(await this.#options.closeProject?.())) return false;
       if (isOpen()) return false;
-      // Leaving it can have saved what was being tried, or typed: that counts too.
-      if (isAllThere) {
-        const after = await look();
-        const stillAll = after !== undefined && after.changes === 0 && after.files.length === 0;
-        if (!stillAll && !(await mayGo(after))) return false;
-      }
     }
-    // People took their time to answer: a window may have opened it meanwhile.
+    // People took their time to answer, and a window may have had the project open meanwhile, and
+    // closed it again; leaving it here can have saved what was being tried, or typed. So all of
+    // it is read again, whatever was found before: what goes now is what is there now.
+    let last: OnlyHere | undefined;
+    for (;;) {
+      if (isOpen()) return false;
+      last = await look();
+      if (covers(agreed, last)) break;
+      if (!(await mayGo(last))) return false;
+      agreed = last;
+    }
     if (await isOpenElsewhere()) return false;
     try {
       await (this.#options.removeLocal ?? ((id: string) => projects.remove(id)))(key);
@@ -1579,15 +1914,74 @@ export class CloudProjects {
       notifications.push(t("cloud.remove.failed"));
       return false;
     }
-    await this.forget(key);
-    notifications.push(t("cloud.remove.done", words));
+    // The link goes last. Should it stay behind, it is a link to nothing, which nothing reads,
+    // and which goes the next time, see `tidy`; a project left without its link would look like
+    // one of this browser only, and stop syncing without a word.
+    if (!(await this.#forgetLink(key)) && !(await this.#forgetLink(key))) {
+      console.warn("The link of a copy that is gone stays until the next time");
+    }
+    // Only what was found out: that the platform has the project, and had it before this began.
+    const isKept = last !== undefined && last.cloud === "there" && last.changes !== "all";
+    notifications.push(t(isKept ? "cloud.remove.done" : "cloud.remove.doneHere", words));
     return true;
+  }
+
+  /** Takes a link away. Resolves to whether it is gone. */
+  async #forgetLink(key: string): Promise<boolean> {
+    try {
+      await this.#options.cloud.links.remove(key);
+      return true;
+    } catch (error) {
+      console.warn("The link of a project that is gone could not be taken away", error);
+      return false;
+    }
+  }
+
+  /**
+   * Takes away the links that are left of copies this browser does not keep any more, as where
+   * taking a copy out of it stopped between the copy and its link: nothing reads them, see
+   * `#copiesOf`. Once after the page loaded is enough. Not a link that was made just now: its
+   * project may still be on its way in, see `#keep`.
+   */
+  async tidy(): Promise<void> {
+    const { cloud, projects, records } = this.#options;
+    try {
+      const links = (await cloud.links.list()).filter((link) => link.platform === cloud.platform);
+      if (links.length === 0) return;
+      const kept = new Set((await projects.list()).map((summary) => summary.id));
+      const now = Date.now();
+      for (const link of links) {
+        if (kept.has(link.key) || now - link.linkedAt < STALE_LINK_MS) continue;
+        if (await records?.get(link.key)) continue;
+        // Still the same one: a copy that came in meanwhile has a link of its own under this key.
+        const still = await cloud.links.get(link.key);
+        if (still?.project !== link.project || still.linkedAt !== link.linkedAt) continue;
+        await cloud.links.remove(link.key);
+      }
+    } catch (error) {
+      console.warn("Links of copies that are gone could not be looked for", error);
+    }
+  }
+
+  /** What the question about a copy that may not be all on the platform is headed, see `removeFromBrowser`. */
+  #onlyHereTitle(found: OnlyHere | undefined, name: string): string {
+    const { t } = this.#options;
+    const words = { name, interpolation: { escapeValue: false } };
+    if (found?.cloud === "gone") return t("cloud.remove.goneTitle", words);
+    const isKnown =
+      found !== undefined &&
+      ((found.changes !== 0 && found.changes !== "unknown") ||
+        found.files.length > 0 ||
+        found.left.length > 0);
+    return t(isKnown ? "cloud.remove.unsyncedTitle" : "cloud.remove.unsureTitle", words);
   }
 
   /** What is only here, in words, see `removeFromBrowser`. */
   #onlyHereText(found: OnlyHere | undefined): string {
     const { t } = this.#options;
     const said: string[] = [];
+    // First what there is no doubt about: the platform does not have the project at all.
+    if (found?.cloud === "gone") said.push(t("cloud.remove.gone"));
     if (!found || found.changes === "unknown") said.push(t("cloud.remove.unknown"));
     else if (found.changes === "all") said.push(t("cloud.remove.notThere"));
     else if (found.changes > 0) said.push(t("cloud.remove.unsynced", { count: found.changes }));
@@ -1600,7 +1994,33 @@ export class CloudProjects {
         }),
       );
     }
-    said.push(t("cloud.remove.lost"));
+    if (found && found.left.length > 0) {
+      const what = found.left
+        .map((kind) => t(`cloud.remove.left.${kind}`))
+        .join(t("cloud.remove.and"));
+      said.push(t("cloud.remove.leftBehind", { what, interpolation: { escapeValue: false } }));
+    }
+    // A project that never got there is said above: whether the platform has it is no question.
+    if (found && found.changes !== "all") {
+      if (found.cloud === "unknown") said.push(t("cloud.remove.cloudUnknown"));
+      if (found.cloud === "otherAccount") said.push(t("cloud.remove.cloudOtherAccount"));
+    }
+    const isLast = found?.cloud === "gone";
+    const isOnlyDoubt =
+      found !== undefined &&
+      !isLast &&
+      found.changes === 0 &&
+      found.files.length === 0 &&
+      found.left.length === 0;
+    said.push(
+      t(
+        isLast
+          ? "cloud.remove.lostAll"
+          : isOnlyDoubt
+            ? "cloud.remove.lostMaybe"
+            : "cloud.remove.lost",
+      ),
+    );
     // A folder keeps the files too, where this browser can write one.
     if (found && found.files.length > 0 && this.#options.moveToFolder)
       said.push(t("cloud.remove.keepFiles"));
@@ -1624,24 +2044,35 @@ export class CloudProjects {
       danger: true,
     });
     if (!go) return false;
+    // What this computer has of it, read before anything goes: whose each says the project is.
+    const links = await cloud.links.withProject(cloud.platform, project).catch(() => []);
     // Nothing of it may come back: the window that syncs it here stops first.
     const open = this.#snapshot.kind === "linked" ? this.#snapshot.link : undefined;
     const isOpen = open?.project === project && session.key === open.key;
     if (isOpen) await this.#stop();
     const outcome = await this.#takeAway(project);
-    if (outcome !== "removed" && outcome !== "missing") {
+    // "No such project" is what the platform says of somebody else's too: where what this
+    // computer has of it says that it is of another account, nothing says that it is gone, and
+    // what this computer has of it stays connected.
+    const isForeign = outcome === "missing" && links.some((link) => !this.isOwn(link));
+    if ((outcome !== "removed" && outcome !== "missing") || isForeign) {
       if (isOpen) {
         this.#key = undefined;
         this.#store = undefined;
         void this.follow();
       }
       notifications.push(
-        t(outcome === "hasRepository" ? "cloud.delete.hasRepository" : "cloud.delete.failed"),
+        t(
+          outcome === "hasRepository"
+            ? "cloud.delete.hasRepository"
+            : isForeign
+              ? "cloud.delete.otherAccount"
+              : "cloud.delete.failed",
+        ),
       );
       return false;
     }
     // What this computer has of it is of this computer only from now on.
-    const links = await cloud.links.withProject(cloud.platform, project).catch(() => []);
     for (const link of links) {
       if (isOpen && link.key === open?.key) {
         await this.#unlink(link.key, { quietly: true });

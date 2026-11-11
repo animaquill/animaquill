@@ -1,4 +1,14 @@
-import { count, isObject, optional, projectOf, text, texts } from "./answers.ts";
+import {
+  CHANGE_TIMEOUT_MS,
+  REQUEST_TIMEOUT_MS,
+  count,
+  isObject,
+  optional,
+  projectOf,
+  text,
+  texts,
+  withinTime,
+} from "./answers.ts";
 import {
   CloudSignedOut,
   RepositoryRefused,
@@ -23,6 +33,8 @@ import {
  * - `POST <api>/projects/<project>/archive`, with `{ replace }` or nothing
  *
  * What comes back is read field by field: a platform of another version can say more, or less.
+ * A platform that does not answer for a while is "unavailable", like one that is not there: what
+ * was asked for may have happened all the same, which asking again finds out.
  */
 
 export interface BrowserRepositoryOptions {
@@ -31,6 +43,10 @@ export interface BrowserRepositoryOptions {
   /** Headers the platform asks of requests that change something. */
   readonly changeHeaders?: Readonly<Record<string, string>>;
   readonly fetch?: typeof fetch;
+  /** How long the platform has to answer what only looks, see `REQUEST_TIMEOUT_MS`. */
+  readonly timeoutMs?: number;
+  /** ...and what links a repository or archives, see `CHANGE_TIMEOUT_MS`. */
+  readonly changeTimeoutMs?: number;
 }
 
 const choiceOf = (value: unknown): RepositoryChoice | undefined => {
@@ -80,6 +96,10 @@ const divergedOf = (value: unknown): RepositoryStatus["diverged"] => {
   return { sha, files, deleted };
 };
 
+/** How a repository is gone, only where the platform can tell, and in the words the editor knows. */
+const goneOf = (value: unknown): RepositoryStatus["gone"] =>
+  value === "deleted" || value === "unauthorized" ? value : undefined;
+
 /** A status as the platform said it. Throws where it is not one at all. */
 export const statusOf = (value: unknown): RepositoryStatus => {
   if (!isObject(value)) throw new Error("The platform's answer is not a status");
@@ -109,6 +129,7 @@ export const statusOf = (value: unknown): RepositoryStatus => {
       }),
     state,
     ...optional("reason", text(value.reason)),
+    ...optional("gone", goneOf(value.gone)),
     ...optional("detail", text(value.detail)),
     archiving: value.archiving === true,
     ...(last &&
@@ -165,23 +186,34 @@ const codeOf = (status: number, said: unknown): RepositoryRefusal => {
 
 export function browserRepository(options: BrowserRepositoryOptions): RepositoryAccess {
   const request = options.fetch ?? ((input, init) => fetch(input, init));
+  const lookMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const changeMs = options.changeTimeoutMs ?? CHANGE_TIMEOUT_MS;
 
-  const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> => {
+  const call = async (
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    timeoutMs = lookMs,
+  ): Promise<unknown> => {
     let response: Response;
+    let json: unknown;
     try {
-      response = await request(options.api(path), {
-        method,
-        cache: "no-store",
-        ...(method === "POST" && {
-          headers: { ...options.changeHeaders, "content-type": "application/json" },
-          body: JSON.stringify(body ?? {}),
-        }),
+      [response, json] = await withinTime(timeoutMs, async (signal) => {
+        const answered = await request(options.api(path), {
+          method,
+          cache: "no-store",
+          ...(method === "POST" && {
+            headers: { ...options.changeHeaders, "content-type": "application/json" },
+            body: JSON.stringify(body ?? {}),
+          }),
+          signal,
+        });
+        return [answered, await answered.json().catch(() => undefined)] as const;
       });
     } catch {
-      // No answer at all: the network, or the platform not there now.
+      // No answer at all: the network, the platform not there now, or a line that hangs.
       throw new RepositoryRefused("unavailable");
     }
-    const json: unknown = await response.json().catch(() => undefined);
     if (response.ok) return json;
     const answer = isObject(json) ? json : {};
     if (response.status === 401 || answer.error === "signedOut")
@@ -224,7 +256,7 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
       return said;
     },
     async link(project, choice) {
-      return statusOf(await call("POST", projectPath(project, "repository"), choice));
+      return statusOf(await call("POST", projectPath(project, "repository"), choice, changeMs));
     },
     async status(project) {
       return statusOf(await call("GET", projectPath(project, "repository")));
@@ -235,6 +267,7 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
           "POST",
           projectPath(project, "archive"),
           archive.replace === undefined ? {} : { replace: archive.replace },
+          changeMs,
         ),
       );
     },

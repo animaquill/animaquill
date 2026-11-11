@@ -110,6 +110,17 @@ describe("repositories through the platform", () => {
     expect(() => statusOf("nonsense")).toThrow();
   });
 
+  test("reads whether a repository that is gone was deleted, or is out of what the App may reach", () => {
+    const paused = { state: "paused", reason: "gone", head: 1, archivedSeq: 1, archiving: false };
+    expect(statusOf({ ...paused, gone: "deleted" }).gone).toBe("deleted");
+    expect(statusOf({ ...paused, gone: "unauthorized" }).gone).toBe("unauthorized");
+    // A platform that cannot tell says nothing, and neither does one from before it could.
+    expect(statusOf(paused)).not.toHaveProperty("gone");
+    // What a newer platform says is not one of the two: the editor says what fits both.
+    expect(statusOf({ ...paused, gone: "moved" })).not.toHaveProperty("gone");
+    expect(statusOf({ ...paused, gone: true })).not.toHaveProperty("gone");
+  });
+
   test("lists repositories to choose from", async () => {
     const { access, sent } = platform(() =>
       Response.json({
@@ -310,5 +321,36 @@ describe("repositories through the platform", () => {
       code: "invalid",
     });
     await expect(access.status("p1")).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  test("a platform that does not answer for a while is not there, and the request stops", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const hanging = browserRepository({
+      api: (path) => path,
+      fetch: (_input, init) => {
+        signals.push(init?.signal ?? undefined);
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        });
+      },
+      timeoutMs: 20,
+      changeTimeoutMs: 40,
+    });
+    await expect(hanging.status("p1")).rejects.toMatchObject({ code: "unavailable" });
+    await expect(hanging.list()).rejects.toMatchObject({ code: "unavailable" });
+    await expect(hanging.check({ create: { name: "x" } })).rejects.toMatchObject({
+      code: "unavailable",
+    });
+    // Making a repository takes the platform longer: it gets longer, and is given up on too.
+    const before = Date.now();
+    await expect(hanging.link("p1", { create: { name: "x" } })).rejects.toMatchObject({
+      code: "unavailable",
+    });
+    expect(Date.now() - before).toBeGreaterThanOrEqual(35);
+    await expect(hanging.archiveNow("p1")).rejects.toMatchObject({ code: "unavailable" });
+    expect(signals).toHaveLength(5);
+    expect(signals.every((signal) => signal?.aborted)).toBe(true);
   });
 });

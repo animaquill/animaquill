@@ -16,6 +16,7 @@ const isMoved = (data: unknown): data is Moved =>
  * Which windows have which projects open, through Web Locks: each window holds a shared lock for
  * each project it has open, which the browser lets go of when the window goes away, and asking the
  * browser what is held counts them. Without Web Locks nobody can tell, and every window is alone.
+ * A browser that has them and does not answer is something else: `others` rejects then.
  */
 export function browserPresence(
   locks: () => LockManager | undefined = () => navigator.locks,
@@ -60,7 +61,9 @@ export function browserPresence(
     async others(project) {
       const manager = locks();
       if (!manager) return 0;
-      const { held = [] } = await manager.query().catch(() => ({ held: undefined }));
+      // A browser that does not say what is held cannot tell: that is no "nobody", which is what
+      // people would be told before something of the project is taken away.
+      const { held = [] } = await manager.query();
       const all = held.filter(({ name }) => name === `${PREFIX}${project}`).length;
       // A lock this window just asked for may not be held yet.
       return Math.max(0, all - (mine.get(project) ?? 0));

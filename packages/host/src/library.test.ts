@@ -597,6 +597,36 @@ describe("what is being tried out", () => {
     expect(await (await trials().open(PROJECT.id)).load()).toBeUndefined();
   });
 
+  it("says whether anything is kept on a project, whichever window left it and whether one has it", async () => {
+    const { trials, library, locks, addTrialRecord } = await setup();
+    await library.create({ id: "project_b", name: "别的" }, STATE);
+    expect(await trials().holds?.(PROJECT.id)).toBe(false);
+    // A place that a window has, with nothing in it, holds nothing.
+    const place = await trials().open(PROJECT.id);
+    expect(await trials().holds?.(PROJECT.id)).toBe(false);
+    await place.save("试改");
+    expect(await trials().holds?.(PROJECT.id)).toBe(true);
+    expect(await trials().holds?.("project_b")).toBe(false);
+    // The window went away: what it left is still there, for the next one, or to go with the project.
+    locks.dropAll();
+    expect(await trials().holds?.(PROJECT.id)).toBe(true);
+    // Asking takes no place, and leaves what is kept for whoever comes for it.
+    expect(await (await trials().open(PROJECT.id)).load()).toBe("试改");
+    await (await trials().open(PROJECT.id)).save(undefined);
+    locks.dropAll();
+    await (await trials().open(PROJECT.id)).save(undefined);
+    expect(await trials().holds?.(PROJECT.id)).toBe(false);
+    // What a project with the same id left before this one is not of this one.
+    await addTrialRecord({
+      project: PROJECT.id,
+      place: "old",
+      instance: "another",
+      savedAt: 1,
+      trial: "旧",
+    });
+    expect(await trials().holds?.(PROJECT.id)).toBe(false);
+  });
+
   it("does not take what a project with the same id left behind", async () => {
     const { trials, addTrialRecord } = await setup();
     (await trials().open(PROJECT.id)).close();
