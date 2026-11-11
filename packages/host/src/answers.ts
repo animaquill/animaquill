@@ -79,6 +79,6 @@ export const unusableOf = (value: unknown): RepositoryUnusable | undefined => {
   const reason = text(value.reason);
   const since = count(value.since);
   const deleteAt = count(value.deleteAt);
-  if (reason === undefined || since === undefined || deleteAt === undefined) return undefined;
-  return { reason, since, deleteAt };
+  if (reason === undefined || since === undefined) return undefined;
+  return { reason, since, ...optional("deleteAt", deleteAt) };
 };

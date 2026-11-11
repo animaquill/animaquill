@@ -116,9 +116,11 @@ describe("repositories through the platform", () => {
     // And that it cannot be used, so the project cannot be edited, since when and until when.
     const unusable = { reason: "gone", since: 10, deleteAt: 20 };
     expect(statusOf({ ...paused, unusable }).unusable).toEqual(unusable);
-    expect(statusOf({ ...paused, unusable: { reason: "gone", since: 10 } })).not.toHaveProperty(
-      "unusable",
-    );
+    expect(statusOf({ ...paused, unusable: { reason: "gone", since: 10 } }).unusable).toEqual({
+      reason: "gone",
+      since: 10,
+    });
+    expect(statusOf({ ...paused, unusable: { reason: "gone" } })).not.toHaveProperty("unusable");
     expect(statusOf({ ...paused, gone: "unauthorized" }).gone).toBe("unauthorized");
     // A platform that cannot tell says nothing, and neither does one from before it could.
     expect(statusOf(paused)).not.toHaveProperty("gone");

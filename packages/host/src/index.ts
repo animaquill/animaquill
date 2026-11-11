@@ -366,14 +366,15 @@ export type RepositoryPause =
 /**
  * The repository of a project cannot be used: deleted, taken out of what the platform may touch,
  * moved to another account, or the platform's access to the account taken away or suspended
- * (`reason`, as the pause of archiving says it). The project cannot be edited meanwhile, and the
- * platform takes it away at `deleteAt` unless the repository can be used again before: counted from
- * when the platform first found it so (`since`). Times are milliseconds since 1970.
+ * (`reason`, as the pause of archiving says it), since the platform first found it so (`since`).
+ * The project cannot be edited meanwhile, and the platform takes it away at `deleteAt` unless the
+ * repository can be used again before; without `deleteAt`, it takes none away. Times are
+ * milliseconds since 1970.
  */
 export interface RepositoryUnusable {
   readonly reason: RepositoryPause | (string & {});
   readonly since: number;
-  readonly deleteAt: number;
+  readonly deleteAt?: number;
 }
 
 /** The repository of a project, and how archiving into it goes. Times are milliseconds since 1970. */
