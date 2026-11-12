@@ -4,6 +4,7 @@ import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/di
 import { useWorkbench } from "./context.ts";
 import { ConnectDialog } from "./ConnectDialog.tsx";
 import { NewProjectDialog } from "./NewProjectDialog.tsx";
+import { ReconcileDialog } from "./ReconcileDialog.tsx";
 import styles from "./DialogHost.module.css";
 import { RepositoryDialog } from "./RepositoryDialog.tsx";
 
@@ -51,9 +52,15 @@ type FormRequest = Extract<DialogRequest, { kind: "form" }>;
 type RepositoryRequest = Extract<DialogRequest, { kind: "repository" }>;
 type ConnectRequest = Extract<DialogRequest, { kind: "connect" }>;
 type CreateRequest = Extract<DialogRequest, { kind: "create" }>;
+type ReconcileRequest = Extract<DialogRequest, { kind: "reconcile" }>;
 type QuestionRequest = Exclude<
   DialogRequest,
-  ProgressRequest | FormRequest | RepositoryRequest | ConnectRequest | CreateRequest
+  | ProgressRequest
+  | FormRequest
+  | RepositoryRequest
+  | ConnectRequest
+  | CreateRequest
+  | ReconcileRequest
 >;
 
 /** Choices before something starts. A list each, because there are few options and no typing. */
@@ -257,5 +264,6 @@ export function DialogHost() {
   if (request.kind === "repository") return <RepositoryDialog key={request.id} request={request} />;
   if (request.kind === "connect") return <ConnectDialog key={request.id} request={request} />;
   if (request.kind === "create") return <NewProjectDialog key={request.id} request={request} />;
+  if (request.kind === "reconcile") return <ReconcileDialog key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }

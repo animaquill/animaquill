@@ -99,7 +99,7 @@ import { ResourcePages } from "../resources/pages.ts";
 import { parseProjectResourceId } from "../resources/project-resources.ts";
 import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
-import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
+import { ProjectFolders, type FolderLinking, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import { StartHabits } from "../start/habits.ts";
 import { StartCovers } from "../start/covers.ts";
@@ -656,7 +656,10 @@ export class Workbench {
           ...((await host.trials.holds?.(key)) ? (["trial"] as const) : []),
           ...((await host.drafts.holds?.(key)) ? (["drafts"] as const) : []),
         ],
-        ...(this.projectFolders && { moveToFolder: (key: string) => this.moveToFolder(key) }),
+        ...(this.projectFolders && {
+          moveToFolder: (key: string, linking?: FolderLinking) =>
+            this.projectFolders?.moveToFolder(key, undefined, linking) ?? Promise.resolve(false),
+        }),
         memory: host.windowMemory,
         ...(host.persistence && { persistence: host.persistence }),
         leaving: () => this.leavingPage,
@@ -1654,9 +1657,13 @@ export class Workbench {
         if (key !== undefined) void cloud.removeFromBrowser(key);
         break;
       }
-      case "linkFolder":
-        void this.moveToFolder();
+      case "linkFolder": {
+        // As from the start page: a folder that has the project already is compared with it.
+        const snapshot = cloud.getSnapshot();
+        if (snapshot.kind === "linked") void cloud.linkFolder(snapshot.link.project);
+        else void this.moveToFolder();
         break;
+      }
       case "recheck":
         void cloud.recheck();
         break;

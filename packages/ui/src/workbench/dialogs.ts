@@ -96,6 +96,28 @@ export interface CreateDialogOptions {
   readonly imported?: boolean;
 }
 
+/** A file of the project that two sides have differently, for people to choose a side for. */
+export interface ReconcileItem {
+  readonly path: string;
+  /** How the two sides have it, in words. */
+  readonly status: string;
+  readonly options: readonly { readonly id: string; readonly label: string }[];
+  readonly value: string;
+}
+
+/** Which side each file is to be, see `ReconcileItem`, as one choice for every file. */
+export interface ReconcileDialogOptions {
+  readonly title: string;
+  readonly message: string;
+  readonly items: readonly ReconcileItem[];
+  /** Choices for every file at once, by the id of the option. */
+  readonly all: readonly { readonly id: string; readonly label: string }[];
+  readonly notes: readonly string[];
+  /** Why the last choices could not be carried out. */
+  readonly error?: string;
+  readonly confirm: string;
+}
+
 export interface ProgressOptions {
   readonly title: string;
   /** The word on the button that stops it. */
@@ -138,6 +160,7 @@ export type DialogRequest =
   | ({ readonly kind: "repository"; readonly id: number } & RepositoryDialogOptions)
   | ({ readonly kind: "connect"; readonly id: number } & ConnectDialogOptions)
   | ({ readonly kind: "create"; readonly id: number } & CreateDialogOptions)
+  | ({ readonly kind: "reconcile"; readonly id: number } & ReconcileDialogOptions)
   | ProgressRequest;
 
 type DialogValue = string | boolean | FormAnswer | undefined;
@@ -173,6 +196,13 @@ export class Dialogs {
   /** Resolves to what was chosen, or to undefined when cancelled. */
   form(options: FormOptions): Promise<FormAnswer | undefined> {
     return this.#ask({ kind: "form", id: this.#nextId++, ...options }) as Promise<
+      FormAnswer | undefined
+    >;
+  }
+
+  /** Resolves to the option chosen for each file, by its path, or to undefined when cancelled. */
+  reconcile(options: ReconcileDialogOptions): Promise<FormAnswer | undefined> {
+    return this.#ask({ kind: "reconcile", id: this.#nextId++, ...options }) as Promise<
       FormAnswer | undefined
     >;
   }

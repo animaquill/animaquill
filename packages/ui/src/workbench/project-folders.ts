@@ -33,9 +33,17 @@ import {
   type AssetIssue,
   type AssetProgress,
 } from "../folder/assets.ts";
+import { FolderAdopt, type AdoptPlan, type AdoptResult, type AdoptStep } from "../folder/adopt.ts";
+import {
+  defaultChoices,
+  isSettled,
+  reconcileItems,
+  type ReconcileSide,
+} from "../cloud/reconcile.ts";
 import {
   FolderMove,
   copyOfProject,
+  errorName,
   loadProject,
   type CopyResult,
   type CopySource,
@@ -140,6 +148,38 @@ export interface AssetFileActions {
   filesChanged(paths: readonly string[]): void;
 }
 
+/**
+ * What a copy of a project of the platform brings along when it is linked with a folder, see
+ * `ProjectFolders.moveToFolder`: a folder with the same project in it already is not written over,
+ * people choose file by file which side each file is to be, see `FolderAdopt`. The platform's side
+ * of it is `CloudProjects`.
+ */
+export interface FolderLinking {
+  /**
+   * Resolves once the copy has what the platform has, to whether it does: what people compare is
+   * what the platform has now. Says why where it does not.
+   */
+  readonly caughtUp: () => Promise<boolean>;
+  /**
+   * Has the platform archive the project into its repository and waits for that, as what the folder
+   * puts in place of some of it is to be found again there. Resolves to whether to go on: where it
+   * could not be archived, only where people said so. Says why.
+   */
+  readonly archive: () => Promise<boolean>;
+  /** When the project of the platform last changed, which hints at which side of a file is newer. */
+  readonly updatedAt: () => Promise<number | undefined>;
+  /**
+   * What a folder that this browser knows by `key` is linked with, as a project of the platform:
+   * its name, or undefined where it is linked with none.
+   */
+  readonly linkedTo: (key: string) => Promise<string | undefined>;
+  /**
+   * Set once people began to compare the folder and did not link it in the end: whatever was
+   * brought into this browser only for this may go.
+   */
+  abandoned?: boolean;
+}
+
 /** How long the files of assets are looked at again after what may have changed them settles. */
 const CHECK_AFTER_MS = 300;
 
@@ -175,6 +215,8 @@ interface OpeningFiles {
   drop(): void;
 }
 
+/** How often people choose again where a side changed meanwhile, before it is left for later. */
+const MAX_ADOPT_ROUNDS = 5;
 /** More than anybody reads: what of the folder did not come in, since the project opened. */
 const MAX_LISTED = 200;
 /** Batches of files that can be taken back from elsewhere than their notice, see `undoBatch`. */
@@ -250,6 +292,8 @@ export class ProjectFolders {
   #progress: AssetProgress = NO_PROGRESS;
   /** Moves projects of the browser into folders, see `moveToFolder`. */
   readonly #mover: FolderMove;
+  /** Links copies of projects of the platform with folders that have them already, see `#adopt`. */
+  readonly #adopter: FolderAdopt;
   #moving = false;
   /** See `ProjectFoldersSnapshot.moves`. */
   #moves = 0;
@@ -264,6 +308,12 @@ export class ProjectFolders {
       t: options.t,
     });
     this.#mover = new FolderMove({
+      folders: options.folders,
+      projects: options.projects,
+      t: options.t,
+      ...(options.hasher && { hasher: options.hasher }),
+    });
+    this.#adopter = new FolderAdopt({
       folders: options.folders,
       projects: options.projects,
       t: options.t,
@@ -972,18 +1022,30 @@ export class ProjectFolders {
    * go on. This asks for a folder, so it has to run right after people did something. Resolves to
    * whether it moved.
    */
-  async moveToFolder(key: string, chosen?: FolderChoice): Promise<boolean> {
+  async moveToFolder(
+    key: string,
+    chosen?: FolderChoice,
+    linking?: FolderLinking,
+  ): Promise<boolean> {
     if (this.#moving) return false;
     this.#moving = true;
     try {
-      return await this.#moveToFolder(key, chosen);
+      return await this.#moveToFolder(key, chosen, linking);
     } finally {
       this.#moving = false;
     }
   }
 
-  /** `given`: the folder people chose already, and where in it, as for a new project of the platform. */
-  async #moveToFolder(key: string, given?: FolderChoice): Promise<boolean> {
+  /**
+   * `given`: the folder people chose already, and where in it, as for a new project of the platform.
+   * `linking`: it is a copy of a project of the platform, which a folder that has it already is
+   * linked with, see `FolderLinking`.
+   */
+  async #moveToFolder(
+    key: string,
+    given?: FolderChoice,
+    linking?: FolderLinking,
+  ): Promise<boolean> {
     const { session, projects, presence, dialogs, notifications, t } = this.#options;
     const open = session.key === key ? session.store : undefined;
     // Other windows that have it open go on with the folder once it moved, see `followMove`.
@@ -1020,6 +1082,19 @@ export class ProjectFolders {
       if (refusal) {
         await this.#refusedMove(name, refusal);
         return false;
+      }
+      if (linking && !given) {
+        let found: Awaited<ReturnType<FolderProjects["placeFor"]>>;
+        try {
+          found = await this.projects.placeFor(chosen, name);
+        } catch (error) {
+          this.#failed(error);
+          return false;
+        }
+        if (found.kind === "project" || found.kind === "known") {
+          const replacing = found.kind === "known" ? found.record : undefined;
+          return await this.#adopt(key, store, open, chosen, replacing, linking, saved);
+        }
       }
       const place = given ?? (await this.#placeFor(chosen, name));
       if (!place) return false;
@@ -1084,6 +1159,312 @@ export class ProjectFolders {
         folder: record.folder.name,
       }),
     );
+  }
+
+  /**
+   * Links a copy of a project of the platform with a folder that has the same project in it, see
+   * `FolderAdopt` and the design of the start page of AnimaQuill Cloud, 4.2: the copy first gets
+   * what the platform has, the two are compared, and people choose a side for every file that they
+   * have differently. Where the project of the platform is to change, the platform archives it
+   * first. Then it is carried out, and where anything changed meanwhile, people look again. The
+   * folder this browser knows as a project of this computer, `replacing`, makes way for it. Nothing
+   * changes on either side before people say so, or where it does not go to the end. Resolves to
+   * whether the project is the folder now.
+   */
+  async #adopt(
+    key: string,
+    store: ProjectStore,
+    open: ProjectStore | undefined,
+    folder: LocalFolder,
+    replacing: FolderRecord | undefined,
+    linking: FolderLinking,
+    saved: () => Promise<boolean>,
+  ): Promise<boolean> {
+    const { notifications, presence, projects, session, t } = this.#options;
+    const { name } = store.getState().manifest;
+    const words = { name, folder: folder.name, interpolation: { escapeValue: false } };
+    const failedTitle = t("folder.adopt.failedTitle", words);
+    // Whatever does not end in a link leaves what was brought only for it to go.
+    linking.abandoned = true;
+    if (replacing) {
+      const linked = await linking.linkedTo(replacing.id).catch(() => "");
+      if (linked !== undefined) {
+        await this.#notice(
+          failedTitle,
+          t("folder.adopt.linkedElsewhere", { ...words, project: linked }),
+        );
+        return false;
+      }
+      // Its own window writes it, and has what was tried and typed there.
+      const isOpen =
+        this.#current?.record.id === replacing.id ||
+        ((await presence?.others(replacing.id).catch(() => 1)) ?? 0) > 0;
+      if (isOpen) {
+        await this.#notice(failedTitle, t("folder.adopt.openElsewhere", words));
+        return false;
+      }
+      if (await this.projects.hasUnwritten(replacing)) {
+        await this.#notice(failedTitle, t("folder.adopt.unwritten", words));
+        return false;
+      }
+    }
+    if (!(await linking.caughtUp())) return false;
+    const updatedAt = await linking.updatedAt().catch(() => undefined);
+    const media = projects.media(key);
+    for (let round = 1; ; round++) {
+      const plan = await this.#compareFolder(key, store, folder, updatedAt, words);
+      if (!plan) return false;
+      const choices = await this.#chooseSides(plan, store, words);
+      if (!choices) return false;
+      const settled = this.#adopter.settle(plan, store, choices);
+      if (!isSettled(settled)) return false;
+      // What the folder puts in place of anything of the project of the platform is to be found again.
+      if (settled.changes.length > 0 && !(await linking.archive())) return false;
+      const result = await this.#runAdopt(plan, choices, store, media, saved, replacing, words);
+      if (result.kind === "changed" && round < MAX_ADOPT_ROUNDS) {
+        notifications.push(t("folder.adopt.changed"));
+        continue;
+      }
+      if (result.kind !== "adopted") {
+        await this.#notAdopted(result, failedTitle, words);
+        return false;
+      }
+      linking.abandoned = false;
+      // The project stays open, and from now on its folder is kept in step with it, also in the
+      // other windows that have it open.
+      if (open && session.store === open) await this.#follow(result.record, open);
+      presence?.moved(key);
+      await this.#adopted(result, plan, words);
+      return true;
+    }
+  }
+
+  /** Compares a folder with a copy of a project of the platform, as people watch. */
+  async #compareFolder(
+    key: string,
+    store: ProjectStore,
+    folder: LocalFolder,
+    updatedAt: number | undefined,
+    words: { readonly name: string; readonly folder: string },
+  ): Promise<AdoptPlan | undefined> {
+    const { dialogs, t } = this.#options;
+    const progress = dialogs.progress({
+      title: t("folder.adopt.comparing", words),
+      cancel: t("dialog.cancel"),
+      stopping: t("transfer.stopping"),
+    });
+    let look: Awaited<ReturnType<FolderAdopt["look"]>>;
+    try {
+      look = await this.#adopter.look(key, store, folder, {
+        ...(updatedAt !== undefined && { updatedAt }),
+        signal: progress.signal,
+      });
+    } catch (error) {
+      if (!progress.signal.aborted) this.#failed(error);
+      return undefined;
+    } finally {
+      progress.close();
+    }
+    if (progress.signal.aborted) return undefined;
+    const title = t("folder.adopt.failedTitle", words);
+    switch (look.kind) {
+      case "plan":
+        return look.plan;
+      case "other":
+        await this.#notice(
+          t("folder.adopt.otherTitle", words),
+          t("folder.adopt.other", { ...words, other: look.name }),
+        );
+        return undefined;
+      case "too-new":
+        await this.#notice(title, t("folder.adopt.tooNew"));
+        return undefined;
+      case "unreadable":
+        await this.#notice(
+          title,
+          t("folder.adopt.unreadableFolder", words),
+          look.problems.length > 0
+            ? [
+                listOf(
+                  t,
+                  t("folder.move.listTitle"),
+                  look.problems.map((problem) => problemText(t, problem)),
+                ),
+              ]
+            : undefined,
+        );
+        return undefined;
+      case "invalid":
+        await this.#notice(title, t("folder.adopt.invalid"), [
+          listOf(
+            t,
+            t("folder.move.listTitle"),
+            look.problems.map((problem) => problemText(t, problem)),
+          ),
+        ]);
+        return undefined;
+    }
+  }
+
+  /**
+   * Has people choose a side for every file that the two have differently, until the choices go
+   * together. Resolves to them, or to undefined where people cancelled.
+   */
+  async #chooseSides(
+    plan: AdoptPlan,
+    store: ProjectStore,
+    words: { readonly name: string; readonly folder: string },
+  ): Promise<Map<string, ReconcileSide> | undefined> {
+    const { dialogs, t } = this.#options;
+    let choices = defaultChoices(plan.differences);
+    // Both the same: nothing to choose.
+    if (plan.differences.length === 0) return choices;
+    let error: string | undefined;
+    for (;;) {
+      const answer = await dialogs.reconcile({
+        title: t("folder.adopt.title", words),
+        message: t("folder.adopt.message", { count: plan.differences.length }),
+        items: reconcileItems(plan.differences, choices, t, {
+          now: Date.now(),
+          words: "folder.adopt",
+        }),
+        all: [
+          { id: "here", label: t("folder.adopt.allHere") },
+          { id: "cloud", label: t("folder.adopt.allCloud") },
+        ],
+        notes: [t("folder.adopt.noteKept"), t("folder.adopt.noteArchive")],
+        ...(error !== undefined && { error }),
+        confirm: t("folder.adopt.confirm"),
+      });
+      if (!answer) return undefined;
+      choices = new Map(plan.differences.map(({ path }) => [path, answer[path] as ReconcileSide]));
+      const settled = this.#adopter.settle(plan, store, choices);
+      if (isSettled(settled)) return choices;
+      error = t("folder.adopt.unsettled", {
+        problems: settled.problems
+          .slice(0, 5)
+          .map((problem) => problemText(t, problem))
+          .join("；"),
+        interpolation: { escapeValue: false },
+      });
+    }
+  }
+
+  /** Carries out what people chose, as they watch, see `FolderAdopt.run`. */
+  async #runAdopt(
+    plan: AdoptPlan,
+    choices: ReadonlyMap<string, ReconcileSide>,
+    store: ProjectStore,
+    media: MediaStore,
+    saved: () => Promise<boolean>,
+    replacing: FolderRecord | undefined,
+    words: { readonly name: string; readonly folder: string },
+  ): Promise<AdoptResult> {
+    const { dialogs, t } = this.#options;
+    const progress = dialogs.progress({
+      title: t("folder.adopt.running", words),
+      cancel: t("dialog.cancel"),
+      stopping: t("transfer.stopping"),
+    });
+    const onStep = (step: AdoptStep) =>
+      progress.update({
+        detail: step.file,
+        amount: t(`folder.adopt.phase.${step.phase}`, { done: step.files, total: step.totalFiles }),
+        ...(step.totalFiles > 0 && { ratio: step.files / step.totalFiles }),
+      });
+    try {
+      return await this.#adopter.run(plan, choices, store, media, {
+        saved,
+        signal: progress.signal,
+        onStep,
+        ...(replacing && { replacing }),
+      });
+    } catch (error) {
+      // Before anything was written: nothing throws once it is.
+      console.warn("A folder could not be linked", error);
+      return {
+        kind: "stopped",
+        stage: "checking",
+        cancelled: progress.signal.aborted,
+        error,
+        restored: true,
+        cloudBack: true,
+        kept: undefined,
+      };
+    } finally {
+      progress.close();
+    }
+  }
+
+  /** Says why a folder was not linked, and how both sides are now. */
+  async #notAdopted(
+    result: Exclude<AdoptResult, { kind: "adopted" }>,
+    title: string,
+    words: { readonly name: string; readonly folder: string },
+  ): Promise<void> {
+    const { t } = this.#options;
+    switch (result.kind) {
+      case "refused":
+        await this.#notice(
+          title,
+          result.reason === "unsettled"
+            ? t("folder.adopt.unsettled", {
+                problems: (result.problems ?? [])
+                  .map((problem) => problemText(t, problem))
+                  .join("；"),
+                interpolation: { escapeValue: false },
+              })
+            : t(`folder.adopt.${result.reason}`, words),
+        );
+        return;
+      case "changed":
+        await this.#notice(title, t("folder.adopt.keepsChanging"));
+        return;
+      case "stopped": {
+        const kept = result.kept;
+        const said = [
+          result.cancelled
+            ? t("folder.adopt.cancelled")
+            : t("folder.adopt.stopped", { reason: errorName(result.error) }),
+          result.restored
+            ? t("folder.adopt.folderSame")
+            : kept !== undefined
+              ? t("folder.adopt.notRestored", { kept })
+              : t("folder.adopt.notRestoredNew"),
+          result.cloudBack ? t("folder.adopt.cloudSame") : t("folder.adopt.cloudNotBack"),
+          ...(result.restored && kept !== undefined ? [t("folder.adopt.keptStays", { kept })] : []),
+          t("folder.adopt.stillBrowser"),
+        ];
+        await this.#notice(title, said.join(""));
+        return;
+      }
+    }
+  }
+
+  /** Says that a folder is linked now, and what of either side did not come through as it was. */
+  async #adopted(
+    result: Extract<AdoptResult, { kind: "adopted" }>,
+    plan: AdoptPlan,
+    words: { readonly name: string; readonly folder: string },
+  ): Promise<void> {
+    const { notifications, t } = this.#options;
+    const details = [
+      listOf(t, t("folder.adopt.partly"), result.partly),
+      listOf(t, t("folder.adopt.changedAssets"), result.changedAssets),
+      listOf(t, t("folder.adopt.missing"), result.missing),
+      listOf(t, t("folder.adopt.elsewhere"), downloadableItems(t, result.elsewhere)),
+    ].filter(({ items }) => items.length > 0);
+    if (plan.differences.length === 0 && details.length === 0) {
+      notifications.push(t("folder.adopt.doneSame", words));
+      return;
+    }
+    // What it is called now, which may be what the folder called it.
+    const named = { ...words, name: result.record.name };
+    const message = [
+      t(plan.differences.length === 0 ? "folder.adopt.doneSame" : "folder.adopt.done", named),
+      ...(result.kept !== undefined ? [t("folder.adopt.doneKept", { kept: result.kept })] : []),
+    ].join("");
+    await this.#notice(t("folder.adopt.doneTitle"), message, details);
   }
 
   /** Keeps the folder of an open project that just moved in step with it. */

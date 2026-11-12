@@ -1679,14 +1679,22 @@ describe("downloading a project of the platform into a folder", () => {
     expect(filesOn(platform, project)["code/in-folder.js"]).toBe("f");
 
     // From now on the project is that folder: downloading again opens it, and moves nothing.
+    // People hear which folder it is, and open it.
     here.world.moved.splice(0);
     await here.cloud.close();
     await here.session.close();
+    const asked = answering(here.dialogs, () => true);
     expect(await here.cloud.linkFolder(project)).toBe(true);
     expect(here.world.moved).toEqual([]);
-    expect(messagesOf(here.notifications)).toContain(
-      "这个云端项目在这台电脑上已经有文件夹了，直接打开它。",
-    );
+    expect(asked).toMatchObject([
+      {
+        kind: "confirm",
+        title: expect.stringMatching(/已经关联着文件夹$/),
+        message:
+          "这个浏览器里，文件夹“下载”已经关联着这个云端项目。一个云端项目在一个浏览器里只关联一个文件夹。",
+        confirm: "打开它",
+      },
+    ]);
   });
 });
 

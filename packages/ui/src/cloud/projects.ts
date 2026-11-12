@@ -31,6 +31,7 @@ import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import { loadProject, type CopySource, type LoadedProject } from "../folder/move.ts";
+import type { FolderLinking } from "../workbench/project-folders.ts";
 import { CloudConnect, takeIntent, type ConnectTiming } from "./connect.ts";
 import { DownloadFailed, download, type Downloaded } from "./download.ts";
 import { RepositoryPicker } from "./repository-picker.ts";
@@ -232,7 +233,7 @@ export interface CloudProjectsOptions {
    * Moves a project of this browser into a folder that people choose, see `FolderMove`. Resolves
    * to whether it moved. Missing where the browser cannot write folders.
    */
-  readonly moveToFolder?: (key: string) => Promise<boolean>;
+  readonly moveToFolder?: (key: string, linking?: FolderLinking) => Promise<boolean>;
   /**
    * Whether people did something just now, so that the browser lets the editor ask them for a
    * folder: it only does for a moment after a click.
@@ -265,6 +266,12 @@ export interface CloudProjectsOptions {
   readonly repositoryEnvironment?: RepositoryEnvironment;
   readonly connectTiming?: Partial<ConnectTiming>;
 }
+
+/**
+ * What a copy is sent up and archived for, which says what people read meanwhile: before a project
+ * goes from the platform, or before what a folder has takes the place of some of it.
+ */
+type Purpose = "delete" | "link";
 
 const NONE: CloudProjectsSnapshot = { kind: "none" };
 /** A project that is only in this browser, without the platform: see `CloudProjectsSnapshot`. */
@@ -1921,38 +1928,43 @@ export class CloudProjects {
   }
 
   /**
-   * Opens a project of the platform and moves it into a folder that people choose: from then on
-   * it is a project in a folder that syncs. Its documents and code go there, and the files of its
-   * assets that this browser has; downloading the others comes later. A project that a folder of
-   * this computer is connected to already opens as that folder. Resolves to whether it is in a
-   * folder now.
+   * Opens a project of the platform and links it with a folder that people choose: from then on it
+   * is a project in a folder that syncs, see the design of the start page, 4.2. An empty folder gets
+   * its documents and code, and the files of its assets that this browser has; downloading the
+   * others comes later. A folder with the same project in it already is compared with it, and people
+   * choose file by file, see `FolderLinking`: the copy has what the platform has first, and the
+   * platform archives the project before anything of it is put in place of. A copy that came into
+   * this browser only for that goes again where it ends without a link, unless something of it is
+   * only here. A project that a folder of this computer is linked with already opens as that
+   * folder, once people say so. Resolves to whether it is in a folder now.
    */
   async linkFolder(project: string, about: CloudProjectAbout = {}): Promise<boolean> {
-    const { session, dialogs, notifications, moveToFolder, t } = this.#options;
+    const { cloud, session, dialogs, notifications, moveToFolder, t } = this.#options;
     if (!moveToFolder) return false;
+    let copies: readonly CloudLink[];
     let folder: CloudLink | undefined;
     try {
-      folder = (await this.#copiesOf(project)).folders[0];
+      const found = await this.#copiesOf(project);
+      folder = found.folders[0];
+      copies = found.browsers;
     } catch (error) {
       console.warn("What this browser has of a project of the platform could not be read", error);
       notifications.push(t("cloud.open.failed"));
       return false;
     }
-    if (folder) {
-      notifications.push(t("cloud.download.already"));
-      return this.#open(folder.key);
-    }
+    if (folder) return this.#linkedAlready(folder, about.name);
     if (!(await this.openCloudProject(project, about))) return false;
     const key = session.key;
     const store = session.store;
     if (key === undefined || !store) return false;
+    const name = store.getState().manifest.name;
     // The browser only lets the editor ask for a folder right after people did something, and
     // the project may have taken a while to come.
     const isActive =
       this.#options.isActive ??
       (() => typeof navigator === "undefined" || navigator.userActivation?.isActive !== false);
     if (!isActive()) {
-      const words = { name: store.getState().manifest.name, interpolation: { escapeValue: false } };
+      const words = { name, interpolation: { escapeValue: false } };
       const go = await dialogs.confirm({
         title: t("cloud.download.chooseTitle", words),
         message: t("cloud.download.chooseMessage"),
@@ -1961,7 +1973,139 @@ export class CloudProjects {
       });
       if (!go || session.key !== key) return false;
     }
-    return moveToFolder(key);
+    const linking: FolderLinking = {
+      caughtUp: () => this.#caughtUp(key, name),
+      archive: () => this.#archiveForLink(key, project, name),
+      updatedAt: async () =>
+        (await this.#within(LIST_WAIT_MS, cloud.list())).find((each) => each.id === project)
+          ?.updatedAt,
+      linkedTo: async (other) => {
+        const link = await cloud.links.get(other);
+        return link === undefined ? undefined : (link.name ?? "");
+      },
+    };
+    const linked = await moveToFolder(key, linking);
+    if (!linked && linking.abandoned && copies.length === 0) await this.#letGoOfBrought(key);
+    return linked;
+  }
+
+  /**
+   * A project of the platform that a folder of this browser is linked with already: one is all a
+   * project gets in a browser. People hear which folder, and can open it.
+   */
+  async #linkedAlready(link: CloudLink, name = link.name ?? ""): Promise<boolean> {
+    const { dialogs, records, t } = this.#options;
+    const record = await records?.get(link.key).catch(() => undefined);
+    const words = {
+      name,
+      folder: record?.folder.name ?? link.name ?? "",
+      interpolation: { escapeValue: false },
+    };
+    const go = await dialogs.confirm({
+      title: t("cloud.link.alreadyTitle", words),
+      message: t("cloud.link.already", words),
+      confirm: t("cloud.link.openIt"),
+    });
+    return go && (await this.#open(link.key));
+  }
+
+  /**
+   * Waits for the open copy of a project to have what the platform has, as people watch: what a
+   * folder is compared with. Resolves to whether it does, after saying why where it does not.
+   */
+  async #caughtUp(key: string, name: string): Promise<boolean> {
+    const { dialogs, t } = this.#options;
+    const words = { name, interpolation: { escapeValue: false } };
+    const isThere = () => {
+      const sync = this.session;
+      return sync?.key === key && sync.getSnapshot().state === "online";
+    };
+    if (isThere()) return true;
+    const environment = this.#options.environment ?? pageEnvironment();
+    const progress = dialogs.progress({
+      title: t("cloud.link.catchingUp", words),
+      cancel: t("dialog.cancel"),
+      stopping: t("transfer.stopping"),
+    });
+    const until = environment.now() + SYNC_WAIT_MS;
+    try {
+      while (!progress.signal.aborted && environment.now() < until) {
+        if (isThere()) return true;
+        await this.#pause(SYNC_POLL_MS, progress.signal);
+      }
+    } finally {
+      progress.close();
+    }
+    if (progress.signal.aborted) return false;
+    await dialogs.confirm({
+      title: t("cloud.link.title", words),
+      message: t("cloud.link.offline"),
+      confirm: t("dialog.close"),
+      noticeOnly: true,
+    });
+    return false;
+  }
+
+  /**
+   * Has the platform archive a project into its repository before what a folder has takes the place
+   * of some of it, see `FolderLinking.archive`: the changes of the copy in this browser go there
+   * first. Where it cannot be archived, it goes on only where people say so. Resolves to whether
+   * to go on.
+   */
+  async #archiveForLink(key: string, project: string, name: string): Promise<boolean> {
+    const { cloud, t } = this.#options;
+    const link = await cloud.links.get(key).catch(() => undefined);
+    if (!link) return false;
+    if (!(await this.#sendUp(link, name, "link"))) return false;
+    const archived = await this.#archiveFor(project, name, "link");
+    if (archived === "cancelled") return false;
+    if (archived.archived !== undefined || archived.discard === true) return true;
+    // No repository to archive into, or one that cannot be used: nothing of it is there.
+    return this.#askDiscard(name, t("cloud.link.noRepository"), "link");
+  }
+
+  /**
+   * The copy of a project of the platform that came into this browser only to be linked with a
+   * folder, which did not happen: it goes again, unless something of it is only here, as after
+   * people changed it meanwhile, or another window has it open. Then it stays, as a copy in this
+   * browser that syncs, and people hear nothing: they have it open.
+   */
+  async #letGoOfBrought(key: string): Promise<void> {
+    const { session, cloud, projects } = this.#options;
+    const look = async (): Promise<OnlyHere | undefined> => {
+      try {
+        const link = await cloud.links.get(key);
+        if (!link) return undefined;
+        return await this.#onlyHere(key, link, { withLeft: true, askPlatform: false });
+      } catch (error) {
+        console.warn("What only the copy in this browser has could not be read", error);
+        return undefined;
+      }
+    };
+    const isNothingHere = (found: OnlyHere | undefined) =>
+      found !== undefined &&
+      found.changes === 0 &&
+      found.files.length === 0 &&
+      found.left.length === 0;
+    if (session.key === key) {
+      if (!(await session.trySave())) return;
+      await this.session?.flush();
+      if (!isNothingHere(await look())) return;
+      if (!(await this.#options.closeProject?.()) || session.key === key) return;
+    }
+    if ((await this.#othersOf(key)) !== 0) return;
+    // Read again once it is closed: what the window left on it counts too.
+    if (!isNothingHere(await look())) return;
+    try {
+      await (this.#options.removeLocal ?? ((id: string) => projects.remove(id)))(key);
+    } catch (error) {
+      console.warn("The copy that came for linking a folder stays in this browser", error);
+      return;
+    }
+    if (!(await this.#forgetLink(key)) && !(await this.#forgetLink(key))) {
+      console.warn("The link of a copy that went stays until the next time");
+    }
+    this.#tellAbout(key);
   }
 
   /**
@@ -2513,14 +2657,18 @@ export class CloudProjects {
    * to, to `discard` where it could not be archived and people let go of what is not, or to
    * "cancelled".
    */
-  async #archiveFor(project: string, name: string): Promise<CloudRemoveOptions | "cancelled"> {
+  async #archiveFor(
+    project: string,
+    name: string,
+    purpose: Purpose = "delete",
+  ): Promise<CloudRemoveOptions | "cancelled"> {
     const { cloud, dialogs, t } = this.#options;
     const access = cloud.repository;
     // A platform that saves no projects to repositories: what it says about one comes as an answer.
     if (!access) return {};
     const environment = this.#options.environment ?? pageEnvironment();
     const progress = dialogs.progress({
-      title: t("cloud.delete.archiving", { name, interpolation: { escapeValue: false } }),
+      title: t(`cloud.${purpose}.archiving`, { name, interpolation: { escapeValue: false } }),
       cancel: t("dialog.cancel"),
       stopping: t("transfer.stopping"),
     });
@@ -2594,19 +2742,23 @@ export class CloudProjects {
     } finally {
       progress.close();
     }
-    return (await this.#askDiscard(name, why)) ? { discard: true } : "cancelled";
+    return (await this.#askDiscard(name, why, purpose)) ? { discard: true } : "cancelled";
   }
 
   /**
    * Asks whether a project goes all the same, without what its repository does not have. Resolves
    * to whether people said so.
    */
-  async #askDiscard(name: string, why: string): Promise<boolean> {
+  async #askDiscard(name: string, why: string, purpose: Purpose = "delete"): Promise<boolean> {
     const { dialogs, t } = this.#options;
     const answer = await dialogs.choose({
-      title: t("cloud.delete.title", { name, interpolation: { escapeValue: false } }),
-      message: t("cloud.delete.notArchived", { why, interpolation: { escapeValue: false } }),
-      choices: [{ id: "discard", label: t("cloud.delete.discard"), kind: "danger" }],
+      title: t(`cloud.${purpose}.title`, { name, interpolation: { escapeValue: false } }),
+      // Why says it in a sentence of its own sometimes: one full stop is enough.
+      message: t(`cloud.${purpose}.notArchived`, {
+        why: why.replace(/。$/, ""),
+        interpolation: { escapeValue: false },
+      }),
+      choices: [{ id: "discard", label: t(`cloud.${purpose}.discard`), kind: "danger" }],
     });
     return answer === "discard";
   }
@@ -2616,7 +2768,7 @@ export class CloudProjects {
    * nothing else has them. One that is not open opens for that, and goes back to where people
    * were. Resolves to whether all of it is there, after saying why where it is not.
    */
-  async #sendUp(link: CloudLink, name: string): Promise<boolean> {
+  async #sendUp(link: CloudLink, name: string, purpose: Purpose = "delete"): Promise<boolean> {
     const { session, dialogs, notifications, t } = this.#options;
     const words = { name, interpolation: { escapeValue: false } };
     const wasOpen = session.key === link.key;
@@ -2625,13 +2777,13 @@ export class CloudProjects {
       if ((await this.#waitingIn(link.key)) === 0) return true;
       await this.#options.openProject(link.key);
       if (session.key !== link.key) {
-        notifications.push(t("cloud.delete.notOpened", words));
+        notifications.push(t(`cloud.${purpose}.notOpened`, words));
         return false;
       }
     }
     const environment = this.#options.environment ?? pageEnvironment();
     const progress = dialogs.progress({
-      title: t("cloud.delete.syncing", words),
+      title: t(`cloud.${purpose}.syncing`, words),
       cancel: t("dialog.cancel"),
       stopping: t("transfer.stopping"),
     });
@@ -2681,8 +2833,8 @@ export class CloudProjects {
     }
     if (!isThere && why !== undefined) {
       await dialogs.confirm({
-        title: t("cloud.delete.title", words),
-        message: t("cloud.delete.notSynced", { why, interpolation: { escapeValue: false } }),
+        title: t(`cloud.${purpose}.title`, words),
+        message: t(`cloud.${purpose}.notSynced`, { why, interpolation: { escapeValue: false } }),
         confirm: t("dialog.close"),
         noticeOnly: true,
       });

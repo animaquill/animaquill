@@ -218,7 +218,7 @@ const HELD: FolderTrouble = { reason: "held" };
 /** Where what the folder had goes before the editor writes over it, and why. */
 export const RECOVERED_FOLDER = ".animaquill/recovered";
 /** Keeps what is in .animaquill out of Git, without changing the .gitignore of the project. */
-const IGNORE_FILE = ".animaquill/.gitignore";
+export const IGNORE_FILE = ".animaquill/.gitignore";
 const ABSENT = "absent";
 const LOOK_AT_ONCE = 16;
 /** About what the host found best for many small files, see `WRITE_AT_ONCE` there. */
@@ -433,7 +433,7 @@ async function inTurns<T>(
 }
 
 /** A name for a moment, in the time of this computer, that every system takes. */
-function stampOf(time: number): string {
+export function stampOf(time: number): string {
   const date = new Date(time);
   const two = (value: number) => String(value).padStart(2, "0");
   const day = `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;

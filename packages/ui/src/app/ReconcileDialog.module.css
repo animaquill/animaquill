@@ -1,0 +1,89 @@
+/* Long paths and three columns need more room than other dialogs. */
+.dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.files {
+  max-height: min(360px, calc(100dvh - 360px));
+  min-height: 48px;
+  margin: 0 0 10px;
+  padding: 4px 0;
+  overflow: auto;
+  list-style: none;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+/* The path, how the sides have it, and the choice: in a narrow window one under another. */
+.file {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .file {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.file + .file {
+  border-top: 1px solid var(--aq-border);
+}
+
+.path {
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.status {
+  color: var(--aq-text-muted);
+}
+
+.sides {
+  display: flex;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.side {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--aq-text);
+  cursor: pointer;
+}
+
+.side input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--aq-accent);
+}
+
+.all {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.all button {
+  padding: 3px 10px;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.content .error,
+.error {
+  margin: 0 0 12px;
+  color: var(--aq-danger-text);
+}
