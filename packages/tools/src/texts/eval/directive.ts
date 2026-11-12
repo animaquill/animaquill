@@ -45,6 +45,131 @@ export const DIRECTIVE_OVERRIDES = {
     "Hardly ever needed: a revision from an earlier result, to also refuse changes of anything changed since then. It never lets through a change the tools would refuse.",
   "edit.examplesHeading":
     "Examples of operations (illustrative; their ids come from a sample project, so use the ids you read):",
+  "tools.aq_guide.params.topic":
+    'One page, such as "ops/clip.move", "format/animaquill.json" or "scene-runtime/aq"; ":2" after it for its next part. Without topic and query, the table of contents.',
+  "types.Key":
+    'A keyframe: {"time":"<seconds from the start of the clip>","value":…}, with how it goes on to the next one.',
+  // How toolset 2026.1 listed the operations in the description of aq_edit: signatures with these
+  // summaries, and these examples; the branches of the schema had no description.
+  "ops.project.rename.summary": "rename the project",
+  "ops.project.setFrameRate.summary": "set the frame rate the timeline counts frames by",
+  "ops.asset.update.summary": "rename an asset or change its tags",
+  "ops.asset.remove.summary": "remove an asset, and with withUses the clips that use it",
+  "ops.scene.add.summary":
+    "create a scene (HTML, CSS and JavaScript that draw a picture) with its files",
+  "ops.scene.update.summary": "change the manifest of a scene: name, entry, params, presets",
+  "ops.scene.remove.summary":
+    "remove a scene and its files, and with withUses the clips that use it",
+  "ops.sound.add.summary": "create a sound made by code, with its files",
+  "ops.sound.update.summary": "change the manifest of a sound: name, entry, params, outputs",
+  "ops.sound.remove.summary":
+    "remove a sound and its files, and with withUses the clips that use it",
+  "ops.source.replace.summary":
+    "make every clip that uses an asset, scene or sound use another one of the same kind",
+  "ops.file.remove.summary": "remove a code file that is no entry",
+  "ops.file.rename.summary": "rename or move a code file",
+  "ops.timeline.rename.summary": "rename a timeline",
+  "ops.section.add.summary": "add a section to a timeline, which makes it longer",
+  "ops.section.update.summary": "change the duration or name of a section",
+  "ops.section.remove.summary": "remove a section; a timeline keeps at least one",
+  "ops.track.add.summary": "add a video, audio or caption track",
+  "ops.track.update.summary":
+    "change the name, hidden, muted, solo, locked, group or role of a track",
+  "ops.track.move.summary": "move a track before another one, or last",
+  "ops.track.remove.summary": "remove a track with all its clips",
+  "ops.clip.add.summary": "put a clip on a track: an asset, a scene, a sound, a color or a caption",
+  "ops.clip.remove.summary": "remove clips",
+  "ops.clip.update.summary":
+    "change the name, source, offset, loop, hidden, draft, link or section fit of a clip",
+  "ops.clip.setTransition.summary":
+    "put a transition at the start (enter) or end (exit) of a clip, or take it away with null",
+  "ops.join.add.summary": "put a transition on the cut between two clips that touch",
+  "ops.effect.add.summary": "put an effect on a clip, with the values of its parameters",
+  "ops.effect.remove.summary": "take effects off a clip",
+  "ops.effect.move.summary":
+    "move an effect in the list of its clip, which changes what it works on",
+  "ops.effect.update.summary": "turn an effect on or off, or change when it works",
+  "ops.join.update.summary": "change the type, duration, align, curve or values of a join",
+  "ops.join.remove.summary": "remove joins",
+  "ops.clip.move.summary": "move clips to other starts or tracks, in one step",
+  "ops.clip.trim.summary": "move the start or end of a clip; what it shows stays in place",
+  "ops.clip.split.summary": "cut a clip in two at a moment of the timeline",
+  "ops.property.edit.summary": "set properties of clips and their keyframes, in one step",
+  "ops.property.rename.summary":
+    "give properties of a clip another path, with their keyframes, after code renamed what they are about",
+  "ops.marker.add.summary": "add a marker to a timeline",
+  "ops.marker.update.summary": "change the time, name, note, color or duration of a marker",
+  "ops.marker.remove.summary": "remove a marker",
+  "edit.list": "signatures",
+  "edit.operationsHeading":
+    'Operations (every parameter, result and more examples: aq_guide topic "ops/<operation>"):',
+  "edit.examples": [
+    [
+      {
+        op: "clip.add",
+        timeline: "main",
+        track: "track_video",
+        id: "clip_title2",
+        start: "31",
+        duration: "4",
+        source: { kind: "scene", scene: "title" },
+      },
+    ],
+    [
+      {
+        op: "clip.move",
+        timeline: "main",
+        clips: [
+          { clip: "clip_lottie", start: "7" },
+          { clip: "clip_idea", start: "12" },
+        ],
+      },
+    ],
+    [
+      {
+        op: "clip.setTransition",
+        timeline: "main",
+        clip: "clip_logo",
+        enter: { type: "fade", duration: "0.5" },
+      },
+    ],
+    [
+      {
+        op: "property.edit",
+        timeline: "main",
+        edits: [
+          {
+            owner: { clip: "clip_title" },
+            path: "transform.y",
+            op: "set",
+            value: {
+              keys: [
+                { time: "0", value: -200 },
+                { time: "0.6", value: 0 },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+    [{ op: "clip.remove", timeline: "main", clips: ["clip_idea"] }],
+    [
+      {
+        op: "scene.add",
+        id: "lower_third",
+        manifest: { name: "Lower third", entry: "index.html", runtime: 1 },
+        files: { "index.html": "<!doctype html><p>Name</p>" },
+      },
+      {
+        op: "clip.add",
+        timeline: "main",
+        track: "track_overlay",
+        start: "0",
+        duration: "4",
+        source: { kind: "scene", scene: "lower_third" },
+      },
+    ],
+  ],
 } satisfies TextTable;
 
 /** The default words with these instead: the toolset as 2026.1 had it. */

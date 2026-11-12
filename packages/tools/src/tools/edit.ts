@@ -30,7 +30,14 @@ import { issueLine } from "../issues.ts";
 import { problemLines } from "../problems-en.ts";
 import { AI_OPERATIONS, MAX_OPERATIONS, operationsParameter, signatureOf } from "../schema.ts";
 import { didYouMean, mostLike } from "../similar.ts";
-import { PARAM, editExamples, operationExamples, textOf, type TextTable } from "../texts/index.ts";
+import {
+  PARAM,
+  editExamples,
+  editList,
+  operationExamples,
+  textOf,
+  type TextTable,
+} from "../texts/index.ts";
 import { schemaOf, type ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
 
@@ -411,19 +418,53 @@ function problemsLines(call: Call, before: ProjectState, after: ProjectState): r
   ];
 }
 
-/** The description of aq_edit: how it works, its operations and a few examples. */
+/**
+ * The order of the groups of operations in the description of aq_edit: the project, then what a
+ * timeline holds from the outside in, then what clips use.
+ */
+export const GROUPS: readonly string[] = [
+  "project",
+  "timeline",
+  "track",
+  "clip",
+  "transition",
+  "effect",
+  "property",
+  "marker",
+  "scene",
+  "sound",
+  "asset",
+  "file",
+];
+
+/**
+ * The description of aq_edit: how it works, its operations and a few examples. The operations are
+ * their names by group, one line each, or as `edit.list` says, their signatures with summaries.
+ */
 function editDescription(texts: TextTable): string {
-  const groups = new Map<string, string[]>();
+  const groups = new Map<string, string[]>(
+    editList(texts) === "names" ? GROUPS.map((group) => [group, []]) : [],
+  );
   for (const op of AI_OPERATIONS) {
     const list = groups.get(op.group) ?? [];
     groups.set(op.group, list);
-    list.push(`${signatureOf(op.name)} — ${textOf(texts, `ops.${op.name}.summary`)}`);
+    list.push(
+      editList(texts) === "names"
+        ? op.name
+        : `${signatureOf(op.name)} — ${textOf(texts, `ops.${op.name}.summary`)}`,
+    );
   }
+  const lines =
+    editList(texts) === "names"
+      ? [...groups]
+          .filter(([, names]) => names.length > 0)
+          .map(([group, names]) => `${group}: ${names.join(", ")}`)
+      : [...groups.values()].flat();
   return [
     textOf(texts, "tools.aq_edit.description"),
     "",
     textOf(texts, "edit.operationsHeading"),
-    ...[...groups.values()].flat(),
+    ...lines,
     "",
     textOf(texts, "edit.examplesHeading"),
     ...editExamples(texts).map((batch) => JSON.stringify(batch)),

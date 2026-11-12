@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./eval": "./src/texts/eval/directive.ts"
+    "./eval": "./src/texts/eval/directive.ts",
+    "./eval/alternatives": "./src/texts/eval/alternatives.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",

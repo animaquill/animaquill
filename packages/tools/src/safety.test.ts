@@ -566,7 +566,7 @@ describe("small things of the texts", () => {
     const result = await call("aq_guide", { query: "keyframe" });
     expect(result.text).toContain("format/时间轴");
     const topics = await call("aq_guide", {});
-    expect(topics.text).toContain("search them with Chinese words too");
+    expect(topics.text).toContain("Chinese words find them too");
   });
 });
 

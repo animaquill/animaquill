@@ -2,8 +2,14 @@ import type { TextTable } from "./table.ts";
 
 /** The parts of the description of aq_edit around its list of operations, and its examples. */
 export const EDIT_TEXTS = {
+  /**
+   * How the description lists the operations: "names", by what they change, one line each, with
+   * the summary of each one in its branch of the schema; or "signatures", one line each with what
+   * it takes and its summary, as toolset 2026.1 did.
+   */
+  "edit.list": "names",
   "edit.operationsHeading":
-    'Operations (every parameter, result and more examples: aq_guide topic "ops/<operation>"):',
+    'Operations, by what they change. Each operation\'s parameters are in the schema; aq_guide topic "ops/<operation>" has its full page with examples.',
   "edit.examplesHeading":
     "Examples of operations (illustrative; their ids come from a sample project, not from the open one):",
   "edit.examples": [
@@ -17,32 +23,12 @@ export const EDIT_TEXTS = {
         duration: "4",
         source: { kind: "scene", scene: "title" },
       },
-    ],
-    [
-      {
-        op: "clip.move",
-        timeline: "main",
-        clips: [
-          { clip: "clip_lottie", start: "7" },
-          { clip: "clip_idea", start: "12" },
-        ],
-      },
-    ],
-    [
-      {
-        op: "clip.setTransition",
-        timeline: "main",
-        clip: "clip_logo",
-        enter: { type: "fade", duration: "0.5" },
-      },
-    ],
-    [
       {
         op: "property.edit",
         timeline: "main",
         edits: [
           {
-            owner: { clip: "clip_title" },
+            owner: { clip: "clip_title2" },
             path: "transform.y",
             op: "set",
             value: {
@@ -55,21 +41,14 @@ export const EDIT_TEXTS = {
         ],
       },
     ],
-    [{ op: "clip.remove", timeline: "main", clips: ["clip_idea"] }],
     [
       {
-        op: "scene.add",
-        id: "lower_third",
-        manifest: { name: "Lower third", entry: "index.html", runtime: 1 },
-        files: { "index.html": "<!doctype html><p>Name</p>" },
-      },
-      {
-        op: "clip.add",
+        op: "clip.move",
         timeline: "main",
-        track: "track_overlay",
-        start: "0",
-        duration: "4",
-        source: { kind: "scene", scene: "lower_third" },
+        clips: [
+          { clip: "clip_lottie", start: "7" },
+          { clip: "clip_idea", start: "12" },
+        ],
       },
     ],
   ],

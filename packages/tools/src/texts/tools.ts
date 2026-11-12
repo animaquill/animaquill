@@ -43,9 +43,9 @@ export const TOOL_TEXTS = {
   "tools.aq_selection_read.description":
     "What the user is pointing at in the editor right now: the timeline they are on, the playhead time, the current version, the selected clips (ids and one line each) and the selected transition. It has only what the user chose to share; the full objects are in aq_object_read.",
   "tools.aq_guide.description":
-    'The AnimaQuill manual: a reference page for every operation of aq_edit (topic "ops/<operation>", such as "ops/property.edit": parameters, what it returns, its errors and examples), the project format (topics "format/…": times, ids, world coordinates, clips, transitions, effects, properties and keyframes), and how scene code talks to the editor (topics "scene-runtime/…"). Without arguments it gives the table of contents; topic gives one page; query searches the titles and text by keywords.',
+    'The AnimaQuill manual: short pages on how the editor does things (topics "howto/…", such as "howto/keyframes", "howto/times" and "howto/transitions"), a reference page for every operation of aq_edit (topic "ops/<operation>", such as "ops/property.edit": parameters and the fields inside them, what it returns, its errors and examples), the types that operations share (topics "types/…", such as "types/ClipSource"), the project format (topics "format/…": times, ids, world coordinates, clips, transitions, effects, properties and keyframes), and how scene code talks to the editor (topics "scene-runtime/…"); the format and scene runtime pages are in Chinese. Without arguments it gives the table of contents; topic gives one page; query searches the titles and text by keywords.',
   "tools.aq_guide.params.topic":
-    'One page, such as "ops/clip.move", "format/animaquill.json" or "scene-runtime/aq"; ":2" after it for its next part. Without topic and query, the table of contents.',
+    'One page, such as "ops/clip.move", "howto/keyframes", "types/ClipSource", "format/animaquill.json" or "scene-runtime/aq"; ":2" after it for its next part. Without topic and query, the table of contents.',
   "tools.aq_guide.params.query":
     "Words to look for in titles and pages; it gives up to 10 topics, each with a line of what it says.",
   "tools.aq_edit.description":

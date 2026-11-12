@@ -6,7 +6,7 @@ export const TYPE_TEXTS = {
   "types.ClipSource": "What a clip shows or plays.",
   "types.Handle": "A bezier handle [x, y], x from 0 to 1.",
   "types.Key":
-    'A keyframe: {"time":"<seconds from the start of the clip>","value":…}, with how it goes on to the next one.',
+    'A keyframe: {"time":"<seconds>","value":…}, with how it goes on to the next one. time is on the clip\'s clock, which reads the clip\'s offset (0 by default) at its first frame.',
   "types.MediaRef": 'A file: {"asset":"<asset id>"}, or {"library":"<library id>","path":"…"}.',
   "types.PropertyEdit": "One edit of a property of a clip.",
   "types.PropertyPath": 'The path of a property, such as "transform.x" or "param.title".',

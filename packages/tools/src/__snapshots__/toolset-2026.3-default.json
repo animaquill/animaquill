@@ -177,12 +177,12 @@
  },
  {
   "name": "aq_guide",
-  "description": "The AnimaQuill manual: a reference page for every operation of aq_edit (topic \"ops/<operation>\", such as \"ops/property.edit\": parameters, what it returns, its errors and examples), the project format (topics \"format/…\": times, ids, world coordinates, clips, transitions, effects, properties and keyframes), and how scene code talks to the editor (topics \"scene-runtime/…\"). Without arguments it gives the table of contents; topic gives one page; query searches the titles and text by keywords.",
+  "description": "The AnimaQuill manual: short pages on how the editor does things (topics \"howto/…\", such as \"howto/keyframes\", \"howto/times\" and \"howto/transitions\"), a reference page for every operation of aq_edit (topic \"ops/<operation>\", such as \"ops/property.edit\": parameters and the fields inside them, what it returns, its errors and examples), the types that operations share (topics \"types/…\", such as \"types/ClipSource\"), the project format (topics \"format/…\": times, ids, world coordinates, clips, transitions, effects, properties and keyframes), and how scene code talks to the editor (topics \"scene-runtime/…\"); the format and scene runtime pages are in Chinese. Without arguments it gives the table of contents; topic gives one page; query searches the titles and text by keywords.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "topic": {
-     "description": "One page, such as \"ops/clip.move\", \"format/animaquill.json\" or \"scene-runtime/aq\"; \":2\" after it for its next part. Without topic and query, the table of contents.",
+     "description": "One page, such as \"ops/clip.move\", \"howto/keyframes\", \"types/ClipSource\", \"format/animaquill.json\" or \"scene-runtime/aq\"; \":2\" after it for its next part. Without topic and query, the table of contents.",
      "type": "string"
     },
     "query": {
@@ -195,7 +195,7 @@
  },
  {
   "name": "aq_edit",
-  "description": "Changes the open project with a batch of operations — the same operations the editor's own commands use — on timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. It does not change the text of code files; aq_file_edit and aq_file_write do. scene.add and sound.add take the first files of a new scene or sound.\n\nAll operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object that an earlier one created with an id given in the batch, such as \"clip_title2\". Times are strings in seconds, such as \"12.5\" or \"1001/30000\"; positions and sizes are in world units, with the origin at the center of the picture. Ids of existing objects come from the reading tools; an id that does not exist fails with not-found.\n\nChanges are checked against what you have read: a change to an object that the user changed after you last read it fails with conflict, and a change to an existing object before anything was read in this conversation fails with not-read; in both cases nothing is written. dry_run: true checks the batch and reports everything it would change or remove, including what uses those objects, without writing. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved. summary is one short sentence that the user sees for this batch, saying what it does.\n\nOperations (every parameter, result and more examples: aq_guide topic \"ops/<operation>\"):\nproject.rename {name} — rename the project\nproject.setFrameRate {fps} — set the frame rate the timeline counts frames by\nasset.update {asset, changes:{name?, tags?:[string]}} — rename an asset or change its tags\nasset.remove {asset, withUses?} — remove an asset, and with withUses the clips that use it\nscene.add {id?, manifest, files:object} — create a scene (HTML, CSS and JavaScript that draw a picture) with its files\nscene.update {scene, changes:object, clear?:[\"description\"|\"params\"|\"presets\"|\"tags\"]} — change the manifest of a scene: name, entry, params, presets\nscene.remove {scene, withUses?} — remove a scene and its files, and with withUses the clips that use it\nsound.add {id?, manifest, files:object} — create a sound made by code, with its files\nsound.update {sound, changes:object, clear?:[\"description\"|\"params\"|\"outputs\"|\"tags\"]} — change the manifest of a sound: name, entry, params, outputs\nsound.remove {sound, withUses?} — remove a sound and its files, and with withUses the clips that use it\nsource.replace {kind, from, to} — make every clip that uses an asset, scene or sound use another one of the same kind\nclip.add {timeline, track, name?, start, duration, source, offset?, loop?, enter?, exit?, hidden?, draft?, link?, sectionFit?, properties?:object, effects?:[{id, type, enabled?, start?, end?}], id?, overlap?} — put a clip on a track: an asset, a scene, a sound, a color or a caption\nclip.remove {timeline, clips:[string]} — remove clips\nclip.update {timeline, clip, changes:{name?, source?, offset?, loop?, hidden?, draft?, link?, sectionFit?}, clear?:[\"name\"|\"offset\"|\"loop\"|\"hidden\"|\"draft\"|\"link\"|\"sectionFit\"]} — change the name, source, offset, loop, hidden, draft, link or section fit of a clip\nclip.move {timeline, clips:[{clip, start?, track?}], overlap?} — move clips to other starts or tracks, in one step\nclip.trim {timeline, clip, start?, end?} — move the start or end of a clip; what it shows stays in place\nclip.split {timeline, clip, at, piece?, keep?:[string]} — cut a clip in two at a moment of the timeline\nfile.remove {path} — remove a code file that is no entry\nfile.rename {from, to} — rename or move a code file\ntimeline.rename {timeline, name} — rename a timeline\nsection.add {timeline, id?, duration, name?, before?} — add a section to a timeline, which makes it longer\nsection.update {timeline, section, duration?, name?} — change the duration or name of a section\nsection.remove {timeline, section} — remove a section; a timeline keeps at least one\ntrack.add {timeline, id?, kind, name?, before?} — add a video, audio or caption track\ntrack.update {timeline, track, changes:{name?, locked?, group?, hidden?, muted?, solo?, role?}} — change the name, hidden, muted, solo, locked, group or role of a track\ntrack.move {timeline, track, before?} — move a track before another one, or last\ntrack.remove {timeline, track} — remove a track with all its clips\nclip.setTransition {timeline, clip, enter?, exit?} — put a transition at the start (enter) or end (exit) of a clip, or take it away with null\njoin.add {type?, transition?, library?, resource?, duration?, curve?, values?:object, timeline, id?, from, to, align?} — put a transition on the cut between two clips that touch\njoin.update {timeline, join, changes:{type?, transition?, library?, resource?, duration?, curve?, values?, align?}} — change the type, duration, align, curve or values of a join\njoin.remove {timeline, joins:[string]} — remove joins\neffect.add {timeline, clip, id?, type, enabled?, index?, values?:object, start?, end?} — put an effect on a clip, with the values of its parameters\neffect.remove {timeline, clip, effects:[string]} — take effects off a clip\neffect.move {timeline, clip, effect, index} — move an effect in the list of its clip, which changes what it works on\neffect.update {timeline, clip, effect, enabled?, start?, end?} — turn an effect on or off, or change when it works\nproperty.edit {timeline, edits:[PropertyEdit]} — set properties of clips and their keyframes, in one step\nproperty.rename {timeline, renames:[PropertyRename]} — give properties of a clip another path, with their keyframes, after code renamed what they are about\nmarker.add {timeline, id?, time, name?, note?, color?, duration?} — add a marker to a timeline\nmarker.update {timeline, marker, changes:{time?, name?, note?, color?, duration?}} — change the time, name, note, color or duration of a marker\nmarker.remove {timeline, marker} — remove a marker\n\nExamples of operations (illustrative; their ids come from a sample project, not from the open one):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]\n[{\"op\":\"clip.setTransition\",\"timeline\":\"main\",\"clip\":\"clip_logo\",\"enter\":{\"type\":\"fade\",\"duration\":\"0.5\"}}]\n[{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.remove\",\"timeline\":\"main\",\"clips\":[\"clip_idea\"]}]\n[{\"op\":\"scene.add\",\"id\":\"lower_third\",\"manifest\":{\"name\":\"Lower third\",\"entry\":\"index.html\",\"runtime\":1},\"files\":{\"index.html\":\"<!doctype html><p>Name</p>\"}},{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_overlay\",\"start\":\"0\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"lower_third\"}}]",
+  "description": "Changes the open project with a batch of operations — the same operations the editor's own commands use — on timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. It does not change the text of code files; aq_file_edit and aq_file_write do. scene.add and sound.add take the first files of a new scene or sound.\n\nAll operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object that an earlier one created with an id given in the batch, such as \"clip_title2\". Times are strings in seconds, such as \"12.5\" or \"1001/30000\"; positions and sizes are in world units, with the origin at the center of the picture. Ids of existing objects come from the reading tools; an id that does not exist fails with not-found.\n\nChanges are checked against what you have read: a change to an object that the user changed after you last read it fails with conflict, and a change to an existing object before anything was read in this conversation fails with not-read; in both cases nothing is written. dry_run: true checks the batch and reports everything it would change or remove, including what uses those objects, without writing. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved. summary is one short sentence that the user sees for this batch, saying what it does.\n\nOperations, by what they change. Each operation's parameters are in the schema; aq_guide topic \"ops/<operation>\" has its full page with examples.\nproject: project.rename, project.setFrameRate\ntimeline: timeline.rename, section.add, section.update, section.remove\ntrack: track.add, track.update, track.move, track.remove\nclip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.split\ntransition: clip.setTransition, join.add, join.update, join.remove\neffect: effect.add, effect.remove, effect.move, effect.update\nproperty: property.edit, property.rename\nmarker: marker.add, marker.update, marker.remove\nscene: scene.add, scene.update, scene.remove\nsound: sound.add, sound.update, sound.remove\nasset: asset.update, asset.remove\nfile: file.remove, file.rename\n\nExamples of operations (illustrative; their ids come from a sample project, not from the open one):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}},{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title2\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -208,6 +208,7 @@
       "anyOf": [
        {
         "type": "object",
+        "description": "Renames the project.",
         "properties": {
          "op": {
           "const": "project.rename"
@@ -225,6 +226,7 @@
        },
        {
         "type": "object",
+        "description": "Sets the frame rate the timeline counts frames by.",
         "properties": {
          "op": {
           "const": "project.setFrameRate"
@@ -243,6 +245,7 @@
        },
        {
         "type": "object",
+        "description": "Renames an asset or changes its tags.",
         "properties": {
          "op": {
           "const": "asset.update"
@@ -276,6 +279,7 @@
        },
        {
         "type": "object",
+        "description": "Removes an asset, and with withUses the clips that use it.",
         "properties": {
          "op": {
           "const": "asset.remove"
@@ -297,6 +301,7 @@
        },
        {
         "type": "object",
+        "description": "Creates a scene (HTML, CSS and JavaScript that draw a picture) with its files.",
         "properties": {
          "op": {
           "const": "scene.add"
@@ -326,6 +331,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the manifest of a scene: name, entry, params, presets.",
         "properties": {
          "op": {
           "const": "scene.update"
@@ -361,6 +367,7 @@
        },
        {
         "type": "object",
+        "description": "Removes a scene and its files, and with withUses the clips that use it.",
         "properties": {
          "op": {
           "const": "scene.remove"
@@ -382,6 +389,7 @@
        },
        {
         "type": "object",
+        "description": "Creates a sound made by code, with its files.",
         "properties": {
          "op": {
           "const": "sound.add"
@@ -411,6 +419,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the manifest of a sound: name, entry, params, outputs.",
         "properties": {
          "op": {
           "const": "sound.update"
@@ -446,6 +455,7 @@
        },
        {
         "type": "object",
+        "description": "Removes a sound and its files, and with withUses the clips that use it.",
         "properties": {
          "op": {
           "const": "sound.remove"
@@ -467,6 +477,7 @@
        },
        {
         "type": "object",
+        "description": "Makes every clip that uses an asset, scene or sound use another one of the same kind.",
         "properties": {
          "op": {
           "const": "source.replace"
@@ -499,6 +510,7 @@
        },
        {
         "type": "object",
+        "description": "Removes a code file that is no entry.",
         "properties": {
          "op": {
           "const": "file.remove"
@@ -516,6 +528,7 @@
        },
        {
         "type": "object",
+        "description": "Renames or moves a code file.",
         "properties": {
          "op": {
           "const": "file.rename"
@@ -538,6 +551,7 @@
        },
        {
         "type": "object",
+        "description": "Renames a timeline.",
         "properties": {
          "op": {
           "const": "timeline.rename"
@@ -560,6 +574,7 @@
        },
        {
         "type": "object",
+        "description": "Adds a section to a timeline, which makes it longer.",
         "properties": {
          "op": {
           "const": "section.add"
@@ -594,6 +609,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the duration or name of a section.",
         "properties": {
          "op": {
           "const": "section.update"
@@ -624,6 +640,7 @@
        },
        {
         "type": "object",
+        "description": "Removes a section; a timeline keeps at least one.",
         "properties": {
          "op": {
           "const": "section.remove"
@@ -646,6 +663,7 @@
        },
        {
         "type": "object",
+        "description": "Adds a video, audio or caption track.",
         "properties": {
          "op": {
           "const": "track.add"
@@ -685,6 +703,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the name, hidden, muted, solo, locked, group or role of a track.",
         "properties": {
          "op": {
           "const": "track.update"
@@ -740,6 +759,7 @@
        },
        {
         "type": "object",
+        "description": "Moves a track before another one, or last.",
         "properties": {
          "op": {
           "const": "track.move"
@@ -766,6 +786,7 @@
        },
        {
         "type": "object",
+        "description": "Removes a track with all its clips.",
         "properties": {
          "op": {
           "const": "track.remove"
@@ -788,6 +809,7 @@
        },
        {
         "type": "object",
+        "description": "Puts a clip on a track: an asset, a scene, a sound, a color or a caption.",
         "properties": {
          "op": {
           "const": "clip.add"
@@ -916,6 +938,7 @@
        },
        {
         "type": "object",
+        "description": "Removes clips.",
         "properties": {
          "op": {
           "const": "clip.remove"
@@ -942,6 +965,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the name, source, offset, loop, hidden, draft, link or section fit of a clip.",
         "properties": {
          "op": {
           "const": "clip.update"
@@ -1016,6 +1040,7 @@
        },
        {
         "type": "object",
+        "description": "Puts a transition at the start (enter) or end (exit) of a clip, or takes it away with null.",
         "properties": {
          "op": {
           "const": "clip.setTransition"
@@ -1060,6 +1085,7 @@
        },
        {
         "type": "object",
+        "description": "Puts a transition on the cut between two clips that touch.",
         "properties": {
          "op": {
           "const": "join.add"
@@ -1134,6 +1160,7 @@
        },
        {
         "type": "object",
+        "description": "Puts an effect on a clip, with the values of its parameters.",
         "properties": {
          "op": {
           "const": "effect.add"
@@ -1189,6 +1216,7 @@
        },
        {
         "type": "object",
+        "description": "Takes effects off a clip.",
         "properties": {
          "op": {
           "const": "effect.remove"
@@ -1220,6 +1248,7 @@
        },
        {
         "type": "object",
+        "description": "Moves an effect in the list of its clip, which changes what it works on.",
         "properties": {
          "op": {
           "const": "effect.move"
@@ -1253,6 +1282,7 @@
        },
        {
         "type": "object",
+        "description": "Turns an effect on or off, or changes when it works.",
         "properties": {
          "op": {
           "const": "effect.update"
@@ -1298,6 +1328,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the type, duration, align, curve or values of a join.",
         "properties": {
          "op": {
           "const": "join.update"
@@ -1383,6 +1414,7 @@
        },
        {
         "type": "object",
+        "description": "Removes joins.",
         "properties": {
          "op": {
           "const": "join.remove"
@@ -1409,6 +1441,7 @@
        },
        {
         "type": "object",
+        "description": "Moves clips to other starts or tracks, in one step.",
         "properties": {
          "op": {
           "const": "clip.move"
@@ -1457,6 +1490,7 @@
        },
        {
         "type": "object",
+        "description": "Moves the start or end of a clip; what it shows stays in place.",
         "properties": {
          "op": {
           "const": "clip.trim"
@@ -1487,6 +1521,7 @@
        },
        {
         "type": "object",
+        "description": "Cuts a clip in two at a moment of the timeline.",
         "properties": {
          "op": {
           "const": "clip.split"
@@ -1525,6 +1560,7 @@
        },
        {
         "type": "object",
+        "description": "Sets properties of clips and their keyframes, in one step.",
         "properties": {
          "op": {
           "const": "property.edit"
@@ -1551,6 +1587,7 @@
        },
        {
         "type": "object",
+        "description": "Gives properties of a clip another path, with their keyframes, after code renamed what they are about.",
         "properties": {
          "op": {
           "const": "property.rename"
@@ -1577,6 +1614,7 @@
        },
        {
         "type": "object",
+        "description": "Adds a marker to a timeline.",
         "properties": {
          "op": {
           "const": "marker.add"
@@ -1619,6 +1657,7 @@
        },
        {
         "type": "object",
+        "description": "Changes the time, name, note, color or duration of a marker.",
         "properties": {
          "op": {
           "const": "marker.update"
@@ -1663,6 +1702,7 @@
        },
        {
         "type": "object",
+        "description": "Removes a marker.",
         "properties": {
          "op": {
           "const": "marker.remove"
@@ -2027,7 +2067,7 @@
         "time",
         "value"
        ],
-       "description": "A keyframe: {\"time\":\"<seconds from the start of the clip>\",\"value\":…}, with how it goes on to the next one."
+       "description": "A keyframe: {\"time\":\"<seconds>\",\"value\":…}, with how it goes on to the next one. time is on the clip's clock, which reads the clip's offset (0 by default) at its first frame."
       },
       "MediaRef": {
        "anyOf": [

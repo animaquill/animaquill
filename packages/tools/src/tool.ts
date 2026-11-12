@@ -136,7 +136,6 @@ export function makeTool<P>(
     title,
     description,
     inputSchema,
-    outputSchema: { type: "object", additionalProperties: true },
     annotations,
     validate: (args) => {
       caller.answerIs(host.answer?.());
@@ -177,9 +176,13 @@ export function makeTool<P>(
       }
       if (writes) caller.own.add(host.origin());
       const call: Call = { host, caller, store, texts, tool: name };
+      // What others did is told up to the revision it was told at, not the one after the call: a
+      // change that lands while a call waits, or while other calls run beside it, as read-only
+      // calls may, is told by the next call instead of never.
+      const at = store.revisionId;
       const others = othersLine(call);
       const result = await definition.run(call, parsed.value);
-      caller.lastCall = store.revisionId;
+      caller.lastCall = at;
       if (writes && result.isError) caller.hold("failed");
       const done = others ? { ...result, text: `${result.text}\n${others}` } : result;
       if (writes && request !== undefined) caller.keepResult(request, key, done);

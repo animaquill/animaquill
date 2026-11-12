@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { createProject } from "@animaquill/schema";
 import { ProjectStore, aiTask } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
+import { HOWTO_PAGES, TYPE_PAGES } from "./guide/pages.ts";
 import { PROJECT_FORMAT, SCENE_RUNTIME } from "./guide/texts.ts";
 import { HAS_CHINESE } from "./issues.ts";
 import { PROBLEM_TEXTS, STATIC_PROBLEM_CODES } from "./problems-en.ts";
 import { AI_OPERATIONS } from "./schema.ts";
+import { ALTERNATIVES } from "./texts/eval/alternatives.ts";
 import { DIRECTIVE_OVERRIDES, DIRECTIVE_TEXTS } from "./texts/eval/directive.ts";
 import { DEFAULT_TEXTS, editExamples, operationExamples } from "./texts/index.ts";
 import {
@@ -21,10 +23,11 @@ import type { Tool } from "./types.ts";
 
 /**
  * How many characters the list of tools takes, as services get it: names, descriptions and the
- * schemas of parameters. Measured 52 874 (2026-11-12, toolset 2026.2; 2026.1 took 54 191); the 48 tools before took
- * 67 322. It is a ceiling, so that the list does not grow unnoticed.
+ * schemas of parameters. Measured 51 728 (2026-11-12, toolset 2026.3: aq_edit names its operations
+ * and each branch of its schema says what the operation does; 2026.2 took 52 874, 2026.1 54 191);
+ * the 48 tools before took 67 322. It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 55_000;
+const MOST_CHARACTERS = 52_500;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
@@ -168,20 +171,66 @@ describe("the toolset", () => {
   });
 
   it("lists every operation AI can use in the description of aq_edit, and no other", () => {
-    const description = toolsOn().tools.get("aq_edit")?.description ?? "";
-    for (const op of AI_OPERATIONS) expect(description).toContain(`${op.name} {`);
-    expect(description).not.toContain("clip.setProperty");
-    expect(description).not.toContain("asset.add ");
+    const tool = toolsOn().tools.get("aq_edit") as Tool;
+    const listed = tool.description
+      .split("\n")
+      .filter((line) => /^[a-z]+: [a-z]+\.[a-zA-Z]+/.test(line));
+    const names = listed.flatMap((line) => line.slice(line.indexOf(": ") + 2).split(", "));
+    expect(names.toSorted()).toEqual(AI_OPERATIONS.map(({ name }) => name).toSorted());
+    expect(tool.description).not.toContain("clip.setProperty");
+    expect(tool.description).not.toContain("asset.add");
+    // What each one does is in its branch of the schema.
+    const operations = (tool.inputSchema.properties as Node).operations as Node;
+    for (const branch of (operations.items as Node).anyOf as Node[]) {
+      expect(branch.description, JSON.stringify(branch.properties)).toMatch(/^[A-Z].+\.$/);
+    }
+  });
+
+  it("keeps each description within what clients load: 4,000 characters", () => {
+    // Claude Code cuts a description loaded directly at 4,096 characters, and its tool search
+    // reads the first 4,096 only (the audit of MCP, 2026-11-12).
+    for (const tool of toolsOn().tools.values()) {
+      expect(tool.description.length, tool.name).toBeLessThanOrEqual(4_000);
+    }
+  });
+
+  it("keeps each text of the table within the limits of a model pack", () => {
+    // The limits of the design of model packs, section 3.1: the default pack keeps them too.
+    const limit = (key: string): number => {
+      if (key.startsWith("system.")) return 4_000;
+      if (/^tools\.[a-z_]+\.description$/.test(key)) return 4_000;
+      if (/^ops\.[^.]+\.[^.]+\.summary$/.test(key)) return 200;
+      if (/^ops\.[^.]+\.[^.]+\.description$/.test(key)) return 2_000;
+      return 500;
+    };
+    const over = Object.entries(DEFAULT_TEXTS).flatMap(([key, value]) => {
+      if (typeof value === "string") return value.length > limit(key) ? [key] : [];
+      return value.filter((example) => JSON.stringify(example).length > 2_000).map(() => key);
+    });
+    expect(over).toEqual([]);
   });
 
   it("has examples that fit and run on the sample project", () => {
     const store = openSample();
     const edit = toolsOn(testHost(store)).tools.get("aq_edit") as Tool;
+    // The batches of the pages that people write, one line each.
+    const written = [...HOWTO_PAGES, ...TYPE_PAGES].flatMap(({ text }) =>
+      text
+        .split("\n")
+        .filter((line) => line.startsWith('[{"op":'))
+        .map((line) => JSON.parse(line) as Record<string, unknown>[]),
+    );
+    expect(written.length).toBeGreaterThanOrEqual(HOWTO_PAGES.length + TYPE_PAGES.length);
     const batches = [
       ...AI_OPERATIONS.flatMap(({ name: op }) =>
         operationExamples(DEFAULT_TEXTS, op).map(({ params }) => [{ op, ...params }]),
       ),
       ...editExamples(DEFAULT_TEXTS),
+      ...editExamples(DIRECTIVE_TEXTS),
+      ...Object.values(ALTERNATIVES).flatMap(({ texts }) =>
+        editExamples({ ...DEFAULT_TEXTS, ...texts }),
+      ),
+      ...written,
     ];
     for (const operations of batches) {
       expect(edit.validate({ operations }), JSON.stringify(operations)).toBeUndefined();
@@ -212,6 +261,7 @@ describe("results", () => {
     ["aq_search", { query: "logo" }],
     ["aq_check_run", { limit: 5 }],
     ["aq_guide", { topic: "ops/property.edit" }],
+    ["aq_guide", {}],
   ])("of %s read as they did", async (name, args) => {
     const { call } = toolsOn();
     const result = await call(name, args);

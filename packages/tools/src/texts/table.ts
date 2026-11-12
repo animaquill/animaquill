@@ -54,6 +54,18 @@ export function editExamples(texts: TextTable): readonly EditExample[] {
   return Array.isArray(value) ? (value as readonly EditExample[]) : [];
 }
 
+/**
+ * How the description of aq_edit lists the operations, as `edit.list` says: their names by what
+ * they change, with the summary of each in its branch of the schema, or their signatures with
+ * their summaries in the description itself (toolset 2026.1).
+ */
+export const editList = (texts: TextTable): "names" | "signatures" =>
+  textIn(texts, "edit.list") === "signatures" ? "signatures" : "names";
+
+/** What an operation does, as a sentence: its summary, which is lower case and without a stop. */
+export const sentenceOf = (summary: string): string =>
+  `${summary.charAt(0).toUpperCase()}${summary.slice(1)}.`;
+
 /** What a parameter of an operation is: its words in this operation, or what its name means. */
 export const paramText = (texts: TextTable, operation: string, name: string): string | undefined =>
   textIn(texts, `ops.${operation}.params.${name}`) ?? textIn(texts, `params.${name}`);

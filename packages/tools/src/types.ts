@@ -82,7 +82,6 @@ export interface Tool {
   readonly title: string;
   readonly description: string;
   readonly inputSchema: JsonSchema;
-  readonly outputSchema: JsonSchema;
   readonly annotations: ToolAnnotations;
   /**
    * Whether a call of the model fits the parameters, as the error the call would give, or undefined:

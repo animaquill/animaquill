@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { textKeys } from "./text-keys.ts";
+import { ALTERNATIVES } from "./texts/eval/alternatives.ts";
 import { DIRECTIVE_TEXTS } from "./texts/eval/directive.ts";
 import { DEFAULT_TEXTS, hashOfTexts, systemPromptOf, type TextTable } from "./texts/index.ts";
 import { testHost, toolsOn } from "./test-support.ts";
@@ -12,6 +13,19 @@ const listOf = (texts?: TextTable) =>
     description,
     inputSchema,
   }));
+
+describe("the alternatives for evaluations", () => {
+  it("change only keys there are, and the tools take them", () => {
+    const keys = new Set(textKeys().map(({ key }) => key));
+    for (const [name, { texts }] of Object.entries(ALTERNATIVES)) {
+      expect(
+        Object.keys(texts).filter((key) => !keys.has(key)),
+        name,
+      ).toEqual([]);
+      expect(listOf({ ...DEFAULT_TEXTS, ...texts }), name).not.toEqual(listOf());
+    }
+  });
+});
 
 describe("the table of texts", () => {
   it("has every key the tools need, and no key they do not have", () => {
@@ -33,7 +47,7 @@ describe("the table of texts", () => {
       ...DEFAULT_TEXTS,
       "tools.aq_search.description": "Find things.",
       "tools.aq_file_edit.params.edits.old_text": "The text to replace.",
-      "ops.clip.move.summary": "move clips",
+      "ops.clip.move.summary": "moves clips",
       "params.clip": "The clip.",
       "types.Key": "A keyframe.",
       "edit.examples": [[{ op: "project.rename", name: "x" }]],
@@ -43,9 +57,7 @@ describe("the table of texts", () => {
     const json = JSON.stringify(after);
     expect(json).toContain("Find things.");
     expect(json).toContain("The text to replace.");
-    expect(json).toContain(
-      "clip.move {timeline, clips:[{clip, start?, track?}], overlap?} — move clips",
-    );
+    expect(json).toContain('"description":"Moves clips."');
     expect(json).toContain("The clip.");
     expect(json).toContain("A keyframe.");
     expect(json).toContain('[{\\"op\\":\\"project.rename\\",\\"name\\":\\"x\\"}]');
@@ -60,6 +72,24 @@ describe("the table of texts", () => {
     );
     // The default table still gives what it gave.
     expect(listOf()).toEqual(before);
+  });
+
+  it("lists operations by their names, or as toolset 2026.1 did by their signatures", () => {
+    const edit = (texts?: TextTable) => listOf(texts).find(({ name }) => name === "aq_edit");
+    const names = edit();
+    expect(names?.description).toContain(
+      "clip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.split",
+    );
+    expect(names?.description).not.toContain("clip.move {");
+    const signatures = edit({ ...DEFAULT_TEXTS, "edit.list": "signatures" });
+    expect(signatures?.description).toContain(
+      "clip.move {timeline, clips:[{clip, start?, track?}], overlap?} — moves clips to other starts or tracks, in one step",
+    );
+    // The summaries are in the branches of the schema only where the description has no list of them.
+    expect(JSON.stringify(names?.inputSchema)).toContain(
+      '"description":"Moves clips to other starts or tracks, in one step."',
+    );
+    expect(JSON.stringify(signatures?.inputSchema)).not.toContain("Moves clips to other starts");
   });
 
   it("gives an example after an error from the table of the tools", async () => {

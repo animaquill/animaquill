@@ -1,4 +1,5 @@
-import { LOOSE, AI_OPERATIONS, SHARED_TYPES, operationsParameter } from "./schema.ts";
+import { GENERAL_FAILURES } from "@animaquill/core";
+import { LOOSE, AI_OPERATIONS, SHARED_TYPES, fieldsOf, operationsParameter } from "./schema.ts";
 import { DEFAULT_TEXTS, SYSTEM_PARTS } from "./texts/index.ts";
 import { paramPaths } from "./tool.ts";
 import { DEFINITIONS } from "./toolset.ts";
@@ -34,6 +35,7 @@ export function textKeys(): readonly TextKey[] {
     for (const path of paramPaths(params)) add(`tools.${name}.params.${path}`);
   }
   add("tools.aq_edit.params.operations");
+  add("edit.list");
   add("edit.operationsHeading");
   add("edit.examplesHeading");
   add("edit.examples", "examples");
@@ -42,7 +44,12 @@ export function textKeys(): readonly TextKey[] {
   const names = new Set<string>();
   for (const [index, op] of AI_OPERATIONS.entries()) {
     add(`ops.${op.name}.summary`);
+    add(`ops.${op.name}.description`);
     add(`ops.${op.name}.examples`, "examples");
+    // What the page of the operation in the manual says of each error of its own.
+    const general: ReadonlySet<string> = new Set(GENERAL_FAILURES);
+    for (const code of op.failures) if (!general.has(code)) add(`ops.${op.name}.errors.${code}`);
+    for (const { path } of fieldsOf(op.name)) add(`ops.${op.name}.fields.${path}`, "text", false);
     const properties = Object.keys((branches[index]?.properties ?? {}) as Node).filter(
       (name) => name !== "op",
     );

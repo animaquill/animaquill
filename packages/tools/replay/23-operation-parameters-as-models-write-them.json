@@ -1,0 +1,220 @@
+{
+  "about": "The mistakes with parameters of operations that the review of the hand-written tasks found (6.5b ③): times of keyframes as numbers, an op of property.edit that is not one, a clip without its source, an operation that is not one. With aq_edit naming its operations (toolset 2026.3), each error says where and what fits, the manual has the page it points to, and the corrected batch runs.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": {
+                  "clip": "clip_title"
+                },
+                "path": "opacity",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    {
+                      "time": 0,
+                      "value": 0
+                    },
+                    {
+                      "time": 1,
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid-params",
+        "lines": [
+          "error invalid-params in operations[0] (property.edit)",
+          "edits[0].value.keys[0].time: expected a time: seconds as a string, such as \"12.5\", got the number 0",
+          "edits[0].value.keys[1].time: expected a time: seconds as a string, such as \"12.5\", got the number 1",
+          "shape: property.edit {timeline, edits:[PropertyEdit]}",
+          "example (ids from a sample project): {\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title\"},\"path\":\"opacity\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":0},{\"time\":\"1\",\"value\":1}]}}]}",
+          "nothing was written"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": {
+                  "clip": "clip_title"
+                },
+                "path": "opacity",
+                "op": "addKey",
+                "time": "2",
+                "value": 0.5
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid-params",
+        "lines": [
+          "edits[0].op: expected one of \"write\", \"setKey\", \"removeKey\", \"moveKey\", \"setInterp\", \"putKeys\", \"set\", \"clear\", got the string \"addKey\"",
+          "shape: property.edit {timeline, edits:[PropertyEdit]}"
+        ]
+      }
+    },
+    {
+      "tool": "aq_guide",
+      "args": {
+        "topic": "types/PropertyEdit"
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "- \"setKey\", time, value: a key at time gets value",
+          "- \"write\", time, value:"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_overlay",
+            "id": "clip_band",
+            "start": "0",
+            "duration": "3"
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid-params",
+        "lines": [
+          "error invalid-params in operations[0] (clip.add)",
+          "source: missing; such as {\"kind\":\"color\",\"color\":\"#3366ff\"}",
+          "shape: clip.add {timeline, track, name?, start, duration, source,"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.delete",
+            "timeline": "main",
+            "clips": ["clip_idea"]
+          }
+        ]
+      },
+      "expect": {
+        "error": "unknown-operation",
+        "lines": [
+          "there is no operation \"clip.delete\". Similar: clip.remove",
+          "The description of aq_edit lists them."
+        ]
+      }
+    },
+    {
+      "message": true
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "summary": "Fade the title in, add a band, and take the sketch away",
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": {
+                  "clip": "clip_title"
+                },
+                "path": "opacity",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    {
+                      "time": "0",
+                      "value": 0
+                    },
+                    {
+                      "time": "1",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "owner": {
+                  "clip": "clip_title"
+                },
+                "path": "opacity",
+                "op": "setKey",
+                "time": "2",
+                "value": 0.5
+              }
+            ]
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_overlay",
+            "id": "clip_band",
+            "start": "0",
+            "duration": "3",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.remove",
+            "timeline": "main",
+            "clips": ["clip_idea"]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "done: 3 operations as one step",
+          "created: clip_band (operations[1])",
+          "properties.opacity animated (3 keys)→animated (3 keys)"
+        ]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": [
+        "\"id\": \"clip_band\"",
+        "{ \"time\": \"2\", \"value\": 0.5 }"
+      ]
+    },
+    "absent": {
+      "timelines/main/timeline.json": ["\"id\": \"clip_idea\""]
+    },
+    "undoAll": true
+  }
+}

@@ -18,20 +18,115 @@ exports[`results > of aq_guide read as they did 1`] = `
 topic ops/property.edit
 # property.edit
 
-Set properties of clips and their keyframes, in one step.
+Sets properties of clips and their keyframes, in one step.
 
-Signature: property.edit {timeline, edits:[PropertyEdit]}
+Changes properties of clips: values that can change over time with keyframes, such as opacity, transform.x, param.<scene param> or effect.<effect id>.<parameter> (topic "howto/keyframes"). edits run in order as one step, each on what the ones before made, and can be about several clips of the timeline. Each edit names the clip (owner), the property (path) and what to do (op): "set" the whole property to a value or keyframes, "clear" it, "write" a value at a time (a keyframe there when it has keyframes, else the value), "setKey" a keyframe, "removeKey", "moveKey", "putKeys" (whole keyframes in place of what is at those times) or "setInterp" (how keyframes go on to the next), as topic "types/PropertyEdit" has it. Keyframe times are on the clip's clock (topic "howto/times"). aq_object_read gives the properties a clip has and those its scene describes.
+
+Shape: property.edit {timeline, edits:[PropertyEdit]}
 
 Parameters:
-- timeline (required): Timeline id (aq_project_status).
-- edits (required): Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp".
+- timeline (string, required): Timeline id (aq_project_status).
+- edits (list of PropertyEdit, topic "types/PropertyEdit", required): Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp".
 
-Returns nothing besides the list of changes.
+Result: "changed:" has a line for each object it changed.
 
-Errors it can give: not-found, invalid-value, not-animatable, invalid-params, unknown-operation, not-allowed, storage-only, project-locked, read-only, missing-updates, conflict, stale-revision, would-break-document
+Errors of its own:
+- not-found: There is no timeline or clip with this id, or an edit is about a keyframe at a time where there is none (the error gives the time).
+- invalid-value: A value does not fit the property (the error says why), the path is no property, or two keyframes would be at one time.
+- not-animatable: A property that cannot have keyframes gets them, such as fit.
+Errors that any batch can give, such as conflict, not-read and invalid-params: topic "howto/batches".
 
-Examples (illustrative; their ids come from a sample project):
-- Fade a property in with two keyframes: {"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_title"},"path":"opacity","op":"set","value":{"keys":[{"time":"0","value":0},{"time":"1","value":1}]}}]}"
+Examples (illustrative; their ids come from a sample project, not from the open one):
+- A property that fades in with two keyframes: {"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_title"},"path":"opacity","op":"set","value":{"keys":[{"time":"0","value":0},{"time":"1","value":1}]}}]}
+- A parameter of a scene, and a keyframe added with an ease out: {"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_title"},"path":"param.size","op":"set","value":72},{"owner":{"clip":"clip_title"},"path":"opacity","op":"setKey","time":"2","value":0.5},{"owner":{"clip":"clip_title"},"path":"opacity","op":"setInterp","times":["2"],"ease":{"interp":"bezier","out":[0.42,0]}}]}"
+`;
+
+exports[`results > of aq_guide read as they did 2`] = `
+"rev <epoch>:0
+The manual of AnimaQuill. A topic is one page; topic "<topic>:2" is the next part of a long one; query searches titles and pages.
+
+How the editor does things (short pages):
+howto/batches — batches of aq_edit: ids of new objects, dry runs, what was read, and the errors any batch can give
+howto/times — times and frames: how times are written, and which clock each time is on
+howto/keyframes — keyframes: which properties a clip has, and how property.edit sets values and keys
+howto/transitions — transitions: at the edges of a clip, and joins between two clips that touch
+howto/effects — effects: the list of a clip, the built-in effects, and their parameters as properties
+howto/scene-code — scene and sound code: files and folders, what the code reaches, and how it meets the editor
+
+Operations of aq_edit (each page: what it does, parameters and the fields inside them, result, errors, examples):
+ops/project.rename — renames the project
+ops/project.setFrameRate — sets the frame rate the timeline counts frames by
+ops/timeline.rename — renames a timeline
+ops/section.add — adds a section to a timeline, which makes it longer
+ops/section.update — changes the duration or name of a section
+ops/section.remove — removes a section; a timeline keeps at least one
+ops/track.add — adds a video, audio or caption track
+ops/track.update — changes the name, hidden, muted, solo, locked, group or role of a track
+ops/track.move — moves a track before another one, or last
+ops/track.remove — removes a track with all its clips
+ops/source.replace — makes every clip that uses an asset, scene or sound use another one of the same kind
+ops/clip.add — puts a clip on a track: an asset, a scene, a sound, a color or a caption
+ops/clip.remove — removes clips
+ops/clip.update — changes the name, source, offset, loop, hidden, draft, link or section fit of a clip
+ops/clip.move — moves clips to other starts or tracks, in one step
+ops/clip.trim — moves the start or end of a clip; what it shows stays in place
+ops/clip.split — cuts a clip in two at a moment of the timeline
+ops/clip.setTransition — puts a transition at the start (enter) or end (exit) of a clip, or takes it away with null
+ops/join.add — puts a transition on the cut between two clips that touch
+ops/join.update — changes the type, duration, align, curve or values of a join
+ops/join.remove — removes joins
+ops/effect.add — puts an effect on a clip, with the values of its parameters
+ops/effect.remove — takes effects off a clip
+ops/effect.move — moves an effect in the list of its clip, which changes what it works on
+ops/effect.update — turns an effect on or off, or changes when it works
+ops/property.edit — sets properties of clips and their keyframes, in one step
+ops/property.rename — gives properties of a clip another path, with their keyframes, after code renamed what they are about
+ops/marker.add — adds a marker to a timeline
+ops/marker.update — changes the time, name, note, color or duration of a marker
+ops/marker.remove — removes a marker
+ops/scene.add — creates a scene (HTML, CSS and JavaScript that draw a picture) with its files
+ops/scene.update — changes the manifest of a scene: name, entry, params, presets
+ops/scene.remove — removes a scene and its files, and with withUses the clips that use it
+ops/sound.add — creates a sound made by code, with its files
+ops/sound.update — changes the manifest of a sound: name, entry, params, outputs
+ops/sound.remove — removes a sound and its files, and with withUses the clips that use it
+ops/asset.update — renames an asset or changes its tags
+ops/asset.remove — removes an asset, and with withUses the clips that use it
+ops/file.remove — removes a code file that is no entry
+ops/file.rename — renames or moves a code file
+
+Types that operations share (fields and examples):
+types/ClipSource (also types/MediaRef) — what a clip shows or plays, by kind, and the track each kind goes on; MediaRef
+types/Transition (also types/SpeedCurve, types/TypeName) — a transition: built-in types with their properties, duration, speed curve; TypeName
+types/PropertyValue (also types/Value, types/Animation, types/Key, types/Handle) — a value of a property, or keyframes: Value, Animation, Key, Handle
+types/PropertyEdit (also types/PropertyPath) — one edit of property.edit, by op; property paths
+types/PropertyRename — one rename of property.rename: a property, or all under a path
+types/SceneManifest (also types/SoundManifest) — the manifest of a scene (scene.json) or a sound (sound.json): entry, runtime, params
+
+The project format (in Chinese; Chinese words find them too, such as 关键帧 for keyframe):
+format/目录结构 — folder layout (目录结构)
+format/通用规则 — general rules: times, ids, world coordinates (通用规则)
+format/animaquill.json — the project manifest (animaquill.json)
+format/时间轴 — timelines: sections, tracks, clips, transitions, joins, effects, properties and keyframes (时间轴)
+format/差异 — versions: overrides by language and format (差异)
+format/场景和声音 — scenes and sounds (场景和声音)
+format/素材 — assets (素材)
+format/字符串表 — string tables, for translations (字符串表)
+format/库 — libraries (库)
+format/批注 — notes (批注)
+format/校验和问题 — checks and problems (校验和问题)
+format/导出和导入 — export and import (导出和导入)
+format/版本和迁移 — format versions and migration (版本和迁移)
+
+The scene runtime: what scene and sound code can use (in Chinese):
+scene-runtime/场景在哪里跑 — where scenes run (场景在哪里跑)
+scene-runtime/aq — the aq object of scene code (\`aq\`)
+scene-runtime/可以打关键帧的对象 — objects whose properties have keyframes: registering them (可以打关键帧的对象)
+scene-runtime/时间 — time in scene code (时间)
+scene-runtime/做不到确定的事 — what cannot be the same every time (做不到确定的事)
+scene-runtime/改了代码之后 — after code changes (改了代码之后)
+scene-runtime/限制 — limits (限制)
+scene-runtime/声音 — sound code (声音)"
 `;
 
 exports[`results > of aq_object_read read as they did 1`] = `

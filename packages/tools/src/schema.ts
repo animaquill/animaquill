@@ -19,7 +19,14 @@ import {
   Value,
 } from "@animaquill/schema";
 import { z } from "zod";
-import { DEFAULT_TEXTS, paramText, textOf, type TextTable } from "./texts/index.ts";
+import {
+  DEFAULT_TEXTS,
+  editList,
+  paramText,
+  sentenceOf,
+  textOf,
+  type TextTable,
+} from "./texts/index.ts";
 import type { JsonSchema } from "./types.ts";
 
 /** The operations AI can use, in the order of the registry. */
@@ -127,8 +134,12 @@ function branchOf(op: Operation, generated: Node, texts: TextTable): Node {
     };
   }
   const required = (generated.required ?? []) as string[];
+  // What it does, where the description of aq_edit only names it.
+  const description =
+    editList(texts) === "names" ? sentenceOf(textOf(texts, `ops.${op.name}.summary`)) : undefined;
   return {
     type: "object",
+    ...(description !== undefined && { description }),
     properties: { op: { const: op.name }, ...properties },
     required: ["op", ...required],
     additionalProperties: false,
@@ -239,4 +250,46 @@ export function signatureOf(name: string): string {
   if (!branch) return name;
   const { op: _op, ...properties } = branch.properties as Node;
   return `${name} ${shapeOf({ ...branch, properties }, (schema.$defs ?? {}) as Node)}`;
+}
+
+/** A parameter of an operation, or a field inside one, as the operation's branch of the schema has it. */
+export interface Field {
+  /** Dotted, without the places of lists: `clips.start`. */
+  readonly path: string;
+  /** 0 for a parameter, 1 for a field of one, and on. */
+  readonly depth: number;
+  readonly schema: Readonly<Record<string, unknown>>;
+  readonly required: boolean;
+}
+
+/** The objects a schema holds, through lists and choices, up to the shared types of `$defs`. */
+function objectsIn(schema: Node): readonly Node[] {
+  if (typeof schema.$ref === "string") return [];
+  if (schema.type === "array" && isNode(schema.items)) return objectsIn(schema.items);
+  const choices = [...((schema.anyOf ?? []) as Node[]), ...((schema.oneOf ?? []) as Node[])];
+  if (choices.length > 0) return choices.flatMap((choice) => objectsIn(choice));
+  return isNode(schema.properties) ? [schema] : [];
+}
+
+/** Every parameter of an operation and every field inside one, in the order of the schema. */
+export function fieldsOf(name: string, texts: TextTable = DEFAULT_TEXTS): readonly Field[] {
+  const schema = operationsParameter(texts) as Node;
+  const branch = ((schema.items as Node).anyOf as Node[]).find(
+    (each) => ((each.properties as Node).op as Node).const === name,
+  );
+  const fields: Field[] = [];
+  const seen = new Set<string>();
+  const walk = (object: Node, prefix: string, depth: number) => {
+    const required = new Set((object.required ?? []) as string[]);
+    for (const [key, inner] of Object.entries(object.properties as Record<string, Node>)) {
+      if (depth === 0 && key === "op") continue;
+      const path = prefix === "" ? key : `${prefix}.${key}`;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      fields.push({ path, depth, schema: inner, required: required.has(key) });
+      for (const each of objectsIn(inner)) walk(each, path, depth + 1);
+    }
+  };
+  if (branch) walk(branch, "", 0);
+  return fields;
 }

@@ -38,7 +38,7 @@ export const DEFINITIONS: readonly ToolDefinition<any>[] = [
  * version they are the same to the byte, so that services keep them in their caches; any change of
  * them is a new version (a test compares them with a snapshot).
  */
-export const TOOLSET_VERSION = "2026.2";
+export const TOOLSET_VERSION = "2026.3";
 
 /** The words of the tools as AnimaQuill writes them: what a conversation records it used. */
 export const DEFAULT_TEXTS_USED: TextsUsed = {
