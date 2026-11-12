@@ -98,6 +98,29 @@ export async function addAnthropic(page: Page, key: string, model?: string) {
   await expect(service.getByTestId("ai-test")).toContainText("连上了");
   await page.unroute(ANTHROPIC, answerTests);
   if (model !== undefined) await onlyModel(page, model);
+  await noAutoTitle(page);
+}
+
+/**
+ * Turns off the titles the model writes after the first turn of a conversation, on the page of AI
+ * models: each would be one more request to the pretend service, which tests count.
+ */
+export async function noAutoTitle(page: Page) {
+  await settingsOf(page)
+    .getByRole("checkbox", { name: /让模型给对话起一个短标题/ })
+    .uncheck();
+}
+
+/** Turns on one more model of the service open, named by hand, leaving the others as they are. */
+export async function addModel(page: Page, model: string) {
+  const service = settingsOf(page).getByTestId("ai-service");
+  await service.getByRole("button", { name: "手动加一个模型名" }).click();
+  const form = service.getByTestId("ai-add-model");
+  await form.getByLabel("模型名").fill(model);
+  await form.getByRole("button", { name: "加上并启用" }).click();
+  await expect(
+    service.locator(`[data-testid="ai-model"][data-model="${model}"]`).getByRole("switch"),
+  ).toBeChecked();
 }
 
 /** Makes a model of the service open the only one on, and the default: named by hand if need be. */

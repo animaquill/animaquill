@@ -1,20 +1,26 @@
 import type { AssistantEntry, ChatEntry, ConversationSnapshot } from "@animaquill/agent";
 import { entryOf, type ProjectState } from "@animaquill/core";
-import { ArrowDown, Plus, SendHorizontal, Square } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronUp, Menu, MoreHorizontal, Quote } from "lucide-react";
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type KeyboardEvent,
+  type RefObject,
 } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
+import { EmptyStart, Onboarding } from "./ChatStart.tsx";
+import { Composer } from "./Composer.tsx";
+import { ConversationList } from "./ConversationList.tsx";
+import { firstWords } from "./conversations.ts";
 import type { ModelPacks } from "./packs.ts";
+import { PackViewer } from "./PackViews.tsx";
 import { noteLabel } from "./packText.ts";
 import { RunState } from "./RunState.tsx";
 import { followsAfterScroll, showsToLatest } from "./scroll.ts";
@@ -75,15 +81,20 @@ export function ChatPanel() {
   // What a task can take back changes with every change of the project.
   const state = useProject(store);
   const names = useMemo(() => namesIn(state), [state]);
-  const [text, setText] = useState("");
-  const chosen = ai.defaultModel();
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** Puts the cursor in the input box, after something went there. */
+  const focusInput = () =>
+    panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')?.focus();
+  // The list of conversations over this one, or with this one's name to change.
+  const [listOpen, setListOpen] = useState<false | "list" | "rename">(false);
+  const model = chat.modelNow()?.ref.model;
   const modelName = useCallback(
-    (model: string) => {
+    (id: string) => {
       for (const service of settings.services) {
-        const name = ai.modelOf(service.id, model)?.name;
+        const name = ai.modelOf(service.id, id)?.name;
         if (name) return name;
       }
-      return model;
+      return id;
     },
     [ai, settings],
   );
@@ -116,6 +127,16 @@ export function ChatPanel() {
     },
     [toBottom, setToLatest],
   );
+  /** Goes to the turn a search found, once the conversation it is in shows. */
+  const showTurn = (task: string | undefined) => {
+    if (task === undefined) return;
+    requestAnimationFrame(() => {
+      const turn = listRef.current?.querySelector(`[data-task="${CSS.escape(task)}"]`);
+      if (!turn) return;
+      following.current = false;
+      turn.scrollIntoView({ block: "start" });
+    });
+  };
 
   const runningTask = talk.running?.task;
   const turns = useMemo(
@@ -125,75 +146,50 @@ export function ChatPanel() {
       ),
     [talk.entries, runningTask],
   );
-
-  const send = () => {
-    const message = text;
-    if (!message.trim() || talk.running) return;
-    setText("");
-    following.current = true;
-    void chat.send(message);
-  };
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Escape" && talk.running) {
-      event.preventDefault();
-      chat.stop();
-    } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      send();
+  const project = chat.projectKey;
+  const putInBox = (text: string) => {
+    if (project !== undefined && snapshot.id !== undefined) {
+      chat.drafts.write(project, snapshot.id, text);
     }
+    focusInput();
   };
 
   if (settings.services.length === 0) {
     return (
-      <div className={styles.panel}>
-        <div className={styles.none}>
-          <p>{t("chat.noServices")}</p>
-          <button
-            type="button"
-            onClick={() => workbench.openSettings({ page: "models", depth: 2, adding: true })}
-          >
-            {t("chat.setUp")}
-          </button>
-        </div>
+      <div className={styles.panel} data-testid="chat">
+        <Onboarding />
       </div>
     );
   }
 
   const switches = packSwitches(t, talk.entries, packs.getSnapshot().packs);
-  const packLines = packLinesOf(t, talk.entries, chosen?.model, chat, packs);
+  const packLines = packLinesOf(t, talk.entries, model, chat, packs);
+  const title =
+    snapshot.titleBy === undefined && snapshot.forkedFrom
+      ? t("chat.list.forked", { ...snapshot.forkedFrom })
+      : snapshot.title || firstWords(talk.entries, 40) || t("chat.list.newTitle");
   return (
-    <div className={styles.panel} data-testid="chat">
+    <div className={styles.panel} data-testid="chat" ref={panelRef}>
       <div className={styles.bar}>
-        <ModelButton />
         <button
           type="button"
-          title={t("chat.newConversation")}
-          aria-label={t("chat.newConversation")}
-          disabled={talk.running !== undefined}
-          onClick={() => chat.newConversation()}
+          className={styles.title}
+          data-testid="chat-title"
+          aria-expanded={listOpen !== false}
+          title={t("chat.list.title")}
+          onClick={() => setListOpen(listOpen ? false : "list")}
         >
-          <Plus size={14} />
+          <Menu size={12} aria-hidden />
+          <span className={styles.titleText}>{title}</span>
+          {listOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
         </button>
-        {snapshot.saved.length > 0 && (
-          <select
-            className={styles.history}
-            aria-label={t("chat.history")}
-            value=""
-            disabled={talk.running !== undefined}
-            onChange={(event) => {
-              if (event.target.value) void chat.open(event.target.value);
-            }}
-          >
-            <option value="">{t("chat.history")}</option>
-            {snapshot.saved.map((saved) => (
-              <option key={saved.id} value={saved.id}>
-                {saved.id === snapshot.id ? "· " : ""}
-                {saved.title || t("chat.untitled")}
-              </option>
-            ))}
-          </select>
-        )}
         <UsageMeter entries={talk.entries} />
+        <MoreMenu
+          title={title}
+          entries={talk.entries}
+          running={talk.running !== undefined}
+          onRename={() => setListOpen("rename")}
+        />
       </div>
 
       <div className={styles.listWrap}>
@@ -214,12 +210,17 @@ export function ChatPanel() {
           }}
         >
           <div className={styles.column} ref={columnRef}>
+            {snapshot.forkedFrom && (
+              <p className={styles.muted} data-testid="chat-forked">
+                {t("chat.forked", { ...snapshot.forkedFrom })}
+              </p>
+            )}
             {packLines.map(({ text: line, testId }) => (
               <p key={testId} className={styles.muted} data-testid={testId}>
                 {line}
               </p>
             ))}
-            {turns.length === 0 && <p className={styles.empty}>{t("chat.empty")}</p>}
+            {turns.length === 0 && <EmptyStart onExample={putInBox} />}
             {conversation &&
               turns.map((turn, index) => {
                 const running = talk.running?.task === turn.task ? talk.running : undefined;
@@ -229,6 +230,7 @@ export function ChatPanel() {
                     key={turn.task}
                     turn={turn}
                     running={running}
+                    busy={talk.running !== undefined}
                     conversation={conversation}
                     outcome={latest && talk.last?.task === turn.task ? talk.last : undefined}
                     latest={latest}
@@ -239,11 +241,21 @@ export function ChatPanel() {
                     })}
                     names={names}
                     modelName={modelName}
+                    onForked={focusInput}
                   />
                 );
               })}
           </div>
         </div>
+        <QuoteButton
+          list={listRef}
+          onQuote={(text) => {
+            if (project !== undefined && snapshot.id !== undefined) {
+              chat.drafts.quote(project, snapshot.id, text);
+            }
+            focusInput();
+          }}
+        />
         {toLatest && (
           <button
             type="button"
@@ -258,13 +270,20 @@ export function ChatPanel() {
             <ArrowDown size={12} /> {t("chat.latest")}
           </button>
         )}
+        {listOpen && (
+          <ConversationList
+            rename={listOpen === "rename"}
+            onClose={() => setListOpen(false)}
+            onFound={showTurn}
+          />
+        )}
       </div>
 
       {conversation && talk.running && (
         <RunState conversation={conversation} running={talk.running} />
       )}
       {snapshot.hold && (
-        <p className={styles.hold} role="alert">
+        <p className={styles.hold} role="alert" data-testid="chat-hold">
           {t(`chat.hold.${snapshot.hold}`)}
           {snapshot.hold === "relaySignIn" && workbench.account && (
             <>
@@ -276,69 +295,181 @@ export function ChatPanel() {
           )}
         </p>
       )}
-      <div className={styles.compose}>
-        <textarea
-          aria-label={t("chat.placeholder")}
-          placeholder={t("chat.placeholder")}
-          value={text}
-          rows={3}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={onKeyDown}
-        />
-        {talk.running ? (
-          <button
-            type="button"
-            className={styles.stop}
-            aria-label={t("chat.stop")}
-            onClick={() => chat.stop()}
-          >
-            <Square size={12} /> <span className={styles.buttonText}>{t("chat.stop")}</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={styles.send}
-            aria-label={t("chat.send")}
-            disabled={!text.trim()}
-            onClick={send}
-          >
-            <SendHorizontal size={12} className={styles.narrowIcon} />
-            <span className={styles.buttonText}>{t("chat.send")}</span>
-          </button>
-        )}
-      </div>
+      <Composer
+        onSent={() => {
+          following.current = true;
+        }}
+      />
     </div>
   );
 }
 
 /**
- * The model new conversations use, by name: picking another is in the settings for now, where this
- * goes. (The model of each conversation, picked here, comes with the input box redone.)
+ * "Quote" over words selected in an answer of AI: they go to the input box as a Markdown quote,
+ * pi-web's way.
  */
-function ModelButton() {
-  const { ai } = useWorkbench();
-  const workbench = useWorkbench();
+function QuoteButton(props: {
+  readonly list: RefObject<HTMLDivElement | null>;
+  readonly onQuote: (text: string) => void;
+}) {
   const { t } = useTranslation();
-  useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const chosen = ai.defaultModel();
-  const name = chosen && (ai.modelOf(chosen.service.id, chosen.model)?.name ?? chosen.model);
+  const [at, setAt] = useState<{ top: number; left: number; text: string } | undefined>();
+  const { list } = props;
+  useEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    const look = () => {
+      const selection = document.getSelection();
+      const text = selection?.toString().trim() ?? "";
+      const node = selection?.anchorNode;
+      const from = (node instanceof Element ? node : node?.parentElement)?.closest(
+        '[data-testid="chat-answer"], [data-testid="chat-said"]',
+      );
+      if (!selection || selection.rangeCount === 0 || !text || !from || !element.contains(from)) {
+        setAt(undefined);
+        return;
+      }
+      const box = selection.getRangeAt(0).getBoundingClientRect();
+      const wrap = element.getBoundingClientRect();
+      setAt({
+        top: Math.max(0, box.top - wrap.top - 28),
+        left: Math.min(Math.max(0, box.left - wrap.left), wrap.width - 64),
+        text,
+      });
+    };
+    document.addEventListener("selectionchange", look);
+    return () => document.removeEventListener("selectionchange", look);
+  }, [list]);
+  if (!at) return null;
   return (
     <button
       type="button"
-      className={styles.model}
-      data-testid="chat-model"
-      title={
-        chosen
-          ? t("chat.modelTitle", { service: chosen.service.name, model: name })
-          : t("chat.modelNoneTitle")
-      }
-      onClick={() =>
-        workbench.openSettings({ page: "models", depth: 2, service: chosen?.service.id })
-      }
+      className={styles.quote}
+      data-testid="chat-quote"
+      style={{ top: at.top, left: at.left }}
+      // Pressing it must not take the selection away first.
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={() => {
+        props.onQuote(at.text);
+        document.getSelection()?.removeAllRanges();
+        setAt(undefined);
+      }}
     >
-      {name ?? t("chat.modelNone")}
+      <Quote size={12} aria-hidden /> {t("chat.compose.quote")}
     </button>
   );
+}
+
+/**
+ * More of the conversation open: a new one, renaming or deleting it, copying it as Markdown, and
+ * all its model gets with the pack it has (its system prompt and tools).
+ */
+function MoreMenu(props: {
+  readonly title: string;
+  readonly entries: readonly ChatEntry[];
+  readonly running: boolean;
+  readonly onRename: () => void;
+}) {
+  const { chat, dialogs, notifications } = useWorkbench();
+  const { t } = useTranslation();
+  const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState<{ pack: string; model: string } | undefined>();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  const id = snapshot.id;
+  const saved = snapshot.saved.some((each) => each.id === id);
+  const item = (label: string, action: () => void, disabled = false) => (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onClick={() => {
+        setOpen(false);
+        action();
+      }}
+    >
+      {label}
+    </button>
+  );
+  const remove = async () => {
+    if (id === undefined) return;
+    const sure = await dialogs.confirm({
+      title: t("chat.list.removeConfirm"),
+      message: t("chat.list.removeNote"),
+      confirm: t("chat.list.remove"),
+      danger: true,
+    });
+    if (sure) await chat.remove(id);
+  };
+  const copy = () => {
+    const text = markdownOf(t, props.title, props.entries);
+    void navigator.clipboard?.writeText(text).then(
+      () => notifications.push(t("chat.more.copied")),
+      () => notifications.push(t("chat.more.copyFailed")),
+    );
+  };
+  const sent = () => {
+    const model = chat.modelNow()?.ref.model;
+    if (!model) return;
+    const last = props.entries.findLast((entry) => entry.role === "assistant");
+    const pack =
+      last?.role === "assistant" && last.model === model && last.texts
+        ? last.texts.id
+        : chat.choiceFor(model).pack.id;
+    setViewing({ pack, model });
+  };
+  return (
+    <div className={styles.moreWrap} ref={ref}>
+      <button
+        type="button"
+        className={styles.icon}
+        aria-label={t("chat.more.title")}
+        title={t("chat.more.title")}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        data-testid="chat-more"
+        onClick={() => setOpen(!open)}
+      >
+        <MoreHorizontal size={14} aria-hidden />
+      </button>
+      {open && (
+        <div className={styles.menu} role="menu">
+          {item(t("chat.newConversation"), () => chat.newConversation(), props.running)}
+          {item(t("chat.more.rename"), props.onRename, !saved)}
+          {item(t("chat.more.remove"), () => void remove(), !saved || props.running)}
+          {item(t("chat.more.copy"), copy, props.entries.length === 0)}
+          {item(t("chat.more.sent"), sent, chat.modelNow() === undefined)}
+        </div>
+      )}
+      {viewing && (
+        <PackViewer
+          view="full"
+          pack={viewing.pack}
+          model={viewing.model}
+          onClose={() => setViewing(undefined)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** A conversation as Markdown: what people said and what AI answered, turn by turn. */
+export function markdownOf(t: TFunction, title: string, entries: readonly ChatEntry[]): string {
+  const parts = [`# ${title}`];
+  for (const group of groupsOf(entries)) {
+    parts.push(`**${t("chat.you")}**:\n\n${group.user.text}`);
+    const turn = turnOf(group.user, group.entries);
+    if (turn.answer) parts.push(`**${t("chat.assistant")}**:\n\n${turn.answer}`);
+  }
+  return `${parts.join("\n\n")}\n`;
 }
 
 /**

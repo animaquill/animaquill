@@ -12,6 +12,7 @@ import {
   type OtherRow,
   type TurnChange,
 } from "./summary.ts";
+import { changeName } from "./objectName.ts";
 import type { Say } from "./toolSummary.ts";
 
 /** The tools before these, which read, for the count of changes of an earlier conversation. */
@@ -194,7 +195,9 @@ function ChangesView({
         const there = change.change !== "removed" && isThere(state, ref);
         return (
           <div key={change.key} className={styles.change} data-testid="chat-change">
-            <span className={styles.changeText}>{changeText(t as unknown as Say, change)}</span>
+            <span className={styles.changeText}>
+              {changeText(t as unknown as Say, change, changeName(t, change, state))}
+            </span>
             {change.change !== "removed" && change.kind !== "project" && (
               <button
                 type="button"
@@ -225,10 +228,10 @@ function ChangesView({
 }
 
 /** One change in a line: what it is, and how up to three of its fields changed. */
-function changeText(say: Say, change: TurnChange): string {
+function changeText(say: Say, change: TurnChange, named: string | undefined): string {
   const t = say;
   const kind = t(`chat.kinds.${change.kind}`);
-  const name = change.name ? `「${change.name}」` : ` ${change.id}`;
+  const name = named ? `「${named}」` : "";
   const head = `${t(`chat.summary.${change.change}`, { kind })}${name}`;
   if (change.lines) {
     return `${head}  ${t("chat.summary.lines", change.lines)}`;

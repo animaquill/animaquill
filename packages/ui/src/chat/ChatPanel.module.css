@@ -63,17 +63,61 @@
   border-bottom: 1px solid var(--aq-border);
 }
 
-.panel .history {
-  max-width: 30%;
+/* The name of the conversation, which opens the list of them. */
+.panel .title {
+  flex: 1;
+  min-width: 48px;
+  color: var(--aq-text-strong);
+  background: transparent;
 }
 
-.panel .model {
-  flex: 1;
-  min-width: 64px;
+.titleText {
+  min-width: 0;
   overflow: hidden;
-  text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.panel .icon {
+  justify-content: center;
+  min-width: 22px;
+  padding: 3px 4px;
+  color: var(--aq-text-muted);
+  background: transparent;
+}
+
+.panel .icon:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.moreWrap {
+  position: relative;
+  min-width: 0;
+}
+
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  box-shadow: var(--aq-shadow);
+}
+
+.panel .menu button {
+  justify-content: flex-start;
+  background: transparent;
+}
+
+.panel .menu button:hover:not(:disabled) {
+  background: var(--aq-bg-hover);
 }
 
 .meterWrap {
@@ -607,17 +651,489 @@
 }
 
 .compose {
+  position: relative;
   display: flex;
   flex: none;
+  flex-direction: column;
   gap: 6px;
-  align-items: flex-end;
   padding: 6px 8px 8px;
   border-top: 1px solid var(--aq-border);
 }
 
 .compose textarea {
-  flex: 1;
   resize: none;
+  line-height: 16px;
+}
+
+/* Under the box: the model, how hard it reasons, then send or stop. */
+.controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.grow {
+  flex: 1;
+}
+
+.panel .pick {
+  max-width: 100%;
+  min-width: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border: 1px solid var(--aq-border);
+}
+
+.panel .pick[data-state="off"],
+.panel .pick[data-state="gone"] {
+  color: var(--aq-warning);
+}
+
+.pickName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Its bubble grows up from the top of the input box, not from the button. */
+.pickerWrap {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.panel .reasoning {
+  flex: none;
+  max-width: 130px;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-color: var(--aq-border);
+}
+
+/* The bubble of models: up from the input box, the width of the chat when it is narrow. */
+.bubble {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 8px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100cqw - 16px));
+  max-height: min(420px, 70vh);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.bubbleSearch,
+.sheetSearch {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--aq-text-muted);
+}
+
+.bubbleSearch {
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.panel .bubbleSearch input,
+.panel .sheetSearch input {
+  flex: 1;
+  min-width: 0;
+}
+
+.bubbleList {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0;
+  overflow: auto;
+}
+
+.bubbleNone,
+.sheetNone {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--aq-text-muted);
+}
+
+.bubbleGroup,
+.sheetGroup {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 12px 2px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+[data-dim] > .bubbleGroup ~ .modelRow,
+.modelRow[data-dim] {
+  opacity: 0.55;
+}
+
+.modelRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.modelRow[data-active] {
+  background: var(--aq-bg-hover);
+}
+
+.panel .modelChoose {
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 4px 5px 12px;
+  background: transparent;
+  border-radius: 0;
+}
+
+.panel .modelChoose:hover {
+  background: transparent;
+}
+
+.panel .modelChoose[aria-selected="true"] {
+  font-weight: 600;
+}
+
+.tick {
+  display: inline-flex;
+  flex: none;
+  width: 12px;
+  color: var(--aq-accent);
+}
+
+.modelRowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.modelMeta {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.panel .star {
+  flex: none;
+  margin-right: 6px;
+  padding: 3px;
+  color: var(--aq-text-muted);
+  background: transparent;
+  opacity: 0;
+}
+
+.panel .star[data-on],
+.panel .star[data-active],
+.modelRow:hover .star,
+.panel .star:focus-visible {
+  opacity: 1;
+}
+
+.panel .star[data-on] {
+  color: var(--aq-warning);
+}
+
+@media (hover: none) {
+  .panel .star {
+    opacity: 1;
+  }
+}
+
+.packLine {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 12px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.packWhich {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.tag[data-kind="mine"] {
+  color: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.packWhich .muted {
+  display: block;
+}
+
+.bubbleFoot {
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--aq-border);
+}
+
+/* Messages that go after the task that runs. */
+.queued {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.queuedItem {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 4px 2px 8px;
+  background: var(--aq-bg-input);
+  border-left: 2px solid var(--aq-accent);
+  border-radius: 3px;
+}
+
+.queuedText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The conversations, over the one open. */
+.sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  background: var(--aq-bg-panel);
+}
+
+.sheetHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.sheetBody {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 8px;
+  overflow: auto;
+}
+
+.conv {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 8px;
+}
+
+.conv[data-current] {
+  background: var(--aq-bg-input);
+}
+
+.panel .convOpen {
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px;
+  text-align: left;
+  background: transparent;
+}
+
+.convInfo {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.convTitle,
+.convMeta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.convTitle {
+  color: var(--aq-text-strong);
+}
+
+.convMeta {
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.convMeta mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--aq-warning) 35%, transparent);
+}
+
+.convActions {
+  display: flex;
+  flex: none;
+  opacity: 0;
+}
+
+.conv:hover .convActions,
+.conv:focus-within .convActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .convActions {
+    opacity: 1;
+  }
+}
+
+.panel .convRename {
+  flex: 1;
+}
+
+.askDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--aq-warning);
+  border-radius: 50%;
+}
+
+.panel .hit {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  padding: 4px 12px;
+  text-align: left;
+  background: transparent;
+}
+
+.panel .hit:hover {
+  background: var(--aq-bg-hover);
+}
+
+.panel .danger {
+  color: var(--aq-on-accent);
+  background: var(--aq-danger);
+}
+
+/* What people said, with what to do with it on hovering. */
+.userWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.userActions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.userWrap:hover .userActions,
+.userActions:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .userActions {
+    opacity: 1;
+  }
+}
+
+.panel .quote {
+  position: absolute;
+  z-index: 3;
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  box-shadow: var(--aq-shadow);
+}
+
+/* Before anything is said: what is missing, or what to try. */
+.onboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 16px;
+  overflow: auto;
+}
+
+.onboard h3 {
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 14px;
+}
+
+.panel .serviceButton {
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.serviceButtonText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.onboard .link {
+  align-self: flex-start;
+}
+
+.missing,
+.examples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.missing {
+  padding: 8px;
+  border: 1px solid var(--aq-warning);
+  border-radius: 4px;
+}
+
+.missing p {
+  margin: 0;
+}
+
+.panel .example {
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--aq-border);
 }
 
 .narrowIcon {
@@ -673,6 +1189,16 @@
 
 /* 300–400 wide: the bar keeps the share of the context, a turn its tokens and time. */
 @container (max-width: 400px) {
+  .bubble {
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+
+  .pickName {
+    max-width: 14ch;
+  }
+
   .meterCost,
   .usageCost,
   .usageModel {
@@ -694,7 +1220,7 @@
     display: inline-flex;
   }
 
-  .panel .history {
-    max-width: 24%;
+  .panel .reasoning {
+    max-width: 72px;
   }
 }

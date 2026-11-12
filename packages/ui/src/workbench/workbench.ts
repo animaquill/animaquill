@@ -580,6 +580,7 @@ export class Workbench {
         registered: (revision) => this.registrations.problemsOf(revision),
       }),
       undone: (result) => this.tellUndo(result),
+      memory: host.windowMemory,
     });
     // What the last turn of AI changed shows on the timeline until the next one.
     this.chat.subscribe(() => this.timeline.setMarked(this.chat.getSnapshot().marked));

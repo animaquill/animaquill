@@ -4,7 +4,7 @@
  * demand: import only its types from here.
  */
 import type { ListedModel } from "./model-discovery.ts";
-import type { Endpoint, ModelTest } from "./pi.ts";
+import type { Endpoint, ModelTest, SmallAsk } from "./pi.ts";
 import type { Protocol } from "./services.ts";
 
 export {
@@ -42,6 +42,7 @@ export type {
   ModelTest,
   FakeEndpoint,
   Relayed,
+  SmallAsk,
   ToolOutput,
   ToolSpec,
 } from "./pi.ts";
@@ -99,6 +100,16 @@ export async function knownModels(
 ): Promise<readonly ListedModel[]> {
   const pi = await import("./pi.ts");
   return pi.knownModels(catalog, protocol);
+}
+
+/** One small request to a model, such as for the title of a conversation: see `askModel` of `pi.ts`. */
+export async function askModel(
+  endpoint: Endpoint,
+  key: string | undefined,
+  options: SmallAsk,
+): Promise<ModelTest> {
+  const pi = await import("./pi.ts");
+  return pi.askModel(endpoint, key, options);
 }
 
 /** Asks a model for a word, to see that it can be reached: see `testModel` of `pi.ts`. */

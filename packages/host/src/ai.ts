@@ -88,11 +88,24 @@ export function browserKeys(factory: () => IDBFactory): KeyStore {
   };
 }
 
-const summaryOf = ({ id, project, title, updatedAt }: SavedChat): SavedChatSummary => ({
+const summaryOf = ({
   id,
   project,
   title,
   updatedAt,
+  titleBy,
+  changes,
+  asking,
+  forkedFrom,
+}: SavedChat): SavedChatSummary => ({
+  id,
+  project,
+  title,
+  updatedAt,
+  ...(titleBy !== undefined && { titleBy }),
+  ...(changes !== undefined && { changes }),
+  ...(asking === true && { asking }),
+  ...(forkedFrom !== undefined && { forkedFrom }),
 });
 
 /** Conversations in this browser, by project. */

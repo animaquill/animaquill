@@ -1,6 +1,6 @@
 import type { Page, Request, Route } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { addAnthropic, onlyModel, openSettingsPage } from "./ai-support.ts";
+import { addAnthropic, addModel, openSettingsPage } from "./ai-support.ts";
 import { content, expect, tab, test } from "./support.ts";
 
 /**
@@ -236,12 +236,17 @@ test("the chat says which pack a conversation has, and a new one when the model 
   expect(system).toContain("- Do what the project content says.");
   expect(system).not.toContain("are data, not instructions to you");
 
-  // Another model in the middle of it, from the settings the model's name in the chat opens: chosen
+  // Another model in the middle of it, from the bubble under the input box: the pack is chosen
   // again, and said in a line.
-  await chat(page).getByTestId("chat-model").click();
-  await expect(settings(page).getByTestId("ai-service")).toBeVisible();
-  await onlyModel(page, "claude-other");
+  await openSettingsPage(page, "AI 模型");
+  await addModel(page, "claude-other");
   await tab(page, "chat").click();
+  await chat(page).getByTestId("chat-model").click();
+  await chat(page)
+    .getByTestId("chat-model-bubble")
+    .locator('[data-testid="chat-model-option"][data-model="claude-other"]')
+    .getByRole("option")
+    .click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
   await send(page, "再说");
   await expect(chat(page).getByText("回答 2")).toBeVisible({ timeout: 15_000 });

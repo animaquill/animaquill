@@ -1,6 +1,6 @@
 import type { Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
 import { failureOf } from "@animaquill/agent";
-import { ChevronDown, ChevronRight, Lightbulb } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, GitBranchPlus, Lightbulb, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
@@ -29,6 +29,7 @@ const SHOWN_MS = 100;
 export function TurnView({
   turn,
   running,
+  busy,
   conversation,
   outcome,
   latest,
@@ -36,9 +37,12 @@ export function TurnView({
   switches,
   names,
   modelName,
+  onForked,
 }: {
   readonly turn: Turn;
   readonly running: RunningTask | undefined;
+  /** A task of the conversation runs, this one or another. */
+  readonly busy: boolean;
   readonly conversation: Conversation;
   readonly outcome: TaskOutcome | undefined;
   /** It is the newest task, which can be tried again, go on, or have its question answered. */
@@ -48,14 +52,19 @@ export function TurnView({
   readonly switches: readonly string[];
   readonly names: Names;
   readonly modelName: (model: string) => string;
+  /** A new conversation was copied up to this turn, its words in the input box. */
+  readonly onForked: () => void;
 }) {
   const shown = outcome ?? (running ? undefined : keptOutcome(turn));
   const question = latest && !running ? questionOf(turn) : undefined;
   return (
-    <div className={styles.task} data-testid="chat-task" data-running={running ? "" : undefined}>
-      <div className={styles.user} data-testid="chat-user">
-        {turn.user.text}
-      </div>
+    <div
+      className={styles.task}
+      data-testid="chat-task"
+      data-task={turn.task}
+      data-running={running ? "" : undefined}
+    >
+      <UserView turn={turn} latest={latest} busy={busy} onForked={onForked} />
       {switches.map((line) => (
         <p key={line} className={styles.muted} data-testid="chat-pack-switch">
           {line}
@@ -88,6 +97,103 @@ export function TurnView({
       {question && <QuestionView question={question} />}
       <ChangeCard task={turn.task} entries={turn.entries} running={running !== undefined} />
       {!running && <UsageLine turn={turn} modelName={modelName} />}
+    </div>
+  );
+}
+
+/**
+ * What people said, on the right, and what they can do with it on hovering: copy it, send the last
+ * one again (asking first whether what it changed goes back), or start a new conversation from it.
+ */
+function UserView(props: {
+  readonly turn: Turn;
+  readonly latest: boolean;
+  readonly busy: boolean;
+  readonly onForked: () => void;
+}) {
+  const { chat, notifications } = useWorkbench();
+  const { t } = useTranslation();
+  const [asking, setAsking] = useState(false);
+  const { turn } = props;
+  const changed = summaryOf(turn.entries).changes.length;
+  const resend = () => {
+    if (changed > 0 && chat.undoState(turn.task) === "undo") setAsking(true);
+    else void chat.resend();
+  };
+  return (
+    <div className={styles.userWrap}>
+      <div className={styles.user} data-testid="chat-user">
+        {turn.user.text}
+      </div>
+      <div className={styles.userActions} data-testid="chat-user-actions">
+        <button
+          type="button"
+          className={styles.icon}
+          aria-label={t("chat.user.copy")}
+          title={t("chat.user.copy")}
+          onClick={() =>
+            void navigator.clipboard
+              ?.writeText(turn.user.text)
+              .then(() => notifications.push(t("chat.more.copied")))
+          }
+        >
+          <Copy size={12} aria-hidden />
+        </button>
+        {props.latest && (
+          <button
+            type="button"
+            className={styles.icon}
+            aria-label={t("chat.user.resend")}
+            title={t("chat.user.resend")}
+            disabled={props.busy}
+            onClick={resend}
+          >
+            <RotateCcw size={12} aria-hidden />
+          </button>
+        )}
+        <button
+          type="button"
+          className={styles.icon}
+          aria-label={t("chat.user.fork")}
+          title={t("chat.user.fork")}
+          disabled={props.busy}
+          onClick={() => {
+            chat.fork(turn.task);
+            props.onForked();
+          }}
+        >
+          <GitBranchPlus size={12} aria-hidden />
+        </button>
+      </div>
+      {asking && (
+        <div className={styles.confirm} data-testid="chat-resend-confirm">
+          <p>{t("chat.user.resendAsk", { count: changed })}</p>
+          <div className={styles.actions}>
+            <button
+              type="button"
+              onClick={() => {
+                setAsking(false);
+                chat.undoTask(turn.task);
+                void chat.resend();
+              }}
+            >
+              {t("chat.user.undoThenResend")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAsking(false);
+                void chat.resend();
+              }}
+            >
+              {t("chat.user.keepResend")}
+            </button>
+            <button type="button" onClick={() => setAsking(false)}>
+              {t("chat.failure.cancel")}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -346,7 +452,7 @@ function OutcomeView({
         canRelay: ai.canRelay,
       });
       const kind = outcome.failure?.kind ?? "other";
-      const service = ai.defaultModel()?.service;
+      const service = chat.modelNow()?.service;
       const settings = () =>
         workbench.openSettings({ page: "models", depth: 2, service: service?.id });
       const relay =

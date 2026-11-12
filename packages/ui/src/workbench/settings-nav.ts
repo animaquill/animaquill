@@ -17,6 +17,8 @@ export interface SettingsPlace {
   readonly service?: string | undefined;
   /** The cards of services to add are shown, with one picked where it says which kind. */
   readonly adding?: true | string | undefined;
+  /** Where to go once a service is added: back to the chat, which sent people here. */
+  readonly back?: "chat" | undefined;
 }
 
 /** Where the settings of this window are, which a window keeps for itself, see `SettingsPlace`. */

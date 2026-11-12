@@ -537,6 +537,11 @@ export class AiSettingsStore {
     this.#save({ ...this.#settingsNow(), maxToolCalls: limited });
   }
 
+  /** Whether a conversation gets a short title from its model after its first turn. */
+  setAutoTitle(on: boolean): void {
+    this.#save({ ...this.#settingsNow(), autoTitle: on });
+  }
+
   /** Whether the settings list the model packs that are hidden, see `AiSettings`. */
   setShowHiddenPacks(on: boolean): void {
     const { showHiddenPacks: _was, ...now } = this.#settingsNow();

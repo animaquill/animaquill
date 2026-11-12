@@ -2825,7 +2825,8 @@
         "onlyLeft": "（只有左边有）",
         "onlyRight": "（只有右边有）"
       }
-    }
+    },
+    "autoTitle": "第一轮之后让模型给对话起一个短标题（一次很小的请求）"
   },
   "chat": {
     "model": "模型",
@@ -3009,7 +3010,9 @@
       "badUrl": "服务的地址不对，请在设置里改一下。",
       "relayMissing": "这里没有平台转发（只有登录后的网页版才能用）。请在设置里把这家服务的连接方式改成直连。",
       "relayUrl": "平台转发只能转到 https 地址的默认端口，请在设置里改一下服务的地址，或者改成直连。",
-      "relaySignIn": "通过平台转发要先登录。"
+      "relaySignIn": "通过平台转发要先登录。",
+      "modelGone": "这个对话用的模型所在的服务已经删了，在下面换一个模型。",
+      "modelOff": "这个对话用的模型已经在设置里停用了，在下面换一个模型，或者去设置里启用它。"
     },
     "tool": {
       "aq_project_status": "读项目概况",
@@ -3100,7 +3103,110 @@
     "packNextAnswer": "下一条回答起改用 {{name}}。",
     "modelNone": "选模型…",
     "modelTitle": "新对话用的模型：{{service}} · {{model}}。点了去设置里换。",
-    "modelNoneTitle": "还没有启用的模型，点了去设置。"
+    "modelNoneTitle": "还没有启用的模型，点了去设置。",
+    "forked": "从《{{title}}》第 {{turn}} 轮分出来；那之后的改动还在项目里。",
+    "list": {
+      "title": "对话列表",
+      "newTitle": "新对话",
+      "forked": "从《{{title}}》第 {{turn}} 轮分出",
+      "search": "搜这个项目的对话",
+      "today": "今天",
+      "yesterday": "昨天",
+      "earlier": "更早",
+      "changes": "改了 {{count}} 处",
+      "asking": "等你回答",
+      "rename": "重命名“{{title}}”",
+      "renameLabel": "重命名",
+      "ok": "好",
+      "remove": "删除",
+      "removeLabel": "删除“{{title}}”",
+      "removeConfirm": "删除这个对话？",
+      "removeNote": "对话里 AI 做的改动不会撤销。",
+      "cancel": "取消",
+      "none": "还没有对话。",
+      "noHits": "没有找到“{{query}}”。"
+    },
+    "more": {
+      "title": "更多",
+      "rename": "重命名",
+      "remove": "删除这个对话",
+      "copy": "复制成 Markdown",
+      "copied": "已复制",
+      "copyFailed": "复制不了，浏览器不让写剪贴板。",
+      "sent": "看模型实际收到的"
+    },
+    "picker": {
+      "label": "选模型",
+      "title": "这个对话用 {{service}} · {{model}}，点了换",
+      "search": "搜模型、服务",
+      "none": "没有找到模型。",
+      "noKey": "缺 key，去设置",
+      "failed": "连不上，去设置",
+      "setDefault": "把 {{model}} 设为默认模型（新对话用）",
+      "isDefault": "默认模型（新对话用）",
+      "manage": "管理模型和服务…",
+      "price": "每百万 token：输入 ${{input}} · 输出 ${{output}}",
+      "thinking": "能思考",
+      "image": "能看图",
+      "gone": "（已删除的服务）{{model}}",
+      "off": "（已停用）{{model}}",
+      "pack": "适配包",
+      "packRecommended": "推荐",
+      "packChosen": "你选的",
+      "packDetails": "详情 ›",
+      "packNone": "这个模型没有专门的适配包"
+    },
+    "reasoning": {
+      "label": "推理强度",
+      "title": "这个对话的推理强度；默认值在设置里改",
+      "auto": "思考 自动（{{level}}）",
+      "autoNone": "思考 自动",
+      "level": "思考 {{level}}"
+    },
+    "compose": {
+      "queue": "排队",
+      "queued": "排着：{{text}}",
+      "edit": "撤回来改",
+      "drop": "撤回",
+      "sendNow": "现在发",
+      "whileRunning": "AI 在做事，Enter 排到这一轮之后",
+      "quote": "引用"
+    },
+    "user": {
+      "copy": "复制",
+      "resend": "重发",
+      "fork": "从这里开新对话",
+      "resendAsk": "这一轮的 {{count}} 处改动要先撤销吗？",
+      "undoThenResend": "撤销后重发",
+      "keepResend": "保留改动重发"
+    },
+    "onboard": {
+      "title": "用你自己的 AI 服务",
+      "text": "AI 用你自己的 key，从这个浏览器直接发给服务商，key 不经过我们。准备好一把 API key 就能开始。",
+      "about": {
+        "anthropic": "Claude",
+        "openai": "GPT",
+        "deepseek": "国内可直连"
+      },
+      "models": "{{count}} 个模型",
+      "more": "更多服务（含国内和自建）…",
+      "noSubscription": "不支持 Claude 订阅登录，请用 API key。"
+    },
+    "missing": {
+      "noModel": "还没有启用的模型。",
+      "enable": "去启用",
+      "choose": "去设置",
+      "off": "这个对话用的 {{model}} 已经停用了。",
+      "noKey": "{{service}} 还没有填 key。",
+      "fillKey": "去填 key"
+    },
+    "examples": {
+      "title": "试试这样说：",
+      "subtitles": "把所有字幕往上挪一点",
+      "slower": "开场放慢一点",
+      "marker": "在 3 秒处加一个标记",
+      "problems": "看看项目里有什么问题"
+    }
   },
   "account": {
     "signIn": "登录",

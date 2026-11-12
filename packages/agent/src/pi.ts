@@ -787,6 +787,29 @@ export async function testModel(
   key: string | undefined,
   options: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
 ): Promise<ModelTest> {
+  return askModel(endpoint, key, { ...options, prompt: "Reply with OK only.", maxTokens: 16 });
+}
+
+/** What to ask a model in one small request, see `askModel`. */
+export interface SmallAsk {
+  readonly prompt: string;
+  readonly maxTokens: number;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  /** At most this many characters of the answer come back. */
+  readonly maxChars?: number;
+}
+
+/**
+ * One small request to a model, the way the chat asks it (straight or through the relay), with no
+ * tools, no retry and no cache: such as a test, or the title of a conversation. It never throws,
+ * and what it says has no key in it.
+ */
+export async function askModel(
+  endpoint: Endpoint,
+  key: string | undefined,
+  options: SmallAsk,
+): Promise<ModelTest> {
   const started = Date.now();
   const clean = (text: string) => withoutKeys(text, [key]);
   const timeout = new AbortController();
@@ -817,9 +840,9 @@ export async function testModel(
     const relay = endpoint.relay;
     const message = await models.completeSimple(
       relay ? { ...model, baseUrl: relay.baseUrl } : model,
-      { messages: [{ role: "user", content: "Reply with OK only.", timestamp: Date.now() }] },
+      { messages: [{ role: "user", content: options.prompt, timestamp: Date.now() }] },
       {
-        maxTokens: 16,
+        maxTokens: options.maxTokens,
         maxRetries: 0,
         cacheRetention: "none",
         signal,
@@ -835,7 +858,8 @@ export async function testModel(
         error: clean(timeout.signal.aborted ? `timeout after ${ms} ms ${said}`.trim() : said),
       };
     }
-    return { ok: true, ms, text: clean(textOf(message.content)).trim().slice(0, 120) };
+    const text = clean(textOf(message.content)).trim();
+    return { ok: true, ms, text: text.slice(0, options.maxChars ?? 120) };
   } catch (error) {
     const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     return { ok: false, ms: Date.now() - started, error: clean(message) };

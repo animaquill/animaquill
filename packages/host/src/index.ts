@@ -1641,6 +1641,14 @@ export interface SavedChatSummary {
   readonly title: string;
   /** Milliseconds since 1970. */
   readonly updatedAt: number;
+  /** Who named it: people (`user`), whose name stays, or the editor and the model (`auto`). */
+  readonly titleBy?: "auto" | "user";
+  /** How many objects of the project AI changed in it. */
+  readonly changes?: number;
+  /** AI asked people something in its last turn, which waits for their answer. */
+  readonly asking?: true;
+  /** The conversation it was copied from, up to which turn (from 1). */
+  readonly forkedFrom?: { readonly title: string; readonly turn: number };
 }
 
 /** A conversation as it was kept. What was said is the editor's to read, see `readEntry`. */
@@ -1648,6 +1656,10 @@ export interface SavedChat extends SavedChatSummary {
   readonly entries: readonly unknown[];
   /** What the tools keep of the conversation, such as what AI read: the editor's to read back. */
   readonly caller?: unknown;
+  /** The model it uses, by the id of the service and the name of the model; else the default. */
+  readonly model?: { readonly service: string; readonly model: string };
+  /** How hard its model reasons, as people chose for it (`ReasoningLevel`); else as set up. */
+  readonly reasoning?: string;
 }
 
 /** Conversations with AI by project. Only so many of a project are kept, the oldest go first. */

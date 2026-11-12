@@ -24,6 +24,12 @@ async function setUpService(page: Page) {
   await expect(chat(page).getByRole("textbox", { name: /给 AI 发消息/ })).toBeVisible();
 }
 
+/** A new conversation, from the menu of the one open. */
+async function newConversation(page: Page) {
+  await chat(page).getByTestId("chat-more").click();
+  await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+}
+
 async function send(page: Page, text: string) {
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill(text);
@@ -277,6 +283,9 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   const rows = changes.getByTestId("chat-change");
   await expect(rows).toHaveCount(2);
   await expect(rows.filter({ hasText: "新加片段" })).toHaveCount(1);
+  // A clip without a name has what people call it elsewhere, never its inner id.
+  await expect(rows.filter({ hasText: "新加片段" })).toContainText(/新加片段「.+」/);
+  await expect(rows.filter({ hasText: "新加片段" })).not.toContainText("clip_");
   await expect(rows.filter({ hasText: "新加标记「AI」" })).toHaveCount(1);
   await rows.filter({ hasText: "新加片段" }).getByRole("button", { name: "定位" }).click();
 
@@ -779,7 +788,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await shoot(page, "done-open");
 
   // Running: each step as it comes, what it does now, and stop in place of send.
-  await chat(page).getByRole("button", { name: "新对话" }).click();
+  await newConversation(page);
   await send(page, "结尾加一段黑场");
   await expect(chat(page).getByTestId("chat-tool")).toHaveAttribute("data-state", "ok");
   await expect(chat(page).getByTestId("chat-phase")).toContainText("等模型回答…");
@@ -789,7 +798,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await shoot(page, "stopped");
 
   // Failed: what to do first, buttons, what the service said folded away.
-  await chat(page).getByRole("button", { name: "新对话" }).click();
+  await newConversation(page);
   await send(page, "加一个蓝色片段");
   await expect(chat(page).getByTestId("chat-failure")).toContainText("服务拒绝了这个 key");
   await shoot(page, "failed");
@@ -798,7 +807,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await openSettingsPage(page, "AI 模型");
   await settingsOf(page).getByLabel("一次任务最多调用工具").fill("3");
   await tab(page, "chat").click();
-  await chat(page).getByRole("button", { name: "新对话" }).click();
+  await newConversation(page);
   await send(page, "一直读");
   const limit = chat(page).getByTestId("chat-limit");
   await expect(limit).toContainText("这次任务调用了 3 次工具，停下了。");

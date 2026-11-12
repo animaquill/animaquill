@@ -15,7 +15,8 @@ import { ServiceDetail } from "./ServiceDetail.tsx";
  * service open, or the cards of services to add. Where the settings are narrow, one at a time.
  */
 export function AiModelsPage() {
-  const { ai, settingsNav, dialogs } = useWorkbench();
+  const workbench = useWorkbench();
+  const { ai, settingsNav, dialogs } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
@@ -31,7 +32,12 @@ export function AiModelsPage() {
   const adding = place.adding !== undefined || services.length === 0;
   const depth = place.depth === 0 ? 1 : place.depth;
   const go = (changes: { service?: string | undefined; adding?: true | string }) =>
-    settingsNav.go({ page: "models", depth: 2, ...changes });
+    settingsNav.go({
+      page: "models",
+      depth: 2,
+      ...(changes.adding !== undefined && place.back && { back: place.back }),
+      ...changes,
+    });
 
   const reset = async () => {
     const sure = await dialogs.confirm({
@@ -135,6 +141,15 @@ export function AiModelsPage() {
             <span>{t("ai.times")}</span>
           </label>
           <p className={styles.help}>{t("ai.limitHelp")}</p>
+          <label className={styles.limit}>
+            <input
+              type="checkbox"
+              checked={snapshot.autoTitle}
+              disabled={snapshot.held !== undefined}
+              onChange={(event) => ai.setAutoTitle(event.target.checked)}
+            />
+            <span>{t("ai.autoTitle")}</span>
+          </label>
           <h3>{t("ai.device")}</h3>
           <p className={styles.help} data-testid="ai-keys-where">
             {snapshot.keysWhere
@@ -157,7 +172,12 @@ export function AiModelsPage() {
                   : settingsNav.go({ page: "models", depth: 1 })
               }
               backAlways={services.length > 0}
-              onAdded={(id) => go({ service: id })}
+              onAdded={(id) => {
+                const back = place.back;
+                go({ service: id });
+                // Sent here from the chat: back to it, where the service is ready to use.
+                if (back === "chat") workbench.layout.openPanel("chat");
+              }}
             />
           ) : (
             <>

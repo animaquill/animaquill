@@ -4,6 +4,7 @@ import {
   addAnthropic,
   anthropicSays,
   isConnectionTest,
+  noAutoTitle,
   openSettingsPage,
   settingsOf,
 } from "./ai-support.ts";
@@ -111,7 +112,8 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   ]);
   expect(JSON.stringify(kept)).not.toContain("SECRET");
   await settings.screenshot(shot("wide-detail.png"));
-  // The chat sends to the default model, and its name there opens it in the settings.
+  // The chat sends to the default model, and its bubble there goes to the settings.
+  await noAutoTitle(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
@@ -120,6 +122,7 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   await expect(chat(page).getByText("OK", { exact: true })).toBeVisible();
   expect(sent.at(-1)).toMatchObject({ model: "claude-opus-5-5" });
   await chat(page).getByTestId("chat-model").click();
+  await chat(page).getByRole("button", { name: "管理模型和服务…" }).click();
   await expect(settings.getByTestId("ai-service")).toBeVisible();
 
   // With the window to themselves, the pages on the left.
@@ -246,6 +249,7 @@ test("models: on and off, the default, at least one stays on, one named by hand,
     .toEqual({ "claude-opus-5-5": "high" });
   await settings.screenshot(shot("wide-models.png"));
 
+  await noAutoTitle(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });

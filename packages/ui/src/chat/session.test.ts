@@ -4,6 +4,8 @@ import {
   memoryChats,
   memoryKeys,
   type AccountAccess,
+  type ChatStore,
+  type WindowMemory,
   type AccountSnapshot,
   type AiRelay,
   type SettingsStore,
@@ -11,7 +13,7 @@ import {
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelPacks } from "./packs.ts";
-import { ChatSession } from "./session.ts";
+import { ChatSession, titlePrompt, type ChatSessionOptions } from "./session.ts";
 import { AiSettingsStore } from "./settings.ts";
 
 /** An account that is in whatever state a test says. */
@@ -40,7 +42,25 @@ const RELAY: AiRelay = {
   headers: { "x-from-the-page": "1" },
 };
 
-function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
+/** The memory of a window, as `Host.windowMemory` is. */
+function windowMemory(): WindowMemory & { readonly values: Map<string, string> } {
+  const values = new Map<string, string>();
+  return {
+    values,
+    read: (key) => values.get(key),
+    write: (key, value) => void values.set(key, value),
+  };
+}
+
+function setup(
+  where: {
+    relay?: AiRelay;
+    account?: AccountAccess;
+    memory?: WindowMemory;
+    chats?: ChatStore;
+    ask?: ChatSessionOptions["ask"];
+  } = {},
+) {
   const values = new Map<string, unknown>();
   const settings: SettingsStore = {
     load: async (key) => values.get(key),
@@ -56,7 +76,7 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
     },
     where.relay,
   );
-  const chats = memoryChats();
+  const chats = where.chats ?? memoryChats();
   const first = ProjectStore.create(createProject({ name: "第一个" }));
   let project: { store: ProjectStore; key: string } | undefined = { store: first, key: "p1" };
   const listeners = new Set<() => void>();
@@ -78,6 +98,9 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
     problems: () => problems,
     undone: (result) => undone.push(result),
     fake: () => fake,
+    ...(where.memory && { memory: where.memory }),
+    // No title from a model unless a test asks for one: it would be one more request.
+    ask: where.ask ?? (async () => ({ ok: false })),
   });
   const open = (next: typeof project) => {
     project = next;
@@ -353,6 +376,198 @@ describe("the chat", () => {
     expect(outcome?.end).toBe("stopped");
     expect(markers()).toHaveLength(1);
     expect(markers(second)).toHaveLength(0);
+  });
+});
+
+describe("a conversation of its own", () => {
+  /** A service that answers every request with its model's name, and the requests it got. */
+  function stubService() {
+    const sent: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      sent.push(body);
+      return new Response(
+        `data: ${JSON.stringify({
+          id: "c",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: body.model,
+          choices: [{ index: 0, delta: { content: String(body.model) }, finish_reason: "stop" }],
+        })}\n\ndata: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    return sent;
+  }
+
+  it("keeps its model and reasoning; another conversation has the default, which the star changes", async () => {
+    const sent = stubService();
+    try {
+      const chats = memoryChats();
+      const { ai, chat } = setup({ chats });
+      const id = ai.add("deepseek", "DeepSeek", {
+        enabled: ["deepseek-v4-pro", "deepseek-flash"],
+      }) as string;
+      ai.setDefault({ service: id, model: "deepseek-v4-pro" });
+      await ai.setKey(id, "sk-deepseek-0123456789");
+
+      chat.chooseModel({ service: id, model: "deepseek-flash" });
+      chat.chooseReasoning("high");
+      await chat.send("一");
+      expect(sent.at(-1)).toMatchObject({ model: "deepseek-flash" });
+      // The settings did not change.
+      expect(ai.getSnapshot().default).toEqual({ service: id, model: "deepseek-v4-pro" });
+      expect(ai.getSnapshot().reasoningFor).toBeUndefined();
+      const first = chat.getSnapshot().id as string;
+      await chat.flush();
+      expect(await chats.load("p1", first)).toMatchObject({
+        model: { service: id, model: "deepseek-flash" },
+        reasoning: "high",
+      });
+
+      chat.newConversation();
+      expect(chat.modelNow()).toMatchObject({ ref: { model: "deepseek-v4-pro" }, own: false });
+      await chat.send("二");
+      expect(sent.at(-1)).toMatchObject({ model: "deepseek-v4-pro" });
+      // Its first message settled its model: a new default is for new conversations.
+      ai.setDefault({ service: id, model: "deepseek-flash" });
+      await chat.send("三");
+      expect(sent.at(-1)).toMatchObject({ model: "deepseek-v4-pro" });
+
+      await chat.open(first);
+      expect(chat.getSnapshot()).toMatchObject({
+        model: { service: id, model: "deepseek-flash" },
+        reasoning: "high",
+      });
+      // Turned off in the settings: it says so, and nothing goes.
+      ai.setEnabled(id, "deepseek-v4-pro", true);
+      ai.setDefault({ service: id, model: "deepseek-v4-pro" });
+      ai.setEnabled(id, "deepseek-flash", false);
+      const before = sent.length;
+      await chat.send("四");
+      expect(chat.getSnapshot().hold).toBe("modelOff");
+      expect(sent).toHaveLength(before);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a draft for each conversation in the window, and words that did not go go back", async () => {
+    const memory = windowMemory();
+    const { chat } = setup({ memory });
+    const id = chat.getSnapshot().id as string;
+    chat.drafts.write("p1", id, "说到一半");
+    // No service: the words come back, ahead of what was typed since.
+    chat.drafts.write("p1", id, "又打了几个字");
+    await chat.send("先发的");
+    expect(chat.getSnapshot().hold).toBe("noService");
+    expect(chat.drafts.read("p1", id)).toBe("先发的\n\n又打了几个字");
+
+    // Another window of the same tab after a reload: the conversation with the draft is open again.
+    const again = setup({ memory });
+    expect(again.chat.getSnapshot().id).toBe(id);
+    expect(again.chat.drafts.read("p1", id)).toBe("先发的\n\n又打了几个字");
+  });
+
+  it("queues messages while a task runs, and sends them once it is done", async () => {
+    const { chat, fake } = setup();
+    fake({ fake: [{ text: "一" }, { text: "二" }, { text: "三" }], charactersPerSecond: 20 });
+    const running = chat.send("第一句");
+    await vi.waitFor(() => expect(chat.running).toBe(true));
+    chat.queue("第二句");
+    chat.queue("第三句");
+    expect(chat.unqueue(1)).toBe("第三句");
+    expect(chat.getSnapshot().queued).toEqual(["第二句"]);
+    await running;
+    await vi.waitFor(() =>
+      expect(
+        chat
+          .getSnapshot()
+          .conversation?.getSnapshot()
+          .entries.filter((entry) => entry.role === "user")
+          .map((entry) => (entry.role === "user" ? entry.text : "")),
+      ).toEqual(["第一句", "第二句"]),
+    );
+    await vi.waitFor(() => expect(chat.running).toBe(false));
+    expect(chat.getSnapshot().queued).toEqual([]);
+  });
+
+  it("starts a new conversation from a turn: what came before, the turn's words to send", async () => {
+    const chats = memoryChats();
+    const memory = windowMemory();
+    const { chat, fake, markers } = setup({ chats, memory });
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "一" }, { text: "二" }] });
+    await chat.send("加个标记");
+    await chat.send("再说点");
+    await chat.rename(chat.getSnapshot().id as string, "开场");
+    const task = chat.getSnapshot().conversation?.tasks[1] as string;
+    chat.fork(task);
+    const { id, forkedFrom, conversation } = chat.getSnapshot();
+    expect(forkedFrom).toEqual({ title: "开场", turn: 2 });
+    expect(conversation?.getSnapshot().entries.map((entry) => entry.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(chat.drafts.read("p1", id as string)).toBe("再说点");
+    // The project stays as it is.
+    expect(markers()).toHaveLength(1);
+    await chat.flush();
+    expect(await chats.load("p1", id as string)).toMatchObject({ forkedFrom: { turn: 2 } });
+    expect(chat.getSnapshot().saved).toHaveLength(2);
+  });
+
+  it("gets a short title from its model after the first turn, unless people named it", async () => {
+    const asked: string[] = [];
+    const { ai, chat, fake, chats } = setup({
+      chats: memoryChats(),
+      ask: async (_endpoint, _key, { prompt }) => {
+        asked.push(prompt);
+        return { ok: true, text: "标题：「调整开场节奏」。" };
+      },
+    });
+    fake({ fake: [{ text: "好" }, { text: "好" }] });
+    await chat.send("把开场放慢一点，标题也挪一下");
+    await vi.waitFor(() => expect(chat.getSnapshot().title).toBe("调整开场节奏"));
+    expect(asked).toEqual([titlePrompt("把开场放慢一点，标题也挪一下")]);
+    expect(chat.getSnapshot().titleBy).toBe("auto");
+    await chat.flush();
+    expect((await chats.list("p1"))[0]).toMatchObject({ title: "调整开场节奏", titleBy: "auto" });
+    // Only after the first turn.
+    await chat.send("再来");
+    expect(asked).toHaveLength(1);
+    await chat.rename(chat.getSnapshot().id as string, "我起的名字");
+    expect((await chats.list("p1"))[0]).toMatchObject({ title: "我起的名字", titleBy: "user" });
+
+    // Turned off in the settings: the first words stay.
+    ai.setAutoTitle(false);
+    chat.newConversation();
+    fake({ fake: [{ text: "好" }] });
+    await chat.send("另一件事");
+    expect(asked).toHaveLength(1);
+    await chat.flush();
+    expect((await chats.list("p1"))[0]).toMatchObject({ title: "另一件事" });
+  });
+
+  it("finds words in the conversations of the project, and renames and deletes them", async () => {
+    const { chat, fake } = setup();
+    fake({ fake: [{ text: "字幕挪好了" }] });
+    await chat.send("把字幕往上挪");
+    chat.newConversation();
+    fake({ fake: [{ text: "开场放慢了" }] });
+    await chat.send("开场放慢一点");
+    await chat.flush();
+    const found = await chat.search("字幕");
+    expect(found.map(({ title, match }) => [title, match])).toEqual([
+      ["把字幕往上挪", "字幕"],
+      ["把字幕往上挪", "字幕"],
+    ]);
+    const other = chat.getSnapshot().saved.find((each) => each.title === "把字幕往上挪");
+    await chat.rename(other?.id as string, "字幕");
+    expect(chat.getSnapshot().saved.map(({ title }) => title)).toContain("字幕");
+    await chat.remove(other?.id as string);
+    expect(chat.getSnapshot().saved.map(({ title }) => title)).toEqual(["开场放慢一点"]);
   });
 });
 

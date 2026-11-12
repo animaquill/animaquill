@@ -1,12 +1,17 @@
 import {
   Conversation,
+  askModel,
   browserSystemPrompt,
   readEntry,
   toolSpecsOf,
   type ChatEntry,
   type Endpoint,
   type FakeEndpoint,
+  type ModelRef,
   type PackNote,
+  type ReasoningLevel,
+  type ServiceConfig,
+  type SmallAsk,
   type TaskOutcome,
   type TaskTarget,
 } from "@animaquill/agent";
@@ -22,6 +27,7 @@ import {
 import {
   CallerState,
   DEFAULT_PACK,
+  REASONING,
   TOOLSET_VERSION,
   builtinPacks,
   choosePack,
@@ -36,9 +42,20 @@ import {
   memoryChats,
   type AccountAccess,
   type ChatStore,
+  type SavedChat,
   type SavedChatSummary,
+  type WindowMemory,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
+import {
+  askingIn,
+  changesIn,
+  cleanTitle,
+  firstWords,
+  searchChats,
+  type Found,
+} from "./conversations.ts";
+import { Drafts } from "./drafts.ts";
 import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
 import { clipsOf, summaryOf } from "./summary.ts";
@@ -49,7 +66,36 @@ import { clipsOf, summaryOf } from "./summary.ts";
  * signed in to the platform (`relaySignIn`).
  */
 export type ChatHold =
-  "noProject" | "noService" | "noModel" | "badUrl" | "relayMissing" | "relayUrl" | "relaySignIn";
+  | "noProject"
+  | "noService"
+  | "noModel"
+  | "badUrl"
+  | "relayMissing"
+  | "relayUrl"
+  | "relaySignIn"
+  /** The service of the model of the conversation was taken away. */
+  | "modelGone"
+  /** The model of the conversation was turned off in the settings. */
+  | "modelOff";
+
+/** Where a conversation was copied from, see `ChatSession.fork`. */
+export interface ForkedFrom {
+  readonly title: string;
+  /** Up to which turn, from 1: the turn whose words went to the new one's input box. */
+  readonly turn: number;
+}
+
+/**
+ * The model a conversation uses, as the chat shows it: its own, or the default where it chose
+ * none. `off` and `gone` say that it cannot be used as it is: turned off, or its service gone.
+ */
+export interface ModelNow {
+  readonly ref: ModelRef;
+  readonly service: ServiceConfig | undefined;
+  readonly state: "ok" | "off" | "gone";
+  /** The conversation chose it, rather than taking the default. */
+  readonly own: boolean;
+}
 
 export interface ChatSnapshot {
   /** The conversation of the open project, which is new until somebody writes in it. */
@@ -63,6 +109,16 @@ export interface ChatSnapshot {
   readonly undoTick: number;
   /** The clips the last task changed or made, which the timeline marks until the next one. */
   readonly marked: ReadonlySet<string>;
+  /** What the conversation open is called, and who named it; empty until it has words. */
+  readonly title: string;
+  readonly titleBy: "auto" | "user" | undefined;
+  /** The model the conversation open chose; none takes the default. */
+  readonly model: ModelRef | undefined;
+  /** How hard its model reasons, as chosen for this conversation; none as set up. */
+  readonly reasoning: ReasoningLevel | undefined;
+  readonly forkedFrom: ForkedFrom | undefined;
+  /** Messages that go once the task that runs is done, oldest first. */
+  readonly queued: readonly string[];
 }
 
 /** What `ChatSession.packOptions` gives for a model. */
@@ -103,6 +159,14 @@ export interface ChatSessionOptions {
   readonly undone: (result: UndoResult) => void;
   /** For tests: a service that answers from a script, instead of the one people chose. */
   readonly fake?: () => FakeEndpoint | undefined;
+  /** The memory of this window, where drafts and the conversation open are kept. */
+  readonly memory?: WindowMemory;
+  /** For tests: what a small request to a model answers, such as for a title. See `askModel`. */
+  readonly ask?: (
+    endpoint: Endpoint,
+    key: string | undefined,
+    options: SmallAsk,
+  ) => Promise<{ readonly ok: boolean; readonly text?: string }>;
 }
 
 /**
@@ -111,6 +175,17 @@ export interface ChatSessionOptions {
  */
 const SAVE_DELAY_MS = 500;
 const TITLE_LENGTH = 40;
+/** At most this many tokens for the title the model writes, and this long to wait for it. */
+const TITLE_TOKENS = 60;
+const TITLE_TIMEOUT_MS = 20_000;
+/** Where the window keeps which conversation of a project it had open. */
+const openKey = (project: string) => `chat.open\n${project}`;
+
+/** What the model is asked for the title of a conversation: words to the AI, in English. */
+export const titlePrompt = (text: string): string =>
+  "Write a title of at most 8 words for a conversation that begins with the message below, in the " +
+  "language of the message. Reply with the title only, without quotes.\n\nMessage:\n" +
+  text.slice(0, 1000);
 
 const newChatId = () =>
   `chat-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0]?.toString(36)}`;
@@ -130,7 +205,15 @@ export class ChatSession {
     hold: undefined,
     undoTick: 0,
     marked: new Set(),
+    title: "",
+    titleBy: undefined,
+    model: undefined,
+    reasoning: undefined,
+    forkedFrom: undefined,
+    queued: [],
   };
+  /** What people wrote and did not send yet, by conversation. */
+  readonly drafts: Drafts;
   /** The last task, once people took back what it did: its clips are no longer marked. */
   #unmarked: string | undefined;
   #project: { readonly store: ProjectStore; readonly key: string } | undefined;
@@ -145,6 +228,7 @@ export class ChatSession {
   constructor(options: ChatSessionOptions) {
     this.#options = options;
     this.#chats = options.chats ?? memoryChats();
+    this.drafts = new Drafts(options.memory);
     options.subscribeProject(() => this.#follow());
     this.#follow();
   }
@@ -164,16 +248,22 @@ export class ChatSession {
     this.#snapshot.conversation?.stop();
     void this.flush();
     this.#project = project;
-    this.#start([], undefined, undefined);
-    if (project) void this.#loadLatest(project.key);
+    // A new conversation this window had open, with words in its input box, is that one again.
+    const kept = project && this.#options.memory?.read(openKey(project.key));
+    const draft = project && kept ? this.drafts.read(project.key, kept) : "";
+    this.#start([], draft ? kept || undefined : undefined, undefined);
+    if (project) void this.#loadLatest(project.key, kept || undefined);
   }
 
-  async #loadLatest(project: string): Promise<void> {
+  /** The conversations of a project, and the one this window had open, else the newest. */
+  async #loadLatest(project: string, kept: string | undefined): Promise<void> {
     try {
       const saved = await this.#chats.list(project);
       if (this.#project?.key !== project) return;
       this.#set({ saved });
-      const latest = saved[0];
+      const open = saved.find((each) => each.id === kept);
+      const latest =
+        open ?? (this.drafts.read(project, this.#snapshot.id ?? "") ? undefined : saved[0]);
       // Somebody may have started to write meanwhile.
       if (latest && this.#snapshot.conversation?.getSnapshot().entries.length === 0) {
         await this.open(latest.id);
@@ -187,7 +277,12 @@ export class ChatSession {
    * A conversation, from what was kept of it if anything: what AI read in it still counts, as far
    * as the project is the one it read (a reopened project has new revisions, see `CallerState`).
    */
-  #start(entries: readonly ChatEntry[], id: string | undefined, caller: unknown): void {
+  #start(
+    entries: readonly ChatEntry[],
+    id: string | undefined,
+    caller: unknown,
+    kept: Partial<Pick<SavedChat, "title" | "titleBy" | "model" | "reasoning" | "forkedFrom">> = {},
+  ): void {
     this.#stopWatching?.();
     const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
     this.#caller = tools;
@@ -212,7 +307,19 @@ export class ChatSession {
       running = conversation.running;
       if (was && !running) void this.flush();
     });
-    this.#set({ conversation, id: chatId, hold: undefined });
+    this.#set({
+      conversation,
+      id: chatId,
+      hold: undefined,
+      title: kept.title ?? "",
+      titleBy: kept.titleBy,
+      model: kept.model,
+      reasoning: readReasoning(kept.reasoning),
+      forkedFrom: kept.forkedFrom,
+      queued: [],
+    });
+    const project = this.#project?.key;
+    if (project !== undefined) this.#options.memory?.write(openKey(project), chatId);
     this.#mark(entries);
   }
 
@@ -259,17 +366,37 @@ export class ChatSession {
 
   #saveSoon(id: string, entries: readonly ChatEntry[]): void {
     const project = this.#project?.key;
-    if (project === undefined || entries.length === 0) return;
-    const first = entries.find((entry) => entry.role === "user");
-    const title = (first?.role === "user" ? first.text : "").trim().slice(0, TITLE_LENGTH);
+    if (project === undefined || entries.length === 0 || id !== this.#snapshot.id) return;
+    const { title: named, titleBy, model, reasoning, forkedFrom } = this.#snapshot;
+    const title = titleBy !== undefined && named ? named : firstWords(entries, TITLE_LENGTH);
+    const changes = changesIn(entries);
     const caller = this.#caller;
     this.#pending = async () => {
-      const chat = { id, project, title, updatedAt: Date.now(), entries, caller: caller.toJSON() };
+      const chat: SavedChat = {
+        id,
+        project,
+        title,
+        updatedAt: Date.now(),
+        ...(titleBy !== undefined && named && { titleBy }),
+        ...(changes > 0 && { changes }),
+        ...(askingIn(entries) && { asking: true as const }),
+        entries,
+        caller: caller.toJSON(),
+        ...(model && { model }),
+        ...(reasoning !== undefined && { reasoning }),
+        ...(forkedFrom && { forkedFrom }),
+      };
       try {
         await this.#chats.save(chat);
         if (this.#project?.key !== project) return;
         const others = this.#snapshot.saved.filter((saved) => saved.id !== id);
-        const { entries: _entries, caller: _caller, ...summary } = chat;
+        const {
+          entries: _entries,
+          caller: _caller,
+          model: _model,
+          reasoning: _reasoning,
+          ...summary
+        } = chat;
         this.#set({ saved: [summary, ...others] });
       } catch (error) {
         console.warn("The conversation could not be kept", error);
@@ -285,6 +412,11 @@ export class ChatSession {
     const pending = this.#pending;
     this.#pending = undefined;
     await pending?.();
+  }
+
+  /** What this browser keeps the open project by, which drafts are kept under. */
+  get projectKey(): string | undefined {
+    return this.#project?.key;
   }
 
   get running(): boolean {
@@ -308,7 +440,194 @@ export class ChatSession {
     });
     if (!saved || this.#project?.key !== project) return;
     const entries = saved.entries.map(readEntry).filter((entry) => entry !== undefined);
-    this.#start(entries, id, saved.caller);
+    this.#start(entries, id, saved.caller, {
+      ...(saved.titleBy !== undefined && { title: saved.title, titleBy: saved.titleBy }),
+      ...(isModelRef(saved.model) && { model: saved.model }),
+      ...(typeof saved.reasoning === "string" && { reasoning: saved.reasoning }),
+      ...(isForkedFrom(saved.forkedFrom) && { forkedFrom: saved.forkedFrom }),
+    });
+  }
+
+  /** Saves what the conversation open is now, such as its model, where it has words to keep. */
+  #keep(): void {
+    const { conversation, id } = this.#snapshot;
+    if (!conversation || id === undefined) return;
+    this.#saveSoon(id, conversation.getSnapshot().entries);
+  }
+
+  /**
+   * The model of the conversation open from its next turn on, which it keeps: other conversations
+   * and the settings stay as they are. Nothing takes the default again, until the first message.
+   */
+  chooseModel(ref: ModelRef | undefined): void {
+    this.#set({ model: ref, hold: undefined });
+    this.#keep();
+  }
+
+  /** How hard the model of the conversation open reasons; nothing leaves it to the settings. */
+  chooseReasoning(level: ReasoningLevel | undefined): void {
+    this.#set({ reasoning: level });
+    this.#keep();
+  }
+
+  /** The model the conversation open uses, see `ModelNow`; none where there is no default. */
+  modelNow(): ModelNow | undefined {
+    const own = this.#snapshot.model;
+    const { ai } = this.#options;
+    if (own) {
+      const service = ai.serviceOf(own.service);
+      return {
+        ref: own,
+        service,
+        state: !service ? "gone" : service.enabled.includes(own.model) ? "ok" : "off",
+        own: true,
+      };
+    }
+    const chosen = ai.defaultModel();
+    return chosen
+      ? {
+          ref: { service: chosen.service.id, model: chosen.model },
+          service: chosen.service,
+          state: "ok",
+          own: false,
+        }
+      : undefined;
+  }
+
+  /**
+   * How hard the model of the conversation open reasons: as the conversation chose, else as set up
+   * for the model, else as its pack says (`undefined` here).
+   */
+  reasoningNow(model: string): ReasoningLevel | undefined {
+    return this.#snapshot.reasoning ?? this.#options.ai.getSnapshot().reasoningFor?.[model];
+  }
+
+  /** Renames a conversation of the project, which keeps that name: no title comes for it any more. */
+  async rename(id: string, title: string): Promise<void> {
+    const name = title.trim().slice(0, TITLE_LENGTH * 2);
+    const project = this.#project?.key;
+    if (!name || project === undefined) return;
+    if (id === this.#snapshot.id) {
+      this.#set({ title: name, titleBy: "user" });
+      this.#keep();
+      if (this.#snapshot.conversation?.getSnapshot().entries.length === 0) return;
+      return this.flush();
+    }
+    const saved = await this.#chats.load(project, id).catch(() => undefined);
+    if (!saved || this.#project?.key !== project) return;
+    const chat: SavedChat = { ...saved, title: name, titleBy: "user" };
+    await this.#chats.save(chat).catch((error: unknown) => {
+      console.warn("The conversation could not be kept", error);
+    });
+    this.#set({
+      saved: this.#snapshot.saved.map((each) =>
+        each.id === id ? { ...each, title: name, titleBy: "user" } : each,
+      ),
+    });
+  }
+
+  /**
+   * Finds words in the conversations of the project: what people said, what AI answered, and the
+   * titles. Every conversation kept is read, which are at most 50.
+   */
+  async search(query: string): Promise<readonly Found[]> {
+    const project = this.#project?.key;
+    if (project === undefined || !query.trim()) return [];
+    await this.flush();
+    const chats = await Promise.all(
+      this.#snapshot.saved.map(async (summary) => {
+        const saved = await this.#chats.load(project, summary.id).catch(() => undefined);
+        const entries = (saved?.entries ?? [])
+          .map(readEntry)
+          .filter((entry) => entry !== undefined);
+        return { summary, entries };
+      }),
+    );
+    return searchChats(chats, query);
+  }
+
+  /**
+   * A new conversation with what the one open said before a turn, and the words of that turn in its
+   * input box, not sent. It keeps the model; the project stays as it is, with what AI changed after.
+   */
+  fork(task: string): void {
+    const { conversation, id } = this.#snapshot;
+    const project = this.#project?.key;
+    if (!conversation || this.running || project === undefined || id === undefined) return;
+    const entries = conversation.getSnapshot().entries;
+    const start = entries.findIndex((entry) => entry.role === "user" && entry.task === task);
+    const user = entries[start];
+    if (user?.role !== "user") return;
+    const turn = entries.slice(0, start + 1).filter((entry) => entry.role === "user").length;
+    const title = this.#snapshot.title || firstWords(entries, TITLE_LENGTH);
+    const { model, reasoning } = this.#snapshot;
+    void this.flush();
+    const copy = newChatId();
+    this.#start(entries.slice(0, start), copy, undefined, {
+      ...(model && { model }),
+      ...(reasoning !== undefined && { reasoning }),
+      forkedFrom: { title, turn },
+    });
+    this.drafts.write(project, copy, user.text);
+    this.#keep();
+  }
+
+  /** Queues a message to go once the task that runs is done. */
+  queue(text: string): void {
+    if (!text.trim()) return;
+    this.#set({ queued: [...this.#snapshot.queued, text] });
+  }
+
+  /** Takes a queued message back, which then does not go. Says what it was. */
+  unqueue(index: number): string | undefined {
+    const { queued } = this.#snapshot;
+    const text = queued[index];
+    if (text === undefined) return undefined;
+    this.#set({ queued: queued.filter((_, at) => at !== index) });
+    return text;
+  }
+
+  /**
+   * After a task: the next message queued goes, where the task was done as it should be; after a
+   * stop, a failure or the limit it waits for people. The conversation gets a title after its
+   * first turn.
+   */
+  #after(conversation: Conversation, outcome: TaskOutcome | undefined): void {
+    if (this.#snapshot.conversation !== conversation || !outcome) return;
+    void this.#title(conversation);
+    const [next, ...rest] = this.#snapshot.queued;
+    if (next === undefined || outcome.end !== "done") return;
+    this.#set({ queued: rest });
+    void this.send(next);
+  }
+
+  /**
+   * A short title from the model of the conversation, after its first turn: one small request,
+   * where the settings say so and people did not name the conversation. Its first words stay
+   * otherwise.
+   */
+  async #title(conversation: Conversation): Promise<void> {
+    const { titleBy, id } = this.#snapshot;
+    const entries = conversation.getSnapshot().entries;
+    if (titleBy !== undefined || !this.#options.ai.getSnapshot().autoTitle) return;
+    if (entries.filter((entry) => entry.role === "user").length !== 1) return;
+    const first = entries.find((entry) => entry.role === "user");
+    const answered = entries.some((entry) => entry.role === "assistant" && entry.end !== "failed");
+    if (first?.role !== "user" || !answered) return;
+    const target = await this.#target();
+    if (typeof target === "string" || ("fake" in target.endpoint && !this.#options.ask)) return;
+    const ask = this.#options.ask ?? askModel;
+    const said = await ask(target.endpoint as Endpoint, await target.key(), {
+      prompt: titlePrompt(first.text),
+      maxTokens: TITLE_TOKENS,
+      timeoutMs: TITLE_TIMEOUT_MS,
+      maxChars: 200,
+    }).catch(() => undefined);
+    const title = said?.ok ? cleanTitle(said.text ?? "", TITLE_LENGTH) : undefined;
+    // People may have named it, or gone to another, meanwhile.
+    if (!title || this.#snapshot.id !== id || this.#snapshot.titleBy !== undefined) return;
+    this.#set({ title, titleBy: "auto" });
+    this.#keep();
   }
 
   async remove(id: string): Promise<void> {
@@ -317,8 +636,10 @@ export class ChatSession {
     if (id === this.#snapshot.id) {
       if (this.running) return;
       this.#pending = undefined;
+      clearTimeout(this.#saving);
       this.#start([], undefined, undefined);
     }
+    this.drafts.clear(project, id);
     await this.#chats.remove(project, id).catch((error: unknown) => {
       console.warn("A conversation could not be taken away", error);
     });
@@ -423,9 +744,12 @@ export class ChatSession {
     const fake = this.#options.fake?.();
     if (fake) return { endpoint: fake, key: async () => undefined, model: fake.model ?? "fake" };
     const { ai } = this.#options;
-    const chosen = ai.defaultModel();
-    if (!chosen) return ai.getSnapshot().services.length === 0 ? "noService" : "noModel";
-    const { service, model } = chosen;
+    const now = this.modelNow();
+    if (!now) return ai.getSnapshot().services.length === 0 ? "noService" : "noModel";
+    if (now.state === "gone") return "modelGone";
+    if (now.state === "off") return "modelOff";
+    const service = now.service as ServiceConfig;
+    const { model } = now.ref;
     const endpoint = ai.endpointOf(service, model);
     if (endpoint === undefined) return "noService";
     if (typeof endpoint === "string") return endpoint;
@@ -435,13 +759,47 @@ export class ChatSession {
     return { endpoint, key: () => ai.keyOf(service.id), model };
   }
 
-  /** Sends a message, which starts a task. Resolves once the task is over. */
+  /**
+   * Sends a message, which starts a task. Resolves once the task is over. Words that do not go out,
+   * or that the service refused before it said anything, go back to the input box.
+   */
   async send(text: string): Promise<TaskOutcome | undefined> {
     const conversation = this.#snapshot.conversation;
     if (!conversation || conversation.running || !text.trim()) return undefined;
+    const id = this.#snapshot.id;
+    const project = this.#project?.key;
     const target = await this.#taskTarget(conversation);
-    if (!target) return undefined;
-    return conversation.send(text, target);
+    if (!target) {
+      if (project !== undefined && id !== undefined) this.drafts.restore(project, id, text);
+      return undefined;
+    }
+    // The first message settles the model of the conversation: another default later is not it.
+    if (!this.#snapshot.model) {
+      const now = this.modelNow();
+      if (now) this.#set({ model: now.ref });
+    }
+    const outcome = await conversation.send(text, target);
+    if (outcome?.end === "failed" && project !== undefined && id !== undefined) {
+      const entries = conversation.getSnapshot().entries;
+      const turn = entries.slice(entries.findLastIndex((entry) => entry.role === "user") + 1);
+      const silent = turn.every(
+        (entry) => entry.role === "assistant" && entry.text === "" && entry.calls.length === 0,
+      );
+      if (silent) this.drafts.restore(project, id, text);
+    }
+    this.#after(conversation, outcome);
+    return outcome;
+  }
+
+  /**
+   * The last turn once more, as a new turn with the same words. What it changed stays, unless
+   * people took it back first (`undoTask`).
+   */
+  async resend(): Promise<TaskOutcome | undefined> {
+    const last = this.#snapshot.conversation
+      ?.getSnapshot()
+      .entries.findLast((entry) => entry.role === "user");
+    return last?.role === "user" ? this.send(last.text) : undefined;
   }
 
   /**
@@ -453,7 +811,9 @@ export class ChatSession {
     if (!conversation || conversation.running || !conversation.failedTask()) return undefined;
     const target = await this.#taskTarget(conversation);
     if (!target) return undefined;
-    return conversation.retry(target);
+    const outcome = await conversation.retry(target);
+    this.#after(conversation, outcome);
+    return outcome;
   }
 
   /** Where the next task of a conversation goes, and what goes with it; or why it cannot go. */
@@ -469,8 +829,8 @@ export class ChatSession {
       return undefined;
     }
     this.#set({ hold: undefined });
-    const { maxToolCalls, reasoningFor } = this.#options.ai.getSnapshot();
-    const reasoning = reasoningFor?.[target.model];
+    const { maxToolCalls } = this.#options.ai.getSnapshot();
+    const reasoning = this.reasoningNow(target.model);
     const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
     // Another conversation may have opened meanwhile: this one is no longer on the screen.
     if (this.#snapshot.conversation !== conversation) return undefined;
@@ -521,6 +881,25 @@ export class ChatSession {
       this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
     }
   }
+}
+
+const REASONING_LEVELS: ReadonlySet<string> = new Set(REASONING);
+
+/** A step of reasoning as kept, where it is one. */
+function readReasoning(value: unknown): ReasoningLevel | undefined {
+  return typeof value === "string" && REASONING_LEVELS.has(value)
+    ? (value as ReasoningLevel)
+    : undefined;
+}
+
+function isModelRef(value: unknown): value is ModelRef {
+  const ref = value as Partial<ModelRef> | undefined;
+  return typeof ref?.service === "string" && typeof ref.model === "string";
+}
+
+function isForkedFrom(value: unknown): value is ForkedFrom {
+  const from = value as Partial<ForkedFrom> | undefined;
+  return typeof from?.title === "string" && typeof from.turn === "number";
 }
 
 /** What an answer records of its pack, for people. */
