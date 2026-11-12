@@ -287,8 +287,10 @@ export const OPERATION_TEXTS = {
 
   "ops.track.add.summary": "adds a video, audio or caption track",
   "ops.track.add.description":
-    "Adds a track to a timeline: video tracks hold video, image, scene, timeline and color clips; audio tracks hold audio, sound, music and timeline clips; caption tracks hold captions. Tracks are listed from the back of the picture to the front, and a new one goes before the track named by before, or in front of all. Sections, tracks and clips of one timeline share their ids.",
+    "Adds a track to a timeline: video tracks hold video, image, scene, timeline and color clips; audio tracks hold audio, sound, music and timeline clips; caption tracks hold captions. Tracks go from the back of the picture forward: a new one goes right behind the track named by before, or without before in front of all. Sections, tracks and clips of one timeline share their ids.",
   "ops.track.add.params.kind": '"video", "audio" or "caption".',
+  "ops.track.add.params.before":
+    "Id of the track it goes right behind (tracks go from the back of the picture forward); without it, in front of all.",
   "ops.track.add.errors.not-found": "There is no timeline with this id, or no track before.",
   "ops.track.add.errors.id-taken": "A section, track or clip of the timeline has this id already.",
   "ops.track.add.examples": [
@@ -297,7 +299,7 @@ export const OPERATION_TEXTS = {
       params: { timeline: "main", kind: "video", name: "Titles" },
     },
     {
-      title: "An audio track for sound effects, listed before the music track",
+      title: "An audio track for sound effects, right behind the music track",
       params: {
         timeline: "main",
         id: "track_sfx",
@@ -331,15 +333,20 @@ export const OPERATION_TEXTS = {
     },
   ],
 
-  "ops.track.move.summary": "moves a track before another one, or last",
+  "ops.track.move.summary": "moves a track behind another one, or in front of all",
   "ops.track.move.description":
-    "Changes the order of the tracks, which is the order of the picture from back to front: the track goes before the track named by before, or in front of all. Its clips go with it.",
+    "Changes the order of the tracks, which go from the back of the picture forward: the track goes right behind the track named by before (that one covers it), or without before in front of all, where it covers the others. Its clips go with it. The result says where it is now: behind which track, or in front of all.",
+  "ops.track.move.params.before":
+    "Id of the track it goes right behind (tracks go from the back of the picture forward); without it, in front of all.",
   "ops.track.move.errors.not-found":
     "There is no timeline or track with this id, or no track before.",
   "ops.track.move.examples": [
-    { title: "A track in front of all", params: { timeline: "main", track: "track_video" } },
     {
-      title: "A track behind another one",
+      title: "A track on top of all the others, as for captions over everything",
+      params: { timeline: "main", track: "track_overlay" },
+    },
+    {
+      title: "A track right behind another one, which covers it",
       params: { timeline: "main", track: "track_overlay", before: "track_video" },
     },
   ],
@@ -355,7 +362,7 @@ export const OPERATION_TEXTS = {
   "ops.clip.add.summary":
     "puts a clip on a track: an asset, a scene, a sound, a color or a caption",
   "ops.clip.add.description":
-    'Puts a new clip on a track, from start (on the timeline) for duration. source says what it shows or plays, and the kind of the track has to hold it (topic "types/ClipSource"). A scene or sound that is not in the project fails with not-found; an asset id is not checked, and a clip of an asset that is not in assets.json is added as it is. A clip past the end of the timeline makes its last section longer. Clips already in the way make it fail with overlap, unless overlap is "overwrite": then the parts in the way are cut away. properties sets values and keyframes from the start (paths: topic "howto/keyframes"); enter and exit are transitions at its edges; effects are the effects on its picture, whose parameters go in properties as effect.<effect id>.<parameter>. Sections, tracks and clips of one timeline share their ids; with id, later operations of the batch can name the clip.',
+    'Puts a new clip on a track, from start (on the timeline) for duration. source says what it shows or plays, and the kind of the track has to hold it (topic "types/ClipSource"). A scene, sound or asset that is not in the project fails with not-found (only the user adds assets). A clip past the end of the timeline makes its last section longer. Clips already in the way make it fail with overlap, unless overlap is "overwrite": then the parts in the way are cut away. properties sets values and keyframes from the start (paths: topic "howto/keyframes"); enter and exit are transitions at its edges; effects are the effects on its picture, whose parameters go in properties as effect.<effect id>.<parameter>. Sections, tracks and clips of one timeline share their ids; with id, later operations of the batch can name the clip.',
   "ops.clip.add.params.enter": "Transition at its start.",
   "ops.clip.add.params.exit": "Transition at its end.",
   "ops.clip.add.fields.properties":
@@ -367,7 +374,7 @@ export const OPERATION_TEXTS = {
   "ops.clip.add.fields.effects.end":
     "When it stops working, seconds from the start of the clip; without it, the end of the clip.",
   "ops.clip.add.errors.not-found":
-    "There is no timeline or track with this id, or the scene or sound of source is not there.",
+    "There is no timeline or track with this id, or the scene, sound or asset of source is not there (the error names similar ones).",
   "ops.clip.add.errors.wrong-track": "The kind of the track cannot hold this kind of clip.",
   "ops.clip.add.errors.id-taken": "A section, track or clip of the timeline has this id already.",
   "ops.clip.add.errors.not-animatable":
@@ -426,7 +433,8 @@ export const OPERATION_TEXTS = {
     "Clips with the same link move together when people drag them, like the picture and sound of a video; clip.move moves only the clips it lists.",
   "ops.clip.update.fields.changes.sectionFit":
     'What it does when its section gets longer in a version: "stretch" scales it, "hold" holds its end, "span" runs on across sections.',
-  "ops.clip.update.errors.not-found": "There is no timeline or clip with this id.",
+  "ops.clip.update.errors.not-found":
+    "There is no timeline or clip with this id, or the scene, sound or asset of the new source is not there.",
   "ops.clip.update.errors.invalid-value":
     "The clip with these changes does not fit the project format.",
   "ops.clip.update.errors.wrong-track":
@@ -482,7 +490,8 @@ export const OPERATION_TEXTS = {
     'Puts a join, a transition from one clip to the next, on the cut between two clips on one video or audio track, where from ends exactly where to starts. A cut has one join at most. The transition is named by type (built in: fade, dip, wipe, push for pictures; fade, fade-linear for sound), as in topic "types/Transition". Without duration it takes the default length of the transition (0.5 s for pictures, 0.2 s for sound), or as much as fits. align says where it is around the cut: "center" half before and half after, "before" it ends at the cut, "after" it starts at it; without align the editor picks by how much the two clips have past the cut. The join moves with the clips while they stay together; moving one of them apart removes it.',
   "ops.join.add.params.from": "Clip id before the cut.",
   "ops.join.add.params.to": "Clip id after the cut, starting where the first ends.",
-  "ops.join.add.params.duration": "Length, seconds; leave out for as much as fits.",
+  "ops.join.add.params.duration":
+    "Length, seconds; without it, the transition's default (0.5 for pictures, 0.2 for sound), or less where less fits.",
   "ops.join.add.fields.type":
     "Built in: fade, dip, wipe or push for pictures, fade or fade-linear for sound; a name with a dot is a transition of a plugin.",
   "ops.join.add.errors.not-found":

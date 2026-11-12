@@ -13,6 +13,7 @@ import {
   type ProjectState,
   type Revision,
 } from "@animaquill/core";
+import { BUILT_IN_EFFECTS } from "@animaquill/schema";
 import { z } from "zod";
 import { changeLine, describeChanges, type ObjectChange } from "../changes.ts";
 import {
@@ -281,6 +282,14 @@ function failureOf(call: Call, args: EditArgs, failure: CommandFailure, bases: B
     );
     if (similar.length > 0)
       lines[0] = lines[0]?.replace("\n", `\nsimilar: ${similar.join(" | ")}\n`) ?? "";
+    // A parameter of an effect: the parameters that this kind of effect has.
+    const type = args.operations[failure.index]?.type;
+    const spec =
+      kind === "parameter" && typeof type === "string" ? BUILT_IN_EFFECTS[type] : undefined;
+    if (spec) {
+      const has = spec.properties.map(({ path }) => path).join(", ");
+      lines[0] = lines[0]?.replace("\n", `\nparameters of ${type}: ${has}\n`) ?? "";
+    }
   }
   const name = names[failure.index] ?? "";
   if (failure.code === "invalid-params" && operationOf(name)) {
@@ -290,6 +299,46 @@ function failureOf(call: Call, args: EditArgs, failure: CommandFailure, bases: B
     );
   }
   return failed(lines.join("\n"));
+}
+
+/** The asset a clip of an operation shows, from its source: clip.add's, or clip.update's new one. */
+function assetOf(operation: Readonly<Record<string, unknown>>): string | undefined {
+  const source =
+    operation.op === "clip.add"
+      ? operation.source
+      : operation.op === "clip.update"
+        ? (operation.changes as { readonly source?: unknown } | undefined)?.source
+        : undefined;
+  const asset = (source as { readonly media?: { readonly asset?: unknown } } | undefined)?.media
+    ?.asset;
+  return typeof asset === "string" ? asset : undefined;
+}
+
+/**
+ * A clip that AI puts on an asset the project does not have fails, as one on a scene or sound that
+ * is not there does: AI cannot add assets, so the id is a mistake. People's own commands take such a
+ * clip, as one pasted from another project, and the problems tell about it (`asset-missing`). An
+ * asset that an earlier operation of the batch removes counts as not there.
+ */
+function missingAsset(call: Call, args: EditArgs, before: ProjectState): ToolResult | undefined {
+  const assets = new Set(Object.keys(before.assets ?? {}));
+  for (const [index, operation] of args.operations.entries()) {
+    if (operation.op === "asset.remove" && typeof operation.asset === "string") {
+      assets.delete(operation.asset);
+      continue;
+    }
+    const asset = assetOf(operation);
+    if (asset === undefined || assets.has(asset)) continue;
+    const similar = similarTo(before, "asset", asset, undefined);
+    return failed(
+      [
+        `error not-found in operations[${index}] (${String(operation.op)}): There is no asset ${asset} in the project. Only the user adds assets; aq_project_status and aq_search list those there are.`,
+        ...(similar.length > 0 ? [`similar: ${similar.join(" | ")}`] : []),
+        "nothing was written",
+      ].join("\n"),
+    );
+  }
+  return undefined;
 }
 
 const operationsWord = (count: number) => `${count} operation${count === 1 ? "" : "s"}`;
@@ -487,6 +536,8 @@ export const edit: ToolDefinition<EditArgs> = {
     const { store, host } = call;
     const before = store.getState();
     const calls = args.operations.map(({ op, ...params }) => ({ type: String(op), params }));
+    const missing = missingAsset(call, args, before);
+    if (missing) return missing;
     const bases = basesOf(call, args, before);
     const result = store.executeBatch(calls, {
       origin: host.origin(),

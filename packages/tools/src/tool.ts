@@ -178,11 +178,14 @@ export function makeTool<P>(
       const call: Call = { host, caller, store, texts, tool: name };
       // What others did is told up to the revision it was told at, not the one after the call: a
       // change that lands while a call waits, or while other calls run beside it, as read-only
-      // calls may, is told by the next call instead of never.
+      // calls may, is told by the next call instead of never. Of calls that end in another order
+      // than they began, the later revision stays, so that nothing is told twice.
       const at = store.revisionId;
       const others = othersLine(call);
       const result = await definition.run(call, parsed.value);
-      caller.lastCall = at;
+      const last = caller.lastCall === undefined ? undefined : store.revisionOf(caller.lastCall);
+      const now = store.revisionOf(at);
+      if (last === undefined || now === undefined || now >= last) caller.lastCall = at;
       if (writes && result.isError) caller.hold("failed");
       const done = others ? { ...result, text: `${result.text}\n${others}` } : result;
       if (writes && request !== undefined) caller.keepResult(request, key, done);

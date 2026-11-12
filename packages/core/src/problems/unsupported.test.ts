@@ -140,7 +140,7 @@ describe("what this editor does not do yet", () => {
         'unsupported-library scene {"library":"lib"} picture',
         'unsupported-library enter {"library":"lib"} picture',
         'unsupported-library value {"library":"lib"} picture',
-        'unsupported-library before {"library":"lib"} picture',
+        'unsupported-library before {"join":"j","library":"lib"} picture',
       ].toSorted(),
     );
     const own = clip("own", { kind: "image", media: { asset: "logo" } });

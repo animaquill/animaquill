@@ -49,6 +49,10 @@ export const DIRECTIVE_OVERRIDES = {
     'One page, such as "ops/clip.move", "format/animaquill.json" or "scene-runtime/aq"; ":2" after it for its next part. Without topic and query, the table of contents.',
   "types.Key":
     'A keyframe: {"time":"<seconds from the start of the clip>","value":…}, with how it goes on to the next one.',
+  "types.PropertyEdit": "One edit of a property of a clip.",
+  "ops.track.add.params.before": "Id of the one it goes before; leave out for last.",
+  "ops.track.move.params.before": "Id of the one it goes before; leave out for last.",
+  "ops.join.add.params.duration": "Length, seconds; leave out for as much as fits.",
   // How toolset 2026.1 listed the operations in the description of aq_edit: signatures with these
   // summaries, and these examples; the branches of the schema had no description.
   "ops.project.rename.summary": "rename the project",

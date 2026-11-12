@@ -140,6 +140,13 @@ export function describeProjectProblem(
       ...asText,
     });
   }
+  if (code === "unsupported-library" && params["join"] !== undefined) {
+    return t("problems.codes.unsupported-library-join", {
+      ...params,
+      defaultValue: code,
+      ...asText,
+    });
+  }
   if (code === "unsupported-audio-effect") {
     const key = `problems.codes.unsupported-audio-effect.${params["where"]}`;
     return t(key, { ...params, defaultValue: code, ...asText });

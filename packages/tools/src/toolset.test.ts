@@ -23,7 +23,7 @@ import type { Tool } from "./types.ts";
 
 /**
  * How many characters the list of tools takes, as services get it: names, descriptions and the
- * schemas of parameters. Measured 51 728 (2026-11-12, toolset 2026.3: aq_edit names its operations
+ * schemas of parameters. Measured 52 088 (2026-11-12, toolset 2026.3: aq_edit names its operations
  * and each branch of its schema says what the operation does; 2026.2 took 52 874, 2026.1 54 191);
  * the 48 tools before took 67 322. It is a ceiling, so that the list does not grow unnoticed.
  */

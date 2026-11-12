@@ -2,15 +2,15 @@
 
 exports[`results > of aq_check_run read as they did 1`] = `
 "rev <epoch>:0
-0 errors, 17 warnings; format: ok
+0 errors, 18 warnings; format: ok
 sources: project data; scene runtime: not checked here
-problems 1-5 of 17:
+problems 1-5 of 18:
 W unsupported-audio-property clip_interview "采访" at time.speed: time.speed is not applied by this editor version yet; preview and export ignore it
 W unsupported-library clip_logo: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
 W unsupported-library clip_card: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
 W unsupported-draft clip_idea "样片：换个开场": a draft clip still shows and exports in this editor version
 W unsupported-audio-property clip_interview_audio at audio.pan: audio.pan is not applied by this editor version yet; preview and export ignore it
-12 more; cursor "c1" gives the next ones."
+13 more; cursor "c1" gives the next ones."
 `;
 
 exports[`results > of aq_guide read as they did 1`] = `
@@ -62,7 +62,7 @@ ops/section.update — changes the duration or name of a section
 ops/section.remove — removes a section; a timeline keeps at least one
 ops/track.add — adds a video, audio or caption track
 ops/track.update — changes the name, hidden, muted, solo, locked, group or role of a track
-ops/track.move — moves a track before another one, or last
+ops/track.move — moves a track behind another one, or in front of all
 ops/track.remove — removes a track with all its clips
 ops/source.replace — makes every clip that uses an asset, scene or sound use another one of the same kind
 ops/clip.add — puts a clip on a track: an asset, a scene, a sound, a color or a caption
@@ -148,7 +148,7 @@ scenes (1): title "标题卡" entry=index.html
 sounds (1): impacts "打击音效" entry=main.js
 assets (7): font-sans font path="assets/fonts/sans.woff2" | interview "采访" video path="assets/interview.mp4" 12.5s 1920x1080 | logo image path="assets/logo.svg" | narration-en audio path="assets/voice/en.flac" 26s | narration-zh audio path="assets/voice/zh.flac" 20s | raw-footage video path="assets/raw.mov" | studio-loop audio path="assets/loop.wav"
 code files (1): code/animate.js
-problems: 0 errors, 17 warnings (aq_check_run lists them)"
+problems: 0 errors, 18 warnings (aq_check_run lists them)"
 `;
 
 exports[`results > of aq_search read as they did 1`] = `

@@ -83,7 +83,9 @@ function fieldText(texts: TextTable, op: string, field: Field): string {
   const schema = field.depth === 0 ? (field.schema.description as string | undefined) : undefined;
   const words = schema ?? paramText(texts, op, leaf) ?? "";
   if (manual === undefined) return words;
-  return field.depth === 0 && words !== "" && words !== manual ? `${words} ${manual}` : manual;
+  // Words of the manual that go on from those of the schema say it all.
+  const repeats = words === "" || manual.startsWith(words.replace(/\.$/, ""));
+  return field.depth === 0 && !repeats ? `${words} ${manual}` : manual;
 }
 
 /** The page of one operation: what it does, takes, gives back and can fail with, and examples. */

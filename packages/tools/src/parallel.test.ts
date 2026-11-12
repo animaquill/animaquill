@@ -110,4 +110,16 @@ describe("reading tools called at the same time", () => {
       'others: since your last call the user changed clip_title "Opening" (name)',
     );
   });
+  it("tell a change once, also when the call that began first ends last", async () => {
+    const tools = toolsOn(testHost());
+    await tools.call("aq_project_status");
+    // The manual waits for its pages; the user changes a clip; a call after it ends first.
+    const first = tools.call("aq_guide", { topic: "ops/clip.move" });
+    userRenames(tools, "clip_title", "Opening");
+    const second = await tools.call("aq_project_status");
+    await first;
+    expect(second.text).toContain('the user changed clip_title "Opening" (name)');
+    const next = await tools.call("aq_project_status");
+    expect(next.text).not.toContain("others:");
+  });
 });

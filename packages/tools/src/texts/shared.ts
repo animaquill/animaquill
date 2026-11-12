@@ -8,7 +8,8 @@ export const TYPE_TEXTS = {
   "types.Key":
     'A keyframe: {"time":"<seconds>","value":…}, with how it goes on to the next one. time is on the clip\'s clock, which reads the clip\'s offset (0 by default) at its first frame.',
   "types.MediaRef": 'A file: {"asset":"<asset id>"}, or {"library":"<library id>","path":"…"}.',
-  "types.PropertyEdit": "One edit of a property of a clip.",
+  "types.PropertyEdit":
+    "One edit of a property of a clip. Its times (time, times, moves) are on the clip's clock, as the times of keys are: it reads the clip's offset (0 by default) at the clip's first frame.",
   "types.PropertyPath": 'The path of a property, such as "transform.x" or "param.title".',
   "types.PropertyRename": "Another path for properties of a clip.",
   "types.PropertyValue":

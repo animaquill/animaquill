@@ -55,7 +55,13 @@ const EXPECTS: Readonly<Record<string, string>> = {
 };
 
 export const INVALID_VALUE_TEXTS: RuleTexts = {
-  format: ({ path, message }) => `${path || "The value"} ${englishRule(message)}.`,
+  format: ({ path, message }) => {
+    // The rule of a value can name its path itself, as the rules of properties do.
+    const rule = englishRule(message);
+    return path !== "" && rule.startsWith(`${path} `)
+      ? `${rule}.`
+      : `${path || "The value"} ${rule}.`;
+  },
   "retired-property": ({ path }) =>
     `There is no property ${path} any more: cropping is an effect now (effect.add with type "crop").`,
   type: ({ path, expects, length }) =>
@@ -154,7 +160,7 @@ export const FAILURE_TEXTS: Texts = {
     holds === "clip"
       ? `${an(trackKind, true)} track cannot hold ${sourceKind ? `${an(sourceKind)} clip` : "this clip"}: ${trackFor(sourceKind)}`
       : holds === "effect"
-        ? `Only clips on video tracks can have effects so far, not on a ${trackKind} track.`
+        ? `Only clips on video tracks can have effects so far, not on ${an(trackKind)} track.`
         : `${an(trackKind, true)} track cannot have joins; joins go between clips on video and audio tracks.`,
   overlap: ({ clips, moved }) =>
     moved

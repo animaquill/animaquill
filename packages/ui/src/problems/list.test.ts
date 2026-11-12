@@ -1,6 +1,7 @@
 import {
   PROPERTY_CODES,
   ProjectStore,
+  REFERENCE_CODES,
   UNSUPPORTED_CODES,
   withId,
   type ProjectProblem,
@@ -286,12 +287,13 @@ describe("the words of a problem", () => {
       "unsupported-audio-property": { property: "audio.pan" },
       "property-mismatch": { path: "x", type: "number" },
     };
-    for (const code of [...UNSUPPORTED_CODES, ...PROPERTY_CODES]) {
+    for (const code of [...REFERENCE_CODES, ...UNSUPPORTED_CODES, ...PROPERTY_CODES]) {
       const words = about(code, params[code] ?? { problem: "object-id" });
       expect(words, code).not.toContain(code);
       expect(words, code).not.toContain("problems.");
       expect(words, code).toMatch(/[一-鿿]/);
     }
+    expect(about("unsupported-library", { library: "lib", join: "join_2" })).toContain("join_2");
     for (const where of ["clip", "track", "mix"]) {
       expect(about("unsupported-audio-effect", { where, count: 2 })).not.toContain("problems.");
     }

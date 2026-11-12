@@ -3,6 +3,8 @@ import {
   entryOf,
   objectKey,
   objectOfPath,
+  orderedSections,
+  orderedTracks,
   pathOfObject,
   type ObjectKind,
   type ObjectRef,
@@ -69,6 +71,22 @@ function lineChanges(before: string, after: string) {
   return { added, removed };
 }
 
+/**
+ * Where a track or a section is among the others, in place of the number that orders them: a track
+ * by the one right in front of it (tracks go from the back of the picture forward), a section by
+ * the one right after it.
+ */
+function positionText(state: ProjectState, ref: ObjectRef): string {
+  const timeline = entryOf(state.timelines, ref.timeline ?? "");
+  if (!timeline) return "none";
+  const list = ref.kind === "track" ? orderedTracks(timeline) : orderedSections(timeline);
+  const index = list.findIndex(({ id }) => id === ref.id);
+  if (index < 0) return "none";
+  const next = list[index + 1];
+  if (ref.kind === "track") return next ? `behind ${next.id}` : "in front of all";
+  return next ? `before ${next.id}` : "last";
+}
+
 /** What patches did to the objects they touched, before against after. */
 export function describeChanges(
   before: ProjectState,
@@ -127,6 +145,15 @@ export function describeChanges(
             before: shortText(old[key], key),
             after: shortText(now[key], key),
           }));
+      }
+      if (field === "order" && (ref.kind === "track" || ref.kind === "section")) {
+        return [
+          {
+            path: "position",
+            before: positionText(before, ref),
+            after: positionText(after, ref),
+          },
+        ];
       }
       return [{ path: field, before: shortText(old, field), after: shortText(now, field) }];
     });

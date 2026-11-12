@@ -1,0 +1,63 @@
+{
+  "about": "The order of tracks, as aq_edit says it (review of 6.5b ⑥, M1): before puts a track right behind another, which covers it; without before it goes in front of all. The timeline reads the order back from the back of the picture forward.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true,
+        "lines": [
+          "tracks (back of the picture first): track_video \"画面\" video | track_overlay \"叠加\" video locked | track_voice \"配音\" audio role=voice | track_music \"音乐\" audio role=music | track_captions \"字幕\" caption"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [{ "op": "track.move", "timeline": "main", "track": "track_video" }]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["track_video \"画面\": position behind track_overlay→in front of all"]
+      }
+    },
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true,
+        "lines": [
+          "tracks (back of the picture first): track_overlay \"叠加\" video locked | track_voice \"配音\" audio role=voice | track_music \"音乐\" audio role=music | track_captions \"字幕\" caption | track_video \"画面\" video"
+        ]
+      }
+    },
+    {
+      "message": true
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "track.move",
+            "timeline": "main",
+            "track": "track_video",
+            "before": "track_overlay"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["track_video \"画面\": position in front of all→behind track_overlay"]
+      }
+    },
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true,
+        "lines": ["tracks (back of the picture first): track_video \"画面\" video | track_overlay"]
+      }
+    }
+  ],
+  "end": {
+    "undoAll": true
+  }
+}

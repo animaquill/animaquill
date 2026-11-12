@@ -1543,6 +1543,10 @@
       "unsupported-music-clip": "音乐片段这一版还不能播放，预览和导出里都没有它的声音",
       "unsupported-timeline-clip": "嵌套的时间轴“{{timeline}}”这一版还不显示，预览和导出里都没有它",
       "unsupported-library": "用到了库“{{library}}”里的内容，这一版还不能取库里的东西，预览和导出里没有它",
+      "unsupported-library-join": "衔接转场“{{join}}”是库“{{library}}”里的转场，这一版还不能取库里的东西，预览和导出里没有它",
+      "asset-missing": "用到的素材“{{asset}}”不在项目里，片段里没有它的画面和声音",
+      "scene-missing": "用到的场景“{{scene}}”不在项目里，片段没有画面",
+      "sound-missing": "用到的声音“{{sound}}”不在项目里，片段没有声音",
       "unsupported-caption-display": "这条轨道上的 {{count}} 个字幕这一版还不显示，也不会烧进导出的视频",
       "unsupported-audio-effect": {
         "clip": "片段上的 {{count}} 个声音效果这一版还不生效，听到的是没有效果的声音",

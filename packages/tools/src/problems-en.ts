@@ -1,5 +1,6 @@
 import {
   PROPERTY_CODES,
+  REFERENCE_CODES,
   UNSUPPORTED_CODES,
   type ProjectProblem,
   type ProjectState,
@@ -17,6 +18,9 @@ type Params = Readonly<Record<string, string | number>>;
 
 const str = (value: unknown) => String(value ?? "");
 
+/** Where a version, not the master, uses something. */
+const inVersion = (p: Params) => (p.version === undefined ? "" : ` in version ${str(p.version)}`);
+
 /** The words of problems that the project alone tells, by code. */
 export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>> = {
   "unsupported-music-clip": () =>
@@ -24,7 +28,15 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
   "unsupported-timeline-clip": (p) =>
     `nested timeline ${str(p.timeline)} does not show in this editor version yet`,
   "unsupported-library": (p) =>
-    `uses library ${str(p.library)}, which this editor version cannot read yet: missing from preview and export`,
+    p.join === undefined
+      ? `uses library ${str(p.library)}, which this editor version cannot read yet: missing from preview and export`
+      : `its join ${str(p.join)} is a transition of library ${str(p.library)}, which this editor version cannot read yet: missing from preview and export`,
+  "asset-missing": (p) =>
+    `uses asset ${str(p.asset)}${inVersion(p)}, which is not in assets.json: the clip shows and plays nothing of it`,
+  "scene-missing": (p) =>
+    `uses scene ${str(p.scene)}${inVersion(p)}, which the project does not have: the clip shows nothing`,
+  "sound-missing": (p) =>
+    `uses sound ${str(p.sound)}${inVersion(p)}, which the project does not have: the clip plays nothing`,
   "unsupported-caption-display": (p) =>
     `${str(p.count)} captions on this track do not show in this editor version yet, nor in exported video`,
   "unsupported-audio-effect": (p) =>
@@ -66,7 +78,11 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
 };
 
 /** All codes the project alone tells, which have to have words here. */
-export const STATIC_PROBLEM_CODES: readonly string[] = [...UNSUPPORTED_CODES, ...PROPERTY_CODES];
+export const STATIC_PROBLEM_CODES: readonly string[] = [
+  ...REFERENCE_CODES,
+  ...UNSUPPORTED_CODES,
+  ...PROPERTY_CODES,
+];
 
 const LETTERS = { error: "E", warning: "W", check: "C" } as const;
 

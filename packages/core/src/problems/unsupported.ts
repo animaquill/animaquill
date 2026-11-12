@@ -291,14 +291,15 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       }
     }
 
-    for (const join of Object.values(timeline.joins ?? {})) {
+    for (const [id, join] of Object.entries(timeline.joins ?? {})) {
       const library = join.transition?.library;
       if (typeof library !== "string") continue;
       const from = join.from === undefined ? undefined : timeline.clips[join.from];
       const track = join.track === undefined ? undefined : timeline.tracks[join.track];
       const subject = from ? clipOf(from) : track ? trackOf(track) : whole;
       const part = from ? partOf(from) : undefined;
-      report("unsupported-library", subject, { library }, part);
+      // The join, not the clip it starts at: a clip of the same library is another problem.
+      report("unsupported-library", subject, { library, join: id }, part);
     }
 
     const { mix } = timeline;

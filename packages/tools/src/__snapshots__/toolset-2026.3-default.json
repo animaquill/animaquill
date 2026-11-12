@@ -690,7 +690,7 @@
           "type": "string"
          },
          "before": {
-          "description": "Id of the one it goes before; leave out for last.",
+          "description": "Id of the track it goes right behind (tracks go from the back of the picture forward); without it, in front of all.",
           "type": "string"
          }
         },
@@ -759,7 +759,7 @@
        },
        {
         "type": "object",
-        "description": "Moves a track before another one, or last.",
+        "description": "Moves a track behind another one, or in front of all.",
         "properties": {
          "op": {
           "const": "track.move"
@@ -773,7 +773,7 @@
           "type": "string"
          },
          "before": {
-          "description": "Id of the one it goes before; leave out for last.",
+          "description": "Id of the track it goes right behind (tracks go from the back of the picture forward); without it, in front of all.",
           "type": "string"
          }
         },
@@ -1107,7 +1107,7 @@
           "type": "string"
          },
          "duration": {
-          "description": "Length, seconds; leave out for as much as fits.",
+          "description": "Length, seconds; without it, the transition's default (0.5 for pictures, 0.2 for sound), or less where less fits.",
           "type": "string"
          },
          "curve": {
@@ -2424,7 +2424,7 @@
          ]
         }
        ],
-       "description": "One edit of a property of a clip."
+       "description": "One edit of a property of a clip. Its times (time, times, moves) are on the clip's clock, as the times of keys are: it reads the clip's offset (0 by default) at the clip's first frame."
       },
       "PropertyPath": {
        "type": "string",
