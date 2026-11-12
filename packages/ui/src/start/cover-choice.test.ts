@@ -7,8 +7,15 @@ import { MOST_PICTURE_BYTES, chooseCover, restoreAutoCover } from "./cover-choic
 const image = () => ({ width: 4000, height: 3000, close: vi.fn() }) as unknown as ImageBitmap;
 const target = { key: "folder-1", project: undefined, durationMs: 9000 };
 
+/** Real time, which the tests do not take over. */
+const realTimeout = globalThis.setTimeout;
+
+/** Lets what is on its way finish: hashing takes more than a tick, on another thread. */
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+  for (let turn = 0; turn < 3; turn++) {
+    await new Promise((resolve) => realTimeout(resolve, 5));
+    for (let tick = 0; tick < 20; tick++) await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 describe("a cover people choose", () => {
