@@ -16,7 +16,14 @@ export function NotificationList() {
       <ErrorPrompt workbench={workbench} />
       <div className={styles.items} role="status">
         {items.map((item) => (
-          <div key={item.id} className={styles.item}>
+          <div
+            key={item.id}
+            className={styles.item}
+            onPointerEnter={() => notifications.hold(item.id)}
+            onPointerLeave={() => notifications.release(item.id)}
+            onFocus={() => notifications.hold(item.id)}
+            onBlur={() => notifications.release(item.id)}
+          >
             <span>{item.message}</span>
             {item.actions?.map(({ label, run }) => (
               <button

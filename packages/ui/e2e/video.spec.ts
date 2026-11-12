@@ -125,7 +125,9 @@ async function open(page: Page, folder: string, code = false): Promise<void> {
   await chooseFolder(page, folder);
   // A project with code says so first.
   if (code) await openAnyway(page);
-  await expect(tab(page, "preview")).toBeVisible();
+  // The folders here hold pictures and sound to read in, which takes longer than the 5 seconds of
+  // the rest on the site, where the 24 pictures of the slide show once did not make it.
+  await expect(tab(page, "preview")).toBeVisible({ timeout: 30_000 });
 }
 
 /** What is in the file the export wrote, or undefined when there is none. */

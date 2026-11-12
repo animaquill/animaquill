@@ -575,12 +575,8 @@ export class CloudProjects {
     const { notifications, t } = this.#options;
     if (this.#told().includes(key)) return;
     this.noteToldOnlyHere(key);
-    notifications.push(
-      t("cloud.onlyHere.notice", { name, interpolation: { escapeValue: false } }),
-      {
-        stays: true,
-      },
-    );
+    // The status bar and the panel say it for as long as it is so: this one is for the first time.
+    notifications.push(t("cloud.onlyHere.notice", { name, interpolation: { escapeValue: false } }));
   }
 
   /**

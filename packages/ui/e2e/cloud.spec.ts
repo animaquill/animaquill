@@ -9,7 +9,7 @@ import {
   sidebar,
   statusOf,
 } from "./start-support.ts";
-import { createProject, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
+import { content, createProject, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
 
 /**
  * The start page, the dialog that connects a project, and the panel of the platform, as people go
@@ -796,5 +796,29 @@ test.describe("where the editor is hosted on no platform", () => {
     await chooseFrom(page, "文件", "关闭项目");
     await expect(sidebar(page)).toBeVisible();
     await expect(page.getByRole("link", { name: /^测试项目/ })).toBeVisible();
+  });
+});
+
+test.describe("what the page says in its corner", () => {
+  test("does not take the buttons of the list of operations from people", async ({ page }) => {
+    await arrive(page);
+    await createProject(page);
+    // Another window of the same browser opens it: nothing told it that it is only here.
+    const other = await page.context().newPage();
+    await other.goto(page.url());
+    await expect(tab(other, "preview")).toBeVisible();
+    const notice = other.getByRole("status").filter({ hasText: "只在这个浏览器里，不安全" });
+    await expect(notice).toBeVisible();
+    await tab(other, "assets").click();
+    await content(other, "assets").getByRole("button", { name: "新建场景" }).click();
+    await other
+      .getByRole("contentinfo")
+      .getByRole("button", { name: /^上次的操作：/ })
+      .click();
+    await expect(notice).toBeVisible();
+    await other
+      .getByRole("dialog", { name: "最近的操作" })
+      .getByRole("button", { name: "撤销到这里" })
+      .click({ timeout: 3000 });
   });
 });

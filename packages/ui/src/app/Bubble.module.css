@@ -3,7 +3,8 @@
 
   position: fixed;
   left: 0;
-  z-index: 100;
+  /* Over the notifications in the corner, which would be on the buttons it offers. */
+  z-index: 1002;
   display: grid;
   gap: 8px;
   width: max-content;
