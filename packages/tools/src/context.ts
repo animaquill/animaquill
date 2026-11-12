@@ -129,25 +129,67 @@ export interface Call {
 }
 
 /**
- * What others changed since the last call of this caller, as one line that only says what happened:
- * who, which objects, which of their fields. What to do about it is for the system prompt to say.
+ * Who changed something besides this conversation, for people: the user, the user taking back or
+ * doing again, another AI task, the files of the project folder, another device, another window.
  */
-export function othersLine(call: Call): string | undefined {
+export type OtherWho = "user" | "undo" | "redo" | "ai" | "folder" | "device" | "window";
+
+/** One object that others changed since the last call of a caller, for people to see. */
+export interface OtherChange {
+  readonly who: OtherWho;
+  readonly kind: ObjectRef["kind"];
+  readonly id: string;
+  readonly timeline?: string;
+  readonly name?: string;
+  readonly fields: readonly string[];
+  /** It is not in the project any more. */
+  readonly removed?: true;
+}
+
+/** How many objects changed by others a result keeps for people. */
+const MAX_OTHERS_KEPT = 20;
+
+function whoOf(change: Pick<ChangeRecord, "origin" | "takesBack">): OtherWho {
+  const { origin, takesBack } = change;
+  if (takesBack !== undefined) return takesBack;
+  if (origin === USER) return "user";
+  if (origin.startsWith("ai:")) return "ai";
+  if (origin.startsWith("folder:")) return "folder";
+  if (cloudSeqOf(origin) !== undefined) return "device";
+  return "window";
+}
+
+/**
+ * What others changed since the last call of this caller: as one line for the model that only says
+ * what happened (who, which objects, which of their fields; what to do about it is for the system
+ * prompt to say), and as a list for people, which goes with the data of the result.
+ */
+export function othersOf(call: Call): {
+  readonly line: string | undefined;
+  readonly changes: readonly OtherChange[];
+} {
   const { caller, store } = call;
   const since = caller.lastCall;
-  if (since === undefined) return undefined;
+  const none = { line: undefined, changes: [] };
+  if (since === undefined) return none;
   if (store.revisionOf(since) === undefined) {
-    return "others: the project was reopened since your last call, so what you read before may be out of date.";
+    return {
+      line: "others: the project was reopened since your last call, so what you read before may be out of date.",
+      changes: [],
+    };
   }
   const changes = store.changesSince(since);
   if (!changes) {
-    return "others: there were more changes by others since your last call than the tools keep track of.";
+    return {
+      line: "others: there were more changes by others since your last call than the tools keep track of.",
+      changes: [],
+    };
   }
   const state = store.getState();
   const own = isOwnOf(call);
   const byWho = new Map<
     string,
-    Map<string, { ref: ObjectRef; fields: Set<string>; gone: boolean }>
+    Map<string, { ref: ObjectRef; fields: Set<string>; code: OtherWho }>
   >();
   for (const change of changes) {
     const mine = own(change.origin);
@@ -158,30 +200,50 @@ export function othersLine(call: Call): string | undefined {
     for (const path of change.paths) {
       const ref = objectOfPath(path);
       const key = objectKey(ref);
-      const known = objects.get(key) ?? { ref, fields: new Set<string>(), gone: false };
+      const known = objects.get(key) ?? { ref, fields: new Set<string>(), code: whoOf(change) };
       objects.set(key, known);
       const field = fieldOf(path, ref);
       if (field !== undefined && ref.kind !== "file") known.fields.add(field);
     }
   }
-  if (byWho.size === 0) return undefined;
+  if (byWho.size === 0) return none;
   let left = MAX_OTHERS;
   let more = 0;
+  const kept: OtherChange[] = [];
   const parts = [...byWho].map(([who, objects]) => {
-    const said = [...objects.values()].flatMap(({ ref, fields }) => {
+    const said = [...objects.values()].flatMap(({ ref, fields, code }) => {
+      const there = existsIn(state, ref);
+      if (kept.length < MAX_OTHERS_KEPT) {
+        const name = nameOf(state, ref);
+        kept.push({
+          who: code,
+          kind: ref.kind,
+          id: ref.id,
+          ...(ref.timeline !== undefined && { timeline: ref.timeline }),
+          ...(name !== undefined && name !== "" && { name }),
+          fields: [...fields],
+          ...(!there && { removed: true }),
+        });
+      }
       if (left <= 0) {
         more += 1;
         return [];
       }
       left -= 1;
-      if (!existsIn(state, ref)) return [`${objectText(state, ref)} (removed)`];
+      if (!there) return [`${objectText(state, ref)} (removed)`];
       const list = fields.size > 0 ? ` (${[...fields].slice(0, 4).join(", ")})` : "";
       return [`${objectText(state, ref)}${list}`];
     });
     return said.length > 0 ? `${who} ${said.join(", ")}` : `${who} more`;
   });
-  return `others: since your last call ${parts.join("; ")}${more > 0 ? ` and ${more} more` : ""}.`;
+  return {
+    line: `others: since your last call ${parts.join("; ")}${more > 0 ? ` and ${more} more` : ""}.`,
+    changes: kept,
+  };
 }
+
+/** The line of `othersOf`, for the model. */
+export const othersLine = (call: Call): string | undefined => othersOf(call).line;
 
 /** Lines as one text, cut at a whole line when too long, with a word on what was left out. */
 const tooLong = (max: number) => `one result holds at most ${max.toLocaleString("en")} characters`;

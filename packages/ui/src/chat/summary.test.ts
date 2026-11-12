@@ -1,6 +1,6 @@
 import type { ChatEntry } from "@animaquill/agent";
 import { describe, expect, it } from "vitest";
-import { clipsOf, summaryOf } from "./summary.ts";
+import { clipsOf, othersOfTurn, problemsOfTurn, summaryOf } from "./summary.ts";
 
 let calls = 0;
 const edit = (data: Record<string, unknown>, name = "aq_edit", ok = true): ChatEntry => ({
@@ -127,5 +127,66 @@ describe("the summary of a turn", () => {
       at: 1,
     };
     expect(summaryOf([old])).toEqual({ changes: [], said: [], told: false });
+  });
+});
+
+describe("what others changed while a task ran", () => {
+  const told = (others: unknown[], name = "aq_project_status"): ChatEntry => ({
+    role: "tool",
+    call: `c${++calls}`,
+    name,
+    ok: true,
+    text: "",
+    at: calls,
+    data: { others },
+  });
+  const user = (id: string, fields: string[]) => ({
+    who: "user",
+    kind: "clip",
+    id,
+    timeline: "main",
+    name: id,
+    fields,
+  });
+  const titleMoved = edit({
+    changes: [
+      {
+        kind: "clip",
+        id: "clip_title",
+        timeline: "main",
+        change: "changed",
+        fields: [{ path: "start", before: "1", after: "2" }],
+      },
+    ],
+  });
+
+  it("tells people's own changes apart from those elsewhere, and what AI wrote again after", () => {
+    const { mine, elsewhere } = othersOfTurn([
+      told([user("clip_title", ["start"]), user("clip_logo", ["name"])]),
+      told([{ ...user("clip_end", []), who: "device" }]),
+      titleMoved,
+    ]);
+    expect(mine.map(({ change, overwritten }) => [change.id, overwritten])).toEqual([
+      ["clip_title", true],
+      ["clip_logo", false],
+    ]);
+    expect(elsewhere.map(({ change }) => change.id)).toEqual(["clip_end"]);
+  });
+
+  it("counts a change that AI made before it heard as kept", () => {
+    const { mine } = othersOfTurn([titleMoved, told([user("clip_title", ["start"])])]);
+    expect(mine[0]?.overwritten).toBe(false);
+  });
+});
+
+describe("the problems of a task", () => {
+  it("adds up what its changes brought and resolved, and keeps the last check", () => {
+    const entries: ChatEntry[] = [
+      edit({ changes: [], problems: { added: 1, resolved: 2 } }),
+      edit({ changes: [], problems: { added: 0, resolved: 1 } }),
+      edit({ problems: [{ id: "p1" }, { id: "p2" }] }, "aq_check_run"),
+    ];
+    expect(problemsOfTurn(entries)).toEqual({ added: 1, resolved: 3, checked: 2 });
+    expect(problemsOfTurn([])).toEqual({ added: 0, resolved: 0, checked: undefined });
   });
 });

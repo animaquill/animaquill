@@ -8,6 +8,7 @@ import {
   type FakeEndpoint,
   type PackNote,
   type TaskOutcome,
+  type TaskTarget,
 } from "@animaquill/agent";
 import {
   aiTask,
@@ -437,8 +438,27 @@ export class ChatSession {
   /** Sends a message, which starts a task. Resolves once the task is over. */
   async send(text: string): Promise<TaskOutcome | undefined> {
     const conversation = this.#snapshot.conversation;
-    const caller = this.#caller;
     if (!conversation || conversation.running || !text.trim()) return undefined;
+    const target = await this.#taskTarget(conversation);
+    if (!target) return undefined;
+    return conversation.send(text, target);
+  }
+
+  /**
+   * Tries the last task of the conversation again after it failed, as the same task: what it
+   * changed so far stays, and the task goes on from there. See `Conversation.retry`.
+   */
+  async retry(): Promise<TaskOutcome | undefined> {
+    const conversation = this.#snapshot.conversation;
+    if (!conversation || conversation.running || !conversation.failedTask()) return undefined;
+    const target = await this.#taskTarget(conversation);
+    if (!target) return undefined;
+    return conversation.retry(target);
+  }
+
+  /** Where the next task of a conversation goes, and what goes with it; or why it cannot go. */
+  async #taskTarget(conversation: Conversation): Promise<TaskTarget | undefined> {
+    const caller = this.#caller;
     if (!this.#project) {
       this.#set({ hold: "noProject" });
       return undefined;
@@ -454,7 +474,7 @@ export class ChatSession {
     const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
     // Another conversation may have opened meanwhile: this one is no longer on the screen.
     if (this.#snapshot.conversation !== conversation) return undefined;
-    return conversation.send(text, {
+    return {
       endpoint: target.endpoint,
       key: target.key,
       maxToolCalls,
@@ -463,7 +483,7 @@ export class ChatSession {
       // How hard the model reasons: as people set it for the model, else as its pack says.
       call: reasoning === undefined ? use.call : { ...use.call, reasoning },
       stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },
-    });
+    };
   }
 
   stop(): void {

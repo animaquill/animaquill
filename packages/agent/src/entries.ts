@@ -46,6 +46,8 @@ export interface AssistantEntry {
    * along, never sent back to it.
    */
   readonly thinking?: string;
+  /** How long it thought, where it said so. */
+  readonly thinkingMs?: number;
   /** The version of the tools it had, see `TOOLSET_VERSION`. Older answers had the tools before. */
   readonly toolset?: string;
   /**
@@ -55,6 +57,25 @@ export interface AssistantEntry {
   readonly texts?: TextsUsed;
   /** What people see of that pack. Older answers do not say. */
   readonly pack?: PackNote;
+  /** How many tokens the request took and what it cost, as the service told. Older answers do not say. */
+  readonly usage?: AnswerUsage;
+  /** When the answer was over, in milliseconds since 1970; `at` is when its request went out. */
+  readonly endedAt?: number;
+}
+
+/**
+ * The tokens of one request and its answer, as the service counted them. The cost, in US dollars,
+ * only where it is known: from the prices pi lists for this very model, or as the service billed it;
+ * a model pi does not list has tokens only. So has the size of the context of the model.
+ */
+export interface AnswerUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly cost?: number;
+  /** How many tokens the model takes in at most, where pi knows the model. */
+  readonly window?: number;
 }
 
 /**
@@ -80,7 +101,9 @@ export interface ToolEntry {
   readonly name: string;
   readonly ok: boolean;
   readonly text: string;
+  /** When it was done; `startedAt` is when it began, which older results do not say. */
   readonly at: number;
+  readonly startedAt?: number;
   /** What the call changed or found, for the summary of a turn: never sent to the model. */
   readonly data?: Readonly<Record<string, unknown>>;
 }
@@ -109,6 +132,26 @@ function readPack(value: unknown): PackNote | undefined {
   };
 }
 
+const count = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+function readUsage(value: unknown): AnswerUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const input = count(value.input);
+  const output = count(value.output);
+  if (input === undefined || output === undefined) return undefined;
+  const cost = count(value.cost);
+  const window = count(value.window);
+  return {
+    input,
+    output,
+    cacheRead: count(value.cacheRead) ?? 0,
+    cacheWrite: count(value.cacheWrite) ?? 0,
+    ...(cost !== undefined && { cost }),
+    ...(window !== undefined && window > 0 && { window }),
+  };
+}
+
 const ENDS: readonly AnswerEnd[] = ["done", "tools", "length", "stopped", "failed"];
 
 function readCall(value: unknown): ToolCallEntry | undefined {
@@ -131,12 +174,25 @@ export function readEntry(value: unknown): ChatEntry | undefined {
     const { call, name, ok, text, data } = value;
     if (typeof call !== "string" || typeof name !== "string") return undefined;
     if (typeof ok !== "boolean" || typeof text !== "string") return undefined;
-    return { role, call, name, ok, text, at, ...(isRecord(data) && { data }) };
+    const startedAt = count(value.startedAt);
+    return {
+      role,
+      call,
+      name,
+      ok,
+      text,
+      at,
+      ...(startedAt !== undefined && { startedAt }),
+      ...(isRecord(data) && { data }),
+    };
   }
   if (role === "assistant") {
     const { text, calls, end, error, service, protocol, model, thinking, toolset, texts, pack } =
       value;
     const note = readPack(pack);
+    const usage = readUsage(value.usage);
+    const endedAt = count(value.endedAt);
+    const thinkingMs = count(value.thinkingMs);
     if (typeof text !== "string" || !Array.isArray(calls)) return undefined;
     if (!ENDS.includes(end as AnswerEnd)) return undefined;
     if (typeof service !== "string" || typeof protocol !== "string") return undefined;
@@ -154,9 +210,12 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       protocol,
       model,
       ...(typeof thinking === "string" && thinking !== "" && { thinking }),
+      ...(typeof thinking === "string" && thinkingMs !== undefined && { thinkingMs }),
       ...(typeof toolset === "string" && { toolset }),
       ...(isTextsUsed(texts) && { texts }),
       ...(note && { pack: note }),
+      ...(usage && { usage }),
+      ...(endedAt !== undefined && { endedAt }),
     };
   }
   return undefined;

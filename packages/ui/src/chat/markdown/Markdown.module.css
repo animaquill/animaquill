@@ -1,0 +1,127 @@
+/* What AI wrote, as Markdown, in the narrow chat: small headings, tight lists, tables that scroll. */
+.plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.markdown > :first-child > :first-child {
+  margin-top: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote,
+.markdown .table {
+  margin: 0 0 6px;
+}
+
+.markdown > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 10px 0 4px;
+  color: var(--aq-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.markdown h1 {
+  font-size: 15px;
+}
+
+.markdown h2 {
+  font-size: 14px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 18px;
+}
+
+.markdown li + li {
+  margin-top: 2px;
+}
+
+.markdown li > p {
+  margin: 0;
+}
+
+.markdown code {
+  padding: 0 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.markdown pre {
+  max-height: 320px;
+  padding: 6px 8px;
+  overflow: auto;
+  background: var(--aq-bg-input);
+  border-radius: 4px;
+}
+
+.markdown pre code {
+  padding: 0;
+  white-space: pre;
+  background: none;
+}
+
+.markdown blockquote {
+  padding-left: 8px;
+  color: var(--aq-text-muted);
+  border-left: 2px solid var(--aq-border);
+}
+
+.markdown a {
+  color: var(--aq-accent);
+}
+
+.markdown hr {
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--aq-border);
+}
+
+.table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.table th,
+.table td {
+  padding: 3px 6px;
+  text-align: left;
+  border: 1px solid var(--aq-border);
+}
+
+.table th {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-input);
+}
+
+.image {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}

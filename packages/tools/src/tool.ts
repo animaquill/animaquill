@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CallerState } from "./caller.ts";
-import { failed, othersLine, type Call } from "./context.ts";
+import { failed, othersOf, type Call } from "./context.ts";
 import { issueLine } from "./issues.ts";
 import type { DetailLimits } from "./packs/detail.ts";
 import { PARAM, textOf, type TextTable } from "./texts/index.ts";
@@ -210,13 +210,18 @@ export function makeTool<P>(
       // calls may, is told by the next call instead of never. Of calls that end in another order
       // than they began, the later revision stays, so that nothing is told twice.
       const at = store.revisionId;
-      const others = othersLine(call);
+      const others = othersOf(call);
       const result = await definition.run(call, parsed.value);
       const last = caller.lastCall === undefined ? undefined : store.revisionOf(caller.lastCall);
       const now = store.revisionOf(at);
       if (last === undefined || now === undefined || now >= last) caller.lastCall = at;
       if (writes && result.isError) caller.hold("failed");
-      const done = others ? { ...result, text: `${result.text}\n${others}` } : result;
+      // What others changed goes to the model as a line, and to people as data with the result.
+      const told = others.line ? { ...result, text: `${result.text}\n${others.line}` } : result;
+      const done =
+        others.changes.length > 0
+          ? { ...told, data: { ...told.data, others: others.changes } }
+          : told;
       if (writes && request !== undefined) caller.keepResult(request, key, done);
       return done;
     },

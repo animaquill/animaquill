@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { addAnthropic, openSettingsPage } from "./ai-support.ts";
+import { addAnthropic, openSettingsPage, settingsOf } from "./ai-support.ts";
 import { clips } from "./property-helpers.ts";
 import { content, expect, tab, test } from "./support.ts";
 
@@ -37,8 +37,15 @@ type Block =
 
 let toolIds = 0;
 
+/** What Anthropic counts for a request: tokens in, read from its cache, and out. */
+interface Counted {
+  readonly input: number;
+  readonly cacheRead?: number;
+  readonly output: number;
+}
+
 /** What Anthropic streams for an answer, as server-sent events. */
-function stream(blocks: readonly Block[]): string {
+function stream(blocks: readonly Block[], usage: Counted = { input: 10, output: 20 }): string {
   const events: [string, unknown][] = [
     [
       "message_start",
@@ -52,7 +59,11 @@ function stream(blocks: readonly Block[]): string {
           content: [],
           stop_reason: null,
           stop_sequence: null,
-          usage: { input_tokens: 10, output_tokens: 1 },
+          usage: {
+            input_tokens: usage.input,
+            cache_read_input_tokens: usage.cacheRead ?? 0,
+            output_tokens: 1,
+          },
         },
       },
     ],
@@ -126,7 +137,7 @@ function stream(blocks: readonly Block[]): string {
       {
         type: "message_delta",
         delta: { stop_reason: tools ? "tool_use" : "end_turn", stop_sequence: null },
-        usage: { output_tokens: 20 },
+        usage: { output_tokens: usage.output },
       },
     ],
     ["message_stop", { type: "message_stop" }],
@@ -134,12 +145,27 @@ function stream(blocks: readonly Block[]): string {
   return events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join("");
 }
 
-const answer = (route: Route, blocks: readonly Block[]) =>
+const answer = (route: Route, blocks: readonly Block[], usage?: Counted) =>
   route.fulfill({
     status: 200,
     headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
-    body: stream(blocks),
+    body: stream(blocks, usage),
   });
+
+/** What Anthropic says when it refuses a request, as it says it. */
+const refusal = (route: Route, status: number, type: string, message: string) =>
+  route.fulfill({
+    status,
+    headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+    body: JSON.stringify({ type: "error", error: { type, message } }),
+  });
+
+/** Opens the process of the last turn that is done, which comes folded. */
+async function openProcess(page: Page) {
+  const process = chat(page).getByTestId("chat-process").last();
+  await process.getByRole("button").first().click();
+  await expect(process.getByRole("button").first()).toHaveAttribute("aria-expanded", "true");
+}
 
 interface Sent {
   readonly system?: unknown;
@@ -221,17 +247,31 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
     timeout: 15_000,
   });
   await expect(clips(page)).toHaveCount(1);
+  // Done, the process folds into one line: what it took, open to every step.
+  const process = chat(page).getByTestId("chat-process");
+  await expect(process).toContainText("过程 · 1 次思考 · 3 次工具");
   const tools = chat(page).getByTestId("chat-tool");
+  await expect(tools).toHaveCount(0);
+  await openProcess(page);
   await expect(tools).toHaveCount(3);
   await expect(tools.nth(0)).toContainText("读项目概况");
   await expect(tools.nth(1)).toContainText("读时间轴");
   await expect(tools.nth(2)).toContainText("改项目");
   await expect(tools.nth(2)).toHaveAttribute("data-state", "ok");
+  // A line in words for each call: what it was about, not its JSON.
+  await expect(tools.nth(2).getByTestId("chat-tool-summary")).toHaveText(
+    "加一个蓝色片段和一个标记 · 2 个操作",
+  );
+  await tools.nth(2).getByRole("button").first().click();
+  const body = tools.nth(2).getByTestId("chat-tool-body");
+  await expect(body).toContainText("summary：加一个蓝色片段和一个标记");
+  await expect(body).toContainText("clip.add");
+  await expect(body).not.toContainText('{"op"');
   // What the model said of its thinking, for people to follow, folded.
   await expect(chat(page).getByTestId("chat-thinking").first()).toContainText("思考");
 
-  // The summary of the turn: what AI said the batch does, and each object, with where it is.
-  await expect(chat(page).getByText("改了 2 处")).toBeVisible();
+  // The card of the turn: what AI said the batch does, and each object, with where it is.
+  await expect(chat(page).getByTestId("chat-card")).toContainText("改了 2 处");
   const changes = chat(page).getByTestId("chat-changes");
   await expect(changes).toContainText("加一个蓝色片段和一个标记");
   const rows = changes.getByTestId("chat-change");
@@ -255,10 +295,10 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   expect(offered).not.toContain("clip_add");
   expect(JSON.stringify(firstSent.system)).toContain("You are the AI assistant inside AnimaQuill");
 
-  await chat(page).getByRole("button", { name: "撤销这次任务的改动" }).click();
+  await chat(page).getByRole("button", { name: "撤销这次任务", exact: true }).click();
   await expect(clips(page)).toHaveCount(0);
   await expect(rows.first().getByRole("button")).toBeDisabled();
-  await chat(page).getByRole("button", { name: "重做这次任务的改动" }).click();
+  await chat(page).getByRole("button", { name: "重做这次任务", exact: true }).click();
   await expect(clips(page)).toHaveCount(1);
 
   // The conversation is still there after a reload, with its summary; the key never shows.
@@ -356,6 +396,7 @@ test("an earlier conversation with the tools before goes on, with those calls as
   });
   await page.reload();
   await tab(page, "chat").click();
+  await openProcess(page);
   await expect(chat(page).getByTestId("chat-tool")).toContainText("读项目结构");
   await send(page, "继续");
   await expect(chat(page).getByText("接着来。")).toBeVisible();
@@ -434,13 +475,26 @@ test("stopping ends the task right away, and the chat goes on", async ({ page })
   await send(page, "慢慢来");
   const stop = chat(page).getByRole("button", { name: "停止" });
   await expect(stop).toBeVisible();
-  await expect(chat(page).getByText("正在想…")).toBeVisible();
+  // What it does now, and for how long, above the input.
+  await expect(chat(page).getByTestId("chat-phase")).toContainText("等模型回答…");
   await stop.click();
-  await expect(chat(page).getByText(/已停止/)).toBeVisible();
+  await expect(chat(page).getByTestId("chat-stopped")).toHaveText(
+    "已停止。到这里为止的改动都保留了，可以撤销这次任务。",
+  );
   await expect(stop).toBeHidden();
+  await expect(chat(page).getByTestId("chat-phase")).toBeHidden();
 
   await send(page, "再来");
   await expect(chat(page).getByText("这次很快。")).toBeVisible();
+
+  // Esc in the input stops too.
+  await send(page, "还是慢慢来");
+  await expect(chat(page).getByTestId("chat-phase")).toBeVisible();
+  await chat(page)
+    .getByRole("textbox", { name: /给 AI 发消息/ })
+    .press("Escape");
+  await expect(chat(page).getByTestId("chat-stopped")).toHaveCount(2);
+  await expect(chat(page).getByTestId("chat-phase")).toBeHidden();
   for (const route of waiting) await route.abort().catch(() => {});
 });
 
@@ -470,7 +524,286 @@ test("says what to do when the service cannot be reached, or refuses the key", a
   refuse = true;
   await send(page, "再试一次");
   await expect(failure).toContainText("服务拒绝了这个 key");
+  // What the service said is folded away, without the key; the way out is a button.
   await expect(failure).toContainText("401");
+  await expect(failure.getByRole("button", { name: "去设置" })).toBeVisible();
   expect(await page.content()).not.toContain("SECRET");
+  expectedInConsole(problems);
+});
+
+test("a turn of six tools folds once done, a failed one shows open, and the answer is Markdown", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const reads: Block[] = [
+    { tool: "aq_project_status", input: {} },
+    { tool: "aq_timeline_read", input: { from: "0", to: "30" } },
+    { tool: "aq_object_read", input: { ids: ["clip_nope"] } },
+    { tool: "aq_search", input: { query: "标题" } },
+    { tool: "aq_selection_read", input: {} },
+    { tool: "aq_guide", input: { topic: "ops/clip.move" } },
+  ];
+  let count = 0;
+  await page.route(ANTHROPIC, async (route) => {
+    const next = reads[count++];
+    if (next) return answer(route, [next]);
+    return answer(route, [
+      {
+        text: [
+          "看完了：",
+          "",
+          "- 项目里**没有**片段",
+          "- 时间轴是空的",
+          "",
+          "| 项目 | 数 |",
+          "| --- | --- |",
+          "| 片段 | 0 |",
+          "",
+          '<img src="x" onerror="window.hacked = 1">',
+          "",
+          "![图](https://example.com/a.png) [说明](https://example.com/doc) [坏的](javascript:alert(1))",
+        ].join("\n"),
+      },
+    ]);
+  });
+  await setUpService(page);
+  await send(page, "看看项目");
+  const answerBlock = chat(page).getByTestId("chat-answer");
+  await expect(answerBlock.locator("li")).toHaveCount(2, { timeout: 15_000 });
+  await expect(answerBlock.locator("strong")).toHaveText("没有");
+  await expect(answerBlock.locator("table td").first()).toHaveText("片段");
+  // Never HTML of its own, never an image that loads by itself, links that keep the page apart.
+  await expect(answerBlock).toContainText('<img src="x"');
+  await expect(answerBlock.locator("img")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as { hacked?: number }).hacked)).toBeUndefined();
+  const doc = answerBlock.getByRole("link", { name: "说明" });
+  await expect(doc).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(doc).toHaveAttribute("target", "_blank");
+  await expect(answerBlock.getByRole("link", { name: "坏的" })).toHaveCount(0);
+
+  const process = chat(page).getByTestId("chat-process");
+  await expect(process).toContainText("6 次工具 · 1 次失败");
+  // Folded, only the failed call shows, and open: why, in words, the words for AI folded away.
+  const tools = chat(page).getByTestId("chat-tool");
+  await expect(tools).toHaveCount(1);
+  await expect(tools.first()).toHaveAttribute("data-state", "failed");
+  await expect(tools.first().getByTestId("chat-tool-error")).toContainText("没有成功");
+  await expect(tools.first().getByText("给 AI 的原文")).toBeVisible();
+  await openProcess(page);
+  await expect(tools).toHaveCount(6);
+  await expect(tools.nth(1).getByTestId("chat-tool-summary")).toContainText("0:00–0:30");
+  await expect(tools.nth(3).getByTestId("chat-tool-summary")).toHaveText("「标题」");
+});
+
+test("a failed task is tried again from where it was, as the same task", async ({
+  page,
+  problems,
+}) => {
+  let refusing = true;
+  await page.route(ANTHROPIC, async (route) => {
+    if (refusing) return refusal(route, 401, "authentication_error", "invalid x-api-key");
+    return answer(route, [{ text: "这次成了。" }]);
+  });
+  await setUpService(page);
+  await send(page, "你好");
+  const failure = chat(page).getByTestId("chat-failure");
+  await expect(failure).toContainText("服务拒绝了这个 key");
+  refusing = false;
+  await failure.getByRole("button", { name: "重试" }).click();
+  await expect(chat(page).getByText("这次成了。")).toBeVisible();
+  await expect(failure).toHaveCount(0);
+  // Still one turn: what people said went once.
+  await expect(chat(page).getByTestId("chat-user")).toHaveCount(1);
+  expectedInConsole(problems);
+});
+
+test("a busy service is tried again by itself, and the chat says so meanwhile", async ({
+  page,
+  problems,
+}) => {
+  let requests = 0;
+  await page.route(ANTHROPIC, async (route) => {
+    requests += 1;
+    if (requests === 1) return refusal(route, 429, "rate_limit_error", "Too many requests");
+    return answer(route, [{ text: "等了一下，好了。" }]);
+  });
+  await setUpService(page);
+  await send(page, "你好");
+  const phase = chat(page).getByTestId("chat-phase");
+  await expect(phase).toContainText("服务太忙（429），正在重试 1/3");
+  await expect(phase).toHaveAttribute("data-state", "retry");
+  await expect(chat(page).getByText("等了一下，好了。")).toBeVisible({ timeout: 10_000 });
+  await expect(chat(page).getByTestId("chat-failure")).toHaveCount(0);
+  expect(requests).toBe(2);
+  expectedInConsole(problems);
+});
+
+test("what a conversation took: in the bar on top, and a line under each turn", async ({
+  page,
+}) => {
+  await page.route(ANTHROPIC, (route) =>
+    answer(route, [{ text: "好的。" }], { input: 6000, cacheRead: 374_000, output: 1100 }),
+  );
+  await addAnthropic(page, KEY, "claude-opus-5");
+  await tab(page, "chat").click();
+  await send(page, "你好");
+  await expect(chat(page).getByText("好的。")).toBeVisible();
+  // 380k of the 1M Claude Opus 5 takes in, at its listed prices.
+  const total = chat(page).getByTestId("chat-usage-total");
+  await expect(total).toHaveText("38% · $0.24");
+  const line = chat(page).getByTestId("chat-usage");
+  await expect(line).toContainText("Claude Opus 5");
+  await expect(line).toContainText("↑380k ↓1.1k");
+  await expect(line).toContainText("$0.24");
+  await total.click();
+  const panel = chat(page).getByTestId("chat-usage-panel");
+  await expect(panel).toContainText("380k / 1M");
+  await expect(panel).toContainText("按公开价格估算");
+});
+
+/** The widths of the chat the states are looked at in: a group at the side, and a narrow one. */
+const WIDTHS = [420, 320];
+
+/** Pictures of the chat in a state, at each width, for people to look at (in the test's output). */
+async function shoot(page: Page, name: string) {
+  const panel = chat(page).getByTestId("chat");
+  for (const width of WIDTHS) {
+    // The group of the chat is wider than this in the window the test makes: the chat is made so.
+    await page.addStyleTag({
+      content: `[data-testid="chat"] { width: ${width}px !important; }`,
+    });
+    await expect.poll(async () => (await panel.boundingBox())?.width).toBe(width);
+    await panel.screenshot({ path: test.info().outputPath(`cm2-${name}-${width}.png`) });
+  }
+}
+
+test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, failed, at the limit", async ({
+  page,
+  problems,
+}) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 2000, height: 1000 });
+  const waiting: Route[] = [];
+  let step = 0;
+  await page.route(ANTHROPIC, async (route) => {
+    const sent = route.request().postDataJSON() as Sent;
+    const said = JSON.stringify(sent.messages);
+    const usage = { input: 6000, cacheRead: 120_000 + step * 4000, output: 300 };
+    if (said.includes("一直读")) return answer(route, [{ tool: "aq_project_status", input: {} }]);
+    if (said.includes("加一个蓝色片段"))
+      return refusal(route, 401, "authentication_error", "invalid x-api-key");
+    if (said.includes("结尾加一段黑场")) {
+      if (said.includes("tool_result")) return void waiting.push(route);
+      return answer(route, [
+        { thinking: "先看看结尾在哪、最后一个片段有没有转场。" },
+        { tool: "aq_timeline_read", input: { from: "50", to: "62" } },
+      ]);
+    }
+    step += 1;
+    switch (step) {
+      case 1:
+        return answer(
+          route,
+          [
+            { thinking: "先读时间轴，看看开场有哪几个片段。\n然后把它们拉长。" },
+            { tool: "aq_timeline_read", input: { from: "0", to: "30" } },
+          ],
+          usage,
+        );
+      case 2:
+        return answer(
+          route,
+          [
+            { text: "时间轴上还没有片段，我先加一个开场片段。" },
+            { tool: "aq_object_read", input: { ids: ["clip_open"] } },
+          ],
+          usage,
+        );
+      case 3: {
+        // What aq_timeline_read said, two calls before.
+        const track = videoTrackIn(said);
+        return answer(
+          route,
+          [
+            {
+              tool: "aq_edit",
+              input: {
+                summary: "加开场片段和标记",
+                operations: [
+                  {
+                    op: "clip.add",
+                    timeline: "main",
+                    track,
+                    start: "0",
+                    duration: "6",
+                    source: { kind: "color", color: "#3366ff" },
+                  },
+                  { op: "marker.add", timeline: "main", time: "2", name: "开场" },
+                ],
+              },
+            },
+          ],
+          usage,
+        );
+      }
+      default:
+        return answer(
+          route,
+          [
+            {
+              text: [
+                "加好了开场，**6 秒**，并在 2 秒处做了标记：",
+                "",
+                "- 片段：蓝色，0:00–0:06",
+                "- 标记「开场」：0:02",
+                "",
+                "| 对象 | 开始 | 时长 |",
+                "| --- | --- | --- |",
+                "| 开场片段 | 0:00 | 0:06 |",
+              ].join("\n"),
+            },
+          ],
+          usage,
+        );
+    }
+  });
+  await addAnthropic(page, KEY, "claude-opus-5");
+  await tab(page, "chat").click();
+
+  // Done: the process folded, the failed call open, the answer, the card, what it took.
+  await send(page, "把开场放慢一点，字幕跟着对齐");
+  await expect(chat(page).getByTestId("chat-usage")).toBeVisible({ timeout: 15_000 });
+  await expect(chat(page).getByTestId("chat-card")).toContainText("改了 2 处");
+  await shoot(page, "done");
+  await openProcess(page);
+  await shoot(page, "done-open");
+
+  // Running: each step as it comes, what it does now, and stop in place of send.
+  await chat(page).getByRole("button", { name: "新对话" }).click();
+  await send(page, "结尾加一段黑场");
+  await expect(chat(page).getByTestId("chat-tool")).toHaveAttribute("data-state", "ok");
+  await expect(chat(page).getByTestId("chat-phase")).toContainText("等模型回答…");
+  await shoot(page, "running");
+  await chat(page).getByRole("button", { name: "停止" }).click();
+  await expect(chat(page).getByTestId("chat-stopped")).toBeVisible();
+  await shoot(page, "stopped");
+
+  // Failed: what to do first, buttons, what the service said folded away.
+  await chat(page).getByRole("button", { name: "新对话" }).click();
+  await send(page, "加一个蓝色片段");
+  await expect(chat(page).getByTestId("chat-failure")).toContainText("服务拒绝了这个 key");
+  await shoot(page, "failed");
+
+  // At the limit of tools: it says so, with a way to go on.
+  await openSettingsPage(page, "AI 模型");
+  await settingsOf(page).getByLabel("一次任务最多调用工具").fill("3");
+  await tab(page, "chat").click();
+  await chat(page).getByRole("button", { name: "新对话" }).click();
+  await send(page, "一直读");
+  const limit = chat(page).getByTestId("chat-limit");
+  await expect(limit).toContainText("这次任务调用了 3 次工具，停下了。");
+  await expect(limit.getByRole("button", { name: "继续" })).toBeVisible();
+  await shoot(page, "limit");
+  for (const route of waiting) await route.abort().catch(() => {});
   expectedInConsole(problems);
 });

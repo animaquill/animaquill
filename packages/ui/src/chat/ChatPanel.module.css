@@ -4,6 +4,7 @@
   height: 100%;
   overflow: hidden;
   font-size: 12px;
+  container-type: inline-size;
 }
 
 .none {
@@ -52,17 +53,14 @@
   border-radius: 3px;
 }
 
+/* The bar on top: the model, a new conversation, earlier ones, what this one took. */
 .bar {
   display: flex;
   flex: none;
-  flex-wrap: wrap;
   gap: 4px;
+  align-items: center;
   padding: 6px 8px;
   border-bottom: 1px solid var(--aq-border);
-}
-
-.bar select {
-  max-width: 40%;
 }
 
 .panel .history {
@@ -71,18 +69,105 @@
 
 .panel .model {
   flex: 1;
-  min-width: 96px;
+  min-width: 64px;
   overflow: hidden;
   text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.list {
+.meterWrap {
+  position: relative;
+  flex: none;
+  margin-left: auto;
+}
+
+.panel .meter {
+  color: var(--aq-text-muted);
+  background: none;
+  white-space: nowrap;
+}
+
+.meter[data-level="warn"] {
+  color: var(--aq-warning);
+}
+
+.meter[data-level="full"] {
+  color: var(--aq-danger-text);
+}
+
+.pie {
+  width: 10px;
+  height: 10px;
+  background: conic-gradient(currentcolor var(--share), var(--aq-border) 0);
+  border-radius: 50%;
+}
+
+.meterPanel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  width: 220px;
+  padding: 8px 10px;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  box-shadow: var(--aq-shadow);
+}
+
+.meterTitle {
+  margin-bottom: 4px;
+  color: var(--aq-text-strong);
+}
+
+.meterPanel dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0 0 4px;
+}
+
+.meterPanel dt {
+  color: var(--aq-text-muted);
+}
+
+.meterPanel dd {
+  margin: 0;
+  text-align: right;
+}
+
+/* The conversation, which keeps to the newest unless people scroll up. */
+.listWrap {
+  position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
+}
+
+.list {
+  flex: 1;
+  min-width: 0;
   padding: 8px;
   overflow: auto;
+}
+
+/* Wide, the lines stay short enough to read. */
+.column {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.panel .toLatest {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 12px;
+  box-shadow: var(--aq-shadow);
+  transform: translateX(-50%);
 }
 
 .empty {
@@ -93,26 +178,24 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
   border-bottom: 1px solid var(--aq-border);
 }
 
 .user {
   align-self: flex-end;
-  max-width: 90%;
-  padding: 6px 8px;
+  max-width: 85%;
+  padding: 6px 10px;
   color: var(--aq-text-strong);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--aq-bg-input);
-  border-radius: 6px;
+  border-radius: 10px;
 }
 
 .answer {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  color: var(--aq-text);
 }
 
 .text {
@@ -126,21 +209,78 @@
   color: var(--aq-text-muted);
 }
 
-.tool {
-  border-left: 2px solid var(--aq-border);
+/* The process of a turn: one line once done, open to its steps. */
+.process {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel .processHead {
+  align-self: flex-start;
+  padding: 1px 2px;
+  color: var(--aq-text-muted);
+  background: none;
+}
+
+.panel .processHead:hover {
+  color: var(--aq-text);
+  background: none;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process .steps:not(:empty) {
+  padding-left: 10px;
+  border-left: 1px solid var(--aq-border);
+}
+
+.said {
+  margin: 0;
+  color: var(--aq-text);
+}
+
+/* A call of a tool, and a thought: one line each, open to the rest. */
+.tool,
+.thinking {
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.tool[data-state="ok"] {
+  border-left: 2px solid var(--aq-success);
 }
 
 .tool[data-state="failed"] {
-  border-left-color: var(--aq-danger);
+  border-color: var(--aq-danger);
 }
 
-.panel .toolHead {
+.tool[data-state="running"] {
+  border-color: var(--aq-accent);
+}
+
+.panel .toolHead,
+.panel .thinkingHead {
   display: flex;
   gap: 6px;
+  align-items: center;
   width: 100%;
-  padding: 2px 6px;
+  min-width: 0;
+  padding: 3px 6px;
   text-align: left;
   background: none;
+}
+
+.thinkingHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 6px;
 }
 
 .toolIcon {
@@ -150,42 +290,234 @@
 }
 
 .tool[data-state="ok"] .toolIcon {
-  color: var(--aq-accent);
+  color: var(--aq-success);
 }
 
 .tool[data-state="failed"] .toolIcon {
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
-.toolName {
+.tool[data-state="running"] .toolIcon {
+  color: var(--aq-accent);
+}
+
+.toolName,
+.thinkingLabel {
   flex: none;
   color: var(--aq-text-strong);
 }
 
-.toolArgs {
+.toolArgs,
+.thinkingFirst {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--aq-text-muted);
-  font-family: ui-monospace, monospace;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.toolBody {
-  padding: 2px 8px 4px;
+.thinkingFirst {
+  font-style: italic;
 }
 
-.toolBody pre {
-  max-height: 200px;
-  margin: 2px 0 4px;
+.thinking svg {
+  flex: none;
+  color: var(--aq-warning);
+}
+
+.toolMs {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.toolBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.toolBody pre,
+.raw pre {
+  max-height: 240px;
+  margin: 0;
   overflow: auto;
+  font-family: ui-monospace, monospace;
   font-size: 11px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.field {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field[data-multiline] {
+  flex-direction: column;
+  gap: 0;
+}
+
+.field dt {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.field dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.field[data-multiline] dd {
+  max-height: 160px;
+  padding-left: 8px;
+  overflow: auto;
+}
+
+.toolError {
+  margin: 0;
+  color: var(--aq-danger-text);
+}
+
+.raw summary {
+  color: var(--aq-text-muted);
+  cursor: pointer;
+}
+
+.thinkingText {
+  padding: 4px 8px 6px;
+  color: var(--aq-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--aq-border);
+}
+
+/* The card of what a task changed. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.cardHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cardTitle {
+  flex: 1;
+  color: var(--aq-text-strong);
+}
+
+.changes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.change {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.changeText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel .link {
+  padding: 0 4px;
+  color: var(--aq-accent);
+  background: none;
+}
+
+.panel .link:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+.panel .more {
+  align-self: flex-start;
+  padding: 0 4px;
+  color: var(--aq-text-muted);
+  background: none;
+}
+
+.others {
+  color: var(--aq-warning);
+}
+
+.panel .othersHead {
+  gap: 6px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 3px 4px;
+  color: var(--aq-warning);
+  text-align: left;
+  background: color-mix(in srgb, var(--aq-warning) 12%, transparent);
+}
+
+.others ul {
+  margin: 2px 0 0;
+  padding-left: 22px;
+  color: var(--aq-text);
+}
+
+.cardLine {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--aq-text-muted);
+}
+
+/* The line of what a turn took. */
+.usageLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 0;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .notice,
 .hold {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
   margin: 0;
   color: var(--aq-warning);
 }
@@ -196,20 +528,82 @@
 }
 
 .failure {
-  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
   color: var(--aq-text);
-  border-left: 2px solid var(--aq-danger);
+  background: color-mix(in srgb, var(--aq-danger) 10%, transparent);
+  border: 1px solid var(--aq-danger);
+  border-radius: 4px;
 }
 
 .failure p {
   margin: 0;
 }
 
-.undo {
+.actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.panel .primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--aq-border);
+}
+
+/* What the task does now, above the input. */
+.phase {
+  display: flex;
+  flex: none;
+  gap: 6px;
   align-items: center;
-  justify-content: flex-end;
+  min-width: 0;
+  padding: 4px 8px;
+  color: var(--aq-text-muted);
+  border-top: 1px solid var(--aq-border);
+}
+
+.phase[data-state="retry"],
+.phase[data-state="quiet"] {
+  color: var(--aq-warning);
+  background: color-mix(in srgb, var(--aq-warning) 10%, transparent);
+}
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--aq-accent);
+  border-radius: 50%;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.phase[data-state="retry"] .dot,
+.phase[data-state="quiet"] .dot {
+  background: var(--aq-warning);
+}
+
+.phaseText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.phaseTime {
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .compose {
@@ -224,6 +618,15 @@
 .compose textarea {
   flex: 1;
   resize: none;
+}
+
+.narrowIcon {
+  display: none;
+}
+
+.panel .send {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
 }
 
 .panel .stop {
@@ -241,53 +644,17 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation: none;
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
   }
 }
 
-/* What the model said of its thinking: there to follow along, out of the way of the answer. */
-.thinking {
-  margin: 0;
-  font-size: 12px;
-  color: var(--aq-text-muted);
-  white-space: pre-wrap;
-}
-
-.thinking summary {
-  cursor: pointer;
-}
-
-.changes {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-}
-
-.said {
-  margin: 0;
-  color: var(--aq-text);
-}
-
-.change {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.changeText {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.panel .more {
-  align-self: flex-start;
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .dot {
+    animation: none;
+  }
 }
 
 .question {
@@ -302,4 +669,32 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 300–400 wide: the bar keeps the share of the context, a turn its tokens and time. */
+@container (max-width: 400px) {
+  .meterCost,
+  .usageCost,
+  .usageModel {
+    display: none;
+  }
+
+  .user {
+    max-width: 90%;
+  }
+}
+
+/* Narrower than 300: buttons keep their icons. */
+@container (max-width: 300px) {
+  .buttonText {
+    display: none;
+  }
+
+  .narrowIcon {
+    display: inline-flex;
+  }
+
+  .panel .history {
+    max-width: 24%;
+  }
 }

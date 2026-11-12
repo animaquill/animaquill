@@ -12,7 +12,9 @@ export {
   limitReason,
   type ConversationOptions,
   type ConversationSnapshot,
+  type RetryWait,
   type RunningTask,
+  type RunningTool,
   type TaskEnd,
   type TaskOutcome,
   type TaskTarget,
@@ -20,6 +22,7 @@ export {
 export {
   readEntry,
   type AnswerEnd,
+  type AnswerUsage,
   type AssistantEntry,
   type ChatEntry,
   type PackBy,
@@ -28,6 +31,8 @@ export {
   type ToolEntry,
   type UserEntry,
 } from "./entries.ts";
+export { NO_LIVE, createLiveStore, type LiveAnswer, type LiveStore } from "./live.ts";
+export { AUTO_RETRIES, RETRY_DELAYS_MS, passes, retryDelay } from "./retry.ts";
 export { DEFAULT_STAMP, browserSystemPrompt, toolSpecsOf } from "./assistant.ts";
 export type {
   AnswerStamp,

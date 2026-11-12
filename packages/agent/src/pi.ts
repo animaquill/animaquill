@@ -36,7 +36,14 @@ import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conve
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type { CallSettings, TextsUsed } from "@animaquill/tools";
-import type { AnswerEnd, AssistantEntry, ChatEntry, PackNote, ToolEntry } from "./entries.ts";
+import type {
+  AnswerEnd,
+  AnswerUsage,
+  AssistantEntry,
+  ChatEntry,
+  PackNote,
+  ToolEntry,
+} from "./entries.ts";
 import type { ListedModel, ReasoningLevel } from "./model-discovery.ts";
 import { withoutKeys } from "./secrets.ts";
 import type { Protocol } from "./services.ts";
@@ -164,7 +171,11 @@ export interface RunOptions {
   readonly onAnswer?: () => void;
   /** The conversation so far. */
   readonly history: readonly ChatEntry[];
-  readonly prompt: string;
+  /**
+   * What people wrote, which starts the task. Without it the task goes on from the history, which
+   * then ends with what people wrote or what tools said: to try again after a failure.
+   */
+  readonly prompt?: string;
   readonly signal: AbortSignal;
   /**
    * Asked before each tool runs, with its arguments checked: a reason not to run it goes to AI
@@ -271,14 +282,27 @@ export async function knownModels(
 }
 
 /**
+ * How well pi knows a model: as itself ("listed", with its prices), as a close version of one it
+ * lists ("relative": its context, not its prices), or not at all.
+ */
+type Known = "listed" | "relative" | "unknown";
+
+/**
  * The model as pi wants it. What pi knows of it helps, such as how long its answers can be and how
  * its service differs from the protocol. A model pi does not know gets what is safe for most.
  */
 async function modelOf(endpoint: Endpoint, provider: string): Promise<Model<Api>> {
+  return (await knownModelOf(endpoint, provider)).model;
+}
+
+async function knownModelOf(
+  endpoint: Endpoint,
+  provider: string,
+): Promise<{ readonly model: Model<Api>; readonly known: Known }> {
   const catalog = await catalogOf(endpoint.catalog);
   const same = Object.values(catalog).filter((model) => model.api === endpoint.protocol);
-  const known =
-    same.find((model) => model.id === endpoint.model) ?? relativeOf(same, endpoint.model);
+  const listed = same.find((model) => model.id === endpoint.model);
+  const known = listed ?? relativeOf(same, endpoint.model);
   const base: Model<Api> = known ?? {
     id: endpoint.model,
     name: endpoint.model,
@@ -293,7 +317,41 @@ async function modelOf(endpoint: Endpoint, provider: string): Promise<Model<Api>
     // How this service differs from the protocol, as pi knows it for the others of the service.
     ...(same[0]?.compat !== undefined && { compat: same[0].compat }),
   };
-  return { ...base, provider, baseUrl: endpoint.baseUrl };
+  return {
+    model: { ...base, provider, baseUrl: endpoint.baseUrl },
+    known: listed ? "listed" : known ? "relative" : "unknown",
+  };
+}
+
+/**
+ * What an answer took, as we keep it: the cost only where pi lists the prices of this very model or
+ * the service billed it, the size of the context where pi knows the model at all.
+ */
+export function usageOf(usage: Usage | undefined, model: Model<Api>, known: Known): AnswerUsage {
+  const billed = usage?.cost.totalFromProvider === true;
+  const cost = usage && (billed || known === "listed") ? usage.cost.total : undefined;
+  return {
+    input: usage?.input ?? 0,
+    output: usage?.output ?? 0,
+    cacheRead: usage?.cacheRead ?? 0,
+    cacheWrite: usage?.cacheWrite ?? 0,
+    ...(cost !== undefined && Number.isFinite(cost) && { cost }),
+    ...(known !== "unknown" && model.contextWindow > 0 && { window: model.contextWindow }),
+  };
+}
+
+/** Our record of what an answer took, as pi has it, for what pi works out from it. */
+function piUsage(usage: AnswerUsage | undefined): Usage {
+  if (!usage) return NO_USAGE;
+  const { input, output, cacheRead, cacheWrite } = usage;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: input + output + cacheRead + cacheWrite,
+    cost: { ...NO_USAGE.cost, total: usage.cost ?? 0 },
+  };
 }
 
 /**
@@ -393,6 +451,9 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
           old.set(call.id, `- ${call.name} ${cut(JSON.stringify(call.args), OLD_CALL_TEXT)}`);
         }
         if (entry.text === "" && current.length === 0) break;
+        // pi leaves out an answer that failed or got stopped anyway, and cannot go on after one: to
+        // try again, the history has to end where the task was before it.
+        if ((entry.end === "failed" || entry.end === "stopped") && entry.calls.length === 0) break;
         for (const call of current) {
           const id = callIdOf(entry.protocol, call.id);
           if (id !== call.id) ids.set(call.id, id);
@@ -411,7 +472,7 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
           api: entry.protocol,
           provider: providerOf(entry.service),
           model: entry.model,
-          usage: NO_USAGE,
+          usage: piUsage(entry.usage),
           // An answer whose calls all went to text ended there, as far as the model is told.
           stopReason: entry.end === "tools" && current.length === 0 ? "stop" : stops[entry.end],
           timestamp: entry.at,
@@ -485,6 +546,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   let protocol: string;
   const models = createModels({ identity: IDENTITY });
   let model: Model<Api>;
+  let known: Known = "unknown";
   if (isFake(endpoint)) {
     const faux = fakeProvider(endpoint, () => seen);
     models.setProvider(faux.provider);
@@ -496,7 +558,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     protocol = endpoint.protocol;
     const provider = providerOf(endpoint.service);
     try {
-      model = await modelOf(endpoint, provider);
+      ({ model, known } = await knownModelOf(endpoint, provider));
     } catch (error) {
       return { end: "failed", error: withoutKeys(String(error)) };
     }
@@ -600,23 +662,38 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   const clean = (text: string) => withoutKeys(text, [key]);
   const stamp = options.stamp ?? {};
   let thinking = "";
+  /** When the thinking of this answer began, and how long it went on. */
+  let thoughtFrom: number | undefined;
+  let thinkingMs: number | undefined;
+  /** When each tool began, by call. */
+  const toolStarts = new Map<string, number>();
+  const thought = () => {
+    if (thoughtFrom !== undefined && thinkingMs === undefined)
+      thinkingMs = Date.now() - thoughtFrom;
+  };
   agent.subscribe((event: AgentEvent) => {
     if (event.type === "turn_start") {
       thinking = "";
+      thoughtFrom = undefined;
+      thinkingMs = undefined;
       options.onAnswer?.();
     } else if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
+      if (update.type === "text_delta" || update.type === "toolcall_start") thought();
       if (update.type === "text_delta") onEvent({ type: "text", delta: update.delta });
       if (update.type === "thinking_delta" && update.delta !== "") {
+        thoughtFrom ??= Date.now();
         thinking += update.delta;
         onEvent({ type: "thinking", delta: update.delta });
       }
     } else if (event.type === "tool_execution_start") {
       const args = (event.args ?? {}) as Record<string, unknown>;
+      toolStarts.set(event.toolCallId, Date.now());
       onEvent({ type: "tool", id: event.toolCallId, name: event.toolName, args });
     } else if (event.type === "message_end") {
       const message = event.message as Message;
       if (message.role === "assistant") {
+        thought();
         const error = message.errorMessage;
         onEvent({
           type: "entry",
@@ -635,14 +712,23 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             protocol,
             model: model.id,
             ...(thinking.trim() !== "" && { thinking: thinking.trim() }),
+            ...(thinking.trim() !== "" && thinkingMs !== undefined && { thinkingMs }),
             ...(stamp.toolset !== undefined && { toolset: stamp.toolset }),
             ...(stamp.texts !== undefined && { texts: stamp.texts }),
             ...(stamp.pack !== undefined && { pack: stamp.pack }),
+            usage: usageOf(message.usage, model, known),
+            endedAt:
+              message.durationMs === undefined
+                ? Date.now()
+                : message.timestamp + message.durationMs,
           },
         });
         thinking = "";
+        thoughtFrom = undefined;
+        thinkingMs = undefined;
       } else if (message.role === "toolResult") {
         const details = (message as { details?: unknown }).details;
+        const startedAt = toolStarts.get(message.toolCallId);
         const entry: ToolEntry = {
           role: "tool",
           call: message.toolCallId,
@@ -650,6 +736,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
           ok: !message.isError,
           text: clean(textOf(message.content)),
           at: message.timestamp,
+          ...(startedAt !== undefined && { startedAt }),
           ...(typeof details === "object" &&
             details !== null && {
               data: details as Readonly<Record<string, unknown>>,
@@ -665,7 +752,8 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   signal.addEventListener("abort", stop);
   try {
     if (signal.aborted) return { end: "stopped" };
-    await agent.prompt(options.prompt);
+    if (options.prompt === undefined) await agent.continue();
+    else await agent.prompt(options.prompt);
   } catch (error) {
     return { end: "failed", error: clean(error instanceof Error ? error.message : String(error)) };
   } finally {

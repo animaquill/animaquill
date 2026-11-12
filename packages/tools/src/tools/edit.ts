@@ -456,14 +456,18 @@ function afterWrite(
 }
 
 /** The problems a batch brought and resolved, of those the project alone tells. */
-function problemsLines(call: Call, before: ProjectState, after: ProjectState): readonly string[] {
+function problemsOf(
+  call: Call,
+  before: ProjectState,
+  after: ProjectState,
+): { readonly lines: readonly string[]; readonly added: number; readonly resolved: number } {
   const inputs = call.host.problemInputs?.() ?? {};
   const { added, resolved } = problemDelta(
     staticProblems(before, inputs),
     staticProblems(after, inputs),
   );
-  if (added.length === 0 && resolved.length === 0) return [];
-  return [
+  if (added.length === 0 && resolved.length === 0) return { lines: [], added: 0, resolved: 0 };
+  const lines = [
     `problems: new ${added.length} | resolved ${resolved.length}`,
     ...added
       .slice(0, MAX_PROBLEMS)
@@ -476,6 +480,7 @@ function problemsLines(call: Call, before: ProjectState, after: ProjectState): r
         .map((line) => `  resolved ${line}`),
     ),
   ];
+  return { lines, added: added.length, resolved: resolved.length };
 }
 
 /**
@@ -577,16 +582,21 @@ export const edit: ToolDefinition<EditArgs> = {
       : changes.length === 0
         ? `done: ${operationsWord(calls.length)}, which changed nothing`
         : `done: ${operationsWord(calls.length)} as one step`;
+    const problems = problemsOf(call, before, result.state);
     return answer(
       call,
       [
         first,
         ...(created.length > 0 ? [`created: ${created.join(" | ")}`] : []),
         ...(shown.length > 0 ? ["changed:", ...shown, ...more] : []),
-        ...problemsLines(call, before, result.state),
+        ...problems.lines,
       ],
       {
         changes,
+        ...(!args.dry_run &&
+          problems.lines.length > 0 && {
+            problems: { added: problems.added, resolved: problems.resolved },
+          }),
         ...(args.summary !== undefined && { summary: args.summary }),
         ...(args.dry_run && { dryRun: true }),
       },

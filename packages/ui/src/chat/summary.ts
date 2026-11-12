@@ -1,6 +1,6 @@
 import type { ChatEntry, ToolEntry } from "@animaquill/agent";
 import type { ObjectKind } from "@animaquill/core";
-import { WRITE_TOOLS } from "@animaquill/tools";
+import { WRITE_TOOLS, type OtherChange } from "@animaquill/tools";
 
 /** What a turn did to one object, as the tools tell it (`ObjectChange` of `@animaquill/tools`). */
 export interface TurnChange {
@@ -126,3 +126,86 @@ export const clipsOf = (summary: TurnSummary): ReadonlySet<string> =>
       .filter(({ kind, change }) => kind === "clip" && change !== "removed")
       .map(({ id }) => id),
   );
+
+/** An object that people or others changed while a task ran, as the tools told AI of it. */
+export interface OtherRow {
+  readonly key: string;
+  readonly change: OtherChange;
+  /** AI changed the same fields of it after it heard: what people did is not what is there now. */
+  readonly overwritten: boolean;
+}
+
+/** What others changed while a task ran: people in this window, and anywhere else. */
+export interface OthersOfTurn {
+  readonly mine: readonly OtherRow[];
+  readonly elsewhere: readonly OtherRow[];
+}
+
+const MINE = new Set(["user", "undo", "redo"]);
+
+const isOther = (value: unknown): value is OtherChange =>
+  isRecord(value) &&
+  typeof value.who === "string" &&
+  typeof value.kind === "string" &&
+  typeof value.id === "string" &&
+  Array.isArray(value.fields);
+
+/** Whether two fields of an object meet: the same, or one under the other. */
+const meets = (a: string, b: string) => a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
+
+/**
+ * What others changed while a task ran, from what its tools told AI (`others` of their data), and
+ * whether a later change of AI in the task wrote the same fields again. Each object once, as last
+ * told.
+ */
+export function othersOfTurn(entries: readonly ChatEntry[]): OthersOfTurn {
+  const rows = new Map<string, { change: OtherChange; at: number }>();
+  const tools = entries.filter((entry): entry is ToolEntry => entry.role === "tool");
+  tools.forEach((entry, index) => {
+    const others = entry.data?.others;
+    if (!Array.isArray(others)) return;
+    for (const change of others.filter(isOther)) {
+      const key = keyOf(change.kind, change.id, change.timeline);
+      const known = rows.get(key);
+      const fields = [...new Set([...(known?.change.fields ?? []), ...change.fields])];
+      rows.set(key, { change: { ...change, fields }, at: index });
+    }
+  });
+  const mine: OtherRow[] = [];
+  const elsewhere: OtherRow[] = [];
+  for (const [key, { change, at }] of rows) {
+    const later = summaryOf(tools.slice(at + 1));
+    const again = later.changes.find((each) => each.key === key);
+    const overwritten =
+      again !== undefined &&
+      (again.change === "removed" ||
+        change.fields.length === 0 ||
+        again.fields.some(({ path }) => change.fields.some((field) => meets(path, field))));
+    (MINE.has(change.who) ? mine : elsewhere).push({ key, change, overwritten });
+  }
+  return { mine, elsewhere };
+}
+
+/** How the problems of the project changed with a task, and what its last check found. */
+export interface ProblemsOfTurn {
+  readonly added: number;
+  readonly resolved: number;
+  /** How many problems the last aq_check_run of the task listed, where it ran. */
+  readonly checked: number | undefined;
+}
+
+export function problemsOfTurn(entries: readonly ChatEntry[]): ProblemsOfTurn {
+  let added = 0;
+  let resolved = 0;
+  let checked: number | undefined;
+  for (const entry of entries) {
+    if (entry.role !== "tool" || !entry.ok) continue;
+    const problems = entry.data?.problems;
+    if (entry.name === "aq_check_run" && Array.isArray(problems)) checked = problems.length;
+    else if (isRecord(problems)) {
+      added += Number(problems.added) || 0;
+      resolved += Number(problems.resolved) || 0;
+    }
+  }
+  return { added, resolved, checked };
+}

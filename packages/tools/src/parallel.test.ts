@@ -109,6 +109,17 @@ describe("reading tools called at the same time", () => {
     expect(next.text).toContain(
       'others: since your last call the user changed clip_title "Opening" (name)',
     );
+    // The same for people, with the result, in data that never goes to the model.
+    expect(next.data?.others).toEqual([
+      {
+        who: "user",
+        kind: "clip",
+        id: "clip_title",
+        timeline: "main",
+        name: "Opening",
+        fields: ["name"],
+      },
+    ]);
   });
   it("tell a change once, also when the call that began first ends last", async () => {
     const tools = toolsOn(testHost());

@@ -4,6 +4,7 @@ import {
   knownModels,
   runTask,
   testModel,
+  usageOf,
   type Endpoint,
   type FakeEndpoint,
   type RunEvent,
@@ -356,5 +357,44 @@ describe("a service through the relay of the platform", () => {
       image: true,
     });
     expect(opus?.levels).toContain("high");
+  });
+});
+
+describe("what an answer took", () => {
+  const usage = {
+    input: 1000,
+    output: 200,
+    cacheRead: 5000,
+    cacheWrite: 0,
+    totalTokens: 6200,
+    cost: { input: 0.003, output: 0.003, cacheRead: 0.0015, cacheWrite: 0, total: 0.0075 },
+  };
+  const model = { contextWindow: 200_000 } as Parameters<typeof usageOf>[1];
+
+  it("has a price only for a model pi lists as itself, or as the service billed it", () => {
+    expect(usageOf(usage, model, "listed")).toEqual({
+      input: 1000,
+      output: 200,
+      cacheRead: 5000,
+      cacheWrite: 0,
+      cost: 0.0075,
+      window: 200_000,
+    });
+    // A close version: its context is the same, its prices may not be.
+    expect(usageOf(usage, model, "relative")).toEqual({
+      input: 1000,
+      output: 200,
+      cacheRead: 5000,
+      cacheWrite: 0,
+      window: 200_000,
+    });
+    expect(usageOf(usage, model, "unknown")).toEqual({
+      input: 1000,
+      output: 200,
+      cacheRead: 5000,
+      cacheWrite: 0,
+    });
+    const billed = { ...usage, cost: { ...usage.cost, total: 0.01, totalFromProvider: true } };
+    expect(usageOf(billed, model, "unknown").cost).toBe(0.01);
   });
 });
