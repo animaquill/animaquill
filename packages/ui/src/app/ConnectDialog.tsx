@@ -166,6 +166,13 @@ export function ConnectDialog({ request }: { request: ConnectRequest }) {
                     if (gone) void cloud.openCloudProject(id, { name });
                   }))
               }
+              onRestore={
+                cloud &&
+                ((repository) =>
+                  void giveUp().then((gone) => {
+                    if (gone) void cloud.restoreFromRepository(repository, { other: true });
+                  }))
+              }
             />
           </fieldset>
         )}

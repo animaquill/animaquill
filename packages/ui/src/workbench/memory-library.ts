@@ -97,6 +97,14 @@ export class MemoryLibrary implements ProjectLibrary {
   readonly incoming = new Set<string>();
   /** What tells two projects with one id apart. */
   readonly instances = new Map<string, number>();
+  /** Which log of a project it is, once it started anew, see `renew`. */
+  readonly logs = new Map<string, number>();
+  /** What `renew` kept, by project and then by name. */
+  readonly backupsOf = new Map<string, Map<string, Uint8Array[]>>();
+  /** `renew` fails, as a database that is full. */
+  failingToRenew = false;
+  /** `renew` never comes back, once, as in a page that went away just then. */
+  renewNeverEnds = false;
   #nextInstance = 1;
   failing = false;
   compactions = 0;
@@ -168,18 +176,34 @@ export class MemoryLibrary implements ProjectLibrary {
     };
   }
 
+  /** Who hears the changes of the log a project has now, see `renew`. */
+  #listenersOf(id: string): Set<(update: Uint8Array) => void> {
+    const log = this.logs.get(id) ?? 0;
+    const key = log === 0 ? id : `${id}#${log}`;
+    const listeners = this.listeners.get(key) ?? new Set();
+    this.listeners.set(key, listeners);
+    return listeners;
+  }
+
   async open(id: string): Promise<ProjectLog> {
-    const listeners = this.listeners.get(id) ?? new Set();
-    this.listeners.set(id, listeners);
+    const listeners = this.#listenersOf(id);
     const own = new Set<(update: Uint8Array) => void>();
     const instance = this.instances.get(id);
+    const log = this.logs.get(id) ?? 0;
+    const isOurs = () => this.instances.get(id) === instance && (this.logs.get(id) ?? 0) === log;
     return {
+      isCurrent: async () => this.summaries.has(id) && isOurs(),
       load: async () => {
+        // A log that started anew is not this one: what it has is of another document.
+        if (this.instances.get(id) === instance && (this.logs.get(id) ?? 0) !== log)
+          throw new Error("gone");
         const updates = [...(this.updates.get(id) ?? [])];
         this.duringLoad?.();
         return updates;
       },
       entries: async (after = 0) => {
+        if (this.instances.get(id) === instance && (this.logs.get(id) ?? 0) !== log)
+          throw new Error("gone");
         const entries = this.#entriesOf(id, after);
         // Reading all of it is what opening a project does, as `load`.
         if (after === 0) this.duringLoad?.();
@@ -188,13 +212,15 @@ export class MemoryLibrary implements ProjectLibrary {
       append: async (update, name, source) => {
         if (this.failing) throw new Error("quota");
         const summary = this.summaries.get(id);
-        if (!summary || this.instances.get(id) !== instance) throw new Error("gone");
+        if (!summary || !isOurs()) throw new Error("gone");
         await this.duringAppend?.();
+        if (!isOurs()) throw new Error("gone");
         this.summaries.set(id, { ...summary, name });
         this.updates.get(id)?.push(this.#marked(update, source));
         for (const listener of listeners) if (!own.has(listener)) listener(update);
       },
       compact: async (merge, { through } = {}) => {
+        if (!isOurs()) return;
         this.compactions += 1;
         const all = this.updates.get(id) ?? [];
         const markOf = (update: Uint8Array) => this.entries.get(update)?.mark ?? 0;
@@ -252,7 +278,48 @@ export class MemoryLibrary implements ProjectLibrary {
 
   /** Delivers an update to everyone on a project, as another window would. */
   broadcast(id: string, update: Uint8Array) {
-    for (const listener of this.listeners.get(id) ?? []) listener(update);
+    for (const listener of this.#listenersOf(id)) listener(update);
+  }
+
+  async renew(
+    id: string,
+    entries: readonly { readonly update: Uint8Array; readonly source?: ChangeSource }[],
+    backup: string,
+  ) {
+    if (this.failing || this.failingToRenew) throw new Error("quota");
+    if (this.renewNeverEnds) {
+      this.renewNeverEnds = false;
+      return new Promise<void>(() => {});
+    }
+    const summary = this.summaries.get(id);
+    const kept = this.backupsOf.get(id) ?? new Map<string, Uint8Array[]>();
+    if (!summary) throw new Error(`No project ${id}`);
+    if (kept.has(backup)) throw new Error(`A backup ${backup} is there already`);
+    kept.set(backup, this.updates.get(id) ?? []);
+    this.backupsOf.set(id, kept);
+    this.updates.set(
+      id,
+      entries.map(({ update, source }) => this.#marked(update, source)),
+    );
+    this.logs.set(id, (this.logs.get(id) ?? 0) + 1);
+  }
+
+  async backups(id: string) {
+    return [...(this.backupsOf.get(id)?.keys() ?? [])];
+  }
+
+  async restoreBackup(id: string, backup: string) {
+    if (this.failing) throw new Error("quota");
+    const kept = this.backupsOf.get(id)?.get(backup);
+    if (!kept || !this.summaries.has(id)) throw new Error(`No backup ${backup} of ${id}`);
+    this.backupsOf.get(id)?.delete(backup);
+    this.updates.set(id, kept);
+    this.logs.set(id, (this.logs.get(id) ?? 0) + 1);
+  }
+
+  async dropBackup(id: string, backup: string) {
+    if (this.failing) throw new Error("quota");
+    this.backupsOf.get(id)?.delete(backup);
   }
 
   #removeFiles(project: string) {
@@ -268,6 +335,7 @@ export class MemoryLibrary implements ProjectLibrary {
     this.summaries.delete(id);
     this.updates.delete(id);
     this.instances.delete(id);
+    this.backupsOf.delete(id);
     this.#removeFiles(id);
   }
 

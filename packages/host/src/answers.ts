@@ -1,4 +1,4 @@
-import type { RepositoryUnusable } from "./index.ts";
+import type { CloudCopyProblem, RepositoryUnusable } from "./index.ts";
 
 /**
  * Reading what a platform answered, field by field: a platform of another version can say more, or
@@ -82,4 +82,18 @@ export const unusableOf = (value: unknown): RepositoryUnusable | undefined => {
   if (reason === undefined || since === undefined) return undefined;
   const gone = value.gone === "deleted" || value.gone === "unauthorized" ? value.gone : undefined;
   return { reason, since, ...optional("deleteAt", deleteAt), ...optional("gone", gone) };
+};
+
+/** Why making the working copy of a project again failed, as the platform said it. */
+export const copyProblemOf = (value: unknown): CloudCopyProblem | undefined => {
+  if (!isObject(value)) return undefined;
+  const code = text(value.code);
+  if (code === undefined || code === "") return undefined;
+  return {
+    code,
+    at: count(value.at) ?? 0,
+    ...optional("files", texts(value.files)),
+    ...optional("reason", text(value.reason)),
+    ...optional("retryAt", count(value.retryAt)),
+  };
 };

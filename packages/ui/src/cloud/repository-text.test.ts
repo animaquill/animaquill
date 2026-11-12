@@ -194,7 +194,7 @@ describe("how saving to GitHub reads", () => {
     );
     expect(
       unusableAdvice(choice(), "hasProject", { code: "hasProject", files: ["animaquill.json"] }, t),
-    ).toBe("根目录已经有项目的文件：animaquill.json。以后可以从这个仓库恢复成云端项目");
+    ).toBe("根目录已经有项目的文件：animaquill.json。可以从这个仓库恢复成一个新的云端项目");
     expect(unusableAdvice(choice(), "archived", undefined, t)).toBe("在 GitHub 上已归档，只能读");
     // A repository with other files in it keeps them.
     expect(choiceNote(choice({ empty: false }), t)).toBe("这个仓库里已有的其他文件不会动。");

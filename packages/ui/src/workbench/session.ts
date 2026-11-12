@@ -84,6 +84,11 @@ export interface Journal {
    * lost something does not, by its state vector: it gets that from there.
    */
   refill(theirs: Uint8Array): Promise<void>;
+  /**
+   * Whether `store` is what the log of the open project has: false once another project is open,
+   * or the log started anew under it (`ProjectLibrary.renew`), and the store is of before then.
+   */
+  current(store: ProjectStore): Promise<boolean>;
 }
 
 export interface SessionOptions {
@@ -168,6 +173,11 @@ export class ProjectSession {
     saved: () => this.trySave(),
     readLog: () => this.readLog(),
     damaged: () => this.#damaged,
+    current: async (store) => {
+      const log = this.#log;
+      if (!log || this.#snapshot.store !== store) return false;
+      return (await log.isCurrent?.()) ?? true;
+    },
     refill: (theirs) =>
       new Promise<void>((resolve, reject) => {
         const log = this.#log;

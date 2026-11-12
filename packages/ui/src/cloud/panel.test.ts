@@ -257,7 +257,44 @@ describe("the status of the platform in a project", () => {
     expect(rowOf(signedOut, "sync")).toMatchObject({ tone: "attention" });
     expect(ids(signedOut).rows["sync"]).toEqual(["signIn"]);
     expect(ids(stuck({ kind: "outdated" })).rows["sync"]).toEqual(["reload"]);
-    expect(ids(stuck({ kind: "rebuilt" })).rows["sync"]).toEqual(["reload"]);
+    // Taking it back onto the copy the platform made again goes by itself, until it stops.
+    expect(ids(stuck({ kind: "rebuilt" })).rows["sync"]).toEqual([]);
+    const takingBack = (state: "running" | "stopped") =>
+      cloudPanel(
+        linked({
+          sync: sync({ state: "paused", problem: { kind: "rebuilt" }, pending: 2 }),
+          takeBack: state,
+        }),
+        t,
+      );
+    expect(read(takingBack("running")).rows[1]).toBe(
+      "同步  云端已从 GitHub 重新取回这个项目，正在把这台电脑上的改动接回去…",
+    );
+    expect(ids(takingBack("running")).rows["sync"]).toEqual([]);
+    expect(read(takingBack("stopped")).rows[1]).toBe(
+      "同步  云端已从 GitHub 重新取回这个项目，这台电脑上的改动还没接回。接回之前这个项目只能看、不能改。 [接回]",
+    );
+    expect(ids(takingBack("stopped")).rows["sync"]).toEqual(["takeBack"]);
+    // While the platform makes it again, which the window waits for.
+    expect(
+      read(cloudPanel(linked({ sync: sync({ state: "reconnecting", restoring: "restoring" }) }), t))
+        .rows[1],
+    ).toBe("同步  正在从 GitHub 取回…");
+    // ...and could not lately: why, and what helps where the repository had what kept it.
+    const notMade = (code: string) =>
+      cloudPanel(
+        linked({
+          sync: sync({ state: "reconnecting", restoring: "released" }),
+          copyProblem: { code, at: 1, files: ["timeline.json"] },
+        }),
+        t,
+      );
+    expect(read(notMade("unreadable")).rows[1]).toBe(
+      "同步  上次取回没成功：GitHub 仓库里有读不懂的文件：timeline.json · 在 GitHub 上修好以后，可以按 GitHub 上现在的样子取回。 · 按 GitHub 上现在的样子取回时，分不清这台电脑上哪些是新改的，两边不一样的文件会让你逐个选。 [我已在 GitHub 上修好，按现在的样子取回]",
+    );
+    expect(ids(notMade("unreadable")).rows["sync"]).toEqual(["wakeAsItIs"]);
+    expect(rowOf(notMade("unreadable"), "sync")).toMatchObject({ tone: "attention" });
+    expect(ids(notMade("unavailable")).rows["sync"]).toEqual([]);
     expect(ids(stuck({ kind: "unsupported" })).rows["sync"]).toEqual([]);
     expect(ids(stuck({ kind: "unlinked" })).rows["sync"]).toEqual(["retry"]);
     // What the platform will not take stays here: the project can go on without it.
@@ -271,7 +308,7 @@ describe("the status of the platform in a project", () => {
     expect(read(stuck({ kind: "rejected", reason: "too-large" })).rows[1]).toBe(
       "同步  云端没有接受一个改动（太大），同步已暂停。改动都留在本机，可以重试，或者断开云端连接。 [重试] [处理…]",
     );
-    expect(read(stuck({ kind: "rebuilt" })).rows[1]).toContain("已经从仓库重新取回");
+    expect(read(stuck({ kind: "rebuilt" })).rows[1]).toContain("已经从 GitHub 重新取回");
     expect(stuck({ kind: "missing" }).sync).toBe("paused");
   });
 

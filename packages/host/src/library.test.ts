@@ -1,5 +1,5 @@
-import { IDBDatabase, IDBFactory } from "fake-indexeddb";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { IDBDatabase, IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserHost } from "./browser.ts";
 import type { ProjectLog } from "./index.ts";
 
@@ -937,5 +937,105 @@ describe("a project that is a folder", () => {
     await library.create(PROJECT, STATE);
     await library.remove(PROJECT.id);
     expect(await ids(library)).toEqual([]);
+  });
+});
+
+describe("a log that starts anew on another copy of the project", () => {
+  const OLD = new Uint8Array([4]);
+  const NEW = new Uint8Array([5]);
+  const MERGE = new Uint8Array([6]);
+
+  async function renewed() {
+    const setup = browser();
+    const { library } = setup;
+    await library.create(PROJECT, STATE);
+    const before = await logOf(library);
+    await before.append(OLD, "名字", { kind: "user" });
+    await library.renew?.(
+      PROJECT.id,
+      [
+        { update: NEW, source: { kind: "cloud", seq: 9 } },
+        { update: MERGE, source: { kind: "other" } },
+      ],
+      "copy1",
+    );
+    return { ...setup, before };
+  }
+
+  it("has only the new entries, in order, with who made them, and keeps the old ones aside", async () => {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    onTestFinished(() => void vi.unstubAllGlobals());
+    const { library } = await renewed();
+    const log = await logOf(library);
+    const entries = (await log.entries?.()) ?? [];
+    expect(entries.map(({ update }) => [...update])).toEqual([[5], [6]]);
+    expect(entries.map(({ source }) => source?.kind)).toEqual(["cloud", "other"]);
+    expect(await library.backups?.(PROJECT.id)).toEqual(["copy1"]);
+    expect(await ids(library)).toEqual([PROJECT.id]);
+  });
+
+  it("is out of reach of the windows of the log before: they neither write to it nor hear it", async () => {
+    const { library, before } = await renewed();
+    const heard = vi.fn<(update: Uint8Array) => void>();
+    before.listen(heard);
+    await expect(before.append(new Uint8Array([7]), "名字")).rejects.toThrow();
+    const log = await logOf(library);
+    const second = await logOf(library);
+    const sameLog = vi.fn<(update: Uint8Array) => void>();
+    second.listen(sameLog);
+    await log.append(new Uint8Array([8]), "名字");
+    await vi.waitFor(() => expect(sameLog).toHaveBeenCalled());
+    expect(heard).not.toHaveBeenCalled();
+    expect(await log.load()).toEqual([NEW, MERGE, new Uint8Array([8])]);
+    // Nor do they read it, as more of their own, and they can tell.
+    await expect(before.load()).rejects.toThrow();
+    await expect(before.entries?.()).rejects.toThrow();
+    expect(await before.isCurrent?.()).toBe(false);
+    expect(await log.isCurrent?.()).toBe(true);
+  });
+
+  it("keeps what windows were trying out, which goes by the project and not its log", async () => {
+    const { trials, library } = browser();
+    await library.create(PROJECT, STATE);
+    const place = await trials().open(PROJECT.id);
+    await place.save({ tried: 1 });
+    place.close();
+    await library.renew?.(PROJECT.id, [{ update: NEW }], "copy1");
+    expect(await trials().holds?.(PROJECT.id)).toBe(true);
+  });
+
+  it("puts the log back as it was, and takes away what it kept", async () => {
+    const { library } = await renewed();
+    await library.restoreBackup?.(PROJECT.id, "copy1");
+    expect(await (await logOf(library)).load()).toEqual([STATE, OLD]);
+    expect(await library.backups?.(PROJECT.id)).toEqual([]);
+    await library.renew?.(PROJECT.id, [{ update: NEW }], "copy2");
+    await library.dropBackup?.(PROJECT.id, "copy2");
+    expect(await library.backups?.(PROJECT.id)).toEqual([]);
+    expect(await (await logOf(library)).load()).toEqual([NEW]);
+  });
+
+  it("refuses, and changes nothing, for a name it kept already or a project that is not there", async () => {
+    const { library } = await renewed();
+    await expect(library.renew?.(PROJECT.id, [{ update: STATE }], "copy1")).rejects.toThrow();
+    expect(await (await logOf(library)).load()).toEqual([NEW, MERGE]);
+    await expect(library.renew?.("nothing", [{ update: STATE }], "x")).rejects.toThrow();
+    await expect(library.restoreBackup?.(PROJECT.id, "none")).rejects.toThrow();
+  });
+
+  it("goes with the project, kept logs too", async () => {
+    const { library, factory } = await renewed();
+    await library.remove(PROJECT.id);
+    const left = await new Promise<unknown[]>((resolve) => {
+      const request = factory.open("animaquill");
+      request.addEventListener("success", () => {
+        const all = request.result.transaction("updates").objectStore("updates").getAll();
+        all.addEventListener("success", () => {
+          request.result.close();
+          resolve(all.result);
+        });
+      });
+    });
+    expect(left).toEqual([]);
   });
 });

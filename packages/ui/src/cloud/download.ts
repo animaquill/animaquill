@@ -52,6 +52,11 @@ export async function download(
     readonly editor: string;
     readonly signal?: AbortSignal;
     readonly readOnly?: boolean;
+    /**
+     * With `readOnly`: the working copy as it began, from the archive the platform made it again
+     * from, see `base` of "hello": what a copy of the one before has in common with it.
+     */
+    readonly base?: boolean;
   },
 ): Promise<Downloaded> {
   const connection = cloud.connect();
@@ -115,6 +120,7 @@ export async function download(
               window: who.window,
               editor: who.editor,
               ...(who.readOnly === true && { readOnly: true }),
+              ...(who.readOnly === true && who.base === true && { base: true }),
               payload: new Uint8Array(0),
             }),
           );

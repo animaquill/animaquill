@@ -200,6 +200,12 @@ export interface CloudSnapshot {
   readonly retryAt: number | undefined;
   /** The last update of the platform that the project has. */
   readonly seq: number;
+  /**
+   * The platform makes its working copy of the project again from the repository, as nobody opened
+   * it for a while ("restoring"), or could not lately and tries again later ("released"): the window
+   * comes back for it meanwhile.
+   */
+  readonly restoring?: "restoring" | "released" | undefined;
 }
 
 export interface CloudSessionOptions {
@@ -473,6 +479,11 @@ export class CloudSession {
     return this.#project;
   }
 
+  /** Which working copy of the platform the log of this window is of, see `CloudLink.generation`. */
+  get generation(): number {
+    return this.#generation;
+  }
+
   /** Starts syncing, or waiting for the window that does. */
   start(): void {
     if (this.#started || this.#closed) return;
@@ -634,7 +645,8 @@ export class CloudSession {
       before.syncedAt === next.syncedAt &&
       before.pending === next.pending &&
       before.retryAt === next.retryAt &&
-      before.seq === next.seq
+      before.seq === next.seq &&
+      before.restoring === next.restoring
     )
       return;
     this.#snapshot = next;
@@ -653,6 +665,7 @@ export class CloudSession {
       pending: snapshot.pending,
       retryAt: snapshot.retryAt,
       seq: snapshot.seq,
+      restoring: snapshot.restoring,
     });
   }
 
@@ -679,9 +692,15 @@ export class CloudSession {
       // What the window that synced before did last is in the log: the platform may need it.
       await this.#journal.readLog().catch(() => {});
       // ...and it noted down how far it got, which this window goes on from.
-      if (await this.#takeOver()) await this.#sync(claim);
+      const taken = await this.#takeOver();
+      if (taken === true) await this.#sync(claim);
       else {
-        this.#set({ state: "paused", problem: { kind: "unlinked" } });
+        // Gone, or on another working copy of the platform than the log this window has: what
+        // this window has of the project is of the copy before, see `CloudLink.renewing`.
+        this.#set({
+          state: "paused",
+          problem: taken === "moved" ? { kind: "rebuilt" } : { kind: "unlinked" },
+        });
         await new Promise<void>((resolve) => {
           this.#unpause = resolve;
         });
@@ -695,8 +714,11 @@ export class CloudSession {
     }
   }
 
-  /** Goes on from where the link says, as another window may have synced. False: it is gone. */
-  async #takeOver(): Promise<boolean> {
+  /**
+   * Goes on from where the link says, as another window may have synced. False: it is gone;
+   * "moved": it is on another working copy of the platform, or on its way there.
+   */
+  async #takeOver(): Promise<boolean | "moved"> {
     let link;
     try {
       link = await this.#cloud.links.get(this.#key);
@@ -705,6 +727,14 @@ export class CloudSession {
       return true;
     }
     if (!link || link.project !== this.#project) return false;
+    if ((link.generation ?? 1) !== this.#generation || link.renewing) return "moved";
+    // Nor where the log this window has is of before: a window that went on with it would say hello
+    // for the copy the link is on now with what the copy before had.
+    const isCurrent = await this.#journal.current(this.#store).catch((error: unknown) => {
+      console.warn("Whether the log is the one of the project could not be read", error);
+      return true;
+    });
+    if (!isCurrent) return "moved";
     if (link.seq !== this.#seq || this.#notedSeq !== link.seq) {
       // As the window that synced before left it, also after the platform came back from a backup.
       this.#seq = link.seq;
@@ -937,11 +967,20 @@ export class CloudSession {
         (code === SYNC_CLOSE.missing || code === SYNC_CLOSE.deleted) && this.#create !== undefined
           ? { kind: "missing", unmade: true }
           : said;
+      // The platform makes the project again from its repository meanwhile: the window says so.
+      const restoring =
+        code === SYNC_CLOSE.unavailable && (reason === "restoring" || reason === "released")
+          ? reason
+          : undefined;
+      if (isCurrent() && restoring !== this.#snapshot.restoring) this.#set({ restoring });
       settle(
         problem
           ? { kind: "pause", problem }
           : code === SYNC_CLOSE.unavailable || code === SYNC_CLOSE.tooMany
-            ? { kind: "retry", later: true }
+            ? // The copy is on its way, or here by now: this window waits for it alone, and soon.
+              reason === "restoring" || reason === "restored"
+              ? { kind: "retry" }
+              : { kind: "retry", later: true }
             : { kind: "retry" },
       );
     });
@@ -1067,6 +1106,7 @@ export class CloudSession {
           return;
         }
         if (!this.#generationNoted) this.#generationToNote = message.generation;
+        if (this.#snapshot.restoring !== undefined) this.#set({ restoring: undefined });
         this.#phase = "catching-up";
         this.#headAtWelcome = message.head;
         // The project is there: the first version is not to be made again.

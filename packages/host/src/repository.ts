@@ -1,6 +1,7 @@
 import {
   CHANGE_TIMEOUT_MS,
   REQUEST_TIMEOUT_MS,
+  copyProblemOf,
   count,
   isObject,
   optional,
@@ -18,6 +19,7 @@ import {
   type RepositoryChoice,
   type RepositoryList,
   type RepositoryRefusal,
+  type RepositoryRestored,
   type RepositoryStatus,
 } from "./index.ts";
 
@@ -32,6 +34,8 @@ import {
  * - `POST <api>/projects/<project>/repository` with a `RepositoryLink`
  * - `GET  <api>/projects/<project>/repository`
  * - `POST <api>/projects/<project>/archive`, with `{ replace }` or nothing
+ * - `POST <api>/projects/restore` with `{ existing: { id }, confirmPublic? }`: 201 or 202 with
+ *   `{ project: { id, name }, copy }`
  *
  * What comes back is read field by field: a platform of another version can say more, or less.
  * A platform that does not answer for a while is "unavailable", like one that is not there: what
@@ -154,7 +158,29 @@ export const statusOf = (value: unknown): RepositoryStatus => {
     ...optional("diverged", divergedOf(value.diverged)),
     head: count(value.head) ?? 0,
     archivedSeq: count(value.archivedSeq) ?? 0,
+    ...optional("copy", text(value.copy)),
+    ...optional("generation", count(value.generation)),
+    ...optional("copyProblem", copyProblemOf(value.copyProblem)),
+    ...optional("rebuiltFrom", rebuiltFromOf(value.rebuiltFrom)),
   };
+};
+
+/** Where the copy before was, see `RepositoryStatus.rebuiltFrom`. */
+const rebuiltFromOf = (value: unknown): RepositoryStatus["rebuiltFrom"] => {
+  if (!isObject(value)) return undefined;
+  const generation = count(value.generation);
+  const archivedSeq = count(value.archivedSeq);
+  if (generation === undefined || archivedSeq === undefined) return undefined;
+  // Only a yes is one: what says nothing is nothing in common, which merges nothing by itself.
+  return { generation, archivedSeq, commonBase: value.commonBase === true };
+};
+
+/** A project made from a repository, as the platform said it, or undefined for what is none. */
+const restoredOf = (value: unknown): RepositoryRestored | undefined => {
+  if (!isObject(value)) return undefined;
+  const project = projectOf(value.project);
+  if (!project) return undefined;
+  return { project, copy: value.copy === "live" ? "live" : "restoring" };
 };
 
 /** The codes a platform says, see `RepositoryRefusal`. */
@@ -173,6 +199,11 @@ const CODES: ReadonlySet<string> = new Set<RepositoryRefusal>([
   "busy",
   "invalid",
   "unavailable",
+  "noProject",
+  "unreadable",
+  "tooLarge",
+  "tooNew",
+  "quota",
 ]);
 
 /**
@@ -265,6 +296,12 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
     },
     async recheck(project) {
       return statusOf(await call("POST", projectPath(project, "repository/check"), {}, changeMs));
+    },
+    async restore(choice) {
+      const said = restoredOf(await call("POST", "/projects/restore", choice, changeMs));
+      // An answer that is no project, as from a gateway: the platform did not say it made one.
+      if (!said) throw new RepositoryRefused("unavailable");
+      return said;
     },
     async archiveNow(project, archive = {}) {
       return statusOf(

@@ -1,5 +1,6 @@
 import {
   REQUEST_TIMEOUT_MS,
+  copyProblemOf,
   count,
   isObject,
   isProjectId,
@@ -14,6 +15,7 @@ import {
   type CloudProjectSummary,
   type CloudRemoveOptions,
   type CloudRemoveRefusal,
+  type CloudWake,
 } from "./index.ts";
 
 /**
@@ -118,6 +120,7 @@ export const projectSummaryOf = (value: unknown): CloudProjectSummary | undefine
     updatedAt: count(value.updatedAt) ?? 0,
     ...optional("createdAt", count(value.createdAt)),
     ...optional("copy", text(value.copy)),
+    ...optional("copyProblem", copyProblemOf(value.copyProblem)),
     ...optional("size", sizeOf(value.size)),
     ...optional("repository", repositoryOf(value.repository)),
     ...optional("archive", archiveOf(value.archive)),
@@ -150,9 +153,42 @@ export const refusalOf = (answer: unknown): CloudRemoveRefusal | undefined => {
   };
 };
 
-export function browserCloudProjects(
-  options: BrowserCloudProjectsOptions,
-): Pick<CloudAccess, "list"> & { readonly remove: NonNullable<CloudAccess["remove"]> } {
+/** What asking for the working copy of a project came to, see `CloudAccess.wake`. */
+export const wakeOf = (
+  status: number,
+  answer: unknown,
+  retryAfter: number,
+): CloudWake | undefined => {
+  const said = isObject(answer) ? answer : {};
+  if (status === 200 && said.copy === "live") return { copy: "live" };
+  if ((status === 200 || status === 202) && said.copy === "restoring") return { copy: "restoring" };
+  if (status === 404 && said.error === "notFound") return { copy: "missing" };
+  const refused =
+    status === 409 &&
+    (said.error === "noRepository" || said.error === "unusable" || said.error === "notAllowed")
+      ? said.error
+      : status === 429 && said.error === "busy"
+        ? "busy"
+        : undefined;
+  if (refused === undefined) return undefined;
+  return {
+    copy: "released",
+    refused,
+    ...optional("copyProblem", copyProblemOf(said.copyProblem)),
+    ...optional(
+      "retryAfter",
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+    ),
+  };
+};
+
+export function browserCloudProjects(options: BrowserCloudProjectsOptions): Pick<
+  CloudAccess,
+  "list"
+> & {
+  readonly remove: NonNullable<CloudAccess["remove"]>;
+  readonly wake: NonNullable<CloudAccess["wake"]>;
+} {
   const request = options.fetch ?? ((input, init) => fetch(input, init));
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   return {
@@ -201,6 +237,26 @@ export function browserCloudProjects(
         const refusal = response.status === 409 ? refusalOf(answer) : undefined;
         if (refusal) return refusal;
         throw new Error(`The platform answered ${response.status}`);
+      }),
+    wake: (project, { fromBranch = false } = {}) =>
+      withinTime(timeoutMs, async (signal) => {
+        const response = await request(
+          options.api(`/projects/${encodeURIComponent(project)}/wake`),
+          {
+            method: "POST",
+            cache: "no-store",
+            headers: { ...options.changeHeaders, "content-type": "application/json" },
+            body: JSON.stringify(fromBranch ? { fromBranch: true } : {}),
+            signal,
+          },
+        );
+        const answer: unknown = await response.json().catch(() => undefined);
+        if (response.status === 401 || (isObject(answer) && answer.error === "signedOut"))
+          throw new CloudSignedOut("Nobody is signed in");
+        // Only in the platform's own words: a gateway says 404 and 409 too.
+        const said = wakeOf(response.status, answer, Number(response.headers.get("retry-after")));
+        if (!said) throw new Error(`The platform answered ${response.status}`);
+        return said;
       }),
   };
 }

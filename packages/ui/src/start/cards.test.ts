@@ -318,6 +318,11 @@ describe("what a card says", () => {
           listed("p-s", "暂停的", { attention: "repository", repository: repository("s") }),
           listed("p-half", "半截的", { attention: "noRepository" }),
           listed("p-gone", "取回的", { copy: "released", repository: repository("g") }),
+          listed("p-failed", "没取回的", {
+            copy: "released",
+            copyProblem: { code: "unreadable", at: 1, files: ["timeline.json"] },
+            repository: repository("h"),
+          }),
         ],
       }),
       { marks: new Map(), groups: [] },
@@ -332,6 +337,7 @@ describe("what a card says", () => {
       "GitHub 同步失败 warning",
       "云端 · 还差一步：选仓库 warning",
       "云端 · 打开时从 GitHub 取回 plain",
+      "云端 · 上次从 GitHub 取回没成功 warning",
     ]);
   });
 

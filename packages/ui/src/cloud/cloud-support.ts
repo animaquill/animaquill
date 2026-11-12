@@ -24,10 +24,13 @@ import {
   type CloudAccess,
   type CloudClose,
   type CloudConnection,
+  type CloudCopyProblem,
+  type CloudWake,
   type CloudLine,
   type CloudProjectSummary,
   type CloudRemoval,
   type CloudRemoveOptions,
+  type RepositoryStatus,
   type RepositoryUnusable,
   type SyncClientMessage,
   type SyncRejection,
@@ -63,6 +66,19 @@ interface PlatformProject {
     { readonly seq: number; readonly digest: string; readonly state: Uint8Array } | undefined;
   /** Snapshots made before changes made without the latest came in, see the design, 7.6. */
   readonly beforeMerge: { readonly seq: number; readonly device: string }[];
+  /** Whether the platform has the working copy, see `CloudProjectSummary.copy`. */
+  copy?: "live" | "released" | "restoring";
+  /** Where the copy before was when it went, see `release`. */
+  releasedFrom?: {
+    readonly generation: number;
+    readonly head: number;
+    readonly archivedSeq: number;
+    commonBase?: boolean;
+  };
+  /** What this copy began as, see `rebuild`: `base` of "hello". */
+  began?: { readonly seq: number; readonly digest: string; readonly state: Uint8Array };
+  /** Why making it again failed the last time, see `rebuild`. */
+  copyProblem?: CloudCopyProblem | undefined;
 }
 
 interface ServerSide {
@@ -301,7 +317,9 @@ export class MemoryPlatform {
           id: project.id,
           name: project.name,
           updatedAt: project.head,
-          copy: "live",
+          copy: project.copy ?? "live",
+          ...(project.copy !== "live" &&
+            project.copyProblem && { copyProblem: project.copyProblem }),
           ...(repository
             ? {
                 repository: {
@@ -422,6 +440,187 @@ export class MemoryPlatform {
     this.restart();
   }
 
+  /** What each repository has of its project, as files: its last archive, see `archive`. */
+  readonly archives = new Map<string, Map<string, string>>();
+  /** What the branch of a repository has, where people changed it on GitHub since, see `rebuild`. */
+  readonly branches = new Map<string, Map<string, string>>();
+  /** A window that says hello for a project the platform let go of has it made again at once. */
+  rebuildsOnHello = true;
+  /** The next `rebuild` fails like this, once. */
+  rebuildFails: CloudCopyProblem["code"] | undefined;
+
+  /**
+   * Archives a project as the platform does into its repository: what it has now, up to its head.
+   */
+  archive(id: string): void {
+    const project = this.projects.get(id);
+    if (!project || project.copy === "released") throw new Error(`no working copy of ${id}`);
+    this.archives.set(id, this.workingCopy(id).exportFiles().files);
+    this.archivedSeq.set(id, project.head);
+  }
+
+  /**
+   * Lets go of the working copy of a project, archived or not, as the platform does once nobody
+   * opened it for a while: its windows go first. The list keeps it, as "released".
+   */
+  release(id: string): void {
+    const project = this.projects.get(id);
+    if (!project || (project.copy ?? "live") !== "live")
+      throw new Error(`no working copy of ${id}`);
+    for (const side of this.#sides) if (side.project === project) side.close(1006);
+    project.releasedFrom = {
+      generation: project.generation,
+      head: project.head,
+      archivedSeq: this.archives.has(id) ? (this.archivedSeq.get(id) ?? 0) : 0,
+    };
+    project.copy = "released";
+    project.updates = [];
+    project.snapshot = undefined;
+    this.#working.delete(id);
+  }
+
+  /**
+   * Makes the working copy of a project again from its repository, as the worker does: from its
+   * last archive, or from its branch as it is (`fromBranch`), as another document, the next copy.
+   * Its numbers go on from where the copy before was.
+   */
+  rebuild(id: string, { fromBranch = false } = {}): boolean {
+    const project = this.projects.get(id);
+    const from = project?.releasedFrom;
+    if (!project || !from || project.copy === "live") throw new Error(`nothing to make of ${id}`);
+    const failing = this.rebuildFails;
+    this.rebuildFails = undefined;
+    const files = fromBranch
+      ? (this.branches.get(id) ?? this.archives.get(id))
+      : this.archives.get(id);
+    const store = files && !failing ? ProjectStore.open(files).store : undefined;
+    if (!store || !files) {
+      project.copy = "released";
+      project.copyProblem = {
+        code: failing ?? "unreadable",
+        at: 1,
+        retryAt: 2,
+        ...(failing === "unreadable" || !failing ? { files: ["timeline.json"] } : {}),
+      };
+      return false;
+    }
+    const state = store.encodeState();
+    store.destroy();
+    project.generation += 1;
+    project.head = from.head + 1;
+    project.digest = digestOf(`copy${project.generation}`, project.head, state);
+    project.updates = [
+      {
+        seq: project.head,
+        digest: project.digest,
+        data: state,
+        kind: "first",
+        device: "platform",
+        base: 0,
+        behind: false,
+      },
+    ];
+    project.snapshot = undefined;
+    project.began = { seq: project.head, digest: project.digest, state };
+    from.commonBase = !fromBranch && from.archivedSeq > 0;
+    project.copy = "live";
+    project.copyProblem = undefined;
+    this.archives.set(id, files);
+    this.archivedSeq.set(id, project.head);
+    this.#working.delete(id);
+    return true;
+  }
+
+  /** What `GET /api/projects/<id>/repository` says of the working copy of a project. */
+  status(user: string, id: string): RepositoryStatus {
+    if (this.faults.unreachable) throw new Error("The platform is not there");
+    const project = this.projects.get(id);
+    if (!project || project.owner !== user) throw new Error(`no project ${id}`);
+    const from = project.releasedFrom;
+    const repository = this.repositories.get(id);
+    return {
+      state: repository ? (repository.state ?? "ready") : "none",
+      archiving: false,
+      head: project.head,
+      archivedSeq: this.archivedSeq.get(id) ?? 0,
+      copy: project.copy ?? "live",
+      generation: project.generation,
+      ...(project.copyProblem && { copyProblem: project.copyProblem }),
+      ...(from &&
+        from.generation < project.generation && {
+          rebuiltFrom: {
+            generation: from.generation,
+            archivedSeq: from.archivedSeq,
+            commonBase: from.commonBase !== false,
+          },
+        }),
+    };
+  }
+
+  /**
+   * `POST /api/projects/restore`: a repository that has a project at its top becomes a new project
+   * of `user`, made from what it has, the first copy. Resolves to its id and name.
+   */
+  restoreProject(
+    user: string,
+    repository: { readonly id: number; readonly owner: string; readonly name: string },
+    files: ReadonlyMap<string, string>,
+  ): { readonly id: string; readonly name: string } {
+    const store = ProjectStore.open(files).store;
+    if (!store) throw new Error("no project in the repository");
+    const state = store.encodeState();
+    const { name, id: projectId } = store.getState().manifest;
+    store.destroy();
+    const id = `restored${this.projects.size + 1}`;
+    const digest = digestOf("", 1, state);
+    this.projects.set(id, {
+      id,
+      owner: user,
+      projectId,
+      name,
+      generation: 1,
+      head: 1,
+      digest,
+      updates: [
+        { seq: 1, digest, data: state, kind: "first", device: "platform", base: 0, behind: false },
+      ],
+      snapshot: undefined,
+      beforeMerge: [],
+      copy: "live",
+    });
+    this.repositories.set(id, repository);
+    this.archives.set(id, new Map(files));
+    this.archivedSeq.set(id, 1);
+    return { id, name };
+  }
+
+  /** `POST /api/projects/<id>/wake`: makes the copy again where it went, see `rebuild`. */
+  wake(user: string, id: string, { fromBranch = false } = {}): CloudWake {
+    if (this.faults.unreachable) throw new Error("The platform is not there");
+    const project = this.projects.get(id);
+    if (!project || project.owner !== user) return { copy: "missing" };
+    if ((project.copy ?? "live") === "live") return { copy: "live" };
+    if (!this.repositories.has(id)) return { copy: "released", refused: "noRepository" };
+    if (fromBranch && !project.copyProblem) return { copy: "released", refused: "notAllowed" };
+    if (project.copyProblem && !fromBranch && project.copyProblem.code !== "unavailable") {
+      return {
+        copy: "released",
+        refused: "busy",
+        copyProblem: project.copyProblem,
+        retryAfter: 60,
+      };
+    }
+    project.copy = "restoring";
+    return this.rebuild(id, { fromBranch })
+      ? { copy: "live" }
+      : {
+          copy: "released",
+          refused: "busy",
+          ...(project.copyProblem && { copyProblem: project.copyProblem }),
+          retryAfter: 60,
+        };
+  }
+
   /** Drops the connections of a browser, or of all of them, as a network that went away. */
   drop(tag?: string): void {
     for (const side of this.#sides) if (tag === undefined || side.tag === tag) side.close(1006);
@@ -508,6 +707,54 @@ export class MemoryPlatform {
     // hears so, where it knows the word.
     if (!project && this.deleted.has(message.project)) {
       side.close(this.knowsDeleted ? SYNC_CLOSE.deleted : SYNC_CLOSE.missing);
+      return;
+    }
+    if (project && (project.copy ?? "live") !== "live" && project.owner === side.user) {
+      if (side.readOnly) {
+        if (project.copy === "restoring") side.close(SYNC_CLOSE.unavailable, "restoring");
+        else side.close(SYNC_CLOSE.unusable, "released");
+        return;
+      }
+      // Made again from its repository, a moment after the window heard to come back later; or
+      // not, where that failed lately, and the platform tries again later ("released").
+      side.close(
+        SYNC_CLOSE.unavailable,
+        project.copy === "released" && project.copyProblem ? "released" : "restoring",
+      );
+      if (this.rebuildsOnHello && project.copy === "released" && !project.copyProblem) {
+        const id = project.id;
+        void Promise.resolve().then(() => {
+          const now = this.projects.get(id);
+          if (now && now.copy === "released" && !now.copyProblem) {
+            now.copy = "restoring";
+            this.rebuild(id);
+          }
+        });
+      }
+      return;
+    }
+    if (project && message.base === true) {
+      const began = project.began;
+      if (!began || !side.readOnly || project.owner !== side.user) {
+        side.close(SYNC_CLOSE.missing);
+        return;
+      }
+      this.#send(side, {
+        t: "welcome",
+        head: began.seq,
+        digest: began.digest,
+        reset: false,
+        generation: project.generation,
+      });
+      this.#send(side, {
+        t: "update",
+        seq: began.seq,
+        digest: began.digest,
+        kind: "first",
+        at: 0,
+        payload: began.state,
+      });
+      this.#send(side, { t: "synced", head: began.seq, digest: began.digest });
       return;
     }
     const unusable = project && this.repositories.get(project.id)?.unusable;
@@ -764,12 +1011,24 @@ export class TestCloudBrowser {
         await this.platform.answers();
         return this.platform.remove(this.user, project, options);
       },
+      wake: async (project, options) => {
+        await this.platform.answers();
+        return this.platform.wake(this.user, project, options);
+      },
       links: this.links,
       syncer: (key) => this.writers.writer(`cloud.${key}`, page),
       line: (key) => this.lines.line(key),
     };
   }
 }
+
+/** What the platform says of a project, as `RepositoryAccess.status` would, for a browser. */
+export const statusFor =
+  (browser: TestCloudBrowser) =>
+  async (project: string): Promise<RepositoryStatus> => {
+    await browser.platform.answers();
+    return browser.platform.status(browser.user, project);
+  };
 
 /** Time that only moves when a test says so, for the waits of a session. */
 export class TestTime implements CloudEnvironment {

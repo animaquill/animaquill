@@ -869,18 +869,17 @@ describe("projects of the platform without a folder", () => {
     expect(here.session.key).toBe(key);
   });
 
-  it("only opens a project whose working copy the platform has, and waits for one on its way back", async () => {
+  it("asks for a working copy that only the repository has, and waits for one on its way back", async () => {
     const time = new TestTime();
     const platform = new MemoryPlatform();
     const { project } = await onPlatform(platform, time);
     const here = await windowOf(platform, time);
     const connections = platform.connections;
-    expect(await here.cloud.openCloudProject(project, { copy: "released" })).toBe(false);
+    // A word this editor does not know is nothing it can open yet.
     expect(await here.cloud.openCloudProject(project, { copy: "somethingNew" })).toBe(false);
     expect(platform.connections).toBe(connections);
     expect(messagesOf(here.notifications)).toEqual([
-      "这个云端项目要先从仓库取回，这一版编辑器还做不了。请刷新页面后再试。",
-      "这个云端项目要先从仓库取回，这一版编辑器还做不了。请刷新页面后再试。",
+      "这个云端项目现在没法从 GitHub 取回，请稍后再试。",
     ]);
 
     platform.listed.set(project, { copy: "restoring" });
@@ -888,7 +887,7 @@ describe("projects of the platform without a folder", () => {
     await time.advance(4000);
     expect(here.dialogs.getSnapshot()).toMatchObject({
       kind: "progress",
-      title: "正在从仓库取回项目…",
+      title: "正在从 GitHub 取回…",
     });
     expect(platform.connections).toBe(connections);
     platform.listed.set(project, { copy: "live" });

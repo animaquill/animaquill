@@ -211,6 +211,11 @@ export function settle(
   differences: readonly ReconcileDifference[],
   choices: ReconcileChoices,
   batch: string,
+  /**
+   * Who the batch is from: files from the folder by default, which change no label that only
+   * people can; the person, for what this computer had of the project already, see `take-back.ts`.
+   */
+  from: Origin = folderBatch(batch),
 ): Settled | Unsettled {
   const final = new Map(cloud);
   const asked = new Set<string>();
@@ -231,7 +236,7 @@ export function settle(
     const text = final.get(path);
     if (base !== text) changes.push({ path, base, text });
   }
-  const origin = folderBatch(batch);
+  const origin = from;
   const fork = ProjectStore.fromUpdates([store.encodeState()]).store;
   if (!fork) return { problems: [problem("", "云端的项目读不出来")] };
   try {
@@ -274,8 +279,11 @@ export function settle(
 /** Whether `settle` came to something that can be carried out. */
 export const isSettled = (outcome: Settled | Unsettled): outcome is Settled => "after" in outcome;
 
-/** Where the texts of a dialog that chooses sides are, by what "here" is: see "folder.adopt". */
-export type ReconcileWords = "folder.adopt";
+/**
+ * Where the texts of a dialog that chooses sides are, by what "here" is: see "folder.adopt", and
+ * "cloud.takeBack" for a copy that comes back to a working copy rebuilt from its repository.
+ */
+export type ReconcileWords = "folder.adopt" | "cloud.takeBack";
 
 /** When a file changed, the way people say it: the time of day for today, and the day otherwise. */
 export function whenText(time: number, now: number, t: TFunction): string {

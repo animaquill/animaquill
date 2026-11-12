@@ -1,4 +1,5 @@
 import type {
+  CloudCopyProblem,
   RepositoryChoice,
   RepositoryPause,
   RepositoryRefusal,
@@ -285,4 +286,36 @@ export function divergedOutcome(
     else removed.push(path);
   }
   return { overwritten, removed, restored };
+}
+
+/**
+ * Why making the working copy of a project from its repository failed that people can answer by
+ * taking the branch as it is, once they put it right on GitHub (`fromBranch` of `CloudAccess.wake`).
+ */
+export const BRANCH_MENDS: ReadonlySet<string> = new Set([
+  "unreadable",
+  "notProject",
+  "tooLarge",
+  "tooNew",
+]);
+
+const COPY_PROBLEMS = new Set([
+  "unreadable",
+  "notProject",
+  "tooLarge",
+  "tooNew",
+  "identity",
+  "quota",
+  "unusable",
+  "unavailable",
+]);
+
+/** Why the working copy of a project could not be made from its repository, in people's words. */
+export function copyProblemText(problem: CloudCopyProblem, t: TFunction): string {
+  if (!COPY_PROBLEMS.has(problem.code))
+    return t("cloud.copyProblem.other", { code: problem.code, ...plain });
+  return t(`cloud.copyProblem.${problem.code as "unreadable"}`, {
+    files: pathList(problem.files ?? []),
+    ...plain,
+  });
 }

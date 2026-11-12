@@ -30,15 +30,23 @@ export function ReadOnlyBar() {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
-  if (!isReadOnly || !unusable) return null;
+  // Or what this computer has is of the copy before the one the platform made again, until it is
+  // taken back onto that one, see `CloudProjects.takeBack`: how that goes is no part of the
+  // snapshot, and is read by itself, so that the bar follows it.
+  const takeBack = useSyncExternalStore(cloud?.subscribe ?? noSubscription, () =>
+    cloud?.rebuilt === true ? (cloud.takeBack ?? "running") : undefined,
+  );
+  if (!isReadOnly || (!unusable && !takeBack)) return null;
   return (
     <div className={styles.bar} role="alert" data-read-only="">
       <Lock size={14} aria-hidden="true" />
       <span className={styles.text}>
-        {t("cloud.unusable.bar", {
-          what: unusableLine(unusable, now, t),
-          interpolation: { escapeValue: false },
-        })}
+        {unusable
+          ? t("cloud.unusable.bar", {
+              what: unusableLine(unusable, now, t),
+              interpolation: { escapeValue: false },
+            })
+          : t(takeBack === "stopped" ? "cloud.takeBack.cancelled" : "cloud.takeBack.waiting")}
       </span>
       <button type="button" onClick={() => workbench.cloudPanel.set(true)}>
         {t("cloud.unusable.showWays")}

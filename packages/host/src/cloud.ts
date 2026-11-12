@@ -27,11 +27,16 @@ import type {
  * link only remembers for lists is as the last one said.
  */
 const forward = (link: CloudLink, change: CloudLinkChange): CloudLink => {
+  const renewed = renewal(link, change);
+  if (renewed !== link) return renewed;
   const { creating: _creating, ...made } = link;
   const kept: CloudLink = change.made ? made : link;
   // The platform took what waited to go in one piece: nothing waits like that any more.
   const { resync: _resync, ...settled } = kept;
-  const next: CloudLink = change.resync === null ? settled : kept;
+  const resynced: CloudLink = change.resync === null ? settled : kept;
+  // The log of the copy before is gone.
+  const { kept: _old, ...dropped } = resynced;
+  const next: CloudLink = change.kept === null ? dropped : resynced;
   const isAhead = change.seq !== undefined && change.seq > link.seq;
   return {
     ...next,
@@ -52,6 +57,38 @@ const forward = (link: CloudLink, change: CloudLinkChange): CloudLink => {
     ...(change.repository !== undefined && { repository: change.repository }),
     ...(change.owner !== undefined && { owner: change.owner }),
   };
+};
+
+/**
+ * What a change does to a link where it puts its log on another working copy, see
+ * `CloudLink.renewing`: the link itself where it does nothing of that. Beginning takes only a link
+ * of the copy it goes from with nothing else on its way; getting there only a link that is on its
+ * way, and then the link goes on from the new copy, whatever it said of the one before.
+ */
+const renewal = (link: CloudLink, change: CloudLinkChange): CloudLink => {
+  const { renewing: on, kept: _kept, ...rest } = link;
+  if (change.renewed !== undefined) {
+    if (!on) return link;
+    const { resync: _resync, pending: _pending, ...plain } = rest;
+    return {
+      ...plain,
+      generation: on.generation,
+      seq: on.seq,
+      digest: on.digest,
+      pushed: change.renewed.pushed,
+      kept: { backup: on.backup, generation: on.from, until: change.renewed.until },
+    };
+  }
+  if (change.renewing === null) {
+    if (!on) return link;
+    const { renewing: _gone, ...without } = link;
+    return without;
+  }
+  if (change.renewing !== undefined) {
+    if (on || (link.generation ?? 1) !== change.renewing.from) return link;
+    return { ...link, renewing: change.renewing };
+  }
+  return link;
 };
 
 /** Where a link starts over, see `CloudLinks.reset`. */
@@ -330,6 +367,8 @@ export interface BrowserCloudOptions {
   readonly list: () => Promise<readonly CloudProjectSummary[]>;
   /** Takes a project without a repository away, where the platform does, see `CloudAccess.remove`. */
   readonly remove?: NonNullable<CloudAccess["remove"]>;
+  /** Makes the working copy of a project again from its repository, see `CloudAccess.wake`. */
+  readonly wake?: NonNullable<CloudAccess["wake"]>;
   /** Saving its projects to repositories, where the platform does, see `browserRepository`. */
   readonly repository?: RepositoryAccess;
   /** Sending files of assets into the large file storage of repositories, see `browserLfs`. */
@@ -353,6 +392,7 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     syncer: (key) => browserFolderWriter(key, locks, undefined, "animaquill.cloud-sync."),
     line: (key) => broadcastLine(`animaquill.cloud.${key}`),
     ...(options.remove && { remove: options.remove }),
+    ...(options.wake && { wake: options.wake }),
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),
     ...(options.cover && { cover: options.cover }),

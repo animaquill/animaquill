@@ -680,6 +680,7 @@ export class Workbench {
         // "连成另一个云端项目" is the dialog that connects a project in one go, see `connectToCloud`.
         showConnect: () => this.connectToCloud(),
         openProject: (id) => this.openProject(id),
+        reopenProject: (key) => this.#reopenProject(key),
         ...(host.localFolders && { records: host.localFolders.records }),
         ...(host.presence && {
           others: async (key: string) => (await host.presence?.others(key)) ?? 0,
@@ -1593,7 +1594,11 @@ export class Workbench {
     // Only what is said of this very project: another one may be on its way in.
     const said = this.cloud?.getSnapshot();
     const isThis = said?.kind === "linked" && said.link.key === this.session.key;
-    const isReadOnly = store !== undefined && isThis && this.cloud?.unusable !== undefined;
+    // Also while what it has is of a copy that the platform made again, until it is taken back.
+    const isReadOnly =
+      store !== undefined &&
+      isThis &&
+      (this.cloud?.unusable !== undefined || this.cloud?.rebuilt === true);
     if (store && store.readOnly !== isReadOnly) store.readOnly = isReadOnly;
     this.projectFolders?.hold(isReadOnly);
     if (isReadOnly && !this.readOnly.getSnapshot() && this.chat.running) this.chat.stop();
@@ -1782,6 +1787,12 @@ export class Workbench {
         break;
       case "retry":
         cloud.session?.resume();
+        break;
+      case "takeBack":
+        void cloud.takeBackAgain();
+        break;
+      case "wakeAsItIs":
+        void cloud.wakeFromBranch();
         break;
       case "signIn":
         void this.signIn();
@@ -2449,8 +2460,10 @@ export class Workbench {
   async #changeProject(next?: () => Promise<unknown>): Promise<void> {
     if (this.#changingProject) return;
     this.#changingProject = true;
+    // Only the project that `#reopenProject` opens again is left without a word.
+    const quietly = this.#reopening !== undefined && this.#reopening === this.session.key;
     try {
-      if (await this.#leaveProject()) await next?.();
+      if (await this.#leaveProject({ quietly })) await next?.();
     } finally {
       this.#changingProject = false;
     }
@@ -2542,12 +2555,41 @@ export class Workbench {
     });
   }
 
-  /** Resolves to false when people would rather stay with what could not be saved. */
-  async #leaveProject(): Promise<boolean> {
+  /**
+   * Opens the open project again from what this browser keeps of it, without asking people: what
+   * they were trying out and the code they did not save stay where windows keep them, and come back
+   * as after a reload. For a project whose log went on another working copy of the platform, see
+   * `CloudProjects`: what this window has is of the copy before.
+   */
+  async #reopenProject(key: string): Promise<void> {
+    if (this.session.key !== key || this.#changingProject || this.#reopening !== undefined) return;
+    // As people open it, folder or not: that leaves the project as it is first, see `#changeProject`.
+    this.#reopening = key;
+    try {
+      await this.openProject(key);
+    } finally {
+      this.#reopening = undefined;
+    }
+  }
+
+  /** The project that `#reopenProject` opens again, while it does. */
+  #reopening: string | undefined;
+
+  /**
+   * Resolves to false when people would rather stay with what could not be saved. `quietly`: asks
+   * nothing, see `#reopenProject`.
+   */
+  async #leaveProject({ quietly = false } = {}): Promise<boolean> {
     if (!this.session.store) return true;
-    if (!(await this.#settleCode())) return false;
-    if (!(await this.#settleTrial())) return false;
-    if (!(await this.session.trySave())) {
+    if (quietly) {
+      // Kept where windows keep them, as for a reload.
+      await Promise.all([this.trials.settle(), this.drafts.settle()]);
+    } else {
+      if (!(await this.#settleCode())) return false;
+      if (!(await this.#settleTrial())) return false;
+    }
+    // Quietly, the project could not be changed meanwhile: what its log does not have is not there.
+    if (!(await this.session.trySave()) && !quietly) {
       const { t } = this;
       const leave = await this.dialogs.confirm({
         title: t("project.unsavedTitle"),

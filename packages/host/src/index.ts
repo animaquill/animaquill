@@ -509,6 +509,11 @@ export interface CloudProjectSummary {
    * not know as one it cannot open yet.
    */
   readonly copy?: "live" | "released" | "restoring" | (string & {});
+  /**
+   * Why making the working copy again from the repository failed the last time, where it did and
+   * the platform does not have it yet: see `CloudCopyProblem`.
+   */
+  readonly copyProblem?: CloudCopyProblem;
   /** Bytes: of its documents and code as the platform keeps them, and of its assets when last archived. */
   readonly size?: {
     readonly documents: number;
@@ -565,6 +570,51 @@ export interface CloudProjectSummary {
 }
 
 /**
+ * Why the platform could not make the working copy of a project from its repository the last time
+ * it tried: what the repository has does not read as the format says ("unreadable", `files` the
+ * documents), has no project at its top ("notProject"), is larger than a project of the platform may
+ * be ("tooLarge"), is of a newer format ("tooNew"), is another project ("identity"); the person keeps
+ * as much as they may ("quota"); the repository cannot be used ("unusable", `reason` as the pause
+ * says it); or GitHub or the platform failed ("unavailable"), which is tried again. `retryAt`: from
+ * when it is tried again as it is asked for. Times are milliseconds since 1970.
+ */
+export interface CloudCopyProblem {
+  readonly code:
+    | "unreadable"
+    | "notProject"
+    | "tooLarge"
+    | "tooNew"
+    | "identity"
+    | "quota"
+    | "unusable"
+    | "unavailable"
+    | (string & {});
+  readonly at: number;
+  readonly files?: readonly string[];
+  readonly reason?: string;
+  readonly retryAt?: number;
+}
+
+/**
+ * What asking for the working copy of a project that only its repository has came to, see
+ * `CloudAccess.wake`: it is there ("live"), or on its way back ("restoring"); or it stays as it is,
+ * for want of a repository ("noRepository"), as that cannot be used ("unusable"), as making it failed
+ * a moment ago ("busy", with why and when it is tried again), or as the branch was asked for where
+ * that is no answer ("notAllowed"); or the platform has no such project of whoever is signed in
+ * ("missing").
+ */
+export type CloudWake =
+  | { readonly copy: "live" | "restoring" }
+  | {
+      readonly copy: "released";
+      readonly refused: "noRepository" | "unusable" | "busy" | "notAllowed";
+      readonly copyProblem?: CloudCopyProblem;
+      /** Seconds, for "busy". */
+      readonly retryAfter?: number;
+    }
+  | { readonly copy: "missing" };
+
+/**
  * Where projects sync to: a platform, as the host reaches it. The editor runs the protocol over the
  * connections, see `SyncClientMessage`, and keeps its records here.
  */
@@ -607,6 +657,15 @@ export interface CloudAccess {
    * may still be there then. Missing where the platform takes no projects away.
    */
   remove?(project: string, options?: CloudRemoveOptions): Promise<CloudRemoval>;
+  /**
+   * Asks for the working copy of a project that only its repository has now (`copy` "released" in
+   * the list) to be made again from there, see `CloudWake`: the list says once it is "live". With
+   * `fromBranch`, from the branch as it is rather than the last archive, where that failed for what
+   * the repository had and people put it right on GitHub: such a copy has nothing in common with
+   * the one before. Rejects where the platform could not say, with a `CloudSignedOut` when nobody is
+   * signed in. Missing where the platform makes no copies again.
+   */
+  wake?(project: string, options?: { readonly fromBranch?: boolean }): Promise<CloudWake>;
   /**
    * Saving projects of the platform to a Git repository of the person, where the platform does that:
    * it archives what it has of a project into the repository by itself. Without it, there is none.
@@ -935,6 +994,26 @@ export interface RepositoryStatus {
   /** The update of the project the platform has, and the one the repository has. */
   readonly head: number;
   readonly archivedSeq: number;
+  /**
+   * Whether the platform has the working copy, as `CloudProjectSummary.copy`; which one it is, see
+   * `CloudLink.generation`; and why making it again failed the last time, see `CloudCopyProblem`.
+   * A platform from before says none of these.
+   */
+  readonly copy?: "live" | "released" | "restoring" | (string & {});
+  readonly generation?: number;
+  readonly copyProblem?: CloudCopyProblem;
+  /**
+   * Where the copy before this one was when the platform let go of it, once this one was made from
+   * the repository: which one it was, and the update of it that the archive this one began as has
+   * all up to. `commonBase`: whether this one began as that archive, which is then what a window of
+   * the copy before has in common with it; false where it began as something else (the branch as
+   * it is, or an archive that was not there any more), and there is nothing in common.
+   */
+  readonly rebuiltFrom?: {
+    readonly generation: number;
+    readonly archivedSeq: number;
+    readonly commonBase: boolean;
+  };
 }
 
 /**
@@ -967,6 +1046,25 @@ export interface RepositoryAccess {
    * not be asked, "notLinked" for a project without a repository.
    */
   recheck(project: string): Promise<RepositoryStatus>;
+  /**
+   * "从这个仓库恢复成云端项目": a repository of the person's that has a project at its top, which
+   * linking turns away ("hasProject"), becomes a new project of theirs on the platform, saved to it,
+   * made from the last commit of its branch. Resolves once it is there ("live"), or once it is on
+   * its way and takes longer ("restoring"): the list says when it is there, or that it could not
+   * be. Refuses as linking one does (notInstalled, notFound, notPushable, public, linkedElsewhere),
+   * and noProject, unreadable (with `files`), tooLarge, tooNew, quota, unavailable. Missing where
+   * the platform does not do that.
+   */
+  restore?(choice: {
+    readonly existing: { readonly id: number };
+    readonly confirmPublic?: boolean;
+  }): Promise<RepositoryRestored>;
+}
+
+/** A project made from a repository, see `RepositoryAccess.restore`. */
+export interface RepositoryRestored {
+  readonly project: { readonly id: string; readonly name: string };
+  readonly copy: "live" | "restoring";
 }
 
 /** What the platform says when it refuses something about repositories. */
@@ -984,7 +1082,17 @@ export type RepositoryRefusal =
   | "diverged"
   | "busy"
   | "invalid"
-  | "unavailable";
+  | "unavailable"
+  /** For a restore: no project at the top of the repository. */
+  | "noProject"
+  /** ...documents that do not read as the format says, see `RepositoryRefused.files`. */
+  | "unreadable"
+  /** ...larger than a project of the platform may be. */
+  | "tooLarge"
+  /** ...of a newer format than the platform knows. */
+  | "tooNew"
+  /** ...the person keeps as many projects, or bytes, as they may. */
+  | "quota";
 
 /**
  * The platform did not do what was asked: always one of the codes of `RepositoryRefusal`, also where
@@ -993,7 +1101,7 @@ export type RepositoryRefusal =
 export class RepositoryRefused extends Error {
   override readonly name = "RepositoryRefused";
   readonly code: RepositoryRefusal;
-  /** For "hasProject": what of a project is there. */
+  /** For "hasProject": what of a project is there; for "unreadable", what does not read. */
   readonly files: readonly string[] | undefined;
   /** For "linkedElsewhere": the project the repository is of, where it is the person's own. */
   readonly project: { readonly id: string; readonly name: string } | undefined;
@@ -1229,6 +1337,38 @@ export interface CloudLinkChange {
   /** Null: the platform said the project has none. */
   readonly repository?: CloudLinkRepository | null;
   readonly owner?: string;
+  /**
+   * Begins to put the log on another working copy of the platform, see `CloudLink.renewing`: only
+   * on a link of the working copy `renewing.from`, with nothing else on its way. Null: it did not
+   * get there, and the link stays on its own copy.
+   */
+  readonly renewing?: CloudRenewal | null;
+  /**
+   * The log is on the working copy that `renewing` said now: the link goes on from there, with
+   * `pushed` the mark of the log up to which the platform has it, and keeps where the log of the
+   * copy before is until what came of it is on the platform, see `CloudLink.kept`. Only on a link
+   * that has `renewing`; it can go back, which nothing else can.
+   */
+  readonly renewed?: { readonly pushed: number; readonly until: number };
+  /** Null: the log of the copy before is taken away, see `CloudLink.kept`. */
+  readonly kept?: null;
+}
+
+/**
+ * Putting the log of a project of this browser on another working copy of the platform, once that
+ * made the project again from its repository: what a window that comes back puts its changes onto,
+ * see `CloudLink.renewing`. `id` tells one try from another.
+ */
+export interface CloudRenewal {
+  readonly id: string;
+  /** The working copy the log is of, which it goes from. */
+  readonly from: number;
+  /** ...and the one it goes to, at its update `seq`, whose digest is `digest`. */
+  readonly generation: number;
+  readonly seq: number;
+  readonly digest: string;
+  /** What the log as it was is kept as, see `ProjectLibrary.renew`. */
+  readonly backup: string;
 }
 
 /** That a project of this browser is connected to a project of the platform. */
@@ -1290,6 +1430,17 @@ export interface CloudLink {
    * browser has to read its log, see `CloudProjects.removeFromBrowser` in the editor.
    */
   readonly pending?: number;
+  /**
+   * The log is being put on another working copy of the platform, see `CloudRenewal`: it may be,
+   * or may not be yet, where a page went away meanwhile. The library says which: it keeps the log as
+   * it was by `backup` once it is. Nothing syncs a link with this until that is settled.
+   */
+  readonly renewing?: CloudRenewal;
+  /**
+   * The log of the working copy before, as it was when the log went on this one: kept in the library
+   * by `backup` until the platform has the log up to `until` (`pushed`), which has what came of it.
+   */
+  readonly kept?: { readonly backup: string; readonly generation: number; readonly until: number };
 }
 
 export interface CloudLinks {
@@ -1686,6 +1837,28 @@ export interface ProjectLibrary {
    * is not there. What the editor made stays.
    */
   dropCopies(id: string, names: readonly string[]): Promise<void>;
+  /**
+   * Starts the log of a project anew with `entries`, in one step, keeping what it had as `backup`,
+   * which only `restoreBackup` and `dropBackup` reach: for a project whose platform made it again as
+   * another document, see `CloudLink.renewing`. The project is another one from then on, as one that
+   * came in with the same id: what windows have of it before cannot write to it any more, nor hear
+   * from it. Rejects, and changes nothing, where there is no such project, or a backup of that name.
+   * Missing where a host cannot.
+   */
+  renew?(
+    id: string,
+    entries: readonly { readonly update: Uint8Array; readonly source?: ChangeSource }[],
+    backup: string,
+  ): Promise<void>;
+  /** The names of what `renew` kept of a project, which are there still. */
+  backups?(id: string): Promise<readonly string[]>;
+  /**
+   * Puts the log back as `renew` kept it, in place of what it has now, in one step: a project that
+   * did not get to go on from there. Rejects where there is no such backup.
+   */
+  restoreBackup?(id: string, backup: string): Promise<void>;
+  /** Takes away what `renew` kept, once it is of no use any more. */
+  dropBackup?(id: string, backup: string): Promise<void>;
 }
 
 /** A file that a host keeps, as far as the room it takes goes. */
@@ -1754,6 +1927,12 @@ export interface ProjectLog {
   ): Promise<void>;
   /** Updates from other windows on the same project. Returns how to stop listening. */
   listen(listener: (update: Uint8Array) => void): () => void;
+  /**
+   * Whether this is still the log of the project: false once the project went, or its log started
+   * anew (`ProjectLibrary.renew`), and what this one has is of before. Missing where a host never
+   * starts a log anew.
+   */
+  isCurrent?(): Promise<boolean>;
   close(): void;
 }
 

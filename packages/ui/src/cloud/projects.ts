@@ -9,8 +9,10 @@ import {
   type CloudAccess,
   type CloudLine,
   type CloudLink,
+  type CloudCopyProblem,
   type CloudLinkRepository,
   type CloudProjectSummary,
+  type CloudWake,
   type CloudRemoval,
   type CloudRemoveOptions,
   type RepositoryStatus,
@@ -35,7 +37,14 @@ import type { FolderLinking } from "../workbench/project-folders.ts";
 import { CloudConnect, takeIntent, type ConnectTiming } from "./connect.ts";
 import { DownloadFailed, download, type Downloaded } from "./download.ts";
 import { RepositoryPicker } from "./repository-picker.ts";
-import { connectRepositoryName, divergedOutcome, pathList, pauseText } from "./repository-text.ts";
+import {
+  BRANCH_MENDS,
+  connectRepositoryName,
+  copyProblemText,
+  divergedOutcome,
+  pathList,
+  pauseText,
+} from "./repository-text.ts";
 import {
   RepositoryWatch,
   type ArchiveNowOutcome,
@@ -50,6 +59,8 @@ import {
   type CloudTiming,
 } from "./session.ts";
 import { unusableTitle } from "./unusable.ts";
+import { chooseTakeBack, keepFolderFiles, takeBackFailedText } from "./take-back-flow.ts";
+import { TakeBack, dropKept, settleRenewal } from "./take-back.ts";
 
 /**
  * Which project of this window is connected to the platform, and how people connect one, let go of
@@ -207,6 +218,12 @@ export interface CloudProjectsOptions {
    */
   readonly signIn: () => Promise<void> | void;
   readonly openProject: (id: string) => Promise<void>;
+  /**
+   * Opens the project of this window again from what this browser keeps of it, without asking
+   * people anything: what they were trying out stays, as for a reload. For a project whose log went
+   * on another working copy of the platform, see `TakeBack`. Without it, `openProject`.
+   */
+  readonly reopenProject?: (key: string) => Promise<void>;
   /** Leaves the page to install the GitHub App on the account, and comes back. As `signIn`. */
   readonly installApp?: () => Promise<void> | void;
   /**
@@ -286,6 +303,36 @@ const LINK_REFUSALS = {
   folderNotReady: "cloud.folderNotReady",
   failed: "cloud.connectFailed",
 } as const satisfies Record<LinkRefusal, string>;
+
+/** Restoring a repository refused, see `RepositoryAccess.restore`, in people's words. */
+function restoreRefusalText(error: RepositoryRefused, t: TFunction): string {
+  const plain = { interpolation: { escapeValue: false } } as const;
+  switch (error.code) {
+    case "unreadable":
+      return t("cloud.restore.failure.unreadable", {
+        files: pathList(error.files ?? []),
+        ...plain,
+      });
+    case "linkedElsewhere":
+      return error.project
+        ? t("cloud.restore.failure.linkedProject", { name: error.project.name, ...plain })
+        : t("cloud.restore.failure.linkedElsewhere");
+    case "notPushable":
+      return t("cloud.restore.failure.cannotWrite");
+    case "noProject":
+    case "tooLarge":
+    case "tooNew":
+    case "quota":
+    case "public":
+    case "notFound":
+    case "notInstalled":
+    case "unavailable":
+    case "busy":
+      return t(`cloud.restore.failure.${error.code}`);
+    default:
+      return t("cloud.restore.failure.other", { code: error.code, ...plain });
+  }
+}
 
 /** How often the list is asked while a project comes back from its repository, and for how long. */
 const RESTORE_POLL_MS = 3000;
@@ -445,6 +492,15 @@ export class CloudProjects {
       // Another window found that the repository can be used again: so can the project here.
       if (kind === "usable") {
         this.#usableAgain();
+        return;
+      }
+      // Another window took the project back onto the copy the platform made again: what this
+      // window has is of the copy before, and the log is not.
+      if (kind === "renewed") {
+        // Not where this window is on the new copy already.
+        const sync = this.session;
+        if (sync && sync.generation !== (data as { generation?: unknown }).generation)
+          void this.#reopen(key);
         return;
       }
       if (kind !== "link") return;
@@ -700,6 +756,21 @@ export class CloudProjects {
         this.#heardUnusable.set(sync, repository?.getSnapshot().checkedAt);
         void repository?.refresh();
       }
+      // The platform made the project again from its repository: what this computer has goes onto
+      // the new copy. Only the window that syncs: it holds the turn meanwhile.
+      if (problem?.kind === "rebuilt" && sync.getSnapshot().here && !this.#takingBack.has(sync)) {
+        void this.#takeBack(sync, link);
+      }
+      // The platform could not make the project again from its repository lately, and tries again
+      // later: why, as what it says of the repository has it, see `copyProblem`.
+      const { restoring } = sync.getSnapshot();
+      if (restoring === "released" && !this.#heardReleased.has(sync)) {
+        this.#heardReleased.add(sync);
+        void repository?.refresh();
+      } else if (restoring !== "released") this.#heardReleased.delete(sync);
+      // What the log had of the copy before goes once the platform has what came of it.
+      if (state === "online" && sync.getSnapshot().pending === 0 && link.kept)
+        void this.#dropKept(sync, link);
       // What archiving says is of before a change that the platform has by now, see `noteSeq`.
       repository?.noteSeq(sync.getSnapshot().seq);
       // The platform only lets the owner of a project sync it: whoever is signed in is the one.
@@ -769,6 +840,232 @@ export class CloudProjects {
     void this.#options.cloud.links.update(link.key, link.project, next).catch((error: unknown) => {
       console.warn("What a list shows of the project could not be kept", error);
     });
+  }
+
+  /** Sessions that heard that the platform could not make the project again, see `copyProblem`. */
+  readonly #heardReleased = new WeakSet<CloudSession>();
+
+  /**
+   * Why the platform could not make the open project again from its repository, where it could
+   * not lately and the window waits for it to try again (`CloudSnapshot.restoring` "released"):
+   * what helps is in the panel, see `wakeFromBranch`.
+   */
+  get copyProblem(): CloudCopyProblem | undefined {
+    const snapshot = this.#snapshot;
+    if (snapshot.kind !== "linked") return undefined;
+    if (snapshot.session.getSnapshot().restoring !== "released") return undefined;
+    return snapshot.repository?.status?.copyProblem;
+  }
+
+  /**
+   * "我已在 GitHub 上修好": has the platform make the open project again from its branch as it is
+   * now, where what the repository had kept it from coming, see `CloudAccess.wake`; syncing comes
+   * back for it at once. Such a copy has nothing in common with the one this computer has, and
+   * taking it back asks people about every file that is not the same, see `TakeBack`.
+   */
+  async wakeFromBranch(): Promise<void> {
+    const snapshot = this.#snapshot;
+    if (snapshot.kind !== "linked") return;
+    const { link, session } = snapshot;
+    const woke = await this.#wake(link.project, true);
+    if (woke === undefined) return;
+    if (woke.copy === "released") {
+      const name = this.#options.session.store?.getState().manifest.name ?? link.name ?? "";
+      await this.#notWoken(name, woke, { once: true });
+      void snapshot.repository?.refresh();
+      return;
+    }
+    session.resume();
+  }
+
+  /** Sessions whose copy is being taken back, or was, see `#takeBack`. */
+  readonly #takingBack = new WeakSet<CloudSession>();
+  /** How taking the open project back goes: "running", or "stopped" until people try again. */
+  #takeBackState: "running" | "stopped" | undefined;
+  /** Sessions whose log of the copy before went, or is going. */
+  readonly #dropping = new WeakSet<CloudSession>();
+
+  /**
+   * Whether the platform made the open project again from its repository, and what this window
+   * has is of the copy before: it can be looked at, and not changed, until it is taken back.
+   */
+  get rebuilt(): boolean {
+    const snapshot = this.#snapshot;
+    return snapshot.kind === "linked" && snapshot.session.getSnapshot().problem?.kind === "rebuilt";
+  }
+
+  /** How taking the open project back goes, see `#takeBack`. */
+  get takeBack(): "running" | "stopped" | undefined {
+    return this.rebuilt ? this.#takeBackState : undefined;
+  }
+
+  #setTakeBack(state: "running" | "stopped" | undefined): void {
+    if (this.#takeBackState === state) return;
+    this.#takeBackState = state;
+    this.#emitter.emit();
+  }
+
+  /** Tries again to take the open project back, as people ask after it stopped. */
+  async takeBackAgain(): Promise<void> {
+    const snapshot = this.#snapshot;
+    if (snapshot.kind !== "linked" || !snapshot.session.getSnapshot().here) return;
+    this.#takingBack.delete(snapshot.session);
+    await this.#takeBack(snapshot.session, snapshot.link);
+  }
+
+  /**
+   * Takes what this computer has of the open project back onto the copy that the platform made
+   * again from its repository, see `TakeBack`, and opens the project again from what comes of it,
+   * here and in the other windows of this browser that have it. Where the platform cannot be asked
+   * now, again a little later; where people do not choose, or it fails, the project stays as it
+   * is, and people can try again. Only the window that syncs does this, with its turn.
+   */
+  async #takeBack(sync: CloudSession, link: CloudLink): Promise<void> {
+    const { cloud, projects, session, notifications, t } = this.#options;
+    const repository = cloud.repository;
+    this.#takingBack.add(sync);
+    const isStill = () => this.session === sync && !sync.getSnapshot().state.startsWith("clos");
+    const name = session.store?.getState().manifest.name ?? link.name ?? "";
+    this.#setTakeBack("running");
+    try {
+      for (let wait = 5000; isStill(); wait = Math.min(wait * 2, 5 * 60_000)) {
+        const now = await cloud.links.get(link.key).catch(() => undefined);
+        if (!now || now.project !== link.project) return;
+        // A page that went away halfway: finished, or put back, by whoever syncs first.
+        if (now.renewing) {
+          if (await settleRenewal(cloud, projects, now)) await this.#reopen(link.key);
+          else sync.resume();
+          return;
+        }
+        // Another window of this browser took it back already.
+        if ((now.generation ?? 1) !== sync.generation) {
+          await this.#reopen(link.key);
+          return;
+        }
+        const store = session.store;
+        if (!repository || !store || session.key !== link.key) {
+          this.#setTakeBack("stopped");
+          return;
+        }
+        // The log went on another copy under this window: what it has is of the one before.
+        if (!(await session.journal.current(store).catch(() => true))) {
+          await this.#reopen(link.key);
+          return;
+        }
+        const folder = this.#options.folderOf(link.key);
+        const outcome = await new TakeBack({
+          cloud,
+          projects,
+          status: (project) => repository.status(project),
+          window: this.#options.window,
+          editor: this.#options.editor,
+        }).run({
+          key: link.key,
+          project: link.project,
+          store,
+          generation: sync.generation,
+          saved: async () => {
+            await session.journal.readLog().catch(() => {});
+            return session.journal.saved();
+          },
+          entries: async () => (await session.journal.entries()) ?? [],
+          choose: chooseTakeBack({ dialogs: this.#options.dialogs, t, name }),
+          ...(folder && {
+            keep: (paths: readonly string[]) => keepFolderFiles(folder, paths, Date.now()),
+          }),
+        });
+        switch (outcome.kind) {
+          case "renewed": {
+            if (outcome.changed) {
+              notifications.push(
+                [
+                  t("cloud.takeBack.done", {
+                    name,
+                    count: outcome.merged.length + outcome.chosen,
+                    interpolation: { escapeValue: false },
+                  }),
+                  ...(outcome.kept
+                    ? [
+                        t("cloud.takeBack.doneKept", {
+                          kept: outcome.kept,
+                          interpolation: { escapeValue: false },
+                        }),
+                      ]
+                    : []),
+                ].join(""),
+              );
+            }
+            const line = cloud.line(link.key);
+            line?.post({
+              kind: "renewed",
+              generation: (await cloud.links.get(link.key))?.generation,
+            });
+            line?.close();
+            await this.#reopen(link.key);
+            return;
+          }
+          case "already":
+            await this.#reopen(link.key);
+            return;
+          case "same":
+            sync.resume();
+            return;
+          case "later":
+            await this.#wait(wait);
+            continue;
+          case "cancelled":
+            this.#setTakeBack("stopped");
+            return;
+          case "failed":
+            notifications.push(
+              `${t("cloud.takeBack.failedTitle", { name, interpolation: { escapeValue: false } })}：${takeBackFailedText(outcome, t)}`,
+            );
+            this.#setTakeBack("stopped");
+            return;
+        }
+      }
+    } catch (error) {
+      console.warn("The project could not be taken back onto the new copy", error);
+      this.#setTakeBack("stopped");
+    }
+  }
+
+  /**
+   * Opens the project of this window again, as its log is now: where the log went on another copy
+   * of the platform, what this window has is of the one before.
+   */
+  async #reopen(key: string): Promise<void> {
+    const { session } = this.#options;
+    if (session.key !== key) return;
+    // Once: this window hears what it says to the others too.
+    if (this.#reopening?.key === key) return this.#reopening.done;
+    this.#takeBackState = undefined;
+    const done = (this.#options.reopenProject ?? this.#options.openProject)(key).finally(() => {
+      if (this.#reopening?.done === done) this.#reopening = undefined;
+    });
+    this.#reopening = { key, done };
+    return done;
+  }
+
+  /** The project this window opens again, while it does, see `#reopen`. */
+  #reopening: { readonly key: string; readonly done: Promise<void> } | undefined;
+
+  /** Takes away what the log had of the copy before, once the platform has what came of it. */
+  async #dropKept(sync: CloudSession, link: CloudLink): Promise<void> {
+    if (this.#dropping.has(sync)) return;
+    this.#dropping.add(sync);
+    // Once `pushed` is noted down, a moment after the platform took it.
+    await this.#wait(2000);
+    for (let tries = 0; tries < 5 && this.session === sync; tries++) {
+      try {
+        if (await dropKept(this.#options.cloud, this.#options.projects, link.key)) return;
+      } catch (error) {
+        console.warn("What the log had of the copy before stays for now", error);
+      }
+      await this.#wait(10_000);
+    }
+    // Next time the project opens, or syncs again here.
+    this.#dropping.delete(sync);
   }
 
   #rememberOwner(link: CloudLink): void {
@@ -1610,61 +1907,279 @@ export class CloudProjects {
 
   /**
    * Whether the platform has the working copy of a project, which is what can be opened. One that
-   * is on its way back from its repository is waited for; one that only its repository has now
-   * takes an editor that knows how to ask for it.
+   * only its repository has now is asked for (`CloudAccess.wake`), and one on its way back from
+   * there is waited for, as people watch: "正在从 GitHub 取回…". Where it cannot come, people hear
+   * why, and what helps: to try again once it is time, or, where what the repository has kept it
+   * from coming, to take the branch as it is once they put that right on GitHub.
    */
   async #whenLive(project: string, about: CloudProjectAbout): Promise<boolean> {
     const { cloud, dialogs, notifications, t } = this.#options;
-    const copy = about.copy ?? "live";
+    let copy = about.copy ?? "live";
     if (copy === "live") return true;
-    if (copy !== "restoring") {
-      notifications.push(t("cloud.open.notLive"));
-      return false;
+    const name = about.name ?? "";
+    const environment = this.#options.environment ?? pageEnvironment();
+    for (let asked = 0; asked < 10; asked++) {
+      if (copy === "released") {
+        const woke = await this.#wake(project, false);
+        if (woke === undefined) return false;
+        if (woke.copy === "released") {
+          const again = await this.#notWoken(name, woke);
+          if (again === undefined) return false;
+          const retried = await this.#wake(project, again === "fromBranch");
+          if (retried === undefined) return false;
+          if (retried.copy === "released") {
+            await this.#notWoken(name, retried, { once: true });
+            return false;
+          }
+          copy = retried.copy;
+        } else copy = woke.copy;
+        if (copy === "live") return true;
+      }
+      if (copy !== "restoring") {
+        notifications.push(t("cloud.open.notLive"));
+        return false;
+      }
+      const progress = dialogs.progress({
+        title: t("cloud.open.restoring"),
+        cancel: t("dialog.cancel"),
+        stopping: t("transfer.stopping"),
+      });
+      const until = environment.now() + RESTORE_WAIT_MS;
+      let found: CloudProjectSummary | "gone" | undefined;
+      try {
+        for (;;) {
+          await new Promise<void>((resolve) => {
+            const timer = environment.setTimeout(resolve, RESTORE_POLL_MS);
+            progress.signal.addEventListener(
+              "abort",
+              () => {
+                environment.clearTimeout(timer);
+                resolve();
+              },
+              { once: true },
+            );
+          });
+          if (progress.signal.aborted) return false;
+          found = await cloud.list().then(
+            (list) => list.find((each) => each.id === project) ?? "gone",
+            () => undefined,
+          );
+          if (progress.signal.aborted) return false;
+          if (found === "gone") {
+            notifications.push(t("cloud.open.gone"));
+            return false;
+          }
+          const now = found?.copy ?? (found ? "live" : "restoring");
+          if (now === "live") return true;
+          if (now !== "restoring") {
+            copy = now;
+            break;
+          }
+          if (environment.now() >= until) {
+            notifications.push(t("cloud.open.restoringLong"));
+            return false;
+          }
+        }
+      } finally {
+        progress.close();
+      }
+      // It went back to "released": making it failed, and the list says why.
+      if (copy === "released" && typeof found === "object" && found.copyProblem) {
+        const again = await this.#notWoken(name, {
+          copy: "released",
+          refused: "busy",
+          copyProblem: found.copyProblem,
+        });
+        if (again === undefined) return false;
+        const retried = await this.#wake(project, again === "fromBranch");
+        if (retried === undefined) return false;
+        if (retried.copy === "released") {
+          await this.#notWoken(name, retried, { once: true });
+          return false;
+        }
+        copy = retried.copy;
+        if (copy === "live") return true;
+      }
     }
+    return false;
+  }
+
+  /**
+   * "从这个仓库恢复成云端项目": a repository of the person's that has a project at its top, which
+   * connecting turns away, becomes a new project of the platform, made from the last commit of its
+   * branch, see `RepositoryAccess.restore`; then it opens, in this browser only, as one that is
+   * opened from the list. People say yes first, and watch it come ("正在从 GitHub 取回…"); where it
+   * cannot, they hear why. `other`: a project is open that this does not change, and they are told
+   * so. Resolves to whether it opened.
+   */
+  async restoreFromRepository(
+    repository: { readonly id: number; readonly fullName: string; readonly public?: boolean },
+    { other = false }: { readonly other?: boolean } = {},
+  ): Promise<boolean> {
+    const { cloud, dialogs, notifications, t } = this.#options;
+    const access = cloud.repository;
+    if (!access?.restore) return false;
+    const plain = { interpolation: { escapeValue: false } } as const;
+    const words = { repository: repository.fullName, ...plain };
+    const go = await dialogs.confirm({
+      title: t("cloud.restore.confirmTitle", words),
+      message: [
+        t("cloud.restore.confirmMessage"),
+        ...(other ? [t("cloud.restore.confirmMessageOther")] : []),
+        ...(repository.public ? [t("cloud.restore.publicNote")] : []),
+      ].join(""),
+      confirm: t("cloud.restore.confirm"),
+    });
+    if (!go) return false;
+    if (!(await this.#signedIn(t("cloud.openTitle")))) return false;
     const environment = this.#options.environment ?? pageEnvironment();
     const progress = dialogs.progress({
-      title: t("cloud.open.restoring"),
+      title: t("cloud.restore.running"),
       cancel: t("dialog.cancel"),
       stopping: t("transfer.stopping"),
     });
-    const until = environment.now() + RESTORE_WAIT_MS;
+    let made: { readonly id: string; readonly name: string } | undefined;
+    let failure: string | undefined;
     try {
-      for (;;) {
-        await new Promise<void>((resolve) => {
-          const timer = environment.setTimeout(resolve, RESTORE_POLL_MS);
-          progress.signal.addEventListener(
-            "abort",
-            () => {
-              environment.clearTimeout(timer);
-              resolve();
-            },
-            { once: true },
+      const restored = await access.restore({
+        existing: { id: repository.id },
+        ...(repository.public && { confirmPublic: true }),
+      });
+      made = restored.project;
+      if (restored.copy !== "live") {
+        // It takes longer: the list says once it is there, or that it could not be.
+        const until = environment.now() + RESTORE_WAIT_MS;
+        for (;;) {
+          await this.#pause(RESTORE_POLL_MS, progress.signal).catch(() => {});
+          if (progress.signal.aborted) {
+            notifications.push(t("cloud.restore.long"));
+            return false;
+          }
+          const found = await cloud.list().then(
+            (list) => list.find((each) => each.id === restored.project.id) ?? "gone",
+            () => undefined,
           );
-        });
-        if (progress.signal.aborted) return false;
-        const found = await cloud.list().then(
-          (list) => list.find((each) => each.id === project) ?? "gone",
-          () => undefined,
-        );
-        if (progress.signal.aborted) return false;
-        if (found === "gone") {
-          notifications.push(t("cloud.open.gone"));
-          return false;
+          if (found === "gone") {
+            failure = t("cloud.restore.gone");
+            break;
+          }
+          const copy = found?.copy ?? (found ? "live" : "restoring");
+          if (copy === "live") break;
+          if (copy === "released" && found && typeof found === "object") {
+            failure = found.copyProblem
+              ? copyProblemText(found.copyProblem, t)
+              : t("cloud.restore.gone");
+            break;
+          }
+          if (environment.now() >= until) {
+            notifications.push(t("cloud.restore.long"));
+            return false;
+          }
         }
-        const now = found?.copy ?? (found ? "live" : "restoring");
-        if (now === "live") return true;
-        if (now !== "restoring") {
-          notifications.push(t("cloud.open.notLive"));
-          return false;
-        }
-        if (environment.now() >= until) {
-          notifications.push(t("cloud.open.restoringLong"));
-          return false;
-        }
+      }
+    } catch (error) {
+      if (error instanceof CloudSignedOut) failure = t("cloud.restore.failure.signedOut");
+      else if (error instanceof RepositoryRefused) failure = restoreRefusalText(error, t);
+      else {
+        console.warn("A repository could not be restored as a project of the platform", error);
+        failure = t("cloud.restore.failure.unavailable");
       }
     } finally {
       progress.close();
     }
+    if (failure !== undefined || !made) {
+      await dialogs.confirm({
+        title: t("cloud.restore.failedTitle", words),
+        message: failure ?? t("cloud.restore.gone"),
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+      return false;
+    }
+    return this.openCloudProject(made.id, { name: made.name, copy: "live" });
+  }
+
+  /** Asks the platform for the working copy of a project, see `CloudAccess.wake`. */
+  async #wake(project: string, fromBranch: boolean): Promise<CloudWake | undefined> {
+    const { cloud, notifications, t } = this.#options;
+    if (!cloud.wake) {
+      notifications.push(t("cloud.open.notLive"));
+      return undefined;
+    }
+    try {
+      const woke = await cloud.wake(project, fromBranch ? { fromBranch: true } : {});
+      if (woke.copy === "missing") {
+        notifications.push(t("cloud.wake.missing"));
+        return undefined;
+      }
+      return woke;
+    } catch (error) {
+      console.warn("The platform could not be asked for the working copy of a project", error);
+      notifications.push(
+        t(
+          error instanceof CloudSignedOut
+            ? "cloud.restore.failure.signedOut"
+            : "cloud.wake.unavailable",
+        ),
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Says why the working copy of a project could not come, and what helps: "retry" once it may be
+   * tried again; "fromBranch" where what the repository had kept it from coming. Resolves to what
+   * people chose, or undefined. `once`: only says it, as after trying again.
+   */
+  async #notWoken(
+    name: string,
+    woke: Extract<CloudWake, { copy: "released" }>,
+    { once = false } = {},
+  ): Promise<"retry" | "fromBranch" | undefined> {
+    const { dialogs, t } = this.#options;
+    const environment = this.#options.environment ?? pageEnvironment();
+    const plain = { interpolation: { escapeValue: false } } as const;
+    const problem = woke.copyProblem;
+    const why = problem ? copyProblemText(problem, t) : undefined;
+    const lines: string[] = [];
+    if (woke.refused === "noRepository") lines.push(t("cloud.wake.noRepository"));
+    else if (woke.refused === "unusable") lines.push(t("cloud.wake.unusable"));
+    else if (woke.refused === "notAllowed") lines.push(t("cloud.wake.notAllowed"));
+    else if (why) lines.push(t("cloud.wake.busy", { why, ...plain }));
+    const mends = problem !== undefined && BRANCH_MENDS.has(problem.code);
+    const retryAt =
+      problem?.retryAt ??
+      (woke.retryAfter !== undefined ? environment.now() + woke.retryAfter * 1000 : undefined);
+    const canRetry =
+      woke.refused === "busy" && (retryAt === undefined || retryAt <= environment.now());
+    if (woke.refused === "busy" && !canRetry && retryAt !== undefined) {
+      lines.push(
+        t("cloud.wake.retryAt", {
+          count: Math.max(1, Math.ceil((retryAt - environment.now()) / 60_000)),
+        }),
+      );
+    }
+    if (mends) lines.push(t("cloud.wake.fixed"), t("cloud.wake.fromGitHubNote"));
+    const choices = once
+      ? []
+      : [
+          ...(canRetry ? [{ id: "retry", label: t("cloud.wake.retry") }] : []),
+          ...(mends
+            ? [{ id: "fromBranch", label: t("cloud.wake.fromGitHub"), kind: "primary" as const }]
+            : []),
+        ];
+    const title = t("cloud.wake.failedTitle", { name, ...plain });
+    if (choices.length === 0) {
+      await dialogs.confirm({
+        title,
+        message: lines.join(""),
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+      return undefined;
+    }
+    const answer = await dialogs.choose({ title, message: lines.join(""), choices });
+    return answer === "retry" || answer === "fromBranch" ? answer : undefined;
   }
 
   /** All of a project from the platform, with people watching, who can stop it. */

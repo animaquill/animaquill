@@ -1,5 +1,6 @@
 import {
   RepositoryRefused,
+  type RepositoryRestored,
   type RepositoryAccess,
   type RepositoryCheck,
   type RepositoryChoice,
@@ -52,6 +53,36 @@ export class FakeRepositories implements RepositoryAccess {
    * repository has it, see `MemoryPlatform.archivedSeq`.
    */
   followsPlatform = false;
+  /** What repositories have at their top, by their id, for `restore`: the files of a project. */
+  readonly contents = new Map<number, Map<string, string>>();
+  /** What `restore` is refused with, once. */
+  refuseRestore: RepositoryRefused | undefined;
+  /** `restore` answers before the project is there ("restoring"), which the list says later. */
+  restoreSlowly = false;
+
+  async restore(choice: {
+    readonly existing: { readonly id: number };
+    readonly confirmPublic?: boolean;
+  }): Promise<RepositoryRestored> {
+    this.calls.push(`restore ${choice.existing.id}`);
+    const refused = this.refuseRestore;
+    this.refuseRestore = undefined;
+    if (refused) throw refused;
+    const files = this.contents.get(choice.existing.id);
+    const chosen = this.repositories.find((each) => each.id === choice.existing.id);
+    if (!chosen) throw new RepositoryRefused("notFound");
+    if (!files) throw new RepositoryRefused("noProject");
+    if (!this.platform) throw new RepositoryRefused("unavailable");
+    const owner = [...this.platform.projects.values()][0]?.owner ?? "ada";
+    const project = this.platform.restoreProject(owner, chosen, files);
+    if (this.restoreSlowly) {
+      const made = this.platform.projects.get(project.id);
+      if (made) made.copy = "restoring";
+      return { project, copy: "restoring" };
+    }
+    return { project, copy: "live" };
+  }
+
   /** What the platform has of a project now, where it is one of its own. */
   #headOf(project: string): number {
     return this.platform?.projects.get(project)?.head ?? this.answer.head;
@@ -138,10 +169,17 @@ export class FakeRepositories implements RepositoryAccess {
     this.#once("status");
     if (this.followsPlatform && this.platform?.projects.has(project)) {
       const head = this.#headOf(project);
+      const owner = this.platform.projects.get(project)?.owner ?? "";
+      const { copy, generation, copyProblem, rebuiltFrom } = this.platform.status(owner, project);
+      const { copyProblem: _problem, rebuiltFrom: _from, ...rest } = this.answer;
       this.answer = {
-        ...this.answer,
+        ...rest,
         head,
         archivedSeq: this.platform.archivedSeq.get(project) ?? this.answer.archivedSeq,
+        ...(copy !== undefined && { copy }),
+        ...(generation !== undefined && { generation }),
+        ...(copyProblem && { copyProblem }),
+        ...(rebuiltFrom && { rebuiltFrom }),
       };
     }
     return this.answer;

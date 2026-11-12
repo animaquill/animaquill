@@ -259,6 +259,13 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
                     if (gone) void cloud.openCloudProject(id, { name });
                   }))
               }
+              onRestore={
+                cloud &&
+                ((repository) =>
+                  void giveUp().then((gone) => {
+                    if (gone) void cloud.restoreFromRepository(repository);
+                  }))
+              }
             />
           </fieldset>
         )}

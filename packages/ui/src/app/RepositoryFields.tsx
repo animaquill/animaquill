@@ -17,6 +17,7 @@ export function RepositoryFields({
   disabled = false,
   nameInput,
   onOpenProject,
+  onRestore,
 }: {
   readonly picker: RepositoryPicker;
   /**
@@ -31,6 +32,17 @@ export function RepositoryFields({
   /** Opens the project that a repository of the list is saved for already, in place of this one. */
   readonly onOpenProject?:
     ((project: { readonly id: string; readonly name: string }) => void) | undefined;
+  /**
+   * Makes a repository of the list that has a project at its top a project of the platform, in
+   * place of choosing it here, see `CloudProjects.restoreFromRepository`.
+   */
+  readonly onRestore?:
+    | ((repository: {
+        readonly id: number;
+        readonly fullName: string;
+        readonly public: boolean;
+      }) => void)
+    | undefined;
 }) {
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(picker.subscribe, picker.getSnapshot);
@@ -170,6 +182,23 @@ export function RepositoryFields({
                       onClick={() => onOpenProject(itsProject)}
                     >
                       {t("repository.openLinked")}
+                    </button>
+                  )}
+                  {reason === "hasProject" && onRestore && (
+                    <button
+                      type="button"
+                      className={styles.openLinked}
+                      disabled={isBusy}
+                      data-restore={each.fullName}
+                      onClick={() =>
+                        onRestore({
+                          id: each.id,
+                          fullName: each.fullName,
+                          public: picker.isPublic(each),
+                        })
+                      }
+                    >
+                      {t("repository.restore")}
                     </button>
                   )}
                 </div>

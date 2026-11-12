@@ -101,7 +101,21 @@ interface ProjectRecord extends ProjectSummary {
    * was added have none, and go on working: nothing else can be without one.
    */
   readonly instance?: string;
+  /**
+   * Which log of the project this is, once it started anew (`ProjectLibrary.renew`): windows of the
+   * log before neither write to this one nor hear from it. What windows keep of the project goes
+   * by `instance`, which stays. Projects whose log never started anew have none.
+   */
+  readonly log?: string;
+  /** What `renew` kept of the log before, by name, see `backupKey`. */
+  readonly backups?: readonly string[];
 }
+
+/**
+ * The key that the records of a kept log go by, see `ProjectLibrary.renew`: nothing that reads the
+ * log of a project by its id finds them.
+ */
+const backupKey = (id: string, backup: string) => `${id}\u0000backup\u0000${backup}`;
 
 const newInstance = () => crypto.getRandomValues(new Uint32Array(4)).join("-");
 
@@ -190,20 +204,47 @@ function openLog(
   database: () => Promise<IDBDatabase>,
   id: string,
   instance: string | undefined,
+  log: string | undefined,
 ): ProjectLog {
-  // Windows on another project with this id have nothing to say to this one.
-  const channel = channelFor(instance === undefined ? id : `${id}.${instance}`);
-  const isOurs = (record: ProjectRecord | undefined) => isInstance(record, instance);
+  // Windows on another project with this id, or on its log before it started anew, have nothing
+  // to say to this one.
+  const channel = channelFor(
+    [id, ...(instance === undefined ? [] : [instance]), ...(log === undefined ? [] : [log])].join(
+      ".",
+    ),
+  );
+  const isOurs = (record: ProjectRecord | undefined) =>
+    isInstance(record, instance) && record?.log === log;
+  /**
+   * Rejects where the log of this project started anew since this one opened: what it has now is
+   * another document, which a window of the log before must not take for more of its own.
+   */
+  const refuseRenewed = async (transaction: IDBTransaction) => {
+    const record = await resultOf<ProjectRecord | undefined>(
+      transaction.objectStore(PROJECTS).get(id),
+    );
+    if (record && isInstance(record, instance) && record.log !== log)
+      throw new Error("The log of the project started anew");
+  };
 
   return {
+    async isCurrent() {
+      const transaction = (await database()).transaction(PROJECTS);
+      const record = await resultOf<ProjectRecord | undefined>(
+        transaction.objectStore(PROJECTS).get(id),
+      );
+      return record !== undefined && !record.incoming && isOurs(record);
+    },
     async load() {
-      const transaction = (await database()).transaction(UPDATES);
+      const transaction = (await database()).transaction([UPDATES, PROJECTS]);
+      await refuseRenewed(transaction);
       const index = transaction.objectStore(UPDATES).index(BY_PROJECT);
       const records = await resultOf<UpdateRecord[]>(index.getAll(id));
       return records.map((record) => record.update);
     },
     async entries(after = 0) {
-      const transaction = (await database()).transaction(UPDATES);
+      const transaction = (await database()).transaction([UPDATES, PROJECTS]);
+      await refuseRenewed(transaction);
       const index = transaction.objectStore(UPDATES).index(BY_PROJECT);
       // The index has the records of a project in the order they came in: from the first one after
       // the mark on, and nothing of other projects.
@@ -372,7 +413,14 @@ function openMedia(database: () => Promise<IDBDatabase>, project: string): Media
 
 /** Removes all there is of a project, as part of a transaction on all stores. */
 function removeFrom(transaction: IDBTransaction, id: string): void {
-  transaction.objectStore(PROJECTS).delete(id);
+  const projects = transaction.objectStore(PROJECTS);
+  // What its log kept of before goes with it.
+  const read = projects.get(id);
+  read.addEventListener("success", () => {
+    const record = read.result as ProjectRecord | undefined;
+    for (const backup of record?.backups ?? []) deleteLog(transaction, backupKey(id, backup));
+    projects.delete(id);
+  });
   for (const name of [UPDATES, MEDIA]) {
     const store = transaction.objectStore(name);
     const keys = store.index(BY_PROJECT).getAllKeys(id);
@@ -380,6 +428,29 @@ function removeFrom(transaction: IDBTransaction, id: string): void {
       for (const key of keys.result) store.delete(key);
     });
   }
+}
+
+/** Takes away the records of a log by the key they go by, as part of a transaction. */
+function deleteLog(transaction: IDBTransaction, key: string): void {
+  const updates = transaction.objectStore(UPDATES);
+  const keys = updates.index(BY_PROJECT).getAllKeys(key);
+  keys.addEventListener("success", () => {
+    for (const each of keys.result) updates.delete(each);
+  });
+}
+
+/**
+ * Moves the records of a log from one key to another, as part of a transaction: they keep where they
+ * are in it (`seq`), and so their order.
+ */
+function moveLog(transaction: IDBTransaction, from: string, to: string): void {
+  const updates = transaction.objectStore(UPDATES);
+  const read = updates.index(BY_PROJECT).getAll(from);
+  read.addEventListener("success", () => {
+    for (const record of read.result as UpdateRecord[]) {
+      updates.put({ ...record, project: to } satisfies UpdateRecord);
+    }
+  });
 }
 
 /**
@@ -534,7 +605,7 @@ function createLibrary(
       const transaction = (await database()).transaction(PROJECTS);
       const request = transaction.objectStore(PROJECTS).get(id);
       const record = await resultOf<ProjectRecord | undefined>(request);
-      return openLog(database, id, record?.instance);
+      return openLog(database, id, record?.instance, record?.log);
     },
     media: (id) => openMedia(database, id),
     async remove(id, { folder = false } = {}) {
@@ -582,6 +653,93 @@ function createLibrary(
       return records.flatMap(({ hash, file }) =>
         isMadeFile(hash) ? [] : [{ name: hash, size: file.size }],
       );
+    },
+    async renew(id, entries, backup) {
+      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
+        durability: "strict",
+      });
+      const projects = transaction.objectStore(PROJECTS);
+      const read = projects.get(id);
+      let refused: string | undefined;
+      read.addEventListener("success", () => {
+        const record = read.result as ProjectRecord | undefined;
+        if (!record || record.incoming) refused = `No project ${id} to start anew`;
+        else if (record.backups?.includes(backup)) refused = `A backup ${backup} is there already`;
+        if (!record || refused !== undefined) {
+          transaction.abort();
+          return;
+        }
+        // What the log had goes out of its way first: the new entries come after it.
+        moveLog(transaction, id, backupKey(id, backup));
+        const updates = transaction.objectStore(UPDATES);
+        for (const { update, source } of entries) {
+          updates.add({ project: id, update, ...(source && { source }) } satisfies UpdateRecord);
+        }
+        projects.put({
+          ...record,
+          updatedAt: Date.now(),
+          log: newInstance(),
+          backups: [...(record.backups ?? []), backup],
+        } satisfies ProjectRecord);
+      });
+      await committed(transaction).catch((error: unknown) => {
+        throw new Error(refused ?? "The log could not start anew", { cause: error });
+      });
+    },
+    async backups(id) {
+      const transaction = (await database()).transaction(PROJECTS);
+      const record = await resultOf<ProjectRecord | undefined>(
+        transaction.objectStore(PROJECTS).get(id),
+      );
+      return record?.incoming ? [] : [...(record?.backups ?? [])];
+    },
+    async restoreBackup(id, backup) {
+      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
+        durability: "strict",
+      });
+      const projects = transaction.objectStore(PROJECTS);
+      const read = projects.get(id);
+      let isThere = false;
+      read.addEventListener("success", () => {
+        const record = read.result as ProjectRecord | undefined;
+        if (!record || record.incoming || !record.backups?.includes(backup)) {
+          transaction.abort();
+          return;
+        }
+        isThere = true;
+        // What the log has now goes, and what it had comes back, in its order.
+        deleteLog(transaction, id);
+        moveLog(transaction, backupKey(id, backup), id);
+        projects.put({
+          ...record,
+          updatedAt: Date.now(),
+          log: newInstance(),
+          backups: record.backups.filter((name) => name !== backup),
+        } satisfies ProjectRecord);
+      });
+      await committed(transaction).catch((error: unknown) => {
+        throw new Error(
+          isThere ? "The log could not be put back" : `No backup ${backup} of ${id}`,
+          {
+            cause: error,
+          },
+        );
+      });
+    },
+    async dropBackup(id, backup) {
+      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
+      const projects = transaction.objectStore(PROJECTS);
+      const read = projects.get(id);
+      read.addEventListener("success", () => {
+        const record = read.result as ProjectRecord | undefined;
+        if (!record?.backups?.includes(backup)) return;
+        deleteLog(transaction, backupKey(id, backup));
+        projects.put({
+          ...record,
+          backups: record.backups.filter((name) => name !== backup),
+        } satisfies ProjectRecord);
+      });
+      await committed(transaction);
     },
     async dropCopies(id, names) {
       const transaction = (await database()).transaction([PROJECTS, MEDIA], "readwrite");

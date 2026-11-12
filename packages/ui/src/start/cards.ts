@@ -363,7 +363,9 @@ export function cardStatus(
     };
   }
   const { row } = source;
-  const trouble = cloudTrouble(row.mark, row, t);
+  const trouble =
+    cloudTrouble(row.mark, row, t) ??
+    (row.copyFailed === true ? t("start.status.restoreFailed") : undefined);
   const place =
     row.key !== undefined
       ? t("start.status.onlyBrowser")

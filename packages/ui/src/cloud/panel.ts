@@ -1,7 +1,9 @@
-import type { RepositoryStatus, RepositoryUnusable } from "@animaquill/host";
+import type { CloudCopyProblem, RepositoryStatus, RepositoryUnusable } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import type { CloudProjectsSnapshot } from "./projects.ts";
 import {
+  BRANCH_MENDS,
+  copyProblemText,
   goneKind,
   keptText,
   knownPause,
@@ -84,6 +86,10 @@ export type PanelActionId =
   | "reload"
   /** Tries syncing again, see `CloudSession.resume`. */
   | "retry"
+  /** Tries again to take what this computer has onto the copy the platform made again. */
+  | "takeBack"
+  /** Has the platform make the project again from its branch as it is, see `wakeFromBranch`. */
+  | "wakeAsItIs"
   | "resolveStuck"
   /** Moves a project that is only in this browser into a folder, see `FolderMove`. */
   | "moveToFolder"
@@ -175,6 +181,16 @@ export interface PanelInput {
   readonly unusable?: RepositoryUnusable;
   /** For "linked": whoever is signed in can take it away on the platform, see `CloudProjects`. */
   readonly canDelete?: boolean;
+  /**
+   * For "linked": how taking it back onto the copy the platform made again goes, see
+   * `CloudProjects.takeBack`.
+   */
+  readonly takeBack?: "running" | "stopped";
+  /**
+   * For "linked": why the platform could not make the project again from its repository lately,
+   * while the window waits for it to try again, see `CloudProjects.copyProblem`.
+   */
+  readonly copyProblem?: CloudCopyProblem;
   /** Milliseconds since 1970. */
   readonly now: number;
 }
@@ -184,7 +200,15 @@ export function panelInputOf(
   snapshot: CloudProjectsSnapshot,
   more: Pick<
     PanelInput,
-    "name" | "canMoveToFolder" | "now" | "persisted" | "clearsWhenIdle" | "unusable" | "canDelete"
+    | "name"
+    | "canMoveToFolder"
+    | "now"
+    | "persisted"
+    | "clearsWhenIdle"
+    | "unusable"
+    | "canDelete"
+    | "takeBack"
+    | "copyProblem"
   >,
 ): PanelInput {
   if (snapshot.kind === "none")
@@ -227,8 +251,10 @@ const syncActions = (problem: CloudProblem | undefined): readonly PanelActionId[
     case "signed-out":
       return ["signIn"];
     case "outdated":
-    case "rebuilt":
       return ["reload"];
+    // Taking it back goes by itself: only once it stopped do people try again.
+    case "rebuilt":
+      return [];
     case "rejected":
     case "diverged":
     case "missing":
@@ -469,25 +495,39 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   }
 
   // ---- syncing
+  const takeBack = problem?.kind === "rebuilt" ? input.takeBack : undefined;
+  // The platform could not make it again lately, and tries again later.
+  const notMade =
+    !isStuck && input.sync.restoring === "released" && state !== "online"
+      ? input.copyProblem
+      : undefined;
   const syncText = isStuck
     ? problem
       ? problem.kind === "rejected"
         ? t("cloud.problem.rejected", { reason: t(`cloud.reason.${problem.reason}`), ...plain })
-        : t(`cloud.problem.${problem.kind}`)
+        : takeBack === "running"
+          ? t("cloud.takeBack.waiting")
+          : takeBack === "stopped"
+            ? t("cloud.takeBack.cancelled")
+            : t(`cloud.problem.${problem.kind}`)
       : t("cloud.status.paused")
-    : state === "online"
-      ? pending > 0
-        ? t("cloud.panel.sync.onlinePending", { count: pending })
-        : t("cloud.panel.sync.online")
-      : state === "offline"
-        ? pending > 0
-          ? t("cloud.panel.sync.offlinePending", { count: pending })
-          : t("cloud.panel.sync.offline")
-        : state === "reconnecting"
-          ? retryAt === undefined
-            ? t("cloud.panel.sync.reconnecting")
-            : t("cloud.panel.sync.reconnectingAt", { time: momentText(retryAt, now, t) })
-          : t("cloud.panel.sync.connecting");
+    : notMade
+      ? t("cloud.wake.busy", { why: copyProblemText(notMade, t), ...plain })
+      : input.sync.restoring !== undefined && state !== "online"
+        ? t("cloud.open.restoring")
+        : state === "online"
+          ? pending > 0
+            ? t("cloud.panel.sync.onlinePending", { count: pending })
+            : t("cloud.panel.sync.online")
+          : state === "offline"
+            ? pending > 0
+              ? t("cloud.panel.sync.offlinePending", { count: pending })
+              : t("cloud.panel.sync.offline")
+            : state === "reconnecting"
+              ? retryAt === undefined
+                ? t("cloud.panel.sync.reconnecting")
+                : t("cloud.panel.sync.reconnectingAt", { time: momentText(retryAt, now, t) })
+              : t("cloud.panel.sync.connecting");
   rows.push(
     row("sync", syncText, {
       notes: [
@@ -495,8 +535,20 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
           ? [t("cloud.panel.sync.pending", { count: pending })]
           : []),
         ...(here || isStuck ? [] : [t("cloud.panel.sync.elsewhere")]),
+        ...(notMade
+          ? BRANCH_MENDS.has(notMade.code)
+            ? [t("cloud.wake.fixed"), t("cloud.wake.fromGitHubNote")]
+            : [t("cloud.wake.later")]
+          : []),
       ],
-      ...(isStuck && { tone: "attention" as const, actions: actions(syncActions(problem)) }),
+      ...(isStuck && {
+        tone: "attention" as const,
+        actions: actions(takeBack === "stopped" ? ["takeBack"] : syncActions(problem)),
+      }),
+      ...(notMade && {
+        tone: "attention" as const,
+        actions: actions(BRANCH_MENDS.has(notMade.code) ? ["wakeAsItIs"] : []),
+      }),
     }),
   );
 

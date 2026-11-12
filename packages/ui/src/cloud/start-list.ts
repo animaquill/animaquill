@@ -128,6 +128,11 @@ export interface CloudRow {
   /** See `CloudProjectSummary.copy`: only a "live" one can be opened from the platform. */
   readonly copy: string;
   /**
+   * The platform could not make its working copy from the repository the last time it tried, see
+   * `CloudProjectSummary.copyProblem`: why is said once people open it.
+   */
+  readonly copyFailed?: boolean;
+  /**
    * It can be taken away on the platform, see `CloudAccess.remove`: the platform's list of whoever
    * is signed in has it, so it is theirs.
    */
@@ -333,6 +338,7 @@ export function composeStartList(input: StartInput): StartLists {
         listed: true,
         needsSignIn: false,
         copy: summary.copy ?? "live",
+        ...(summary.copy === "released" && summary.copyProblem && { copyFailed: true }),
         deletable: input.canDelete,
         owner: account ?? copy?.link.owner,
         behind: isBehind(summary),

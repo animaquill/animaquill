@@ -3061,7 +3061,8 @@
       "pending": "有改动还没同步",
       "inBrowser": "在这个浏览器里",
       "githubPending": "待同步",
-      "githubFailed": "GitHub 同步失败"
+      "githubFailed": "GitHub 同步失败",
+      "restoreFailed": "上次从 GitHub 取回没成功"
     },
     "place": {
       "local": "本地 · {{folder}}",
@@ -3242,7 +3243,7 @@
       "outdated": "编辑器比平台旧，刷新页面后继续同步。改动都留在本机。",
       "missing": "云端找不到这个项目，或者它不是你的。改动都留在本机。",
       "diverged": "本机和云端的内容对不上，同步已暂停。改动都留在本机。",
-      "rebuilt": "云端的这个项目已经从仓库重新取回，这个浏览器里的这一份接不上了，同步已暂停。改动都留在本机。请刷新页面更新编辑器后再处理。",
+      "rebuilt": "云端的这个项目已经从 GitHub 重新取回，这台电脑上的改动要先接回去。接回之前只能看、不能改。",
       "unsupported": "这个浏览器存不了同步需要的记录，不能同步。",
       "unlinked": "这个项目在另一个窗口断开了云端连接。",
       "deleted": "这个云端项目已经在平台上删除了。改动都留在本机。",
@@ -3268,9 +3269,9 @@
     "open": {
       "failed": "读不出这个浏览器里的记录，没能打开云端的项目，请稍后再试。",
       "busy": "这个云端项目正在另一个窗口里打开，稍等一下再试。",
-      "notLive": "这个云端项目要先从仓库取回，这一版编辑器还做不了。请刷新页面后再试。",
-      "restoring": "正在从仓库取回项目…",
-      "restoringLong": "从仓库取回项目花的时间比预期长，请稍后再打开。",
+      "notLive": "这个云端项目现在没法从 GitHub 取回，请稍后再试。",
+      "restoring": "正在从 GitHub 取回…",
+      "restoringLong": "从 GitHub 取回花的时间比预期长，好了以后再打开。",
       "gone": "云端的列表里已经没有这个项目了。"
     },
     "link": {
@@ -3524,7 +3525,9 @@
         "reinstall": "去 GitHub 重新安装…",
         "restoreApp": "去 GitHub 恢复…",
         "saveAsLocal": "另存为本地项目…",
-        "deleteCloud": "删除云端项目…"
+        "deleteCloud": "删除云端项目…",
+        "takeBack": "接回",
+        "wakeAsItIs": "我已在 GitHub 上修好，按现在的样子取回"
       }
     },
     "onlyHere": {
@@ -3580,7 +3583,97 @@
     "copy": {
       "released": "平台上已经没有这个项目的内容可取了。"
     },
-    "saveAsLocalAction": "另存为本地项目…"
+    "saveAsLocalAction": "另存为本地项目…",
+    "wake": {
+      "failedTitle": "没能从 GitHub 取回“{{name}}”",
+      "noRepository": "这个项目没有仓库，平台上的内容已经没了，没法取回。",
+      "unusable": "仓库用不了，没法从 GitHub 取回。",
+      "missing": "云端的列表里已经没有这个项目了。",
+      "unavailable": "现在连不上平台，请稍后再试。",
+      "busy": "上次取回没成功：{{why}}",
+      "retryAt": "{{count}} 分钟后可以再试。",
+      "later": "平台过一会儿会自动再试，改动都留在本机。",
+      "fixed": "在 GitHub 上修好以后，可以按 GitHub 上现在的样子取回。",
+      "retry": "再试一次",
+      "notAllowed": "上次取回不是因为仓库里的内容失败的，不能按 GitHub 上现在的样子取回。",
+      "fromGitHub": "我已在 GitHub 上修好，按现在的样子取回",
+      "fromGitHubNote": "按 GitHub 上现在的样子取回时，分不清这台电脑上哪些是新改的，两边不一样的文件会让你逐个选。"
+    },
+    "copyProblem": {
+      "unreadable": "GitHub 仓库里有读不懂的文件：{{files}}",
+      "notProject": "GitHub 仓库的根目录里没有 AnimaQuill 项目",
+      "tooLarge": "仓库里的项目太大，超过了云端项目的上限",
+      "tooNew": "仓库里的项目是更新的编辑器做的，刷新页面更新编辑器后再试",
+      "identity": "仓库里现在是另一个项目",
+      "quota": "你的云端项目数量或空间已经满了",
+      "unusable": "仓库用不了",
+      "unavailable": "GitHub 或平台暂时出了问题",
+      "other": "出了问题（{{code}}）"
+    },
+    "restore": {
+      "confirmTitle": "从仓库 {{repository}} 恢复成云端项目？",
+      "confirmMessage": "会按这个仓库现在的样子建一个新的云端项目，以后照常存回这个仓库。恢复出来的项目先只在浏览器里，以后可以再关联文件夹。",
+      "confirmMessageOther": "当前的项目不会变，恢复好以后会打开恢复出来的那个。",
+      "confirm": "恢复",
+      "running": "正在从 GitHub 取回…",
+      "long": "恢复花的时间比预期长，好了以后会出现在“云端项目”里。",
+      "gone": "从仓库恢复没有成功，什么都没留下，可以再试一次。",
+      "failedTitle": "没能从仓库 {{repository}} 恢复",
+      "failure": {
+        "noProject": "仓库的根目录里没有 AnimaQuill 项目。",
+        "unreadable": "仓库里有读不懂的文件：{{files}}。在 GitHub 上修好以后再试。",
+        "tooLarge": "仓库里的项目太大，超过了云端项目的上限。",
+        "tooNew": "仓库里的项目是更新的编辑器做的。刷新页面更新编辑器后再试。",
+        "quota": "你的云端项目数量或空间已经满了。",
+        "linkedElsewhere": "这个仓库已经是你另一个云端项目的了。",
+        "linkedProject": "这个仓库已经是你的云端项目“{{name}}”的了。",
+        "public": "这是公开仓库，要先确认。",
+        "notFound": "找不到这个仓库，可能已经删了或不在授权范围里。",
+        "notInstalled": "GitHub App 没装在这个仓库所在的账号上。",
+        "unavailable": "GitHub 或平台暂时出了问题，什么都没留下，可以再试一次。",
+        "busy": "操作太频繁，稍后再试。",
+        "signedOut": "登录已过期，请先登录。",
+        "other": "平台没有恢复（{{code}}）。",
+        "cannotWrite": "你不能往这个仓库里写。"
+      },
+      "publicNote": "这是公开仓库，所有人都能看到里面的内容。"
+    },
+    "takeBack": {
+      "title": "接回“{{name}}”",
+      "message": "云端的这个项目已经从 GitHub 重新取回。这台电脑上还有没进 GitHub 的改动，下面 {{count}} 个文件云端也改了同一处，请选用哪一边：",
+      "messageNoBase": "云端的这个项目已经从 GitHub 重新取回，分不清这台电脑上的哪些是新改的。下面 {{count}} 个文件两边不一样，请选用哪一边：",
+      "merged": "另外有 {{count}} 个文件只有这台电脑改过，会自动并回去。",
+      "both": "两边不一样",
+      "newerHere": "这台电脑和云端都改了同一处",
+      "newerCloud": "云端改过",
+      "onlyHere": "只有这台电脑上有",
+      "onlyCloud": "只有云端有",
+      "unreadable": "这台电脑上的这个文件读不出来",
+      "useHere": "用这台电脑的",
+      "useCloud": "用云端的",
+      "keep": "留下",
+      "drop": "删掉",
+      "moveAway": "移走",
+      "allHere": "全部用这台电脑的",
+      "allCloud": "全部用云端的",
+      "noteKept": "文件夹里被换掉的文件会先备份到 .animaquill/recovered/；这台电脑上原来的内容在接回的改动同步到云端之前一直留在这个浏览器里。",
+      "summary": "将换掉云端 {{cloud}} 个文件、这台电脑上 {{here}} 个文件。",
+      "confirm": "接回",
+      "confirmReplacing": "接回（换掉云端 {{count}} 个文件）",
+      "unsettled": "这样选不行：{{problems}}。请换一种选法。",
+      "done": "“{{name}}”已经接回，这台电脑上 {{count}} 个文件的改动并回了云端。",
+      "doneKept": "文件夹里被换掉的文件备份在“{{kept}}”里。",
+      "waiting": "云端已从 GitHub 重新取回这个项目，正在把这台电脑上的改动接回去…",
+      "cancelled": "云端已从 GitHub 重新取回这个项目，这台电脑上的改动还没接回。接回之前这个项目只能看、不能改。",
+      "failedTitle": "“{{name}}”没有接回",
+      "failed": {
+        "unsaved": "有改动还没存进这个浏览器，先没接回，稍后再试。",
+        "unreadable": "这台电脑上的项目有不符合格式的内容，没法接回：{{problems}}",
+        "kept": "文件夹里要被换掉的文件没能先备份，没有接回。请检查文件夹能不能写，再试一次。",
+        "library": "这个浏览器没能保存接回的结果，什么都没有改，稍后再试。",
+        "gone": "这个项目和云端的关联已经没了。"
+      }
+    }
   },
   "repository": {
     "switchTitle": "换一个仓库",
@@ -3621,7 +3714,7 @@
       "hasProject": "根目录已经有项目的文件：{{files}}",
       "notFound": "找不到了，可能已删除或不在授权范围里",
       "linkedProject": "已经是云端项目“{{name}}”的仓库",
-      "restoreLater": "以后可以从这个仓库恢复成云端项目"
+      "restoreLater": "可以从这个仓库恢复成一个新的云端项目"
     },
     "openLinked": "打开那个项目",
     "keepsFiles": "这个仓库里已有的其他文件不会动。",
@@ -3683,7 +3776,8 @@
     "replaceRestored": "会写回去的文件（GitHub 上删掉了，项目里还有）",
     "replaceChanged": "GitHub 上的文件又变了，请再看一下再决定。",
     "archiveFailed": "没能开始存档：{{reason}}",
-    "archiveWait": "1 分钟内只能存一次档，{{count}} 秒后自动存。"
+    "archiveWait": "1 分钟内只能存一次档，{{count}} 秒后自动存。",
+    "restore": "从这个仓库恢复"
   },
   "storage": {
     "download": {

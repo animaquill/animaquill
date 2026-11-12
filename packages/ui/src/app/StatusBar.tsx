@@ -413,12 +413,23 @@ const storedOf = (workbench: {
 const noCloud = () => NO_CLOUD;
 /** Whether the open project can be edited and taken away, for the panel, see `PanelInput`. */
 const cloudOf = (workbench: {
-  cloud: { unusable: PanelInput["unusable"]; canDelete: boolean } | undefined;
+  cloud:
+    | {
+        unusable: PanelInput["unusable"];
+        canDelete: boolean;
+        takeBack: PanelInput["takeBack"];
+        copyProblem: PanelInput["copyProblem"];
+      }
+    | undefined;
 }) => {
   const unusable = workbench.cloud?.unusable;
+  const takeBack = workbench.cloud?.takeBack;
+  const copyProblem = workbench.cloud?.copyProblem;
   return {
     ...(unusable && { unusable }),
     ...(workbench.cloud?.canDelete && { canDelete: true }),
+    ...(takeBack && { takeBack }),
+    ...(copyProblem && { copyProblem }),
   };
 };
 const noSnapshot = () => undefined;
@@ -558,6 +569,8 @@ function SaveStatuses({
     repository?.subscribe ?? noSubscription,
     repository?.getSnapshot ?? noSnapshot,
   );
+  // ...and how taking it back onto a copy made again goes, which is no part of the snapshot.
+  useSyncExternalStore(cloud?.subscribe ?? noSubscription, () => cloud?.takeBack);
   const open = useSyncExternalStore(shown.subscribe, shown.getSnapshot);
   // Until the project was looked at, nothing says how it stands: "仅本机" could be wrong.
   const known = useSyncExternalStore(
