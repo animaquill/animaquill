@@ -124,15 +124,19 @@ export const FAILURE_TEXTS: Texts = {
   "unknown-command": ({ command }) => `There is no operation ${command}; aq_guide lists them.`,
   "user-only": ({ command, param }) =>
     param !== undefined
-      ? `Only the user can use the parameter ${param}${command ? ` of ${command}` : ""}. Leave it out.`
+      ? `Only the user can use the parameter ${param}${command ? ` of ${command}` : ""}; the operation works without it.`
       : command !== undefined
         ? `Only the user can do ${command}. `
         : "Only the user can change the tags of the project.",
   "storage-only": () => "Uploads only write down where files are.",
-  "project-locked": () => "The project has a tag that locks it.",
-  "read-only": () => "The project is read-only for now.",
-  "missing-updates": () => "Changes from elsewhere are still arriving.",
-  conflict: () => "Somebody else changed what you are changing after you last read it.",
+  "project-locked": () =>
+    "The project has a tag that locks it; every change is refused until the user removes the tag.",
+  "read-only": () =>
+    "The project is read-only for now; every change is refused until it can be written again.",
+  "missing-updates": () =>
+    "Changes from elsewhere are still arriving; the same call works once they are in, usually within seconds.",
+  conflict: () =>
+    "Somebody else changed what you are changing after you last read it; a change sent after reading it again is checked against what was read then.",
   "stale-revision": () =>
     "The project was reopened since you read it, so what you read is out of date; the tools keep track of revisions themselves.",
   "would-break-document": ({ file, path, message }) =>
@@ -155,7 +159,7 @@ export const FAILURE_TEXTS: Texts = {
   overlap: ({ clips, moved }) =>
     moved
       ? `Clips would land on the same place: ${clips.map((clip) => clip.id).join(", ")}. Give them starts that do not overlap.`
-      : `There are clips in the way: ${clips.map((clip) => clip.id).join(", ")}. Choose a free place, or pass overlap: "overwrite".`,
+      : `There are clips in the way: ${clips.map((clip) => clip.id).join(", ")}; overlap: "overwrite" cuts them away.`,
   "not-adjacent": ({ from, to, why }) =>
     why === "tracks"
       ? `Clips ${from} and ${to} are on different tracks: a join needs both on one track.`
@@ -185,7 +189,7 @@ export const FAILURE_TEXTS: Texts = {
   "join-taken": ({ join }) => `This cut has a join already: ${join}. join.update changes it.`,
   "asset-in-use": ({ asset, by, file }) =>
     by === "code"
-      ? `Code uses asset ${asset} (${file ?? ""}): change the code first.`
+      ? `Code uses asset ${asset} (${file ?? ""}); the asset can be removed once no code refers to it.`
       : `Clips or versions use asset ${asset}; withUses: true removes them too.`,
   "scene-in-use": ({ scene }) =>
     `Clips or versions use scene ${scene}; withUses: true removes them too.`,

@@ -12015,7 +12015,7 @@
         "lines": [
           "clips 1-5 of 11, by start:",
           "| and 1452 more (aq_search kinds [\"marker\"])",
-          "6 more: call again with cursor \"c1\""
+          "6 more; cursor \"c1\" gives the next ones."
         ]
       }
     },

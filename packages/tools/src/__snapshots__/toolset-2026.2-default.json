@@ -2899,7 +2899,7 @@
  },
  {
   "name": "aq_check_run",
-  "description": "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone. A problem with a fix line is fixed by sending that operation to aq_edit.",
+  "description": "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
   "inputSchema": {
    "type": "object",
    "properties": {

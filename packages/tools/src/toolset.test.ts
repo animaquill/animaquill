@@ -236,7 +236,7 @@ describe("results", () => {
     const { call, caller } = toolsOn(testHost(store));
     const first = await call("aq_timeline_read", { limit: 120 });
     expect(first.text).toContain("clips 1-120 of 300, by start:");
-    expect(first.text).toContain('180 more: call again with cursor "c1"');
+    expect(first.text).toContain('180 more; cursor "c1" gives the next ones.');
     const next = await call("aq_timeline_read", { limit: 120, cursor: "c1" });
     expect(next.text).toContain("clips 121-240 of 300");
     expect(next.text).toContain("c120 track=v 120..121");
@@ -273,7 +273,7 @@ describe("results", () => {
     const { call } = toolsOn(testHost(store));
     const result = await call("aq_timeline_read", { limit: 500 });
     expect(result.text.length).toBeLessThanOrEqual(40_000);
-    expect(result.text).toMatch(/\d+ more: call again with cursor "c1"/);
+    expect(result.text).toMatch(/\d+ more; cursor "c1"/);
   });
 
   it("say when there is no project, and check parameters before anything", async () => {

@@ -177,7 +177,7 @@ describe("what a list shows", () => {
     const { call, caller } = toolsOn(testHost(store));
     const first = await call("aq_timeline_read", { limit: 1 });
     expect(first.text).toMatch(/clips 1-1 of 3/);
-    expect(first.text).toContain('call again with cursor "c1"');
+    expect(first.text).toContain('cursor "c1" gives the next ones.');
     caller.beginAnswer();
     const next = await call("aq_timeline_read", { limit: 1, cursor: "c1" });
     expect(next.text).toMatch(/clips 2-2 of 3/);
@@ -241,7 +241,7 @@ describe("reading a file", () => {
     const shown = read.text.split("\n").filter((line) => /^\s+\d+→/.test(line)).length;
     expect(shown).toBeLessThan(2000);
     expect(read.text.split("\n")[1]).toBe(`file code/long.js lines 1-${shown} of 2000`);
-    expect(read.text).toContain(`call again with offset ${shown + 1}`);
+    expect(read.text).toContain(`offset ${shown + 1}`);
     const write = await call("aq_file_write", { path: "code/long.js", text: "x\n" });
     expect(write.text).toContain(`you have read lines 1-${shown} of code/long.js (2000 lines)`);
     expect(write.text).toContain(`the first line not read is ${shown + 1}`);

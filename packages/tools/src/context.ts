@@ -118,6 +118,8 @@ export interface Call {
   readonly store: ProjectStore;
   /** The words of the tools, where a result uses them, such as an example after an error. */
   readonly texts: TextTable;
+  /** The tool that runs, by name. */
+  readonly tool: string;
 }
 
 /**
@@ -176,13 +178,27 @@ export function othersLine(call: Call): string | undefined {
 }
 
 /** Lines as one text, cut at a whole line when too long, with a word on what was left out. */
+const TOO_LONG = `one result holds at most ${MAX_RESULT.toLocaleString("en")} characters`;
+
+/** What makes a result of a tool smaller, by tool, for what a result has to leave out. */
+const NARROWER: Readonly<Record<string, string>> = {
+  aq_timeline_read: "limit, from and to, or tracks give a smaller one",
+  aq_object_read: "fields or fewer ids give a smaller one",
+  aq_search: "limit, kinds or query give a smaller one",
+  aq_check_run: "limit, severity or subject give a smaller one",
+};
+
+/** What a result left out, and what makes it smaller where the tool has a way. */
+export const leftOut = (tool: string, left: number): string =>
+  `${left} more lines left out: ${TOO_LONG}${NARROWER[tool] ? `; ${NARROWER[tool]}` : ""}.`;
+
 export function fitted(lines: readonly string[], more?: (left: number) => string): string {
   let length = 0;
   for (let index = 0; index < lines.length; index += 1) {
     length += (lines[index] as string).length + 1;
     if (length > MAX_RESULT - 200) {
       const left = lines.length - index;
-      const tail = more ? more(left) : `${left} more lines left out: ask for less at once.`;
+      const tail = more ? more(left) : `${left} more lines left out: ${TOO_LONG}.`;
       return [...lines.slice(0, index), tail].join("\n");
     }
   }
@@ -196,7 +212,10 @@ export function answer(
   data?: Readonly<Record<string, unknown>>,
   others?: string,
 ): ToolResult {
-  const text = fitted([`rev ${call.store.revisionId}`, ...lines, ...(others ? [others] : [])]);
+  const text = fitted(
+    [`rev ${call.store.revisionId}`, ...lines, ...(others ? [others] : [])],
+    (left) => leftOut(call.tool, left),
+  );
   return { text, isError: false, ...(data && { data }) };
 }
 

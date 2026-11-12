@@ -3,7 +3,14 @@ import { DEFAULT_TEXTS, SYSTEM_PARTS } from "./texts/index.ts";
 import { paramPaths } from "./tool.ts";
 import { DEFINITIONS } from "./toolset.ts";
 
-/** A key of the table of texts: what it holds, and whether the table has to have it. */
+/**
+ * A key of the table of texts: what it holds, and whether the table has to have it. The table has
+ * what describes the tools and what the system prompt says, which a model pack may change. What
+ * tools give back (results, errors, problems) is not in it and no pack changes it: results hold
+ * what the model copies back into parameters, such as `track=` and the ids of lines, and their
+ * words are part of the contract of the tools. Results that say something else, to compare with a
+ * real model, are for an evaluation of its own.
+ */
 export interface TextKey {
   readonly key: string;
   readonly kind: "text" | "examples";

@@ -90,7 +90,7 @@ export const TOOL_TEXTS = {
   "tools.aq_propose.params.allow_other":
     "false when the user must pick one of the options; by default they can also answer in their own words.",
   "tools.aq_check_run.description":
-    "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone. A problem with a fix line is fixed by sending that operation to aq_edit.",
+    "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
   "tools.aq_check_run.params.checks":
     '"format": whether every document fits the project format; "problems": all problems the editor knows of. Both by default.',
   "tools.aq_check_run.params.severity": "Only problems of these kinds.",

@@ -165,7 +165,7 @@ export function makeTool<P>(
           const known = caller.resultOf(request, key);
           if (known === "other") {
             return failed(
-              `error invalid-params: request_id ${JSON.stringify(request)} was used for a different call in this conversation; use a new one. Nothing was written.`,
+              `error invalid-params: request_id ${JSON.stringify(request)} was used for a different call in this conversation; a new request_id runs a new call. Nothing was written.`,
             );
           }
           if (known) return known;
@@ -174,7 +174,7 @@ export function makeTool<P>(
         if (caller.answer.failedWrite) return failed(NOT_RUN_FAILED);
       }
       if (writes) caller.own.add(host.origin());
-      const call: Call = { host, caller, store, texts };
+      const call: Call = { host, caller, store, texts, tool: name };
       const others = othersLine(call);
       const result = await definition.run(call, parsed.value);
       caller.lastCall = store.revisionId;

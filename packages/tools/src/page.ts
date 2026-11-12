@@ -24,7 +24,7 @@ export function offsetOf(call: Call, tool: string, args: object & Paging): numbe
   const fits = cursor && cursor.tool === tool && cursor.args === argsKey(args);
   if (!cursor || !fits || cursor.revision !== call.store.revisionId) {
     return failed(
-      "error cursor-expired: this cursor is out of date (the project changed, 10 minutes passed, or the other parameters differ). Call again without cursor.",
+      "error cursor-expired: this cursor is out of date (the project changed, 10 minutes passed, or the other parameters differ); without cursor the list starts again from the top.",
     );
   }
   return cursor.offset;
@@ -75,7 +75,7 @@ export function paged(
       revision: call.store.revisionId,
       offset: end,
     });
-    lines.push(`${items.length - end} more: call again with cursor "${name}"`);
+    lines.push(`${items.length - end} more; cursor "${name}" gives the next ones.`);
   }
   return answer(call, [...lines, ...tail], data);
 }

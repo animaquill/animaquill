@@ -26,7 +26,7 @@
       },
       "expect": {
         "ok": true,
-        "lines": ["file code/long.js lines 1-", "more lines: call again with offset"]
+        "lines": ["file code/long.js lines 1-", "more lines; offset"]
       }
     },
     {

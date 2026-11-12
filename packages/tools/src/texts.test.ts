@@ -69,7 +69,9 @@ describe("the table of texts", () => {
     };
     const { call } = toolsOn(testHost(), new CallerState(), texts);
     const result = await call("aq_edit", { operations: [{ op: "clip.move", timeline: 3 }] });
-    expect(result.text).toContain('example: {"op":"clip.move","timeline":"main","clips":[]}');
+    expect(result.text).toContain(
+      'example (ids from a sample project): {"op":"clip.move","timeline":"main","clips":[]}',
+    );
   });
 });
 

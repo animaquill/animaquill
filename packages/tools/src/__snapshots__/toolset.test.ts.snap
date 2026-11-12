@@ -10,7 +10,7 @@ W unsupported-library clip_logo: uses library lib_7f3a, which this editor versio
 W unsupported-library clip_card: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
 W unsupported-draft clip_idea "样片：换个开场": a draft clip still shows and exports in this editor version
 W unsupported-audio-property clip_interview_audio at audio.pan: audio.pan is not applied by this editor version yet; preview and export ignore it
-12 more: call again with cursor "c1""
+12 more; cursor "c1" gives the next ones."
 `;
 
 exports[`results > of aq_guide read as they did 1`] = `

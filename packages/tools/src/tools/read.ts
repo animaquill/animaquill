@@ -656,7 +656,7 @@ export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
           `line ${number} is ${(lines[number - 1] ?? "").length} characters long; it is cut after ${MAX_LINE}`,
       ),
       ...(last < lines.length
-        ? [`${lines.length - last} more lines: call again with offset ${last + 1}`]
+        ? [`${lines.length - last} more lines; offset ${last + 1} continues.`]
         : []),
     ];
     const endings = crlf ? " (Windows line endings)" : "";

@@ -16,6 +16,15 @@ function given(value: unknown): string[] {
 }
 
 describe("what failures say to AI", () => {
+  it("says how the same call can work, where it can", () => {
+    const says = (code: FailureCode) =>
+      failureText(FAILURE_SAMPLES.find((sample) => sample.code === code) as CommandFailure);
+    expect(says("missing-updates")).toContain("the same call works once they are in");
+    expect(says("project-locked")).toContain("until the user removes the tag");
+    expect(says("read-only")).toContain("until it can be written again");
+    expect(says("conflict")).toContain("a change sent after reading it again is checked");
+  });
+
   it("says what happened, and no advice", () => {
     const texts = [...FAILURE_SAMPLES, ...INVALID_VALUE_SAMPLES].map((sample) =>
       failureText(sample as CommandFailure),

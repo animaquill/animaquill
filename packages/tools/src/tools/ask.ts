@@ -30,7 +30,7 @@ export const propose: ToolDefinition<z.output<typeof ProposeParams>> = {
     const { caller } = call;
     if (caller.answer.proposed) {
       return failed(
-        "error one-at-a-time: this answer already asks the user a question; ask one at a time.",
+        "error one-at-a-time: this answer already asks the user a question; one question per answer.",
       );
     }
     caller.answer.proposed = true;

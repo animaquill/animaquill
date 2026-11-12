@@ -128,7 +128,7 @@ function checkOperations(args: EditArgs, texts: TextTable): ToolResult | undefin
       if (!hasPath(params, hidden.name)) continue;
       if (hidden.why === "human") {
         return failed(
-          `error not-allowed in ${where} (${op}): only the user can use the parameter ${hidden.name}; leave it out. Nothing was written.`,
+          `error not-allowed in ${where} (${op}): only the user can set ${hidden.name}; the operation works without it. Nothing was written.`,
         );
       }
       lines.push(
@@ -151,7 +151,12 @@ function checkOperations(args: EditArgs, texts: TextTable): ToolResult | undefin
   const text = faults.flatMap(({ index, name, lines }) => [
     `error invalid-params in operations[${index}] (${name})`,
     ...lines.map((line) => `  ${line}`),
-    ...(name === "?" ? [] : [`shape: ${signatureOf(name)}`, `example: ${exampleOf(texts, name)}`]),
+    ...(name === "?"
+      ? []
+      : [
+          `shape: ${signatureOf(name)}`,
+          `example (ids from a sample project): ${exampleOf(texts, name)}`,
+        ]),
   ]);
   return failed([...text, "nothing was written"].join("\n"));
 }
@@ -233,7 +238,7 @@ function conflictText(call: Call, failure: CommandFailure, bases: Bases): string
     const list = fields.size > 0 ? ` (${[...fields].join(", ")})` : "";
     return `${[...who].join(" and ") || "someone else changed"} ${objectText(state, ref)}${list}`;
   });
-  return `error conflict: ${parts.join("; ")} after you last read it\nnothing was written`;
+  return `error conflict: ${parts.join("; ")} after you last read it; a change sent after reading it again is checked against what was read then\nnothing was written`;
 }
 
 /** The text of a batch that failed, with what helps to fix it. */
@@ -272,7 +277,10 @@ function failureOf(call: Call, args: EditArgs, failure: CommandFailure, bases: B
   }
   const name = names[failure.index] ?? "";
   if (failure.code === "invalid-params" && operationOf(name)) {
-    lines.push(`shape: ${signatureOf(name)}`, `example: ${exampleOf(call.texts, name)}`);
+    lines.push(
+      `shape: ${signatureOf(name)}`,
+      `example (ids from a sample project): ${exampleOf(call.texts, name)}`,
+    );
   }
   return failed(lines.join("\n"));
 }
