@@ -87,4 +87,15 @@ describe("the copies of a project in the sync protocol", () => {
     for (const wrong of ["true", 1, null])
       expect(readSyncClientMessage(frame({ ...header, readOnly: wrong }))).toBeUndefined();
   });
+
+  it("says that a window asks for the copy as it began, which a window from before does not", () => {
+    const asked = { ...hello, readOnly: true, base: true } as const;
+    expect(readSyncClientMessage(encodeSyncMessage(asked))).toEqual(asked);
+    const notSaid = readSyncClientMessage(encodeSyncMessage({ ...hello, base: false }));
+    expect(notSaid).toEqual(hello);
+    expect(notSaid).not.toHaveProperty("base");
+    const { payload: _payload, ...header } = hello;
+    for (const wrong of ["true", 1, null])
+      expect(readSyncClientMessage(frame({ ...header, base: wrong }))).toBeUndefined();
+  });
 });

@@ -150,6 +150,11 @@ export type SyncClientMessage =
    * that opens it from the platform, says none. `readOnly`: the window only reads the project, as
    * to keep a copy of it, also one that cannot be edited (`SYNC_CLOSE.unusable`): it sends no
    * change, and does not count as opening it. A platform from before this takes it as any window.
+   * `base`, with `readOnly`: the window asks for the project as this working copy began, from the
+   * archive it was made again from, not as it is now: what a window that had the one before has
+   * in common with it, to put its own changes onto this one. Then "welcome", that version whole,
+   * and "synced", each for the update it is, and nothing more: the window closes once it has them.
+   * A copy that was not made again has none: `SYNC_CLOSE.missing`.
    */
   | {
       readonly t: "hello";
@@ -163,6 +168,7 @@ export type SyncClientMessage =
       readonly editor: string;
       readonly create?: { readonly name: string; readonly projectId: string };
       readonly readOnly?: boolean;
+      readonly base?: boolean;
       readonly payload: Uint8Array;
     }
   /**
@@ -410,7 +416,8 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         !isToken(h["window"]) ||
         !isText(h["editor"], 64) ||
         !isCreate ||
-        (h["readOnly"] !== undefined && typeof h["readOnly"] !== "boolean")
+        (h["readOnly"] !== undefined && typeof h["readOnly"] !== "boolean") ||
+        (h["base"] !== undefined && typeof h["base"] !== "boolean")
       )
         return undefined;
       return {
@@ -427,6 +434,7 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
           create: { name: create["name"] as string, projectId: create["projectId"] as string },
         }),
         ...(h["readOnly"] === true && { readOnly: true }),
+        ...(h["base"] === true && { base: true }),
         payload,
       };
     }
