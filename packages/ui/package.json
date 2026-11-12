@@ -16,6 +16,7 @@
     "@animaquill/render": "workspace:*",
     "@animaquill/scene": "workspace:*",
     "@animaquill/schema": "workspace:*",
+    "@animaquill/tools": "workspace:*",
     "dockview-react": "8.8.3",
     "i18next": "26.7.1",
     "lucide-react": "1.69.0",

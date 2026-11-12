@@ -1,5 +1,5 @@
 import { LOOSE, AI_OPERATIONS, SHARED_TYPES, operationsParameter } from "./schema.ts";
-import { DEFAULT_TEXTS } from "./texts/index.ts";
+import { DEFAULT_TEXTS, SYSTEM_PARTS } from "./texts/index.ts";
 import { paramPaths } from "./tool.ts";
 import { DEFINITIONS } from "./toolset.ts";
 
@@ -21,6 +21,7 @@ export function textKeys(): readonly TextKey[] {
   const keys: TextKey[] = [];
   const add = (key: string, kind: TextKey["kind"] = "text", required = true) =>
     keys.push({ key, kind, required });
+  for (const part of SYSTEM_PARTS) add(`system.${part}`);
   for (const { name, params } of DEFINITIONS) {
     add(`tools.${name}.description`);
     for (const path of paramPaths(params)) add(`tools.${name}.params.${path}`);

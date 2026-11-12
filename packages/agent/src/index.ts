@@ -1,6 +1,6 @@
 /**
- * AI in the browser: people bring a service and a key, and AI changes the project with the same
- * commands people use. The library that talks to services is behind `pi.ts`, which is loaded on
+ * AI in the browser: people bring a service and a key, and AI changes the project with the tools of
+ * `@animaquill/tools`, which run the same commands people use. The library that talks to services is behind `pi.ts`, which is loaded on
  * demand: import only its types from here.
  */
 import type { Protocol } from "./services.ts";
@@ -24,8 +24,17 @@ export {
   type ToolEntry,
   type UserEntry,
 } from "./entries.ts";
-export type { Endpoint, FakeAnswer, FakeEndpoint, Relayed, ToolSpec } from "./pi.ts";
-export { SYSTEM_PROMPT } from "./prompt.ts";
+export { DEFAULT_STAMP, browserSystemPrompt, toolSpecsOf } from "./assistant.ts";
+export type {
+  AnswerStamp,
+  CallSettings,
+  Endpoint,
+  FakeAnswer,
+  FakeEndpoint,
+  Relayed,
+  ToolOutput,
+  ToolSpec,
+} from "./pi.ts";
 export { HIDDEN_KEY, withoutKeys } from "./secrets.ts";
 export {
   DEFAULT_MAX_TOOL_CALLS,
@@ -48,16 +57,6 @@ export {
   type ServiceFailure,
   type ServiceKind,
 } from "./services.ts";
-export {
-  MAX_TOOL_TEXT,
-  allTools,
-  commandTools,
-  parametersOf,
-  readTools,
-  toolName,
-  type SelectionFacts,
-  type ToolContext,
-} from "./tools.ts";
 
 /** The models pi knows of for a kind of service, loading the library on the way. */
 export async function knownModels(

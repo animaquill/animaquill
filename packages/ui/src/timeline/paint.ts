@@ -56,6 +56,9 @@ const END_HANDLE = 6;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
 
+/** How big the mark of a clip that AI just changed is. */
+const AI_MARK = 7;
+
 /** Dark text on light colours, light text on dark ones. */
 function readableOn(color: string): string {
   const value = Number.parseInt(color.slice(1, 7), 16);
@@ -383,6 +386,17 @@ export class TimelinePainter extends StagePainter {
     if (this.#hasFailed(box.clip)) {
       context.fillStyle = this.#theme.failed;
       context.fillRect(left, top + height - FAILED_BAR, width, FAILED_BAR);
+    }
+
+    // What AI just changed: a corner, out of the way of the name and the transitions.
+    if (editor.marked.has(box.id) && width >= AI_MARK * 2) {
+      context.fillStyle = this.#theme.selected;
+      context.beginPath();
+      context.moveTo(right - AI_MARK - 1, top + 1);
+      context.lineTo(right - 1, top + 1);
+      context.lineTo(right - 1, top + 1 + AI_MARK);
+      context.closePath();
+      context.fill();
     }
 
     if (look.edge) {

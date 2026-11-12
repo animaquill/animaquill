@@ -7,12 +7,14 @@ import type {
   ToolCallEntry,
   ToolEntry,
 } from "@animaquill/agent";
+import { pathOfObject, type ObjectRef, type ProjectState } from "@animaquill/core";
 import { Check, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { failureText } from "./failure.ts";
+import { summaryOf, type TurnChange } from "./summary.ts";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
 const noop = () => () => {};
@@ -35,7 +37,17 @@ function groupsOf(entries: readonly ChatEntry[]): TaskGroup[] {
   return groups;
 }
 
-const READ_TOOLS = new Set(["project_overview", "timeline_read", "selection_read", "file_read"]);
+/** The tools before these, which read, for the count of changes of an earlier conversation. */
+const OLD_READ_TOOLS = new Set([
+  "project_overview",
+  "timeline_read",
+  "selection_read",
+  "file_read",
+]);
+/** What a turn shows of what it changed before it opens up. */
+const SHOWN_CHANGES = 5;
+const SHOWN_SAID = 3;
+const SHOWN_FIELDS = 3;
 
 /**
  * How an earlier task ended, as far as what was kept says: only a failure or a stop leave a mark.
@@ -51,10 +63,20 @@ function keptOutcome(group: TaskGroup): TaskOutcome | undefined {
   return undefined;
 }
 
-/** A command by its type, as people know it from the command system. */
+/** A command by its type, as people know it from the command system: the tools before these. */
 const commandOf = (tool: string) => tool.replaceAll("_", ".");
 
-function summaryOf(args: Readonly<Record<string, unknown>>): string {
+/** Whether an object is still in the project, to go to it. */
+function isThere(state: ProjectState | undefined, ref: ObjectRef): boolean {
+  let node: unknown = state;
+  for (const key of pathOfObject(ref)) {
+    if (typeof node !== "object" || node === null || !Object.hasOwn(node, key)) return false;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node !== undefined;
+}
+
+function argsSummaryOf(args: Readonly<Record<string, unknown>>): string {
   const text = JSON.stringify(args);
   return text.length > ARGS_SUMMARY ? `${text.slice(0, ARGS_SUMMARY)}…` : text;
 }
@@ -173,6 +195,7 @@ export function ChatPanel() {
             running={talk.running?.task === group.task ? talk.running : undefined}
             outcome={index === groups.length - 1 ? talk.last : undefined}
             maxToolCalls={settings.maxToolCalls}
+            last={index === groups.length - 1}
           />
         ))}
       </div>
@@ -255,20 +278,27 @@ function TaskView({
   running,
   outcome,
   maxToolCalls,
+  last,
 }: {
   readonly group: TaskGroup;
   readonly running: ConversationSnapshot["running"];
   readonly outcome: TaskOutcome | undefined;
   readonly maxToolCalls: number;
+  /** It is the newest task, whose question people can still answer. */
+  readonly last: boolean;
 }) {
   const { chat } = useWorkbench();
   const { t } = useTranslation();
   const results = new Map<string, ToolEntry>();
   for (const entry of group.entries) if (entry.role === "tool") results.set(entry.call, entry);
-  const changes = [...results.values()].filter(
-    (result) => result.ok && !READ_TOOLS.has(result.name),
-  ).length;
+  const summary = summaryOf(group.entries);
+  // Earlier conversations had tools that said nothing of what they changed: those count calls.
+  const changes = summary.told
+    ? summary.changes.length
+    : [...results.values()].filter((result) => result.ok && !OLD_READ_TOOLS.has(result.name))
+        .length;
   const undo = running ? undefined : chat.undoState(group.task);
+  const question = last ? questionOf(group) : undefined;
 
   return (
     <div className={styles.task} data-testid="chat-task">
@@ -287,10 +317,16 @@ function TaskView({
       })}
       {running && (
         <div className={styles.answer} aria-live="polite">
+          {running.thinking.trim() !== "" && (
+            <p className={styles.thinking} data-testid="chat-thinking">
+              {running.thinking.trim()}
+            </p>
+          )}
           {running.text ? (
             <p className={styles.text}>{running.text}</p>
           ) : (
-            !running.tool && (
+            !running.tool &&
+            running.thinking.trim() === "" && (
               <p className={styles.muted}>
                 <LoaderCircle size={12} className={styles.spin} /> {t("chat.thinking")}
               </p>
@@ -302,21 +338,171 @@ function TaskView({
         const shown = outcome ?? (running ? undefined : keptOutcome(group));
         return shown && <OutcomeView outcome={shown} maxToolCalls={maxToolCalls} />;
       })()}
-      {undo && (
+      {question && !running && <QuestionView question={question} />}
+      {(undo || (summary.told && changes > 0 && !running)) && (
         <div className={styles.undo}>
           {changes > 0 && (
             <span className={styles.muted}>{t("chat.changes", { count: changes })}</span>
           )}
-          <button
-            type="button"
-            onClick={() =>
-              undo === "undo" ? chat.undoTask(group.task) : chat.redoTask(group.task)
-            }
-          >
-            {undo === "undo" ? t("chat.undoTask") : t("chat.redoTask")}
-          </button>
+          {undo && (
+            <button
+              type="button"
+              onClick={() =>
+                undo === "undo" ? chat.undoTask(group.task) : chat.redoTask(group.task)
+              }
+            >
+              {undo === "undo" ? t("chat.undoTask") : t("chat.redoTask")}
+            </button>
+          )}
         </div>
       )}
+      {!running && summary.told && changes > 0 && (
+        <ChangesView said={summary.said} changes={summary.changes} />
+      )}
+    </div>
+  );
+}
+
+/** What the batches of a turn did, as AI said it, and the objects they changed. */
+function ChangesView({
+  said,
+  changes,
+}: {
+  readonly said: readonly string[];
+  readonly changes: readonly TurnChange[];
+}) {
+  const workbench = useWorkbench();
+  const { t } = useTranslation();
+  const { store } = useSession();
+  const state = useProject(store);
+  const [open, setOpen] = useState(false);
+  const lines = open ? changes : changes.slice(0, SHOWN_CHANGES);
+  const sentences = open ? said : said.slice(0, SHOWN_SAID);
+  return (
+    <div className={styles.changes} data-testid="chat-changes">
+      {sentences.map((sentence, index) => (
+        <p key={index} className={styles.said}>
+          {sentence}
+        </p>
+      ))}
+      {lines.map((change) => {
+        const ref: ObjectRef = {
+          kind: change.kind,
+          id: change.id,
+          ...(change.timeline !== undefined && { timeline: change.timeline }),
+        };
+        const there = change.change !== "removed" && isThere(state, ref);
+        return (
+          <div key={change.key} className={styles.change} data-testid="chat-change">
+            <span className={styles.changeText}>{changeText(t as unknown as Say, change)}</span>
+            {change.change !== "removed" && change.kind !== "project" && (
+              <button
+                type="button"
+                disabled={!there}
+                title={there ? undefined : t("chat.summary.gone")}
+                onClick={() => workbench.goToObject(ref)}
+              >
+                {change.kind === "file" || change.kind === "scene"
+                  ? t("chat.summary.open")
+                  : t("chat.summary.locate")}
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {(changes.length > SHOWN_CHANGES || said.length > SHOWN_SAID) && (
+        <button type="button" className={styles.more} onClick={() => setOpen(!open)}>
+          {open
+            ? t("chat.summary.less")
+            : changes.length > SHOWN_CHANGES
+              ? t("chat.summary.more", { count: changes.length - SHOWN_CHANGES })
+              : t("chat.summary.saidMore", { count: said.length - SHOWN_SAID })}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Words by a key made at run time, which the types of the keys cannot follow. */
+type Say = (key: string, options?: Readonly<Record<string, unknown>>) => string;
+
+/** One change in a line: what it is, and how up to three of its fields changed. */
+function changeText(say: Say, change: TurnChange): string {
+  const t = say;
+  const kind = t(`chat.kinds.${change.kind}`);
+  const name = change.name ? `「${change.name}」` : ` ${change.id}`;
+  const head = `${t(`chat.summary.${change.change}`, { kind })}${name}`;
+  if (change.lines) {
+    return `${head}  ${t("chat.summary.lines", change.lines)}`;
+  }
+  if (change.change !== "changed") return head;
+  const fieldName = (path: string) => {
+    const field = path.split(".")[0] ?? path;
+    return t(`chat.fields.${field}`, { defaultValue: path });
+  };
+  const fields = change.fields.slice(0, SHOWN_FIELDS).map(({ path, before, after }) => {
+    const field = fieldName(path);
+    if (after === undefined) return t("chat.summary.cleared", { field });
+    if (before === undefined) return t("chat.summary.set", { field, after });
+    return t("chat.summary.from", { field, before, after });
+  });
+  const more =
+    change.fields.length > SHOWN_FIELDS
+      ? [t("chat.summary.fieldsMore", { count: change.fields.length - SHOWN_FIELDS })]
+      : [];
+  return [head, ...fields, ...more].join("  ");
+}
+
+/** A question AI asked with aq_propose, which the newest task can still have answered. */
+interface Question {
+  readonly question: string;
+  readonly options: readonly { readonly label: string; readonly detail?: string }[];
+  readonly other: boolean;
+}
+
+function questionOf(group: TaskGroup): Question | undefined {
+  const asked = group.entries.findLast(
+    (entry) => entry.role === "tool" && entry.name === "aq_propose" && entry.ok,
+  );
+  const data = asked?.role === "tool" ? asked.data?.question : undefined;
+  if (typeof data !== "object" || data === null) return undefined;
+  const { question, options, allow_other: other } = data as Record<string, unknown>;
+  if (typeof question !== "string" || !Array.isArray(options)) return undefined;
+  const choices = options.flatMap((option: Record<string, unknown>) =>
+    typeof option?.label === "string"
+      ? [
+          {
+            label: option.label,
+            ...(typeof option.detail === "string" && { detail: option.detail }),
+          },
+        ]
+      : [],
+  );
+  return { question, options: choices, other: other !== false };
+}
+
+/** The question of AI, with its answers to pick: the pick goes as the next message. */
+function QuestionView({ question }: { readonly question: Question }) {
+  const { chat } = useWorkbench();
+  const { t } = useTranslation();
+  return (
+    <div className={styles.question} data-testid="chat-question" role="group">
+      <div className={styles.muted}>{t("chat.question.title")}</div>
+      <p className={styles.text}>{question.question}</p>
+      <div className={styles.options}>
+        {question.options.map(({ label, detail }) => (
+          <button
+            key={label}
+            type="button"
+            title={detail}
+            onClick={() => void chat.send(t("chat.question.picked", { label }))}
+          >
+            {label}
+            {detail && <span className={styles.muted}> · {detail}</span>}
+          </button>
+        ))}
+      </div>
+      {question.other && <p className={styles.muted}>{t("chat.question.other")}</p>}
     </div>
   );
 }
@@ -330,8 +516,15 @@ function AnswerView({
   readonly results: ReadonlyMap<string, ToolEntry>;
   readonly running: ConversationSnapshot["running"];
 }) {
+  const { t } = useTranslation();
   return (
     <div className={styles.answer}>
+      {entry.thinking && (
+        <details className={styles.thinking} data-testid="chat-thinking">
+          <summary>{t("chat.thinkingSummary")}</summary>
+          {entry.thinking}
+        </details>
+      )}
       {entry.text && <p className={styles.text}>{entry.text}</p>}
       {entry.calls.map((call) => (
         <ToolView
@@ -358,9 +551,9 @@ function ToolView({
   const failed = result !== undefined && !result.ok;
   const [open, setOpen] = useState(false);
   const shown = open || failed;
-  const label = READ_TOOLS.has(call.name)
-    ? t(`chat.tool.${call.name}` as "chat.tool.file_read")
-    : commandOf(call.name);
+  const label = t(`chat.tool.${call.name}` as "chat.tool.file_read", {
+    defaultValue: commandOf(call.name),
+  });
   const state =
     result === undefined ? (active ? "running" : "waiting") : result.ok ? "ok" : "failed";
   return (
@@ -379,7 +572,7 @@ function ToolView({
           )}
         </span>
         <span className={styles.toolName}>{label}</span>
-        <span className={styles.toolArgs}>{summaryOf(call.args)}</span>
+        <span className={styles.toolArgs}>{argsSummaryOf(call.args)}</span>
       </button>
       {shown && (
         <div className={styles.toolBody}>

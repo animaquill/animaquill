@@ -82,7 +82,7 @@ describe("the toolset", () => {
     expect(JSON.stringify(listOf(toolsOn().tools.values()))).toBe(list);
     expect(list.length).toBeLessThanOrEqual(MOST_CHARACTERS);
     await expect(JSON.stringify(listOf(tools.values()), null, 1)).toMatchFileSnapshot(
-      `__snapshots__/toolset-${TOOLSET_VERSION}.json`,
+      `__snapshots__/toolset-${TOOLSET_VERSION}-default.json`,
     );
   });
 
@@ -147,6 +147,17 @@ describe("the toolset", () => {
       Object.values(DIRECTIVE_OVERRIDES).some((value) => phrase.test(JSON.stringify(value))),
     );
     expect(before.length).toBeGreaterThan(5);
+  });
+
+  it("says which tools change the project, and that none of them does what cannot be taken back", () => {
+    const tools = [...toolsOn().tools.values()];
+    expect(
+      tools.filter(({ annotations }) => !annotations.readOnlyHint).map(({ name }) => name),
+    ).toEqual(["aq_edit", "aq_file_edit", "aq_file_write"]);
+    for (const { name, annotations } of tools) {
+      expect(annotations.destructiveHint ?? false, name).toBe(false);
+      expect(annotations.openWorldHint, name).toBe(false);
+    }
   });
 
   it("lists every operation AI can use in the description of aq_edit, and no other", () => {

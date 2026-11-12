@@ -119,8 +119,10 @@ export function makeTool<P>(
   const annotations: ToolAnnotations = {
     title,
     readOnlyHint: !writes,
-    // Sent again, a change can do it twice, such as a clip without an id: request_id is for that.
-    ...(writes && { destructiveHint: true, idempotentHint: false }),
+    // Every change is on record and can be taken back as a whole, removals too: none of them
+    // is destructive. Sent again, a change can do it twice, such as a clip without an id:
+    // request_id is for that.
+    ...(writes && { destructiveHint: false, idempotentHint: false }),
     openWorldHint: false,
   };
   const parse = (args: unknown): { ok: true; value: P } | { ok: false; error: ToolResult } => {
@@ -138,7 +140,10 @@ export function makeTool<P>(
     annotations,
     validate: (args) => {
       const parsed = parse(args);
-      return parsed.ok ? undefined : parsed.error;
+      if (parsed.ok) return undefined;
+      // The call came from the model and goes no further: a failed change holds back the rest.
+      if (writes) caller.answer.failedWrite = true;
+      return parsed.error;
     },
     run: async (args) => {
       const parsed = parse(args);

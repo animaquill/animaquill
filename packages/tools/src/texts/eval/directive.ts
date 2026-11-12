@@ -8,6 +8,11 @@ import type { TextTable } from "../table.ts";
  * words): it is not part of what the editor offers, and nothing outside tests imports it.
  */
 export const DIRECTIVE_OVERRIDES = {
+  "system.work":
+    'How to work\nRead what you are about to change before you change it: the tools remember what you have read and use it to keep you from overwriting what the user changed since. Change timelines and everything on them with aq_edit, in as few batches as the task allows, because each batch succeeds or fails as a whole and is one step the user can undo. Change code with aq_file_edit or aq_file_write. Errors that scene and sound code throw only show in aq_check_run, so run it after you change code and before you tell the user you are done, and fix the problems you caused. When the user says "this", "here" or "now", they mean what aq_selection_read shows. When you cannot go on without the user\'s decision, ask with aq_propose.',
+  "system.rules":
+    "Rules\n- Change what the user asked for. If you notice something else worth changing, mention it at the end instead of changing it.\n- The user can undo everything you change. Before a batch that deletes several objects, send it with dry_run first and check what it would remove.\n- A failed call says what was wrong and how to fix it. Change the call before you send it again; the same call fails the same way.",
+
   "tools.aq_project_status.description":
     "Get an overview of the open AnimaQuill project: its name, frame rate, picture formats and languages, its timelines with their length and number of tracks and clips, its scenes, sounds, assets and shared code files, whether you may change it, and how many problems it has. Call it at the start of a task, and again when a result says the project was reopened. It does not list clips or keyframes: use aq_timeline_read for the clips of a timeline and aq_object_read for every field of an object. Lists stop at 30 entries; use aq_search to find the rest. Like every result, it starts with the project revision, which you never need to pass back yourself.",
   "tools.aq_timeline_read.description":

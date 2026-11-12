@@ -1,5 +1,5 @@
 import { CallerState } from "./caller.ts";
-import { DEFAULT_TEXTS, type TextTable } from "./texts/index.ts";
+import { DEFAULT_TEXTS, hashOfTexts, type TextTable, type TextsUsed } from "./texts/index.ts";
 import { makeTool, type ToolDefinition } from "./tool.ts";
 import { checkRun, propose } from "./tools/ask.ts";
 import { edit } from "./tools/edit.ts";
@@ -39,6 +39,18 @@ export const DEFINITIONS: readonly ToolDefinition<any>[] = [
  * them is a new version (a test compares them with a snapshot).
  */
 export const TOOLSET_VERSION = "2026.2";
+
+/** The words of the tools as AnimaQuill writes them: what a conversation records it used. */
+export const DEFAULT_TEXTS_USED: TextsUsed = {
+  id: "animaquill/default",
+  version: TOOLSET_VERSION,
+  hash: hashOfTexts(DEFAULT_TEXTS),
+};
+
+/** The tools that change the project, for whoever shows what a turn did. */
+export const WRITE_TOOLS: ReadonlySet<string> = new Set(
+  DEFINITIONS.filter(({ writes }) => writes === true).map(({ name }) => name),
+);
 
 /**
  * The tools that AI uses on a project, the same for the assistant in the browser, a command line

@@ -17,6 +17,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxText,
+  fauxThinking,
   fauxToolCall,
   type Api,
   type AssistantMessage,
@@ -32,6 +33,7 @@ import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generati
 import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import type { TextsUsed } from "@animaquill/tools";
 import type { AnswerEnd, AssistantEntry, ChatEntry, ToolEntry } from "./entries.ts";
 import { withoutKeys } from "./secrets.ts";
 import type { Protocol } from "./services.ts";
@@ -68,6 +70,8 @@ export interface Relayed {
 /** One step of a pretend service, for tests: what it answers to the next request. */
 export interface FakeAnswer {
   readonly text?: string;
+  /** What it says of its thinking first, as services that summarize it do. */
+  readonly thinking?: string;
   readonly calls?: readonly { readonly name: string; readonly args: Record<string, unknown> }[];
   /** Fails the request with this message instead. */
   readonly error?: string;
@@ -85,21 +89,66 @@ export interface FakeEndpoint {
   requests?: number;
 }
 
-/** A tool, as AI sees it and as the editor runs it. Failing is throwing, with what AI should read. */
+/** What a tool said, for AI to read, and what it changed or found, for people. */
+export interface ToolOutput {
+  readonly text: string;
+  readonly isError: boolean;
+  /** For the summary of a turn: kept with the result, never sent to the model. */
+  readonly data?: Readonly<Record<string, unknown>>;
+  /** The turn waits for the user now: it ends after the tools of this answer. */
+  readonly terminate?: true;
+}
+
+/** A tool, as AI sees it and as the editor runs it. */
 export interface ToolSpec {
   readonly name: string;
   /** For people. */
   readonly label: string;
   /** For AI, which picks tools by it. */
   readonly description: string;
-  /** JSON Schema, checked before `run`: what does not fit goes back to AI and does not run. */
+  /** JSON Schema, as the model gets it. */
   readonly parameters: Record<string, unknown>;
-  run(args: Record<string, unknown>): Promise<string>;
+  /**
+   * The tool's own check of a call, before anything else: what it says goes back to AI as the
+   * result, and the call does not run. Without it, pi checks against `parameters`.
+   */
+  validate?(args: unknown): string | undefined;
+  run(args: Record<string, unknown>): Promise<ToolOutput>;
+}
+
+/**
+ * How to call the model, as a model pack says (see the design of model packs): every field is what
+ * the host has by default when it is left out. A closed list, so that nothing else reaches a request.
+ */
+export interface CallSettings {
+  readonly reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** The most an answer writes; pi adds the budget of thinking to it for models that have one. */
+  readonly maxOutputTokens?: number;
+  readonly temperature?: number;
+  /**
+   * Whether an answer may call several tools. pi 1.5.0 has no way to say so for any protocol (only
+   * Codex sends it, always on), so it changes nothing yet; the tools run one at a time anyway.
+   */
+  readonly parallelToolCalls?: boolean;
+  readonly cache?: "short" | "long";
+  /**
+   * pi 1.5.0 does not pass the display of thinking on from its simple requests: Anthropic always
+   * gets "summarized", which is what the browser wants. Kept for when it does.
+   */
+  readonly anthropic?: { readonly thinkingDisplay?: "summarized" | "omitted" };
+}
+
+/** What every answer of a task says it was made with, see `AssistantEntry`. */
+export interface AnswerStamp {
+  readonly toolset?: string;
+  readonly texts?: TextsUsed;
 }
 
 /** What happens while AI answers, in the order it happens. */
 export type RunEvent =
   | { readonly type: "text"; readonly delta: string }
+  /** What the model said of its thinking, where its service gives a summary. */
+  | { readonly type: "thinking"; readonly delta: string }
   | { readonly type: "entry"; readonly entry: AssistantEntry | ToolEntry }
   | {
       readonly type: "tool";
@@ -114,6 +163,12 @@ export interface RunOptions {
   readonly key: () => Promise<string | undefined>;
   readonly system: string;
   readonly tools: readonly ToolSpec[];
+  /** How to call the model. */
+  readonly call?: CallSettings;
+  /** What every answer is recorded as made with. */
+  readonly stamp?: AnswerStamp;
+  /** A new answer of the model begins, before any tool of it runs. */
+  readonly onAnswer?: () => void;
   /** The conversation so far. */
   readonly history: readonly ChatEntry[];
   readonly prompt: string;
@@ -248,8 +303,19 @@ const FAKE = "fake";
 
 const isFake = (endpoint: Endpoint | FakeEndpoint): endpoint is FakeEndpoint => "fake" in endpoint;
 
-/** Turns our record of the conversation into pi's messages. */
-function messagesOf(history: readonly ChatEntry[]): Message[] {
+/** How much of an earlier call of a tool that is no more, and of its result, the model gets. */
+const OLD_CALL_TEXT = 200;
+const OLD_RESULT_TEXT = 300;
+
+const cut = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
+
+/**
+ * Turns our record of the conversation into pi's messages. Calls of tools that the model does not
+ * have now, such as those of the tools before these, go as text: services refuse a call of a tool
+ * that is not in the list. The answer says what it called, and what came of those calls follows as
+ * one message of the user. The same record always gives the same messages, for the caches.
+ */
+function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
     done: "stop",
     tools: "toolUse",
@@ -257,25 +323,51 @@ function messagesOf(history: readonly ChatEntry[]): Message[] {
     stopped: "aborted",
     failed: "error",
   };
-  return history.map((entry): Message => {
+  const messages: Message[] = [];
+  /** The calls of tools no more, by id, whose results become text. */
+  const old = new Set<string>();
+  let results: string[] = [];
+  const flush = (at: number) => {
+    if (results.length === 0) return;
+    const text = `Results of earlier tool calls (old tool set, no longer available):\n${results.join("\n")}`;
+    messages.push({ role: "user", content: text, timestamp: at });
+    results = [];
+  };
+  for (const entry of history) {
+    if (entry.role !== "tool") flush(entry.at);
     switch (entry.role) {
       case "user":
-        return { role: "user", content: entry.text, timestamp: entry.at };
+        messages.push({ role: "user", content: entry.text, timestamp: entry.at });
+        break;
       case "tool":
-        return {
-          role: "toolResult",
-          toolCallId: entry.call,
-          toolName: entry.name,
-          content: [{ type: "text", text: entry.text }],
-          isError: !entry.ok,
-          timestamp: entry.at,
-        };
-      case "assistant":
-        return {
+        if (old.has(entry.call)) {
+          const outcome = entry.ok ? "ok" : "error";
+          results.push(`- ${entry.name} → ${outcome}: ${cut(entry.text, OLD_RESULT_TEXT)}`);
+        } else {
+          messages.push({
+            role: "toolResult",
+            toolCallId: entry.call,
+            toolName: entry.name,
+            content: [{ type: "text", text: entry.text }],
+            isError: !entry.ok,
+            timestamp: entry.at,
+          });
+        }
+        break;
+      case "assistant": {
+        const current = entry.calls.filter((call) => tools.has(call.name));
+        const gone = entry.calls.filter((call) => !tools.has(call.name));
+        for (const call of gone) old.add(call.id);
+        const said = gone.map(
+          (call) =>
+            `[earlier tool call ${call.name} ${cut(JSON.stringify(call.args), OLD_CALL_TEXT)}]`,
+        );
+        const text = [entry.text, ...said].filter((part) => part !== "").join("\n");
+        messages.push({
           role: "assistant",
           content: [
-            ...(entry.text ? [{ type: "text" as const, text: entry.text }] : []),
-            ...entry.calls.map((call) => ({
+            ...(text ? [{ type: "text" as const, text }] : []),
+            ...current.map((call) => ({
               type: "toolCall" as const,
               id: call.id,
               name: call.name,
@@ -286,11 +378,16 @@ function messagesOf(history: readonly ChatEntry[]): Message[] {
           provider: providerOf(entry.service),
           model: entry.model,
           usage: NO_USAGE,
-          stopReason: stops[entry.end],
+          // An answer whose calls all went to text ended there, as far as the model is told.
+          stopReason: entry.end === "tools" && current.length === 0 ? "stop" : stops[entry.end],
           timestamp: entry.at,
-        };
+        });
+        break;
+      }
     }
-  });
+  }
+  flush(history.at(-1)?.at ?? 0);
+  return messages;
 }
 
 const textOf = (content: readonly { readonly type: string; readonly text?: string }[]) =>
@@ -330,6 +427,7 @@ function fakeProvider(endpoint: FakeEndpoint, results: () => readonly ToolEntry[
     const calls = answer.calls ?? [];
     return fauxAssistantMessage(
       [
+        ...(answer.thinking ? [fauxThinking(answer.thinking)] : []),
         ...(answer.text ? [fauxText(answer.text)] : []),
         ...calls.map((call) => fauxToolCall(call.name, call.args as never)),
       ],
@@ -385,24 +483,51 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     );
   }
 
+  /** A tool of the last answer asked the user: the turn ends after its tools. */
+  let asked = false;
   const tools: AgentTool[] = options.tools.map((tool) => ({
     name: tool.name,
     label: tool.label,
     description: tool.description,
     parameters: tool.parameters,
     executionMode: "sequential",
+    // Our own check comes first, so that the model reads our error and not pi's.
+    ...(tool.validate && {
+      prepareArguments: (args: unknown) => {
+        const error = tool.validate?.(args);
+        if (error !== undefined) throw new Error(error);
+        return args as never;
+      },
+    }),
     execute: async (_id, args) => {
-      const text = await tool.run(args as Record<string, unknown>);
-      return { content: [{ type: "text", text }], details: undefined };
+      const output = await tool.run(args as Record<string, unknown>);
+      if (output.terminate) asked = true;
+      return {
+        content: [{ type: "text", text: output.text }],
+        details: output.data,
+        ...(output.isError && { isError: true }),
+      };
     },
   }));
+  const names = new Set(options.tools.map((tool) => tool.name));
+  const call = options.call ?? {};
+  const settings = {
+    ...(call.reasoning !== undefined && call.reasoning !== "off" && { reasoning: call.reasoning }),
+    ...(call.maxOutputTokens !== undefined && { maxTokens: call.maxOutputTokens }),
+    ...(call.temperature !== undefined && { temperature: call.temperature }),
+    ...(call.cache !== undefined && { cacheRetention: call.cache }),
+    ...(protocol === "anthropic-messages" &&
+      call.anthropic?.thinkingDisplay !== undefined && {
+        thinkingDisplay: call.anthropic.thinkingDisplay,
+      }),
+  };
 
   const agent = new Agent({
     initialState: {
       systemPrompt: options.system,
       model,
       tools,
-      messages: messagesOf(options.history) as AgentMessage[],
+      messages: messagesOf(options.history, names) as AgentMessage[],
     },
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
@@ -412,6 +537,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
         context,
         {
           ...streamOptions,
+          ...settings,
           ...(relay && { headers: { ...streamOptions?.headers, ...relay.headers } }),
           // Retrying is for people to decide: a failure shows right away.
           maxRetries: 0,
@@ -429,14 +555,23 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       const no = options.before?.({ id: toolCall.id, name: toolCall.name });
       return no ? { block: true, reason: no.reason, terminate: no.stop } : undefined;
     },
-    finishTurn: () => (options.enough?.() ? { action: "end" } : undefined),
+    finishTurn: () => (asked || options.enough?.() ? { action: "end" } : undefined),
   });
 
   const clean = (text: string) => withoutKeys(text, [key]);
+  const stamp = options.stamp ?? {};
+  let thinking = "";
   agent.subscribe((event: AgentEvent) => {
-    if (event.type === "message_update") {
+    if (event.type === "turn_start") {
+      thinking = "";
+      options.onAnswer?.();
+    } else if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
       if (update.type === "text_delta") onEvent({ type: "text", delta: update.delta });
+      if (update.type === "thinking_delta" && update.delta !== "") {
+        thinking += update.delta;
+        onEvent({ type: "thinking", delta: update.delta });
+      }
     } else if (event.type === "tool_execution_start") {
       const args = (event.args ?? {}) as Record<string, unknown>;
       onEvent({ type: "tool", id: event.toolCallId, name: event.toolName, args });
@@ -460,9 +595,14 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             service,
             protocol,
             model: model.id,
+            ...(thinking.trim() !== "" && { thinking: thinking.trim() }),
+            ...(stamp.toolset !== undefined && { toolset: stamp.toolset }),
+            ...(stamp.texts !== undefined && { texts: stamp.texts }),
           },
         });
+        thinking = "";
       } else if (message.role === "toolResult") {
+        const details = (message as { details?: unknown }).details;
         const entry: ToolEntry = {
           role: "tool",
           call: message.toolCallId,
@@ -470,6 +610,10 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
           ok: !message.isError,
           text: clean(textOf(message.content)),
           at: message.timestamp,
+          ...(typeof details === "object" &&
+            details !== null && {
+              data: details as Readonly<Record<string, unknown>>,
+            }),
         };
         seen.push(entry);
         onEvent({ type: "entry", entry });

@@ -1,3 +1,5 @@
+import type { TextsUsed } from "@animaquill/tools";
+
 /**
  * A conversation with AI, as this editor keeps it. This is our own shape and not the one of the
  * library that talks to the services: what is kept in the browser has to outlive an upgrade of it.
@@ -39,6 +41,15 @@ export interface AssistantEntry {
   readonly service: string;
   readonly protocol: string;
   readonly model: string;
+  /**
+   * What the model said of its thinking, where its service gives a summary: for people to follow
+   * along, never sent back to it.
+   */
+  readonly thinking?: string;
+  /** The version of the tools it had, see `TOOLSET_VERSION`. Older answers had the tools before. */
+  readonly toolset?: string;
+  /** The words of the tools and of the system prompt it had. Older answers had the default ones. */
+  readonly texts?: TextsUsed;
 }
 
 /** What came of one call of a tool, which is what AI gets to read. */
@@ -50,12 +61,20 @@ export interface ToolEntry {
   readonly ok: boolean;
   readonly text: string;
   readonly at: number;
+  /** What the call changed or found, for the summary of a turn: never sent to the model. */
+  readonly data?: Readonly<Record<string, unknown>>;
 }
 
 export type ChatEntry = UserEntry | AssistantEntry | ToolEntry;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isTextsUsed = (value: unknown): value is TextsUsed =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.version === "string" &&
+  typeof value.hash === "string";
 
 const ENDS: readonly AnswerEnd[] = ["done", "tools", "length", "stopped", "failed"];
 
@@ -76,13 +95,13 @@ export function readEntry(value: unknown): ChatEntry | undefined {
     return { role, text, at, task };
   }
   if (role === "tool") {
-    const { call, name, ok, text } = value;
+    const { call, name, ok, text, data } = value;
     if (typeof call !== "string" || typeof name !== "string") return undefined;
     if (typeof ok !== "boolean" || typeof text !== "string") return undefined;
-    return { role, call, name, ok, text, at };
+    return { role, call, name, ok, text, at, ...(isRecord(data) && { data }) };
   }
   if (role === "assistant") {
-    const { text, calls, end, error, service, protocol, model } = value;
+    const { text, calls, end, error, service, protocol, model, thinking, toolset, texts } = value;
     if (typeof text !== "string" || !Array.isArray(calls)) return undefined;
     if (!ENDS.includes(end as AnswerEnd)) return undefined;
     if (typeof service !== "string" || typeof protocol !== "string") return undefined;
@@ -99,6 +118,9 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       service,
       protocol,
       model,
+      ...(typeof thinking === "string" && thinking !== "" && { thinking }),
+      ...(typeof toolset === "string" && { toolset }),
+      ...(isTextsUsed(texts) && { texts }),
     };
   }
   return undefined;

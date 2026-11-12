@@ -1,27 +1,26 @@
-import { ProjectStore, aiTask } from "@animaquill/core";
+import { ProblemSet, ProjectStore, aiTask } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
+import { CallerState, createToolset } from "@animaquill/tools";
+import { toolSpecsOf } from "./assistant.ts";
 import { describe, expect, it } from "vitest";
 import { Conversation, type TaskTarget } from "./conversation.ts";
 import type { FakeEndpoint } from "./pi.ts";
-import { allTools } from "./tools.ts";
 
 function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
   const store = ProjectStore.create(createProject({ name: "对话" }));
-  let seen: number | undefined;
   let count = 0;
+  const caller = new CallerState();
   const conversation = new Conversation({
     system: "test",
     newTask: () => `t${++count}`,
-    tools: (task) => {
-      seen = store.revision;
-      return allTools({
-        store: () => store,
-        task,
-        selection: () => undefined,
-        seen: () => seen,
-        saw: (revision) => (seen = revision),
-      });
-    },
+    tools: (task) =>
+      toolSpecsOf(
+        createToolset(
+          { store: () => store, origin: () => aiTask(task), problems: () => new ProblemSet() },
+          caller,
+        ),
+      ),
+    onAnswer: () => caller.beginAnswer(),
   });
   const endpoint: FakeEndpoint = { fake };
   const target: TaskTarget = { endpoint, key: async () => undefined, maxToolCalls };
@@ -30,15 +29,23 @@ function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
 }
 
 const addMarker = (time: string) => ({
-  name: "marker_add",
-  args: { timeline: "main", time },
+  name: "aq_edit",
+  args: { operations: [{ op: "marker.add", timeline: "main", time }] },
 });
 
 describe("a conversation", () => {
   it("changes the project with a task that can be taken back as a whole", async () => {
     const { store, conversation, target, markers } = setup([
+      { calls: [{ name: "aq_project_status", args: {} }] },
       { calls: [addMarker("1"), addMarker("2")] },
-      { calls: [{ name: "project_rename", args: { name: "AI 起的名字" } }] },
+      {
+        calls: [
+          {
+            name: "aq_edit",
+            args: { operations: [{ op: "project.rename", name: "AI 起的名字" }] },
+          },
+        ],
+      },
       { text: "加了两个标记，也改了名字。" },
     ]);
     const outcome = await conversation.send("加两个标记", target);
@@ -51,12 +58,14 @@ describe("a conversation", () => {
       "user",
       "assistant",
       "tool",
+      "assistant",
+      "tool",
       "tool",
       "assistant",
       "tool",
       "assistant",
     ]);
-    expect(conversation.resultsOf("t1").size).toBe(3);
+    expect(conversation.resultsOf("t1").size).toBe(4);
 
     expect(store.undoOrigin(aiTask("t1")).ok).toBe(true);
     expect(markers()).toHaveLength(0);
@@ -85,7 +94,7 @@ describe("a conversation", () => {
     expect(markers()).toHaveLength(2);
     const results = [...conversation.resultsOf("t1").values()];
     expect(results.map((result) => result.ok)).toEqual([true, true, false, false]);
-    expect(results[2]?.text).toMatch(/上限（2 次）/);
+    expect(results[2]?.text).toMatch(/^error limit: this task has called tools 2 times/);
   });
 
   it("runs one task at a time, and stops when asked", async () => {

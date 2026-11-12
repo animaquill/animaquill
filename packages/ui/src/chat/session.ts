@@ -1,16 +1,25 @@
 import {
   Conversation,
-  SYSTEM_PROMPT,
-  allTools,
+  DEFAULT_STAMP,
+  browserSystemPrompt,
   kindOf,
   readEntry,
+  toolSpecsOf,
   type ChatEntry,
   type Endpoint,
   type FakeEndpoint,
-  type SelectionFacts,
   type TaskOutcome,
 } from "@animaquill/agent";
-import { aiTask, type ProjectStore, type UndoResult } from "@animaquill/core";
+import {
+  aiTask,
+  type ClipDescription,
+  type ClipState,
+  type ProblemSet,
+  type ProjectStore,
+  type StaticInputs,
+  type UndoResult,
+} from "@animaquill/core";
+import { CallerState, createToolset, type SelectionFacts } from "@animaquill/tools";
 import {
   memoryChats,
   type AccountAccess,
@@ -19,6 +28,7 @@ import {
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import type { AiSettingsStore } from "./settings.ts";
+import { clipsOf, summaryOf } from "./summary.ts";
 
 /**
  * Why a message cannot go out yet, before any service is asked. Through the relay of the platform:
@@ -38,6 +48,8 @@ export interface ChatSnapshot {
   readonly hold: ChatHold | undefined;
   /** Changes to the project went back or came again, which the buttons of tasks show. */
   readonly undoTick: number;
+  /** The clips the last task changed or made, which the timeline marks until the next one. */
+  readonly marked: ReadonlySet<string>;
 }
 
 export interface ChatSessionOptions {
@@ -49,6 +61,12 @@ export interface ChatSessionOptions {
   readonly project: () => { readonly store: ProjectStore; readonly key: string } | undefined;
   readonly subscribeProject: (listener: () => void) => () => void;
   readonly selection: () => SelectionFacts | undefined;
+  /** All problems the editor knows of, which AI checks its work with. */
+  readonly problems: () => ProblemSet;
+  /** What a scene says about the properties of a clip, once the editor ran it. */
+  readonly describe?: (clip: ClipState) => ClipDescription | undefined;
+  /** What the problems of the project alone need, to tell what a batch of AI changes. */
+  readonly problemInputs?: () => StaticInputs;
   /** What taking back or doing again came to, for people. */
   readonly undone: (result: UndoResult) => void;
   /** For tests: a service that answers from a script, instead of the one people chose. */
@@ -79,10 +97,15 @@ export class ChatSession {
     saved: [],
     hold: undefined,
     undoTick: 0,
+    marked: new Set(),
   };
+  /** The last task, once people took back what it did: its clips are no longer marked. */
+  #unmarked: string | undefined;
   #project: { readonly store: ProjectStore; readonly key: string } | undefined;
   #stopWatching: (() => void) | undefined;
   #saving: ReturnType<typeof setTimeout> | undefined;
+  /** What the tools keep of the conversation that is open, see `CallerState`. */
+  #caller = new CallerState();
   #pending: (() => Promise<void>) | undefined;
 
   constructor(options: ChatSessionOptions) {
@@ -107,7 +130,7 @@ export class ChatSession {
     this.#snapshot.conversation?.stop();
     void this.flush();
     this.#project = project;
-    this.#start([], undefined);
+    this.#start([], undefined, undefined);
     if (project) void this.#loadLatest(project.key);
   }
 
@@ -126,12 +149,21 @@ export class ChatSession {
     }
   }
 
-  #start(entries: readonly ChatEntry[], id: string | undefined): void {
+  /**
+   * A conversation, from what was kept of it if anything: what AI read in it still counts, as far
+   * as the project is the one it read (a reopened project has new revisions, see `CallerState`).
+   */
+  #start(entries: readonly ChatEntry[], id: string | undefined, caller: unknown): void {
     this.#stopWatching?.();
+    const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
+    this.#caller = tools;
     const conversation = new Conversation({
       entries,
-      system: SYSTEM_PROMPT,
-      tools: (task) => this.#toolsOf(task),
+      system: browserSystemPrompt(),
+      tools: (task) => this.#toolsOf(task, tools),
+      stamp: DEFAULT_STAMP,
+      // Each answer of the model is one: a change that fails holds back the rest of it.
+      onAnswer: () => tools.beginAnswer(),
     });
     const chatId = id ?? newChatId();
     let known = conversation.getSnapshot().entries;
@@ -141,6 +173,7 @@ export class ChatSession {
       if (now !== known) {
         known = now;
         this.#saveSoon(chatId, now);
+        this.#mark(now);
       }
       // A task that ended has its last answer on the screen: people may leave right after reading
       // it, before a write that waits would come.
@@ -149,20 +182,45 @@ export class ChatSession {
       if (was && !running) void this.flush();
     });
     this.#set({ conversation, id: chatId, hold: undefined });
+    this.#mark(entries);
+  }
+
+  /** Marks the clips of the last task, the one that runs or ran last. */
+  #mark(entries: readonly ChatEntry[]): void {
+    const start = entries.findLastIndex((entry) => entry.role === "user");
+    const last = entries[start];
+    const task = last?.role === "user" ? last.task : undefined;
+    const marked =
+      task === undefined || task === this.#unmarked
+        ? new Set<string>()
+        : clipsOf(summaryOf(entries.slice(start)));
+    const before = this.#snapshot.marked;
+    if (marked.size === before.size && [...marked].every((clip) => before.has(clip))) return;
+    this.#set({ marked });
+  }
+
+  /** The task whose changes the timeline marks, or would. */
+  #lastTask(): string | undefined {
+    return this.#snapshot.conversation?.tasks.at(-1);
   }
 
   /** The tools of one task, on the project that was open when it started, and only that one. */
-  #toolsOf(task: string) {
+  #toolsOf(task: string, caller: CallerState) {
     const project = this.#project;
-    let seen = project?.store.revision;
-    return allTools({
-      store: () =>
-        project && this.#options.project()?.store === project.store ? project.store : undefined,
-      task,
-      selection: this.#options.selection,
-      seen: () => seen,
-      saw: (revision) => (seen = revision),
-    });
+    const { selection, problems, describe, problemInputs } = this.#options;
+    const tools = createToolset(
+      {
+        store: () =>
+          project && this.#options.project()?.store === project.store ? project.store : undefined,
+        origin: () => aiTask(task),
+        selection,
+        problems,
+        ...(describe && { describe }),
+        ...(problemInputs && { problemInputs }),
+      },
+      caller,
+    );
+    return toolSpecsOf(tools);
   }
 
   #saveSoon(id: string, entries: readonly ChatEntry[]): void {
@@ -170,13 +228,14 @@ export class ChatSession {
     if (project === undefined || entries.length === 0) return;
     const first = entries.find((entry) => entry.role === "user");
     const title = (first?.role === "user" ? first.text : "").trim().slice(0, TITLE_LENGTH);
+    const caller = this.#caller;
     this.#pending = async () => {
-      const chat = { id, project, title, updatedAt: Date.now(), entries };
+      const chat = { id, project, title, updatedAt: Date.now(), entries, caller: caller.toJSON() };
       try {
         await this.#chats.save(chat);
         if (this.#project?.key !== project) return;
         const others = this.#snapshot.saved.filter((saved) => saved.id !== id);
-        const { entries: _entries, ...summary } = chat;
+        const { entries: _entries, caller: _caller, ...summary } = chat;
         this.#set({ saved: [summary, ...others] });
       } catch (error) {
         console.warn("The conversation could not be kept", error);
@@ -202,7 +261,7 @@ export class ChatSession {
   newConversation(): void {
     if (this.running) return;
     void this.flush();
-    this.#start([], undefined);
+    this.#start([], undefined, undefined);
   }
 
   async open(id: string): Promise<void> {
@@ -215,7 +274,7 @@ export class ChatSession {
     });
     if (!saved || this.#project?.key !== project) return;
     const entries = saved.entries.map(readEntry).filter((entry) => entry !== undefined);
-    this.#start(entries, id);
+    this.#start(entries, id, saved.caller);
   }
 
   async remove(id: string): Promise<void> {
@@ -224,7 +283,7 @@ export class ChatSession {
     if (id === this.#snapshot.id) {
       if (this.running) return;
       this.#pending = undefined;
-      this.#start([], undefined);
+      this.#start([], undefined, undefined);
     }
     await this.#chats.remove(project, id).catch((error: unknown) => {
       console.warn("A conversation could not be taken away", error);
@@ -301,6 +360,10 @@ export class ChatSession {
     if (!store) return;
     this.#options.undone(store.undoOrigin(aiTask(task)));
     this.#set({ undoTick: this.#snapshot.undoTick + 1 });
+    if (task === this.#lastTask()) {
+      this.#unmarked = task;
+      this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
+    }
   }
 
   redoTask(task: string): void {
@@ -308,5 +371,9 @@ export class ChatSession {
     if (!store) return;
     this.#options.undone(store.redoOrigin(aiTask(task)));
     this.#set({ undoTick: this.#snapshot.undoTick + 1 });
+    if (task === this.#unmarked) {
+      this.#unmarked = undefined;
+      this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
+    }
   }
 }

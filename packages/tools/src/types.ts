@@ -68,7 +68,11 @@ export interface Tool {
   readonly inputSchema: JsonSchema;
   readonly outputSchema: JsonSchema;
   readonly annotations: ToolAnnotations;
-  /** Whether the call fits the parameters, as the error a call would give, or undefined. */
+  /**
+   * Whether a call of the model fits the parameters, as the error the call would give, or undefined:
+   * hosts check before they run it, the way they check every call. One that does not fit counts as a
+   * failed change for what comes after it in the same answer, as when `run` finds it.
+   */
   validate(args: unknown): ToolResult | undefined;
   run(args: unknown): Promise<ToolResult>;
 }

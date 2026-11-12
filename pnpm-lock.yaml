@@ -421,6 +421,9 @@ importers:
       '@animaquill/schema':
         specifier: workspace:*
         version: link:../schema
+      '@animaquill/tools':
+        specifier: workspace:*
+        version: link:../tools
       dockview-react:
         specifier: 8.8.3
         version: 8.8.3(react-dom@19.3.1(react@19.3.1))(react@19.3.1)

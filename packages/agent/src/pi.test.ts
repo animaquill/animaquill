@@ -12,7 +12,7 @@ const echo: ToolSpec = {
     required: ["at"],
     additionalProperties: false,
   },
-  run: async (args) => `已加在 ${String(args.at)}`,
+  run: async (args) => ({ text: `已加在 ${String(args.at)}`, isError: false }),
 };
 
 function run(endpoint: FakeEndpoint, options: Partial<Parameters<typeof runTask>[0]> = {}) {
@@ -64,7 +64,10 @@ describe("the wrapper of pi", () => {
 
   it("gives arguments that do not fit back to AI without running the tool", async () => {
     let ran = false;
-    const strict: ToolSpec = { ...echo, run: async () => ((ran = true), "ran") };
+    const strict: ToolSpec = {
+      ...echo,
+      run: async () => ((ran = true), { text: "ran", isError: false }),
+    };
     let read: readonly ToolEntry[] = [];
     const endpoint: FakeEndpoint = {
       fake: [

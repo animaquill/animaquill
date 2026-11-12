@@ -1,5 +1,5 @@
 import type { FakeEndpoint } from "@animaquill/agent";
-import { ProjectStore, type UndoResult } from "@animaquill/core";
+import { ProblemSet, ProjectStore, withId, type UndoResult } from "@animaquill/core";
 import {
   memoryChats,
   memoryKeys,
@@ -61,6 +61,7 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
   const listeners = new Set<() => void>();
   const undone: UndoResult[] = [];
   let fake: FakeEndpoint | undefined;
+  const problems = new ProblemSet({ reports: ["runtime"] });
   const chat = new ChatSession({
     chats,
     ai,
@@ -71,6 +72,7 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
       return () => listeners.delete(listener);
     },
     selection: () => undefined,
+    problems: () => problems,
     undone: (result) => undone.push(result),
     fake: () => fake,
   });
@@ -88,13 +90,18 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
     undone,
     open,
     markers,
+    problems,
     fake: (endpoint: FakeEndpoint) => (fake = endpoint),
   };
 }
 
 const addMarker = (time: string) => ({
-  name: "marker_add",
-  args: { timeline: "main", time },
+  name: "aq_edit",
+  args: { operations: [{ op: "marker.add", timeline: "main", time }] },
+});
+const rename = (name: string) => ({
+  name: "aq_edit",
+  args: { operations: [{ op: "project.rename", name }] },
 });
 
 beforeEach(() => {
@@ -206,6 +213,74 @@ describe("the chat", () => {
     chat.newConversation();
     expect(chat.getSnapshot().conversation?.getSnapshot().entries).toEqual([]);
     expect(chat.getSnapshot().saved).toHaveLength(1);
+  });
+
+  it("keeps what AI read with the conversation, and goes on from it when it is opened again", async () => {
+    const { chat, chats, fake, first } = setup();
+    fake({ fake: [{ calls: [{ name: "aq_project_status", args: {} }] }, { text: "看过了" }] });
+    await chat.send("看看项目");
+    await chat.flush();
+    const id = chat.getSnapshot().id as string;
+    const kept = await chats.load("p1", id);
+    expect(kept?.caller).toMatchObject({ version: 1, lastRead: expect.any(String) });
+
+    // A new conversation has read nothing: a change of what is there is refused.
+    chat.newConversation();
+    fake({ fake: [{ calls: [rename("新名字")] }, { text: "x" }] });
+    await chat.send("改名");
+    expect(first.getState().manifest.name).toBe("第一个");
+    const results = [
+      ...(chat
+        .getSnapshot()
+        .conversation?.resultsOf(chat.getSnapshot().conversation?.tasks.at(-1) ?? "")
+        .values() ?? []),
+    ];
+    expect(results[0]?.text).toContain("error not-read");
+
+    // The one from before has: it goes on.
+    await chat.open(id);
+    fake({ fake: [{ calls: [rename("新名字")] }, { text: "改好了" }] });
+    await chat.send("改名");
+    expect(first.getState().manifest.name).toBe("新名字");
+  });
+
+  it("has what scene code threw only in aq_check_run, after the code changed", async () => {
+    const { chat, fake, problems } = setup();
+    let written = "";
+    let checked = "";
+    fake({
+      fake: [
+        {
+          calls: [
+            { name: "aq_file_write", args: { path: "code/move.js", text: "export const a = ;\n" } },
+          ],
+        },
+        (results) => {
+          written = results.at(-1)?.text ?? "";
+          // The editor ran the code meanwhile, and it threw.
+          problems.report("runtime", "scenes", [
+            withId({
+              source: "runtime",
+              severity: "error",
+              code: "scene-error",
+              params: {},
+              file: "code/move.js",
+              line: 1,
+              detail: "SyntaxError: Unexpected token ';'",
+            }),
+          ]);
+          return { calls: [{ name: "aq_check_run", args: {} }] };
+        },
+        (results) => ((checked = results.at(-1)?.text ?? ""), { text: "查过了" }),
+      ],
+    });
+    await chat.send("写一段代码");
+    expect(written).toContain("wrote code/move.js");
+    expect(written).not.toContain("scene-error");
+    expect(checked).toContain("scene-error");
+    expect(checked).toContain("SyntaxError: Unexpected token");
+    // A list of what is wrong: nothing in it tells the model what to do about it.
+    expect(checked).not.toMatch(/\bfix (the|it|them)\b|\byou should\b/i);
   });
 
   it("keeps the last answer as soon as the task ends, for people who leave right after", async () => {

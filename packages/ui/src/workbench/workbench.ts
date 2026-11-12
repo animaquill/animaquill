@@ -25,10 +25,11 @@ import {
   withId,
   type OperationCall,
   type UndoResult,
+  type ObjectRef,
 } from "@animaquill/core";
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
-import { compare, createProject, formatTime, toSeconds } from "@animaquill/schema";
+import { compare, createProject, formatTime, parseTime, toSeconds } from "@animaquill/schema";
 import { newSyncId, type ProjectSummary } from "@animaquill/host";
 import type { ConnectTiming } from "../cloud/connect.ts";
 import {
@@ -78,7 +79,7 @@ import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
-import { frameTime } from "../timeline/frames.ts";
+import { frameAt, frameTime } from "../timeline/frames.ts";
 import { keepFiles, type ImportReport, type PreparedProject } from "../transfer/import.ts";
 import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
@@ -545,8 +546,16 @@ export class Workbench {
           ...(transition && { transition }),
         };
       },
+      problems: () => this.problems.set,
+      describe: (clip) => this.keyframes.describe(clip),
+      problemInputs: () => ({
+        describe: (clip) => this.keyframes.describe(clip),
+        registered: (revision) => this.registrations.problemsOf(revision),
+      }),
       undone: (result) => this.tellUndo(result),
     });
+    // What the last turn of AI changed shows on the timeline until the next one.
+    this.chat.subscribe(() => this.timeline.setMarked(this.chat.getSnapshot().marked));
     this.frameRate = new PreviewFrameRate(this.timeline);
     this.previewQuality = new PreviewQuality(host.settings, this.frameRate);
     const differences = new OutputDifferences({
@@ -1132,18 +1141,38 @@ export class Workbench {
       }
       return;
     }
+    if (subject) this.goToObject(subject);
+  }
+
+  /**
+   * Goes to an object of the project, as people see it: a clip or a join on the timeline, a marker
+   * at its time, a file or the code of a scene, the first clip of a track. Only the timeline that
+   * the editor shows can be gone to. Resolves to whether there was somewhere to go.
+   */
+  goToObject(subject: ObjectRef): boolean {
     const state = this.session.store?.getState();
-    if (!subject || !state) return;
+    const timeline = this.timeline.model;
+    if (!state) return false;
+    if (subject.kind === "file") return this.showCode(subject.id);
     if (subject.kind === "scene") {
       const manifest = state.scenes[subject.id];
-      if (manifest) this.showCode(`scenes/${subject.id}/${manifest.entry}`);
-      return;
+      return manifest ? this.showCode(`scenes/${subject.id}/${manifest.entry}`) : false;
     }
     const at = subject.kind === "timeline" ? subject.id : subject.timeline;
-    if (at === undefined || timeline?.id !== at) return;
-    if (subject.kind === "clip") {
-      this.goToUse({ timeline: at, clip: subject.id });
-      return;
+    if (at === undefined || timeline?.id !== at) return false;
+    if (subject.kind === "clip") return this.goToUse({ timeline: at, clip: subject.id });
+    if (subject.kind === "join") {
+      const join = state.timelines[at]?.joins?.[subject.id];
+      return join?.from === undefined
+        ? false
+        : this.goToUse({ timeline: at, clip: join.from, join: subject.id });
+    }
+    if (subject.kind === "marker") {
+      const marker = state.timelines[at]?.markers[subject.id];
+      if (!marker) return false;
+      this.timeline.seek(frameAt(toSeconds(parseTime(marker.time)), timeline.rate));
+      this.layout.openPanel("timeline");
+      return true;
     }
     // A track, or the whole timeline: the first clip of the track, or the timeline itself.
     const first =
@@ -1152,8 +1181,10 @@ export class Workbench {
             .filter((clip) => clip.track === subject.id)
             .toSorted((a, b) => compare(clipStart(a), clipStart(b)))[0]
         : undefined;
-    if (!first || !this.goToUse({ timeline: at, clip: first.id }))
+    if (!first || !this.goToUse({ timeline: at, clip: first.id })) {
       this.layout.openPanel("timeline");
+    }
+    return true;
   }
 
   /**

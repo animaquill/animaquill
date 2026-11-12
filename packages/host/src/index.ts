@@ -1418,6 +1418,8 @@ export interface SavedChatSummary {
 /** A conversation as it was kept. What was said is the editor's to read, see `readEntry`. */
 export interface SavedChat extends SavedChatSummary {
   readonly entries: readonly unknown[];
+  /** What the tools keep of the conversation, such as what AI read: the editor's to read back. */
+  readonly caller?: unknown;
 }
 
 /** Conversations with AI by project. Only so many of a project are kept, the oldest go first. */

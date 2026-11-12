@@ -1,5 +1,12 @@
 import type { AnswerEnd, ChatEntry, ToolEntry, UserEntry } from "./entries.ts";
-import type { Endpoint, FakeEndpoint, RunEvent, ToolSpec } from "./pi.ts";
+import type {
+  AnswerStamp,
+  CallSettings,
+  Endpoint,
+  FakeEndpoint,
+  RunEvent,
+  ToolSpec,
+} from "./pi.ts";
 import { failureOf, type ServiceFailure } from "./services.ts";
 
 /**
@@ -25,6 +32,8 @@ export interface RunningTask {
   readonly task: string;
   /** What AI wrote of the answer that is on its way. */
   readonly text: string;
+  /** What it said of its thinking for this answer so far, where its service gives that. */
+  readonly thinking: string;
   readonly tool: { readonly id: string; readonly name: string } | undefined;
 }
 
@@ -47,6 +56,11 @@ export interface ConversationOptions {
   readonly system: string;
   /** The tools of a task, which change the project as that task. */
   readonly tools: (task: string) => readonly ToolSpec[];
+  /** How to call the model, and what answers are recorded as made with. */
+  readonly call?: CallSettings;
+  readonly stamp?: AnswerStamp;
+  /** A new answer of the model begins, before any of its tools run. */
+  readonly onAnswer?: () => void;
   /** A new name for a task, which no other task of this project has. */
   readonly newTask?: () => string;
   readonly now?: () => number;
@@ -59,7 +73,7 @@ const newTaskId = () => {
 
 /** Says that a task called as many tools as it may, to AI and for people. */
 export const limitReason = (max: number): string =>
-  `limit: 这次任务调用工具已经达到上限（${max} 次），这个工具没有执行。停下来，告诉用户做到了哪里，用户可以让你继续。`;
+  `error limit: this task has called tools ${max} times, as many as it may; this call and those after it in this task are not run.`;
 
 export class Conversation {
   readonly #options: ConversationOptions;
@@ -107,7 +121,7 @@ export class Conversation {
     const history = this.#snapshot.entries;
     this.#set({
       entries: [...history, user],
-      running: { task, text: "", tool: undefined },
+      running: { task, text: "", thinking: "", tool: undefined },
       last: undefined,
     });
 
@@ -121,6 +135,8 @@ export class Conversation {
       if (!running) return;
       if (event.type === "text") {
         this.#set({ running: { ...running, text: running.text + event.delta } });
+      } else if (event.type === "thinking") {
+        this.#set({ running: { ...running, thinking: running.thinking + event.delta } });
       } else if (event.type === "tool") {
         this.#set({ running: { ...running, tool: { id: event.id, name: event.name } } });
       } else {
@@ -128,7 +144,7 @@ export class Conversation {
         const done = event.entry.role === "tool" ? undefined : running.tool;
         this.#set({
           entries: [...this.#snapshot.entries, event.entry],
-          running: { ...running, text: "", tool: done },
+          running: { ...running, text: "", thinking: "", tool: done },
         });
       }
     };
@@ -141,6 +157,9 @@ export class Conversation {
         key: target.key,
         system: this.#options.system,
         tools: this.#options.tools(task),
+        ...(this.#options.call && { call: this.#options.call }),
+        ...(this.#options.stamp && { stamp: this.#options.stamp }),
+        ...(this.#options.onAnswer && { onAnswer: this.#options.onAnswer }),
         history,
         prompt: text,
         signal: controller.signal,

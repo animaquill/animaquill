@@ -12,8 +12,12 @@ export {
   type OperationExample,
   type TextTable,
   type TextValue,
+  type TextsUsed,
+  type Entry,
+  hashOfTexts,
+  systemPromptOf,
 } from "./texts/index.ts";
-export { TOOLSET_VERSION, createToolset } from "./toolset.ts";
+export { DEFAULT_TEXTS_USED, TOOLSET_VERSION, WRITE_TOOLS, createToolset } from "./toolset.ts";
 export type {
   JsonSchema,
   SelectionFacts,
