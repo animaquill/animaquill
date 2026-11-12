@@ -245,14 +245,47 @@ describe("a copy of a project", () => {
     const source = open();
     const shown = sceneSourceOf(source.getState(), "title");
     const copy = fork(source);
-    success(
-      copy.store.execute({
-        type: "file.write",
-        params: { path: "scenes/title/index.html", text: "<p>copy</p>\n" },
-      }),
-    );
-    const inCopy = sceneSourceOf(copy.store.getState(), "title");
-    expect(inCopy?.revision).not.toBe(shown?.revision);
-    expect(sceneSourceOf(source.getState(), "title")).toBe(shown);
+    for (let round = 0; round < 50; round += 1) {
+      success(
+        copy.store.execute({
+          type: "file.write",
+          params: { path: "scenes/title/index.html", text: `<p>${round}</p>\n` },
+        }),
+      );
+      const inCopy = sceneSourceOf(copy.store.getState(), "title");
+      expect(inCopy?.revision).not.toBe(shown?.revision);
+      // The project is shown meanwhile, as an editor does.
+      expect(sceneSourceOf(source.getState(), "title")).toBe(shown);
+    }
+  });
+
+  it("keeps what each scene is shown as, for a project with many scenes", () => {
+    const source = open();
+    const calls: CommandCall[] = Array.from({ length: 600 }, (_, index) => ({
+      type: "scene.add",
+      params: {
+        id: `s${index}`,
+        manifest: { name: `s${index}`, entry: "index.html", runtime: 1 },
+        files: { "index.html": `<p>${index}</p>` },
+      },
+    }));
+    success(source.executeBatch(calls));
+    const state = source.getState();
+    const first = calls.map((_, index) => sceneSourceOf(state, `s${index}`));
+    const second = calls.map((_, index) => sceneSourceOf(state, `s${index}`));
+    expect(second.filter((made, index) => made !== first[index])).toEqual([]);
+    // Many changes of other scenes in a copy leave them be.
+    const copy = fork(source);
+    for (let index = 0; index < 600; index += 1) {
+      success(
+        copy.store.execute({
+          type: "file.write",
+          params: { path: `scenes/s${index}/index.html`, text: "<p>copy</p>" },
+        }),
+      );
+      sceneSourceOf(copy.store.getState(), `s${index}`);
+    }
+    expect(calls.map((_, index) => sceneSourceOf(state, `s${index}`))).toEqual(first);
+    expect(sceneSourceOf(state, "s0")).toBe(first[0]);
   });
 });

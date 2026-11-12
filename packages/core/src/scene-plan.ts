@@ -240,12 +240,13 @@ export function codeOfAsksFor(state: ProjectState, owner: string, asset: string)
 }
 
 /**
- * What scenes were shown as, by scene and revision: one that stays what it was keeps its identity.
- * By revision too, so that two states with the same scene, such as a project and a copy of it, do
- * not take turns at making it anew. The last few hundred are kept.
+ * What scenes were shown as, by scene and then revision: one that stays what it was keeps its
+ * identity. A few revisions of each, so that two states with the same scene, such as a project and
+ * a copy of it, do not take turns at making it anew, and a project with many scenes keeps them all.
  */
-const sources = new Map<string, SceneSource>();
-const MOST_SOURCES = 512;
+const sources = new Map<string, Map<string, SceneSource>>();
+/** How many revisions of one scene are kept, the ones last shown. */
+const REVISIONS_KEPT = 4;
 
 /** What a compositor has to know to show a scene, or undefined when there is no such scene. */
 export function sceneSourceOf(state: ProjectState, scene: string): SceneSource | undefined {
@@ -258,12 +259,13 @@ export function sceneSourceOf(state: ProjectState, scene: string): SceneSource |
   const content = revisionOfFiles(state, paths);
   const params = paramsOf(manifest);
   const revision = hashOfText(JSON.stringify([entry, runtime, content, assets, params]));
-  const key = `${scene}\n${revision}`;
-  const known = sources.get(key);
+  const kept = sources.get(scene) ?? new Map<string, SceneSource>();
+  sources.set(scene, kept);
+  const known = kept.get(revision);
   // A scene that stays what it was keeps its identity, which is how a plan sees that nothing changed.
   if (known) {
-    sources.delete(key);
-    sources.set(key, known);
+    kept.delete(revision);
+    kept.set(revision, known);
     return known;
   }
   const source: SceneSource = {
@@ -276,10 +278,10 @@ export function sceneSourceOf(state: ProjectState, scene: string): SceneSource |
     params,
     seed: Number.parseInt(hashOfText(scene).slice(0, 6), 36),
   };
-  sources.set(key, source);
-  if (sources.size > MOST_SOURCES) {
-    const [oldest] = sources.keys();
-    if (oldest !== undefined) sources.delete(oldest);
+  kept.set(revision, source);
+  if (kept.size > REVISIONS_KEPT) {
+    const [oldest] = kept.keys();
+    if (oldest !== undefined) kept.delete(oldest);
   }
   return source;
 }
