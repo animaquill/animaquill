@@ -39,6 +39,7 @@ async function setup(here?: Here) {
     copyFailed: fail,
     readFailed: fail,
     otherKind: fail,
+    readOnly: fail,
   };
   const media = new MediaLibrary(session, projects, messages, "");
   await session.create("我的项目");

@@ -34,6 +34,7 @@ async function setup() {
     copyFailed: vi.fn<(name: string, reason: CopyFailure) => void>(),
     readFailed: vi.fn<(name: string) => void>(),
     otherKind: vi.fn<(name: string) => void>(),
+    readOnly: vi.fn<() => void>(),
   };
   const library = new MediaLibrary(session, projects, messages, "");
   await session.create("我的项目");

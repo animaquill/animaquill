@@ -47,6 +47,11 @@ export interface MediaMessages {
   readFailed(name: string): void;
   /** The file that took the place of the file of an asset is another kind of file. */
   otherKind(name: string): void;
+  /**
+   * The project cannot be edited now, see `ProjectStore.readOnly`: nothing came in, and nothing
+   * was copied into its folder.
+   */
+  readOnly(): void;
 }
 
 /** Why a file did not get into the project folder. */
@@ -329,6 +334,10 @@ export class MediaLibrary {
     const store = this.#store;
     const asset = store?.getState().assets?.[assetId];
     if (!store || !asset) return false;
+    if (store.readOnly) {
+      this.#messages.readOnly();
+      return false;
+    }
     const folder = this.#folder();
     let file: File;
     let place: { readonly path: string; readonly hash: string } | undefined;
@@ -438,6 +447,11 @@ export class MediaLibrary {
   /** One at a time, because each one is read into memory. A file that fails does not stop others. */
   async importFiles(files: readonly File[]): Promise<readonly string[]> {
     const store = this.#session.store;
+    // Nothing goes into the folder of a project that cannot take it in.
+    if (store?.readOnly && files.length > 0) {
+      this.#messages.readOnly();
+      return [];
+    }
     const ids: string[] = [];
     this.#setImporting(this.#importing + files.length);
     for (const [index, file] of files.entries()) {
@@ -466,6 +480,10 @@ export class MediaLibrary {
     const store = this.#session.store;
     const folder = this.#folder();
     if (!store || !folder) return [];
+    if (store.readOnly && paths.length > 0) {
+      this.#messages.readOnly();
+      return [];
+    }
     const ids: string[] = [];
     this.#setImporting(this.#importing + paths.length);
     for (const path of paths) {

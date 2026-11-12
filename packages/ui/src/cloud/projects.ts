@@ -433,8 +433,14 @@ export class CloudProjects {
     const line = this.#options.cloud.line(key);
     if (!line) return;
     const stop = line.listen((data) => {
-      if ((data as { kind?: unknown } | null)?.kind !== "link" || this.#options.session.key !== key)
+      const kind = (data as { kind?: unknown } | null)?.kind;
+      if (this.#options.session.key !== key) return;
+      // Another window found that the repository can be used again: so can the project here.
+      if (kind === "usable") {
+        this.#usableAgain();
         return;
+      }
+      if (kind !== "link") return;
       // Looks again as if the project had just opened.
       void this.#stop().then(() => {
         this.#key = undefined;
@@ -443,6 +449,32 @@ export class CloudProjects {
       });
     });
     this.#line = { line, stop };
+  }
+
+  /**
+   * The repository of the open project can be used again, as this window or another one found:
+   * what the platform says of it is asked again, and syncing goes on, here and, as the window that
+   * syncs hears it too, in every window of the project.
+   */
+  #usableAgain(): void {
+    const snapshot = this.#snapshot;
+    if (snapshot.kind !== "linked") return;
+    void snapshot.repository?.refresh();
+    if (snapshot.session.getSnapshot().problem?.kind === "unusable") {
+      this.#heardUnusable.delete(snapshot.session);
+      snapshot.session.resume();
+    }
+  }
+
+  /** Tells the windows that have a project of the platform open that its repository can be used. */
+  async #tellUsable(project: string): Promise<void> {
+    const { cloud } = this.#options;
+    const links = await cloud.links.withProject(cloud.platform, project).catch(() => []);
+    for (const { key } of links) {
+      const line = cloud.line(key);
+      line?.post({ kind: "usable" });
+      line?.close();
+    }
   }
 
   /** Tells the other windows that the link of this project changed. */
@@ -883,11 +915,13 @@ export class CloudProjects {
         }),
       );
     } else {
-      // Syncing goes on, and with it editing.
+      // Syncing goes on, and with it editing, here and in every other window of the project:
+      // the one that syncs may be another one, in the back.
       if (open?.link.project === id) {
         this.#heardUnusable.delete(open.session);
         open.session.resume();
       }
+      void this.#tellUsable(id);
       notifications.push(t("cloud.recheck.usable"));
     }
     return status;
@@ -1301,6 +1335,7 @@ export class CloudProjects {
     });
     if (!linked || !this.#isStill(snapshot)) return;
     watch.take(linked, { hurry: true });
+    if (!linked.unusable) void this.#tellUsable(snapshot.link.project);
     notifications.push(
       t("repository.linked", {
         name: linked.repository?.fullName ?? "",
@@ -1334,6 +1369,7 @@ export class CloudProjects {
       name: connectRepositoryName(undefined, name),
     });
     if (!linked) return false;
+    if (!linked.unusable) void this.#tellUsable(project);
     notifications.push(
       t("repository.linked", {
         name: linked.repository?.fullName ?? "",
@@ -1809,6 +1845,7 @@ export class CloudProjects {
       // What other computers sent before it could not be edited is on the platform, and may not
       // be here yet: the two copies of one project go together without losing anything.
       const there = await this.#read(project, signal).catch(() => undefined);
+      // Of the same working copy only, see below.
       const generation = snapshot.link.generation ?? 1;
       if (!there || (there.generation ?? 1) !== generation)
         return { store, media, close: () => {} };
@@ -1833,6 +1870,10 @@ export class CloudProjects {
       if (loaded) {
         const local = loaded;
         const there = await this.#read(project, signal).catch(() => undefined);
+        // Two copies of one project go together only where they are of the same working copy of
+        // the platform. Until working copies are made again from repositories, there is only the
+        // first one; once they are, a copy of another one is to be taken in as on coming back
+        // (docs/design/start-and-cloud.md of AnimaQuill Cloud, plan 13.5), not left out unsaid.
         const fits = there && (there.generation ?? 1) === (browser.generation ?? 1);
         const merged = fits
           ? ProjectStore.fromUpdates([local.store.encodeState(), there.state]).store
@@ -2341,8 +2382,12 @@ export class CloudProjects {
               interpolation: { escapeValue: false },
             })
           : t("cloud.delete.noRepository"),
+      // As it is, the platform's copy may have what the repository does not: people hear that.
+      ...(unusable && summary.archive?.behind === true ? [t("cloud.delete.unsavedGo")] : []),
       ...(copies.folders.length > 0 ? [t("cloud.delete.folderStays")] : []),
-      ...(copies.browsers.length > 0 ? [t("cloud.delete.browserGoes")] : []),
+      ...(copies.browsers.length > 0
+        ? [t(archives ? "cloud.delete.browserGoes" : "cloud.delete.browserStays")]
+        : []),
       ...(archives ? [t("cloud.delete.archiveFirst")] : []),
     ].join("");
     const go = await dialogs.confirm({
@@ -2359,7 +2404,7 @@ export class CloudProjects {
       }
     }
     const outcome = await this.#takeAwayArchived(project, name, { archives });
-    if (outcome !== "removed") return false;
+    if (outcome === "stopped") return false;
     const said = [t("cloud.delete.done", words)];
     for (const link of copies.folders) {
       if (this.#options.session.key === link.key) await this.#unlink(link.key, { quietly: true });
@@ -2370,7 +2415,11 @@ export class CloudProjects {
     }
     if (copies.folders.length > 0) said.push(t("cloud.delete.doneFolder"));
     for (const link of copies.browsers) {
-      const kept = await this.#letGoOfCopy(link);
+      // Only where the repository has all the platform had does the platform's having all of the
+      // copy say that nothing is lost with it. Otherwise the copy may be the last place some
+      // changes are: it stays, as a project of this browser only, with its ways out.
+      const kept =
+        outcome === "archived" ? await this.#letGoOfCopy(link) : await this.#keepCopy(link);
       said.push(
         kept === undefined
           ? t("cloud.delete.doneBrowser")
@@ -2385,14 +2434,16 @@ export class CloudProjects {
    * Has the platform take a project away once its repository has all of it, see
    * `deleteFromCloud`, step 3, or as people let go of what it does not have. The open project of
    * it stops syncing first: nothing of it comes back, and the platform's word that it is gone is
-   * no news from elsewhere. Where it stays, it goes on as before. Resolves to whether it is gone,
-   * after saying why where it is not.
+   * no news from elsewhere. Where it stays, it goes on as before. Resolves to how it went:
+   * "archived" where the platform took it away once its repository had all of it, "removed" where
+   * it went without that (people let go, its repository cannot be used, it has none), "stopped"
+   * where it stays, after saying why.
    */
   async #takeAwayArchived(
     project: string,
     name: string,
     { archives }: { readonly archives: boolean },
-  ): Promise<"removed" | "stopped"> {
+  ): Promise<"archived" | "removed" | "stopped"> {
     const { notifications, t } = this.#options;
     const words = { name, interpolation: { escapeValue: false } };
     let stopped = false;
@@ -2419,7 +2470,7 @@ export class CloudProjects {
         stopped = true;
       }
       const outcome = await this.#takeAway(project, condition);
-      if (outcome === "removed") return "removed";
+      if (outcome === "removed") return condition.archived !== undefined ? "archived" : "removed";
       if (outcome === "missing") {
         // Gone already, as the list had it a moment ago: what this computer has stays all the same.
         notifications.push(t("cloud.delete.notListed", words));
@@ -2722,6 +2773,23 @@ export class CloudProjects {
     }
     this.#tellAbout(key);
     return kept;
+  }
+
+  /**
+   * The copy in this browser of a project that went from the platform without its repository
+   * having all of it, see `deleteFromCloud`: it stays as it is, as a project of this browser
+   * only, and only its link goes. Resolves to why it stays.
+   */
+  async #keepCopy(link: CloudLink): Promise<"notArchived"> {
+    const { key } = link;
+    if (this.#options.session.key === key) await this.#unlink(key, { quietly: true });
+    else {
+      if (!(await this.#forgetLink(key)) && !(await this.#forgetLink(key))) {
+        console.warn("The link of a project that was deleted stays until the next time");
+      }
+      this.#tellAbout(key);
+    }
+    return "notArchived";
   }
 
   /** Waits a while, or until `signal` says to stop. */

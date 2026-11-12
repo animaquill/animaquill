@@ -12,6 +12,8 @@ import { Emitter } from "../workbench/emitter.ts";
  * with it (docs/design/phase5-step14.md 3.1.10): the platform archives by itself, and this asks it
  * over HTTP, as the sync protocol has no word for it.
  *
+ * - While the repository cannot be used, every 5 minutes in the back as well: whether the project
+ *   can be edited goes by it, also for other windows of the project, see `CloudProjects`.
  * - Once a minute while the window is in front, and once when it comes back to the front. A window
  *   in the back does not ask: every window of the browser asks with the same session, which the
  *   platform counts (120 in ten minutes where it cannot tell the address).
@@ -43,6 +45,12 @@ export interface RepositoryTiming {
   readonly aheadMs: number;
   /** ...and not more often than this, whatever it answers. */
   readonly aheadEveryMs: number;
+  /**
+   * How often to ask while the window is in the back and the repository cannot be used: what the
+   * platform says decides whether the project can be edited, also in a window people do not see,
+   * which other windows of the project may go by.
+   */
+  readonly heldMs: number;
 }
 
 export const REPOSITORY_TIMING: RepositoryTiming = {
@@ -53,6 +61,7 @@ export const REPOSITORY_TIMING: RepositoryTiming = {
   budgetMs: 10 * 60_000,
   aheadMs: 1500,
   aheadEveryMs: 15_000,
+  heldMs: 5 * 60_000,
 };
 
 export interface RepositoryEnvironment {
@@ -299,9 +308,15 @@ export class RepositoryWatch {
     if (this.#closed || !this.#started) return;
     // Signed out: nothing to ask until someone signs in, which asks again, see `CloudProjects`.
     if (this.#snapshot.trouble === "signedOut") return;
-    if (!this.#env.isVisible()) return;
+    // In the back only while the repository cannot be used, and less often.
+    const isHeld = this.#snapshot.status?.unusable !== undefined;
+    if (!this.#env.isVisible() && !isHeld) return;
     const now = this.#env.now();
-    let wait = this.#snapshot.hurrying ? this.#timing.hurryMs : this.#timing.everyMs;
+    let wait = !this.#env.isVisible()
+      ? this.#timing.heldMs
+      : this.#snapshot.hurrying
+        ? this.#timing.hurryMs
+        : this.#timing.everyMs;
     wait = Math.max(wait, this.#quietUntil - now);
     this.#asked = this.#asked.filter((at) => now - at < this.#timing.budgetMs);
     const oldest = this.#asked[0];
@@ -309,8 +324,9 @@ export class RepositoryWatch {
       wait = Math.max(wait, oldest + this.#timing.budgetMs - now);
     this.#timer = this.#env.setTimeout(() => {
       this.#timer = undefined;
-      // Gone to the back meanwhile: coming back asks.
-      if (this.#env.isVisible()) void this.refresh();
+      // Gone to the back meanwhile: coming back asks, unless the repository cannot be used.
+      if (this.#env.isVisible() || this.#snapshot.status?.unusable !== undefined)
+        void this.refresh();
     }, wait);
   }
 

@@ -28,6 +28,12 @@ import {
 } from "./memory-library.ts";
 import { Workbench } from "./workbench.ts";
 
+// Any file is a picture here, as the browser would read one.
+vi.mock("@animaquill/media", async (original) => ({
+  ...(await original<typeof import("@animaquill/media")>()),
+  probeMedia: async () => ({ kind: "image", width: 1, height: 1 }),
+}));
+
 const noFolders: FolderAccess = {
   chooseSource: async () => undefined,
   chooseTarget: async () => undefined,
@@ -338,6 +344,11 @@ describe("a project of the platform whose repository cannot be used, open here",
     await vi.waitFor(() =>
       expect(folderOf(workbench)?.snapshot.trouble).toEqual({ reason: "held" }),
     );
+    // A file people bring in does not come in, and is not copied into the folder either.
+    const picture = new File(["一张图"], "新图.png", { type: "image/png" });
+    expect(await workbench.media.importFiles([picture])).toEqual([]);
+    expect(browser.disk.has("文档/原子/assets/新图.png")).toBe(false);
+    expect(browser.disk.names("文档/原子/assets").toSorted()).toEqual(["片头.mp4"]);
     // What changes in the folder meanwhile stays there, and does not come in.
     browser.disk.write("文档/原子/code/外面.js", "outside\n");
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -379,4 +390,57 @@ describe("a project of the platform whose repository cannot be used, open here",
       expect(filesOf(browser.disk, "文档/原子").get("code/接着.js")).toBe("on\n"),
     );
   });
+});
+
+/** One browser, two windows of the same project of the platform: the first one syncs. */
+async function inBrowserTwice() {
+  const platform = new MemoryPlatform();
+  const repository = repositoryOf(platform);
+  const browser = browserOn(platform, repository);
+  const a = browser.window();
+  expect(await a.session.create("原子")).toBe(true);
+  a.session.store?.execute(write("code/动画.js", "const a = 1;\n"));
+  const begun = await a.cloud?.beginLink();
+  if (typeof begun !== "object") throw new Error("not connected");
+  await online(a);
+  const project = begun.link.project;
+  platform.repositories.set(project, { id: 7, owner: "ada", name: "atom" });
+  const key = a.session.key as string;
+  const b = browser.window();
+  await b.openProject(key);
+  await vi.waitFor(() => expect(b.cloud?.getSnapshot().kind).toBe("linked"));
+  return { platform, repository, a, b, project };
+}
+
+describe("a project of the platform open in two windows, whose repository can be used again", () => {
+  it("can be edited in both as soon as the window that does not sync finds that out", async () => {
+    const { platform, repository, a, b, project } = await inBrowserTwice();
+    expect(a.cloud?.session?.getSnapshot().here).toBe(true);
+    expect(b.cloud?.session?.getSnapshot().here).toBe(false);
+    const unusable = { reason: "gone", since: Date.now(), deleteAt: Date.now() + 7 * DAY };
+    platform.makeUnusable(project, unusable);
+    repository.answer = { ...repository.answer, state: "paused", reason: "gone", unusable };
+    platform.drop();
+    await vi.waitFor(() => expect(a.readOnly.getSnapshot()).toBe(true));
+    await vi.waitFor(() => expect(b.readOnly.getSnapshot()).toBe(true));
+    // Back on GitHub, and people ask again in the window that does not sync.
+    platform.makeUnusable(project, undefined);
+    const usable = { ...repository.answer, state: "ready" } as RepositoryStatus;
+    delete (usable as { unusable?: unknown }).unusable;
+    delete (usable as { reason?: unknown }).reason;
+    repository.recheckAnswer = usable;
+    expect((await b.cloud?.recheck())?.unusable).toBeUndefined();
+    await vi.waitFor(() => expect(b.readOnly.getSnapshot()).toBe(false), { timeout: 3000 });
+    await vi.waitFor(() => expect(a.readOnly.getSnapshot()).toBe(false), { timeout: 3000 });
+    await vi.waitFor(() =>
+      expect(a.cloud?.session?.getSnapshot()).toMatchObject({
+        state: "online",
+        problem: undefined,
+      }),
+    );
+    expect(b.session.store?.execute(write("code/又能改.js", "yes\n")).ok).toBe(true);
+    await vi.waitFor(() =>
+      expect(platform.workingCopy(project).getState().files["code/又能改.js"]).toBe("yes\n"),
+    );
+  }, 20_000);
 });

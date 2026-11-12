@@ -458,6 +458,7 @@ export class Workbench {
           this.notifications.push(t(`folder.copy.failed.${reason}`, { name })),
         readFailed: (name) => this.notifications.push(t("folder.copy.readFailed", { name })),
         otherKind: (name) => this.notifications.push(t("folder.asset.otherKind", { name })),
+        readOnly: () => this.notifications.push(t("cloud.unusable.noImport")),
       },
       compositorUrl,
       () => this.projectFolders?.assets(),

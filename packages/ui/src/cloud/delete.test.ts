@@ -224,6 +224,9 @@ describe("deleting a project of the platform that is saved to a repository", () 
     expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
     expect(platform.removals).toEqual([{ id: project, options: { discard: true } }]);
     expect(platform.projects.has(project)).toBe(false);
+    // What the repository did not get may be only in the copy here now: it stays.
+    expect(here.library.summaries.has(project)).toBe(true);
+    expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
   });
 
   it("archives again where something came after the archive", async () => {
@@ -266,6 +269,7 @@ describe("deleting a project of the platform that is saved to a repository", () 
     choice = "discard";
     expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
     expect(platform.removals.at(-1)?.options).toEqual({ discard: true });
+    expect(here.library.summaries.has(project)).toBe(true);
   });
 
   it("does nothing where people do not say yes, or the platform's list cannot be read", async () => {
@@ -302,45 +306,26 @@ describe("deleting a project of the platform that is saved to a repository", () 
 });
 
 describe("the copy in this browser of a project that was deleted", () => {
-  /** A project whose repository cannot be used, which goes as it is: what is here is not sent. */
-  async function unusableCopy(library?: MemoryLibrary) {
-    const copy = await withCopy({ ...(library && { library }) });
-    const { time, platform, project, repository } = copy;
-    const unusable = { reason: "gone", since: 1, deleteAt: 1 + 7 * DAY, gone: "deleted" as const };
-    platform.makeUnusable(project, unusable);
-    repository.answer = { ...repository.answer, state: "paused", reason: "gone", unusable };
-    await time.advance(500);
-    expect(copy.here.cloud.session?.getSnapshot().problem).toEqual({
-      kind: "unusable",
-      reason: "gone",
-    });
-    return copy;
-  }
-
   it("stays where it has changes that the platform does not have", async () => {
-    const { time, platform, project, here } = await unusableCopy();
-    // Made while the platform took no change of it: it is only here.
-    here.session.store?.execute(write("code/only-here.js", "只在这里"));
-    await time.advance(500);
-    expect(here.cloud.session?.getSnapshot().pending).toBe(1);
-
-    const asked = answering(here.dialogs, sayingYes());
+    const { time, platform, project, here } = await withCopy();
+    // A change right before the platform is asked, once syncing stopped: it is only here.
+    const removing = platform.remove.bind(platform);
+    platform.remove = (user: string, id: string, options?: CloudRemoveOptions) => {
+      here.session.store?.execute(write("code/only-here.js", "只在这里"));
+      return removing(user, id, options);
+    };
+    answering(here.dialogs, sayingYes());
     expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
-    // Nothing could be archived: it went as it was, without being asked to sync first.
-    expect(asked[0]).toMatchObject({
-      message:
-        "仓库已删除。平台上的这份和清单里的这一项会删掉，GitHub 那边什么都不动。这个浏览器里的那一份会清掉（还有没同步的改动、只在这里的素材时留下）。",
-    });
-    expect(platform.removals).toEqual([{ id: project, options: {} }]);
+    expect(platform.removals.map(({ options }) => "archived" in options)).toEqual([true]);
     expect(platform.projects.has(project)).toBe(false);
-    // The copy stays, with what is only in it, as a project of this browser only.
+    // The copy stays, with what is only in it, as a project of this browser only, still open.
     expect(here.library.summaries.has(project)).toBe(true);
     expect(await here.browser.links.get(project)).toBeUndefined();
     expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（还有没同步的改动、只在这里的素材，或者没保存的试改和代码），现在只在这个浏览器里，请移到文件夹或另存一份。",
+      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（还有没同步的改动、只在这里的素材，或者没保存的试改和代码），现在只在这个浏览器里，可以移到文件夹、连接到云端，或者另存一份。",
     );
-    // What only it had is there.
+    await here.session.trySave();
     await here.open(project);
     expect(here.session.store?.getState().files["code/only-here.js"]).toBe("只在这里");
   });
@@ -377,11 +362,15 @@ describe("the copy in this browser of a project that was deleted", () => {
 
   it("stays where it cannot be read whether something is only in it", async () => {
     const library = new Unreadable();
-    const { time, platform, project, here } = await unusableCopy(library);
+    const { time, platform, project, here } = await withCopy({ library });
     await here.cloud.close();
     await here.session.close();
-    library.unreadable.add(project);
-
+    // Its log cannot be read any more once the platform is asked.
+    const removing = platform.remove.bind(platform);
+    platform.remove = (user: string, id: string, options?: CloudRemoveOptions) => {
+      library.unreadable.add(project);
+      return removing(user, id, options);
+    };
     answering(here.dialogs, sayingYes());
     expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
     expect(platform.projects.has(project)).toBe(false);
@@ -389,6 +378,70 @@ describe("the copy in this browser of a project that was deleted", () => {
     expect(library.summaries.has(project)).toBe(true);
     expect(library.updates.get(project)?.length).toBeGreaterThan(0);
     expect(messagesOf(here.notifications).at(-1)).toContain("读不出它有没有只在这里的内容");
+  });
+
+  it("stays where it went without being saved to the repository first, as people let go of that", async () => {
+    const { time, platform, project, repository, here } = await withCopy();
+    // On the platform, and not in the repository, which takes nothing: the copy is the last one.
+    repository.autoArchive = false;
+    repository.answer = { ...repository.answer, state: "paused", reason: "protected" };
+    platform.repositories.set(project, { ...REPOSITORY, state: "paused", reason: "protected" });
+    here.session.store?.execute(write("code/late.js", "只在平台和这里"));
+    await time.advance(500);
+    expect(here.cloud.session?.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    answering(
+      here.dialogs,
+      sayingYes(() => "discard"),
+    );
+    expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
+    expect(platform.projects.has(project)).toBe(false);
+    expect(here.library.summaries.has(project)).toBe(true);
+    expect(messagesOf(here.notifications).at(-1)).toBe(
+      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（删除前没有全部存进 GitHub，它可能有别处没有的改动），现在只在这个浏览器里，可以移到文件夹、连接到云端，或者另存一份。",
+    );
+    expect(here.session.store?.getState().files["code/late.js"]).toBe("只在平台和这里");
+  });
+
+  it("stays where its repository cannot be used, and people hear what the platform had that it has not saved", async () => {
+    const { time, platform, project, repository, here } = await withCopy();
+    repository.autoArchive = false;
+    here.session.store?.execute(write("code/late.js", "只在平台和这里"));
+    await time.advance(500);
+    expect(here.cloud.session?.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    const unusable = { reason: "transferred", since: 5, deleteAt: 5 + 7 * DAY };
+    platform.makeUnusable(project, unusable);
+    repository.answer = {
+      ...repository.answer,
+      state: "paused",
+      reason: "transferred",
+      unusable,
+    } as RepositoryStatus;
+    await time.advance(500);
+    await here.cloud.close();
+    await here.session.close();
+    const asked = answering(here.dialogs, sayingYes());
+    expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
+    expect(asked[0]).toMatchObject({
+      message:
+        "仓库已转到别的账号。平台上的这份和清单里的这一项会删掉，GitHub 那边什么都不动。平台上还有改动没存进 GitHub，删除后平台上的这份就没有了。想留下可以先“另存为本地项目”。这个浏览器里的那一份留下，以后只在这个浏览器里。",
+    });
+    expect(platform.removals).toEqual([{ id: project, options: {} }]);
+    expect(here.library.summaries.has(project)).toBe(true);
+    expect(await here.browser.links.get(project)).toBeUndefined();
+    await here.open(project);
+    expect(here.session.store?.getState().files["code/late.js"]).toBe("只在平台和这里");
+  });
+
+  it("says nothing more of a repository that cannot be used where the platform saved all of it", async () => {
+    const { time, platform, project, repository, here } = await withCopy();
+    platform.archivedSeq.set(project, platform.projects.get(project)?.head ?? 0);
+    const unusable = { reason: "transferred", since: 5, deleteAt: 5 + 7 * DAY };
+    platform.makeUnusable(project, unusable);
+    repository.answer = { ...repository.answer, state: "paused", reason: "transferred", unusable };
+    await time.advance(500);
+    const asked = answering(here.dialogs, () => false);
+    expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(false);
+    expect((asked[0] as { message: string }).message).not.toContain("平台上还有改动没存进 GitHub");
   });
 
   it("stays where another window has it open", async () => {

@@ -45,6 +45,33 @@ describe("RepositoryWatch", () => {
     expect(asked()).toBe(4);
   });
 
+  it("asks in the back as well, less often, while the repository cannot be used", async () => {
+    const { time, window, platform, watch, asked } = setUp();
+    platform.answer = {
+      state: "paused",
+      reason: "gone",
+      unusable: { reason: "gone", since: 1 },
+      archiving: false,
+      head: 3,
+      archivedSeq: 2,
+    };
+    window.show(false);
+    watch.start();
+    await time.advance(0);
+    expect(asked()).toBe(1);
+    // Whether the project can be edited goes by it: every 5 minutes, also where nobody looks.
+    await time.advance(4 * MINUTE);
+    expect(asked()).toBe(1);
+    await time.advance(MINUTE);
+    expect(asked()).toBe(2);
+    // Usable again: in the back it stops asking.
+    platform.answer = { state: "ready", archiving: false, head: 3, archivedSeq: 3 };
+    await time.advance(5 * MINUTE);
+    expect(asked()).toBe(3);
+    await time.advance(30 * MINUTE);
+    expect(asked()).toBe(3);
+  });
+
   it("asks every 3 seconds after archiving now, until it is done", async () => {
     const { time, platform, watch, asked } = setUp();
     platform.answer = { ...platform.answer, state: "ready", head: 4, archivedSeq: 3 };
