@@ -108,19 +108,34 @@ export type AiSettingsReading =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Names of fields that could hold a secret, which are never kept: see `KeptSettings`. */
-const SECRET = /key|token|secret|password|credential|auth/i;
+/**
+ * Names of fields that hold a secret, which are never kept: see `KeptSettings`. Whole names only,
+ * without case, `-` or `_`: `apiKey` and `refresh_token` go, `maxTokens` and `authType` stay.
+ */
+const SECRET =
+  /^(?:(?:api|access|secret|private|client)?key|(?:access|auth|bearer|refresh|id|session)?token|(?:client)?secret|password|passwd|passphrase|credentials?|authorization|cookie)$/;
 
+export const isSecretName = (name: string): boolean =>
+  SECRET.test(name.toLowerCase().replaceAll(/[-_]/g, ""));
+
+/** A value kept as it was, without anything in it under the name of a secret, however deep. */
 function withoutSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutSecrets);
   if (!isRecord(value)) return value;
-  return Object.fromEntries(Object.entries(value).filter(([name]) => !SECRET.test(name)));
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([name]) => !isSecretName(name))
+      .map(([name, inner]) => [name, withoutSecrets(inner)]),
+  );
 }
 
 function unknownFields(
   value: Record<string, unknown>,
   known: ReadonlySet<string>,
 ): Record<string, unknown> | undefined {
-  const entries = Object.entries(value).filter(([name]) => !known.has(name) && !SECRET.test(name));
+  const entries = Object.entries(value)
+    .filter(([name]) => !known.has(name) && !isSecretName(name))
+    .map(([name, inner]) => [name, withoutSecrets(inner)] as const);
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
@@ -365,48 +380,69 @@ export const enabledCountOf = (settings: Pick<AiSettings, "services">): number =
  * Settings of version 2 again, after a page of version 1 (0.3.56 and before) wrote the settings
  * over: it reads the services in use and their model from what version 2 writes for it, and writes
  * back only those, which would leave one model per service. `latest` is what version 2 wrote last
- * (kept apart, where pages of before do not write), `old` what is saved now. What the page of
- * before changed is taken over: names, addresses and routes, services it added or took away, a
- * model it picked (turned on, and the default if it was the one in use), the limit and the packs.
- * The rest stays as version 2 had it.
+ * (kept apart, where pages of before do not write), `old` what is saved now.
+ *
+ * What the page of before changed is told by what differs from `latest` as version 1 has it, which
+ * is what that page read: names, addresses and routes, services it added or took away, a model it
+ * picked (turned on, and the default if it was the one in use), the limit, the packs. Everything
+ * else is as `latest` has it, also what neither version understands (`KeptSettings`), which that
+ * page never saw. A page older still, without packs, leaves them as they were.
+ *
+ * It cannot tell a change of that page from a change made in version 2 after the page read: where
+ * version 2 saved again before that page wrote, see `AiSettingsStore`, what it saved goes back.
  */
 export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | undefined {
   const reading = readAiSettings(old);
-  if (reading.kind !== "ok" || reading.from !== 1) return undefined;
+  if (reading.kind !== "ok" || reading.from !== 1 || !isRecord(old)) return undefined;
   const now = reading.settings;
   // What the page of before read: the settings of version 2 as version 1 has them.
-  const was = readAiSettings({ ...writeAiSettings(latest), version: undefined });
-  if (was.kind !== "ok") return undefined;
-  const before = new Map(was.settings.services.map((service) => [service.id, service]));
+  const read = readAiSettings({ ...writeAiSettings(latest), version: undefined });
+  if (read.kind !== "ok") return undefined;
+  const was = read.settings;
+  const before = new Map(was.services.map((service) => [service.id, service]));
   const services = now.services.map((service): ServiceConfig => {
     const base = latest.services.find(({ id }) => id === service.id);
-    if (!base) return service;
+    const seen = before.get(service.id);
+    if (!base || !seen) return service;
     const picked = service.enabled[0];
-    const changed = picked !== undefined && picked !== before.get(service.id)?.enabled[0];
+    const changed = picked !== undefined && picked !== seen.enabled[0];
+    const pick = <K extends "name" | "baseUrl" | "route">(field: K) =>
+      service[field] === seen[field] ? base[field] : service[field];
     return {
       ...base,
-      name: service.name,
-      baseUrl: service.baseUrl,
-      route: service.route,
+      name: pick("name"),
+      baseUrl: pick("baseUrl"),
+      route: pick("route"),
       enabled: changed && !base.enabled.includes(picked) ? [...base.enabled, picked] : base.enabled,
     };
   });
   const sameDefault =
-    now.default?.service === was.settings.default?.service &&
-    now.default?.model === was.settings.default?.model;
+    now.default?.service === was.default?.service && now.default?.model === was.default?.model;
+  const samePacks =
+    !("packFor" in old) || JSON.stringify(now.packFor) === JSON.stringify(was.packFor);
+  const sameShown = !("showHiddenPacks" in old) || now.showHiddenPacks === was.showHiddenPacks;
+  const packFor = samePacks ? latest.packFor : now.packFor;
+  const showHiddenPacks = sameShown ? latest.showHiddenPacks : now.showHiddenPacks;
   const { packFor: _packs, showHiddenPacks: _shown, kept: _kept, ...rest } = latest;
-  const serviceFields = latest.kept?.serviceFields;
+  // What neither understands stays; what the page of before brought besides goes with it.
+  const fields = { ...latest.kept?.fields, ...now.kept?.fields };
+  const seenServices = new Set((latest.kept?.services ?? []).map((value) => JSON.stringify(value)));
+  const unread = [
+    ...(latest.kept?.services ?? []),
+    ...(now.kept?.services ?? []).filter((value) => !seenServices.has(JSON.stringify(value))),
+  ];
   const kept: KeptSettings = {
-    ...now.kept,
-    ...(serviceFields && { serviceFields }),
+    ...(Object.keys(fields).length > 0 && { fields }),
+    ...(latest.kept?.serviceFields && { serviceFields: latest.kept.serviceFields }),
+    ...(unread.length > 0 && { services: unread }),
   };
   return {
     ...rest,
     services,
     default: settledDefault(services, sameDefault ? latest.default : now.default),
-    ...(now.packFor && { packFor: now.packFor }),
-    ...(now.showHiddenPacks && { showHiddenPacks: true }),
-    maxToolCalls: now.maxToolCalls,
+    ...(packFor && { packFor }),
+    ...(showHiddenPacks && { showHiddenPacks: true }),
+    maxToolCalls: now.maxToolCalls === was.maxToolCalls ? latest.maxToolCalls : now.maxToolCalls,
     ...(Object.keys(kept).length > 0 && { kept }),
   };
 }

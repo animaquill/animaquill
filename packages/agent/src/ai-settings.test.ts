@@ -5,6 +5,7 @@ import {
   EMPTY_AI_SETTINGS,
   enabledCountOf,
   enabledModelsOf,
+  isSecretName,
   readAiSettings,
   recoverOldWrite,
   settledDefault,
@@ -366,5 +367,153 @@ describe("a page of version 1 that wrote over version 2", () => {
   it("is only for version 1", () => {
     expect(recoverOldWrite(latest, writeAiSettings(latest))).toBeUndefined();
     expect(recoverOldWrite(latest, "x")).toBeUndefined();
+  });
+});
+
+describe("review of CM1: what a page of version 1 never saw, and names of secrets", () => {
+  const base = {
+    version: 2,
+    services: [
+      {
+        id: "a",
+        kind: "anthropic",
+        name: "A",
+        baseUrl: "https://api.anthropic.com",
+        route: "direct",
+        enabled: ["m1", "m2"],
+      },
+      {
+        id: "b",
+        kind: "deepseek",
+        name: "B",
+        baseUrl: "https://api.deepseek.com",
+        route: "direct",
+        enabled: ["d1", "d2"],
+      },
+    ],
+    default: { service: "a", model: "m2" },
+  };
+  /** What a page of version 1 writes after reading what version 2 wrote: only what it knows. */
+  const oldWriteOf = (
+    latest: AiSettings,
+    change: (
+      value: Record<string, unknown> & { services: Record<string, unknown>[] },
+    ) => void = () => {},
+  ) => {
+    const written = structuredClone(writeAiSettings(latest)) as Record<string, unknown> & {
+      services: Record<string, unknown>[];
+    };
+    const value = {
+      services: written.services
+        .filter((service) => ["anthropic", "deepseek", "openai"].includes(String(service.kind)))
+        .map(({ id, kind, name, baseUrl, model, route }) => ({
+          id,
+          kind,
+          name,
+          baseUrl,
+          model,
+          route,
+        })),
+      current: written.current,
+      maxToolCalls: written.maxToolCalls,
+      ...(written.packFor !== undefined && { packFor: written.packFor }),
+      ...(written.showHiddenPacks !== undefined && { showHiddenPacks: written.showHiddenPacks }),
+    };
+    change(value);
+    return value;
+  };
+
+  it("keeps services and fields neither version understands", () => {
+    const latest = settingsOf({
+      ...base,
+      services: [
+        ...base.services,
+        {
+          id: "x",
+          kind: "from-later",
+          name: "X",
+          baseUrl: "https://x",
+          route: "direct",
+          enabled: ["q"],
+        },
+      ],
+      laterField: { a: 1 },
+    });
+    expect(latest.kept?.services).toHaveLength(1);
+    const recovered = recoverOldWrite(latest, oldWriteOf(latest));
+    const written = writeAiSettings(recovered as AiSettings);
+    expect((written.services as { id: string }[]).map(({ id }) => id)).toContain("x");
+    expect(written.laterField).toEqual({ a: 1 });
+  });
+
+  it("takes only what differs from what that page read", () => {
+    const latest = settingsOf({
+      ...base,
+      services: [{ ...base.services[0], name: "Renamed" }, base.services[1]],
+      maxToolCalls: 70,
+    });
+    const recovered = recoverOldWrite(
+      latest,
+      oldWriteOf(latest, (value) => {
+        const second = value.services[1];
+        if (second) second.route = "relay";
+      }),
+    );
+    expect(recovered?.services.map(({ name, route }) => [name, route])).toEqual([
+      ["Renamed", "direct"],
+      ["B", "relay"],
+    ]);
+    expect(recovered?.maxToolCalls).toBe(70);
+  });
+
+  it("comes to the same twice, as two windows of version 2 take the same write", () => {
+    const latest = settingsOf(base);
+    const changed = oldWriteOf(latest, (value) => {
+      const second = value.services[1];
+      if (second) second.model = "d1";
+      value.current = "b";
+    });
+    const once = recoverOldWrite(latest, changed) as AiSettings;
+    expect(recoverOldWrite(once, changed)).toEqual(once);
+  });
+
+  it("keeps the packs where the page is older than packs", () => {
+    const latest = settingsOf({ ...base, packFor: { m1: "lin/steady" }, showHiddenPacks: true });
+    const recovered = recoverOldWrite(
+      latest,
+      oldWriteOf(latest, (value) => {
+        delete value.packFor;
+        delete value.showHiddenPacks;
+      }),
+    );
+    expect(recovered?.packFor).toEqual({ m1: "lin/steady" });
+    expect(recovered?.showHiddenPacks).toBe(true);
+  });
+
+  it("keeps fields named like tokens of a model, never those of secrets, however deep", () => {
+    const settings = settingsOf({
+      ...base,
+      services: [
+        { ...base.services[0], maxTokens: 4096, authType: "bearer", apiKey: "sk-xxx" },
+        base.services[1],
+        { id: "x", kind: "from-later", headers: { Authorization: "Bearer sk-zzz", Accept: "a" } },
+      ],
+      maxOutputTokens: 100,
+      tokenBudget: 5,
+      refresh_token: "sk-yyy",
+    });
+    const written = writeAiSettings(settings) as Record<string, unknown> & {
+      services: Record<string, unknown>[];
+    };
+    expect(written.services[0]).toMatchObject({ maxTokens: 4096, authType: "bearer" });
+    expect(written.services[2]).toEqual({ id: "x", kind: "from-later", headers: { Accept: "a" } });
+    expect(written).toMatchObject({ maxOutputTokens: 100, tokenBudget: 5 });
+    expect(JSON.stringify(written)).not.toMatch(/sk-(xxx|yyy|zzz)/);
+    for (const name of ["key", "apiKey", "api_key", "token", "accessToken", "secret", "password"]) {
+      expect(isSecretName(name), name).toBe(true);
+    }
+    for (const name of ["maxTokens", "authType", "keyHint", "tokenBudget", "monkey"]) {
+      expect(isSecretName(name), name).toBe(false);
+    }
   });
 });

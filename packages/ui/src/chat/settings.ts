@@ -200,7 +200,8 @@ export class AiSettingsStore {
    * written before is a page of before that wrote over them: what it changed goes on top of what
    * version 2 wrote last, which is saved again at once.
    */
-  async #take(value: unknown): Promise<void> {
+  async #take(said: unknown): Promise<void> {
+    let value = said;
     const reading = readAiSettings(value);
     if (reading.kind !== "ok") {
       console.warn(`Setting ${SETTINGS_KEY} is ${reading.kind}: left as it is`);
@@ -208,6 +209,14 @@ export class AiSettingsStore {
       return;
     }
     if (reading.from === 1) {
+      // What another window said may be old by now: another page of version 2 may have saved since.
+      const saved = await this.#settings.load(SETTINGS_KEY).catch(() => value);
+      const current = readAiSettings(saved);
+      if (current.kind === "ok" && current.from === 2) {
+        this.#adopt(current.settings, undefined);
+        return;
+      }
+      if (current.kind === "ok") value = saved;
       const latest = await this.#settings.load(LATEST_KEY).catch(() => undefined);
       const before = readAiSettings(latest);
       const recovered =
@@ -220,7 +229,8 @@ export class AiSettingsStore {
         return;
       }
     }
-    this.#adopt(reading.settings, undefined);
+    const taken = readAiSettings(value);
+    if (taken.kind === "ok") this.#adopt(taken.settings, undefined);
   }
 
   #hold(held: SettingsHeld): void {

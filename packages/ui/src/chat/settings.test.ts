@@ -35,7 +35,12 @@ function browser(initial?: unknown) {
     await ai.load();
     return ai;
   };
-  return { values, keys, open };
+  /** A page of before saves settings, which every window hears of. */
+  const oldWrite = (value: unknown) => {
+    values.set("ai", structuredClone(value));
+    for (const listener of listeners) listener.call(structuredClone(value));
+  };
+  return { values, keys, open, oldWrite };
 }
 
 /** Lets what other windows saved arrive. */
@@ -332,6 +337,40 @@ describe("two windows", () => {
     });
     // And version 2 is back where the page of before reads, which it takes as it is.
     expect(values.get("ai")).toMatchObject({ version: 2, maxToolCalls: 9, current: a });
+  });
+});
+
+describe("a page of before, while two of version 2 are open", () => {
+  it("does not take back what version 2 saved after that page wrote", async () => {
+    const { values, open, oldWrite } = browser();
+    const one = await open();
+    const a = one.add("anthropic", "Anthropic", {
+      enabled: ["claude-opus-5-5", "claude-sonnet-5-5"],
+    }) as string;
+    const two = await open();
+    // The page of before writes what it read; before the second window hears of it, the first one
+    // renames the service, which is saved at once.
+    const old = structuredClone(values.get("ai")) as { services: Record<string, unknown>[] };
+    const written = {
+      services: old.services.map(({ id, kind, name, baseUrl, model, route }) => ({
+        id,
+        kind,
+        name,
+        baseUrl,
+        model,
+        route,
+      })),
+      current: a,
+      maxToolCalls: 50,
+    };
+    oldWrite(written);
+    one.update(a, { name: "公司的 Anthropic" });
+    await settle();
+    expect(two.serviceOf(a)).toMatchObject({
+      name: "公司的 Anthropic",
+      enabled: ["claude-opus-5-5", "claude-sonnet-5-5"],
+    });
+    expect(values.get("ai")).toMatchObject({ version: 2 });
   });
 });
 
