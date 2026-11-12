@@ -5,8 +5,8 @@
  * docs/model-packs.md. With `--keys` instead, it lists every key a pack can have words for, with the
  * default words.
  */
-import { readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { ProjectStore } from "@animaquill/core";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import {
@@ -41,12 +41,20 @@ const where = resolve(process.env.INIT_CWD ?? process.cwd(), given);
 const folder = statSync(where).isDirectory() ? where : dirname(where);
 const manifest = statSync(where).isDirectory() ? join(where, "pack.json") : where;
 const files = new Map<string, Uint8Array>();
-/** A file of the pack, only where it is one: a plain file, not much larger than a pack may have. */
+const home = realpathSync(folder);
+/**
+ * A file of the pack, only where it is one: a plain file in the folder of the pack, not through a
+ * link to somewhere else, and not much larger than a pack may have.
+ */
 const read = (path: string) => {
   try {
-    const stat = statSync(path);
+    if (lstatSync(path).isSymbolicLink()) return undefined;
+    // A folder on the way may be a link as well: where the file really is has to be in the pack.
+    const real = realpathSync(path);
+    if (!real.startsWith(`${home}${sep}`)) return undefined;
+    const stat = lstatSync(real);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES * 2) return undefined;
-    return new Uint8Array(readFileSync(path));
+    return new Uint8Array(readFileSync(real));
   } catch {
     return undefined;
   }

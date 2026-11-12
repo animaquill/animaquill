@@ -72,6 +72,8 @@ export type PackProblemCode =
   | "too-deep"
   /** A name or author that says it is AnimaQuill's own, which only built-in packs are. */
   | "reserved-name"
+  /** A name or author with a space other than the plain one, or two in a row. */
+  | "name-blank"
   /**
    * When loading: the default words a pack replaced changed with a new version of the tools, so its
    * words may say what is no longer so; those words are left out.
@@ -201,35 +203,62 @@ function hiddenIn(text: string): string | undefined {
   return undefined;
 }
 
-/** How many empty lines in a row, and how wide a run of spaces (a tab is four), words may have. */
+/** How many empty lines in a row, and how wide a run of blank (a tab is four), words may have. */
 export const MAX_EMPTY_LINES = 2;
 export const MAX_SPACES = 20;
+/** A line with more blank than this, and more blank than characters to see, is mostly blank. */
+export const MAX_LINE_BLANK = 60;
+/** How many lines in a row may have one character to see or none. */
+export const MAX_THIN_LINES = 10;
+
+const SPACE = /\s/u;
+const MARK = /\p{M}/u;
 
 /**
- * Where words have more empty lines in a row, or a wider run of spaces, than writing needs: what
- * comes after them would be out of sight in the install dialog. Counted in one pass; the detail of
- * a problem says what was found and what may be.
+ * Where words have more blank than writing needs, so that what comes after it would be out of
+ * sight in the install dialog. Blank is any space of Unicode, and a combining mark with nothing to
+ * sit on (at the start of a line, or after blank), which shows as next to nothing. Refused: a run
+ * of blank wider than `MAX_SPACES`; more than `MAX_EMPTY_LINES` lines in a row with nothing to see;
+ * a line mostly blank (`MAX_LINE_BLANK`); more than `MAX_THIN_LINES` lines in a row with one
+ * character to see at most. An indent of two wide spaces, short lines of verse and closing braces
+ * of code pass. The detail of a problem says what was found and what may be.
  */
 function spacingIn(text: string): Readonly<Record<string, number>> | undefined {
-  const limits = { maxLines: MAX_EMPTY_LINES, maxSpaces: MAX_SPACES };
+  const limits = {
+    maxLines: MAX_EMPTY_LINES,
+    maxSpaces: MAX_SPACES,
+    maxThinLines: MAX_THIN_LINES,
+  };
+  const lines = text.split("\n");
+  // The end of the last line is no line of its own.
+  if (lines.at(-1) === "") lines.pop();
   let empty = 0;
-  let lineHasText = false;
-  let width = 0;
-  for (const char of text) {
-    if (char === "\n") {
-      if (!lineHasText) {
-        empty += 1;
-        if (empty > MAX_EMPTY_LINES) return { emptyLines: empty, ...limits };
-      } else empty = 0;
-      lineHasText = false;
-      width = 0;
-    } else if (char === " " || char === "\t" || /\s/u.test(char)) {
-      width += char === "\t" ? 4 : 1;
-      if (width > MAX_SPACES) return { spaces: width, ...limits };
-    } else {
-      lineHasText = true;
-      width = 0;
+  let thin = 0;
+  for (const line of lines) {
+    let run = 0;
+    let blank = 0;
+    let seen = 0;
+    let onCharacter = false;
+    for (const char of line) {
+      const mark = MARK.test(char);
+      if (SPACE.test(char) || (mark && !onCharacter)) {
+        const width = char === "\t" ? 4 : 1;
+        run += width;
+        blank += width;
+        onCharacter = false;
+        if (run > MAX_SPACES) return { spaces: run, ...limits };
+      } else if (!mark) {
+        // A mark on a character goes with it.
+        seen += 1;
+        run = 0;
+        onCharacter = true;
+      }
     }
+    if (blank > MAX_LINE_BLANK && blank > seen) return { sparse: blank, ...limits };
+    empty = seen === 0 ? empty + 1 : 0;
+    if (empty > MAX_EMPTY_LINES) return { emptyLines: empty, ...limits };
+    thin = seen <= 1 ? thin + 1 : 0;
+    if (thin > MAX_THIN_LINES) return { thinLines: thin, ...limits };
   }
   return undefined;
 }
@@ -254,12 +283,51 @@ function shapeFits(value: unknown): boolean {
   return true;
 }
 
-/** Words in a name or author that say a pack is AnimaQuill's own. */
-const RESERVED_NAMES = /animaquill|built-?in|official|内置|内建|官方|自带/i;
-const reservedIn = (text: string) =>
-  RESERVED_NAMES.test(
-    text.normalize("NFKC").replace(/[\s\p{P}]/gu, (char) => (char === "-" ? char : "")),
-  );
+/** Letters of other scripts that look like Latin ones, as the Latin ones. */
+const LOOKALIKES: Readonly<Record<string, string>> = Object.fromEntries(
+  [..."АВЕКМНОРСТУХаеорсухІіЈјΑΒΕΖΗΙΚΜΝΟΡΤΥΧοιν"].map((char, index) => [
+    char,
+    "ABEKMHOPCTYXaeopcyxIiJjABEZHIKMNOPTYXoiv"[index] as string,
+  ]),
+);
+
+/**
+ * A name as it reads, for comparing what it says: compatible forms, no combining marks, letters
+ * of other scripts that look Latin as Latin, lower case, without spaces and punctuation, and the
+ * letters easy to take for one another (i, l, 1, |; o, 0) as one.
+ */
+const folded = (text: string) =>
+  [...text.normalize("NFKC").replace(/\p{M}/gu, "")]
+    .map((char) => LOOKALIKES[char] ?? char)
+    .join("")
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]/gu, "")
+    .replace(/[il1|]/g, "l")
+    .replace(/0/g, "o");
+
+/** Words in a name or author that say a pack is AnimaQuill's own, folded as names are. */
+const RESERVED_WORDS = [
+  "animaquill",
+  "builtin",
+  "official",
+  "内置",
+  "內置",
+  "内建",
+  "內建",
+  "官方",
+  "自带",
+  "自帶",
+].map(folded);
+const reservedIn = (text: string) => {
+  const name = folded(text);
+  return RESERVED_WORDS.some((word) => name.includes(word));
+};
+
+/**
+ * Whether a name or author has blank that could push what the editor writes after it out of
+ * sight: any space but the plain one, or two of them in a row.
+ */
+const blankIn = (text: string) => /[^\S ]| {2}/u.test(text);
 
 let keysOfPacks: ReadonlyMap<string, "text" | "examples"> | undefined;
 
@@ -499,6 +567,7 @@ function checkedPack(files: PackFiles, options: CheckOptions): PackCheck {
       ["author", author ?? ""],
     ] as const) {
       if (reservedIn(text)) problems.push({ code: "reserved-name", at });
+      if (blankIn(text)) problems.push({ code: "name-blank", at });
     }
   }
 

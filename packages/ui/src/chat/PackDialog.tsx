@@ -424,15 +424,34 @@ export function sizeText(t: TFunction, text: string): string {
 }
 
 /**
- * What shows as a mark: two empty lines in a row or more, a run of eight spaces or more after words
- * in a line, and an indent wider than sixteen (a tab counts four). The check of packs lets no more
- * than two empty lines and twenty spaces through; the marks make even those plain to see.
+ * What shows as a mark: two lines or more in a row with nothing to see; any space but the plain
+ * one (wide spaces, spaces that do not break, and the like); a run of eight plain spaces or more
+ * after words in a line, and an indent wider than sixteen (a tab counts four); and combining marks
+ * with nothing to sit on, which show as next to nothing. The check of packs lets no long run of any
+ * of them through; the marks make even those plain to see.
  */
-const MARKED = /(?:[ \t]*\n){3,}|(?<=\S)[ \t]{8,}|^[ \t]{17,}/gm;
+const MARKED =
+  /(?:(?:[^\S\n]|(?<![\p{L}\p{N}\p{P}\p{S}])\p{M})*\n){3,}|[^\S\n \t]+|(?<=\S)[ \t]{8,}|^[ \t]{17,}|(?<![\p{L}\p{N}\p{P}\p{S}\p{M}])\p{M}+/gmu;
+
+/** What a mark says of the blank it stands for. */
+function markOf(t: TFunction, run: string): string {
+  const breaks = run.split("\n").length - 1;
+  if (breaks > 0) return t("ai.packs.dialog.emptyLines", { count: breaks - 1 });
+  const chars = [...run];
+  if (chars.every((char) => /\p{M}/u.test(char))) {
+    return t("ai.packs.dialog.marks", { count: chars.length });
+  }
+  if (chars.some((char) => char !== " " && char !== "\t")) {
+    return t("ai.packs.dialog.otherSpaces", { count: chars.length });
+  }
+  return t("ai.packs.dialog.spaces", {
+    count: chars.reduce((width, char) => width + (char === "\t" ? 4 : 1), 0),
+  });
+}
 
 /**
- * Words as they are, with long runs of spaces and of empty lines shown as marks that say how long
- * they are: no run of blank can push words out of sight, and none goes unseen.
+ * Words as they are, with blank that could hide what comes after it shown as marks that say what
+ * it is and how long: no run of blank can push words out of sight, and none goes unseen.
  */
 export function visible(t: TFunction, text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -441,19 +460,13 @@ export function visible(t: TFunction, text: string): ReactNode[] {
     const run = match[0];
     const at = match.index;
     nodes.push(text.slice(last, at));
-    const breaks = run.split("\n").length - 1;
-    const label =
-      breaks > 0
-        ? t("ai.packs.dialog.emptyLines", { count: breaks - 1 })
-        : t("ai.packs.dialog.spaces", {
-            count: [...run].reduce((width, char) => width + (char === "\t" ? 4 : 1), 0),
-          });
+    const lines = run.includes("\n") ? "\n" : "";
     nodes.push(
-      breaks > 0 ? "\n" : "",
+      lines,
       <span key={at} className={styles.blank} data-testid="pack-blank">
-        {label}
+        {markOf(t, run)}
       </span>,
-      breaks > 0 ? "\n" : "",
+      lines,
     );
     last = at + run.length;
   }

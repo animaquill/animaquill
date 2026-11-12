@@ -42,6 +42,29 @@ export interface FileSeen {
 export interface Seen {
   readonly overview?: RevisionId;
   readonly full?: RevisionId;
+  /**
+   * Parts of it read whole on their own, by the field a read asked for ("properties.opacity",
+   * "name"): what a whole read of a part shows counts for that part and what is under it, also
+   * where the object is too large to read whole. A whole read of the object covers them all.
+   */
+  readonly fields?: Readonly<Record<string, RevisionId>>;
+}
+
+/** What is kept of a record of reading: what has the shape of one, else nothing of it. */
+function seenFrom(value: unknown): Seen | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { overview, full, fields } = value as Record<string, unknown>;
+  const parts =
+    typeof fields === "object" && fields !== null && !Array.isArray(fields)
+      ? Object.fromEntries(
+          Object.entries(fields).filter(([, revision]) => typeof revision === "string"),
+        )
+      : {};
+  return {
+    ...(typeof overview === "string" && { overview }),
+    ...(typeof full === "string" && { full }),
+    ...(Object.keys(parts).length > 0 && { fields: parts as Record<string, RevisionId> }),
+  };
 }
 
 /** What `CallerState.toJSON` gives: plain data, to keep with a conversation and read back. */
@@ -122,7 +145,11 @@ export class CallerState {
     const caller = new CallerState(now);
     const data = snapshot as Partial<CallerSnapshot> | undefined;
     if (data?.version !== SNAPSHOT_VERSION) return caller;
-    for (const [key, seen] of data.seen ?? []) caller.seen.set(key, seen);
+    for (const [key, seen] of data.seen ?? []) {
+      // What is not a record of reading counts as nothing read: never as more than it says.
+      const kept = typeof key === "string" ? seenFrom(seen) : undefined;
+      if (kept) caller.seen.set(key, kept);
+    }
     for (const [path, file] of data.files ?? []) caller.files.set(path, file);
     for (const origin of data.own ?? []) caller.own.add(origin);
     for (const path of data.changedCode ?? []) {
@@ -166,18 +193,42 @@ export class CallerState {
     else this.answer.proposed = true;
   }
 
-  /** An object was read, in an overview or whole, at a revision. */
-  saw(object: ObjectRef, revision: RevisionId, depth: "overview" | "full" = "overview"): void {
+  /**
+   * An object was read, in an overview or whole, at a revision; in an overview, `fields` are the
+   * parts of it the read showed whole.
+   */
+  saw(
+    object: ObjectRef,
+    revision: RevisionId,
+    depth: "overview" | "full" = "overview",
+    fields: readonly string[] = [],
+  ): void {
     const key = objectKey(object);
     const known = this.seen.get(key) ?? {};
-    this.seen.set(
-      key,
-      depth === "full" ? { overview: revision, full: revision } : { ...known, overview: revision },
-    );
+    if (depth === "full") {
+      this.seen.set(key, { overview: revision, full: revision });
+      return;
+    }
+    const parts =
+      fields.length > 0
+        ? { ...known.fields, ...Object.fromEntries(fields.map((field) => [field, revision])) }
+        : known.fields;
+    this.seen.set(key, { ...known, overview: revision, ...(parts && { fields: parts }) });
   }
 
   seenOf(object: ObjectRef): Seen {
     return this.seen.get(objectKey(object)) ?? {};
+  }
+
+  /**
+   * When parts of an object that cover a field were read whole on their own: the part itself or
+   * one it is under ("properties" covers "properties.opacity"), each at the revision it was read.
+   */
+  fieldSeen(object: ObjectRef, field: string): readonly RevisionId[] {
+    const fields = this.seen.get(objectKey(object))?.fields ?? {};
+    return Object.entries(fields)
+      .filter(([part]) => field === part || field.startsWith(`${part}.`))
+      .map(([, revision]) => revision);
   }
 
   read(revision: RevisionId): void {

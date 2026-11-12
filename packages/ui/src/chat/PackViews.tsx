@@ -372,6 +372,7 @@ export function PackFullTextView(props: { readonly preview: PackPreview }) {
             chars: toolsSize.toLocaleString(),
           })}
         </h3>
+        <p className={styles.meta}>{t("ai.packs.preview.schemaNote")}</p>
         {tools.map((tool) => (
           <details key={tool.name} data-testid="pack-preview-tool">
             <summary>

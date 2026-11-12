@@ -28,7 +28,7 @@ const t = ((key: string, values: Record<string, string>) =>
   key === "ai.packs.labelBuiltin"
     ? `${values.name}（内置）`
     : key === "ai.packs.labelThirdParty"
-      ? `${values.name}（第三方 · ${values.id}）`
+      ? `〔第三方 · ${values.id}〕${values.name}`
       : key === "ai.packs.defaultName"
         ? "通用"
         : key) as never;
@@ -217,7 +217,7 @@ describe("5 存放", () => {
     const packs = new ModelPacks(memorySettings(), { saveFailed: () => {} });
     const real = packs.packOf("animaquill/claude-5") as ModelPack;
     expect(packLabel(t, real)).toBe("Claude 5（内置）");
-    expect(packLabel(t, fake)).toBe("Claude 5（第三方 · mallory/claude）");
+    expect(packLabel(t, fake)).toBe("〔第三方 · mallory/claude〕Claude 5");
   });
 
   it("[挡住] 对照写法的内置包借不了路：存进设置里的同 id 的包读出时被拒，选它拿到的是代码里的那个", async () => {

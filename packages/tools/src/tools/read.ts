@@ -53,9 +53,10 @@ export function sawAll(
   call: Call,
   refs: Iterable<ObjectRef>,
   depth: "overview" | "full" = "overview",
+  fields: (ref: ObjectRef) => readonly string[] = () => [],
 ): void {
   const revision = call.store.revisionId;
-  for (const ref of refs) call.caller.saw(ref, revision, depth);
+  for (const ref of refs) call.caller.saw(ref, revision, depth, fields(ref));
   call.caller.read(revision);
 }
 
@@ -424,6 +425,8 @@ function sceneProperties(call: Call, state: ProjectState, clip: ClipState): stri
 interface Block {
   readonly ref: ObjectRef;
   readonly lines: readonly string[];
+  /** The fields asked for that the result shows whole. */
+  readonly whole: readonly string[];
 }
 
 /** Room a result keeps besides its lines: the revision first, and what `fitted` keeps free. */
@@ -513,6 +516,13 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         const unset = (args.fields ?? []).filter(
           (field) => fieldAt(each.value, field) === undefined,
         );
+        // What `fields` asked for shows whole, but where a concise result sums up what has more in it.
+        const shownWhole = (args.fields ?? []).filter(
+          (field) =>
+            format !== "concise" ||
+            typeof fieldAt(each.value, field) !== "object" ||
+            fieldAt(each.value, field) === null,
+        );
         if (format === "concise") {
           const record = (value ?? {}) as Record<string, unknown>;
           const fields = Object.entries(record).map(([key, item]) =>
@@ -528,7 +538,7 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         if (each.clip?.source.kind === "scene" && args.fields === undefined) {
           lines.push(sceneProperties(call, state, each.clip));
         }
-        blocks.push({ ref: each.ref, lines });
+        blocks.push({ ref: each.ref, lines, whole: shownWhole });
       }
     }
     // Objects go in whole or not at all: only those the result has count as read, so that a change
@@ -551,10 +561,12 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
       used -= sizeOf(last);
       tail = notReadLine(call, blocks, kept, budget, sizeOf);
     }
+    const parts = new Map(inOrder.map((block) => [block.ref, block.whole]));
     sawAll(
       call,
       inOrder.map(({ ref }) => ref),
       whole ? "full" : "overview",
+      (ref) => parts.get(ref) ?? [],
     );
     const lines = [...inOrder.flatMap((block) => block.lines), ...(tail ? [tail] : [])];
     return answer(call, lines);

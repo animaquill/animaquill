@@ -371,6 +371,11 @@ export class ChatSession {
     }
   }
 
+  /** Whether the next answer of the conversation open takes the pack chosen for a model now. */
+  repicking(model: string): boolean {
+    return this.#repick.has(`${this.#snapshot.id}\n${model}`);
+  }
+
   /** The pack people would get for a model in a new conversation, and how. */
   choiceFor(model: string): { readonly pack: ModelPack; readonly note: PackNote } {
     const choice = choosePack(

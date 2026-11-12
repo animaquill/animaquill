@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { failureText } from "./failure.ts";
+import type { ModelPacks } from "./packs.ts";
 import { noteLabel } from "./packText.ts";
 import type { ChatSession } from "./session.ts";
 import { summaryOf, type TurnChange } from "./summary.ts";
@@ -140,7 +141,7 @@ export function ChatPanel() {
 
   const groups = groupsOf(talk.entries);
   const switches = packSwitches(t, talk.entries, packs.getSnapshot().packs);
-  const packLines = packLinesOf(t, talk.entries, current?.model, chat);
+  const packLines = packLinesOf(t, talk.entries, current?.model, chat, packs);
   return (
     <div className={styles.panel} data-testid="chat">
       <div className={styles.bar}>
@@ -701,9 +702,16 @@ function packLinesOf(
   entries: readonly ChatEntry[],
   model: string | undefined,
   chat: ChatSession,
+  packs: ModelPacks,
 ): readonly { readonly text: string; readonly testId: string }[] {
   const answers = entries.filter((entry): entry is AssistantEntry => entry.role === "assistant");
   const lines: { text: string; testId: string }[] = [];
+  /** What of a pack this version of the tools goes without, said once at the top. */
+  const dropped = (id: string | undefined) => {
+    const count = id === undefined ? 0 : (packs.installedOf(id)?.dropped.length ?? 0);
+    if (count > 0)
+      lines.push({ text: t("chat.packDropped", { count }), testId: "chat-pack-dropped" });
+  };
   const first = answers.find((entry) => entry.pack && entry.texts);
   if (first?.pack) {
     lines.push({
@@ -713,6 +721,7 @@ function packLinesOf(
           : t("chat.packLine", { name: noteLabel(t, first.pack, first.texts?.id) }),
       testId: "chat-pack",
     });
+    dropped(first.texts?.id);
   } else if (answers.length === 0 && model) {
     const { pack, note } = chat.choiceFor(model);
     lines.push({
@@ -722,11 +731,18 @@ function packLinesOf(
           : t("chat.packLine", { name: noteLabel(t, note, pack.id) }),
       testId: "chat-pack",
     });
+    dropped(pack.id);
   }
   const last = answers.at(-1);
   if (model && last?.pack && last.texts && last.model === model && last.pack.by !== "comparison") {
     const { pack, note } = chat.choiceFor(model);
-    if (pack.id !== last.texts.id) {
+    if (chat.repicking(model) && (pack.id !== last.texts.id || pack.hash !== last.texts.hash)) {
+      // Chosen where the model is picked: it comes with the next answer of this conversation.
+      lines.push({
+        text: t("chat.packNextAnswer", { name: noteLabel(t, note, pack.id) }),
+        testId: "chat-pack-next",
+      });
+    } else if (pack.id !== last.texts.id) {
       lines.push({
         text: t("chat.packNext", { model, name: noteLabel(t, note, pack.id) }),
         testId: "chat-pack-next",

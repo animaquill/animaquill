@@ -2490,7 +2490,7 @@
       "defaultName": "通用",
       "comparisonName": "2026.1 旧写法（对照）",
       "labelBuiltin": "{{name}}（内置）",
-      "labelThirdParty": "{{name}}（第三方 · {{id}}）",
+      "labelThirdParty": "〔第三方 · {{id}}〕{{name}}",
       "authorNone": "没写作者",
       "installed": "已有的适配包",
       "version": "版本 {{version}}",
@@ -2596,9 +2596,10 @@
         "too-many-examples": "{{at}}：例子太多（{{count}} 个，最多 {{max}}）。",
         "example-invalid": "{{at}}：例子不合这个操作的参数。",
         "example-fails": "{{at}}：例子在示例项目上跑不通。",
-        "spacing": "{{at}}：连续的空行或空白太多（最多 {{maxLines}} 个空行、{{maxSpaces}} 个空格宽）。太长的空白会把后面的话推到看不见的地方。",
+        "spacing": "{{at}}：空白太多（连续最多 {{maxLines}} 个空行、一串空白最多 {{maxSpaces}} 个空格宽，不能有大半是空白的行，不能连续超过 {{maxThinLines}} 行几乎没有字）。全角空格、不换行空格和单独的组合符号也算空白。太多的空白会把后面的话推到看不见的地方。",
         "too-deep": "{{at}}：嵌套太深或内容项太多（最多 {{depth}} 层），这不是适配包会有的样子。",
         "reserved-name": "{{at}}：名字和作者里不能写“内置”“官方”“AnimaQuill”这类字样，它们只留给随 AnimaQuill 提供的包。",
+        "name-blank": "{{at}}：名字和作者里只能用普通的空格，不能连着两个，也不能用全角空格这类别的空白。",
         "default-changed": "{{at}}：这一版的工具改了这一项的通用写法，包里替换它的说明可能已经不对了，先不用这一条。",
         "needs-review": "这个包改了安全守则或运行环境说明，工具升级以后它有 {{count}} 处不再适用。重新安装一次、看过改动才能再用。",
         "unexpected": "检查这个包时出了没预料到的错（{{message}}），这个包装不了。"
@@ -2653,6 +2654,8 @@
         "size": "{{lines}} 行 · {{chars}} 字",
         "spaces": "⟨{{count}} 个空格⟩",
         "emptyLines": "⟨{{count}} 个空行⟩",
+        "otherSpaces": "⟨{{count}} 个特殊空白⟩",
+        "marks": "⟨{{count}} 个单独的组合符号⟩",
         "install": "安装",
         "update": "更新",
         "cancel": "取消",
@@ -2664,7 +2667,8 @@
         "setting": "{{field}}：{{value}}",
         "system": "系统提示（{{chars}} 字）",
         "tools": "工具清单（{{count}} 个，{{chars}} 字）",
-        "toolSize": "{{chars}} 字"
+        "toolSize": "{{chars}} 字",
+        "schemaNote": "参数结构是交给连接库之前的样子：各家服务收到的参数结构会按它的格式转换形状，文字说明逐字相同。"
       },
       "viewer": {
         "title": "模型适配包",
@@ -2847,6 +2851,7 @@
       "other": "也可以在下面直接回答。"
     },
     "packLine": "适配包：{{name}}",
+    "packDropped": "这个包有 {{count}} 处在这一版的工具里不再适用，那几处按通用写法。",
     "packNone": "{{model}} 没有专门的适配包，正在用通用写法。可以在设置的“模型适配包”里选一个已装的包。",
     "packSwitched": "换成 {{model}}，改用适配包 {{name}}",
     "packSwitchedNone": "换成 {{model}}，它没有专门的适配包，改用通用写法",
@@ -2854,7 +2859,8 @@
     "packChosen": "改用适配包 {{name}}",
     "packUpdated": "适配包 {{name}} 开始时的那一版没有留下，改用已装的版本 {{version}}",
     "packNext": "设置里现在为 {{model}} 选的是 {{name}}，从下一次新对话起用。",
-    "packNextVersion": "{{name}} 已更新到 {{version}}，从下一次新对话起用；这个对话继续用开始时的那一版。"
+    "packNextVersion": "{{name}} 已更新到 {{version}}，从下一次新对话起用；这个对话继续用开始时的那一版。",
+    "packNextAnswer": "下一条回答起改用 {{name}}。"
   },
   "account": {
     "signIn": "登录",

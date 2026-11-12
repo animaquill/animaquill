@@ -245,7 +245,12 @@ function conflictText(call: Call, failure: CommandFailure, bases: Bases): string
     const list = fields.size > 0 ? ` (${[...fields].join(", ")})` : "";
     return `${[...who].join(" and ") || "someone else changed"} ${objectText(state, ref)}${list}`;
   });
-  return `error conflict: ${parts.join("; ")} after you last read it; a change sent after reading it again is checked against what was read then\nnothing was written`;
+  const fields = [...new Set([...byObject.values()].flatMap(({ fields: each }) => [...each]))];
+  const narrow =
+    fields.length > 0
+      ? `; aq_object_read with fields ${JSON.stringify(fields)} reads just what changed`
+      : "";
+  return `error conflict: ${parts.join("; ")} after you last read it; a change sent after reading it again is checked against what was read then${narrow}\nnothing was written`;
 }
 
 /** The text of a batch that failed, with what helps to fix it. */
@@ -386,9 +391,16 @@ function basesOf(call: Call, args: EditArgs, before: ProjectState): Bases {
   const of = (path: readonly string[]): Revision | undefined => {
     const ref = objectOfPath(path);
     const { overview, full } = caller.seenOf(ref);
-    const field = fieldOf(path, ref)?.split(".")[0];
+    const exact = fieldOf(path, ref);
+    const field = exact?.split(".")[0];
     const detail = field !== undefined && DETAIL[ref.kind]?.has(field) === true;
-    const recorded = (detail ? (full ?? overview) : later(overview, full)) ?? caller.lastRead;
+    // A part read whole on its own counts for that part, as a whole read of the object does.
+    const part = (exact === undefined ? [] : caller.fieldSeen(ref, exact)).reduce<
+      Revision | undefined
+    >((latest, each) => later(latest, each), undefined);
+    const recorded =
+      (detail ? (later(full, part) ?? overview) : later(later(overview, full), part)) ??
+      caller.lastRead;
     if (recorded === undefined) {
       if (!existsIn(before, ref)) return undefined;
       unread.set(objectKey(ref), ref);
