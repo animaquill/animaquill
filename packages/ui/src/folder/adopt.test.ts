@@ -16,7 +16,7 @@ import {
   type ReconcileSide,
 } from "../cloud/reconcile.ts";
 import { MemoryLibrary } from "../workbench/memory-library.ts";
-import { FolderAdopt, type AdoptPlan, type AdoptResult } from "./adopt.ts";
+import { FolderAdopt, LINKING_FILE, type AdoptPlan, type AdoptResult } from "./adopt.ts";
 import {
   CODE,
   MAIN,
@@ -27,7 +27,6 @@ import {
   filesOf,
   fixture,
   putProject,
-  recovered,
   renameClip,
   run,
 } from "./folder-support.ts";
@@ -110,6 +109,20 @@ function projectFilesOn(disk: MemoryDisk): Map<string, string> {
 
 const exported = (store: ProjectStore) => store.exportFiles().files;
 
+/**
+ * What was kept in .animaquill/recovered, by the path the file had in the project: of the folder,
+ * or of the project of the platform ("-cloud").
+ */
+function keptOf(disk: MemoryDisk, side: "here" | "cloud" = "here"): Map<string, string[]> {
+  const kept = new Map<string, string[]>();
+  for (const [path, text] of filesOf(disk)) {
+    const [, cloud, original] = /^\.animaquill\/recovered\/[^/]+?(-cloud)?\/(.+)$/.exec(path) ?? [];
+    if (original === undefined || (cloud !== undefined) !== (side === "cloud")) continue;
+    kept.set(original, [...(kept.get(original) ?? []), text]);
+  }
+  return kept;
+}
+
 /** The project in the folder, as files the way the editor writes them. */
 const projectOn = async ({ adopt, folder }: Setup) => (await adopt.read(folder)).files;
 
@@ -144,7 +157,7 @@ describe("FolderAdopt", () => {
     expect(projectFilesOn(world.disk)).toEqual(before);
     expect(exported(world.copy.store)).toEqual(cloud);
     // Nothing was kept, as nothing went.
-    expect(recovered(world.disk).size).toBe(0);
+    expect(keptOf(world.disk).size).toBe(0);
     const record = await world.folders.records.get(KEY);
     expect(record?.project).toBe(world.copy.store.getState().manifest.id);
     // What the editor knows the files by is what the folder has.
@@ -232,7 +245,7 @@ describe("FolderAdopt", () => {
     expect(result.kind).toBe("adopted");
     if (result.kind !== "adopted") return;
     expect(result.kept).toMatch(/^\.animaquill\/recovered\//);
-    const kept = recovered(world.disk);
+    const kept = keptOf(world.disk);
     expect(kept.get(CODE)).toEqual([folderBefore.get(CODE)]);
     expect(kept.get(MAIN)).toEqual([folderBefore.get(MAIN)]);
     expect(kept.get(NEW_CODE)).toEqual([folderBefore.get(NEW_CODE)]);
@@ -290,7 +303,7 @@ describe("FolderAdopt", () => {
     expect(exported(world.copy.store)).toEqual(cloudBefore);
     expect(await world.folders.records.get(KEY)).toBeUndefined();
     // What was kept stays.
-    expect(recovered(world.disk).get(CODE)).toEqual([folderBefore.get(CODE)]);
+    expect(keptOf(world.disk).get(CODE)).toEqual([folderBefore.get(CODE)]);
   });
 
   it("puts the folder back where people stop it", async () => {
@@ -379,7 +392,19 @@ describe("FolderAdopt", () => {
       const folder = (await folders.choose()) as LocalFolder;
       const copy = (await loadProject(world.library, KEY)) as LoadedProject;
       const adopt = new FolderAdopt({ folders, projects: world.library, t });
-      const again = await adopt.look(KEY, copy.store, folder, { updatedAt: UPDATED_AT });
+      // The folder says that linking it did not get to the end, and where what it had is.
+      const first = await adopt.look(KEY, copy.store, folder, { updatedAt: UPDATED_AT });
+      expect(first).toMatchObject({ kind: "unfinished" });
+      if (first.kind !== "unfinished") return;
+      expect(first.unfinished.kept).toMatch(/^\.animaquill\/recovered\//);
+      expect(first.unfinished.files.map(({ path }) => path).toSorted()).toEqual(
+        [MAIN, NEW_CODE, ONLY_CLOUD, SCENE].toSorted(),
+      );
+      // People go on from there.
+      const again = await adopt.look(KEY, copy.store, folder, {
+        updatedAt: UPDATED_AT,
+        goOn: true,
+      });
       if (again.kind !== "plan") throw new Error(again.kind);
       // Nothing that people did not choose for differs now, and what was done is done.
       for (const { path } of again.plan.differences) expect(choices.has(path)).toBe(true);
@@ -393,17 +418,108 @@ describe("FolderAdopt", () => {
         { saved: copy.saved },
       );
       expect(result.kind).toBe("adopted");
+      expect(world.disk.has(`${PROJECT}/${LINKING_FILE}`)).toBe(false);
       const cloud = exported(copy.store);
       expect((await adopt.read(folder)).files).toEqual(cloud);
       for (const [path, text] of chosen) expect(cloud.get(path)).toBe(text);
       // What went of the folder is kept, the first time or the second.
-      const kept = recovered(world.disk);
+      const kept = keptOf(world.disk);
       for (const path of [SCENE, NEW_CODE]) {
         expect(kept.get(path)?.[0]).toBe(folderBefore.get(path));
       }
       copy.close();
     },
   );
+
+  it.each([1, 3])(
+    "where the page goes away (%s), the folder can be put back as it was",
+    async (stopAt) => {
+      const world = await setup();
+      changeBoth(world);
+      const folderBefore = projectFilesOn(world.disk);
+      const plan = await planOf(world);
+      let stopped: () => void = () => {};
+      const gone = new Promise<void>((resolve) => (stopped = resolve));
+      let writes = 0;
+      const write = world.folder.write.bind(world.folder);
+      world.folder.write = (path, content, options) => {
+        if (!path.startsWith(".animaquill/") && ++writes === stopAt) {
+          stopped();
+          return new Promise<never>(() => {});
+        }
+        return write(path, content, options);
+      };
+      void runIt(world, plan, allOneSide(plan.differences, "cloud"));
+      await gone;
+      world.disk.crash();
+      expect(projectFilesOn(world.disk)).not.toEqual(folderBefore);
+
+      const folders = memoryFolders(world.disk);
+      world.disk.chooseNext(PROJECT);
+      const folder = (await folders.choose()) as LocalFolder;
+      const adopt = new FolderAdopt({ folders, projects: world.library, t });
+      const unfinished = await adopt.unfinished(folder);
+      expect(unfinished).toBeDefined();
+      expect(await adopt.restoreUnfinished(folder, unfinished!)).toBe(true);
+      expect(projectFilesOn(world.disk)).toEqual(folderBefore);
+      expect(await adopt.unfinished(folder)).toBeUndefined();
+    },
+  );
+
+  it("looks again, with both sides as they were, where the project changes while the folder is written", async () => {
+    const world = await setup();
+    changeBoth(world);
+    const folderBefore = projectFilesOn(world.disk);
+    const plan = await planOf(world);
+    const choices = new Map<string, ReconcileSide>([
+      [CODE, "here"],
+      [SCENE, "cloud"],
+      [MAIN, "here"],
+      [NEW_CODE, "here"],
+      [ONLY_CLOUD, "cloud"],
+    ]);
+    let changed = false;
+    // While the folder is written, the platform or another window changes what people chose the
+    // folder's side of.
+    const result = await world.adopt.run(
+      plan,
+      choices,
+      world.copy.store,
+      world.library.media(KEY),
+      {
+        saved: world.copy.saved,
+        onStep: (step) => {
+          if (step.phase === "writing" && !changed) {
+            changed = true;
+            run(world.copy.store, "file.write", { path: CODE, text: "export const 云端 = 2;\n" });
+          }
+        },
+      },
+    );
+    expect(result.kind).toBe("changed");
+    // The folder is as it was, and the project has only that change.
+    expect(projectFilesOn(world.disk)).toEqual(folderBefore);
+    expect(world.disk.has(`${PROJECT}/${LINKING_FILE}`)).toBe(false);
+    expect(exported(world.copy.store).get(CODE)).toBe("export const 云端 = 2;\n");
+    expect(await world.folders.records.get(KEY)).toBeUndefined();
+  });
+
+  it("keeps what the project of the platform had of every file the folder takes the place of", async () => {
+    const world = await setup();
+    changeBoth(world);
+    const cloudBefore = exported(world.copy.store);
+    const plan = await planOf(world);
+    const result = await runIt(world, plan, allOneSide(plan.differences, "here"));
+    expect(result.kind).toBe("adopted");
+    if (result.kind !== "adopted") return;
+    expect(result.cloudKept).toMatch(/^\.animaquill\/recovered\/.+-cloud$/);
+    const kept = keptOf(world.disk, "cloud");
+    expect(kept.get(CODE)).toEqual([cloudBefore.get(CODE)]);
+    expect(kept.get(SCENE)).toEqual([cloudBefore.get(SCENE)]);
+    expect(kept.get(ONLY_CLOUD)).toEqual([cloudBefore.get(ONLY_CLOUD)]);
+    // Nothing of the folder went.
+    expect(keptOf(world.disk).size).toBe(0);
+  });
 
   it("changes neither side where a file has no choice", async () => {
     const world = await setup();
@@ -417,7 +533,7 @@ describe("FolderAdopt", () => {
     expect(result).toMatchObject({ kind: "refused", reason: "unsettled" });
     expect(projectFilesOn(world.disk)).toEqual(folderBefore);
     expect(exported(world.copy.store)).toEqual(cloudBefore);
-    expect(recovered(world.disk).size).toBe(0);
+    expect(keptOf(world.disk).size).toBe(0);
   });
 
   it("looks again where the folder changed after people chose", async () => {

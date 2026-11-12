@@ -87,3 +87,24 @@
   margin: 0 0 12px;
   color: var(--aq-danger-text);
 }
+
+.note {
+  display: block;
+  margin-top: 2px;
+  color: var(--aq-warning);
+}
+
+.summary,
+.loud {
+  margin: 0 0 12px;
+}
+
+.content .summary {
+  color: var(--aq-text);
+}
+
+.content .loud,
+.loud {
+  color: var(--aq-warning);
+  font-weight: 600;
+}

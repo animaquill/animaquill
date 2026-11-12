@@ -615,6 +615,12 @@ export class Workbench {
         ...(options.hasher && { hasher: options.hasher }),
         ...(options.folderTiming && { timing: options.folderTiming }),
         ...(host.presence && { presence: host.presence }),
+        // What closed windows left on a folder, which goes with what this browser kept of it.
+        leftBehind: async (key: string) => [
+          ...((await host.trials.holds?.(key)) ? ["trial"] : []),
+          ...((await host.drafts.holds?.(key)) ? ["drafts"] : []),
+        ],
+        ...(host.organizer && { organizer: host.organizer }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
     this.cloud =

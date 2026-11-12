@@ -30,7 +30,16 @@ const t = ((key: string) => key) as never;
 const KEY = "云端1";
 const CODES = [CODE, "code/甲.js", "code/乙.js", "code/丙.js"];
 const CLIPS = ["clip_title", "clip_logo", "clip_card"];
-const FAULTS = ["none", "none", "keep", "write", "link", "cancel"] as const;
+const FAULTS = [
+  "none",
+  "none",
+  "keep",
+  "write",
+  "link",
+  "cancel",
+  "meanwhile",
+  "meanwhile",
+] as const;
 
 const readOnly = (files: ReadonlyMap<string, string>): ReadOnlyFolder => ({
   async *list() {
@@ -120,16 +129,27 @@ async function fuzzAdopt(seed: number): Promise<void> {
   } else if (fault === "link") {
     folders.records.put = () => Promise.reject(new Error("No room"));
   }
+  // While the folder is written, the project of the platform changes too, as it syncs.
+  let meanwhile: Map<string, string> | undefined;
   const result = await adopt.run(plan, choices, store, library.media(KEY), {
     saved: copy.saved,
     signal: stopping.signal,
+    onStep: (step) => {
+      if (fault !== "meanwhile" || step.phase !== "writing" || meanwhile) return;
+      const path = random.pick(CODES) as string;
+      run(store, "file.write", { path, text: `export const 同时 = ${seed};\n` });
+      meanwhile = store.exportFiles().files;
+    },
   });
 
   const cloudAfter = store.exportFiles().files;
-  if (fault === "none" && isFine) expect(result.kind, context).toBe("adopted");
+  if ((fault === "none" || (fault === "meanwhile" && !meanwhile)) && isFine)
+    expect(result.kind, context).toBe("adopted");
+  // Whatever changed meanwhile has people look again.
+  if (meanwhile) expect(result.kind, context).toBe("changed");
   if (result.kind !== "adopted") {
     // Nothing changed, apart from what was kept of the folder.
-    expect(result.kind, context).toBe(isFine ? "stopped" : "refused");
+    expect(result.kind, context).toBe(meanwhile ? "changed" : isFine ? "stopped" : "refused");
     if (result.kind === "stopped") {
       expect(result.restored, context).toBe(true);
       expect(result.cloudBack, context).toBe(true);
@@ -139,7 +159,7 @@ async function fuzzAdopt(seed: number): Promise<void> {
     for (const path of now.keys()) {
       if (!folderBefore.has(path)) expect(path, context).toMatch(/^\.animaquill\//);
     }
-    expect(cloudAfter, context).toEqual(archived);
+    expect(cloudAfter, context).toEqual(meanwhile ?? archived);
     expect(await folders.records.get(KEY), context).toBeUndefined();
     copy.close();
     return;

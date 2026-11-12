@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryPlatform, TestCloudBrowser } from "../cloud/cloud-support.ts";
 import { account } from "../cloud/projects-support.ts";
 import { FakeRepositories } from "../cloud/repository-support.ts";
+import { LINKING_FILE } from "../folder/adopt.ts";
 import { filesOf, recovered } from "../folder/folder-support.ts";
 import type { DialogRequest, FormAnswer } from "./dialogs.ts";
 import { FAST, folderOf, notices, written } from "./folder-windows.ts";
@@ -65,12 +66,14 @@ function browserOn(
   const values = new Map<string, unknown>();
   const trials = new MemoryTrials();
   const drafts = new MemoryTrials();
+  // How people organised their projects is the browser's, as every window shares it.
+  const organizer = memoryOrganizer();
   const window = () => {
     const host: Host = {
       projects: library,
       address: memoryAddress(),
       windowMemory: memoryWindow(),
-      organizer: memoryOrganizer(),
+      organizer,
       settings: {
         load: async (key) => values.get(key),
         save: async (key, value) => void values.set(key, value),
@@ -103,7 +106,7 @@ function browserOn(
     opened.push(workbench);
     return workbench;
   };
-  return { disk, library, links: cloud.links, window };
+  return { disk, library, links: cloud.links, trials, organizer, window };
 }
 
 /** Answers each question as `answer` says, by its kind, and keeps what was asked. */
@@ -387,5 +390,133 @@ describe("a project of the platform linked again with its folder, once the brows
     expect(there.session.store?.getState().files[CODE]).toBe("云端改的\n");
     expect(cleared.library.summaries.has(project)).toBe(true);
     expect(workbench.session.key).toBe(project);
+  });
+
+  it("takes the place of the folder as a project of this computer only where nothing of it is left unsaved, and takes its star along", async () => {
+    const { project, disk, cleared } = await linkedAndCleared();
+    const workbench = cleared.window();
+    // People opened the folder as a project of this computer, as after clearing the browser.
+    disk.chooseNext(FOLDER);
+    answering(workbench, () => true);
+    await workbench.projectFolders?.open();
+    await vi.waitFor(() => expect(folderOf(workbench)?.record).toBeDefined());
+    const old = folderOf(workbench)?.record.id as string;
+    expect(old).not.toBe(project);
+    await workbench.closeProject();
+
+    // A window left something it was trying out on it: that goes first.
+    cleared.trials.kept.set(old, new Map([["place1", { tried: true }]]));
+    const asked = answering(workbench, () => true);
+    disk.chooseNext(FOLDER);
+    expect(await workbench.cloud?.linkFolder(project)).toBe(false);
+    expect(
+      asked.some(
+        (request) => "message" in request && request.message.startsWith("folder.adopt.leftBehind"),
+      ),
+    ).toBe(true);
+    expect((await workbench.projectFolders?.projects.records.get(old))?.id).toBe(old);
+
+    // Nothing left, and a star: it goes with the folder.
+    cleared.trials.kept.delete(old);
+    const starred = Date.now();
+    await cleared.organizer.mark(old, {
+      at: starred,
+      starredAt: starred,
+      starAt: starred,
+      mine: true,
+    });
+    disk.chooseNext(FOLDER);
+    expect(await workbench.cloud?.linkFolder(project)).toBe(true);
+    expect(await workbench.projectFolders?.projects.records.get(old)).toBeUndefined();
+    expect(folderOf(workbench)?.record.id).toBe(project);
+    expect((await cleared.organizer.read()).marks.get(project)?.starredAt).toBe(starred);
+  });
+
+  it("asks what to do with a folder that linking left halfway, also as it opens as a project of this computer", async () => {
+    const { project, disk, cleared } = await linkedAndCleared();
+    const before = filesOf(disk, FOLDER);
+    // Linking stopped halfway: one file is the platform's already, what it had is kept.
+    const kept = ".animaquill/recovered/2026-11-12 10.00.00";
+    disk.write(`${FOLDER}/${kept}/${CODE}`, before.get(CODE) as string);
+    disk.write(`${FOLDER}/${CODE}`, "半截的\n");
+    disk.write(`${FOLDER}/code/新来的.js`, "新来的\n");
+    disk.write(
+      `${FOLDER}/${LINKING_FILE}`,
+      JSON.stringify({
+        kept,
+        files: [
+          { path: CODE, existed: true },
+          { path: "code/新来的.js", existed: false },
+        ],
+      }),
+    );
+    const workbench = cleared.window();
+    // As a project of this computer: put back first, then it opens as it was.
+    const asked = answering(workbench, (request) => (request.kind === "choice" ? "restore" : true));
+    disk.chooseNext(FOLDER);
+    await workbench.projectFolders?.open();
+    expect(asked.find(({ kind }) => kind === "choice")).toMatchObject({
+      title: expect.stringMatching(/^folder\.adopt\.unfinishedTitle/),
+      choices: [{ id: "restore" }],
+    });
+    await vi.waitFor(() => expect(folderOf(workbench)?.record).toBeDefined());
+    const now = filesOf(disk, FOLDER);
+    expect(now.get(CODE)).toBe(before.get(CODE));
+    expect(now.has("code/新来的.js")).toBe(false);
+    expect(now.has(LINKING_FILE)).toBe(false);
+    expect(workbench.session.store?.getState().files[CODE]).toBe(before.get(CODE));
+    const record = folderOf(workbench)?.record;
+    await workbench.closeProject();
+    expect(project).toBeDefined();
+
+    // The same for a folder this browser knows, as it opens again.
+    disk.write(`${FOLDER}/${CODE}`, "又是半截的\n");
+    disk.write(
+      `${FOLDER}/${LINKING_FILE}`,
+      JSON.stringify({ kept, files: [{ path: CODE, existed: true }] }),
+    );
+    const before2 = asked.length;
+    await workbench.projectFolders?.openRecent(record!);
+    expect(asked.slice(before2).some(({ kind }) => kind === "choice")).toBe(true);
+    await vi.waitFor(() => expect(folderOf(workbench)?.record.id).toBe(record?.id));
+    expect(filesOf(disk, FOLDER).get(CODE)).toBe(before.get(CODE));
+    expect(filesOf(disk, FOLDER).has(LINKING_FILE)).toBe(false);
+  });
+
+  it("says what each side loses before people link, and marks what the platform takes only in part", async () => {
+    const { project, disk, cleared } = await linkedAndCleared();
+    const manifest = JSON.parse(disk.text(`${FOLDER}/animaquill.json`));
+    disk.write(
+      `${FOLDER}/animaquill.json`,
+      JSON.stringify({ ...manifest, tags: [{ name: "草稿" }] }, null, 2),
+    );
+    disk.write(`${FOLDER}/${CODE}`, "文件夹改的\n");
+    const workbench = cleared.window();
+    const shown: { summary?: string; confirm?: string; notes: string[]; error?: string }[] = [];
+    answering(workbench, (request) => {
+      if (request.kind !== "reconcile") return request.kind === "choice" ? "discard" : true;
+      const values = Object.fromEntries(request.items.map(({ path }) => [path, "here"]));
+      const said = request.summarize?.(values);
+      shown.push({
+        ...(said && { summary: said.text, confirm: said.confirm }),
+        notes: request.items.flatMap(({ path, note }) => (note ? [path] : [])),
+        ...(request.error !== undefined && { error: request.error }),
+      });
+      return values;
+    });
+    disk.chooseNext(FOLDER);
+    const linked = await workbench.cloud?.linkFolder(project);
+    expect(linked).toBe(true);
+    // Once with what each side loses; again with the file the platform takes only in part.
+    expect(shown[0]).toMatchObject({
+      summary: 'folder.adopt.summary {"cloud":2,"here":0}',
+      confirm: 'folder.adopt.confirmReplacing {"count":2}',
+      notes: [],
+    });
+    expect(shown[1]).toMatchObject({
+      notes: ["animaquill.json"],
+      error: 'folder.adopt.partlyAsk {"count":1}',
+    });
+    expect(shown).toHaveLength(2);
   });
 });

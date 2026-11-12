@@ -23,6 +23,7 @@ import {
   type MediaStore,
   type ProjectAddress,
   type ProjectLibrary,
+  type ProjectOrganizer,
   type ProjectPresence,
 } from "@animaquill/host";
 import type { Asset, Problem } from "@animaquill/schema";
@@ -33,11 +34,18 @@ import {
   type AssetIssue,
   type AssetProgress,
 } from "../folder/assets.ts";
-import { FolderAdopt, type AdoptPlan, type AdoptResult, type AdoptStep } from "../folder/adopt.ts";
+import {
+  FolderAdopt,
+  type AdoptPlan,
+  type AdoptResult,
+  type AdoptStep,
+  type UnfinishedLink,
+} from "../folder/adopt.ts";
 import {
   defaultChoices,
   isSettled,
   reconcileItems,
+  replacedCounts,
   type ReconcileSide,
 } from "../cloud/reconcile.ts";
 import {
@@ -72,7 +80,13 @@ import type { ProblemList } from "../problems/list.ts";
 import { downloadFrom, downloadableItems, type HereOf } from "../storage/places.ts";
 import type { ImportRefused, ImportReport } from "../transfer/import.ts";
 import { formatSize } from "../transfer/transfer.ts";
-import type { ConfirmOptions, DialogDetail, Dialogs, ProgressDialog } from "./dialogs.ts";
+import type {
+  ConfirmOptions,
+  DialogDetail,
+  Dialogs,
+  FormAnswer,
+  ProgressDialog,
+} from "./dialogs.ts";
 import { Emitter } from "./emitter.ts";
 import type { Notifications } from "./notifications.ts";
 import { projectKeyOf, type ProjectSession } from "./session.ts";
@@ -136,6 +150,13 @@ export interface ProjectFoldersOptions {
   readonly timing?: Partial<FolderTiming>;
   /** Which windows have which projects open, which a move into a folder has to know. */
   readonly presence?: ProjectPresence;
+  /**
+   * What closed windows left on a project of this browser, by its key: something tried out, code
+   * typed and not saved, see `Host.trials` and `Host.drafts`. Nothing where it is not given.
+   */
+  readonly leftBehind?: (key: string) => Promise<readonly string[]>;
+  /** How people organised their projects, see `ProjectOrganizer`, which goes with a project. */
+  readonly organizer?: Pick<ProjectOrganizer, "read" | "mark">;
 }
 
 /** What people can do about the file of an asset, and what has to know that one changed. */
@@ -1207,6 +1228,14 @@ export class ProjectFolders {
         await this.#notice(failedTitle, t("folder.adopt.unwritten", words));
         return false;
       }
+      // What closed windows left on it goes with it: people keep or drop it first.
+      const left = await (this.#options.leftBehind?.(replacing.id) ?? Promise.resolve([])).catch(
+        () => ["unknown"],
+      );
+      if (left.length > 0) {
+        await this.#notice(failedTitle, t("folder.adopt.leftBehind", words));
+        return false;
+      }
     }
     if (!(await linking.caughtUp())) return false;
     const updatedAt = await linking.updatedAt().catch(() => undefined);
@@ -1230,6 +1259,8 @@ export class ProjectFolders {
         return false;
       }
       linking.abandoned = false;
+      // The star and the group of the folder go with it.
+      if (replacing) await this.#takeMarks(replacing.id, key);
       // The project stays open, and from now on its folder is kept in step with it, also in the
       // other windows that have it open.
       if (open && session.store === open) await this.#follow(result.record, open);
@@ -1246,6 +1277,7 @@ export class ProjectFolders {
     folder: LocalFolder,
     updatedAt: number | undefined,
     words: { readonly name: string; readonly folder: string },
+    goOn = false,
   ): Promise<AdoptPlan | undefined> {
     const { dialogs, t } = this.#options;
     const progress = dialogs.progress({
@@ -1258,6 +1290,7 @@ export class ProjectFolders {
       look = await this.#adopter.look(key, store, folder, {
         ...(updatedAt !== undefined && { updatedAt }),
         signal: progress.signal,
+        goOn,
       });
     } catch (error) {
       if (!progress.signal.aborted) this.#failed(error);
@@ -1270,6 +1303,25 @@ export class ProjectFolders {
     switch (look.kind) {
       case "plan":
         return look.plan;
+      case "unfinished": {
+        // Linking it before stopped halfway: on from there, or back to how the folder was.
+        const answer = await dialogs.choose({
+          title: t("folder.adopt.unfinishedTitle", words),
+          message: t("folder.adopt.unfinished", {
+            kept: look.unfinished.kept,
+            interpolation: { escapeValue: false },
+          }),
+          choices: [
+            { id: "restore", label: t("folder.adopt.restore") },
+            { id: "goOn", label: t("folder.adopt.goOn"), kind: "primary" },
+          ],
+        });
+        if (answer === "goOn")
+          return this.#compareFolder(key, store, folder, updatedAt, words, true);
+        if (answer !== "restore") return undefined;
+        if (!(await this.#restoreUnfinished(folder, look.unfinished))) return undefined;
+        return this.#compareFolder(key, store, folder, updatedAt, words);
+      }
       case "other":
         await this.#notice(
           t("folder.adopt.otherTitle", words),
@@ -1306,6 +1358,74 @@ export class ProjectFolders {
     }
   }
 
+  /** Puts back how a folder was before linking it stopped halfway, and says how that went. */
+  async #restoreUnfinished(folder: LocalFolder, unfinished: UnfinishedLink): Promise<boolean> {
+    const { notifications, t } = this.#options;
+    const isBack = await this.#adopter.restoreUnfinished(folder, unfinished).catch(() => false);
+    if (isBack) notifications.push(t("folder.adopt.restored", { folder: folder.name }));
+    else
+      await this.#notice(
+        t("folder.adopt.unfinishedTitle", { folder: folder.name }),
+        t("folder.adopt.restoreFailed", {
+          kept: unfinished.kept,
+          interpolation: { escapeValue: false },
+        }),
+      );
+    return isBack;
+  }
+
+  /**
+   * A folder that opens as a project of this computer, where linking it to a project of the platform
+   * stopped halfway: what is in it is half of each side, which must not come in as changes made
+   * outside. People put it back first, or link it again from the project of the platform. Resolves
+   * to whether it opens.
+   */
+  async #openingUnfinished(folder: LocalFolder): Promise<boolean> {
+    const { dialogs, t } = this.#options;
+    const unfinished = await this.#adopter.unfinished(folder).catch(() => undefined);
+    if (!unfinished) return true;
+    const answer = await dialogs.choose({
+      title: t("folder.adopt.unfinishedTitle", { folder: folder.name }),
+      message: t("folder.adopt.unfinishedOpen", {
+        kept: unfinished.kept,
+        interpolation: { escapeValue: false },
+      }),
+      choices: [{ id: "restore", label: t("folder.adopt.restoreOpen"), kind: "primary" }],
+    });
+    return answer === "restore" && (await this.#restoreUnfinished(folder, unfinished));
+  }
+
+  /**
+   * The star and the group of a folder that a project of the platform takes the place of, under
+   * the key it goes on with, where that has none of its own.
+   */
+  async #takeMarks(from: string, to: string): Promise<void> {
+    const { organizer } = this.#options;
+    if (!organizer) return;
+    try {
+      const { marks } = await organizer.read();
+      const old = marks.get(from);
+      const now = marks.get(to);
+      if (!old) return;
+      const change = {
+        at: old.at,
+        ...(old.starredAt !== undefined &&
+          now?.starredAt === undefined && {
+            starredAt: old.starredAt,
+            ...(old.starAt !== undefined && { starAt: old.starAt }),
+          }),
+        ...(old.group !== undefined &&
+          now?.group === undefined && {
+            group: old.group,
+            ...(old.groupAt !== undefined && { groupAt: old.groupAt }),
+          }),
+      };
+      if ("starredAt" in change || "group" in change) await organizer.mark(to, change);
+    } catch (error) {
+      console.warn("How the folder was organised did not go with it", error);
+    }
+  }
+
   /**
    * Has people choose a side for every file that the two have differently, until the choices go
    * together. Resolves to them, or to undefined where people cancelled.
@@ -1320,14 +1440,33 @@ export class ProjectFolders {
     // Both the same: nothing to choose.
     if (plan.differences.length === 0) return choices;
     let error: string | undefined;
+    /** Files that the platform takes only in part, as people were told, see `Settled.partly`. */
+    let told: readonly string[] = [];
+    const summarize = (values: FormAnswer) => {
+      const { cloud, here } = replacedCounts(
+        plan.differences,
+        new Map(plan.differences.map(({ path }) => [path, values[path] as ReconcileSide])),
+      );
+      return {
+        text: t("folder.adopt.summary", { cloud, here }),
+        confirm:
+          cloud > 0
+            ? t("folder.adopt.confirmReplacing", { count: cloud })
+            : t("folder.adopt.confirm"),
+        loud: cloud > 0,
+      };
+    };
     for (;;) {
+      const items = reconcileItems(plan.differences, choices, t, {
+        now: Date.now(),
+        words: "folder.adopt",
+      }).map((item) =>
+        told.includes(item.path) ? { ...item, note: t("folder.adopt.partlyNote") } : item,
+      );
       const answer = await dialogs.reconcile({
         title: t("folder.adopt.title", words),
         message: t("folder.adopt.message", { count: plan.differences.length }),
-        items: reconcileItems(plan.differences, choices, t, {
-          now: Date.now(),
-          words: "folder.adopt",
-        }),
+        items,
         all: [
           { id: "here", label: t("folder.adopt.allHere") },
           { id: "cloud", label: t("folder.adopt.allCloud") },
@@ -1335,11 +1474,19 @@ export class ProjectFolders {
         notes: [t("folder.adopt.noteKept"), t("folder.adopt.noteArchive")],
         ...(error !== undefined && { error }),
         confirm: t("folder.adopt.confirm"),
+        summarize,
       });
       if (!answer) return undefined;
       choices = new Map(plan.differences.map(({ path }) => [path, answer[path] as ReconcileSide]));
       const settled = this.#adopter.settle(plan, store, choices);
-      if (isSettled(settled)) return choices;
+      if (isSettled(settled)) {
+        // What the platform takes only in part is said before anything happens, once.
+        const partly = [...settled.partly].toSorted();
+        if (partly.every((path) => told.includes(path))) return choices;
+        told = partly;
+        error = t("folder.adopt.partlyAsk", { count: partly.length });
+        continue;
+      }
       error = t("folder.adopt.unsettled", {
         problems: settled.problems
           .slice(0, 5)
@@ -1463,6 +1610,9 @@ export class ProjectFolders {
     const message = [
       t(plan.differences.length === 0 ? "folder.adopt.doneSame" : "folder.adopt.done", named),
       ...(result.kept !== undefined ? [t("folder.adopt.doneKept", { kept: result.kept })] : []),
+      ...(result.cloudKept !== undefined
+        ? [t("folder.adopt.doneCloudKept", { kept: result.cloudKept })]
+        : []),
     ].join("");
     await this.#notice(t("folder.adopt.doneTitle"), message, details);
   }
@@ -1882,6 +2032,11 @@ export class ProjectFolders {
     }
     // People said no: nothing changes, and they can try again.
     if (answer !== "granted") return;
+    // Half linked to a project of the platform: put back first. A folder this browser knows asks
+    // as it opens.
+    if (!(await this.projects.records.find(folder).catch(() => undefined))) {
+      if (!(await this.#openingUnfinished(folder))) return;
+    }
     const look = await this.#reading(folder.name, (options) => this.projects.look(folder, options));
     if (!look) return;
     if (look.kind === "known") {
@@ -2020,6 +2175,8 @@ export class ProjectFolders {
   /** Opens the project of a folder this browser knows, and keeps the folder in step. */
   async #open(given: FolderRecord, { relocated = false } = {}): Promise<boolean> {
     const { session, t } = this.#options;
+    // Half linked to a project of the platform: put back first.
+    if (!(await this.#openingUnfinished(given.folder))) return false;
     // What a move that stopped right at the end left of the file that says it is not done.
     const record = await this.#mover.settle(given);
     // A newer editor wrote it: this one does not open it, and leaves the files as they are.

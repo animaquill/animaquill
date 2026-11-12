@@ -103,6 +103,8 @@ export interface ReconcileItem {
   readonly status: string;
   readonly options: readonly { readonly id: string; readonly label: string }[];
   readonly value: string;
+  /** What else to know about it before choosing, as that the side chosen takes it only in part. */
+  readonly note?: string;
 }
 
 /** Which side each file is to be, see `ReconcileItem`, as one choice for every file. */
@@ -113,9 +115,19 @@ export interface ReconcileDialogOptions {
   /** Choices for every file at once, by the id of the option. */
   readonly all: readonly { readonly id: string; readonly label: string }[];
   readonly notes: readonly string[];
-  /** Why the last choices could not be carried out. */
+  /** Why the last choices could not be carried out, or what to look at before going on. */
   readonly error?: string;
   readonly confirm: string;
+  /**
+   * What the choices as they are now come to, in a line above the buttons, and the word of the
+   * button that carries them out: `loud` where they take something away that people may not
+   * expect.
+   */
+  readonly summarize?: (values: FormAnswer) => {
+    readonly text: string;
+    readonly confirm: string;
+    readonly loud: boolean;
+  };
 }
 
 export interface ProgressOptions {

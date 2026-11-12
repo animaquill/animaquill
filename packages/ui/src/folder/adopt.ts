@@ -53,6 +53,21 @@ import { ImportRefused, readProjectFolder, type ProjectFolder } from "../transfe
 import { FolderAssets } from "./assets.ts";
 import { IGNORE_FILE, RECOVERED_FOLDER, stampOf } from "./session.ts";
 
+/**
+ * The file that says that linking the folder did not get to the end, while it is written: where
+ * what it had is kept, and which files it was to change. A folder that opens with it is asked
+ * about first, see `ProjectFolders`: what is in it is half of each side.
+ */
+export const LINKING_FILE = ".animaquill/linking.json";
+
+/** What `LINKING_FILE` says. */
+export interface UnfinishedLink {
+  /** Where what the folder had of the files that change is kept, see `RECOVERED_FOLDER`. */
+  readonly kept: string;
+  /** The files that were to change, and whether each was there before. */
+  readonly files: readonly { readonly path: string; readonly existed: boolean }[];
+}
+
 /** What the folder holds of a file of the project, as it was read. */
 export interface FoundFile {
   readonly content: Uint8Array<ArrayBuffer>;
@@ -92,7 +107,9 @@ export type AdoptLook =
   /** The folder cannot be read as a project, see `ImportRefused`. */
   | { readonly kind: "unreadable"; readonly reason: string; readonly problems: readonly Problem[] }
   /** The project of the platform cannot be written as files. */
-  | { readonly kind: "invalid"; readonly problems: readonly Problem[] };
+  | { readonly kind: "invalid"; readonly problems: readonly Problem[] }
+  /** Linking it before did not get to the end, see `LINKING_FILE`: people say what next. */
+  | { readonly kind: "unfinished"; readonly unfinished: UnfinishedLink };
 
 /** How far it got, for people to see it go. */
 export interface AdoptStep {
@@ -109,6 +126,8 @@ export type AdoptResult =
       readonly record: FolderRecord;
       /** Where what the folder had of the files that went is kept, if any did. */
       readonly kept: string | undefined;
+      /** Where what the project of the platform had of the files that it took is kept, if any. */
+      readonly cloudKept: string | undefined;
       /** Files chosen as the folder has them that the project could take only in part. */
       readonly partly: readonly string[];
       /** Assets whose files neither the folder nor this browser has. */
@@ -128,7 +147,10 @@ export type AdoptResult =
       readonly reason: "busy" | "already" | "unsettled";
       readonly problems?: readonly Problem[];
     }
-  /** Either side is not what people saw any more: nothing happened, and they look again. */
+  /**
+   * Either side is not what people saw any more, before or while it was carried out: both are as
+   * they were, apart from what was kept, and people look again.
+   */
   | { readonly kind: "changed" }
   /**
    * It stopped, as people said or as something failed: the folder is as it was where `restored`,
@@ -196,6 +218,14 @@ interface Change {
 }
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const encoder = new TextEncoder();
+
+/** A path in the folder that a file it wrote may say: nothing above it, nothing odd. */
+const isSafePath = (path: string): boolean =>
+  path !== "" &&
+  !path.startsWith("/") &&
+  !path.includes("\\") &&
+  path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 
 const textOf = (content: Uint8Array): string | undefined => {
   try {
@@ -275,8 +305,21 @@ export class FolderAdopt {
     key: string,
     store: ProjectStore,
     folder: LocalFolder,
-    { updatedAt, signal }: { readonly updatedAt?: number; readonly signal?: AbortSignal } = {},
+    {
+      updatedAt,
+      signal,
+      goOn = false,
+    }: {
+      readonly updatedAt?: number;
+      readonly signal?: AbortSignal;
+      /** Goes on from where linking before stopped, see `LINKING_FILE`. */
+      readonly goOn?: boolean;
+    } = {},
   ): Promise<AdoptLook> {
+    if (!goOn) {
+      const unfinished = await this.unfinished(folder);
+      if (unfinished) return { kind: "unfinished", unfinished };
+    }
     let here: FolderReading;
     try {
       here = await this.read(folder, signal);
@@ -409,12 +452,19 @@ export class FolderAdopt {
       };
     }
 
-    // What the folder has of every file that goes, kept and read back before anything changes.
+    // What the folder has of every file that goes, and what the project of the platform has of
+    // every file that the folder takes the place of, kept and read back before anything changes.
     let kept: string | undefined;
-    const going = changes.filter(({ before }) => before !== undefined);
-    if (going.length > 0) {
+    let cloudKept: string | undefined;
+    const going = changes.flatMap(({ path, before }) =>
+      before ? [{ path, content: before.content }] : [],
+    );
+    const replaced = settled.changes.flatMap(({ path, base }) =>
+      base === undefined ? [] : [{ path, content: encoder.encode(base) }],
+    );
+    if (going.length > 0 || replaced.length > 0) {
       try {
-        kept = await this.#keep(folder, going, onStep);
+        ({ kept, cloudKept } = await this.#keep(folder, going, replaced, onStep));
       } catch (error) {
         return {
           kind: "stopped",
@@ -427,6 +477,32 @@ export class FolderAdopt {
         };
       }
     }
+    // Until all of it is right, the folder says that it is half of each side, and where what it
+    // had is: a page that goes away meanwhile leaves that much, see `unfinished`.
+    let marked = false;
+    if (changes.length > 0 && kept !== undefined) {
+      const unfinished: UnfinishedLink = {
+        kept,
+        files: changes.map(({ path, before }) => ({ path, existed: before !== undefined })),
+      };
+      try {
+        await folder.write(LINKING_FILE, JSON.stringify(unfinished, null, 2));
+        marked = true;
+      } catch (error) {
+        return {
+          kind: "stopped",
+          stage: "keeping",
+          cancelled: false,
+          error,
+          restored: true,
+          cloudBack: true,
+          kept,
+        };
+      }
+    }
+    const unmark = async () => {
+      if (marked) await removing(() => folder.remove(LINKING_FILE));
+    };
     const done: Done[] = [];
     const stop = async (
       stage: "writing" | "checking" | "taking" | "linking",
@@ -435,6 +511,8 @@ export class FolderAdopt {
     ): Promise<AdoptResult> => {
       await this.#forgetHashes(key);
       const restored = await this.#restore(folder, done);
+      // What stays half of each side says so, for the next time.
+      if (restored) await unmark();
       return {
         kind: "stopped",
         stage,
@@ -475,13 +553,23 @@ export class FolderAdopt {
       const undone = store.undoOrigin(settled.origin);
       return undone.ok && undone.kept.length === 0 && (await saved());
     };
+    // The project of the platform may have changed while the folder was written, as it syncs, or
+    // in another window: what people chose may not be what it would take now. They look again.
+    if (!sameFiles(store.exportFiles().files, plan.cloud)) {
+      const stopped = await stop("taking", new Error("The project changed meanwhile"));
+      return stopped.kind === "stopped" && stopped.restored ? { kind: "changed" } : stopped;
+    }
     if (settled.changes.length > 0) {
       const merged = store.mergeFiles(settled.changes, {
         origin: settled.origin,
         baseOf: (path) => settled.after.get(path),
       });
       took = merged.ok && merged.patches.length > 0;
-      const isAll = merged.ok && merged.files.every(({ status }) => status === "merged");
+      // Where the two clash, the project's side would stay: not what people chose.
+      const isAll =
+        merged.ok &&
+        merged.conflicts.length === 0 &&
+        merged.files.every(({ status }) => status === "merged");
       if (!isAll) {
         const back = await takeBack();
         return stop(
@@ -529,6 +617,8 @@ export class FolderAdopt {
         error,
       );
     });
+    // Also what linking it before left, where this went on from there.
+    await removing(() => folder.remove(LINKING_FILE)).catch(() => false);
     if (replacing) {
       await this.#forget(replacing.id).catch((error: unknown) => {
         console.warn("What this browser kept of the folder before stays until later", error);
@@ -538,6 +628,7 @@ export class FolderAdopt {
       kind: "adopted",
       record,
       kept,
+      cloudKept,
       partly: settled.partly,
       ...assets,
     };
@@ -570,26 +661,33 @@ export class FolderAdopt {
   }
 
   /**
-   * Keeps what the folder has of these files in a folder of its own in RECOVERED_FOLDER, and reads
-   * each back. Resolves to where they are, and rejects where any could not be kept as it was.
+   * Keeps what the folder has of these files in a folder of its own in RECOVERED_FOLDER, and what
+   * the project of the platform has of those it is to take from the folder in one next to it,
+   * "-cloud", and reads each back. Resolves to where they are, and rejects where any could not be
+   * kept as it was.
    */
   async #keep(
     folder: LocalFolder,
-    going: readonly Change[],
+    going: readonly { readonly path: string; readonly content: Uint8Array<ArrayBuffer> }[],
+    replaced: readonly { readonly path: string; readonly content: Uint8Array<ArrayBuffer> }[],
     onStep: AdoptRunOptions["onStep"],
-  ): Promise<string> {
+  ): Promise<{ readonly kept: string | undefined; readonly cloudKept: string | undefined }> {
     try {
       await folder.write(IGNORE_FILE, "*\n", { expected: "absent" });
     } catch (error) {
       if (!isFolderError(error, "changed", "exists")) throw error;
     }
     const stamp = stampOf(this.#now());
+    const targetsOf = (place: string) => [
+      ...going.map(({ path }) => `${place}/${path}`),
+      ...replaced.map(({ path }) => `${place}-cloud/${path}`),
+    ];
     let place: string | undefined;
     for (let number = 1; number <= 100 && place === undefined; number++) {
       const candidate = `${RECOVERED_FOLDER}/${stamp}${number === 1 ? "" : `-${number}`}`;
       let isFree = true;
-      for (const { path } of going) {
-        const there = await folder.file(`${candidate}/${path}`).then(
+      for (const target of targetsOf(candidate)) {
+        const there = await folder.file(target).then(
           () => true,
           () => false,
         );
@@ -601,17 +699,67 @@ export class FolderAdopt {
       if (isFree) place = candidate;
     }
     if (place === undefined) throw new FolderError("failed", RECOVERED_FOLDER);
+    const all = [
+      ...going.map(({ path, content }) => ({ path, content, target: `${place}/${path}` })),
+      ...replaced.map(({ path, content }) => ({ path, content, target: `${place}-cloud/${path}` })),
+    ];
     let files = 0;
-    for (const { path, before } of going) {
-      if (!before) continue;
-      onStep?.({ phase: "keeping", file: path, files, totalFiles: going.length });
-      const target = `${place}/${path}`;
-      await folder.write(target, before.content, { expected: "absent" });
+    for (const { path, content, target } of all) {
+      onStep?.({ phase: "keeping", file: path, files, totalFiles: all.length });
+      await folder.write(target, content, { expected: "absent" });
       const back = await folder.read(target);
-      if (!sameBytes(back, before.content)) throw new FolderError("failed", target);
+      if (!sameBytes(back, content)) throw new FolderError("failed", target);
       files += 1;
     }
-    return place;
+    return {
+      kept: going.length > 0 ? place : undefined,
+      cloudKept: replaced.length > 0 ? `${place}-cloud` : undefined,
+    };
+  }
+
+  /** What `LINKING_FILE` says, where linking this folder before did not get to the end. */
+  async unfinished(folder: LocalFolder): Promise<UnfinishedLink | undefined> {
+    let text: string;
+    try {
+      text = await folder.readText(LINKING_FILE);
+    } catch {
+      return undefined;
+    }
+    try {
+      const said = JSON.parse(text) as Partial<UnfinishedLink>;
+      if (typeof said.kept !== "string" || !Array.isArray(said.files)) throw new Error("Not one");
+      const files = said.files.filter(
+        (each): each is UnfinishedLink["files"][number] =>
+          typeof each?.path === "string" && typeof each.existed === "boolean",
+      );
+      return { kept: said.kept, files };
+    } catch {
+      // Not what this editor writes: nothing says where what it had is.
+      return { kept: RECOVERED_FOLDER, files: [] };
+    }
+  }
+
+  /**
+   * Puts the files back that linking changed before it stopped, from where it kept them, and takes
+   * away those it made: as the folder was before. Resolves to whether all of it is back; then the
+   * file that says it is not done goes too.
+   */
+  async restoreUnfinished(folder: LocalFolder, unfinished: UnfinishedLink): Promise<boolean> {
+    let isBack = true;
+    for (const { path, existed } of unfinished.files) {
+      if (!isSafePath(path) || !isSafePath(unfinished.kept)) {
+        isBack = false;
+        continue;
+      }
+      try {
+        if (existed) await folder.write(path, await folder.read(`${unfinished.kept}/${path}`));
+        else if (!(await removing(() => folder.remove(path)))) isBack = false;
+      } catch {
+        isBack = false;
+      }
+    }
+    if (isBack) isBack = await removing(() => folder.remove(LINKING_FILE));
+    return isBack;
   }
 
   /**

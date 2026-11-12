@@ -15,7 +15,7 @@ type ReconcileRequest = Extract<DialogRequest, { kind: "reconcile" }>;
 export function ReconcileDialog({ request }: { request: ReconcileRequest }) {
   const { dialogs } = useWorkbench();
   const { t } = useTranslation();
-  const { title, message, items, all, notes, error, confirm } = request;
+  const { title, message, items, all, notes, error, confirm, summarize } = request;
   const [values, setValues] = useState<FormAnswer>(() =>
     Object.fromEntries(items.map(({ path, value }) => [path, value])),
   );
@@ -31,6 +31,7 @@ export function ReconcileDialog({ request }: { request: ReconcileRequest }) {
   }, []);
 
   const dismiss = () => dialogs.answer(undefined);
+  const summary = summarize?.(values);
   const chooseAll = (side: string) =>
     setValues(
       Object.fromEntries(
@@ -55,12 +56,15 @@ export function ReconcileDialog({ request }: { request: ReconcileRequest }) {
         <h2>{title}</h2>
         <p>{message}</p>
         <ul className={own.files}>
-          {items.map(({ path, status, options }) => (
-            <li key={path} className={own.file} data-path={path}>
+          {items.map(({ path, status, options, note }) => (
+            <li key={path} className={own.file} data-path={path} data-note={note ? "" : undefined}>
               <span className={own.path} title={path}>
                 {path}
               </span>
-              <span className={own.status}>{status}</span>
+              <span className={own.status}>
+                {status}
+                {note && <span className={own.note}>{note}</span>}
+              </span>
               <span className={own.sides} role="radiogroup" aria-label={path}>
                 {options.map(({ id, label }) => (
                   <label key={id} className={own.side}>
@@ -97,12 +101,17 @@ export function ReconcileDialog({ request }: { request: ReconcileRequest }) {
             {error}
           </p>
         )}
+        {summary && (
+          <p className={summary.loud ? own.loud : own.summary} data-summary="">
+            {summary.text}
+          </p>
+        )}
         <div className={styles.buttons}>
           <button ref={cancel} type="button" onClick={dismiss}>
             {t("dialog.cancel")}
           </button>
           <button type="button" className={styles.primary} onClick={() => dialogs.answer(values)}>
-            {confirm}
+            {summary?.confirm ?? confirm}
           </button>
         </div>
       </div>

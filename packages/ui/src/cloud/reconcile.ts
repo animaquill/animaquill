@@ -124,6 +124,35 @@ export const sidesOf = (difference: ReconcileDifference): readonly ReconcileSide
   difference.unreadable ? ["cloud"] : ["here", "cloud"];
 
 /**
+ * Which side loses what it has of a file where people choose `side` for it: the platform where the
+ * file here takes the place of its own or it goes there, this computer the other way round.
+ * Undefined where nothing goes, as a file that only comes in.
+ */
+export function replacedBy(
+  difference: ReconcileDifference,
+  side: ReconcileSide,
+): ReconcileSide | undefined {
+  if (side === "here") return difference.kind === "here" ? undefined : "cloud";
+  return difference.kind === "cloud" ? undefined : "here";
+}
+
+/** How many files each side loses with these choices, see `replacedBy`. */
+export function replacedCounts(
+  differences: readonly ReconcileDifference[],
+  choices: ReconcileChoices,
+): { readonly cloud: number; readonly here: number } {
+  let cloud = 0;
+  let here = 0;
+  for (const difference of differences) {
+    const side = choices.get(difference.path);
+    const loses = side && replacedBy(difference, side);
+    if (loses === "cloud") cloud += 1;
+    if (loses === "here") here += 1;
+  }
+  return { cloud, here };
+}
+
+/**
  * What a file is chosen to be until people say otherwise: the newer side where both have it, and
  * where only one side has it, that side, as nothing goes without people saying so.
  */
