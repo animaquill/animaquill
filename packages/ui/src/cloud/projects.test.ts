@@ -284,7 +284,9 @@ describe("CloudProjects", () => {
     const asked = answering(here.dialogs, (request) =>
       request.kind === "choice" ? undefined : true,
     );
-    // Taken away on the platform, on another computer.
+    // Taken away on the platform, on another computer, as a platform says it that does not tell
+    // editors that it was deleted yet, see `MemoryPlatform.knowsDeleted`.
+    platform.knowsDeleted = false;
     expect(platform.remove("ada", project)).toBe("removed");
     await time.advance(500);
     expect(here.cloud.session?.getSnapshot().problem).toEqual({ kind: "missing" });
@@ -1087,7 +1089,7 @@ describe("taking the copy of a project out of this browser", () => {
     expect(await here.cloud.removeFromBrowser(project)).toBe(false);
     expect(asked.map((request) => request.kind)).toEqual(["choice"]);
     expect((asked[0] as { message: string }).message).toBe(
-      "有 1 个素材文件只在这个浏览器里，别处下载不到：assets/新素材.mp4。现在移除，这些内容就没有了。素材文件可以先用“下载到文件夹…”留一份。",
+      "有 1 个素材文件只在这个浏览器里，别处下载不到：assets/新素材.mp4。现在移除，这些内容就没有了。素材文件可以先用“关联文件夹…”留一份。",
     );
     expect(here.library.files.size).toBe(1);
     expect(here.library.summaries.has(project)).toBe(true);
@@ -1615,7 +1617,7 @@ describe("downloading a project of the platform into a folder", () => {
     const { project } = await onPlatform(platform, time);
     const here = await windowOf(platform, time);
     here.world.move = async () => true;
-    expect(await here.cloud.downloadToFolder(project)).toBe(true);
+    expect(await here.cloud.linkFolder(project)).toBe(true);
     expect(here.session.key).toBe(project);
     expect(here.world.moved).toEqual([project]);
     expect(here.dialogs.getSnapshot()).toBeUndefined();
@@ -1631,7 +1633,7 @@ describe("downloading a project of the platform into a folder", () => {
     here.world.active = false;
     let go = false;
     const asked = answering(here.dialogs, () => go);
-    expect(await here.cloud.downloadToFolder(project)).toBe(false);
+    expect(await here.cloud.linkFolder(project)).toBe(false);
     expect(asked[0]).toMatchObject({
       kind: "confirm",
       title: "把“原子是什么”放进文件夹",
@@ -1645,7 +1647,7 @@ describe("downloading a project of the platform into a folder", () => {
 
     // Again, from the open project: no second copy, and the click is what lets the browser ask.
     go = true;
-    expect(await here.cloud.downloadToFolder(project)).toBe(true);
+    expect(await here.cloud.linkFolder(project)).toBe(true);
     expect(here.world.moved).toEqual([project]);
     expect(here.library.summaries.size).toBe(1);
   });
@@ -1666,7 +1668,7 @@ describe("downloading a project of the platform into a folder", () => {
       await here.cloud.follow();
       return true;
     };
-    expect(await here.cloud.downloadToFolder(project)).toBe(true);
+    expect(await here.cloud.linkFolder(project)).toBe(true);
     await time.advance(200);
     expect(disk.has(`下载/${OLD_CLOUD_FILE}`)).toBe(false);
     expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "folder" });
@@ -1680,110 +1682,11 @@ describe("downloading a project of the platform into a folder", () => {
     here.world.moved.splice(0);
     await here.cloud.close();
     await here.session.close();
-    expect(await here.cloud.downloadToFolder(project)).toBe(true);
+    expect(await here.cloud.linkFolder(project)).toBe(true);
     expect(here.world.moved).toEqual([]);
     expect(messagesOf(here.notifications)).toContain(
       "这个云端项目在这台电脑上已经有文件夹了，直接打开它。",
     );
-  });
-});
-
-describe("taking a project without a repository away on the platform", () => {
-  it("takes it away once people say so, and what this browser has of it is of this browser only", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    const here = await windowOf(platform, time);
-    await here.cloud.openCloudProject(project);
-    await time.advance(200);
-    const asked = answering(here.dialogs, () => true);
-    expect(await here.cloud.deleteFromCloud(project, "原子是什么")).toBe(true);
-    expect(asked[0]).toMatchObject({
-      kind: "confirm",
-      danger: true,
-      title: "删除云端项目“原子是什么”？",
-    });
-    expect(platform.projects.has(project)).toBe(false);
-    expect(platform.removed).toEqual([project]);
-    // The copy stays, and is not connected any more: nothing makes the project again.
-    expect(here.session.key).toBe(project);
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(await here.browser.links.get(project)).toBeUndefined();
-    here.session.store?.execute(write("code/after.js", "a"));
-    await time.advance(2000);
-    expect(platform.projects.size).toBe(0);
-    expect(messagesOf(here.notifications)).toContain("已删除云端项目“原子是什么”。");
-  });
-
-  it("leaves a project that has a repository, and everything as it was", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    platform.repositories.set(project, { id: 7, owner: "ada", name: "atom" });
-    const here = await windowOf(platform, time);
-    await here.cloud.openCloudProject(project);
-    await time.advance(200);
-    answering(here.dialogs, () => true);
-    expect(await here.cloud.deleteFromCloud(project, "原子是什么")).toBe(false);
-    expect(platform.projects.has(project)).toBe(true);
-    expect(messagesOf(here.notifications)).toContain("这个云端项目已经有仓库，不能在这里删除。");
-    // It syncs on.
-    await time.advance(200);
-    expect(here.cloud.session?.getSnapshot().state).toBe("online");
-    expect((await here.browser.links.get(project))?.project).toBe(project);
-
-    // And nothing happens where people do not say yes, or the platform cannot be reached.
-    const other = await windowOf(platform, time);
-    answering(other.dialogs, () => false);
-    expect(await other.cloud.deleteFromCloud(project, "原子是什么")).toBe(false);
-    platform.repositories.delete(project);
-    platform.faults.unreachable = true;
-    const third = await windowOf(platform, time);
-    answering(third.dialogs, () => true);
-    expect(await third.cloud.deleteFromCloud(project, "原子是什么")).toBe(false);
-    expect(messagesOf(third.notifications)).toContain("没能删除云端项目，请稍后再试。");
-    expect(platform.projects.has(project)).toBe(true);
-  });
-});
-
-describe("a project of somebody else, which the platform says is not there", () => {
-  it("is not taken for gone where what this computer has of it says whose it is", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    // This browser reaches the platform as whoever is signed in, which changes below.
-    let user = "ada";
-    const here = await windowOf(platform, time, {
-      overrides: {
-        connect: () => platform.connect(user),
-        remove: async (id) => platform.remove(user, id),
-      },
-    });
-    await here.cloud.openCloudProject(project);
-    await time.advance(200);
-    expect((await here.browser.links.get(project))?.owner).toBe("user-ada");
-    // Somebody else signs in on this browser, and asks to take the project away: the platform
-    // says "no such project" of ada's, as it would of one that is gone.
-    user = "bob";
-    here.who.set({ status: "signedIn", id: "user-bob", name: "bob", appInstalled: true });
-    answering(here.dialogs, () => true);
-    expect(await here.cloud.deleteFromCloud(project, "原子是什么")).toBe(false);
-    expect(messagesOf(here.notifications)).toContain(
-      "云端找不到这个项目，它可能属于另一个账号，所以没有删除，这台电脑上的那一份也没有动。换回连接它时用的账号再试。",
-    );
-    // Nothing went: neither the project of the platform, nor what connects this copy to it.
-    expect(platform.projects.has(project)).toBe(true);
-    expect(await here.browser.links.get(project)).toMatchObject({ project, owner: "user-ada" });
-    await time.advance(200);
-    expect(here.cloud.getSnapshot().kind).toBe("linked");
-
-    // Their own project that is gone already is gone, as ever: the copy is of this browser only.
-    user = "ada";
-    here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: true });
-    expect(platform.remove("ada", project)).toBe("removed");
-    expect(await here.cloud.deleteFromCloud(project, "原子是什么")).toBe(true);
-    expect(await here.browser.links.get(project)).toBeUndefined();
-    expect(here.cloud.getSnapshot().kind).toBe("none");
   });
 });
 
@@ -1858,7 +1761,9 @@ describe("a project the platform would not make", () => {
     await back();
     expect(platform.projects.has(project)).toBe(true);
     expect((await here.browser.links.get(id))?.creating).toBeUndefined();
-    // Taken away there, on another computer: the copy here was of a project that was there.
+    // Taken away there, on another computer: the copy here was of a project that was there. As a
+    // platform says it that does not tell editors that it was deleted yet.
+    platform.knowsDeleted = false;
     expect(platform.remove("ada", project)).toBe("removed");
     await here.time.advance(40_000);
     expect(here.cloud.getSnapshot().kind).toBe("linked");

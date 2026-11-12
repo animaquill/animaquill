@@ -26,6 +26,9 @@ import {
   type CloudConnection,
   type CloudLine,
   type CloudProjectSummary,
+  type CloudRemoval,
+  type CloudRemoveOptions,
+  type RepositoryUnusable,
   type SyncClientMessage,
   type SyncRejection,
   type SyncServerMessage,
@@ -67,7 +70,9 @@ interface ServerSide {
   /** Which browser it is, for a test to drop its connections. */
   readonly tag: string;
   readonly deliver: (data: Uint8Array) => void;
-  readonly close: (code: number) => void;
+  readonly close: (code: number, reason?: string) => void;
+  /** It only reads, see `readOnly` of "hello": it sends no change. */
+  readOnly: boolean;
   readonly frames: Reassembler;
   project: PlatformProject | undefined;
   device: string;
@@ -96,6 +101,10 @@ export interface PlatformRepository {
   readonly owner: string;
   readonly name: string;
   readonly state?: "ready" | "paused";
+  /** Why archiving paused, see `RepositoryPause`. */
+  readonly reason?: string;
+  /** It cannot be used, and so the project cannot be edited, see `makeUnusable`. */
+  readonly unusable?: RepositoryUnusable;
 }
 
 /** What stands for an update and all before it, as the platform makes it: any digest will do. */
@@ -140,6 +149,18 @@ export class MemoryPlatform {
   voidsUnmade = false;
   /** Repairs that brought the platform something it did not have, see "check". */
   effectiveRepairs = 0;
+  /**
+   * Editors know that a project was deleted (`SYNC_CLOSE.deleted`) and that one cannot be edited
+   * (`SYNC_CLOSE.unusable`), as the platform says once its switches are on; otherwise they hear
+   * `missing`, as older editors do.
+   */
+  knowsDeleted = true;
+  /** The update of each project its repository has all up to, see `remove`. */
+  readonly archivedSeq = new Map<string, number>();
+  /** Projects with files still on their way into the large file storage, and how many. */
+  readonly uploads = new Map<string, number>();
+  /** How each project was asked to go, in order. */
+  readonly removals: { readonly id: string; readonly options: CloudRemoveOptions }[] = [];
   /** What the platform turned away, by why. */
   readonly rejected: SyncRejection[] = [];
   #working = new Map<string, Store>();
@@ -198,19 +219,20 @@ export class MemoryPlatform {
       project: undefined,
       device: "",
       snapshotted: false,
+      readOnly: false,
       frames: new Reassembler(SYNC_LIMITS.update),
       deliver: (data) =>
         down.carry(data, () => {
           if (isClosed || isClosing || this.faults.silent) return;
           toClient(data);
         }),
-      close: (code) => end(code),
+      close: (code, reason) => end(code, reason),
     };
-    const end = (code: number) => {
+    const end = (code: number, reason = "") => {
       if (isClosed) return;
       isClosed = true;
       this.#sides.delete(side);
-      later(() => resolveClosed({ code, reason: "" }));
+      later(() => resolveClosed({ code, reason }));
     };
     this.connections += 1;
     this.#sides.add(side);
@@ -290,8 +312,16 @@ export class MemoryPlatform {
                   private: true,
                   url: `https://github.com/${repository.owner}/${repository.name}`,
                   state: repository.state ?? "ready",
+                  ...(repository.reason !== undefined && { reason: repository.reason }),
+                  ...(repository.unusable && { unusable: repository.unusable }),
                 },
-                ...(repository.state === "paused" && { attention: "repository" }),
+                archive: {
+                  seq: this.archivedSeq.get(project.id) ?? 0,
+                  behind: project.head > (this.archivedSeq.get(project.id) ?? 0),
+                },
+                ...(repository.unusable
+                  ? { attention: "unusable" }
+                  : repository.state === "paused" && { attention: "repository" }),
               }
             : { attention: "noRepository" }),
           ...this.listed.get(project.id),
@@ -299,23 +329,73 @@ export class MemoryPlatform {
       });
   }
 
-  /** Takes a project away as `DELETE /api/projects/<id>` does: only one without a repository. */
-  remove(user: string, id: string): "removed" | "missing" | "hasRepository" {
+  /**
+   * Takes a project away as `DELETE /api/projects/<id>` does: one without a repository, or one
+   * whose repository cannot be used, as it is; one with a repository only once it has all of the
+   * project, or as people let go of what it does not, see `CloudRemoveOptions`.
+   */
+  remove(user: string, id: string, options: CloudRemoveOptions = {}): CloudRemoval {
     if (this.faults.unreachable) throw new Error("The platform is not there");
     if (this.signedOut.has(user)) throw new CloudSignedOut("Nobody is signed in");
+    this.removals.push({ id, options });
     const project = this.projects.get(id);
     if (!project || project.owner !== user) {
       if (!project && this.voidsUnmade) this.deleted.add(id);
       return "missing";
     }
-    if (this.repositories.has(id)) return "hasRepository";
+    const repository = this.repositories.get(id);
+    const asked = options.discard === true || options.archived !== undefined;
+    if (repository && !asked && !repository.unusable) return "hasRepository";
+    const uploads = this.uploads.get(id) ?? 0;
+    if (uploads > 0 && options.discard !== true) return { kind: "uploading", uploads };
+    if (repository && !repository.unusable && options.discard !== true) {
+      const archivedSeq = this.archivedSeq.get(id) ?? 0;
+      const state = repository.state ?? "ready";
+      if (state !== "ready" || archivedSeq !== project.head || options.archived !== project.head) {
+        return {
+          kind: "notArchived",
+          head: project.head,
+          archivedSeq,
+          state,
+          ...(repository.reason !== undefined && { reason: repository.reason }),
+          archiving: false,
+        };
+      }
+    }
     // Its connections go first, so that nothing of it comes back.
-    for (const side of this.#sides) if (side.project === project) side.close(SYNC_CLOSE.missing);
+    const code = this.knowsDeleted ? SYNC_CLOSE.deleted : SYNC_CLOSE.missing;
+    for (const side of this.#sides) if (side.project === project) side.close(code);
     this.projects.delete(id);
     this.#working.delete(id);
     this.removed.push(id);
     this.deleted.add(id);
     return "removed";
+  }
+
+  /**
+   * The repository of a project cannot be used any more, as when it was deleted on GitHub: the
+   * project cannot be edited, its windows close saying why, and no change of it is taken, see
+   * `SYNC_CLOSE.unusable`. Without `unusable`, it can be used again.
+   */
+  makeUnusable(id: string, unusable: RepositoryUnusable | undefined): void {
+    const repository = this.repositories.get(id);
+    if (!repository) throw new Error(`no repository of ${id}`);
+    const { unusable: _, reason: __, state: ___, ...rest } = repository;
+    this.repositories.set(
+      id,
+      unusable
+        ? { ...rest, unusable, state: "paused", reason: unusable.reason }
+        : { ...rest, state: "ready" },
+    );
+    if (!unusable) return;
+    for (const side of this.#sides) {
+      if (side.project?.id !== id || side.readOnly) continue;
+      side.close(...this.#unusableClose(unusable.reason));
+    }
+  }
+
+  #unusableClose(reason: string): [number, string] {
+    return this.knowsDeleted ? [SYNC_CLOSE.unusable, reason] : [SYNC_CLOSE.missing, ""];
   }
 
   /** Drops every connection without a word, and forgets all but what it kept. */
@@ -417,18 +497,25 @@ export class MemoryPlatform {
       return;
     }
     side.device = message.device;
+    side.readOnly = message.readOnly === true;
     let project = this.projects.get(message.project);
     let created = false;
     if (project && project.owner !== side.user) {
       side.close(SYNC_CLOSE.missing);
       return;
     }
+    // A project that was taken away is not made again, whoever asks, and a window that has it
+    // hears so, where it knows the word.
+    if (!project && this.deleted.has(message.project)) {
+      side.close(this.knowsDeleted ? SYNC_CLOSE.deleted : SYNC_CLOSE.missing);
+      return;
+    }
+    const unusable = project && this.repositories.get(project.id)?.unusable;
+    if (unusable && !side.readOnly) {
+      side.close(...this.#unusableClose(unusable.reason));
+      return;
+    }
     if (!project && message.create) {
-      // A project that was taken away is not made again, whoever asks.
-      if (this.deleted.has(message.project)) {
-        side.close(SYNC_CLOSE.missing);
-        return;
-      }
       if (message.payload.length > SYNC_LIMITS.state) {
         side.close(SYNC_CLOSE.tooLarge);
         return;
@@ -522,7 +609,8 @@ export class MemoryPlatform {
 
   #push(side: ServerSide, message: Extract<SyncClientMessage, { t: "push" }>): void {
     const project = side.project;
-    if (!project) {
+    // A window that only reads sends nothing.
+    if (!project || side.readOnly) {
       side.close(SYNC_CLOSE.protocol);
       return;
     }
@@ -672,9 +760,9 @@ export class TestCloudBrowser {
         await this.platform.answers();
         return this.platform.list(this.user);
       },
-      remove: async (project) => {
+      remove: async (project, options) => {
         await this.platform.answers();
-        return this.platform.remove(this.user, project);
+        return this.platform.remove(this.user, project, options);
       },
       links: this.links,
       syncer: (key) => this.writers.writer(`cloud.${key}`, page),

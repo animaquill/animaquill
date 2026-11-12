@@ -2,7 +2,7 @@ import { Circle, CircleAlert, CircleX, Download, Pause, TriangleAlert, X } from 
 import type { TFunction } from "i18next";
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import { cloudPanel, panelInputOf } from "../cloud/panel.ts";
+import { cloudPanel, panelInputOf, type PanelInput } from "../cloud/panel.ts";
 import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
 import type { FolderTrouble } from "../folder/session.ts";
 import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
@@ -281,6 +281,7 @@ function troubleText(trouble: FolderTrouble, t: TFunction): string {
     case "too-new":
     case "denied":
     case "full":
+    case "held":
       return t(`folder.trouble.${trouble.reason}`);
     case "busy":
     case "too-long":
@@ -384,6 +385,16 @@ const storedOf = (workbench: {
   };
 };
 const noCloud = () => NO_CLOUD;
+/** Whether the open project can be edited and taken away, for the panel, see `PanelInput`. */
+const cloudOf = (workbench: {
+  cloud: { unusable: PanelInput["unusable"]; canDelete: boolean } | undefined;
+}) => {
+  const unusable = workbench.cloud?.unusable;
+  return {
+    ...(unusable && { unusable }),
+    ...(workbench.cloud?.canDelete && { canDelete: true }),
+  };
+};
 const noSnapshot = () => undefined;
 /** How often the times in the panel move on while it is open. */
 const TICK_MS = 15_000;
@@ -439,6 +450,7 @@ function CloudPanelBubble({
       name,
       canMoveToFolder: workbench.projectFolders !== undefined,
       ...storedOf(workbench),
+      ...cloudOf(workbench),
       now,
     }),
     t,
@@ -504,6 +516,7 @@ function CloudStatus({ name }: { name: string }) {
       name,
       canMoveToFolder: workbench.projectFolders !== undefined,
       ...storedOf(workbench),
+      ...cloudOf(workbench),
       now,
     }),
     t,

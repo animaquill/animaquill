@@ -248,6 +248,50 @@ describe("taking a project of the platform away", () => {
     });
   });
 
+  test("asks for a project with a repository to go once it is archived, or as it is", async () => {
+    const answers = [
+      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 }),
+      Response.json(
+        {
+          error: "notArchived",
+          head: 9,
+          archivedSeq: 7,
+          state: "paused",
+          reason: "protected",
+          archiving: true,
+          failures: 2,
+        },
+        { status: 409 },
+      ),
+      Response.json({ error: "uploading", uploads: 3 }, { status: 409 }),
+      // What says too little is no answer: the project may be there, and may go any time.
+      Response.json({ error: "notArchived", archivedSeq: 7 }, { status: 409 }),
+    ];
+    const { projects, sent } = platform(() => answers.shift() as Response);
+    expect(await projects.remove("p1", { archived: 9 })).toBe("removed");
+    expect(await projects.remove("p1", { discard: true, archived: 9 })).toBe("removed");
+    expect(await projects.remove("p1", { archived: 9 })).toEqual({
+      kind: "notArchived",
+      head: 9,
+      archivedSeq: 7,
+      state: "paused",
+      reason: "protected",
+      archiving: true,
+      failures: 2,
+    });
+    expect(await projects.remove("p1", { archived: 9 })).toEqual({ kind: "uploading", uploads: 3 });
+    await expect(projects.remove("p1", { archived: 9 })).rejects.toThrow("409");
+    expect(sent.map(({ url }) => url)).toEqual([
+      "https://platform.example/api/projects/p1?archived=9",
+      // Letting go of what is not archived says nothing about what was.
+      "https://platform.example/api/projects/p1?discard=1",
+      "https://platform.example/api/projects/p1?archived=9",
+      "https://platform.example/api/projects/p1?archived=9",
+      "https://platform.example/api/projects/p1?archived=9",
+    ]);
+  });
+
   test("takes only the platform's own word for a project that is not there", async () => {
     // A platform that takes no projects away, or a gateway, says 404 too: the project may be there.
     const answers = [

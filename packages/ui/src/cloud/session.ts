@@ -164,6 +164,17 @@ export type CloudProblem =
    * under that id again; or the id is of a project of somebody else.
    */
   | { readonly kind: "missing"; readonly unmade?: true }
+  /**
+   * The project was deleted on the platform, here or on another computer, see `SYNC_CLOSE.deleted`:
+   * there is nothing there to sync with any more, and never will be.
+   */
+  | { readonly kind: "deleted" }
+  /**
+   * The project cannot be edited now, as the repository it is saved to cannot be used, see
+   * `SYNC_CLOSE.unusable`: `reason` as the platform names the pause of its archiving. What was
+   * not on the platform by then stays here, and goes once the repository can be used again.
+   */
+  | { readonly kind: "unusable"; readonly reason: string }
   /** The project here and the one on the platform do not fit together any more. */
   | { readonly kind: "diverged" }
   /**
@@ -252,13 +263,17 @@ const isPushed = (entry: LogEntry) => NOT_PUSHED.has(entry.source?.kind ?? "othe
  */
 export const isOnPlatform = (entry: LogEntry): boolean => isPushed(entry);
 
-const problemOf = (code: number): CloudProblem | undefined => {
+const problemOf = (code: number, reason: string): CloudProblem | undefined => {
   switch (code) {
     case SYNC_CLOSE.signedOut:
       return { kind: "signed-out" };
     case SYNC_CLOSE.forbidden:
     case SYNC_CLOSE.missing:
       return { kind: "missing" };
+    case SYNC_CLOSE.deleted:
+      return { kind: "deleted" };
+    case SYNC_CLOSE.unusable:
+      return { kind: "unusable", reason: reason || "gone" };
     case SYNC_CLOSE.outdated:
       return { kind: "outdated" };
     case SYNC_CLOSE.rebuilt:
@@ -914,11 +929,12 @@ export class CloudSession {
         settle({ kind: "retry" });
       });
     });
-    void connection.closed.then(({ code }) => {
-      const said = problemOf(code);
-      // No such project, said to a hello that was to make it: the platform would not.
+    void connection.closed.then(({ code, reason }) => {
+      const said = problemOf(code, reason);
+      // No such project, or one that was taken away, said to a hello that was to make it: the
+      // platform would not, as under an id that it was asked to take away.
       const problem: CloudProblem | undefined =
-        code === SYNC_CLOSE.missing && this.#create !== undefined
+        (code === SYNC_CLOSE.missing || code === SYNC_CLOSE.deleted) && this.#create !== undefined
           ? { kind: "missing", unmade: true }
           : said;
       settle(

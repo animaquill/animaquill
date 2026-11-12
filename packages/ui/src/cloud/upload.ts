@@ -56,6 +56,9 @@ export class UploadFailed extends Error {
 const codeOf = (close: number): UploadFailed["code"] => {
   switch (close) {
     case SYNC_CLOSE.missing:
+    // A project that was taken away under this id, as one people gave up on making: neither is
+    // made again, whatever the platform calls it.
+    case SYNC_CLOSE.deleted:
       return "missing";
     case SYNC_CLOSE.signedOut:
     case SYNC_CLOSE.forbidden:

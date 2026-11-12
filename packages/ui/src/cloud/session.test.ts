@@ -923,11 +923,45 @@ describe("a project that is to be made on the platform, or was", () => {
     expect(a.cloud.getSnapshot()).toMatchObject({ state: "paused" });
     expect(a.cloud.getSnapshot().problem).toEqual({ kind: "missing", unmade: true });
     expect(platform.projects.size).toBe(0);
-    // One that was there, and was taken away: it is missing, and nothing more.
+    // The same where the platform does not tell editors yet that the id was taken away.
+    platform.knowsDeleted = false;
+    const second = new Browser(platform, "ada");
+    await second.project(id, state);
+    const again = await second.open(id, time, { create: true });
+    opened.push(again);
+    await time.advance(500);
+    expect(again.cloud.getSnapshot().problem).toEqual({ kind: "missing", unmade: true });
+    // One that was there, and was taken away: it was deleted, and nothing more.
     const other = await start(time);
     expect(other.platform.remove("ada", CLOUD_ID)).toBe("removed");
     await time.advance(500);
-    expect(other.a.cloud.getSnapshot().problem).toEqual({ kind: "missing" });
+    expect(other.a.cloud.getSnapshot().problem).toEqual({ kind: "deleted" });
+    // ...or missing, where the platform does not tell editors that yet.
+    const older = await start(time);
+    older.platform.knowsDeleted = false;
+    expect(older.platform.remove("ada", CLOUD_ID)).toBe("removed");
+    await time.advance(500);
+    expect(older.a.cloud.getSnapshot().problem).toEqual({ kind: "missing" });
+  });
+
+  it("says that the project cannot be edited, and why, as the platform closes it (SYNC_CLOSE.unusable)", async () => {
+    const time = new TestTime();
+    const { platform, a } = await start(time);
+    platform.repositories.set(CLOUD_ID, { id: 7, owner: "ada", name: "atom" });
+    platform.makeUnusable(CLOUD_ID, { reason: "suspended", since: 1 });
+    await time.advance(500);
+    expect(a.cloud.getSnapshot()).toMatchObject({
+      state: "paused",
+      problem: { kind: "unusable", reason: "suspended" },
+    });
+    // It stays so: a hello is closed the same way, until the repository can be used again.
+    a.cloud.resume();
+    await time.advance(500);
+    expect(a.cloud.getSnapshot().problem).toEqual({ kind: "unusable", reason: "suspended" });
+    platform.makeUnusable(CLOUD_ID, undefined);
+    a.cloud.resume();
+    await time.advance(500);
+    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", problem: undefined });
   });
 
   it("says when nothing of it is on its way to the platform any more", async () => {

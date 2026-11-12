@@ -8,6 +8,7 @@ import {
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { httpsLink } from "../app/links.ts";
+import { unusableLine, unusableWays } from "../cloud/unusable.ts";
 import {
   markHint,
   type CloudMark,
@@ -245,16 +246,51 @@ function cloudTrouble(
   }
 }
 
+/** What the platform says of a card of one of its projects, see `CloudRow`, or undefined. */
+const platformOf = (card: ProjectCard) => {
+  const { source } = card;
+  if (source.kind === "browser") return undefined;
+  if (source.kind === "local" && card.kind === "local") return undefined;
+  return source.row;
+};
+
+/**
+ * Whether the repository of the project of a card cannot be used, and so the project cannot be
+ * edited, see the design, 5.1: the card opens no project then, and says why and what helps.
+ */
+export function isUnusable(card: ProjectCard): boolean {
+  return platformOf(card)?.unusable !== undefined;
+}
+
 /**
  * The line of a card. `folder`: how its folder is, once that is known; looking can take a while,
- * as on a network.
+ * as on a network. `now`: for how many days the platform keeps a project that cannot be edited.
  */
 export function cardStatus(
   card: ProjectCard,
   folder: FolderStatus | undefined,
   t: TFunction,
+  now = Date.now(),
 ): CardStatus {
   const { source } = card;
+  // What says most: a project that cannot be edited, then changes the platform keeps only a week.
+  const platform = platformOf(card);
+  if (platform?.unusable) {
+    return {
+      place: "cloud",
+      text: unusableLine(platform.unusable, now, t),
+      tone: "warning",
+      hint: t("start.hint.unusable"),
+    };
+  }
+  if (platform?.behind) {
+    return {
+      place: "cloud",
+      text: t("start.status.unsaved"),
+      tone: "warning",
+      hint: t("start.hint.unsaved"),
+    };
+  }
   if (source.kind === "browser") {
     return source.known
       ? {
@@ -346,6 +382,14 @@ export type CardAction =
   | "removeHere"
   | "openOnGitHub"
   | "deleteCloud"
+  /** A copy into a folder, as a project of this computer that does not sync. */
+  | "saveAsLocal"
+  /** Asks GitHub again about a repository that cannot be used. */
+  | "recheck"
+  | "reauthorize"
+  | "reinstall"
+  | "restoreApp"
+  | "switchRepository"
   | "findAgain"
   | "saveElsewhere"
   | "releaseCopies"
@@ -391,15 +435,41 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
     card.source.kind !== "browser" && card.source.row.deletable,
     "deleteCloud",
   );
+  const platform = platformOf(card);
+  const unusable = platform?.unusable;
+  // What the platform has of it to copy, or what this browser has: not once both are gone.
+  const hasContent = platform?.copy === "live" || card.key !== undefined;
+  const savable = when(canFolders && hasPlatform && hasContent, "saveAsLocal");
   const common: CardAction[] = [
     "open",
-    // One that this browser has nothing of has to change on the platform: not yet.
-    ...when(card.kind !== "cloudRemote", "rename"),
+    // One that this browser has nothing of has to change on the platform: not yet. One that
+    // cannot be edited cannot be renamed either.
+    ...when(card.kind !== "cloudRemote" && !unusable, "rename"),
     ...when(card.marksKey !== undefined, card.starred ? "unstar" : "star", "moveToGroup"),
   ];
   const folderGone = when(isGone, "findAgain", "saveElsewhere");
   const kept = when(copies > 0, "releaseCopies");
   const groups = (): CardAction[][] => {
+    if (unusable && card.kind !== "local" && card.kind !== "onlyHere") {
+      // Why it cannot be edited and what helps, see the design, 5.1.
+      const ways: CardAction[] = unusableWays(unusable, {
+        hasContent: platform?.copy === "live",
+      });
+      return [
+        common,
+        [
+          ...savable,
+          ...ways,
+          ...when(card.kind === "cloudFolder" && !isGone, "disconnect"),
+          ...github,
+        ],
+        [
+          ...when(card.kind === "cloudFolder", "removeFromList"),
+          ...when(card.kind === "cloudHere", "removeHere"),
+          ...deletable,
+        ],
+      ];
+    }
     switch (card.kind) {
       case "local":
         return [
@@ -410,17 +480,17 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
       case "cloudFolder":
         return [
           common,
-          [...when(!isGone, "disconnect"), ...folderGone, ...github, ...kept],
+          [...when(!isGone, "disconnect"), ...savable, ...folderGone, ...github, ...kept],
           ["removeFromList", ...deletable],
         ];
       case "cloudHere":
         return [
           common,
-          [...when(canFolders, "linkFolder"), ...github],
+          [...when(canFolders, "linkFolder"), ...savable, ...github],
           ["removeHere", ...deletable],
         ];
       case "cloudRemote":
-        return [common, [...when(canFolders, "linkFolder"), ...github], deletable];
+        return [common, [...when(canFolders, "linkFolder"), ...savable, ...github], deletable];
       case "onlyHere":
         return [
           common,
@@ -430,6 +500,18 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
     }
   };
   return groups().filter((group) => group.length > 0);
+}
+
+/**
+ * What the dialog of a card whose project cannot be edited offers, see `isUnusable`: the ways out
+ * of its menu, deleting it last.
+ */
+export function unusableChoices(card: ProjectCard, context: CardContext): CardAction[] {
+  const [, ways = [], last = []] = cardActions(card, context);
+  return [
+    ...ways.filter((action) => action !== "openOnGitHub"),
+    ...last.filter((action) => action === "deleteCloud"),
+  ];
 }
 
 /** Menu items that take something away, which show as such. */

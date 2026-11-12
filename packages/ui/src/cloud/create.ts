@@ -1049,7 +1049,9 @@ export class CloudCreate {
     let outcome: "removed" | "missing" | "hasRepository" | "unknown" = "unknown";
     if (project && cloud?.remove) {
       try {
-        outcome = await this.#within(REMOVE_WAIT_MS, cloud.remove(project));
+        const said = await this.#within(REMOVE_WAIT_MS, cloud.remove(project));
+        // Any other answer keeps the project, as one with files on their way to its repository.
+        outcome = typeof said === "string" ? said : "unknown";
       } catch (error) {
         console.warn("The platform could not say that the new project is gone", error);
       }

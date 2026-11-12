@@ -296,7 +296,7 @@ describe("the lists of the start page", () => {
     expect(lists.cloud).toEqual([]);
   });
 
-  it("lists a project of the platform without a repository as one that can be taken away there", () => {
+  it("lists every project of the platform's list as one that can be taken away there", () => {
     const base = {
       listed: [
         listed("p5", "改版前连的", { attention: "noRepository" }),
@@ -310,7 +310,8 @@ describe("the lists of the start page", () => {
       "有仓库的 | ada/six | ☁ 已连云端 · ada/six",
       "要取回的 | ada/seven | ☁ 已连云端 · ada/seven | 要先从仓库取回",
     ]);
-    expect(lists.cloud.map((row) => row.deletable)).toEqual([true, false, false]);
+    // With a repository too: it is archived first, see `CloudProjects.deleteFromCloud`.
+    expect(lists.cloud.map((row) => row.deletable)).toEqual([true, true, true]);
     expect(lists.cloud[1]?.repository).toEqual({
       fullName: "ada/six",
       url: "https://github.com/ada/six",
@@ -343,7 +344,7 @@ describe("the lists of the start page", () => {
       cloud: ["年会视频 |  | ☁ 已连云端 | 在这个浏览器里打开过"],
       browser: [],
     });
-    expect(lists.cloud[0]).toMatchObject({ copy: "live", deletable: false });
+    expect(lists.cloud[0]).toMatchObject({ copy: "live", deletable: true, behind: false });
   });
 
   it("calls a copy with changes the platform does not have yet what it is called here", () => {

@@ -25,7 +25,10 @@ export class FakeRepositories implements RepositoryAccess {
     link?: Error;
     status?: Error;
     archiveNow?: Error;
+    recheck?: Error;
   } = {};
+  /** What the repository is like once GitHub is asked again, see `recheck`: as it is, where unsaid. */
+  recheckAnswer: RepositoryStatus | undefined;
   readonly calls: string[] = [];
   readonly links: RepositoryLink[] = [];
   readonly archives: { readonly replace?: string }[] = [];
@@ -39,6 +42,20 @@ export class FakeRepositories implements RepositoryAccess {
   readonly checked: RepositoryLink[] = [];
   /** The platform whose projects these repositories are of: it hears which project has one. */
   platform: MemoryPlatform | undefined;
+  /**
+   * "Archive now" archives what the platform has right away, as a worker that is quick: the
+   * repository has all of it, see `MemoryPlatform.archivedSeq`.
+   */
+  autoArchive = false;
+  /**
+   * What the status says follows the platform: the update it has of the project, and how far its
+   * repository has it, see `MemoryPlatform.archivedSeq`.
+   */
+  followsPlatform = false;
+  /** What the platform has of a project now, where it is one of its own. */
+  #headOf(project: string): number {
+    return this.platform?.projects.get(project)?.head ?? this.answer.head;
+  }
 
   #once<K extends keyof FakeRepositories["refuse"]>(kind: K): void {
     const error = this.refuse[kind];
@@ -119,6 +136,14 @@ export class FakeRepositories implements RepositoryAccess {
   async status(project: string): Promise<RepositoryStatus> {
     this.calls.push(`status ${project}`);
     this.#once("status");
+    if (this.followsPlatform && this.platform?.projects.has(project)) {
+      const head = this.#headOf(project);
+      this.answer = {
+        ...this.answer,
+        head,
+        archivedSeq: this.platform.archivedSeq.get(project) ?? this.answer.archivedSeq,
+      };
+    }
     return this.answer;
   }
 
@@ -136,11 +161,26 @@ export class FakeRepositories implements RepositoryAccess {
     };
     delete (this.answer as { reason?: string }).reason;
     delete (this.answer as { diverged?: unknown }).diverged;
+    if (this.autoArchive) {
+      this.answer = { ...this.answer, head: this.#headOf(project) };
+      this.archived(1, project);
+    }
     return this.answer;
   }
 
-  /** The worker archived what the platform has. */
-  archived(at: number): void {
+  async recheck(project: string): Promise<RepositoryStatus> {
+    this.calls.push(`recheck ${project}`);
+    this.#once("recheck");
+    if (this.recheckAnswer) {
+      this.answer = this.recheckAnswer;
+      this.recheckAnswer = undefined;
+    }
+    return this.answer;
+  }
+
+  /** The worker archived what the platform has, of `project` where it says which. */
+  archived(at: number, project?: string): void {
+    if (project !== undefined) this.platform?.archivedSeq.set(project, this.answer.head);
     const { reason: _, diverged: __, ...rest } = this.answer;
     this.answer = {
       ...rest,

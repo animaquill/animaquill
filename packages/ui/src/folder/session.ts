@@ -143,6 +143,11 @@ export type FolderTrouble =
    */
   | { readonly reason: "too-new" }
   /**
+   * The project cannot be edited for now, see `FolderSession.hold`: nothing gets written or taken
+   * in, and the files stay as they are, until it can be again.
+   */
+  | { readonly reason: "held" }
+  /**
    * A file could not be written, or read, for the reason a `FolderError` gives. It gets tried
    * again. "busy" for one that another program keeps from being read.
    */
@@ -204,6 +209,9 @@ export type Reconnection =
   | "not-a-project"
   /** It has another project in it. */
   | "other-project";
+
+/** What the snapshot says while the folder is left as it is, see `FolderSession.hold`. */
+const HELD: FolderTrouble = { reason: "held" };
 
 /** Where what the folder had goes before the editor writes over it, and why. */
 export const RECOVERED_FOLDER = ".animaquill/recovered";
@@ -1229,8 +1237,9 @@ class Turn {
     batch: readonly FileChange[],
     disk: ReadonlyMap<string, Disk | undefined>,
   ): void {
-    if (error.code === "missing-updates") {
-      // Another window's changes are on their way: once they are here, this goes again.
+    if (error.code === "missing-updates" || error.code === "read-only") {
+      // Another window's changes are on their way, or the project cannot be edited for now, see
+      // `FolderSession.hold`: the files stay as they are, and come in once it can be again.
       for (const { path } of batch) this.#external.add(path);
       this.#arm(this.#context.timing.retryMs);
       return;
@@ -1836,6 +1845,8 @@ export class FolderSession {
   #unpark = () => {};
   /** The last turn left the folder written, but not noted down, see `FolderSnapshot.unrecorded`. */
   #unrecorded = false;
+  /** The folder is left as it is for now, see `hold`. */
+  #held = false;
   /** The turn that compared the folder with the project, see `FolderSnapshot.compared`. */
   #compared: Turn | undefined;
   readonly #emitter = new Emitter();
@@ -1963,6 +1974,31 @@ export class FolderSession {
   }
 
   /**
+   * Leaves the folder as it is for now, or goes on with it: while the project cannot be edited, as
+   * one of a platform whose repository cannot be used (the design of the start page of AnimaQuill
+   * Cloud, 5.1), nothing is written to it, and nothing that changes in it comes in. Neither is
+   * lost: what the project has and the folder does not stays in the log, what changed in the
+   * folder stays in its files, and once it goes on, the two are compared as when a window takes
+   * over writing the folder. Another window does not write it meanwhile either: this one keeps
+   * nobody from it, and the others are held as well, as their project cannot be edited either.
+   */
+  hold(held: boolean): void {
+    if (held === this.#held || this.#isClosed) return;
+    this.#held = held;
+    if (held) {
+      // Whatever it was writing gets there; nothing after that does, and its watch stops.
+      this.#turn?.stop();
+      this.#waiting?.abort();
+    } else this.#unpark();
+    this.#refresh();
+  }
+
+  /** Whether the folder is left as it is for now, see `hold`. */
+  get held(): boolean {
+    return this.#held;
+  }
+
+  /**
    * Goes on with the folder once it is back, or with another folder people found for it, see
    * `FolderTrouble`. A folder knows only its place, so whatever is there has to be this project. A
    * window that stopped because the folder was gone writes it again, or waits for the one that does.
@@ -1990,6 +2026,16 @@ export class FolderSession {
 
   async #run(ready: () => void): Promise<void> {
     while (!this.#isClosed) {
+      if (this.#held) {
+        // Until it is let go, see `hold`.
+        this.#setRole("stopped");
+        ready();
+        await new Promise<void>((resolve) => {
+          this.#unpark = resolve;
+          if (!this.#held || this.#isClosed) resolve();
+        });
+        continue;
+      }
       if (this.#stopped) {
         // Until people find the folder again, see `reconnect`: no window can write it meanwhile.
         this.#setRole("stopped");
@@ -2001,10 +2047,18 @@ export class FolderSession {
         continue;
       }
       const claim = await this.#claimTurn(ready);
-      if (!claim) return;
+      if (!claim) {
+        // Held while it waited for its turn: it waits to be let go instead.
+        if (this.#held && !this.#isClosed) continue;
+        return;
+      }
       if (this.#isClosed) {
         claim.release();
         return;
+      }
+      if (this.#held) {
+        claim.release();
+        continue;
       }
       this.#claim = claim;
       const turn = new Turn({
@@ -2053,7 +2107,7 @@ export class FolderSession {
   /** Waits for the turn to write the folder, or takes it over from a window that sleeps. */
   async #claimTurn(ready: () => void): Promise<WriterClaim | undefined> {
     for (;;) {
-      if (this.#isClosed) return undefined;
+      if (this.#isClosed || this.#held) return undefined;
       if (this.#isTakingOver) {
         this.#isTakingOver = false;
         try {
@@ -2128,7 +2182,13 @@ export class FolderSession {
           : this.#role === "stopped"
             ? "unsaved"
             : "saving";
-    const trouble = turn ? turn.troubleNow : this.#role === "stopped" ? this.#stopped : undefined;
+    const trouble = turn
+      ? turn.troubleNow
+      : this.#role === "stopped"
+        ? this.#held
+          ? HELD
+          : this.#stopped
+        : undefined;
     const blocked = turn?.blocked ?? [];
     const writtenAt = turn?.writtenAt ?? this.#snapshot.writtenAt;
     const unrecorded = turn ? turn.unrecorded : this.#unrecorded;

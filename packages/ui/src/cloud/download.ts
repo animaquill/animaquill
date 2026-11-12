@@ -16,10 +16,13 @@ export class DownloadFailed extends Error {
   override readonly name = "DownloadFailed";
   /** How the platform closed the connection, when it did. */
   readonly code: number | undefined;
+  /** ...and why, in its words, as "released" for a project it has nothing of any more. */
+  readonly reason: string;
 
-  constructor(message: string, code?: number) {
+  constructor(message: string, code?: number, reason = "") {
     super(message);
     this.code = code;
+    this.reason = reason;
   }
 }
 
@@ -37,12 +40,19 @@ export interface Downloaded {
 /**
  * All of a project on the platform, as one update, with the number of its last update there and
  * its digest: what opening it in this browser starts from, and where syncing goes on from. The
- * same protocol as syncing, from nothing: it says no `generation`, as it has none.
+ * same protocol as syncing, from nothing: it says no `generation`, as it has none. `readOnly`:
+ * only to keep a copy of what the platform has, as one that is saved elsewhere, also of a project
+ * that cannot be edited: it does not count as opening it, see `SyncClientMessage`.
  */
 export async function download(
   cloud: CloudAccess,
   project: string,
-  who: { readonly window: string; readonly editor: string; readonly signal?: AbortSignal },
+  who: {
+    readonly window: string;
+    readonly editor: string;
+    readonly signal?: AbortSignal;
+    readonly readOnly?: boolean;
+  },
 ): Promise<Downloaded> {
   const connection = cloud.connect();
   const updates: Uint8Array[] = [];
@@ -57,8 +67,8 @@ export async function download(
         clearTimeout(timer);
         reject(error);
       };
-      void connection.closed.then(({ code }) =>
-        fail(new DownloadFailed("The platform closed the connection", code)),
+      void connection.closed.then(({ code, reason }) =>
+        fail(new DownloadFailed("The platform closed the connection", code, reason)),
       );
       // People can stop it: the connection goes, and so does what came.
       who.signal?.addEventListener("abort", () => {
@@ -104,6 +114,7 @@ export async function download(
               device,
               window: who.window,
               editor: who.editor,
+              ...(who.readOnly === true && { readOnly: true }),
               payload: new Uint8Array(0),
             }),
           );

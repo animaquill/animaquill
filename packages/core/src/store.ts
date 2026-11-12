@@ -455,6 +455,8 @@ const PROJECT_LOCKED: CommandFailure = {
   code: "project-locked",
   message: "项目有不可编辑的标签，要先移除标签",
 };
+/** Nothing may change the project for now, see `ProjectStore.readOnly`. */
+const READ_ONLY: CommandFailure = { code: "read-only", message: "项目现在只能看，不能修改" };
 const NOTHING_TO_UNDO: CommandFailure = { code: "nothing-to-undo", message: "没有可以撤销的步骤" };
 /** What keeps no undo log only writes down where files are, see `STORAGE`. */
 const STORAGE_ONLY: CommandFailure = {
@@ -503,6 +505,8 @@ export class ProjectStore {
   #serial = 0;
   /** Whoever brings updates has said that what is missing is not coming. See catchUp(). */
   #isSettled = true;
+  /** See `readOnly`. */
+  #readOnly = false;
 
   /** Opens a document that already has content, such as one that came from the platform. */
   constructor(doc: Y.Doc) {
@@ -747,6 +751,20 @@ export class ProjectStore {
     return this.#revision;
   }
 
+  /**
+   * Whether nothing may change the project for now: commands, files that are taken in, undo and
+   * redo all fail with "read-only", whoever asks, and the history stays as it is. What other
+   * windows and the platform already did still comes in, see `applyUpdates`. For a project that
+   * cannot be edited while it is so, as one of a platform whose repository cannot be used.
+   */
+  get readOnly(): boolean {
+    return this.#readOnly;
+  }
+
+  set readOnly(value: boolean) {
+    this.#readOnly = value;
+  }
+
   /** What listeners are hearing about, if it was made here. */
   get change(): LocalChange | undefined {
     return this.#change;
@@ -978,6 +996,7 @@ export class ProjectStore {
 
   /** Why nothing can be taken back at the moment. The history stays as it is then. */
   get #whyNotNow(): CommandFailure | undefined {
+    if (this.#readOnly) return READ_ONLY;
     if (this.#isBehind) return MISSING_UPDATES;
     return this.#isLocked ? PROJECT_LOCKED : undefined;
   }
@@ -1034,6 +1053,7 @@ export class ProjectStore {
     options: CommitOptions,
     plan: (draft: Draft) => readonly unknown[],
   ): CommandResult {
+    if (this.#readOnly) return { ok: false, error: READ_ONLY };
     if (this.#isBehind) return { ok: false, error: MISSING_UPDATES };
     const draft = new Draft(this.#state, origin, this.#written);
     let results: readonly unknown[];

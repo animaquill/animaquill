@@ -9,6 +9,7 @@ import {
   type FolderRecords,
   type ProjectLibrary,
   type ProjectSummary,
+  type RepositoryUnusable,
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { Emitter } from "../workbench/emitter.ts";
@@ -91,6 +92,12 @@ export interface LocalRow {
   readonly deletable: boolean;
   /** Whose project of the platform it is, see `CloudLink.owner`, where that is known. */
   readonly owner: string | undefined;
+  /** See `CloudRow.behind`. */
+  readonly behind: boolean;
+  /** See `CloudRow.unusable`. */
+  readonly unusable: RepositoryUnusable | undefined;
+  /** See `CloudRow.copy`; "live" where the platform's list does not say. */
+  readonly copy: string;
 }
 
 /** A project of the platform that has no folder on this computer. */
@@ -113,10 +120,20 @@ export interface CloudRow {
   readonly needsSignIn: boolean;
   /** See `CloudProjectSummary.copy`: only a "live" one can be opened from the platform. */
   readonly copy: string;
-  /** It can be taken away on the platform: it has no repository, see `CloudAccess.remove`. */
+  /**
+   * It can be taken away on the platform, see `CloudAccess.remove`: the platform's list of whoever
+   * is signed in has it, so it is theirs.
+   */
   readonly deletable: boolean;
   /** Whose it is, see `CloudLink.owner`: whoever is signed in for what the list has. */
   readonly owner: string | undefined;
+  /**
+   * The platform has changes of it that its repository does not have yet, as its list says: it
+   * keeps them a week, see the design of the start page, 1.
+   */
+  readonly behind: boolean;
+  /** Its repository cannot be used, and so the project cannot be edited, see the design, 5.1. */
+  readonly unusable: RepositoryUnusable | undefined;
 }
 
 export interface StartLists {
@@ -153,6 +170,15 @@ export interface StartInput {
   /** The platform takes projects without a repository away, see `CloudAccess.remove`. */
   readonly canDelete: boolean;
 }
+
+/**
+ * Whether the platform has changes of a project that its repository does not have, as its list
+ * says: not for one whose repository cannot be used, which says more than that.
+ */
+const isBehind = (summary: CloudProjectSummary): boolean =>
+  summary.archive?.behind === true &&
+  summary.repository !== undefined &&
+  summary.repository.unusable === undefined;
 
 const isPending = (link: CloudLink | undefined): boolean =>
   link !== undefined && (link.creating === true || (link.pending ?? 0) > 0);
@@ -224,8 +250,11 @@ export function composeStartList(input: StartInput): StartLists {
       pending: isPending(link),
       updatedAt: times.length > 0 ? Math.max(...times) : undefined,
       repositoryUrl: onPlatform?.repository?.url || undefined,
-      deletable: input.canDelete && onPlatform?.attention === "noRepository",
+      deletable: input.canDelete && onPlatform !== undefined,
       owner: onPlatform ? (account ?? link?.owner) : link?.owner,
+      behind: onPlatform !== undefined && isBehind(onPlatform),
+      unusable: onPlatform?.repository?.unusable,
+      copy: onPlatform?.copy ?? "live",
     };
   });
 
@@ -275,8 +304,10 @@ export function composeStartList(input: StartInput): StartLists {
         listed: true,
         needsSignIn: false,
         copy: summary.copy ?? "live",
-        deletable: input.canDelete && summary.attention === "noRepository",
+        deletable: input.canDelete,
         owner: account ?? copy?.link.owner,
+        behind: isBehind(summary),
+        unusable: summary.repository?.unusable,
       };
     });
   // What this browser has and the list does not: all of it while there is no list.
@@ -298,6 +329,8 @@ export function composeStartList(input: StartInput): StartLists {
       copy: "live",
       deletable: false,
       owner: link.owner,
+      behind: false,
+      unusable: undefined,
     }));
 
   return {

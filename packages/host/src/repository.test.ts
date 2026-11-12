@@ -71,12 +71,15 @@ describe("repositories through the platform", () => {
     await access.link("p1", { create: { name: "film" } });
     await access.archiveNow("p1", { replace: "b".repeat(40) });
     await access.archiveNow("p1");
+    await access.recheck("p1");
     expect(sent.map(({ method, url }) => `${method} ${url}`)).toEqual([
       "GET https://platform.example/api/projects/p%2F1/repository",
       "POST https://platform.example/api/projects/p1/repository",
       "POST https://platform.example/api/projects/p1/archive",
       "POST https://platform.example/api/projects/p1/archive",
+      "POST https://platform.example/api/projects/p1/repository/check",
     ]);
+    expect(sent[4]!.headers).toMatchObject({ "x-animaquill": "1" });
     expect(sent[0]!.headers).toEqual({});
     expect(sent[1]).toMatchObject({
       headers: { "x-animaquill": "1", "content-type": "application/json" },
@@ -121,6 +124,14 @@ describe("repositories through the platform", () => {
       since: 10,
     });
     expect(statusOf({ ...paused, unusable: { reason: "gone" } })).not.toHaveProperty("unusable");
+    // How it is gone, where the platform can tell: only in the words the editor knows.
+    expect(statusOf({ ...paused, unusable: { ...unusable, gone: "deleted" } }).unusable).toEqual({
+      ...unusable,
+      gone: "deleted",
+    });
+    expect(statusOf({ ...paused, unusable: { ...unusable, gone: "moved" } }).unusable).toEqual(
+      unusable,
+    );
     expect(statusOf({ ...paused, gone: "unauthorized" }).gone).toBe("unauthorized");
     // A platform that cannot tell says nothing, and neither does one from before it could.
     expect(statusOf(paused)).not.toHaveProperty("gone");

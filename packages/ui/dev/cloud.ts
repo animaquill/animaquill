@@ -134,6 +134,12 @@ export class LabRepositories implements RepositoryAccess {
     };
   }
 
+  async recheck(project: string): Promise<RepositoryStatus> {
+    const kept = this.statuses.get(project);
+    if (!kept?.repository) throw new RepositoryRefused("notLinked");
+    return this.status(project);
+  }
+
   async archiveNow(project: string): Promise<RepositoryStatus> {
     const kept = this.statuses.get(project);
     if (!kept?.repository) throw new RepositoryRefused("notFound");
@@ -148,6 +154,8 @@ export class LabRepositories implements RepositoryAccess {
     const kept = this.statuses.get(project);
     if (!kept?.repository || kept.state !== "ready") return;
     const head = this.#head(project);
+    // What the platform's list says of it: the repository has all of it now.
+    this.#platform.archivedSeq.set(project, head);
     this.statuses.set(project, {
       ...kept,
       archiving: false,
@@ -220,7 +228,7 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
             name: platform.workingCopy(summary.id).getState().manifest.name,
           })),
         ),
-      remove: async (project) => signedIn(() => platform.remove(USER, project)),
+      remove: async (project, options) => signedIn(() => platform.remove(USER, project, options)),
       links,
       syncer: (key) => writers.writer(`cloud.${key}`, PAGE),
       line: (key) => lines.line(key),
@@ -253,6 +261,7 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
         if (repository !== undefined) {
           const number = 500 + ++seeded;
           platform.repositories.set(id, { id: number, owner: USER, name: repository });
+          platform.archivedSeq.set(id, 1);
           repositories.taken.add(repository.toLowerCase());
           repositories.statuses.set(id, {
             repository: {

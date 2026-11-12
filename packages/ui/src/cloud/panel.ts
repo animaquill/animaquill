@@ -1,4 +1,4 @@
-import type { RepositoryStatus } from "@animaquill/host";
+import type { RepositoryStatus, RepositoryUnusable } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import type { CloudProjectsSnapshot } from "./projects.ts";
 import {
@@ -11,6 +11,13 @@ import {
 } from "./repository-text.ts";
 import type { RepositoryWatchSnapshot } from "./repository-watch.ts";
 import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
+import {
+  unusableFix,
+  unusableKind,
+  unusableLine,
+  unusableTitle,
+  unusableWays,
+} from "./unusable.ts";
 
 /**
  * The one place in a project that says how it stands with the platform, see the design of the
@@ -24,8 +31,16 @@ import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
  *   "只在浏览器里", as something to do something about, and the panel says why that is not safe
  *   and the ways out: into a folder, to the platform, a copy as a file.
  * - Connected and in step: "☁ 已同步". A project of the platform that was opened without a folder
- *   says "☁ 云端项目" then, has a row that says it is only in this browser, with "下载到文件夹…",
+ *   says "☁ 云端项目" then, has a row that says it is only in this browser, with "关联文件夹…",
  *   and "从这个浏览器移除…" in place of "断开云端…".
+ * - The platform has changes that are not in the repository yet: "☁ 有未保存的更改，平台只保留
+ *   7 天", in the status bar and on the row of archiving, as the platform keeps its copy for a week
+ *   only (the design, 1). Where they cannot be saved, also why, as something to do something
+ *   about; where they only wait for the next archive, as something on its way.
+ * - Its repository cannot be used (the design, 5.1): why, and when the platform takes the project
+ *   away, in the status bar and on the row of the repository, with the ways out: ask GitHub again,
+ *   let the platform at the repository again, another repository, a copy as a project of this
+ *   computer, disconnecting a folder, and deleting it. The project cannot be edited meanwhile.
  * - Without a network, or with changes on their way: "☁ 离线，3 个改动待发".
  * - Something people have to do: "☁ 要处理". Syncing stopped, archiving paused, the project
  *   has no repository yet, as one from before every project of the platform had one, or
@@ -55,8 +70,19 @@ export type PanelActionId =
   | "switchRepository"
   | "disconnect"
   | "removeFromBrowser"
-  | "downloadToFolder"
+  /** Puts a project that is only in this browser into a folder, and it goes on syncing. */
+  | "linkFolder"
   | "archiveNow"
+  /** Asks GitHub again whether a repository that cannot be used can be used now. */
+  | "recheck"
+  /** Lets the platform at the repository again, on GitHub: as `installApp` does. */
+  | "reauthorize"
+  | "reinstall"
+  | "restoreApp"
+  /** A copy into a folder, which is a project of this computer, and does not sync. */
+  | "saveAsLocal"
+  /** Takes the project away on the platform. */
+  | "deleteCloud"
   | "continueWithEditor"
   | "installApp"
   | "signIn"
@@ -132,6 +158,13 @@ export interface PanelInput {
   readonly name: string;
   /** This browser can write folders, so that a project that is only in it can move into one. */
   readonly canMoveToFolder: boolean;
+  /**
+   * For "linked": its repository cannot be used, and so the project cannot be edited, see
+   * `CloudProjects.unusable`.
+   */
+  readonly unusable?: RepositoryUnusable;
+  /** For "linked": whoever is signed in can take it away on the platform, see `CloudProjects`. */
+  readonly canDelete?: boolean;
   /** Milliseconds since 1970. */
   readonly now: number;
 }
@@ -139,7 +172,10 @@ export interface PanelInput {
 /** What the panel needs, from what `CloudProjects` says and what it holds says right now. */
 export function panelInputOf(
   snapshot: CloudProjectsSnapshot,
-  more: Pick<PanelInput, "name" | "canMoveToFolder" | "now" | "persisted" | "clearsWhenIdle">,
+  more: Pick<
+    PanelInput,
+    "name" | "canMoveToFolder" | "now" | "persisted" | "clearsWhenIdle" | "unusable" | "canDelete"
+  >,
 ): PanelInput {
   if (snapshot.kind === "none")
     return { kind: "none", ...(snapshot.local && { local: snapshot.local }), ...more };
@@ -188,6 +224,11 @@ const syncActions = (problem: CloudProblem | undefined): readonly PanelActionId[
     case "missing":
       // What the platform will not take stays here: the project can go on without it.
       return ["retry", "resolveStuck"];
+    // What helps is on the row of the repository: syncing goes on by itself once it can be used.
+    case "unusable":
+    // The link goes by itself, see `CloudProjects`.
+    case "deleted":
+      return [];
     default:
       return ["retry"];
   }
@@ -305,30 +346,65 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   // go back to, which there is where the platform saves projects to repositories.
   const isUnfinished = input.made === false && watch !== undefined;
   const isAway = state === "offline" || state === "reconnecting";
+  const { unusable } = input;
+  // The platform has changes that its repository does not: it keeps them a week, see the design, 1.
+  const isBehind =
+    unusable === undefined &&
+    status !== undefined &&
+    repository !== undefined &&
+    (status.dirtySince !== undefined || status.head > status.archivedSeq);
+  // ...and cannot save them now, rather than only waiting for the next archive.
+  const isFailing = isPaused || (!status?.archiving && (status?.failures ?? 0) > 0);
 
   const level: PanelLevel =
-    isStuck || isPaused || lacksRepository || isUnfinished
+    unusable || isStuck || isPaused || lacksRepository || isUnfinished
       ? "attention"
-      : state === "online" && pending === 0
+      : state === "online" && pending === 0 && !isBehind
         ? "ok"
         : "busy";
-  const bar =
-    level === "attention"
+  const behindBar = t("cloud.panel.bar.unsaved");
+  const bar = unusable
+    ? t("cloud.panel.bar.unusable", { what: unusableTitle(unusable, t), ...plain })
+    : isStuck || lacksRepository || isUnfinished
       ? t("cloud.panel.bar.attention")
-      : isAway
-        ? pending > 0
-          ? t("cloud.panel.bar.offlinePending", { count: pending })
-          : t("cloud.panel.bar.offline")
-        : state !== "online"
-          ? t("cloud.panel.bar.connecting")
-          : pending > 0
-            ? t("cloud.panel.bar.syncingPending", { count: pending })
-            : t(isDirect ? "cloud.panel.bar.direct" : "cloud.panel.bar.synced");
+      : isPaused
+        ? isBehind
+          ? behindBar
+          : t("cloud.panel.bar.attention")
+        : isAway
+          ? pending > 0
+            ? t("cloud.panel.bar.offlinePending", { count: pending })
+            : t("cloud.panel.bar.offline")
+          : state !== "online"
+            ? t("cloud.panel.bar.connecting")
+            : pending > 0
+              ? t("cloud.panel.bar.syncingPending", { count: pending })
+              : isBehind
+                ? behindBar
+                : t(isDirect ? "cloud.panel.bar.direct" : "cloud.panel.bar.synced");
 
   const rows: PanelRow[] = [];
 
   // ---- the repository
-  if (watch) {
+  if (unusable) {
+    const ways = unusableWays(unusable, { hasContent: repository !== undefined });
+    rows.push(
+      row("repository", unusableLine(unusable, now, t), {
+        notes: [
+          unusableFix(unusable, t),
+          t("cloud.unusable.readOnly"),
+          t("cloud.unusable.ways"),
+          ...(isDirect ? [] : [t("cloud.unusable.waysFolder")]),
+        ],
+        tone: "attention",
+        ...(repository?.url &&
+          unusableKind(unusable) !== "deleted" && {
+            link: { label: t("cloud.panel.action.openOnGitHub"), url: repository.url },
+          }),
+        actions: actions(ways),
+      }),
+    );
+  } else if (watch) {
     if (isUnfinished) {
       rows.push(
         row("repository", t("cloud.panel.repository.unfinished"), {
@@ -408,8 +484,9 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     }),
   );
 
-  // ---- archiving
-  if (watch && status && repository) {
+  // ---- archiving: what says why it cannot be used says it all
+  const unsaved = isBehind ? `${t("cloud.panel.archive.unsaved")}` : "";
+  if (watch && status && repository && !unusable) {
     if (isPaused) {
       const { reason, fix } = pauseText(status, t);
       const detail = pauseDetail(status, t);
@@ -420,7 +497,7 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
           ? (["switchRepository"] as const)
           : (PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]);
       rows.push(
-        row("archive", t("cloud.panel.archive.paused", { reason, ...plain }), {
+        row("archive", unsaved + t("cloud.panel.archive.paused", { reason, ...plain }), {
           notes: [fix, ...(detail ? [detail] : []), ...(kept ? [kept] : [])],
           tone: "attention",
           actions: actions(helps),
@@ -429,13 +506,16 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     } else {
       const kept = keptText(status, t);
       const isBusy = status.archiving || watch.archiveAt !== undefined;
+      const detail = isFailing ? pauseDetail(status, t) : undefined;
       rows.push(
-        row("archive", archiveText(status, watch.archiveAt, now, t), {
+        row("archive", unsaved + archiveText(status, watch.archiveAt, now, t), {
           notes: [
+            ...(detail ? [detail] : []),
             ...(kept ? [kept] : []),
             // An archive is of what the platform has: what did not get there yet is not in it.
             ...(pending > 0 ? [t("cloud.panel.archive.notSent")] : []),
           ],
+          ...(isFailing && { tone: "attention" as const }),
           actions: [action("archiveNow", { enabled: !isBusy })],
         }),
       );
@@ -457,7 +537,7 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       row("local", t("cloud.panel.local.browser"), {
         notes,
         ...(notes.length > 0 && { tone: "attention" as const }),
-        ...(input.canMoveToFolder && { actions: [action("downloadToFolder")] }),
+        ...(input.canMoveToFolder && { actions: [action("linkFolder")] }),
       }),
     );
   }
@@ -475,7 +555,12 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       !rows.some((each) => each.actions.some((offered) => offered.id === "switchRepository"))
         ? [action("switchRepository")]
         : []),
+      // A copy as a project of this computer, which does not sync: of what is on the platform.
+      ...(input.canMoveToFolder && input.made !== false ? [action("saveAsLocal")] : []),
       action(isDirect ? "removeFromBrowser" : "disconnect", { kind: "danger" }),
+      ...(input.canDelete && input.made !== false
+        ? [action("deleteCloud", { kind: "danger" })]
+        : []),
     ],
     sync: state,
     archive: status?.state,

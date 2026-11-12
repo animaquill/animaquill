@@ -344,16 +344,23 @@ export interface CloudAccess {
   /** How the windows of this browser tell each other about the sync of a project. */
   line(key: string): CloudLine | undefined;
   /**
-   * Takes away a project of the platform that is not saved to a repository, with all the platform
-   * has of it: one that connecting made and people gave up on, or one from before projects of the
-   * platform always had a repository. Nothing on this computer changes. Resolves to "removed"; to
-   * "missing" when the platform has no such project of whoever is signed in: one that is gone, or
-   * one of somebody else, which the platform does not tell apart; and to "hasRepository" for one
-   * that is saved to a repository, which stays. Rejects when the platform could not say, also
-   * where it does not answer for a while, with a `CloudSignedOut` when nobody is signed in: the
-   * project may still be there then. Missing where the platform takes no projects away.
+   * Takes away a project of the platform, with all the platform has of it; the repository it is
+   * saved to stays as it is. Nothing on this computer changes. Without `options` only one that is
+   * not saved to a repository goes: one that connecting made and people gave up on, or one from
+   * before projects of the platform always had a repository; and one whose repository cannot be
+   * used (`RepositoryUnusable`), as nothing of it can be archived any more. One that is saved to a
+   * repository goes with `archived`, where the repository has everything up to that update of
+   * the platform, the head, and archiving goes as it should; or with `discard`, where people let go
+   * of whatever the repository does not have, see `CloudRemoveOptions`.
+   *
+   * Resolves to "removed"; to "missing" when the platform has no such project of whoever is signed
+   * in: one that is gone, or one of somebody else, which the platform does not tell apart; to
+   * "hasRepository" for one that is saved to a repository and was asked for without `options`; or
+   * to why it stays, see `CloudRemoveRefusal`. Rejects when the platform could not say, also where
+   * it does not answer for a while, with a `CloudSignedOut` when nobody is signed in: the project
+   * may still be there then. Missing where the platform takes no projects away.
    */
-  remove?(project: string): Promise<"removed" | "missing" | "hasRepository">;
+  remove?(project: string, options?: CloudRemoveOptions): Promise<CloudRemoval>;
   /**
    * Saving projects of the platform to a Git repository of the person, where the platform does that:
    * it archives what it has of a project into the repository by itself. Without it, there is none.
@@ -366,6 +373,40 @@ export interface CloudAccess {
    */
   readonly lfs?: LfsAccess;
 }
+
+/** What a project of the platform that is saved to a repository may go with, see `CloudAccess.remove`. */
+export interface CloudRemoveOptions {
+  /**
+   * The update of the platform that the editor saw archived: the project goes only where that is
+   * its head, the repository has it, and archiving goes as it should.
+   */
+  readonly archived?: number;
+  /** People let go of whatever the repository does not have: it goes as it is. */
+  readonly discard?: boolean;
+}
+
+/**
+ * Why a project of the platform stayed, see `CloudAccess.remove`. "notArchived": the repository
+ * does not have everything up to `head`, the update the platform has now, or archiving does not go
+ * as it should: `state` and `reason` as `RepositoryStatus` says them, `archiving` where an archive
+ * people asked for is not done yet, `failures` where the last ones failed. Archive, wait, and ask
+ * again. "uploading": files of the project are still on their way into the large file storage of
+ * the repository, `uploads` of them.
+ */
+export type CloudRemoveRefusal =
+  | {
+      readonly kind: "notArchived";
+      readonly head: number;
+      readonly archivedSeq: number;
+      readonly state: "ready" | "paused" | (string & {});
+      readonly reason?: RepositoryPause | (string & {});
+      readonly archiving: boolean;
+      readonly failures?: number;
+    }
+  | { readonly kind: "uploading"; readonly uploads: number };
+
+/** What asking the platform to take a project away came to, see `CloudAccess.remove`. */
+export type CloudRemoval = "removed" | "missing" | "hasRepository" | CloudRemoveRefusal;
 
 /** Nobody is signed in to the platform. */
 export class CloudSignedOut extends Error {
@@ -471,6 +512,8 @@ export interface RepositoryUnusable {
   readonly reason: RepositoryPause | (string & {});
   readonly since: number;
   readonly deleteAt?: number;
+  /** For "gone", where the platform can tell, as `RepositoryStatus.gone`. */
+  readonly gone?: "deleted" | "unauthorized";
 }
 
 /** The repository of a project, and how archiving into it goes. Times are milliseconds since 1970. */
@@ -557,6 +600,13 @@ export interface RepositoryAccess {
    * saw the changed files on, which the archive then writes over (never forced: it goes on top).
    */
   archiveNow(project: string, options?: { readonly replace?: string }): Promise<RepositoryStatus>;
+  /**
+   * "Check again": the platform asks GitHub now whether the repository of a project can be used,
+   * see `RepositoryStatus.unusable`; where it can, the project can be edited again. Resolves to the
+   * status as it is then. Refuses "busy" more than once a minute, "unavailable" where GitHub could
+   * not be asked, "notLinked" for a project without a repository.
+   */
+  recheck(project: string): Promise<RepositoryStatus>;
 }
 
 /** What the platform says when it refuses something about repositories. */

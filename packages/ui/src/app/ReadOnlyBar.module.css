@@ -1,0 +1,34 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  color: var(--aq-text-strong);
+  background: color-mix(in srgb, var(--aq-warning) 22%, var(--aq-bg-chrome));
+  border-bottom: 1px solid color-mix(in srgb, var(--aq-warning) 55%, transparent);
+  font-size: 12px;
+}
+
+.bar svg {
+  flex: none;
+  color: var(--aq-warning);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.bar button {
+  flex: none;
+  padding: 3px 10px;
+  color: var(--aq-text-strong);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--aq-warning) 70%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.bar button:hover {
+  background: var(--aq-bg-hover);
+}

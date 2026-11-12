@@ -176,7 +176,8 @@ test.describe("the start page", () => {
 
     // Back on the start page it shows once, as opened here, and goes out of the browser again.
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^云端 · 只在这个浏览器里/);
+    // The platform has the change, its repository not yet: the card says so.
+    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^有未保存的更改，平台只保留 7 天/);
     // Once: it is a project of the platform, not one of this browser as well.
     await expect(projectCard(page, "片头动画 第二版")).toHaveCount(1);
     await expect(page.locator('main li[data-kind="onlyHere"]')).toHaveCount(0);
@@ -187,13 +188,12 @@ test.describe("the start page", () => {
     await expect(
       page.getByText("已从这个浏览器移除“片头动画 第二版”。云端的项目还在。"),
     ).toBeVisible();
-    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^云端 · 这台电脑还没打开过/);
+    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^有未保存的更改，平台只保留 7 天/);
 
     // One without a repository can be deleted there, after people read what goes and what stays.
     await cardMenu(page, "半截的", "删除云端项目…");
     const deleting = page.getByRole("dialog", { name: "删除云端项目“半截的”？" });
-    await expect(deleting).toContainText("它还没有仓库，所以云端之外没有存档");
-    await expect(deleting).toContainText("这台电脑上的文件夹和浏览器里的那一份不会动");
+    await expect(deleting).toContainText("它没有仓库，云端之外没有存档");
     await shot(page, "start-delete-cloud");
     await deleting.getByRole("button", { name: "删除云端项目" }).click();
     await expect(projectCard(page, "半截的")).toHaveCount(0);
@@ -704,6 +704,21 @@ test.describe("the panel of the platform", () => {
     await shot(page, "panel-offline");
     await page.keyboard.press("Escape");
     await context.setOffline(false);
+    // The change got to the platform, and its repository does not have it yet: people hear that,
+    // until it is saved there.
+    await expect(cloudStatus(page)).toHaveText("有未保存的更改，平台只保留 7 天", {
+      timeout: 20_000,
+    });
+    await cloudStatus(page).click();
+    await expect(row(page, "archive").getByRole("status")).toContainText(
+      "有未保存的更改，平台只保留 7 天。",
+    );
+    await shot(page, "panel-unsaved");
+    await row(page, "archive").getByRole("button", { name: "现在存档" }).click();
+    await expect(row(page, "archive").getByRole("status")).toHaveText("刚刚存过", {
+      timeout: 15_000,
+    });
+    await page.keyboard.press("Escape");
     await expect(cloudStatus(page)).toHaveText("已同步");
   });
 

@@ -133,7 +133,7 @@ describe("a project of the platform, downloaded into a folder", () => {
     const workbench = browser.window();
 
     browser.disk.chooseNext("文档/下载");
-    const downloading = workbench.cloud?.downloadToFolder(project);
+    const downloading = workbench.cloud?.linkFolder(project);
     // It has no files of assets in the browser to tell people about: only that it moved.
     const said = await answerNext(workbench, "confirm", true);
     expect(said).toMatchObject({ title: "folder.move.movedTitle", noticeOnly: true });
@@ -178,7 +178,7 @@ describe("a project of the platform, downloaded into a folder", () => {
     const browser = browserOn(platform);
     const workbench = browser.window();
     // They close the browser's question about the folder.
-    expect(await workbench.cloud?.downloadToFolder(project)).toBe(false);
+    expect(await workbench.cloud?.linkFolder(project)).toBe(false);
     expect(workbench.session.key).toBe(project);
     expect(folderOf(workbench)).toBeUndefined();
     expect(workbench.cloud?.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });

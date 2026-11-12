@@ -39,7 +39,9 @@ import {
   DANGEROUS,
   gitHubAddress,
   initialOf,
+  isUnusable,
   marksTargetOf,
+  unusableChoices,
   type CardAction,
   type MarksTarget,
   type ProjectCard,
@@ -67,6 +69,7 @@ import { useWorkbench } from "./context.ts";
 import { Menu, PopupMenu, type MenuItem } from "./Menu.tsx";
 import styles from "./StartPage.module.css";
 import { agoText, durationText } from "./start-view.ts";
+import { unusableFix, unusableLine } from "../cloud/unusable.ts";
 
 const noSubscription = () => () => {};
 const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined, moves: 0 };
@@ -659,7 +662,7 @@ function CardItem({
   const more = useRef<HTMLDivElement>(null);
   const [problem, setProblem] = useState<string | undefined>();
   const folder = card.key === undefined ? undefined : statuses.get(card.key);
-  const status = cardStatus(card, folder, t);
+  const status = cardStatus(card, folder, t, now);
   const at = time === "opened" ? card.openedAt : card.updatedAt;
   const when = at === undefined ? undefined : agoText(at, now, t);
   const words = { name: card.name, ...plain };
@@ -675,7 +678,10 @@ function CardItem({
     groups.map((group) =>
       group.map((action): MenuItem => ({
         id: action,
-        label: t(`start.menu.${action}`),
+        // One that cannot be edited does not open: it says why, and what helps.
+        label: t(
+          action === "open" && isUnusable(card) ? "start.menu.about" : `start.menu.${action}`,
+        ),
         ...(DANGEROUS.has(action) && { danger: true }),
         ...(busy && action !== "openOnGitHub" && { disabled: true }),
         run: () => actions.run(card, action, more.current),
@@ -845,6 +851,45 @@ function noticeOf(situation: Situation): "signInOrSwitch" | "localUnsupported" |
   return signedIn === false ? "signInOrSwitch" : undefined;
 }
 
+/**
+ * What a card whose project cannot be edited says when people click it, in place of opening it:
+ * why, until when, and what helps, see the design of the start page of AnimaQuill Cloud, 5.1.
+ * What people choose goes as the same item of its menu would.
+ */
+async function explainUnusable(
+  workbench: Workbench,
+  card: ProjectCard,
+  run: (action: CardAction) => void,
+): Promise<void> {
+  const { t } = workbench;
+  const { source } = card;
+  const unusable = source.kind === "browser" ? undefined : source.row.unusable;
+  if (!unusable) return;
+  const choices = unusableChoices(card, {
+    hasPlatform: workbench.cloud !== undefined,
+    canFolders: workbench.projectFolders !== undefined,
+    folder: undefined,
+    copies: 0,
+  });
+  const words = { name: card.name, interpolation: { escapeValue: false } };
+  const answer = await workbench.dialogs.choose({
+    title: t("cloud.unusable.aboutTitle", words),
+    message: [
+      `${unusableLine(unusable, Date.now(), t)}。`,
+      unusableFix(unusable, t),
+      t("cloud.unusable.ways"),
+      ...(card.kind === "cloudFolder" ? [t("cloud.unusable.waysFolder")] : []),
+    ].join(""),
+    choices: choices.map((action) => ({
+      id: action,
+      label: t(`start.menu.${action}`),
+      ...(DANGEROUS.has(action) && { kind: "danger" as const }),
+    })),
+  });
+  const chosen = choices.find((action) => action === answer);
+  if (chosen) run(chosen);
+}
+
 /** What the start page does with the projects, as one place for every card and menu. */
 function useCardActions(
   workbench: Workbench,
@@ -886,7 +931,10 @@ function useCardActions(
       if (card.key !== undefined && workbench.session.key === card.key) await work();
     });
   const actions: CardActions = {
-    open: (card) => run(() => open(card)),
+    open: (card) =>
+      isUnusable(card)
+        ? void explainUnusable(workbench, card, (action) => actions.run(card, action, null))
+        : run(() => open(card)),
     renaming,
     stopRenaming: () => setRenaming(undefined),
     rename: async (card, name) => {
@@ -909,6 +957,25 @@ function useCardActions(
       switch (action) {
         case "open":
           actions.open(card);
+          return;
+        case "saveAsLocal":
+          // A folder is the project itself: it is open as one for its files to be copied.
+          if (card.project === undefined) return;
+          if (card.kind === "cloudFolder")
+            thenOpen(card, () => workbench.saveAsLocal(card.project, card.name));
+          else run(() => workbench.saveAsLocal(card.project, card.name));
+          return;
+        case "recheck":
+          if (card.project !== undefined && cloud) run(() => cloud.recheck(card.project));
+          return;
+        case "reauthorize":
+        case "reinstall":
+        case "restoreApp":
+          void workbench.installApp();
+          return;
+        case "switchRepository":
+          if (card.project !== undefined && cloud)
+            run(() => cloud.switchRepositoryOf(card.project as string, card.name));
           return;
         case "rename":
           setRenaming(card.id);
@@ -934,7 +1001,7 @@ function useCardActions(
         case "linkFolder":
           // Right in the click: the browser lets the editor ask for a folder only then.
           if (card.project !== undefined && cloud)
-            run(() => cloud.downloadToFolder(card.project as string, about));
+            run(() => cloud.linkFolder(card.project as string, about));
           return;
         case "removeHere":
           if (card.key !== undefined && cloud)
@@ -946,8 +1013,8 @@ function useCardActions(
           return;
         }
         case "deleteCloud":
-          if (card.project !== undefined && cloud)
-            run(() => cloud.deleteFromCloud(card.project as string, card.name));
+          if (card.project !== undefined)
+            run(() => workbench.deleteFromCloud(card.project, card.name));
           return;
         case "findAgain":
           if (record && projectFolders) run(() => projectFolders.findAgain(record));

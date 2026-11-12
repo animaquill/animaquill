@@ -11,6 +11,7 @@ import { DialogHost } from "./DialogHost.tsx";
 import styles from "./App.module.css";
 import { WorkbenchContext, useSession } from "./context.ts";
 import { NotificationList } from "./NotificationList.tsx";
+import { ReadOnlyBar } from "./ReadOnlyBar.tsx";
 import { StartPage } from "./StartPage.tsx";
 import { StatusBar } from "./StatusBar.tsx";
 import { TitleBar } from "./TitleBar.tsx";
@@ -78,6 +79,7 @@ function Content() {
   return (
     <div className={styles.body}>
       <PlaybackClock />
+      <ReadOnlyBar />
       <main className={styles.dock}>
         <DockArea />
       </main>

@@ -23,6 +23,7 @@ import {
   INCOMPLETE_FILE,
   ProjectStore,
   inRanks,
+  isSourceFile,
   placedAsset,
   type CommandCall,
 } from "@animaquill/core";
@@ -48,6 +49,8 @@ import { hashText, isSameHash } from "@animaquill/media";
 import {
   CURRENT_FORMAT_VERSION,
   MANIFEST_FILE,
+  newId,
+  readProject,
   writeProject,
   type Asset,
   type Problem,
@@ -218,7 +221,36 @@ export interface FolderMoveOptions {
   readonly t: TFunction;
   readonly hasher?: Hasher;
   readonly now?: () => number;
+  /** A new number for a folder, see `FolderRecord.id`, for a copy, see `FolderMove.copy`. */
+  readonly newKey?: () => string;
 }
+
+/**
+ * A project as it goes into a folder as a copy, see `ProjectFolders.saveAsLocal`: what it is now,
+ * and where the files of its assets come from. Let go of once it is written.
+ */
+export interface CopySource {
+  readonly store: ProjectStore;
+  readonly media: Pick<MediaStore, "get">;
+  close(): void;
+}
+
+/** What writing a copy of a project into a folder came to, see `FolderMove.copy`. */
+export type CopyResult =
+  /** The copy is a project of this computer in its folder now, which this browser knows. */
+  | {
+      readonly kind: "copied";
+      readonly record: FolderRecord;
+      /** Assets whose files were not there to copy, so that the folder does not have them. */
+      readonly missing: readonly string[];
+      /** Of those, the ones that can come from where they are kept, see `elsewhereFile`. */
+      readonly elsewhere: readonly ElsewhereFile[];
+      /** Assets whose files were something else than the project says: the folder does not have them. */
+      readonly damaged: readonly string[];
+      /** Assets whose files went to paths of their own in the copy. */
+      readonly renamed: readonly Rename[];
+    }
+  | Exclude<MoveResult, { readonly kind: "moved" }>;
 
 /** A project read from its log, which takes what changes in it there too. */
 export interface LoadedProject {
@@ -440,6 +472,26 @@ export async function loadProject(
 }
 
 /**
+ * A project of its own with what a project has now, as it is written to files: another id, which
+ * nothing else has, and the name people chose, see `FolderMove.copy`. Nothing of `store` changes.
+ * What could not be written is said as problems, and is not in the copy: undefined where those are
+ * errors, as the copy would lack it.
+ */
+export function copyOfProject(
+  store: ProjectStore,
+  name: string,
+): { readonly store?: ProjectStore; readonly problems: readonly Problem[] } {
+  const { files, problems } = store.exportFiles();
+  const errors = problems.filter(({ severity }) => severity === "error");
+  if (errors.length > 0) return { problems: errors };
+  const { project, problems: read } = readProject(files);
+  if (!project) return { problems: read };
+  const sources = Object.fromEntries([...files].filter(([path]) => isSourceFile(path)));
+  const manifest = { ...project.manifest, id: newId("project"), name };
+  return { store: ProjectStore.create({ ...project, manifest }, sources), problems: [] };
+}
+
+/**
  * New paths for the files of assets whose paths no folder can have, or that are longer than what the
  * editor makes, see `MAX_PATH_LENGTH`: in the folder they were in where that one is fine, otherwise
  * in the assets folder, under the names they had as far as they can. Two assets of one file go to
@@ -493,12 +545,169 @@ export class FolderMove {
   readonly #hasher: Hasher;
   readonly #now: () => number;
 
-  constructor({ folders, projects, t, hasher = hasherHere, now = Date.now }: FolderMoveOptions) {
+  readonly #newKey: () => string;
+
+  constructor({
+    folders,
+    projects,
+    t,
+    hasher = hasherHere,
+    now = Date.now,
+    newKey = () => crypto.randomUUID(),
+  }: FolderMoveOptions) {
     this.#folders = folders;
     this.#projects = projects;
     this.#t = t;
     this.#hasher = hasher;
     this.#now = now;
+    this.#newKey = newKey;
+  }
+
+  /**
+   * Writes a copy of a project into a folder, as a project of this computer of its own, see the
+   * design of the start page of AnimaQuill Cloud, 4.3 ("另存为本地项目"): written, read again and
+   * compared as a move is, and only once all of it is right does this browser know the folder, under
+   * a number of its own, with a log of what was written. `store` is that copy already, with an id of
+   * its own and the name people chose, which this takes and changes: nothing else has it. Where
+   * the files of its assets come from is `media`: those it does not have are listed, as missing.
+   * What the copy came from is not touched, whatever happens. Whatever is not right stops it, and
+   * what was written is taken back, or stays for people to look at, as for a move.
+   */
+  async copy(
+    store: ProjectStore,
+    media: Pick<MediaStore, "get">,
+    place: MovePlace,
+    options: Omit<MoveOptions, "saved">,
+  ): Promise<CopyResult> {
+    const key = this.#newKey();
+    const planned = await this.#plan(key, store, media);
+    if ("refusal" in planned) return { kind: "refused", refusal: planned.refusal };
+    const claim = await this.#claim(key);
+    if (!claim) return { kind: "refused", refusal: { kind: "busy" } };
+    try {
+      return await this.#copy(key, store, planned, place, options);
+    } finally {
+      claim.release();
+    }
+  }
+
+  async #copy(
+    key: string,
+    store: ProjectStore,
+    plan: Plan,
+    place: MovePlace,
+    { notice, signal, onStep }: Omit<MoveOptions, "saved">,
+  ): Promise<CopyResult> {
+    const startedAt = this.#now();
+    let spot: Spot;
+    try {
+      spot = await this.#spotFor(place, plan);
+    } catch (error) {
+      const folder = place.inside ?? place.chosen.name;
+      return { kind: "stopped", cancelled: false, file: folder, error, cleaned: true, folder };
+    }
+    const { target } = spot;
+    const trail: Trail = {
+      notice: undefined,
+      written: [],
+      begun: new Set(),
+      damaged: new Map(),
+      file: INCOMPLETE_FILE,
+    };
+    const stopped = async (error: unknown, cancelled: boolean): Promise<CopyResult> => {
+      await this.#forgetHashes(key);
+      const cleaned = await this.#takeBack(spot, trail);
+      return { kind: "stopped", cancelled, file: trail.file, error, cleaned, folder: target.name };
+    };
+    try {
+      await this.#write(spot, plan, notice, trail, { signal, onStep });
+    } catch (error) {
+      return stopped(error, signal?.aborted === true);
+    }
+    // The copy as it is written: with the new paths of its assets, which its log has to say.
+    if (plan.renames.length > 0) {
+      const result = store.executeBatch(renameCalls(plan.renames));
+      if (!result.ok) return stopped(new Error(result.error.message), false);
+    }
+    let compared: { readonly mismatches: readonly Mismatch[]; readonly seen: Seen };
+    try {
+      compared = await this.#compare(key, target, store, plan, trail, startedAt, {
+        signal,
+        onStep,
+      });
+    } catch (error) {
+      if (signal?.aborted) return stopped(error, true);
+      compared = {
+        mismatches: [{ kind: "unreadable", reason: errorName(error), problems: [] }],
+        seen: new Map(),
+      };
+    }
+    if (compared.mismatches.length > 0) {
+      await this.#forgetHashes(key);
+      return {
+        kind: "unverified",
+        folder: target.name,
+        mismatches: compared.mismatches,
+        takeBack: () => this.#takeBack(spot, trail),
+      };
+    }
+    // All of it is right: its log, what the editor knows its files by, and the record, which
+    // makes the folder a project of this browser. The file that says it is not done goes last.
+    const { id: project, name } = store.getState().manifest;
+    const { bases, records } = this.#folders;
+    let made = false;
+    const unswitched = async (error: unknown): Promise<CopyResult> => {
+      await this.#forgetHashes(key);
+      if (made) await this.#projects.remove(key, { folder: true }).catch(() => {});
+      const cleaned = await this.#takeBack(spot, trail);
+      return { kind: "unswitched", folder: target.name, error, cleaned };
+    };
+    try {
+      await this.#projects.create({ id: key, name, folder: true }, store.encodeState());
+      made = true;
+      const turn = await bases.claim(key);
+      const put: FolderFileRecord[] = [...plan.files].map(([path, text]) => {
+        const stat = compared.seen.get(path);
+        return { path, base: text, ...(stat && { stat }), synced: hashText(text) };
+      });
+      if (!(await bases.save(key, turn, { put, replace: true }))) {
+        throw new Error("Another window claimed the folder of the copy");
+      }
+    } catch (error) {
+      return unswitched(error);
+    }
+    const record: FolderRecord = {
+      id: key,
+      folder: target,
+      project,
+      name,
+      openedAt: this.#now(),
+      ...(trail.notice && { unfinished: statOf(trail.notice) }),
+    };
+    try {
+      await records.put(record);
+    } catch (error) {
+      return unswitched(error);
+    }
+    let settled = record;
+    if (trail.notice) {
+      const isGone = await removing(() =>
+        target.remove(INCOMPLETE_FILE, { expected: trail.notice as File }),
+      );
+      if (isGone) {
+        const { unfinished: _, ...without } = record;
+        settled = without;
+        await records.put(settled).catch(() => {});
+      }
+    }
+    return {
+      kind: "copied",
+      record: settled,
+      missing: plan.missing,
+      elsewhere: plan.elsewhere,
+      damaged: [...trail.damaged.values()],
+      renamed: plan.renames,
+    };
   }
 
   /** Whether this browser keeps the project by a folder already. */
@@ -819,7 +1028,7 @@ export class FolderMove {
   async #plan(
     key: string,
     store: ProjectStore,
-    media: MediaStore,
+    media: Pick<MediaStore, "get">,
   ): Promise<Plan | { readonly refusal: MoveRefusal }> {
     if (await this.isFolder(key)) return { refusal: { kind: "already" } };
     if (store.getState().manifest.formatVersion > CURRENT_FORMAT_VERSION) {
@@ -844,7 +1053,7 @@ export class FolderMove {
 
   async #planOf(
     store: ProjectStore,
-    media: MediaStore,
+    media: Pick<MediaStore, "get">,
     renames: readonly Rename[],
   ): Promise<Plan | { readonly refusal: MoveRefusal }> {
     const state = store.getState();

@@ -1700,7 +1700,8 @@
       "too-long": "“{{path}}”的路径可能太长，把项目放到浅一点的文件夹里",
       "clash": "“{{path}}”和另一个文件在有的系统上是同一个文件，只写了一个",
       "other": "没写进文件夹：“{{path}}”",
-      "too-new": "文件夹里的项目格式比编辑器新，请刷新页面更新编辑器"
+      "too-new": "文件夹里的项目格式比编辑器新，请刷新页面更新编辑器",
+      "held": "项目现在只能看，文件夹先不动"
     },
     "troubleAbout": "改动都在浏览器里，好了以后会补写进去。",
     "blockedCount": "有 {{count}} 个文件等你处理",
@@ -1848,6 +1849,25 @@
       "restoreCopy": "用浏览器里的副本放回去",
       "restoreFailed": "没能把“{{path}}”放回文件夹：{{reason}}。",
       "removeIsFolder": "“{{name}}”已经移到了文件夹里，在“最近的项目”里。要从列表移除请在那里操作。"
+    },
+    "saveAs": {
+      "title": "把“{{name}}”另存为本地项目",
+      "hint": "复制一份到文件夹，复制出来的是一个新的本地项目，不再和云端同步，和这个云端项目是两个项目。下一步选一个空文件夹，或者在里面新建一个。",
+      "notEmpty": "另存为本地项目只放进空文件夹。可以在里面新建一个文件夹“{{inside}}”来放。",
+      "progress": "正在另存为本地项目“{{name}}”",
+      "incompleteNotice": "这个文件夹是一次没有完成的“另存为本地项目”，内容可能不完整，不能当作项目打开。原来的云端项目没有改动，这个文件夹可以删除。\n",
+      "failed": "没能另存为本地项目“{{name}}”，原来的项目没有改动，可以再试一次。",
+      "failedTitle": "“{{name}}”没有另存成本地项目",
+      "cancelled": "已取消另存，原来的项目没有改动。",
+      "writeFailed": "处理“{{file}}”时出错：{{reason}}。原来的项目没有改动。",
+      "unverified": "写进“{{folder}}”的内容和项目对不上，所以没有当成本地项目。原来的项目没有改动。“{{folder}}”先留着给你看，里面的“{{file}}”也这样写着；不需要的话可以删掉这次写出的文件。",
+      "unswitched": "“{{folder}}”写好了，也核对过了，但浏览器没能记下它。原来的项目没有改动，可以再试一次。",
+      "doneTitle": "已另存为本地项目",
+      "done": "“{{name}}”已经放在文件夹“{{folder}}”里。它是一个新的本地项目，不再和云端同步。",
+      "missing": "有 {{count}} 个素材文件这台电脑上没有，没有复制过去（{{files}}），新项目里会显示缺文件。",
+      "renamed": "有 {{count}} 个素材文件的路径在文件夹里不能用，换了路径。",
+      "open": "打开新的本地项目",
+      "stay": "留在这里"
     }
   },
   "resources": {
@@ -2272,7 +2292,9 @@
       "noRepository": "这个项目已经在云端，还没选仓库。打开项目接着选。",
       "otherAccount": "它连着的云端项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
       "stale": "云端的列表读不出来，这是这个浏览器上次记下的情况。",
-      "onlyHere": "浏览器清理数据时会丢。在菜单里可以移到文件夹、连接到云端，或者另存一份。"
+      "onlyHere": "浏览器清理数据时会丢。在菜单里可以移到文件夹、连接到云端，或者另存一份。",
+      "unsaved": "平台上有改动还没存进 GitHub。平台上的这份只保留 7 天，7 天里没打开就会删掉。打开项目，在云端面板里看原因，或者点“现在存档”。",
+      "unusable": "仓库用不了，这个云端项目现在不能编辑，到期后平台会自动删除。点开看原因和能做的事。"
     },
     "status": {
       "local": "本地 · {{folder}}",
@@ -2286,7 +2308,8 @@
       "otherAccount": "是另一个账号的",
       "afterSignIn": "登录后继续同步",
       "pending": "有改动还没同步",
-      "inBrowser": "在这个浏览器里"
+      "inBrowser": "在这个浏览器里",
+      "unsaved": "有未保存的更改，平台只保留 7 天"
     },
     "place": {
       "local": "本地 · {{folder}}",
@@ -2368,7 +2391,14 @@
       "removeFromList": "从列表移除",
       "moveToFolder": "移到文件夹…",
       "saveCopy": "另存一份…",
-      "delete": "删除…"
+      "delete": "删除…",
+      "about": "为什么不能打开…",
+      "saveAsLocal": "另存为本地项目…",
+      "recheck": "再检查一次",
+      "reauthorize": "去 GitHub 重新授权…",
+      "reinstall": "去 GitHub 重新安装…",
+      "restoreApp": "去 GitHub 恢复…",
+      "switchRepository": "换一个仓库…"
     },
     "group": {
       "new": "新建分组",
@@ -2450,7 +2480,9 @@
       "diverged": "本机和云端的内容对不上，同步已暂停。改动都留在本机。",
       "rebuilt": "云端的这个项目已经从仓库重新取回，这个浏览器里的这一份接不上了，同步已暂停。改动都留在本机。请刷新页面更新编辑器后再处理。",
       "unsupported": "这个浏览器存不了同步需要的记录，不能同步。",
-      "unlinked": "这个项目在另一个窗口断开了云端连接。"
+      "unlinked": "这个项目在另一个窗口断开了云端连接。",
+      "deleted": "这个云端项目已经在平台上删除了。改动都留在本机。",
+      "unusable": "仓库用不了，这个云端项目现在不能编辑。出问题之前的改动都留在本机。"
     },
     "reason": {
       "malformed": "读不懂",
@@ -2507,7 +2539,7 @@
       "lost": "现在移除，这些内容就没有了。",
       "lostAll": "现在移除，这个项目就找不回来了。",
       "lostMaybe": "如果云端已经没有了，这个浏览器里的就是最后一份，移除以后找不回来。",
-      "keepFiles": "素材文件可以先用“下载到文件夹…”留一份。",
+      "keepFiles": "素材文件可以先用“关联文件夹…”留一份。",
       "open": "打开项目让它同步",
       "openIt": "打开项目",
       "wait": "先留着，等它同步",
@@ -2520,12 +2552,41 @@
     },
     "delete": {
       "title": "删除云端项目“{{name}}”？",
-      "message": "云端的这个项目会删掉，不能恢复。它还没有仓库，所以云端之外没有存档。这台电脑上的文件夹和浏览器里的那一份不会动，以后只在本机。",
+      "withRepository": "平台上不再有这个云端项目。GitHub 仓库 {{repository}} 留着，里面的存档不动。",
+      "noRepository": "平台上不再有这个云端项目，不能恢复。它没有仓库，云端之外没有存档。",
+      "unusable": "{{what}}。平台上的这份和清单里的这一项会删掉，GitHub 那边什么都不动。",
+      "folderStays": "这台电脑上的文件夹留下，变成本地项目。",
+      "browserGoes": "这个浏览器里的那一份会清掉（还有没同步的改动、只在这里的素材时留下）。",
+      "archiveFirst": "删除之前先把最新的改动存进 GitHub。",
       "confirm": "删除云端项目",
-      "hasRepository": "这个云端项目已经有仓库，不能在这里删除。",
-      "otherAccount": "云端找不到这个项目，它可能属于另一个账号，所以没有删除，这台电脑上的那一份也没有动。换回连接它时用的账号再试。",
+      "signedOut": "登录已过期，重新登录后再删除。",
+      "unreadable": "现在读不到云端的项目列表，没有删除。联网后再试。",
+      "notListed": "云端的项目列表里没有“{{name}}”，可能已经删除，或者属于另一个账号。这台电脑上的那一份没有动。",
+      "syncing": "正在把“{{name}}”在这个浏览器里的改动同步上去…",
+      "notSynced": "这个浏览器里的改动没能同步上去，所以没有删除：{{why}}",
+      "notOpened": "没能打开“{{name}}”把这个浏览器里的改动同步上去，所以没有删除。",
+      "notSyncing": "这个项目现在没有同步。",
+      "offline": "连不上平台。",
+      "syncSlow": "同步太久了，请稍后再试。",
+      "archiving": "正在把“{{name}}”存进 GitHub…",
+      "archiveSlow": "存档太久了还没存完",
+      "archiveFailed": "存档没有成功",
+      "archiveFailedSaid": "存档没有成功（{{detail}}）",
+      "cannotArchive": "现在存不进 GitHub",
+      "keepsChanging": "一直有新改动进来，存不完",
+      "uploading": "还有 {{count}} 个素材文件没传完",
+      "notArchived": "最新的改动没能存进 GitHub：{{why}}。可以取消，等能存了再删；也可以仍然删除，最后这些改动就不会进 GitHub。",
+      "discard": "仍然删除（最后的改动不会进 GitHub）",
       "failed": "没能删除云端项目，请稍后再试。",
-      "done": "已删除云端项目“{{name}}”。"
+      "done": "已删除云端项目“{{name}}”。",
+      "doneFolder": "文件夹留着，现在是本地项目。",
+      "doneBrowser": "这个浏览器里的那一份已清掉。",
+      "keptBrowser": "这个浏览器里的那一份留下了（{{why}}），现在只在这个浏览器里，请移到文件夹或另存一份。",
+      "kept": {
+        "open": "它在别的窗口还开着",
+        "unsynced": "还有没同步的改动、只在这里的素材，或者没保存的试改和代码",
+        "unread": "读不出它有没有只在这里的内容"
+      }
     },
     "connect": {
       "title": "把“{{name}}”连接到云端",
@@ -2610,7 +2671,9 @@
         "offline": "☁ 离线",
         "offlinePending": "☁ 离线，{{count}} 个改动待发",
         "attention": "☁ 要处理",
-        "onlyHere": "只在浏览器里"
+        "onlyHere": "只在浏览器里",
+        "unsaved": "☁ 有未保存的更改，平台只保留 7 天",
+        "unusable": "☁ {{what}}"
       },
       "row": {
         "repository": "仓库",
@@ -2649,7 +2712,8 @@
         "retry": "上次没存成，{{time}} 再试",
         "paused": "存档先停着：{{reason}}",
         "archiveAt": "1 分钟内只能存一次档，{{count}} 秒后自动存",
-        "notSent": "还有改动没发到云端，发过去以后才会存。"
+        "notSent": "还有改动没发到云端，发过去以后才会存。",
+        "unsaved": "有未保存的更改，平台只保留 7 天。"
       },
       "local": {
         "browser": "没有文件夹，项目放在这个浏览器里"
@@ -2661,7 +2725,7 @@
         "switchRepository": "换一个仓库…",
         "disconnect": "断开云端…",
         "removeFromBrowser": "从这个浏览器移除…",
-        "downloadToFolder": "下载到文件夹…",
+        "linkFolder": "关联文件夹…",
         "archiveNow": "现在存档",
         "openOnGitHub": "在 GitHub 上打开",
         "signIn": "登录",
@@ -2672,7 +2736,13 @@
         "continueWithEditor": "以编辑器的内容接着存…",
         "installApp": "去安装…",
         "moveToFolder": "移到文件夹…",
-        "saveCopy": "另存一份…"
+        "saveCopy": "另存一份…",
+        "recheck": "再检查一次",
+        "reauthorize": "去 GitHub 重新授权…",
+        "reinstall": "去 GitHub 重新安装…",
+        "restoreApp": "去 GitHub 恢复…",
+        "saveAsLocal": "另存为本地项目…",
+        "deleteCloud": "删除云端项目…"
       }
     },
     "onlyHere": {
@@ -2684,7 +2754,50 @@
       "refused": "浏览器没有答应长期保存这个网站的数据：磁盘紧张时，它可能清掉只在浏览器里的项目里还没同步的改动。保持联网，改动会及时同步到云端。",
       "note": "浏览器没有答应长期保存：磁盘紧张时可能清掉还没同步的改动。",
       "idle": "Safari 会在 7 天没打开这个网站后清掉它存的数据，还没同步的改动会丢：请联网同步，或者把网站添加到程序坞或主屏幕。"
-    }
+    },
+    "deletedElsewhere": {
+      "folder": "“{{name}}”这个云端项目已经在别处删除。文件夹留着，里面的内容和还没同步上去的改动都在，现在它是本地项目。",
+      "browser": "“{{name}}”这个云端项目已经在别处删除。这个浏览器里的那一份留着，没有清掉，现在它只在这个浏览器里：浏览器清理数据时会丢，请移到文件夹、另存一份，或者连接到云端。"
+    },
+    "recheck": {
+      "usable": "仓库能用了，项目可以接着编辑。",
+      "still": "问过 GitHub 了，仓库还是用不了：{{what}}。",
+      "busy": "一分钟内只能检查一次，请稍后再试。",
+      "signedOut": "登录已过期，重新登录后再试。",
+      "notLinked": "这个云端项目没有仓库。",
+      "unavailable": "现在问不了 GitHub，请稍后再试。"
+    },
+    "unusable": {
+      "title": {
+        "deleted": "仓库已删除",
+        "unauthorized": "AnimaQuill 不能再访问这个仓库",
+        "notFound": "找不到这个项目的 GitHub 仓库",
+        "transferred": "仓库已转到别的账号",
+        "uninstalled": "AnimaQuill 在 GitHub 上的授权被卸载了",
+        "suspended": "AnimaQuill 在 GitHub 上的授权被暂停了"
+      },
+      "line": "{{what}}，{{count}} 天后自动删除",
+      "lineToday": "{{what}}，马上会被自动删除",
+      "lineNoDate": "{{what}}，现在不能编辑",
+      "fix": {
+        "deleted": "在 GitHub 上恢复仓库后点“再检查一次”；也可以换一个仓库。",
+        "unauthorized": "在 GitHub 上把这个仓库加回 AnimaQuill 的授权范围，或者换一个仓库。",
+        "notFound": "去 GitHub 重新授权，或者换一个仓库。",
+        "transferred": "换一个仓库；仓库转回来以后点“再检查一次”。",
+        "uninstalled": "去 GitHub 重新安装 AnimaQuill，回来后会自动再检查。",
+        "suspended": "在 GitHub 上恢复 AnimaQuill，回来后会自动再检查。"
+      },
+      "readOnly": "仓库能用之前不能编辑，可以看、播放和导出。出问题之前的改动都留在这台电脑上，仓库修好后接着同步。",
+      "ways": "这期间也可以另存为本地项目，把内容取到一个文件夹里，或者删除这个云端项目。",
+      "waysFolder": "有文件夹的也可以断开云端，作为本地项目接着编辑。",
+      "aboutTitle": "“{{name}}”现在不能打开编辑",
+      "bar": "{{what}}。现在只能看、播放和导出，不能修改；出问题之前的改动都留在这台电脑上。",
+      "showWays": "看看能做什么…"
+    },
+    "copy": {
+      "released": "平台上已经没有这个项目的内容可取了。"
+    },
+    "saveAsLocalAction": "另存为本地项目…"
   },
   "repository": {
     "switchTitle": "换一个仓库",

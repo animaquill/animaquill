@@ -184,11 +184,14 @@
 
 .buttons {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
 
+/* Many ways out wrap to another line, each in one piece. */
 .buttons button {
+  white-space: nowrap;
   padding: 4px 14px;
   color: var(--aq-text);
   background: var(--aq-bg-input);

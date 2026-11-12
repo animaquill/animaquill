@@ -23,6 +23,7 @@ import {
   ProjectStore,
   USER,
   aiTask,
+  folderBatch,
   mergeUpdates,
   type CommandResult,
   type ExecuteOptions,
@@ -3692,6 +3693,50 @@ describe("a step that cannot go back", () => {
     expect(opacity(store)).toBeUndefined();
     taken(store.undo());
     expect(store.getState().manifest.tags).toEqual(lock.tags);
+  });
+});
+
+describe("a project that is only to be looked at", () => {
+  it("takes no change from anyone while it is so, and keeps its history", () => {
+    const store = freshProject();
+    setOpacity(store, 0.5);
+    setOpacity(store, 0.6, { origin: AI });
+    const before = store.encodeState();
+    store.readOnly = true;
+    const code = (result: CommandResult | UndoResult) =>
+      result.ok ? undefined : result.error.code;
+    const set = (options: ExecuteOptions = {}) =>
+      edit(store, "c", { path: "opacity", op: "set", value: 0.7 }, options);
+    expect(code(set())).toBe("read-only");
+    expect(code(set({ origin: AI }))).toBe("read-only");
+    expect(code(set({ dryRun: true }))).toBe("read-only");
+    expect(code(store.undo())).toBe("read-only");
+    expect(code(store.redo())).toBe("read-only");
+    expect(code(store.undoTask("task-1"))).toBe("read-only");
+    expect(code(store.importFile(MAIN, JSON.stringify(timeline(store)), { origin: USER }))).toBe(
+      "read-only",
+    );
+    const text = JSON.stringify(timeline(store));
+    const merged = store.mergeFiles([{ path: MAIN, text, base: text }], {
+      origin: folderBatch("b"),
+      baseOf: () => undefined,
+    });
+    expect(merged.ok ? undefined : merged.error.code).toBe("read-only");
+    expect(store.hasAllOf(before)).toBe(true);
+    expect(store.encodeState()).toEqual(before);
+    expect(opacity(store)).toBe(0.6);
+    // Once it can be edited again, nothing was lost on the way.
+    store.readOnly = false;
+    taken(store.undoTask("task-1"));
+    expect(opacity(store)).toBe(0.5);
+    taken(store.undo());
+    expect(opacity(store)).toBeUndefined();
+    // What others did comes in all the same.
+    store.readOnly = true;
+    const other = twin(store);
+    setOpacity(other, 0.9);
+    sync(other, store);
+    expect(opacity(store)).toBe(0.9);
   });
 });
 

@@ -231,6 +231,12 @@ export class Workbench {
   readonly cloudKnown = new Flag();
   /** The start page is asked to show its projects of the platform, see `openCloudProjects`. */
   readonly cloudColumn = new Flag();
+  /**
+   * The open project cannot be edited now, as a project of the platform whose repository cannot be
+   * used, see `CloudProjects.unusable`: it can be looked at, played and exported, and nothing
+   * changes it, see `ProjectStore.readOnly`; its folder is left as it is, see `FolderSession.hold`.
+   */
+  readonly readOnly = new Flag();
   /** Whether the browser keeps what the editor stores, see `Host.persistence`. */
   readonly persistence: StoragePersistence | undefined;
   /** The platform, where the editor is hosted on one and has accounts. */
@@ -641,6 +647,10 @@ export class Workbench {
       const follow = () => void this.#followCloud();
       this.session.subscribe(follow);
       this.projectFolders?.subscribe(follow);
+      // Whether the open project can be edited follows how it stands with the platform.
+      const keepReadOnly = () => this.#keepReadOnly();
+      this.cloud.subscribe(keepReadOnly);
+      this.session.subscribe(keepReadOnly);
       // What taking a copy out of this browser left behind, should it have stopped halfway.
       void this.cloud.tidy();
       // And what making a project of the platform left there, should the page have gone halfway.
@@ -1403,6 +1413,66 @@ export class Workbench {
   }
 
   /**
+   * Makes the open project one that cannot be edited, or one that can again, as how it stands with
+   * the platform says, see `readOnly`: the project first, so that nothing changes it from here on,
+   * then its folder, and the browser AI stops what it does. Where it can be edited again, the
+   * folder is compared with the project, and what changed in it meanwhile comes in.
+   */
+  #keepReadOnly(): void {
+    const store = this.session.store;
+    // Only what is said of this very project: another one may be on its way in.
+    const said = this.cloud?.getSnapshot();
+    const isThis = said?.kind === "linked" && said.link.key === this.session.key;
+    const isReadOnly = store !== undefined && isThis && this.cloud?.unusable !== undefined;
+    if (store && store.readOnly !== isReadOnly) store.readOnly = isReadOnly;
+    this.projectFolders?.hold(isReadOnly);
+    if (isReadOnly && !this.readOnly.getSnapshot() && this.chat.running) this.chat.stop();
+    this.readOnly.set(isReadOnly);
+  }
+
+  /**
+   * "另存为本地项目…": a copy of a project of the platform, the open one where none is said, as a
+   * project of this computer of its own in a folder, which does not sync, see
+   * `ProjectFolders.saveAsLocal`. Where this window has the project open, the copy is of what it
+   * has; otherwise of what the platform has, read only. The project itself does not change.
+   */
+  async saveAsLocal(project?: string, name?: string): Promise<void> {
+    const { cloud, projectFolders } = this;
+    if (!cloud || !projectFolders) return;
+    const open = cloud.getSnapshot();
+    const id = project ?? (open.kind === "linked" ? open.link.project : undefined);
+    if (id === undefined) return;
+    const isOpen = open.kind === "linked" && open.link.project === id;
+    const shown = name ?? (isOpen ? this.session.store?.getState().manifest.name : undefined) ?? "";
+    await projectFolders.saveAsLocal(shown, (signal) =>
+      cloud.copySource(
+        id,
+        signal,
+        (key) => projectFolders.mediaFor(key) ?? this.projects.media(key),
+      ),
+    );
+  }
+
+  /**
+   * "删除云端项目…": takes a project of the platform away there, the open one where none is said,
+   * see `CloudProjects.deleteFromCloud`.
+   */
+  async deleteFromCloud(project?: string, name?: string): Promise<boolean> {
+    const { cloud } = this;
+    if (!cloud) return false;
+    const open = cloud.getSnapshot();
+    const id = project ?? (open.kind === "linked" ? open.link.project : undefined);
+    if (id === undefined) return false;
+    const shown =
+      name ??
+      (open.kind === "linked" && open.link.project === id
+        ? this.session.store?.getState().manifest.name
+        : undefined) ??
+      "";
+    return cloud.deleteFromCloud(id, shown);
+  }
+
+  /**
    * "云端…": how the open project stands with the platform. One that is not connected gets the
    * dialog that connects it; any other the panel, which the status bar shows.
    */
@@ -1492,7 +1562,7 @@ export class Workbench {
     const { cloud } = this;
     if (!cloud) return;
     // These show how they go in the panel itself; the others ask something, or leave.
-    if (id !== "archiveNow" && id !== "retry") this.cloudPanel.set(false);
+    if (id !== "archiveNow" && id !== "retry" && id !== "recheck") this.cloudPanel.set(false);
     switch (id) {
       case "connect":
       case "chooseRepository":
@@ -1510,8 +1580,22 @@ export class Workbench {
         if (key !== undefined) void cloud.removeFromBrowser(key);
         break;
       }
-      case "downloadToFolder":
+      case "linkFolder":
         void this.moveToFolder();
+        break;
+      case "recheck":
+        void cloud.recheck();
+        break;
+      case "reauthorize":
+      case "reinstall":
+      case "restoreApp":
+        void this.installApp();
+        break;
+      case "saveAsLocal":
+        void this.saveAsLocal();
+        break;
+      case "deleteCloud":
+        void this.deleteFromCloud();
         break;
       case "archiveNow":
         void cloud.archiveNow();
@@ -2274,6 +2358,27 @@ export class Workbench {
         run: () => this.showCloud(),
         menu: { name: "file", group: "cloud" },
         enabled: isOpen,
+      });
+      this.actions.register({
+        id: "cloud.saveAsLocal",
+        title: (t) => t("cloud.saveAsLocalAction"),
+        run: () => void this.saveAsLocal(),
+        menu: { name: "file", group: "cloud" },
+        // A copy of a project of the platform, into a folder.
+        enabled: () => this.projectFolders !== undefined && cloud.isOnPlatform,
+        visible: () => this.projectFolders !== undefined && cloud.getSnapshot().kind === "linked",
+      });
+      this.actions.register({
+        id: "cloud.delete",
+        title: (t) => t("cloud.panel.action.deleteCloud"),
+        run: () => void this.deleteFromCloud(),
+        enabled: () => cloud.canDelete,
+      });
+      this.actions.register({
+        id: "cloud.recheck",
+        title: (t) => t("cloud.panel.action.recheck"),
+        run: () => void cloud.recheck(),
+        enabled: () => cloud.unusable !== undefined,
       });
       this.actions.register({
         id: "cloud.connect",

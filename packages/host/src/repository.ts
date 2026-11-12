@@ -263,6 +263,9 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
     async status(project) {
       return statusOf(await call("GET", projectPath(project, "repository")));
     },
+    async recheck(project) {
+      return statusOf(await call("POST", projectPath(project, "repository/check"), {}, changeMs));
+    },
     async archiveNow(project, archive = {}) {
       return statusOf(
         await call(

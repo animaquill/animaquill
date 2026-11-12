@@ -199,8 +199,10 @@ test.describe("the start page with projects of this computer and of the platform
       "收藏",
       "移到分组…",
       "关联文件夹…",
+      "另存为本地项目…",
       "在 GitHub 上打开",
       "从这个浏览器移除…",
+      "删除云端项目…",
     ]);
     await shot(page, "05-menu");
     await page.keyboard.press("Escape");
@@ -209,7 +211,9 @@ test.describe("the start page with projects of this computer and of the platform
       "收藏",
       "移到分组…",
       "关联文件夹…",
+      "另存为本地项目…",
       "在 GitHub 上打开",
+      "删除云端项目…",
     ]);
     await page.keyboard.press("Escape");
     expect(await menuOf("课程片头")).toEqual([
@@ -227,8 +231,10 @@ test.describe("the start page with projects of this computer and of the platform
       "取消收藏",
       "移到分组…",
       "断开云端…",
+      "另存为本地项目…",
       "在 GitHub 上打开",
       "从列表移除",
+      "删除云端项目…",
     ]);
     await page.keyboard.press("Escape");
 

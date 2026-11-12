@@ -35,7 +35,10 @@ import {
 } from "../folder/assets.ts";
 import {
   FolderMove,
+  copyOfProject,
   loadProject,
+  type CopyResult,
+  type CopySource,
   type LoadedProject,
   type Mismatch,
   type MoveRefusal,
@@ -249,6 +252,8 @@ export class ProjectFolders {
   #moving = false;
   /** See `ProjectFoldersSnapshot.moves`. */
   #moves = 0;
+  /** The folder of the open project is left as it is, see `hold`. */
+  #held = false;
 
   constructor(options: ProjectFoldersOptions) {
     this.#options = options;
@@ -792,6 +797,113 @@ export class ProjectFolders {
     await this.#options.changeProject(() => this.#open(moved, { relocated: true }));
   }
 
+  /**
+   * Saves a copy of a project as a project of this computer of its own, in a folder people choose,
+   * see the design of the start page of AnimaQuill Cloud, 4.3 ("另存为本地项目"): people are told
+   * that it is a copy that does not sync, and can change its name. Only an empty folder takes it,
+   * or a new folder in one that has other things in it; one that is a project, or in one, is not
+   * asked about, as nothing is to be compared here. `source` brings the project once people chose
+   * where, as it is then, and says why where it cannot: the copy gets an id of its own, and all of
+   * it is written, read again and compared, see `FolderMove.copy`. What it came from does not
+   * change. Then people choose to open the copy or to stay. Resolves to its record, or undefined.
+   */
+  async saveAsLocal(
+    name: string,
+    source: (signal: AbortSignal) => Promise<CopySource | undefined>,
+  ): Promise<FolderRecord | undefined> {
+    const { dialogs, notifications, t } = this.#options;
+    const wanted = await dialogs.prompt({
+      title: t("folder.saveAs.title", { name }),
+      value: name,
+      hint: t("folder.saveAs.hint"),
+      confirm: t("folder.chooseFolder"),
+    });
+    if (!wanted) return undefined;
+    // The browser asks for a folder only right after people did something: this follows the click.
+    const chosen = await this.#choose();
+    if (!chosen) return undefined;
+    const place = await this.#placeFor(chosen, wanted, undefined, { onlyInside: true });
+    if (!place) return undefined;
+    const progress = dialogs.progress({
+      title: t("folder.saveAs.progress", { name: wanted }),
+      cancel: t("dialog.cancel"),
+      stopping: t("transfer.stopping"),
+    });
+    let result: CopyResult | undefined;
+    let refused: readonly Problem[] | undefined;
+    let got: CopySource | undefined;
+    try {
+      got = await source(progress.signal);
+      if (!got || progress.signal.aborted) return undefined;
+      const { store, problems } = copyOfProject(got.store, wanted);
+      if (!store) refused = problems;
+      else {
+        try {
+          result = await this.#mover.copy(
+            store,
+            got.media,
+            { chosen, inside: place.inside },
+            {
+              notice: t("folder.saveAs.incompleteNotice"),
+              signal: progress.signal,
+              onStep: this.#followMove(progress),
+            },
+          );
+        } finally {
+          store.destroy();
+        }
+      }
+    } catch (error) {
+      console.warn("A copy of a project could not be saved to a folder", error);
+      notifications.push(t("folder.saveAs.failed", { name: wanted }));
+      return undefined;
+    } finally {
+      progress.close();
+      got?.close();
+    }
+    if (refused) {
+      await this.#refusedMove(wanted, { kind: "invalid", problems: refused });
+      return undefined;
+    }
+    if (!result) return undefined;
+    if (result.kind !== "copied") {
+      await this.#notMoved(wanted, result, "saveAs");
+      return undefined;
+    }
+    const { record, missing, elsewhere, damaged, renamed } = result;
+    const lacking = [...missing, ...elsewhere.map(({ name: file }) => file), ...damaged];
+    const answer = await dialogs.choose({
+      title: t("folder.saveAs.doneTitle"),
+      message: [
+        t("folder.saveAs.done", { name: wanted, folder: record.folder.name }),
+        ...(lacking.length > 0
+          ? [
+              t("folder.saveAs.missing", {
+                count: lacking.length,
+                files: lacking.slice(0, 5).join("、"),
+              }),
+            ]
+          : []),
+        ...(renamed.length > 0 ? [t("folder.saveAs.renamed", { count: renamed.length })] : []),
+      ].join(""),
+      choices: [
+        { id: "stay", label: t("folder.saveAs.stay") },
+        { id: "open", label: t("folder.saveAs.open"), kind: "primary" },
+      ],
+    });
+    if (answer === "open") await this.openRecent(record);
+    return record;
+  }
+
+  /**
+   * Leaves the folder of the open project as it is, while the project cannot be edited, or goes on
+   * with it, see `FolderSession.hold`. It holds for a folder that opens meanwhile too.
+   */
+  hold(held: boolean): void {
+    this.#held = held;
+    this.#current?.session.hold(held);
+  }
+
   /** Lets the editor at the open folder again, after the browser took that back. */
   async allowAgain(): Promise<void> {
     const current = this.#current;
@@ -1131,9 +1243,15 @@ export class ProjectFolders {
   }
 
   /** Says why a project did not move, and that it stays as it was in the browser. */
-  async #notMoved(name: string, result: Exclude<MoveResult, { kind: "moved" }>): Promise<void> {
+  async #notMoved(
+    name: string,
+    result: Exclude<MoveResult, { kind: "moved" }>,
+    what: "move" | "saveAs" = "move",
+  ): Promise<void> {
     const { dialogs, notifications, t } = this.#options;
-    const title = t("folder.move.failedTitle", { name });
+    const title = t(what === "move" ? "folder.move.failedTitle" : "folder.saveAs.failedTitle", {
+      name,
+    });
     const left = (cleaned: boolean, folder: string) =>
       cleaned
         ? t("folder.move.nothingLeft")
@@ -1143,13 +1261,16 @@ export class ProjectFolders {
         await this.#refusedMove(name, result.refusal);
         return;
       case "stopped": {
+        const cancelled = t(what === "move" ? "folder.move.cancelled" : "folder.saveAs.cancelled", {
+          name,
+        });
         if (result.cancelled && result.cleaned) {
-          notifications.push(t("folder.move.cancelled", { name }));
+          notifications.push(cancelled);
           return;
         }
         const reason = result.cancelled
-          ? t("folder.move.cancelled", { name })
-          : t("folder.move.writeFailed", {
+          ? cancelled
+          : t(what === "move" ? "folder.move.writeFailed" : "folder.saveAs.writeFailed", {
               file: result.file,
               reason: this.#reasonOf(result.error),
             });
@@ -1160,7 +1281,10 @@ export class ProjectFolders {
         // The folder stays for people to look at, unless they want what was written gone.
         const discard = await dialogs.confirm({
           title,
-          message: t("folder.move.unverified", { folder: result.folder, file: INCOMPLETE_FILE }),
+          message: t(what === "move" ? "folder.move.unverified" : "folder.saveAs.unverified", {
+            folder: result.folder,
+            file: INCOMPLETE_FILE,
+          }),
           confirm: t("folder.move.discard"),
           cancel: t("folder.move.keepFolder"),
           danger: true,
@@ -1185,7 +1309,7 @@ export class ProjectFolders {
         console.warn("A project in a folder could not be kept by it", result.error);
         await this.#notice(
           title,
-          `${t("folder.move.unswitched", { folder: result.folder })}${left(result.cleaned, result.folder)}`,
+          `${t(what === "move" ? "folder.move.unswitched" : "folder.saveAs.unswitched", { folder: result.folder })}${left(result.cleaned, result.folder)}`,
         );
         return;
     }
@@ -1266,6 +1390,7 @@ export class ProjectFolders {
     folder: LocalFolder,
     name: string,
     open?: (folder: LocalFolder) => Promise<void>,
+    { onlyInside = false }: { readonly onlyInside?: boolean } = {},
   ): Promise<{ readonly inside: string | undefined } | undefined> {
     const { dialogs, t } = this.#options;
     let place: Awaited<ReturnType<FolderProjects["placeFor"]>>;
@@ -1304,7 +1429,7 @@ export class ProjectFolders {
       case "other": {
         // Files where a project has its own would be taken for its own: then only a folder of its own.
         const choices =
-          place.clashes.length > 0
+          place.clashes.length > 0 || onlyInside
             ? [
                 {
                   id: "inside",
@@ -1322,8 +1447,9 @@ export class ProjectFolders {
               ];
         const answer = await dialogs.choose({
           title: t("folder.notEmptyTitle", { folder: folder.name }),
-          message:
-            place.clashes.length > 0
+          message: onlyInside
+            ? t("folder.saveAs.notEmpty", { inside: place.inside })
+            : place.clashes.length > 0
               ? t("folder.notEmptyClashes", {
                   inside: place.inside,
                   files: place.clashes.slice(0, 5).join("、"),
@@ -1334,7 +1460,8 @@ export class ProjectFolders {
         });
         // Only what was offered: a folder with files where a project has its own gets no "here".
         if (answer === "inside") return { inside: place.inside };
-        if (answer === "here" && place.clashes.length === 0) return { inside: undefined };
+        if (answer === "here" && place.clashes.length === 0 && !onlyInside)
+          return { inside: undefined };
         return undefined;
       }
     }
@@ -1601,6 +1728,8 @@ export class ProjectFolders {
       ...(timing && { timing }),
     });
     files.follow(folderSession);
+    // A project that cannot be edited leaves its folder as it is from the start, see `hold`.
+    if (this.#held) folderSession.hold(true);
     const stops: (() => void)[] = [];
     const current: Current = {
       session: folderSession,

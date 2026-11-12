@@ -1,4 +1,4 @@
-import type { RepositoryStatus } from "@animaquill/host";
+import type { RepositoryStatus, RepositoryUnusable } from "@animaquill/host";
 import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
 import zhCN from "../i18n/zh-CN.json" with { type: "json" };
@@ -135,18 +135,31 @@ describe("the status of the platform in a project", () => {
     );
     expect(panel.title).toBe("云端 · 原子是什么");
     expect(panel.opens).toBe("panel");
+    // The platform has changes that its repository does not have yet: it keeps them a week.
     expect(read(panel)).toEqual({
-      bar: "☁ 已同步",
-      level: "ok",
+      bar: "☁ 有未保存的更改，平台只保留 7 天",
+      level: "busy",
       rows: [
         "仓库  ada/atom（私有） <在 GitHub 上打开>",
         "同步  在线，改动都已发送",
-        "存档  14:05 存过。有新改动，约 3 分钟后再存 [现在存档]",
+        "存档  有未保存的更改，平台只保留 7 天。14:05 存过。有新改动，约 3 分钟后再存 [现在存档]",
       ],
-      actions: ["[换一个仓库…]", "[断开云端…]"],
+      actions: ["[换一个仓库…]", "[另存为本地项目…]", "[断开云端…]"],
     });
+    expect(panel.rows[2]).toMatchObject({ tone: "plain" });
     expect(panel.rows[0]?.link?.url).toBe("https://github.com/ada/atom");
-    expect(panel.actions.map(({ kind }) => kind)).toEqual([undefined, "danger"]);
+    expect(panel.actions.map(({ kind }) => kind)).toEqual([undefined, undefined, "danger"]);
+    // Once all of it is in the repository, nothing more is said.
+    const inStep = cloudPanel(linked(), t);
+    expect(read(inStep)).toMatchObject({ bar: "☁ 已同步", level: "ok" });
+    expect(read(inStep).rows[2]).toBe("存档  14:05 存过 [现在存档]");
+    // Whoever it is of can take it away there, at the end.
+    expect(ids(cloudPanel(linked({ canDelete: true }), t)).bottom).toEqual([
+      "switchRepository",
+      "saveAsLocal",
+      "disconnect",
+      "deleteCloud",
+    ]);
     // What the page says about itself, for whatever reads it.
     expect(panel).toMatchObject({ sync: "online", archive: "ready" });
   });
@@ -235,14 +248,14 @@ describe("the status of the platform in a project", () => {
     expect(diverged.archive).toBe("paused");
     expect(ids(diverged)).toEqual({
       rows: { repository: [], sync: [], archive: ["continueWithEditor"] },
-      bottom: ["switchRepository", "disconnect"],
+      bottom: ["switchRepository", "saveAsLocal", "disconnect"],
     });
     expect(ids(paused("gone")).rows["archive"]).toEqual(["archiveNow"]);
     expect(ids(paused("uninstalled")).rows["archive"]).toEqual(["installApp"]);
     // Another repository is all that helps: it is where it always is.
     expect(ids(paused("transferred"))).toMatchObject({
       rows: { archive: [] },
-      bottom: ["switchRepository", "disconnect"],
+      bottom: ["switchRepository", "saveAsLocal", "disconnect"],
     });
     // A reason of a newer platform still has a way on.
     expect(ids(paused("somethingNew")).rows["archive"]).toEqual(["archiveNow"]);
@@ -260,16 +273,24 @@ describe("the status of the platform in a project", () => {
     );
     expect(row(status({ archiving: true }))).toBe("存档  14:05 存过。正在存档… [现在存档，不能点]");
     const { lastArchive: _last, ...never } = status({ archiving: true, archivedSeq: 0 });
-    expect(row(never)).toBe("存档  正在存档… [现在存档，不能点]");
+    // Never archived: all of it waits for the repository.
+    expect(row(never)).toBe("存档  有未保存的更改，平台只保留 7 天。正在存档… [现在存档，不能点]");
     const { lastArchive: _none, ...idle } = status({ archivedSeq: 9 });
     expect(row(idle)).toBe("存档  还没存过档 [现在存档]");
     expect(row(status({ head: 12, nextAt: NOW - 1 }))).toBe(
-      "存档  14:05 存过。有新改动，马上存 [现在存档]",
+      "存档  有未保存的更改，平台只保留 7 天。14:05 存过。有新改动，马上存 [现在存档]",
     );
     const retryAt = new Date(2026, 10, 10, 14, 10, 0).getTime();
     expect(row(status({ failures: 2, retryAt, head: 12 }))).toBe(
-      "存档  14:05 存过。上次没存成，14:10 再试 [现在存档]",
+      "存档  有未保存的更改，平台只保留 7 天。14:05 存过。上次没存成，14:10 再试 [现在存档]",
     );
+    // What cannot be saved is something to do something about, in the status bar too.
+    const failing = cloudPanel(
+      linked({ archive: watch(status({ failures: 2, retryAt, head: 12 })) }),
+      t,
+    );
+    expect(failing.rows[2]).toMatchObject({ tone: "attention" });
+    expect(failing).toMatchObject({ bar: "☁ 有未保存的更改，平台只保留 7 天" });
     // "Archive now" was asked for too soon, and goes by itself.
     expect(row(status(), { archiveAt: NOW + 40_000 })).toBe(
       "存档  14:05 存过。1 分钟内只能存一次档，40 秒后自动存 [现在存档，不能点]",
@@ -288,13 +309,13 @@ describe("the status of the platform in a project", () => {
         "仓库  ada/atom（私有） <在 GitHub 上打开>",
         "同步  在线，改动都已发送",
         "存档  14:05 存过 [现在存档]",
-        "本机  没有文件夹，项目放在这个浏览器里 [下载到文件夹…]",
+        "本机  没有文件夹，项目放在这个浏览器里 [关联文件夹…]",
       ],
       // Taking it out of this browser in place of disconnecting it.
-      actions: ["[换一个仓库…]", "[从这个浏览器移除…]"],
+      actions: ["[换一个仓库…]", "[另存为本地项目…]", "[从这个浏览器移除…]"],
     });
-    expect(ids(direct).bottom).toEqual(["switchRepository", "removeFromBrowser"]);
-    expect(ids(direct).rows["local"]).toEqual(["downloadToFolder"]);
+    expect(ids(direct).bottom).toEqual(["switchRepository", "saveAsLocal", "removeFromBrowser"]);
+    expect(ids(direct).rows["local"]).toEqual(["linkFolder"]);
     // Without a network, and with something to do, it says what any project says.
     expect(
       cloudPanel(linked({ local: "browser", sync: sync({ state: "offline", pending: 3 }) }), t).bar,
@@ -319,7 +340,7 @@ describe("the status of the platform in a project", () => {
       bar: "☁ 要处理",
       level: "attention",
       rows: ["仓库  还差一步：选仓库 [选仓库…]", "同步  在线，改动都已发送"],
-      actions: ["[断开云端…]"],
+      actions: ["[另存为本地项目…]", "[断开云端…]"],
     });
     expect(legacy.rows[0]).toMatchObject({ tone: "attention" });
     expect(ids(legacy).rows["repository"]).toEqual(["chooseRepository"]);
@@ -332,7 +353,10 @@ describe("the status of the platform in a project", () => {
       }),
       t,
     );
-    expect(read(direct)).toMatchObject({ bar: "☁ 要处理", actions: ["[从这个浏览器移除…]"] });
+    expect(read(direct)).toMatchObject({
+      bar: "☁ 要处理",
+      actions: ["[另存为本地项目…]", "[从这个浏览器移除…]"],
+    });
   });
 
   it("says of a repository that is gone whether it was deleted, or is out of what the App may reach", () => {
@@ -354,7 +378,7 @@ describe("the status of the platform in a project", () => {
     // Said once: not again at the end of the panel.
     expect(ids(deleted)).toEqual({
       rows: { repository: [], sync: [], archive: ["switchRepository"] },
-      bottom: ["disconnect"],
+      bottom: ["saveAsLocal", "disconnect"],
     });
     // Taken out of what the App may reach: putting it back is what helps, and archiving goes on.
     const unauthorized = paused("unauthorized");
@@ -363,14 +387,14 @@ describe("the status of the platform in a project", () => {
     );
     expect(ids(unauthorized)).toEqual({
       rows: { repository: [], sync: [], archive: ["archiveNow"] },
-      bottom: ["switchRepository", "disconnect"],
+      bottom: ["switchRepository", "saveAsLocal", "disconnect"],
     });
     // The platform cannot tell: what fits both, as before.
     const either = paused();
     expect(read(either).rows[2]).toBe(
       "存档  存档先停着：仓库不见了，或者 GitHub App 不能再访问它 · 在 GitHub 上把仓库加回 App 的授权范围后点“现在存档”，或者换一个仓库。 [现在存档]",
     );
-    expect(ids(either).bottom).toEqual(["switchRepository", "disconnect"]);
+    expect(ids(either).bottom).toEqual(["switchRepository", "saveAsLocal", "disconnect"]);
     for (const panel of [deleted, unauthorized, either]) {
       expect(panel).toMatchObject({ level: "attention", bar: "☁ 要处理", archive: "paused" });
     }
@@ -458,7 +482,7 @@ describe("the status of the platform in a project", () => {
     // Not knowing is no reason to worry people, and nothing to switch from.
     const unknown = cloudPanel(linked({ archive: silent() }), t);
     expect(unknown).toMatchObject({ level: "ok", bar: "☁ 已同步", archive: undefined });
-    expect(ids(unknown).bottom).toEqual(["disconnect"]);
+    expect(ids(unknown).bottom).toEqual(["saveAsLocal", "disconnect"]);
     expect(
       read(
         cloudPanel(
@@ -475,8 +499,80 @@ describe("the status of the platform in a project", () => {
       bar: "☁ 已同步",
       level: "ok",
       rows: ["同步  在线，改动都已发送"],
-      actions: ["[断开云端…]"],
+      actions: ["[另存为本地项目…]", "[断开云端…]"],
     });
+  });
+
+  it("says why a project whose repository cannot be used cannot be edited, until when, and what helps", () => {
+    const DAY = 24 * 3600_000;
+    const unusable = (reason: string, more: { gone?: "deleted" | "unauthorized" } = {}) => ({
+      reason,
+      since: NOW - DAY,
+      deleteAt: NOW + 6 * DAY + 1000,
+      ...more,
+    });
+    const panelOf = (said: RepositoryUnusable, more: Partial<PanelInput> = {}) =>
+      cloudPanel(
+        linked({
+          unusable: said,
+          canDelete: true,
+          sync: sync({ state: "paused", problem: { kind: "unusable", reason: said.reason } }),
+          archive: watch(status({ state: "paused", reason: said.reason, head: 12 })),
+          ...more,
+        }),
+        t,
+      );
+    const deleted = panelOf(unusable("gone", { gone: "deleted" }));
+    expect(read(deleted)).toEqual({
+      bar: "☁ 仓库已删除",
+      level: "attention",
+      rows: [
+        "仓库  仓库已删除，7 天后自动删除 · 在 GitHub 上恢复仓库后点“再检查一次”；也可以换一个仓库。 · 仓库能用之前不能编辑，可以看、播放和导出。出问题之前的改动都留在这台电脑上，仓库修好后接着同步。 · 这期间也可以另存为本地项目，把内容取到一个文件夹里，或者删除这个云端项目。 · 有文件夹的也可以断开云端，作为本地项目接着编辑。 [再检查一次] [换一个仓库…]",
+        "同步  仓库用不了，这个云端项目现在不能编辑。出问题之前的改动都留在本机。",
+        // Nothing about archiving, and no "unsaved changes": the row of the repository says it all.
+      ],
+      actions: ["[另存为本地项目…]", "[断开云端…]", "[删除云端项目…]"],
+    });
+    expect(deleted.rows[0]).toMatchObject({ tone: "attention" });
+    // Nothing to retry about syncing: it goes on by itself once the repository can be used.
+    expect(ids(deleted).rows["sync"]).toEqual([]);
+    // What helps is by why it cannot be used.
+    expect(ids(panelOf(unusable("gone", { gone: "unauthorized" }))).rows["repository"]).toEqual([
+      "reauthorize",
+      "switchRepository",
+      "recheck",
+    ]);
+    expect(ids(panelOf(unusable("gone"))).rows["repository"]).toEqual([
+      "reauthorize",
+      "switchRepository",
+      "recheck",
+    ]);
+    expect(read(panelOf(unusable("gone"))).bar).toBe("☁ 找不到这个项目的 GitHub 仓库");
+    expect(ids(panelOf(unusable("transferred"))).rows["repository"]).toEqual([
+      "switchRepository",
+      "recheck",
+    ]);
+    expect(ids(panelOf(unusable("uninstalled"))).rows["repository"]).toEqual([
+      "reinstall",
+      "recheck",
+      "switchRepository",
+    ]);
+    expect(ids(panelOf(unusable("suspended"))).rows["repository"]).toEqual([
+      "restoreApp",
+      "recheck",
+      "switchRepository",
+    ]);
+    // A copy only in this browser has no folder to go on with.
+    const direct = panelOf(unusable("transferred"), { local: "browser" });
+    expect(ids(direct).bottom).toEqual(["saveAsLocal", "removeFromBrowser", "deleteCloud"]);
+    expect(read(direct).rows[0]).not.toContain("有文件夹的也可以断开云端");
+    // Where the platform does not take such projects away by itself yet: no days.
+    const { deleteAt: _, ...forever } = unusable("transferred");
+    expect(read(panelOf(forever)).rows[0]).toMatch(/^仓库  仓库已转到别的账号，现在不能编辑/);
+    // ...and on the last day.
+    expect(read(panelOf({ ...forever, deleteAt: NOW - 1 })).rows[0]).toMatch(
+      /^仓库  仓库已转到别的账号，马上会被自动删除/,
+    );
   });
 
   it("is put together from what `CloudProjects` says and what it holds says right now", () => {

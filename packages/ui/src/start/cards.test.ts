@@ -19,9 +19,11 @@ import {
   coverColorOf,
   gitHubAddress,
   initialOf,
+  isUnusable,
   marksTargetOf,
   NOTHING_ORGANIZED,
   shownGroups,
+  unusableChoices,
   type CardContext,
   type Organized,
   type ProjectCard,
@@ -122,6 +124,7 @@ const byName = (cards: readonly ProjectCard[], name: string) => {
 };
 
 const CONTEXT: CardContext = { hasPlatform: true, canFolders: true, folder: "ready", copies: 0 };
+const DAY = 24 * 3600_000;
 
 describe("the cards of the start page", () => {
   it("are one of each project, of the kind it is", () => {
@@ -356,18 +359,19 @@ describe("what the menu of a card offers", () => {
     ]);
     expect(actions("旅行 Vlog")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
-      ["disconnect", "openOnGitHub"],
-      ["removeFromList"],
+      ["disconnect", "saveAsLocal", "openOnGitHub"],
+      ["removeFromList", "deleteCloud"],
     ]);
     expect(actions("产品发布")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
-      ["linkFolder", "openOnGitHub"],
-      ["removeHere"],
+      ["linkFolder", "saveAsLocal", "openOnGitHub"],
+      ["removeHere", "deleteCloud"],
     ]);
     // It cannot be renamed before the platform can change what it has without an editor on it.
     expect(actions("年会开场")).toEqual([
       ["open", "star", "moveToGroup"],
-      ["linkFolder", "openOnGitHub"],
+      ["linkFolder", "saveAsLocal", "openOnGitHub"],
+      ["deleteCloud"],
     ]);
     expect(actions("旧项目")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
@@ -380,6 +384,7 @@ describe("what the menu of a card offers", () => {
     const flat = (name: string) => actions(name, { canFolders: false }).flat();
     expect(flat("产品发布")).not.toContain("linkFolder");
     expect(flat("年会开场")).not.toContain("linkFolder");
+    expect(flat("年会开场")).not.toContain("saveAsLocal");
     expect(flat("旧项目")).not.toContain("moveToFolder");
   });
 
@@ -397,7 +402,7 @@ describe("what the menu of a card offers", () => {
     expect(actions("课程片头", { copies: 1024 }).flat()).toContain("releaseCopies");
   });
 
-  it("deletes on the platform only what has no repository", () => {
+  it("deletes on the platform whatever the platform's list has, with or without a repository", () => {
     const half = composeCards(
       listsOf({
         records: [folder("f", "半截的文件夹")],
@@ -414,9 +419,121 @@ describe("what the menu of a card offers", () => {
       true,
       true,
     ]);
-    expect(cards.some((card) => cardActions(card, CONTEXT).flat().includes("deleteCloud"))).toBe(
+    expect(cards.map((card) => cardActions(card, CONTEXT).flat().includes("deleteCloud"))).toEqual([
       false,
+      true,
+      true,
+      true,
+      false,
+    ]);
+    // Not what only this browser remembers, as of another account.
+    const remembered = composeCards(
+      listsOf({ projects: [kept("k", "别人的")], links: [link("k", "p-x")], listed: "signedOut" }),
+      { marks: new Map(), groups: [] },
     );
+    expect(cardActions(remembered[0] as ProjectCard, CONTEXT).flat()).not.toContain("deleteCloud");
+  });
+
+  it("says that a project cannot be edited, until when, and offers only the ways out", () => {
+    const now = 1_000_000;
+    const unusable = (reason: string, more: object = {}) => ({
+      reason,
+      since: now - DAY,
+      deleteAt: now + 6 * DAY + 1,
+      ...more,
+    });
+    const shown = composeCards(
+      listsOf({
+        records: [folder("f", "有文件夹的")],
+        projects: [kept("f", "有文件夹的", { folder: true }), kept("k", "浏览器里的")],
+        links: [link("f", "p-f"), link("k", "p-k")],
+        listed: [
+          listed("p-f", "有文件夹的", {
+            repository: { ...repository("f"), unusable: unusable("gone", { gone: "deleted" }) },
+          }),
+          listed("p-k", "浏览器里的", {
+            repository: { ...repository("k"), unusable: unusable("uninstalled") },
+          }),
+          listed("p-r", "没打开过的", {
+            repository: { ...repository("r"), unusable: unusable("transferred") },
+          }),
+          // The platform has nothing of it any more: there is nothing to copy.
+          listed("p-x", "取不到的", {
+            copy: "released",
+            repository: { ...repository("x"), unusable: unusable("gone") },
+          }),
+        ],
+      }),
+      { marks: new Map(), groups: [] },
+    );
+    expect(shown.map(isUnusable)).toEqual([true, true, true, true]);
+    expect(shown.map((card) => cardStatus(card, "ready", t, now))).toEqual([
+      expect.objectContaining({ text: "仓库已删除，7 天后自动删除", tone: "warning" }),
+      expect.objectContaining({
+        text: "AnimaQuill 在 GitHub 上的授权被卸载了，7 天后自动删除",
+        tone: "warning",
+      }),
+      expect.objectContaining({ text: "仓库已转到别的账号，7 天后自动删除", tone: "warning" }),
+      expect.objectContaining({ text: "找不到这个项目的 GitHub 仓库，7 天后自动删除" }),
+    ]);
+    expect(cardActions(shown[0] as ProjectCard, CONTEXT)).toEqual([
+      // Not renamed: it cannot be edited.
+      ["open", "star", "moveToGroup"],
+      ["saveAsLocal", "recheck", "switchRepository", "disconnect", "openOnGitHub"],
+      ["removeFromList", "deleteCloud"],
+    ]);
+    expect(cardActions(shown[1] as ProjectCard, CONTEXT)[1]).toEqual([
+      "saveAsLocal",
+      "reinstall",
+      "recheck",
+      "switchRepository",
+      "openOnGitHub",
+    ]);
+    expect(cardActions(shown[2] as ProjectCard, CONTEXT)[1]).toEqual([
+      "saveAsLocal",
+      "switchRepository",
+      "recheck",
+      "openOnGitHub",
+    ]);
+    // Nothing to copy, and nothing to save into another repository.
+    expect(cardActions(shown[3] as ProjectCard, CONTEXT)[1]).toEqual([
+      "reauthorize",
+      "recheck",
+      "openOnGitHub",
+    ]);
+    // Clicking it says why, with these ways out, and deleting it last.
+    expect(unusableChoices(shown[0] as ProjectCard, CONTEXT)).toEqual([
+      "saveAsLocal",
+      "recheck",
+      "switchRepository",
+      "disconnect",
+      "deleteCloud",
+    ]);
+  });
+
+  it("says that the platform keeps changes that are not in the repository only a week", () => {
+    const shown = composeCards(
+      listsOf({
+        projects: [kept("k", "改了的")],
+        links: [link("k", "p-k")],
+        listed: [
+          listed("p-k", "改了的", {
+            repository: repository("k"),
+            archive: { seq: 3, behind: true },
+          }),
+          listed("p-r", "存好的", {
+            repository: repository("r"),
+            archive: { seq: 3, behind: false },
+          }),
+        ],
+      }),
+      { marks: new Map(), groups: [] },
+    );
+    expect(shown.map((card) => cardStatus(card, "ready", t).text)).toEqual([
+      "有未保存的更改，平台只保留 7 天",
+      "云端 · 这台电脑还没打开过",
+    ]);
+    expect(cardStatus(shown[0] as ProjectCard, "ready", t).tone).toBe("warning");
   });
 
   it("opens GitHub only at an https address: the platform's word is not checked", () => {

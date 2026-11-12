@@ -8,7 +8,13 @@ import {
   unusableOf,
   withinTime,
 } from "./answers.ts";
-import { CloudSignedOut, type CloudAccess, type CloudProjectSummary } from "./index.ts";
+import {
+  CloudSignedOut,
+  type CloudAccess,
+  type CloudProjectSummary,
+  type CloudRemoveOptions,
+  type CloudRemoveRefusal,
+} from "./index.ts";
 
 /**
  * The projects of a platform over its HTTP API, as a browser reaches it: the list people open one
@@ -16,8 +22,9 @@ import { CloudSignedOut, type CloudAccess, type CloudProjectSummary } from "./in
  * the headers it asks of requests that change something, as for `browserRepository`.
  *
  * - `GET    <api>/projects` answers `{ projects: [...] }`, each a `CloudProjectSummary`
- * - `DELETE <api>/projects/<project>` answers 204, or `{ error }` with 404 "notFound" or 409
- *   "hasRepository"
+ * - `DELETE <api>/projects/<project>[?archived=<seq>|?discard=1]` answers 204, or `{ error }` with
+ *   404 "notFound", or 409 "hasRepository", "notArchived" (with `head`, `archivedSeq`, `state`,
+ *   `reason`, `archiving`, `failures`) or "uploading" (with `uploads`)
  *
  * What comes back is read field by field: a platform of another version can say more, or less.
  * But only what the platform said in these words counts as an answer: whether a project is still
@@ -103,6 +110,29 @@ export const projectSummaryOf = (value: unknown): CloudProjectSummary | undefine
   };
 };
 
+/**
+ * Why the platform kept a project it was asked to take away, in its own words, see
+ * `CloudRemoveRefusal`: undefined for anything else, which says nothing either way.
+ */
+export const refusalOf = (answer: unknown): CloudRemoveRefusal | undefined => {
+  if (!isObject(answer)) return undefined;
+  if (answer.error === "uploading")
+    return { kind: "uploading", uploads: count(answer.uploads) ?? 0 };
+  if (answer.error !== "notArchived") return undefined;
+  const head = count(answer.head);
+  const archivedSeq = count(answer.archivedSeq);
+  if (head === undefined || archivedSeq === undefined) return undefined;
+  return {
+    kind: "notArchived",
+    head,
+    archivedSeq,
+    state: text(answer.state) ?? "ready",
+    ...optional("reason", text(answer.reason)),
+    archiving: answer.archiving === true,
+    ...optional("failures", count(answer.failures)),
+  };
+};
+
 export function browserCloudProjects(
   options: BrowserCloudProjectsOptions,
 ): Pick<CloudAccess, "list"> & { readonly remove: NonNullable<CloudAccess["remove"]> } {
@@ -126,9 +156,16 @@ export function browserCloudProjects(
         }
         return [...listed.values()];
       }),
-    remove: (project) =>
+    remove: (project, condition: CloudRemoveOptions = {}) =>
       withinTime(timeoutMs, async (signal) => {
-        const response = await request(options.api(`/projects/${encodeURIComponent(project)}`), {
+        const query =
+          condition.discard === true
+            ? "?discard=1"
+            : condition.archived !== undefined
+              ? `?archived=${Math.max(0, Math.floor(condition.archived))}`
+              : "";
+        const path = `/projects/${encodeURIComponent(project)}${query}`;
+        const response = await request(options.api(path), {
           method: "DELETE",
           cache: "no-store",
           headers: { ...options.changeHeaders },
@@ -144,6 +181,8 @@ export function browserCloudProjects(
         // takes no projects away, where the project is still there.
         if (response.status === 404 && said === "notFound") return "missing";
         if (response.status === 409 && said === "hasRepository") return "hasRepository";
+        const refusal = response.status === 409 ? refusalOf(answer) : undefined;
+        if (refusal) return refusal;
         throw new Error(`The platform answered ${response.status}`);
       }),
   };
