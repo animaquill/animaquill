@@ -50,6 +50,7 @@ import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
+import { SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -301,6 +302,8 @@ export class Workbench {
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
   readonly chat: ChatSession;
+  /** Where the settings of this window are, see `SettingsNav`. */
+  readonly settingsNav = new SettingsNav();
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -1113,6 +1116,12 @@ export class Workbench {
   /** Whether the explorer lists a resource, which is where `revealResource` goes. */
   canRevealResource(id: string): boolean {
     return nodeOfResource(id) !== undefined && this.panels.get("explorer") !== undefined;
+  }
+
+  /** Opens the settings at a place, such as a service of AI from the chat. */
+  openSettings(place: SettingsPlace): void {
+    this.settingsNav.go(place);
+    this.layout.openPanel("settings");
   }
 
   /** Shows a resource in the explorer, from a tab that finds and uses resources. */

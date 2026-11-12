@@ -1,8 +1,9 @@
+import { enabledModelsOf } from "@animaquill/agent";
 import { checkPack, type ModelPack, type PackProblem } from "@animaquill/tools";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import settingsStyles from "./AiServicesSettings.module.css";
+import settingsStyles from "./AiSettings.module.css";
 import styles from "./ModelPacks.module.css";
 import { PackDialog, type PackDialogChoice, type PackDialogProps } from "./PackDialog.tsx";
 import { PackViewer, type PackViewerProps } from "./PackViews.tsx";
@@ -133,7 +134,11 @@ export function ModelPacksSettings() {
 
   const view = (id: string) => setViewing({ view: "details", pack: id });
 
-  const services = settings.services.filter(({ model }) => model !== "");
+  // Each model that is on, with the service it is on in: once, as the choice is by model.
+  const services = enabledModelsOf(settings).map((model) => ({
+    model,
+    name: settings.services.find(({ enabled }) => enabled.includes(model))?.name ?? "",
+  }));
   // Hidden packs show only when people ask, or where one is chosen.
   const shown = (pack: ModelPack, chosen?: string) =>
     !pack.hidden || settings.showHiddenPacks === true || pack.id === chosen;
@@ -148,7 +153,7 @@ export function ModelPacksSettings() {
         const automatic = packs.choose(service.model, undefined);
         const now = chat.choiceFor(service.model);
         return (
-          <div key={service.id} data-testid="pack-service">
+          <div key={service.model} data-testid="pack-service">
             <label className={styles.service}>
               <span title={service.model}>
                 {service.name} · {service.model}

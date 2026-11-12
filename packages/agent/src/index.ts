@@ -3,6 +3,8 @@
  * `@animaquill/tools`, which run the same commands people use. The library that talks to services is behind `pi.ts`, which is loaded on
  * demand: import only its types from here.
  */
+import type { ListedModel } from "./model-discovery.ts";
+import type { Endpoint, ModelTest } from "./pi.ts";
 import type { Protocol } from "./services.ts";
 
 export {
@@ -32,6 +34,7 @@ export type {
   CallSettings,
   Endpoint,
   FakeAnswer,
+  ModelTest,
   FakeEndpoint,
   Relayed,
   ToolOutput,
@@ -39,24 +42,47 @@ export type {
 } from "./pi.ts";
 export { HIDDEN_KEY, withoutKeys } from "./secrets.ts";
 export {
+  AI_SETTINGS_VERSION,
+  DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_TOOL_CALLS,
   EMPTY_AI_SETTINGS,
-  PROTOCOLS,
-  SERVICE_KINDS,
   TOOL_CALL_LIMITS,
+  enabledCountOf,
+  enabledModelsOf,
+  isEnabled,
+  readAiSettings,
+  settledDefault,
+  writeAiSettings,
+  type AiSettings,
+  type AiSettingsReading,
+  type CustomModel,
+  type KeptSettings,
+  type ModelRef,
+  type ServiceConfig,
+} from "./ai-settings.ts";
+export {
+  bulkActions,
+  filterModels,
+  isLastEnabled,
+  type BulkActions,
+  type ModelRow,
+} from "./enabled-models.ts";
+export { parseListedModels, type ListedModel, type ReasoningLevel } from "./model-discovery.ts";
+export {
+  PROTOCOLS,
+  SERVICE_GROUPS,
+  SERVICE_KINDS,
   checkBaseUrl,
   failureOf,
   kindOf,
   listModels,
-  readAiSettings,
-  type AiSettings,
+  recommendedOf,
   type FailureKind,
-  type ListedModel,
   type ModelList,
   type Protocol,
   type Route,
-  type ServiceConfig,
   type ServiceFailure,
+  type ServiceGroup,
   type ServiceKind,
 } from "./services.ts";
 
@@ -64,7 +90,17 @@ export {
 export async function knownModels(
   catalog: string | undefined,
   protocol: Protocol,
-): Promise<readonly { readonly id: string; readonly name: string }[]> {
+): Promise<readonly ListedModel[]> {
   const pi = await import("./pi.ts");
   return pi.knownModels(catalog, protocol);
+}
+
+/** Asks a model for a word, to see that it can be reached: see `testModel` of `pi.ts`. */
+export async function testModel(
+  endpoint: Endpoint,
+  key: string | undefined,
+  options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+): Promise<ModelTest> {
+  const pi = await import("./pi.ts");
+  return pi.testModel(endpoint, key, options);
 }

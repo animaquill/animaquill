@@ -1,3 +1,4 @@
+import { enabledModelsOf } from "@animaquill/agent";
 import {
   comparePacks,
   previewOf,
@@ -48,7 +49,7 @@ export function PackViewer(props: PackViewerProps) {
   const snapshot = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
-  const models = [...new Set(settings.services.map(({ model }) => model).filter(Boolean))];
+  const models = enabledModelsOf(settings);
   const [view, setView] = useState<PackView>(props.view);
   const [id, setId] = useState(props.pack);
   const [other, setOther] = useState(props.other ?? props.pack);

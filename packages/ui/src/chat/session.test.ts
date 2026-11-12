@@ -124,7 +124,8 @@ describe("the chat", () => {
     const id = ai.add("deepseek", "DeepSeek") as string;
     await chat.send("你好");
     expect(chat.getSnapshot().hold).toBe("noModel");
-    ai.update(id, { model: "deepseek-chat", route: "relay" });
+    ai.setEnabled(id, "deepseek-chat", true);
+    ai.update(id, { route: "relay" });
     // Nowhere to relay to, as on this computer.
     await chat.send("你好");
     expect(chat.getSnapshot().hold).toBe("relayMissing");
@@ -149,15 +150,14 @@ describe("the chat", () => {
     try {
       const signedOut = setup({ relay: RELAY, account: accountIn("signedOut") });
       const kimi = signedOut.ai.add("moonshot", "Kimi") as string;
-      signedOut.ai.update(kimi, { model: "kimi-k2" });
-      expect(signedOut.ai.current?.route).toBe("relay");
+      signedOut.ai.setEnabled(kimi, "kimi-k2", true);
+      expect(signedOut.ai.defaultModel()?.service.route).toBe("relay");
       await signedOut.chat.send("你好");
       expect(signedOut.chat.getSnapshot().hold).toBe("relaySignIn");
       expect(sent).toEqual([]);
 
       const { ai, chat } = setup({ relay: RELAY, account: accountIn("signedIn") });
-      const id = ai.add("moonshot", "Kimi") as string;
-      ai.update(id, { model: "kimi-k2" });
+      const id = ai.add("moonshot", "Kimi", { enabled: ["kimi-k2"] }) as string;
       await ai.setKey(id, "sk-moonshot-0123456789");
       const outcome = await chat.send("你好");
       expect(outcome).toMatchObject({ end: "done", relayed: true });
@@ -177,6 +177,37 @@ describe("the chat", () => {
       await chat.send("直连");
       expect(sent.at(-1)?.url).toBe("https://api.moonshot.cn/v1/chat/completions");
       expect(sent.at(-1)?.headers.has("x-from-the-page")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends to the default model, with the reasoning people set for it", async () => {
+    const sent: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(
+        `data: ${JSON.stringify({
+          id: "c",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "deepseek-v4-pro",
+          choices: [{ index: 0, delta: { content: "好" }, finish_reason: "stop" }],
+        })}\n\ndata: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    try {
+      const { ai, chat } = setup();
+      ai.add("anthropic", "Anthropic", { enabled: ["claude-opus-5-5"] });
+      const deepseek = ai.add("deepseek", "DeepSeek", { enabled: ["deepseek-flash"] }) as string;
+      ai.setDefault({ service: deepseek, model: "deepseek-v4-pro" });
+      ai.setReasoning("deepseek-v4-pro", "high");
+      await ai.setKey(deepseek, "sk-deepseek-0123456789");
+      expect(await chat.send("你好")).toMatchObject({ end: "done" });
+      expect(sent.map(({ url }) => url)).toEqual(["https://api.deepseek.com/chat/completions"]);
+      expect(sent[0]?.body).toMatchObject({ model: "deepseek-v4-pro" });
+      expect(JSON.stringify(sent[0]?.body)).toMatch(/"(reasoning_effort|thinking)"/);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -352,24 +383,26 @@ describe("AI services", () => {
   it("start straight where there is no relay, also those that need one", () => {
     const withRelay = setup({ relay: RELAY }).ai;
     withRelay.add("zhipu", "智谱");
-    expect(withRelay.current?.route).toBe("relay");
+    expect(withRelay.getSnapshot().services[0]?.route).toBe("relay");
     expect(withRelay.canRelay).toBe(true);
     const here = setup().ai;
     here.add("zhipu", "智谱");
-    expect(here.current?.route).toBe("direct");
+    expect(here.getSnapshot().services[0]?.route).toBe("direct");
     expect(here.canRelay).toBe(false);
   });
 
-  it("start with what their kind has, and the first one is the one in use", () => {
+  it("start with what their kind has, and the first model on is the default", () => {
     const { ai } = setup();
     const id = ai.add("google", "Gemini") as string;
-    ai.add("deepseek", "DeepSeek");
-    expect(ai.current).toMatchObject({
+    expect(ai.serviceOf(id)).toMatchObject({
       id,
       baseUrl: "https://generativelanguage.googleapis.com/v1beta",
       route: "direct",
-      model: "",
+      enabled: [],
     });
+    expect(ai.defaultModel()).toBeUndefined();
+    const deepseek = ai.add("deepseek", "DeepSeek", { enabled: ["deepseek-flash"] }) as string;
+    expect(ai.defaultModel()).toMatchObject({ service: { id: deepseek }, model: "deepseek-flash" });
     ai.setMaxToolCalls(9999);
     expect(ai.getSnapshot().maxToolCalls).toBe(500);
   });

@@ -1,8 +1,74 @@
+/* The pages of the settings on the left, a page on the right; one level at a time where narrow. */
+/* The tab is the container whose width the queries below ask about; what changes is inside it. */
 .panel {
-  max-width: 640px;
+  height: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  container-type: size;
+  container-name: settings;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  height: 100%;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 0;
+  overflow: auto;
+  border-right: 1px solid var(--aq-border);
+}
+
+.navItem {
+  padding: 6px 14px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+
+.navItem:hover {
+  background: var(--aq-bg-hover);
+}
+
+.navItem[aria-current="page"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+  border-left-color: var(--aq-accent);
+}
+
+.page {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scroll {
+  box-sizing: border-box;
+  max-width: 720px;
+  height: 100%;
   padding: 12px 16px;
   overflow: auto;
-  font-size: 12px;
+}
+
+.back {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 8px -4px;
+  padding: 2px 4px;
+  color: var(--aq-match);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
 }
 
 .group {
@@ -45,4 +111,51 @@
 
 .pending {
   color: var(--aq-trial);
+}
+
+/* Middling, as in the middle of the window beside other tabs: the pages across the top, so that a
+   page has the width. */
+@container settings (min-width: 641px) and (max-width: 940px) {
+  .layout {
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav {
+    flex-direction: row;
+    padding: 0 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--aq-border);
+  }
+
+  .navItem {
+    padding: 7px 12px;
+    border-bottom: 2px solid transparent;
+    border-left: 0;
+  }
+
+  .navItem[aria-current="page"] {
+    background: none;
+    border-bottom-color: var(--aq-accent);
+  }
+}
+
+/* Narrow: the list of pages, or a page, never both. */
+@container settings (max-width: 640px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout[data-depth="0"] .page,
+  .layout:not([data-depth="0"]) .nav {
+    display: none;
+  }
+
+  .nav {
+    border-right: 0;
+  }
+
+  .back {
+    display: inline-flex;
+  }
 }

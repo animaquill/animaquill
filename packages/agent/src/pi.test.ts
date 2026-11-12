@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatEntry, ToolEntry } from "./entries.ts";
-import { runTask, type Endpoint, type FakeEndpoint, type RunEvent, type ToolSpec } from "./pi.ts";
+import {
+  knownModels,
+  runTask,
+  testModel,
+  type Endpoint,
+  type FakeEndpoint,
+  type RunEvent,
+  type ToolSpec,
+} from "./pi.ts";
 
 const echo: ToolSpec = {
   name: "marker_add",
@@ -285,5 +293,68 @@ describe("a service through the relay of the platform", () => {
     expect(result).toEqual({ end: "done" });
     expect(sent[0]?.url).toBe("https://api.deepseek.com/chat/completions");
     expect(sent[0]?.headers.has("x-animaquill")).toBe(false);
+  });
+
+  it("tests a model with a word, the way the chat goes, and says what went wrong without the key", async () => {
+    const KEY = "sk-moonshot-0123456789SECRET";
+    const sent: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+    let refuse = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({
+        url: input instanceof Request ? input.url : String(input),
+        headers: new Headers(init?.headers ?? {}),
+        body: JSON.parse(String(init?.body ?? "{}")),
+      });
+      if (refuse) {
+        return new Response(JSON.stringify({ error: { message: `Invalid key ${KEY}` } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(streamed(["OK"]), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const endpoint: Endpoint = {
+      service: "moonshot",
+      protocol: "openai-completions",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k3",
+      catalog: "moonshotai-cn",
+      relay: {
+        baseUrl: "https://platform.example/api/llm-relay/https/api.moonshot.cn/v1",
+        headers: { "x-animaquill": "1" },
+      },
+    };
+    const passed = await testModel(endpoint, KEY);
+    expect(passed).toMatchObject({ ok: true, text: "OK" });
+    expect(sent[0]?.url).toBe(
+      "https://platform.example/api/llm-relay/https/api.moonshot.cn/v1/chat/completions",
+    );
+    expect(sent[0]?.headers.get("x-animaquill")).toBe("1");
+    expect(sent[0]?.body).toMatchObject({ max_tokens: 16 });
+    expect(JSON.stringify(sent[0]?.body.messages)).toContain("Reply with OK only.");
+
+    refuse = true;
+    const failed = await testModel(endpoint, KEY);
+    expect(failed.ok).toBe(false);
+    expect(!failed.ok && failed.error).toMatch(/401/);
+    expect(JSON.stringify(failed)).not.toContain("SECRET");
+    // No retry: one request each.
+    expect(sent).toHaveLength(2);
+  });
+
+  it("knows what pi knows of models: how much they read, price, thinking and pictures", async () => {
+    const models = await knownModels("anthropic", "anthropic-messages");
+    const opus = models.find(({ id }) => id === "claude-opus-5-5");
+    expect(opus).toMatchObject({
+      name: expect.any(String),
+      contextWindow: expect.any(Number),
+      cost: { input: expect.any(Number), output: expect.any(Number) },
+      reasoning: true,
+      image: true,
+    });
+    expect(opus?.levels).toContain("high");
   });
 });

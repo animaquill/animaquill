@@ -44,6 +44,8 @@ pnpm e2e     # 浏览器测试
 
 [GNU Affero General Public License v3.0](LICENSE)
 
+部分代码改编自 [pi-web](https://github.com/agegr/pi-web)（MIT），文件开头写明出处，许可全文见 [LICENSES/pi-web.txt](LICENSES/pi-web.txt)。
+
 ## 名称和图标
 
 “AnimaQuill”这个名称和图标是项目的商标。代码按 AGPL-3.0 许可证可以自由使用、修改和分发；二次发布修改后的版本时，请换掉名称和图标，不要让人误以为是官方版本。

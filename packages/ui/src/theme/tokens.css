@@ -21,6 +21,8 @@
   --aq-danger: #c72e2e;
   /* What takes something away, as text on a dark background. */
   --aq-danger-text: #ff8a8a;
+  /* What worked, such as a test of a connection. */
+  --aq-success: #4cc38a;
   --aq-bg-input: #313131;
   --aq-shadow: 0 2px 8px #0000008c;
   --aq-scrollbar: #79797966;

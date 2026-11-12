@@ -1,3 +1,4 @@
+import { parseListedModels, type ListedModel } from "./model-discovery.ts";
 import { withoutKeys } from "./secrets.ts";
 
 /**
@@ -46,7 +47,18 @@ export interface ServiceKind {
   readonly tested: boolean;
   /** People give the address, as for a server of their own. */
   readonly custom?: true;
+  /** Where adding a service lists it. */
+  readonly group: ServiceGroup;
+  /**
+   * The models a new service of this kind starts with, best first: its newest flagship and a
+   * cheaper one, as far as pi knows them (see `recommendedOf`). Kinds without a catalog have none.
+   */
+  readonly recommended?: readonly string[];
 }
+
+/** How adding a service groups the kinds: the common ones, those in China, more, one's own. */
+export type ServiceGroup = "common" | "china" | "more" | "own";
+export const SERVICE_GROUPS: readonly ServiceGroup[] = ["common", "china", "more", "own"];
 
 /**
  * The kinds of services, and how each is reached by default: tested 2026-11-09 from Chrome with a
@@ -62,6 +74,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "anthropic",
     route: "direct",
     tested: true,
+    group: "common",
+    recommended: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
   },
   {
     id: "openai",
@@ -71,6 +85,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "openai",
     route: "direct",
     tested: false,
+    group: "common",
+    recommended: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],
   },
   {
     id: "google",
@@ -80,6 +96,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "google",
     route: "direct",
     tested: true,
+    group: "common",
+    recommended: ["gemini-4-argon", "gemini-3.8-flash"],
   },
   {
     id: "deepseek",
@@ -89,6 +107,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "deepseek",
     route: "direct",
     tested: true,
+    group: "common",
+    recommended: ["deepseek-v4-pro", "deepseek-flash"],
   },
   {
     id: "dashscope",
@@ -97,6 +117,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     route: "direct",
     tested: true,
+    group: "china",
   },
   {
     id: "siliconflow",
@@ -105,6 +126,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     baseUrl: "https://api.siliconflow.cn/v1",
     route: "direct",
     tested: true,
+    group: "china",
   },
   {
     id: "qianfan",
@@ -113,6 +135,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     baseUrl: "https://qianfan.baidubce.com/v2",
     route: "direct",
     tested: true,
+    group: "china",
   },
   {
     id: "openrouter",
@@ -122,6 +145,12 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "openrouter",
     route: "direct",
     tested: false,
+    group: "common",
+    recommended: [
+      "~openai/gpt-sol-latest",
+      "~google/gemini-pro-latest",
+      "~deepseek/deepseek-pro-latest",
+    ],
   },
   {
     id: "xai",
@@ -131,6 +160,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "xai",
     route: "direct",
     tested: true,
+    group: "more",
+    recommended: ["grok-4.7"],
   },
   {
     id: "zai",
@@ -140,6 +171,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "zai",
     route: "direct",
     tested: true,
+    group: "more",
+    recommended: ["glm-5.3", "glm-5.3-flash"],
   },
   {
     id: "groq",
@@ -149,6 +182,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "groq",
     route: "direct",
     tested: true,
+    group: "more",
+    recommended: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
   },
   {
     id: "mistral",
@@ -158,6 +193,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "mistral",
     route: "direct",
     tested: true,
+    group: "more",
+    recommended: ["mistral-large-latest", "mistral-medium-latest"],
   },
   {
     id: "together",
@@ -167,6 +204,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "together",
     route: "direct",
     tested: true,
+    group: "more",
+    recommended: ["moonshotai/Kimi-K3", "zai-org/GLM-5.3"],
   },
   {
     id: "huggingface",
@@ -176,6 +215,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "huggingface",
     route: "direct",
     tested: true,
+    group: "more",
+    recommended: ["deepseek-ai/DeepSeek-V4-Pro", "moonshotai/Kimi-K2.6"],
   },
   {
     id: "cerebras",
@@ -185,6 +226,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "cerebras",
     route: "direct",
     tested: false,
+    group: "more",
+    recommended: ["gpt-oss-120b", "qwen-3.8-27b"],
   },
   {
     id: "volcengine",
@@ -193,6 +236,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     route: "direct",
     tested: false,
+    group: "china",
   },
   {
     id: "moonshot",
@@ -202,6 +246,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "moonshotai-cn",
     route: "relay",
     tested: true,
+    group: "china",
+    recommended: ["kimi-k3.1-pro", "kimi-k3"],
   },
   {
     id: "zhipu",
@@ -210,6 +256,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     route: "relay",
     tested: true,
+    group: "china",
   },
   {
     id: "minimax",
@@ -219,6 +266,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "minimax-cn",
     route: "relay",
     tested: true,
+    group: "china",
+    recommended: ["MiniMax-M3", "MiniMax-M3.1-Flash"],
   },
   {
     id: "fireworks",
@@ -228,6 +277,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "fireworks",
     route: "relay",
     tested: true,
+    group: "more",
+    recommended: ["accounts/fireworks/models/kimi-k3", "accounts/fireworks/models/glm-5p3"],
   },
   {
     id: "nvidia",
@@ -237,6 +288,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     catalog: "nvidia",
     route: "relay",
     tested: true,
+    group: "more",
+    recommended: ["z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash"],
   },
   {
     id: "openai-compatible",
@@ -246,6 +299,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     route: "direct",
     tested: false,
     custom: true,
+    group: "own",
   },
   {
     id: "anthropic-compatible",
@@ -255,99 +309,12 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     route: "direct",
     tested: false,
     custom: true,
+    group: "own",
   },
 ];
 
 export const kindOf = (id: string): ServiceKind | undefined =>
   SERVICE_KINDS.find((kind) => kind.id === id);
-
-/** A service people set up. Its key is kept apart, by `id`. */
-export interface ServiceConfig {
-  readonly id: string;
-  readonly kind: string;
-  /** What people call it, such as "公司的 DeepSeek". */
-  readonly name: string;
-  readonly baseUrl: string;
-  /** The model the chat uses. Empty until people pick one. */
-  readonly model: string;
-  readonly route: Route;
-}
-
-/** Everything about AI that people set up, apart from keys. Shared by all windows. */
-export interface AiSettings {
-  readonly services: readonly ServiceConfig[];
-  /** The service the chat uses. */
-  readonly current: string | undefined;
-  /** How many tools one task can call at most, so that AI stuck in a loop stops on its own. */
-  readonly maxToolCalls: number;
-  /**
-   * The settings list the model packs that are hidden (`ModelPack.hidden`), such as the words of
-   * toolset 2026.1 to compare with, so that people can choose them for a model. A preference of
-   * what to see only: which pack a model has is `packFor`.
-   */
-  readonly showHiddenPacks?: true;
-  /**
-   * The model pack people chose for a model, by the name of the model as services have it: for every
-   * service that has it. A model without one gets the pack that is for it, see `choosePack`.
-   */
-  readonly packFor?: Readonly<Record<string, string>>;
-}
-
-export const DEFAULT_MAX_TOOL_CALLS = 50;
-export const TOOL_CALL_LIMITS = { min: 1, max: 500 } as const;
-
-export const EMPTY_AI_SETTINGS: AiSettings = {
-  services: [],
-  current: undefined,
-  maxToolCalls: DEFAULT_MAX_TOOL_CALLS,
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-function readService(value: unknown): ServiceConfig | undefined {
-  if (!isRecord(value)) return undefined;
-  const { id, kind, name, baseUrl, model, route } = value;
-  if (typeof id !== "string" || typeof kind !== "string" || !kindOf(kind)) return undefined;
-  if (typeof name !== "string" || typeof baseUrl !== "string" || typeof model !== "string") {
-    return undefined;
-  }
-  if (route !== "direct" && route !== "relay") return undefined;
-  return { id, kind, name, baseUrl, model, route };
-}
-
-/** Reads what was saved. Services that cannot be read are left out, not the rest of them. */
-export function readAiSettings(value: unknown): AiSettings | undefined {
-  if (!isRecord(value) || !Array.isArray(value.services)) return undefined;
-  const services = value.services.map(readService).filter((service) => service !== undefined);
-  const current =
-    typeof value.current === "string" && services.some(({ id }) => id === value.current)
-      ? value.current
-      : services[0]?.id;
-  const limit = value.maxToolCalls;
-  const maxToolCalls =
-    typeof limit === "number" && Number.isInteger(limit)
-      ? Math.min(TOOL_CALL_LIMITS.max, Math.max(TOOL_CALL_LIMITS.min, limit))
-      : DEFAULT_MAX_TOOL_CALLS;
-  const packFor = readPackFor(value.packFor);
-  return {
-    services,
-    current,
-    maxToolCalls,
-    ...(value.showHiddenPacks === true && { showHiddenPacks: true }),
-    ...(packFor && { packFor }),
-  };
-}
-
-/** People's choices of packs, as far as they are names of models and ids of packs. */
-function readPackFor(value: unknown): Readonly<Record<string, string>> | undefined {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value).filter(
-    ([model, pack]) =>
-      model !== "" && typeof pack === "string" && /^[a-z0-9-]+\/[a-z0-9-]+$/.test(pack),
-  );
-  return entries.length > 0 ? Object.fromEntries(entries as [string, string][]) : undefined;
-}
 
 /** Only https, and plain http for this computer and the local network, where servers of one's own are. */
 export function checkBaseUrl(text: string): string | undefined {
@@ -395,11 +362,6 @@ export function failureOf(
   return { kind, message: clean };
 }
 
-export interface ListedModel {
-  readonly id: string;
-  readonly name?: string;
-}
-
 export type ModelList =
   | { readonly ok: true; readonly models: readonly ListedModel[] }
   | { readonly ok: false; readonly failure: ServiceFailure };
@@ -407,19 +369,7 @@ export type ModelList =
 interface ListRequest {
   readonly url: string;
   readonly headers: Record<string, string>;
-  readonly read: (body: unknown) => ListedModel[];
 }
-
-const idsIn = (body: unknown, field: string): ListedModel[] => {
-  const list = isRecord(body) ? body[field] : undefined;
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((item) => {
-    if (!isRecord(item)) return [];
-    const id = typeof item.id === "string" ? item.id : undefined;
-    const name = typeof item.display_name === "string" ? item.display_name : undefined;
-    return id ? [{ id, ...(name && name !== id && { name }) }] : [];
-  });
-};
 
 function listRequest(protocol: Protocol, baseUrl: string, key: string): ListRequest {
   const bearer: Record<string, string> = key ? { authorization: `Bearer ${key}` } : {};
@@ -432,29 +382,17 @@ function listRequest(protocol: Protocol, baseUrl: string, key: string): ListRequ
           "anthropic-version": "2023-06-01",
           "anthropic-dangerous-direct-browser-access": "true",
         },
-        read: (body) => idsIn(body, "data"),
       };
     case "google-generative-ai":
       return {
         url: `${baseUrl}/models?pageSize=1000`,
         headers: key ? { "x-goog-api-key": key } : {},
-        read: (body) => {
-          const list = isRecord(body) && Array.isArray(body.models) ? body.models : [];
-          return list.flatMap((item: unknown) => {
-            if (!isRecord(item) || typeof item.name !== "string") return [];
-            const methods = item.supportedGenerationMethods;
-            if (Array.isArray(methods) && !methods.includes("generateContent")) return [];
-            const id = item.name.replace(/^models\//, "");
-            const name = typeof item.displayName === "string" ? item.displayName : undefined;
-            return [{ id, ...(name && { name }) }];
-          });
-        },
       };
     case "mistral-conversations":
-      return { url: `${baseUrl}/v1/models`, headers: bearer, read: (body) => idsIn(body, "data") };
+      return { url: `${baseUrl}/v1/models`, headers: bearer };
     case "openai-responses":
     case "openai-completions":
-      return { url: `${baseUrl}/models`, headers: bearer, read: (body) => idsIn(body, "data") };
+      return { url: `${baseUrl}/models`, headers: bearer };
   }
 }
 
@@ -481,11 +419,19 @@ export async function listModels(
       const body = await response.text().catch(() => "");
       return { ok: false, failure: failureOf(`${response.status} ${body.slice(0, 500)}`, [key]) };
     }
-    const models = request.read(await response.json());
-    const sorted = models.toSorted((a, b) => a.id.localeCompare(b.id));
-    return { ok: true, models: sorted };
+    return { ok: true, models: parseListedModels(await response.json()) };
   } catch (error) {
     const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     return { ok: false, failure: failureOf(message, [key]) };
   }
+}
+
+/**
+ * The models a new service starts with: those of its kind's `recommended` that the service has, or
+ * else the first three it has, for people to choose from afterwards.
+ */
+export function recommendedOf(kind: ServiceKind, models: readonly ListedModel[]): string[] {
+  const ids = new Set(models.map((model) => model.id));
+  const listed = (kind.recommended ?? []).filter((id) => ids.has(id));
+  return listed.length > 0 ? listed : models.slice(0, 3).map((model) => model.id);
 }

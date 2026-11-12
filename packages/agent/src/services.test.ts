@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { withoutKeys } from "./secrets.ts";
 import {
-  DEFAULT_MAX_TOOL_CALLS,
+  SERVICE_GROUPS,
   SERVICE_KINDS,
   checkBaseUrl,
   failureOf,
+  kindOf,
   listModels,
-  readAiSettings,
+  recommendedOf,
 } from "./services.ts";
 
 const KEY = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -58,28 +59,24 @@ describe("services", () => {
     expect(checkBaseUrl("not a url")).toBeUndefined();
   });
 
-  it("read back what was saved, leaving out what cannot be read", () => {
-    const read = readAiSettings({
-      services: [
-        {
-          id: "a",
-          kind: "anthropic",
-          name: "A",
-          baseUrl: "https://x",
-          model: "m",
-          route: "direct",
-        },
-        { id: "b", kind: "nope", name: "B", baseUrl: "https://x", model: "", route: "direct" },
-        { id: "c", kind: "deepseek", name: "C", baseUrl: "https://x", model: "", key: KEY },
-      ],
-      current: "b",
-      maxToolCalls: 100000,
-    });
-    expect(read?.services.map(({ id }) => id)).toEqual(["a"]);
-    expect(read?.current).toBe("a");
-    expect(read?.maxToolCalls).toBe(500);
-    expect(readAiSettings({ services: [] })?.maxToolCalls).toBe(DEFAULT_MAX_TOOL_CALLS);
-    expect(readAiSettings("x")).toBeUndefined();
+  it("each kind is in one of the groups that adding a service shows", () => {
+    for (const kind of SERVICE_KINDS) expect(SERVICE_GROUPS).toContain(kind.group);
+    expect(SERVICE_KINDS.filter((kind) => kind.group === "own").every((kind) => kind.custom)).toBe(
+      true,
+    );
+    // Only kinds whose models pi knows recommend some.
+    for (const kind of SERVICE_KINDS) if (kind.recommended) expect(kind.catalog).toBeDefined();
+  });
+
+  it("start new services with the recommended models they have, else the first three", () => {
+    const anthropic = kindOf("anthropic");
+    const dashscope = kindOf("dashscope");
+    if (!anthropic || !dashscope) throw new Error("kinds missing");
+    const models = ["claude-haiku-5-5", "claude-opus-5-5", "claude-x"].map((id) => ({ id }));
+    expect(recommendedOf(anthropic, models)).toEqual(["claude-opus-5-5", "claude-haiku-5-5"]);
+    const listed = ["qwen-a", "qwen-b", "qwen-c", "qwen-d"].map((id) => ({ id }));
+    expect(recommendedOf(dashscope, listed)).toEqual(["qwen-a", "qwen-b", "qwen-c"]);
+    expect(recommendedOf(dashscope, [])).toEqual([]);
   });
 
   it("list their models, and say why when they cannot", async () => {

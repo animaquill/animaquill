@@ -1,4 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
+import { addAnthropic, openSettingsPage } from "./ai-support.ts";
 import { clips } from "./property-helpers.ts";
 import { content, expect, tab, test } from "./support.ts";
 
@@ -12,26 +13,14 @@ const ANTHROPIC = "https://api.anthropic.com/**";
 
 const chat = (page: Page) => content(page, "chat");
 
-async function chooseFrom(page: Page, menu: string, item: string) {
-  await page.locator("header").getByRole("button", { name: menu, exact: true }).click();
-  await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
-}
-
 /** Sets up Anthropic with a key and a model, as people do in the settings. */
 async function setUpService(page: Page) {
-  await chooseFrom(page, "视图", "设置");
-  const settings = content(page, "settings");
-  await settings.getByRole("combobox", { name: "服务类型" }).selectOption("anthropic");
-  await settings.getByRole("button", { name: "添加服务" }).click();
-  const service = settings.getByTestId("ai-service");
-  await service.getByLabel("Key").fill(KEY);
-  await service.getByLabel("Key").press("Enter");
-  await expect(service.getByLabel("Key")).toHaveAttribute("placeholder", "已保存（不显示）");
-  await expect(service.getByLabel("Key")).toHaveValue("");
-  await service.getByLabel("模型").fill("claude-test");
-  await service.getByLabel("模型").press("Enter");
-  await expect(settings.getByTestId("ai-keys-where")).toContainText("animaquill-keys");
+  await addAnthropic(page, KEY, "claude-test");
+  await expect(content(page, "settings").getByTestId("ai-keys-where")).toContainText(
+    "animaquill-keys",
+  );
   await tab(page, "chat").click();
+  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
   await expect(chat(page).getByRole("textbox", { name: /给 AI 发消息/ })).toBeVisible();
 }
 
@@ -386,7 +375,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
     return answer(route, [{ text: "好的。" }]);
   });
   await setUpService(page);
-  await chooseFrom(page, "视图", "设置");
+  await openSettingsPage(page, "模型适配包");
   const settings = content(page, "settings");
   const packs = settings.getByTestId("model-packs");
   const choice = packs.getByRole("combobox", { name: "claude-test 用的适配包" });
@@ -413,7 +402,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
     "Call it at the start of a task",
   );
   // Back to the one recommended: the conversation keeps its words, also after a reload.
-  await chooseFrom(page, "视图", "设置");
+  await openSettingsPage(page, "模型适配包");
   await choice.selectOption({ label: "自动：通用（没有专门的适配包）" });
   await page.reload();
   await tab(page, "chat").click();

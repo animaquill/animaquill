@@ -1,3 +1,4 @@
+import { enabledModelsOf } from "@animaquill/agent";
 import {
   callChanges,
   choosePack,
@@ -397,7 +398,7 @@ function useModels(pack: ModelPack | undefined, mode: PackDialogProps["mode"]) {
   const installed = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
   return useMemo(() => {
     if (!pack || mode === "view") return [];
-    const models = [...new Set(settings.services.map(({ model }) => model).filter(Boolean))];
+    const models = enabledModelsOf(settings);
     const others = installed.packs.filter(({ id }) => id !== pack.id);
     const all = [...others, pack];
     return models

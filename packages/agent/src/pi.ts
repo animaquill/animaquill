@@ -14,6 +14,7 @@ import {
 import {
   clampThinkingLevel,
   createModels,
+  getSupportedThinkingLevels,
   createProvider,
   fauxAssistantMessage,
   fauxProvider,
@@ -36,6 +37,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type { CallSettings, TextsUsed } from "@animaquill/tools";
 import type { AnswerEnd, AssistantEntry, ChatEntry, PackNote, ToolEntry } from "./entries.ts";
+import type { ListedModel, ReasoningLevel } from "./model-discovery.ts";
 import { withoutKeys } from "./secrets.ts";
 import type { Protocol } from "./services.ts";
 
@@ -248,15 +250,23 @@ async function catalogOf(name: string | undefined): Promise<Catalog> {
   }
 }
 
-/** The models pi knows of for a service, for people to pick from. */
+/** The models pi knows of for a service, with what it knows of each, for people to pick from. */
 export async function knownModels(
   catalog: string | undefined,
   protocol: Protocol,
-): Promise<readonly { readonly id: string; readonly name: string }[]> {
+): Promise<readonly ListedModel[]> {
   const models = Object.values(await catalogOf(catalog));
   return models
-    .filter((model) => model.api === protocol)
-    .map(({ id, name }) => ({ id, name }))
+    .filter((model) => model.api === protocol && (model.type ?? "chat") === "chat")
+    .map((model) => ({
+      id: model.id,
+      name: model.name,
+      contextWindow: model.contextWindow,
+      cost: { input: model.cost.input, output: model.cost.output },
+      reasoning: model.reasoning,
+      image: model.input.includes("image"),
+      levels: getSupportedThinkingLevels(model) as ReasoningLevel[],
+    }))
     .toSorted((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -669,4 +679,79 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   const end = endOf(last);
   if (end === "failed") return { end, error: clean(last.errorMessage ?? "") };
   return { end };
+}
+
+/** How long a test of a model waits for its answer. */
+export const TEST_TIMEOUT_MS = 20_000;
+
+/** What asking a model for a word came to, see `testModel`. */
+export type ModelTest =
+  | { readonly ok: true; readonly ms: number; readonly text: string }
+  | { readonly ok: false; readonly ms: number; readonly error: string };
+
+/**
+ * Asks a model to answer "OK" and nothing else, the way the chat asks it (straight or through the
+ * relay), to see that the key, the address and the model work: at most 16 tokens, no retry, 20
+ * seconds at most. It never throws, and what it says has no key in it.
+ */
+export async function testModel(
+  endpoint: Endpoint,
+  key: string | undefined,
+  options: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
+): Promise<ModelTest> {
+  const started = Date.now();
+  const clean = (text: string) => withoutKeys(text, [key]);
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), options.timeoutMs ?? TEST_TIMEOUT_MS);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeout.signal])
+    : timeout.signal;
+  try {
+    const provider = providerOf(endpoint.service);
+    const model = await modelOf(endpoint, provider);
+    const models = createModels({ identity: IDENTITY });
+    models.setProvider(
+      createProvider({
+        id: provider,
+        name: endpoint.service,
+        baseUrl: endpoint.baseUrl,
+        auth: {
+          apiKey: {
+            name: "key",
+            // Some servers of one's own need no key, and their libraries still want one.
+            resolve: async () => ({ auth: { apiKey: key || "none" } }),
+          },
+        },
+        models: [model],
+        api: API[endpoint.protocol](),
+      }),
+    );
+    const relay = endpoint.relay;
+    const message = await models.completeSimple(
+      relay ? { ...model, baseUrl: relay.baseUrl } : model,
+      { messages: [{ role: "user", content: "Reply with OK only.", timestamp: Date.now() }] },
+      {
+        maxTokens: 16,
+        maxRetries: 0,
+        cacheRetention: "none",
+        signal,
+        ...(relay && { headers: { ...relay.headers } }),
+      },
+    );
+    const ms = Date.now() - started;
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      const said = message.errorMessage ?? "";
+      return {
+        ok: false,
+        ms,
+        error: clean(timeout.signal.aborted ? `timeout after ${ms} ms ${said}`.trim() : said),
+      };
+    }
+    return { ok: true, ms, text: clean(textOf(message.content)).trim().slice(0, 120) };
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    return { ok: false, ms: Date.now() - started, error: clean(message) };
+  } finally {
+    clearTimeout(timer);
+  }
 }

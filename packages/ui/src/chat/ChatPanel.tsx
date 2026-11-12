@@ -88,7 +88,7 @@ function argsSummaryOf(args: Readonly<Record<string, unknown>>): string {
 /** The chat with AI in the browser, about the open project. */
 export function ChatPanel() {
   const workbench = useWorkbench();
-  const { chat, ai, layout, packs } = workbench;
+  const { chat, ai, packs } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
@@ -104,7 +104,7 @@ export function ChatPanel() {
   useProject(store);
   const [text, setText] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
-  const current = ai.current;
+  const chosen = ai.defaultModel();
 
   // New words come in at the bottom, where people read, unless they scrolled up to read before.
   const stick = useRef(true);
@@ -131,7 +131,10 @@ export function ChatPanel() {
       <div className={styles.panel}>
         <div className={styles.none}>
           <p>{t("chat.noServices")}</p>
-          <button type="button" onClick={() => layout.openPanel("settings")}>
+          <button
+            type="button"
+            onClick={() => workbench.openSettings({ page: "models", depth: 2, adding: true })}
+          >
             {t("chat.setUp")}
           </button>
         </div>
@@ -141,22 +144,11 @@ export function ChatPanel() {
 
   const groups = groupsOf(talk.entries);
   const switches = packSwitches(t, talk.entries, packs.getSnapshot().packs);
-  const packLines = packLinesOf(t, talk.entries, current?.model, chat, packs);
+  const packLines = packLinesOf(t, talk.entries, chosen?.model, chat, packs);
   return (
     <div className={styles.panel} data-testid="chat">
       <div className={styles.bar}>
-        <select
-          aria-label={t("chat.service")}
-          value={settings.current ?? ""}
-          onChange={(event) => ai.choose(event.target.value)}
-        >
-          {settings.services.map((service) => (
-            <option key={service.id} value={service.id}>
-              {service.name}
-            </option>
-          ))}
-        </select>
-        {current && <ModelPicker key={current.id} />}
+        <ModelButton />
         <button
           type="button"
           title={t("chat.newConversation")}
@@ -250,40 +242,33 @@ export function ChatPanel() {
   );
 }
 
-/** The model of the current service, picked from what it has or typed. */
-function ModelPicker() {
+/**
+ * The model new conversations use, by name: picking another is in the settings for now, where this
+ * goes. (The model of each conversation, picked here, comes with the input box redone.)
+ */
+function ModelButton() {
   const { ai } = useWorkbench();
+  const workbench = useWorkbench();
   const { t } = useTranslation();
   useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const service = ai.current;
-  if (!service) return null;
-  const models = ai.modelsFor(service.id);
-  const listId = `chat-models-${service.id}`;
+  const chosen = ai.defaultModel();
+  const name = chosen && (ai.modelOf(chosen.service.id, chosen.model)?.name ?? chosen.model);
   return (
-    <>
-      <input
-        className={styles.model}
-        aria-label={t("chat.model")}
-        list={listId}
-        key={service.model}
-        defaultValue={service.model}
-        placeholder={t("ai.modelPlaceholder")}
-        spellCheck={false}
-        onFocus={() => void ai.loadKnown(service.kind)}
-        onBlur={(event) => {
-          const model = event.target.value.trim();
-          if (model !== service.model) ai.update(service.id, { model });
-        }}
-        onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
-      />
-      <datalist id={listId}>
-        {models.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.name}
-          </option>
-        ))}
-      </datalist>
-    </>
+    <button
+      type="button"
+      className={styles.model}
+      data-testid="chat-model"
+      title={
+        chosen
+          ? t("chat.modelTitle", { service: chosen.service.name, model: name })
+          : t("chat.modelNoneTitle")
+      }
+      onClick={() =>
+        workbench.openSettings({ page: "models", depth: 2, service: chosen?.service.id })
+      }
+    >
+      {name ?? t("chat.modelNone")}
+    </button>
   );
 }
 

@@ -1,7 +1,6 @@
 import {
   Conversation,
   browserSystemPrompt,
-  kindOf,
   readEntry,
   toolSpecsOf,
   type ChatEntry,
@@ -423,25 +422,16 @@ export class ChatSession {
     const fake = this.#options.fake?.();
     if (fake) return { endpoint: fake, key: async () => undefined, model: fake.model ?? "fake" };
     const { ai } = this.#options;
-    const service = ai.current;
-    const kind = service && kindOf(service.kind);
-    if (!service || !kind) return "noService";
-    if (!service.model) return "noModel";
-    if (!service.baseUrl) return "badUrl";
-    const route = ai.routeOf(service);
-    if (typeof route === "string") return route;
+    const chosen = ai.defaultModel();
+    if (!chosen) return ai.getSnapshot().services.length === 0 ? "noService" : "noModel";
+    const { service, model } = chosen;
+    const endpoint = ai.endpointOf(service, model);
+    if (endpoint === undefined) return "noService";
+    if (typeof endpoint === "string") return endpoint;
     // Not known yet is worth a try: the relay says so when nobody is signed in.
-    if (route.relay && this.#options.account?.getSnapshot().status === "signedOut")
+    if (endpoint.relay && this.#options.account?.getSnapshot().status === "signedOut")
       return "relaySignIn";
-    const endpoint: Endpoint = {
-      service: service.kind,
-      protocol: kind.protocol,
-      baseUrl: route.baseUrl,
-      model: service.model,
-      catalog: kind.catalog,
-      ...(route.relay && { relay: route.relay }),
-    };
-    return { endpoint, key: () => ai.keyOf(service.id), model: service.model };
+    return { endpoint, key: () => ai.keyOf(service.id), model };
   }
 
   /** Sends a message, which starts a task. Resolves once the task is over. */
@@ -459,7 +449,8 @@ export class ChatSession {
       return undefined;
     }
     this.#set({ hold: undefined });
-    const maxToolCalls = this.#options.ai.getSnapshot().maxToolCalls;
+    const { maxToolCalls, reasoningFor } = this.#options.ai.getSnapshot();
+    const reasoning = reasoningFor?.[target.model];
     const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
     // Another conversation may have opened meanwhile: this one is no longer on the screen.
     if (this.#snapshot.conversation !== conversation) return undefined;
@@ -469,7 +460,8 @@ export class ChatSession {
       maxToolCalls,
       system: browserSystemPrompt(use.texts),
       tools: (task) => this.#toolsOf(task, caller, use),
-      call: use.call,
+      // How hard the model reasons: as people set it for the model, else as its pack says.
+      call: reasoning === undefined ? use.call : { ...use.call, reasoning },
       stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },
     });
   }
