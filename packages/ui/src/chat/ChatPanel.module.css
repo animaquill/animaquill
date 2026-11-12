@@ -1,4 +1,5 @@
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -856,12 +857,44 @@
   }
 }
 
+/* The model pack of the model under the cursor: which, whose, and another one. */
+.packPart {
+  flex: none;
+  padding: 2px 0 6px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.panel .packRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 12px;
+  text-align: left;
+  background: transparent;
+  border-radius: 0;
+}
+
+.panel .packRow:hover {
+  background: var(--aq-bg-hover);
+}
+
 .packLine {
   display: flex;
   gap: 6px;
   align-items: center;
-  padding: 6px 12px;
-  border-top: 1px solid var(--aq-border);
+  padding: 3px 12px;
+}
+
+.packLine select {
+  flex: 1;
+  min-width: 0;
+}
+
+.packWhen {
+  margin: 2px 12px 0;
+  color: var(--aq-text-muted);
+  font-size: 11px;
 }
 
 .packWhich {

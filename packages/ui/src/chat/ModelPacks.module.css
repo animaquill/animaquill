@@ -121,18 +121,150 @@
   margin-top: 16px;
 }
 
-.service {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px;
-  align-items: center;
-  margin: 4px 0;
+.heading {
+  margin: 14px 0 6px;
+  color: var(--aq-text-strong);
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.service span {
+.headingRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 14px 0 6px;
+}
+
+.headingRow .heading {
+  margin: 0;
+}
+
+.grow {
+  flex: 1;
+}
+
+.primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+/*
+ * Which pack each model uses: one grid for all models, so that their columns line up; a row a
+ * model, two columns where the page is narrow.
+ */
+.table {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.9fr) minmax(150px, 1.3fr) minmax(150px, 1.2fr) max-content;
+  column-gap: 10px;
+  align-items: center;
+}
+
+.modelRow {
+  display: contents;
+}
+
+.modelRow > * {
+  align-self: stretch;
+  padding: 6px 0;
+  border-top: 1px solid var(--aq-border);
+}
+
+.modelName {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.modelName strong {
   overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--aq-text-strong);
   white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.modelName small,
+.modelPack small {
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.modelPack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  align-items: center;
+  align-content: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.modelPack small {
+  flex-basis: 100%;
+}
+
+.modelChoose {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.modelChoose select {
+  width: 100%;
+  min-width: 0;
+}
+
+.modelLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: center;
+}
+
+@container (max-width: 620px) {
+  .table {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .modelChoose,
+  .modelLinks {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+.tag {
+  padding: 0 4px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.tag[data-kind="mine"] {
+  color: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.showHidden {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 10px 0 6px;
+  color: var(--aq-text-strong);
+}
+
+.showHidden input {
+  width: auto;
+  margin: 2px 0 0;
+}
+
+.showHidden small {
+  display: block;
+  color: var(--aq-text-muted);
 }
 
 .list {
@@ -210,12 +342,6 @@
   color: var(--aq-danger-text);
 }
 
-.using {
-  margin: 0 0 6px;
-  color: var(--aq-text-muted);
-  font-size: 12px;
-}
-
 /* The full text a model gets: long, read only. */
 .full pre {
   max-height: 360px;
@@ -283,4 +409,182 @@
 .copy {
   margin-left: 6px;
   font-size: 11px;
+}
+
+/*
+ * The views of packs, one level in from where they were opened: over the chat, or in place of the
+ * page of the settings. A bar with the way back, and what scrolls under it.
+ */
+.layer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--aq-text);
+  background: var(--aq-bg-panel, var(--aq-bg));
+}
+
+.layerBar {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.layerBar h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.layer .layerBack {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  padding: 2px 4px 2px 0;
+  color: var(--aq-match);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.layer .layerBack:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+.layerBody {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 16px;
+  overflow: auto;
+}
+
+/* Over the chat: all of it, under nothing else. */
+.overChat {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.overChat > .layer {
+  flex: 1;
+}
+
+/* What a comparison shows where it is narrow: a card a piece. */
+.narrowBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+}
+
+.narrowBar .agree {
+  margin: 0;
+}
+
+.sideSwitch {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.layer .sideSwitch button {
+  padding: 2px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.layer .sideSwitch button[aria-checked="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.card {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.cardFlagged {
+  border-color: var(--aq-warning);
+}
+
+.cardHead {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 0 4px;
+}
+
+.cardHead strong {
+  min-width: 0;
+  color: var(--aq-text-strong);
+  overflow-wrap: anywhere;
+}
+
+.cardSide + .cardSide {
+  margin-top: 6px;
+}
+
+.who {
+  margin: 0 0 2px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.cardText {
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  color: var(--aq-text);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.layer .sameRow {
+  display: block;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  color: var(--aq-text-muted);
+  text-align: left;
+  border: 1px dashed var(--aq-border);
+  border-radius: 6px;
+}
+
+.sameRow summary {
+  cursor: pointer;
+}
+
+/* Words the right pack puts in, and those it takes out of the left one. */
+.put {
+  color: inherit;
+  background: color-mix(in srgb, var(--aq-success) 30%, transparent);
+}
+
+.taken {
+  color: inherit;
+  text-decoration: line-through;
+  background: color-mix(in srgb, var(--aq-danger) 30%, transparent);
 }

@@ -1660,6 +1660,11 @@ export interface SavedChat extends SavedChatSummary {
   readonly model?: { readonly service: string; readonly model: string };
   /** How hard its model reasons, as people chose for it (`ReasoningLevel`); else as set up. */
   readonly reasoning?: string;
+  /**
+   * Models whose model pack people chose again while in this conversation, by name: its next answer
+   * with such a model takes the pack chosen for it then, rather than the one it began with.
+   */
+  readonly repick?: readonly string[];
 }
 
 /** Conversations with AI by project. Only so many of a project are kept, the oldest go first. */

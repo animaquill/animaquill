@@ -117,6 +117,12 @@ export interface ChatSnapshot {
   /** How hard its model reasons, as chosen for this conversation; none as set up. */
   readonly reasoning: ReasoningLevel | undefined;
   readonly forkedFrom: ForkedFrom | undefined;
+  /**
+   * Models whose pack people chose again from where this conversation picks its model: its next
+   * answer with one of them takes the pack chosen now (and says so), see `choosePack`. Kept with the
+   * conversation, so that it holds after a reload.
+   */
+  readonly repick: readonly string[];
   /** Messages that go once the task that runs is done, oldest first. */
   readonly queued: readonly string[];
 }
@@ -210,6 +216,7 @@ export class ChatSession {
     model: undefined,
     reasoning: undefined,
     forkedFrom: undefined,
+    repick: [],
     queued: [],
   };
   /** What people wrote and did not send yet, by conversation. */
@@ -222,8 +229,8 @@ export class ChatSession {
   /** What the tools keep of the conversation that is open, see `CallerState`. */
   #caller = new CallerState();
   #pending: (() => Promise<void>) | undefined;
-  /** Conversations, by id and model, whose next answer takes the pack chosen for the model now. */
-  readonly #repick = new Set<string>();
+  /** A pack chosen again that the task starting takes, until an answer comes with it. */
+  #taking: { readonly model: string; readonly answers: number } | undefined;
 
   constructor(options: ChatSessionOptions) {
     this.#options = options;
@@ -281,9 +288,12 @@ export class ChatSession {
     entries: readonly ChatEntry[],
     id: string | undefined,
     caller: unknown,
-    kept: Partial<Pick<SavedChat, "title" | "titleBy" | "model" | "reasoning" | "forkedFrom">> = {},
+    kept: Partial<
+      Pick<SavedChat, "title" | "titleBy" | "model" | "reasoning" | "forkedFrom" | "repick">
+    > = {},
   ): void {
     this.#stopWatching?.();
+    this.#taking = undefined;
     const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
     this.#caller = tools;
     const conversation = new Conversation({
@@ -298,6 +308,7 @@ export class ChatSession {
       const now = conversation.getSnapshot().entries;
       if (now !== known) {
         known = now;
+        this.#took(now);
         this.#saveSoon(chatId, now);
         this.#mark(now);
       }
@@ -316,11 +327,23 @@ export class ChatSession {
       model: kept.model,
       reasoning: readReasoning(kept.reasoning),
       forkedFrom: kept.forkedFrom,
+      repick: kept.repick ?? [],
       queued: [],
     });
     const project = this.#project?.key;
     if (project !== undefined) this.#options.memory?.write(openKey(project), chatId);
     this.#mark(entries);
+  }
+
+  /** A pack chosen again came with an answer, which the next ones then keep: it is taken. */
+  #took(entries: readonly ChatEntry[]): void {
+    const taking = this.#taking;
+    if (!taking || answersIn(entries) <= taking.answers) return;
+    this.#taking = undefined;
+    const { repick } = this.#snapshot;
+    if (repick.includes(taking.model)) {
+      this.#set({ repick: repick.filter((each) => each !== taking.model) });
+    }
   }
 
   /** Marks the clips of the last task, the one that runs or ran last. */
@@ -367,7 +390,7 @@ export class ChatSession {
   #saveSoon(id: string, entries: readonly ChatEntry[]): void {
     const project = this.#project?.key;
     if (project === undefined || entries.length === 0 || id !== this.#snapshot.id) return;
-    const { title: named, titleBy, model, reasoning, forkedFrom } = this.#snapshot;
+    const { title: named, titleBy, model, reasoning, forkedFrom, repick } = this.#snapshot;
     const title = titleBy !== undefined && named ? named : firstWords(entries, TITLE_LENGTH);
     const changes = changesIn(entries);
     const caller = this.#caller;
@@ -385,6 +408,7 @@ export class ChatSession {
         ...(model && { model }),
         ...(reasoning !== undefined && { reasoning }),
         ...(forkedFrom && { forkedFrom }),
+        ...(repick.length > 0 && { repick }),
       };
       try {
         await this.#chats.save(chat);
@@ -395,6 +419,7 @@ export class ChatSession {
           caller: _caller,
           model: _model,
           reasoning: _reasoning,
+          repick: _repick,
           ...summary
         } = chat;
         this.#set({ saved: [summary, ...others] });
@@ -445,6 +470,9 @@ export class ChatSession {
       ...(isModelRef(saved.model) && { model: saved.model }),
       ...(typeof saved.reasoning === "string" && { reasoning: saved.reasoning }),
       ...(isForkedFrom(saved.forkedFrom) && { forkedFrom: saved.forkedFrom }),
+      ...(Array.isArray(saved.repick) && {
+        repick: saved.repick.filter((model): model is string => typeof model === "string"),
+      }),
     });
   }
 
@@ -560,12 +588,13 @@ export class ChatSession {
     if (user?.role !== "user") return;
     const turn = entries.slice(0, start + 1).filter((entry) => entry.role === "user").length;
     const title = this.#snapshot.title || firstWords(entries, TITLE_LENGTH);
-    const { model, reasoning } = this.#snapshot;
+    const { model, reasoning, repick } = this.#snapshot;
     void this.flush();
     const copy = newChatId();
     this.#start(entries.slice(0, start), copy, undefined, {
       ...(model && { model }),
       ...(reasoning !== undefined && { reasoning }),
+      repick,
       forkedFrom: { title, turn },
     });
     this.drafts.write(project, copy, user.text);
@@ -687,14 +716,17 @@ export class ChatSession {
    */
   choosePack(model: string, pack: string | undefined, from: "now" | "next" = "next"): void {
     this.#options.ai.choosePack([model], pack);
-    if (from === "now" && this.#snapshot.id !== undefined) {
-      this.#repick.add(`${this.#snapshot.id}\n${model}`);
-    }
+    const { repick, conversation } = this.#snapshot;
+    if (from !== "now" || !conversation || repick.includes(model)) return;
+    this.#set({ repick: [...repick, model] });
+    // Written right away: people may leave right after choosing, and expect it to hold.
+    this.#keep();
+    void this.flush();
   }
 
   /** Whether the next answer of the conversation open takes the pack chosen for a model now. */
   repicking(model: string): boolean {
-    return this.#repick.has(`${this.#snapshot.id}\n${model}`);
+    return this.#snapshot.repick.includes(model);
   }
 
   /** The pack people would get for a model in a new conversation, and how. */
@@ -718,7 +750,9 @@ export class ChatSession {
     entries: readonly ChatEntry[],
   ): { readonly use: PackUse; readonly note: PackNote } {
     const last = entries.findLast((entry) => entry.role === "assistant");
-    const repick = this.#repick.delete(`${this.#snapshot.id}\n${model}`);
+    const repick = this.#snapshot.repick.includes(model);
+    // The choice holds until an answer comes with it: that answer then keeps the pack.
+    if (repick) this.#taking = { model, answers: answersIn(entries) };
     if (!repick && last?.role === "assistant" && last.model === model && last.pack && last.texts) {
       const { id, hash } = last.texts;
       const pinned =
@@ -831,9 +865,9 @@ export class ChatSession {
     this.#set({ hold: undefined });
     const { maxToolCalls } = this.#options.ai.getSnapshot();
     const reasoning = this.reasoningNow(target.model);
-    const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
     // Another conversation may have opened meanwhile: this one is no longer on the screen.
     if (this.#snapshot.conversation !== conversation) return undefined;
+    const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
     return {
       endpoint: target.endpoint,
       key: target.key,
@@ -884,6 +918,10 @@ export class ChatSession {
 }
 
 const REASONING_LEVELS: ReadonlySet<string> = new Set(REASONING);
+
+/** How many answers of the model a conversation has. */
+const answersIn = (entries: readonly ChatEntry[]): number =>
+  entries.reduce((count, entry) => count + (entry.role === "assistant" ? 1 : 0), 0);
 
 /** A step of reasoning as kept, where it is one. */
 function readReasoning(value: unknown): ReasoningLevel | undefined {

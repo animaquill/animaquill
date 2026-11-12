@@ -2,6 +2,7 @@ import type { ReasoningLevel } from "@animaquill/agent";
 import { DEFAULT_PACK, REASONING, usePack as packFor } from "@animaquill/tools";
 import { Brain, Check, ChevronDown, ChevronUp, Image, Search, Star } from "lucide-react";
 import {
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -15,7 +16,8 @@ import { stateOf } from "./aiParts.tsx";
 import styles from "./ChatPanel.module.css";
 import { contextLabel, priceLabel } from "./modelText.ts";
 import { packLabel } from "./packText.ts";
-import { PackViewer } from "./PackViews.tsx";
+import { PackSelect } from "./PackSelect.tsx";
+import { OpenPackView } from "./PackViews.tsx";
 import type { ServiceModel } from "./settings.ts";
 
 /**
@@ -23,7 +25,8 @@ import type { ServiceModel } from "./settings.ts";
  * which opens a bubble of the models that are on, by service in the order of the settings, to find
  * by name, service or id. The tick is the model of this conversation, the star the default (which
  * only the star changes, pi-web's way). Under the models, the model pack of the model the cursor is
- * on (choosing another is CM4). How hard the model reasons is the button beside, `ReasoningPicker`.
+ * on: its details, another one, back to the one recommended (`PackPart`). How hard the model
+ * reasons is the button beside, `ReasoningPicker`.
  */
 
 interface Row {
@@ -106,7 +109,7 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
-  const [viewing, setViewing] = useState<{ pack: string; model: string } | undefined>();
+  const openView = useContext(OpenPackView);
   const ref = useRef<HTMLDivElement>(null);
   const now = chat.modelNow();
 
@@ -142,27 +145,26 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
 
   useEffect(() => {
     const close = (event: PointerEvent) => {
-      if (viewing) return;
       const picker = ref.current?.parentElement;
       if (!picker?.contains(event.target as Node)) onClose();
     };
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
-  }, [onClose, viewing]);
+  }, [onClose]);
 
   const choose = (row: Row) => {
     chat.chooseModel({ service: row.service, model: row.model.id });
     onClose();
   };
   const onKeyDown = (event: KeyboardEvent) => {
-    // The details of a pack are a dialog of their own, which Esc closes.
-    if (viewing) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       onClose();
       return;
     }
+    // The keys of the list of packs, and of the buttons by it, are theirs.
+    if ((event.target as HTMLElement).closest("[data-pack-part]")) return;
     if (event.key === "Enter") {
       event.preventDefault();
       if (at) choose(at);
@@ -240,7 +242,14 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
         ))}
       </div>
       {at && (
-        <PackLine model={at.model.id} name={at.model.name ?? at.model.id} onView={setViewing} />
+        <PackPart
+          model={at.model.id}
+          name={at.model.name ?? at.model.id}
+          onView={(view) => {
+            onClose();
+            openView?.(view);
+          }}
+        />
       )}
       <div className={styles.bubbleFoot}>
         <button
@@ -254,14 +263,6 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
           {t("chat.picker.manage")}
         </button>
       </div>
-      {viewing && (
-        <PackViewer
-          view="details"
-          pack={viewing.pack}
-          model={viewing.model}
-          onClose={() => setViewing(undefined)}
-        />
-      )}
     </div>
   );
 }
@@ -335,38 +336,76 @@ function ModelRow(props: {
 }
 
 /**
- * The model pack of a model, in a line: its name, whose, recommended or chosen, and its details.
- * Choosing another here comes with CM4.
+ * The model pack of a model: the one it has (whose, recommended or chosen), which opens its details;
+ * the one recommended, with a way back to it, where people chose another; and the list to choose
+ * another. Chosen here, the conversation open takes it from its next turn (`ChatSession.choosePack`
+ * "now"), and says so; so do new conversations, as the choice is the model's, as in the settings.
  */
-function PackLine(props: {
+function PackPart(props: {
   readonly model: string;
   readonly name: string;
-  readonly onView: (viewing: { pack: string; model: string }) => void;
+  readonly onView: (view: { view: "details"; pack: string; model: string }) => void;
 }) {
   const { chat, packs } = useWorkbench();
   const { t } = useTranslation();
   useSyncExternalStore(packs.subscribe, packs.getSnapshot);
-  const options = chat.packOptions(props.model);
+  useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const { model } = props;
+  const options = chat.packOptions(model);
   const pack = options.current;
   const special = pack.id !== DEFAULT_PACK.id;
+  const choose = (id: string | undefined) => chat.choosePack(model, id, "now");
+  const conversation = chat.getSnapshot().conversation;
+  const next =
+    chat.repicking(model) && (conversation?.getSnapshot().entries.length ?? 0) > 0
+      ? t("chat.picker.packNext", { name: packLabel(t, pack) })
+      : t("chat.picker.packWhen");
   return (
-    <div className={styles.packLine} data-testid="chat-model-pack">
-      <span className={styles.packWhich}>
-        {t("chat.picker.pack", { model: props.name })}
-        {"："}
-        <strong>{packLabel(t, pack)}</strong>
-        <span className={styles.tag} data-kind={options.chosen ? "mine" : "recommended"}>
-          {options.chosen ? t("chat.picker.packChosen") : t("chat.picker.packRecommended")}
-        </span>
-        {!special && <span className={styles.muted}>{t("chat.picker.packNone")}</span>}
-      </span>
+    <div className={styles.packPart} data-testid="chat-model-pack" data-pack-part="">
+      <div className={styles.bubbleGroup}>{t("chat.picker.pack", { model: props.name })}</div>
       <button
         type="button"
-        className={styles.link}
-        onClick={() => props.onView({ pack: pack.id, model: props.model })}
+        className={styles.packRow}
+        data-testid="chat-pack-details"
+        title={t("chat.picker.packDetailsTitle")}
+        onClick={() => props.onView({ view: "details", pack: pack.id, model })}
       >
-        {t("chat.picker.packDetails")}
+        <span className={styles.packWhich}>
+          <strong data-testid="chat-pack-name">{packLabel(t, pack)}</strong>
+          <span
+            className={styles.tag}
+            data-kind={options.chosen ? "mine" : "recommended"}
+            data-testid="chat-pack-by"
+          >
+            {options.chosen ? t("chat.picker.packChosen") : t("chat.picker.packRecommended")}
+          </span>
+          {!special && <span className={styles.muted}>{t("chat.picker.packNone")}</span>}
+        </span>
+        <span className={styles.muted}>{t("chat.picker.packDetails")}</span>
       </button>
+      {options.chosen && (
+        <div className={styles.packLine}>
+          <span className={styles.packWhich}>
+            <span className={styles.muted}>
+              {options.recommended.id === DEFAULT_PACK.id
+                ? t("chat.picker.packRecommendedNone")
+                : t("chat.picker.packRecommendedIs", {
+                    name: packLabel(t, options.recommended),
+                  })}
+            </span>
+          </span>
+          <button type="button" data-testid="chat-pack-reset" onClick={() => choose(undefined)}>
+            {t("chat.picker.packReset")}
+          </button>
+        </div>
+      )}
+      <label className={styles.packLine}>
+        <span className={styles.muted}>{t("chat.picker.packOther")}</span>
+        <PackSelect model={model} onChoose={choose} testId="chat-pack-choose" />
+      </label>
+      <p className={styles.packWhen} data-testid="chat-pack-when">
+        {next}
+      </p>
     </div>
   );
 }

@@ -86,7 +86,9 @@ test("packs are installed after people saw what they change, chosen for a model,
   const choice = row.getByRole("combobox", { name: "deepseek-chat 用的适配包" });
 
   // No pack is for this model: the default one, said here, without asking.
-  await expect(choice.locator("option:checked")).toHaveText("自动：通用（没有专门的适配包）");
+  await expect(choice.locator("option:checked")).toHaveText(
+    "推荐（自动）：通用（没有专门的适配包）",
+  );
   await expect(row.getByTestId("pack-none")).toBeVisible();
   await expect(packs.getByTestId("pack-item")).toHaveCount(2);
   await packs.screenshot(shot("settings-packs.png"));
@@ -130,18 +132,22 @@ test("packs are installed after people saw what they change, chosen for a model,
   );
   await expect(packs.getByTestId("pack-item").nth(2)).toContainText("来自文件夹 steady");
   await expect(choice.locator("option:checked")).toHaveText(
-    "自动：〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+    "推荐（自动）：〔第三方 · lin/deepseek-steady〕DeepSeek steady",
   );
   await expect(row.getByTestId("pack-none")).toHaveCount(0);
-  await expect(row.getByTestId("pack-using")).toContainText(
-    "新对话用：〔第三方 · lin/deepseek-steady〕DeepSeek steady，是别人写的包。",
+  await expect(row.getByTestId("pack-using")).toHaveText(
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady推荐",
   );
 
   // People choose another for the model, and back.
   await choice.selectOption({ label: "通用（内置）" });
   await expect(choice.locator("option:checked")).toHaveText("通用（内置）");
-  await expect(row.getByTestId("pack-none")).toHaveCount(0);
-  await choice.selectOption({ label: "自动：〔第三方 · lin/deepseek-steady〕DeepSeek steady" });
+  await expect(row.getByTestId("pack-using")).toContainText("你选的");
+  await row.getByTestId("pack-reset").click();
+  await expect(choice.locator("option:checked")).toHaveText(
+    "推荐（自动）：〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+  );
+  await expect(row.getByTestId("pack-reset")).toHaveCount(0);
 
   // The same pack again, newer: only what differs from the version installed.
   await packs.getByTestId("pack-folder-input").setInputFiles(`${PACKS}steady-1.3`);
@@ -189,10 +195,12 @@ test("packs are installed after people saw what they change, chosen for a model,
   await dialog.getByRole("button", { name: "关闭" }).click();
 
   // Removed, the model goes back to the default.
-  await packs.getByTestId("pack-item").nth(2).getByRole("button", { name: "移除" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "移除" }).click();
+  await packs.getByTestId("pack-item").nth(2).getByRole("button", { name: "卸载" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "卸载" }).click();
   await expect(packs.getByTestId("pack-item")).toHaveCount(2);
-  await expect(choice.locator("option:checked")).toHaveText("自动：通用（没有专门的适配包）");
+  await expect(choice.locator("option:checked")).toHaveText(
+    "推荐（自动）：通用（没有专门的适配包）",
+  );
 });
 
 test("the chat says which pack a conversation has, and a new one when the model changes", async ({
@@ -269,9 +277,7 @@ test("a pack that names a built-in's model says what it takes over, can be kept 
   const packs = settings(page).getByTestId("model-packs");
   const row = packs.getByTestId("pack-service");
   const choice = row.getByRole("combobox", { name: "claude-opus-5-5 用的适配包" });
-  await expect(row.getByTestId("pack-using")).toContainText(
-    "新对话用：Claude 5（内置），随 AnimaQuill 提供。",
-  );
+  await expect(row.getByTestId("pack-using")).toHaveText("Claude 5（内置）推荐");
 
   // All a model gets, read only: the system prompt and the tools, merged.
   await row.getByTestId("pack-preview-open").click();
@@ -292,8 +298,11 @@ test("a pack that names a built-in's model says what it takes over, can be kept 
     .locator("summary")
     .click();
   await viewer.screenshot(shot("preview.png"));
-  await viewer.getByRole("button", { name: "关闭" }).click();
+  // One level in, in place of the page: back to it.
+  await expect(packs.getByTestId("pack-service")).toHaveCount(0);
+  await viewer.getByTestId("pack-viewer-back").click();
   await expect(viewer).toHaveCount(0);
+  await expect(row).toBeVisible();
 
   // Named and written as the built-in one: marked as someone else's, and it says what it replaces.
   await packs.getByTestId("pack-file-input").setInputFiles(`${PACKS}fake-claude.json`);
@@ -327,9 +336,9 @@ test("a pack that names a built-in's model says what it takes over, can be kept 
   ).toHaveCount(1);
   // Left to itself the model would get the new one, which says so: what it is, plainly.
   await expect(choice.locator("option").first()).toHaveText(
-    "自动：〔第三方 · mallory/claude〕Claude 5",
+    "推荐（自动）：〔第三方 · mallory/claude〕Claude 5",
   );
-  await expect(row.getByTestId("pack-using")).toContainText("新对话用：Claude 5（内置）");
+  await expect(row.getByTestId("pack-using")).toHaveText("Claude 5（内置）你选的");
   await packs.screenshot(shot("settings-third-party.png"));
 });
 
@@ -342,7 +351,7 @@ test("a pack's details, all a model gets with it, and two packs side by side", a
   await expect(packs.getByTestId("pack-item")).toHaveCount(3);
 
   // Details: where from, what it changes by group, how it calls models.
-  await packs.getByTestId("pack-item").nth(2).getByRole("button", { name: "查看内容" }).click();
+  await packs.getByTestId("pack-item").nth(2).getByRole("button", { name: "详情" }).click();
   const viewer = page.getByTestId("pack-viewer");
   const details = viewer.getByTestId("pack-details");
   await expect(details).toContainText("〔第三方 · lin/deepseek-steady〕DeepSeek steady");
@@ -389,4 +398,295 @@ test("a pack's details, all a model gets with it, and two packs side by side", a
   await expect(compare.getByTestId("pack-compare-words")).toContainText("system.rules");
   await rules.scrollIntoViewIfNeeded();
   await viewer.screenshot(shot("viewer-compare.png"));
+});
+
+const CM4 = (name: string) => ({ path: test.info().outputPath(`cm4-${name}.png`) });
+
+/** The chat this wide, for what shows there as people with a narrow chat see it. */
+async function chatWidth(page: Page, width: number) {
+  await page.addStyleTag({ content: `[data-testid="chat"] { width: ${width}px !important; }` });
+  await expect
+    .poll(async () => (await chat(page).getByTestId("chat").boundingBox())?.width)
+    .toBe(width);
+}
+
+test("in the bubble of models a pack is chosen for the next turn, kept over a reload, looked at and compared, and back to the one recommended", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  // Wide enough that the chat can be made 420 wide for the pictures.
+  await page.setViewportSize({ width: 2000, height: 1000 });
+  const requests: Request[] = [];
+  await page.route("https://api.anthropic.com/**", async (route) => {
+    requests.push(route.request());
+    return answer(route, `回答 ${requests.length}`);
+  });
+  await setUpService(page, "claude-opus-5-5");
+  await settings(page)
+    .getByTestId("model-packs")
+    .getByTestId("pack-folder-input")
+    .setInputFiles(`${PACKS}steady`);
+  await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
+  await tab(page, "chat").click();
+  await send(page, "一");
+  await expect(chat(page).getByText("回答 1")).toBeVisible({ timeout: 15_000 });
+  const systemOf = (request: Request | undefined) =>
+    JSON.stringify((request?.postDataJSON() as { system?: unknown } | undefined)?.system);
+  const steady = "If a call fails twice the same way, stop and tell the user what went wrong.";
+  expect(systemOf(requests[0])).not.toContain(steady);
+
+  // The bubble: the pack of the model, recommended, and the list to choose another.
+  await chat(page).getByTestId("chat-model").click();
+  const bubble = chat(page).getByTestId("chat-model-bubble");
+  const part = bubble.getByTestId("chat-model-pack");
+  await expect(part.getByTestId("chat-pack-name")).toHaveText("Claude 5（内置）");
+  await expect(part.getByTestId("chat-pack-by")).toHaveText("推荐");
+  await expect(part.getByTestId("chat-pack-reset")).toHaveCount(0);
+  const choice = part.getByTestId("chat-pack-choose");
+  await expect(choice.locator("option:checked")).toHaveText("推荐（自动）：Claude 5（内置）");
+  // Those for the model first, the others under them; the hidden one is not there.
+  await expect(choice.locator("optgroup").first()).toHaveAttribute(
+    "label",
+    "适用于 claude-opus-5-5",
+  );
+  await expect(choice.locator("optgroup").first().locator("option")).toHaveText([
+    "Claude 5（内置）",
+  ]);
+  await expect(choice.locator("optgroup").nth(1)).toHaveAttribute("label", "其他已装的");
+  await expect(choice.locator("optgroup").nth(1).locator("option")).toHaveText([
+    "通用（内置）",
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+  ]);
+  for (const width of [420, 320]) {
+    await chatWidth(page, width);
+    await chat(page)
+      .getByTestId("chat")
+      .screenshot(CM4(`bubble-recommended-${width}`));
+  }
+
+  // Someone else's, chosen here: marked as theirs and as chosen, with the way back to the one
+  // recommended; the conversation takes it from its next turn.
+  await choice.selectOption({ label: "〔第三方 · lin/deepseek-steady〕DeepSeek steady" });
+  await expect(part.getByTestId("chat-pack-name")).toHaveText(
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+  );
+  await expect(part.getByTestId("chat-pack-by")).toHaveText("你选的");
+  await expect(part).toContainText("推荐的是：Claude 5（内置）");
+  await expect(part.getByTestId("chat-pack-when")).toHaveText(
+    "这个对话下一轮起改用 〔第三方 · lin/deepseek-steady〕DeepSeek steady。",
+  );
+  for (const width of [420, 320]) {
+    await chatWidth(page, width);
+    await chat(page)
+      .getByTestId("chat")
+      .screenshot(CM4(`bubble-chosen-third-party-${width}`));
+  }
+  await page.keyboard.press("Escape");
+  await expect(bubble).toBeHidden();
+
+  // A reload in between: the next turn still takes it, and says so.
+  await page.reload();
+  await tab(page, "chat").click();
+  await tab(page, "chat").click();
+  await expect(chat(page).getByText("回答 1")).toBeVisible();
+  await chat(page).getByTestId("chat-model").click();
+  await expect(part.getByTestId("chat-pack-name")).toHaveText(
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+  );
+  await expect(part.getByTestId("chat-pack-when")).toHaveText(
+    "这个对话下一轮起改用 〔第三方 · lin/deepseek-steady〕DeepSeek steady。",
+  );
+  await page.keyboard.press("Escape");
+  await send(page, "二");
+  await expect(chat(page).getByText("回答 2")).toBeVisible({ timeout: 15_000 });
+  expect(systemOf(requests[1])).toContain(steady);
+  await expect(chat(page).getByTestId("chat-pack-switch")).toHaveText(
+    "改用适配包 〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+  );
+  // And the turns after it keep it.
+  await send(page, "三");
+  await expect(chat(page).getByText("回答 3")).toBeVisible({ timeout: 15_000 });
+  expect(systemOf(requests[2])).toContain(steady);
+  await expect(chat(page).getByTestId("chat-pack-switch")).toHaveCount(1);
+
+  // Its details, over the chat with a way back; from there against the one recommended, piece by
+  // piece where the chat is narrow.
+  await chatWidth(page, 420);
+  await chat(page).getByTestId("chat-model").click();
+  await bubble.getByTestId("chat-pack-details").click();
+  const viewer = chat(page).getByTestId("pack-viewer");
+  await expect(viewer.getByTestId("pack-details")).toContainText(
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady",
+  );
+  await viewer.getByRole("button", { name: "和推荐的比（Claude 5（内置））" }).click();
+  const compare = viewer.getByTestId("pack-compare");
+  await expect(compare).toHaveAttribute("data-narrow", "");
+  await expect(viewer.getByRole("combobox", { name: "左" }).locator("option:checked")).toHaveText(
+    "Claude 5（内置）",
+  );
+  // Only the pieces that differ, by default; those that are the same fold into one line.
+  const onlyDiffer = compare.getByTestId("pack-compare-only-differ");
+  await expect(onlyDiffer).toBeChecked();
+  await expect(
+    compare.locator('[data-testid="pack-compare-segment"][data-state="same"]'),
+  ).toHaveCount(0);
+  await expect(compare.getByTestId("pack-compare-same")).toContainText("相同的");
+  const rules = compare.locator('[data-testid="pack-compare-segment"][data-key="system.rules"]');
+  await expect(rules).toContainText("系统提示 · 规则");
+  await expect(rules.locator('[data-side="b"]').getByTestId("pack-diff-in")).toContainText(
+    "If a call fails twice the same way",
+  );
+  await expect(compare.getByTestId("pack-compare-call")).toContainText(
+    "单次回答最多输出（token）：32000 → 16000",
+  );
+  await viewer.screenshot(CM4("compare-narrow-420"));
+  // One side alone.
+  await compare.getByTestId("pack-compare-sides").getByRole("radio", { name: "B" }).click();
+  await expect(rules.locator('[data-side="a"]')).toHaveCount(0);
+  await expect(rules.locator('[data-side="b"]')).toBeVisible();
+  await chatWidth(page, 320);
+  await viewer.screenshot(CM4("compare-narrow-320-b"));
+  await compare.getByTestId("pack-compare-same").click();
+  await expect(onlyDiffer).not.toBeChecked();
+  await expect(
+    compare.locator('[data-testid="pack-compare-segment"][data-state="same"]').first(),
+  ).toBeVisible();
+  await viewer.getByTestId("pack-viewer-back").click();
+  await expect(viewer).toHaveCount(0);
+
+  // Back to the one recommended, from the bubble: the next turn has it again.
+  await chat(page).getByTestId("chat-model").click();
+  await bubble.getByTestId("chat-pack-reset").click();
+  await expect(part.getByTestId("chat-pack-by")).toHaveText("推荐");
+  await page.keyboard.press("Escape");
+  await send(page, "四");
+  await expect(chat(page).getByText("回答 4")).toBeVisible({ timeout: 15_000 });
+  expect(systemOf(requests[3])).not.toContain(steady);
+  await expect(chat(page).getByTestId("chat-pack-switch").nth(1)).toHaveText(
+    "改用适配包 Claude 5（内置）",
+  );
+});
+
+test("the page of packs: each model with its pack, the packs there are, the hidden one to choose, and two packs compared", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await addAnthropic(page, KEY, "claude-opus-5-5");
+  await addModel(page, "deepseek-chat");
+  await addModel(page, "claude-test");
+  await openSettingsPage(page, "模型适配包");
+  const packs = settings(page).getByTestId("model-packs");
+
+  // Installing: from a folder, a pack.json or GitHub, in one place.
+  await packs.getByTestId("pack-install-open").click();
+  const install = page.getByTestId("pack-install");
+  await expect(install.getByRole("button", { name: "从文件夹安装" })).toBeVisible();
+  await expect(install.getByRole("button", { name: "从 pack.json 安装" })).toBeVisible();
+  await expect(install.getByRole("textbox", { name: "从 GitHub 安装" })).toBeVisible();
+  await install.screenshot(CM4("install-chooser"));
+  await packs.getByTestId("pack-folder-input").setInputFiles(`${PACKS}steady`);
+  await expect(install).toHaveCount(0);
+  await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
+
+  const row = (model: string) =>
+    packs.locator(`[data-testid="pack-service"][data-model="${model}"]`);
+  await expect(row("claude-opus-5-5").getByTestId("pack-using")).toHaveText("Claude 5（内置）推荐");
+  await expect(row("deepseek-chat").getByTestId("pack-using")).toHaveText(
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady推荐",
+  );
+  await expect(row("claude-test").getByTestId("pack-none")).toBeVisible();
+  // Chosen here: the one chosen, with the way back.
+  await row("claude-test")
+    .getByRole("combobox", { name: "claude-test 用的适配包" })
+    .selectOption({ label: "〔第三方 · lin/deepseek-steady〕DeepSeek steady" });
+  await expect(row("claude-test").getByTestId("pack-using")).toHaveText(
+    "〔第三方 · lin/deepseek-steady〕DeepSeek steady你选的",
+  );
+  await expect(row("claude-test").getByTestId("pack-reset")).toBeVisible();
+
+  // The hidden pack to compare with: there once asked for, in the list of each model too.
+  const hidden = packs.locator('[data-testid="pack-item"][data-pack="animaquill/eval-directive"]');
+  await expect(hidden).toHaveCount(0);
+  await packs.getByTestId("pack-show-hidden").check();
+  await expect(hidden).toContainText("对照用");
+  await row("claude-opus-5-5")
+    .getByRole("combobox", { name: "claude-opus-5-5 用的适配包" })
+    .selectOption({ label: "2026.1 旧写法（对照）（内置）" });
+  await expect(row("claude-opus-5-5").getByTestId("pack-using")).toHaveText(
+    "2026.1 旧写法（对照）（内置）你选的",
+  );
+  await settings(page).screenshot(CM4("packs-page"));
+
+  // The full text of a model, one level in, and back.
+  await row("deepseek-chat").getByTestId("pack-preview-open").click();
+  const viewer = packs.getByTestId("pack-viewer");
+  await expect(viewer.getByTestId("pack-full")).toContainText(
+    "stop and tell the user what went wrong.",
+  );
+  await viewer.getByTestId("pack-viewer-back").click();
+
+  // Two packs side by side, wide.
+  await packs.getByTestId("pack-compare-open").click();
+  const compare = viewer.getByTestId("pack-compare");
+  await expect(compare).not.toHaveAttribute("data-narrow", "");
+  await viewer.getByRole("combobox", { name: "模型", exact: true }).fill("deepseek-chat");
+  const rules = compare
+    .getByTestId("pack-compare-segment")
+    .filter({ has: page.locator("summary", { hasText: /^system\.rules/ }) });
+  await expect(rules.getByTestId("pack-diff-in")).toContainText("If a call fails twice");
+  await rules.scrollIntoViewIfNeeded();
+  await settings(page).screenshot(CM4("compare-wide"));
+});
+
+test("settings that had the words to compare with on keep them for their model, after the upgrade", async ({
+  page,
+}) => {
+  const requests: Request[] = [];
+  await page.route("https://api.anthropic.com/**", async (route) => {
+    requests.push(route.request());
+    return answer(route, "好的。");
+  });
+  await page.evaluate(async (key) => {
+    localStorage.setItem(
+      "animaquill.ai",
+      JSON.stringify({
+        services: [
+          {
+            id: "service-old",
+            kind: "anthropic",
+            name: "我的 Anthropic",
+            baseUrl: "https://api.anthropic.com",
+            model: "claude-test",
+            route: "direct",
+          },
+        ],
+        current: "service-old",
+        comparisonTexts: true,
+      }),
+    );
+    const open = indexedDB.open("animaquill-keys", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("keys", { keyPath: "service" });
+    const database = await new Promise<IDBDatabase>((resolve) => {
+      open.onsuccess = () => resolve(open.result);
+    });
+    const transaction = database.transaction("keys", "readwrite");
+    transaction.objectStore("keys").put({ service: "service-old", key });
+    await new Promise((resolve) => {
+      transaction.oncomplete = resolve;
+    });
+    database.close();
+  }, KEY);
+  await page.reload();
+  await openSettingsPage(page, "模型适配包");
+  const packs = settings(page).getByTestId("model-packs");
+  await expect(packs.getByTestId("pack-show-hidden")).toBeChecked();
+  await expect(
+    packs.getByRole("combobox", { name: "claude-test 用的适配包" }).locator("option:checked"),
+  ).toHaveText("2026.1 旧写法（对照）（内置）");
+  await tab(page, "chat").click();
+  await send(page, "你好");
+  await expect(chat(page).getByText("好的。")).toBeVisible({ timeout: 15_000 });
+  const sent = requests[0]?.postDataJSON() as { system?: unknown };
+  expect(JSON.stringify(sent.system)).toContain("so run it after you change code");
 });

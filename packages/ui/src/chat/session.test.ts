@@ -790,6 +790,36 @@ describe("the model pack of a conversation", () => {
     });
   });
 
+  it("keeps a pack chosen where the model is picked with the conversation, until an answer takes it", async () => {
+    const { chat, fake, packs } = setup();
+    packs.install(packFiles({ ...PACK, models: ["nothing-*"] }), {
+      kind: "file",
+      name: "pack.json",
+    });
+    fake({ model: "claude-opus-5-5", fake: [{ text: "一" }] });
+    await chat.send("一");
+    const id = chat.getSnapshot().id as string;
+    chat.choosePack("claude-opus-5-5", "someone/deepseek", "now");
+    expect(chat.repicking("claude-opus-5-5")).toBe(true);
+    // Another conversation and back, as after a reload: the choice still waits for the next answer.
+    await chat.flush();
+    chat.newConversation();
+    expect(chat.repicking("claude-opus-5-5")).toBe(false);
+    await chat.open(id);
+    expect(chat.getSnapshot().repick).toEqual(["claude-opus-5-5"]);
+    fake({ model: "claude-opus-5-5", fake: [{ text: "二" }] });
+    await chat.send("二");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("someone/deepseek");
+    expect(chat.repicking("claude-opus-5-5")).toBe(false);
+    await chat.flush();
+    chat.newConversation();
+    await chat.open(id);
+    expect(chat.getSnapshot().repick).toEqual([]);
+    fake({ model: "claude-opus-5-5", fake: [{ text: "三" }] });
+    await chat.send("三");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("someone/deepseek");
+  });
+
   it("gives where models are picked the packs for a model: recommended, current, chosen", () => {
     const { chat, ai, packs } = setup();
     const ids = (model: string) =>

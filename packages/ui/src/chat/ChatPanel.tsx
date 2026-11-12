@@ -3,6 +3,7 @@ import { entryOf, type ProjectState } from "@animaquill/core";
 import { ArrowDown, ChevronDown, ChevronUp, Menu, MoreHorizontal, Quote } from "lucide-react";
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -20,7 +21,8 @@ import { Composer } from "./Composer.tsx";
 import { ConversationList } from "./ConversationList.tsx";
 import { firstWords } from "./conversations.ts";
 import type { ModelPacks } from "./packs.ts";
-import { PackViewer } from "./PackViews.tsx";
+import packStyles from "./ModelPacks.module.css";
+import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
 import { noteLabel } from "./packText.ts";
 import { RunState } from "./RunState.tsx";
 import { followsAfterScroll, showsToLatest } from "./scroll.ts";
@@ -87,6 +89,8 @@ export function ChatPanel() {
     panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')?.focus();
   // The list of conversations over this one, or with this one's name to change.
   const [listOpen, setListOpen] = useState<false | "list" | "rename">(false);
+  // A view of model packs over the whole chat: details, all a model gets, or a comparison.
+  const [packView, setPackView] = useState<PackViewRequest | undefined>();
   const model = chat.modelNow()?.ref.model;
   const modelName = useCallback(
     (id: string) => {
@@ -169,138 +173,151 @@ export function ChatPanel() {
       ? t("chat.list.forked", { ...snapshot.forkedFrom })
       : snapshot.title || firstWords(talk.entries, 40) || t("chat.list.newTitle");
   return (
-    <div className={styles.panel} data-testid="chat" ref={panelRef}>
-      <div className={styles.bar}>
-        <button
-          type="button"
-          className={styles.title}
-          data-testid="chat-title"
-          aria-expanded={listOpen !== false}
-          title={t("chat.list.title")}
-          onClick={() => setListOpen(listOpen ? false : "list")}
-        >
-          <Menu size={12} aria-hidden />
-          <span className={styles.titleText}>{title}</span>
-          {listOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
-        </button>
-        <UsageMeter entries={talk.entries} />
-        <MoreMenu
-          title={title}
-          entries={talk.entries}
-          running={talk.running !== undefined}
-          onRename={() => setListOpen("rename")}
-        />
-      </div>
-
-      <div className={styles.listWrap}>
-        <div
-          className={styles.list}
-          ref={listRef}
-          onScroll={(event) => {
-            const list = event.currentTarget;
-            following.current = followsAfterScroll(
-              following.current,
-              lastTop.current,
-              list.scrollTop,
-              list.clientHeight,
-              list.scrollHeight,
-            );
-            lastTop.current = list.scrollTop;
-            setToLatest(showsToLatest(list.scrollTop, list.clientHeight, list.scrollHeight));
-          }}
-        >
-          <div className={styles.column} ref={columnRef}>
-            {snapshot.forkedFrom && (
-              <p className={styles.muted} data-testid="chat-forked">
-                {t("chat.forked", { ...snapshot.forkedFrom })}
-              </p>
-            )}
-            {packLines.map(({ text: line, testId }) => (
-              <p key={testId} className={styles.muted} data-testid={testId}>
-                {line}
-              </p>
-            ))}
-            {turns.length === 0 && <EmptyStart onExample={putInBox} />}
-            {conversation &&
-              turns.map((turn, index) => {
-                const running = talk.running?.task === turn.task ? talk.running : undefined;
-                const latest = index === turns.length - 1;
-                return (
-                  <TurnView
-                    key={turn.task}
-                    turn={turn}
-                    running={running}
-                    busy={talk.running !== undefined}
-                    conversation={conversation}
-                    outcome={latest && talk.last?.task === turn.task ? talk.last : undefined}
-                    latest={latest}
-                    maxToolCalls={settings.maxToolCalls}
-                    switches={turn.entries.flatMap((entry) => {
-                      const line = switches.get(entry);
-                      return line ? [line] : [];
-                    })}
-                    names={names}
-                    modelName={modelName}
-                    onForked={focusInput}
-                  />
-                );
-              })}
-          </div>
-        </div>
-        <QuoteButton
-          list={listRef}
-          onQuote={(text) => {
-            if (project !== undefined && snapshot.id !== undefined) {
-              chat.drafts.quote(project, snapshot.id, text);
-            }
-            focusInput();
-          }}
-        />
-        {toLatest && (
+    <OpenPackView.Provider value={setPackView}>
+      <div className={styles.panel} data-testid="chat" ref={panelRef}>
+        <div className={styles.bar}>
           <button
             type="button"
-            className={styles.toLatest}
-            data-testid="chat-to-latest"
-            onClick={() => {
-              following.current = true;
-              toBottom();
-              setToLatest(false);
+            className={styles.title}
+            data-testid="chat-title"
+            aria-expanded={listOpen !== false}
+            title={t("chat.list.title")}
+            onClick={() => setListOpen(listOpen ? false : "list")}
+          >
+            <Menu size={12} aria-hidden />
+            <span className={styles.titleText}>{title}</span>
+            {listOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
+          </button>
+          <UsageMeter entries={talk.entries} />
+          <MoreMenu
+            title={title}
+            entries={talk.entries}
+            running={talk.running !== undefined}
+            onRename={() => setListOpen("rename")}
+          />
+        </div>
+
+        <div className={styles.listWrap}>
+          <div
+            className={styles.list}
+            ref={listRef}
+            onScroll={(event) => {
+              const list = event.currentTarget;
+              following.current = followsAfterScroll(
+                following.current,
+                lastTop.current,
+                list.scrollTop,
+                list.clientHeight,
+                list.scrollHeight,
+              );
+              lastTop.current = list.scrollTop;
+              setToLatest(showsToLatest(list.scrollTop, list.clientHeight, list.scrollHeight));
             }}
           >
-            <ArrowDown size={12} /> {t("chat.latest")}
-          </button>
-        )}
-        {listOpen && (
-          <ConversationList
-            rename={listOpen === "rename"}
-            onClose={() => setListOpen(false)}
-            onFound={showTurn}
+            <div className={styles.column} ref={columnRef}>
+              {snapshot.forkedFrom && (
+                <p className={styles.muted} data-testid="chat-forked">
+                  {t("chat.forked", { ...snapshot.forkedFrom })}
+                </p>
+              )}
+              {packLines.map(({ text: line, testId }) => (
+                <p key={testId} className={styles.muted} data-testid={testId}>
+                  {line}
+                </p>
+              ))}
+              {turns.length === 0 && <EmptyStart onExample={putInBox} />}
+              {conversation &&
+                turns.map((turn, index) => {
+                  const running = talk.running?.task === turn.task ? talk.running : undefined;
+                  const latest = index === turns.length - 1;
+                  return (
+                    <TurnView
+                      key={turn.task}
+                      turn={turn}
+                      running={running}
+                      busy={talk.running !== undefined}
+                      conversation={conversation}
+                      outcome={latest && talk.last?.task === turn.task ? talk.last : undefined}
+                      latest={latest}
+                      maxToolCalls={settings.maxToolCalls}
+                      switches={turn.entries.flatMap((entry) => {
+                        const line = switches.get(entry);
+                        return line ? [line] : [];
+                      })}
+                      names={names}
+                      modelName={modelName}
+                      onForked={focusInput}
+                    />
+                  );
+                })}
+            </div>
+          </div>
+          <QuoteButton
+            list={listRef}
+            onQuote={(text) => {
+              if (project !== undefined && snapshot.id !== undefined) {
+                chat.drafts.quote(project, snapshot.id, text);
+              }
+              focusInput();
+            }}
           />
+          {toLatest && (
+            <button
+              type="button"
+              className={styles.toLatest}
+              data-testid="chat-to-latest"
+              onClick={() => {
+                following.current = true;
+                toBottom();
+                setToLatest(false);
+              }}
+            >
+              <ArrowDown size={12} /> {t("chat.latest")}
+            </button>
+          )}
+          {listOpen && (
+            <ConversationList
+              rename={listOpen === "rename"}
+              onClose={() => setListOpen(false)}
+              onFound={showTurn}
+            />
+          )}
+        </div>
+
+        {conversation && talk.running && (
+          <RunState conversation={conversation} running={talk.running} />
+        )}
+        {snapshot.hold && (
+          <p className={styles.hold} role="alert" data-testid="chat-hold">
+            {t(`chat.hold.${snapshot.hold}`)}
+            {snapshot.hold === "relaySignIn" && workbench.account && (
+              <>
+                {" "}
+                <button type="button" onClick={() => void workbench.signIn()}>
+                  {t("account.signIn")}
+                </button>
+              </>
+            )}
+          </p>
+        )}
+        <Composer
+          onSent={() => {
+            following.current = true;
+          }}
+        />
+        {packView && (
+          <div className={packStyles.overChat}>
+            <PackViewer
+              {...packView}
+              onClose={() => {
+                setPackView(undefined);
+                focusInput();
+              }}
+            />
+          </div>
         )}
       </div>
-
-      {conversation && talk.running && (
-        <RunState conversation={conversation} running={talk.running} />
-      )}
-      {snapshot.hold && (
-        <p className={styles.hold} role="alert" data-testid="chat-hold">
-          {t(`chat.hold.${snapshot.hold}`)}
-          {snapshot.hold === "relaySignIn" && workbench.account && (
-            <>
-              {" "}
-              <button type="button" onClick={() => void workbench.signIn()}>
-                {t("account.signIn")}
-              </button>
-            </>
-          )}
-        </p>
-      )}
-      <Composer
-        onSent={() => {
-          following.current = true;
-        }}
-      />
-    </div>
+    </OpenPackView.Provider>
   );
 }
 
@@ -374,7 +391,7 @@ function MoreMenu(props: {
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const [open, setOpen] = useState(false);
-  const [viewing, setViewing] = useState<{ pack: string; model: string } | undefined>();
+  const openView = useContext(OpenPackView);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -424,7 +441,7 @@ function MoreMenu(props: {
       last?.role === "assistant" && last.model === model && last.texts
         ? last.texts.id
         : chat.choiceFor(model).pack.id;
-    setViewing({ pack, model });
+    openView?.({ view: "full", pack, model });
   };
   return (
     <div className={styles.moreWrap} ref={ref}>
@@ -448,14 +465,6 @@ function MoreMenu(props: {
           {item(t("chat.more.copy"), copy, props.entries.length === 0)}
           {item(t("chat.more.sent"), sent, chat.modelNow() === undefined)}
         </div>
-      )}
-      {viewing && (
-        <PackViewer
-          view="full"
-          pack={viewing.pack}
-          model={viewing.model}
-          onClose={() => setViewing(undefined)}
-        />
       )}
     </div>
   );
