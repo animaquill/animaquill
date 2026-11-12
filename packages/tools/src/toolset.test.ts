@@ -6,14 +6,15 @@ import { PROJECT_FORMAT, SCENE_RUNTIME } from "./guide/texts.ts";
 import { HAS_CHINESE } from "./issues.ts";
 import { PROBLEM_TEXTS, STATIC_PROBLEM_CODES } from "./problems-en.ts";
 import { AI_OPERATIONS } from "./schema.ts";
+import { DIRECTIVE_OVERRIDES, DIRECTIVE_TEXTS } from "./texts/eval/directive.ts";
 import { DEFAULT_TEXTS, editExamples, operationExamples } from "./texts/index.ts";
-import { openSample, testHost, toolsOn } from "./test-support.ts";
+import { ADVICE, DIRECTIVE_PHRASES, openSample, testHost, toolsOn } from "./test-support.ts";
 import { TOOLSET_VERSION } from "./toolset.ts";
 import type { Tool } from "./types.ts";
 
 /**
  * How many characters the list of tools takes, as services get it: names, descriptions and the
- * schemas of parameters. Measured 54 317 (2026-11-12, toolset 2026.1); the 48 tools before took
+ * schemas of parameters. Measured 52 874 (2026-11-12, toolset 2026.2; 2026.1 took 54 191); the 48 tools before took
  * 67 322. It is a ceiling, so that the list does not grow unnoticed.
  */
 const MOST_CHARACTERS = 55_000;
@@ -62,6 +63,17 @@ describe("the toolset", () => {
       "aq_propose",
       "aq_check_run",
     ]);
+  });
+
+  it("as the comparison table has it, is toolset 2026.1 to the byte", async () => {
+    const list = JSON.stringify(
+      listOf(toolsOn(testHost(), undefined, DIRECTIVE_TEXTS).tools.values()),
+      null,
+      1,
+    );
+    expect(list).toBe(
+      readFileSync(new URL("__snapshots__/toolset-2026.1.json", import.meta.url), "utf8"),
+    );
   });
 
   it("is the same to the byte within a version, and no larger than it was", async () => {
@@ -115,7 +127,26 @@ describe("the toolset", () => {
     for (const code of STATIC_PROBLEM_CODES) {
       expect(PROBLEM_TEXTS[code], code).toBeDefined();
       expect(PROBLEM_TEXTS[code]?.({}) ?? "", code).not.toMatch(HAS_CHINESE);
+      for (const advice of ADVICE)
+        expect(PROBLEM_TEXTS[code]?.({}) ?? "", code).not.toMatch(advice);
     }
+  });
+
+  it("says what tools are and do, and does not tell AI when to call them", () => {
+    // What tells a model what to do, or always to do it, makes new models call tools for that
+    // even where they need not: the words of the tools only say what is so. How to work is for
+    // the system prompt, once. Each of these phrases is a command in every context they can be in.
+    const found = [...DIRECTIVE_PHRASES, ...ADVICE].flatMap((phrase) =>
+      Object.entries(DEFAULT_TEXTS)
+        .filter(([key, value]) => !key.startsWith("system.") && phrase.test(JSON.stringify(value)))
+        .map(([key]) => `${key}: ${String(phrase)}`),
+    );
+    expect(found).toEqual([]);
+    // The table they replaced had them, which the check finds.
+    const before = DIRECTIVE_PHRASES.filter((phrase) =>
+      Object.values(DIRECTIVE_OVERRIDES).some((value) => phrase.test(JSON.stringify(value))),
+    );
+    expect(before.length).toBeGreaterThan(5);
   });
 
   it("lists every operation AI can use in the description of aq_edit, and no other", () => {

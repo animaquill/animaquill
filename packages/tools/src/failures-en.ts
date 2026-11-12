@@ -126,17 +126,15 @@ export const FAILURE_TEXTS: Texts = {
     param !== undefined
       ? `Only the user can use the parameter ${param}${command ? ` of ${command}` : ""}. Leave it out.`
       : command !== undefined
-        ? `Only the user can do ${command}. Ask the user to do it if it is needed.`
+        ? `Only the user can do ${command}. `
         : "Only the user can change the tags of the project.",
   "storage-only": () => "Uploads only write down where files are.",
-  "project-locked": () =>
-    "The project has a tag that locks it. Tell the user; do not try again until it is unlocked.",
-  "read-only": () => "The project is read-only for now. Tell the user; do not try again.",
-  "missing-updates": () => "Changes from elsewhere are still arriving. Try again in a moment.",
-  conflict: () =>
-    "Somebody else changed what you are changing after you last read it. Read it again with aq_object_read, then decide whether your change still fits.",
+  "project-locked": () => "The project has a tag that locks it.",
+  "read-only": () => "The project is read-only for now.",
+  "missing-updates": () => "Changes from elsewhere are still arriving.",
+  conflict: () => "Somebody else changed what you are changing after you last read it.",
   "stale-revision": () =>
-    "The project was reopened since you read it, so what you read is out of date. Read again what you are about to change; the tools keep track of revisions for you.",
+    "The project was reopened since you read it, so what you read is out of date; the tools keep track of revisions themselves.",
   "would-break-document": ({ file, path, message }) =>
     `This would make ${file} invalid at ${path || "the top"} (${path || "it"} ${englishRule(message)}). Often an id that is taken or a value out of range.`,
   "not-found": ({ kind, id, clip, why }) => {
@@ -147,7 +145,7 @@ export const FAILURE_TEXTS: Texts = {
     return `There is no ${word(kind)} ${id}${clip === undefined ? "" : ` on clip ${clip}`}.`;
   },
   "id-taken": ({ kind, id, by }) =>
-    `The id ${id} is taken by a ${word(by)}${by === kind ? "" : ` (sections, tracks and clips of a timeline share their ids)`}. Use another id, or leave it out to get a new one.`,
+    `The id ${id} is taken by a ${word(by)}${by === kind ? "" : ` (sections, tracks and clips of a timeline share their ids)`}. Without an id, a new one is made.`,
   "wrong-track": ({ trackKind, holds, sourceKind }) =>
     holds === "clip"
       ? `${an(trackKind, true)} track cannot hold ${sourceKind ? `${an(sourceKind)} clip` : "this clip"}: ${trackFor(sourceKind)}`
@@ -162,8 +160,7 @@ export const FAILURE_TEXTS: Texts = {
     why === "tracks"
       ? `Clips ${from} and ${to} are on different tracks: a join needs both on one track.`
       : `There is a gap between clips ${from} and ${to}: a join needs the second to start where the first ends.`,
-  "last-section": ({ timeline }) =>
-    `Timeline ${timeline} needs at least one section: change its duration with section.update instead, or add another section first.`,
+  "last-section": ({ timeline }) => `Timeline ${timeline} needs at least one section.`,
   "source-start": ({ clip }) =>
     `Clip ${clip} would start before what it shows starts: trim its start to a later time.`,
   "source-end": ({ clip }) =>
@@ -185,28 +182,28 @@ export const FAILURE_TEXTS: Texts = {
           ? `The join is too long: at most ${longest} seconds here.`
           : "There is no room for a join at this cut.",
   "not-animatable": ({ path }) => `${path} cannot have keys.`,
-  "join-taken": ({ join }) => `This cut has a join already: ${join}. Use join.update to change it.`,
+  "join-taken": ({ join }) => `This cut has a join already: ${join}. join.update changes it.`,
   "asset-in-use": ({ asset, by, file }) =>
     by === "code"
       ? `Code uses asset ${asset} (${file ?? ""}): change the code first.`
-      : `Clips or versions use asset ${asset}: replace or remove them first, or pass withUses: true.`,
+      : `Clips or versions use asset ${asset}; withUses: true removes them too.`,
   "scene-in-use": ({ scene }) =>
-    `Clips or versions use scene ${scene}: replace or remove them first, or pass withUses: true.`,
+    `Clips or versions use scene ${scene}; withUses: true removes them too.`,
   "sound-in-use": ({ sound }) =>
-    `Clips or versions use sound ${sound}: replace or remove them first, or pass withUses: true.`,
+    `Clips or versions use sound ${sound}; withUses: true removes them too.`,
   "entry-in-use": ({ path, why }) =>
     why === "remove"
-      ? `${path} is an entry: give its scene or sound another entry first.`
+      ? `${path} is the entry of its scene or sound.`
       : `${path} is an entry and cannot leave its folder.`,
   "missing-entry": ({ kind, entry }) =>
-    `The entry of the ${kind} is not there: ${entry}. Give its files an entry of that name, or name one of its files as entry.`,
+    `The entry of the ${kind} is not there: ${entry}. The entry has to be one of its files.`,
   "path-taken": ({ path, by }) =>
     by === "manifest"
       ? `${path} is where the folder keeps its own manifest.`
       : `There is a ${by} at ${path} already.`,
   "file-too-large": ({ path, limit }) => `${path} is larger than ${limit / 1024 ** 2} MiB.`,
   "runtime-too-new": ({ runtime, current }) =>
-    `Runtime ${runtime} is newer than this editor's ${current}: use runtime ${current}.`,
+    `Runtime ${runtime} is newer than this editor's ${current}: the runtime it takes is ${current}.`,
   "invalid-value": invalidValue,
   "not-moved": ({ clip }) => `This batch did not take away clip ${clip}.`,
   "not-in-use": ({ kind, id }) => `No clip uses the ${kind} ${id}.`,

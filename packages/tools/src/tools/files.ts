@@ -160,7 +160,7 @@ export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
       }
       if (places.length === 0) {
         return failed(
-          `error text-not-found in ${where}: old_text is not in ${args.path} as it is now; the file may have changed since you read it: read it again with aq_file_read.${closest(text, wanted)}\nnothing was written`,
+          `error text-not-found in ${where}: old_text is not in ${args.path} as it is now; the file may have changed since you read it.${closest(text, wanted)}\nnothing was written`,
         );
       }
       if (places.length > 1 && !all) {
@@ -173,7 +173,7 @@ export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
           times > 1 ? `${line} (${times} times)` : String(line),
         );
         return failed(
-          `error text-not-unique in ${where}: old_text is there ${places.length} times, on line${lines.size > 1 ? "s" : ""} ${lineList.join(", ")}. Add text around it to make it unique, or set replace_all. Nothing was written.`,
+          `error text-not-unique in ${where}: old_text is there ${places.length} times, on line${lines.size > 1 ? "s" : ""} ${lineList.join(", ")}; it has to be there once, or replace_all set. Nothing was written.`,
         );
       }
       count += places.length;
@@ -220,12 +220,12 @@ function pathProblem(state: ProjectState, path: string): ToolResult | undefined 
   const manifests = top === "scenes" ? state.scenes : state.sounds;
   if (name === "" || name === "scene.json" || name === "sound.json") {
     return refuse(
-      `that is the manifest of the ${top.slice(0, -1)}: change it with ${top.slice(0, -1)}.update in aq_edit.`,
+      `that is the manifest of the ${top.slice(0, -1)}, which ${top.slice(0, -1)}.update in aq_edit changes.`,
     );
   }
   if (owner === undefined || !entryOf(manifests, owner)) {
     return failed(
-      `error not-found: there is no ${top.slice(0, -1)} ${JSON.stringify(owner ?? "")}: create it with ${top.slice(0, -1)}.add in aq_edit, which takes its first files too. Nothing was written.`,
+      `error not-found: there is no ${top.slice(0, -1)} ${JSON.stringify(owner ?? "")}; ${top.slice(0, -1)}.add in aq_edit makes one, with its first files. Nothing was written.`,
     );
   }
   return undefined;
@@ -254,19 +254,19 @@ export const fileWrite: ToolDefinition<z.output<typeof FileWriteParams>> = {
       const count = before.split("\n").length;
       if (!seen) {
         return failed(
-          `error file-not-read: ${path} exists, and you have not read it in this conversation: read it with aq_file_read first, or change parts of it with aq_file_edit. Nothing was written.`,
+          `error file-not-read: ${path} exists, and you have not read it in this conversation; replacing it needs all its lines read with aq_file_read. Nothing was written.`,
         );
       }
       if (seen.hash !== hash) {
         return failed(
-          `error file-changed: ${path} changed since you read it, maybe by the user: read it again with aq_file_read, then decide. Nothing was written.`,
+          `error file-changed: ${path} changed since you read it, maybe by the user. Nothing was written.`,
         );
       }
       if (!readWhole(seen, hash, count)) {
         const read = seen.ranges.map(([from, to]) => `${from}-${to}`).join(", ") || "none";
         const next = (seen.ranges[0]?.[0] ?? 1) > 1 ? 1 : (seen.ranges[0]?.[1] ?? 0) + 1;
         return failed(
-          `error file-not-read: you have read lines ${read} of ${path} (${linesWord(count)}). Read the rest with aq_file_read (offset ${next}) before you replace the whole file, or change parts of it with aq_file_edit. Nothing was written.`,
+          `error file-not-read: you have read lines ${read} of ${path} (${linesWord(count)}). Replacing the whole file needs all of them read; the first line not read is ${next}. Nothing was written.`,
         );
       }
     }

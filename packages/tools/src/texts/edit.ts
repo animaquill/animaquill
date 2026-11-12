@@ -5,7 +5,7 @@ export const EDIT_TEXTS = {
   "edit.operationsHeading":
     'Operations (every parameter, result and more examples: aq_guide topic "ops/<operation>"):',
   "edit.examplesHeading":
-    "Examples of operations (illustrative; their ids come from a sample project, so use the ids you read):",
+    "Examples of operations (illustrative; their ids come from a sample project, not from the open one):",
   "edit.examples": [
     [
       {

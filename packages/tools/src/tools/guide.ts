@@ -200,7 +200,7 @@ export const guide: ToolDefinition<z.output<typeof GuideParams>> = {
         found.push(`${page.topic}: ${line.trim().slice(0, 160)}`);
         if (found.length >= 10) break;
       }
-      return answer(call, found.length > 0 ? found : ["nothing found: try fewer or other words"]);
+      return answer(call, found.length > 0 ? found : ["nothing found"]);
     }
     return answer(call, [
       fitted([

@@ -244,7 +244,7 @@ describe("reading a file", () => {
     expect(read.text).toContain(`call again with offset ${shown + 1}`);
     const write = await call("aq_file_write", { path: "code/long.js", text: "x\n" });
     expect(write.text).toContain(`you have read lines 1-${shown} of code/long.js (2000 lines)`);
-    expect(write.text).toContain(`offset ${shown + 1}`);
+    expect(write.text).toContain(`the first line not read is ${shown + 1}`);
   });
 
   it("needs every line read to replace the file, and a cut line is not read", async () => {
@@ -558,7 +558,7 @@ describe("small things of the texts", () => {
   it("send the manifest of a scene to scene.update", async () => {
     const { call } = toolsOn();
     const result = await call("aq_file_write", { path: "scenes/title/scene.json", text: "{}" });
-    expect(result.text).toContain("change it with scene.update in aq_edit");
+    expect(result.text).toContain("which scene.update in aq_edit changes");
   });
 
   it("name the guide sections in English too", async () => {

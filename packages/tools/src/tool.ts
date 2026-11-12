@@ -102,7 +102,7 @@ export function paramsError(error: z.ZodError, schema: z.ZodType, input: unknown
 
 /** The text of a call that was not run, because of what came before it in the same answer. */
 const NOT_RUN_FAILED =
-  "error not-run: an earlier change in this answer failed, so this one was not run; nothing was written. Read the error above and send it again if it still fits.";
+  "error not-run: an earlier change in this answer failed, so this one was not run; nothing was written.";
 const NOT_RUN_WAITING =
   "error not-run: this answer asked the user a question, so this change was not run; the turn is waiting for the user.";
 
@@ -147,7 +147,7 @@ export function makeTool<P>(
         return parsed.error;
       }
       const store = host.store();
-      if (!store) return failed("error no-project: no project is open. Ask the user to open one.");
+      if (!store) return failed("error no-project: no project is open.");
       const { request_id: given, ...rest } = parsed.value as {
         readonly request_id?: string;
         readonly dry_run?: boolean;

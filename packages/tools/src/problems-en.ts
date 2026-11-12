@@ -41,7 +41,7 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
   "unsupported-override": (p) =>
     `the changes of version ${str(p.version ?? p.format ?? p.language)} are not applied by this editor version yet`,
   "property-orphan": (p) =>
-    `nothing in the scene takes ${str(p.path)}, so its keyframes do nothing; rename it to a path the scene has, or remove it`,
+    `nothing in the scene takes ${str(p.path)}, so its keyframes do nothing`,
   "property-orphan-element": (p) =>
     `the scene page has no element for ${str(p.path)} right now, so its keyframes wait for it`,
   "property-renamed": (p) =>
@@ -49,7 +49,7 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
   "property-mismatch": (p) =>
     `the value of ${str(p.path)} is no ${str(p.type)}, so the default applies`,
   "scene-param-id": (p) =>
-    `the id of parameter ${JSON.stringify(str(p.name))} cannot be a property path: use letters, digits, _ and -`,
+    `the id of parameter ${JSON.stringify(str(p.name))} cannot be a property path, which has only letters, digits, _ and -`,
   "scene-registration": (p) =>
     `the scene registers ${str(p.target) || "something"} in a way the editor cannot use (${str(p.problem)})`,
   "scene-error": () => "the code threw an error",

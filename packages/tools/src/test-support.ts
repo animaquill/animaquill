@@ -67,3 +67,43 @@ export function toolsOn(
   };
   return { tools, call, caller, host };
 }
+
+/**
+ * Phrases that tell a model to call a tool, when, or never to do something: triggers, defaults and
+ * absolutes. Anthropic names these as what makes newer models call tools too often (see the audit
+ * of tool descriptions, 2026-11-12). Facts with consequences take their place.
+ */
+export const DIRECTIVE_PHRASES: readonly RegExp[] = [
+  /\bcall (it|this)\b/i,
+  /\buse (it|this tool) (to|when|for)\b/i,
+  /\brun it\b/i,
+  /\bat the start of\b/i,
+  /\bbefore you\b/i,
+  /\bwhen the user says\b/i,
+  /\binstead of guessing\b/i,
+  /\bif in doubt\b/i,
+  /\bwhenever\b/i,
+  /\balways\b/i,
+  /\bnever\b/i,
+  /\bDo not\b/,
+  /\bDon't\b/,
+  /\byou must\b/i,
+  /\bmake sure\b/i,
+  /\bread (it|the file) again\b/i,
+];
+
+/**
+ * What tells AI what to do next, rather than what happened: results and errors say what is so,
+ * with the form a call needs, and leave what to do to the model and what the user asked for.
+ */
+export const ADVICE: readonly RegExp[] = [
+  /\bfix (the|it|them|this)\b/i,
+  /\byou should\b/i,
+  /\bconsider\b/i,
+  /\btry again\b/i,
+  /\btell the user\b/i,
+  /\bask the user\b/i,
+  /\bthen decide\b/i,
+  /\bread (it|them|the file) again\b/i,
+  /\bplease\b/i,
+];

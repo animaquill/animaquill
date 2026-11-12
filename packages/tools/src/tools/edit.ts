@@ -60,14 +60,11 @@ function notForAi(name: string, where: string): ToolResult | undefined {
   const op = operationOf(name);
   if (!op || op.ai === "yes") return undefined;
   const { no, instead } = op.ai;
-  const use = instead ? ` Use ${instead} instead.` : "";
+  const use = instead ? ` ${instead} does it for AI.` : "";
   const error = (code: string, words: string) =>
     failed(`error ${code} in ${where}: ${words} Nothing was written.`);
   if (no === "human") {
-    return error(
-      "not-allowed",
-      `only the user can do ${name}; ask the user to do it if it is needed.`,
-    );
+    return error("not-allowed", `only the user can do ${name}.`);
   }
   if (no === "file-tools") {
     return error(
@@ -76,10 +73,7 @@ function notForAi(name: string, where: string): ToolResult | undefined {
     );
   }
   if (no === "needs-file") {
-    return error(
-      "not-allowed",
-      `${name} needs a file that only the user can pick; ask the user to add it.`,
-    );
+    return error("not-allowed", `${name} needs a file that only the user can pick.`);
   }
   return error("unknown-operation", `${name} is not an operation here.${use}`);
 }
@@ -138,7 +132,7 @@ function checkOperations(args: EditArgs, texts: TextTable): ToolResult | undefin
         );
       }
       lines.push(
-        `${hidden.name}: not a parameter of ${op} here; use ${hidden.instead ?? "another operation"} for it`,
+        `${hidden.name}: not a parameter of ${op} here${hidden.instead ? `; ${hidden.instead} takes it` : ""}`,
       );
     }
     const parsed = definition.params.safeParse(params);
@@ -239,7 +233,7 @@ function conflictText(call: Call, failure: CommandFailure, bases: Bases): string
     const list = fields.size > 0 ? ` (${[...fields].join(", ")})` : "";
     return `${[...who].join(" and ") || "someone else changed"} ${objectText(state, ref)}${list}`;
   });
-  return `error conflict: ${parts.join("; ")} after you last read it\nread it again with aq_object_read and decide whether your change still fits; nothing was written`;
+  return `error conflict: ${parts.join("; ")} after you last read it\nnothing was written`;
 }
 
 /** The text of a batch that failed, with what helps to fix it. */
@@ -254,7 +248,7 @@ function failureOf(call: Call, args: EditArgs, failure: CommandFailure, bases: B
     });
     const more = bases.unread.size > 5 ? ` and ${bases.unread.size - 5} more` : "";
     return failed(
-      `error not-read: you have not read ${objects.join(", ")}${more} in this conversation, so the tools cannot tell whether the user changed it since. Read it with aq_object_read or aq_timeline_read, then send the change again. Nothing was written.`,
+      `error not-read: you have not read ${objects.join(", ")}${more} in this conversation, so the tools cannot tell whether the user changed it since; what aq_object_read or aq_timeline_read shows counts as read. Nothing was written.`,
     );
   }
   if (failure.code === "stale-revision") {

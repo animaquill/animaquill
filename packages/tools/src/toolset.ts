@@ -38,7 +38,7 @@ export const DEFINITIONS: readonly ToolDefinition<any>[] = [
  * version they are the same to the byte, so that services keep them in their caches; any change of
  * them is a new version (a test compares them with a snapshot).
  */
-export const TOOLSET_VERSION = "2026.1";
+export const TOOLSET_VERSION = "2026.2";
 
 /**
  * The tools that AI uses on a project, the same for the assistant in the browser, a command line

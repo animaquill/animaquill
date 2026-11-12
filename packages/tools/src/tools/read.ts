@@ -620,7 +620,7 @@ export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
     if (text === undefined) {
       if (isNoCodeFile(state, args.path)) {
         return failed(
-          `error not-a-code-file: ${args.path} is a document of the project or a file of an asset, not code: read documents with aq_object_read.`,
+          `error not-a-code-file: ${args.path} is a document of the project or a file of an asset, not code; documents are in aq_object_read.`,
         );
       }
       const similar = mostLike(args.path, Object.keys(state.files));
