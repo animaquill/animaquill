@@ -40,6 +40,79 @@
   gap: 4px;
 }
 
+/* The three statuses of saving: where it is, "本地", and how it is; then the platform's two. */
+.saves {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.local,
+.save {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.local .name {
+  margin-left: -6px;
+}
+
+.saveLabel {
+  color: var(--aq-text-muted);
+}
+
+.save .saveWord {
+  color: var(--aq-text);
+}
+
+.placeIcon[data-place="folder"] {
+  color: var(--aq-local);
+}
+
+.placeIcon[data-place="cloud"] {
+  color: var(--aq-cloud);
+}
+
+.placeIcon[data-place="cloudFolder"] {
+  --place-folder: var(--aq-local);
+  --place-cloud: var(--aq-cloud);
+}
+
+/* Saving into GitHub went wrong: it stands out, whatever the width. */
+.alert,
+.alert .saveLabel,
+.alert .saveWord {
+  color: var(--aq-bg-chrome);
+  font-weight: 600;
+}
+
+.alert {
+  background: var(--aq-warning);
+}
+
+.alert:hover {
+  color: var(--aq-bg-chrome);
+  background: var(--aq-warning);
+  filter: brightness(1.1);
+}
+
+/* Narrow: the words "本地" "云同步" "GitHub 仓库" go, the signs stay. */
+@media (max-width: 1100px) {
+  .saveLabel {
+    display: none;
+  }
+}
+
+/* Narrower still: only the signs, apart from an error, which keeps its word. */
+@media (max-width: 760px) {
+  .save:not(.alert) .saveWord {
+    display: none;
+  }
+}
+
 .info {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

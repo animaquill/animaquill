@@ -75,7 +75,10 @@ async function arrive(page: Page, who: { signedIn?: boolean; installed?: boolean
 const shot = (page: Page, name: string) =>
   page.screenshot({ path: test.info().outputPath(`${name}.png`) });
 
+/** The status of syncing, or of a project that does not sync. */
 const cloudStatus = (page: Page) => footer(page).locator("[data-cloud-level]");
+/** The status of the repository on GitHub: "已同步", "待同步", or what went wrong. */
+const githubStatus = (page: Page) => footer(page).locator("[data-github]");
 const panel = (page: Page) => page.getByRole("dialog", { name: /^云端 · / });
 const row = (page: Page, id: string) => panel(page).locator(`[data-cloud-row="${id}"]`);
 const connectDialog = (page: Page) => page.locator("dialog[data-connect-phase]");
@@ -151,7 +154,7 @@ test.describe("the start page", () => {
 
     await openCard(page, "片头动画");
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
-    await expect(cloudStatus(page)).toHaveText("云端项目");
+    await expect(cloudStatus(page)).toHaveText("已同步");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     // The panel says that it has no folder here, and has no "disconnect".
     await cloudStatus(page).click();
@@ -177,7 +180,8 @@ test.describe("the start page", () => {
     // Back on the start page it shows once, as opened here, and goes out of the browser again.
     await chooseFrom(page, "文件", "关闭项目");
     // The platform has the change, its repository not yet: the card says so.
-    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^有未保存的更改，平台只保留 7 天/);
+    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^云端 · 待同步/);
+    await expect(statusOf(page, "片头动画 第二版")).toHaveAttribute("data-tone", "plain");
     // Once: it is a project of the platform, not one of this browser as well.
     await expect(projectCard(page, "片头动画 第二版")).toHaveCount(1);
     await expect(page.locator('main li[data-kind="onlyHere"]')).toHaveCount(0);
@@ -188,7 +192,7 @@ test.describe("the start page", () => {
     await expect(
       page.getByText("已从这个浏览器移除“片头动画 第二版”。云端的项目还在。"),
     ).toBeVisible();
-    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^有未保存的更改，平台只保留 7 天/);
+    await expect(statusOf(page, "片头动画 第二版")).toHaveText(/^云端 · 待同步/);
 
     // One without a repository can be deleted there, after people read what goes and what stays.
     await cardMenu(page, "半截的", "删除云端项目…");
@@ -465,7 +469,7 @@ test.describe("connecting a project", () => {
     await choice("opening").getByRole("button", { name: "打开那个项目" }).click();
     await expect(connectDialog(page)).toHaveCount(0);
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
-    await expect(cloudStatus(page)).toHaveText("云端项目");
+    await expect(cloudStatus(page)).toHaveText("已同步");
     // Nothing was made for the project they left.
     expect(await withLab(page, (lab) => [...lab.platform.projects.keys()])).toEqual([other]);
   });
@@ -500,7 +504,7 @@ test.describe("connecting a project", () => {
     await shot(page, "connect-done");
     await connecting.getByRole("button", { name: "完成" }).click();
     // A project without a folder is one of the platform from then on, kept in this browser.
-    await expect(cloudStatus(page)).toHaveText("云端项目");
+    await expect(cloudStatus(page)).toHaveText("已同步");
     await expect(cloudStatus(page)).toHaveAttribute("data-archive", "ready");
   });
 
@@ -548,8 +552,9 @@ test.describe("connecting a project", () => {
     await withLab(page, (lab) => lab.seed("旧的云端项目"));
     await chooseFrom(page, "文件", "打开云端的项目…");
     await openCard(page, "旧的云端项目");
-    await expect(cloudStatus(page)).toHaveText("要处理");
-    await cloudStatus(page).click();
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库还差一步：选仓库");
+    await expect(githubStatus(page)).toHaveAttribute("data-github", "error");
+    await githubStatus(page).click();
     await expect(row(page, "repository")).toContainText("还差一步：选仓库");
     await row(page, "repository").getByRole("button", { name: "选仓库…" }).click();
 
@@ -563,7 +568,7 @@ test.describe("connecting a project", () => {
     await expect(step(page, "upload")).toHaveCount(0);
     await expect(connecting).toHaveAttribute("data-connect-phase", "done");
     await connecting.getByRole("button", { name: "完成" }).click();
-    await expect(cloudStatus(page)).toHaveText("云端项目");
+    await expect(cloudStatus(page)).toHaveText("已同步");
     // Closing the dialog before that would have taken nothing away.
     expect(await withLab(page, (lab) => lab.platform.removed)).toEqual([]);
   });
@@ -591,7 +596,7 @@ test.describe("making a new project", () => {
     await shot(page, "new-cloud-steps");
     await box.getByRole("button", { name: /^(关闭|完成)$/ }).click();
     await expect(page).toHaveTitle("原子是什么 - AnimaQuill");
-    await expect(cloudStatus(page)).toHaveText("云端项目");
+    await expect(cloudStatus(page)).toHaveText("已同步");
     await expect(page.getByLabel("项目分辨率：1080×1920")).toBeVisible();
     expect(
       await withLab(page, ({ platform }) =>
@@ -630,6 +635,149 @@ test.describe("the panel of the platform", () => {
     await connect(page, "my-film");
   }
 
+  test("says how saving goes in three statuses, and on the cards only what went wrong stands out", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const bar = (name: string) =>
+      footer(page).screenshot({ path: test.info().outputPath(`${name}.png`) });
+    const local = footer(page).locator('[data-save-status="local"]');
+    await connected(page);
+    // All of it saved: here, on the platform and in the repository.
+    await expect(local).toContainText("本地");
+    await expect(local).toContainText("已保存");
+    await expect(local.getByRole("img", { name: "云端项目，这台电脑上有文件夹" })).toBeVisible();
+    await expect(cloudStatus(page)).toHaveText("已同步");
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库已同步");
+    await expect(footer(page).getByRole("button", { name: "云同步：已同步" })).toBeVisible();
+    await expect(footer(page).getByRole("button", { name: "GitHub 仓库：已同步" })).toBeVisible();
+    await bar("s1-bar-all-good");
+    // Each opens its part of the panel.
+    await footer(page).getByRole("button", { name: "本地", exact: true }).click();
+    await expect(panel(page).locator('[data-cloud-section="local"]')).toHaveAttribute(
+      "data-focused",
+      "true",
+    );
+    await expect(panel(page).locator("[data-cloud-section]")).toHaveCount(3);
+    await page.keyboard.press("Escape");
+
+    // A change: the repository does not have it yet, which does not stand out.
+    await withLab(page, (lab) => {
+      lab.repositories.archiveMs = -1;
+    });
+    await renameTo(page, "改了的名字");
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库待同步");
+    await expect(githubStatus(page)).toHaveAttribute("data-github", "pending");
+    await bar("s1-bar-pending");
+
+    // It cannot get there: that stands out, also in a narrow window, where only it keeps its word.
+    await withLab(page, (lab) => {
+      const [project] = [...lab.platform.projects.keys()];
+      lab.repositories.pause(project!, "archived");
+    });
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库同步失败");
+    await bar("s1-bar-error");
+    await githubStatus(page).hover();
+    await expect(page.getByRole("tooltip")).toContainText(
+      "存进 GitHub 失败：仓库在 GitHub 上已归档，只能读。",
+    );
+    await shot(page, "s1-error-tip");
+    await githubStatus(page).click();
+    await expect(panel(page).locator('[data-cloud-section="github"]')).toHaveAttribute(
+      "data-focused",
+      "true",
+    );
+    await expect(row(page, "archive")).toContainText("平台临时存储只保存 7 天，请尽快处理。");
+    await shot(page, "s1-error-panel");
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 700, height: 900 });
+    await expect(githubStatus(page).getByText("同步失败")).toBeVisible();
+    await expect(cloudStatus(page)).toBeHidden();
+    await bar("s1-bar-narrow");
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // A project of this computer has only "本地", and "仅本机" to connect it.
+    await chooseFrom(page, "文件", "关闭项目");
+    await newInFolder(page, "本地的", "mine");
+    await expect(
+      footer(page).getByRole("img", { name: "本地项目，在这台电脑的文件夹里" }),
+    ).toBeVisible();
+    await expect(githubStatus(page)).toHaveCount(0);
+    await expect(cloudStatus(page)).toHaveText("仅本机");
+    await bar("s1-bar-local");
+
+    // The cards: only what went wrong stands out, what is on its way says so in plain words.
+    await withLab(page, (lab) => {
+      lab.seed("存好的", { repository: "kept", listed: { archive: { seq: 1, behind: false } } });
+      lab.seed("等着存的", {
+        repository: "waiting",
+        listed: { archive: { seq: 1, behind: true } },
+      });
+      lab.seed("存不进去的", {
+        repository: "failing",
+        listed: {
+          attention: "repository",
+          repository: {
+            id: 901,
+            owner: "octo",
+            name: "failing",
+            fullName: "octo/failing",
+            private: true,
+            url: "https://github.com/octo/failing",
+            state: "paused",
+            reason: "archived",
+          },
+          archive: { seq: 1, behind: true },
+        },
+      });
+    });
+    await chooseFrom(page, "文件", "关闭项目");
+    await showView(page, "全部项目");
+    await expect(statusOf(page, "存好的")).toHaveText(/^云端 · 这台电脑还没打开过/);
+    await expect(statusOf(page, "等着存的")).toHaveText(/^云端 · 待同步/);
+    await expect(statusOf(page, "等着存的")).toHaveAttribute("data-tone", "plain");
+    await expect(statusOf(page, "存不进去的")).toHaveText(/^GitHub 同步失败/);
+    await expect(statusOf(page, "存不进去的")).toHaveAttribute("data-tone", "warning");
+    await expect(projectCard(page, "存不进去的").locator("[data-tone]").first()).toHaveAttribute(
+      "title",
+      /平台临时存储只保存 7 天，请尽快处理。$/,
+    );
+    await expect(
+      projectCard(page, "改了的名字").getByRole("img", { name: "云端项目，这台电脑上有文件夹" }),
+    ).toBeVisible();
+    await expect(
+      projectCard(page, "本地的").getByRole("img", { name: "本地项目，在这台电脑的文件夹里" }),
+    ).toBeVisible();
+    await expect(projectCard(page, "存好的").getByRole("img", { name: "云端项目" })).toBeVisible();
+    await shot(page, "s1-cards");
+    await page.getByRole("button", { name: "列表" }).click();
+    await shot(page, "s1-list");
+
+    // The three signs side by side, large, for people to look at.
+    await page.evaluate(() => {
+      const shelf = document.createElement("div");
+      shelf.id = "aq-icons";
+      shelf.style.cssText =
+        "position:fixed;left:20px;top:20px;z-index:9999;display:flex;gap:32px;padding:24px;background:var(--aq-bg-chrome);";
+      for (const place of ["folder", "cloud", "cloudFolder"]) {
+        const found = document.querySelector(`main [data-place="${place}"]`);
+        if (!found) continue;
+        const icon = found.cloneNode(true) as SVGElement;
+        icon.setAttribute("width", "96");
+        icon.setAttribute("height", "96");
+        const box = document.createElement("span");
+        box.className = (found.parentElement?.className ?? "") as string;
+        box.style.cssText = "display:grid;place-items:center;gap:8px;font-size:12px";
+        box.append(icon, place);
+        shelf.append(box);
+      }
+      document.body.append(shelf);
+    });
+    await page.locator("#aq-icons").screenshot({ path: test.info().outputPath("s1-icons.png") });
+  });
+
   test("says how the repository, syncing and archiving are, and what there is to do", async ({
     page,
   }) => {
@@ -644,7 +792,8 @@ test.describe("the panel of the platform", () => {
     ).toHaveAttribute("href", "https://github.com/octo/my-film");
     await expect(row(page, "sync")).toContainText("在线，改动都已发送");
     await expect(row(page, "archive")).toContainText("刚刚存过");
-    await expect(row(page, "local")).toHaveCount(0);
+    // Where it is: in its folder, as the first part of the panel says.
+    await expect(row(page, "local")).toContainText("在这台电脑的文件夹“film”里");
     await expect(panel(page).getByRole("button", { name: "换一个仓库…" })).toBeVisible();
     await expect(panel(page).getByRole("button", { name: "断开云端…" })).toBeVisible();
     await shot(page, "panel-synced");
@@ -697,22 +846,21 @@ test.describe("the panel of the platform", () => {
     await goOffline(context, page);
     await expect(cloudStatus(page)).toHaveText("离线");
     await renameTo(page, "离线时的名字");
-    await expect(cloudStatus(page)).toHaveText("离线，1 个改动待发");
+    await expect(cloudStatus(page)).toHaveText("离线");
+    await expect(footer(page).getByRole("button", { name: "云同步：离线" })).toBeVisible();
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "offline");
     await cloudStatus(page).click();
     await expect(row(page, "sync")).toContainText("离线，1 个改动待发，联网后自动发送");
     await shot(page, "panel-offline");
     await page.keyboard.press("Escape");
     await context.setOffline(false);
-    // The change got to the platform, and its repository does not have it yet: people hear that,
-    // until it is saved there.
-    await expect(cloudStatus(page)).toHaveText("有未保存的更改，平台只保留 7 天", {
-      timeout: 20_000,
-    });
-    await cloudStatus(page).click();
-    await expect(row(page, "archive").getByRole("status")).toContainText(
-      "有未保存的更改，平台只保留 7 天。",
-    );
+    // The change got to the platform, and its repository does not have it yet: on its way there,
+    // which does not stand out.
+    await expect(cloudStatus(page)).toHaveText("已同步", { timeout: 20_000 });
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库待同步");
+    await expect(githubStatus(page)).toHaveAttribute("data-github", "pending");
+    await githubStatus(page).click();
+    await expect(row(page, "archive").getByRole("status")).toContainText("有新改动");
     await shot(page, "panel-unsaved");
     await row(page, "archive").getByRole("button", { name: "现在存档" }).click();
     await expect(row(page, "archive").getByRole("status")).toHaveText("刚刚存过", {
@@ -720,6 +868,7 @@ test.describe("the panel of the platform", () => {
     });
     await page.keyboard.press("Escape");
     await expect(cloudStatus(page)).toHaveText("已同步");
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库已同步");
   });
 
   test("stands out where archiving paused, with why and what helps", async ({ page }) => {
@@ -732,9 +881,26 @@ test.describe("the panel of the platform", () => {
     });
     // The window comes back to the front: the editor looks again.
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await expect(cloudStatus(page)).toHaveText("要处理");
+    // Syncing goes on; saving into GitHub stands out, says why, and that the platform keeps it a
+    // week only.
+    await expect(cloudStatus(page)).toHaveText("已同步");
     await expect(cloudStatus(page)).toHaveAttribute("data-archive", "paused");
-    await cloudStatus(page).click();
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库同步失败");
+    await expect(githubStatus(page)).toHaveAttribute("data-github", "error");
+    await expect(githubStatus(page)).toHaveAttribute(
+      "aria-description",
+      /^存进 GitHub 失败：GitHub 不让存档写进这个仓库.*平台临时存储只保存 7 天，请尽快处理。$/,
+    );
+    // Hovering says the same.
+    await githubStatus(page).hover();
+    await expect(page.getByRole("tooltip")).toContainText("平台临时存储只保存 7 天，请尽快处理。");
+    await shot(page, "github-error-tip");
+    await githubStatus(page).click();
+    await expect(panel(page).locator('[data-cloud-section="github"]')).toHaveAttribute(
+      "data-focused",
+      "true",
+    );
+    await expect(row(page, "archive")).toContainText("平台临时存储只保存 7 天，请尽快处理。");
     await expect(row(page, "archive")).toContainText("存档先停着：GitHub 不让存档写进这个仓库");
     await expect(row(page, "archive")).toContainText(
       "GitHub 的原话：Changes must be made through a pull request.",
@@ -752,8 +918,8 @@ test.describe("the panel of the platform", () => {
       lab.repositories.pause(project!, "gone", { gone: "deleted" });
     });
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await expect(cloudStatus(page)).toHaveText("要处理");
-    await cloudStatus(page).click();
+    await expect(githubStatus(page)).toHaveText("GitHub 仓库同步失败");
+    await githubStatus(page).click();
     await expect(row(page, "archive")).toContainText("存档先停着：仓库在 GitHub 上被删除了");
     await expect(row(page, "archive")).toContainText("换一个仓库，项目会重新存一份进去");
     await expect(row(page, "archive").getByRole("button", { name: "换一个仓库…" })).toBeVisible();

@@ -467,8 +467,16 @@ export interface CloudProjectSummary {
     /** The repository cannot be used, and the project cannot be edited: see `RepositoryUnusable`. */
     readonly unusable?: RepositoryUnusable;
   };
-  /** How far archiving got. `behind`: the platform has changes that are not archived yet. */
-  readonly archive?: { readonly at?: number; readonly seq: number; readonly behind: boolean };
+  /**
+   * How far archiving got. `behind`: the platform has changes that are not archived yet.
+   * `failingSince`: see `RepositoryStatus.failingSince`.
+   */
+  readonly archive?: {
+    readonly at?: number;
+    readonly seq: number;
+    readonly behind: boolean;
+    readonly failingSince?: number;
+  };
   /**
    * What people have to do something about: it has no repository yet ("noRepository"), archiving
    * into its repository paused ("repository"), its repository cannot be used, and so neither can
@@ -839,6 +847,12 @@ export interface RepositoryStatus {
   /** After failing: when it is tried again, and how many failed in a row. */
   readonly retryAt?: number;
   readonly failures?: number;
+  /**
+   * Since when archives fail for what only GitHub or the platform can put right, as GitHub being
+   * away or limiting: the platform tries again by itself, and an editor tells people once it fails
+   * for long. Missing while archives get through, or pause for people.
+   */
+  readonly failingSince?: number;
   /**
    * For "diverged": which files changed, on which commit: what `archiveNow` with `replace` goes on
    * top of. `deleted`: those of them the commit does not have any more, as against changed or new.

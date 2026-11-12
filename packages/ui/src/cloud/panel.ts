@@ -9,15 +9,10 @@ import {
   pauseDetail,
   pauseText,
 } from "./repository-text.ts";
+import { githubOfStatus, type GitHubState } from "./github-status.ts";
 import type { RepositoryWatchSnapshot } from "./repository-watch.ts";
 import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
-import {
-  unusableFix,
-  unusableKind,
-  unusableLine,
-  unusableTitle,
-  unusableWays,
-} from "./unusable.ts";
+import { unusableFix, unusableKind, unusableLine, unusableWays } from "./unusable.ts";
 
 /**
  * The one place in a project that says how it stands with the platform, see the design of the
@@ -103,8 +98,13 @@ export interface PanelAction {
   readonly kind?: "primary" | "danger";
 }
 
+/** The three parts of the panel, as the three statuses of the status bar: see the top. */
+export type PanelSection = "local" | "sync" | "github";
+
 export interface PanelRow {
   readonly id: "repository" | "sync" | "archive" | "local";
+  /** Which part of the panel it is in. */
+  readonly section: PanelSection;
   readonly label: string;
   readonly text: string;
   /** Lines below it: what helps, and what else there is to know. */
@@ -116,9 +116,17 @@ export interface PanelRow {
 }
 
 export interface CloudPanel {
+  /** How syncing goes: the level of its status. */
   readonly level: PanelLevel;
-  /** The word of the status bar. */
+  /** The word of the status of syncing, or of a project that does not sync. */
   readonly bar: string;
+  /** What hovering over it says. */
+  readonly barAbout: string;
+  /**
+   * How it stands with its repository, see `github-status.ts`: the third status. Undefined where
+   * the platform saves projects to no repositories, or the project does not sync.
+   */
+  readonly github: GitHubState | undefined;
   /** What a click on the status opens: the dialog that connects the project, or the panel. */
   readonly opens: "connect" | "panel";
   readonly title: string;
@@ -156,6 +164,8 @@ export interface PanelInput {
   readonly archive?: RepositoryWatchSnapshot;
   /** What the project is called. */
   readonly name: string;
+  /** For "linked" with `local` "folder": what its folder is called, where that is known. */
+  readonly folder?: string;
   /** This browser can write folders, so that a project that is only in it can move into one. */
   readonly canMoveToFolder: boolean;
   /**
@@ -281,12 +291,19 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   /** The first is what people most likely want. */
   const actions = (ids: readonly PanelActionId[]): PanelAction[] =>
     ids.map((id, index) => action(id, index === 0 ? { kind: "primary" } : {}));
+  const sections: Record<PanelRow["id"], PanelSection> = {
+    local: "local",
+    sync: "sync",
+    repository: "github",
+    archive: "github",
+  };
   const row = (
     id: PanelRow["id"],
     text: string,
     more: Partial<Pick<PanelRow, "notes" | "tone" | "link" | "actions">> = {},
   ): PanelRow => ({
     id,
+    section: sections[id],
     label: t(`cloud.panel.row.${id}`),
     text,
     notes: more.notes ?? [],
@@ -300,6 +317,8 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     return {
       level: "attention",
       bar: t("cloud.panel.bar.onlyHere"),
+      barAbout: t("cloud.onlyHere.text"),
+      github: undefined,
       opens: "panel",
       title,
       rows: [
@@ -323,6 +342,8 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     return {
       level: "none",
       bar: t("cloud.panel.bar.local"),
+      barAbout: t("cloud.panel.about.local"),
+      github: undefined,
       opens: "connect",
       title,
       rows: [],
@@ -347,41 +368,35 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   const isUnfinished = input.made === false && watch !== undefined;
   const isAway = state === "offline" || state === "reconnecting";
   const { unusable } = input;
-  // The platform has changes that its repository does not: it keeps them a week, see the design, 1.
-  const isBehind =
-    unusable === undefined &&
-    status !== undefined &&
-    repository !== undefined &&
-    (status.dirtySince !== undefined || status.head > status.archivedSeq);
+  // The third status: how it stands with its repository.
+  const github =
+    watch || unusable
+      ? githubOfStatus(
+          {
+            status,
+            ...(unusable && { unusable }),
+            ...(isUnfinished && { unfinished: true }),
+            now,
+          },
+          t,
+        )
+      : undefined;
   // ...and cannot save them now, rather than only waiting for the next archive.
   const isFailing = isPaused || (!status?.archiving && (status?.failures ?? 0) > 0);
 
-  const level: PanelLevel =
-    unusable || isStuck || isPaused || lacksRepository || isUnfinished
-      ? "attention"
-      : state === "online" && pending === 0 && !isBehind
-        ? "ok"
-        : "busy";
-  const behindBar = t("cloud.panel.bar.unsaved");
-  const bar = unusable
-    ? t("cloud.panel.bar.unusable", { what: unusableTitle(unusable, t), ...plain })
-    : isStuck || lacksRepository || isUnfinished
-      ? t("cloud.panel.bar.attention")
-      : isPaused
-        ? isBehind
-          ? behindBar
-          : t("cloud.panel.bar.attention")
-        : isAway
-          ? pending > 0
-            ? t("cloud.panel.bar.offlinePending", { count: pending })
-            : t("cloud.panel.bar.offline")
-          : state !== "online"
-            ? t("cloud.panel.bar.connecting")
-            : pending > 0
-              ? t("cloud.panel.bar.syncingPending", { count: pending })
-              : isBehind
-                ? behindBar
-                : t(isDirect ? "cloud.panel.bar.direct" : "cloud.panel.bar.synced");
+  // The status of syncing: whether the platform has the changes, and nothing else.
+  const level: PanelLevel = isStuck
+    ? "attention"
+    : state === "online" && pending === 0
+      ? "ok"
+      : "busy";
+  const bar = isStuck
+    ? t("cloud.panel.bar.error")
+    : isAway
+      ? t("cloud.panel.bar.offline")
+      : state === "online" && pending === 0
+        ? t("cloud.panel.bar.synced")
+        : t("cloud.panel.bar.syncing");
 
   const rows: PanelRow[] = [];
 
@@ -408,7 +423,7 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     if (isUnfinished) {
       rows.push(
         row("repository", t("cloud.panel.repository.unfinished"), {
-          notes: [t("cloud.panel.repository.unfinishedNote")],
+          notes: [t("cloud.panel.repository.unfinishedNote"), t("github.week")],
           tone: "attention",
           actions: actions(["finishConnect"]),
         }),
@@ -434,6 +449,7 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     } else if (lacksRepository) {
       rows.push(
         row("repository", t("cloud.panel.repository.none"), {
+          notes: [t("github.week")],
           tone: "attention",
           actions: actions(["chooseRepository"]),
         }),
@@ -484,8 +500,9 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     }),
   );
 
-  // ---- archiving: what says why it cannot be used says it all
-  const unsaved = isBehind ? `${t("cloud.panel.archive.unsaved")}` : "";
+  // ---- archiving: what says why it cannot be used says it all. An error says that the
+  // platform keeps its copy for a week only.
+  const week = github?.kind === "error" ? [t("github.week")] : [];
   if (watch && status && repository && !unusable) {
     if (isPaused) {
       const { reason, fix } = pauseText(status, t);
@@ -497,8 +514,8 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
           ? (["switchRepository"] as const)
           : (PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]);
       rows.push(
-        row("archive", unsaved + t("cloud.panel.archive.paused", { reason, ...plain }), {
-          notes: [fix, ...(detail ? [detail] : []), ...(kept ? [kept] : [])],
+        row("archive", t("cloud.panel.archive.paused", { reason, ...plain }), {
+          notes: [fix, ...(detail ? [detail] : []), ...(kept ? [kept] : []), ...week],
           tone: "attention",
           actions: actions(helps),
         }),
@@ -507,15 +524,20 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       const kept = keptText(status, t);
       const isBusy = status.archiving || watch.archiveAt !== undefined;
       const detail = isFailing ? pauseDetail(status, t) : undefined;
+      const isError = github?.kind === "error";
       rows.push(
-        row("archive", unsaved + archiveText(status, watch.archiveAt, now, t), {
+        row("archive", archiveText(status, watch.archiveAt, now, t), {
           notes: [
+            ...(isError && github.cause === "failingLong" && github.reason ? [github.reason] : []),
+            ...(isError && github.fix && github.cause !== "kept" ? [github.fix] : []),
             ...(detail ? [detail] : []),
             ...(kept ? [kept] : []),
+            ...(isError && github.cause === "kept" && github.fix ? [github.fix] : []),
+            ...week,
             // An archive is of what the platform has: what did not get there yet is not in it.
             ...(pending > 0 ? [t("cloud.panel.archive.notSent")] : []),
           ],
-          ...(isFailing && { tone: "attention" as const }),
+          ...(isError && { tone: "attention" as const }),
           actions: [action("archiveNow", { enabled: !isBusy })],
         }),
       );
@@ -523,7 +545,16 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   }
 
   // ---- where it is on this computer
-  if (isDirect) {
+  if (!isDirect) {
+    rows.push(
+      row(
+        "local",
+        input.folder === undefined
+          ? t("cloud.panel.local.someFolder")
+          : t("cloud.panel.local.folder", { folder: input.folder, ...plain }),
+      ),
+    );
+  } else {
     const notes = [
       // The browser may clear it when its disk is nearly full: what did not get to the platform
       // would go with it.
@@ -542,12 +573,17 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     );
   }
 
+  // The parts in the order of the status bar.
+  const order: readonly PanelSection[] = ["local", "sync", "github"];
+  const syncAbout = rows.find((each) => each.id === "sync")?.text ?? bar;
   return {
     level,
     bar,
+    barAbout: syncAbout,
+    github,
     opens: "panel",
     title,
-    rows,
+    rows: rows.toSorted((a, b) => order.indexOf(a.section) - order.indexOf(b.section)),
     actions: [
       // Another repository at any time, not only where archiving paused: here, unless a row
       // says so already, as the way out of what it says.

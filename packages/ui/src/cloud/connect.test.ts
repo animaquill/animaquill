@@ -1409,11 +1409,13 @@ describe("a link that was there before the dialog opened", () => {
     expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", made: false });
     const panel = panelOf(here, time);
     // Not "a project of the platform, all in step" with a repository that is "being looked for".
-    expect(panel.level).toBe("attention");
-    expect(panel.bar).toBe("☁ 要处理");
+    expect(panel.github).toMatchObject({ kind: "error", cause: "unfinished" });
     expect(panel.rows.find((row) => row.id === "repository")).toMatchObject({
       text: "还没连接完",
-      notes: ["项目还没传到云端，也还没有仓库。联网后会自动接着传；点“接着连接…”把剩下的做完。"],
+      notes: [
+        "项目还没传到云端，也还没有仓库。联网后会自动接着传；点“接着连接…”把剩下的做完。",
+        "平台临时存储只保存 7 天，请尽快处理。",
+      ],
       tone: "attention",
       actions: [{ id: "finishConnect", label: "接着连接…", enabled: true, kind: "primary" }],
     });
@@ -1432,7 +1434,7 @@ describe("a link that was there before the dialog opened", () => {
     // So its repository is looked at, and the panel says what is missing: one step.
     expect(here.cloud.repository?.status?.state).toBe("none");
     const panel = panelOf(here, time);
-    expect(panel.level).toBe("attention");
+    expect(panel.github).toMatchObject({ kind: "error", cause: "noRepository" });
     expect(panel.rows.find((row) => row.id === "repository")).toMatchObject({
       text: "还差一步：选仓库",
       actions: [{ id: "chooseRepository" }],

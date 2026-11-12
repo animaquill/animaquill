@@ -8,6 +8,7 @@ import {
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { httpsLink } from "../app/links.ts";
+import { githubAbout, githubOfListed } from "../cloud/github-status.ts";
 import { unusableLine, unusableWays } from "../cloud/unusable.ts";
 import {
   markHint,
@@ -223,12 +224,20 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
 
 export type StatusTone = "plain" | "warning";
 
+/**
+ * Where a project is, for the small sign before its line: a folder of this computer, a project of
+ * the platform, one of those with a folder of this computer too, or only this browser.
+ */
+export type CardPlace = "cloud" | "cloudFolder" | "folder" | "browser";
+
 export interface CardStatus {
   /** Where it is, for the small sign before the line. */
-  readonly place: "cloud" | "folder" | "browser";
+  readonly place: CardPlace;
   /** The line under the name, such as "本地 · intro" or "云端 · 只在这个浏览器里". */
   readonly text: string;
   readonly tone: StatusTone;
+  /** It stands out more than a warning: saving into GitHub went wrong. */
+  readonly alert?: true;
   /** What the line means and what people can do, for hovering. */
   readonly hint: string | undefined;
 }
@@ -281,24 +290,29 @@ export function cardStatus(
   now = Date.now(),
 ): CardStatus {
   const { source } = card;
-  // What says most: a project that cannot be edited, then changes the platform keeps only a week.
+  // What says most: a project that cannot be edited, then one that cannot get into its repository,
+  // as the platform keeps it a week only. Changes on their way there say so, as nothing to do.
   const platform = platformOf(card);
+  const where: CardPlace = card.kind === "cloudFolder" ? "cloudFolder" : "cloud";
   if (platform?.unusable) {
     return {
-      place: "cloud",
+      place: where,
       text: unusableLine(platform.unusable, now, t),
       tone: "warning",
       hint: t("start.hint.unusable"),
     };
   }
-  if (platform?.behind) {
+  const github = platform?.archive && githubOfListed(platform.archive, now, t);
+  if (github?.kind === "error" && github.cause !== "noRepository") {
     return {
-      place: "cloud",
-      text: t("start.status.unsaved"),
+      place: where,
+      text: t("start.status.githubFailed"),
       tone: "warning",
-      hint: t("start.hint.unsaved"),
+      alert: true,
+      hint: githubAbout(github, t),
     };
   }
+  const githubWord = github?.kind === "pending" ? t("start.status.githubPending") : undefined;
   if (source.kind === "browser") {
     return source.known
       ? {
@@ -331,18 +345,22 @@ export function cardStatus(
       ? t(`folder.recentStatus.${folder}`)
       : cloudTrouble(row.mark, { pending: row.pending, needsSignIn: false }, t);
     return {
-      place: "cloud",
+      place: "cloudFolder",
       text: t("start.status.cloud", {
-        what: trouble ?? t("start.status.withFolder"),
+        what: trouble ?? githubWord ?? t("start.status.withFolder"),
         ...plain,
       }),
       tone: trouble === undefined ? "plain" : "warning",
-      hint: markHint(row.mark, t) ?? t("folder.folderLabel", { folder: row.folder, ...plain }),
+      hint:
+        markHint(row.mark, t) ??
+        (githubWord !== undefined && github
+          ? githubAbout(github, t)
+          : t("folder.folderLabel", { folder: row.folder, ...plain })),
     };
   }
   const { row } = source;
   const trouble = cloudTrouble(row.mark, row, t);
-  const where =
+  const place =
     row.key !== undefined
       ? t("start.status.onlyBrowser")
       : row.copy === "live"
@@ -350,9 +368,11 @@ export function cardStatus(
         : t("start.status.fromGitHub");
   return {
     place: "cloud",
-    text: t("start.status.cloud", { what: trouble ?? where, ...plain }),
+    text: t("start.status.cloud", { what: trouble ?? githubWord ?? place, ...plain }),
     tone: trouble === undefined ? "plain" : "warning",
-    hint: markHint(row.mark, t),
+    hint:
+      markHint(row.mark, t) ??
+      (githubWord !== undefined && github ? githubAbout(github, t) : undefined),
   };
 }
 

@@ -4,6 +4,35 @@
   max-width: calc(100vw - 12px);
 }
 
+/* The three parts, as the three statuses of the status bar. */
+.sections {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section {
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  outline: 0;
+}
+
+.section[data-focused] {
+  background: var(--aq-bg-hover);
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--aq-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .rows {
   display: grid;
   gap: 8px;
@@ -110,4 +139,17 @@
 .footer button:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.sectionTitle [data-place="folder"] {
+  color: var(--aq-local);
+}
+
+.sectionTitle [data-place="cloud"] {
+  color: var(--aq-cloud);
+}
+
+.sectionTitle [data-place="cloudFolder"] {
+  --place-folder: var(--aq-local);
+  --place-cloud: var(--aq-cloud);
 }

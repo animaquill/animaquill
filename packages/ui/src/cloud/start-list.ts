@@ -13,6 +13,7 @@ import {
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { Emitter } from "../workbench/emitter.ts";
+import type { ListedArchive } from "./github-status.ts";
 
 /**
  * What the start page lists, see the design of the start page (docs/design/start-and-cloud.md of
@@ -94,6 +95,8 @@ export interface LocalRow {
   readonly owner: string | undefined;
   /** See `CloudRow.behind`. */
   readonly behind: boolean;
+  /** See `CloudRow.archive`. */
+  readonly archive: ListedArchive | undefined;
   /** See `CloudRow.unusable`. */
   readonly unusable: RepositoryUnusable | undefined;
   /** See `CloudRow.copy`; "live" where the platform's list does not say. */
@@ -136,6 +139,11 @@ export interface CloudRow {
    * keeps them a week, see the design of the start page, 1.
    */
   readonly behind: boolean;
+  /**
+   * What the list says of archiving it into its repository, for how it stands there, see
+   * `githubOfListed`. Undefined where the list does not have it.
+   */
+  readonly archive: ListedArchive | undefined;
   /** Its repository cannot be used, and so the project cannot be edited, see the design, 5.1. */
   readonly unusable: RepositoryUnusable | undefined;
   /** Its cover on the platform, as the list says, see `CloudProjectSummary.cover`. */
@@ -187,6 +195,13 @@ const isBehind = (summary: CloudProjectSummary): boolean =>
   summary.archive?.behind === true &&
   summary.repository !== undefined &&
   summary.repository.unusable === undefined;
+
+/** What the list says of archiving a project, for `githubOfListed`. */
+const listedArchive = ({ attention, repository, archive }: CloudProjectSummary): ListedArchive => ({
+  ...(attention !== undefined && { attention }),
+  ...(repository && { repository }),
+  ...(archive && { archive }),
+});
 
 const isPending = (link: CloudLink | undefined): boolean =>
   link !== undefined && (link.creating === true || (link.pending ?? 0) > 0);
@@ -261,6 +276,7 @@ export function composeStartList(input: StartInput): StartLists {
       deletable: input.canDelete && onPlatform !== undefined,
       owner: onPlatform ? (account ?? link?.owner) : link?.owner,
       behind: onPlatform !== undefined && isBehind(onPlatform),
+      archive: onPlatform && listedArchive(onPlatform),
       unusable: onPlatform?.repository?.unusable,
       copy: onPlatform?.copy ?? "live",
       cover: onPlatform?.cover,
@@ -317,6 +333,7 @@ export function composeStartList(input: StartInput): StartLists {
         deletable: input.canDelete,
         owner: account ?? copy?.link.owner,
         behind: isBehind(summary),
+        archive: listedArchive(summary),
         unusable: summary.repository?.unusable,
         cover: summary.cover,
         durationMs: summary.durationMs,
@@ -342,6 +359,7 @@ export function composeStartList(input: StartInput): StartLists {
       deletable: false,
       owner: link.owner,
       behind: false,
+      archive: undefined,
       unusable: undefined,
       cover: undefined,
       durationMs: undefined,

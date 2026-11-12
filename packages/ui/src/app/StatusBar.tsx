@@ -1,8 +1,34 @@
-import { Circle, CircleAlert, CircleX, Download, Pause, TriangleAlert, X } from "lucide-react";
+import {
+  Circle,
+  CircleAlert,
+  CircleX,
+  Cloud,
+  CloudOff,
+  Download,
+  GitBranch,
+  Pause,
+  RefreshCw,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import type { TFunction } from "i18next";
-import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { cloudPanel, panelInputOf, type PanelInput } from "../cloud/panel.ts";
+import { githubAbout, githubText } from "../cloud/github-status.ts";
+import {
+  cloudPanel,
+  panelInputOf,
+  type CloudPanel,
+  type PanelInput,
+  type PanelSection,
+} from "../cloud/panel.ts";
 import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
 import type { FolderTrouble } from "../folder/session.ts";
 import type { OpenFolder, ProjectFoldersSnapshot } from "../workbench/project-folders.ts";
@@ -14,9 +40,9 @@ import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { CloudPanelBody } from "./CloudPanel.tsx";
-import { CloudText, withoutCloud } from "./CloudText.tsx";
 import panelStyles from "./CloudPanel.module.css";
 import { OperationStatus } from "./OperationStatus.tsx";
+import { PlaceIcon, type Place } from "./PlaceIcon.tsx";
 import styles from "./StatusBar.module.css";
 import { Tip } from "./Tip.tsx";
 
@@ -396,6 +422,8 @@ const cloudOf = (workbench: {
   };
 };
 const noSnapshot = () => undefined;
+/** How often whether archiving fails for long is looked at again. */
+const MINUTE_MS = 60_000;
 /** How often the times in the panel move on while it is open. */
 const TICK_MS = 15_000;
 const SECOND_MS = 1000;
@@ -409,12 +437,19 @@ const FRESH_MS = 3000;
 function CloudPanelBubble({
   snapshot,
   name,
+  folder,
+  place,
   button,
+  focus,
 }: {
   snapshot: CloudProjectsSnapshot;
   name: string;
+  folder: string | undefined;
+  place: Place;
   /** What it points at. */
-  button: RefObject<HTMLButtonElement | null>;
+  button: RefObject<HTMLElement | null>;
+  /** The part of the panel that the status people clicked is about. */
+  focus: PanelSection | undefined;
 }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
@@ -448,6 +483,7 @@ function CloudPanelBubble({
   const panel = cloudPanel(
     panelInputOf(snapshot, {
       name,
+      ...(folder !== undefined && { folder }),
       canMoveToFolder: workbench.projectFolders !== undefined,
       ...storedOf(workbench),
       ...cloudOf(workbench),
@@ -462,18 +498,51 @@ function CloudPanelBubble({
       className={panelStyles.bubble}
       onClose={() => workbench.cloudPanel.set(false)}
     >
-      <CloudPanelBody panel={panel} run={(id) => workbench.runCloudAction(id)} />
+      <CloudPanelBody
+        panel={panel}
+        run={(id) => workbench.runCloudAction(id)}
+        {...(focus && { focus })}
+        place={place}
+      />
     </Bubble>
   );
 }
 
+/** The icon of the status of syncing, by how it goes. */
+const SyncIcon = ({ panel }: { panel: CloudPanel }) =>
+  panel.sync === "offline" || panel.sync === "reconnecting" ? (
+    <CloudOff size={12} aria-hidden="true" />
+  ) : panel.level === "busy" ? (
+    <RefreshCw size={12} aria-hidden="true" />
+  ) : panel.level === "attention" ? (
+    <CircleAlert size={12} aria-hidden="true" />
+  ) : (
+    <Cloud size={12} aria-hidden="true" data-cloud-icon="" />
+  );
+
 /**
- * How the open project stands with the platform, in one item, see `cloudPanel` and the design of
- * the start page, 4: "仅本机" for a project that is not connected, which a click connects, and
- * for any other how syncing and archiving go, which a click opens the panel for. Nothing at all
- * where the editor is hosted on no platform.
+ * How the open project is saved, as three statuses side by side, see `cloudPanel` and the design
+ * of the start page, 8: "本地", whether this computer has the changes, in its folder or in this
+ * browser; for a project of the platform also "云同步", whether the platform has them, and "GitHub
+ * 仓库", whether its repository has them, which stands out only where something is wrong. Each
+ * opens its part of the panel. A project that does not sync has "仅本机" in place of the other two,
+ * which connects it, and one only in this browser says that. Nothing of the platform where the
+ * editor is hosted on none.
  */
-function CloudStatus({ name }: { name: string }) {
+function SaveStatuses({
+  name,
+  place,
+  folder,
+  children,
+}: {
+  name: string;
+  /** Where the project is, see `PlaceIcon`. */
+  place: Place;
+  /** What its folder is called, for a project that is a folder. */
+  folder: string | undefined;
+  /** What says whether this computer has the changes. */
+  children: ReactNode;
+}) {
   const workbench = useWorkbench();
   const { cloud, cloudPanel: shown } = workbench;
   const { t } = useTranslation();
@@ -481,7 +550,7 @@ function CloudStatus({ name }: { name: string }) {
     cloud?.subscribe ?? noSubscription,
     cloud?.getSnapshot ?? noCloud,
   );
-  // What the panel says comes from these two as well: it follows each of them.
+  // What the statuses say comes from these two as well: they follow each of them.
   const session = outer.kind === "linked" ? outer.session : undefined;
   useSyncExternalStore(session?.subscribe ?? noSubscription, session?.getSnapshot ?? noSnapshot);
   const repository = outer.kind === "linked" ? outer.repository : undefined;
@@ -495,64 +564,198 @@ function CloudStatus({ name }: { name: string }) {
     workbench.cloudKnown.subscribe,
     workbench.cloudKnown.getSnapshot,
   );
-  const button = useRef<HTMLButtonElement>(null);
+  const group = useRef<HTMLSpanElement>(null);
   const wasOpen = useRef(false);
-  // The item says nothing that moves with the time: only the panel does.
-  const [now] = useState(() => Date.now());
-  // A press outside the panel closes it, also one on this item: the click that follows must not
+  const [focus, setFocus] = useState<PanelSection>();
+  // Failing for long is looked at again every minute, and whenever the platform says something.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), MINUTE_MS);
+    return () => clearInterval(timer);
+  }, []);
+  // A press outside the panel closes it, also one on a status: the click that follows must not
   // open it again. This hears the press before the panel does, as it listens since before.
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       wasOpen.current =
-        shown.getSnapshot() && button.current?.contains(event.target as Node) === true;
+        shown.getSnapshot() && group.current?.contains(event.target as Node) === true;
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [shown]);
 
-  if (!cloud || !known) return null;
-  const panel = cloudPanel(
-    panelInputOf(outer, {
-      name,
-      canMoveToFolder: workbench.projectFolders !== undefined,
-      ...storedOf(workbench),
-      ...cloudOf(workbench),
-      now,
-    }),
-    t,
-  );
-  const about =
-    panel.opens === "connect"
-      ? t("cloud.panel.about.local")
-      : [
-          ...panel.rows.map((row) => `${row.label}：${row.text}`),
-          t("cloud.panel.about.panel"),
-        ].join(" · ");
+  const panel =
+    cloud && known
+      ? cloudPanel(
+          panelInputOf(outer, {
+            name,
+            ...(folder !== undefined && { folder }),
+            canMoveToFolder: workbench.projectFolders !== undefined,
+            ...storedOf(workbench),
+            ...cloudOf(workbench),
+            now,
+          }),
+          t,
+        )
+      : undefined;
+  const opensPanel = panel?.opens === "panel";
+  const openAt = (section: PanelSection) => {
+    if (wasOpen.current && focus === section) shown.set(false);
+    else {
+      setFocus(section);
+      shown.set(true);
+    }
+    wasOpen.current = false;
+  };
+  const label = (what: "local" | "sync" | "github", state: string) =>
+    t("saveStatus.label", {
+      what: t(`saveStatus.${what}`),
+      state,
+      interpolation: { escapeValue: false },
+    });
+  const github = panel?.github;
+  const isError = github?.kind === "error";
   return (
-    <>
-      <Tip name={withoutCloud(panel.bar)} usage={about}>
-        <button
-          ref={button}
-          type="button"
-          className={`${styles.name} ${styles.cloud} ${panel.level === "attention" ? styles.failed : ""}`}
-          aria-haspopup="dialog"
-          aria-label={`${t("cloud.statusLabel")}：${withoutCloud(panel.bar)}`}
-          data-cloud-level={panel.level}
-          {...(panel.sync && { "data-cloud": panel.sync })}
-          {...(panel.archive && { "data-archive": panel.archive })}
-          onClick={() => {
-            if (panel.opens === "connect") void workbench.connectToCloud();
-            else shown.set(!wasOpen.current);
-            wasOpen.current = false;
-          }}
-        >
-          <CloudText text={panel.bar} />
-        </button>
-      </Tip>
-      {open && panel.opens === "panel" && (
-        <CloudPanelBubble snapshot={outer} name={name} button={button} />
+    <span ref={group} className={styles.saves}>
+      <LocalStatus
+        place={place}
+        {...(opensPanel && outer.kind === "linked" && { onOpen: () => openAt("local") })}
+      >
+        {children}
+      </LocalStatus>
+      {panel && !opensPanel && (
+        <Tip name={panel.bar} usage={panel.barAbout}>
+          <button
+            type="button"
+            className={`${styles.name} ${styles.cloud}`}
+            aria-label={`${t("cloud.statusLabel")}：${panel.bar}`}
+            data-cloud-level={panel.level}
+            onClick={() => void workbench.connectToCloud()}
+          >
+            {panel.bar}
+          </button>
+        </Tip>
       )}
+      {panel && opensPanel && outer.kind === "none" && (
+        // Only in this browser, without the platform: one status, which stands out.
+        <Tip name={panel.bar} usage={panel.barAbout}>
+          <button
+            type="button"
+            className={`${styles.name} ${styles.cloud} ${styles.failed}`}
+            aria-haspopup="dialog"
+            aria-label={`${t("cloud.statusLabel")}：${panel.bar}`}
+            data-cloud-level={panel.level}
+            onClick={() => openAt("local")}
+          >
+            {panel.bar}
+          </button>
+        </Tip>
+      )}
+      {panel && opensPanel && outer.kind === "linked" && (
+        <>
+          <Tip name={label("sync", panel.bar)} usage={panel.barAbout}>
+            <button
+              type="button"
+              className={`${styles.name} ${styles.save} ${panel.level === "attention" ? styles.failed : ""}`}
+              aria-haspopup="dialog"
+              aria-label={label("sync", panel.bar)}
+              data-save-status="sync"
+              onClick={() => openAt("sync")}
+            >
+              <SyncIcon panel={panel} />
+              <span className={styles.saveLabel}>{t("saveStatus.sync")}</span>
+              <span
+                className={styles.saveWord}
+                data-cloud-level={panel.level}
+                {...(panel.sync && { "data-cloud": panel.sync })}
+                {...(panel.archive && { "data-archive": panel.archive })}
+              >
+                {panel.bar}
+              </span>
+            </button>
+          </Tip>
+          {github && (
+            <Tip name={label("github", githubText(github, t))} usage={githubAbout(github, t)}>
+              <button
+                type="button"
+                className={`${styles.name} ${styles.save} ${isError ? styles.alert : ""}`}
+                aria-haspopup="dialog"
+                aria-label={label("github", githubText(github, t))}
+                aria-description={githubAbout(github, t)}
+                data-save-status="github"
+                data-github={github.kind}
+                data-github-cause={github.cause}
+                onClick={() => openAt("github")}
+              >
+                {isError ? (
+                  <CircleAlert size={12} aria-hidden="true" />
+                ) : (
+                  <GitBranch size={12} aria-hidden="true" />
+                )}
+                <span className={styles.saveLabel}>{t("saveStatus.github")}</span>
+                <span className={styles.saveWord}>{githubText(github, t)}</span>
+              </button>
+            </Tip>
+          )}
+        </>
+      )}
+      {open && opensPanel && (
+        <CloudPanelBubble
+          snapshot={outer}
+          name={name}
+          folder={folder}
+          place={place}
+          button={group}
+          focus={focus}
+        />
+      )}
+    </span>
+  );
+}
+
+/**
+ * Whether this computer has the changes, as the first of the statuses: where the project is, the
+ * word "本地", and how its folder or the log in this browser is. `open` opens its part of the panel,
+ * for a project of the platform.
+ */
+function LocalStatus({
+  place,
+  onOpen,
+  children,
+}: {
+  place: Place;
+  onOpen?: () => void;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const sign = (
+    <>
+      <PlaceIcon
+        place={place}
+        size={13}
+        className={styles.placeIcon}
+        label={t(`saveStatus.place.${place}`)}
+      />
+      <span className={styles.saveLabel}>{t("saveStatus.local")}</span>
     </>
+  );
+  return (
+    <span className={styles.local} data-save-status="local">
+      {onOpen ? (
+        <button
+          type="button"
+          className={`${styles.name} ${styles.save}`}
+          aria-haspopup="dialog"
+          aria-label={t("saveStatus.local")}
+          onClick={onOpen}
+        >
+          {sign}
+        </button>
+      ) : (
+        <span className={styles.save}>{sign}</span>
+      )}
+      {children}
+    </span>
   );
 }
 
@@ -591,6 +794,19 @@ export function StatusBar() {
     failed: t("project.saveFailed"),
   }[save];
   const format = project?.manifest.formats[0];
+  // Where the project is, for the sign in front of "本地".
+  const cloudSnapshot = useSyncExternalStore(
+    workbench.cloud?.subscribe ?? noSubscription,
+    workbench.cloud?.getSnapshot ?? noCloud,
+  );
+  const place: Place =
+    cloudSnapshot.kind === "linked"
+      ? cloudSnapshot.local === "folder"
+        ? "cloudFolder"
+        : "cloud"
+      : folder
+        ? "folder"
+        : "browser";
 
   return (
     <footer className={styles.bar}>
@@ -607,14 +823,21 @@ export function StatusBar() {
       )}
       {format && <SizeStatus width={format.width} height={format.height} />}
       {project && <FrameRateStatus />}
-      {project && folder && <FolderSaveStatus open={folder} />}
-      {project && (!folder || save === "failed") && (
-        <span className={save === "failed" ? styles.failed : undefined} role="status">
-          {save === "failed" && <CircleAlert size={12} />}
-          {saveText}
-        </span>
+      {project && (
+        <SaveStatuses
+          name={project.manifest.name}
+          place={place}
+          folder={folder?.record.folder.name}
+        >
+          {folder && <FolderSaveStatus open={folder} />}
+          {(!folder || save === "failed") && (
+            <span className={save === "failed" ? styles.failed : undefined} role="status">
+              {save === "failed" && <CircleAlert size={12} />}
+              {saveText}
+            </span>
+          )}
+        </SaveStatuses>
       )}
-      {project && <CloudStatus name={project.manifest.name} />}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
       {project && <OperationStatus />}

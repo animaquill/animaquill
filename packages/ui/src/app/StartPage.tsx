@@ -6,7 +6,6 @@ import {
   Ellipsis,
   Folder,
   FolderOpen,
-  HardDrive,
   Layers,
   LayoutGrid,
   List,
@@ -68,6 +67,7 @@ import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project
 import type { Workbench } from "../workbench/workbench.ts";
 import { useWorkbench } from "./context.ts";
 import { Menu, PopupMenu, type MenuItem } from "./Menu.tsx";
+import { PlaceIcon } from "./PlaceIcon.tsx";
 import styles from "./StartPage.module.css";
 import { agoText, durationText } from "./start-view.ts";
 import { unusableFix, unusableLine } from "../cloud/unusable.ts";
@@ -694,8 +694,6 @@ function CardItem({
         run: () => actions.run(card, action, more.current),
       })),
     );
-  const PlaceIcon =
-    status.place === "cloud" ? Cloud : status.place === "folder" ? Folder : HardDrive;
   const onClick = (event: MouseEvent) => {
     // With Ctrl, Command or Shift the browser opens the link in a new tab or window, as people
     // expect, and so it does with the middle button, which is no click.
@@ -751,14 +749,15 @@ function CardItem({
   const statusLine = (
     <span className={styles.status} data-tone={status.tone} title={status.hint}>
       <PlaceIcon
-        size={13}
+        place={status.place}
+        size={14}
         className={styles.placeIcon}
-        data-place={status.place}
-        aria-hidden="true"
+        label={t(`saveStatus.place.${status.place}`)}
       />
       <span
         className={styles.statusText}
         data-mark={status.tone === "warning" ? card.kind : undefined}
+        data-alert={status.alert}
       >
         {status.text}
       </span>

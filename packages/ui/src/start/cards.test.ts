@@ -271,7 +271,7 @@ describe("what a card says", () => {
     ]);
     expect(cards.map((card) => cardStatus(card, "ready", t).place)).toEqual([
       "folder",
-      "cloud",
+      "cloudFolder",
       "cloud",
       "cloud",
       "browser",
@@ -329,7 +329,7 @@ describe("what a card says", () => {
     ).toEqual([
       "云端 · 有改动还没同步 warning",
       "云端 · 有改动还没同步 warning",
-      "云端 · 要处理 warning",
+      "GitHub 同步失败 warning",
       "云端 · 还差一步：选仓库 warning",
       "云端 · 打开时从 GitHub 取回 plain",
     ]);
@@ -511,7 +511,9 @@ describe("what the menu of a card offers", () => {
     ]);
   });
 
-  it("says that the platform keeps changes that are not in the repository only a week", () => {
+  it("says only where saving into GitHub went wrong, why, and that the platform keeps it a week", () => {
+    const NOW = Date.UTC(2026, 10, 12, 12);
+    const HOUR = 3600_000;
     const shown = composeCards(
       listsOf({
         projects: [kept("k", "改了的")],
@@ -525,15 +527,42 @@ describe("what the menu of a card offers", () => {
             repository: repository("r"),
             archive: { seq: 3, behind: false },
           }),
+          listed("p-t", "重试中的", {
+            repository: repository("t"),
+            archive: { seq: 3, behind: true, failingSince: NOW - HOUR + 60_000 },
+          }),
+          listed("p-l", "一直失败的", {
+            repository: repository("l"),
+            archive: { seq: 3, behind: true, failingSince: NOW - 3 * HOUR },
+          }),
+          listed("p-s", "暂停的", {
+            attention: "repository",
+            repository: { ...repository("s"), state: "paused", reason: "archived" },
+            archive: { seq: 3, behind: true },
+          }),
         ],
       }),
       { marks: new Map(), groups: [] },
     );
-    expect(shown.map((card) => cardStatus(card, "ready", t).text)).toEqual([
-      "有未保存的更改，平台只保留 7 天",
-      "云端 · 这台电脑还没打开过",
+    const said = shown.map((card) => cardStatus(card, "ready", t, NOW));
+    // On their way: plain words, nothing to do.
+    expect(said.map(({ text, tone }) => `${text} ${tone}`)).toEqual([
+      "云端 · 待同步 plain",
+      "云端 · 这台电脑还没打开过 plain",
+      "云端 · 待同步 plain",
+      "GitHub 同步失败 warning",
+      "GitHub 同步失败 warning",
     ]);
-    expect(cardStatus(shown[0] as ProjectCard, "ready", t).tone).toBe("warning");
+    expect(said[0]?.hint).toBe(
+      "有改动还没存进 GitHub，平台会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
+    );
+    // An error says why, what helps, and that the platform keeps it a week only.
+    expect(said[3]?.hint).toBe(
+      "存进 GitHub 失败：已经连续 3 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）。平台会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。平台临时存储只保存 7 天，请尽快处理。",
+    );
+    expect(said[4]?.hint).toBe(
+      "存进 GitHub 失败：仓库在 GitHub 上已归档，只能读。在 GitHub 上取消归档后点“现在存档”，或者换一个仓库。平台临时存储只保存 7 天，请尽快处理。",
+    );
   });
 
   it("opens GitHub only at an https address: the platform's word is not checked", () => {

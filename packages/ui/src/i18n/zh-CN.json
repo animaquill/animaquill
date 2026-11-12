@@ -2140,6 +2140,44 @@
       "stay": "留在这里"
     }
   },
+  "github": {
+    "text": {
+      "synced": "已同步",
+      "pending": "待同步",
+      "error": "同步失败"
+    },
+    "reason": {
+      "failingLong": "已经连续 {{hours}} 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）",
+      "detail": "：{{detail}}"
+    },
+    "fix": {
+      "noRepository": "点“选仓库…”选一个仓库，选好以后会自动存进去。",
+      "kept": "在编辑器里改好这些文件以后会自动接着存。",
+      "failingLong": "平台会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。",
+      "open": "打开项目，在云端面板里处理。"
+    },
+    "about": {
+      "error": "存进 GitHub 失败：{{reason}}。{{fix}}平台临时存储只保存 7 天，请尽快处理。",
+      "pending": "有改动还没存进 GitHub，平台会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
+      "retrying": "上次没能存进 GitHub（GitHub 暂时连不上或限流），平台会自动重试，不用管。",
+      "unknown": "还不知道 GitHub 仓库的情况，正在查。",
+      "synced": "改动都已存进 GitHub 仓库。"
+    },
+    "week": "平台临时存储只保存 7 天，请尽快处理。"
+  },
+  "saveStatus": {
+    "local": "本地",
+    "sync": "云同步",
+    "github": "GitHub 仓库",
+    "label": "{{what}}：{{state}}",
+    "browser": "浏览器",
+    "place": {
+      "folder": "本地项目，在这台电脑的文件夹里",
+      "cloud": "云端项目",
+      "cloudFolder": "云端项目，这台电脑上有文件夹",
+      "browser": "只在这个浏览器里"
+    }
+  },
   "reconcile": {
     "today": "今天 {{time}}",
     "day": "{{month}}月{{day}}日 {{time}}",
@@ -2568,7 +2606,7 @@
       "otherAccount": "它连着的云端项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
       "stale": "云端的列表读不出来，这是这个浏览器上次记下的情况。",
       "onlyHere": "浏览器清理数据时会丢。在菜单里可以移到文件夹、连接到云端，或者另存一份。",
-      "unsaved": "平台上有改动还没存进 GitHub。平台上的这份只保留 7 天，7 天里没打开就会删掉。打开项目，在云端面板里看原因，或者点“现在存档”。",
+      "pending": "平台上有改动还没存进 GitHub，平台会自动存进去，不用管。",
       "unusable": "仓库用不了，这个云端项目现在不能编辑，到期后平台会自动删除。点开看原因和能做的事。"
     },
     "status": {
@@ -2584,7 +2622,8 @@
       "afterSignIn": "登录后继续同步",
       "pending": "有改动还没同步",
       "inBrowser": "在这个浏览器里",
-      "unsaved": "有未保存的更改，平台只保留 7 天"
+      "githubPending": "待同步",
+      "githubFailed": "GitHub 同步失败"
     },
     "place": {
       "local": "本地 · {{folder}}",
@@ -2956,16 +2995,11 @@
       "more": "其他操作",
       "bar": {
         "local": "仅本机",
-        "synced": "☁ 已同步",
-        "direct": "☁ 云端项目",
-        "syncingPending": "☁ 正在同步，{{count}} 个改动待发",
-        "connecting": "☁ 正在连接",
-        "offline": "☁ 离线",
-        "offlinePending": "☁ 离线，{{count}} 个改动待发",
-        "attention": "☁ 要处理",
-        "onlyHere": "只在浏览器里",
-        "unsaved": "☁ 有未保存的更改，平台只保留 7 天",
-        "unusable": "☁ {{what}}"
+        "synced": "已同步",
+        "syncing": "同步中",
+        "offline": "离线",
+        "error": "出错",
+        "onlyHere": "只在浏览器里"
       },
       "row": {
         "repository": "仓库",
@@ -3004,11 +3038,17 @@
         "retry": "上次没存成，{{time}} 再试",
         "paused": "存档先停着：{{reason}}",
         "archiveAt": "1 分钟内只能存一次档，{{count}} 秒后自动存",
-        "notSent": "还有改动没发到云端，发过去以后才会存。",
-        "unsaved": "有未保存的更改，平台只保留 7 天。"
+        "notSent": "还有改动没发到云端，发过去以后才会存。"
       },
       "local": {
-        "browser": "没有文件夹，项目放在这个浏览器里"
+        "browser": "没有文件夹，项目放在这个浏览器里",
+        "folder": "在这台电脑的文件夹“{{folder}}”里",
+        "someFolder": "在这台电脑的文件夹里"
+      },
+      "section": {
+        "local": "本地",
+        "sync": "云同步",
+        "github": "GitHub 仓库"
       },
       "action": {
         "connect": "连接到云端…",

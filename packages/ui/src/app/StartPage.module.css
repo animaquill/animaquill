@@ -633,12 +633,23 @@
   color: var(--aq-local);
 }
 
+/* Both: the folder in the colour of this computer, the small cloud in that of the platform. */
+.placeIcon[data-place="cloudFolder"] {
+  --place-folder: var(--aq-local);
+  --place-cloud: var(--aq-cloud);
+}
+
 .status[data-tone="warning"] .statusText,
 .status[data-tone="warning"] .placeIcon {
+  --place-folder: var(--aq-warning);
+  --place-cloud: var(--aq-warning);
+
   color: var(--aq-warning);
 }
 
-/* Only in this browser: it stands out, as the browser can take it at any time. */
+/* Only in this browser: it stands out, as the browser can take it at any time. So does saving
+   into GitHub that went wrong, as the platform keeps the project a week only. */
+.status[data-tone="warning"] .statusText[data-alert="true"],
 .card[data-kind="onlyHere"] .status[data-tone="warning"] .statusText {
   padding: 0 6px;
   color: var(--aq-bg-chrome);
