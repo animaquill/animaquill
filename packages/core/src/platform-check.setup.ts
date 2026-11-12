@@ -26,6 +26,7 @@ const ON_PURPOSE: readonly RegExp[] = [
   /does not let a path a zip file cannot have stop the export/,
   /takes what a page from back then writes the way it did, as long as it is not large/,
   /say so at the export already when they are too large to come back/,
+  /says what reading all of them says, at every step/,
 ];
 
 const SHADOW = Symbol("shadow");
