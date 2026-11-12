@@ -1,5 +1,4 @@
 import { hashOfPack, textsOf, usedOf } from "../../packs/apply.ts";
-import { COMPARISON_PACK_ID } from "../../packs/builtin.ts";
 import type { ModelPack, PackEdit } from "../../packs/format.ts";
 import type { TextsUsed } from "../index.ts";
 import type { TextTable } from "../table.ts";
@@ -180,6 +179,12 @@ export const DIRECTIVE_OVERRIDES = {
   ],
 } satisfies TextTable;
 
+/**
+ * The id of the words of toolset 2026.1 as a pack: one of the packs that come with AnimaQuill,
+ * hidden, which a model gets only when people choose it.
+ */
+export const COMPARISON_PACK_ID = "animaquill/eval-directive";
+
 const body: Omit<ModelPack, "hash"> = {
   id: COMPARISON_PACK_ID,
   name: "Toolset 2026.1 (comparison)",
@@ -200,13 +205,15 @@ const body: Omit<ModelPack, "hash"> = {
 };
 
 /**
- * The words of toolset 2026.1 as a model pack, only for tests, evaluations and the switch for
- * developers in the settings of the browser, which loads this module only when it is on. It is not
- * one of the packs that come with AnimaQuill: no model gets it unless that switch says so. Made in
- * code, it may change what no pack.json can, such as how aq_edit lists its operations, and its
- * description of aq_edit is longer than a pack's may be.
+ * The words of toolset 2026.1 as a model pack, to compare with the default words on real models:
+ * one of the packs that come with AnimaQuill, hidden in the settings until people ask to see it,
+ * and never chosen for a model on its own (`hidden`), only by people. Made in code, it may change
+ * what no pack.json can, such as how aq_edit lists its operations, and its description of aq_edit
+ * is longer than a pack's may be: it does not go through `checkPack`, and no pack that does can
+ * have its id or say it is hidden. Its hash is that of the words, as it was before it came with
+ * AnimaQuill, so that conversations that began with it keep it.
  */
-export const DIRECTIVE_PACK: ModelPack = { ...body, hash: hashOfPack(body) };
+export const DIRECTIVE_PACK: ModelPack = { ...body, hidden: true, hash: hashOfPack(body) };
 
 /** The default words with these instead: the toolset as 2026.1 had it. */
 export const DIRECTIVE_TEXTS: TextTable = textsOf(DIRECTIVE_PACK);

@@ -83,24 +83,8 @@ export function wordsChanges(pack: ModelPack, installed?: ModelPack): readonly W
       if (variant.extra) changes.push(editChange(variant.extra, variant.models));
     }
   } else {
-    const was = textsOf(installed);
-    const is = textsOf(pack);
-    const keys = new Set([...installed.edits, ...pack.edits].map(({ key }) => key));
-    for (const key of keys) {
-      const before = read(was, key);
-      const after = read(is, key);
-      if (before === after) continue;
-      const edit = pack.edits.find((each) => each.key === key);
-      changes.push({
-        key,
-        group: groupOf(key),
-        how: edit?.how ?? "set",
-        before,
-        after,
-        sensitive: isSensitive(key),
-        hints: hintsIn(after),
-      });
-    }
+    const keys = [...installed.edits, ...pack.edits].map(({ key }) => key);
+    changes.push(...textsChanges(textsOf(installed), textsOf(pack), keys, pack.edits));
     const before = extrasOf(installed);
     const after = extrasOf(pack);
     for (let index = 0; index < Math.max(before.length, after.length); index += 1) {
@@ -120,6 +104,35 @@ export function wordsChanges(pack: ModelPack, installed?: ModelPack): readonly W
         hints: hintsIn(newText),
       });
     }
+  }
+  return changes.toSorted((a, b) => Number(b.sensitive) - Number(a.sensitive));
+}
+
+/**
+ * Where two tables of words differ, by key, of the keys given: as the model reads them, with how
+ * the second has them where `edits` say. For an update, and to compare two packs for a model.
+ */
+export function textsChanges(
+  was: TextTable,
+  is: TextTable,
+  keys: Iterable<string>,
+  edits: readonly PackEdit[] = [],
+): readonly WordsChange[] {
+  const changes: WordsChange[] = [];
+  for (const key of new Set(keys)) {
+    const before = read(was, key);
+    const after = read(is, key);
+    if (before === after) continue;
+    const edit = edits.find((each) => each.key === key);
+    changes.push({
+      key,
+      group: groupOf(key),
+      how: edit?.how ?? (after === "" ? "remove" : "set"),
+      before,
+      after,
+      sensitive: isSensitive(key),
+      hints: hintsIn(after),
+    });
   }
   return changes.toSorted((a, b) => Number(b.sensitive) - Number(a.sensitive));
 }
@@ -154,6 +167,8 @@ function settingsOf(call: CallSettings, results: string | undefined): Map<string
 
 const costly = (field: string, value: Setting | undefined): boolean =>
   (field === "reasoning" && (value === "xhigh" || value === "max")) ||
+  // A cache that lasts long costs more to write, on Anthropic's services.
+  (field === "cache" && value === "long") ||
   (field === "maxOutputTokens" && typeof value === "number" && value > 64_000);
 
 /** Each set of settings of a pack: its own, then each variant's by its models. */
@@ -167,26 +182,52 @@ function allSettings(pack: ModelPack | undefined): Map<string, Map<string, Setti
   return all;
 }
 
+/** Where two sets of settings differ, field by field. */
+function settingsChanges(
+  before: ReadonlyMap<string, Setting>,
+  after: ReadonlyMap<string, Setting>,
+  models?: readonly string[],
+): CallChange[] {
+  const changes: CallChange[] = [];
+  for (const field of new Set([...after.keys(), ...before.keys()])) {
+    const old = before.get(field);
+    const now = after.get(field);
+    if (old === now) continue;
+    changes.push({
+      field,
+      ...(models && { models }),
+      ...(old !== undefined && { before: old }),
+      ...(now !== undefined && { after: now }),
+      costly: costly(field, now),
+    });
+  }
+  return changes;
+}
+
 /** How a pack calls models, against the editor's defaults or the version installed. */
 export function callChanges(pack: ModelPack, installed?: ModelPack): readonly CallChange[] {
   const was = allSettings(installed);
   const is = allSettings(pack);
   const changes: CallChange[] = [];
   for (const models of new Set([...is.keys(), ...was.keys()])) {
-    const before = was.get(models) ?? new Map<string, Setting>();
-    const after = is.get(models) ?? new Map<string, Setting>();
-    for (const field of new Set([...after.keys(), ...before.keys()])) {
-      const old = before.get(field);
-      const now = after.get(field);
-      if (old === now) continue;
-      changes.push({
-        field,
-        ...(models !== "" && { models: models.split(" ") }),
-        ...(old !== undefined && { before: old }),
-        ...(now !== undefined && { after: now }),
-        costly: costly(field, now),
-      });
-    }
+    changes.push(
+      ...settingsChanges(
+        was.get(models) ?? new Map<string, Setting>(),
+        is.get(models) ?? new Map<string, Setting>(),
+        models === "" ? undefined : models.split(" "),
+      ),
+    );
   }
   return changes;
+}
+
+/**
+ * How two ways of calling one model differ, as each pack has it merged for the model (see
+ * `usePack`): the settings and how much results give.
+ */
+export function useChanges(
+  was: { readonly call: CallSettings; readonly results: string },
+  is: { readonly call: CallSettings; readonly results: string },
+): readonly CallChange[] {
+  return settingsChanges(settingsOf(was.call, was.results), settingsOf(is.call, is.results));
 }

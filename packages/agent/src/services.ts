@@ -281,12 +281,11 @@ export interface AiSettings {
   /** How many tools one task can call at most, so that AI stuck in a loop stops on its own. */
   readonly maxToolCalls: number;
   /**
-   * New conversations use the words of the tools as they were before 2026.2, which also said when
-   * to call each tool: to compare the two with real models. Descriptions and the system prompt
-   * only; what tools give back stays. It is the model pack "animaquill/eval-directive", which only
-   * this switch gives.
+   * The settings list the model packs that are hidden (`ModelPack.hidden`), such as the words of
+   * toolset 2026.1 to compare with, so that people can choose them for a model. A preference of
+   * what to see only: which pack a model has is `packFor`.
    */
-  readonly comparisonTexts?: true;
+  readonly showHiddenPacks?: true;
   /**
    * The model pack people chose for a model, by the name of the model as services have it: for every
    * service that has it. A model without one gets the pack that is for it, see `choosePack`.
@@ -335,7 +334,7 @@ export function readAiSettings(value: unknown): AiSettings | undefined {
     services,
     current,
     maxToolCalls,
-    ...(value.comparisonTexts === true && { comparisonTexts: true }),
+    ...(value.showHiddenPacks === true && { showHiddenPacks: true }),
     ...(packFor && { packFor }),
   };
 }

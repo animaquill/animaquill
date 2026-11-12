@@ -139,8 +139,8 @@ export function ChatPanel() {
   }
 
   const groups = groupsOf(talk.entries);
-  const switches = packSwitches(t, talk.entries);
-  const packLines = snapshot.comparison ? [] : packLinesOf(t, talk.entries, current?.model, chat);
+  const switches = packSwitches(t, talk.entries, packs.getSnapshot().packs);
+  const packLines = packLinesOf(t, talk.entries, current?.model, chat);
   return (
     <div className={styles.panel} data-testid="chat">
       <div className={styles.bar}>
@@ -194,11 +194,6 @@ export function ChatPanel() {
           stick.current = list.scrollHeight - list.scrollTop - list.clientHeight < STICK_PX;
         }}
       >
-        {snapshot.comparison && (
-          <p className={styles.muted} data-testid="chat-comparison">
-            {t("chat.comparisonTexts")}
-          </p>
-        )}
         {packLines.map(({ text: line, testId }) => (
           <p key={testId} className={styles.muted} data-testid={testId}>
             {line}
@@ -653,19 +648,41 @@ function OutcomeView({
  * Where an answer had another model pack than the answer before it: the model changed and a pack
  * was chosen again, or the pack was gone. The line says which pack it is now.
  */
-function packSwitches(t: TFunction, entries: readonly ChatEntry[]): ReadonlyMap<ChatEntry, string> {
+function packSwitches(
+  t: TFunction,
+  entries: readonly ChatEntry[],
+  packs: readonly { readonly id: string }[],
+): ReadonlyMap<ChatEntry, string> {
   const lines = new Map<ChatEntry, string>();
   let before: AssistantEntry | undefined;
   for (const entry of entries) {
     if (entry.role !== "assistant" || !entry.pack || !entry.texts) continue;
-    if (before?.texts && before.pack && before.texts.id !== entry.texts.id) {
-      const name = noteLabel(t, entry.pack, entry.texts.id);
+    if (
+      before?.texts &&
+      before.pack &&
+      before.texts.id === entry.texts.id &&
+      before.texts.hash !== entry.texts.hash
+    ) {
+      // The version it began with is not kept any more: the one installed went on.
       lines.set(
         entry,
-        entry.pack.by === "fallback"
-          ? t("chat.packSwitchedNone", { model: entry.model })
-          : before.model === entry.model
-            ? t("chat.packChanged", { name })
+        t("chat.packUpdated", {
+          name: noteLabel(t, entry.pack, entry.texts.id),
+          version: entry.texts.version,
+        }),
+      );
+    } else if (before?.texts && before.pack && before.texts.id !== entry.texts.id) {
+      const name = noteLabel(t, entry.pack, entry.texts.id);
+      const was = before.texts.id;
+      lines.set(
+        entry,
+        before.model === entry.model
+          ? // People chose another while the one before is still there; else it went.
+            packs.some(({ id }) => id === was)
+            ? t("chat.packChosen", { name })
+            : t("chat.packChanged", { name })
+          : entry.pack.by === "fallback"
+            ? t("chat.packSwitchedNone", { model: entry.model })
             : t("chat.packSwitched", { model: entry.model, name }),
       );
     }
@@ -712,6 +729,14 @@ function packLinesOf(
     if (pack.id !== last.texts.id) {
       lines.push({
         text: t("chat.packNext", { model, name: noteLabel(t, note, pack.id) }),
+        testId: "chat-pack-next",
+      });
+    } else if (pack.hash !== last.texts.hash) {
+      lines.push({
+        text: t("chat.packNextVersion", {
+          name: noteLabel(t, note, pack.id),
+          version: pack.version,
+        }),
         testId: "chat-pack-next",
       });
     }

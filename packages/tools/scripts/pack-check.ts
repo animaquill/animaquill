@@ -9,7 +9,15 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { ProjectStore } from "@animaquill/core";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
-import { checkPack, filesNamedIn, packKeys, textsOf, usePack } from "../src/packs/index.ts";
+import {
+  MAX_FILE_BYTES,
+  checkPack,
+  filesNamedIn,
+  isPackPath,
+  packKeys,
+  textsOf,
+  usePack,
+} from "../src/packs/index.ts";
 import { DEFAULT_TEXTS, systemPromptOf } from "../src/texts/index.ts";
 import { createToolset } from "../src/toolset.ts";
 
@@ -33,8 +41,11 @@ const where = resolve(process.env.INIT_CWD ?? process.cwd(), given);
 const folder = statSync(where).isDirectory() ? where : dirname(where);
 const manifest = statSync(where).isDirectory() ? join(where, "pack.json") : where;
 const files = new Map<string, Uint8Array>();
+/** A file of the pack, only where it is one: a plain file, not much larger than a pack may have. */
 const read = (path: string) => {
   try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > MAX_FILE_BYTES * 2) return undefined;
     return new Uint8Array(readFileSync(path));
   } catch {
     return undefined;
@@ -42,7 +53,9 @@ const read = (path: string) => {
 };
 const own = read(manifest);
 if (own) files.set("pack.json", own);
+// Only paths inside the pack, of the kinds it may have: the check says why the others are not.
 for (const path of filesNamedIn(new TextDecoder().decode(own ?? new Uint8Array()))) {
+  if (!isPackPath(path)) continue;
   const bytes = read(join(folder, path));
   if (bytes) files.set(path, bytes);
 }

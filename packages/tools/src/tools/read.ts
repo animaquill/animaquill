@@ -123,9 +123,16 @@ export const projectStatus: ToolDefinition<z.output<typeof StatusParams>> = {
     sawAll(call, [
       { kind: "project", id: "project" },
       ...manifest.timelines.map((id) => ({ kind: "timeline", id }) as const),
-      ...Object.keys(state.scenes).map((id) => ({ kind: "scene", id }) as const),
-      ...Object.keys(state.sounds).map((id) => ({ kind: "sound", id }) as const),
-      ...Object.keys(state.assets ?? {}).map((id) => ({ kind: "asset", id }) as const),
+      // Only what the overview names counts as read: the rest are for aq_search.
+      ...Object.keys(state.scenes)
+        .slice(0, call.limits.listed)
+        .map((id) => ({ kind: "scene", id }) as const),
+      ...Object.keys(state.sounds)
+        .slice(0, call.limits.listed)
+        .map((id) => ({ kind: "sound", id }) as const),
+      ...Object.keys(state.assets ?? {})
+        .slice(0, call.limits.listed)
+        .map((id) => ({ kind: "asset", id }) as const),
     ]);
     return answer(call, [
       `project ${quoted(manifest.name)} fps=${projectFrameRate(manifest)} formats=${formats.join(" ")} languages=${languages.join(" ")}`,
@@ -413,6 +420,61 @@ function sceneProperties(call: Call, state: ProjectState, clip: ClipState): stri
   return `scene properties${ran}: ${shown.join(" | ") || "none"}`;
 }
 
+/** What a result of aq_object_read has of one object it found. */
+interface Block {
+  readonly ref: ObjectRef;
+  readonly lines: readonly string[];
+}
+
+/** Room a result keeps besides its lines: the revision first, and what `fitted` keeps free. */
+const RESULT_MARGIN = 300;
+
+/**
+ * The line on objects a result had no room for: which ids, that they were not read, and how to read
+ * them: the calls that each fit in one result, in the order asked for, and for an object too long
+ * for any result, `fields`.
+ */
+function notReadLine(
+  call: Call,
+  blocks: readonly Block[],
+  kept: ReadonlySet<Block>,
+  budget: number,
+  sizeOf: (block: Block) => number,
+): string | undefined {
+  const sizes = new Map<string, number>();
+  for (const block of blocks) {
+    if (kept.has(block)) continue;
+    sizes.set(block.ref.id, (sizes.get(block.ref.id) ?? 0) + sizeOf(block));
+  }
+  if (sizes.size === 0) return undefined;
+  const ids = [...sizes.keys()];
+  const alone = ids.filter((id) => (sizes.get(id) ?? 0) > budget);
+  const calls: string[][] = [];
+  let room = 0;
+  for (const id of ids) {
+    const size = sizes.get(id) ?? 0;
+    if (size > budget) continue;
+    if (calls.length === 0 || size > room) {
+      calls.push([id]);
+      room = budget - size;
+    } else {
+      (calls.at(-1) as string[]).push(id);
+      room -= size;
+    }
+  }
+  const max = call.limits.result.toLocaleString("en");
+  const parts = [
+    `not read: ${ids.join(", ")} had no room in this result (one result holds at most ${max} characters), so they do not count as read`,
+    ...(calls.length > 0
+      ? [
+          `${calls.map((each) => `ids ${JSON.stringify(each)}`).join(", then ")} ${calls.length === 1 ? "reads them in one call" : `read them in ${calls.length} calls`}`,
+        ]
+      : []),
+    ...alone.map((id) => `${id} is longer than one result: fields reads part of it`),
+  ];
+  return `${parts.join("; ")}.`;
+}
+
 export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
   name: "aq_object_read",
   title: "Read objects",
@@ -422,8 +484,7 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
     if (args.timeline !== undefined && !entryOf(state.timelines, args.timeline)) {
       return noTimeline(state, args.timeline);
     }
-    const lines: string[] = [];
-    const seen: ObjectRef[] = [];
+    const blocks: Block[] = [];
     // Every field of an object, not some of them nor a summary, is reading it whole.
     const format = args.response_format ?? call.limits.objects;
     const whole = args.fields === undefined && format !== "concise";
@@ -445,8 +506,7 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         );
       }
       for (const each of found) {
-        seen.push(each.ref);
-        lines.push(each.head);
+        const lines: string[] = [each.head];
         const value = args.fields
           ? Object.fromEntries(args.fields.map((field) => [field, fieldAt(each.value, field)]))
           : each.value;
@@ -468,9 +528,35 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         if (each.clip?.source.kind === "scene" && args.fields === undefined) {
           lines.push(sceneProperties(call, state, each.clip));
         }
+        blocks.push({ ref: each.ref, lines });
       }
     }
-    sawAll(call, seen, whole ? "full" : "overview");
+    // Objects go in whole or not at all: only those the result has count as read, so that a change
+    // of one it had no room for is still checked against what the model saw of it before. The line
+    // on those left out has to fit as well: what `answer` cuts would not be seen either.
+    const budget = call.limits.result - RESULT_MARGIN;
+    const sizeOf = (block: Block) => block.lines.reduce((sum, line) => sum + line.length + 1, 0);
+    const kept = new Set<Block>();
+    let used = 0;
+    for (const block of blocks) {
+      if (used + sizeOf(block) > budget) continue;
+      kept.add(block);
+      used += sizeOf(block);
+    }
+    let tail = notReadLine(call, blocks, kept, budget, sizeOf);
+    const inOrder = blocks.filter((block) => kept.has(block));
+    while (tail !== undefined && used + tail.length + 1 > budget && inOrder.length > 0) {
+      const last = inOrder.pop() as Block;
+      kept.delete(last);
+      used -= sizeOf(last);
+      tail = notReadLine(call, blocks, kept, budget, sizeOf);
+    }
+    sawAll(
+      call,
+      inOrder.map(({ ref }) => ref),
+      whole ? "full" : "overview",
+    );
+    const lines = [...inOrder.flatMap((block) => block.lines), ...(tail ? [tail] : [])];
     return answer(call, lines);
   },
 };
@@ -678,10 +764,20 @@ export const selectionRead: ToolDefinition<z.output<typeof SelectionParams>> = {
     const state = call.store.getState();
     const timeline =
       facts.timeline === undefined ? undefined : entryOf(state.timelines, facts.timeline);
-    const clips = facts.clips.flatMap((id) => {
+    // As many as one result has room for: only those count as read.
+    let room = call.limits.result - 1_000;
+    const listed: string[] = [];
+    const clips: string[] = [];
+    for (const id of facts.clips) {
       const clip = timeline && entryOf(timeline.clips, id);
-      return clip ? [clipLine(clip)] : [];
-    });
+      if (!clip) continue;
+      const line = clipLine(clip);
+      room -= line.length + 3;
+      if (room < 0) break;
+      clips.push(line);
+      listed.push(id);
+    }
+    const found = facts.clips.filter((id) => timeline && entryOf(timeline.clips, id)).length;
     const transition = facts.transition
       ? "join" in facts.transition
         ? `join ${facts.transition.join}`
@@ -690,13 +786,17 @@ export const selectionRead: ToolDefinition<z.output<typeof SelectionParams>> = {
     if (facts.timeline !== undefined) {
       sawAll(
         call,
-        facts.clips.map((id) => ({ kind: "clip", id, timeline: facts.timeline }) as ObjectRef),
+        listed.map((id) => ({ kind: "clip", id, timeline: facts.timeline }) as ObjectRef),
       );
     }
+    const more =
+      found > clips.length
+        ? ` | and ${found - clips.length} more, not read (aq_timeline_read lists them)`
+        : "";
     return answer(call, [
       "values right now in the editor",
       `timeline=${facts.timeline ?? "none"} playhead=${facts.playhead ?? "none"} version=${facts.version ?? "master"}`,
-      `selected clips (${clips.length}): ${clips.join(" | ") || "none"}`,
+      `selected clips (${found}): ${clips.join(" | ") || "none"}${more}`,
       ...(transition ? [`selected transition: ${transition}`] : []),
     ]);
   },

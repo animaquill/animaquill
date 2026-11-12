@@ -1,5 +1,6 @@
 import { DEFAULT_PACK } from "./apply.ts";
 import { checkPack } from "./check.ts";
+import { DIRECTIVE_PACK } from "../texts/eval/directive.ts";
 import { MANIFEST, type ModelPack } from "./format.ts";
 
 /**
@@ -34,15 +35,14 @@ export const BUILTIN_MANIFESTS: readonly Readonly<Record<string, unknown>>[] = [
   },
 ];
 
-/**
- * The id of the words of toolset 2026.1 as a pack, which only tests, evaluations and the switch for
- * developers use (`@animaquill/tools/eval`): no model gets it otherwise.
- */
-export const COMPARISON_PACK_ID = "animaquill/eval-directive";
+export { COMPARISON_PACK_ID } from "../texts/eval/directive.ts";
 
 let builtins: readonly ModelPack[] | undefined;
 
-/** The packs that come with AnimaQuill, the default one first. */
+/**
+ * The packs that come with AnimaQuill, the default one first, and last the words of toolset 2026.1
+ * to compare with, which is hidden (see `ModelPack.hidden`).
+ */
 export function builtinPacks(): readonly ModelPack[] {
   builtins ??= [
     DEFAULT_PACK,
@@ -53,6 +53,7 @@ export function builtinPacks(): readonly ModelPack[] {
       if (!pack) throw new Error(`A built-in pack does not pass: ${JSON.stringify(problems)}`);
       return pack;
     }),
+    DIRECTIVE_PACK,
   ];
   return builtins;
 }

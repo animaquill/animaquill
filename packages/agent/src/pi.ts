@@ -12,6 +12,7 @@ import {
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
 import {
+  clampThinkingLevel,
   createModels,
   createProvider,
   fauxAssistantMessage,
@@ -310,6 +311,13 @@ const isFake = (endpoint: Endpoint | FakeEndpoint): endpoint is FakeEndpoint => 
 const OLD_CALL_TEXT = 200;
 const OLD_RESULT_TEXT = 300;
 
+/**
+ * The id of a call as it goes back to the service: for OpenAI's Responses only the call id, without
+ * the id of its item, whose reasoning item our record does not keep (see `messagesOf`).
+ */
+const callIdOf = (protocol: string, id: string): string =>
+  protocol === "openai-responses" ? (id.split("|")[0] ?? id) : id;
+
 const cut = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
 
 /**
@@ -318,6 +326,13 @@ const cut = (text: string, most: number) => (text.length > most ? `${text.slice(
  * that is not in the list: the calls and what came of them follow the answer as one message of the
  * user, and the answer keeps only its own words. The same record always gives the same messages, for
  * the caches.
+ *
+ * Our record keeps the words and calls of answers, not the reasoning items of OpenAI's Responses
+ * (nor its `phase`, nor the signatures of Anthropic's thinking). A call there has an id of the item
+ * after "|" (`call_…|fc_…`), and OpenAI checks that such an item comes with the reasoning item it
+ * was paired with: without it, the next message is refused. So calls of that protocol go back with
+ * their call id only (`callIdOf`), as pi does for calls of another model. Keeping answers as each
+ * protocol has them, to send them back as they were, is a design of its own, still to come.
  */
 function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
@@ -328,6 +343,8 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
     failed: "error",
   };
   const messages: Message[] = [];
+  /** Ids of calls as they go back, where they differ from the record, see `callIdOf`. */
+  const ids = new Map<string, string>();
   /** The calls of tools no more, by id, and what each came to so far, as lines of text. */
   let old = new Map<string, string>();
   const flush = (at: number) => {
@@ -350,7 +367,7 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
         } else {
           messages.push({
             role: "toolResult",
-            toolCallId: entry.call,
+            toolCallId: ids.get(entry.call) ?? entry.call,
             toolName: entry.name,
             content: [{ type: "text", text: entry.text }],
             isError: !entry.ok,
@@ -366,13 +383,17 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
           old.set(call.id, `- ${call.name} ${cut(JSON.stringify(call.args), OLD_CALL_TEXT)}`);
         }
         if (entry.text === "" && current.length === 0) break;
+        for (const call of current) {
+          const id = callIdOf(entry.protocol, call.id);
+          if (id !== call.id) ids.set(call.id, id);
+        }
         messages.push({
           role: "assistant",
           content: [
             ...(entry.text ? [{ type: "text" as const, text: entry.text }] : []),
             ...current.map((call) => ({
               type: "toolCall" as const,
-              id: call.id,
+              id: ids.get(call.id) ?? call.id,
               name: call.name,
               arguments: call.args as never,
             })),
@@ -514,8 +535,13 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   }));
   const names = new Set(options.tools.map((tool) => tool.name));
   const call = options.call ?? {};
+  // "Off" is the least the model can think: off where it can be, else its lowest step (low for
+  // GPT-6.1 Sol, which takes no "none"), as pi has the steps of each model.
+  const wanted =
+    call.reasoning === undefined ? undefined : clampThinkingLevel(model, call.reasoning);
+  const reasoning = wanted === "off" ? undefined : wanted;
   const settings = {
-    ...(call.reasoning !== undefined && call.reasoning !== "off" && { reasoning: call.reasoning }),
+    ...(reasoning !== undefined && { reasoning }),
     ...(call.maxOutputTokens !== undefined && { maxTokens: call.maxOutputTokens }),
     ...(call.temperature !== undefined && { temperature: call.temperature }),
     ...(call.cache !== undefined && { cacheRetention: call.cache }),

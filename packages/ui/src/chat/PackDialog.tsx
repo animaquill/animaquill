@@ -8,13 +8,29 @@ import {
   type WordsChange,
   type WordsGroup,
 } from "@animaquill/tools";
-import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import dialogStyles from "../app/DialogHost.module.css";
 import styles from "./ModelPacks.module.css";
 import type { PackSource } from "./packs.ts";
-import { callText, packLabel, packName, problemText, sourceText } from "./packText.ts";
+import {
+  authorText,
+  callText,
+  originDiffers,
+  packLabel,
+  packName,
+  problemText,
+  sourceText,
+} from "./packText.ts";
 
 export interface PackDialogProps {
   /** Installing a pack, taking a new version of one installed, or only looking at one. */
@@ -23,11 +39,23 @@ export interface PackDialogProps {
   readonly pack: ModelPack | undefined;
   /** The version installed, which an update is shown against. */
   readonly installed?: ModelPack | undefined;
+  /** Where the version installed came from, for an update. */
+  readonly installedSource?: PackSource | undefined;
   readonly source?: PackSource | undefined;
   readonly problems?: readonly PackProblem[];
-  /** People said yes, and which of their models are to use it from now on. */
-  readonly onConfirm?: (models: readonly string[]) => void;
+  /** People said yes, and what their models are to use from now on. */
+  readonly onConfirm?: (choice: PackDialogChoice) => void;
   readonly onClose: () => void;
+}
+
+/**
+ * What people chose for their models as they installed a pack: models that are to use it although
+ * another pack would go on, and models that are to keep the pack they have now although this one
+ * would take over.
+ */
+export interface PackDialogChoice {
+  readonly switchTo: readonly string[];
+  readonly keep: readonly { readonly model: string; readonly pack: string }[];
 }
 
 const GROUPS: readonly WordsGroup[] = ["system", "tools", "params", "ops", "examples"];
@@ -39,12 +67,22 @@ const GROUPS: readonly WordsGroup[] = ["system", "tools", "params", "ops", "exam
  * replaces. All of it as text: what a pack says is never markup.
  */
 export function PackDialog(props: PackDialogProps) {
-  const { mode, pack, installed, source, problems = [], onConfirm, onClose } = props;
+  const {
+    mode,
+    pack,
+    installed,
+    installedSource,
+    source,
+    problems = [],
+    onConfirm,
+    onClose,
+  } = props;
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const [agreed, setAgreed] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [keeping, setKeeping] = useState(false);
 
   useLayoutEffect(() => {
     const element = dialog.current;
@@ -72,6 +110,8 @@ export function PackDialog(props: PackDialogProps) {
     mode === "update" ? t("ai.packs.dialog.oldWords") : t("ai.packs.dialog.builtinWords");
   const after = mode === "update" ? t("ai.packs.dialog.newWords") : t("ai.packs.dialog.packWords");
   const models = useModels(pack, mode);
+  const takeover = models.filter(({ effect }) => effect === "takeover");
+  const stays = models.filter(({ effect }) => effect === "stays");
   const ready = pack !== undefined && (sensitive.length === 0 || agreed || mode === "view");
 
   return (
@@ -87,6 +127,11 @@ export function PackDialog(props: PackDialogProps) {
     >
       <div className={dialogStyles.content}>
         <h2>{title}</h2>
+        {foreign && mode !== "view" && (
+          <p className={styles.trust} data-testid="pack-trust">
+            {t("ai.packs.dialog.trust")}
+          </p>
+        )}
         {pack && (
           <p className={styles.meta}>
             {[
@@ -100,7 +145,21 @@ export function PackDialog(props: PackDialogProps) {
               .join(" · ")}
           </p>
         )}
+        {pack && !pack.builtin && (
+          <p className={styles.meta} data-testid="pack-author">
+            {t("ai.packs.dialog.author", { author: authorText(t, pack) })}
+            {pack.homepage && ` · ${pack.homepage}`}
+          </p>
+        )}
         {pack?.description && <p>{pack.description}</p>}
+        {mode === "update" && pack && installed && (
+          <Origin
+            pack={pack}
+            installed={installed}
+            source={source}
+            installedSource={installedSource}
+          />
+        )}
         {problems.length > 0 && (
           <>
             <p>{t("ai.packs.dialog.problemsIntro")}</p>
@@ -111,13 +170,8 @@ export function PackDialog(props: PackDialogProps) {
             </ul>
           </>
         )}
-        {foreign && mode !== "view" && (
-          <p className={styles.trust} data-testid="pack-trust">
-            {t("ai.packs.dialog.trust")}
-            {mode === "update" && installed && (
-              <> {t("ai.packs.dialog.updateFrom", { version: installed.version })}</>
-            )}
-          </p>
+        {mode === "update" && installed && (
+          <p>{t("ai.packs.dialog.updateFrom", { version: installed.version })}</p>
         )}
 
         {sensitive.length > 0 && (
@@ -154,16 +208,32 @@ export function PackDialog(props: PackDialogProps) {
               <p>{t("ai.packs.dialog.modelsNone")}</p>
             ) : (
               <ul className={styles.rows}>
-                {models.map(({ model, current, automatic }) => (
-                  <li key={model}>
-                    {automatic
-                      ? t("ai.packs.dialog.modelAutomatic", { model })
-                      : t("ai.packs.dialog.modelNow", { model, current: packLabel(t, current) })}
+                {models.map(({ model, current, effect }) => (
+                  <li
+                    key={model}
+                    className={effect === "takeover" ? styles.takeover : undefined}
+                    data-testid="pack-model"
+                  >
+                    {t(`ai.packs.dialog.model.${effect}`, {
+                      model,
+                      current: packLabel(t, current),
+                    })}
                   </li>
                 ))}
               </ul>
             )}
-            {models.some(({ automatic }) => !automatic) && (
+            {takeover.length > 0 && (
+              <label className={styles.agree}>
+                <input
+                  type="checkbox"
+                  checked={keeping}
+                  onChange={(event) => setKeeping(event.target.checked)}
+                  data-testid="pack-keep"
+                />
+                {t("ai.packs.dialog.keep")}
+              </label>
+            )}
+            {stays.length > 0 && (
               <label className={styles.agree}>
                 <input
                   type="checkbox"
@@ -204,8 +274,12 @@ export function PackDialog(props: PackDialogProps) {
               <p>{t("ai.packs.dialog.wordsNone")}</p>
             ) : (
               GROUPS.map((group) => {
-                const changes = rest.filter((change) => change.group === group);
+                // What to look out for first in each group.
+                const changes = rest
+                  .filter((change) => change.group === group)
+                  .toSorted((a, b) => Number(b.hints.length > 0) - Number(a.hints.length > 0));
                 if (changes.length === 0) return null;
+                const flagged = changes.filter((change) => change.hints.length > 0).length;
                 return (
                   <div key={group} className={styles.section}>
                     <h3>
@@ -213,13 +287,21 @@ export function PackDialog(props: PackDialogProps) {
                         group: t(`ai.packs.group.${group}`),
                         count: changes.length,
                       })}
+                      {flagged > 0 && (
+                        <span className={styles.costly}>
+                          {t("ai.packs.dialog.groupFlagged", { count: flagged })}
+                        </span>
+                      )}
                     </h3>
                     {changes.map((change, index) => (
                       <details key={`${change.key}-${index}`} className={styles.change}>
                         <summary>
                           {change.key}
                           {change.models && ` (${change.models.join(", ")})`}
-                          {change.hints.length > 0 && t("ai.packs.dialog.flagged")}
+                          <span className={styles.size}>{sizeText(t, change.after)}</span>
+                          {change.hints.length > 0 && (
+                            <span className={styles.costly}>{t("ai.packs.dialog.flagged")}</span>
+                          )}
                         </summary>
                         <Sides change={change} before={before} after={after} />
                       </details>
@@ -242,11 +324,12 @@ export function PackDialog(props: PackDialogProps) {
               disabled={!ready}
               data-testid="pack-confirm"
               onClick={() =>
-                onConfirm(
-                  switching
-                    ? models.filter(({ automatic }) => !automatic).map(({ model }) => model)
+                onConfirm({
+                  switchTo: switching ? stays.map(({ model }) => model) : [],
+                  keep: keeping
+                    ? takeover.map(({ model, current }) => ({ model, pack: current.id }))
                     : [],
-                )
+                })
               }
             >
               {mode === "update" ? t("ai.packs.dialog.update") : t("ai.packs.dialog.install")}
@@ -259,7 +342,7 @@ export function PackDialog(props: PackDialogProps) {
 }
 
 /** The words before and after, side by side, with what to look out for. */
-function Sides(props: {
+export function Sides(props: {
   readonly change: WordsChange;
   readonly before: string;
   readonly after: string;
@@ -276,12 +359,18 @@ function Sides(props: {
     <>
       <div className={styles.sides}>
         <div className={styles.side}>
-          <h4>{props.before}</h4>
-          <pre>{change.before}</pre>
+          <h4>
+            {props.before}
+            <span className={styles.size}>{sizeText(t, change.before)}</span>
+          </h4>
+          <pre>{visible(t, change.before)}</pre>
         </div>
         <div className={`${styles.side} ${change.hints.length > 0 ? styles.flagged : ""}`}>
-          <h4>{label}</h4>
-          <pre data-testid="pack-after">{change.after}</pre>
+          <h4>
+            {label}
+            <span className={styles.size}>{sizeText(t, change.after)}</span>
+          </h4>
+          <pre data-testid="pack-after">{visible(t, change.after)}</pre>
         </div>
       </div>
       {change.hints.length > 0 && (
@@ -295,9 +384,12 @@ function Sides(props: {
   );
 }
 
+/** What installing a pack does for one model: it takes over, the model stays, or it has it now. */
+type ModelEffect = "takeover" | "stays" | "already";
+
 /**
- * The models of the services people set up that a pack is for: whether it would be theirs on its
- * own, or which pack they have now.
+ * The models of the services people set up that a pack is for, or that people chose it for: which
+ * pack each has now, and whether this one would take over once installed.
  */
 function useModels(pack: ModelPack | undefined, mode: PackDialogProps["mode"]) {
   const { ai, packs } = useWorkbench();
@@ -309,12 +401,99 @@ function useModels(pack: ModelPack | undefined, mode: PackDialogProps["mode"]) {
     const others = installed.packs.filter(({ id }) => id !== pack.id);
     const all = [...others, pack];
     return models
-      .filter((model) => closenessFor(pack, model) !== undefined)
+      .filter(
+        (model) => closenessFor(pack, model) !== undefined || settings.packFor?.[model] === pack.id,
+      )
       .map((model) => {
         const chosen = settings.packFor?.[model];
-        const current = choosePack(model, others, chosen).pack;
-        const automatic = choosePack(model, all, chosen).pack.id === pack.id;
-        return { model, current, automatic };
+        const current = choosePack(model, installed.packs, chosen).pack;
+        const after = choosePack(model, all, chosen).pack;
+        const effect: ModelEffect =
+          current.id === pack.id ? "already" : after.id === pack.id ? "takeover" : "stays";
+        return { model, current, effect };
       });
   }, [pack, mode, settings, installed]);
+}
+
+/** How long words are: "3 行 · 120 字". */
+export function sizeText(t: TFunction, text: string): string {
+  return t("ai.packs.dialog.size", {
+    lines: text === "" ? 0 : text.split("\n").length,
+    chars: [...text].length,
+  });
+}
+
+/**
+ * What shows as a mark: two empty lines in a row or more, a run of eight spaces or more after words
+ * in a line, and an indent wider than sixteen (a tab counts four). The check of packs lets no more
+ * than two empty lines and twenty spaces through; the marks make even those plain to see.
+ */
+const MARKED = /(?:[ \t]*\n){3,}|(?<=\S)[ \t]{8,}|^[ \t]{17,}/gm;
+
+/**
+ * Words as they are, with long runs of spaces and of empty lines shown as marks that say how long
+ * they are: no run of blank can push words out of sight, and none goes unseen.
+ */
+export function visible(t: TFunction, text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(MARKED)) {
+    const run = match[0];
+    const at = match.index;
+    nodes.push(text.slice(last, at));
+    const breaks = run.split("\n").length - 1;
+    const label =
+      breaks > 0
+        ? t("ai.packs.dialog.emptyLines", { count: breaks - 1 })
+        : t("ai.packs.dialog.spaces", {
+            count: [...run].reduce((width, char) => width + (char === "\t" ? 4 : 1), 0),
+          });
+    nodes.push(
+      breaks > 0 ? "\n" : "",
+      <span key={at} className={styles.blank} data-testid="pack-blank">
+        {label}
+      </span>,
+      breaks > 0 ? "\n" : "",
+    );
+    last = at + run.length;
+  }
+  nodes.push(text.slice(last));
+  return nodes;
+}
+
+/**
+ * For an update: where the version installed came from and who wrote it, next to the new one's.
+ * The same id is no proof of the same author: anyone can write any id, so where they differ it
+ * says so plainly.
+ */
+function Origin(props: {
+  readonly pack: ModelPack;
+  readonly installed: ModelPack;
+  readonly source: PackSource | undefined;
+  readonly installedSource: PackSource | undefined;
+}) {
+  const { pack, installed, source, installedSource } = props;
+  const { t } = useTranslation();
+  const where = (each: PackSource | undefined) => (each ? sourceText(t, each) : "?");
+  const differs = originDiffers(pack, installed, source, installedSource);
+  return (
+    <div
+      className={`${styles.section} ${differs ? styles.origin : ""}`}
+      data-testid="pack-origin"
+      data-differs={differs ? "yes" : "no"}
+    >
+      {differs && <h3>{t("ai.packs.dialog.originDiffers")}</h3>}
+      <ul className={styles.rows}>
+        <li>
+          {t("ai.packs.dialog.originInstalled", {
+            author: authorText(t, installed),
+            source: where(installedSource),
+          })}
+        </li>
+        <li>
+          {t("ai.packs.dialog.originNew", { author: authorText(t, pack), source: where(source) })}
+        </li>
+      </ul>
+    </div>
+  );
 }

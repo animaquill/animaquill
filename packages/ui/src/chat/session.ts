@@ -20,7 +20,6 @@ import {
   type UndoResult,
 } from "@animaquill/core";
 import {
-  COMPARISON_PACK_ID,
   CallerState,
   DEFAULT_PACK,
   TOOLSET_VERSION,
@@ -64,8 +63,21 @@ export interface ChatSnapshot {
   readonly undoTick: number;
   /** The clips the last task changed or made, which the timeline marks until the next one. */
   readonly marked: ReadonlySet<string>;
-  /** The conversation uses the words of the tools to compare with, see `AiSettings`. */
-  readonly comparison: boolean;
+}
+
+/** What `ChatSession.packOptions` gives for a model. */
+export interface PackOptions {
+  /** People chose the pack it has, rather than leaving it to the one recommended. */
+  readonly chosen: boolean;
+  /** What the model gets when people choose none. */
+  readonly recommended: ModelPack;
+  /** What a new conversation with the model gets now. */
+  readonly current: ModelPack;
+  readonly packs: readonly {
+    readonly pack: ModelPack;
+    readonly recommended: boolean;
+    readonly current: boolean;
+  }[];
 }
 
 export interface ChatSessionOptions {
@@ -118,7 +130,6 @@ export class ChatSession {
     hold: undefined,
     undoTick: 0,
     marked: new Set(),
-    comparison: false,
   };
   /** The last task, once people took back what it did: its clips are no longer marked. */
   #unmarked: string | undefined;
@@ -128,19 +139,13 @@ export class ChatSession {
   /** What the tools keep of the conversation that is open, see `CallerState`. */
   #caller = new CallerState();
   #pending: (() => Promise<void>) | undefined;
+  /** Conversations, by id and model, whose next answer takes the pack chosen for the model now. */
+  readonly #repick = new Set<string>();
 
   constructor(options: ChatSessionOptions) {
     this.#options = options;
     this.#chats = options.chats ?? memoryChats();
     options.subscribeProject(() => this.#follow());
-    // A conversation nobody wrote in yet takes the words the settings say now.
-    options.ai.subscribe(() => {
-      const { conversation, id, comparison } = this.#snapshot;
-      const wanted = options.ai.getSnapshot().comparisonTexts === true;
-      if (conversation && !conversation.running && comparison !== wanted) {
-        if (conversation.getSnapshot().entries.length === 0) this.#start([], id, undefined);
-      }
-    });
     this.#follow();
   }
 
@@ -186,13 +191,6 @@ export class ChatSession {
     this.#stopWatching?.();
     const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
     this.#caller = tools;
-    // A conversation keeps the words to compare with if it began with them; a new one takes what
-    // the settings say.
-    const used = entries.findLast((entry) => entry.role === "assistant");
-    const comparison =
-      used?.role === "assistant" && used.texts !== undefined
-        ? used.texts.id === COMPARISON_PACK_ID
-        : entries.length === 0 && this.#options.ai.getSnapshot().comparisonTexts === true;
     const conversation = new Conversation({
       entries,
       // Each answer of the model is one: a change that fails holds back the rest of it.
@@ -214,7 +212,7 @@ export class ChatSession {
       running = conversation.running;
       if (was && !running) void this.flush();
     });
-    this.#set({ conversation, id: chatId, hold: undefined, comparison });
+    this.#set({ conversation, id: chatId, hold: undefined });
     this.#mark(entries);
   }
 
@@ -332,6 +330,47 @@ export class ChatSession {
     return this.#options.packs?.getSnapshot().packs ?? builtinPacks();
   }
 
+  /**
+   * The packs people can choose for a model, for where they pick a model: each with whether it is
+   * the one recommended for the model (what it gets when people choose none: see `choosePack`),
+   * and whether it is the one a new conversation gets now. Hidden packs are there only when the
+   * settings show them or people chose one for this model.
+   */
+  packOptions(model: string): PackOptions {
+    const packs = this.#packs();
+    const settings = this.#options.ai.getSnapshot();
+    const chosen = settings.packFor?.[model];
+    const recommended = choosePack(model, packs).pack;
+    const now = choosePack(model, packs, chosen);
+    return {
+      chosen: now.by === "chosen",
+      recommended,
+      current: now.pack,
+      packs: packs
+        .filter(
+          (pack) => !pack.hidden || settings.showHiddenPacks === true || pack.id === now.pack.id,
+        )
+        .map((pack) => ({
+          pack,
+          recommended: pack.id === recommended.id,
+          current: pack.id === now.pack.id,
+        })),
+    };
+  }
+
+  /**
+   * A pack for a model from now on (by its name, as the settings keep it: the same choice as there),
+   * nothing for the one recommended. From the settings ("next") it comes with the next conversation;
+   * from where a conversation picks its model ("now") also with the next answer of the conversation
+   * open, which then says so.
+   */
+  choosePack(model: string, pack: string | undefined, from: "now" | "next" = "next"): void {
+    this.#options.ai.choosePack([model], pack);
+    if (from === "now" && this.#snapshot.id !== undefined) {
+      this.#repick.add(`${this.#snapshot.id}\n${model}`);
+    }
+  }
+
   /** The pack people would get for a model in a new conversation, and how. */
   choiceFor(model: string): { readonly pack: ModelPack; readonly note: PackNote } {
     const choice = choosePack(
@@ -343,26 +382,24 @@ export class ChatSession {
   }
 
   /**
-   * The pack for the next answer of the conversation. A conversation keeps its pack while the model
-   * stays (as that pack is installed now: an update counts from the next conversation only where
-   * it changed which pack it is); a new model, or a pack that is gone, chooses again, see
-   * `choosePack`. The switch for developers gives the words to compare with to the whole of a
-   * conversation that began with it.
+   * The pack for the next answer of the conversation. A conversation keeps its pack, at the version
+   * it began with, while the model stays: an update, like another choice in the settings, counts
+   * from the next conversation. Where that version is not kept any more, the version installed goes
+   * on (the chat says so); a new model, or a pack that is gone, chooses again, see `choosePack`.
    */
-  async #packFor(
+  #packFor(
     model: string,
     entries: readonly ChatEntry[],
-  ): Promise<{ readonly use: PackUse; readonly note: PackNote }> {
-    if (this.#snapshot.comparison) {
-      // Only this switch loads the words to compare with: they are not one of the packs.
-      const { DIRECTIVE_PACK } = await import("@animaquill/tools/eval");
-      return { use: usePack(DIRECTIVE_PACK, model), note: noteOf(DIRECTIVE_PACK, "comparison") };
-    }
+  ): { readonly use: PackUse; readonly note: PackNote } {
     const last = entries.findLast((entry) => entry.role === "assistant");
-    if (last?.role === "assistant" && last.model === model && last.pack && last.texts) {
-      const id = last.texts.id;
+    const repick = this.#repick.delete(`${this.#snapshot.id}\n${model}`);
+    if (!repick && last?.role === "assistant" && last.model === model && last.pack && last.texts) {
+      const { id, hash } = last.texts;
       const pinned =
-        id === DEFAULT_PACK.id ? DEFAULT_PACK : this.#packs().find((pack) => pack.id === id);
+        id === DEFAULT_PACK.id
+          ? DEFAULT_PACK
+          : (this.#options.packs?.versionOf(id, hash) ??
+            this.#packs().find((pack) => pack.id === id));
       if (pinned) return { use: usePack(pinned, model), note: { ...last.pack, name: pinned.name } };
     }
     const { pack, note } = this.choiceFor(model);
@@ -418,7 +455,7 @@ export class ChatSession {
     }
     this.#set({ hold: undefined });
     const maxToolCalls = this.#options.ai.getSnapshot().maxToolCalls;
-    const { use, note } = await this.#packFor(target.model, conversation.getSnapshot().entries);
+    const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
     // Another conversation may have opened meanwhile: this one is no longer on the screen.
     if (this.#snapshot.conversation !== conversation) return undefined;
     return conversation.send(text, {

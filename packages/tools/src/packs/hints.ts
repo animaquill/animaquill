@@ -9,7 +9,10 @@ export const HINT_RULES = [
     pattern:
       /\b(?:api[\s_-]?keys?|passwords?|passwd|passphrases?|tokens?|secrets?|credentials?|private[\s_-]keys?)\b|密钥|口令|密码|令牌|凭据/i,
   },
-  { rule: "address", pattern: /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|dev|cn)\b/i },
+  {
+    rule: "address",
+    pattern: /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]{1,63}\.(?:com|net|org|io|dev|cn)\b/i,
+  },
   {
     rule: "ignore",
     pattern:

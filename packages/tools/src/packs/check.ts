@@ -5,6 +5,7 @@ import { AI_OPERATIONS } from "../schema.ts";
 import { textKeys } from "../text-keys.ts";
 import {
   DEFAULT_TEXTS,
+  hashOf,
   systemPromptOf,
   type EditExample,
   type OperationExample,
@@ -64,7 +65,25 @@ export type PackProblemCode =
   /** An example does not fit the parameters of its operation. */
   | "example-invalid"
   /** An example does not run on the sample project. */
-  | "example-fails";
+  | "example-fails"
+  /** Long runs of empty lines or of spaces, which push words out of sight where people read them. */
+  | "spacing"
+  /** JSON nested deeper, or with more values, than any pack needs. */
+  | "too-deep"
+  /** A name or author that says it is AnimaQuill's own, which only built-in packs are. */
+  | "reserved-name"
+  /**
+   * When loading: the default words a pack replaced changed with a new version of the tools, so its
+   * words may say what is no longer so; those words are left out.
+   */
+  | "default-changed"
+  /**
+   * When loading: a pack that changes the guard or what the place says of itself lost some of its
+   * words; it is not used until people install it again and see what it is now.
+   */
+  | "needs-review"
+  /** The check itself failed: the pack is not used. */
+  | "unexpected";
 
 export interface PackProblem {
   readonly code: PackProblemCode;
@@ -92,8 +111,16 @@ export interface PackCheck {
   readonly hints: readonly PackHint[];
 }
 
+/**
+ * A file that was too large to read, with its size in bytes (or as much as was read of it before
+ * it stopped): those who read a pack do not read such files whole, and the check says why.
+ */
+export interface PackFileTooLarge {
+  readonly tooLarge: number;
+}
+
 /** The files of a pack by their paths in it, pack.json among them. */
-export type PackFiles = ReadonlyMap<string, string | Uint8Array>;
+export type PackFiles = ReadonlyMap<string, string | Uint8Array | PackFileTooLarge>;
 
 export interface CheckOptions {
   /**
@@ -105,6 +132,24 @@ export interface CheckOptions {
   readonly builtin?: boolean;
   /** A project to run the examples on, dry: the sample project, in tests and for authors. */
   readonly sample?: () => ProjectStore;
+  /**
+   * When loading: the default words of the keys the pack changes, as `defaultsOf` had them when it
+   * was installed.
+   */
+  readonly defaults?: Readonly<Record<string, string>>;
+}
+
+/** A hash of the default words of a key, to tell later whether they changed. */
+export function defaultHash(key: string): string {
+  return hashOf(JSON.stringify(DEFAULT_TEXTS[key] ?? null));
+}
+
+/** The default words of every key a pack changes, as hashes, to keep with it when it is installed. */
+export function defaultsOf(pack: ModelPack): Readonly<Record<string, string>> {
+  const keys = [...pack.edits, ...pack.variants.flatMap(({ extra }) => (extra ? [extra] : []))].map(
+    ({ key }) => key,
+  );
+  return Object.fromEntries(keys.map((key) => [key, defaultHash(key)]));
 }
 
 /** How large a file of a pack and a whole pack may be, in bytes of UTF-8. */
@@ -133,27 +178,88 @@ export function limitOf(key: string): number {
 }
 
 /**
- * Characters a pack cannot have: control characters other than tab and line feed, format
- * characters (zero-width ones, those that change the direction of writing, tags, the byte order
- * mark), separators of lines and paragraphs, and the invisible fillers and selectors. They can make
- * what people see when they install a pack differ from what the model reads.
+ * Characters a pack cannot have, by kind: controls other than tab and line feed, format characters
+ * (zero-width ones, those that change the direction of writing, tags, the byte order mark), the
+ * separators of lines and paragraphs, private use, and whatever Unicode says shows as nothing
+ * (variation selectors, fillers, the grapheme joiner and more), with a few that show as nothing but
+ * are not said to (the blank of Braille, the object replacement, a null note head). They can make
+ * what people see when they install a pack differ from what the model reads, or carry words hidden
+ * in what looks like one character.
  */
-const HIDDEN = /[\p{Cc}\p{Cf}\u2028\u2029\u3164\uffa0]/u;
+const HIDDEN =
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Default_Ignorable_Code_Point}\u2800\ufffc\u{1d159}]/u;
 const ALLOWED_CONTROLS = new Set(["\n", "\t"]);
-/** Fillers of Hangul that show as nothing, and the selectors of variations past emoji. */
-const isFiller = (code: number) =>
-  code === 0x115f || code === 0x1160 || (code >= 0xe0100 && code <= 0xe01ef);
 
 function hiddenIn(text: string): string | undefined {
   for (const char of text) {
     if (ALLOWED_CONTROLS.has(char)) continue;
-    const code = char.codePointAt(0) ?? 0;
-    if (HIDDEN.test(char) || isFiller(code)) {
+    if (HIDDEN.test(char)) {
+      const code = char.codePointAt(0) ?? 0;
       return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
     }
   }
   return undefined;
 }
+
+/** How many empty lines in a row, and how wide a run of spaces (a tab is four), words may have. */
+export const MAX_EMPTY_LINES = 2;
+export const MAX_SPACES = 20;
+
+/**
+ * Where words have more empty lines in a row, or a wider run of spaces, than writing needs: what
+ * comes after them would be out of sight in the install dialog. Counted in one pass; the detail of
+ * a problem says what was found and what may be.
+ */
+function spacingIn(text: string): Readonly<Record<string, number>> | undefined {
+  const limits = { maxLines: MAX_EMPTY_LINES, maxSpaces: MAX_SPACES };
+  let empty = 0;
+  let lineHasText = false;
+  let width = 0;
+  for (const char of text) {
+    if (char === "\n") {
+      if (!lineHasText) {
+        empty += 1;
+        if (empty > MAX_EMPTY_LINES) return { emptyLines: empty, ...limits };
+      } else empty = 0;
+      lineHasText = false;
+      width = 0;
+    } else if (char === " " || char === "\t" || /\s/u.test(char)) {
+      width += char === "\t" ? 4 : 1;
+      if (width > MAX_SPACES) return { spaces: width, ...limits };
+    } else {
+      lineHasText = true;
+      width = 0;
+    }
+  }
+  return undefined;
+}
+
+/** How deep JSON of a pack may nest, and how many values it may have. */
+export const MAX_DEPTH = 40;
+export const MAX_VALUES = 50_000;
+
+/** Whether JSON nests no deeper than a pack may, counted without recursion. */
+function shapeFits(value: unknown): boolean {
+  const stack: [unknown, number][] = [[value, 1]];
+  let values = 0;
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop() as [unknown, number];
+    values += 1;
+    if (depth > MAX_DEPTH || values > MAX_VALUES) return false;
+    if (typeof node !== "object" || node === null) continue;
+    for (const inner of Array.isArray(node) ? node : Object.values(node)) {
+      stack.push([inner, depth + 1]);
+    }
+  }
+  return true;
+}
+
+/** Words in a name or author that say a pack is AnimaQuill's own. */
+const RESERVED_NAMES = /animaquill|built-?in|official|内置|内建|官方|自带/i;
+const reservedIn = (text: string) =>
+  RESERVED_NAMES.test(
+    text.normalize("NFKC").replace(/[\s\p{P}]/gu, (char) => (char === "-" ? char : "")),
+  );
 
 let keysOfPacks: ReadonlyMap<string, "text" | "examples"> | undefined;
 
@@ -254,6 +360,26 @@ const NO_HOST: ToolHost = {
  * what it refuses, and `PackHint` for what it only points out.
  */
 export function checkPack(files: PackFiles, options: CheckOptions = {}): PackCheck {
+  try {
+    return checkedPack(files, options);
+  } catch (error) {
+    // Nothing a pack has may get through by making the check fail: then it is not used.
+    return {
+      pack: undefined,
+      problems: [
+        {
+          code: "unexpected",
+          at: MANIFEST,
+          detail: { message: String((error as Error)?.message) },
+        },
+      ],
+      dropped: [],
+      hints: [],
+    };
+  }
+}
+
+function checkedPack(files: PackFiles, options: CheckOptions): PackCheck {
   const mode = options.mode ?? "install";
   const problems: PackProblem[] = [];
   const hints: PackHint[] = [];
@@ -274,6 +400,14 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
         code: path === MANIFEST ? "no-manifest" : "file-missing",
         at,
         detail: { file: path },
+      });
+      return undefined;
+    }
+    if (typeof raw !== "string" && !ArrayBuffer.isView(raw)) {
+      problems.push({
+        code: "file-size",
+        at,
+        detail: { file: path, bytes: raw.tooLarge, max: MAX_FILE_BYTES },
       });
       return undefined;
     }
@@ -306,6 +440,10 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
     });
     return done();
   }
+  if (!shapeFits(json)) {
+    problems.push({ code: "too-deep", at: MANIFEST, detail: { depth: MAX_DEPTH } });
+    return done();
+  }
   if (typeof json !== "object" || json === null || Array.isArray(json)) {
     problems.push({
       code: "invalid",
@@ -330,6 +468,8 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
     }
     const found = hiddenIn(text);
     if (found) problems.push({ code: "characters", at, detail: { char: found } });
+    const spacing = spacingIn(text);
+    if (spacing) problems.push({ code: "spacing", at, detail: spacing });
   }
   const parsed = ManifestSchema.safeParse(normalized(json));
   if (!parsed.success) {
@@ -352,6 +492,15 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
   if (!options.builtin && manifest.id.startsWith(BUILTIN_PREFIX)) {
     problems.push({ code: "reserved-id", at: "id" });
   }
+  if (!options.builtin) {
+    const author = typeof manifest.author === "string" ? manifest.author : manifest.author?.name;
+    for (const [at, text] of [
+      ["name", manifest.name],
+      ["author", author ?? ""],
+    ] as const) {
+      if (reservedIn(text)) problems.push({ code: "reserved-name", at });
+    }
+  }
 
   /** Words, from the manifest or the file it names. */
   const textOf = (value: string | { readonly file: string }, at: string): string | undefined => {
@@ -365,7 +514,13 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
       problems.push({ code: "characters", at, detail: { char: found, file: path } });
       return undefined;
     }
-    return text.normalize("NFC").replace(/\s+$/, "");
+    const words = text.normalize("NFC").trimEnd();
+    const spacing = spacingIn(words);
+    if (spacing) {
+      problems.push({ code: "spacing", at, detail: { ...spacing, file: path } });
+      return undefined;
+    }
+    return words;
   };
   const fileOf = (path: string, at: string, kinds: readonly string[]): string | undefined => {
     const parts = path.split("/");
@@ -400,7 +555,19 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
         return undefined;
       }
       try {
-        list = normalized(JSON.parse(text));
+        const fromFile = JSON.parse(text) as unknown;
+        if (!shapeFits(fromFile)) {
+          problems.push({ code: "too-deep", at, detail: { depth: MAX_DEPTH, file: path ?? "" } });
+          return undefined;
+        }
+        for (const [place, words] of stringsIn(fromFile, "")) {
+          const spacing = spacingIn(words);
+          if (spacing) {
+            problems.push({ code: "spacing", at: `${at} ${place}`, detail: spacing });
+            return undefined;
+          }
+        }
+        list = normalized(fromFile);
       } catch (error) {
         problems.push({
           code: "not-json",
@@ -525,7 +692,25 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
       wrong.add(edit);
     }
   }
+  // Words that replace default words which changed since the pack was installed may say what is no
+  // longer so, such as what a parameter means: they go. Words that go on after the default stay.
+  for (const edit of all) {
+    if (mode !== "load" || edit.how !== "set" || wrong.has(edit)) continue;
+    const then = options.defaults?.[edit.key];
+    if (then !== undefined && then !== defaultHash(edit.key)) {
+      droppable.push({ code: "default-changed", at: edit.key });
+      wrong.add(edit);
+    }
+  }
   if (mode === "install") problems.push(...droppable);
+  // A pack that changes the guard or what the place says of itself was agreed to as a whole.
+  else if (
+    droppable.length > 0 &&
+    all.some(({ key }) => key === "system.guard" || key === "system.host")
+  ) {
+    problems.push({ code: "needs-review", at: MANIFEST, detail: { count: droppable.length } });
+    return done();
+  }
   const kept = edits.filter((edit) => !wrong.has(edit));
   const keptVariants: readonly PackVariant[] = variants.map(({ extra, ...variant }) =>
     extra && !wrong.has(extra) ? { ...variant, extra } : variant,
@@ -559,6 +744,16 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
           code: "too-long",
           at: `${one.key}[${index}]`,
           detail: { length, max: MAX_EXAMPLE },
+        });
+        continue;
+      }
+      const given = (example as Partial<OperationExample>).params;
+      if (one.key !== "edit.examples" && given !== undefined && Object.hasOwn(given, "op")) {
+        // Its operation is the one whose page it is on.
+        problems.push({
+          code: "example-invalid",
+          at: `${one.key}[${index}]`,
+          detail: { message: "params has op: the operation is the one the example is for" },
         });
         continue;
       }
@@ -596,6 +791,8 @@ export function checkPack(files: PackFiles, options: CheckOptions = {}): PackChe
   }
 
   // What people should look at: words that ask for secrets, addresses, to ignore or hide, to send.
+  // Only for words short enough to pass, which the rules read quickly.
+  if (problems.length > 0) return done();
   for (const one of [...kept, ...keptVariants.flatMap(({ extra }) => (extra ? [extra] : []))]) {
     if (one.how === "remove") continue;
     const text = typeof one.value === "string" ? one.value : JSON.stringify(one.value);
@@ -681,21 +878,41 @@ export function filesNamedIn(manifest: string): readonly string[] {
   } catch {
     return [];
   }
+  // What the check refuses is not read either: a pack nested too deep has no files to read.
+  if (!shapeFits(json)) return [];
   const found = new Set<string>();
-  const walk = (value: unknown): void => {
-    if (Array.isArray(value)) for (const item of value) walk(item);
+  const stack: unknown[] = [json];
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (Array.isArray(value)) stack.push(...value.toReversed());
     else if (typeof value === "object" && value !== null) {
       const record = value as Record<string, unknown>;
       const keys = Object.keys(record);
       if (keys.length === 1 && keys[0] === "file" && typeof record.file === "string") {
         found.add(record.file);
-        return;
+        continue;
       }
-      for (const item of Object.values(record)) walk(item);
+      stack.push(...Object.values(record).toReversed());
     }
-  };
-  walk(json);
+  }
   return [...found];
+}
+
+/**
+ * Whether a path a pack names can be a file of it: inside it, `/` between parts, of a kind a pack
+ * may have. The check says why not; those who read files before it (such as `pack-check`) read
+ * none that is not.
+ */
+export function isPackPath(path: string): boolean {
+  const parts = path.split("/");
+  return (
+    !path.startsWith("/") &&
+    !path.includes("\\") &&
+    !path.includes(":") &&
+    !parts.some((part) => part === "" || part === "." || part === "..") &&
+    /\.(md|txt|json)$/i.test(path) &&
+    path !== MANIFEST
+  );
 }
 
 /** The manifest as a pack has it, for a pack AnimaQuill makes in code. */

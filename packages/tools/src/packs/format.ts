@@ -199,6 +199,11 @@ export interface ModelPack {
   readonly homepage?: string;
   /** It comes with AnimaQuill. */
   readonly builtin: boolean;
+  /**
+   * Not listed unless people ask to see such packs, and never chosen for a model on its own: only
+   * when people choose it. Only packs AnimaQuill makes in code are; pack.json has no such field.
+   */
+  readonly hidden?: true;
   /** The models it is for, see `fitsModel`; none for the default pack, which is for the rest. */
   readonly models: readonly string[];
   readonly call: CallSettings;

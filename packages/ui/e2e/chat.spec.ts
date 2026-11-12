@@ -377,7 +377,7 @@ test("an earlier conversation with the tools before goes on, with those calls as
   expect(text).not.toContain('"type":"tool_use"');
 });
 
-test("a switch of the settings makes new conversations use the words to compare with", async ({
+test("the words to compare with are a hidden pack: shown on asking, used once chosen for a model", async ({
   page,
 }) => {
   const requests: Request[] = [];
@@ -386,13 +386,23 @@ test("a switch of the settings makes new conversations use the words to compare 
     return answer(route, [{ text: "好的。" }]);
   });
   await setUpService(page);
-  await expect(chat(page).getByTestId("chat-comparison")).toHaveCount(0);
   await chooseFrom(page, "视图", "设置");
   const settings = content(page, "settings");
-  await settings.getByText("开发者选项").click();
-  await settings.getByRole("checkbox", { name: /新对话用对照的文字/ }).check();
+  const packs = settings.getByTestId("model-packs");
+  const choice = packs.getByRole("combobox", { name: "claude-test 用的适配包" });
+  // Hidden until people ask to see it: not in the list, and no model gets it on its own.
+  await expect(choice.locator("option", { hasText: "2026.1 旧写法" })).toHaveCount(0);
+  await expect(settings.getByText("开发者选项")).toHaveCount(0);
+  await packs.getByTestId("pack-show-hidden").check();
+  await expect(choice.locator("option:checked")).toHaveText("自动：通用（没有专门的适配包）");
+  await choice.selectOption({ label: "2026.1 旧写法（对照）（内置）" });
+  // Hidden again, the choice stays and is still shown.
+  await packs.getByTestId("pack-show-hidden").uncheck();
+  await expect(choice.locator("option:checked")).toHaveText("2026.1 旧写法（对照）（内置）");
   await tab(page, "chat").click();
-  await expect(chat(page).getByTestId("chat-comparison")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-pack")).toHaveText(
+    "适配包：2026.1 旧写法（对照）（内置）",
+  );
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible();
   const sent = requests[0]?.postDataJSON() as Omit<Sent, "tools"> & {
@@ -402,12 +412,14 @@ test("a switch of the settings makes new conversations use the words to compare 
   expect(sent.tools.map(({ description }) => description).join("\n")).toContain(
     "Call it at the start of a task",
   );
-  // The conversation keeps its words when the switch goes off, and says so after a reload.
+  // Back to the one recommended: the conversation keeps its words, also after a reload.
   await chooseFrom(page, "视图", "设置");
-  await settings.getByRole("checkbox", { name: /新对话用对照的文字/ }).uncheck();
+  await choice.selectOption({ label: "自动：通用（没有专门的适配包）" });
   await page.reload();
   await tab(page, "chat").click();
-  await expect(chat(page).getByTestId("chat-comparison")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-pack")).toHaveText(
+    "适配包：2026.1 旧写法（对照）（内置）",
+  );
 });
 
 test("keeps the last answer when the page goes right after it came", async ({ page }) => {

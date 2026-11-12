@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CallerState } from "../caller.ts";
 import { DIRECTIVE_PACK } from "../texts/eval/directive.ts";
-import { DEFAULT_TEXTS, systemPromptOf } from "../texts/index.ts";
+import { DEFAULT_TEXTS, SYSTEM_PARTS, systemPromptOf } from "../texts/index.ts";
 import { openSample, testHost, toolsOn } from "../test-support.ts";
 import { createToolset } from "../toolset.ts";
 import type { Tool } from "../types.ts";
@@ -11,6 +11,7 @@ import { callChanges, wordsChanges } from "./changes.ts";
 import { checkPack, MAX_LIST, MAX_SYSTEM, packKeys, type PackFiles } from "./check.ts";
 import { DETAIL_LIMITS } from "./detail.ts";
 import type { ModelPack } from "./format.ts";
+import { comparePacks, previewOf, segmentsOf } from "./preview.ts";
 import { choosePack } from "./resolve.ts";
 
 /** A pack someone else wrote, for DeepSeek: the example of the design and of the public page. */
@@ -608,6 +609,8 @@ describe("the packs that come with AnimaQuill", () => {
     expect(builtinPacks().map(({ id }) => id)).toEqual([
       "animaquill/default",
       "animaquill/claude-5",
+      // Made in code, hidden: see the words to compare with below.
+      "animaquill/eval-directive",
     ]);
   });
 
@@ -615,9 +618,13 @@ describe("the packs that come with AnimaQuill", () => {
     const [general, claude] = builtinPacks() as [ModelPack, ModelPack];
     expect(textsOf(general)).toBe(DEFAULT_TEXTS);
     expect(usePack(general, "anything")).toMatchObject({ call: {}, results: "standard" });
-    await expect(JSON.stringify(builtinPacks(), null, 1)).toMatchFileSnapshot(
-      "../__snapshots__/packs-builtin.json",
-    );
+    await expect(
+      JSON.stringify(
+        builtinPacks().filter(({ hidden }) => !hidden),
+        null,
+        1,
+      ),
+    ).toMatchFileSnapshot("../__snapshots__/packs-builtin.json");
     // Claude 5 says nothing other than the default words yet.
     expect(listOf(createToolset(testHost(), new CallerState(), textsOf(claude)))).toEqual(
       listOf(createToolset(testHost())),
@@ -641,7 +648,16 @@ describe("the packs that come with AnimaQuill", () => {
     expect(list).toBe(
       readFileSync(new URL("../__snapshots__/toolset-2026.1.json", import.meta.url), "utf8"),
     );
-    expect(builtinPacks().some(({ id }) => id === DIRECTIVE_PACK.id)).toBe(false);
+    // It comes with AnimaQuill, hidden: no model gets it unless people choose it.
+    expect(builtinPacks().at(-1)).toBe(DIRECTIVE_PACK);
+    expect(DIRECTIVE_PACK.hidden).toBe(true);
+    for (const model of ["any", "claude-opus-5-5", "gpt-6.1-sol", "deepseek-chat"]) {
+      expect(choosePack(model, builtinPacks()).pack.id).not.toBe(DIRECTIVE_PACK.id);
+    }
+    expect(choosePack("any", builtinPacks(), DIRECTIVE_PACK.id)).toEqual({
+      pack: DIRECTIVE_PACK,
+      by: "chosen",
+    });
   });
 });
 
@@ -718,5 +734,74 @@ describe("a pack that means harm", () => {
     caller.beginAnswer();
     const tags = await call("aq_edit", { operations: [{ op: "project.setTags", tags: ["x"] }] });
     expect(tags.text).toMatch(/not-allowed|unknown-operation|not for AI|only the user/);
+  });
+});
+
+describe("what a model gets, and two packs side by side", () => {
+  const pack = (over: Record<string, unknown>): ModelPack => {
+    const { pack: made, problems } = checkPack(
+      files({ format: 1, id: "lin/steady", name: "Steady", version: "1.0.0", ...over }),
+    );
+    if (!made) throw new Error(JSON.stringify(problems));
+    return made;
+  };
+
+  it("is the system prompt part by part and every tool, as the assistant sends them", () => {
+    const steady = pack({ system: { extra: "Keep batches small.", guard: null } });
+    const preview = previewOf(steady, "deepseek-chat");
+    expect(preview.parts.map(({ part }) => part)).toEqual([...SYSTEM_PARTS]);
+    expect(preview.parts.find(({ part }) => part === "extra")?.text).toBe("Keep batches small.");
+    expect(preview.parts.find(({ part }) => part === "guard")?.text).toBe("");
+    expect(preview.system).toBe(
+      systemPromptOf({ entry: "browser", texts: usePack(steady, "deepseek-chat").texts }),
+    );
+    const keys = segmentsOf(preview).map(({ key }) => key);
+    expect(keys.slice(0, SYSTEM_PARTS.length)).toEqual(
+      SYSTEM_PARTS.map((part) => `system.${part}`),
+    );
+    expect(keys).toContain("tools.aq_edit");
+    expect(keys).toContain("tools.aq_edit.params");
+  });
+
+  it("compares piece by piece for one model, with its variant, and by key as an update does", () => {
+    const same = comparePacks(DEFAULT_PACK, DEFAULT_PACK, "any");
+    expect(same.segments.every(({ state }) => state === "same")).toBe(true);
+    expect(same.words).toEqual([]);
+    expect(same.call).toEqual([]);
+
+    const steady = pack({
+      call: { reasoning: "medium" },
+      results: "concise",
+      system: { extra: "Keep batches small.", guard: null },
+      tools: { aq_search: { description: { append: "Search first." } } },
+      variants: [{ models: ["deepseek-reasoner*"], call: { reasoning: "high" } }],
+    });
+    const compared = comparePacks(DEFAULT_PACK, steady, "deepseek-reasoner");
+    const states = Object.fromEntries(compared.segments.map(({ key, state }) => [key, state]));
+    expect(states["system.extra"]).toBe("onlyRight");
+    expect(states["system.guard"]).toBe("onlyLeft");
+    expect(states["tools.aq_search"]).toBe("changed");
+    expect(states["tools.aq_edit"]).toBe("same");
+    // Results given more briefly change what parameters say of their defaults and limits.
+    expect(states["tools.aq_timeline_read.params"]).toBe("changed");
+    // The same comparison as the install dialog's, against the default words.
+    expect(compared.words.map(({ key }) => key).toSorted()).toEqual(
+      wordsChanges(steady)
+        .map(({ key }) => key)
+        .toSorted(),
+    );
+    expect(compared.words[0]).toMatchObject({ key: "system.guard", sensitive: true, after: "" });
+    // The variant for this model: reasoning high, and fewer results.
+    expect(compared.call).toEqual([
+      { field: "reasoning", after: "high", costly: false },
+      { field: "results", before: "standard", after: "concise", costly: false },
+    ]);
+    // The other way round, the sides swap.
+    const back = comparePacks(steady, DEFAULT_PACK, "deepseek-reasoner");
+    expect(back.segments.find(({ key }) => key === "system.extra")?.state).toBe("onlyLeft");
+
+    // The words to compare with against the default: aq_edit and the system prompt differ.
+    const directive = comparePacks(DEFAULT_PACK, DIRECTIVE_PACK, "any");
+    expect(directive.segments.find(({ key }) => key === "tools.aq_edit")?.state).toBe("changed");
   });
 });

@@ -111,3 +111,53 @@ describe("a pack on GitHub", () => {
     });
   });
 });
+
+describe("the details of a pack", () => {
+  it("say where it is from, what it changes by group, and what of it goes unused", async () => {
+    const { builtinPacks, TOOLSET_VERSION } = await import("@animaquill/tools");
+    const { ModelPacks, detailsOf } = await import("./packs.ts");
+    const saved = new Map<string, unknown>();
+    const settings = {
+      load: async (key: string) => saved.get(key),
+      save: async (key: string, value: unknown) => {
+        saved.set(key, value);
+      },
+      listen: () => () => {},
+    };
+    const packs = new ModelPacks(settings, { saveFailed: () => {} });
+    const manifest = JSON.stringify({
+      format: 1,
+      id: "lin/steady",
+      name: "Steady",
+      version: "1.0.0",
+      models: ["deepseek-*"],
+      call: { reasoning: "low" },
+      system: { extra: "Keep batches small." },
+      tools: { aq_search: { description: { append: "Search first." } } },
+      params: { start: "Start in seconds." },
+    });
+    packs.install(new Map([["pack.json", manifest]]), { kind: "file", name: "pack.json" });
+    const installed = packs.installedOf("lin/steady");
+    if (!installed) throw new Error("not installed");
+    const details = detailsOf(installed);
+    expect(details).toMatchObject({
+      id: "lin/steady",
+      source: { kind: "file", name: "pack.json" },
+      toolset: TOOLSET_VERSION,
+      call: [{ field: "reasoning", after: "low", costly: false }],
+      problems: [],
+      dropped: [],
+    });
+    expect(
+      details.words.map(({ group, changes }) => [group, changes.map(({ key }) => key)]),
+    ).toEqual([
+      ["system", ["system.extra"]],
+      ["tools", ["tools.aq_search.description"]],
+      ["params", ["params.start"]],
+    ]);
+    const claude = builtinPacks().find(({ id }) => id === "animaquill/claude-5");
+    if (!claude) throw new Error("no Claude 5");
+    expect(detailsOf(claude)).toMatchObject({ source: "builtin", words: [] });
+    expect(detailsOf(claude)).not.toHaveProperty("toolset");
+  });
+});

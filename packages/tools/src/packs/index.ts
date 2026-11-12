@@ -30,12 +30,15 @@ export {
   MAX_PACK_BYTES,
   MAX_SYSTEM,
   checkPack,
+  defaultsOf,
   filesNamedIn,
+  isPackPath,
   limitOf,
   packKeys,
   type CheckOptions,
   type PackCheck,
   type PackFiles,
+  type PackFileTooLarge,
   type PackHint,
   type PackProblem,
   type PackProblemCode,
@@ -54,4 +57,13 @@ export {
   type PackVariant,
 } from "./format.ts";
 export { HINT_RULES, hintsIn, type HintRule } from "./hints.ts";
+export {
+  comparePacks,
+  previewOf,
+  segmentsOf,
+  type ComparedSegment,
+  type PackPreview,
+  type PackSegment,
+  type PacksCompared,
+} from "./preview.ts";
 export { choosePack, closenessFor, type PackChoice, type PackChoiceBy } from "./resolve.ts";

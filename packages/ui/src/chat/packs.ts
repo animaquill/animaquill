@@ -1,14 +1,23 @@
 import {
   builtinPacks,
+  callChanges,
   checkPack,
   choosePack,
+  defaultsOf,
   filesNamedIn,
+  isPackPath,
   MANIFEST,
   MAX_FILE_BYTES,
+  TOOLSET_VERSION,
   type ModelPack,
   type PackCheck,
   type PackChoice,
+  type PackFileTooLarge,
   type PackProblem,
+  type CallChange,
+  type WordsChange,
+  type WordsGroup,
+  wordsChanges,
 } from "@animaquill/tools";
 import type { SettingsStore } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
@@ -26,7 +35,22 @@ export interface KeptPack {
   readonly source: PackSource;
   /** Milliseconds since 1970: of two packs for the same models, the one installed first goes. */
   readonly installedAt: number;
+  /** The version of the tools it was installed with, see `TOOLSET_VERSION`. */
+  readonly toolset?: string;
+  /**
+   * The default words of each key it changes, as hashes, as they were when it was installed: words
+   * that replace defaults which changed since may say what is no longer so, see `defaultsOf`.
+   */
+  readonly defaults?: Readonly<Record<string, string>>;
+  /**
+   * The versions before an update, latest first, for conversations that began with one of them:
+   * a conversation keeps the version it began with. Only the last few are kept.
+   */
+  readonly previous?: readonly KeptPack[];
 }
+
+/** How many versions before an update are kept for conversations that began with them. */
+export const PREVIOUS = 2;
 
 /** A pack installed in this browser, as it reads now. */
 export interface InstalledPack {
@@ -76,16 +100,42 @@ function readKept(value: unknown): KeptPack | undefined {
   const source = readSource(value.source);
   const files = Object.entries(value.files);
   if (!source || files.some(([, text]) => typeof text !== "string")) return undefined;
+  const defaults =
+    isRecord(value.defaults) &&
+    Object.values(value.defaults).every((hash) => typeof hash === "string")
+      ? (value.defaults as Record<string, string>)
+      : undefined;
+  const previous = Array.isArray(value.previous)
+    ? value.previous
+        .slice(0, PREVIOUS)
+        .map((each: unknown) =>
+          isRecord(each) ? readKept({ ...each, previous: undefined }) : undefined,
+        )
+        .filter((each) => each !== undefined)
+    : [];
   return {
     files: Object.fromEntries(files) as Record<string, string>,
     source,
     installedAt: value.installedAt,
+    ...(typeof value.toolset === "string" && { toolset: value.toolset }),
+    ...(defaults && { defaults }),
+    ...(previous.length > 0 && { previous }),
   };
 }
 
-/** A pack kept before, checked again as it is read: this version of the tools may differ. */
+/**
+ * A pack kept before, checked again as it is read: this version of the tools may differ. Words of a
+ * pack installed with another version of the tools that replace defaults which changed since go.
+ */
+function checkKept(kept: KeptPack) {
+  return checkPack(new Map(Object.entries(kept.files)), {
+    mode: "load",
+    ...(kept.defaults && kept.toolset !== TOOLSET_VERSION && { defaults: kept.defaults }),
+  });
+}
+
 function installedOf(kept: KeptPack): InstalledPack | undefined {
-  const check = checkPack(new Map(Object.entries(kept.files)), { mode: "load" });
+  const check = checkKept(kept);
   const manifest = kept.files[MANIFEST];
   let id = check.pack?.id;
   if (id === undefined && manifest !== undefined) {
@@ -110,6 +160,8 @@ export class ModelPacks {
   readonly #messages: ModelPacksMessages;
   readonly #emitter = new Emitter();
   #snapshot: ModelPacksSnapshot = { installed: [], packs: builtinPacks() };
+  /** Versions before an update, checked when a conversation asks for one, by id and hash. */
+  readonly #before = new Map<string, ModelPack | null>();
 
   constructor(settings: SettingsStore, messages: ModelPacksMessages) {
     this.#settings = settings;
@@ -164,6 +216,27 @@ export class ModelPacks {
     return this.#snapshot.packs.find((pack) => pack.id === id);
   }
 
+  /**
+   * A pack at the version a conversation began with, by id and hash: the one installed, one of the
+   * versions kept from before an update, or one that comes with AnimaQuill. Nothing when that
+   * version is not here any more.
+   */
+  versionOf(id: string, hash: string): ModelPack | undefined {
+    const now = this.#snapshot.packs.find((pack) => pack.id === id);
+    if (now?.hash === hash) return now;
+    const installed = this.installedOf(id);
+    for (const kept of installed?.kept.previous ?? []) {
+      const key = `${id}\n${JSON.stringify(kept.files)}`;
+      let pack = this.#before.get(key);
+      if (pack === undefined) {
+        pack = checkKept(kept).pack ?? null;
+        this.#before.set(key, pack);
+      }
+      if (pack?.id === id && pack.hash === hash) return pack;
+    }
+    return undefined;
+  }
+
   /** The pack for a model, with people's choice for it, see `choosePack`. */
   choose(model: string, chosen: string | undefined): PackChoice {
     return choosePack(model, this.#snapshot.packs, chosen);
@@ -178,11 +251,19 @@ export class ModelPacks {
     const pack = check.pack;
     if (!pack) return check;
     const before = this.installedOf(pack.id);
+    const { previous: older = [], ...last } = before?.kept ?? {};
+    const previous =
+      before && before.pack?.hash !== pack.hash
+        ? [last as KeptPack, ...older].slice(0, PREVIOUS)
+        : older;
     const kept: KeptPack = {
       files: Object.fromEntries(files),
       source,
       // An update keeps its place among packs for the same models.
       installedAt: before?.kept.installedAt ?? Date.now(),
+      toolset: TOOLSET_VERSION,
+      defaults: defaultsOf(pack),
+      ...(previous.length > 0 && { previous }),
     };
     const installed: InstalledPack = { id: pack.id, kept, pack, problems: [], dropped: [] };
     const others = this.#snapshot.installed.filter(({ id }) => id !== pack.id);
@@ -197,8 +278,10 @@ export class ModelPacks {
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
+type Read = Map<string, string | Uint8Array | PackFileTooLarge>;
+
 /** Text where it is UTF-8, bytes where not, so that the check can tell which files are not. */
-function asText(path: string, bytes: Uint8Array, into: Map<string, string | Uint8Array>): void {
+function asText(path: string, bytes: Uint8Array, into: Read): void {
   try {
     into.set(path, decoder.decode(bytes));
   } catch {
@@ -207,10 +290,16 @@ function asText(path: string, bytes: Uint8Array, into: Map<string, string | Uint
 }
 
 /** The files a pack is made of, for `checkPack`: pack.json and those it names. */
-export type PackInput = ReadonlyMap<string, string | Uint8Array>;
+export type PackInput = ReadonlyMap<string, string | Uint8Array | PackFileTooLarge>;
 
-/** Only files a pack may have are read, and none much larger than a pack may have. */
-const tooLarge = (size: number) => size > MAX_FILE_BYTES * 2;
+/** The most of one file that is read: a little more than a pack may have, for the check to say so. */
+const MOST = MAX_FILE_BYTES + 1;
+
+/** A file people picked, unless it is larger than a pack may have: then only its size. */
+async function readPicked(path: string, file: File, into: Read): Promise<void> {
+  if (file.size > MOST) into.set(path, { tooLarge: file.size });
+  else asText(path, new Uint8Array(await file.arrayBuffer()), into);
+}
 
 /**
  * A pack from a folder people picked: its pack.json and the files that names, as the folder has
@@ -224,24 +313,23 @@ export async function readFolder(files: readonly File[]): Promise<PackInput> {
     const parts = relative.split("/");
     byPath.set(parts.length > 1 ? parts.slice(1).join("/") : relative, file);
   }
-  const read = new Map<string, string | Uint8Array>();
+  const read: Read = new Map();
   const manifest = byPath.get(MANIFEST);
-  if (!manifest || tooLarge(manifest.size)) return read;
-  asText(MANIFEST, new Uint8Array(await manifest.arrayBuffer()), read);
+  if (!manifest) return read;
+  await readPicked(MANIFEST, manifest, read);
   const text = read.get(MANIFEST);
   if (typeof text !== "string") return read;
-  for (const path of filesNamedIn(text)) {
+  for (const path of filesNamedIn(text).filter(isPackPath)) {
     const file = byPath.get(path);
-    if (!file || tooLarge(file.size)) continue;
-    asText(path, new Uint8Array(await file.arrayBuffer()), read);
+    if (file) await readPicked(path, file, read);
   }
   return read;
 }
 
 /** A pack that is one pack.json people picked. */
 export async function readManifestFile(file: File): Promise<PackInput> {
-  const read = new Map<string, string | Uint8Array>();
-  if (!tooLarge(file.size)) asText(MANIFEST, new Uint8Array(await file.arrayBuffer()), read);
+  const read: Read = new Map();
+  await readPicked(MANIFEST, file, read);
   return read;
 }
 
@@ -313,6 +401,46 @@ export type GitHubRead =
     }
   | { readonly ok: false; readonly failure: GitHubFailure };
 
+/**
+ * The body of a response, up to a size: what says it is larger is not read, and what turns out
+ * larger stops being read there, so that a large file never sits in memory whole.
+ */
+async function upTo(
+  response: Response,
+  max: number,
+): Promise<Uint8Array | PackFileTooLarge | "network"> {
+  const length = Number(response.headers.get("content-length") ?? Number.NaN);
+  if (Number.isFinite(length) && length > max) {
+    await response.body?.cancel().catch(() => undefined);
+    return { tooLarge: length };
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > max) {
+        await reader.cancel().catch(() => undefined);
+        return { tooLarge: size };
+      }
+      parts.push(value);
+    }
+  } catch {
+    return "network";
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const part of parts) {
+    bytes.set(part, at);
+    at += part.length;
+  }
+  return bytes;
+}
+
 const API = "https://api.github.com";
 const RAW = "https://raw.githubusercontent.com";
 
@@ -357,27 +485,26 @@ export async function readGitHub(
   }
   const folder =
     place.path === "" ? "" : `${place.path.split("/").map(encodeURIComponent).join("/")}/`;
-  const read = new Map<string, string | Uint8Array>();
+  const read: Read = new Map();
   const take = async (path: string): Promise<GitHubFailure | undefined> => {
     const file = await get(
       `${RAW}/${repo}/${commit}/${folder}${path.split("/").map(encodeURIComponent).join("/")}`,
     );
     if (typeof file === "string") return file === "notFound" ? undefined : file;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (!tooLarge(bytes.length)) asText(path, bytes, read);
+    const bytes = await upTo(file, MOST);
+    if (bytes === "network") return bytes;
+    if (bytes instanceof Uint8Array) asText(path, bytes, read);
+    else read.set(path, bytes);
     return undefined;
   };
   const failed = await take(MANIFEST);
   if (failed) return { ok: false, failure: failed };
   const manifest = read.get(MANIFEST);
+  // A pack.json too large is for the check to say, as of any file.
   if (manifest === undefined) return { ok: false, failure: "notFound" };
   if (typeof manifest === "string") {
     // Only files a pack may name: in it, of the kinds it may have, and not many of them.
-    const named = filesNamedIn(manifest)
-      .filter(
-        (path) => /^[^/\\:][^\\:]*\.(md|txt|json)$/i.test(path) && !path.split("/").includes(".."),
-      )
-      .slice(0, 64);
+    const named = filesNamedIn(manifest).filter(isPackPath).slice(0, 64);
     for (const path of named) {
       const error = await take(path);
       if (error) return { ok: false, failure: error };
@@ -387,5 +514,50 @@ export async function readGitHub(
     ok: true,
     files: read,
     source: { kind: "github", url: address.trim(), commit },
+  };
+}
+
+/** All there is to say of a pack, for its page of details. */
+export interface PackDetails {
+  readonly id: string;
+  /** Nothing when it does not pass any more: `problems` says why. */
+  readonly pack: ModelPack | undefined;
+  /** Where it came from: with AnimaQuill, or as people installed it. */
+  readonly source: PackSource | "builtin";
+  /** The version of the tools it was installed with; nothing for those that come with AnimaQuill. */
+  readonly toolset?: string;
+  /** How it calls models, its variants included, against the editor's defaults. */
+  readonly call: readonly CallChange[];
+  /** The words it changes, by group, in the order of the groups, with what they replace. */
+  readonly words: readonly {
+    readonly group: WordsGroup;
+    readonly changes: readonly WordsChange[];
+  }[];
+  /** Why it is not used, where it is not. */
+  readonly problems: readonly PackProblem[];
+  /** What of it this version of the tools goes without, and why. */
+  readonly dropped: readonly PackProblem[];
+}
+
+/** The groups of words, in the order people read them. */
+export const WORDS_GROUPS: readonly WordsGroup[] = ["system", "tools", "params", "ops", "examples"];
+
+/** The details of a pack that comes with AnimaQuill, or of one installed here. */
+export function detailsOf(pack: ModelPack | InstalledPack): PackDetails {
+  const installed = "kept" in pack ? pack : undefined;
+  const used = installed ? installed.pack : (pack as ModelPack);
+  const changes = used ? wordsChanges(used) : [];
+  return {
+    id: installed?.id ?? (pack as ModelPack).id,
+    pack: used,
+    source: installed ? installed.kept.source : "builtin",
+    ...(installed?.kept.toolset !== undefined && { toolset: installed.kept.toolset }),
+    call: used ? callChanges(used) : [],
+    words: WORDS_GROUPS.flatMap((group) => {
+      const inGroup = changes.filter((change) => change.group === group);
+      return inGroup.length > 0 ? [{ group, changes: inGroup }] : [];
+    }),
+    problems: installed?.problems ?? [],
+    dropped: installed?.dropped ?? [],
   };
 }

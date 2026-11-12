@@ -176,3 +176,111 @@
   width: auto;
   margin: 0;
 }
+
+/* A model a new pack would take over: plain to see, with what it has now. */
+.takeover {
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.size {
+  margin-left: 6px;
+  color: var(--aq-text-muted);
+  font-family: var(--aq-font, inherit);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* A long run of blank, shown as a mark that says how long it is. */
+.blank {
+  padding: 0 3px;
+  color: var(--aq-warning);
+  border: 1px dashed var(--aq-warning);
+  border-radius: 3px;
+}
+
+/* An update from another author or place than the version installed. */
+.origin {
+  padding: 6px 8px;
+  border: 1px solid var(--aq-danger);
+  border-radius: 4px;
+}
+
+.origin h3 {
+  color: var(--aq-danger-text);
+}
+
+.using {
+  margin: 0 0 6px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+/* The full text a model gets: long, read only. */
+.full pre {
+  max-height: 360px;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  overflow: auto;
+  color: var(--aq-text);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+}
+
+.full summary {
+  cursor: pointer;
+  font-family: var(--aq-mono, monospace);
+  font-size: 12px;
+}
+
+.droppedLine {
+  display: block;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.tabOn {
+  color: var(--aq-text-strong);
+  border-color: var(--aq-accent, var(--aq-border));
+  font-weight: 600;
+}
+
+.pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  margin: 0 0 12px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0 0 12px;
+}
+
+.facts > div {
+  display: contents;
+}
+
+.facts dt {
+  color: var(--aq-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.copy {
+  margin-left: 6px;
+  font-size: 11px;
+}

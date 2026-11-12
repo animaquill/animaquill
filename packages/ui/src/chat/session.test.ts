@@ -341,12 +341,12 @@ describe("AI services", () => {
     expect(ai.getSnapshot().services).toEqual([]);
   });
 
-  it("turn the words to compare with on and off again", () => {
+  it("show the hidden model packs and hide them again", () => {
     const { ai } = setup();
-    ai.setComparisonTexts(true);
-    expect(ai.getSnapshot().comparisonTexts).toBe(true);
-    ai.setComparisonTexts(false);
-    expect(ai.getSnapshot().comparisonTexts).toBeUndefined();
+    ai.setShowHiddenPacks(true);
+    expect(ai.getSnapshot().showHiddenPacks).toBe(true);
+    ai.setShowHiddenPacks(false);
+    expect(ai.getSnapshot().showHiddenPacks).toBeUndefined();
   });
 
   it("start straight where there is no relay, also those that need one", () => {
@@ -441,6 +441,30 @@ describe("the model pack of a conversation", () => {
     });
   });
 
+  it("keeps the version it began with when the pack is updated meanwhile", async () => {
+    const { chat, fake, packs } = setup();
+    packs.install(packFiles(), { kind: "file", name: "pack.json" });
+    fake({ model: "deepseek-chat", fake: [{ text: "一" }] });
+    await chat.send("一");
+    const first = answers(chat).at(-1)?.texts;
+    expect(first).toMatchObject({ id: "someone/deepseek", version: "1.0.0" });
+    packs.install(packFiles({ ...PACK, version: "1.0.1", system: { extra: "Other words." } }), {
+      kind: "file",
+      name: "pack.json",
+    });
+    fake({ model: "deepseek-chat", fake: [{ text: "二" }] });
+    await chat.send("二");
+    expect(answers(chat).at(-1)?.texts).toEqual(first);
+    // The next conversation has the update.
+    chat.newConversation();
+    fake({ model: "deepseek-chat", fake: [{ text: "三" }] });
+    await chat.send("三");
+    expect(answers(chat).at(-1)?.texts).toMatchObject({
+      id: "someone/deepseek",
+      version: "1.0.1",
+    });
+  });
+
   it("is chosen again when it is gone, and the history still goes as it was", async () => {
     const { chat, fake, packs, ai } = setup();
     packs.install(packFiles(), { kind: "file", name: "pack.json" });
@@ -458,18 +482,22 @@ describe("the model pack of a conversation", () => {
     });
   });
 
-  it("is the words to compare with for a conversation that began with them", async () => {
+  it("is the words to compare with only for a model people chose them for, to the end", async () => {
     const { chat, fake, ai } = setup();
-    ai.setComparisonTexts(true);
     fake({ model: "claude-opus-5-5", fake: [{ text: "好" }] });
     await chat.send("你好");
-    expect(chat.getSnapshot().comparison).toBe(true);
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/claude-5");
+    chat.newConversation();
+    chat.choosePack("claude-opus-5-5", "animaquill/eval-directive");
+    fake({ model: "claude-opus-5-5", fake: [{ text: "好" }] });
+    await chat.send("你好");
     expect(answers(chat).at(-1)).toMatchObject({
       texts: { id: "animaquill/eval-directive", version: "2026.1" },
-      pack: { by: "comparison" },
+      pack: { by: "chosen", builtin: true },
     });
-    // Turned off, the conversation keeps them; a new one does not.
-    ai.setComparisonTexts(false);
+    // Back to the one recommended: the conversation keeps them; a new one does not.
+    chat.choosePack("claude-opus-5-5", undefined);
+    expect(ai.getSnapshot().packFor).toBeUndefined();
     fake({ model: "claude-opus-5-5", fake: [{ text: "再" }] });
     await chat.send("再");
     expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/eval-directive");
@@ -477,6 +505,91 @@ describe("the model pack of a conversation", () => {
     fake({ model: "claude-opus-5-5", fake: [{ text: "新" }] });
     await chat.send("新");
     expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/claude-5");
+  });
+
+  it("chosen where the model is picked, comes with the next answer; from the settings, the next conversation", async () => {
+    const { chat, fake, packs, ai } = setup();
+    packs.install(packFiles({ ...PACK, models: ["nothing-*"] }), {
+      kind: "file",
+      name: "pack.json",
+    });
+    fake({ model: "claude-opus-5-5", fake: [{ text: "一" }] });
+    await chat.send("一");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/claude-5");
+    // From the settings: this conversation keeps its pack.
+    ai.choosePack(["claude-opus-5-5"], "someone/deepseek");
+    fake({ model: "claude-opus-5-5", fake: [{ text: "二" }] });
+    await chat.send("二");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/claude-5");
+    // Where the model is picked: the next answer has it, and the ones after.
+    chat.choosePack("claude-opus-5-5", "someone/deepseek", "now");
+    fake({ model: "claude-opus-5-5", fake: [{ text: "三" }] });
+    await chat.send("三");
+    expect(answers(chat).at(-1)).toMatchObject({
+      texts: { id: "someone/deepseek" },
+      pack: { by: "chosen" },
+    });
+    fake({ model: "claude-opus-5-5", fake: [{ text: "四" }] });
+    await chat.send("四");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("someone/deepseek");
+    // Back to the one recommended, there too.
+    chat.choosePack("claude-opus-5-5", undefined, "now");
+    fake({ model: "claude-opus-5-5", fake: [{ text: "五" }] });
+    await chat.send("五");
+    expect(answers(chat).at(-1)).toMatchObject({
+      texts: { id: "animaquill/claude-5" },
+      pack: { by: "matched" },
+    });
+  });
+
+  it("gives where models are picked the packs for a model: recommended, current, chosen", () => {
+    const { chat, ai, packs } = setup();
+    const ids = (model: string) =>
+      chat
+        .packOptions(model)
+        .packs.map(({ pack, recommended, current }) =>
+          [pack.id, recommended ? "recommended" : "", current ? "current" : ""]
+            .filter(Boolean)
+            .join(" "),
+        );
+    expect(chat.packOptions("claude-opus-5-5")).toMatchObject({
+      chosen: false,
+      recommended: { id: "animaquill/claude-5" },
+      current: { id: "animaquill/claude-5" },
+    });
+    // The hidden one is not there until the settings show it.
+    expect(ids("claude-opus-5-5")).toEqual([
+      "animaquill/default",
+      "animaquill/claude-5 recommended current",
+    ]);
+    packs.install(packFiles(), { kind: "file", name: "pack.json" });
+    chat.choosePack("claude-opus-5-5", "someone/deepseek");
+    expect(chat.packOptions("claude-opus-5-5")).toMatchObject({
+      chosen: true,
+      recommended: { id: "animaquill/claude-5" },
+      current: { id: "someone/deepseek" },
+    });
+    expect(ids("claude-opus-5-5")).toEqual([
+      "animaquill/default",
+      "animaquill/claude-5 recommended",
+      "someone/deepseek current",
+    ]);
+    // Only for that model.
+    expect(chat.packOptions("deepseek-chat")).toMatchObject({
+      chosen: false,
+      current: { id: "someone/deepseek" },
+    });
+    ai.setShowHiddenPacks(true);
+    expect(ids("claude-opus-5-5")).toContain("animaquill/eval-directive");
+    ai.setShowHiddenPacks(false);
+    chat.choosePack("claude-opus-5-5", "animaquill/eval-directive");
+    // Chosen, it stays in the list while hidden.
+    expect(ids("claude-opus-5-5")).toContain("animaquill/eval-directive current");
+    chat.choosePack("claude-opus-5-5", undefined);
+    expect(chat.packOptions("claude-opus-5-5")).toMatchObject({
+      chosen: false,
+      current: { id: "animaquill/claude-5" },
+    });
   });
 });
 
@@ -500,6 +613,7 @@ describe("model packs in this browser", () => {
     expect(other.getSnapshot().packs.map(({ id }) => id)).toEqual([
       "animaquill/default",
       "animaquill/claude-5",
+      "animaquill/eval-directive",
       "someone/deepseek",
     ]);
     // What was changed where it is kept does not pass, and is not used.

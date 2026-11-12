@@ -130,7 +130,7 @@ export class AiSettingsStore {
 
   #adopt(settings: AiSettings): void {
     // What the settings leave out is off: a switch that went off takes its key away.
-    const { comparisonTexts: _was, packFor: _chosen, ...before } = this.#snapshot;
+    const { showHiddenPacks: _was, packFor: _chosen, ...before } = this.#snapshot;
     this.#snapshot = { ...before, ...settings };
     this.#emitter.emit();
   }
@@ -147,12 +147,12 @@ export class AiSettingsStore {
 
   #save(settings: AiSettings): void {
     this.#adopt(settings);
-    const { services, current, maxToolCalls, comparisonTexts, packFor } = settings;
+    const { services, current, maxToolCalls, showHiddenPacks, packFor } = settings;
     const saved = {
       services,
       current,
       maxToolCalls,
-      ...(comparisonTexts && { comparisonTexts }),
+      ...(showHiddenPacks && { showHiddenPacks }),
       ...(packFor && { packFor }),
     };
     this.#settings.save(SETTINGS_KEY, saved).catch((error) => {
@@ -162,12 +162,12 @@ export class AiSettingsStore {
   }
 
   #settingsNow(): AiSettings {
-    const { services, current, maxToolCalls, comparisonTexts, packFor } = this.#snapshot;
+    const { services, current, maxToolCalls, showHiddenPacks, packFor } = this.#snapshot;
     return {
       services,
       current,
       maxToolCalls,
-      ...(comparisonTexts && { comparisonTexts }),
+      ...(showHiddenPacks && { showHiddenPacks }),
       ...(packFor && { packFor }),
     };
   }
@@ -241,10 +241,10 @@ export class AiSettingsStore {
     this.#save({ ...this.#settingsNow(), maxToolCalls: limited });
   }
 
-  /** Whether new conversations use the words of the tools to compare with, see `AiSettings`. */
-  setComparisonTexts(on: boolean): void {
-    const { comparisonTexts: _was, ...now } = this.#settingsNow();
-    this.#save({ ...now, ...(on && { comparisonTexts: true }) });
+  /** Whether the settings list the model packs that are hidden, see `AiSettings`. */
+  setShowHiddenPacks(on: boolean): void {
+    const { showHiddenPacks: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(on && { showHiddenPacks: true }) });
   }
 
   async keyOf(id: string): Promise<string | undefined> {

@@ -27,7 +27,8 @@ export function closenessFor(pack: ModelPack, model: string): number | undefined
 }
 
 /**
- * The pack for a model. People's choice for it comes first, while that pack is there. Otherwise the
+ * The pack for a model. People's choice for it comes first, while that pack is there (hidden ones
+ * too, which only people's choice gives). Otherwise the
  * pack that names the model most closely (the most characters other than `*` in its pattern that
  * fits); of those that name it as closely, AnimaQuill's own, then the one installed first, so that a
  * new pack never takes over unasked. No pack for it: the default one.
@@ -45,6 +46,8 @@ export function choosePack(
   }
   let best: { pack: ModelPack; closeness: number } | undefined;
   for (const pack of packs) {
+    // A hidden pack is only for those who choose it.
+    if (pack.hidden) continue;
     const closeness = closenessFor(pack, model);
     if (closeness === undefined) continue;
     const better =

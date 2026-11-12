@@ -87,18 +87,6 @@ export function AiServicesSettings() {
         <span>{t("ai.times")}</span>
       </label>
       <p className={styles.help}>{t("ai.limitHelp")}</p>
-      <details className={styles.developer}>
-        <summary>{t("ai.developer")}</summary>
-        <label>
-          <input
-            type="checkbox"
-            checked={snapshot.comparisonTexts === true}
-            onChange={(event) => ai.setComparisonTexts(event.target.checked)}
-          />{" "}
-          {t("ai.comparisonTexts")}
-        </label>
-        <p className={styles.help}>{t("ai.comparisonTextsHelp")}</p>
-      </details>
     </section>
   );
 }

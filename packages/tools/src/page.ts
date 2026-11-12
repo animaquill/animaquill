@@ -60,13 +60,13 @@ export function paged(
     if (room < 0) break;
     shown.push(item);
   }
-  // A list always goes on: an item too long for the room left comes cut, rather than none.
+  // A list always goes on: an item too long for the room left comes cut, rather than none. A cut
+  // one does not count as read.
   const first = items[offset];
-  if (shown.length === 0 && first !== undefined && limit > 0) {
-    shown.push(`${first.slice(0, Math.max(200, room + first.length))}…`);
-  }
+  const cut = shown.length === 0 && first !== undefined && limit > 0;
+  if (cut) shown.push(`${first.slice(0, Math.max(200, room + first.length))}…`);
   const end = offset + shown.length;
-  options.shown?.(offset, end);
+  options.shown?.(offset, cut ? offset : end);
   const lines = [...head];
   if (items.length > 0) lines.push(title(offset + 1, end, items.length), ...shown);
   if (end < items.length) {
