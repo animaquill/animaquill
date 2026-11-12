@@ -7,6 +7,7 @@ import {
   withinTime,
 } from "./answers.ts";
 import {
+  CloudOtherAccount,
   CloudSignedOut,
   ORGANIZER_BATCH,
   type AccountChanges,
@@ -72,15 +73,23 @@ const marksOf = (value: unknown, clock: Clock): AccountMarks | undefined => {
 const stateOf = (value: unknown, clock: Clock): AccountOrganized | undefined => {
   if (!isObject(value) || !Array.isArray(value.groups) || !Array.isArray(value.marks))
     return undefined;
+  const account = text(value.account);
+  if (account === undefined) return undefined;
   const groups = value.groups.map((each) => groupOf(each, clock));
   const marks = value.marks.map((each) => marksOf(each, clock));
   // Anything that cannot be read is not taken for nothing: the whole answer is not.
   if (groups.includes(undefined) || marks.includes(undefined)) return undefined;
-  return { groups: groups as AccountGroup[], marks: marks as AccountMarks[] };
+  return { account, groups: groups as AccountGroup[], marks: marks as AccountMarks[] };
 };
 
 const groupOutcomeOf = (value: unknown): AccountGroupOutcome | undefined => {
-  if (value === "kept" || value === "older" || value === "missing" || value === "tooMany")
+  if (
+    value === "kept" ||
+    value === "older" ||
+    value === "missing" ||
+    value === "tooMany" ||
+    value === "invalid"
+  )
     return value;
   const taken = isObject(value) ? text(value.taken) : undefined;
   return taken === undefined ? undefined : { taken };
@@ -105,11 +114,12 @@ const marksOutcomeOf = (value: unknown): AccountMarksOutcome | undefined => {
 /**
  * How the person organises their projects on a platform, over its HTTP API, see `OrganizerAccess`:
  *
- * - `GET <api>/organizer` answers `{now, groups, marks}`: `AccountOrganized` by the platform's
- *   clock, and what that said then (`now`).
- * - `POST <api>/organizer` with `{now, groups?, marks?}`, `AccountChanges` by this computer's clock
- *   and what that says as it sends them: the platform has them agree with its own. It answers
- *   `{now, groups, marks, state}`, see `AccountChangesAnswer`.
+ * - `GET <api>/organizer` answers `{now, account, groups, marks}`: `AccountOrganized` by the
+ *   platform's clock, and what that said then (`now`).
+ * - `POST <api>/organizer` with `{now, account, groups?, marks?}`, `AccountChanges` by this
+ *   computer's clock and what that says as it sends them: the platform has them agree with its own.
+ *   It answers `{now, groups, marks, state}`, see `AccountChangesAnswer`; 409 "otherAccount" where
+ *   its session is of somebody else than `account`, and nothing is kept.
  *
  * Both say 401 "signedOut", 429 "busy" with Retry-After. Times come back by this computer's clock:
  * the difference between the two clocks is taken as what it was as the request went and came back.
@@ -126,6 +136,8 @@ export function browserOrganizerAccess(options: BrowserOrganizerAccessOptions): 
     const said = isObject(answer) ? answer.error : undefined;
     if (response.status === 401 || said === "signedOut")
       throw new CloudSignedOut("Nobody is signed in");
+    if (response.status === 409 && said === "otherAccount")
+      throw new CloudOtherAccount("Somebody else is signed in");
     if (response.status === 429) {
       const seconds = Number(response.headers.get("retry-after"));
       throw new OrganizerBusy(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000);
@@ -156,7 +168,7 @@ export function browserOrganizerAccess(options: BrowserOrganizerAccessOptions): 
           {
             method: "POST",
             headers: { ...options.changeHeaders, "content-type": "application/json" },
-            body: JSON.stringify({ now: now(), groups, marks }),
+            body: JSON.stringify({ now: now(), account: changes.account, groups, marks }),
           },
           signal,
         );

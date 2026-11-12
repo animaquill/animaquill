@@ -1,6 +1,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import type { ProjectGroup } from "./index.ts";
+import { cleanGroupName, groupNameOf } from "./organize-rules.ts";
 import {
   browserOrganizer,
   memoryOrganizer,
@@ -75,6 +76,35 @@ describe("merging the marks of a project", () => {
   it("remembers whose project of the platform it is", () => {
     const marks = mergeMarks(undefined, { starredAt: 1, account: "user-ada", at: 1 });
     expect(mergeMarks(marks, { group: "g", at: 2 })).toMatchObject({ account: "user-ada" });
+  });
+
+  it("has what people do here come after whatever is kept, also a time still to come", () => {
+    const ahead = mergeMarks(undefined, { starredAt: 900, at: 900, group: "g" });
+    // A change of before that time is older; one people made here is not.
+    expect(mergeMarks(ahead, { starredAt: null, at: 100 }).starredAt).toBe(900);
+    expect(mergeMarks(ahead, { starredAt: null, at: 100, mine: true })).toMatchObject({
+      starredAt: null,
+      starAt: 901,
+      group: "g",
+      groupAt: 900,
+    });
+  });
+
+  it("has times kept here that are still to come become now, values as they are", () => {
+    const ahead = mergeMarks(undefined, {
+      starredAt: 900,
+      group: "g",
+      at: 900,
+      sent: { star: 900, group: 50 },
+    });
+    expect(mergeMarks(ahead, { at: 900, notAfter: 200 })).toEqual({
+      starredAt: 900,
+      starAt: 200,
+      group: "g",
+      groupAt: 200,
+      at: 200,
+      sent: { star: 200, group: 50 },
+    });
   });
 
   it("does not take opening for organising: the time to merge by stays", () => {
@@ -194,6 +224,7 @@ describe.each([
       group("x", "频道", { ...ada, at: 30, sent: 10, deleted: true, into: "w" }),
     );
     expect(unsentOf(content, "ada")).toEqual({
+      account: "ada",
       groups: [{ id: "x", name: "频道", at: 30, deleted: true }],
       marks: [{ project: "p", group: { id: "w", at: 20 } }],
     });
@@ -227,6 +258,18 @@ describe.each([
     stop();
     await organizer.forget("a");
     expect(heard).toBe(2);
+  });
+});
+
+describe("names of groups", () => {
+  it("have no control or format characters, nor separators of lines: those become a space", () => {
+    expect(cleanGroupName(" A\tB ")).toBe("A B");
+    expect(cleanGroupName("工作\u200b")).toBe("工作");
+    expect(cleanGroupName("a\u2028b\u2029c\u0085d\u202ee")).toBe("a b c d e");
+    expect(groupNameOf(" 工作 ")).toBe("工作");
+    expect(groupNameOf("😀".repeat(60))).toBe("😀".repeat(60));
+    for (const no of ["", " ", "A\tB", "工作\u200b", "\u200b", "字".repeat(61), 5, undefined])
+      expect(groupNameOf(no), JSON.stringify(no)).toBeUndefined();
   });
 });
 

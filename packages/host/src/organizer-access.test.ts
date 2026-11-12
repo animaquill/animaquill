@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CloudSignedOut } from "./index.ts";
+import { CloudOtherAccount, CloudSignedOut } from "./index.ts";
 import { browserOrganizerAccess, OrganizerBusy } from "./organizer-access.ts";
 
 /** The platform's clock is this much ahead of this computer's. */
@@ -40,6 +40,7 @@ describe("how projects are organised, on a platform over HTTP", () => {
       json(200, {
         // Half way: sent at 1_000_010, back at 1_000_030.
         now: 1_000_020 + AHEAD,
+        account: "ada",
         groups: [
           { id: "g", name: "工作", at: 500_000 + AHEAD },
           { id: "h", name: "删了", at: 600_000 + AHEAD, deleted: true },
@@ -55,6 +56,7 @@ describe("how projects are organised, on a platform over HTTP", () => {
       }),
     );
     expect(await access.read()).toEqual({
+      account: "ada",
       groups: [
         { id: "g", name: "工作", at: 500_000 },
         { id: "h", name: "删了", at: 600_000, deleted: true },
@@ -75,10 +77,11 @@ describe("how projects are organised, on a platform over HTTP", () => {
           { project: "p", star: "kept", group: "noGroup" },
           { project: "q", missing: true },
         ],
-        state: { groups: [{ id: "w", name: "工作", at: 1000 + AHEAD }], marks: [] },
+        state: { account: "ada", groups: [{ id: "w", name: "工作", at: 1000 + AHEAD }], marks: [] },
       }),
     );
     const changes = {
+      account: "ada",
       groups: [
         { id: "g", name: "新", at: 900_000 },
         { id: "x", name: "工作", at: 900_001 },
@@ -94,7 +97,7 @@ describe("how projects are organised, on a platform over HTTP", () => {
         { project: "p", star: "kept", group: "noGroup" },
         { project: "q", missing: true },
       ],
-      state: { groups: [{ id: "w", name: "工作", at: 1000 }], marks: [] },
+      state: { account: "ada", groups: [{ id: "w", name: "工作", at: 1000 }], marks: [] },
     });
     expect(asked[0]).toMatchObject({
       method: "POST",
@@ -107,6 +110,14 @@ describe("how projects are organised, on a platform over HTTP", () => {
     await expect(platformOf(() => json(401, { error: "signedOut" })).access.read()).rejects.toThrow(
       CloudSignedOut,
     );
+    // Its session is of somebody else: nothing was kept.
+    await expect(
+      platformOf(() => json(409, { error: "otherAccount" })).access.change({ account: "ada" }),
+    ).rejects.toThrow(CloudOtherAccount);
+    // An answer that does not say whose it is is none.
+    await expect(
+      platformOf(() => json(200, { now: 1, groups: [], marks: [] })).access.read(),
+    ).rejects.toThrow();
     const busy = platformOf(() =>
       json(429, { error: "busy" }, { "retry-after": "7" }),
     ).access.read();
@@ -116,8 +127,8 @@ describe("how projects are organised, on a platform over HTTP", () => {
       json(503, { error: "unavailable" }),
       new Response("<html>gateway</html>", { status: 200 }),
       json(200, { groups: [], marks: [] }),
-      json(200, { now: 1, groups: [{ id: "g" }], marks: [] }),
-      json(200, { now: 1, groups: [], marks: [{ project: 5 }] }),
+      json(200, { now: 1, account: "ada", groups: [{ id: "g" }], marks: [] }),
+      json(200, { now: 1, account: "ada", groups: [], marks: [{ project: 5 }] }),
     ])
       await expect(platformOf(() => answer.clone()).access.read()).rejects.toThrow();
     // An answer that does not say what came of each change is none.
@@ -125,10 +136,11 @@ describe("how projects are organised, on a platform over HTTP", () => {
       json(200, { now: 1, groups: [], marks: [], state: { groups: [], marks: [] } }),
     );
     await expect(
-      short.access.change({ groups: [{ id: "g", name: "x", at: 1 }] }),
+      short.access.change({ account: "ada", groups: [{ id: "g", name: "x", at: 1 }] }),
     ).rejects.toThrow();
     await expect(
       platformOf(() => json(200, {})).access.change({
+        account: "ada",
         marks: Array.from({ length: 201 }, (_, i) => ({
           project: `p${i}`,
           star: { starred: true, at: 1 },

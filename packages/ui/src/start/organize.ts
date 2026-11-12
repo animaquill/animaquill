@@ -1,4 +1,5 @@
 import {
+  cleanGroupName,
   groupNameKey,
   MAX_GROUP_NAME,
   type AccountAccess,
@@ -37,7 +38,7 @@ export function groupNameProblem(
   groups: readonly ProjectGroup[],
   except?: string,
 ): GroupNameProblem | undefined {
-  const wanted = name.trim();
+  const wanted = cleanGroupName(name);
   if (wanted === "") return "empty";
   if ([...wanted].length > MAX_GROUP_NAME) return "tooLong";
   const key = groupNameKey(wanted);
@@ -135,7 +136,12 @@ export class StartOrganizer {
     this.#sync =
       sync ??
       (cloud && account
-        ? new OrganizerSync({ local: organizer, remote: cloud, account: () => this.#signedIn })
+        ? new OrganizerSync({
+            local: organizer,
+            remote: cloud,
+            account: () => this.#signedIn,
+            otherAccount: () => void account.refresh(),
+          })
         : undefined);
   }
 
@@ -202,7 +208,12 @@ export class StartOrganizer {
   /** Resolves to whether it is kept: where it is not, nothing changed. */
   async #mark(project: string, change: Omit<ProjectMarksChange, "at">): Promise<boolean> {
     try {
-      await this.#organizer.mark(project, { ...change, at: this.#now() });
+      const isOrganizing = change.starredAt !== undefined || change.group !== undefined;
+      await this.#organizer.mark(project, {
+        ...change,
+        at: this.#now(),
+        ...(isOrganizing && { mine: true }),
+      });
       if (change.starredAt !== undefined || change.group !== undefined) this.#changed();
       return true;
     } catch (error) {
@@ -234,7 +245,7 @@ export class StartOrganizer {
   ): Promise<boolean> {
     const at = this.#now();
     const write = async (key: string, more: Partial<ProjectMarksChange>) => {
-      await this.#organizer.mark(key, { ...change, ...more, at });
+      await this.#organizer.mark(key, { ...change, ...more, at, mine: true });
     };
     try {
       await write(target.key, target.account === undefined ? {} : { account: target.account });
@@ -273,7 +284,7 @@ export class StartOrganizer {
     if (problem) return { problem };
     const group: ProjectGroup = {
       id: this.#newId(),
-      name: name.trim(),
+      name: cleanGroupName(name),
       scope: this.#signedIn !== undefined && this.#sync ? { account: this.#signedIn } : "browser",
       at: this.#now(),
     };
@@ -303,7 +314,11 @@ export class StartOrganizer {
     if (!group) return undefined;
     const problem = this.nameProblem(name, id);
     if (problem) return problem;
-    const outcome = await this.#putGroup({ ...group, name: name.trim(), at: this.#now() });
+    const outcome = await this.#putGroup({
+      ...group,
+      name: cleanGroupName(name),
+      at: this.#after(group),
+    });
     return outcome === "taken" ? "taken" : outcome;
   }
 
@@ -314,7 +329,12 @@ export class StartOrganizer {
   async deleteGroup(id: string): Promise<boolean> {
     const group = this.#snapshot.groups.find((each) => each.id === id);
     if (!group) return false;
-    return (await this.#putGroup({ ...group, deleted: true, at: this.#now() })) === true;
+    return (await this.#putGroup({ ...group, deleted: true, at: this.#after(group) })) === true;
+  }
+
+  /** When people change `group` here: now, after whatever is kept of it, see `ProjectMarksChange.mine`. */
+  #after(group: ProjectGroup): number {
+    return Math.max(this.#now(), group.at + 1);
   }
 
   /**

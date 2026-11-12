@@ -1,4 +1,5 @@
 import {
+  CloudOtherAccount,
   CloudSignedOut,
   ORGANIZER_BATCH,
   unsentOf,
@@ -30,7 +31,13 @@ import { cloudMarksKey } from "./cards.ts";
  *   into the name of another one: the rename does not count, the group keeps the name it has there.
  * - A project of the platform that is gone: its marks here are forgotten.
  * - Clocks that do not agree: the host has the platform's times by this computer's clock, see
- *   `OrganizerAccess`, and the platform takes none later than its own now.
+ *   `OrganizerAccess`, and the platform takes none later than its own now. Times kept here that are
+ *   still to come, as this computer's clock was ahead once, become now; what people do here comes
+ *   after whatever is kept here.
+ * - The platform's session is of somebody else than this window took to be signed in, as another
+ *   window signed out and in again: nothing is given or taken, and who is signed in is asked again.
+ * - A name that no group can have, as one with a tab pasted from a table: given as it is kept
+ *   (`cleanGroupName`), which the copy here takes; one that is nothing then stays here.
  */
 
 /** Keeps a copy of everything the account has, as the account's, and what it has of each. */
@@ -39,6 +46,8 @@ async function adopt(
   account: string,
   state: AccountOrganized,
 ): Promise<void> {
+  if (state.account !== account)
+    throw new CloudOtherAccount("The platform's session is of somebody else");
   await local.adoptGroups(state.groups.map((group) => copyOf(group, account)));
   await local.markAll(
     state.marks.map((each): readonly [string, ProjectMarksChange] => {
@@ -83,7 +92,9 @@ async function push(
   for (let from = 0; from < Math.max(groups.length, marks.length); from += ORGANIZER_BATCH) {
     const someGroups = groups.slice(from, from + ORGANIZER_BATCH);
     const someMarks = marks.slice(from, from + ORGANIZER_BATCH);
-    const answer = await remote.change({ groups: someGroups, marks: someMarks });
+    const answer = await remote.change({ account, groups: someGroups, marks: someMarks });
+    if (answer.state.account !== account)
+      throw new CloudOtherAccount("The platform's session is of somebody else");
     const given: ProjectGroup[] = [];
     const became: [from: string, into: string][] = [];
     const renamed: ProjectGroup[] = [];
@@ -97,8 +108,8 @@ async function push(
         if (there) renamed.push(copyOf(there, account));
         else became.push([group.id, outcome.taken]);
       }
-      // "older": what the account has comes with the state. "tooMany": it stays here.
-      if (outcome !== "tooMany") settled = true;
+      // "older": what the account has comes with the state. "tooMany", "invalid": it stays here.
+      if (outcome !== "tooMany" && outcome !== "invalid") settled = true;
     });
     const sent: [string, ProjectMarksChange][] = [];
     const gone: string[] = [];
@@ -153,6 +164,38 @@ async function push(
 }
 
 /**
+ * Has times of `account` kept here that are still to come become `now`, values as they are: a
+ * clock that was ahead left them, and nothing that changed elsewhere since would come after them.
+ */
+async function notAhead(local: ProjectOrganizer, account: string, now: number): Promise<void> {
+  const content = await local.read();
+  const ahead = (at: number | undefined) => at !== undefined && at > now;
+  const groups = content.groups.filter(
+    (group) =>
+      group.scope !== "browser" &&
+      group.scope.account === account &&
+      (ahead(group.at) || ahead(group.sent)),
+  );
+  if (groups.length > 0)
+    await local.adoptGroups(
+      groups.map((group) => ({
+        ...group,
+        at: Math.min(group.at, now),
+        ...(group.sent !== undefined && { sent: Math.min(group.sent, now) }),
+      })),
+      { replace: true },
+    );
+  const marks = [...content.marks].filter(
+    ([key, each]) =>
+      key.startsWith("cloud:") &&
+      (each.account === undefined || each.account === account) &&
+      [each.at, each.starAt, each.groupAt, each.sent?.star, each.sent?.group].some(ahead),
+  );
+  if (marks.length > 0)
+    await local.markAll(marks.map(([key, each]) => [key, { at: each.at, notAfter: now }]));
+}
+
+/**
  * One round with the account: reads it, has the groups of this browser become its own, and gives it
  * what changed here. Rejects where the platform could not say: nothing is lost, the next round goes
  * on from what is kept here.
@@ -161,9 +204,14 @@ export async function syncOrganizer(
   local: ProjectOrganizer,
   remote: OrganizerAccess,
   account: string,
+  now: () => number = Date.now,
 ): Promise<void> {
+  const state = await remote.read();
+  if (state.account !== account)
+    throw new CloudOtherAccount("The platform's session is of somebody else");
   await local.noteAccount(account);
-  await adopt(local, account, await remote.read());
+  await notAhead(local, account, now());
+  await adopt(local, account, state);
   await local.claimGroups(account);
   // A group that became another moves projects into that one, which is given again.
   for (let round = 0; round < 3; round += 1) if (!(await push(local, remote, account))) break;
@@ -176,6 +224,11 @@ export interface OrganizerSyncOptions {
   readonly account: () => string | undefined;
   /** Only tests: a timer of their own. */
   readonly setTimer?: (run: () => void, ms: number) => () => void;
+  /**
+   * The platform's session is of somebody else than `account` says, see `CloudOtherAccount`: who
+   * is signed in is to be asked again. Nothing goes until then.
+   */
+  readonly otherAccount?: () => void;
 }
 
 /** How long after a change it is given to the account: changes in a row go in one. */
@@ -238,6 +291,10 @@ export class OrganizerSync {
       } catch (error) {
         // Somebody signing in again goes on from here.
         if (error instanceof CloudSignedOut) return;
+        if (error instanceof CloudOtherAccount) {
+          this.#options.otherAccount?.();
+          return;
+        }
         this.#failures += 1;
         const busy = (error as { retryAfterMs?: unknown }).retryAfterMs;
         const wait =

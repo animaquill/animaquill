@@ -1,5 +1,7 @@
 import {
+  CloudOtherAccount,
   groupNameKey,
+  groupNameOf,
   memoryOrganizer,
   type AccountChanges,
   type AccountGroupOutcome,
@@ -24,8 +26,11 @@ interface PlatformGroup {
   deleted: boolean;
 }
 
-/** The platform, as sync/organize.ts keeps it: the later change of each field. */
-function platformOf(projects: readonly string[]) {
+/**
+ * The platform, as sync/organize.ts keeps it for `account`, whose session it is: the later change
+ * of each field.
+ */
+function platformOf(projects: readonly string[], account = "ada") {
   const groups = new Map<string, PlatformGroup>();
   const marks = new Map<
     string,
@@ -34,6 +39,7 @@ function platformOf(projects: readonly string[]) {
   const own = new Set(projects);
   let reachable = true;
   const state = (): AccountOrganized => ({
+    account,
     groups: [...groups].map(([id, group]) => ({
       id,
       name: group.name,
@@ -55,6 +61,7 @@ function platformOf(projects: readonly string[]) {
         return "kept";
       }
       if (!isLater(false)) return "older";
+      if (groupNameOf(change.name) === undefined) return "invalid";
       const other = [...groups].find(
         ([id, group]) =>
           id !== change.id &&
@@ -105,6 +112,7 @@ function platformOf(projects: readonly string[]) {
      */
     access(platformNow: () => number, offset = 0): OrganizerAccess {
       const local = (organized: AccountOrganized): AccountOrganized => ({
+        account: organized.account,
         groups: organized.groups.map((group) => ({ ...group, at: group.at + offset })),
         marks: organized.marks.map((each) => ({
           project: each.project,
@@ -122,6 +130,7 @@ function platformOf(projects: readonly string[]) {
         },
         async change(changes) {
           check();
+          if (changes.account !== account) throw new CloudOtherAccount("otherAccount");
           const done = apply(changes, (at) => Math.min(platformNow(), at - offset));
           return { ...done, state: local(state()) };
         },
@@ -138,7 +147,7 @@ function world(projects: readonly string[] = ["p", "q"]) {
   const platformFor = (account: string) => {
     let platform = platforms.get(account);
     if (!platform)
-      platforms.set(account, (platform = platformOf(account === "ada" ? projects : [])));
+      platforms.set(account, (platform = platformOf(account === "ada" ? projects : [], account)));
     return platform;
   };
   const platform = platformFor("ada");
@@ -185,14 +194,17 @@ function world(projects: readonly string[] = ["p", "q"]) {
             : { status: "signedIn", id, name: id, appInstalled: true };
         for (const listener of listeners) listener();
       },
-      sync: (as = "ada") => syncOrganizer(local, remoteOf(as), as),
+      sync: (as = "ada") => syncOrganizer(local, remoteOf(as), as, () => time + offset),
+      /** This window takes `as` to be signed in; the platform's session is of `session`. */
+      staleSync: (as: string, session: string) =>
+        syncOrganizer(local, remoteOf(session), as, () => time + offset),
       async refreshed() {
         await organizer.refresh();
         return organizer.getSnapshot();
       },
     };
   };
-  return { platform, computer, tick: (ms = 1) => (time += ms) };
+  return { platform, platformFor, computer, tick: (ms = 1) => (time += ms) };
 }
 
 const cloud = (project: string, account = "ada") => ({ key: `cloud:${project}`, account });
@@ -472,6 +484,132 @@ describe("stars and groups that go with the account", () => {
 });
 
 const DEBUG = false;
+
+describe("what the review of R8 found", () => {
+  // Another window signed out and in as bob; this one still takes ada to be signed in. Nothing of
+  // ada's goes to bob, nothing of ada's is forgotten as gone, nothing of bob's is kept as ada's.
+  it("the platform's session is of somebody else: nothing is given, taken or forgotten", async () => {
+    const { computer, platform, platformFor } = world();
+    const one = computer();
+    platformFor("bob").groups.set("bob-g", { name: "bob 的分组", at: 1, deleted: false });
+    platform.reachable = false;
+    const made = await one.organizer.createGroup("ada 的私人分组");
+    if (!made || !("id" in made)) throw new Error("no group");
+    await one.organizer.star(cloud("p"), true);
+    platform.reachable = true;
+    await expect(one.staleSync("ada", "bob")).rejects.toThrow(CloudOtherAccount);
+    expect([...platformFor("bob").groups.values()].map((g) => g.name)).toEqual(["bob 的分组"]);
+    const kept = await one.local.read();
+    expect(kept.marks.get("cloud:p")?.starredAt).toEqual(expect.any(Number));
+    expect(kept.groups.map((g) => g.name)).toEqual(["ada 的私人分组"]);
+    // The platform itself takes nothing of another account either.
+    await expect(
+      platformFor("bob")
+        .access(() => 1)
+        .change({ account: "ada", groups: [{ id: "x", name: "x", at: 1 }] }),
+    ).rejects.toThrow(CloudOtherAccount);
+    // Once ada is signed in there again, all of it goes.
+    await one.sync();
+    expect([...platform.groups.values()].map((g) => g.name)).toEqual(["ada 的私人分组"]);
+    expect(platform.marks.get("p")?.star?.starred).toBe(true);
+  });
+
+  it("asks who is signed in again, and goes no further, where the session is of somebody else", async () => {
+    const { platformFor } = world();
+    let asked = 0;
+    const timers: unknown[] = [];
+    const sync = new OrganizerSync({
+      local: memoryOrganizer(),
+      remote: platformFor("bob").access(() => 1),
+      account: () => "ada",
+      setTimer: (run, ms) => {
+        timers.push(ms);
+        return () => {};
+      },
+      otherAccount: () => (asked += 1),
+    });
+    await sync.run();
+    expect(asked).toBe(1);
+    expect(timers).toEqual([]);
+  });
+
+  // A tab pasted from a table, or a group of R5 that was never looked at: what no name has is a
+  // space, as the platform keeps it, and the rest goes; one that is nothing then stays here.
+  it("a name with characters no name has does not keep anything else from going", async () => {
+    const { computer, platform } = world();
+    const one = computer();
+    // Like a platform that turns the whole of a request away for such a name.
+    const strict: OrganizerAccess = {
+      read: () => one.remote.read(),
+      async change(changes) {
+        if ((changes.groups ?? []).some((g) => !g.deleted && groupNameOf(g.name) !== g.name))
+          throw new Error("The platform answered 400");
+        return one.remote.change(changes);
+      },
+    };
+    const ada = { scope: { account: "ada" } } as const;
+    await one.local.putGroup({ id: "tab", name: "A\tB", ...ada, at: 5 });
+    await one.local.putGroup({ id: "wide", name: "工作\u200b", ...ada, at: 6 });
+    await one.local.putGroup({ id: "none", name: "\u200b\u2028", ...ada, at: 7 });
+    await one.local.mark("cloud:q", { group: "none", groupAt: 8, at: 8, account: "ada" });
+    await one.organizer.star(cloud("p"), true);
+    for (let i = 0; i < 2; i += 1) await syncOrganizer(one.local, strict, "ada");
+    expect(platform.marks.get("p")?.star?.starred).toBe(true);
+    expect([...platform.groups.values()].map((g) => g.name).toSorted()).toEqual(["A B", "工作"]);
+    const kept = await one.local.read();
+    expect(kept.groups.find((g) => g.id === "tab")?.name).toBe("A B");
+    // Nothing once cleaned: it stays here, and so does the project in it.
+    expect(platform.groups.has("none")).toBe(false);
+    expect(platform.marks.has("q")).toBe(false);
+    // The editor makes no such name any more.
+    expect(await one.organizer.createGroup("C\tD")).toEqual({ id: expect.any(String) });
+    expect((await one.local.read()).groups.some((g) => g.name === "C D")).toBe(true);
+    expect(await one.organizer.createGroup("\u200b")).toEqual({ problem: "empty" });
+  });
+
+  // A clock that was ahead a day left a time to come here: changes elsewhere come after it all the
+  // same, and so does what people do here.
+  it("times kept here that are still to come do not keep later changes out", async () => {
+    const { computer, tick } = world();
+    const one = computer();
+    const other = computer();
+    const future = 1000 + 24 * 3600_000;
+    await one.local.mark("cloud:p", {
+      starredAt: future,
+      starAt: future,
+      at: future,
+      account: "ada",
+    });
+    await one.sync();
+    tick(1000);
+    await other.sync();
+    await other.organizer.star(cloud("p"), false);
+    await other.sync();
+    await one.sync();
+    expect((await shown(other)).p.starred).toBe(false);
+    expect((await shown(one)).p.starred).toBe(false);
+    // What people do here comes after whatever is kept here.
+    const third = computer();
+    await third.local.mark("cloud:q", { starredAt: null, starAt: future, at: future });
+    await third.organizer.star(cloud("q"), true);
+    expect((await shown(third)).q.starred).toBe(true);
+  });
+
+  // R5: a folder that is disconnected keeps how it was organised while it was connected.
+  it("a folder that is disconnected keeps its star and group, also once the account has them", async () => {
+    const { computer } = world();
+    const one = computer();
+    const made = await one.organizer.createGroup("工作");
+    if (!made || !("id" in made)) throw new Error("no group");
+    const target = { key: "cloud:p", also: "f", account: "ada" };
+    await one.organizer.star(target, true);
+    await one.organizer.moveToGroup(target, made.id);
+    await one.sync();
+    const { marks } = await one.refreshed();
+    expect(marks.get("f")).toMatchObject({ starredAt: expect.any(Number), group: made.id });
+    expect(marks.get("f")?.account).toBeUndefined();
+  });
+});
 
 describe("when it goes to the account", () => {
   /** Timers that go as the test says. */

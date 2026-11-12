@@ -9,9 +9,15 @@ import type {
   ProjectMarksChange,
   ProjectOrganizer,
 } from "./index.ts";
-import { groupNameKey } from "./organize-rules.ts";
+import { cleanGroupName, groupNameKey, MAX_GROUP_NAME } from "./organize-rules.ts";
 
-export { groupNameKey, MAX_GROUP_NAME, ORGANIZER_BATCH } from "./organize-rules.ts";
+export {
+  cleanGroupName,
+  groupNameKey,
+  groupNameOf,
+  MAX_GROUP_NAME,
+  ORGANIZER_BATCH,
+} from "./organize-rules.ts";
 
 /**
  * How people organise their projects on the start page, see `ProjectOrganizer`. A database of its
@@ -56,18 +62,24 @@ export function mergeMarks(
   before: ProjectMarks | undefined,
   change: ProjectMarksChange,
 ): ProjectMarks {
-  const changeStarAt = change.starAt ?? change.at;
-  const changeGroupAt = change.groupAt ?? change.at;
+  // What people do here comes after whatever is kept here, also where a clock that was ahead
+  // left a time to come.
+  const after = (at: number, kept: number) => (change.mine ? Math.max(at, kept + 1) : at);
+  const changeStarAt = after(change.starAt ?? change.at, starTime(before));
+  const changeGroupAt = after(change.groupAt ?? change.at, groupTime(before));
   const isStar = change.starredAt !== undefined && changeStarAt >= starTime(before);
   const isGroup = change.group !== undefined && changeGroupAt >= groupTime(before);
+  /** A time kept here, no later than `notAfter`. */
+  const notAfter = (at: number | undefined) =>
+    at === undefined || change.notAfter === undefined ? at : Math.min(at, change.notAfter);
   const openedAt = change.openedAt ?? before?.openedAt;
   const starredAt = isStar ? change.starredAt : before?.starredAt;
-  const starAt = isStar ? changeStarAt : before?.starAt;
+  const starAt = isStar ? changeStarAt : notAfter(before?.starAt);
   const group = isGroup ? change.group : before?.group;
-  const groupAt = isGroup ? changeGroupAt : before?.groupAt;
+  const groupAt = isGroup ? changeGroupAt : notAfter(before?.groupAt);
   const account = change.account ?? before?.account;
-  const sentStar = later(before?.sent?.star, change.sent?.star);
-  const sentGroup = later(before?.sent?.group, change.sent?.group);
+  const sentStar = notAfter(later(before?.sent?.star, change.sent?.star));
+  const sentGroup = notAfter(later(before?.sent?.group, change.sent?.group));
   const changed = Math.max(isStar ? changeStarAt : -Infinity, isGroup ? changeGroupAt : -Infinity);
   const at =
     before === undefined
@@ -75,8 +87,8 @@ export function mergeMarks(
         ? changed
         : change.at
       : isStar || isGroup
-        ? Math.max(before.at, changed)
-        : before.at;
+        ? Math.max(notAfter(before.at)!, changed)
+        : notAfter(before.at)!;
   return {
     ...(openedAt !== undefined && { openedAt }),
     ...(starredAt !== undefined && { starredAt }),
@@ -222,11 +234,20 @@ export const isUnsentGroup = (group: ProjectGroup, account: string): boolean =>
 export function unsentOf(content: OrganizerContent, account: string): Required<AccountChanges> {
   const groups: AccountGroup[] = [];
   const byId = new Map(content.groups.map((group) => [group.id, group]));
+  /** Groups whose names are nothing once cleaned: they stay here. */
+  const nameless = new Set<string>();
   for (const group of content.groups) {
     if (!isUnsentGroup(group, account)) continue;
+    // Names of before they were cleaned, as a tab pasted from a table: as they are kept, which the
+    // copy here takes once the account has it.
+    const name = [...cleanGroupName(group.name)].slice(0, MAX_GROUP_NAME).join("").trim();
+    if (name === "" && !group.deleted) {
+      nameless.add(group.id);
+      continue;
+    }
     groups.push({
       id: group.id,
-      name: group.name,
+      name: name === "" ? group.name : name,
       at: group.at,
       ...(group.deleted && { deleted: true as const }),
     });
@@ -235,7 +256,7 @@ export function unsentOf(content: OrganizerContent, account: string): Required<A
   const asKnown = (id: string | null): string | null | undefined => {
     if (id === null) return null;
     const group = byId.get(id);
-    if (!group || group.into !== undefined) return undefined;
+    if (!group || group.into !== undefined || nameless.has(id)) return undefined;
     if (accountOf(group) === account) return group.deleted && group.sent === undefined ? null : id;
     return group.scope === "browser" && group.deleted ? null : undefined;
   };
@@ -261,7 +282,7 @@ export function unsentOf(content: OrganizerContent, account: string): Required<A
         ...(group && { group }),
       });
   }
-  return { groups, marks };
+  return { account, groups, marks };
 }
 
 /** What is kept of a project, without what it is kept by. */

@@ -7,6 +7,8 @@ export { MemoryCloudLinks } from "./cloud.ts";
 export {
   groupNameKey,
   groupTime,
+  cleanGroupName,
+  groupNameOf,
   MAX_GROUP_NAME,
   ORGANIZER_BATCH,
   isUnsentGroup,
@@ -250,6 +252,13 @@ export type ProjectMarksChange = Partial<
    * see `ProjectMarks.sent`. Never moves them back.
    */
   readonly sent?: { readonly star?: number; readonly group?: number };
+  /**
+   * People changed it here, by hand: it comes after whatever is kept here, a time that is to come
+   * too, as one a clock that was ahead left.
+   */
+  readonly mine?: true;
+  /** Times kept here later than this become this, as ones a clock that was ahead left. */
+  readonly notAfter?: number;
 };
 
 /**
@@ -565,6 +574,11 @@ export interface AccountMarks {
 
 /** Everything an account keeps of how its projects are organised. */
 export interface AccountOrganized {
+  /**
+   * Whose it is, see `AccountSnapshot.id`: whoever the platform's session is of, which another
+   * window may have changed since this one asked who is signed in.
+   */
+  readonly account: string;
   readonly groups: readonly AccountGroup[];
   readonly marks: readonly AccountMarks[];
 }
@@ -576,7 +590,13 @@ export interface AccountOrganized {
  * this one, has that name, whatever the case or width of its letters.
  */
 export type AccountGroupOutcome =
-  "kept" | "older" | "missing" | "tooMany" | { readonly taken: string };
+  | "kept"
+  | "older"
+  | "missing"
+  | "tooMany"
+  /** Its name is none a group can have, see `groupNameOf`: nothing is kept of it. */
+  | "invalid"
+  | { readonly taken: string };
 
 /**
  * What came of marks given to an account, field by field: "kept", or "older" where it has a change
@@ -592,6 +612,11 @@ export interface AccountMarksOutcome {
 
 /** Changes given to an account in one go: the groups first, then the marks. */
 export interface AccountChanges {
+  /**
+   * Whose they are, see `AccountSnapshot.id`: the platform takes none of them where its session is
+   * of somebody else, see `CloudOtherAccount`.
+   */
+  readonly account: string;
   readonly groups?: readonly AccountGroup[];
   readonly marks?: readonly AccountMarks[];
 }
@@ -608,7 +633,8 @@ export interface AccountChangesAnswer {
  * each change is kept where it is later than what it has of the same field (the star, the group of a
  * project; a group as a whole), see the design of the start page, 6.6. Times are of this computer's
  * clock both ways: the host has them agree with the platform's. Rejects where the platform could not
- * say, with a `CloudSignedOut` when nobody is signed in.
+ * say, with a `CloudSignedOut` when nobody is signed in, and with a `CloudOtherAccount` where changes
+ * are of another account than the one its session is of.
  */
 export interface OrganizerAccess {
   read(): Promise<AccountOrganized>;
@@ -653,6 +679,14 @@ export type CloudRemoval = "removed" | "missing" | "hasRepository" | CloudRemove
 /** Nobody is signed in to the platform. */
 export class CloudSignedOut extends Error {
   override readonly name = "CloudSignedOut";
+}
+
+/**
+ * Somebody else is signed in to the platform than a window took to be, as after signing out and in
+ * again in another window: what the window has is not of this account.
+ */
+export class CloudOtherAccount extends Error {
+  override readonly name = "CloudOtherAccount";
 }
 
 /** A repository people can choose to save a project to, as the platform lists them. */
