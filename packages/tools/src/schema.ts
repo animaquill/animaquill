@@ -19,7 +19,7 @@ import {
   Value,
 } from "@animaquill/schema";
 import { z } from "zod";
-import { paramWords } from "./docs/params.ts";
+import { DEFAULT_TEXTS, paramText, textOf, type TextTable } from "./texts/index.ts";
 import type { JsonSchema } from "./types.ts";
 
 /** The operations AI can use, in the order of the registry. */
@@ -35,47 +35,26 @@ export const DEFS_AT = "#/properties/operations/$defs/";
  * the parameter `operations`, not of the whole schema: pi gives Anthropic only `type`, `properties`
  * and `required` of the top of a schema, and references to `$defs` there would point at nothing.
  */
-const SHARED: readonly (readonly [z.ZodType, string, string])[] = [
-  [
-    ExtensionName,
-    "TypeName",
-    'The name of a kind of effect or transition, such as "blur" or "plugin.effect".',
-  ],
-  [PropertyPath, "PropertyPath", 'The path of a property, such as "transform.x" or "param.title".'],
-  [
-    MediaRef,
-    "MediaRef",
-    'A file: {"asset":"<asset id>"}, or {"library":"<library id>","path":"…"}.',
-  ],
-  [Value, "Value", "A plain value: a number, a string, true or false, numbers, text or a file."],
-  [Handle, "Handle", "A bezier handle [x, y], x from 0 to 1."],
-  [
-    Key,
-    "Key",
-    'A keyframe: {"time":"<seconds from the start of the clip>","value":…}, with how it goes on to the next one.',
-  ],
-  [Animation, "Animation", 'Keyframes: {"keys":[…]}.'],
-  [
-    TransitionCurve,
-    "SpeedCurve",
-    "How it speeds up and slows down: [x1, y1, x2, y2] as in CSS cubic-bezier().",
-  ],
-  [ClipSource, "ClipSource", "What a clip shows or plays."],
-  [
-    Transition,
-    "Transition",
-    'A transition at the edge of a clip, such as {"type":"fade","duration":"0.5"}.',
-  ],
-  [
-    PropertyValue,
-    "PropertyValue",
-    'A value of a property, or {"keys":[{"time":"0","value":0},…]} with keyframes.',
-  ],
-  [PropertyEdit, "PropertyEdit", "One edit of a property of a clip."],
-  [PropertyRename, "PropertyRename", "Another path for properties of a clip."],
-  [SceneManifest, "SceneManifest", "What a scene is, as its scene.json says."],
-  [SoundManifest, "SoundManifest", "What a sound is, as its sound.json says."],
+const SHARED: readonly (readonly [z.ZodType, string])[] = [
+  [ExtensionName, "TypeName"],
+  [PropertyPath, "PropertyPath"],
+  [MediaRef, "MediaRef"],
+  [Value, "Value"],
+  [Handle, "Handle"],
+  [Key, "Key"],
+  [Animation, "Animation"],
+  [TransitionCurve, "SpeedCurve"],
+  [ClipSource, "ClipSource"],
+  [Transition, "Transition"],
+  [PropertyValue, "PropertyValue"],
+  [PropertyEdit, "PropertyEdit"],
+  [PropertyRename, "PropertyRename"],
+  [SceneManifest, "SceneManifest"],
+  [SoundManifest, "SoundManifest"],
 ];
+
+/** The names of the shared types, for the keys of their texts (`types.<name>`). */
+export const SHARED_TYPES: readonly string[] = SHARED.map(([, name]) => name);
 
 type Node = Record<string, unknown>;
 
@@ -132,18 +111,20 @@ function withoutParam(schema: Node, path: readonly string[]): void {
 }
 
 /** The branch of one operation: `op` first, then its parameters, without what AI does not see. */
-function branchOf(op: Operation, generated: Node): Node {
+function branchOf(op: Operation, generated: Node, texts: TextTable): Node {
   for (const { name } of op.hiddenParams ?? []) withoutParam(generated, name.split("."));
   const properties = (generated.properties ?? {}) as Record<string, Node>;
   for (const [name, schema] of Object.entries(properties)) {
-    const words = paramWords(op.name, name);
+    const words = paramText(texts, op.name, name);
     if (words !== undefined && schema.description === undefined) {
       properties[name] = { description: words, ...schema };
     }
   }
-  const loose = LOOSE[op.name];
-  for (const [name, words] of Object.entries(loose ?? {})) {
-    properties[name] = { type: "object", description: words };
+  for (const name of LOOSE[op.name] ?? []) {
+    properties[name] = {
+      type: "object",
+      description: textOf(texts, `ops.${op.name}.params.${name}`),
+    };
   }
   const required = (generated.required ?? []) as string[];
   return {
@@ -155,9 +136,11 @@ function branchOf(op: Operation, generated: Node): Node {
 }
 
 /** The schema of `operations`: each item one operation, with the shared types in its `$defs`. */
-function operationsSchema(): Node {
+function operationsSchema(texts: TextTable): Node {
   const registry = z.registry<{ id: string; description: string }>();
-  for (const [schema, id, description] of SHARED) registry.add(schema, { id, description });
+  for (const [schema, id] of SHARED) {
+    registry.add(schema, { id, description: textOf(texts, `types.${id}`) });
+  }
   const union = z.union(AI_OPERATIONS.map((op) => op.params) as [z.ZodType, ...z.ZodType[]]);
   const generated = z.toJSONSchema(z.array(union), {
     target: "draft-2020-12",
@@ -174,13 +157,12 @@ function operationsSchema(): Node {
   const items = (generated.items ?? {}) as Node;
   const branches = ((items.anyOf ?? []) as Node[]).map((branch, index) => {
     const op = AI_OPERATIONS[index] as Operation;
-    return branchOf(op, { ...(rehome(branch) as Node), additionalProperties: false });
+    return branchOf(op, { ...(rehome(branch) as Node), additionalProperties: false }, texts);
   });
   const defs = rehome(generated.$defs ?? {}) as Record<string, Node>;
   return {
     type: "array",
-    description:
-      'The operations, run in order as one batch: each one {"op": "<operation>", …its parameters}. 1 to 100.',
+    description: textOf(texts, "tools.aq_edit.params.operations"),
     minItems: 1,
     maxItems: MAX_OPERATIONS,
     items: { anyOf: branches },
@@ -196,20 +178,26 @@ function operationsSchema(): Node {
  * Parameters that only repeat a type of `$defs` with every field optional: said in words, so that
  * the list of tools stays small. The tools check them as strictly as the rest.
  */
-const LOOSE: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  "scene.update": { changes: "The fields of the SceneManifest to change; the rest stay." },
-  "sound.update": { changes: "The fields of the SoundManifest to change; the rest stay." },
+export const LOOSE: Readonly<Record<string, readonly string[]>> = {
+  "scene.update": ["changes"],
+  "sound.update": ["changes"],
 };
 
 /** How many operations one batch takes at most: more is for a script. */
 export const MAX_OPERATIONS = 100;
 
-let made: Node | undefined;
+const made = new WeakMap<TextTable, Node>();
 
-/** The schema of `operations` of aq_edit, made once: the same every time, for caches of services. */
-export function operationsParameter(): JsonSchema {
-  made ??= operationsSchema();
-  return made;
+/**
+ * The schema of `operations` of aq_edit, made once for a table of texts: the same every time, for
+ * caches of services.
+ */
+export function operationsParameter(texts: TextTable = DEFAULT_TEXTS): JsonSchema {
+  const known = made.get(texts);
+  if (known) return known;
+  const schema = operationsSchema(texts);
+  made.set(texts, schema);
+  return schema;
 }
 
 /** A short form of a schema, as signatures show it: `{timeline, clips:[{clip, start?, track?}], overlap?}`. */

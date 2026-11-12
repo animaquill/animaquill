@@ -2,14 +2,13 @@ import { readFileSync } from "node:fs";
 import { createProject } from "@animaquill/schema";
 import { ProjectStore, aiTask } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
-import { OPERATION_DOCS } from "./docs/operations.ts";
 import { PROJECT_FORMAT, SCENE_RUNTIME } from "./guide/texts.ts";
 import { HAS_CHINESE } from "./issues.ts";
 import { PROBLEM_TEXTS, STATIC_PROBLEM_CODES } from "./problems-en.ts";
 import { AI_OPERATIONS } from "./schema.ts";
+import { DEFAULT_TEXTS, editExamples, operationExamples } from "./texts/index.ts";
 import { openSample, testHost, toolsOn } from "./test-support.ts";
 import { TOOLSET_VERSION } from "./toolset.ts";
-import { EXAMPLES } from "./tools/edit.ts";
 import type { Tool } from "./types.ts";
 
 /**
@@ -130,10 +129,10 @@ describe("the toolset", () => {
     const store = openSample();
     const edit = toolsOn(testHost(store)).tools.get("aq_edit") as Tool;
     const batches = [
-      ...Object.entries(OPERATION_DOCS).flatMap(([op, { examples }]) =>
-        examples.map(({ params }) => [{ op, ...params }]),
+      ...AI_OPERATIONS.flatMap(({ name: op }) =>
+        operationExamples(DEFAULT_TEXTS, op).map(({ params }) => [{ op, ...params }]),
       ),
-      ...EXAMPLES,
+      ...editExamples(DEFAULT_TEXTS),
     ];
     for (const operations of batches) {
       expect(edit.validate({ operations }), JSON.stringify(operations)).toBeUndefined();

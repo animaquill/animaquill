@@ -2,33 +2,83 @@ import { z } from "zod";
 import type { CallerState } from "./caller.ts";
 import { failed, othersLine, type Call } from "./context.ts";
 import { issueLine } from "./issues.ts";
+import { PARAM, textOf, type TextTable } from "./texts/index.ts";
 import type { JsonSchema, Tool, ToolAnnotations, ToolHost, ToolResult } from "./types.ts";
 
 /** How many things wrong with parameters one error lists. */
 const MAX_ISSUES = 5;
 
-/** What every tool says about itself and does, before the common part around it. */
+/**
+ * What every tool is and does, before the common part around it. What it says, its description and
+ * the words for its parameters (`.describe(PARAM)`), comes from the table of texts, see `TextTable`.
+ */
 export interface ToolDefinition<P> {
   readonly name: string;
   readonly title: string;
-  readonly description: string;
   readonly params: z.ZodType<P>;
+  /** Its description, where it is more than the text `tools.<name>.description`. */
+  readonly describe?: (texts: TextTable) => string;
   /** The schema of parameters as the model sees it, where it is not the one zod makes. */
-  readonly inputSchema?: JsonSchema;
+  readonly inputSchema?: (texts: TextTable) => JsonSchema;
   /** It changes the project: one failure holds back the changes after it in the same answer. */
   readonly writes?: boolean;
   /** More checks of parameters than the schema has, as the lines of an error. */
-  readonly check?: (args: P) => ToolResult | undefined;
+  readonly check?: (args: P, texts: TextTable) => ToolResult | undefined;
   run(call: Call, args: P): ToolResult | Promise<ToolResult>;
 }
 
+type Node = Record<string, unknown>;
+
+/**
+ * Puts in the words for each parameter, by its path below `at`: `tools.aq_file_edit.params.edits.
+ * old_text`. Lists and choices are no step of the path.
+ */
+export function withTexts(node: unknown, texts: TextTable, at: string, path: string[] = []): void {
+  if (typeof node !== "object" || node === null) return;
+  if (Array.isArray(node)) {
+    for (const item of node) withTexts(item, texts, at, path);
+    return;
+  }
+  const schema = node as Node;
+  if (schema.description === PARAM) schema.description = textOf(texts, `${at}.${path.join(".")}`);
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "properties" && typeof value === "object" && value !== null) {
+      for (const [name, inner] of Object.entries(value))
+        withTexts(inner, texts, at, [...path, name]);
+    } else if (key === "items" || key === "anyOf" || key === "oneOf") {
+      withTexts(value, texts, at, path);
+    }
+  }
+}
+
+/** The paths of the parameters of a tool that have words, as `withTexts` puts them in. */
+export function paramPaths(params: z.ZodType): readonly string[] {
+  const found: string[] = [];
+  const walk = (node: unknown, path: string[]): void => {
+    if (typeof node !== "object" || node === null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, path);
+      return;
+    }
+    const schema = node as Node;
+    if (schema.description === PARAM) found.push(path.join("."));
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === "properties" && typeof value === "object" && value !== null) {
+        for (const [name, inner] of Object.entries(value)) walk(inner, [...path, name]);
+      } else if (key === "items" || key === "anyOf" || key === "oneOf") {
+        walk(value, path);
+      }
+    }
+  };
+  walk(z.toJSONSchema(params, { target: "draft-2020-12", io: "input" }), []);
+  return found;
+}
+
 /** The parameters of a tool, as JSON Schema with a description for each of them. */
-export function schemaOf(params: z.ZodType): JsonSchema {
-  const schema = z.toJSONSchema(params, { target: "draft-2020-12", io: "input" }) as Record<
-    string,
-    unknown
-  >;
+export function schemaOf(params: z.ZodType, texts: TextTable, tool: string): JsonSchema {
+  const schema = z.toJSONSchema(params, { target: "draft-2020-12", io: "input" }) as Node;
   delete schema.$schema;
+  withTexts(schema, texts, `tools.${tool}.params`);
   return schema;
 }
 
@@ -61,9 +111,11 @@ export function makeTool<P>(
   definition: ToolDefinition<P>,
   host: ToolHost,
   caller: CallerState,
+  texts: TextTable,
 ): Tool {
-  const { name, title, description, params, writes = false } = definition;
-  const inputSchema = definition.inputSchema ?? schemaOf(params);
+  const { name, title, params, writes = false } = definition;
+  const description = definition.describe?.(texts) ?? textOf(texts, `tools.${name}.description`);
+  const inputSchema = definition.inputSchema?.(texts) ?? schemaOf(params, texts, name);
   const annotations: ToolAnnotations = {
     title,
     readOnlyHint: !writes,
@@ -74,7 +126,7 @@ export function makeTool<P>(
   const parse = (args: unknown): { ok: true; value: P } | { ok: false; error: ToolResult } => {
     const parsed = params.safeParse(args ?? {});
     if (!parsed.success) return { ok: false, error: paramsError(parsed.error, params, args) };
-    const extra = definition.check?.(parsed.data);
+    const extra = definition.check?.(parsed.data, texts);
     return extra ? { ok: false, error: extra } : { ok: true, value: parsed.data };
   };
   return {
@@ -117,7 +169,7 @@ export function makeTool<P>(
         if (caller.answer.failedWrite) return failed(NOT_RUN_FAILED);
       }
       if (writes) caller.own.add(host.origin());
-      const call: Call = { host, caller, store };
+      const call: Call = { host, caller, store, texts };
       const others = othersLine(call);
       const result = await definition.run(call, parsed.value);
       caller.lastCall = store.revisionId;

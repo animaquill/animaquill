@@ -7,6 +7,7 @@ import {
 } from "@animaquill/core";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { CallerState } from "./caller.ts";
+import { DEFAULT_TEXTS, type TextTable } from "./texts/index.ts";
 import { createToolset } from "./toolset.ts";
 import type { SelectionFacts, Tool, ToolHost, ToolResult } from "./types.ts";
 
@@ -51,8 +52,14 @@ export function testHost(store: ProjectStore | undefined = openSample(), task = 
 }
 
 /** The tools on a host, by name, with a way to call them. */
-export function toolsOn(host: ToolHost = testHost(), caller = new CallerState()) {
-  const tools = new Map<string, Tool>(createToolset(host, caller).map((tool) => [tool.name, tool]));
+export function toolsOn(
+  host: ToolHost = testHost(),
+  caller = new CallerState(),
+  texts: TextTable = DEFAULT_TEXTS,
+) {
+  const tools = new Map<string, Tool>(
+    createToolset(host, caller, texts).map((tool) => [tool.name, tool]),
+  );
   const call = async (name: string, args: unknown = {}): Promise<ToolResult> => {
     const tool = tools.get(name);
     if (!tool) throw new Error(`no tool ${name}`);

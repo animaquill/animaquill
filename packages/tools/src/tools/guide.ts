@@ -1,11 +1,10 @@
 import { GENERAL_FAILURES, type Operation } from "@animaquill/core";
 import { z } from "zod";
 import { answer, failed, fitted, MAX_RESULT, type Call } from "../context.ts";
-import { OPERATION_DOCS } from "../docs/operations.ts";
-import { paramWords } from "../docs/params.ts";
 import { aiCode } from "../failures-en.ts";
 import { AI_OPERATIONS, operationsParameter, signatureOf } from "../schema.ts";
 import { mostLike } from "../similar.ts";
+import { PARAM, operationExamples, paramText, textOf, type TextTable } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
 
 /**
@@ -37,9 +36,9 @@ function sectionsOf(
 }
 
 /** The page of one operation: what it takes, gives back and can fail with, and its examples. */
-function operationPage(op: Operation): string {
-  const doc = OPERATION_DOCS[op.name as keyof typeof OPERATION_DOCS];
-  const schema = operationsParameter() as {
+function operationPage(op: Operation, texts: TextTable): string {
+  const summary = textOf(texts, `ops.${op.name}.summary`);
+  const schema = operationsParameter(texts) as {
     items: {
       anyOf: { properties: Record<string, { description?: string }>; required: string[] }[];
     };
@@ -51,7 +50,7 @@ function operationPage(op: Operation): string {
     .filter(([name]) => name !== "op")
     .map(([name, value]) => {
       const required = branch?.required.includes(name) ? "required" : "optional";
-      return `- ${name} (${required}): ${value.description ?? paramWords(op.name, name) ?? ""}`;
+      return `- ${name} (${required}): ${value.description ?? paramText(texts, op.name, name) ?? ""}`;
     });
   const result = JSON.stringify(
     z.toJSONSchema(op.result, { io: "output", unrepresentable: "any" }),
@@ -68,7 +67,7 @@ function operationPage(op: Operation): string {
   return [
     `# ${op.name}`,
     "",
-    `${doc.summary[0]?.toUpperCase()}${doc.summary.slice(1)}.`,
+    `${summary[0]?.toUpperCase()}${summary.slice(1)}.`,
     "",
     `Signature: ${signatureOf(op.name)}`,
     "",
@@ -80,7 +79,7 @@ function operationPage(op: Operation): string {
     `Errors it can give: ${failures.join(", ")}`,
     "",
     "Examples (illustrative; their ids come from a sample project):",
-    ...doc.examples.map(
+    ...operationExamples(texts, op.name).map(
       ({ title, params: example }) => `- ${title}: ${JSON.stringify({ op: op.name, ...example })}`,
     ),
   ].join("\n");
@@ -112,17 +111,18 @@ const ENGLISH: Readonly<Record<string, string>> = {
   "scene-runtime/声音": "sound code",
 };
 
-let pages: readonly Page[] | undefined;
+const made = new WeakMap<TextTable, readonly Page[]>();
 
 /** Every page, the operations first. */
-async function allPages(): Promise<readonly Page[]> {
-  if (pages) return pages;
+async function allPages(texts: TextTable): Promise<readonly Page[]> {
+  const known = made.get(texts);
+  if (known) return known;
   const { PROJECT_FORMAT, SCENE_RUNTIME } = await import("../guide/texts.ts");
-  pages = [
+  const pages = [
     ...AI_OPERATIONS.map((op) => ({
       topic: `ops/${op.name}`,
-      title: OPERATION_DOCS[op.name as keyof typeof OPERATION_DOCS].summary,
-      text: () => operationPage(op),
+      title: textOf(texts, `ops.${op.name}.summary`),
+      text: () => operationPage(op, texts),
     })),
     ...sectionsOf(PROJECT_FORMAT, "format").map(({ topic, title, body }) => ({
       topic,
@@ -135,6 +135,7 @@ async function allPages(): Promise<readonly Page[]> {
       text: () => body,
     })),
   ];
+  made.set(texts, pages);
   return pages;
 }
 
@@ -154,28 +155,16 @@ function partOf(text: string, topic: string, part: number): { text: string; more
 }
 
 const GuideParams = z.strictObject({
-  topic: z
-    .string()
-    .optional()
-    .describe(
-      'One page, such as "ops/clip.move", "format/animaquill.json" or "scene-runtime/aq"; ":2" after it for its next part. Without topic and query, the table of contents.',
-    ),
-  query: z
-    .string()
-    .optional()
-    .describe(
-      "Words to look for in titles and pages; it gives up to 10 topics, each with a line of what it says.",
-    ),
+  topic: z.string().optional().describe(PARAM),
+  query: z.string().optional().describe(PARAM),
 });
 
 export const guide: ToolDefinition<z.output<typeof GuideParams>> = {
   name: "aq_guide",
   title: "Read the manual",
-  description:
-    'Read the AnimaQuill manual. It has a reference page for every operation of aq_edit (topic "ops/<operation>", such as "ops/property.edit": parameters, what it returns, its errors, examples), the project format (topics "format/…": times, ids, world coordinates, clips, transitions, effects, properties and keyframes) and how scene code talks to the editor (topics "scene-runtime/…"). Call it without arguments for the table of contents, with topic for one page, or with query to search by keywords. Look things up here instead of guessing: read the page of an operation before its first use when its parameters are not obvious, and the scene runtime pages when scene code has to work with the editor (its properties, time, assets or fonts).',
   params: GuideParams,
   run: async (call: Call, args) => {
-    const all = await allPages();
+    const all = await allPages(call.texts);
     if (args.topic !== undefined) {
       const [topic = "", number = "1"] = args.topic.split(":");
       const page = all.find((each) => each.topic === topic);

@@ -27,6 +27,7 @@ import {
 } from "../lines.ts";
 import { offsetOf, paged } from "../page.ts";
 import { mostLike } from "../similar.ts";
+import { PARAM } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
 
@@ -87,15 +88,11 @@ const noTimeline = (state: ProjectState, id: string | undefined): ToolResult => 
   return failed(`error not-found: no timeline ${JSON.stringify(id ?? "")}${hint}`);
 };
 
-const time = (value: string) => Time.describe(`${value} Seconds as a string, such as "12.5".`);
-
 const StatusParams = z.strictObject({});
 
 export const projectStatus: ToolDefinition<z.output<typeof StatusParams>> = {
   name: "aq_project_status",
   title: "Project overview",
-  description:
-    "Get an overview of the open AnimaQuill project: its name, frame rate, picture formats and languages, its timelines with their length and number of tracks and clips, its scenes, sounds, assets and shared code files, whether you may change it, and how many problems it has. Call it at the start of a task, and again when a result says the project was reopened. It does not list clips or keyframes: use aq_timeline_read for the clips of a timeline and aq_object_read for every field of an object. Lists stop at 30 entries; use aq_search to find the rest. Like every result, it starts with the project revision, which you never need to pass back yourself.",
   params: StatusParams,
   run: (call) => {
     const { store, host } = call;
@@ -148,26 +145,12 @@ export const projectStatus: ToolDefinition<z.output<typeof StatusParams>> = {
 };
 
 const TimelineParams = z.strictObject({
-  timeline: z
-    .string()
-    .optional()
-    .describe(
-      "Timeline id, as aq_project_status lists it. Without it, the first timeline of the project.",
-    ),
-  from: time("Only clips that end after this moment.").optional(),
-  to: time("Only clips that start before this moment.").optional(),
-  tracks: z.array(z.string()).optional().describe("Only clips on these tracks, by track id."),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(500)
-    .optional()
-    .describe("How many clips at most, 1 to 500; 200 by default."),
-  cursor: z
-    .string()
-    .optional()
-    .describe("Where to go on, as the last line of an earlier result of this call says."),
+  timeline: z.string().optional().describe(PARAM),
+  from: Time.describe(PARAM).optional(),
+  to: Time.describe(PARAM).optional(),
+  tracks: z.array(z.string()).optional().describe(PARAM),
+  limit: z.number().int().min(1).max(500).optional().describe(PARAM),
+  cursor: z.string().optional().describe(PARAM),
 });
 
 /** The tracks of a timeline in one line, the one at the back of the picture first. */
@@ -193,8 +176,6 @@ function tracksLine(timeline: TimelineState): string {
 export const timelineRead: ToolDefinition<z.output<typeof TimelineParams>> = {
   name: "aq_timeline_read",
   title: "Read a timeline",
-  description:
-    "List what is on one timeline, one compact line per clip sorted by start: its id, name, track, start..end in seconds, what it shows (asset=, scene=, sound=, color=, text=), the transitions at its edges, its effects, and how many properties it sets and how many of them are animated. The result also lists the sections the timeline is made of, its tracks from the back of the picture forward, joins (transitions between two clips that touch) and markers. Narrow it with from and to (seconds) and tracks, and page through long timelines with cursor. Use it to find the clips you are about to change and their ids; to read every field, keyframe and effect parameter of a clip, use aq_object_read. Without timeline it reads the first timeline of the project.",
   params: TimelineParams,
   run: (call, args) => {
     const state = call.store.getState();
@@ -284,26 +265,10 @@ function safeEnd(clip: ClipState) {
 }
 
 const ObjectParams = z.strictObject({
-  ids: z
-    .array(z.string())
-    .min(1)
-    .max(20)
-    .describe(
-      'Ids of clips, tracks, sections, joins, markers, scenes, sounds, assets or timelines, or "project", 1 to 20.',
-    ),
-  timeline: z.string().optional().describe("Timeline id, for ids that several timelines have."),
-  fields: z
-    .array(z.string())
-    .optional()
-    .describe(
-      'Dotted paths to read only these fields, such as "start", "properties.transform.x" or "effects".',
-    ),
-  response_format: z
-    .enum(["detailed", "concise"])
-    .optional()
-    .describe(
-      '"detailed" (the default) gives every field as JSON; "concise" one line per object and its top-level fields.',
-    ),
+  ids: z.array(z.string()).min(1).max(20).describe(PARAM),
+  timeline: z.string().optional().describe(PARAM),
+  fields: z.array(z.string()).optional().describe(PARAM),
+  response_format: z.enum(["detailed", "concise"]).optional().describe(PARAM),
 });
 
 /** An object found by id, with what results show of it. */
@@ -455,8 +420,6 @@ function sceneProperties(call: Call, state: ProjectState, clip: ClipState): stri
 export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
   name: "aq_object_read",
   title: "Read objects",
-  description:
-    'Read objects of the project by id, with every field as the project format writes it: clips with their source, transitions, effects, properties and keyframes; tracks, sections, joins, markers, scenes, sounds, assets, timelines, or "project" for the project settings. The JSON you get is the same shape that aq_edit operations take, so copy from it rather than guessing. Pass fields (dotted paths such as "properties.transform.x" or "effects") to read only those. For a clip that shows a scene it also lists the properties the scene describes, with their type, unit, range and default: use these paths with property.edit. Clip ids are unique only within a timeline; pass timeline when several timelines have the same id. Read up to 20 objects in one call; with response_format "concise" you get one line per object and a summary of its top-level fields instead of the full JSON.',
   params: ObjectParams,
   run: (call, args) => {
     const state = call.store.getState();
@@ -529,35 +492,16 @@ const KINDS = [
 ] as const;
 
 const SearchParams = z.strictObject({
-  query: z
-    .string()
-    .optional()
-    .describe(
-      "Text to find, any case, in ids, names, paths, sources, or the text of code files (kind text).",
-    ),
-  kinds: z
-    .array(z.enum(KINDS))
-    .optional()
-    .describe("Only these kinds of objects; every kind but text by default."),
-  timeline: z.string().optional().describe("Only objects of this timeline, by its id."),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
-    .optional()
-    .describe("How many results at most, 1 to 200; 50 by default."),
-  cursor: z
-    .string()
-    .optional()
-    .describe("Where to go on, as the last line of an earlier result of this call says."),
+  query: z.string().optional().describe(PARAM),
+  kinds: z.array(z.enum(KINDS)).optional().describe(PARAM),
+  timeline: z.string().optional().describe(PARAM),
+  limit: z.number().int().min(1).max(200).optional().describe(PARAM),
+  cursor: z.string().optional().describe(PARAM),
 });
 
 export const search: ToolDefinition<z.output<typeof SearchParams>> = {
   name: "aq_search",
   title: "Find objects",
-  description:
-    'Find objects in the project by id, name, kind or text, when you know what you are looking for but not where it is: clips that show a given asset or scene, a track by name, markers, scenes, sounds, assets, files by path, or text inside the code of scenes and sounds (kind "text", which answers with path:line and the line). Matching ignores case and finds the query anywhere in the id, name, path or source. Without query it lists everything of the given kinds. Results are compact lines with ids you can use in other tools.',
   params: SearchParams,
   run: (call, args) => {
     const state = call.store.getState();
@@ -656,24 +600,9 @@ export const search: ToolDefinition<z.output<typeof SearchParams>> = {
 };
 
 const FileReadParams = z.strictObject({
-  path: z
-    .string()
-    .describe(
-      'Path of a code file, such as "scenes/title/index.html", as aq_project_status or aq_search lists it.',
-    ),
-  offset: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe("The first line to read, from 1; 1 by default."),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(2000)
-    .optional()
-    .describe("How many lines at most, 1 to 2000; 2000 by default."),
+  path: z.string().describe(PARAM),
+  offset: z.number().int().min(1).optional().describe(PARAM),
+  limit: z.number().int().min(1).max(2000).optional().describe(PARAM),
 });
 
 /** Whether a path is a document of the project or a file of an asset: not code to read here. */
@@ -684,8 +613,6 @@ export function isNoCodeFile(state: ProjectState, path: string): boolean {
 export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
   name: "aq_file_read",
   title: "Read a code file",
-  description:
-    'Read a code file of the project: the HTML, CSS and JavaScript of a scene (under scenes/<id>/), the code of a sound (under sounds/<id>/), or shared code (under code/). Lines come numbered as "   12→text"; the numbers are not part of the file, so leave them out when you copy text into aq_file_edit. Long files come in parts: pass offset (the first line) and limit (how many lines). Read all of a file before you replace it with aq_file_write, which requires it, and before you edit it, so that you copy its exact text. Project settings, timelines, scenes\' manifests and assets are not files you read here: use aq_object_read for them.',
   params: FileReadParams,
   run: (call, args) => {
     const state = call.store.getState();
@@ -746,8 +673,6 @@ const SelectionParams = z.strictObject({});
 export const selectionRead: ToolDefinition<z.output<typeof SelectionParams>> = {
   name: "aq_selection_read",
   title: "What the user selected",
-  description:
-    'See what the user is pointing at in the editor right now: the timeline they are on, the playhead time, the current version, the selected clips (ids and one line each) and the selected transition. Call it when the user says "this", "here", "these clips" or "now". It only gives what the user chose to share with you; read the full objects with aq_object_read.',
   params: SelectionParams,
   run: (call) => {
     const facts = call.host.selection?.();

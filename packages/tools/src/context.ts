@@ -11,6 +11,7 @@ import {
   type ProjectStore,
 } from "@animaquill/core";
 import type { CallerState } from "./caller.ts";
+import type { TextTable } from "./texts/index.ts";
 import type { ToolHost, ToolResult } from "./types.ts";
 
 /** How long one result may be, in characters: about 10 000 tokens, which leaves room in small models. */
@@ -115,6 +116,8 @@ export interface Call {
   readonly host: ToolHost;
   readonly caller: CallerState;
   readonly store: ProjectStore;
+  /** The words of the tools, where a result uses them, such as an example after an error. */
+  readonly texts: TextTable;
 }
 
 /**

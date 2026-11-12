@@ -3,38 +3,28 @@ import { z } from "zod";
 import { answer, failed } from "../context.ts";
 import { offsetOf, paged } from "../page.ts";
 import { problemLines } from "../problems-en.ts";
+import { PARAM } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
 
 const ProposeParams = z.strictObject({
-  kind: z.literal("question").describe('"question": a choice for the user to make.'),
-  question: z
-    .string()
-    .min(1)
-    .max(300)
-    .describe("The question, in one sentence, in the language of the user."),
+  kind: z.literal("question").describe(PARAM),
+  question: z.string().min(1).max(300).describe(PARAM),
   options: z
     .array(
       z.strictObject({
-        label: z.string().min(1).max(80).describe("A short answer the user can pick."),
-        detail: z.string().max(200).optional().describe("What picking it means, in a few words."),
+        label: z.string().min(1).max(80).describe(PARAM),
+        detail: z.string().max(200).optional().describe(PARAM),
       }),
     )
     .min(2)
     .max(6)
-    .describe("2 to 6 concrete answers."),
-  allow_other: z
-    .boolean()
-    .optional()
-    .describe(
-      "false when the user must pick one of the options; by default they can also answer in their own words.",
-    ),
+    .describe(PARAM),
+  allow_other: z.boolean().optional().describe(PARAM),
 });
 
 export const propose: ToolDefinition<z.output<typeof ProposeParams>> = {
   name: "aq_propose",
   title: "Ask the user",
-  description:
-    "Hand a decision to the user and stop this turn to wait for it. Use kind \"question\" when you cannot go on without the user's choice — which of two clips they meant, which of a few styles they want, whether to replace or keep something — and give 2 to 6 short, concrete options; the user can also answer in their own words. Do not ask about what you can find out by reading the project, and ask one question at a time. After calling it, end your turn without further tools: the answer arrives as the user's next message.",
   params: ProposeParams,
   run: (call, args) => {
     const { caller } = call;
@@ -59,25 +49,14 @@ const CheckParams = z.strictObject({
   checks: z
     .array(z.enum(["format", "problems"]))
     .optional()
-    .describe(
-      '"format": whether every document fits the project format; "problems": all problems the editor knows of. Both by default.',
-    ),
+    .describe(PARAM),
   severity: z
     .array(z.enum(["error", "warning", "check"]))
     .optional()
-    .describe("Only problems of these kinds."),
-  subject: z.string().optional().describe("Only problems of this object id or file path."),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(500)
-    .optional()
-    .describe("How many problems at most, 1 to 500; 100 by default."),
-  cursor: z
-    .string()
-    .optional()
-    .describe("Where to go on, as the last line of an earlier result of this call says."),
+    .describe(PARAM),
+  subject: z.string().optional().describe(PARAM),
+  limit: z.number().int().min(1).max(500).optional().describe(PARAM),
+  cursor: z.string().optional().describe(PARAM),
 });
 
 const SOURCE_WORDS: Readonly<Record<string, string>> = {
@@ -92,8 +71,6 @@ const SOURCE_WORDS: Readonly<Record<string, string>> = {
 export const checkRun: ToolDefinition<z.output<typeof CheckParams>> = {
   name: "aq_check_run",
   title: "Check the project",
-  description:
-    "Check the project and list its problems: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they will not appear in the preview or the export). Run it after changing code, and before you tell the user you are done; fix the problems you caused and mention the others. Problems with a fix line are fixed by sending that operation to aq_edit. Runtime errors only come from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone.",
   params: CheckParams,
   run: (call, args) => {
     const { store, host } = call;

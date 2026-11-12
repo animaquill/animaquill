@@ -25,13 +25,13 @@ import {
   whoMade,
   type Call,
 } from "../context.ts";
-import { OPERATION_DOCS } from "../docs/operations.ts";
 import { failureWords, operationFailureText } from "../failures-en.ts";
 import { issueLine } from "../issues.ts";
 import { problemLines } from "../problems-en.ts";
 import { AI_OPERATIONS, MAX_OPERATIONS, operationsParameter, signatureOf } from "../schema.ts";
 import { didYouMean, mostLike } from "../similar.ts";
-import type { ToolDefinition } from "../tool.ts";
+import { PARAM, editExamples, operationExamples, textOf, type TextTable } from "../texts/index.ts";
+import { schemaOf, type ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
 
 /** How many changed objects a result lists, and how many new and resolved problems. */
@@ -41,36 +41,17 @@ const MAX_ISSUES = 5;
 
 const EditParams = z.strictObject({
   operations: z.array(z.record(z.string(), z.unknown())),
-  summary: z
-    .string()
-    .max(120)
-    .optional()
-    .describe("One short sentence for the user on what the batch does, without your reasoning."),
-  dry_run: z
-    .boolean()
-    .optional()
-    .describe("true checks everything and writes nothing, and lists what the batch would change."),
-  base_revision: z
-    .string()
-    .optional()
-    .describe(
-      "Hardly ever needed: a revision from an earlier result, to also refuse changes of anything changed since then. It never lets through a change the tools would refuse.",
-    ),
-  request_id: z
-    .string()
-    .max(64)
-    .optional()
-    .describe(
-      "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
-    ),
+  summary: z.string().max(120).optional().describe(PARAM),
+  dry_run: z.boolean().optional().describe(PARAM),
+  base_revision: z.string().optional().describe(PARAM),
+  request_id: z.string().max(64).optional().describe(PARAM),
 });
 
 type EditArgs = z.output<typeof EditParams>;
 
 /** One operation as an example, as the parameters of aq_edit take it. */
-const exampleOf = (name: string): string => {
-  const doc = OPERATION_DOCS[name as keyof typeof OPERATION_DOCS];
-  const params = doc?.examples[0]?.params ?? {};
+const exampleOf = (texts: TextTable, name: string): string => {
+  const params = operationExamples(texts, name)[0]?.params ?? {};
   return JSON.stringify({ op: name, ...params });
 };
 
@@ -106,7 +87,7 @@ function notForAi(name: string, where: string): ToolResult | undefined {
 const AI_NAMES = AI_OPERATIONS.map(({ name }) => name);
 
 /** Every operation of a batch against its schema, all the faults at once, before anything runs. */
-function checkOperations(args: EditArgs): ToolResult | undefined {
+function checkOperations(args: EditArgs, texts: TextTable): ToolResult | undefined {
   const { operations } = args;
   if (operations.length === 0) {
     return failed(
@@ -176,7 +157,7 @@ function checkOperations(args: EditArgs): ToolResult | undefined {
   const text = faults.flatMap(({ index, name, lines }) => [
     `error invalid-params in operations[${index}] (${name})`,
     ...lines.map((line) => `  ${line}`),
-    ...(name === "?" ? [] : [`shape: ${signatureOf(name)}`, `example: ${exampleOf(name)}`]),
+    ...(name === "?" ? [] : [`shape: ${signatureOf(name)}`, `example: ${exampleOf(texts, name)}`]),
   ]);
   return failed([...text, "nothing was written"].join("\n"));
 }
@@ -297,7 +278,7 @@ function failureOf(call: Call, args: EditArgs, failure: CommandFailure, bases: B
   }
   const name = names[failure.index] ?? "";
   if (failure.code === "invalid-params" && operationOf(name)) {
-    lines.push(`shape: ${signatureOf(name)}`, `example: ${exampleOf(name)}`);
+    lines.push(`shape: ${signatureOf(name)}`, `example: ${exampleOf(call.texts, name)}`);
   }
   return failed(lines.join("\n"));
 }
@@ -429,118 +410,33 @@ function problemsLines(call: Call, before: ProjectState, after: ProjectState): r
 }
 
 /** The description of aq_edit: how it works, its operations and a few examples. */
-function editDescription(): string {
+function editDescription(texts: TextTable): string {
   const groups = new Map<string, string[]>();
   for (const op of AI_OPERATIONS) {
     const list = groups.get(op.group) ?? [];
     groups.set(op.group, list);
-    const { summary } = OPERATION_DOCS[op.name as keyof typeof OPERATION_DOCS];
-    list.push(`${signatureOf(op.name)} — ${summary}`);
+    list.push(`${signatureOf(op.name)} — ${textOf(texts, `ops.${op.name}.summary`)}`);
   }
-  const examples = EXAMPLES.map((batch) => JSON.stringify(batch));
   return [
-    'Change the open project with a batch of operations — the same operations the editor\'s own commands use. All operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object an earlier one created: give new objects ids of your own, such as "clip_title2", and use them in the same batch.',
+    textOf(texts, "tools.aq_edit.description"),
     "",
-    "Use it for everything about timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. Do not use it for the text of code files: change code with aq_file_edit or aq_file_write. To create a scene or a sound, use scene.add or sound.add with its files in the same operation.",
-    "",
-    'Times are strings in seconds, such as "12.5" or "1001/30000". Positions and sizes are in world units, with the origin at the center of the picture. Ids come from the reading tools; never invent ids of existing objects.',
-    "",
-    "Before a batch that deletes several objects, send it with dry_run: true first to see everything it would remove, including what uses those objects. If the user changed something you are about to change after you last read it, the call fails with conflict and writes nothing: read it again, then decide. A failed call says which operation failed, why, the correct shape and an example.",
-    "",
-    "The result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved — fix the problems you introduced. Write summary as one short sentence that tells the user what the batch does, without your reasoning.",
-    "",
-    'Operations (every parameter, result and more examples: aq_guide topic "ops/<operation>"):',
+    textOf(texts, "edit.operationsHeading"),
     ...[...groups.values()].flat(),
     "",
-    "Examples of operations (illustrative; their ids come from a sample project, so use the ids you read):",
-    ...examples,
+    textOf(texts, "edit.examplesHeading"),
+    ...editExamples(texts).map((batch) => JSON.stringify(batch)),
   ].join("\n");
 }
-
-/** Six examples that differ from each other, each the `operations` of one call. */
-export const EXAMPLES: readonly (readonly Readonly<Record<string, unknown>>[])[] = [
-  [
-    {
-      op: "clip.add",
-      timeline: "main",
-      track: "track_video",
-      id: "clip_title2",
-      start: "31",
-      duration: "4",
-      source: { kind: "scene", scene: "title" },
-    },
-  ],
-  [
-    {
-      op: "clip.move",
-      timeline: "main",
-      clips: [
-        { clip: "clip_lottie", start: "7" },
-        { clip: "clip_idea", start: "12" },
-      ],
-    },
-  ],
-  [
-    {
-      op: "clip.setTransition",
-      timeline: "main",
-      clip: "clip_logo",
-      enter: { type: "fade", duration: "0.5" },
-    },
-  ],
-  [
-    {
-      op: "property.edit",
-      timeline: "main",
-      edits: [
-        {
-          owner: { clip: "clip_title" },
-          path: "transform.y",
-          op: "set",
-          value: {
-            keys: [
-              { time: "0", value: -200 },
-              { time: "0.6", value: 0 },
-            ],
-          },
-        },
-      ],
-    },
-  ],
-  [{ op: "clip.remove", timeline: "main", clips: ["clip_idea"] }],
-  [
-    {
-      op: "scene.add",
-      id: "lower_third",
-      manifest: { name: "Lower third", entry: "index.html", runtime: 1 },
-      files: { "index.html": "<!doctype html><p>Name</p>" },
-    },
-    {
-      op: "clip.add",
-      timeline: "main",
-      track: "track_overlay",
-      start: "0",
-      duration: "4",
-      source: { kind: "scene", scene: "lower_third" },
-    },
-  ],
-];
 
 export const edit: ToolDefinition<EditArgs> = {
   name: "aq_edit",
   title: "Change the project",
-  get description() {
-    return editDescription();
-  },
+  describe: editDescription,
   params: EditParams,
-  get inputSchema() {
-    const schema = z.toJSONSchema(EditParams, { target: "draft-2020-12", io: "input" }) as Record<
-      string,
-      unknown
-    >;
-    delete schema.$schema;
+  inputSchema: (texts) => {
+    const schema = schemaOf(EditParams, texts, "aq_edit");
     const properties = schema.properties as Record<string, unknown>;
-    return { ...schema, properties: { ...properties, operations: operationsParameter() } };
+    return { ...schema, properties: { ...properties, operations: operationsParameter(texts) } };
   },
   writes: true,
   check: checkOperations,

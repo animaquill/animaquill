@@ -5,6 +5,7 @@ import { answer, failed, type Call } from "../context.ts";
 import { failureText } from "../failures-en.ts";
 import { mostLike } from "../similar.ts";
 import { syntaxOf } from "../syntax.ts";
+import { PARAM } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
 import { isNoCodeFile, textHash } from "./read.ts";
@@ -17,13 +18,7 @@ const AROUND = 2;
 const RUNTIME =
   "Runtime errors of this code show in aq_check_run once the editor has run it again.";
 
-const request = z
-  .string()
-  .max(64)
-  .optional()
-  .describe(
-    "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
-  );
+const request = z.string().max(64).optional().describe(PARAM);
 
 const missing = (state: ProjectState, path: string): ToolResult => {
   if (isNoCodeFile(state, path)) {
@@ -117,33 +112,24 @@ function closest(text: string, wanted: string): string {
 }
 
 const FileEditParams = z.strictObject({
-  path: z.string().describe('Path of the code file, such as "scenes/title/index.html".'),
+  path: z.string().describe(PARAM),
   edits: z
     .array(
       z.strictObject({
-        old_text: z
-          .string()
-          .describe(
-            "Text of the file as it is now, exactly, without the line numbers of aq_file_read; enough of it to be found once.",
-          ),
-        new_text: z.string().describe("What replaces it."),
-        replace_all: z
-          .boolean()
-          .optional()
-          .describe("true replaces every place old_text is found, at least one."),
+        old_text: z.string().describe(PARAM),
+        new_text: z.string().describe(PARAM),
+        replace_all: z.boolean().optional().describe(PARAM),
       }),
     )
     .min(1)
     .max(20)
-    .describe("Replacements, applied in order, 1 to 20."),
+    .describe(PARAM),
   request_id: request,
 });
 
 export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
   name: "aq_file_edit",
   title: "Edit a code file",
-  description:
-    "Change part of a code file by replacing exact text: for each edit, old_text must appear exactly once in the file as it is now (copy it from aq_file_read without the line numbers, with enough surrounding lines to be unique), and it is replaced with new_text. Set replace_all to replace every occurrence instead. All edits of one call are applied in order and succeed together, or nothing is written. This is the way to change scene, sound and shared code; it does not need the file's revision, so the user may edit other parts of the same file meanwhile. If old_text is not found, the user may have just changed that part: read the file again. The result shows the changed lines and a syntax check. To create a file or rewrite most of one, use aq_file_write.",
   params: FileEditParams,
   writes: true,
   run: async (call, args) => {
@@ -215,18 +201,9 @@ export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
 };
 
 const FileWriteParams = z.strictObject({
-  path: z
-    .string()
-    .describe(
-      'Path of the file, under scenes/<scene id>/, sounds/<sound id>/ or code/, such as "code/ease.js".',
-    ),
-  text: z.string().describe("All of its text."),
-  base_revision: z
-    .string()
-    .optional()
-    .describe(
-      "Hardly ever needed: a revision from an earlier result, to also refuse the write if the file changed since then. The file still has to be read first.",
-    ),
+  path: z.string().describe(PARAM),
+  text: z.string().describe(PARAM),
+  base_revision: z.string().optional().describe(PARAM),
   request_id: request,
 });
 
@@ -257,8 +234,6 @@ function pathProblem(state: ProjectState, path: string): ToolResult | undefined 
 export const fileWrite: ToolDefinition<z.output<typeof FileWriteParams>> = {
   name: "aq_file_write",
   title: "Write a code file",
-  description:
-    "Create a code file, or replace all of one: a new file of a scene, sound or shared code, or a rewrite of most of a file. Paths go under scenes/<scene id>/, sounds/<sound id>/ or code/; the scene or sound must exist (create it with scene.add or sound.add in aq_edit, which takes its first files too). To replace an existing file you must have read all its lines with aq_file_read in this conversation, and the call fails with file-changed if somebody changed it since: read it again, then write. For small changes use aq_file_edit, which keeps the user's edits elsewhere in the file. The result includes a syntax check.",
   params: FileWriteParams,
   writes: true,
   run: async (call, args) => {
