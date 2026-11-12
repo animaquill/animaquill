@@ -20,12 +20,13 @@ export {
   type AnswerEnd,
   type AssistantEntry,
   type ChatEntry,
+  type PackBy,
+  type PackNote,
   type ToolCallEntry,
   type ToolEntry,
   type UserEntry,
 } from "./entries.ts";
 export { DEFAULT_STAMP, browserSystemPrompt, toolSpecsOf } from "./assistant.ts";
-export { MODEL_SETTINGS, callSettingsFor, fitsModel, type ModelSettings } from "./models.ts";
 export type {
   AnswerStamp,
   CallSettings,

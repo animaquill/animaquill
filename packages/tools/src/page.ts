@@ -1,4 +1,4 @@
-import { answer, failed, MAX_RESULT, type Call } from "./context.ts";
+import { answer, failed, type Call } from "./context.ts";
 import type { ToolResult } from "./types.ts";
 
 /** What a list asks for: how many at most, and where to go on from. */
@@ -52,7 +52,8 @@ export function paged(
   },
 ): ToolResult {
   const { head, items, offset, limit, title, tail = [], data } = options;
-  let room = MAX_RESULT - 500 - [...head, ...tail].reduce((sum, line) => sum + line.length + 1, 0);
+  let room =
+    call.limits.result - 500 - [...head, ...tail].reduce((sum, line) => sum + line.length + 1, 0);
   const shown: string[] = [];
   for (const item of items.slice(offset, offset + limit)) {
     room -= item.length + 1;

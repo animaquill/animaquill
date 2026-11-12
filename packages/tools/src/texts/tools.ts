@@ -3,7 +3,7 @@ import type { TextTable } from "./table.ts";
 /** What each tool says it does, and what each of its own parameters is. */
 export const TOOL_TEXTS = {
   "tools.aq_project_status.description":
-    "Overview of the open AnimaQuill project: its name, frame rate, picture formats and languages; each timeline with its length and its numbers of tracks and clips; its scenes, sounds, assets and shared code files (up to 30 of each; aq_search finds the rest); whether it can be changed; and how many problems it has. It does not list clips or keyframes: those are in aq_timeline_read and aq_object_read. Like every result, it starts with the project revision; the tools keep track of revisions themselves, so no call needs it back.",
+    "Overview of the open AnimaQuill project: its name, frame rate, picture formats and languages; each timeline with its length and its numbers of tracks and clips; its scenes, sounds, assets and shared code files (up to {listed} of each; aq_search finds the rest); whether it can be changed; and how many problems it has. It does not list clips or keyframes: those are in aq_timeline_read and aq_object_read. Like every result, it starts with the project revision; the tools keep track of revisions themselves, so no call needs it back.",
   "tools.aq_timeline_read.description":
     "What is on one timeline: one compact line per clip, sorted by start, with its id, name, track, start..end in seconds, what it shows (asset=, scene=, sound=, color=, text=), the transitions at its edges, its effects, and how many properties it sets and how many of them are animated. The result also lists the sections the timeline is made of, its tracks from the back of the picture forward, joins (transitions between two clips that touch) and markers. from and to (seconds) and tracks narrow it; cursor pages through long timelines; without timeline it reads the first timeline of the project. It has no property values or keyframes: every field of a clip is in aq_object_read. The clips it lists count as read for the conflict check of aq_edit.",
   "tools.aq_timeline_read.params.timeline":
@@ -13,7 +13,8 @@ export const TOOL_TEXTS = {
   "tools.aq_timeline_read.params.to":
     'Only clips that start before this moment. Seconds as a string, such as "12.5".',
   "tools.aq_timeline_read.params.tracks": "Only clips on these tracks, by track id.",
-  "tools.aq_timeline_read.params.limit": "How many clips at most, 1 to 500; 200 by default.",
+  "tools.aq_timeline_read.params.limit":
+    "How many clips at most, 1 to {max}; {default} by default.",
   "tools.aq_timeline_read.params.cursor":
     "Where to go on, as the last line of an earlier result of this call says.",
   "tools.aq_object_read.description":
@@ -24,14 +25,14 @@ export const TOOL_TEXTS = {
   "tools.aq_object_read.params.fields":
     'Dotted paths to read only these fields, such as "start", "properties.transform.x" or "effects".',
   "tools.aq_object_read.params.response_format":
-    '"detailed" (the default) gives every field as JSON; "concise" one line per object and its top-level fields.',
+    '"detailed" gives every field as JSON, "concise" one line per object and its top-level fields; {default} by default.',
   "tools.aq_search.description":
     'Finds objects in the project by id, name, kind or text: clips that show a given asset or scene, tracks, markers, scenes, sounds, assets, files by path, and text inside the code of scenes and sounds (kind "text" answers with path:line and the line). Matching ignores case and finds the query anywhere in the id, name, path or source. Without query it lists everything of the given kinds. Results are compact lines with ids that the other tools take.',
   "tools.aq_search.params.query":
     "Text to find, any case, in ids, names, paths, sources, or the text of code files (kind text).",
   "tools.aq_search.params.kinds": "Only these kinds of objects; every kind but text by default.",
   "tools.aq_search.params.timeline": "Only objects of this timeline, by its id.",
-  "tools.aq_search.params.limit": "How many results at most, 1 to 200; 50 by default.",
+  "tools.aq_search.params.limit": "How many results at most, 1 to {max}; {default} by default.",
   "tools.aq_search.params.cursor":
     "Where to go on, as the last line of an earlier result of this call says.",
   "tools.aq_file_read.description":
@@ -39,7 +40,7 @@ export const TOOL_TEXTS = {
   "tools.aq_file_read.params.path":
     'Path of a code file, such as "scenes/title/index.html", as aq_project_status or aq_search lists it.',
   "tools.aq_file_read.params.offset": "The first line to read, from 1; 1 by default.",
-  "tools.aq_file_read.params.limit": "How many lines at most, 1 to 2000; 2000 by default.",
+  "tools.aq_file_read.params.limit": "How many lines at most, 1 to {max}; {default} by default.",
   "tools.aq_selection_read.description":
     "What the user is pointing at in the editor right now: the timeline they are on, the playhead time, the current version, the selected clips (ids and one line each) and the selected transition. It has only what the user chose to share; the full objects are in aq_object_read.",
   "tools.aq_guide.description":
@@ -95,7 +96,7 @@ export const TOOL_TEXTS = {
     '"format": whether every document fits the project format; "problems": all problems the editor knows of. Both by default.',
   "tools.aq_check_run.params.severity": "Only problems of these kinds.",
   "tools.aq_check_run.params.subject": "Only problems of this object id or file path.",
-  "tools.aq_check_run.params.limit": "How many problems at most, 1 to 500; 100 by default.",
+  "tools.aq_check_run.params.limit": "How many problems at most, 1 to {max}; {default} by default.",
   "tools.aq_check_run.params.cursor":
     "Where to go on, as the last line of an earlier result of this call says.",
 } satisfies TextTable;

@@ -8,7 +8,7 @@ import {
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import { CallerState } from "./caller.ts";
 import { DEFAULT_TEXTS, type TextTable } from "./texts/index.ts";
-import { createToolset } from "./toolset.ts";
+import { createToolset, type ToolsetOptions } from "./toolset.ts";
 import type { SelectionFacts, Tool, ToolHost, ToolResult } from "./types.ts";
 
 /** The sample project, without the tag that locks it, so that it can be changed. */
@@ -56,9 +56,10 @@ export function toolsOn(
   host: ToolHost = testHost(),
   caller = new CallerState(),
   texts: TextTable = DEFAULT_TEXTS,
+  options: ToolsetOptions = {},
 ) {
   const tools = new Map<string, Tool>(
-    createToolset(host, caller, texts).map((tool) => [tool.name, tool]),
+    createToolset(host, caller, texts, options).map((tool) => [tool.name, tool]),
   );
   const call = async (name: string, args: unknown = {}): Promise<ToolResult> => {
     const tool = tools.get(name);

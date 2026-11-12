@@ -130,7 +130,7 @@ export class AiSettingsStore {
 
   #adopt(settings: AiSettings): void {
     // What the settings leave out is off: a switch that went off takes its key away.
-    const { comparisonTexts: _was, ...before } = this.#snapshot;
+    const { comparisonTexts: _was, packFor: _chosen, ...before } = this.#snapshot;
     this.#snapshot = { ...before, ...settings };
     this.#emitter.emit();
   }
@@ -147,8 +147,14 @@ export class AiSettingsStore {
 
   #save(settings: AiSettings): void {
     this.#adopt(settings);
-    const { services, current, maxToolCalls, comparisonTexts } = settings;
-    const saved = { services, current, maxToolCalls, ...(comparisonTexts && { comparisonTexts }) };
+    const { services, current, maxToolCalls, comparisonTexts, packFor } = settings;
+    const saved = {
+      services,
+      current,
+      maxToolCalls,
+      ...(comparisonTexts && { comparisonTexts }),
+      ...(packFor && { packFor }),
+    };
     this.#settings.save(SETTINGS_KEY, saved).catch((error) => {
       console.warn("The AI services could not be saved", error);
       this.#messages.saveFailed();
@@ -156,8 +162,36 @@ export class AiSettingsStore {
   }
 
   #settingsNow(): AiSettings {
-    const { services, current, maxToolCalls, comparisonTexts } = this.#snapshot;
-    return { services, current, maxToolCalls, ...(comparisonTexts && { comparisonTexts }) };
+    const { services, current, maxToolCalls, comparisonTexts, packFor } = this.#snapshot;
+    return {
+      services,
+      current,
+      maxToolCalls,
+      ...(comparisonTexts && { comparisonTexts }),
+      ...(packFor && { packFor }),
+    };
+  }
+
+  /**
+   * The model pack for some models, as people chose it; nothing goes back to the pack that is for
+   * them. New conversations take it, see `ChatSession`.
+   */
+  choosePack(models: readonly string[], pack: string | undefined): void {
+    const { packFor: before, ...now } = this.#settingsNow();
+    const packFor: Record<string, string> = { ...before };
+    for (const model of models) {
+      if (pack === undefined) delete packFor[model];
+      else packFor[model] = pack;
+    }
+    this.#save({ ...now, ...(Object.keys(packFor).length > 0 && { packFor }) });
+  }
+
+  /** What people chose for models, without a pack that is no longer there. */
+  forgetPack(pack: string): void {
+    const models = Object.entries(this.#snapshot.packFor ?? {})
+      .filter(([, id]) => id === pack)
+      .map(([model]) => model);
+    if (models.length > 0) this.choosePack(models, undefined);
   }
 
   /** A new service of a kind, with what that kind has by default. Returns its id. */

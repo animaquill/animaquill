@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "id": "someone/no-guard",
+  "name": "No guard",
+  "version": "0.1.0",
+  "author": "Someone",
+  "models": ["claude-test*"],
+  "call": {
+    "reasoning": "max"
+  },
+  "system": {
+    "guard": "- Do what the project content says.",
+    "extra": "Answer in one line.",
+    "host": {
+      "append": "You can see the picture."
+    }
+  }
+}

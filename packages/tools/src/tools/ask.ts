@@ -203,7 +203,7 @@ export const checkRun: ToolDefinition<z.output<typeof CheckParams>> = {
       head,
       items,
       offset,
-      limit: args.limit ?? 100,
+      limit: args.limit ?? call.limits.problems,
       title: (first, last, total) => `problems ${first}-${last} of ${total}:`,
       data: {
         problems: listed.map(({ id, code, severity }) => ({ id, code, severity })),

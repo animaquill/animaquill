@@ -10,10 +10,13 @@ import type {
 import { pathOfObject, type ObjectRef, type ProjectState } from "@animaquill/core";
 import { Check, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { failureText } from "./failure.ts";
+import { noteLabel } from "./packText.ts";
+import type { ChatSession } from "./session.ts";
 import { summaryOf, type TurnChange } from "./summary.ts";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
@@ -84,10 +87,12 @@ function argsSummaryOf(args: Readonly<Record<string, unknown>>): string {
 /** The chat with AI in the browser, about the open project. */
 export function ChatPanel() {
   const workbench = useWorkbench();
-  const { chat, ai, layout } = workbench;
+  const { chat, ai, layout, packs } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  // Which pack a new conversation would get changes with the packs installed.
+  useSyncExternalStore(packs.subscribe, packs.getSnapshot);
   const conversation = snapshot.conversation;
   const talk = useSyncExternalStore(
     conversation?.subscribe ?? noop,
@@ -134,6 +139,8 @@ export function ChatPanel() {
   }
 
   const groups = groupsOf(talk.entries);
+  const switches = packSwitches(t, talk.entries);
+  const packLines = snapshot.comparison ? [] : packLinesOf(t, talk.entries, current?.model, chat);
   return (
     <div className={styles.panel} data-testid="chat">
       <div className={styles.bar}>
@@ -192,6 +199,11 @@ export function ChatPanel() {
             {t("chat.comparisonTexts")}
           </p>
         )}
+        {packLines.map(({ text: line, testId }) => (
+          <p key={testId} className={styles.muted} data-testid={testId}>
+            {line}
+          </p>
+        ))}
         {groups.length === 0 && <p className={styles.empty}>{t("chat.empty")}</p>}
         {groups.map((group, index) => (
           <TaskView
@@ -201,6 +213,7 @@ export function ChatPanel() {
             outcome={index === groups.length - 1 ? talk.last : undefined}
             maxToolCalls={settings.maxToolCalls}
             last={index === groups.length - 1}
+            switches={switches}
           />
         ))}
       </div>
@@ -284,7 +297,10 @@ function TaskView({
   outcome,
   maxToolCalls,
   last,
+  switches,
 }: {
+  /** The line before an answer that had another model pack than the one before it. */
+  readonly switches: ReadonlyMap<ChatEntry, string>;
   readonly group: TaskGroup;
   readonly running: ConversationSnapshot["running"];
   readonly outcome: TaskOutcome | undefined;
@@ -316,7 +332,17 @@ function TaskView({
           );
         }
         if (entry.role === "assistant") {
-          return <AnswerView key={index} entry={entry} results={results} running={running} />;
+          const switched = switches.get(entry);
+          return (
+            <div key={index}>
+              {switched && (
+                <p className={styles.muted} data-testid="chat-pack-switch">
+                  {switched}
+                </p>
+              )}
+              <AnswerView entry={entry} results={results} running={running} />
+            </div>
+          );
         }
         return null;
       })}
@@ -621,4 +647,74 @@ function OutcomeView({
     default:
       return null;
   }
+}
+
+/**
+ * Where an answer had another model pack than the answer before it: the model changed and a pack
+ * was chosen again, or the pack was gone. The line says which pack it is now.
+ */
+function packSwitches(t: TFunction, entries: readonly ChatEntry[]): ReadonlyMap<ChatEntry, string> {
+  const lines = new Map<ChatEntry, string>();
+  let before: AssistantEntry | undefined;
+  for (const entry of entries) {
+    if (entry.role !== "assistant" || !entry.pack || !entry.texts) continue;
+    if (before?.texts && before.pack && before.texts.id !== entry.texts.id) {
+      const name = noteLabel(t, entry.pack, entry.texts.id);
+      lines.set(
+        entry,
+        entry.pack.by === "fallback"
+          ? t("chat.packSwitchedNone", { model: entry.model })
+          : before.model === entry.model
+            ? t("chat.packChanged", { name })
+            : t("chat.packSwitched", { model: entry.model, name }),
+      );
+    }
+    before = entry;
+  }
+  return lines;
+}
+
+/**
+ * What the top of a conversation says of its model pack: the pack of its first answer, or of a
+ * new conversation the pack it would get; that a model has no pack of its own; and that the pack
+ * chosen in the settings now comes with the next conversation.
+ */
+function packLinesOf(
+  t: TFunction,
+  entries: readonly ChatEntry[],
+  model: string | undefined,
+  chat: ChatSession,
+): readonly { readonly text: string; readonly testId: string }[] {
+  const answers = entries.filter((entry): entry is AssistantEntry => entry.role === "assistant");
+  const lines: { text: string; testId: string }[] = [];
+  const first = answers.find((entry) => entry.pack && entry.texts);
+  if (first?.pack) {
+    lines.push({
+      text:
+        first.pack.by === "fallback"
+          ? t("chat.packNone", { model: first.model })
+          : t("chat.packLine", { name: noteLabel(t, first.pack, first.texts?.id) }),
+      testId: "chat-pack",
+    });
+  } else if (answers.length === 0 && model) {
+    const { pack, note } = chat.choiceFor(model);
+    lines.push({
+      text:
+        note.by === "fallback"
+          ? t("chat.packNone", { model })
+          : t("chat.packLine", { name: noteLabel(t, note, pack.id) }),
+      testId: "chat-pack",
+    });
+  }
+  const last = answers.at(-1);
+  if (model && last?.pack && last.texts && last.model === model && last.pack.by !== "comparison") {
+    const { pack, note } = chat.choiceFor(model);
+    if (pack.id !== last.texts.id) {
+      lines.push({
+        text: t("chat.packNext", { model, name: noteLabel(t, note, pack.id) }),
+        testId: "chat-pack-next",
+      });
+    }
+  }
+  return lines;
 }

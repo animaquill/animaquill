@@ -1,6 +1,6 @@
 import { GENERAL_FAILURES, type Operation } from "@animaquill/core";
 import { z } from "zod";
-import { answer, failed, fitted, MAX_RESULT, type Call } from "../context.ts";
+import { answer, failed, fitted, type Call } from "../context.ts";
 import { aiCode } from "../failures-en.ts";
 import { HOWTO_PAGES, TYPE_PAGES, type ManualPage } from "../guide/pages.ts";
 import { AI_OPERATIONS, DEFS_AT, fieldsOf, signatureOf, type Field } from "../schema.ts";
@@ -217,8 +217,13 @@ function contents(pages: readonly Page[]): readonly string[] {
 }
 
 /** A page in parts that fit in one result: `topic`, `topic:2` and on. */
-function partOf(text: string, topic: string, part: number): { text: string; more: boolean } {
-  const size = MAX_RESULT - 1000;
+function partOf(
+  text: string,
+  topic: string,
+  part: number,
+  max: number,
+): { text: string; more: boolean } {
+  const size = max - 1000;
   const parts: string[] = [];
   let rest = text;
   while (rest.length > size) {
@@ -256,7 +261,7 @@ export const guide: ToolDefinition<z.output<typeof GuideParams>> = {
         );
       }
       const part = Math.max(1, Number.parseInt(number, 10) || 1);
-      const { text, more } = partOf(await page.text(), topic, part);
+      const { text, more } = partOf(await page.text(), topic, part, call.limits.result);
       return answer(call, [
         `topic ${topic}${part > 1 ? ` part ${part}` : ""}`,
         text,
@@ -291,6 +296,6 @@ export const guide: ToolDefinition<z.output<typeof GuideParams>> = {
         found.length > 0 ? [...found.slice(0, MAX_FOUND), ...more] : ["nothing found"],
       );
     }
-    return answer(call, [fitted(contents(all))]);
+    return answer(call, [fitted(contents(all), undefined, call.limits.result)]);
   },
 };

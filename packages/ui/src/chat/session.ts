@@ -1,15 +1,13 @@
 import {
   Conversation,
-  DEFAULT_STAMP,
   browserSystemPrompt,
-  callSettingsFor,
   kindOf,
   readEntry,
   toolSpecsOf,
   type ChatEntry,
   type Endpoint,
   type FakeEndpoint,
-  type CallSettings,
+  type PackNote,
   type TaskOutcome,
 } from "@animaquill/agent";
 import {
@@ -22,15 +20,19 @@ import {
   type UndoResult,
 } from "@animaquill/core";
 import {
+  COMPARISON_PACK_ID,
   CallerState,
-  DEFAULT_TEXTS,
+  DEFAULT_PACK,
   TOOLSET_VERSION,
+  builtinPacks,
+  choosePack,
   createToolset,
+  usePack,
+  type ModelPack,
+  type PackUse,
   type SelectionFacts,
-  type TextTable,
   type ToolHost,
 } from "@animaquill/tools";
-import { DIRECTIVE_TEXTS, DIRECTIVE_TEXTS_USED } from "@animaquill/tools/eval";
 import {
   memoryChats,
   type AccountAccess,
@@ -38,6 +40,7 @@ import {
   type SavedChatSummary,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
+import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
 import { clipsOf, summaryOf } from "./summary.ts";
 
@@ -68,6 +71,8 @@ export interface ChatSnapshot {
 export interface ChatSessionOptions {
   readonly chats: ChatStore | undefined;
   readonly ai: AiSettingsStore;
+  /** The model packs installed here; without them, those that come with AnimaQuill. */
+  readonly packs?: ModelPacks;
   /** The account on the platform, which the relay of AI services is only for. */
   readonly account?: AccountAccess | undefined;
   /** The project of this window, and what this browser keeps it by. */
@@ -181,18 +186,15 @@ export class ChatSession {
     this.#stopWatching?.();
     const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
     this.#caller = tools;
-    // A conversation keeps the words it began with; a new one takes what the settings say.
+    // A conversation keeps the words to compare with if it began with them; a new one takes what
+    // the settings say.
     const used = entries.findLast((entry) => entry.role === "assistant");
     const comparison =
       used?.role === "assistant" && used.texts !== undefined
-        ? used.texts.id === DIRECTIVE_TEXTS_USED.id
+        ? used.texts.id === COMPARISON_PACK_ID
         : entries.length === 0 && this.#options.ai.getSnapshot().comparisonTexts === true;
-    const texts: TextTable = comparison ? DIRECTIVE_TEXTS : DEFAULT_TEXTS;
     const conversation = new Conversation({
       entries,
-      system: browserSystemPrompt(texts),
-      tools: (task) => this.#toolsOf(task, tools, texts),
-      stamp: comparison ? { toolset: TOOLSET_VERSION, texts: DIRECTIVE_TEXTS_USED } : DEFAULT_STAMP,
       // Each answer of the model is one: a change that fails holds back the rest of it.
       onAnswer: () => tools.beginAnswer(),
     });
@@ -236,7 +238,7 @@ export class ChatSession {
   }
 
   /** The tools of one task, on the project that was open when it started, and only that one. */
-  #toolsOf(task: string, caller: CallerState, texts: TextTable) {
+  #toolsOf(task: string, caller: CallerState, use: PackUse) {
     const project = this.#project;
     const { selection, problems, describe, problemInputs, ranNow } = this.#options;
     const tools = createToolset(
@@ -251,7 +253,8 @@ export class ChatSession {
         ...(ranNow && { ranNow }),
       },
       caller,
-      texts,
+      use.texts,
+      { results: use.results },
     );
     return toolSpecsOf(tools);
   }
@@ -324,17 +327,59 @@ export class ChatSession {
     this.#set({ saved: this.#snapshot.saved.filter((saved) => saved.id !== id) });
   }
 
+  /** The packs that can be used here: AnimaQuill's own, then those installed. */
+  #packs(): readonly ModelPack[] {
+    return this.#options.packs?.getSnapshot().packs ?? builtinPacks();
+  }
+
+  /** The pack people would get for a model in a new conversation, and how. */
+  choiceFor(model: string): { readonly pack: ModelPack; readonly note: PackNote } {
+    const choice = choosePack(
+      model,
+      this.#packs(),
+      this.#options.ai.getSnapshot().packFor?.[model],
+    );
+    return { pack: choice.pack, note: noteOf(choice.pack, choice.by) };
+  }
+
+  /**
+   * The pack for the next answer of the conversation. A conversation keeps its pack while the model
+   * stays (as that pack is installed now: an update counts from the next conversation only where
+   * it changed which pack it is); a new model, or a pack that is gone, chooses again, see
+   * `choosePack`. The switch for developers gives the words to compare with to the whole of a
+   * conversation that began with it.
+   */
+  async #packFor(
+    model: string,
+    entries: readonly ChatEntry[],
+  ): Promise<{ readonly use: PackUse; readonly note: PackNote }> {
+    if (this.#snapshot.comparison) {
+      // Only this switch loads the words to compare with: they are not one of the packs.
+      const { DIRECTIVE_PACK } = await import("@animaquill/tools/eval");
+      return { use: usePack(DIRECTIVE_PACK, model), note: noteOf(DIRECTIVE_PACK, "comparison") };
+    }
+    const last = entries.findLast((entry) => entry.role === "assistant");
+    if (last?.role === "assistant" && last.model === model && last.pack && last.texts) {
+      const id = last.texts.id;
+      const pinned =
+        id === DEFAULT_PACK.id ? DEFAULT_PACK : this.#packs().find((pack) => pack.id === id);
+      if (pinned) return { use: usePack(pinned, model), note: { ...last.pack, name: pinned.name } };
+    }
+    const { pack, note } = this.choiceFor(model);
+    return { use: usePack(pack, model), note };
+  }
+
   /** Where a message would go now, or why it cannot go. */
   async #target(): Promise<
     | {
         readonly endpoint: Endpoint | FakeEndpoint;
         readonly key: () => Promise<string | undefined>;
-        readonly call?: CallSettings;
+        readonly model: string;
       }
     | ChatHold
   > {
     const fake = this.#options.fake?.();
-    if (fake) return { endpoint: fake, key: async () => undefined };
+    if (fake) return { endpoint: fake, key: async () => undefined, model: fake.model ?? "fake" };
     const { ai } = this.#options;
     const service = ai.current;
     const kind = service && kindOf(service.kind);
@@ -354,12 +399,13 @@ export class ChatSession {
       catalog: kind.catalog,
       ...(route.relay && { relay: route.relay }),
     };
-    return { endpoint, key: () => ai.keyOf(service.id), call: callSettingsFor(service.model) };
+    return { endpoint, key: () => ai.keyOf(service.id), model: service.model };
   }
 
   /** Sends a message, which starts a task. Resolves once the task is over. */
   async send(text: string): Promise<TaskOutcome | undefined> {
     const conversation = this.#snapshot.conversation;
+    const caller = this.#caller;
     if (!conversation || conversation.running || !text.trim()) return undefined;
     if (!this.#project) {
       this.#set({ hold: "noProject" });
@@ -372,7 +418,18 @@ export class ChatSession {
     }
     this.#set({ hold: undefined });
     const maxToolCalls = this.#options.ai.getSnapshot().maxToolCalls;
-    return conversation.send(text, { ...target, maxToolCalls });
+    const { use, note } = await this.#packFor(target.model, conversation.getSnapshot().entries);
+    // Another conversation may have opened meanwhile: this one is no longer on the screen.
+    if (this.#snapshot.conversation !== conversation) return undefined;
+    return conversation.send(text, {
+      endpoint: target.endpoint,
+      key: target.key,
+      maxToolCalls,
+      system: browserSystemPrompt(use.texts),
+      tools: (task) => this.#toolsOf(task, caller, use),
+      call: use.call,
+      stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },
+    });
   }
 
   stop(): void {
@@ -410,4 +467,14 @@ export class ChatSession {
       this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
     }
   }
+}
+
+/** What an answer records of its pack, for people. */
+export function noteOf(pack: ModelPack, by: PackNote["by"]): PackNote {
+  return {
+    name: pack.name,
+    ...(pack.author && !pack.builtin && { author: pack.author.name }),
+    ...(pack.builtin && { builtin: true }),
+    by,
+  };
 }

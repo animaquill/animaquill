@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { CallerState } from "./caller.ts";
 import { failed, othersLine, type Call } from "./context.ts";
 import { issueLine } from "./issues.ts";
+import type { DetailLimits } from "./packs/detail.ts";
 import { PARAM, textOf, type TextTable } from "./texts/index.ts";
 import type { JsonSchema, Tool, ToolAnnotations, ToolHost, ToolResult } from "./types.ts";
 
@@ -74,6 +75,33 @@ export function paramPaths(params: z.ZodType): readonly string[] {
   return found;
 }
 
+/**
+ * The most each parameter of a tool takes, by its path as `paramPaths` has it: its maximum, or how
+ * many items or characters at most. What `{max}` stands for in its words.
+ */
+export function paramMaxima(params: z.ZodType): ReadonlyMap<string, number> {
+  const found = new Map<string, number>();
+  const walk = (node: unknown, path: string[]): void => {
+    if (typeof node !== "object" || node === null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, path);
+      return;
+    }
+    const schema = node as Node;
+    const most = schema.maximum ?? schema.maxItems ?? schema.maxLength;
+    if (schema.description === PARAM && typeof most === "number") found.set(path.join("."), most);
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === "properties" && typeof value === "object" && value !== null) {
+        for (const [name, inner] of Object.entries(value)) walk(inner, [...path, name]);
+      } else if (key === "items" || key === "anyOf" || key === "oneOf") {
+        walk(value, path);
+      }
+    }
+  };
+  walk(z.toJSONSchema(params, { target: "draft-2020-12", io: "input" }), []);
+  return found;
+}
+
 /** The parameters of a tool, as JSON Schema with a description for each of them. */
 export function schemaOf(params: z.ZodType, texts: TextTable, tool: string): JsonSchema {
   const schema = z.toJSONSchema(params, { target: "draft-2020-12", io: "input" }) as Node;
@@ -112,6 +140,7 @@ export function makeTool<P>(
   host: ToolHost,
   caller: CallerState,
   texts: TextTable,
+  limits: DetailLimits,
 ): Tool {
   const { name, title, params, writes = false } = definition;
   const description = definition.describe?.(texts) ?? textOf(texts, `tools.${name}.description`);
@@ -175,7 +204,7 @@ export function makeTool<P>(
         if (caller.answer.failedWrite) return failed(NOT_RUN_FAILED);
       }
       if (writes) caller.own.add(host.origin());
-      const call: Call = { host, caller, store, texts, tool: name };
+      const call: Call = { host, caller, store, texts, tool: name, limits };
       // What others did is told up to the revision it was told at, not the one after the call: a
       // change that lands while a call waits, or while other calls run beside it, as read-only
       // calls may, is told by the next call instead of never. Of calls that end in another order

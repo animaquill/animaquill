@@ -11,10 +11,14 @@ import {
   type ProjectStore,
 } from "@animaquill/core";
 import type { CallerState } from "./caller.ts";
+import type { DetailLimits } from "./packs/detail.ts";
 import type { TextTable } from "./texts/index.ts";
 import type { ToolHost, ToolResult } from "./types.ts";
 
-/** How long one result may be, in characters: about 10 000 tokens, which leaves room in small models. */
+/**
+ * How long one result may be, in characters, at the standard detail: about 10 000 tokens, which
+ * leaves room in small models. A model pack may ask for less, see `DETAIL_LIMITS`.
+ */
 export const MAX_RESULT = 40_000;
 /** How long a name is shown, in characters. */
 const MAX_NAME = 40;
@@ -120,6 +124,8 @@ export interface Call {
   readonly texts: TextTable;
   /** The tool that runs, by name. */
   readonly tool: string;
+  /** How much results give, as the model pack has it. */
+  readonly limits: DetailLimits;
 }
 
 /**
@@ -178,7 +184,7 @@ export function othersLine(call: Call): string | undefined {
 }
 
 /** Lines as one text, cut at a whole line when too long, with a word on what was left out. */
-const TOO_LONG = `one result holds at most ${MAX_RESULT.toLocaleString("en")} characters`;
+const tooLong = (max: number) => `one result holds at most ${max.toLocaleString("en")} characters`;
 
 /** What makes a result of a tool smaller, by tool, for what a result has to leave out. */
 const NARROWER: Readonly<Record<string, string>> = {
@@ -189,16 +195,20 @@ const NARROWER: Readonly<Record<string, string>> = {
 };
 
 /** What a result left out, and what makes it smaller where the tool has a way. */
-export const leftOut = (tool: string, left: number): string =>
-  `${left} more lines left out: ${TOO_LONG}${NARROWER[tool] ? `; ${NARROWER[tool]}` : ""}.`;
+export const leftOut = (tool: string, left: number, max = MAX_RESULT): string =>
+  `${left} more lines left out: ${tooLong(max)}${NARROWER[tool] ? `; ${NARROWER[tool]}` : ""}.`;
 
-export function fitted(lines: readonly string[], more?: (left: number) => string): string {
+export function fitted(
+  lines: readonly string[],
+  more?: (left: number) => string,
+  max = MAX_RESULT,
+): string {
   let length = 0;
   for (let index = 0; index < lines.length; index += 1) {
     length += (lines[index] as string).length + 1;
-    if (length > MAX_RESULT - 200) {
+    if (length > max - 200) {
       const left = lines.length - index;
-      const tail = more ? more(left) : `${left} more lines left out: ${TOO_LONG}.`;
+      const tail = more ? more(left) : `${left} more lines left out: ${tooLong(max)}.`;
       return [...lines.slice(0, index), tail].join("\n");
     }
   }
@@ -214,7 +224,8 @@ export function answer(
 ): ToolResult {
   const text = fitted(
     [`rev ${call.store.revisionId}`, ...lines, ...(others ? [others] : [])],
-    (left) => leftOut(call.tool, left),
+    (left) => leftOut(call.tool, left, call.limits.result),
+    call.limits.result,
   );
   return { text, isError: false, ...(data && { data }) };
 }

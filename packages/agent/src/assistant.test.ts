@@ -1,9 +1,15 @@
 import { ProblemSet, ProjectStore, aiTask } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
-import { CallerState, createToolset } from "@animaquill/tools";
+import {
+  CallerState,
+  builtinPacks,
+  choosePack,
+  createToolset,
+  usePack,
+  type CallSettings,
+} from "@animaquill/tools";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_DATA, keptData, toolSpecsOf } from "./assistant.ts";
-import { callSettingsFor } from "./models.ts";
 import type { ChatEntry, ToolEntry } from "./entries.ts";
 import { runTask, type Endpoint, type FakeEndpoint, type RunEvent, type ToolSpec } from "./pi.ts";
 import type { Protocol } from "./services.ts";
@@ -377,20 +383,24 @@ describe("what a tool found, as a conversation keeps it", () => {
   });
 });
 
+/** How the packs that come with AnimaQuill call a model. */
+const callFor = (model: string): CallSettings =>
+  usePack(choosePack(model, builtinPacks()).pack, model).call;
+
 describe("models pi does not know yet", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("get the call settings of their family, by name", () => {
-    expect(callSettingsFor("claude-fable-5-2")).toMatchObject({
+  it("get the call settings of their family from the pack for Claude 5, by name", () => {
+    expect(callFor("claude-fable-5-2")).toMatchObject({
       reasoning: "high",
       maxOutputTokens: 32_000,
     });
-    expect(callSettingsFor("anthropic/claude-sonnet-5-5")).toMatchObject({ reasoning: "medium" });
-    expect(callSettingsFor("CLAUDE-OPUS-5-5")).toMatchObject({ reasoning: "medium" });
-    expect(callSettingsFor("gpt-5")).toEqual({});
-    expect(callSettingsFor("claude-sonnet-4-5")).toEqual({});
+    expect(callFor("anthropic/claude-sonnet-5-5")).toMatchObject({ reasoning: "medium" });
+    expect(callFor("CLAUDE-OPUS-5-5")).toMatchObject({ reasoning: "medium" });
+    expect(callFor("gpt-5")).toEqual({});
+    expect(callFor("claude-sonnet-4-5")).toEqual({});
   });
 
   it("go as the closest one pi knows: long answers, and a summary of the thinking", async () => {
@@ -401,9 +411,79 @@ describe("models pi does not know yet", () => {
       model: "claude-fable-5-2",
       catalog: "anthropic",
     };
-    const body = await requestOf(endpoint, [], { call: callSettingsFor(endpoint.model) });
+    const body = await requestOf(endpoint, [], { call: callFor(endpoint.model) });
     expect(body.model).toBe("claude-fable-5-2");
     expect(body.max_tokens).toBe(32_000);
     expect(body.thinking).toMatchObject({ type: "adaptive", display: "summarized" });
+  });
+});
+
+describe("call settings of a pack", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Every setting there is, at values that show. */
+  const ALL: CallSettings = {
+    reasoning: "high",
+    maxOutputTokens: 12_345,
+    temperature: 0.5,
+    parallelToolCalls: false,
+    cache: "long",
+    anthropic: { thinkingDisplay: "summarized" },
+  };
+
+  /** The fields of a request that differ, with the setting and without. */
+  async function changed(endpoint: Endpoint, call: CallSettings) {
+    const without = await requestOf(endpoint, []);
+    const withIt = await requestOf(endpoint, [], { call });
+    const fields = [...new Set([...Object.keys(without), ...Object.keys(withIt)])].filter(
+      (key) => JSON.stringify(without[key]) !== JSON.stringify(withIt[key]),
+    );
+    return { fields: fields.toSorted(), body: withIt };
+  }
+
+  it("reach a request as they are, and nothing else does, for each protocol", async () => {
+    const anthropic = await changed(ENDPOINTS[0] as Endpoint, ALL);
+    // The cache that lasts long is marked on the blocks it caches: the system prompt, the last
+    // tool and the last message.
+    expect(anthropic.fields).toEqual(["max_tokens", "messages", "system", "thinking", "tools"]);
+    // pi adds the budget of thinking to what the answer itself may write, where a model has one.
+    const budget = (anthropic.body.thinking as { budget_tokens?: number }).budget_tokens ?? 0;
+    expect(anthropic.body.max_tokens).toBe(12_345 + budget);
+    for (const field of ["system", "messages", "tools"]) {
+      expect(JSON.stringify(anthropic.body[field]), field).toContain('"ttl":"1h"');
+    }
+    expect(anthropic.body.thinking).toMatchObject({ display: "summarized" });
+    const responses = await changed(ENDPOINTS[1] as Endpoint, ALL);
+    // With reasoning, pi also asks for its encrypted content back, to send it on.
+    expect(responses.fields).toEqual([
+      "include",
+      "max_output_tokens",
+      "prompt_cache_retention",
+      "reasoning",
+      "temperature",
+    ]);
+    expect(responses.body.temperature).toBe(0.5);
+    expect(responses.body.max_output_tokens).toBe(12_345);
+    expect(responses.body.reasoning).toMatchObject({ effort: "high" });
+    const completions = await changed(
+      {
+        service: "deepseek",
+        protocol: "openai-completions",
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-chat",
+        catalog: "deepseek",
+      },
+      ALL,
+    );
+    expect(completions.fields).toEqual(["max_tokens", "prompt_cache_retention", "temperature"]);
+    expect(completions.body).toMatchObject({ max_tokens: 12_345, temperature: 0.5 });
+  });
+
+  it("leave a request as it was when a pack has none", async () => {
+    for (const endpoint of ENDPOINTS) {
+      expect((await changed(endpoint, {})).fields).toEqual([]);
+    }
   });
 });

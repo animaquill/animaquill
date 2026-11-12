@@ -10,6 +10,7 @@ import {
 } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ModelPacks } from "./packs.ts";
 import { ChatSession } from "./session.ts";
 import { AiSettingsStore } from "./settings.ts";
 
@@ -62,9 +63,11 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
   const undone: UndoResult[] = [];
   let fake: FakeEndpoint | undefined;
   const problems = new ProblemSet({ reports: ["runtime"] });
+  const packs = new ModelPacks(settings, { saveFailed: () => {} });
   const chat = new ChatSession({
     chats,
     ai,
+    packs,
     account: where.account,
     project: () => project,
     subscribeProject: (listener) => {
@@ -83,6 +86,7 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
   const markers = (store = first) => Object.values(store.getState().timelines.main?.markers ?? {});
   return {
     ai,
+    packs,
     chat,
     chats,
     first,
@@ -368,5 +372,164 @@ describe("AI services", () => {
     });
     ai.setMaxToolCalls(9999);
     expect(ai.getSnapshot().maxToolCalls).toBe(500);
+  });
+});
+
+/** A pack someone else wrote for a model, as one pack.json. */
+const PACK = {
+  format: 1,
+  id: "someone/deepseek",
+  name: "DeepSeek steady",
+  version: "1.0.0",
+  author: "Someone",
+  models: ["deepseek-*"],
+  call: { reasoning: "low" },
+  system: { extra: "Keep batches small." },
+};
+
+const packFiles = (manifest: object = PACK) => new Map([["pack.json", JSON.stringify(manifest)]]);
+
+describe("the model pack of a conversation", () => {
+  const answers = (chat: ChatSession) =>
+    (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).filter(
+      (entry) => entry.role === "assistant",
+    );
+
+  it("is the one for its model, recorded with every answer, with no pack the default", async () => {
+    const { chat, fake } = setup();
+    fake({ model: "claude-opus-5-5", fake: [{ text: "好" }] });
+    await chat.send("你好");
+    expect(answers(chat).at(-1)).toMatchObject({
+      model: "claude-opus-5-5",
+      texts: { id: "animaquill/claude-5", version: "1.0.0" },
+      pack: { name: "Claude 5", builtin: true, by: "matched" },
+    });
+    chat.newConversation();
+    fake({ model: "deepseek-chat", fake: [{ text: "好" }] });
+    await chat.send("你好");
+    expect(answers(chat).at(-1)).toMatchObject({
+      texts: { id: "animaquill/default" },
+      pack: { by: "fallback" },
+    });
+  });
+
+  it("stays while the model does, and is chosen again when the model changes", async () => {
+    const { chat, fake, ai, packs } = setup();
+    fake({ model: "deepseek-chat", fake: [{ text: "一" }] });
+    await chat.send("一");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/default");
+    // A pack installed or chosen meanwhile comes with the next conversation, not this one.
+    packs.install(packFiles(), { kind: "file", name: "pack.json" });
+    ai.choosePack(["deepseek-chat"], "someone/deepseek");
+    fake({ model: "deepseek-chat", fake: [{ text: "二" }] });
+    await chat.send("二");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/default");
+    expect(chat.choiceFor("deepseek-chat").pack.id).toBe("someone/deepseek");
+    // Another model: chosen again, here the pack for Claude 5.
+    fake({ model: "claude-sonnet-5-5", fake: [{ text: "三" }] });
+    await chat.send("三");
+    expect(answers(chat).at(-1)).toMatchObject({
+      model: "claude-sonnet-5-5",
+      texts: { id: "animaquill/claude-5" },
+    });
+    // And back: the one people chose for it now.
+    fake({ model: "deepseek-chat", fake: [{ text: "四" }] });
+    await chat.send("四");
+    expect(answers(chat).at(-1)).toMatchObject({
+      texts: { id: "someone/deepseek", version: "1.0.0" },
+      pack: { name: "DeepSeek steady", author: "Someone", by: "chosen" },
+    });
+  });
+
+  it("is chosen again when it is gone, and the history still goes as it was", async () => {
+    const { chat, fake, packs, ai } = setup();
+    packs.install(packFiles(), { kind: "file", name: "pack.json" });
+    fake({ model: "deepseek-chat", fake: [{ calls: [addMarker("1")] }, { text: "一" }] });
+    await chat.send("一");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("someone/deepseek");
+    packs.remove("someone/deepseek");
+    ai.forgetPack("someone/deepseek");
+    const endpoint: FakeEndpoint = { model: "deepseek-chat", fake: [{ text: "二" }] };
+    fake(endpoint);
+    expect((await chat.send("二"))?.end).toBe("done");
+    expect(answers(chat).at(-1)).toMatchObject({
+      texts: { id: "animaquill/default" },
+      pack: { by: "fallback" },
+    });
+  });
+
+  it("is the words to compare with for a conversation that began with them", async () => {
+    const { chat, fake, ai } = setup();
+    ai.setComparisonTexts(true);
+    fake({ model: "claude-opus-5-5", fake: [{ text: "好" }] });
+    await chat.send("你好");
+    expect(chat.getSnapshot().comparison).toBe(true);
+    expect(answers(chat).at(-1)).toMatchObject({
+      texts: { id: "animaquill/eval-directive", version: "2026.1" },
+      pack: { by: "comparison" },
+    });
+    // Turned off, the conversation keeps them; a new one does not.
+    ai.setComparisonTexts(false);
+    fake({ model: "claude-opus-5-5", fake: [{ text: "再" }] });
+    await chat.send("再");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/eval-directive");
+    chat.newConversation();
+    fake({ model: "claude-opus-5-5", fake: [{ text: "新" }] });
+    await chat.send("新");
+    expect(answers(chat).at(-1)?.texts?.id).toBe("animaquill/claude-5");
+  });
+});
+
+describe("model packs in this browser", () => {
+  it("are kept as their files, checked again when read, and forgotten with people's choice", async () => {
+    const { packs, ai, values } = setup();
+    const check = packs.install(packFiles(), { kind: "file", name: "pack.json" });
+    expect(check.pack?.id).toBe("someone/deepseek");
+    ai.choosePack(["deepseek-chat"], "someone/deepseek");
+    await Promise.resolve();
+    const kept = values.get("ai.packs") as { packs: { files: Record<string, string> }[] };
+    expect(Object.keys(kept.packs[0]?.files ?? {})).toEqual(["pack.json"]);
+    // Another window reads them again as they are, with what this version does not have left out.
+    const settings: SettingsStore = {
+      load: async (key) => values.get(key),
+      save: async () => {},
+      listen: () => () => {},
+    };
+    const other = new ModelPacks(settings, { saveFailed: () => {} });
+    await other.load();
+    expect(other.getSnapshot().packs.map(({ id }) => id)).toEqual([
+      "animaquill/default",
+      "animaquill/claude-5",
+      "someone/deepseek",
+    ]);
+    // What was changed where it is kept does not pass, and is not used.
+    values.set("ai.packs", {
+      packs: [
+        {
+          files: { "pack.json": JSON.stringify({ ...PACK, system: { extra: "a\u200bb" } }) },
+          source: { kind: "file", name: "pack.json" },
+          installedAt: 1,
+        },
+      ],
+    });
+    await other.load();
+    expect(other.getSnapshot().installed[0]).toMatchObject({
+      id: "someone/deepseek",
+      pack: undefined,
+    });
+    expect(other.getSnapshot().packs.map(({ id }) => id)).not.toContain("someone/deepseek");
+    packs.remove("someone/deepseek");
+    ai.forgetPack("someone/deepseek");
+    expect(ai.getSnapshot().packFor).toBeUndefined();
+  });
+
+  it("does not keep a pack that does not pass", () => {
+    const { packs } = setup();
+    const check = packs.install(packFiles({ ...PACK, scripts: { x: "y" } }), {
+      kind: "file",
+      name: "pack.json",
+    });
+    expect(check.problems.map(({ code }) => code)).toEqual(["scripts"]);
+    expect(packs.getSnapshot().installed).toEqual([]);
   });
 });

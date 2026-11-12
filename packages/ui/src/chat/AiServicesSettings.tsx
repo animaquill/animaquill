@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import styles from "./AiServicesSettings.module.css";
 import { failureText } from "./failure.ts";
+import { ModelPacksSettings } from "./ModelPacksSettings.tsx";
 
 /** The AI services people bring, in the settings: each with its address, key and model. */
 export function AiServicesSettings() {
@@ -71,6 +72,8 @@ export function AiServicesSettings() {
           {t("ai.add")}
         </button>
       </div>
+
+      <ModelPacksSettings />
 
       <label className={styles.limit}>
         <span>{t("ai.limit")}</span>

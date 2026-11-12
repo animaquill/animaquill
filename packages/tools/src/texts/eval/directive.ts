@@ -1,5 +1,7 @@
-import { TOOLSET_VERSION } from "../../toolset.ts";
-import { DEFAULT_TEXTS, hashOfTexts, type TextsUsed } from "../index.ts";
+import { hashOfPack, textsOf, usedOf } from "../../packs/apply.ts";
+import { COMPARISON_PACK_ID } from "../../packs/builtin.ts";
+import type { ModelPack, PackEdit } from "../../packs/format.ts";
+import type { TextsUsed } from "../index.ts";
 import type { TextTable } from "../table.ts";
 
 /**
@@ -10,6 +12,8 @@ import type { TextTable } from "../table.ts";
  * when that is on. It changes descriptions and the system prompt; what tools give back stays.
  */
 export const DIRECTIVE_OVERRIDES = {
+  "tools.aq_object_read.params.response_format":
+    '"detailed" (the default) gives every field as JSON; "concise" one line per object and its top-level fields.',
   "ops.clip.add.params.enter": "Transition at its start; null takes it away.",
   "ops.clip.add.params.exit": "Transition at its end; null takes it away.",
   "system.work":
@@ -176,12 +180,36 @@ export const DIRECTIVE_OVERRIDES = {
   ],
 } satisfies TextTable;
 
+const body: Omit<ModelPack, "hash"> = {
+  id: COMPARISON_PACK_ID,
+  name: "Toolset 2026.1 (comparison)",
+  version: "2026.1",
+  description:
+    "The words of toolset 2026.1, which said when to call each tool: to compare with the default words on real models.",
+  author: { name: "AnimaQuill" },
+  license: "AGPL-3.0-only",
+  builtin: true,
+  models: [],
+  call: {},
+  variants: [],
+  edits: Object.entries(DIRECTIVE_OVERRIDES).map(([key, value]): PackEdit => ({
+    key,
+    how: "set",
+    value,
+  })),
+};
+
+/**
+ * The words of toolset 2026.1 as a model pack, only for tests, evaluations and the switch for
+ * developers in the settings of the browser, which loads this module only when it is on. It is not
+ * one of the packs that come with AnimaQuill: no model gets it unless that switch says so. Made in
+ * code, it may change what no pack.json can, such as how aq_edit lists its operations, and its
+ * description of aq_edit is longer than a pack's may be.
+ */
+export const DIRECTIVE_PACK: ModelPack = { ...body, hash: hashOfPack(body) };
+
 /** The default words with these instead: the toolset as 2026.1 had it. */
-export const DIRECTIVE_TEXTS: TextTable = { ...DEFAULT_TEXTS, ...DIRECTIVE_OVERRIDES };
+export const DIRECTIVE_TEXTS: TextTable = textsOf(DIRECTIVE_PACK);
 
 /** What a conversation records when it used these words. */
-export const DIRECTIVE_TEXTS_USED: TextsUsed = {
-  id: "animaquill/eval-directive",
-  version: TOOLSET_VERSION,
-  hash: hashOfTexts(DIRECTIVE_TEXTS),
-};
+export const DIRECTIVE_TEXTS_USED: TextsUsed = usedOf(DIRECTIVE_PACK);

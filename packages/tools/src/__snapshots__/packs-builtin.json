@@ -1,0 +1,56 @@
+[
+ {
+  "id": "animaquill/default",
+  "name": "Default",
+  "version": "2026.4",
+  "description": "The words AnimaQuill writes for every model.",
+  "author": {
+   "name": "AnimaQuill"
+  },
+  "license": "AGPL-3.0-only",
+  "builtin": true,
+  "models": [],
+  "call": {},
+  "variants": [],
+  "edits": [],
+  "hash": "28hh6h60qpp"
+ },
+ {
+  "id": "animaquill/claude-5",
+  "name": "Claude 5",
+  "version": "1.0.0",
+  "description": "How to call the Claude 5 models, as Anthropic's documentation says: how hard they think, room for long answers with their thinking, and a summary of it.",
+  "author": {
+   "name": "AnimaQuill"
+  },
+  "license": "AGPL-3.0-only",
+  "builtin": true,
+  "models": [
+   "claude-fable-5*",
+   "claude-mythos-5*",
+   "claude-opus-5*",
+   "claude-sonnet-5*",
+   "claude-haiku-5*"
+  ],
+  "call": {
+   "reasoning": "medium",
+   "maxOutputTokens": 32000,
+   "anthropic": {
+    "thinkingDisplay": "summarized"
+   }
+  },
+  "variants": [
+   {
+    "models": [
+     "claude-fable-5*",
+     "claude-mythos-5*"
+    ],
+    "call": {
+     "reasoning": "high"
+    }
+   }
+  ],
+  "edits": [],
+  "hash": "1glkuzmfe8q"
+ }
+]

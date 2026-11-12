@@ -42,8 +42,7 @@ import {
 import { schemaOf, type ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
 
-/** How many changed objects a result lists, and how many new and resolved problems. */
-const MAX_CHANGED = 20;
+/** How many new and resolved problems a result lists; how many changed objects is up to the pack. */
 const MAX_PROBLEMS = 10;
 const MAX_ISSUES = 5;
 
@@ -557,13 +556,10 @@ export const edit: ToolDefinition<EditArgs> = {
       const id = (value as { readonly id?: unknown } | undefined)?.id;
       return typeof id === "string" ? [`${id} (operations[${index}])`] : [];
     });
-    const shown = changes
-      .slice(0, MAX_CHANGED)
-      .map((change) => `  ${changeLine(result.state, change)}`);
+    const most = call.limits.changed;
+    const shown = changes.slice(0, most).map((change) => `  ${changeLine(result.state, change)}`);
     const more =
-      changes.length > MAX_CHANGED
-        ? [`  and ${changes.length - MAX_CHANGED} more (aq_object_read)`]
-        : [];
+      changes.length > most ? [`  and ${changes.length - most} more (aq_object_read)`] : [];
     const first = args.dry_run
       ? `dry run: nothing was written; ${operationsWord(calls.length)} would be one step`
       : changes.length === 0

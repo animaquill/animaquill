@@ -48,6 +48,7 @@ import { CloudProjects } from "../cloud/projects.ts";
 import type { CloudEnvironment, CloudTiming } from "../cloud/session.ts";
 import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
+import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
@@ -296,6 +297,8 @@ export class Workbench {
   readonly drafts: CodeDrafts;
   /** The AI services people set up, with their keys, which only this browser has. */
   readonly ai: AiSettingsStore;
+  /** The model packs installed in this browser, see `ModelPacks`. */
+  readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
   readonly chat: ChatSession;
   #changingProject = false;
@@ -334,6 +337,9 @@ export class Workbench {
       },
       host.aiRelay,
     );
+    this.packs = new ModelPacks(host.settings, {
+      saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")),
+    });
     const sink = host.diagnostics;
     this.#sink = sink;
     let names: { state: unknown; keys: ReadonlySet<string>; found: Set<string> } | undefined;
@@ -546,6 +552,7 @@ export class Workbench {
     this.chat = new ChatSession({
       chats: host.chats,
       ai: this.ai,
+      packs: this.packs,
       account: host.account,
       project: () => {
         const { store, key } = this.session.getSnapshot();
@@ -1388,6 +1395,7 @@ export class Workbench {
       this.previewQuality.load(),
       this.trials.load(),
       this.ai.load(),
+      this.packs.load(),
     ]);
     // An address of a project folder opens as one once the page is there, see `resume`.
     if (!(await this.projectFolders?.restore())) await this.session.restore();

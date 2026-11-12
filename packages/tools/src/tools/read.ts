@@ -16,7 +16,7 @@ import {
 } from "@animaquill/core";
 import { Time, compare, formatTime, parseTime } from "@animaquill/schema";
 import { z } from "zod";
-import { answer, failed, MAX_RESULT, named, quoted, type Call } from "../context.ts";
+import { answer, failed, named, quoted, type Call } from "../context.ts";
 import {
   assetLine,
   clipLine,
@@ -30,9 +30,6 @@ import { mostLike } from "../similar.ts";
 import { PARAM } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
-
-/** How many scenes, sounds and assets the overview lists of each. */
-const MAX_LISTED = 30;
 
 /** A hash of a text, to tell later whether a file changed since it was read. */
 export function textHash(text: string): string {
@@ -69,10 +66,9 @@ const MAX_LINE = 2000;
 const MAX_SMALL = 50;
 
 /** A list in one line, cut after some entries with a word on where the rest are. */
-function listLine(title: string, entries: readonly string[]): string {
-  const shown = entries.slice(0, MAX_LISTED);
-  const more =
-    entries.length > MAX_LISTED ? ` | and ${entries.length - MAX_LISTED} more (aq_search)` : "";
+function listLine(title: string, entries: readonly string[], most: number): string {
+  const shown = entries.slice(0, most);
+  const more = entries.length > most ? ` | and ${entries.length - most} more (aq_search)` : "";
   return `${title} (${entries.length}): ${shown.join(" | ") || "none"}${more}`;
 }
 
@@ -135,10 +131,10 @@ export const projectStatus: ToolDefinition<z.output<typeof StatusParams>> = {
       `project ${quoted(manifest.name)} fps=${projectFrameRate(manifest)} formats=${formats.join(" ")} languages=${languages.join(" ")}`,
       editable,
       `timelines (${timelines.length}): ${timelines.join(" | ")}`,
-      listLine("scenes", scenes),
-      listLine("sounds", sounds),
-      listLine("assets", assets),
-      listLine("code files", code),
+      listLine("scenes", scenes, call.limits.listed),
+      listLine("sounds", sounds, call.limits.listed),
+      listLine("assets", assets, call.limits.listed),
+      listLine("code files", code, call.limits.listed),
       `problems: ${errors} errors, ${warnings} warnings (aq_check_run lists them)`,
     ]);
   },
@@ -192,7 +188,7 @@ export const timelineRead: ToolDefinition<z.output<typeof TimelineParams>> = {
       .filter((clip) => from === undefined || compare(safeEnd(clip), from) > 0)
       .filter((clip) => to === undefined || compare(clipStart(clip), to) < 0)
       .toSorted((a, b) => compare(clipStart(a), clipStart(b)) || a.id.localeCompare(b.id));
-    const limit = args.limit ?? 200;
+    const limit = args.limit ?? call.limits.timeline;
     const joins = Object.entries(timeline.joins ?? {});
     const markers = Object.values(timeline.markers).toSorted((a, b) =>
       compare(parseTime(a.time), parseTime(b.time)),
@@ -429,7 +425,8 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
     const lines: string[] = [];
     const seen: ObjectRef[] = [];
     // Every field of an object, not some of them nor a summary, is reading it whole.
-    const whole = args.fields === undefined && args.response_format !== "concise";
+    const format = args.response_format ?? call.limits.objects;
+    const whole = args.fields === undefined && format !== "concise";
     for (const id of args.ids) {
       const found = findAll(state, id, args.timeline);
       if (found.length === 0) {
@@ -456,7 +453,7 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         const unset = (args.fields ?? []).filter(
           (field) => fieldAt(each.value, field) === undefined,
         );
-        if (args.response_format === "concise") {
+        if (format === "concise") {
           const record = (value ?? {}) as Record<string, unknown>;
           const fields = Object.entries(record).map(([key, item]) =>
             typeof item === "object" && item !== null
@@ -588,7 +585,7 @@ export const search: ToolDefinition<z.output<typeof SearchParams>> = {
       head: items.length === 0 ? ["found nothing"] : [],
       items,
       offset,
-      limit: args.limit ?? 50,
+      limit: args.limit ?? call.limits.search,
       title: (first, last, total) => `found ${first}-${last} of ${total}:`,
       shown: (first, end) =>
         sawAll(
@@ -634,7 +631,7 @@ export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
     // As many lines as fit in one result; a line too long for that comes cut, and is not read.
     const numbered: string[] = [];
     const cut: number[] = [];
-    let room = MAX_RESULT - 500;
+    let room = call.limits.result - 500;
     let last = first - 1;
     for (let number = first; number <= wanted; number += 1) {
       const line = lines[number - 1] ?? "";

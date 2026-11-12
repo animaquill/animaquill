@@ -33,8 +33,8 @@ import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generati
 import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
-import type { TextsUsed } from "@animaquill/tools";
-import type { AnswerEnd, AssistantEntry, ChatEntry, ToolEntry } from "./entries.ts";
+import type { CallSettings, TextsUsed } from "@animaquill/tools";
+import type { AnswerEnd, AssistantEntry, ChatEntry, PackNote, ToolEntry } from "./entries.ts";
 import { withoutKeys } from "./secrets.ts";
 import type { Protocol } from "./services.ts";
 
@@ -83,6 +83,8 @@ export interface FakeAnswer {
  */
 export interface FakeEndpoint {
   readonly fake: (FakeAnswer | ((results: readonly ToolEntry[]) => FakeAnswer))[];
+  /** The name of the model it plays, as answers record it; "fake" without one. */
+  readonly model?: string;
   /** How fast it writes, to have time to stop it. Without it, all at once. */
   readonly charactersPerSecond?: number;
   /** How many requests it got. */
@@ -117,31 +119,19 @@ export interface ToolSpec {
 }
 
 /**
- * How to call the model, as a model pack says (see the design of model packs): every field is what
- * the host has by default when it is left out. A closed list, so that nothing else reaches a request.
+ * How to call the model, as a model pack says: every field is what the host has by default when it
+ * is left out. A closed list, so that nothing else reaches a request. pi 1.5.0 has no way to say
+ * `parallelToolCalls` for any protocol (only Codex sends it, always on), so it changes nothing yet,
+ * and it does not pass the display of thinking on from its simple requests: Anthropic always gets
+ * "summarized", which is what the browser wants.
  */
-export interface CallSettings {
-  readonly reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  /** The most an answer writes; pi adds the budget of thinking to it for models that have one. */
-  readonly maxOutputTokens?: number;
-  readonly temperature?: number;
-  /**
-   * Whether an answer may call several tools. pi 1.5.0 has no way to say so for any protocol (only
-   * Codex sends it, always on), so it changes nothing yet; the tools run one at a time anyway.
-   */
-  readonly parallelToolCalls?: boolean;
-  readonly cache?: "short" | "long";
-  /**
-   * pi 1.5.0 does not pass the display of thinking on from its simple requests: Anthropic always
-   * gets "summarized", which is what the browser wants. Kept for when it does.
-   */
-  readonly anthropic?: { readonly thinkingDisplay?: "summarized" | "omitted" };
-}
+export type { CallSettings };
 
 /** What every answer of a task says it was made with, see `AssistantEntry`. */
 export interface AnswerStamp {
   readonly toolset?: string;
   readonly texts?: TextsUsed;
+  readonly pack?: PackNote;
 }
 
 /** What happens while AI answers, in the order it happens. */
@@ -426,7 +416,7 @@ function fakeProvider(endpoint: FakeEndpoint, results: () => readonly ToolEntry[
   const cps = endpoint.charactersPerSecond;
   const faux = fauxProvider({
     provider: FAKE,
-    models: [{ id: FAKE }],
+    models: [{ id: endpoint.model ?? FAKE }],
     ...(cps !== undefined && { tokensPerSecond: cps, tokenSize: { min: 1, max: 1 } }),
   });
   const step: FauxResponseStep = () => {
@@ -611,6 +601,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             ...(thinking.trim() !== "" && { thinking: thinking.trim() }),
             ...(stamp.toolset !== undefined && { toolset: stamp.toolset }),
             ...(stamp.texts !== undefined && { texts: stamp.texts }),
+            ...(stamp.pack !== undefined && { pack: stamp.pack }),
           },
         });
         thinking = "";

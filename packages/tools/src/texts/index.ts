@@ -63,7 +63,11 @@ export interface TextsUsed {
 
 /** A short hash of a table of texts, the same for the same content. */
 export function hashOfTexts(texts: TextTable): string {
-  const text = JSON.stringify(Object.entries(texts).toSorted(([a], [b]) => (a < b ? -1 : 1)));
+  return hashOf(JSON.stringify(Object.entries(texts).toSorted(([a], [b]) => (a < b ? -1 : 1))));
+}
+
+/** A short hash of a text, the same for the same text. */
+export function hashOf(text: string): string {
   let first = 0xdeadbeef;
   let second = 0x41c6ce57;
   for (let index = 0; index < text.length; index += 1) {

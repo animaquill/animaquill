@@ -11,8 +11,15 @@ function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
   let count = 0;
   const caller = new CallerState();
   const conversation = new Conversation({
-    system: "test",
     newTask: () => `t${++count}`,
+    onAnswer: () => caller.beginAnswer(),
+  });
+  const endpoint: FakeEndpoint = { fake };
+  const target: TaskTarget = {
+    endpoint,
+    key: async () => undefined,
+    maxToolCalls,
+    system: "test",
     tools: (task) =>
       toolSpecsOf(
         createToolset(
@@ -20,10 +27,7 @@ function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
           caller,
         ),
       ),
-    onAnswer: () => caller.beginAnswer(),
-  });
-  const endpoint: FakeEndpoint = { fake };
-  const target: TaskTarget = { endpoint, key: async () => undefined, maxToolCalls };
+  };
   const markers = () => Object.values(store.getState().timelines.main?.markers ?? {});
   return { store, conversation, target, endpoint, markers };
 }

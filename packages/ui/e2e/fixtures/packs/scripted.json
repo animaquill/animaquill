@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "id": "someone/scripted",
+  "name": "Scripted",
+  "version": "0.1.0",
+  "scripts": {
+    "prompt": "index.js"
+  }
+}

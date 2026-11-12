@@ -48,8 +48,28 @@ export interface AssistantEntry {
   readonly thinking?: string;
   /** The version of the tools it had, see `TOOLSET_VERSION`. Older answers had the tools before. */
   readonly toolset?: string;
-  /** The words of the tools and of the system prompt it had. Older answers had the default ones. */
+  /**
+   * The model pack it had: the words of the tools and of the system prompt, see `usedOf`. Older
+   * answers had the default ones.
+   */
   readonly texts?: TextsUsed;
+  /** What people see of that pack. Older answers do not say. */
+  readonly pack?: PackNote;
+}
+
+/**
+ * How a conversation came to use a model pack, as `PackChoiceBy` says, or because the switch for
+ * developers asked for the words to compare with.
+ */
+export type PackBy = "chosen" | "matched" | "fallback" | "comparison";
+
+/** Which model pack an answer had, for people: its name, its author, how it came to be. */
+export interface PackNote {
+  readonly name: string;
+  readonly author?: string;
+  /** It comes with AnimaQuill. */
+  readonly builtin?: true;
+  readonly by: PackBy;
 }
 
 /** What came of one call of a tool, which is what AI gets to read. */
@@ -76,6 +96,19 @@ const isTextsUsed = (value: unknown): value is TextsUsed =>
   typeof value.version === "string" &&
   typeof value.hash === "string";
 
+const BYS: readonly PackBy[] = ["chosen", "matched", "fallback", "comparison"];
+
+function readPack(value: unknown): PackNote | undefined {
+  if (!isRecord(value) || typeof value.name !== "string") return undefined;
+  if (!BYS.includes(value.by as PackBy)) return undefined;
+  return {
+    name: value.name,
+    ...(typeof value.author === "string" && { author: value.author }),
+    ...(value.builtin === true && { builtin: true }),
+    by: value.by as PackBy,
+  };
+}
+
 const ENDS: readonly AnswerEnd[] = ["done", "tools", "length", "stopped", "failed"];
 
 function readCall(value: unknown): ToolCallEntry | undefined {
@@ -101,7 +134,9 @@ export function readEntry(value: unknown): ChatEntry | undefined {
     return { role, call, name, ok, text, at, ...(isRecord(data) && { data }) };
   }
   if (role === "assistant") {
-    const { text, calls, end, error, service, protocol, model, thinking, toolset, texts } = value;
+    const { text, calls, end, error, service, protocol, model, thinking, toolset, texts, pack } =
+      value;
+    const note = readPack(pack);
     if (typeof text !== "string" || !Array.isArray(calls)) return undefined;
     if (!ENDS.includes(end as AnswerEnd)) return undefined;
     if (typeof service !== "string" || typeof protocol !== "string") return undefined;
@@ -121,6 +156,7 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       ...(typeof thinking === "string" && thinking !== "" && { thinking }),
       ...(typeof toolset === "string" && { toolset }),
       ...(isTextsUsed(texts) && { texts }),
+      ...(note && { pack: note }),
     };
   }
   return undefined;

@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "id": "lin/deepseek-steady",
+  "name": "DeepSeek steady",
+  "version": "1.3.0",
+  "description": "Smaller batches and plainer parameter words for DeepSeek models.",
+  "author": {
+    "name": "Lin",
+    "url": "https://github.com/lin"
+  },
+  "license": "MIT",
+  "models": ["deepseek-chat*", "deepseek-reasoner*"],
+  "call": {
+    "reasoning": "medium",
+    "maxOutputTokens": 16000
+  },
+  "results": "concise",
+  "variants": [
+    {
+      "models": ["deepseek-reasoner*"],
+      "call": {
+        "reasoning": "high"
+      }
+    }
+  ],
+  "system": {
+    "work": "How to work\nRead before you change. Up to 10 operations a batch.",
+    "rules": {
+      "append": "- If a call fails twice the same way, stop and say why."
+    }
+  },
+  "tools": {
+    "aq_timeline_read": {
+      "params": {
+        "limit": "How many clips to list, 1 to {max}. Leave it out for {default}."
+      }
+    }
+  },
+  "ops": {
+    "clip.move": {
+      "summary": "move clips to a new start time or another track"
+    }
+  },
+  "params": {
+    "start": "Start time in seconds, written as a string, for example \"12.5\"."
+  }
+}

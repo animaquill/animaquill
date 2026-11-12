@@ -44,22 +44,26 @@ export interface ConversationSnapshot {
   readonly last: TaskOutcome | undefined;
 }
 
-/** Where a task goes: the service, its key, and how far AI may go. */
+/**
+ * Where a task goes and what goes with it: the service, its key, how far AI may go, and what the
+ * model pack for its model gives (the system prompt, the tools, how to call the model). Each task
+ * has its own: the model can change between two messages, and with it the pack.
+ */
 export interface TaskTarget {
   readonly endpoint: Endpoint | FakeEndpoint;
   readonly key: () => Promise<string | undefined>;
   readonly maxToolCalls: number;
-  /** How to call its model, see `callSettingsFor`. */
+  readonly system: string;
+  /** The tools of a task, which change the project as that task. */
+  readonly tools: (task: string) => readonly ToolSpec[];
+  /** How to call its model, as its model pack says. */
   readonly call?: CallSettings;
+  /** What its answers are recorded as made with. */
+  readonly stamp?: AnswerStamp;
 }
 
 export interface ConversationOptions {
   readonly entries?: readonly ChatEntry[];
-  readonly system: string;
-  /** The tools of a task, which change the project as that task. */
-  readonly tools: (task: string) => readonly ToolSpec[];
-  /** What answers are recorded as made with. */
-  readonly stamp?: AnswerStamp;
   /** A new answer of the model begins, before any of its tools run. */
   readonly onAnswer?: () => void;
   /** A new name for a task, which no other task of this project has. */
@@ -156,10 +160,10 @@ export class Conversation {
       const result = await runTask({
         endpoint: target.endpoint,
         key: target.key,
-        system: this.#options.system,
-        tools: this.#options.tools(task),
+        system: target.system,
+        tools: target.tools(task),
         ...(target.call && { call: target.call }),
-        ...(this.#options.stamp && { stamp: this.#options.stamp }),
+        ...(target.stamp && { stamp: target.stamp }),
         ...(this.#options.onAnswer && { onAnswer: this.#options.onAnswer }),
         history,
         prompt: text,

@@ -283,9 +283,15 @@ export interface AiSettings {
   /**
    * New conversations use the words of the tools as they were before 2026.2, which also said when
    * to call each tool: to compare the two with real models. Descriptions and the system prompt
-   * only; what tools give back stays.
+   * only; what tools give back stays. It is the model pack "animaquill/eval-directive", which only
+   * this switch gives.
    */
   readonly comparisonTexts?: true;
+  /**
+   * The model pack people chose for a model, by the name of the model as services have it: for every
+   * service that has it. A model without one gets the pack that is for it, see `choosePack`.
+   */
+  readonly packFor?: Readonly<Record<string, string>>;
 }
 
 export const DEFAULT_MAX_TOOL_CALLS = 50;
@@ -324,12 +330,24 @@ export function readAiSettings(value: unknown): AiSettings | undefined {
     typeof limit === "number" && Number.isInteger(limit)
       ? Math.min(TOOL_CALL_LIMITS.max, Math.max(TOOL_CALL_LIMITS.min, limit))
       : DEFAULT_MAX_TOOL_CALLS;
+  const packFor = readPackFor(value.packFor);
   return {
     services,
     current,
     maxToolCalls,
     ...(value.comparisonTexts === true && { comparisonTexts: true }),
+    ...(packFor && { packFor }),
   };
+}
+
+/** People's choices of packs, as far as they are names of models and ids of packs. */
+function readPackFor(value: unknown): Readonly<Record<string, string>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).filter(
+    ([model, pack]) =>
+      model !== "" && typeof pack === "string" && /^[a-z0-9-]+\/[a-z0-9-]+$/.test(pack),
+  );
+  return entries.length > 0 ? Object.fromEntries(entries as [string, string][]) : undefined;
 }
 
 /** Only https, and plain http for this computer and the local network, where servers of one's own are. */

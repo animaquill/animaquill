@@ -17,7 +17,15 @@ export {
   hashOfTexts,
   systemPromptOf,
 } from "./texts/index.ts";
-export { DEFAULT_TEXTS_USED, TOOLSET_VERSION, WRITE_TOOLS, createToolset } from "./toolset.ts";
+export {
+  DEFAULT_TEXTS_USED,
+  TOOLSET_VERSION,
+  WRITE_TOOLS,
+  createToolset,
+  textsAt,
+  type ToolsetOptions,
+} from "./toolset.ts";
+export * from "./packs/index.ts";
 export type {
   JsonSchema,
   SelectionFacts,

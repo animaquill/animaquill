@@ -76,7 +76,7 @@
      }
     },
     "response_format": {
-     "description": "\"detailed\" (the default) gives every field as JSON; \"concise\" one line per object and its top-level fields.",
+     "description": "\"detailed\" gives every field as JSON, \"concise\" one line per object and its top-level fields; \"detailed\" by default.",
      "type": "string",
      "enum": [
       "detailed",
