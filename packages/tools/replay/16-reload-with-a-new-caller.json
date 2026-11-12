@@ -1,0 +1,96 @@
+{
+  "about": "A reload loses what the tools kept of the conversation: a change of what was not read again is refused, not written over what the user did.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "user": [
+        {
+          "type": "clip.update",
+          "params": {
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "用户改的"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "reopen": true,
+      "newCaller": true
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "AI, from before"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "not-read",
+        "lines": ["you have not read clip_title \"用户改的\" (timeline main) in this conversation"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "id": "marker_new",
+            "time": "2"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_object_read",
+      "args": {
+        "ids": ["clip_title"]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "AI, read again"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["AI, read again", "marker_new"]
+    }
+  }
+}

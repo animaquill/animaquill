@@ -86,6 +86,32 @@ function operationPage(op: Operation): string {
   ].join("\n");
 }
 
+/** What the sections of the two documents are about, in English, for the table of contents and search. */
+const ENGLISH: Readonly<Record<string, string>> = {
+  "format/目录结构": "folder layout",
+  "format/通用规则": "general rules: times, ids, world coordinates",
+  "format/animaquill.json": "the project manifest",
+  "format/时间轴":
+    "timelines: sections, tracks, clips, transitions, joins, effects, properties and keyframes",
+  "format/差异": "versions: overrides by language and format",
+  "format/场景和声音": "scenes and sounds",
+  "format/素材": "assets",
+  "format/字符串表": "string tables, for translations",
+  "format/库": "libraries",
+  "format/批注": "notes",
+  "format/校验和问题": "checks and problems",
+  "format/导出和导入": "export and import",
+  "format/版本和迁移": "format versions and migration",
+  "scene-runtime/场景在哪里跑": "where scenes run",
+  "scene-runtime/aq": "the aq object of scene code",
+  "scene-runtime/可以打关键帧的对象": "objects whose properties have keyframes: registering them",
+  "scene-runtime/时间": "time in scene code",
+  "scene-runtime/做不到确定的事": "what cannot be the same every time",
+  "scene-runtime/改了代码之后": "after code changes",
+  "scene-runtime/限制": "limits",
+  "scene-runtime/声音": "sound code",
+};
+
 let pages: readonly Page[] | undefined;
 
 /** Every page, the operations first. */
@@ -100,12 +126,12 @@ async function allPages(): Promise<readonly Page[]> {
     })),
     ...sectionsOf(PROJECT_FORMAT, "format").map(({ topic, title, body }) => ({
       topic,
-      title: `project format: ${title}`,
+      title: `project format: ${ENGLISH[topic] ?? ""} (${title})`,
       text: () => body,
     })),
     ...sectionsOf(SCENE_RUNTIME, "scene-runtime").map(({ topic, title, body }) => ({
       topic,
-      title: `scene runtime: ${title}`,
+      title: `scene runtime: ${ENGLISH[topic] ?? ""} (${title})`,
       text: () => body,
     })),
   ];
@@ -188,7 +214,10 @@ export const guide: ToolDefinition<z.output<typeof GuideParams>> = {
       return answer(call, found.length > 0 ? found : ["nothing found: try fewer or other words"]);
     }
     return answer(call, [
-      fitted(["topics:", ...all.map((page) => `${page.topic} — ${page.title}`)]),
+      fitted([
+        "topics (the format and scene runtime pages are in Chinese; search them with Chinese words too, such as 关键帧 for keyframe):",
+        ...all.map((page) => `${page.topic} — ${page.title}`),
+      ]),
     ]);
   },
 };

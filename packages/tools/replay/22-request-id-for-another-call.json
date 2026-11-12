@@ -1,0 +1,51 @@
+{
+  "about": "A request_id is for one call: sent with other parameters, it is refused rather than answered with another result.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "request_id": "r1",
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "7",
+            "name": "Once"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "request_id": "r1",
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "8",
+            "name": "Twice"
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid-params",
+        "lines": ["request_id \"r1\" was used for a different call"]
+      }
+    }
+  ],
+  "end": {
+    "absent": {
+      "timelines/main/timeline.json": ["Twice"]
+    }
+  }
+}

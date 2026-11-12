@@ -40,7 +40,7 @@
       },
       "expect": {
         "error": "text-not-unique",
-        "lines": ["on lines 1, 1"]
+        "lines": ["on line 1 (6 times)"]
       }
     },
     {

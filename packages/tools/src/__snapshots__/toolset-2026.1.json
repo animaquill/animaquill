@@ -20,10 +20,12 @@
     },
     "from": {
      "type": "string",
+     "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$",
      "description": "Only clips that end after this moment. Seconds as a string, such as \"12.5\"."
     },
     "to": {
      "type": "string",
+     "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$",
      "description": "Only clips that start before this moment. Seconds as a string, such as \"12.5\"."
     },
     "tracks": {
@@ -137,7 +139,7 @@
  },
  {
   "name": "aq_file_read",
-  "description": "Read a code file of the project: the HTML, CSS and JavaScript of a scene (under scenes/<id>/), the code of a sound (under sounds/<id>/), or shared code (under code/). Lines come numbered as \"   12→text\"; the numbers are not part of the file, so leave them out when you copy text into aq_file_edit. Long files come in parts: pass offset (the first line) and limit (how many lines). Read a file before you replace it with aq_file_write, which requires it, and before you edit it, so that you copy its exact text. Project settings, timelines, scenes' manifests and assets are not files you read here: use aq_object_read for them.",
+  "description": "Read a code file of the project: the HTML, CSS and JavaScript of a scene (under scenes/<id>/), the code of a sound (under sounds/<id>/), or shared code (under code/). Lines come numbered as \"   12→text\"; the numbers are not part of the file, so leave them out when you copy text into aq_file_edit. Long files come in parts: pass offset (the first line) and limit (how many lines). Read all of a file before you replace it with aq_file_write, which requires it, and before you edit it, so that you copy its exact text. Project settings, timelines, scenes' manifests and assets are not files you read here: use aq_object_read for them.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -300,7 +302,7 @@
           "const": "scene.add"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "manifest": {
@@ -385,7 +387,7 @@
           "const": "sound.add"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "manifest": {
@@ -567,7 +569,7 @@
           "type": "string"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "duration": {
@@ -653,7 +655,7 @@
           "type": "string"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "kind": {
@@ -890,7 +892,7 @@
           }
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "overlap": {
@@ -1101,7 +1103,7 @@
           "type": "string"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "from": {
@@ -1145,7 +1147,7 @@
           "type": "string"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "type": {
@@ -1584,7 +1586,7 @@
           "type": "string"
          },
          "id": {
-          "description": "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+          "description": "New id, to use later in the batch; optional.",
           "type": "string"
          },
          "time": {
@@ -2742,7 +2744,7 @@
      "type": "boolean"
     },
     "base_revision": {
-     "description": "Hardly ever needed: the revision a result began with, to check the whole batch against it. The tools keep track of what you read for you.",
+     "description": "Hardly ever needed: a revision from an earlier result, to also refuse changes of anything changed since then. It never lets through a change the tools would refuse.",
      "type": "string"
     },
     "request_id": {
@@ -2810,7 +2812,7 @@
  },
  {
   "name": "aq_file_write",
-  "description": "Create a code file, or replace all of one: a new file of a scene, sound or shared code, or a rewrite of most of a file. Paths go under scenes/<scene id>/, sounds/<sound id>/ or code/; the scene or sound must exist (create it with scene.add or sound.add in aq_edit, which takes its first files too). To replace an existing file you must have read it with aq_file_read in this conversation, and the call fails with file-changed if somebody changed it since: read it again, then write. For small changes use aq_file_edit, which keeps the user's edits elsewhere in the file. The result includes a syntax check.",
+  "description": "Create a code file, or replace all of one: a new file of a scene, sound or shared code, or a rewrite of most of a file. Paths go under scenes/<scene id>/, sounds/<sound id>/ or code/; the scene or sound must exist (create it with scene.add or sound.add in aq_edit, which takes its first files too). To replace an existing file you must have read all its lines with aq_file_read in this conversation, and the call fails with file-changed if somebody changed it since: read it again, then write. For small changes use aq_file_edit, which keeps the user's edits elsewhere in the file. The result includes a syntax check.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -2823,7 +2825,7 @@
      "description": "All of its text."
     },
     "base_revision": {
-     "description": "Hardly ever needed: the revision a result began with, instead of having read the file in this conversation.",
+     "description": "Hardly ever needed: a revision from an earlier result, to also refuse the write if the file changed since then. The file still has to be read first.",
      "type": "string"
     },
     "request_id": {

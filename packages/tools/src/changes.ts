@@ -7,7 +7,7 @@ import {
   type ObjectRef,
   type ProjectState,
 } from "@animaquill/core";
-import { fieldOf, nameOf, objectText } from "./context.ts";
+import { fieldOf, nameOf, objectText, pathOfObject } from "./context.ts";
 import { clipLine, transitionText } from "./lines.ts";
 
 /** What a batch did to one object, for the summary of a turn and for AI. */
@@ -29,27 +29,6 @@ export interface ObjectChange {
 
 const MAX_TEXT = 40;
 
-/** Where an object sits in the state. */
-export function pathOfObject(ref: ObjectRef): readonly string[] {
-  const { kind, id, timeline = "" } = ref;
-  switch (kind) {
-    case "project":
-      return ["manifest"];
-    case "timeline":
-      return ["timelines", id];
-    case "scene":
-      return ["scenes", id];
-    case "sound":
-      return ["sounds", id];
-    case "asset":
-      return ["assets", id];
-    case "file":
-      return ["files", id];
-    default:
-      return ["timelines", timeline, `${kind}s`, id];
-  }
-}
-
 function valueAt(state: ProjectState, path: readonly string[]): unknown {
   let node: unknown = state;
   for (const key of path) {
@@ -59,6 +38,9 @@ function valueAt(state: ProjectState, path: readonly string[]): unknown {
   }
   return node;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** A value in a few characters. */
 export function shortText(value: unknown, field = ""): string {
@@ -73,10 +55,11 @@ export function shortText(value: unknown, field = ""): string {
 
 /** How many lines came and went between two texts, as a diff counts them. */
 function lineChanges(before: string, after: string) {
+  const linesOf = (text: string) => (text === "" ? [] : text.split("\n"));
   const counts = new Map<string, number>();
-  for (const line of before.split("\n")) counts.set(line, (counts.get(line) ?? 0) + 1);
+  for (const line of linesOf(before)) counts.set(line, (counts.get(line) ?? 0) + 1);
   let added = 0;
-  for (const line of after.split("\n")) {
+  for (const line of linesOf(after)) {
     const left = counts.get(line) ?? 0;
     if (left > 0) counts.set(line, left - 1);
     else added += 1;
@@ -121,16 +104,30 @@ export function describeChanges(
     }
     if (was === undefined && is !== undefined) return { ...base, change: "added" };
     if (is === undefined) return { ...base, change: "removed" };
-    const changed = [...fields].toSorted().map((field) => {
+    const changed = [...fields].toSorted().flatMap((field) => {
       const where =
         field.includes(".") && /^(properties|effects)\./.test(field)
           ? [...at, field.slice(0, field.indexOf(".")), field.slice(field.indexOf(".") + 1)]
           : [...at, field];
-      return {
-        path: field,
-        before: shortText(valueAt(before, where), field),
-        after: shortText(valueAt(after, where), field),
-      };
+      const old = valueAt(before, where);
+      const now = valueAt(after, where);
+      // Of two records, such as an effect, the fields that differ, so that a change shows.
+      if (
+        isRecord(old) &&
+        isRecord(now) &&
+        !isAnimation(old as never) &&
+        !isAnimation(now as never)
+      ) {
+        const keys = [...new Set([...Object.keys(old), ...Object.keys(now)])].toSorted();
+        return keys
+          .filter((key) => JSON.stringify(old[key]) !== JSON.stringify(now[key]))
+          .map((key) => ({
+            path: `${field}.${key}`,
+            before: shortText(old[key], key),
+            after: shortText(now[key], key),
+          }));
+      }
+      return [{ path: field, before: shortText(old, field), after: shortText(now, field) }];
     });
     return { ...base, change: "changed", fields: changed };
   });

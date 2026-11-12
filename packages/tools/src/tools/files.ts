@@ -8,6 +8,7 @@ import { syntaxOf } from "../syntax.ts";
 import type { ToolDefinition } from "../tool.ts";
 import type { ToolResult } from "../types.ts";
 import { isNoCodeFile, textHash } from "./read.ts";
+import { readWhole } from "../caller.ts";
 
 /** How many changed lines a result shows, with what is around them. */
 const MAX_SHOWN = 30;
@@ -37,15 +38,31 @@ const missing = (state: ProjectState, path: string): ToolResult => {
   );
 };
 
+const linesWord = (count: number) => `${count} line${count === 1 ? "" : "s"}`;
+
 /** Writes a file as one step, and what the result says about it. */
-function write(call: Call, path: string, text: string, base?: string): ToolResult | undefined {
+function write(
+  call: Call,
+  path: string,
+  text: string,
+  options: { readonly base?: string | undefined; readonly whole: boolean },
+): ToolResult | undefined {
+  const { base, whole } = options;
   const { store, host } = call;
   const result = store.execute(
     { type: "file.write", params: { path, text } },
     { origin: host.origin(), ...(base !== undefined && { baseRevision: base }) },
   );
   if (result.ok) {
-    call.caller.files.set(path, { revision: store.revisionId, hash: textHash(text) });
+    // What the caller wrote all of, it knows all of; what it changed parts of, as it knew it before.
+    const lines = text.split("\n").length;
+    call.caller.readFile(
+      path,
+      store.revisionId,
+      textHash(text),
+      lines,
+      whole ? [1, lines] : undefined,
+    );
     call.caller.saw({ kind: "file", id: path }, store.revisionId);
     return undefined;
   }
@@ -133,12 +150,16 @@ export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
     const state = call.store.getState();
     const before = entryOf(state.files, args.path);
     if (before === undefined) return missing(state, args.path);
-    let text = before;
+    // A file with Windows line endings: what the model copies has none, so match without them.
+    const crlf = before.includes("\r\n");
+    let text = crlf ? before.replaceAll("\r\n", "\n") : before;
     let count = 0;
     for (const [
       index,
-      { old_text: wanted, new_text: replacement, replace_all: all },
+      { old_text: given, new_text: written, replace_all: all },
     ] of args.edits.entries()) {
+      const wanted = crlf ? given.replaceAll("\r\n", "\n") : given;
+      const replacement = crlf ? written.replaceAll("\r\n", "\n") : written;
       const where = `edits[${index}]`;
       if (wanted === replacement) {
         return failed(
@@ -157,21 +178,33 @@ export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
         );
       }
       if (places.length > 1 && !all) {
-        const lines = places.map((at) => text.slice(0, at).split("\n").length);
+        const lines = new Map<number, number>();
+        for (const at of places) {
+          const line = text.slice(0, at).split("\n").length;
+          lines.set(line, (lines.get(line) ?? 0) + 1);
+        }
+        const lineList = [...lines].map(([line, times]) =>
+          times > 1 ? `${line} (${times} times)` : String(line),
+        );
         return failed(
-          `error text-not-unique in ${where}: old_text is there ${places.length} times, on lines ${lines.join(", ")}. Add lines around it to make it unique, or set replace_all. Nothing was written.`,
+          `error text-not-unique in ${where}: old_text is there ${places.length} times, on line${lines.size > 1 ? "s" : ""} ${lineList.join(", ")}. Add text around it to make it unique, or set replace_all. Nothing was written.`,
         );
       }
       count += places.length;
       text = all ? text.split(wanted).join(replacement) : text.replace(wanted, () => replacement);
     }
-    const refused = write(call, args.path, text);
+    if (crlf) text = text.replaceAll("\n", "\r\n");
+    const seen = call.caller.files.get(args.path);
+    const lines = before.split("\n").length;
+    const refused = write(call, args.path, text, {
+      whole: readWhole(seen, textHash(before), lines),
+    });
     if (refused) return refused;
     const changes = describeChanges(state, call.store.getState(), [["files", args.path]]);
     return answer(
       call,
       [
-        `edited ${args.path}: ${count} replacement${count === 1 ? "" : "s"}, now ${text.split("\n").length} lines`,
+        `edited ${args.path}: ${count} replacement${count === 1 ? "" : "s"}, now ${linesWord(text.split("\n").length)}`,
         ...changedLines(before, text),
         `syntax: ${await syntaxOf(args.path, text)}`,
         RUNTIME,
@@ -192,7 +225,7 @@ const FileWriteParams = z.strictObject({
     .string()
     .optional()
     .describe(
-      "Hardly ever needed: the revision a result began with, instead of having read the file in this conversation.",
+      "Hardly ever needed: a revision from an earlier result, to also refuse the write if the file changed since then. The file still has to be read first.",
     ),
   request_id: request,
 });
@@ -225,40 +258,50 @@ export const fileWrite: ToolDefinition<z.output<typeof FileWriteParams>> = {
   name: "aq_file_write",
   title: "Write a code file",
   description:
-    "Create a code file, or replace all of one: a new file of a scene, sound or shared code, or a rewrite of most of a file. Paths go under scenes/<scene id>/, sounds/<sound id>/ or code/; the scene or sound must exist (create it with scene.add or sound.add in aq_edit, which takes its first files too). To replace an existing file you must have read it with aq_file_read in this conversation, and the call fails with file-changed if somebody changed it since: read it again, then write. For small changes use aq_file_edit, which keeps the user's edits elsewhere in the file. The result includes a syntax check.",
+    "Create a code file, or replace all of one: a new file of a scene, sound or shared code, or a rewrite of most of a file. Paths go under scenes/<scene id>/, sounds/<sound id>/ or code/; the scene or sound must exist (create it with scene.add or sound.add in aq_edit, which takes its first files too). To replace an existing file you must have read all its lines with aq_file_read in this conversation, and the call fails with file-changed if somebody changed it since: read it again, then write. For small changes use aq_file_edit, which keeps the user's edits elsewhere in the file. The result includes a syntax check.",
   params: FileWriteParams,
   writes: true,
   run: async (call, args) => {
     const state = call.store.getState();
     const { path, text } = args;
+    const refused = pathProblem(state, path);
+    if (refused) return refused;
     if (isNoCodeFile(state, path)) {
       return failed(
         `error path-not-allowed: ${path} is a document of the project or a file of an asset, not code. Nothing was written.`,
       );
     }
-    const refused = pathProblem(state, path);
-    if (refused) return refused;
     const before = entryOf(state.files, path);
-    if (before !== undefined && args.base_revision === undefined) {
+    if (before !== undefined) {
+      // Replacing a whole file needs all of it read, of the text it has now: a revision is no read.
       const seen = call.caller.files.get(path);
+      const hash = textHash(before);
+      const count = before.split("\n").length;
       if (!seen) {
         return failed(
           `error file-not-read: ${path} exists, and you have not read it in this conversation: read it with aq_file_read first, or change parts of it with aq_file_edit. Nothing was written.`,
         );
       }
-      if (seen.hash !== textHash(before)) {
+      if (seen.hash !== hash) {
         return failed(
           `error file-changed: ${path} changed since you read it, maybe by the user: read it again with aq_file_read, then decide. Nothing was written.`,
         );
       }
+      if (!readWhole(seen, hash, count)) {
+        const read = seen.ranges.map(([from, to]) => `${from}-${to}`).join(", ") || "none";
+        const next = (seen.ranges[0]?.[0] ?? 1) > 1 ? 1 : (seen.ranges[0]?.[1] ?? 0) + 1;
+        return failed(
+          `error file-not-read: you have read lines ${read} of ${path} (${linesWord(count)}). Read the rest with aq_file_read (offset ${next}) before you replace the whole file, or change parts of it with aq_file_edit. Nothing was written.`,
+        );
+      }
     }
-    const failedWrite = write(call, path, text, args.base_revision);
+    const failedWrite = write(call, path, text, { base: args.base_revision, whole: true });
     if (failedWrite) return failedWrite;
     const lines = text.split("\n").length;
     const what =
       before === undefined
-        ? `new, ${lines} lines`
-        : `replaced, ${before.split("\n").length} → ${lines} lines`;
+        ? `new, ${linesWord(lines)}`
+        : `replaced, ${before.split("\n").length} → ${linesWord(lines)}`;
     const changes = describeChanges(state, call.store.getState(), [["files", path]]);
     return answer(
       call,

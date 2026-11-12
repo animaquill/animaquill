@@ -1,0 +1,118 @@
+{
+  "about": "Each message of the user is a task of its own: what the conversation did before is its own, and what the user undid of it is the user's.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "user": [
+        {
+          "type": "clip.update",
+          "params": {
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "用户改的"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "hidden": true
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "message": true,
+      "task": "t2"
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "hidden": false
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "absent": ["another AI task"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "AI"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "conflict",
+        "lines": ["error conflict: the user changed clip_title \"用户改的\" (name)"],
+        "absent": ["hidden", "another AI task"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_logo",
+            "changes": {
+              "name": "Logo"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "undoTask": "t2"
+    },
+    {
+      "message": true,
+      "task": "t3"
+    },
+    {
+      "tool": "aq_project_status",
+      "expect": {
+        "ok": true,
+        "lines": ["others: since your last call the user undid your earlier changes of"]
+      }
+    }
+  ]
+}

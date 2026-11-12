@@ -23,6 +23,8 @@ export function openSample(): ProjectStore {
 
 /** A host as a command line would be, around one project. */
 export interface TestHost extends ToolHost {
+  /** The task the changes are made as: in the browser, each message is one. */
+  task: string;
   selected: SelectionFacts | undefined;
   open(store: ProjectStore | undefined): void;
 }
@@ -31,9 +33,10 @@ export function testHost(store: ProjectStore | undefined = openSample(), task = 
   let open: ProjectStore | undefined = store;
   const problems = new ProblemSet();
   const host: TestHost = {
+    task,
     selected: undefined,
     store: () => open,
-    origin: () => aiTask(task),
+    origin: () => aiTask(host.task),
     selection: () => host.selected,
     describe: (_clip: ClipState): ClipDescription | undefined => undefined,
     problems: () => {

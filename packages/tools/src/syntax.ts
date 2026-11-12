@@ -13,7 +13,7 @@ function scriptsOf(
   for (const match of html.matchAll(pattern)) {
     const attributes = (match[1] ?? "").toLowerCase();
     if (/\bsrc\s*=/.test(attributes)) continue;
-    const type = /\btype\s*=\s*["']?([^"'\s>]+)/.exec(attributes)?.[1];
+    const type = /(?:^|\s)type\s*=\s*["']?([^"'\s>]+)/.exec(attributes)?.[1];
     const isScript = type === undefined || type === "module" || type.includes("javascript");
     if (!isScript) continue;
     const start = (match.index ?? 0) + match[0].indexOf(">") + 1;
@@ -27,16 +27,32 @@ function scriptsOf(
 export async function syntaxOf(path: string, text: string): Promise<string> {
   const isScript = /\.m?js$/.test(path);
   const isPage = /\.html?$/.test(path);
-  if (!isScript && !isPage) return "not checked (not JavaScript or HTML)";
+  if (path.endsWith(".json")) {
+    try {
+      JSON.parse(text);
+      return "ok";
+    } catch (error) {
+      return `error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  if (!isScript && !isPage) return "not checked (not JavaScript, HTML or JSON)";
   const { parse } = await import("acorn");
   const parts = isScript ? [{ code: text, line: 1, module: true }] : scriptsOf(text);
   for (const part of parts) {
+    const as = (sourceType: "module" | "script") =>
+      parse(part.code, { ecmaVersion: "latest", sourceType, allowHashBang: true });
     try {
-      parse(part.code, {
-        ecmaVersion: "latest",
-        sourceType: part.module ? "module" : "script",
-        allowHashBang: true,
-      });
+      try {
+        as(part.module ? "module" : "script");
+      } catch (error) {
+        // A .js file can be an old script, which is no module: it is fine as either.
+        if (!isScript) throw error;
+        try {
+          as("script");
+        } catch {
+          throw error;
+        }
+      }
     } catch (error) {
       const { loc, message } = error as {
         loc?: { line: number; column: number };

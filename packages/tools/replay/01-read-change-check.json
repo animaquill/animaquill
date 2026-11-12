@@ -37,7 +37,7 @@
       },
       "expect": {
         "ok": true,
-        "lines": ["done: 1 operations as one step", "clip_idea \"样片：换个开场\": start 10→12"]
+        "lines": ["done: 1 operation as one step", "clip_idea \"样片：换个开场\": start 10→12"]
       }
     },
     {

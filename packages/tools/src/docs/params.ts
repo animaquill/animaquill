@@ -13,7 +13,7 @@ export const PARAM_WORDS: Readonly<Record<string, string>> = {
   scene: "Scene id (aq_project_status).",
   sound: "Sound id (aq_project_status).",
   asset: "Asset id (aq_project_status).",
-  id: "Id for the new object; leave out for a new one, or give one to use later in the batch.",
+  id: "New id, to use later in the batch; optional.",
   name: "Name people see.",
   fps: 'Frames per second, such as "30" or "30000/1001".',
   changes: "Fields to change; the rest stay.",

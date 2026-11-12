@@ -5,6 +5,7 @@ import type {
   InvalidValue,
   ParamIssue,
 } from "@animaquill/core";
+import { BUILT_IN_TRANSITIONS, EFFECT_TYPES } from "@animaquill/schema";
 import { englishRule } from "./issues.ts";
 
 /**
@@ -69,7 +70,7 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "renamed-twice": ({ path }) => `The same property cannot be renamed twice in one step: ${path}.`,
   "rename-into-one": ({ path }) => `Two properties cannot be renamed to the same path: ${path}.`,
   "scale-numbers-only": () => "Only numbers can be scaled or offset.",
-  "track-settings": ({ trackKind }) => `A ${trackKind} track does not have these settings.`,
+  "track-settings": ({ trackKind }) => `${an(trackKind, true)} track does not have these settings.`,
   "moved-twice": ({ clip }) => `The same clip cannot be moved twice in one step: ${clip}.`,
   "end-before-start": ({ clip }) => `The end of clip ${clip} has to come after its start.`,
   "cut-outside": ({ clip, at }) => `${at} is not inside clip ${clip}: a cut has to be within it.`,
@@ -80,7 +81,7 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "effect-backwards": () => "The start of an effect has to come before its end.",
   "replace-same": ({ kind, id }) => `The ${kind} to use instead is the same one: ${id}.`,
   "source-kind": ({ clip, sourceKind, asset, version }) =>
-    `Clip ${clip}${version === undefined ? "" : ` in version ${version}`} is a ${sourceKind} clip and cannot use asset ${asset}.`,
+    `Clip ${clip}${version === undefined ? "" : ` in version ${version}`} is ${an(sourceKind)} clip and cannot use asset ${asset}.`,
   "join-one-clip": ({ clip }) => `A join goes between two different clips, not ${clip} and itself.`,
   "join-incomplete": ({ join }) => `Join ${join} is incomplete: it can only be removed.`,
   "sound-entry": ({ entry }) =>
@@ -100,7 +101,8 @@ function paramIssue({ path, issue, message, keys }: ParamIssue): string {
 }
 
 const MISSING_TRANSITION: Readonly<Record<string, (why: Record<string, string>) => string>> = {
-  unknown: ({ type }) => `There is no transition ${type}.`,
+  unknown: ({ type }) =>
+    `There is no transition ${type}. Built-in transitions: ${Object.keys(BUILT_IN_TRANSITIONS.picture).join(", ")} for pictures; ${Object.keys(BUILT_IN_TRANSITIONS.sound).join(", ") || "none"} for sound.`,
   plugin: ({ type }) => `Transition ${type} comes from a plugin that is not installed.`,
   project: ({ transition }) => `Transitions of the project (${transition}) cannot be used yet.`,
   library: ({ library, resource }) =>
@@ -110,7 +112,8 @@ const MISSING_TRANSITION: Readonly<Record<string, (why: Record<string, string>) 
 };
 
 const MISSING_EFFECT: Readonly<Record<string, (why: Record<string, string>) => string>> = {
-  unknown: ({ type }) => `There is no effect ${type}.`,
+  unknown: ({ type }) =>
+    `There is no effect ${type}. Built-in effects: ${EFFECT_TYPES.join(", ")}.`,
   plugin: ({ type }) => `Effect ${type} comes from a plugin that is not installed.`,
   media: ({ type, media }) => `Effect ${type} does not work on ${media}.`,
 };
@@ -147,10 +150,10 @@ export const FAILURE_TEXTS: Texts = {
     `The id ${id} is taken by a ${word(by)}${by === kind ? "" : ` (sections, tracks and clips of a timeline share their ids)`}. Use another id, or leave it out to get a new one.`,
   "wrong-track": ({ trackKind, holds, sourceKind }) =>
     holds === "clip"
-      ? `A ${trackKind} track cannot hold ${sourceKind ? `a ${sourceKind} clip` : "this clip"}: ${trackFor(sourceKind)}`
+      ? `${an(trackKind, true)} track cannot hold ${sourceKind ? `${an(sourceKind)} clip` : "this clip"}: ${trackFor(sourceKind)}`
       : holds === "effect"
         ? `Only clips on video tracks can have effects so far, not on a ${trackKind} track.`
-        : `A ${trackKind} track cannot have joins; joins go between clips on video and audio tracks.`,
+        : `${an(trackKind, true)} track cannot have joins; joins go between clips on video and audio tracks.`,
   overlap: ({ clips, moved }) =>
     moved
       ? `Clips would land on the same place: ${clips.map((clip) => clip.id).join(", ")}. Give them starts that do not overlap.`
@@ -267,6 +270,12 @@ export function operationFailureText(failure: CommandFailure, names: readonly st
         : `operations[0] ${index === 2 ? "and" : "to"} [${index - 1}] were fine; `;
   const after = index < names.length - 1 ? `; operations after [${index}] were not checked` : "";
   return `error ${aiCode(failure.code)} in operations[${index}] (${name}): ${failureWords(failure)}\n${fine}nothing was written${after}`;
+}
+
+/** A word with its article: "an audio", "a video". */
+function an(noun: string, first = false): string {
+  const article = /^[aeiou]/i.test(noun) ? "an" : "a";
+  return `${first ? article[0]?.toUpperCase() + article.slice(1) : article} ${noun}`;
 }
 
 /** Where a clip of a kind goes. */

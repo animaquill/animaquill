@@ -39,7 +39,15 @@ export function paramsError(error: z.ZodError, schema: z.ZodType, input: unknown
     .map((issue) => `  ${issueLine(issue, schema, input)}`);
   const more =
     error.issues.length > MAX_ISSUES ? [`  and ${error.issues.length - MAX_ISSUES} more`] : [];
-  return failed(["error invalid-params", ...lines, ...more, "nothing was done"].join("\n"));
+  const hint =
+    typeof input === "object" &&
+    input !== null &&
+    typeof (input as Record<string, unknown>).operations === "string"
+      ? ["  pass operations as a JSON array, not a string"]
+      : [];
+  return failed(
+    ["error invalid-params", ...lines, ...more, ...hint, "nothing was written"].join("\n"),
+  );
 }
 
 /** The text of a call that was not run, because of what came before it in the same answer. */
@@ -59,7 +67,8 @@ export function makeTool<P>(
   const annotations: ToolAnnotations = {
     title,
     readOnlyHint: !writes,
-    ...(writes && { destructiveHint: true, idempotentHint: true }),
+    // Sent again, a change can do it twice, such as a clip without an id: request_id is for that.
+    ...(writes && { destructiveHint: true, idempotentHint: false }),
     openWorldHint: false,
   };
   const parse = (args: unknown): { ok: true; value: P } | { ok: false; error: ToolResult } => {
@@ -87,22 +96,34 @@ export function makeTool<P>(
       }
       const store = host.store();
       if (!store) return failed("error no-project: no project is open. Ask the user to open one.");
-      const request = (parsed.value as { readonly request_id?: string }).request_id;
+      const { request_id: given, ...rest } = parsed.value as {
+        readonly request_id?: string;
+        readonly dry_run?: boolean;
+      };
+      // A dry run writes nothing: there is nothing to keep from doing twice.
+      const request = rest.dry_run === true ? undefined : given;
+      const key = JSON.stringify(rest);
       if (writes) {
         if (request !== undefined) {
-          const known = caller.resultOf(request);
+          const known = caller.resultOf(request, key);
+          if (known === "other") {
+            return failed(
+              `error invalid-params: request_id ${JSON.stringify(request)} was used for a different call in this conversation; use a new one. Nothing was written.`,
+            );
+          }
           if (known) return known;
         }
         if (caller.answer.proposed) return failed(NOT_RUN_WAITING);
         if (caller.answer.failedWrite) return failed(NOT_RUN_FAILED);
       }
+      if (writes) caller.own.add(host.origin());
       const call: Call = { host, caller, store };
       const others = othersLine(call);
       const result = await definition.run(call, parsed.value);
       caller.lastCall = store.revisionId;
       if (writes && result.isError) caller.answer.failedWrite = true;
       const done = others ? { ...result, text: `${result.text}\n${others}` } : result;
-      if (writes && request !== undefined) caller.keepResult(request, done);
+      if (writes && request !== undefined) caller.keepResult(request, key, done);
       return done;
     },
   };

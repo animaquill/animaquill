@@ -147,15 +147,54 @@ export function placeOf(path: readonly PropertyKey[], prefix = ""): string {
 }
 
 /** One thing wrong with parameters, as one line. */
+/** What a parameter that is missing looks like, for the ones most often left out. */
+const SUCH_AS: Readonly<Record<string, string>> = {
+  source: '{"kind":"color","color":"#3366ff"}',
+  start: '"0"',
+  duration: '"2.5"',
+  time: '"1.5"',
+  timeline: '"main"',
+};
+
+/** Where in the parameters an issue is, as zod paths have it. */
+type Where = readonly PropertyKey[];
+
+/**
+ * Of the branches of a union that all failed, the one the parameters were most likely meant for:
+ * the one that got furthest into them, then the one with the fewest faults.
+ */
+function likeliest(errors: readonly (readonly z.core.$ZodIssue[])[]): readonly z.core.$ZodIssue[] {
+  let best: readonly z.core.$ZodIssue[] = [];
+  let bestDepth = -1;
+  for (const branch of errors) {
+    const depth = Math.max(...branch.map((issue) => issue.path.length));
+    if (depth > bestDepth || (depth === bestDepth && branch.length < best.length)) {
+      best = branch;
+      bestDepth = depth;
+    }
+  }
+  return best;
+}
+
+/**
+ * One thing wrong with parameters, as one line or a few: where, and how it should be. `hidden`
+ * names parameters AI does not see, by their dotted paths, which no hint offers.
+ */
 export function issueLine(
   issue: z.core.$ZodIssue,
   schema: z.ZodType,
   input: unknown,
   prefix = "",
+  hidden: readonly string[] = [],
+  base: Where = [],
 ): string {
-  const place = placeOf(issue.path, prefix) || "the parameters";
+  const path: Where = [...base, ...issue.path];
+  const place = placeOf(path, prefix) || "the parameters";
   if (issue.code === "unrecognized_keys") {
-    const names = namesAt(schema, issue.path);
+    const at = path.map(String).join(".");
+    const names = namesAt(schema, path).filter(
+      (name) => !hidden.includes(at === "" ? name : `${at}.${name}`),
+    );
     return issue.keys
       .map((key) => {
         const meant = didYouMean(key, names);
@@ -165,10 +204,13 @@ export function issueLine(
       })
       .join("\n  ");
   }
-  const given = valueAt(input, issue.path);
-  const last = issue.path.at(-1);
+  const given = valueAt(input, path);
+  const last = path.at(-1);
+  if (given === undefined) {
+    const example = typeof last === "string" ? SUCH_AS[last] : undefined;
+    return `${place}: missing${example ? `; such as ${example}` : ""}`;
+  }
   if (issue.code === "invalid_type") {
-    if (given === undefined) return `${place}: missing, it has to be ${issue.expected}`;
     const isTime = typeof last === "string" && TIMES.has(last) && issue.expected === "string";
     const expected = isTime ? 'a time: seconds as a string, such as "12.5"' : issue.expected;
     return `${place}: expected ${expected}, got ${typeOf(given)}`;
@@ -180,6 +222,29 @@ export function issueLine(
   if (issue.code === "too_small" || issue.code === "too_big") {
     return `${place}: ${issue.message.replace(/^Too (small|big): /, "")}`;
   }
-  if (issue.code === "invalid_union") return `${place}: does not fit any of the shapes it can have`;
+  if (issue.code === "invalid_union") {
+    const { discriminator, options } = issue as {
+      discriminator?: string;
+      options?: readonly unknown[];
+    };
+    if (discriminator !== undefined && options && options.length > 0) {
+      // Zod puts the discriminator at the end of the path, or not, by version: take either.
+      const atKey = path.at(-1) === discriminator;
+      const value = atKey ? given : (given as Record<string, unknown> | null)?.[discriminator];
+      const where = placeOf(atKey ? path : [...path, discriminator], prefix);
+      const names = options.map((option) => String(option));
+      const meant = typeof value === "string" ? didYouMean(value, names) : undefined;
+      const hint = meant ? `; did you mean "${meant}"?` : "";
+      const listed = names.map((name) => JSON.stringify(name)).join(", ");
+      if (value === undefined) return `${where}: missing; one of ${listed}`;
+      return `${where}: expected one of ${listed}, got ${typeOf(value)}${hint}`;
+    }
+    const branch = likeliest(issue.errors);
+    if (branch.length === 0) return `${place}: does not fit any of the shapes it can have`;
+    return branch
+      .slice(0, 3)
+      .map((inner) => issueLine(inner, schema, input, prefix, hidden, path))
+      .join("\n  ");
+  }
   return `${place}: ${englishRule(issue.message)}`;
 }

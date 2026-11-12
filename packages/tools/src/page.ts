@@ -47,6 +47,8 @@ export function paged(
     readonly title: (from: number, to: number, total: number) => string;
     readonly tail?: readonly string[];
     readonly data?: Readonly<Record<string, unknown>>;
+    /** Hears which items the result has, from `from` up to before `to`: only those were read. */
+    readonly shown?: (from: number, to: number) => void;
   },
 ): ToolResult {
   const { head, items, offset, limit, title, tail = [], data } = options;
@@ -57,7 +59,13 @@ export function paged(
     if (room < 0) break;
     shown.push(item);
   }
+  // A list always goes on: an item too long for the room left comes cut, rather than none.
+  const first = items[offset];
+  if (shown.length === 0 && first !== undefined && limit > 0) {
+    shown.push(`${first.slice(0, Math.max(200, room + first.length))}…`);
+  }
   const end = offset + shown.length;
+  options.shown?.(offset, end);
   const lines = [...head];
   if (items.length > 0) lines.push(title(offset + 1, end, items.length), ...shown);
   if (end < items.length) {

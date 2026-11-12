@@ -6,6 +6,7 @@ import {
   operationOf,
   problemDelta,
   staticProblems,
+  type ChangeRecord,
   type CommandFailure,
   type ObjectRef,
   type Operation,
@@ -14,7 +15,16 @@ import {
 } from "@animaquill/core";
 import { z } from "zod";
 import { changeLine, describeChanges, type ObjectChange } from "../changes.ts";
-import { answer, failed, fieldOf, objectText, whoMade, type Call } from "../context.ts";
+import {
+  answer,
+  existsIn,
+  failed,
+  fieldOf,
+  isOwnOf,
+  objectText,
+  whoMade,
+  type Call,
+} from "../context.ts";
 import { OPERATION_DOCS } from "../docs/operations.ts";
 import { failureWords, operationFailureText } from "../failures-en.ts";
 import { issueLine } from "../issues.ts";
@@ -44,7 +54,7 @@ const EditParams = z.strictObject({
     .string()
     .optional()
     .describe(
-      "Hardly ever needed: the revision a result began with, to check the whole batch against it. The tools keep track of what you read for you.",
+      "Hardly ever needed: a revision from an earlier result, to also refuse changes of anything changed since then. It never lets through a change the tools would refuse.",
     ),
   request_id: z
     .string()
@@ -152,8 +162,10 @@ function checkOperations(args: EditArgs): ToolResult | undefined {
     }
     const parsed = definition.params.safeParse(params);
     if (!parsed.success) {
-      for (const issue of parsed.error.issues)
-        lines.push(issueLine(issue, definition.params as z.ZodType, params));
+      const hidden = (definition.hiddenParams ?? []).map(({ name }) => name);
+      for (const issue of parsed.error.issues) {
+        lines.push(issueLine(issue, definition.params as z.ZodType, params, "", hidden));
+      }
     }
     if (lines.length > 0) {
       faults.push({ index, name: op, lines: lines.slice(0, MAX_ISSUES - count) });
@@ -208,13 +220,24 @@ function similarTo(
 }
 
 /** Who changed what since the caller read it, for an error of conflict. */
-function conflictText(
-  call: Call,
-  failure: CommandFailure,
-  base: (path: readonly string[]) => Revision | undefined,
-): string {
+/** Whether a path written by one change and a path of another meet: the same, or one under the other. */
+const meet = (a: readonly string[], b: readonly string[]) => {
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index += 1) if (a[index] !== b[index]) return false;
+  return true;
+};
+
+/** Whether a change is somebody else's: not of this conversation, or people taking one back. */
+const byOthers = (call: Call) => {
+  const own = isOwnOf(call);
+  return (change: ChangeRecord) => change.takesBack !== undefined || !own(change.origin);
+};
+
+/** Who changed what since the caller read it, for an error of conflict: only what they did change. */
+function conflictText(call: Call, failure: CommandFailure, bases: Bases): string {
   const state = call.store.getState();
-  const mine = call.host.origin();
+  const others = byOthers(call);
+  const own = isOwnOf(call);
   const byObject = new Map<string, { ref: ObjectRef; fields: Set<string>; who: Set<string> }>();
   for (const path of failure.conflicts ?? []) {
     const ref = objectOfPath(path);
@@ -223,29 +246,36 @@ function conflictText(
     byObject.set(key, entry);
     const field = fieldOf(path, ref);
     if (field !== undefined) entry.fields.add(field);
-    const since = base(path);
+    const since = bases.of(path);
     for (const change of (since === undefined ? undefined : call.store.changesSince(since)) ?? []) {
-      if (change.origin === mine) continue;
-      if (change.paths.some((written) => objectKey(objectOfPath(written)) === key))
-        entry.who.add(whoMade(change.origin));
+      if (!others(change)) continue;
+      if (change.paths.some((written) => meet(written, path))) {
+        entry.who.add(whoMade(change, own(change.origin)));
+      }
     }
   }
   const parts = [...byObject.values()].map(({ ref, fields, who }) => {
     const list = fields.size > 0 ? ` (${[...fields].join(", ")})` : "";
-    return `${[...who].join(" and ") || "someone else"} changed ${objectText(state, ref)}${list}`;
+    return `${[...who].join(" and ") || "someone else changed"} ${objectText(state, ref)}${list}`;
   });
   return `error conflict: ${parts.join("; ")} after you last read it\nread it again with aq_object_read and decide whether your change still fits; nothing was written`;
 }
 
 /** The text of a batch that failed, with what helps to fix it. */
-function failureOf(
-  call: Call,
-  args: EditArgs,
-  failure: CommandFailure,
-  base: (path: readonly string[]) => Revision | undefined,
-): ToolResult {
+function failureOf(call: Call, args: EditArgs, failure: CommandFailure, bases: Bases): ToolResult {
   const names = args.operations.map(({ op }) => String(op));
-  if (failure.code === "conflict") return failed(conflictText(call, failure, base));
+  if (failure.code === "conflict") return failed(conflictText(call, failure, bases));
+  if (failure.code === "stale-revision" && bases.unread.size > 0) {
+    const state = call.store.getState();
+    const objects = [...bases.unread.values()].slice(0, 5).map((ref) => {
+      const on = ref.timeline === undefined ? "" : ` (timeline ${ref.timeline})`;
+      return `${objectText(state, ref)}${on}`;
+    });
+    const more = bases.unread.size > 5 ? ` and ${bases.unread.size - 5} more` : "";
+    return failed(
+      `error not-read: you have not read ${objects.join(", ")}${more} in this conversation, so the tools cannot tell whether the user changed it since. Read it with aq_object_read or aq_timeline_read, then send the change again. Nothing was written.`,
+    );
+  }
   if (failure.code === "stale-revision") {
     return failed(`error stale-revision: ${failureWords(failure)} Nothing was written.`);
   }
@@ -262,7 +292,8 @@ function failureOf(
       id,
       typeof timeline === "string" ? timeline : undefined,
     );
-    if (similar.length > 0) lines.splice(1, 0, `similar: ${similar.join(" | ")}`);
+    if (similar.length > 0)
+      lines[0] = lines[0]?.replace("\n", `\nsimilar: ${similar.join(" | ")}\n`) ?? "";
   }
   const name = names[failure.index] ?? "";
   if (failure.code === "invalid-params" && operationOf(name)) {
@@ -271,53 +302,106 @@ function failureOf(
   return failed(lines.join("\n"));
 }
 
+const operationsWord = (count: number) => `${count} operation${count === 1 ? "" : "s"}`;
+
+/** A revision that no store has: what a path of an object nobody read gets, see `Bases`. */
+const UNREAD = "unread:0";
+
+/** Fields of an object that only reading it whole shows: values of properties, keys, effects, params. */
+const DETAIL: Readonly<Record<string, ReadonlySet<string>>> = {
+  clip: new Set(["properties", "effects"]),
+  scene: new Set(["params", "presets"]),
+  sound: new Set(["params", "outputs"]),
+};
+
+/** The base of each path that a batch writes, and the objects it found unread. */
+interface Bases {
+  readonly of: (path: readonly string[]) => Revision | undefined;
+  readonly unread: Map<string, ObjectRef>;
+}
+
 /**
- * The base of each path that a batch writes: the revision at which the caller last read its object,
- * or what it last read at all for an object it never read.
+ * The base of each path that a batch writes: when the caller last read its object, or what it last
+ * read at all for an object it never read. What only reading it whole shows goes by the last whole
+ * read, where there was one; the rest by the latest read of either kind. An object that was there
+ * before and that nothing was read of gets `UNREAD`, which is refused. A revision the caller gives
+ * only makes this earlier, never later: it cannot let through what the tools would refuse.
  */
-function baseOf(call: Call, args: EditArgs): (path: readonly string[]) => Revision | undefined {
-  const given = args.base_revision;
-  if (given !== undefined) return () => given;
-  return (path) => call.caller.seenOf(objectOfPath(path)) ?? call.caller.lastRead;
+function basesOf(call: Call, args: EditArgs, before: ProjectState): Bases {
+  const { caller, store } = call;
+  const unread = new Map<string, ObjectRef>();
+  const count = (revision: Revision) => store.revisionOf(revision);
+  /** The earlier of two revisions; one that is no revision of this store wins, to be refused. */
+  const earlier = (a: Revision, b: Revision) => {
+    const [x, y] = [count(a), count(b)];
+    if (x === undefined) return a;
+    if (y === undefined) return b;
+    return x <= y ? a : b;
+  };
+  const later = (a: Revision | undefined, b: Revision | undefined) => {
+    if (a === undefined) return b;
+    if (b === undefined) return a;
+    const [x, y] = [count(a), count(b)];
+    if (x === undefined || y === undefined) return x === undefined ? a : b;
+    return x >= y ? a : b;
+  };
+  const of = (path: readonly string[]): Revision | undefined => {
+    const ref = objectOfPath(path);
+    const { overview, full } = caller.seenOf(ref);
+    const field = fieldOf(path, ref)?.split(".")[0];
+    const detail = field !== undefined && DETAIL[ref.kind]?.has(field) === true;
+    const recorded = (detail ? (full ?? overview) : later(overview, full)) ?? caller.lastRead;
+    if (recorded === undefined) {
+      if (!existsIn(before, ref)) return undefined;
+      unread.set(objectKey(ref), ref);
+      return UNREAD;
+    }
+    return args.base_revision === undefined ? recorded : earlier(args.base_revision, recorded);
+  };
+  return { of, unread };
 }
 
 /**
  * The objects a batch wrote, as read at the new revision: those that nobody else changed since the
- * caller last read them, and those it made. What somebody else changed in the meantime stays as
- * read before, so that a later change of it is checked against what the caller really saw.
+ * caller last read them, and those it made, each for the kind of reading it had. What somebody else
+ * changed in the meantime stays as read before, so that a later change of it is checked against
+ * what the caller really saw.
  */
 function afterWrite(
   call: Call,
   paths: readonly (readonly string[])[],
   changes: readonly ObjectChange[],
-  before: (path: readonly string[]) => Revision | undefined,
 ): void {
-  const { caller, store, host } = call;
-  const mine = host.origin();
+  const { caller, store } = call;
+  const others = byOthers(call);
   const revision = store.revisionId;
   const added = new Set(
     changes.filter(({ change }) => change === "added").map((change) => objectKey(change)),
   );
   const done = new Set<string>();
+  const untouched = (key: string, since: Revision | undefined) => {
+    const changesSince = since === undefined ? undefined : store.changesSince(since);
+    return (
+      changesSince !== undefined &&
+      !changesSince.some(
+        (change) =>
+          others(change) &&
+          change.paths.some((written) => objectKey(objectOfPath(written)) === key),
+      )
+    );
+  };
   for (const path of paths) {
     const ref = objectOfPath(path);
     const key = objectKey(ref);
     if (done.has(key)) continue;
     done.add(key);
     if (added.has(key)) {
-      caller.saw(ref, revision);
+      caller.saw(ref, revision, "full");
       continue;
     }
-    const since = before(path);
-    const changesSince = since === undefined ? undefined : store.changesSince(since);
-    const byOthers =
-      !changesSince ||
-      changesSince.some(
-        (change) =>
-          change.origin !== mine &&
-          change.paths.some((written) => objectKey(objectOfPath(written)) === key),
-      );
-    if (!byOthers) caller.saw(ref, revision);
+    const { overview, full } = caller.seenOf(ref);
+    if (full !== undefined && untouched(key, full)) caller.saw(ref, revision, "full");
+    else if (untouched(key, overview ?? caller.lastRead)) caller.saw(ref, revision);
   }
 }
 
@@ -464,16 +548,17 @@ export const edit: ToolDefinition<EditArgs> = {
     const { store, host } = call;
     const before = store.getState();
     const calls = args.operations.map(({ op, ...params }) => ({ type: String(op), params }));
-    const base = baseOf(call, args);
+    const bases = basesOf(call, args, before);
     const result = store.executeBatch(calls, {
       origin: host.origin(),
-      baseRevision: base,
+      baseRevision: bases.of,
+      isOwn: isOwnOf(call),
       ...(args.dry_run && { dryRun: true }),
     });
-    if (!result.ok) return failureOf(call, args, result.error, base);
+    if (!result.ok) return failureOf(call, args, result.error, bases);
     const paths = result.patches.map(({ path }) => path);
     const changes = describeChanges(before, result.state, paths);
-    if (!args.dry_run) afterWrite(call, paths, changes, base);
+    if (!args.dry_run) afterWrite(call, paths, changes);
     const created = result.results.flatMap((value, index) => {
       const id = (value as { readonly id?: unknown } | undefined)?.id;
       return typeof id === "string" ? [`${id} (operations[${index}])`] : [];
@@ -486,10 +571,10 @@ export const edit: ToolDefinition<EditArgs> = {
         ? [`  and ${changes.length - MAX_CHANGED} more (aq_object_read)`]
         : [];
     const first = args.dry_run
-      ? `dry run: nothing was written; ${calls.length} operations would be one step`
+      ? `dry run: nothing was written; ${operationsWord(calls.length)} would be one step`
       : changes.length === 0
-        ? `done: ${calls.length} operations, which changed nothing`
-        : `done: ${calls.length} operations as one step`;
+        ? `done: ${operationsWord(calls.length)}, which changed nothing`
+        : `done: ${operationsWord(calls.length)} as one step`;
     return answer(
       call,
       [

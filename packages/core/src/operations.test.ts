@@ -636,6 +636,28 @@ describe("what stays as it was", () => {
     expect(store.getState().manifest.name).toBe(name);
   });
 
+  it("lets a caller's own earlier changes through, but not what took them back", () => {
+    const store = open();
+    const seen = store.revisionId;
+    const rename = (name: string) => ({
+      type: "clip.update",
+      params: { timeline: "main", clip: "clip_title", changes: { name } },
+    });
+    const earlier = aiTask("earlier");
+    const isOwn = (origin: string) => origin === earlier;
+    success(store.execute(rename("上一条消息"), { origin: earlier }));
+    expect(
+      failure(store.execute(rename("没有自己的"), { origin: AI, baseRevision: seen })).code,
+    ).toBe("conflict");
+    success(store.execute(rename("这一条"), { origin: AI, baseRevision: seen, isOwn }));
+    const before = store.revisionId;
+    success(store.execute(rename("又一条"), { origin: earlier }));
+    expect(store.undoOrigin(earlier).ok).toBe(true);
+    expect(
+      failure(store.execute(rename("撤销之后"), { origin: AI, baseRevision: before, isOwn })).code,
+    ).toBe("conflict");
+  });
+
   it("has a revision of one store be none of a copy of it", () => {
     const store = open();
     const copy = ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
@@ -661,6 +683,38 @@ describe("changes since a revision", () => {
     expect(changes[0]?.paths).toEqual([["manifest", "name"]]);
     expect(changes[1]?.paths).toEqual([["manifest", "description"]]);
     expect(store.changesSince(store.revisionId)).toEqual([]);
+  });
+
+  it("say which of them took changes back, and keep one path for each object of a big one", () => {
+    const store = open();
+    const at = store.revisionId;
+    success(store.execute({ type: "project.rename", params: { name: "AI" } }, { origin: AI }));
+    expect(store.undoOrigin(AI).ok).toBe(true);
+    const changes = store.changesSince(at) ?? [];
+    expect(changes.map(({ origin, takesBack }) => [origin, takesBack])).toEqual([
+      [AI, undefined],
+      [AI, "undo"],
+    ]);
+    const before = store.revisionId;
+    const markers = Array.from({ length: 300 }, (_, index) => ({
+      type: "marker.add",
+      params: { timeline: "main", id: `marker_${index}`, time: String(index), name: "x" },
+    }));
+    success(store.executeBatch(markers));
+    const [big] = store.changesSince(before) ?? [];
+    expect(big?.paths.length).toBe(300);
+    expect(big?.paths.every((path) => path.length === 4)).toBe(true);
+  });
+
+  it("are told as far back as they are kept, also when the newest ones wrote nothing", () => {
+    const store = open();
+    const first = store.revisionId;
+    for (let index = 0; index < 1001; index += 1) {
+      success(store.execute({ type: "project.rename", params: { name: `n${index}` } }));
+    }
+    expect(store.changesSince(first)).toBeUndefined();
+    const kept = store.changesSince(store.revisionId);
+    expect(kept).toEqual([]);
   });
 
   it("are not told for a revision of another store", () => {

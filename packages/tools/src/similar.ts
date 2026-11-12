@@ -28,7 +28,8 @@ function distance(wrong: string, right: string): number {
   const a = plain(wrong);
   const b = plain(right);
   if (a === b) return 0;
-  if (b.startsWith(a) || a.startsWith(b) || a.includes(b) || b.includes(a)) return 1;
+  // One name inside another counts only for names of some length: "x" is in many of them.
+  if (Math.min(a.length, b.length) >= 3 && (a.includes(b) || b.includes(a))) return 1;
   return editDistance(a, b);
 }
 

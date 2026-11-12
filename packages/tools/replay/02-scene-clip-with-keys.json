@@ -60,6 +60,6 @@
     "files": {
       "timelines/main/timeline.json": ["\"id\": \"clip_card2\""]
     },
-    "undoSteps": 1
+    "undoAll": true
   }
 }

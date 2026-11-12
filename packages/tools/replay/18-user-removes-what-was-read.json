@@ -1,0 +1,41 @@
+{
+  "about": "The user removes a clip after AI read it: the change of it fails with not-found, and the line about others says it was removed.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "user": [
+        {
+          "type": "clip.remove",
+          "params": {
+            "timeline": "main",
+            "clips": ["clip_idea"]
+          }
+        }
+      ]
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_idea",
+            "changes": {
+              "name": "AI"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "not-found",
+        "lines": ["There is no clip clip_idea.", "clip_idea (removed)"]
+      }
+    }
+  ]
+}

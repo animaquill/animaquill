@@ -1,6 +1,7 @@
 import {
   USER,
   cloudSeqOf,
+  type ChangeRecord,
   entryOf,
   objectKey,
   objectOfPath,
@@ -60,13 +61,25 @@ export function objectText(state: ProjectState, ref: ObjectRef): string {
   return `${kind}${named(ref.id, nameOf(state, ref))}`;
 }
 
-/** Who made a change, in words. */
-export function whoMade(origin: string): string {
-  if (origin === USER) return "the user";
-  if (origin.startsWith("ai:")) return "another AI task";
-  if (origin.startsWith("folder:")) return "a change of the files in the project folder";
-  if (cloudSeqOf(origin) !== undefined) return "another device";
-  return "another window";
+/**
+ * Who made a change and how, in words that go before what it changed: "the user changed". What took
+ * changes back is people's doing, whoever made the changes.
+ */
+export function whoMade(change: Pick<ChangeRecord, "origin" | "takesBack">, own = false): string {
+  const { origin, takesBack } = change;
+  if (takesBack !== undefined) {
+    const whose = own
+      ? "your earlier changes of"
+      : origin.startsWith("ai:")
+        ? "changes of another AI task to"
+        : "changes of";
+    return `the user ${takesBack === "undo" ? "undid" : "redid"} ${whose}`;
+  }
+  if (origin === USER) return "the user changed";
+  if (origin.startsWith("ai:")) return "another AI task changed";
+  if (origin.startsWith("folder:")) return "the files in the project folder changed";
+  if (cloudSeqOf(origin) !== undefined) return "another device changed";
+  return "another window changed";
 }
 
 /** What of an object a path is about, as the parameters of operations name it: `start`, `properties.opacity`. */
@@ -80,6 +93,43 @@ export function fieldOf(path: readonly string[], ref: ObjectRef): string | undef
     : first;
 }
 
+/** Whether an object is in the project. */
+export function existsIn(state: ProjectState, ref: ObjectRef): boolean {
+  let node: unknown = state;
+  for (const key of pathOfObject(ref)) {
+    if (typeof node !== "object" || node === null || !Object.hasOwn(node, key)) return false;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node !== undefined;
+}
+
+/** Where an object sits in the state. */
+export function pathOfObject(ref: ObjectRef): readonly string[] {
+  const { kind, id, timeline = "" } = ref;
+  switch (kind) {
+    case "project":
+      return ["manifest"];
+    case "timeline":
+      return ["timelines", id];
+    case "scene":
+      return ["scenes", id];
+    case "sound":
+      return ["sounds", id];
+    case "asset":
+      return ["assets", id];
+    case "file":
+      return ["files", id];
+    default:
+      return ["timelines", timeline, `${kind}s`, id];
+  }
+}
+
+/** Whether a change was the caller's own: of this conversation, as any of its tasks. */
+export const isOwnOf =
+  (call: Call) =>
+  (origin: string): boolean =>
+    origin === call.host.origin() || call.caller.own.has(origin);
+
 /** Everything a tool works with during one call. */
 export interface Call {
   readonly host: ToolHost;
@@ -92,7 +142,7 @@ export interface Call {
  * who, which objects, which of their fields. What to do about it is for the system prompt to say.
  */
 export function othersLine(call: Call): string | undefined {
-  const { caller, store, host } = call;
+  const { caller, store } = call;
   const since = caller.lastCall;
   if (since === undefined) return undefined;
   if (store.revisionOf(since) === undefined) {
@@ -102,24 +152,28 @@ export function othersLine(call: Call): string | undefined {
   if (!changes) {
     return "others: there were more changes by others since your last call than the tools keep track of.";
   }
-  const mine = host.origin();
-  const byWho = new Map<string, Map<string, { ref: ObjectRef; fields: Set<string> }>>();
-  for (const { origin, paths } of changes) {
-    if (origin === mine) continue;
-    const who = whoMade(origin);
+  const state = store.getState();
+  const own = isOwnOf(call);
+  const byWho = new Map<
+    string,
+    Map<string, { ref: ObjectRef; fields: Set<string>; gone: boolean }>
+  >();
+  for (const change of changes) {
+    const mine = own(change.origin);
+    if (mine && change.takesBack === undefined) continue;
+    const who = whoMade(change, mine);
     const objects = byWho.get(who) ?? new Map();
     byWho.set(who, objects);
-    for (const path of paths) {
+    for (const path of change.paths) {
       const ref = objectOfPath(path);
       const key = objectKey(ref);
-      const known = objects.get(key) ?? { ref, fields: new Set<string>() };
+      const known = objects.get(key) ?? { ref, fields: new Set<string>(), gone: false };
       objects.set(key, known);
       const field = fieldOf(path, ref);
       if (field !== undefined && ref.kind !== "file") known.fields.add(field);
     }
   }
   if (byWho.size === 0) return undefined;
-  const state = store.getState();
   let left = MAX_OTHERS;
   let more = 0;
   const parts = [...byWho].map(([who, objects]) => {
@@ -129,10 +183,11 @@ export function othersLine(call: Call): string | undefined {
         return [];
       }
       left -= 1;
+      if (!existsIn(state, ref)) return [`${objectText(state, ref)} (removed)`];
       const list = fields.size > 0 ? ` (${[...fields].slice(0, 4).join(", ")})` : "";
       return [`${objectText(state, ref)}${list}`];
     });
-    return said.length > 0 ? `${who} changed ${said.join(", ")}` : `${who} changed more`;
+    return said.length > 0 ? `${who} ${said.join(", ")}` : `${who} more`;
   });
   return `others: since your last call ${parts.join("; ")}${more > 0 ? ` and ${more} more` : ""}.`;
 }

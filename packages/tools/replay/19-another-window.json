@@ -1,0 +1,49 @@
+{
+  "about": "A change in another window is somebody else's too: the change of the same field is refused and says so.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "window": [
+        {
+          "type": "clip.update",
+          "params": {
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "别的窗口"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "AI"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "conflict",
+        "lines": ["error conflict: another window changed clip_title \"别的窗口\" (name)"]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["别的窗口"]
+    }
+  }
+}

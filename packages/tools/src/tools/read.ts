@@ -14,9 +14,9 @@ import {
   type ProjectState,
   type TimelineState,
 } from "@animaquill/core";
-import { compare, formatTime, parseTime } from "@animaquill/schema";
+import { Time, compare, formatTime, parseTime } from "@animaquill/schema";
 import { z } from "zod";
-import { answer, failed, named, quoted, type Call } from "../context.ts";
+import { answer, failed, MAX_RESULT, named, quoted, type Call } from "../context.ts";
 import {
   assetLine,
   clipLine,
@@ -47,12 +47,25 @@ export function textHash(text: string): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
-/** Records what was read, at the revision now: the conflict checks of later changes go by it. */
-export function sawAll(call: Call, refs: Iterable<ObjectRef>): void {
+/**
+ * Records what was read, at the revision now, in an overview or whole: the conflict checks of later
+ * changes go by it.
+ */
+export function sawAll(
+  call: Call,
+  refs: Iterable<ObjectRef>,
+  depth: "overview" | "full" = "overview",
+): void {
   const revision = call.store.revisionId;
-  for (const ref of refs) call.caller.saw(ref, revision);
+  for (const ref of refs) call.caller.saw(ref, revision, depth);
   call.caller.read(revision);
 }
+
+/** How long a line of a file comes in a result, in characters. */
+const MAX_LINE = 2000;
+
+/** How many joins and markers a timeline lists; the rest are for aq_search. */
+const MAX_SMALL = 50;
 
 /** A list in one line, cut after some entries with a word on where the rest are. */
 function listLine(title: string, entries: readonly string[]): string {
@@ -74,8 +87,7 @@ const noTimeline = (state: ProjectState, id: string | undefined): ToolResult => 
   return failed(`error not-found: no timeline ${JSON.stringify(id ?? "")}${hint}`);
 };
 
-const time = (value: string) =>
-  z.string().describe(`${value} Seconds as a string, such as "12.5".`);
+const time = (value: string) => Time.describe(`${value} Seconds as a string, such as "12.5".`);
 
 const StatusParams = z.strictObject({});
 
@@ -200,30 +212,38 @@ export const timelineRead: ToolDefinition<z.output<typeof TimelineParams>> = {
       .filter((clip) => to === undefined || compare(clipStart(clip), to) < 0)
       .toSorted((a, b) => compare(clipStart(a), clipStart(b)) || a.id.localeCompare(b.id));
     const limit = args.limit ?? 200;
-    const shown = clips.slice(offset, offset + limit);
-    const joins = Object.entries(timeline.joins ?? {}).map(
-      ([join, { from: before, to: after, transition }]) =>
-        `${join} ${String(before)}>${String(after)} ${transitionText(transition)}`,
+    const joins = Object.entries(timeline.joins ?? {});
+    const markers = Object.values(timeline.markers).toSorted((a, b) =>
+      compare(parseTime(a.time), parseTime(b.time)),
     );
-    const markers = Object.values(timeline.markers)
-      .toSorted((a, b) => compare(parseTime(a.time), parseTime(b.time)))
-      .map((marker) => `${named(marker.id, marker.name)} ${marker.time}`);
+    const listed = (count: number, kind: string) =>
+      count > MAX_SMALL ? ` | and ${count - MAX_SMALL} more (aq_search kinds ["${kind}"])` : "";
+    const joinsLine = joins
+      .slice(0, MAX_SMALL)
+      .map(
+        ([join, { from: before, to: after, transition }]) =>
+          `${join} ${String(before)}>${String(after)} ${transitionText(transition)}`,
+      )
+      .join(" | ");
+    const markersLine = markers
+      .slice(0, MAX_SMALL)
+      .map((marker) => `${named(marker.id, marker.name)} ${marker.time}`)
+      .join(" | ");
     const versions = Object.keys(timeline.overrides);
     sawAll(call, [
       { kind: "timeline", id },
-      ...shown.map((clip) => ({ kind: "clip", id: clip.id, timeline: id }) as const),
       ...Object.keys(timeline.tracks).map(
         (track) => ({ kind: "track", id: track, timeline: id }) as const,
       ),
       ...Object.keys(timeline.sections).map(
         (section) => ({ kind: "section", id: section, timeline: id }) as const,
       ),
-      ...Object.keys(timeline.joins ?? {}).map(
-        (join) => ({ kind: "join", id: join, timeline: id }) as const,
-      ),
-      ...Object.keys(timeline.markers).map(
-        (marker) => ({ kind: "marker", id: marker, timeline: id }) as const,
-      ),
+      ...joins
+        .slice(0, MAX_SMALL)
+        .map(([join]) => ({ kind: "join", id: join, timeline: id }) as const),
+      ...markers
+        .slice(0, MAX_SMALL)
+        .map((marker) => ({ kind: "marker", id: marker.id, timeline: id }) as const),
     ]);
     return paged(call, "aq_timeline_read", args, {
       head: [
@@ -237,10 +257,20 @@ export const timelineRead: ToolDefinition<z.output<typeof TimelineParams>> = {
       title: (first, last, total) => `clips ${first}-${last} of ${total}, by start:`,
       tail: [
         ...(clips.length === 0 ? ["clips: none here"] : []),
-        ...(joins.length > 0 ? [`joins: ${joins.join(" | ")}`] : []),
-        ...(markers.length > 0 ? [`markers: ${markers.join(" | ")}`] : []),
+        ...(joins.length > 0 ? [`joins: ${joinsLine}${listed(joins.length, "join")}`] : []),
+        ...(markers.length > 0
+          ? [`markers: ${markersLine}${listed(markers.length, "marker")}`]
+          : []),
         ...(versions.length > 0 ? [`versions with overrides: ${versions.join(", ")}`] : []),
       ],
+      // Only the clips the result shows are read.
+      shown: (first, end) =>
+        sawAll(
+          call,
+          clips
+            .slice(first, end)
+            .map((clip) => ({ kind: "clip", id: clip.id, timeline: id }) as const),
+        ),
     });
   },
 };
@@ -435,6 +465,8 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
     }
     const lines: string[] = [];
     const seen: ObjectRef[] = [];
+    // Every field of an object, not some of them nor a summary, is reading it whole.
+    const whole = args.fields === undefined && args.response_format !== "concise";
     for (const id of args.ids) {
       const found = findAll(state, id, args.timeline);
       if (found.length === 0) {
@@ -458,6 +490,9 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         const value = args.fields
           ? Object.fromEntries(args.fields.map((field) => [field, fieldAt(each.value, field)]))
           : each.value;
+        const unset = (args.fields ?? []).filter(
+          (field) => fieldAt(each.value, field) === undefined,
+        );
         if (args.response_format === "concise") {
           const record = (value ?? {}) as Record<string, unknown>;
           const fields = Object.entries(record).map(([key, item]) =>
@@ -469,12 +504,13 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
         } else {
           lines.push(JSON.stringify(value));
         }
+        if (unset.length > 0) lines.push(`  not set: ${unset.join(", ")}`);
         if (each.clip?.source.kind === "scene" && args.fields === undefined) {
           lines.push(sceneProperties(call, state, each.clip));
         }
       }
     }
-    sawAll(call, seen);
+    sawAll(call, seen, whole ? "full" : "overview");
     return answer(call, lines);
   },
 };
@@ -535,7 +571,8 @@ export const search: ToolDefinition<z.output<typeof SearchParams>> = {
     const fits = (...texts: (string | undefined)[]) =>
       query === "" || texts.some((text) => text?.toLowerCase().includes(query));
     const items: string[] = [];
-    const seen: ObjectRef[] = [];
+    /** What each item is, where it is a clip, to record the clips the result shows. */
+    const refs: (ObjectRef | undefined)[] = [];
     for (const [id, timeline] of Object.entries(state.timelines)) {
       if (args.timeline !== undefined && id !== args.timeline) continue;
       const on = `timeline=${id}`;
@@ -545,7 +582,7 @@ export const search: ToolDefinition<z.output<typeof SearchParams>> = {
         )) {
           if (!fits(clip.id, clip.name, sourceText(clip.source))) continue;
           items.push(`clip ${on} ${clipLine(clip)}`);
-          seen.push({ kind: "clip", id: clip.id, timeline: id });
+          refs[items.length - 1] = { kind: "clip", id: clip.id, timeline: id };
         }
       }
       if (kinds.has("track")) {
@@ -603,13 +640,17 @@ export const search: ToolDefinition<z.output<typeof SearchParams>> = {
         });
       }
     }
-    sawAll(call, seen);
     return paged(call, "aq_search", args, {
       head: items.length === 0 ? ["found nothing"] : [],
       items,
       offset,
       limit: args.limit ?? 50,
       title: (first, last, total) => `found ${first}-${last} of ${total}:`,
+      shown: (first, end) =>
+        sawAll(
+          call,
+          refs.slice(first, end).filter((ref) => ref !== undefined),
+        ),
     });
   },
 };
@@ -644,7 +685,7 @@ export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
   name: "aq_file_read",
   title: "Read a code file",
   description:
-    'Read a code file of the project: the HTML, CSS and JavaScript of a scene (under scenes/<id>/), the code of a sound (under sounds/<id>/), or shared code (under code/). Lines come numbered as "   12→text"; the numbers are not part of the file, so leave them out when you copy text into aq_file_edit. Long files come in parts: pass offset (the first line) and limit (how many lines). Read a file before you replace it with aq_file_write, which requires it, and before you edit it, so that you copy its exact text. Project settings, timelines, scenes\' manifests and assets are not files you read here: use aq_object_read for them.',
+    'Read a code file of the project: the HTML, CSS and JavaScript of a scene (under scenes/<id>/), the code of a sound (under sounds/<id>/), or shared code (under code/). Lines come numbered as "   12→text"; the numbers are not part of the file, so leave them out when you copy text into aq_file_edit. Long files come in parts: pass offset (the first line) and limit (how many lines). Read all of a file before you replace it with aq_file_write, which requires it, and before you edit it, so that you copy its exact text. Project settings, timelines, scenes\' manifests and assets are not files you read here: use aq_object_read for them.',
   params: FileReadParams,
   run: (call, args) => {
     const state = call.store.getState();
@@ -659,23 +700,43 @@ export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
       const hint = similar.length > 0 ? `\nsimilar: ${similar.join(" | ")}` : "";
       return failed(`error not-found: no code file ${JSON.stringify(args.path)}${hint}`);
     }
-    const lines = text.split("\n");
+    const crlf = text.includes("\r\n");
+    const lines = text.split("\n").map((line) => (crlf ? line.replace(/\r$/, "") : line));
     const first = Math.min(args.offset ?? 1, Math.max(lines.length, 1));
-    const last = Math.min(lines.length, first - 1 + (args.limit ?? 2000));
-    const width = String(last).length;
-    const numbered = lines
-      .slice(first - 1, last)
-      .map((line, index) => `${String(first + index).padStart(Math.max(width, 6))}→${line}`);
-    call.caller.files.set(args.path, { revision: call.store.revisionId, hash: textHash(text) });
-    call.caller.saw({ kind: "file", id: args.path }, call.store.revisionId);
-    const more =
-      last < lines.length
+    const wanted = Math.min(lines.length, first - 1 + (args.limit ?? 2000));
+    // As many lines as fit in one result; a line too long for that comes cut, and is not read.
+    const numbered: string[] = [];
+    const cut: number[] = [];
+    let room = MAX_RESULT - 500;
+    let last = first - 1;
+    for (let number = first; number <= wanted; number += 1) {
+      const line = lines[number - 1] ?? "";
+      const shown = line.length > MAX_LINE ? `${line.slice(0, MAX_LINE)}…` : line;
+      const entry = `${String(number).padStart(6)}→${shown}`;
+      if (room - entry.length - 1 < 0 && numbered.length > 0) break;
+      room -= entry.length + 1;
+      numbered.push(entry);
+      if (line.length > MAX_LINE) cut.push(number);
+      last = number;
+    }
+    const revision = call.store.revisionId;
+    const whole = cut.length === 0 ? ([first, last] as const) : undefined;
+    call.caller.readFile(args.path, revision, textHash(text), lines.length, whole);
+    call.caller.saw({ kind: "file", id: args.path }, revision);
+    const notes = [
+      ...cut.map(
+        (number) =>
+          `line ${number} is ${(lines[number - 1] ?? "").length} characters long; it is cut after ${MAX_LINE}`,
+      ),
+      ...(last < lines.length
         ? [`${lines.length - last} more lines: call again with offset ${last + 1}`]
-        : [];
+        : []),
+    ];
+    const endings = crlf ? " (Windows line endings)" : "";
     return answer(call, [
-      `file ${args.path} lines ${first}-${last} of ${lines.length}`,
+      `file ${args.path} lines ${first}-${last} of ${lines.length}${endings}`,
       ...numbered,
-      ...more,
+      ...notes,
     ]);
   },
 };

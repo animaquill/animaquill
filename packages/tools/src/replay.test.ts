@@ -31,10 +31,14 @@ type Step =
     }
   /** The user changes the project meanwhile, at the editor. */
   | { readonly user: readonly CommandCall[] }
-  /** A new message of the user: a new answer, in the same conversation. */
-  | { readonly message: true }
-  /** The project opens again, as after a reload. */
-  | { readonly reopen: true };
+  /** The user changes the project in another window. */
+  | { readonly window: readonly CommandCall[] }
+  /** The user takes back all an AI task did. */
+  | { readonly undoTask: string }
+  /** A new message of the user: a new answer, in the same conversation, as another task if said. */
+  | { readonly message: true; readonly task?: string }
+  /** The project opens again, as after a reload; with `newCaller`, nothing of the caller is kept. */
+  | { readonly reopen: true; readonly newCaller?: true };
 
 interface Scenario {
   readonly about: string;
@@ -43,8 +47,8 @@ interface Scenario {
     readonly files?: Readonly<Record<string, readonly string[]>>;
     readonly absent?: Readonly<Record<string, readonly string[]>>;
     readonly count?: Readonly<Record<string, Readonly<Record<string, number>>>>;
-    /** How many steps of the task undo takes back. */
-    readonly undoSteps?: number;
+    /** That one undo of the task takes back all it did. */
+    readonly undoAll?: true;
   };
 }
 
@@ -65,27 +69,41 @@ describe("replayed calls", () => {
 
   it.each(scenarios)("%s", async (_, scenario) => {
     const host = testHost();
-    const { call, caller } = toolsOn(host);
+    let tools = toolsOn(host);
     let last: ToolResult | undefined;
     for (const [index, step] of scenario.steps.entries()) {
       const store = host.store() as ProjectStore;
       if ("user" in step) {
-        for (const command of step.user) {
-          const done = store.execute(command, { origin: USER });
+        // As one step, as the user's tools may: many commands one by one would be slow to test.
+        const done = store.executeBatch(step.user, { origin: USER });
+        expect(done.ok, `step ${index}: ${JSON.stringify(done)}`).toBe(true);
+        continue;
+      }
+      if ("window" in step) {
+        const other = ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
+        for (const command of step.window) {
+          const done = other.execute(command, { origin: USER });
           expect(done.ok, `step ${index}: ${JSON.stringify(done)}`).toBe(true);
         }
+        store.applyUpdates([other.encodeState()]);
+        continue;
+      }
+      if ("undoTask" in step) {
+        expect(store.undoTask(step.undoTask).ok, `step ${index}`).toBe(true);
         continue;
       }
       if ("message" in step) {
-        caller.beginAnswer();
+        if (step.task !== undefined) host.task = step.task;
+        tools.caller.beginAnswer();
         continue;
       }
       if ("reopen" in step) {
         host.open(ProjectStore.fromUpdates([store.encodeState()]).store);
+        if (step.newCaller) tools = toolsOn(host);
         continue;
       }
-      if (!step.sameAnswer) caller.beginAnswer();
-      const result = await call(step.tool, step.args ?? {});
+      if (!step.sameAnswer) tools.caller.beginAnswer();
+      const result = await tools.call(step.tool, step.args ?? {});
       const where = `step ${index} (${step.tool}):\n${result.text}`;
       const { expect: wanted } = step;
       if (wanted.ok) expect(result.isError, where).toBe(false);
@@ -111,7 +129,7 @@ describe("replayed calls", () => {
         expect((files.get(path) ?? "").split(text).length - 1, `${path} ${text}`).toBe(count);
       }
     }
-    if (end?.undoSteps !== undefined) {
+    if (end?.undoAll) {
       const origin = host.origin();
       expect(store.canUndoOrigin(origin)).toBe(true);
       expect(store.undoOrigin(origin).ok).toBe(true);

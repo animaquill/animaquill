@@ -29,6 +29,7 @@ import {
   type MergeMemory,
 } from "./merge-files.ts";
 import { brokenDocument } from "./document-check.ts";
+import { objectKey, objectOfPath } from "./object-of-path.ts";
 import { projectToState, stateToProject, type Here, type ProjectState } from "./model.ts";
 import { NOBODY, STORAGE, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
 import { cloudOrigin } from "./sync.ts";
@@ -94,6 +95,11 @@ export interface ExecuteOptions {
    * object, see `objectOfPath`: undefined for a path does not check that path.
    */
   readonly baseRevision?: Revision | ((path: Path) => Revision | undefined);
+  /**
+   * Origins whose changes count as the caller's own, besides its origin: an AI conversation whose
+   * messages each are a task of their own. What people took back of them is not.
+   */
+  readonly isOwn?: (origin: Origin) => boolean;
   /** Runs every check and writes nothing. */
   readonly dryRun?: boolean;
 }
@@ -230,8 +236,17 @@ export interface LocalChange {
 export interface ChangeRecord {
   readonly revision: number;
   readonly origin: Origin;
+  /**
+   * Where it wrote. A change of very many paths, such as the first one from a platform, keeps one
+   * of each object instead, see `objectOfPath`.
+   */
   readonly paths: readonly Path[];
+  /** It took changes of `origin` back, or did them again: that is people's doing. */
+  readonly takesBack?: "undo" | "redo";
 }
+
+/** How many paths one record keeps before it keeps one of each object. */
+const MAX_RECORDED_PATHS = 500;
 
 export interface HistoryEntry {
   readonly revision: number;
@@ -245,6 +260,8 @@ export interface HistoryEntry {
 interface Write {
   readonly revision: number;
   readonly origin: Origin;
+  /** It took a change back or did it again, which only people ask for, whatever its origin. */
+  readonly takesBack?: true;
 }
 
 /** What it takes to undo one change. */
@@ -521,6 +538,8 @@ export class ProjectStore {
   #history: HistoryEntry[] = [];
   /** What every change wrote, whoever made it, also other windows and the platform: see `changesSince`. */
   #changes: ChangeRecord[] = [];
+  /** The first revision after which `#changes` has every change. */
+  #changesFrom = 0;
   /** Which write the document holds where. Only taking changes back needs this: see `Written`. */
   #written: Written = UNWRITTEN;
   /** The change being written here, which already knows what it wrote. */
@@ -827,9 +846,7 @@ export class ProjectStore {
    */
   changesSince(revision: Revision): readonly ChangeRecord[] | undefined {
     const since = this.revisionOf(revision);
-    if (since === undefined) return undefined;
-    const first = this.#changes[0];
-    if (since < this.#revision && (!first || first.revision > since + 1)) return undefined;
+    if (since === undefined || since < this.#changesFrom) return undefined;
     return this.#changes.filter((change) => change.revision > since);
   }
 
@@ -1147,7 +1164,7 @@ export class ProjectStore {
       if (broken) return { ok: false, error: broken };
     }
     if (options.baseRevision !== undefined) {
-      const conflict = this.#findConflicts(patches, origin, options.baseRevision);
+      const conflict = this.#findConflicts(patches, origin, options.baseRevision, options.isOwn);
       if (conflict) return { ok: false, error: conflict };
     }
     if (options.dryRun || patches.length === 0) {
@@ -1175,7 +1192,11 @@ export class ProjectStore {
     }
     this.#written = draft.written;
     // Yjs reports nothing about a field of something that went away in the same change.
-    const write = { revision: this.#revision, origin };
+    const write: Write = {
+      revision: this.#revision,
+      origin,
+      ...(takesBack && { takesBack: true }),
+    };
     for (const { path } of patches) this.#markWrite(path, write, false);
 
     // Where uploads put files is nothing to undo, see `STORAGE`: that keeps no log.
@@ -1313,6 +1334,7 @@ export class ProjectStore {
     patches: readonly Patch[],
     origin: Origin,
     given: NonNullable<ExecuteOptions["baseRevision"]>,
+    isOwn: (origin: Origin) => boolean = () => false,
   ): CommandFailure | undefined {
     const stale = (revision: Revision): CommandFailure => ({
       code: "stale-revision",
@@ -1328,7 +1350,10 @@ export class ProjectStore {
       const base = this.revisionOf(revision);
       if (base === undefined) return stale(revision);
       const isNewer = (write: Write | undefined) =>
-        write !== undefined && write.revision > base && write.origin !== origin;
+        write !== undefined &&
+        write.revision > base &&
+        write.origin !== origin &&
+        (write.takesBack === true || !isOwn(write.origin));
       const isConflict =
         isNewer(this.#writes.get(keyOf(path))) ||
         path.some((_, index) => isNewer(this.#removals.get(keyOf(path.slice(0, index + 1)))));
@@ -1419,7 +1444,12 @@ export class ProjectStore {
     const isLoad = transaction.origin === LOAD;
     if (!isLoad) this.#revision += 1;
     const origin = typeof transaction.origin === "string" ? transaction.origin : "other";
-    const write = { revision: this.#revision, origin };
+    const local = transaction === this.#writing;
+    const write: Write = {
+      revision: this.#revision,
+      origin,
+      ...(local && this.#change?.takesBack !== undefined && { takesBack: true }),
+    };
     const mutator = new Mutator(this.#latest);
     // What is written here comes with its steps, which know more: see #commit.
     const writes = new WriteTree(this.#written);
@@ -1458,15 +1488,35 @@ export class ProjectStore {
         paths.push(where);
       });
     }
-    if (!isLoad && paths.length > 0) {
-      this.#changes.push({ revision: this.#revision, origin, paths });
-      if (this.#changes.length > MAX_HISTORY) this.#changes = this.#changes.slice(-MAX_HISTORY);
+    if (!isLoad) {
+      const kept = paths.length > MAX_RECORDED_PATHS ? onePathEach(paths) : paths;
+      const takesBack = local ? this.#change?.takesBack : undefined;
+      this.#changes.push({
+        revision: this.#revision,
+        origin,
+        paths: kept,
+        ...(takesBack && { takesBack }),
+      });
+      if (this.#changes.length > MAX_HISTORY) {
+        const gone = this.#changes.splice(0, this.#changes.length - MAX_HISTORY);
+        this.#changesFrom = gone.at(-1)?.revision ?? this.#changesFrom;
+      }
     }
 
     this.#written = writes.root;
     this.#latest = mutator.root;
     this.#show();
   };
+}
+
+/** One path of each object that paths are of, for a record of a change of very many. */
+function onePathEach(paths: readonly Path[]): readonly Path[] {
+  const seen = new Map<string, Path>();
+  for (const path of paths) {
+    const key = objectKey(objectOfPath(path));
+    if (!seen.has(key)) seen.set(key, path);
+  }
+  return [...seen.values()];
 }
 
 /** Whether what came as a batch of files is one, from code that does not check its types. */
