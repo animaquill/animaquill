@@ -337,6 +337,14 @@ describe("AI services", () => {
     expect(ai.getSnapshot().services).toEqual([]);
   });
 
+  it("turn the words to compare with on and off again", () => {
+    const { ai } = setup();
+    ai.setComparisonTexts(true);
+    expect(ai.getSnapshot().comparisonTexts).toBe(true);
+    ai.setComparisonTexts(false);
+    expect(ai.getSnapshot().comparisonTexts).toBeUndefined();
+  });
+
   it("start straight where there is no relay, also those that need one", () => {
     const withRelay = setup({ relay: RELAY }).ai;
     withRelay.add("zhipu", "智谱");

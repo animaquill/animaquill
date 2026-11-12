@@ -129,7 +129,9 @@ export class AiSettingsStore {
   }
 
   #adopt(settings: AiSettings): void {
-    this.#snapshot = { ...this.#snapshot, ...settings };
+    // What the settings leave out is off: a switch that went off takes its key away.
+    const { comparisonTexts: _was, ...before } = this.#snapshot;
+    this.#snapshot = { ...before, ...settings };
     this.#emitter.emit();
   }
 
