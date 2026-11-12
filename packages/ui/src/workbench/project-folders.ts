@@ -80,6 +80,7 @@ import type { ProblemList } from "../problems/list.ts";
 import { downloadFrom, downloadableItems, type HereOf } from "../storage/places.ts";
 import type { ImportRefused, ImportReport } from "../transfer/import.ts";
 import { formatSize } from "../transfer/transfer.ts";
+import { commandFailedText } from "../i18n/failures.ts";
 import type {
   ConfirmOptions,
   DialogDetail,
@@ -1488,10 +1489,10 @@ export class ProjectFolders {
         continue;
       }
       error = t("folder.adopt.unsettled", {
-        problems: settled.problems
-          .slice(0, 5)
-          .map((problem) => problemText(t, problem))
-          .join("；"),
+        problems: [
+          ...(settled.failure ? [commandFailedText(t, settled.failure)] : []),
+          ...settled.problems.slice(0, 5).map((problem) => problemText(t, problem)),
+        ].join("；"),
         interpolation: { escapeValue: false },
       });
     }
@@ -1572,7 +1573,12 @@ export class ProjectFolders {
         const said = [
           result.cancelled
             ? t("folder.adopt.cancelled")
-            : t("folder.adopt.stopped", { reason: errorName(result.error) }),
+            : t("folder.adopt.stopped", {
+                reason: result.failure
+                  ? commandFailedText(t, result.failure)
+                  : errorName(result.error),
+                interpolation: { escapeValue: false },
+              }),
           result.restored
             ? t("folder.adopt.folderSame")
             : kept !== undefined

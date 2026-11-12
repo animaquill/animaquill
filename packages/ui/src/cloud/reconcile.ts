@@ -12,7 +12,13 @@
  * that comes back to a working copy rebuilt from its repository goes through the same choices for
  * what a merge from their common base cannot settle.
  */
-import { ProjectStore, folderBatch, type FileChange, type Origin } from "@animaquill/core";
+import {
+  ProjectStore,
+  folderBatch,
+  type CommandFailure,
+  type FileChange,
+  type Origin,
+} from "@animaquill/core";
 import type { Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { ReconcileItem } from "../workbench/dialogs.ts";
@@ -63,6 +69,8 @@ export interface Settled {
 /** Why choices cannot be carried out together, for people to choose again. */
 export interface Unsettled {
   readonly problems: readonly Problem[];
+  /** Why the platform's side would not take the batch at all, in words where people read it. */
+  readonly failure?: CommandFailure;
 }
 
 /** The newer side, by the time of a file here against that of the whole project of the platform. */
@@ -230,9 +238,7 @@ export function settle(
     if (changes.length > 0) {
       const merged = fork.mergeFiles(changes, { origin, baseOf: (path) => final.get(path) });
       if (!merged.ok) {
-        return {
-          problems: [problem("", merged.error.message), ...(merged.error.problems ?? [])],
-        };
+        return { problems: merged.error.problems ?? [], failure: merged.error };
       }
       const blocked = merged.files.filter(({ status }) => status !== "merged");
       if (blocked.length > 0) {

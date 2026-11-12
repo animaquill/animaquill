@@ -16,7 +16,7 @@
  * project in the browser as it was. What was kept stays. Whoever asks people, and has the platform
  * archive first, is `ProjectFolders`.
  */
-import { ProjectStore, inRanks } from "@animaquill/core";
+import { ProjectStore, inRanks, type CommandFailure } from "@animaquill/core";
 import {
   FolderError,
   type FileStat,
@@ -161,6 +161,8 @@ export type AdoptResult =
       readonly stage: "keeping" | "writing" | "checking" | "taking" | "linking";
       readonly cancelled: boolean;
       readonly error: unknown;
+      /** Why the project of the platform would not take what the folder had, where it said so. */
+      readonly failure?: CommandFailure;
       readonly restored: boolean;
       readonly cloudBack: boolean;
       readonly kept: string | undefined;
@@ -508,6 +510,7 @@ export class FolderAdopt {
       stage: "writing" | "checking" | "taking" | "linking",
       error: unknown,
       cloudBack = true,
+      failure?: CommandFailure,
     ): Promise<AdoptResult> => {
       await this.#forgetHashes(key);
       const restored = await this.#restore(folder, done);
@@ -518,6 +521,7 @@ export class FolderAdopt {
         stage,
         cancelled: signal?.aborted === true,
         error,
+        ...(failure && { failure }),
         restored,
         cloudBack,
         kept,
@@ -574,8 +578,9 @@ export class FolderAdopt {
         const back = await takeBack();
         return stop(
           "taking",
-          new Error(merged.ok ? "Not all of it came in" : merged.error.message),
+          new Error(merged.ok ? "Not all of it came in" : merged.error.code),
           back,
+          merged.ok ? undefined : merged.error,
         );
       }
       if (!(await saved())) {
