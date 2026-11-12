@@ -14,7 +14,7 @@ import { MemoryPlatform, TestCloudBrowser } from "../cloud/cloud-support.ts";
 import { account } from "../cloud/projects-support.ts";
 import { FakeRepositories } from "../cloud/repository-support.ts";
 import type { DialogRequest } from "./dialogs.ts";
-import { FAST } from "./folder-windows.ts";
+import { FAST, notices } from "./folder-windows.ts";
 import { layouts } from "./layouts.ts";
 import {
   MemoryExports,
@@ -62,6 +62,7 @@ function browserOn(
   const drafts = new MemoryTrials();
   const organizer = memoryOrganizer();
   // A window whose writes to the log fail while `failing.on`, as a full disk does.
+  let hasLog = false;
   const projectsOf = (fails: boolean): MemoryLibrary =>
     !fails || !failing
       ? library
@@ -70,11 +71,15 @@ function browserOn(
             if (property === "open") {
               return async (id: string) => {
                 const log = await target.open(id);
+                // Only the log the window has the project open with: what goes in afresh is
+                // another matter, as after the disk has room again.
+                const isFirst = !hasLog;
+                hasLog = true;
                 return new Proxy(log, {
                   get(inner, name) {
                     if (name === "append") {
                       return async (...args: Parameters<typeof log.append>) => {
-                        if (failing.on) throw new Error("quota");
+                        if (failing.on && isFirst) throw new Error("quota");
                         return inner.append(...args);
                       };
                     }
@@ -189,74 +194,156 @@ function repositoryOf(platform: MemoryPlatform, project: string): FakeRepositori
   return repository;
 }
 
+const MINE = "code/第二个窗口.js";
+
+/**
+ * A project of the platform open in two windows of this browser, the first of which syncs; the
+ * second has a change that it cannot put into the log, as the disk is full for it. Then nobody
+ * else opens the project for a while, and the platform lets go of its copy and makes it again:
+ * the first window takes it back, and every window opens it again. `stay`: what the second
+ * window answers when it is asked about what it could not save (`stay` to keep it).
+ */
+async function windowsWithAChange({ stay = false } = {}) {
+  const platform = new MemoryPlatform();
+  // Another browser makes the project, which is archived, and leaves it.
+  const elsewhere = browserOn(platform);
+  const there = elsewhere.window();
+  expect(await there.session.create("片子")).toBe(true);
+  there.session.store?.execute(write(CODE, "const a = 1;\n") as never);
+  expect(await there.cloud?.beginLink()).toMatchObject({ isNew: true });
+  await online(there);
+  const project = (await elsewhere.links.get(there.session.key as string))?.project as string;
+  const repository = repositoryOf(platform, project);
+  platform.archive(project);
+  await leave(there);
+
+  const failing = { on: false };
+  const here = browserOn(platform, repository, failing);
+  const first = here.window();
+  answering(first, () => true);
+  expect(await first.cloud?.openCloudProject(project)).toBe(true);
+  await online(first);
+  const key = first.session.key as string;
+  const second = here.window(true);
+  const asked = answering(second, (request) =>
+    request.kind === "confirm" && (request as { title?: string }).title === "project.unsavedTitle"
+      ? !stay
+      : true,
+  );
+  await second.openProject(key);
+  expect(second.session.key).toBe(key);
+
+  // The second window's last change cannot be written: the disk is full for it.
+  failing.on = true;
+  expect(second.session.store?.execute(write(MINE, "mine\n") as never).ok).toBe(true);
+  expect(await second.session.trySave()).toBe(false);
+  const left = [...second.session.unsavedUpdates];
+  return { platform, project, here, first, second, key, asked, left, failing };
+}
+
+/** Until the platform made the copy again, and the first window took it back. */
+async function takenBack({
+  platform,
+  project,
+  here,
+  key,
+}: Awaited<ReturnType<typeof windowsWithAChange>>) {
+  platform.release(project);
+  await vi.waitFor(async () => expect(await here.links.get(key)).toMatchObject({ generation: 2 }), {
+    timeout: 20_000,
+  });
+}
+
+/** Whether a store has the change of the second window. */
+const hasMine = (store: ProjectStore | undefined) => store?.getState().files[MINE] === "mine\n";
+
 describe("a window of this browser whose last change is not in the log yet", () => {
   it(
     "does not lose it when another window takes the copy back and every window opens again",
     { timeout: 60_000 },
     async () => {
-      const platform = new MemoryPlatform();
-      // Another browser makes the project, which is archived, and leaves it.
-      const elsewhere = browserOn(platform);
-      const there = elsewhere.window();
-      expect(await there.session.create("片子")).toBe(true);
-      there.session.store?.execute(write(CODE, "const a = 1;\n") as never);
-      expect(await there.cloud?.beginLink()).toMatchObject({ isNew: true });
-      await online(there);
-      const project = (await elsewhere.links.get(there.session.key as string))?.project as string;
-      const repository = repositoryOf(platform, project);
-      platform.archive(project);
-      await leave(there);
-
-      // This browser has it in two windows: the first syncs.
-      const failing = { on: false };
-      const here = browserOn(platform, repository, failing);
-      const first = here.window();
-      answering(first, () => true);
-      expect(await first.cloud?.openCloudProject(project)).toBe(true);
-      await online(first);
-      const key = first.session.key as string;
-      const second = here.window(true);
-      answering(second, () => true);
-      await second.openProject(key);
-      expect(second.session.key).toBe(key);
-
-      // The second window's last change cannot be written yet: the disk is full for a moment.
-      failing.on = true;
-      expect(second.session.store?.execute(write("code/第二个窗口.js", "mine\n") as never).ok).toBe(
-        true,
-      );
-      expect(await second.session.trySave()).toBe(false);
-
-      // Nobody else opened it for a while: the platform lets go of its copy and makes it again.
-      platform.release(project);
-      await vi.waitFor(
-        async () => expect(await here.links.get(key)).toMatchObject({ generation: 2 }),
-        { timeout: 20_000 },
-      );
+      const setup = await windowsWithAChange();
+      const { platform, project, here, first, second, key, failing } = setup;
+      await takenBack(setup);
       await vi.waitFor(() => expect(second.cloud?.session?.generation).toBe(2), {
         timeout: 20_000,
       });
       failing.on = false;
       await online(first);
-      await new Promise((resolve) => setTimeout(resolve, 6000));
-
-      // The rule: in the content, chosen away by people, or in a backup.
-      const inWindow = second.session.store?.getState().files["code/第二个窗口.js"];
-      const onPlatform = platform.workingCopy(project).getState().files["code/第二个窗口.js"];
+      await online(second);
+      // The rule: in the content, chosen away by people, or in a backup: here, in the content,
+      // as a change of that window, without asking anything.
+      const inWindow = second.session.store?.getState().files[MINE];
+      const onPlatform = platform.workingCopy(project).getState().files[MINE];
+      expect({ inWindow, onPlatform }).toEqual({ inWindow: "mine\n", onPlatform: "mine\n" });
       const kept = [...(here.library.backupsOf.get(key)?.values() ?? [])].some((updates) => {
         const { store } = ProjectStore.fromUpdates(updates);
-        const text = store?.getState().files["code/第二个窗口.js"];
+        const has = hasMine(store);
         store?.destroy();
-        return text === "mine\n";
+        return has;
       });
-      expect({ inWindow, onPlatform, kept }).not.toEqual({
-        inWindow: undefined,
-        onPlatform: undefined,
-        kept: false,
+      // It never got into the log before: not in the backup either.
+      expect(kept).toBe(false);
+    },
+  );
+
+  for (const [what, fault] of [
+    ["the log before cannot be read", "throws"],
+    ["what the log had makes no project", "noProject"],
+  ] as const) {
+    it(
+      `asks before it lets go of it where it cannot go onto the new copy: ${what}`,
+      { timeout: 60_000 },
+      async () => {
+        const setup = await windowsWithAChange({ stay: true });
+        const { here, second, key, asked } = setup;
+        here.library.backupUpdates = async () => {
+          if (fault === "throws") throw new Error("UnknownError");
+          return [new Uint8Array([1, 2, 3])];
+        };
+        await takenBack(setup);
+        // The window asks, as for anything it could not save, and people stay: it still has it.
+        await vi.waitFor(
+          () =>
+            expect(
+              asked.some(
+                (request) =>
+                  request.kind === "confirm" &&
+                  (request as { title?: string }).title === "project.unsavedTitle",
+              ),
+            ).toBe(true),
+          { timeout: 20_000 },
+        );
+        expect(second.session.key).toBe(key);
+        expect(hasMine(second.session.store ?? undefined)).toBe(true);
+        expect(notices(second).some((said) => said.startsWith("cloud.takeBack.carryFailed"))).toBe(
+          true,
+        );
+      },
+    );
+  }
+
+  it(
+    "puts it into the log of the project, whatever the window has open meanwhile",
+    { timeout: 60_000 },
+    async () => {
+      // Straight into the log: once the window opens the project again, or another one, or
+      // anything else, the change is part of the project.
+      const setup = await windowsWithAChange();
+      const { here, key, left, first } = setup;
+      await takenBack(setup);
+      const elsewhere = here.window();
+      answering(elsewhere, () => true);
+      expect(elsewhere.session.key).toBeUndefined();
+      expect(await elsewhere.cloud?.carryOver(key, left)).toBe("carried");
+      const log = await here.library.open(key);
+      const { store } = ProjectStore.fromUpdates(await log.load());
+      log.close();
+      expect(hasMine(store)).toBe(true);
+      store?.destroy();
+      await vi.waitFor(() => expect(hasMine(first.session.store ?? undefined)).toBe(true), {
+        timeout: 20_000,
       });
-      // ...and it went onto the new copy, as a change of that window.
-      expect({ inWindow, onPlatform }).toEqual({ inWindow: "mine\n", onPlatform: "mine\n" });
-      expect(second.session.getSnapshot().save).toBe("saved");
     },
   );
 });

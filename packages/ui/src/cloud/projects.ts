@@ -13,6 +13,7 @@ import {
   type CloudLinkRepository,
   type CloudProjectSummary,
   type CloudWake,
+  type ProjectLog,
   type CloudRemoval,
   type CloudRemoveOptions,
   type RepositoryStatus,
@@ -1087,79 +1088,78 @@ export class CloudProjects {
   }
 
   /**
-   * Whether what a window changed and could not put into the log can go onto the copy its log went
-   * on since, see `carryOver`: the log as it was is still there.
-   */
-  async canCarryOver(key: string): Promise<boolean> {
-    const { cloud, projects } = this.#options;
-    if (!projects.backupUpdates) return false;
-    const link = await cloud.links.get(key).catch(() => undefined);
-    const backup = link?.kept?.backup;
-    if (!backup) return false;
-    return ((await projects.backups?.(key).catch(() => [])) ?? []).includes(backup);
-  }
-
-  /**
-   * Puts what a window changed and could not put into the log (`updates`, as `ProjectSession`
-   * kept them) onto the open project, whose log went on another copy of the platform under that
+   * Puts what this window changed and could not put into the log (`updates`, as `ProjectSession`
+   * kept them) into the log of the project, which went on another copy of the platform under this
    * window, see `TakeBack`: as taking it back does, with what the log had then (`CloudLink.kept`)
-   * for what both had, so that only those changes come in. What the new copy changed in the same
-   * place too, people choose for. Resolves to whether it went.
+   * for what both had, so that only those changes come in, and what the new copy changed in the
+   * same place too people choose for. Straight into the log, while this window still has the
+   * project open as it was: once it opens again, they are part of it, whatever people open
+   * meanwhile. "carried": they are there, or there was nothing to put; "declined": people chose not
+   * to have them; "failed": nothing changed, and they are only in this window still, which then
+   * asks people before it lets go of them, as for anything else it could not save.
    */
-  async carryOver(key: string, updates: readonly Uint8Array[]): Promise<boolean> {
-    const { cloud, projects, session, notifications, dialogs, t } = this.#options;
-    const store = session.store;
+  async carryOver(
+    key: string,
+    updates: readonly Uint8Array[],
+  ): Promise<"carried" | "declined" | "failed"> {
+    const { cloud, projects, dialogs, notifications, t, window } = this.#options;
+    const name = this.#options.session.store?.getState().manifest.name ?? "";
+    const plain = { name, interpolation: { escapeValue: false } } as const;
     const link = await cloud.links.get(key).catch(() => undefined);
     const backup = link?.kept?.backup;
-    if (!store || session.key !== key || !backup || !projects.backupUpdates) return false;
-    const name = store.getState().manifest.name;
-    const plain = { name, interpolation: { escapeValue: false } } as const;
-    let kept: readonly Uint8Array[];
+    if (!backup || !projects.backupUpdates) return "failed";
+    const stores: ProjectStore[] = [];
+    const storeOf = (all: readonly Uint8Array[]) => {
+      const store = ProjectStore.fromUpdates(all).store;
+      if (!store) throw new Error("What the log has is no project");
+      stores.push(store);
+      return store;
+    };
+    let log: ProjectLog | undefined;
     try {
-      kept = await projects.backupUpdates(key, backup);
-    } catch (error) {
-      console.warn("What the log had could not be read to carry changes over", error);
-      notifications.push(t("cloud.takeBack.carryFailed", plain));
-      return false;
-    }
-    const base = ProjectStore.fromUpdates(kept).store;
-    const here = ProjectStore.fromUpdates([...kept, ...updates]).store;
-    try {
-      if (!base || !here) throw new Error("What the log had is no project");
-      const plan = planTakeBack(here.exportFiles().files, store, base.exportFiles().files);
+      const kept = await projects.backupUpdates(key, backup);
+      log = await projects.open(key);
+      const now = storeOf(await log.load());
+      const base = storeOf(kept).exportFiles().files;
+      const here = storeOf([...kept, ...updates]).exportFiles().files;
+      const plan = planTakeBack(here, now, base);
       if (!isPlan(plan)) throw new Error("The changes do not go onto the project");
-      try {
-        let final = plan.after;
-        if (plan.differences.length > 0) {
-          const chosen = await chooseTakeBack({ dialogs, t, name })(plan);
-          if (!chosen) {
-            notifications.push(t("cloud.takeBack.carryDeclined", plain));
-            return false;
-          }
-          final = chosen.settled.after;
+      stores.push(plan.store);
+      let final = plan.after;
+      if (plan.differences.length > 0) {
+        const chosen = await chooseTakeBack({ dialogs, t, name })(plan);
+        if (!chosen) {
+          notifications.push(t("cloud.takeBack.carryDeclined", plain));
+          return "declined";
         }
-        const changes = pathsOfBoth(plan.cloud, final)
-          .filter((path) => plan.cloud.get(path) !== final.get(path))
-          .map((path) => ({ path, base: plan.cloud.get(path), text: final.get(path) }));
-        if (changes.length === 0) return true;
-        if (session.store !== store) return false;
-        const merged = store.mergeFiles(changes, {
-          origin: USER,
-          baseOf: (path) => plan.cloud.get(path),
-        });
-        if (!merged.ok) throw new Error("The changes did not go onto the project");
-        notifications.push(t("cloud.takeBack.carried", { ...plain, count: changes.length }));
-        return true;
-      } finally {
-        plan.store.destroy();
+        final = chosen.settled.after;
       }
+      const changes = pathsOfBoth(plan.cloud, final)
+        .filter((path) => plan.cloud.get(path) !== final.get(path))
+        .map((path) => ({ path, base: plan.cloud.get(path), text: final.get(path) }));
+      if (changes.length === 0) return "carried";
+      const before = now.stateVector();
+      const merged = now.mergeFiles(changes, {
+        origin: USER,
+        baseOf: (path) => plan.cloud.get(path),
+      });
+      if (!merged.ok || merged.files.some(({ status }) => status !== "merged"))
+        throw new Error("The changes did not go onto the project");
+      // As a change of this window: what other windows wrote meanwhile stays, as Yjs puts both.
+      await log.append(now.diffSince(before), now.getState().manifest.name, {
+        kind: "user",
+        window,
+        at: Date.now(),
+      });
+      notifications.push(t("cloud.takeBack.carried", { ...plain, count: changes.length }));
+      return "carried";
     } catch (error) {
       console.warn("Changes of this window could not go onto the new copy", error);
       notifications.push(t("cloud.takeBack.carryFailed", plain));
-      return false;
+      return "failed";
     } finally {
-      base?.destroy();
-      here?.destroy();
+      log?.close();
+      for (const store of stores) store.destroy();
     }
   }
 
