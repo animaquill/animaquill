@@ -5,6 +5,7 @@ import {
   entryOf,
   objectKey,
   objectOfPath,
+  pathOfObject,
   type ObjectRef,
   type ProjectState,
   type ProjectStore,
@@ -101,27 +102,6 @@ export function existsIn(state: ProjectState, ref: ObjectRef): boolean {
     node = (node as Record<string, unknown>)[key];
   }
   return node !== undefined;
-}
-
-/** Where an object sits in the state. */
-export function pathOfObject(ref: ObjectRef): readonly string[] {
-  const { kind, id, timeline = "" } = ref;
-  switch (kind) {
-    case "project":
-      return ["manifest"];
-    case "timeline":
-      return ["timelines", id];
-    case "scene":
-      return ["scenes", id];
-    case "sound":
-      return ["sounds", id];
-    case "asset":
-      return ["assets", id];
-    case "file":
-      return ["files", id];
-    default:
-      return ["timelines", timeline, `${kind}s`, id];
-  }
 }
 
 /** Whether a change was the caller's own: of this conversation, as any of its tasks. */

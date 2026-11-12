@@ -229,6 +229,11 @@ export const FAILURE_TEXTS: Texts = {
     why === "uses-removed"
       ? "The files use what the editor just removed."
       : "The files and what the editor has not written yet would break the project together.",
+  "copy-too-large": ({ bytes, limit }) =>
+    `The project is too large to copy: ${Math.ceil(bytes / 1024 ** 2)} MiB, more than ${limit / 1024 ** 2} MiB.`,
+  "copy-discarded": () => "The copy was discarded.",
+  "not-in-copy": ({ command }) =>
+    `A temporary copy cannot do ${command}: it has the assets of the project, and no new ones.`,
 };
 
 /**

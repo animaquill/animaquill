@@ -239,7 +239,13 @@ export function codeOfAsksFor(state: ProjectState, owner: string, asset: string)
   return manifest?.params?.some(startsWithIt) === true;
 }
 
+/**
+ * What scenes were shown as, by scene and revision: one that stays what it was keeps its identity.
+ * By revision too, so that two states with the same scene, such as a project and a copy of it, do
+ * not take turns at making it anew. The last few hundred are kept.
+ */
 const sources = new Map<string, SceneSource>();
+const MOST_SOURCES = 512;
 
 /** What a compositor has to know to show a scene, or undefined when there is no such scene. */
 export function sceneSourceOf(state: ProjectState, scene: string): SceneSource | undefined {
@@ -252,9 +258,14 @@ export function sceneSourceOf(state: ProjectState, scene: string): SceneSource |
   const content = revisionOfFiles(state, paths);
   const params = paramsOf(manifest);
   const revision = hashOfText(JSON.stringify([entry, runtime, content, assets, params]));
-  const known = sources.get(scene);
+  const key = `${scene}\n${revision}`;
+  const known = sources.get(key);
   // A scene that stays what it was keeps its identity, which is how a plan sees that nothing changed.
-  if (known?.revision === revision) return known;
+  if (known) {
+    sources.delete(key);
+    sources.set(key, known);
+    return known;
+  }
   const source: SceneSource = {
     kind: "scene",
     scene,
@@ -265,6 +276,10 @@ export function sceneSourceOf(state: ProjectState, scene: string): SceneSource |
     params,
     seed: Number.parseInt(hashOfText(scene).slice(0, 6), 36),
   };
-  sources.set(scene, source);
+  sources.set(key, source);
+  if (sources.size > MOST_SOURCES) {
+    const [oldest] = sources.keys();
+    if (oldest !== undefined) sources.delete(oldest);
+  }
   return source;
 }

@@ -242,6 +242,14 @@ export const FAILURES = {
   "merge-unsettled": none,
   /** What came in and what the editor has not written yet would break the project together. */
   "merge-would-break": z.strictObject({ why: z.enum(["uses-removed", "breaks"]) }),
+
+  // Temporary copies of a project, see `ProjectCopy`.
+  /** The project is too large to copy: its update has `bytes`, more than `limit`. */
+  "copy-too-large": z.strictObject({ bytes: z.number(), limit: z.number() }),
+  /** The copy was discarded. */
+  "copy-discarded": none,
+  /** A copy cannot do this: take in new assets or files from a folder (`command`). */
+  "not-in-copy": z.strictObject({ command: z.string() }),
 } as const;
 
 export type FailureCode = keyof typeof FAILURES;

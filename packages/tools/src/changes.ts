@@ -3,11 +3,12 @@ import {
   entryOf,
   objectKey,
   objectOfPath,
+  pathOfObject,
   type ObjectKind,
   type ObjectRef,
   type ProjectState,
 } from "@animaquill/core";
-import { fieldOf, nameOf, objectText, pathOfObject } from "./context.ts";
+import { fieldOf, nameOf, objectText } from "./context.ts";
 import { clipLine, transitionText } from "./lines.ts";
 
 /** What a batch did to one object, for the summary of a turn and for AI. */

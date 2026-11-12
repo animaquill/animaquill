@@ -115,6 +115,12 @@ const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C 
   "manifest-deleted": { code: "manifest-deleted", params: {} },
   "merge-unsettled": { code: "merge-unsettled", params: {} },
   "merge-would-break": { code: "merge-would-break", params: { why: "breaks" } },
+  "copy-too-large": {
+    code: "copy-too-large",
+    params: { bytes: 80 * 1024 ** 2, limit: 64 * 1024 ** 2 },
+  },
+  "copy-discarded": { code: "copy-discarded", params: {} },
+  "not-in-copy": { code: "not-in-copy", params: { command: "asset.add" } },
 };
 
 /** One failure of every code. */

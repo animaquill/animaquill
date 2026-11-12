@@ -22,7 +22,20 @@ export {
   type FailureCode,
   type FailureParams,
 } from "./failures.ts";
-export { objectKey, objectOfPath, type ObjectKind, type ObjectRef } from "./object-of-path.ts";
+export {
+  MAX_COPY_BYTES,
+  CopyDiscarded,
+  ProjectCopy,
+  type CopyChange,
+  type ForkResult,
+} from "./copy.ts";
+export {
+  objectKey,
+  objectOfPath,
+  pathOfObject,
+  type ObjectKind,
+  type ObjectRef,
+} from "./object-of-path.ts";
 export {
   componentKeys,
   componentOf,

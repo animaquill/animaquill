@@ -553,6 +553,8 @@ export class ProjectStore {
   #isSettled = true;
   /** See `readOnly`. */
   #readOnly = false;
+  /** See `refuse`. */
+  #refusal: ((commands: readonly string[]) => CommandFailure | undefined) | undefined;
 
   /** Opens a document that already has content, such as one that came from the platform. */
   constructor(doc: Y.Doc) {
@@ -829,6 +831,16 @@ export class ProjectStore {
     this.#readOnly = value;
   }
 
+  /**
+   * Has every change from here on asked first: a failure refuses it, with the names of what it runs
+   * (commands, or "file.import", "file.merge", "undo"). For what a project may not do here, such as
+   * a temporary copy that takes no new assets, see `ProjectCopy`. What other windows and the platform
+   * did still comes in, as with `readOnly`.
+   */
+  refuse(refusal: (commands: readonly string[]) => CommandFailure | undefined): void {
+    this.#refusal = refusal;
+  }
+
   /** What listeners are hearing about, if it was made here. */
   get change(): LocalChange | undefined {
     return this.#change;
@@ -1083,6 +1095,8 @@ export class ProjectStore {
 
   /** Why nothing can be taken back at the moment. The history stays as it is then. */
   get #whyNotNow(): CommandFailure | undefined {
+    const refused = this.#refusal?.(["undo"]);
+    if (refused) return refused;
     if (this.#readOnly) return READ_ONLY;
     if (this.#isBehind) return MISSING_UPDATES;
     return this.#isLocked ? PROJECT_LOCKED : undefined;
@@ -1146,6 +1160,8 @@ export class ProjectStore {
     options: CommitOptions,
     plan: (draft: Draft) => readonly unknown[],
   ): CommandResult {
+    const refused = this.#refusal?.(commands);
+    if (refused) return { ok: false, error: refused };
     if (this.#readOnly) return { ok: false, error: READ_ONLY };
     if (this.#isBehind) return { ok: false, error: MISSING_UPDATES };
     const draft = new Draft(this.#state, origin, this.#written);

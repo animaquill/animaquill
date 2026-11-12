@@ -599,6 +599,9 @@
       "uses-removed": "外面新用到的东西编辑器里刚删掉了，这一批没有并入",
       "breaks": "外面的改动和编辑器里还没写出去的改动合在一起会让项目出错，这一批没有并入"
     },
+    "copy-too-large": "项目太大，不能分出副本：有 {{size}} MiB，超过了 {{limit}} MiB",
+    "copy-discarded": "这份副本已经丢弃了",
+    "not-in-copy": "临时副本里不能做这件事（{{command}}）：副本只用项目里已有的素材",
     "invalid-value": {
       "format": "{{path}}：{{message}}",
       "formatPlain": "{{message}}",

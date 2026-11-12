@@ -135,6 +135,11 @@ export function failureMessage(failure: CommandFailure, t: Translate = plainTran
       );
     case "file-too-large":
       return t(key, { ...params, size: Number(params.limit) / 1024 ** 2 });
+    case "copy-too-large":
+      return t(key, {
+        size: Math.ceil(Number(params.bytes) / 1024 ** 2),
+        limit: Number(params.limit) / 1024 ** 2,
+      });
     case "not-in-use":
       return t(key, { ...params, kind: t(`failures.kinds.${str(params.kind)}`) });
     case "undo-blocked":

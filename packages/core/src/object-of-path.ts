@@ -70,6 +70,26 @@ export function objectOfPath(path: Path): ObjectRef {
   }
 }
 
+/** Where an object itself is in the state: its record, which is there as long as it is. */
+export function pathOfObject({ kind, id, timeline = "" }: ObjectRef): Path {
+  switch (kind) {
+    case "project":
+      return ["manifest"];
+    case "timeline":
+      return ["timelines", id];
+    case "scene":
+      return ["scenes", id];
+    case "sound":
+      return ["sounds", id];
+    case "asset":
+      return ["assets", id];
+    case "file":
+      return ["files", id];
+    default:
+      return ["timelines", timeline, `${kind}s`, id];
+  }
+}
+
 /** A key for an object, the same for the same object, whatever path it came from. */
 export const objectKey = ({ kind, id, timeline }: ObjectRef): string =>
   timeline === undefined ? `${kind}\n${id}` : `${kind}\n${timeline}\n${id}`;
