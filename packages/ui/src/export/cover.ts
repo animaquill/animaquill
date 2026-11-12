@@ -122,7 +122,7 @@ export async function versionOf(store: Pick<ProjectStore, "stateVector" | "delet
 
 export interface CoverUploadsOptions {
   readonly covers: CoverStore;
-  readonly cloud: Pick<CoverAccess, "put">;
+  readonly cloud: Pick<CoverAccess, "put" | "duration">;
   /** How long until a cover the editor made of the same project is sent again. */
   readonly everyMs?: number;
   /**
@@ -220,13 +220,26 @@ export class CoverUploads {
     this.#sending.add(key);
     try {
       const cover = (await covers.read([key])).get(key);
-      if (!cover || cover.sent === cover.etag) return;
+      if (!cover) return;
+      const { durationMs } = cover;
+      if (cover.sent === cover.etag) {
+        // The platform has the picture. Where people chose it, what the editor makes goes there
+        // only as how long the timeline is now: without the picture, as often as its covers.
+        if (!cover.chosen || durationMs === undefined || cover.sentDurationMs === durationMs)
+          return;
+        this.#last.set(project, this.#now);
+        const said = await cloud.duration(project, durationMs);
+        if (said === "kept") await covers.sent(key, cover.etag, durationMs);
+        else if (said !== "missing" && !this.#waiting.has(key) && !this.#closed)
+          this.#later(key, project, this.#now + said.busy);
+        return;
+      }
       this.#last.set(project, this.#now);
-      const put = await cloud.put(project, cover.picture, cover.durationMs, {
+      const put = await cloud.put(project, cover.picture, durationMs, {
         chosen: cover.chosen === true,
       });
       // Also where the platform kept one people chose elsewhere: this one is not sent again.
-      if (put.kind === "kept") await covers.sent(key, cover.etag);
+      if (put.kind === "kept") await covers.sent(key, cover.etag, durationMs);
       else if (put.kind === "busy" && !this.#waiting.has(key) && !this.#closed)
         this.#later(key, project, this.#now + put.retryAfterMs);
       // "missing": not a project of whoever is signed in; "refused": never will be. Both stay here.
@@ -471,7 +484,8 @@ export class CoverMaker {
         made,
       });
       if (open.shows < changes) open.shows = changes;
-      if (project !== undefined && !kept.chosen)
+      // Where people chose the cover, only how long the timeline is goes, see `CoverUploads`.
+      if (project !== undefined && (!kept.chosen || kept.durationMs !== kept.sentDurationMs))
         this.#options.uploads?.offer(open.key, project, leaving ? "leaving" : "auto");
     } catch (error) {
       // What gave way to something else is made again: not five minutes later for that.

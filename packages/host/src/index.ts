@@ -145,6 +145,8 @@ export interface ProjectCover {
   readonly sent?: string;
   /** When the platform took it, or for one fetched from there when that was, in ms since 1970. */
   readonly sentAt?: number;
+  /** How long the main timeline was, as the platform last heard it from this browser. */
+  readonly sentDurationMs?: number;
   /**
    * People chose the picture themselves: one the editor makes does not take its place, here or on
    * the platform, until people go back to those, see `auto`.
@@ -175,6 +177,7 @@ export function mergeMade(before: ProjectCover | undefined, made: ProjectCover):
     ...(before?.etag === made.etag && { picture: before.picture }),
     ...(before?.sent !== undefined && { sent: before.sent }),
     ...(before?.sentAt !== undefined && { sentAt: before.sentAt }),
+    ...(before?.sentDurationMs !== undefined && { sentDurationMs: before.sentDurationMs }),
   };
 }
 
@@ -198,8 +201,11 @@ export interface CoverStore {
    * Resolves to what is kept now.
    */
   made(key: string, cover: ProjectCover): Promise<ProjectCover>;
-  /** Notes that the platform took the cover `etag` now, where that is still the one kept. */
-  sent(key: string, etag: string): Promise<void>;
+  /**
+   * Notes that the platform took the cover `etag` now, where that is still the one kept, and with
+   * it how long the main timeline is, `durationMs`, where that was said.
+   */
+  sent(key: string, etag: string, durationMs?: number): Promise<void>;
   forget(key: string): Promise<void>;
   /** Hears which cover any window changed, also this one. Returns how to stop listening. */
   listen(listener: (key: string) => void): () => void;
@@ -249,6 +255,16 @@ export interface CoverAccess {
    * in; "busy" where people changed it too often lately. Rejects where the platform could not say.
    */
   remove(project: string): Promise<"removed" | "missing" | "busy">;
+  /**
+   * Says how long the main timeline of a project is now, without a picture, as for one whose cover
+   * people chose: "kept"; "missing" where the platform has no such project of whoever is signed in,
+   * or it has no cover; "busy" where it heard of the project a short while ago, again after
+   * `retryAfterMs`. Rejects where the platform could not say.
+   */
+  duration(
+    project: string,
+    durationMs: number,
+  ): Promise<"kept" | "missing" | { readonly busy: number }>;
   /**
    * The cover of a project, or undefined where it has none, or the platform has no such project of
    * whoever is signed in. Rejects where the platform could not say.

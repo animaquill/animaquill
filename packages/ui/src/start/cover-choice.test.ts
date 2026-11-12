@@ -89,6 +89,7 @@ describe("a cover people choose", () => {
           },
         ),
         remove: vi.fn(async (): Promise<"removed" | "missing" | "busy"> => "removed"),
+        duration: vi.fn(async () => "kept" as const),
       };
       const uploads = new CoverUploads({ covers, cloud });
       const options = {

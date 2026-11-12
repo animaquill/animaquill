@@ -160,13 +160,19 @@ export function browserCoverStore(
       });
       return kept;
     },
-    sent: (key, etag) =>
+    sent: (key, etag, durationMs) =>
       write(key, (store) => {
         // Read and written in one go: a new cover another window keeps meanwhile waits for it.
         const request = store.get(key) as IDBRequest<CoverRecord | undefined>;
         request.addEventListener("success", () => {
           const kept = request.result;
-          if (kept?.etag === etag) store.put({ ...kept, sent: etag, sentAt: Date.now() });
+          if (kept?.etag === etag)
+            store.put({
+              ...kept,
+              sent: etag,
+              sentAt: Date.now(),
+              ...(durationMs !== undefined && { sentDurationMs: durationMs }),
+            });
         });
       }),
     forget: (key) => write(key, (store) => store.delete(key)),
@@ -204,10 +210,15 @@ export function memoryCoverStore(): CoverStore {
       changed(key);
       return kept;
     },
-    async sent(key, etag) {
+    async sent(key, etag, durationMs) {
       const kept = covers.get(key);
       if (kept?.etag !== etag) return;
-      covers.set(key, { ...kept, sent: etag, sentAt: Date.now() });
+      covers.set(key, {
+        ...kept,
+        sent: etag,
+        sentAt: Date.now(),
+        ...(durationMs !== undefined && { sentDurationMs: durationMs }),
+      });
       changed(key);
     },
     async forget(key) {
@@ -240,6 +251,7 @@ const TYPES = new Set(["image/webp", "image/jpeg"]);
  * - `PUT <api>/projects/<project>/cover[?durationMs=][&chosen=1]`, the picture as the body,
  *   answers `{etag, at, chosen?}`, or `{error}`: 404 "notFound", 413 "tooLarge", 415
  *   "unsupported", 400 "invalid", 429 "busy" with Retry-After
+ * - `PATCH <api>/projects/<project>/cover?durationMs=` answers 204, or 404 "notFound", 429 "busy"
  * - `DELETE <api>/projects/<project>/cover` answers 204, or 404 "notFound", 429 "busy"
  * - `GET <api>/projects/<project>/cover` answers the picture, or 404 "notFound"
  *
@@ -289,6 +301,24 @@ export function browserCoverAccess(options: BrowserCoverAccessOptions): CoverAcc
             kind: "busy",
             retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000,
           };
+        }
+        throw new Error(`The platform answered ${response.status}`);
+      }),
+    duration: (project, durationMs) =>
+      withinTime(options.timeoutMs ?? CHANGE_TIMEOUT_MS, async (signal) => {
+        const response = await request(
+          `${path(project)}?durationMs=${Math.max(0, Math.round(durationMs))}`,
+          { method: "PATCH", cache: "no-store", headers: { ...options.changeHeaders }, signal },
+        );
+        if (response.status === 204) return "kept" as const;
+        const answer: unknown = await response.json().catch(() => undefined);
+        const said = isObject(answer) ? answer.error : undefined;
+        if (response.status === 401 || said === "signedOut")
+          throw new CloudSignedOut("Nobody is signed in");
+        if (response.status === 404 && said === "notFound") return "missing" as const;
+        if (response.status === 429) {
+          const seconds = Number(response.headers.get("retry-after"));
+          return { busy: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000 };
         }
         throw new Error(`The platform answered ${response.status}`);
       }),

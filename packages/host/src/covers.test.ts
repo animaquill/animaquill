@@ -169,6 +169,19 @@ describe("the covers of a platform", () => {
     expect(await none.access.get("p_1")).toBeUndefined();
   });
 
+  it("says how long the timeline is without a picture", async () => {
+    const kept = accessWith(() => new Response(null, { status: 204 }));
+    expect(await kept.access.duration("p_1", 4200.4)).toBe("kept");
+    const [url, init] = kept.fetch.mock.calls[0]!;
+    expect(url).toBe("/api/projects/p_1/cover?durationMs=4200");
+    expect(init?.method).toBe("PATCH");
+    expect(init?.body).toBeUndefined();
+    const busy = accessWith(() => answer(429, { error: "busy" }, { "retry-after": "30" }));
+    expect(await busy.access.duration("p_1", 1)).toEqual({ busy: 30_000 });
+    const none = accessWith(() => answer(404, { error: "notFound" }));
+    expect(await none.access.duration("p_1", 1)).toBe("missing");
+  });
+
   it("reads the cover and the length of a project in the list", () => {
     const listed = projectSummaryOf({
       id: "p_1",

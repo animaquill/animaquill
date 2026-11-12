@@ -75,7 +75,7 @@ function makerWith(
   more: {
     busy?: () => boolean;
     project?: string;
-    cloud?: Pick<CoverAccess, "put">;
+    cloud?: Pick<CoverAccess, "put" | "duration">;
     picture?: string;
   } = {},
 ) {
@@ -313,8 +313,13 @@ describe("making the cover of the open project", () => {
 describe("sending covers to the platform", () => {
   const platform = () => {
     const sent: string[] = [];
+    const durations: number[] = [];
     let answer: CoverPut | undefined;
     const cloud = {
+      duration: vi.fn(async (_project: string, durationMs: number) => {
+        durations.push(durationMs);
+        return "kept" as const;
+      }),
       put: vi.fn(
         async (
           _project: string,
@@ -327,7 +332,12 @@ describe("sending covers to the platform", () => {
         },
       ),
     };
-    return { cloud, sent, answerWith: (next: CoverPut | undefined) => (answer = next) };
+    return {
+      cloud,
+      sent,
+      durations,
+      answerWith: (next: CoverPut | undefined) => (answer = next),
+    };
   };
 
   it("sends what was made, and not the same picture again", async () => {
@@ -414,7 +424,7 @@ describe("sending covers to the platform", () => {
 
   it("keeps a cover people chose, with what the editor makes as what to go back to", async () => {
     const store = projectOf();
-    const { cloud, sent } = platform();
+    const { cloud, sent, durations } = platform();
     const { covers, maker, looks } = makerWith(store, { project: "p_1", cloud });
     const mine = new Blob(["mine"], { type: "image/jpeg" });
     await covers.put("folder-1", {
@@ -436,14 +446,53 @@ describe("sending covers to the platform", () => {
     expect(await kept?.picture.text()).toBe("mine");
     expect(kept?.auto?.etag).toBe(await coverEtag(new Blob(["frame 2"])));
     expect(kept?.durationMs).toBe(coverShotOf(store.getState(), "folder-1")?.durationMs);
-    // And nothing of the editor's goes to the platform in its place.
+    // And nothing of the editor's goes to the platform in its place: only how long it is, once.
+    expect(sent).toEqual([]);
+    expect(durations).toEqual([kept?.durationMs]);
+    expect(kept?.sentDurationMs).toBe(kept?.durationMs);
+  });
+
+  it("says how long the timeline is of one people chose, as often as the editor's covers", async () => {
+    const covers = memoryCoverStore();
+    const { cloud, sent, durations } = platform();
+    const uploads = new CoverUploads({ covers, cloud, now: () => clock });
+    const mine = new Blob(["mine"], { type: "image/jpeg" });
+    const etag = await coverEtag(mine);
+    await covers.put("folder-1", { picture: mine, at: clock, etag, chosen: true, sent: etag });
+    const made = async (durationMs: number) => {
+      const frame = new Blob([`frame ${durationMs}`], { type: "image/webp" });
+      await covers.made("folder-1", {
+        picture: frame,
+        at: clock,
+        etag: await coverEtag(frame),
+        durationMs,
+      });
+    };
+    await made(1000);
+    uploads.offer("folder-1", "p_1");
+    await wait(0);
+    expect(durations).toEqual([1000]);
+    await made(2000);
+    uploads.offer("folder-1", "p_1", "auto");
+    await wait(9 * 60_000);
+    expect(durations).toEqual([1000]);
+    await wait(60_000);
+    expect(durations).toEqual([1000, 2000]);
+    // The same length again: nothing to say.
+    await made(2000);
+    uploads.offer("folder-1", "p_1");
+    await wait(20 * 60_000);
+    expect(durations).toEqual([1000, 2000]);
     expect(sent).toEqual([]);
   });
 
   it("gives up quietly where the platform cannot be reached", async () => {
     const covers = memoryCoverStore();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const cloud = { put: vi.fn(() => Promise.reject(new Error("offline"))) };
+    const cloud = {
+      put: vi.fn(() => Promise.reject(new Error("offline"))),
+      duration: vi.fn(() => Promise.reject(new Error("offline"))),
+    };
     const uploads = new CoverUploads({ covers, cloud, now: () => clock });
     const picture = new Blob(["a"], { type: "image/webp" });
     await covers.put("folder-1", { picture, at: clock, etag: await coverEtag(picture) });
