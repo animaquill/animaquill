@@ -38,6 +38,9 @@ function browser(initial?: unknown) {
   return { values, keys, open };
 }
 
+/** Lets what other windows saved arrive. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 /** A service as version 1 (until 0.3.55) saved it. */
 const v1Service = (id: string, kind: string, model: string) => ({
   id,
@@ -202,6 +205,7 @@ describe("AI settings this editor cannot take", () => {
     const other = await open();
     other.reset();
     other.add("anthropic", "Anthropic", { enabled: ["claude-opus-5-5"] });
+    await settle();
     expect(held.getSnapshot().held).toBeUndefined();
     expect(held.getSnapshot().services).toHaveLength(1);
   });
@@ -278,11 +282,56 @@ describe("two windows", () => {
     const one = await open();
     const two = await open();
     const id = one.add("anthropic", "Anthropic", { enabled: ["claude-opus-5-5"] }) as string;
+    await settle();
     expect(two.serviceOf(id)?.enabled).toEqual(["claude-opus-5-5"]);
     two.update(id, { baseUrl: "https://proxy.example" });
+    await settle();
     expect(one.serviceOf(id)?.baseUrl).toBe("https://proxy.example");
     two.setReasoning("claude-opus-5-5", "low");
+    await settle();
     expect(one.getSnapshot().reasoningFor).toEqual({ "claude-opus-5-5": "low" });
+  });
+
+  it("keep version 2 when a page of before writes version 1 over it, with what that page changed", async () => {
+    const { values, open } = browser();
+    const ai = await open();
+    const a = ai.add("anthropic", "Anthropic", {
+      enabled: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    }) as string;
+    ai.setReasoning("claude-opus-5-5", "high");
+    // A page of 0.3.56 reads what is there, people change the limit there, and it writes back
+    // what it knows: one model per service, no version.
+    const old = structuredClone(values.get("ai")) as {
+      services: Record<string, unknown>[];
+      current: string;
+    };
+    const written = {
+      services: old.services.map(({ id, kind, name, baseUrl, model, route }) => ({
+        id,
+        kind,
+        name,
+        baseUrl,
+        model,
+        route,
+      })),
+      current: old.current,
+      maxToolCalls: 9,
+    };
+    values.set("ai", written);
+    // This window hears of it, as of any window.
+    const other = await open();
+    expect(other.serviceOf(a)?.enabled).toEqual([
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+    ]);
+    expect(other.getSnapshot()).toMatchObject({
+      maxToolCalls: 9,
+      reasoningFor: { "claude-opus-5-5": "high" },
+      default: { service: a, model: "claude-opus-5-5" },
+    });
+    // And version 2 is back where the page of before reads, which it takes as it is.
+    expect(values.get("ai")).toMatchObject({ version: 2, maxToolCalls: 9, current: a });
   });
 });
 

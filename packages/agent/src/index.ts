@@ -51,6 +51,7 @@ export {
   enabledModelsOf,
   isEnabled,
   readAiSettings,
+  recoverOldWrite,
   settledDefault,
   writeAiSettings,
   type AiSettings,

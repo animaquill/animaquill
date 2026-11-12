@@ -6,6 +6,7 @@ import {
   enabledCountOf,
   enabledModelsOf,
   readAiSettings,
+  recoverOldWrite,
   settledDefault,
   writeAiSettings,
   type AiSettings,
@@ -250,5 +251,120 @@ describe("AI settings of version 2", () => {
       service: "a",
       model: "m",
     });
+  });
+});
+
+describe("a page of version 1 that wrote over version 2", () => {
+  const latest = settingsOf({
+    version: 2,
+    services: [
+      {
+        id: "a",
+        kind: "anthropic",
+        name: "Anthropic",
+        baseUrl: "https://api.anthropic.com",
+        route: "direct",
+        enabled: ["claude-opus-5-5", "claude-sonnet-5-5"],
+        models: [{ id: "claude-mine", contextWindow: 64000 }],
+      },
+      {
+        id: "b",
+        kind: "deepseek",
+        name: "DeepSeek",
+        baseUrl: "https://api.deepseek.com",
+        route: "direct",
+        enabled: ["deepseek-flash", "deepseek-v4-pro"],
+      },
+    ],
+    default: { service: "a", model: "claude-sonnet-5-5" },
+    reasoningFor: { "claude-opus-5-5": "high" },
+    packFor: { "deepseek-flash": "lin/steady" },
+    autoTitle: false,
+  });
+  /** What that page writes: what it read of version 2, as version 1, with its changes. */
+  const oldWrite = (change: (value: Record<string, unknown>) => void = () => {}) => {
+    const value = structuredClone(writeAiSettings(latest)) as Record<string, unknown> & {
+      services: Record<string, unknown>[];
+    };
+    value.services = value.services.map(({ id, kind, name, baseUrl, model, route }) => ({
+      id,
+      kind,
+      name,
+      baseUrl,
+      model,
+      route,
+    }));
+    for (const field of ["version", "default", "reasoningFor", "autoTitle", "expandThinking"]) {
+      delete value[field];
+    }
+    change(value);
+    return value;
+  };
+
+  it("loses nothing of version 2 where it changed nothing", () => {
+    expect(recoverOldWrite(latest, oldWrite())).toEqual(latest);
+  });
+
+  it("keeps what it changed: names, addresses, a model picked, the limit, packs", () => {
+    const recovered = recoverOldWrite(
+      latest,
+      oldWrite((value) => {
+        const [a, b] = value.services as Record<string, unknown>[];
+        if (!a || !b) throw new Error("no services");
+        a.name = "公司的 Anthropic";
+        a.model = "claude-haiku-5-5";
+        b.baseUrl = "https://proxy.example";
+        value.maxToolCalls = 9;
+        value.packFor = {};
+      }),
+    );
+    expect(recovered?.services[0]).toMatchObject({
+      name: "公司的 Anthropic",
+      enabled: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+      models: [{ id: "claude-mine", contextWindow: 64000 }],
+    });
+    expect(recovered?.services[1]).toMatchObject({
+      baseUrl: "https://proxy.example",
+      enabled: ["deepseek-flash", "deepseek-v4-pro"],
+    });
+    // The model picked in the service in use is the default now.
+    expect(recovered?.default).toEqual({ service: "a", model: "claude-haiku-5-5" });
+    expect(recovered).toMatchObject({
+      maxToolCalls: 9,
+      reasoningFor: { "claude-opus-5-5": "high" },
+      autoTitle: false,
+    });
+    expect(recovered?.packFor).toBeUndefined();
+  });
+
+  it("keeps services it added or took away, and another one in use", () => {
+    const recovered = recoverOldWrite(
+      latest,
+      oldWrite((value) => {
+        const services = value.services as Record<string, unknown>[];
+        value.services = [
+          services[1],
+          {
+            id: "c",
+            kind: "openai",
+            name: "OpenAI",
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-6.1-sol",
+            route: "direct",
+          },
+        ];
+        value.current = "c";
+      }),
+    );
+    expect(recovered?.services.map(({ id, enabled }) => [id, enabled])).toEqual([
+      ["b", ["deepseek-flash", "deepseek-v4-pro"]],
+      ["c", ["gpt-6.1-sol"]],
+    ]);
+    expect(recovered?.default).toEqual({ service: "c", model: "gpt-6.1-sol" });
+  });
+
+  it("is only for version 1", () => {
+    expect(recoverOldWrite(latest, writeAiSettings(latest))).toBeUndefined();
+    expect(recoverOldWrite(latest, "x")).toBeUndefined();
   });
 });

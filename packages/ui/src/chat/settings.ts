@@ -9,6 +9,7 @@ import {
   listModels,
   readAiSettings,
   recommendedOf,
+  recoverOldWrite,
   settledDefault,
   testModel,
   writeAiSettings,
@@ -28,6 +29,12 @@ import { memoryKeys, type AiRelay, type KeyStore, type SettingsStore } from "@an
 import { Emitter } from "../workbench/emitter.ts";
 
 const SETTINGS_KEY = "ai";
+/**
+ * The settings as version 2 wrote them last, apart from `ai`, where pages of version 1 (0.3.56 and
+ * before) still write: what one of those writes is taken over on top of this, rather than taken for
+ * all there is, see `recoverOldWrite`.
+ */
+const LATEST_KEY = "ai.latest";
 /** How many characters of a key the settings show, for people to tell keys apart. */
 const HINT_LENGTH = 4;
 
@@ -137,6 +144,8 @@ export class AiSettingsStore {
   /** What this page knows of keys, by service, so that reports can leave them out. */
   readonly #known = new Map<string, string>();
   #knownSet: ReadonlySet<string> = new Set();
+  /** Settings that other windows saved, taken one after the other. */
+  #taking: Promise<void> = Promise.resolve();
   /** The kinds whose models pi knows are being loaded, once each. */
   readonly #loading = new Map<string, Promise<readonly ListedModel[]>>();
 
@@ -175,21 +184,41 @@ export class AiSettingsStore {
       console.warn(`Setting ${SETTINGS_KEY} is unreadable`, error);
       this.#hold("broken");
     }
-    if (value !== undefined) this.#take(value);
+    if (value !== undefined) await this.#take(value);
     this.#settings.listen(SETTINGS_KEY, (changed) => {
-      if (changed !== undefined) this.#take(changed);
-      void this.#refreshKeyed();
+      // One at a time, in the order they came.
+      this.#taking = this.#taking.then(async () => {
+        if (changed !== undefined) await this.#take(changed);
+        await this.#refreshKeyed();
+      });
     });
     await this.#refreshKeyed();
   }
 
-  /** Takes settings as saved, or holds them where they cannot be taken. */
-  #take(value: unknown): void {
+  /**
+   * Takes settings as saved, or holds them where they cannot be taken. Version 1 where version 2 was
+   * written before is a page of before that wrote over them: what it changed goes on top of what
+   * version 2 wrote last, which is saved again at once.
+   */
+  async #take(value: unknown): Promise<void> {
     const reading = readAiSettings(value);
     if (reading.kind !== "ok") {
       console.warn(`Setting ${SETTINGS_KEY} is ${reading.kind}: left as it is`);
       this.#hold(reading.kind);
       return;
+    }
+    if (reading.from === 1) {
+      const latest = await this.#settings.load(LATEST_KEY).catch(() => undefined);
+      const before = readAiSettings(latest);
+      const recovered =
+        before.kind === "ok" && before.from === 2
+          ? recoverOldWrite(before.settings, value)
+          : undefined;
+      if (recovered) {
+        this.#snapshot = { ...this.#snapshot, held: undefined };
+        this.#save(recovered);
+        return;
+      }
     }
     this.#adopt(reading.settings, undefined);
   }
@@ -309,7 +338,11 @@ export class AiSettingsStore {
     if (this.#snapshot.held) return false;
     const settings = { ...changed, default: settledDefault(changed.services, changed.default) };
     this.#adopt(settings, undefined);
-    this.#settings.save(SETTINGS_KEY, writeAiSettings(settings)).catch((error) => {
+    const written = writeAiSettings(settings);
+    Promise.all([
+      this.#settings.save(LATEST_KEY, written),
+      this.#settings.save(SETTINGS_KEY, written),
+    ]).catch((error: unknown) => {
       console.warn("The AI services could not be saved", error);
       this.#messages.saveFailed();
     });

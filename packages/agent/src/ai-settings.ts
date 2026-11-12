@@ -360,3 +360,53 @@ export function enabledModelsOf(settings: Pick<AiSettings, "services">): string[
 /** How many models are on, in all services. */
 export const enabledCountOf = (settings: Pick<AiSettings, "services">): number =>
   settings.services.reduce((count, service) => count + service.enabled.length, 0);
+
+/**
+ * Settings of version 2 again, after a page of version 1 (0.3.56 and before) wrote the settings
+ * over: it reads the services in use and their model from what version 2 writes for it, and writes
+ * back only those, which would leave one model per service. `latest` is what version 2 wrote last
+ * (kept apart, where pages of before do not write), `old` what is saved now. What the page of
+ * before changed is taken over: names, addresses and routes, services it added or took away, a
+ * model it picked (turned on, and the default if it was the one in use), the limit and the packs.
+ * The rest stays as version 2 had it.
+ */
+export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | undefined {
+  const reading = readAiSettings(old);
+  if (reading.kind !== "ok" || reading.from !== 1) return undefined;
+  const now = reading.settings;
+  // What the page of before read: the settings of version 2 as version 1 has them.
+  const was = readAiSettings({ ...writeAiSettings(latest), version: undefined });
+  if (was.kind !== "ok") return undefined;
+  const before = new Map(was.settings.services.map((service) => [service.id, service]));
+  const services = now.services.map((service): ServiceConfig => {
+    const base = latest.services.find(({ id }) => id === service.id);
+    if (!base) return service;
+    const picked = service.enabled[0];
+    const changed = picked !== undefined && picked !== before.get(service.id)?.enabled[0];
+    return {
+      ...base,
+      name: service.name,
+      baseUrl: service.baseUrl,
+      route: service.route,
+      enabled: changed && !base.enabled.includes(picked) ? [...base.enabled, picked] : base.enabled,
+    };
+  });
+  const sameDefault =
+    now.default?.service === was.settings.default?.service &&
+    now.default?.model === was.settings.default?.model;
+  const { packFor: _packs, showHiddenPacks: _shown, kept: _kept, ...rest } = latest;
+  const serviceFields = latest.kept?.serviceFields;
+  const kept: KeptSettings = {
+    ...now.kept,
+    ...(serviceFields && { serviceFields }),
+  };
+  return {
+    ...rest,
+    services,
+    default: settledDefault(services, sameDefault ? latest.default : now.default),
+    ...(now.packFor && { packFor: now.packFor }),
+    ...(now.showHiddenPacks && { showHiddenPacks: true }),
+    maxToolCalls: now.maxToolCalls,
+    ...(Object.keys(kept).length > 0 && { kept }),
+  };
+}
