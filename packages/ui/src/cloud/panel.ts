@@ -1,6 +1,6 @@
 import type { CloudCopyProblem, RepositoryStatus, RepositoryUnusable } from "@animaquill/host";
 import type { TFunction } from "i18next";
-import type { CloudProjectsSnapshot } from "./projects.ts";
+import type { CloudProjectsSnapshot, TakeBackState } from "./projects.ts";
 import {
   BRANCH_MENDS,
   copyProblemText,
@@ -185,7 +185,7 @@ export interface PanelInput {
    * For "linked": how taking it back onto the copy the platform made again goes, see
    * `CloudProjects.takeBack`.
    */
-  readonly takeBack?: "running" | "stopped";
+  readonly takeBack?: TakeBackState;
   /**
    * For "linked": why the platform could not make the project again from its repository lately,
    * while the window waits for it to try again, see `CloudProjects.copyProblem`.
@@ -196,6 +196,21 @@ export interface PanelInput {
 }
 
 /** What the panel needs, from what `CloudProjects` says and what it holds says right now. */
+/**
+ * How taking a project back onto the copy the platform made again goes, in people's words, see
+ * `TakeBackState`: for the panel, and the bar over a project that can only be looked at.
+ */
+export function takeBackText(state: TakeBackState, t: TFunction): string {
+  switch (state) {
+    case "running":
+      return t("cloud.takeBack.waiting");
+    case "stopped":
+      return t("cloud.takeBack.cancelled");
+    default:
+      return t(`cloud.takeBack.${state}`);
+  }
+}
+
 export function panelInputOf(
   snapshot: CloudProjectsSnapshot,
   more: Pick<
@@ -505,11 +520,9 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     ? problem
       ? problem.kind === "rejected"
         ? t("cloud.problem.rejected", { reason: t(`cloud.reason.${problem.reason}`), ...plain })
-        : takeBack === "running"
-          ? t("cloud.takeBack.waiting")
-          : takeBack === "stopped"
-            ? t("cloud.takeBack.cancelled")
-            : t(`cloud.problem.${problem.kind}`)
+        : takeBack !== undefined
+          ? takeBackText(takeBack, t)
+          : t(`cloud.problem.${problem.kind}`)
       : t("cloud.status.paused")
     : notMade
       ? t("cloud.wake.busy", { why: copyProblemText(notMade, t), ...plain })
@@ -543,7 +556,13 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       ],
       ...(isStuck && {
         tone: "attention" as const,
-        actions: actions(takeBack === "stopped" ? ["takeBack"] : syncActions(problem)),
+        actions: actions(
+          takeBack === "signedOut"
+            ? ["signIn"]
+            : takeBack !== undefined && takeBack !== "running"
+              ? ["takeBack"]
+              : syncActions(problem),
+        ),
       }),
       ...(notMade && {
         tone: "attention" as const,

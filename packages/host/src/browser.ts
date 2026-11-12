@@ -654,13 +654,23 @@ function createLibrary(
         isMadeFile(hash) ? [] : [{ name: hash, size: file.size }],
       );
     },
-    async renew(id, entries, backup) {
+    async renew(id, entries, backup, { expectedLast } = {}) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
         durability: "strict",
       });
       const projects = transaction.objectStore(PROJECTS);
+      const updates = transaction.objectStore(UPDATES);
       const read = projects.get(id);
+      // The last entry of the log, by its mark, in the same step: what came since stays where it is.
+      const last = updates.index(BY_PROJECT).openKeyCursor(IDBKeyRange.only(id), "prev");
       let refused: string | undefined;
+      let moved = false;
+      last.addEventListener("success", () => {
+        const mark = (last.result?.primaryKey as number | undefined) ?? 0;
+        if (expectedLast === undefined || mark === expectedLast) return;
+        moved = true;
+        transaction.abort();
+      });
       read.addEventListener("success", () => {
         const record = read.result as ProjectRecord | undefined;
         if (!record || record.incoming) refused = `No project ${id} to start anew`;
@@ -671,7 +681,6 @@ function createLibrary(
         }
         // What the log had goes out of its way first: the new entries come after it.
         moveLog(transaction, id, backupKey(id, backup));
-        const updates = transaction.objectStore(UPDATES);
         for (const { update, source } of entries) {
           updates.add({ project: id, update, ...(source && { source }) } satisfies UpdateRecord);
         }
@@ -682,9 +691,23 @@ function createLibrary(
           backups: [...(record.backups ?? []), backup],
         } satisfies ProjectRecord);
       });
-      await committed(transaction).catch((error: unknown) => {
+      try {
+        await committed(transaction);
+      } catch (error) {
+        if (moved && refused === undefined) return false;
         throw new Error(refused ?? "The log could not start anew", { cause: error });
-      });
+      }
+      return !moved;
+    },
+    async backupUpdates(id, backup) {
+      const transaction = (await database()).transaction([UPDATES, PROJECTS]);
+      const record = await resultOf<ProjectRecord | undefined>(
+        transaction.objectStore(PROJECTS).get(id),
+      );
+      if (!record?.backups?.includes(backup)) throw new Error(`No backup ${backup} of ${id}`);
+      const index = transaction.objectStore(UPDATES).index(BY_PROJECT);
+      const records = await resultOf<UpdateRecord[]>(index.getAll(backupKey(id, backup)));
+      return records.map((each) => each.update);
     },
     async backups(id) {
       const transaction = (await database()).transaction(PROJECTS);

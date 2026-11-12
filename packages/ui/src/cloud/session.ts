@@ -849,7 +849,11 @@ export class CloudSession {
       this.#wakeAll();
       this.#unpause?.();
     });
-    if (!this.#journal.entries()) {
+    // Whether the host keeps marks at all; what it reads now is of no matter here, and a log that
+    // went on another copy under this window says so where it is read for good.
+    const probe = this.#journal.entries();
+    void probe?.catch(() => {});
+    if (!probe) {
       this.#set({ state: "paused", problem: { kind: "unsupported" } });
       await new Promise<void>((resolve) => {
         this.#unpause = resolve;

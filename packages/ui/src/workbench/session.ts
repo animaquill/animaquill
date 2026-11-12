@@ -219,6 +219,14 @@ export class ProjectSession {
     return this.#snapshot.key;
   }
 
+  /**
+   * The changes of this window that are not in the log yet, oldest first: what `trySave` could not
+   * write, as updates of the project as it is here.
+   */
+  get unsavedUpdates(): readonly Uint8Array[] {
+    return this.#unsaved.map(({ update }) => update);
+  }
+
   /** Whether closing the page now would lose something. */
   get hasUnsavedChanges(): boolean {
     return this.#snapshot.save !== "saved";

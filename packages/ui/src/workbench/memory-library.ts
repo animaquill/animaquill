@@ -103,6 +103,8 @@ export class MemoryLibrary implements ProjectLibrary {
   readonly backupsOf = new Map<string, Map<string, Uint8Array[]>>();
   /** `renew` fails, as a database that is full. */
   failingToRenew = false;
+  /** Runs as `renew` begins, before it looks at the log: what another window does meanwhile. */
+  duringRenew: (() => Promise<void> | void) | undefined;
   /** `renew` never comes back, once, as in a page that went away just then. */
   renewNeverEnds = false;
   #nextInstance = 1;
@@ -285,16 +287,20 @@ export class MemoryLibrary implements ProjectLibrary {
     id: string,
     entries: readonly { readonly update: Uint8Array; readonly source?: ChangeSource }[],
     backup: string,
-  ) {
+    { expectedLast }: { readonly expectedLast?: number } = {},
+  ): Promise<boolean> {
     if (this.failing || this.failingToRenew) throw new Error("quota");
     if (this.renewNeverEnds) {
       this.renewNeverEnds = false;
-      return new Promise<void>(() => {});
+      return new Promise<boolean>(() => {});
     }
+    await this.duringRenew?.();
     const summary = this.summaries.get(id);
     const kept = this.backupsOf.get(id) ?? new Map<string, Uint8Array[]>();
     if (!summary) throw new Error(`No project ${id}`);
     if (kept.has(backup)) throw new Error(`A backup ${backup} is there already`);
+    if (expectedLast !== undefined && (this.#entriesOf(id, 0).at(-1)?.mark ?? 0) !== expectedLast)
+      return false;
     kept.set(backup, this.updates.get(id) ?? []);
     this.backupsOf.set(id, kept);
     this.updates.set(
@@ -302,10 +308,17 @@ export class MemoryLibrary implements ProjectLibrary {
       entries.map(({ update, source }) => this.#marked(update, source)),
     );
     this.logs.set(id, (this.logs.get(id) ?? 0) + 1);
+    return true;
   }
 
   async backups(id: string) {
     return [...(this.backupsOf.get(id)?.keys() ?? [])];
+  }
+
+  async backupUpdates(id: string, backup: string) {
+    const kept = this.backupsOf.get(id)?.get(backup);
+    if (!kept) throw new Error(`No backup ${backup} of ${id}`);
+    return [...kept];
   }
 
   async restoreBackup(id: string, backup: string) {

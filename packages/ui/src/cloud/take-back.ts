@@ -31,6 +31,8 @@
  */
 import { ProjectStore, USER, isEmptyUpdate, type CommandFailure } from "@animaquill/core";
 import {
+  CloudSignedOut,
+  RepositoryRefused,
   SYNC_CLOSE,
   newSyncId,
   type CloudAccess,
@@ -82,16 +84,22 @@ export function baseOfTakeBack(
 
 /**
  * What the log here has that the platform had of the copy before, as one project: what came from
- * there, what the log put together of that, and every change of this computer up to `pushed`. A
- * change it took that the link does not say yet, as a page that went away just then, counts as one
- * the platform did not have, which is the safe side: it comes in again, as a change of this
- * computer. Undefined where that is no project.
+ * there up to where the link says the log got (`seq`), what the log put together of that, and
+ * every change of this computer up to `pushed`. What the link does not say yet, as a page that
+ * went away within the moment it takes to note it down, counts as something the platform did not
+ * have, which is the safe side: a change of this computer comes in again as one, and what came
+ * from the platform after the archive, which only this computer may have now, is brought back.
+ * Undefined where that is no project.
  */
 export function logBase(
   entries: readonly LogEntry[],
-  link: Pick<CloudLink, "pushed">,
+  link: Pick<CloudLink, "pushed" | "seq">,
 ): ProjectStore | undefined {
-  const there = entries.filter((entry) => entry.mark <= link.pushed || isOnPlatform(entry));
+  const there = entries.filter((entry) => {
+    if (entry.source?.kind === "cloud")
+      return entry.source.seq !== undefined && entry.source.seq <= link.seq;
+    return entry.mark <= link.pushed || isOnPlatform(entry);
+  });
   if (there.length === 0) return undefined;
   return ProjectStore.fromUpdates(there.map((entry) => entry.update)).store;
 }
@@ -289,9 +297,14 @@ export type TakeBackOutcome =
   | { readonly kind: "same" }
   /**
    * Not now: the copy is on its way back still ("restoring"), the platform cannot be reached or
-   * asked ("unavailable"), or another copy came meanwhile ("moved"). Again a little later.
+   * asked ("unavailable"), another copy came meanwhile ("moved"), nobody is signed in
+   * ("signedOut"), or the platform says it has no such project of whoever is, or nothing of it to
+   * read ("missing"). Again a little later; for the last two, once people did something.
    */
-  | { readonly kind: "later"; readonly why: "restoring" | "unavailable" | "moved" }
+  | {
+      readonly kind: "later";
+      readonly why: "restoring" | "unavailable" | "moved" | "signedOut" | "missing";
+    }
   /** People did not choose: nothing changed. */
   | { readonly kind: "cancelled" }
   /**
@@ -372,8 +385,8 @@ export class TakeBack {
     let status: RepositoryStatus;
     try {
       status = await this.#options.status(project);
-    } catch {
-      return { kind: "later", why: "unavailable" };
+    } catch (error) {
+      return { kind: "later", why: laterOf(error) };
     }
     if (status.copy !== undefined && status.copy !== "live")
       return { kind: "later", why: "restoring" };
@@ -400,10 +413,8 @@ export class TakeBack {
       }
     } catch (error) {
       if (run.signal?.aborted) return { kind: "cancelled" };
-      if (error instanceof DownloadFailed && error.code === SYNC_CLOSE.rebuilt)
-        return { kind: "later", why: "moved" };
       console.warn("The project could not come from the platform to take it back", error);
-      return { kind: "later", why: "unavailable" };
+      return { kind: "later", why: laterOf(error) };
     }
     const cloudStore = ProjectStore.fromUpdates([now.state]).store;
     if (!cloudStore) return { kind: "later", why: "unavailable" };
@@ -426,29 +437,6 @@ export class TakeBack {
       // what got into the log all the same is taken in with the next try.
       const later = await run.entries();
       if ((later.at(-1)?.mark ?? 0) !== lastMark) return "again";
-      // Nor may the platform have changed what this changes there, while people chose: the change
-      // is made against the copy as it was, and Yjs would keep either side of such a file at
-      // random. Where it did, people look again (as in the review of linking a folder, 1). What
-      // the platform changed elsewhere comes in as any change of others does.
-      const touched = pathsOf(plan.cloud, after).filter(
-        (path) => plan.cloud.get(path) !== after.get(path),
-      );
-      if (touched.length > 0) {
-        let latest: Downloaded;
-        try {
-          latest = await this.#read(project, run.signal);
-        } catch (error) {
-          if (run.signal?.aborted) return { kind: "cancelled" };
-          if (error instanceof DownloadFailed && error.code === SYNC_CLOSE.rebuilt)
-            return { kind: "later", why: "moved" };
-          return { kind: "later", why: "unavailable" };
-        }
-        if (latest.generation !== generation) return { kind: "later", why: "moved" };
-        if (latest.head !== now.head) {
-          const files = filesOf(latest.state);
-          if (touched.some((path) => files.get(path) !== plan.cloud.get(path))) return "again";
-        }
-      }
       const changing = pathsOf(plan.here, after).filter(
         (path) => plan.here.get(path) !== after.get(path),
       );
@@ -461,6 +449,31 @@ export class TakeBack {
           return { kind: "failed", why: "kept", error };
         }
       }
+      // Nor may the platform have changed what this changes there, while people chose, or another
+      // computer took the same back meanwhile: the change is made against the copy as it was, and
+      // Yjs would keep either side of such a file at random, or put the same text in twice. Where
+      // it did, it is planned again from what the platform has now, and people look again (as in
+      // the review of linking a folder, 1); what is there already is no change any more. As late
+      // as it can be: what is left between this and the platform taking the change is a known
+      // risk until the platform takes it only on the copy as it was then, see the design of the
+      // start page, 1. What the platform changed elsewhere comes in as any change of others does.
+      const touched = pathsOf(plan.cloud, after).filter(
+        (path) => plan.cloud.get(path) !== after.get(path),
+      );
+      if (touched.length > 0) {
+        let latest: Downloaded;
+        try {
+          latest = await this.#read(project, run.signal);
+        } catch (error) {
+          if (run.signal?.aborted) return { kind: "cancelled" };
+          return { kind: "later", why: laterOf(error) };
+        }
+        if (latest.generation !== generation) return { kind: "later", why: "moved" };
+        if (latest.head !== now.head) {
+          const files = filesOf(latest.state);
+          if (touched.some((path) => files.get(path) !== plan.cloud.get(path))) return "again";
+        }
+      }
       const window = this.#options.window;
       const at = (this.#options.now ?? Date.now)();
       const renewal: CloudRenewal = {
@@ -471,10 +484,18 @@ export class TakeBack {
         digest: now.digest,
         backup: `copy${run.generation}-${newSyncId()}`,
       };
-      const renewed = await this.#renew(key, project, renewal, [
-        { update: now.state, source: { kind: "cloud", seq: now.head } },
-        ...(update ? [{ update, source: { kind: "other", window, at } }] : []),
-      ]);
+      // Only where the log is still as it was read: what another window, or the start page, wrote
+      // into it since would go into the backup, and not onto the new copy.
+      const renewed = await this.#renew(
+        key,
+        project,
+        renewal,
+        [
+          { update: now.state, source: { kind: "cloud", seq: now.head } },
+          ...(update ? [{ update, source: { kind: "other", window, at } }] : []),
+        ],
+        lastMark,
+      );
       if (renewed !== "renewed") return renewed;
       return {
         kind: "renewed",
@@ -509,7 +530,8 @@ export class TakeBack {
     project: string,
     renewal: CloudRenewal,
     entries: readonly { readonly update: Uint8Array; readonly source: LogEntry["source"] }[],
-  ): Promise<"renewed" | Extract<TakeBackOutcome, { kind: "failed" | "already" }>> {
+    expectedLast: number,
+  ): Promise<"renewed" | "again" | Extract<TakeBackOutcome, { kind: "failed" | "already" }>> {
     const { cloud, projects } = this.#options;
     if (!projects.renew) return { kind: "failed", why: "library" };
     try {
@@ -521,11 +543,16 @@ export class TakeBack {
       return { kind: "failed", why: "library", error };
     }
     try {
-      await projects.renew(
+      const isRenewed = await projects.renew(
         key,
         entries.map(({ update, source }) => ({ update, ...(source && { source }) })),
         renewal.backup,
+        { expectedLast },
       );
+      if (!isRenewed) {
+        await cloud.links.update(key, project, { renewing: null });
+        return "again";
+      }
     } catch (error) {
       console.warn("The log could not start anew on the new copy", error);
       await cloud.links.update(key, project, { renewing: null }).catch(() => {});
@@ -537,6 +564,21 @@ export class TakeBack {
     });
     return "renewed";
   }
+}
+
+/** Why asking the platform failed, as taking a copy back waits for it, see `TakeBackOutcome`. */
+function laterOf(error: unknown): "unavailable" | "moved" | "signedOut" | "missing" {
+  if (error instanceof CloudSignedOut) return "signedOut";
+  if (error instanceof RepositoryRefused) {
+    if (error.code === "notFound") return "missing";
+    return "unavailable";
+  }
+  if (error instanceof DownloadFailed) {
+    if (error.code === SYNC_CLOSE.rebuilt) return "moved";
+    if (error.code === SYNC_CLOSE.signedOut) return "signedOut";
+    if (error.code === SYNC_CLOSE.missing || error.code === SYNC_CLOSE.forbidden) return "missing";
+  }
+  return "unavailable";
 }
 
 /** The project that an update is, as files, or rejects where it is none. */
@@ -575,9 +617,17 @@ async function finishRenewal(
   const isCopy =
     first !== undefined && first.source?.kind === "cloud" && first.source.seq === renewal.seq;
   await cloud.links.update(key, project, {
-    renewed: { pushed: isCopy ? first.mark : 0, until: entries.at(-1)?.mark ?? 0 },
+    renewed: { pushed: isCopy ? first.mark : 0, until: entries.at(-1)?.mark ?? 0, at: Date.now() },
   });
 }
+
+/**
+ * How long the log of the copy before stays after the platform has what came of it: what came of
+ * it is on the platform then, and soon in the repository, but where something went wrong in taking
+ * it back, this is all there is of what this computer had. As long as the platform keeps a copy
+ * nobody opens, see the design of the start page, 1.
+ */
+export const KEEP_BACKUP_MS = 7 * 24 * 60 * 60_000;
 
 /**
  * Settles what a page that went away left halfway, as the link says (`CloudLink.renewing`): where
@@ -602,20 +652,22 @@ export async function settleRenewal(
 }
 
 /**
- * Takes away the log of the copy before, once the platform has what came of it (`CloudLink.kept`),
- * and with it what was kept of copies before that one: all of what they had is in the log that came
- * after them, which the platform has then. Never while the log is on its way to another copy.
+ * Takes away the log of the copy before, once the platform has what came of it (`CloudLink.kept`)
+ * and `KEEP_BACKUP_MS` went by since, and with it what was kept of copies before that one: all of
+ * what they had is in the log that came after them, which the platform has then. Never while the log is on its way to another copy.
  * Resolves to whether it went.
  */
 export async function dropKept(
   cloud: CloudAccess,
   projects: ProjectLibrary,
   key: string,
+  now = Date.now(),
 ): Promise<boolean> {
   const link = await cloud.links.get(key);
   const kept = link?.kept;
   if (!link || !kept || link.renewing || link.resync !== undefined) return false;
   if (link.pushed < kept.until) return false;
+  if (now - (kept.at ?? 0) < KEEP_BACKUP_MS) return false;
   const all = (await projects.backups?.(key)) ?? [kept.backup];
   for (const backup of all) await projects.dropBackup?.(key, backup);
   await cloud.links.update(key, link.project, { kept: null });

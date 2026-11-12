@@ -8,6 +8,7 @@ import { MemoryPlatform, TestCloudBrowser, TestTime, statusFor } from "./cloud-s
 import type { ReconcileChoices } from "./reconcile.ts";
 import { CloudSession } from "./session.ts";
 import {
+  KEEP_BACKUP_MS,
   TakeBack,
   baseOfTakeBack,
   dropKept,
@@ -29,6 +30,8 @@ const MESSAGES: SessionMessages = {
 };
 
 const PLATFORM = "https://platform.test";
+/** Once what the log had of the copy before may go, see `KEEP_BACKUP_MS`. */
+const LATER = Date.now() + 2 * KEEP_BACKUP_MS;
 const CLOUD_ID = "p1";
 
 function fixtureState(): { id: string; state: Uint8Array } {
@@ -280,8 +283,9 @@ describe("TakeBack", () => {
     const link = await a.links.get(a.key);
     expect(link).toMatchObject({ generation: 2, seq: platform.projects.get(CLOUD_ID)?.head });
     expect(link?.renewing).toBeUndefined();
-    // Nothing waits: what the log had goes at once.
-    expect(await dropKept(a.access(again.page), a.library, a.key)).toBe(true);
+    // Nothing waits: what the log had goes once a while went by, and not before.
+    expect(await dropKept(a.access(again.page), a.library, a.key)).toBe(false);
+    expect(await dropKept(a.access(again.page), a.library, a.key, LATER)).toBe(true);
     expect(await a.library.backups(a.key)).toEqual([]);
     // The window of the copy before cannot write to the new log.
     expect(again.store.execute(writeFile("code/a.js", "late\n")).ok).toBe(true);
@@ -340,7 +344,7 @@ describe("TakeBack", () => {
     const outcome = await a.run(again);
     expect(outcome).toMatchObject({ kind: "renewed", changed: true, merged: ["code/b.js"] });
     // What the log had stays until the platform has what came of it.
-    expect(await dropKept(a.access(again.page), a.library, a.key)).toBe(false);
+    expect(await dropKept(a.access(again.page), a.library, a.key, LATER)).toBe(false);
     expect(await a.library.backups(a.key)).toHaveLength(1);
     await a.close(again);
     const renewed = await a.open();
@@ -353,7 +357,7 @@ describe("TakeBack", () => {
     expect([...after].filter((client) => before.has(client))).toEqual([]);
     // Once it is there, what the log had goes.
     await time.advance(200);
-    expect(await dropKept(a.access(renewed.page), a.library, a.key)).toBe(true);
+    expect(await dropKept(a.access(renewed.page), a.library, a.key, LATER)).toBe(true);
   });
 
   it("puts what this computer changed offline onto what others did since, file by file", async () => {
@@ -501,6 +505,33 @@ describe("TakeBack", () => {
     await a.open();
     await time.advance(500);
     expect(cloudText(platform, "code/b.js")).toBe("one\nmine\nthree\n");
+  });
+
+  it("plans again where something got into the log while it went on, rather than keep it aside", async () => {
+    // Another window, or the start page renaming the project, writes into the log after taking it
+    // back read it: that would go into the backup, and not onto the new copy (review of P2, 1).
+    const { time, platform, a, window } = await start();
+    platform.archive(CLOUD_ID);
+    await a.close(window);
+    const again = await releaseAndComeBack(platform, a, time);
+    let wrote = false;
+    a.library.duringRenew = async () => {
+      if (wrote) return;
+      wrote = true;
+      const log = await a.library.open(a.key);
+      const store = ProjectStore.fromUpdates(await log.load()).store as ProjectStore;
+      const before = store.stateVector();
+      store.execute(writeFile("code/另一个窗口.js", "elsewhere\n"));
+      await log.append(store.diffSince(before), "原子", { kind: "user", window: "other" });
+      log.close();
+      store.destroy();
+    };
+    const outcome = await a.run(again);
+    expect(outcome).toMatchObject({ kind: "renewed", merged: ["code/另一个窗口.js"] });
+    await a.close(again);
+    await a.open();
+    await time.advance(500);
+    expect(cloudText(platform, "code/另一个窗口.js")).toBe("elsewhere\n");
   });
 
   it("changes nothing where people do not choose", async () => {
@@ -660,5 +691,129 @@ describe("TakeBack", () => {
     // Syncing there stops before saying hello with the copy before.
     await time.advance(3000);
     expect(second.cloud.getSnapshot()).toMatchObject({ problem: { kind: "rebuilt" } });
+  });
+});
+
+describe("taking back where the log noted down less than it has from the platform", () => {
+  it("brings back what got to the platform after the archive, though the page went away before the link said it had it", async () => {
+    const { time, platform, a, window } = await start();
+    platform.archive(CLOUD_ID);
+    const b = new Device(platform, "b-key", time);
+    await b.fromPlatform();
+    const other = await b.open();
+    await time.advance(500);
+    expect(other.cloud.getSnapshot()).toMatchObject({ state: "online" });
+    // How far b noted it got, before what comes next.
+    const noted = await b.links.get(b.key);
+    if (!noted) throw new Error("no link");
+
+    // a changes two files; the platform archives after the first only (the second never gets
+    // into the repository, as archiving keeps failing for a while).
+    expect(window.store.execute(writeFile("code/a.js", "first\n")).ok).toBe(true);
+    await time.advance(300);
+    platform.archive(CLOUD_ID);
+    expect(window.store.execute(writeFile("code/b.js", "one\ntwo\nlate\n")).ok).toBe(true);
+    await time.advance(300);
+    expect(other.store.getState().files["code/b.js"]).toBe("one\ntwo\nlate\n");
+    // b's log has both from the platform; its page went away before it noted how far it got
+    // (`noteMs` is a second in the editor): the link says what it said before.
+    await b.close(other);
+    await b.links.put({ ...noted });
+    expect(noted.seq).toBeLessThan(platform.archivedSeq.get(CLOUD_ID) ?? 0);
+    // a's browser is gone for good (cleared): b is the only one with the late change.
+    await a.close(window);
+
+    const again = await releaseAndComeBack(platform, b, time);
+    expect(again.store.getState().files["code/b.js"]).toBe("one\ntwo\nlate\n");
+    const outcome = await b.run(again, all("cloud"));
+    await b.close(again);
+    const renewed = await b.open();
+    await time.advance(500);
+    expect(outcome.kind).toBe("renewed");
+    // The rule: in the content, chosen away in a dialog, or in a backup that stays.
+    expect(cloudText(platform, "code/b.js")).toBe("one\ntwo\nlate\n");
+    expect(renewed.store.getState().files["code/b.js"]).toBe("one\ntwo\nlate\n");
+  });
+});
+
+describe("a window of the copy before whose log cannot be read for a moment", () => {
+  it("still never syncs what it has with the new copy", async () => {
+    const { time, platform, a, window } = await start();
+    expect(window.store.execute(writeFile("code/a.js", "old copy\n")).ok).toBe(true);
+    await time.advance(200);
+    platform.archive(CLOUD_ID);
+    await a.close(window);
+    const again = await releaseAndComeBack(platform, a, time);
+    const before = clientsOf(again.store.stateVector());
+    expect(await a.run(again)).toMatchObject({ kind: "renewed" });
+    const link = (await a.links.get(a.key)) as CloudLink;
+    expect(link.generation).toBe(2);
+    await again.cloud.close();
+    // As in "never syncs ...", but reading whether the log is the current one fails once
+    // (IndexedDB can say UnknownError or time out under storage pressure).
+    const stale = new CloudSession({
+      store: again.store,
+      journal: {
+        ...again.session.journal,
+        current: async () => {
+          throw new Error("UnknownError: the database could not be read");
+        },
+      },
+      cloud: a.access(again.page),
+      link,
+      window: "stale",
+      editor: "test",
+      environment: time,
+      timing: { scanMs: 5, noteMs: 50, longestRetryMs: 2000 },
+    });
+    try {
+      stale.start();
+      await time.advance(3000);
+      const after = clientsOf(platform.workingCopy(CLOUD_ID).stateVector());
+      // Nothing of the document of the copy before is in the new one.
+      expect([...after].filter((client) => before.has(client))).toEqual([]);
+    } finally {
+      await stale.close();
+    }
+  });
+});
+
+describe("two devices that take the same change back at the same moment", () => {
+  // A known risk, see the design of the start page of AnimaQuill Cloud, 1: both read the new copy
+  // before either change is there, and Yjs puts the same text in twice. The platform is to take
+  // such a change only where its copy is still the one it was made against, before it lets go of
+  // copies by itself (P3). This says so where that is done.
+  it.fails("puts it in once (not yet: it goes in twice)", async () => {
+    const { time, platform, a, window } = await start();
+    platform.archive(CLOUD_ID);
+    const b = new Device(platform, "b-key", time);
+    await b.fromPlatform();
+    const other = await b.open();
+    await time.advance(500);
+    // a changes a file; b gets it; the platform never archives it, and lets go of its copy.
+    expect(window.store.execute(writeFile("code/b.js", "one\ntwo\nlate\n")).ok).toBe(true);
+    await time.advance(500);
+    expect(other.store.getState().files["code/b.js"]).toBe("one\ntwo\nlate\n");
+    await a.close(window);
+    await b.close(other);
+    platform.release(CLOUD_ID);
+    await time.advance(10);
+    const aw = await a.open();
+    const bw = await b.open();
+    await time.advance(30_000);
+    expect(aw.cloud.getSnapshot()).toMatchObject({ problem: { kind: "rebuilt" } });
+    expect(bw.cloud.getSnapshot()).toMatchObject({ problem: { kind: "rebuilt" } });
+    // Both read the new copy before either change is there, as two pages that open at once.
+    const [ra, rb] = await Promise.all([a.run(aw, all("cloud")), b.run(bw, all("cloud"))]);
+    expect(ra.kind).toBe("renewed");
+    expect(rb.kind).toBe("renewed");
+    await a.close(aw);
+    await b.close(bw);
+    const a2 = await a.open();
+    const b2 = await b.open();
+    await time.advance(2000);
+    expect(a2.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    expect(b2.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    expect(cloudText(platform, "code/b.js")).toBe("one\ntwo\nlate\n");
   });
 });

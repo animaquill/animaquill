@@ -2563,6 +2563,16 @@ export class Workbench {
    */
   async #reopenProject(key: string): Promise<void> {
     if (this.session.key !== key || this.#changingProject || this.#reopening !== undefined) return;
+    // What this window changed and could not put into the log, as the log went on the new copy
+    // under it: that goes onto the new copy as a change of its own once the project is open again,
+    // see `CloudProjects.carryOver`. Where nothing can take it, people are asked as ever before
+    // what could not be saved is left behind.
+    const left = (await this.session.trySave()) ? [] : [...this.session.unsavedUpdates];
+    const cloud = this.cloud;
+    if (left.length > 0 && !(await cloud?.canCarryOver(key))) {
+      await this.openProject(key);
+      return;
+    }
     // As people open it, folder or not: that leaves the project as it is first, see `#changeProject`.
     this.#reopening = key;
     try {
@@ -2570,6 +2580,7 @@ export class Workbench {
     } finally {
       this.#reopening = undefined;
     }
+    if (left.length > 0 && this.session.key === key) await cloud?.carryOver(key, left);
   }
 
   /** The project that `#reopenProject` opens again, while it does. */

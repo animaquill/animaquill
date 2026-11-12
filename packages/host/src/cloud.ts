@@ -76,7 +76,12 @@ const renewal = (link: CloudLink, change: CloudLinkChange): CloudLink => {
       seq: on.seq,
       digest: on.digest,
       pushed: change.renewed.pushed,
-      kept: { backup: on.backup, generation: on.from, until: change.renewed.until },
+      kept: {
+        backup: on.backup,
+        generation: on.from,
+        until: change.renewed.until,
+        ...(change.renewed.at !== undefined && { at: change.renewed.at }),
+      },
     };
   }
   if (change.renewing === null) {

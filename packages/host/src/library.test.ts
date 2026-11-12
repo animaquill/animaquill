@@ -946,6 +946,8 @@ describe("a log that starts anew on another copy of the project", () => {
   const MERGE = new Uint8Array([6]);
 
   async function renewed() {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    onTestFinished(() => void vi.unstubAllGlobals());
     const setup = browser();
     const { library } = setup;
     await library.create(PROJECT, STATE);
@@ -994,7 +996,33 @@ describe("a log that starts anew on another copy of the project", () => {
     expect(await log.isCurrent?.()).toBe(true);
   });
 
+  it("starts anew only where the log ends as it was read, and has what it kept to read", async () => {
+    const { library } = await renewed();
+    const log = await logOf(library);
+    const last = (await log.entries?.())?.at(-1)?.mark ?? 0;
+    // Something got into it since it was read: nothing changes.
+    await log.append(new Uint8Array([7]), "名字");
+    expect(
+      await library.renew?.(PROJECT.id, [{ update: STATE }], "copy2", { expectedLast: last }),
+    ).toBe(false);
+    expect(await (await logOf(library)).load()).toEqual([NEW, MERGE, new Uint8Array([7])]);
+    expect(await library.backups?.(PROJECT.id)).toEqual(["copy1"]);
+    const now = (await log.entries?.())?.at(-1)?.mark ?? 0;
+    expect(
+      await library.renew?.(PROJECT.id, [{ update: STATE }], "copy2", { expectedLast: now }),
+    ).toBe(true);
+    expect(await library.backupUpdates?.(PROJECT.id, "copy1")).toEqual([STATE, OLD]);
+    expect(await library.backupUpdates?.(PROJECT.id, "copy2")).toEqual([
+      NEW,
+      MERGE,
+      new Uint8Array([7]),
+    ]);
+    await expect(library.backupUpdates?.(PROJECT.id, "none")).rejects.toThrow();
+  });
+
   it("keeps what windows were trying out, which goes by the project and not its log", async () => {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    onTestFinished(() => void vi.unstubAllGlobals());
     const { trials, library } = browser();
     await library.create(PROJECT, STATE);
     const place = await trials().open(PROJECT.id);

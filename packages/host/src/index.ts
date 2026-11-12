@@ -1349,7 +1349,7 @@ export interface CloudLinkChange {
    * copy before is until what came of it is on the platform, see `CloudLink.kept`. Only on a link
    * that has `renewing`; it can go back, which nothing else can.
    */
-  readonly renewed?: { readonly pushed: number; readonly until: number };
+  readonly renewed?: { readonly pushed: number; readonly until: number; readonly at?: number };
   /** Null: the log of the copy before is taken away, see `CloudLink.kept`. */
   readonly kept?: null;
 }
@@ -1437,10 +1437,17 @@ export interface CloudLink {
    */
   readonly renewing?: CloudRenewal;
   /**
-   * The log of the working copy before, as it was when the log went on this one: kept in the library
-   * by `backup` until the platform has the log up to `until` (`pushed`), which has what came of it.
+   * The log of the working copy before, as it was when the log went on this one (at `at`,
+   * milliseconds since 1970): kept in the library by `backup` until the platform has the log up to
+   * `until` (`pushed`), which has what came of it, and for a while after that, see `dropKept` in
+   * the editor.
    */
-  readonly kept?: { readonly backup: string; readonly generation: number; readonly until: number };
+  readonly kept?: {
+    readonly backup: string;
+    readonly generation: number;
+    readonly until: number;
+    readonly at?: number;
+  };
 }
 
 export interface CloudLinks {
@@ -1843,15 +1850,20 @@ export interface ProjectLibrary {
    * another document, see `CloudLink.renewing`. The project is another one from then on, as one that
    * came in with the same id: what windows have of it before cannot write to it any more, nor hear
    * from it. Rejects, and changes nothing, where there is no such project, or a backup of that name.
-   * Missing where a host cannot.
+   * With `expectedLast`, the mark of the last entry the log is to have (0: none), in the same step:
+   * where something else got into it since it was read, it resolves to false and changes nothing,
+   * as what that is would go into the backup and not into the new log. Missing where a host cannot.
    */
   renew?(
     id: string,
     entries: readonly { readonly update: Uint8Array; readonly source?: ChangeSource }[],
     backup: string,
-  ): Promise<void>;
+    options?: { readonly expectedLast?: number },
+  ): Promise<boolean>;
   /** The names of what `renew` kept of a project, which are there still. */
   backups?(id: string): Promise<readonly string[]>;
+  /** What a log that `renew` kept has, in its order. Rejects where there is no such backup. */
+  backupUpdates?(id: string, backup: string): Promise<readonly Uint8Array[]>;
   /**
    * Puts the log back as `renew` kept it, in place of what it has now, in one step: a project that
    * did not get to go on from there. Rejects where there is no such backup.

@@ -81,9 +81,10 @@ describe("a project whose working copy the platform let go of", () => {
     expect(messagesOf(here.notifications).at(-1)).toBe(
       "“原子是什么”已经接回，这台电脑上 1 个文件的改动并回了云端。",
     );
-    // What the log had before goes once the platform has what came of it.
+    // What the log had before stays for a while after the platform has what came of it.
     await time.advance(5000);
-    expect(await here.library.backups(id)).toEqual([]);
+    expect(await here.library.backups(id)).toHaveLength(1);
+    expect(await here.browser.links.get(id)).toMatchObject({ kept: { generation: 1 } });
   });
 
   it("asks people where both changed the same place, and waits for them where they do not say", async () => {

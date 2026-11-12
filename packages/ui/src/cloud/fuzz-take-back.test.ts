@@ -23,6 +23,7 @@ import { MemoryPlatform, TestCloudBrowser, TestTime, statusFor } from "./cloud-s
 import { isSettled, type ReconcileChoices } from "./reconcile.ts";
 import { CloudSession } from "./session.ts";
 import {
+  KEEP_BACKUP_MS,
   TakeBack,
   dropKept,
   settleRenewal,
@@ -321,7 +322,11 @@ async function run(seed: number): Promise<void> {
       const store = device.window?.store;
       if (store && !store.readOnly) {
         try {
-          store.execute(randomCommand(store, random));
+          // Never on the file of a device: the checks below take only it to change that.
+          const call = randomCommand(store, random);
+          const { path, from, to } = (call.params ?? {}) as Record<string, unknown>;
+          if (![path, from, to].some((each) => typeof each === "string" && DEVICE_FILE.test(each)))
+            store.execute(call);
         } catch {
           // Some random commands make no sense on some projects.
         }
@@ -386,7 +391,7 @@ async function run(seed: number): Promise<void> {
       copy: platform.projects.get(CLOUD_ID)?.copy ?? "live",
     }).toEqual({ device: device.index, state: "online", pending: 0, copy: "live" });
     // What the log had before it went on the new copy goes once the platform has what came of it.
-    await dropKept(device.reach(), device.library, device.key);
+    await dropKept(device.reach(), device.library, device.key, Date.now() + 2 * KEEP_BACKUP_MS);
     expect(await device.library.backups(device.key)).toEqual([]);
   }
   const files = platform.workingCopy(CLOUD_ID).getState().files;
@@ -406,7 +411,13 @@ async function run(seed: number): Promise<void> {
 }
 
 describe("taking copies back onto copies made again from the repository, at random", () => {
-  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  // `FUZZ_SEEDS=200` for many more, as on the test machine, split over processes that each take
+  // the seeds `FUZZ_SHARD` of `FUZZ_SHARDS` (every n-th).
+  const count = Number(process.env["FUZZ_SEEDS"] ?? 8);
+  const shards = Number(process.env["FUZZ_SHARDS"] ?? 1);
+  const shard = Number(process.env["FUZZ_SHARD"] ?? 0);
+  const seeds = Array.from({ length: count }, (_, index) => index + 1);
+  for (const seed of seeds.filter((each) => each % shards === shard)) {
     it(`loses nothing a device did, and takes nothing back to before (seed ${seed})`, async () => {
       await run(seed);
     }, 60_000);

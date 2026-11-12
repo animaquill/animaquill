@@ -1,6 +1,7 @@
 import { Lock } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { takeBackText } from "../cloud/panel.ts";
 import { unusableLine } from "../cloud/unusable.ts";
 import { useWorkbench } from "./context.ts";
 import styles from "./ReadOnlyBar.module.css";
@@ -46,7 +47,7 @@ export function ReadOnlyBar() {
               what: unusableLine(unusable, now, t),
               interpolation: { escapeValue: false },
             })
-          : t(takeBack === "stopped" ? "cloud.takeBack.cancelled" : "cloud.takeBack.waiting")}
+          : takeBackText(takeBack ?? "running", t)}
       </span>
       <button type="button" onClick={() => workbench.cloudPanel.set(true)}>
         {t("cloud.unusable.showWays")}

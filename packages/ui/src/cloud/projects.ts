@@ -1,4 +1,4 @@
-import { ProjectStore, elsewhereOf, type Here } from "@animaquill/core";
+import { ProjectStore, USER, elsewhereOf, type Here } from "@animaquill/core";
 import {
   CloudSignedOut,
   FolderError,
@@ -60,7 +60,14 @@ import {
 } from "./session.ts";
 import { unusableTitle } from "./unusable.ts";
 import { chooseTakeBack, keepFolderFiles, takeBackFailedText } from "./take-back-flow.ts";
-import { TakeBack, dropKept, settleRenewal } from "./take-back.ts";
+import {
+  KEEP_BACKUP_MS,
+  TakeBack,
+  dropKept,
+  isPlan,
+  planTakeBack,
+  settleRenewal,
+} from "./take-back.ts";
 
 /**
  * Which project of this window is connected to the platform, and how people connect one, let go of
@@ -334,6 +341,20 @@ function restoreRefusalText(error: RepositoryRefused, t: TFunction): string {
   }
 }
 
+/**
+ * How taking the open project back onto the copy the platform made again goes, see
+ * `CloudProjects.takeBack`: on its way ("running"); stopped until people try again, as they did
+ * not choose or it failed ("stopped"); waiting for someone to sign in, as the right person
+ * ("signedOut", "missing"); or trying by itself now and then, as the platform did not answer for
+ * a while ("unavailable").
+ */
+export type TakeBackState = "running" | "stopped" | "signedOut" | "missing" | "unavailable";
+
+/** The paths of either side. */
+const pathsOfBoth = (a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>) => [
+  ...new Set([...a.keys(), ...b.keys()]),
+];
+
 /** How often the list is asked while a project comes back from its repository, and for how long. */
 const RESTORE_POLL_MS = 3000;
 const RESTORE_WAIT_MS = 5 * 60_000;
@@ -401,6 +422,9 @@ export class CloudProjects {
       if (session.getSnapshot().problem?.kind === "signed-out") session.resume();
       const repository = this.repository;
       if (repository?.getSnapshot().trouble === "signedOut") void repository.refresh();
+      // Taking it back waited for somebody to sign in: it goes on.
+      const waited = this.takeBack;
+      if (waited === "signedOut" || waited === "missing") void this.takeBackAgain();
     });
   }
 
@@ -880,8 +904,10 @@ export class CloudProjects {
 
   /** Sessions whose copy is being taken back, or was, see `#takeBack`. */
   readonly #takingBack = new WeakSet<CloudSession>();
-  /** How taking the open project back goes: "running", or "stopped" until people try again. */
-  #takeBackState: "running" | "stopped" | undefined;
+  /** How taking the open project back goes, see `TakeBackState`. */
+  #takeBackState: TakeBackState | undefined;
+  /** Which run of `#takeBack` is the one that counts: one that people start again is another. */
+  #takeBackRun = 0;
   /** Sessions whose log of the copy before went, or is going. */
   readonly #dropping = new WeakSet<CloudSession>();
 
@@ -895,11 +921,11 @@ export class CloudProjects {
   }
 
   /** How taking the open project back goes, see `#takeBack`. */
-  get takeBack(): "running" | "stopped" | undefined {
+  get takeBack(): TakeBackState | undefined {
     return this.rebuilt ? this.#takeBackState : undefined;
   }
 
-  #setTakeBack(state: "running" | "stopped" | undefined): void {
+  #setTakeBack(state: TakeBackState | undefined): void {
     if (this.#takeBackState === state) return;
     this.#takeBackState = state;
     this.#emitter.emit();
@@ -924,9 +950,15 @@ export class CloudProjects {
     const { cloud, projects, session, notifications, t } = this.#options;
     const repository = cloud.repository;
     this.#takingBack.add(sync);
-    const isStill = () => this.session === sync && !sync.getSnapshot().state.startsWith("clos");
+    const run = ++this.#takeBackRun;
+    const isStill = () =>
+      this.session === sync &&
+      run === this.#takeBackRun &&
+      !sync.getSnapshot().state.startsWith("clos");
     const name = session.store?.getState().manifest.name ?? link.name ?? "";
     this.#setTakeBack("running");
+    /** How many times in a row the platform could not be asked. */
+    let unanswered = 0;
     try {
       for (let wait = 5000; isStill(); wait = Math.min(wait * 2, 5 * 60_000)) {
         const now = await cloud.links.get(link.key).catch(() => undefined);
@@ -1011,6 +1043,13 @@ export class CloudProjects {
             sync.resume();
             return;
           case "later":
+            // Nobody signed in, or another account: what helps is people, who hear so.
+            if (outcome.why === "signedOut" || outcome.why === "missing") {
+              this.#setTakeBack(outcome.why);
+              return;
+            }
+            // Not for a while: people hear so, and can try now; it goes on trying by itself.
+            if (++unanswered >= 3) this.#setTakeBack("unavailable");
             await this.#wait(wait);
             continue;
           case "cancelled":
@@ -1047,12 +1086,91 @@ export class CloudProjects {
     return done;
   }
 
+  /**
+   * Whether what a window changed and could not put into the log can go onto the copy its log went
+   * on since, see `carryOver`: the log as it was is still there.
+   */
+  async canCarryOver(key: string): Promise<boolean> {
+    const { cloud, projects } = this.#options;
+    if (!projects.backupUpdates) return false;
+    const link = await cloud.links.get(key).catch(() => undefined);
+    const backup = link?.kept?.backup;
+    if (!backup) return false;
+    return ((await projects.backups?.(key).catch(() => [])) ?? []).includes(backup);
+  }
+
+  /**
+   * Puts what a window changed and could not put into the log (`updates`, as `ProjectSession`
+   * kept them) onto the open project, whose log went on another copy of the platform under that
+   * window, see `TakeBack`: as taking it back does, with what the log had then (`CloudLink.kept`)
+   * for what both had, so that only those changes come in. What the new copy changed in the same
+   * place too, people choose for. Resolves to whether it went.
+   */
+  async carryOver(key: string, updates: readonly Uint8Array[]): Promise<boolean> {
+    const { cloud, projects, session, notifications, dialogs, t } = this.#options;
+    const store = session.store;
+    const link = await cloud.links.get(key).catch(() => undefined);
+    const backup = link?.kept?.backup;
+    if (!store || session.key !== key || !backup || !projects.backupUpdates) return false;
+    const name = store.getState().manifest.name;
+    const plain = { name, interpolation: { escapeValue: false } } as const;
+    let kept: readonly Uint8Array[];
+    try {
+      kept = await projects.backupUpdates(key, backup);
+    } catch (error) {
+      console.warn("What the log had could not be read to carry changes over", error);
+      notifications.push(t("cloud.takeBack.carryFailed", plain));
+      return false;
+    }
+    const base = ProjectStore.fromUpdates(kept).store;
+    const here = ProjectStore.fromUpdates([...kept, ...updates]).store;
+    try {
+      if (!base || !here) throw new Error("What the log had is no project");
+      const plan = planTakeBack(here.exportFiles().files, store, base.exportFiles().files);
+      if (!isPlan(plan)) throw new Error("The changes do not go onto the project");
+      try {
+        let final = plan.after;
+        if (plan.differences.length > 0) {
+          const chosen = await chooseTakeBack({ dialogs, t, name })(plan);
+          if (!chosen) {
+            notifications.push(t("cloud.takeBack.carryDeclined", plain));
+            return false;
+          }
+          final = chosen.settled.after;
+        }
+        const changes = pathsOfBoth(plan.cloud, final)
+          .filter((path) => plan.cloud.get(path) !== final.get(path))
+          .map((path) => ({ path, base: plan.cloud.get(path), text: final.get(path) }));
+        if (changes.length === 0) return true;
+        if (session.store !== store) return false;
+        const merged = store.mergeFiles(changes, {
+          origin: USER,
+          baseOf: (path) => plan.cloud.get(path),
+        });
+        if (!merged.ok) throw new Error("The changes did not go onto the project");
+        notifications.push(t("cloud.takeBack.carried", { ...plain, count: changes.length }));
+        return true;
+      } finally {
+        plan.store.destroy();
+      }
+    } catch (error) {
+      console.warn("Changes of this window could not go onto the new copy", error);
+      notifications.push(t("cloud.takeBack.carryFailed", plain));
+      return false;
+    } finally {
+      base?.destroy();
+      here?.destroy();
+    }
+  }
+
   /** The project this window opens again, while it does, see `#reopen`. */
   #reopening: { readonly key: string; readonly done: Promise<void> } | undefined;
 
   /** Takes away what the log had of the copy before, once the platform has what came of it. */
   async #dropKept(sync: CloudSession, link: CloudLink): Promise<void> {
     if (this.#dropping.has(sync)) return;
+    // Kept for a while in any case: nothing to look at before then.
+    if (Date.now() - (link.kept?.at ?? 0) < KEEP_BACKUP_MS) return;
     this.#dropping.add(sync);
     // Once `pushed` is noted down, a moment after the platform took it.
     await this.#wait(2000);
