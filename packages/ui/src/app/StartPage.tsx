@@ -62,6 +62,7 @@ import {
   type StartSection,
   type ViewId,
 } from "../start/views.ts";
+import type { CardCover } from "../start/covers.ts";
 import type { RenameOutcome } from "../start/rename.ts";
 import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
 import type { Workbench } from "../workbench/workbench.ts";
@@ -606,6 +607,8 @@ interface CardsProps {
   readonly copies: ReadonlyMap<string, number>;
   readonly situation: Situation;
   readonly busy: boolean;
+  /** The cover of each card, by its id, see `StartCovers`. */
+  readonly covers: ReadonlyMap<string, CardCover>;
 }
 
 /** What the page does for a card. */
@@ -620,9 +623,9 @@ interface CardActions {
 
 function CardList(props: CardsProps) {
   const { t } = useTranslation();
-  const { cards, display, label } = props;
+  const { cards, display, label, covers } = props;
   // A column that would be empty everywhere is left out.
-  const hasDuration = cards.some((card) => card.durationMs !== undefined);
+  const hasDuration = cards.some((card) => durationOf(card, covers) !== undefined);
   return (
     <ul
       className={display === "list" ? styles.rows : styles.grid}
@@ -656,6 +659,7 @@ function CardItem({
   copies,
   situation,
   busy,
+  covers,
 }: CardsProps & { card: ProjectCard }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
@@ -696,15 +700,22 @@ function CardItem({
     event.preventDefault();
     actions.open(card);
   };
+  const picture = covers.get(card.id)?.url;
+  const durationMs = durationOf(card, covers);
   const cover = (
     <span
       className={styles.cover}
       style={{ "--cover": `var(--aq-cover-${coverColorOf(card)})` } as CSSProperties}
+      data-picture={picture !== undefined || undefined}
       aria-hidden="true"
     >
-      <span className={styles.initial}>{initialOf(card.name)}</span>
-      {card.durationMs !== undefined && display === "cards" && (
-        <span className={styles.duration}>{durationText(card.durationMs)}</span>
+      {picture === undefined ? (
+        <span className={styles.initial}>{initialOf(card.name)}</span>
+      ) : (
+        <img className={styles.picture} src={picture} alt="" draggable={false} />
+      )}
+      {durationMs !== undefined && display === "cards" && (
+        <span className={styles.duration}>{durationText(durationMs)}</span>
       )}
     </span>
   );
@@ -771,17 +782,22 @@ function CardItem({
           <span
             className={styles.swatch}
             style={{ "--cover": `var(--aq-cover-${coverColorOf(card)})` } as CSSProperties}
+            data-picture={picture !== undefined || undefined}
             aria-hidden="true"
           >
-            {initialOf(card.name)}
+            {picture === undefined ? (
+              initialOf(card.name)
+            ) : (
+              <img className={styles.picture} src={picture} alt="" draggable={false} />
+            )}
           </span>
           {name}
         </span>
         <span className={styles.cell}>{cardPlace(card, t)}</span>
         <span className={styles.cell}>{statusLine}</span>
-        {cards.some((each) => each.durationMs !== undefined) && (
+        {cards.some((each) => durationOf(each, covers) !== undefined) && (
           <span className={styles.cell}>
-            {card.durationMs === undefined ? "" : durationText(card.durationMs)}
+            {durationMs === undefined ? "" : durationText(durationMs)}
           </span>
         )}
         <span className={styles.cell}>{when ?? ""}</span>
@@ -840,6 +856,10 @@ function CardItem({
     </li>
   );
 }
+
+/** How long the main timeline of a card is: as its cover says, or the platform's list. */
+const durationOf = (card: ProjectCard, covers: ReadonlyMap<string, CardCover>) =>
+  covers.get(card.id)?.durationMs ?? card.durationMs;
 
 // ---- the page
 
@@ -1135,6 +1155,14 @@ export function StartPage() {
     sections.find((section) => section.id === current)?.label ??
     ({ key: "start.view.recent" } as const);
   const { actions, busy } = useCardActions(workbench, refresh, setRenaming, renaming, setPicking);
+  const { startCovers } = workbench;
+  const covers = useSyncExternalStore(startCovers.subscribe, startCovers.getSnapshot);
+  // Covers for the cards there are to see, fetched in their order where they have to be.
+  const seen = current === "exports" ? [] : welcome ? remoteCards(cards) : listed;
+  // After every render: it only works out what changed.
+  useEffect(() => {
+    startCovers.show(seen);
+  });
 
   // "打开云端的项目…" of the menu means the projects of the platform, as they are now: asked
   // before the page was there, or while it is.
@@ -1240,6 +1268,7 @@ export function StartPage() {
     copies,
     situation,
     busy,
+    covers,
   } as const;
   const time = sort === "opened" ? "opened" : "updated";
 

@@ -34,6 +34,7 @@ const card = (
   group: undefined,
   owner: undefined,
   durationMs: undefined,
+  cover: undefined,
   source: { kind: "browser", summary: { id: name, name, updatedAt: 1 }, known: true },
   ...more,
 });

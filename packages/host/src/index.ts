@@ -106,6 +106,88 @@ export interface Host {
    * group each is in, and when each was last opened here, see `ProjectOrganizer`.
    */
   readonly organizer: ProjectOrganizer;
+  /**
+   * The covers of projects for the cards of the start page, in this browser, see `CoverStore`.
+   * Without it cards show a colour and a letter.
+   */
+  readonly covers?: CoverStore;
+}
+
+/**
+ * A small picture of a frame of a project, for its card on the start page, see the design of the
+ * start page (docs/design/start-and-cloud.md of AnimaQuill Cloud), 6.4. Never part of the project:
+ * making one changes nothing of it.
+ */
+export interface ProjectCover {
+  /** A WebP or a JPEG of a few dozen kilobytes at most, see `COVER_BYTES`. */
+  readonly picture: Blob;
+  /** When it was made, or for one of the platform when the platform got it, in ms since 1970. */
+  readonly at: number;
+  /** What it is known by, as the platform says it too: see `coverEtag`. */
+  readonly etag: string;
+  /** How long the main timeline was then, in milliseconds. */
+  readonly durationMs?: number;
+  /** What the project was when the editor made it, as the editor tells versions apart. */
+  readonly made?: string;
+  /** The etag of the last cover of this project that the platform took from this browser. */
+  readonly sent?: string;
+}
+
+/** The bytes a cover may have at most, as the platform takes them. */
+export const COVER_BYTES = 64 * 1024;
+
+/**
+ * Where this browser keeps covers: by the number it keeps a project by (a folder, see
+ * `FolderRecord.id`, or a project of the browser), or by `cloud:` and the id of a project of the
+ * platform for one it got from there. Shared by every window. Rejects where it cannot be read or
+ * written: cards then show a colour and a letter.
+ */
+export interface CoverStore {
+  /** What is kept of each of `keys` that has a cover. */
+  read(keys: readonly string[]): Promise<ReadonlyMap<string, ProjectCover>>;
+  /** Keeps a cover in place of the one there was. */
+  put(key: string, cover: ProjectCover): Promise<void>;
+  /** Notes that the platform took the cover `etag`, where that is still the one kept. */
+  sent(key: string, etag: string): Promise<void>;
+  forget(key: string): Promise<void>;
+  /** Hears which cover any window changed, also this one. Returns how to stop listening. */
+  listen(listener: (key: string) => void): () => void;
+}
+
+/**
+ * What a cover is known by: the start of the SHA-256 of its bytes, base64url, as the platform says
+ * it in its list. The same picture is the same etag anywhere: it is not sent or fetched twice.
+ */
+export async function coverEtag(picture: Blob): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await picture.arrayBuffer()));
+  let binary = "";
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "").slice(0, 22);
+}
+
+/** What sending a cover to the platform came to, see `CoverAccess.put`. */
+export type CoverPut =
+  | { readonly kind: "kept"; readonly etag: string; readonly at: number }
+  /** It took one of this project a short while ago: again after `retryAfterMs`. */
+  | { readonly kind: "busy"; readonly retryAfterMs: number }
+  /** The platform has no such project of whoever is signed in. */
+  | { readonly kind: "missing" }
+  /** It does not take this picture: too large, or not a picture it takes. */
+  | { readonly kind: "refused" };
+
+/** The covers of projects on the platform, see `CloudAccess.cover`. */
+export interface CoverAccess {
+  /**
+   * Gives the platform the cover of a project, in place of the one it had, and how long its main
+   * timeline is. Rejects where the platform could not say, with a `CloudSignedOut` when nobody is
+   * signed in.
+   */
+  put(project: string, picture: Blob, durationMs: number | undefined): Promise<CoverPut>;
+  /**
+   * The cover of a project, or undefined where it has none, or the platform has no such project of
+   * whoever is signed in. Rejects where the platform could not say.
+   */
+  get(project: string): Promise<Blob | undefined>;
 }
 
 /**
@@ -316,6 +398,13 @@ export interface CloudProjectSummary {
    */
   readonly attention?:
     "noRepository" | "repository" | "unusable" | "conflicts" | "blocked" | (string & {});
+  /**
+   * Its cover, where an editor sent one: what it is known by, see `coverEtag`, and when the
+   * platform got it. `CoverAccess.get` gives the picture.
+   */
+  readonly cover?: { readonly etag: string; readonly at: number };
+  /** How long its main timeline was when the cover was made, in milliseconds. */
+  readonly durationMs?: number;
 }
 
 /**
@@ -372,6 +461,8 @@ export interface CloudAccess {
    * it, there is none.
    */
   readonly lfs?: LfsAccess;
+  /** The covers of its projects, for the start page on any computer. Without it, there are none. */
+  readonly cover?: CoverAccess;
 }
 
 /** What a project of the platform that is saved to a repository may go with, see `CloudAccess.remove`. */

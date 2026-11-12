@@ -5,6 +5,7 @@ import { browserFolders } from "./folders.ts";
 import { dropTarget } from "./growing.ts";
 import { isMadeFile } from "./index.ts";
 import { browserLocalFolders } from "./local-folders.ts";
+import { browserCoverStore } from "./covers.ts";
 import { browserOrganizer } from "./organizer.ts";
 import { browserPresence } from "./presence.ts";
 import type {
@@ -794,6 +795,8 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
  */
 export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts";
 export { browserOrganizer } from "./organizer.ts";
+export { browserCoverAccess, browserCoverStore, memoryCoverStore } from "./covers.ts";
+export type { BrowserCoverAccessOptions } from "./covers.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";
 export type { BrowserRepositoryOptions } from "./repository.ts";
@@ -954,12 +957,14 @@ export function createBrowserHost(
   const drafts = createPlaces(DRAFTS, projects, database, locks, windowMemory);
   const exports = createExportStore(database, locks);
   const chats = browserChats(database);
+  const covers = browserCoverStore(database);
   // What an export kept of a project that is gone would only take room on the disk.
   const forget = async (project: string) => {
     await Promise.all([
       trials.forget(project),
       drafts.forget(project),
       chats.forget(project).catch(() => {}),
+      covers.forget(project).catch(() => {}),
     ]);
     for (const saved of await exports.list(project).catch(() => [])) {
       // One that a window is at is that window's to finish or give up.
@@ -1001,5 +1006,6 @@ export function createBrowserHost(
     keys: browserKeys(database),
     chats,
     organizer: browserOrganizer(database),
+    covers,
   };
 }

@@ -25,7 +25,7 @@ import {
   type ProjectLibrary,
   type ProjectPresence,
 } from "@animaquill/host";
-import type { Problem } from "@animaquill/schema";
+import type { Asset, Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import {
   FolderAssets,
@@ -289,13 +289,15 @@ export class ProjectFolders {
    * What files of the project this is kept by, where it is the open folder, see `FolderAssets`.
    * `since` is for an export: every file it reads is read all through again, once since then.
    */
-  mediaFor(key: string, since?: number): MediaStore | undefined {
+  mediaFor(
+    key: string,
+    since?: number,
+    assets: () => Readonly<Record<string, Asset>> | undefined = () =>
+      this.#options.session.store?.getState().assets,
+  ): MediaStore | undefined {
     const opened = this.#assets;
     if (opened?.key !== key) return undefined;
-    return opened.assets.media(
-      () => this.#options.session.store?.getState().assets,
-      since === undefined ? {} : { since },
-    );
+    return opened.assets.media(assets, since === undefined ? {} : { since });
   }
 
   /** Which files of the open project folder are read for their hashes now, see `AssetProgress`. */

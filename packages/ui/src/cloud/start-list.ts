@@ -98,6 +98,10 @@ export interface LocalRow {
   readonly unusable: RepositoryUnusable | undefined;
   /** See `CloudRow.copy`; "live" where the platform's list does not say. */
   readonly copy: string;
+  /** See `CloudRow.cover`. */
+  readonly cover: CloudProjectSummary["cover"];
+  /** See `CloudRow.durationMs`. */
+  readonly durationMs: number | undefined;
 }
 
 /** A project of the platform that has no folder on this computer. */
@@ -134,6 +138,10 @@ export interface CloudRow {
   readonly behind: boolean;
   /** Its repository cannot be used, and so the project cannot be edited, see the design, 5.1. */
   readonly unusable: RepositoryUnusable | undefined;
+  /** Its cover on the platform, as the list says, see `CloudProjectSummary.cover`. */
+  readonly cover: CloudProjectSummary["cover"];
+  /** How long its main timeline is, as the list says. */
+  readonly durationMs: number | undefined;
 }
 
 export interface StartLists {
@@ -255,6 +263,8 @@ export function composeStartList(input: StartInput): StartLists {
       behind: onPlatform !== undefined && isBehind(onPlatform),
       unusable: onPlatform?.repository?.unusable,
       copy: onPlatform?.copy ?? "live",
+      cover: onPlatform?.cover,
+      durationMs: onPlatform?.durationMs,
     };
   });
 
@@ -308,6 +318,8 @@ export function composeStartList(input: StartInput): StartLists {
         owner: account ?? copy?.link.owner,
         behind: isBehind(summary),
         unusable: summary.repository?.unusable,
+        cover: summary.cover,
+        durationMs: summary.durationMs,
       };
     });
   // What this browser has and the list does not: all of it while there is no list.
@@ -331,6 +343,8 @@ export function composeStartList(input: StartInput): StartLists {
       owner: link.owner,
       behind: false,
       unusable: undefined,
+      cover: undefined,
+      durationMs: undefined,
     }));
 
   return {

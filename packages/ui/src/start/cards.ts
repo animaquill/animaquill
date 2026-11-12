@@ -66,8 +66,13 @@ export interface ProjectCard {
   readonly group: string | undefined;
   /** Whose project of the platform it is, see `ProjectMarks.account`, where that is known. */
   readonly owner: string | undefined;
-  /** How long its main timeline is, in milliseconds, where that is known. */
+  /**
+   * How long its main timeline is, in milliseconds, as the platform's list says: the cover kept in
+   * this browser can say otherwise, see `StartCovers`.
+   */
   readonly durationMs: number | undefined;
+  /** Its cover on the platform, as the list says, see `CloudProjectSummary.cover`. */
+  readonly cover: { readonly etag: string; readonly at: number } | undefined;
   /** What it came from. */
   readonly source:
     | { readonly kind: "local"; readonly row: LocalRow }
@@ -175,7 +180,8 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       ...organizing(row.key, row.project, row.mark, row.owner),
       openedAt: latest(row.openedAt, openedOf(row.key)),
       updatedAt: row.updatedAt,
-      durationMs: undefined,
+      durationMs: row.durationMs,
+      cover: row.cover,
       source: { kind: "local", row },
     };
   });
@@ -192,7 +198,8 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       // the best there is to go by.
       openedAt: here ? (openedOf(row.key) ?? row.updatedAt) : undefined,
       updatedAt: row.updatedAt,
-      durationMs: undefined,
+      durationMs: row.durationMs,
+      cover: row.cover,
       source: { kind: "cloud", row },
     };
   });
@@ -206,6 +213,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
     openedAt: openedOf(summary.id) ?? summary.updatedAt,
     updatedAt: summary.updatedAt,
     durationMs: undefined,
+    cover: undefined,
     source: { kind: "browser", summary, known: lists.browserKnown },
   }));
   return [...local, ...cloud, ...browser];

@@ -34,6 +34,8 @@
   --aq-local: #ffb44a;
   --aq-star: #ffb44a;
   --aq-cover-text: #ffffffd9;
+  /* What shows beside a cover that is not 16:9, as a portrait one. */
+  --aq-cover-backdrop: #0b0d12;
   --aq-cover-1: #2d4a7a;
   --aq-cover-2: #2d6b55;
   --aq-cover-3: #7a3d2d;

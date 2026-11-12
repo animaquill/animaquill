@@ -706,6 +706,11 @@ export class VideoExport {
     if (this.#options.session.store === store) await this.#pump();
   }
 
+  /** Whether an export, or the questions before one, is under way in this window. */
+  get busy(): boolean {
+    return this.#isBusy();
+  }
+
   /** Whether exports go one after the other in this window right now. */
   #isRunning(): boolean {
     return this.#job !== undefined || this.#pumping !== undefined;

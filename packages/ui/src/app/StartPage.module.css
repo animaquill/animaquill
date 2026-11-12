@@ -543,6 +543,28 @@
   transform: translateY(-2px);
 }
 
+/*
+ * A frame of the project: 16:9 here whatever its own shape, a portrait or a square one whole in
+ * the middle, dark at its sides (the design of the start page, 6.3).
+ */
+.cover[data-picture] {
+  background: var(--aq-cover-backdrop);
+}
+
+.picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.cover .picture,
+.swatch .picture {
+  position: absolute;
+  inset: 0;
+}
+
 .initial {
   color: var(--aq-cover-text);
   font-size: clamp(32px, 4vw, 48px);
@@ -763,6 +785,12 @@
   font-weight: 600;
   background: var(--cover, var(--aq-cover-1));
   border-radius: 4px;
+}
+
+.swatch[data-picture] {
+  position: relative;
+  overflow: hidden;
+  background: var(--aq-cover-backdrop);
 }
 
 .cell {

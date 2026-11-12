@@ -2,6 +2,8 @@ import type {
   AccountAccess,
   AccountSnapshot,
   CloudAccess,
+  CoverAccess,
+  CoverStore,
   DiagnosticsSink,
   Host,
   LocalFolder,
@@ -14,6 +16,7 @@ import type {
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import {
+  buildRenderPlan,
   clipEnd,
   clipOffset,
   clipStart,
@@ -53,6 +56,8 @@ import { connectionsFor, type Connection } from "../keyframes/connect.ts";
 import { KeyframeEditor } from "../keyframes/editor.ts";
 import { OverlayEditor } from "../overlay/editor.ts";
 import { SceneHandles } from "../overlay/scene-handles.ts";
+import { CoverMaker, CoverUploads, type CoverShot } from "../export/cover.ts";
+import { ExportCompositor, exportCompositorOptions } from "../export/compositor.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -95,6 +100,7 @@ import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import { StartHabits } from "../start/habits.ts";
+import { StartCovers } from "../start/covers.ts";
 import { StartOrganizer } from "../start/organize.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
@@ -217,6 +223,10 @@ export class Workbench {
   readonly organizer: StartOrganizer;
   /** How each view of the start page is sorted and shown, see `StartHabits`. */
   readonly startHabits: StartHabits;
+  /** The covers on the cards of the start page, see `StartCovers`. */
+  readonly startCovers: StartCovers;
+  /** Makes the cover of the open project while people leave it alone, see `CoverMaker`. */
+  readonly covers: CoverMaker | undefined;
   readonly #address: Host["address"];
   /**
    * Whether the panel of the platform shows, see `cloudPanel`: the status bar has it, and the menu
@@ -662,6 +672,11 @@ export class Workbench {
     );
     this.#keepPresence(host);
     this.organizer = new StartOrganizer({ organizer: host.organizer });
+    this.startCovers = new StartCovers({
+      ...(host.covers && { covers: host.covers }),
+      ...(cloud?.cover && { cloud: cloud.cover }),
+    });
+    this.covers = host.covers && this.#coverMaker(host.covers, cloud?.cover, library);
     this.#noteOpened();
     this.proxies =
       this.projectFolders && options.proxyMaker
@@ -1808,6 +1823,83 @@ export class Workbench {
     presence.onMoved((project) => void this.projectFolders?.followMove(project));
   }
 
+  /**
+   * The cover of the open project, see `CoverMaker`: made while people leave it alone, and sent to
+   * the platform for a project of the platform that can be edited.
+   */
+  #coverMaker(
+    covers: CoverStore,
+    platform: CoverAccess | undefined,
+    library: ProjectLibrary,
+  ): CoverMaker {
+    const isHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+    const sendTo = () => {
+      const snapshot = this.cloud?.getSnapshot();
+      if (snapshot?.kind !== "linked" || !snapshot.made || this.readOnly.getSnapshot())
+        return undefined;
+      return snapshot.link.project;
+    };
+    const uploads = platform && new CoverUploads({ covers, cloud: platform });
+    const maker = new CoverMaker({
+      session: this.session,
+      covers,
+      picture: (shot, signal) => this.#coverPicture(shot, signal, library),
+      isBusy: () =>
+        this.timeline.getSnapshot().playing ||
+        this.videos.busy ||
+        this.dialogs.getSnapshot() !== undefined ||
+        isHidden(),
+      mayLeave: () => !this.videos.busy && !isHidden(),
+      sendTo,
+      ...(uploads && { uploads }),
+    });
+    // Once the open project is known to be one of the platform, a cover it did not send yet goes.
+    let sending: string | undefined;
+    const follow = () => {
+      const project = sendTo();
+      if (project !== undefined && project !== sending) maker.offerToPlatform();
+      sending = project;
+    };
+    this.cloud?.subscribe(follow);
+    this.readOnly.subscribe(follow);
+    return maker;
+  }
+
+  /**
+   * A frame of the project as it was, as the still export draws it, in a compositor of its own. The
+   * files are reached before anything waits: the project may be closed while it draws.
+   */
+  async #coverPicture(
+    { state, key, timeline, seconds }: CoverShot,
+    signal: AbortSignal,
+    library: ProjectLibrary,
+  ): Promise<ImageBitmap> {
+    const plan = buildRenderPlan(state, timeline);
+    if (!plan) throw new Error("The timeline shows nothing");
+    const projects: ProjectLibrary = {
+      ...this.projects,
+      media: (id) =>
+        this.projectFolders?.mediaFor(id, undefined, () => state.assets) ?? library.media(id),
+    };
+    const site = {
+      projects,
+      preview: this.preview,
+      compositorUrl: this.compositorUrl,
+      sceneOrigins: this.sceneOrigins,
+      sceneStage: this.sceneStage,
+    };
+    signal.throwIfAborted();
+    const compositor = new ExportCompositor(exportCompositorOptions(site, state, key, plan));
+    const stop = () => compositor.dispose();
+    signal.addEventListener("abort", stop, { once: true });
+    try {
+      return await compositor.still(seconds);
+    } finally {
+      signal.removeEventListener("abort", stop);
+      compositor.dispose();
+    }
+  }
+
   /** Back to the start page. */
   async closeProject(): Promise<void> {
     await this.#changeProject();
@@ -2252,6 +2344,8 @@ export class Workbench {
       });
       if (!leave) return false;
     }
+    // A cover of the project as people leave it, while its files can still be read.
+    this.covers?.leaving();
     await this.layout.detach();
     this.cloudPanel.set(false);
     // What the platform does not have yet stays in the log, for whoever syncs next.

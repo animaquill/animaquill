@@ -9,6 +9,7 @@ import type {
   CloudLink,
   CloudLinks,
   CloudProjectSummary,
+  CoverAccess,
   LfsAccess,
   RepositoryAccess,
 } from "./index.ts";
@@ -332,6 +333,8 @@ export interface BrowserCloudOptions {
   readonly repository?: RepositoryAccess;
   /** Sending files of assets into the large file storage of repositories, see `browserLfs`. */
   readonly lfs?: LfsAccess;
+  /** The covers of its projects, where the platform keeps them, see `browserCoverAccess`. */
+  readonly cover?: CoverAccess;
   readonly database?: () => IDBFactory;
   readonly locks?: () => LockManager | undefined;
 }
@@ -349,5 +352,6 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.remove && { remove: options.remove }),
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),
+    ...(options.cover && { cover: options.cover }),
   };
 }

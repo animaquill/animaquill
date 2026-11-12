@@ -90,6 +90,21 @@ const archiveOf = (value: unknown): CloudProjectSummary["archive"] => {
   };
 };
 
+/** What the platform knows the cover of a project by, see `CloudProjectSummary.cover`. */
+const coverOf = (value: unknown): CloudProjectSummary["cover"] => {
+  if (!isObject(value)) return undefined;
+  const etag = text(value.etag);
+  const at = count(value.at);
+  // It goes into a request and a key of this browser: only what the platform makes of it.
+  if (etag === undefined || at === undefined || !/^[\w-]{1,64}$/.test(etag)) return undefined;
+  return { etag, at };
+};
+
+const durationOf = (value: unknown): number | undefined => {
+  const ms = count(value);
+  return ms !== undefined && ms >= 0 ? ms : undefined;
+};
+
 /**
  * A project as the platform listed it, or undefined for what is none: it needs an id that names a
  * project of a platform, see `isProjectId`. One whose name or time cannot be read is there all the
@@ -107,6 +122,8 @@ export const projectSummaryOf = (value: unknown): CloudProjectSummary | undefine
     ...optional("repository", repositoryOf(value.repository)),
     ...optional("archive", archiveOf(value.archive)),
     ...optional("attention", text(value.attention)),
+    ...optional("cover", coverOf(value.cover)),
+    ...optional("durationMs", durationOf(value.durationMs)),
   };
 };
 
