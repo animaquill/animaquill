@@ -109,15 +109,19 @@ export function AssetsPanel() {
   };
 
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
+  // On entering too: the browser goes by the last of the two, and the element under the pointer
+  // changes as the panel shows that it takes them.
+  const takeFiles = (event: DragEvent) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    setOver(true);
+  };
 
   return (
     <div
       className={over ? styles.dropping : styles.panel}
-      onDragOver={(event) => {
-        if (!hasFiles(event)) return;
-        event.preventDefault();
-        setOver(true);
-      }}
+      onDragEnter={takeFiles}
+      onDragOver={takeFiles}
       onDragLeave={() => setOver(false)}
       onDrop={(event) => {
         if (!hasFiles(event)) return;

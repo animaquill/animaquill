@@ -236,6 +236,13 @@ function GroupItem({
     ],
   ];
   const isCard = (event: DragEvent) => event.dataTransfer.types.includes(CARD_TYPE);
+  // On entering too: the browser goes by the last of the two.
+  const takeCard = (event: DragEvent) => {
+    if (!isCard(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setIsOver(true);
+  };
 
   if (renaming) {
     return (
@@ -272,12 +279,8 @@ function GroupItem({
       className={styles.navItem}
       data-group={id}
       data-drop={isOver || undefined}
-      onDragOver={(event) => {
-        if (!isCard(event)) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-        setIsOver(true);
-      }}
+      onDragEnter={takeCard}
+      onDragOver={takeCard}
       onDragLeave={() => setIsOver(false)}
       onDrop={(event) => {
         setIsOver(false);
@@ -1510,6 +1513,59 @@ export function StartPage() {
           onClose={() => setPicking(undefined)}
         />
       )}
+      {situation.canFolders && <DropHint />}
+    </div>
+  );
+}
+
+/** How long a drag over the page counts as there without a word from it, see `DropHint`. */
+const DRAG_GONE_MS = 1000;
+
+/**
+ * While files are dragged over the page: letting go opens a folder, see `mountEditor`. Nothing that
+ * the pointer can land on, so that the page under it stays as it is.
+ */
+function DropHint() {
+  const { dialogs } = useWorkbench();
+  const { t } = useTranslation();
+  const asking = useSyncExternalStore(dialogs.subscribe, dialogs.getSnapshot) !== undefined;
+  const [over, setOver] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const gone = () => {
+      clearTimeout(timer);
+      setOver(false);
+    };
+    const here = (event: globalThis.DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      setOver(true);
+      // The browser says when a drag leaves the window, but not always when it ends elsewhere.
+      clearTimeout(timer);
+      timer = setTimeout(gone, DRAG_GONE_MS);
+    };
+    const left = (event: globalThis.DragEvent) => {
+      if (event.relatedTarget === null) gone();
+    };
+    window.addEventListener("dragenter", here);
+    window.addEventListener("dragover", here);
+    window.addEventListener("dragleave", left);
+    window.addEventListener("drop", gone);
+    window.addEventListener("dragend", gone);
+    return () => {
+      gone();
+      window.removeEventListener("dragenter", here);
+      window.removeEventListener("dragover", here);
+      window.removeEventListener("dragleave", left);
+      window.removeEventListener("drop", gone);
+      window.removeEventListener("dragend", gone);
+    };
+  }, []);
+  if (!over || asking) return null;
+  return (
+    <div className={styles.dropHint} role="status">
+      <FolderOpen size={32} aria-hidden="true" />
+      <p className={styles.dropHintTitle}>{t("start.dropHint")}</p>
+      <p>{t("start.dropHintAbout")}</p>
     </div>
   );
 }

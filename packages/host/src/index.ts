@@ -1821,7 +1821,7 @@ export interface LocalFolders {
    * folder that was dropped, ask first, see `LocalFolder.requestAccess`, which is best done right
    * away: dropping counts as people doing something, but not for long.
    */
-  dropped(transfer: DataTransfer): Promise<readonly LocalEntry[]>;
+  dropped(transfer: Dropped): Promise<readonly LocalEntry[]>;
   /**
    * Asks people for files, as `showOpenFilePicker` does, starting in `near`, such as the folder of
    * the open project. It has to run right after they did something. Like what was dropped, they can
@@ -1957,6 +1957,22 @@ export interface WriterClaim {
    */
   readonly lost: Promise<void>;
   release(): void;
+}
+
+/**
+ * What people dropped: the `DataTransfer` of the `drop` event, or what a page asked of it in the
+ * event and kept for later, as the editor does with what is dropped before it is ready. A browser lets go of
+ * what was dropped once the event is over, but not of what was asked for in it.
+ */
+export interface Dropped {
+  readonly items: ArrayLike<DroppedItem>;
+}
+
+/** One thing that was dropped, as a `DataTransferItem` has it. */
+export interface DroppedItem {
+  readonly kind: string;
+  /** Where the browser gives what was dropped as a file or a folder on this computer. */
+  getAsFileSystemHandle?(): Promise<unknown>;
 }
 
 /** Something on this computer that people dropped. */

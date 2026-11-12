@@ -181,6 +181,14 @@ export function EffectsSection({ clip, objects, readOnly, rows }: EffectsSection
     const index = to > from ? to - 1 : to;
     if (index !== from) timeline.moveEffect(clip.id, id, index);
   };
+  // On entering too: the browser goes by the last of the two, and the pointer goes from one part of
+  // an effect to another.
+  const overEffect = (event: DragEvent<HTMLElement>, index: number) => {
+    if (!dragged || !event.dataTransfer.types.includes(ORDER_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setTarget(dropIndex(event, index));
+  };
   const onKey = (event: KeyboardEvent, id: string, index: number) => {
     if (readOnly) return;
     if (event.key === "ArrowUp" && index > 0) {
@@ -216,12 +224,8 @@ export function EffectsSection({ clip, objects, readOnly, rows }: EffectsSection
               data-fresh={fresh === id || undefined}
               data-dragged={dragged === id || undefined}
               data-drop={target === index ? "before" : target === index + 1 ? "after" : undefined}
-              onDragOver={(event) => {
-                if (!dragged || !event.dataTransfer.types.includes(ORDER_DRAG_TYPE)) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-                setTarget(dropIndex(event, index));
-              }}
+              onDragEnter={(event) => overEffect(event, index)}
+              onDragOver={(event) => overEffect(event, index)}
               onDragLeave={() => setTarget(undefined)}
               onDrop={(event) => {
                 const moving = event.dataTransfer.getData(ORDER_DRAG_TYPE);

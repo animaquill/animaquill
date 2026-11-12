@@ -115,23 +115,35 @@ export const putPrivate = (page: Page, root: string, files: Record<string, strin
     { root, files },
   );
 
+/** How `drop` goes about it, beyond where. */
+export interface DropOptions {
+  /** Drops at once, also before the editor is there: by default it waits for the editor. */
+  readonly early?: boolean;
+  /** What happens while the pointer is over the page, right before letting go. */
+  readonly meanwhile?: () => Promise<unknown>;
+}
+
 /**
  * Drops folders or files of the disk on the page, as people drag them in from their files: where
- * `at` says, or somewhere in the middle. Not before the editor is there, also right after a reload:
- * a page without it does not take what is dropped, and the drop is lost without a word.
+ * `at` says, or somewhere in the middle. By default not before the editor is there, also right
+ * after a reload, as people drop what they see. What the page does with a drop before then is for
+ * the tests of that, with `early`.
  */
 export async function drop(
   page: Page,
   paths: string | readonly string[],
   at: { readonly x: number; readonly y: number } = { x: 300, y: 300 },
+  { early = false, meanwhile }: DropOptions = {},
 ) {
-  await editorReady(page);
+  if (!early) await editorReady(page);
   const client = await page.context().newCDPSession(page);
   const files = typeof paths === "string" ? [paths] : [...paths];
   const data = { items: [], files, dragOperationsMask: 1 };
-  for (const type of ["dragEnter", "dragOver", "drop"] as const) {
+  for (const type of ["dragEnter", "dragOver"] as const) {
     await client.send("Input.dispatchDragEvent", { type, ...at, data });
   }
+  await meanwhile?.();
+  await client.send("Input.dispatchDragEvent", { type: "drop", ...at, data });
   await client.detach();
 }
 

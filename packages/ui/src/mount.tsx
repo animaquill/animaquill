@@ -1,5 +1,5 @@
 import "./theme/tokens.css";
-import type { Host } from "@animaquill/host";
+import type { Dropped, Host } from "@animaquill/host";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App.tsx";
@@ -29,6 +29,8 @@ export interface EditorOptions {
   readonly soundLimitMs?: number;
   /** For tests: how long making a proxy waits after each frame, to see one on its way. */
   readonly proxyFrameMs?: number;
+  /** For tests: what the editor waits for before it gets ready, to drop something meanwhile. */
+  readonly holdLoad?: () => Promise<void>;
   /** Panels the host adds to the built-in ones. */
   readonly panels?: readonly PanelDefinition[];
   /** For tests: what no control can do yet, such as changing code. */
@@ -37,12 +39,73 @@ export interface EditorOptions {
 
 /**
  * Said on the window once the editor takes what is dropped on the page. What runs on the page before
- * the editor can hold back drops until then, as the page of the web app does.
+ * the editor can hold back drops until then, as the page of the web app does, and keep the last of
+ * them where `DROPPED_EARLY` says, in the shape of `keepDropped`: the editor opens it once it is there.
  */
 const EDITOR_HERE = "animaquill-editor";
+const DROPPED_EARLY = "animaquillDropped";
+
+const carriesFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") === true;
+
+/**
+ * What was dropped, asked of the `drop` event right away and kept, for when the editor is ready:
+ * `LocalFolders.dropped` gives the same of it later as it would have in the event. The browser
+ * lets go of what was dropped once the event is over, but not of what it was asked for.
+ */
+function keepDropped(transfer: DataTransfer): Dropped {
+  return {
+    items: Array.from(transfer.items, (item) => {
+      const { kind } = item;
+      const { getAsFileSystemHandle } = item as DataTransferItem & {
+        getAsFileSystemHandle?: () => Promise<unknown>;
+      };
+      if (kind !== "file" || !getAsFileSystemHandle) return { kind };
+      const handle = getAsFileSystemHandle.call(item);
+      // Whoever asks later hears what went wrong.
+      handle.catch(() => {});
+      return { kind, getAsFileSystemHandle: () => handle };
+    }),
+  };
+}
+
+/**
+ * Takes what is dropped on the page from now on, while the editor gets ready, and keeps the last of
+ * it, also what the page kept before. A file dropped meanwhile does not replace the page, and a
+ * folder is not lost: it opens once the editor is there. `take` lets go and gives what was kept.
+ */
+function holdDrops(): { take(): Dropped | undefined } {
+  const keep = (event: DragEvent) => {
+    if (carriesFiles(event)) event.preventDefault();
+  };
+  let last: Dropped | undefined;
+  const hold = (event: DragEvent) => {
+    if (!carriesFiles(event) || !event.dataTransfer) return;
+    event.preventDefault();
+    last = keepDropped(event.dataTransfer);
+  };
+  window.addEventListener("dragenter", keep);
+  window.addEventListener("dragover", keep);
+  window.addEventListener("drop", hold);
+  // What the page held back, see `EDITOR_HERE`, which lets go of drops once it hears this.
+  window.dispatchEvent(new Event(EDITOR_HERE));
+  const page = window as unknown as Record<string, Dropped | undefined>;
+  last = page[DROPPED_EARLY];
+  delete page[DROPPED_EARLY];
+  return {
+    take() {
+      window.removeEventListener("dragenter", keep);
+      window.removeEventListener("dragover", keep);
+      window.removeEventListener("drop", hold);
+      return last;
+    },
+  };
+}
 
 /** Starts the editor in an element. Returns how to remove it again. */
 export async function mountEditor(element: HTMLElement, options: EditorOptions) {
+  // From the first moment: people drop a folder on the page as soon as they see it.
+  const held = holdDrops();
+  await options.holdLoad?.();
   const i18n = await createI18n();
   const workbench = new Workbench({
     host: options.host,
@@ -99,23 +162,35 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   window.addEventListener("keydown", onKeyDown);
 
-  // A file dropped next to where it can go would replace the whole page.
+  // A file dropped next to where it can go would replace the whole page. The browser goes by the
+  // last of `dragenter` and `dragover`: when the page changes under the pointer, as the start page
+  // does once its list is read, only `dragenter` comes before the drop, and without this here the
+  // drop would not come at all.
   const keepFiles = (event: DragEvent) => {
-    if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    if (carriesFiles(event)) event.preventDefault();
   };
   // A folder dropped anywhere else opens as a project, where projects are folders. What a panel
   // takes, such as assets, it has taken already.
+  const open = (dropped: Dropped) => {
+    const { projectFolders, dialogs, notifications, t } = workbench;
+    if (!projectFolders) notifications.push(t("folder.droppedNoFolders"));
+    // A dialog has to be answered first, and a new one would answer it.
+    else if (dialogs.getSnapshot()) notifications.push(t("folder.droppedWhileAsking"));
+    else projectFolders.dropped(dropped);
+  };
   const openDropped = (event: DragEvent) => {
     const transfer = event.dataTransfer;
-    if (!transfer?.types.includes("Files")) return;
+    if (!transfer || !carriesFiles(event)) return;
     const taken = event.defaultPrevented;
     event.preventDefault();
-    if (!taken && !workbench.dialogs.getSnapshot()) workbench.projectFolders?.dropped(transfer);
+    if (!taken) open(transfer);
   };
+  window.addEventListener("dragenter", keepFiles);
   window.addEventListener("dragover", keepFiles);
   window.addEventListener("drop", openDropped);
-  // The page may hold back drops until now, so that a file dropped early does not replace it.
-  window.dispatchEvent(new Event(EDITOR_HERE));
+  // In the same moment as the editor takes drops from here on.
+  const early = held.take();
+  if (early) open(early);
 
   // Leaving now would lose work, which the browser can still ask about.
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -135,6 +210,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   return () => {
     window.removeEventListener("drop", openDropped);
     window.removeEventListener("dragover", keepFiles);
+    window.removeEventListener("dragenter", keepFiles);
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", save);

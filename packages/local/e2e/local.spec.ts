@@ -132,8 +132,13 @@ test.describe("the editor on this computer", () => {
       }),
     );
     expect(taken).toEqual([true, true]);
+    // A folder dropped meanwhile is not lost: it opens once the editor is there.
+    const disk = join(mkdtempSync(join(tmpdir(), "animaquill-local-")), "早到的");
+    mkdirSync(disk);
+    await drop(page, disk, undefined, { early: true });
     arrive();
-    await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
+    await expect(dialog(page)).toContainText("“早到的”是空的");
+    await dialog(page).getByRole("button", { name: "取消" }).click();
     // Once it is there, what is dropped is the editor's: a folder opens as a project.
     await newProjectOnDisk(page);
   });

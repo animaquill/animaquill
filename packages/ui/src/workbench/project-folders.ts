@@ -15,6 +15,7 @@ import {
 import {
   FolderError,
   type AccessAnswer,
+  type Dropped,
   type FolderRecord,
   type FolderStatus,
   type LocalEntry,
@@ -387,7 +388,7 @@ export class ProjectFolders {
    * path there, which are used where they are, and the others, which get copied in. It has to be
    * called in the `drop` event, see `LocalFolders.dropped`.
    */
-  async droppedFiles(transfer: DataTransfer): Promise<PlacedFiles> {
+  async droppedFiles(transfer: Dropped): Promise<PlacedFiles> {
     return this.#place(await this.#options.folders.dropped(transfer));
   }
 
@@ -751,7 +752,7 @@ export class ProjectFolders {
    * what was dropped once it is over. Dropping counts as people doing something, so the editor asks
    * for writing right away, once it knows that this can be a project at all.
    */
-  dropped(transfer: DataTransfer): void {
+  dropped(transfer: Dropped): void {
     const { folders, notifications, t } = this.#options;
     const entries = folders.dropped(transfer);
     void entries

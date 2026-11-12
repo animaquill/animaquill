@@ -63,6 +63,14 @@ const soundLimit = new URLSearchParams(location.search).get("soundLimit");
 const proxyFrameMs = new URLSearchParams(location.search).get("proxyFrameMs");
 
 /**
+ * The editor gets ready only once a test says so, `aqLoad()`, for what people drop on the page
+ * before it is there: `?holdLoad`.
+ */
+const holdLoad = new URLSearchParams(location.search).has("holdLoad")
+  ? () => new Promise<void>((resolve) => Object.assign(window, { aqLoad: resolve }))
+  : undefined;
+
+/**
  * Reports go where they go on a site, which the development server does not answer: tests stand in
  * for the server there.
  */
@@ -110,6 +118,7 @@ if (root)
     ...(sceneStage && { sceneStage: "plain" }),
     ...(soundLimit !== null && { soundLimitMs: Number(soundLimit) }),
     ...(proxyFrameMs !== null && { proxyFrameMs: Number(proxyFrameMs) }),
+    ...(holdLoad && { holdLoad }),
     panels: [crashTest, frameTest],
     onWorkbench: (workbench) => {
       Object.assign(window, {

@@ -941,6 +941,9 @@ function Surface({
         {...events}
         onDoubleClick={(event) => popups.doubleClick(pointerOf(event, event.currentTarget))}
         onContextMenu={onContextMenu}
+        // The browser goes by the last of the two, and the one under the pointer changes as the
+        // drop shows: without this a drop right after would not come.
+        onDragEnter={onDragOver}
         onDragOver={onDragOver}
         onDragLeave={() => {
           editor.showDrop(undefined);

@@ -4,7 +4,8 @@
  * after it moved, and open in two windows. See `folder-support.ts` for how folders get chosen and
  * dropped in a test.
  */
-import { renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   agreeToCode,
@@ -21,6 +22,7 @@ import {
   rename,
   text,
 } from "./folder-support.ts";
+import type { Page } from "@playwright/test";
 import { expect, needsDevPage, tab, test } from "./support.ts";
 
 test.use({
@@ -139,6 +141,60 @@ test.describe("a project folder", () => {
     await rename(other, "另一个窗口改的");
     await expect.poll(() => nameIn(disk), { timeout: 10_000 }).toBe("另一个窗口改的");
     await expect(footer(page).getByText("另一个窗口改的")).toBeVisible();
+  });
+});
+
+/** An empty folder on the disk, to drop in. */
+function emptyOnDisk(): string {
+  const disk = join(mkdtempSync(join(tmpdir(), "animaquill-projects-")), "片子");
+  mkdirSync(disk);
+  return disk;
+}
+
+const createHere = (page: Page) => dialog(page).getByRole("button", { name: "在这里新建项目" });
+
+test.describe("a folder dropped on the page", () => {
+  test("is taken also when the page changes under the pointer right before, and shows where it goes", async ({
+    page,
+  }) => {
+    await drop(page, emptyOnDisk(), undefined, {
+      meanwhile: async () => {
+        // While a folder is over it, the page says what letting go does.
+        await expect(page.getByRole("status").filter({ hasText: "松开鼠标" })).toBeVisible();
+        // As when the start page has read its list: something else is under the pointer now, and
+        // the browser asks that whether it takes the drop.
+        await page.evaluate(() => {
+          const cover = document.createElement("div");
+          cover.id = "cover";
+          cover.style.cssText = "position: fixed; inset: 0; z-index: 5";
+          document.body.append(cover);
+        });
+      },
+    });
+    await page.evaluate(() => document.querySelector("#cover")?.remove());
+    await expect(page.getByRole("status").filter({ hasText: "松开鼠标" })).toHaveCount(0);
+    await createHere(page).click();
+    await dialog(page).getByRole("textbox").fill("片子");
+    await dialog(page).getByRole("button", { name: "创建" }).click();
+    await expect(tab(page, "preview")).toBeVisible();
+  });
+
+  test("before the editor is there opens once it is", async ({ page, devPage }) => {
+    test.skip(!devPage, needsDevPage("?holdLoad"));
+    await page.goto("/?holdLoad");
+    await page.waitForFunction(() => "aqLoad" in window);
+    await expect(page.locator("header")).toHaveCount(0);
+    await drop(page, emptyOnDisk(), undefined, { early: true });
+    await page.evaluate(() => (window as unknown as { aqLoad: () => void }).aqLoad());
+    await expect(createHere(page)).toBeVisible();
+  });
+
+  test("while a dialog asks something says to answer it first", async ({ page }) => {
+    await page.getByRole("button", { name: "新建项目" }).click();
+    await expect(dialog(page)).toBeVisible();
+    await drop(page, emptyOnDisk());
+    await expect(page.getByText("先回答对话框里的问题，再把文件夹拖进来。")).toBeVisible();
+    await expect(createHere(page)).toHaveCount(0);
   });
 });
 

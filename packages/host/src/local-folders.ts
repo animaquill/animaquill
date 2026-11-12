@@ -1156,12 +1156,11 @@ export function createLocalFolders(environment: LocalFoldersEnvironment): LocalF
     dropped(transfer) {
       // The browser lets go of what was dropped once the event is over, so all of it is asked for
       // right now, before anything waits.
-      const asked = Array.from(transfer.items, (item) => {
-        const { getAsFileSystemHandle } = item as DataTransferItem & {
-          getAsFileSystemHandle?: () => Promise<HandleLike | null>;
-        };
-        return item.kind === "file" ? getAsFileSystemHandle?.call(item) : undefined;
-      });
+      const asked = Array.from(transfer.items, (item) =>
+        item.kind === "file"
+          ? (item.getAsFileSystemHandle?.() as Promise<HandleLike | null> | undefined)
+          : undefined,
+      );
       return Promise.all(
         asked.map(async (handle): Promise<LocalEntry | undefined> => {
           let found: HandleLike | null | undefined;

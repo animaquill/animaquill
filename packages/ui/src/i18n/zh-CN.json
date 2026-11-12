@@ -1816,6 +1816,8 @@
     "chooseFolder": "选文件夹…",
     "openAction": "打开项目文件夹…",
     "droppedNoFolder": "拖进来的不是文件夹。要打开项目，请把项目的文件夹拖进来。",
+    "droppedWhileAsking": "先回答对话框里的问题，再把文件夹拖进来。",
+    "droppedNoFolders": "这个浏览器不能打开电脑上的文件夹。请用 Chrome 或 Edge 的新版本，或者新建云端项目。",
     "failed": "文件夹打不开，可以再试一次。",
     "blocked": "浏览器不允许访问“{{name}}”的文件夹，可能是浏览器的设置或者公司的策略。",
     "isProjectTitle": "“{{folder}}”已经是一个项目",
@@ -2662,6 +2664,8 @@
     "welcome": "欢迎使用 AnimaQuill",
     "welcomeAbout": "新建一个项目开始，或者打开电脑上已有的项目文件夹。",
     "welcomeCloudOnly": "新建一个云端项目开始。",
+    "dropHint": "松开鼠标，打开这个文件夹",
+    "dropHintAbout": "项目文件夹直接打开，空文件夹可以在里面新建项目。",
     "remote": "你的云端项目",
     "remoteAbout": "这些项目在你的云端，这台电脑还没打开过。点开就能接着做。",
     "empty": {
