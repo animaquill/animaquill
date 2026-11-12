@@ -664,15 +664,15 @@ k = 1080 / min(format.width, format.height)
 
 读不出来的文件不会被写回，所以不会用空内容覆盖还能修的文件。
 
-格式里有、这一版做不到的，编辑器列进问题，会让成片和项目不一样的，导出时停在那里并说明，比如还不能显示的转场和效果。下面这些现在还做不到，编辑器也还不提示：
+格式里有、这一版做不到的，编辑器列进问题，会让成片和项目不一样的，导出前停下来列出这些地方（每处可以定位），可以取消，也可以仍然导出，比如还不能显示的转场和效果。下面这些现在还做不到，括号里是问题的代码；只在确实会有影响时才列，比如没有超出素材长度的 `loop`、默认值的 `audio.pan` 不列：
 
-- `music` 片段不出声；`timeline` 片段（嵌套的时间轴）不显示。
-- 库里的文件、场景和声音用不了：编辑器还不会取库里的内容。
-- 字幕预览里不显示，导出时只提示不烧进视频。
-- 声音上的效果（片段、音频轨道、总线和主输出上的）和 `mix` 不生效。
-- `audio.pan`、`audio.pitch`、`audio.preservePitch` 和 `time.speed` 不生效；`audio.volume` 有关键帧时只用第一个值。
-- `loop` 不生效；`draft` 的片段照常显示和导出。
-- 语言和画幅的差异不生效，预览和导出都用母版。
+- `music` 片段不出声（`unsupported-music-clip`）；`timeline` 片段（嵌套的时间轴）不显示（`unsupported-timeline-clip`）。
+- 库里的文件、场景、声音和转场用不了：编辑器还不会取库里的内容（`unsupported-library`）。
+- 字幕预览里不显示，也不烧进导出的视频（`unsupported-caption-display`，一条轨道一条）。
+- 声音上的效果（片段、音频轨道、总线和主输出上的）和 `mix` 不生效（`unsupported-audio-effect`）。
+- `audio.pan`、`audio.pitch`、`audio.preservePitch` 和 `time.speed` 不生效（`unsupported-audio-property`）；`audio.volume` 有关键帧时只用第一个值（`unsupported-volume-keys`）。
+- `loop` 不生效（`unsupported-loop`）；`draft` 的片段照常显示和导出（`unsupported-draft`）。
+- 语言和画幅的差异不生效，预览和导出都用母版（`unsupported-override`）；导出那个画幅时导出前会停下。
 
 ## 导出和导入
 

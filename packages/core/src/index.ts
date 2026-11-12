@@ -70,6 +70,7 @@ export {
   type SceneElement,
 } from "./registration.ts";
 export { KeyEase, PropertyEdit, applyEdit, firstKeyFrom, type ValueEdit } from "./property-edit.ts";
+export * from "./problems/index.ts";
 export {
   PropertyRename,
   convertedValue,

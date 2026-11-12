@@ -22,12 +22,13 @@ import {
   clipStart,
   projectFrameRate,
   ProjectStore,
-  type ClipState,
+  withId,
+  type OperationCall,
   type UndoResult,
 } from "@animaquill/core";
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
-import { createProject, formatTime, toSeconds } from "@animaquill/schema";
+import { compare, createProject, formatTime, toSeconds } from "@animaquill/schema";
 import { newSyncId, type ProjectSummary } from "@animaquill/host";
 import type { ConnectTiming } from "../cloud/connect.ts";
 import {
@@ -66,12 +67,12 @@ import { MadeSounds, SoundMaker } from "../media/sounds.ts";
 import { isSameHash } from "@animaquill/media";
 import type { ProxyMaker } from "../proxy/maker.ts";
 import { ProxyFiles, type ProxyProject } from "../proxy/proxies.ts";
-import { describeProblem, describeStatus, sceneClipName } from "../preview/problems.ts";
-import { ProblemList, severityOf, type ListedProblem } from "../problems/list.ts";
+import { describeProblem, sceneClipName } from "../preview/problems.ts";
+import { ProblemList, sceneProblem, type ListedProblem } from "../problems/list.ts";
+import { OutputDifferences } from "../problems/output.ts";
 import { PreviewFrameRate } from "../preview/frame-rate.ts";
 import { PreviewQuality } from "../preview/quality.ts";
 import { PreviewStatus } from "../preview/status.ts";
-import { propertyProblems } from "../properties/problems.ts";
 import { SceneRegistrations } from "../properties/registrations.ts";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
@@ -271,7 +272,7 @@ export class Workbench {
   readonly frameRate: PreviewFrameRate;
   /** How sharp the preview is drawn. Never what gets exported. */
   readonly previewQuality: PreviewQuality;
-  readonly problems = new ProblemList();
+  readonly problems: ProblemList;
   /** What the code of scenes registered when it ran, which is not in the project. */
   readonly registrations: SceneRegistrations;
   readonly code: CodeDocuments;
@@ -345,6 +346,13 @@ export class Workbench {
     this.compositorUrl = compositorUrl;
     this.sceneOrigins = options.sceneOrigins ?? [];
     this.sceneStage = options.sceneStage;
+    this.problems = new ProblemList({
+      t,
+      state: () => this.session.store?.getState(),
+      describe: (clip) => this.keyframes.describe(clip),
+      registered: (revision) => this.registrations.problemsOf(revision),
+      fix: (call) => this.#fix(call),
+    });
     this.preview = new PreviewStatus({
       problem: (clip, revision, problem, first) =>
         this.#noteSceneProblem(clip, revision, problem, first),
@@ -540,6 +548,11 @@ export class Workbench {
     });
     this.frameRate = new PreviewFrameRate(this.timeline);
     this.previewQuality = new PreviewQuality(host.settings, this.frameRate);
+    const differences = new OutputDifferences({
+      dialogs: this.dialogs,
+      t,
+      goTo: (problem) => this.goToProblem({ problem }),
+    });
     this.stills = new StillExport({
       session: this.session,
       timeline: this.timeline,
@@ -552,6 +565,7 @@ export class Workbench {
       compositorUrl,
       sceneOrigins: this.sceneOrigins,
       sceneStage: this.sceneStage,
+      differences,
     });
     this.videos = new VideoExport({
       session: this.session,
@@ -568,6 +582,7 @@ export class Workbench {
       compositorUrl,
       sceneOrigins: this.sceneOrigins,
       sceneStage: this.sceneStage,
+      differences,
     });
     // What nobody went on with for long goes, whichever project it is of.
     void this.videos.cleanUp();
@@ -878,26 +893,14 @@ export class Workbench {
   }
 
   /**
-   * What is wrong with what clips hold for their scenes changes with the project and with what the
-   * scenes registered. It is worked out after a moment, once for all that changed in between.
+   * What the project alone tells of its problems changes with the project and with what the scenes
+   * registered. It is worked out after a moment, once for all that changed in between.
    */
   #keepPropertyProblems(): void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const note = () => {
       timer = undefined;
-      const state = this.session.store?.getState();
-      const timeline = this.timeline.model?.id;
-      if (!state || timeline === undefined) {
-        this.problems.setProperties([]);
-        return;
-      }
-      const sources = {
-        describe: this.keyframes.describe,
-        registered: (revision: string) => this.registrations.problemsOf(revision),
-        clipName: (clip: ClipState) => sceneClipName(clip, state, this.t),
-        rename: (clip: string, from: string, to: string) => this.renameProperty(clip, from, to),
-      };
-      this.problems.setProperties(propertyProblems(state, timeline, sources, this.t));
+      this.problems.update();
     };
     const soon = () => {
       timer ??= setTimeout(note, PROPERTY_PROBLEMS_DELAY_MS);
@@ -915,6 +918,14 @@ export class Workbench {
     follow();
     this.registrations.subscribe(soon);
     this.timeline.subscribe(soon);
+  }
+
+  /** Runs what fixes a problem, as one step, which undo takes back. */
+  #fix(call: OperationCall): void {
+    const result = this.session.store?.execute(call);
+    if (result && !result.ok) {
+      this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
+    }
   }
 
   /**
@@ -983,17 +994,14 @@ export class Workbench {
     this.#markCodeProblem("scene.problem", problem);
     const { t } = this;
     const name = this.#clipName(clip);
-    const { line, ...withoutLine } = problem;
-    const { file, column } = problem;
-    this.problems.noteScene(clip, revision, {
-      severity: severityOf(problem),
-      // The list says where it is by itself.
-      text: describeProblem(t, withoutLine),
-      ...(file !== undefined && { file }),
-      ...(line !== undefined && { line }),
-      ...(column !== undefined && { column }),
-      origin: name,
-    });
+    const shown = this.timeline.model;
+    const source = shown?.boxes.get(clip)?.clip.source;
+    // The same code fails the same way in every clip that shows it.
+    const subject =
+      source?.kind === "scene" && typeof source.scene === "string"
+        ? { kind: "scene" as const, id: source.scene }
+        : { kind: "clip" as const, id: clip, ...(shown && { timeline: shown.id }) };
+    this.problems.noteScene(clip, revision, sceneProblem(problem, subject), name);
     if (!first || this.layout.getSnapshot().visible.has("problems")) return;
     const text = describeProblem(t, problem);
     const words = { name, text, interpolation: { escapeValue: false } };
@@ -1009,9 +1017,19 @@ export class Workbench {
       this.problems.noteStopped(clip, undefined);
       return;
     }
-    const origin = this.#clipName(clip);
-    const text = describeStatus(this.t, origin, status);
-    this.problems.noteStopped(clip, { severity: "error", text, origin });
+    const shown = this.timeline.model;
+    const { state, reason, message } = status;
+    this.problems.noteStopped(
+      clip,
+      withId({
+        source: "runtime",
+        severity: "error",
+        code: "scene-stopped",
+        params: { state, ...(reason !== undefined && { reason }) },
+        subject: { kind: "clip", id: clip, ...(shown && { timeline: shown.id }) },
+        ...(message !== undefined && { detail: message }),
+      }),
+    );
   }
 
   /**
@@ -1079,19 +1097,53 @@ export class Workbench {
     return shown;
   }
 
-  /** Goes to where a problem is: a file of the project, or the keys of a property of a clip. */
-  goToProblem({ file, line, column, target }: ListedProblem): void {
-    if (target) {
-      if (!this.timeline.model?.boxes.has(target.clip)) return;
-      this.timeline.selectOnly(target.clip);
+  /**
+   * Goes to where a problem is: a file of the project, the keys of a property of a clip, or what it
+   * is about on the timeline.
+   */
+  goToProblem({
+    file,
+    line,
+    column,
+    problem,
+  }: Pick<ListedProblem, "file" | "line" | "column" | "problem">): void {
+    const subject = problem?.subject;
+    const timeline = this.timeline.model;
+    if (problem?.source === "properties" && subject?.kind === "clip") {
+      if (!timeline?.boxes.has(subject.id)) return;
+      this.timeline.selectOnly(subject.id);
       this.layout.openPanel("keyframes");
       return;
     }
-    if (file === undefined) return;
-    const place = line === undefined ? undefined : { line, ...(column && { column }) };
-    if (!this.showCode(file, place)) {
-      this.notifications.push(this.t("problems.notInProject", { file }));
+    if (file !== undefined) {
+      const place = line === undefined ? undefined : { line, ...(column && { column }) };
+      if (!this.showCode(file, place)) {
+        this.notifications.push(this.t("problems.notInProject", { file }));
+      }
+      return;
     }
+    const state = this.session.store?.getState();
+    if (!subject || !state) return;
+    if (subject.kind === "scene") {
+      const manifest = state.scenes[subject.id];
+      if (manifest) this.showCode(`scenes/${subject.id}/${manifest.entry}`);
+      return;
+    }
+    const at = subject.kind === "timeline" ? subject.id : subject.timeline;
+    if (at === undefined || timeline?.id !== at) return;
+    if (subject.kind === "clip") {
+      this.goToUse({ timeline: at, clip: subject.id });
+      return;
+    }
+    // A track, or the whole timeline: the first clip of the track, or the timeline itself.
+    const first =
+      subject.kind === "track"
+        ? Object.values(state.timelines[at]?.clips ?? {})
+            .filter((clip) => clip.track === subject.id)
+            .toSorted((a, b) => compare(clipStart(a), clipStart(b)))[0]
+        : undefined;
+    if (!first || !this.goToUse({ timeline: at, clip: first.id }))
+      this.layout.openPanel("timeline");
   }
 
   /**
@@ -1167,9 +1219,10 @@ export class Workbench {
           }))),
       ...said("damaged", damaged),
       ...said("skipped", skipped),
-      ...warnings.map(({ severity, message, file, path }) => ({
+      ...warnings.map(({ severity, message, file, path, code }) => ({
         severity,
         text: message,
+        code,
         file,
         ...(path && { place: path }),
         origin,

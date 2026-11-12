@@ -1339,7 +1339,8 @@
     "clearImport": "清除导入时的问题",
     "origin": {
       "editor": "代码编辑器",
-      "import": "导入"
+      "import": "导入",
+      "folder": "外部文件"
     },
     "import": {
       "missing": "素材的文件不在文件夹里：{{name}}",
@@ -1349,12 +1350,6 @@
       "skipped": "项目用不上这个文件，没有带进来：{{name}}"
     },
     "properties": {
-      "orphan": "{{path}} 没有对象认领，关键帧不起作用。可以在关键帧编辑器的“未连接”里连接到别的属性，或者删除",
-      "orphanElement": "场景页面上现在没有 {{path}} 的元素，关键帧暂时不起作用。元素出现后会自己连上；元素的 id 改了的话，可以在关键帧编辑器的“未连接”里连接到新的属性",
-      "renamed": "{{from}} 改名成了 {{to}}，关键帧还在旧路径上，照样生效",
-      "migrate": "迁移",
-      "mismatch": "{{path}} 的值不是{{type}}，不起作用，用的是默认值",
-      "param": "参数“{{name}}”的 ID 不能用作属性路径，片段不能给它赋值，也不能打关键帧。ID 只能用英文字母、数字、下划线和连字符",
       "types": {
         "number": "数字",
         "angle": "角度",
@@ -1368,6 +1363,50 @@
         "vec4": "四个数字",
         "numbers": "一组数字"
       }
+    },
+    "affectsOutput": "成片会不同",
+    "affectsOutputHint": "导出的视频会和项目不一样，导出前会提示",
+    "versionSeparator": " · ",
+    "audioProperty": {
+      "audio-pan": "声像（audio.pan）",
+      "audio-pitch": "移调（audio.pitch）",
+      "audio-preservePitch": "变速时保持音高（audio.preservePitch）",
+      "time-speed": "变速（time.speed）"
+    },
+    "codes": {
+      "property-orphan": "{{path}} 没有对象认领，关键帧不起作用。可以在关键帧编辑器的“未连接”里连接到别的属性，或者删除",
+      "property-orphan-element": "场景页面上现在没有 {{path}} 的元素，关键帧暂时不起作用。元素出现后会自己连上；元素的 id 改了的话，可以在关键帧编辑器的“未连接”里连接到新的属性",
+      "property-renamed": "{{from}} 改名成了 {{to}}，关键帧还在旧路径上，照样生效",
+      "property-mismatch": "{{path}} 的值不是{{type}}，不起作用，用的是默认值",
+      "scene-param-id": "参数“{{name}}”的 ID 不能用作属性路径，片段不能给它赋值，也不能打关键帧。ID 只能用英文字母、数字、下划线和连字符",
+      "unsupported-music-clip": "音乐片段这一版还不能播放，预览和导出里都没有它的声音",
+      "unsupported-timeline-clip": "嵌套的时间轴“{{timeline}}”这一版还不显示，预览和导出里都没有它",
+      "unsupported-library": "用到了库“{{library}}”里的内容，这一版还不能取库里的东西，预览和导出里没有它",
+      "unsupported-caption-display": "这条轨道上的 {{count}} 个字幕这一版还不显示，也不会烧进导出的视频",
+      "unsupported-audio-effect": {
+        "clip": "片段上的 {{count}} 个声音效果这一版还不生效，听到的是没有效果的声音",
+        "track": "轨道上的 {{count}} 个声音效果这一版还不生效，听到的是没有效果的声音",
+        "mix": "混音（总线和主输出）这一版还不生效，所有出声的轨道直接混在一起"
+      },
+      "unsupported-audio-property": "{{property}}这一版还不生效，预览和导出里都是没有它的样子",
+      "unsupported-volume-keys": "音量的关键帧这一版还不生效，整段只用第一个关键帧的音量",
+      "unsupported-loop": "循环这一版还不生效：素材放完以后不会从头再放",
+      "unsupported-draft": "这是样片，本来不该进成片，这一版的编辑器还照常显示和导出它",
+      "unsupported-override": "版本“{{version}}”的差异这一版还不应用，预览和导出用的都是母版"
+    },
+    "fix": {
+      "property": {
+        "rename": "迁移"
+      }
+    },
+    "export": {
+      "title": "导出的视频会和项目不一样",
+      "titleStill": "导出的图片会和项目不一样",
+      "message": "项目里用到了这一版编辑器还做不到的东西，导出的结果会缺少或者不同于下面这些地方。点一条可以跳过去看。",
+      "list": "不一样的地方（{{count}} 处）",
+      "line": "{{origin}}：{{text}}",
+      "more": "还有 {{count}} 处没有列出，在问题选项卡里能看到全部",
+      "anyway": "仍然导出"
     }
   },
   "keyframes": {

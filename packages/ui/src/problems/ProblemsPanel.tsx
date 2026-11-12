@@ -2,7 +2,7 @@ import { CircleCheck, CircleX, FileCode, TriangleAlert } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import type { ListedProblem } from "./list.ts";
+import { canGoTo, type ListedProblem } from "./list.ts";
 import styles from "./ProblemsPanel.module.css";
 
 /** Goes by file, like the list is sorted. What is about no file is a group of its own. */
@@ -19,7 +19,7 @@ function byFile(problems: readonly ListedProblem[]) {
 function Row({ problem }: { problem: ListedProblem }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
-  const { severity, text, file, line, column, place, origin, target, action } = problem;
+  const { severity, text, line, column, place, origin, action } = problem;
   const Icon = severity === "error" ? CircleX : TriangleAlert;
   const where = line === undefined ? place : t("problems.position", { line, column: column ?? 1 });
   return (
@@ -27,12 +27,17 @@ function Row({ problem }: { problem: ListedProblem }) {
       <button
         type="button"
         className={styles.row}
-        disabled={file === undefined && target === undefined}
+        disabled={!canGoTo(problem)}
         data-severity={severity}
         onClick={() => workbench.goToProblem(problem)}
       >
         <Icon size={14} className={styles.icon} />
         <span className={styles.text}>{text}</span>
+        {problem.problem?.affectsOutput && (
+          <span className={styles.output} title={t("problems.affectsOutputHint")}>
+            {t("problems.affectsOutput")}
+          </span>
+        )}
         <span className={styles.origin}>{origin}</span>
         {where !== undefined && <span className={styles.where}>{where}</span>}
       </button>

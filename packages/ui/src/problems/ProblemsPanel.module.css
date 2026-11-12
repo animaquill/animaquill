@@ -107,6 +107,17 @@
   overflow-wrap: anywhere;
 }
 
+/* What makes an export otherwise than the project, which an export stops at. */
+.output {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--aq-warning) 60%, transparent);
+  border-radius: 3px;
+  color: var(--aq-warning);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .origin,
 .where {
   flex: none;

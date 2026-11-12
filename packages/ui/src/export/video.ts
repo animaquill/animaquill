@@ -32,6 +32,7 @@ import {
 import { failureOf, StillFailed, type EncodedChunk, type FrameToEncode } from "@animaquill/render";
 import { toSeconds } from "@animaquill/schema";
 import type { TFunction } from "i18next";
+import type { OutputCheck } from "../problems/output.ts";
 import { formatTimecode } from "../timeline/frames.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import type { Dialogs, FormField } from "../workbench/dialogs.ts";
@@ -152,6 +153,11 @@ export interface VideoExportOptions extends ExportSite {
   readonly storage?: () => Promise<StorageEstimate | undefined>;
   /** Where the compositor goes, when not into a window of its own made here. */
   readonly windows?: ExportWindows;
+  /**
+   * Asks before an export that this editor would make otherwise than the project says. Asked when
+   * people start one, also into the line; one that goes on after a reload was asked already.
+   */
+  readonly differences?: OutputCheck;
 }
 
 /**
@@ -1503,6 +1509,14 @@ export class VideoExport {
     if (!format || !range) return undefined;
     if (!encoding) {
       await this.#notice(t("export.video.failed"), t("export.video.cannotEncodeFormat"));
+      return undefined;
+    }
+    const { from, to } = range;
+    const query = { timeline: model.id, format: format.id, part: "both", from, to } as const;
+    if (
+      this.#options.differences &&
+      !(await this.#options.differences.confirm(store.getState(), query))
+    ) {
       return undefined;
     }
     const plan = buildRenderPlan(asked, model.id, { format: format.id });

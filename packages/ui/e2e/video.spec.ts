@@ -1021,6 +1021,69 @@ test.describe("the sound of a video", () => {
   });
 });
 
+test.describe("a video of what this editor does not do yet", () => {
+  test("stops first and says where, and goes on only when people say so", async ({ page }) => {
+    const panned = {
+      id: "tone",
+      name: "偏左的音",
+      start: "0",
+      duration: "2",
+      source: { kind: "audio", media: { asset: "tone" } },
+      properties: { "audio.pan": -0.5 },
+    };
+    await open(
+      page,
+      projectFolder(
+        2,
+        [movingSquare(2)],
+        { "assets/tone.wav": tones([{ hz: 440, seconds: 2 }]) },
+        { tone: { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" } },
+        [{ clips: [panned] }],
+      ),
+    );
+    // The list of problems has it, as what makes the video otherwise than the project.
+    await tab(page, "problems").click();
+    // The innermost line: the group of the problems without a file holds it too.
+    const listed = content(page, "problems")
+      .getByRole("listitem")
+      .filter({ hasText: "声像" })
+      .last();
+    await expect(listed).toContainText("声像（audio.pan）这一版还不生效");
+    await expect(listed).toContainText("成片会不同");
+    await expect(listed).toContainText("偏左的音");
+
+    await startExport(page);
+    const asked = dialog(page);
+    await expect(asked).toContainText("导出的视频会和项目不一样");
+    await expect(asked).toContainText("偏左的音：声像（audio.pan）这一版还不生效");
+    // Enter does not export what people did not mean to.
+    await expect(asked.getByRole("button", { name: "取消" })).toBeFocused();
+    await asked.getByRole("button", { name: "取消" }).click();
+    await expect(asked).toBeHidden();
+    await expect(exportStatus(page)).toBeHidden();
+    expect(await savedFile(page)).toBeUndefined();
+
+    await startExport(page);
+    // A line goes to where it is, and the dialog stays.
+    await asked.getByRole("button", { name: /偏左的音/ }).click();
+    await expect(asked).toContainText("导出的视频会和项目不一样");
+    await asked.getByRole("button", { name: "仍然导出" }).click();
+    await exported(page);
+    const file = (await savedFile(page)) as Buffer;
+    expect((await factsOf(file)).frames).toBe(60);
+    const selected = content(page, "timeline").getByRole("option", { selected: true });
+    await expect(selected).toHaveCount(1);
+    await expect(selected).toHaveAttribute("aria-label", /^偏左的音，/);
+  });
+
+  test("goes as before where the project has nothing of that", async ({ page }) => {
+    await open(page, projectFolder(1, [movingSquare(1)]));
+    await startExport(page);
+    await exported(page);
+    expect(await savedFile(page)).toBeDefined();
+  });
+});
+
 test.describe("the sound of a video with a sound that code makes", () => {
   test("waits for the sound, and has it in its place", async ({ page }) => {
     test.setTimeout(120_000);

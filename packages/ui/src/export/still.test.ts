@@ -182,6 +182,20 @@ describe("exporting the frame at the playhead", () => {
     expect(context.saveFile).not.toHaveBeenCalled();
   });
 
+  it("asks first where the picture would be otherwise than the project, and stops when people say", async () => {
+    const confirm = vi.fn(async () => false);
+    const { stills, still, saveFile } = setup({ differences: { confirm } });
+    await stills.run();
+    expect(confirm).toHaveBeenCalledWith(expect.anything(), {
+      timeline: "main",
+      part: "picture",
+      from: 1.5,
+      to: 1.5,
+    });
+    expect(still).not.toHaveBeenCalled();
+    expect(saveFile).not.toHaveBeenCalled();
+  });
+
   it("does nothing without a timeline", async () => {
     const context = setup({ timeline: { frame: 0 } as unknown as TimelineEditor });
     await context.stills.run();

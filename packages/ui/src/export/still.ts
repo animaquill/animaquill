@@ -10,6 +10,7 @@ import { failureOf, StillFailed } from "@animaquill/render";
 import type { TFunction } from "i18next";
 import type { PreviewStatus } from "../preview/status.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
+import type { OutputCheck } from "../problems/output.ts";
 import type { Dialogs } from "../workbench/dialogs.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
@@ -35,6 +36,8 @@ export interface StillExportOptions {
   /** For tests. */
   readonly compositor?: (options: ExportCompositorOptions) => StillCompositor;
   readonly encode?: (image: ImageBitmap) => Promise<Blob>;
+  /** Asks before a picture that this editor would make otherwise than the project says. */
+  readonly differences?: OutputCheck;
 }
 
 export type StillCompositor = Pick<ExportCompositor, "still" | "dispose">;
@@ -85,6 +88,9 @@ export class StillExport {
       await this.#say(notDoneFailure(otherwise), state);
       return;
     }
+    const query = { timeline: model.id, part: "picture", from: seconds, to: seconds } as const;
+    if (this.#options.differences && !(await this.#options.differences.confirm(state, query)))
+      return;
     const progress = dialogs.progress({
       title: t("export.frameRunning"),
       cancel: t("dialog.cancel"),

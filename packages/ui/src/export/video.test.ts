@@ -623,6 +623,30 @@ describe("exporting a video", () => {
     expect(context.writer.frames).toHaveLength(60);
   });
 
+  it("asks first where it would be otherwise than the project, and goes on only when people say", async () => {
+    const asked: unknown[] = [];
+    let go = false;
+    const differences = {
+      confirm: vi.fn(async (_state: unknown, query: unknown) => {
+        asked.push(query);
+        return go;
+      }),
+    };
+    const context = setup({ differences });
+    const stopped = context.videos.start();
+    await answer(context);
+    await stopped;
+    expect(asked).toEqual([{ timeline: "main", format: "small", part: "both", from: 0, to: 2 }]);
+    expect(context.chooseFile).not.toHaveBeenCalled();
+    expect(context.writer.frames).toEqual([]);
+    expect(context.videos.queue.getSnapshot()).toEqual([]);
+    go = true;
+    const running = context.videos.start();
+    await answer(context);
+    await running;
+    expect(context.writer.frames).toHaveLength(60);
+  });
+
   it("asks for one at a time", async () => {
     const context = setup();
     const running = context.videos.start();
