@@ -105,6 +105,12 @@ import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type FolderLinking, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import { StartHabits } from "../start/habits.ts";
+import {
+  chooseCover,
+  restoreAutoCover,
+  type CoverChoiceOptions,
+  type CoverTarget,
+} from "../start/cover-choice.ts";
 import { StartCovers } from "../start/covers.ts";
 import { StartOrganizer } from "../start/organize.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
@@ -234,6 +240,8 @@ export class Workbench {
   readonly startCovers: StartCovers;
   /** Makes the cover of the open project while people leave it alone, see `CoverMaker`. */
   readonly covers: CoverMaker | undefined;
+  /** Where covers are kept and sent, for those people choose, see start/cover-choice.ts. */
+  #coverChoice: CoverChoiceOptions | undefined;
   readonly #address: Host["address"];
   /**
    * Whether the panel of the platform shows, see `cloudPanel`: the status bar has it, and the menu
@@ -1973,6 +1981,11 @@ export class Workbench {
       return snapshot.link.project;
     };
     const uploads = platform && new CoverUploads({ covers, cloud: platform });
+    this.#coverChoice = {
+      covers,
+      ...(uploads && { uploads }),
+      ...(platform && { cloud: platform }),
+    };
     const maker = new CoverMaker({
       session: this.session,
       covers,
@@ -2048,6 +2061,39 @@ export class Workbench {
       signal.removeEventListener("abort", stop);
       compositor.dispose();
     }
+  }
+
+  /** Whether people can choose the covers of projects here: this browser keeps covers. */
+  get canChooseCovers(): boolean {
+    return this.#coverChoice !== undefined;
+  }
+
+  /**
+   * Lets people choose a picture as the cover of a project, see `chooseCover`, and says what went
+   * wrong where something did.
+   */
+  async chooseCover(target: CoverTarget): Promise<void> {
+    const options = this.#coverChoice;
+    if (!options) return;
+    const file = await this.media.chooseFile("image");
+    if (!file) return;
+    const outcome = await chooseCover(target, file, options);
+    if (outcome === "chosen") return;
+    this.notifications.push(
+      this.t(`start.cover.${outcome}`, {
+        file: file.name,
+        size: formatSize(file.size),
+        interpolation: { escapeValue: false },
+      }),
+    );
+  }
+
+  /** Back to the cover the editor makes, see `restoreAutoCover`. */
+  async restoreAutoCover(target: CoverTarget): Promise<void> {
+    const options = this.#coverChoice;
+    if (!options) return;
+    if (!(await restoreAutoCover(target, options)))
+      this.notifications.push(this.t("start.cover.restoreFailed"));
   }
 
   /** Back to the start page. */

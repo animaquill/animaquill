@@ -33,6 +33,7 @@ import {
   cardPlace,
   cardStatus,
   cloudMarksKey,
+  isCloudKind,
   composeCards,
   coverColorOf,
   DANGEROUS,
@@ -61,6 +62,7 @@ import {
   type StartSection,
   type ViewId,
 } from "../start/views.ts";
+import type { CoverTarget } from "../start/cover-choice.ts";
 import type { CardCover } from "../start/covers.ts";
 import type { RenameOutcome } from "../start/rename.ts";
 import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
@@ -683,6 +685,8 @@ function CardItem({
     canFolders: situation.canFolders,
     folder,
     copies: card.key === undefined ? 0 : (copies.get(card.key) ?? 0),
+    covers: workbench.canChooseCovers,
+    coverChosen: covers.get(card.id)?.chosen === true,
   });
   const menu = (): MenuItem[][] =>
     groups.map((group) =>
@@ -863,6 +867,26 @@ function CardItem({
   );
 }
 
+/**
+ * Where a cover people choose for a card goes: what this browser keeps the project by, or for one
+ * of the platform never opened here `cloud:` and its id; and the platform, for one of its projects
+ * of whoever is signed in. None for a project of another account.
+ */
+function coverTargetOf(
+  card: ProjectCard,
+  hasPlatform: boolean,
+  covers: ReadonlyMap<string, CardCover>,
+): CoverTarget | undefined {
+  const key = card.key ?? (card.project === undefined ? undefined : cloudMarksKey(card.project));
+  if (key === undefined || card.marksKey === undefined) return undefined;
+  const isCloud = hasPlatform && isCloudKind(card.kind) && card.project !== undefined;
+  return {
+    key,
+    project: isCloud ? card.project : undefined,
+    durationMs: durationOf(card, covers),
+  };
+}
+
 /** How long the main timeline of a card is: as its cover says, or the platform's list. */
 const durationOf = (card: ProjectCard, covers: ReadonlyMap<string, CardCover>) =>
   covers.get(card.id)?.durationMs ?? card.durationMs;
@@ -923,6 +947,7 @@ function useCardActions(
   setRenaming: (card: string | undefined) => void,
   renaming: string | undefined,
   setPicking: (picking: { card: ProjectCard; x: number; y: number } | undefined) => void,
+  covers: ReadonlyMap<string, CardCover>,
 ): { actions: CardActions; busy: boolean } {
   const { t } = useTranslation();
   /** One thing at a time: a project that is on its way here must not be asked for twice. */
@@ -980,6 +1005,7 @@ function useCardActions(
       const record = source.kind === "local" ? source.row.record : undefined;
       const about =
         source.kind === "cloud" ? { name: card.name, copy: source.row.copy } : { name: card.name };
+      const target = coverTargetOf(card, cloud !== undefined, covers);
       switch (action) {
         case "open":
           actions.open(card);
@@ -1060,6 +1086,13 @@ function useCardActions(
           return;
         case "delete":
           if (source.kind === "browser") run(() => workbench.removeProject(source.summary));
+          return;
+        case "setCover":
+          // Right in the click: the browser lets a page ask for a file only then.
+          if (target) void workbench.chooseCover(target).finally(refresh);
+          return;
+        case "autoCover":
+          if (target) run(() => workbench.restoreAutoCover(target));
           return;
       }
     },
@@ -1160,9 +1193,16 @@ export function StartPage() {
   const title =
     sections.find((section) => section.id === current)?.label ??
     ({ key: "start.view.recent" } as const);
-  const { actions, busy } = useCardActions(workbench, refresh, setRenaming, renaming, setPicking);
   const { startCovers } = workbench;
   const covers = useSyncExternalStore(startCovers.subscribe, startCovers.getSnapshot);
+  const { actions, busy } = useCardActions(
+    workbench,
+    refresh,
+    setRenaming,
+    renaming,
+    setPicking,
+    covers,
+  );
   // Covers for the cards there are to see, fetched in their order where they have to be.
   const seen = current === "exports" ? [] : welcome ? remoteCards(cards) : listed;
   // Covers of the platform only for the cards on the screen, or nearly: not hundreds in a row.
@@ -1189,7 +1229,7 @@ export function StartPage() {
   useEffect(() => () => watch?.observer.disconnect(), [watch]);
   // After every render: it only works out what changed.
   useEffect(() => {
-    startCovers.show(seen, { onlySeen: watch !== undefined });
+    startCovers.show(seen, { onlySeen: watch !== undefined, listedAt: lists.listedAt });
   });
 
   // "打开云端的项目…" of the menu means the projects of the platform, as they are now: asked

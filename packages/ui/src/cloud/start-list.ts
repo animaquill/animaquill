@@ -102,7 +102,7 @@ export interface LocalRow {
   /** See `CloudRow.copy`; "live" where the platform's list does not say. */
   readonly copy: string;
   /** See `CloudRow.cover`. */
-  readonly cover: CloudProjectSummary["cover"];
+  readonly cover: CloudProjectSummary["cover"] | null;
   /** See `CloudRow.durationMs`. */
   readonly durationMs: number | undefined;
 }
@@ -146,8 +146,11 @@ export interface CloudRow {
   readonly archive: ListedArchive | undefined;
   /** Its repository cannot be used, and so the project cannot be edited, see the design, 5.1. */
   readonly unusable: RepositoryUnusable | undefined;
-  /** Its cover on the platform, as the list says, see `CloudProjectSummary.cover`. */
-  readonly cover: CloudProjectSummary["cover"];
+  /**
+   * Its cover on the platform, as the list says, see `CloudProjectSummary.cover`: null where the
+   * list says it has none, undefined where the list does not say.
+   */
+  readonly cover: CloudProjectSummary["cover"] | null;
   /** How long its main timeline is, as the list says. */
   readonly durationMs: number | undefined;
 }
@@ -279,7 +282,7 @@ export function composeStartList(input: StartInput): StartLists {
       archive: onPlatform && listedArchive(onPlatform),
       unusable: onPlatform?.repository?.unusable,
       copy: onPlatform?.copy ?? "live",
-      cover: onPlatform?.cover,
+      cover: onPlatform ? (onPlatform.cover ?? null) : undefined,
       durationMs: onPlatform?.durationMs,
     };
   });
@@ -335,7 +338,7 @@ export function composeStartList(input: StartInput): StartLists {
         behind: isBehind(summary),
         archive: listedArchive(summary),
         unusable: summary.repository?.unusable,
-        cover: summary.cover,
+        cover: summary.cover ?? null,
         durationMs: summary.durationMs,
       };
     });
@@ -430,6 +433,8 @@ export interface StartListSnapshot extends StartLists {
    * that the list is not up to date.
    */
   readonly cloudState: "none" | "loading" | "ready" | "signedOut" | "unreadable";
+  /** When the platform's list that this has came, in ms since 1970, where it came. */
+  readonly listedAt: number | undefined;
   /** What of this computer could not be read: "no projects yet" is not what to say then. */
   readonly failed: {
     readonly projects: boolean;
@@ -454,6 +459,7 @@ const NOTHING: StartListSnapshot = {
   browser: [],
   browserKnown: false,
   cloudState: "none",
+  listedAt: undefined,
   failed: { projects: false, folders: false, links: false },
 };
 
@@ -478,6 +484,8 @@ export class StartList {
         readonly links: readonly CloudLink[] | undefined;
       }
     | undefined;
+  /** When the platform's list came. */
+  #listedAt: number | undefined;
   /** The platform's list, as last read: it stays while it is read again. */
   #listed: StartInput["listed"] = "loading";
   /** Only the last time everything was read counts. */
@@ -530,6 +538,7 @@ export class StartList {
       ...lists,
       loading: here === undefined,
       cloudState: !cloud ? "none" : typeof listed === "string" ? listed : "ready",
+      listedAt: typeof listed === "string" ? undefined : this.#listedAt,
       failed: {
         projects: here !== undefined && here.projects === undefined,
         folders: here !== undefined && here.records === undefined,
@@ -590,6 +599,7 @@ export class StartList {
     }
     if (turn !== this.#turn) return;
     this.#listed = listed;
+    this.#listedAt = Date.now();
     this.#compose();
     if (typeof listed !== "string") await this.#remember(listed, turn);
   }

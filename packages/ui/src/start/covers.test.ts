@@ -69,8 +69,13 @@ describe("the covers of the start page", () => {
     expect(start.getSnapshot().get("folder-1")).toEqual({
       url: expect.stringMatching(/^blob:/),
       durationMs: 42_000,
+      chosen: false,
     });
-    expect(start.getSnapshot().get("folder-2")).toEqual({ url: undefined, durationMs: undefined });
+    expect(start.getSnapshot().get("folder-2")).toEqual({
+      url: undefined,
+      durationMs: undefined,
+      chosen: false,
+    });
   });
 
   it("fetches one of the platform once for each etag, and keeps it for the next time", async () => {
@@ -163,7 +168,11 @@ describe("the covers of the start page", () => {
     start.show([remote("p_1", "a")]);
     await settle();
     expect(cloud.get).toHaveBeenCalledTimes(1);
-    expect(start.getSnapshot().get("cloud:p_1")).toEqual({ url: undefined, durationMs: 6000 });
+    expect(start.getSnapshot().get("cloud:p_1")).toEqual({
+      url: undefined,
+      durationMs: 6000,
+      chosen: false,
+    });
     const covers = memoryCoverStore();
     await covers.put("folder-1", cover("a", 1));
     const kept = new StartCovers({ covers, urls: addresses });
@@ -187,10 +196,79 @@ describe("the covers of the start page", () => {
     expect(start.getSnapshot().get("folder-1")?.url).toMatch(/^blob:/);
   });
 
+  it("puts one people chose before what the editor made, on whichever computer", async () => {
+    const covers = memoryCoverStore();
+    const cloud = { get: vi.fn(async () => picture("chosen elsewhere")) };
+    // The editor made one here later than people chose one on another computer.
+    await covers.put("here", cover("made", 90));
+    const start = new StartCovers({ covers, cloud, urls: urls() });
+    const linked = (listed: ProjectCard["cover"]) =>
+      card("here", { kind: "cloudHere", project: "p_1", cover: listed });
+    start.show([linked({ etag: "theirs", at: 50, chosen: true })]);
+    await settle();
+    expect(cloud.get).toHaveBeenCalledTimes(1);
+    expect(start.getSnapshot().get("here")?.chosen).toBe(true);
+    // One chosen here that the platform did not get yet comes before what it has.
+    await covers.put("here", { ...cover("mine", 10), chosen: true });
+    await settle();
+    start.show([linked({ etag: "made", at: 95 })]);
+    await settle();
+    expect(start.getSnapshot().get("here")?.chosen).toBe(true);
+    expect(cloud.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes back to the editor's where people did so on another computer", async () => {
+    const covers = memoryCoverStore();
+    await covers.put("here", {
+      ...cover("mine", 10),
+      chosen: true,
+      sent: "mine",
+      sentAt: 100,
+      auto: { picture: picture("made"), at: 5, etag: "made" },
+    });
+    const start = new StartCovers({ covers, urls: urls() });
+    const linked = (listed: ProjectCard["cover"]) =>
+      card("here", { kind: "cloudHere", project: "p_1", cover: listed });
+    // The platform still has it.
+    start.show([linked({ etag: "mine", at: 10, chosen: true })]);
+    await settle();
+    expect(start.getSnapshot().get("here")?.chosen).toBe(true);
+    // A list from before the platform took it says nothing of that.
+    start.show([linked({ etag: "old", at: 1 })], { listedAt: 90 });
+    await settle();
+    expect(start.getSnapshot().get("here")?.chosen).toBe(true);
+    // Taken away there, as a later list says.
+    start.show([linked(null)], { listedAt: 200 });
+    await settle();
+    expect(start.getSnapshot().get("here")?.chosen).toBe(false);
+    const kept = (await covers.read(["here"])).get("here");
+    expect(kept).toMatchObject({ etag: "made" });
+    expect(kept?.chosen).toBeUndefined();
+  });
+
+  it("goes back to the editor's on a computer that only fetched the one people chose", async () => {
+    const covers = memoryCoverStore();
+    const cloud = { get: vi.fn(async (project: string) => picture(project)) };
+    const start = new StartCovers({ covers, cloud, urls: urls() });
+    start.show([{ ...remote("p_1", "chosen"), cover: { etag: "chosen", at: 10, chosen: true } }]);
+    await settle();
+    expect(start.getSnapshot().get("cloud:p_1")?.chosen).toBe(true);
+    // People went back to the editor's elsewhere: that one comes.
+    start.show([remote("p_1", "made", 20)], { listedAt: Date.now() + 1000 });
+    await settle();
+    expect(cloud.get).toHaveBeenCalledTimes(2);
+    expect(start.getSnapshot().get("cloud:p_1")?.chosen).toBe(false);
+    expect((await covers.read(["cloud:p_1"])).get("cloud:p_1")?.etag).toBe("made");
+  });
+
   it("works without a platform and without a place to keep covers", async () => {
     const start = new StartCovers({ urls: urls() });
     start.show([card("folder-1"), remote("p_1", "a")]);
     await settle();
-    expect(start.getSnapshot().get("cloud:p_1")).toEqual({ url: undefined, durationMs: 6000 });
+    expect(start.getSnapshot().get("cloud:p_1")).toEqual({
+      url: undefined,
+      durationMs: 6000,
+      chosen: false,
+    });
   });
 });

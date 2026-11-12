@@ -72,8 +72,12 @@ export interface ProjectCard {
    * this browser can say otherwise, see `StartCovers`.
    */
   readonly durationMs: number | undefined;
-  /** Its cover on the platform, as the list says, see `CloudProjectSummary.cover`. */
-  readonly cover: { readonly etag: string; readonly at: number } | undefined;
+  /**
+   * Its cover on the platform, as the list says, see `CloudProjectSummary.cover`: null where the
+   * list says it has none, undefined where the list does not say.
+   */
+  readonly cover:
+    { readonly etag: string; readonly at: number; readonly chosen?: true } | null | undefined;
   /** What it came from. */
   readonly source:
     | { readonly kind: "local"; readonly row: LocalRow }
@@ -424,7 +428,11 @@ export type CardAction =
   | "removeFromList"
   | "moveToFolder"
   | "saveCopy"
-  | "delete";
+  | "delete"
+  /** People choose a picture as the cover, see start/cover-choice.ts. */
+  | "setCover"
+  /** Back to the cover the editor makes. */
+  | "autoCover";
 
 export interface CardContext {
   /** The editor is hosted on a platform. */
@@ -435,6 +443,10 @@ export interface CardContext {
   readonly folder: FolderStatus | undefined;
   /** Bytes of copies of its files that this browser keeps and can let go of, see `releaseCopies`. */
   readonly copies: number;
+  /** This browser keeps covers, see `Host.covers`: people can choose one. */
+  readonly covers?: boolean;
+  /** People chose the cover the card shows, see `ProjectCover.chosen`. */
+  readonly coverChosen?: boolean;
 }
 
 /** Where "在 GitHub 上打开" goes: only an https address. */
@@ -474,6 +486,16 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
     // cannot be edited cannot be renamed either.
     ...when(card.kind !== "cloudRemote" && !unusable, "rename"),
     ...when(card.marksKey !== undefined, card.starred ? "unstar" : "star", "moveToGroup"),
+    // Not of one that cannot be edited, nor of another account's. Who of the people editing a
+    // project together may choose its cover is for when projects are edited together.
+    ...when(context.covers === true && !unusable && card.marksKey !== undefined, "setCover"),
+    ...when(
+      context.covers === true &&
+        context.coverChosen === true &&
+        !unusable &&
+        card.marksKey !== undefined,
+      "autoCover",
+    ),
   ];
   const folderGone = when(isGone, "findAgain", "saveElsewhere");
   const kept = when(copies > 0, "releaseCopies");

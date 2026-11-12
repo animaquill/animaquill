@@ -315,10 +315,17 @@ describe("sending covers to the platform", () => {
     const sent: string[] = [];
     let answer: CoverPut | undefined;
     const cloud = {
-      put: vi.fn(async (_project: string, picture: Blob): Promise<CoverPut> => {
-        sent.push(await picture.text());
-        return answer ?? { kind: "kept", etag: await coverEtag(picture), at: clock };
-      }),
+      put: vi.fn(
+        async (
+          _project: string,
+          picture: Blob,
+          _durationMs?: number,
+          _options?: { chosen?: boolean },
+        ): Promise<CoverPut> => {
+          sent.push(await picture.text());
+          return answer ?? { kind: "kept", etag: await coverEtag(picture), at: clock };
+        },
+      ),
     };
     return { cloud, sent, answerWith: (next: CoverPut | undefined) => (answer = next) };
   };
@@ -348,40 +355,89 @@ describe("sending covers to the platform", () => {
     expect(sent).toEqual(["frame", "frame 2"]);
   });
 
-  it("sends a project once a minute at most, and again when the platform says when", async () => {
+  it("sends what the editor made every ten minutes, as people leave once a minute, and what they chose at once", async () => {
     const covers = memoryCoverStore();
     const { cloud, sent, answerWith } = platform();
     const uploads = new CoverUploads({ covers, cloud, now: () => clock });
-    const keep = async (text: string) => {
+    const keep = async (text: string, chosen = false) => {
       const picture = new Blob([text], { type: "image/webp" });
-      await covers.put("folder-1", { picture, at: clock, etag: await coverEtag(picture) });
+      await covers.put("folder-1", {
+        picture,
+        at: clock,
+        etag: await coverEtag(picture),
+        ...(chosen && { chosen: true as const }),
+      });
     };
     await keep("a");
     uploads.offer("folder-1", "p_1");
     await wait(0);
     expect(sent).toEqual(["a"]);
+    // Made again while people work: not before ten minutes.
     await keep("b");
     uploads.offer("folder-1", "p_1");
-    await wait(30_000);
+    await wait(5 * 60_000);
     expect(sent).toEqual(["a"]);
-    // Offered again while it waits: once.
-    uploads.offer("folder-1", "p_1");
+    // They leave the project: at once, as a minute went by.
+    uploads.offer("folder-1", "p_1", "leaving");
+    await wait(0);
+    expect(sent).toEqual(["a", "b"]);
+    // In and out again at once: a minute after the last.
+    await keep("c");
+    uploads.offer("folder-1", "p_1", "leaving");
     await wait(30_000);
     expect(sent).toEqual(["a", "b"]);
-    await keep("c");
-    answerWith({ kind: "busy", retryAfterMs: 90_000 });
-    uploads.offer("folder-1", "p_1");
-    await wait(60_000);
+    await wait(30_000);
     expect(sent).toEqual(["a", "b", "c"]);
+    await keep("d");
+    uploads.offer("folder-1", "p_1");
+    await wait(9 * 60_000);
+    expect(sent).toEqual(["a", "b", "c"]);
+    await wait(60_000);
+    expect(sent).toEqual(["a", "b", "c", "d"]);
+    // One people chose goes at once, and again when the platform says when.
+    await keep("e", true);
+    answerWith({ kind: "busy", retryAfterMs: 90_000 });
+    uploads.offer("folder-1", "p_1", "chosen");
+    await wait(0);
+    expect(sent).toEqual(["a", "b", "c", "d", "e"]);
     answerWith(undefined);
     await wait(60_000);
-    expect(sent).toEqual(["a", "b", "c"]);
+    expect(sent).toEqual(["a", "b", "c", "d", "e"]);
     await wait(30_000);
-    expect(sent).toEqual(["a", "b", "c", "c"]);
+    expect(sent).toEqual(["a", "b", "c", "d", "e", "e"]);
+    expect(cloud.put.mock.calls.at(-1)?.[3]).toEqual({ chosen: true });
     // Taken now: nothing more goes.
-    uploads.offer("folder-1", "p_1");
-    await wait(120_000);
-    expect(sent).toEqual(["a", "b", "c", "c"]);
+    uploads.offer("folder-1", "p_1", "chosen");
+    await wait(20 * 60_000);
+    expect(sent).toHaveLength(6);
+  });
+
+  it("keeps a cover people chose, with what the editor makes as what to go back to", async () => {
+    const store = projectOf();
+    const { cloud, sent } = platform();
+    const { covers, maker, looks } = makerWith(store, { project: "p_1", cloud });
+    const mine = new Blob(["mine"], { type: "image/jpeg" });
+    await covers.put("folder-1", {
+      picture: mine,
+      at: clock,
+      etag: await coverEtag(mine),
+      chosen: true,
+      sent: await coverEtag(mine),
+    });
+    await settle();
+    await wait(COVER_TIMING.idleMs);
+    looks.picture = "frame 2";
+    rename(store, "片头 2");
+    maker.leaving();
+    await settle();
+    await wait(COVER_TIMING.everyMs);
+    const kept = (await covers.read(["folder-1"])).get("folder-1");
+    expect(kept?.chosen).toBe(true);
+    expect(await kept?.picture.text()).toBe("mine");
+    expect(kept?.auto?.etag).toBe(await coverEtag(new Blob(["frame 2"])));
+    expect(kept?.durationMs).toBe(coverShotOf(store.getState(), "folder-1")?.durationMs);
+    // And nothing of the editor's goes to the platform in its place.
+    expect(sent).toEqual([]);
   });
 
   it("gives up quietly where the platform cannot be reached", async () => {

@@ -97,7 +97,7 @@ const coverOf = (value: unknown): CloudProjectSummary["cover"] => {
   const at = count(value.at);
   // It goes into a request and a key of this browser: only what the platform makes of it.
   if (etag === undefined || at === undefined || !/^[\w-]{1,64}$/.test(etag)) return undefined;
-  return { etag, at };
+  return { etag, at, ...(value.chosen === true && { chosen: true as const }) };
 };
 
 const durationOf = (value: unknown): number | undefined => {

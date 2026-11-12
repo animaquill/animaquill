@@ -1,11 +1,5 @@
 import { timelineLength, type ProjectState, type ProjectStore } from "@animaquill/core";
-import {
-  COVER_BYTES,
-  coverEtag,
-  type CoverAccess,
-  type CoverStore,
-  type ProjectCover,
-} from "@animaquill/host";
+import { COVER_BYTES, coverEtag, type CoverAccess, type CoverStore } from "@animaquill/host";
 import { toSeconds } from "@animaquill/schema";
 
 /**
@@ -129,21 +123,45 @@ export async function versionOf(store: Pick<ProjectStore, "stateVector" | "delet
 export interface CoverUploadsOptions {
   readonly covers: CoverStore;
   readonly cloud: Pick<CoverAccess, "put">;
-  /** How long until the same project is sent again: the platform takes one a minute. */
+  /** How long until a cover the editor made of the same project is sent again. */
   readonly everyMs?: number;
+  /**
+   * How long at least between two of the same project as people leave it: often enough that the
+   * start page elsewhere has it, not so often that going in and out sends one each time.
+   */
+  readonly leavingMs?: number;
   readonly now?: () => number;
 }
 
 /**
+ * How soon a cover goes: one the editor made while people work, one it made as they left the
+ * project, or one they chose themselves, which goes at once (the platform counts those apart).
+ */
+export type CoverUrgency = "auto" | "leaving" | "chosen";
+
+/** One the editor made goes every ten minutes at most, see `CoverUploads`. */
+export const COVER_UPLOAD_MS = 10 * 60_000;
+/** As people leave a project, once a minute at most: the platform takes no more. */
+export const COVER_LEAVING_MS = 60_000;
+
+interface Waiting {
+  project: string;
+  at: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+/**
  * Sends the covers of projects of the platform there, for the start page on other computers: the
- * one kept in this browser, once a minute at most for a project, and never one the platform took
- * from here already (`ProjectCover.sent`). For as long as the page is open; a cover that did not
- * get there is sent the next time the project opens. Nobody hears of it when it fails.
+ * one kept in this browser, and never one the platform took from here already (`ProjectCover.sent`).
+ * One the editor made goes every ten minutes at most for a project, one made as people left it a
+ * minute after the last at the earliest, one people chose at once. For as long as the page is open;
+ * a cover that did not get there is sent the next time the project opens. Nobody hears of it when
+ * it fails.
  */
 export class CoverUploads {
   readonly #options: CoverUploadsOptions;
-  /** What waits to be sent, by the key the browser keeps it by: the project of the platform. */
-  readonly #waiting = new Map<string, { project: string; timer?: ReturnType<typeof setTimeout> }>();
+  /** What waits to be sent, by the key the browser keeps it by. */
+  readonly #waiting = new Map<string, Waiting>();
   readonly #sending = new Set<string>();
   /** When each project of the platform was last sent. */
   readonly #last = new Map<string, number>();
@@ -157,19 +175,24 @@ export class CoverUploads {
     return (this.#options.now ?? Date.now)();
   }
 
-  get #everyMs(): number {
-    return this.#options.everyMs ?? 60_000;
+  #gap(urgency: CoverUrgency): number {
+    if (urgency === "chosen") return 0;
+    if (urgency === "leaving") return this.#options.leavingMs ?? COVER_LEAVING_MS;
+    return this.#options.everyMs ?? COVER_UPLOAD_MS;
   }
 
   /** Sends the cover kept by `key` to the project `project` of the platform, when it may. */
-  offer(key: string, project: string): void {
+  offer(key: string, project: string, urgency: CoverUrgency = "auto"): void {
     if (this.#closed) return;
+    const at = (this.#last.get(project) ?? -Infinity) + this.#gap(urgency);
     const waiting = this.#waiting.get(key);
     if (waiting) {
       waiting.project = project;
-      return;
+      // Sooner than it was going to: as people leave, or chose one.
+      if (at >= waiting.at) return;
+      clearTimeout(waiting.timer);
     }
-    this.#later(key, project, (this.#last.get(project) ?? -Infinity) + this.#everyMs - this.#now);
+    this.#later(key, project, at);
   }
 
   close(): void {
@@ -178,18 +201,17 @@ export class CoverUploads {
     this.#waiting.clear();
   }
 
-  #later(key: string, project: string, ms: number): void {
-    const waiting: { project: string; timer?: ReturnType<typeof setTimeout> } = { project };
+  #later(key: string, project: string, at: number): void {
+    const waiting: Waiting = { project, at };
     this.#waiting.set(key, waiting);
-    waiting.timer = setTimeout(() => void this.#send(key), Math.max(0, ms));
+    waiting.timer = setTimeout(() => void this.#send(key, waiting), Math.max(0, at - this.#now));
   }
 
-  async #send(key: string): Promise<void> {
-    const waiting = this.#waiting.get(key);
-    if (!waiting || this.#closed) return;
+  async #send(key: string, waiting: Waiting): Promise<void> {
+    if (this.#waiting.get(key) !== waiting || this.#closed) return;
     // One at a time for a key: the next waits for this one.
     if (this.#sending.has(key)) {
-      this.#later(key, waiting.project, this.#everyMs);
+      this.#later(key, waiting.project, this.#now + 1000);
       return;
     }
     this.#waiting.delete(key);
@@ -200,10 +222,13 @@ export class CoverUploads {
       const cover = (await covers.read([key])).get(key);
       if (!cover || cover.sent === cover.etag) return;
       this.#last.set(project, this.#now);
-      const put = await cloud.put(project, cover.picture, cover.durationMs);
+      const put = await cloud.put(project, cover.picture, cover.durationMs, {
+        chosen: cover.chosen === true,
+      });
+      // Also where the platform kept one people chose elsewhere: this one is not sent again.
       if (put.kind === "kept") await covers.sent(key, cover.etag);
       else if (put.kind === "busy" && !this.#waiting.has(key) && !this.#closed)
-        this.#later(key, project, put.retryAfterMs);
+        this.#later(key, project, this.#now + put.retryAfterMs);
       // "missing": not a project of whoever is signed in; "refused": never will be. Both stay here.
     } catch (error) {
       // Offline, or nobody is signed in: the next cover, or the next time it opens.
@@ -302,7 +327,7 @@ export class CoverMaker {
     if (this.#options.mayLeave && !this.#options.mayLeave()) return;
     clearTimeout(open.timer);
     open.timer = undefined;
-    void this.#make(open);
+    void this.#make(open, true);
   }
 
   /**
@@ -363,7 +388,7 @@ export class CoverMaker {
       if (kept) open.lastAt = Math.max(open.lastAt, kept.at);
       if (kept?.made === version && open.changes === changes) open.shows = changes;
       // One that did not get to the platform before goes now.
-      if (kept && kept.sent !== kept.etag) this.#send(open.key);
+      if (kept && kept.sent !== kept.etag) this.#send(open.key, kept.chosen ? "chosen" : "auto");
     } catch (error) {
       console.warn("The cover of the project could not be read", error);
     }
@@ -389,12 +414,12 @@ export class CoverMaker {
     void this.#make(open);
   }
 
-  #send(key: string): void {
+  #send(key: string, urgency: CoverUrgency = "auto"): void {
     const project = this.#options.sendTo?.();
-    if (project !== undefined) this.#options.uploads?.offer(key, project);
+    if (project !== undefined) this.#options.uploads?.offer(key, project, urgency);
   }
 
-  async #make(open: Open): Promise<void> {
+  async #make(open: Open, leaving = false): Promise<void> {
     const { covers } = this.#options;
     const changes = open.changes;
     const shot = coverShotOf(open.store.getState(), open.key);
@@ -436,23 +461,18 @@ export class CoverMaker {
         image.close();
       }
       if (!picture) return;
-      const [etag, made, before] = await Promise.all([
-        coverEtag(picture),
-        version,
-        covers.read([open.key]).then((found) => found.get(open.key)),
-      ]);
-      const cover: ProjectCover = {
-        // The same picture as before stays the one that was sent.
-        picture: before?.etag === etag ? before.picture : picture,
+      const [etag, made] = await Promise.all([coverEtag(picture), version]);
+      // In place of the one there was, unless people chose that one, see `CoverStore.made`.
+      const kept = await covers.made(open.key, {
+        picture,
         at: this.#now,
         etag,
         durationMs: shot.durationMs,
         made,
-        ...(before?.sent !== undefined && { sent: before.sent }),
-      };
-      await covers.put(open.key, cover);
+      });
       if (open.shows < changes) open.shows = changes;
-      if (project !== undefined) this.#options.uploads?.offer(open.key, project);
+      if (project !== undefined && !kept.chosen)
+        this.#options.uploads?.offer(open.key, project, leaving ? "leaving" : "auto");
     } catch (error) {
       // What gave way to something else is made again: not five minutes later for that.
       if (isYield(error)) open.lastAt = lastAt;

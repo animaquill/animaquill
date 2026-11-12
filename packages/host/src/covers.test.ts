@@ -60,6 +60,28 @@ describe("the covers of a browser", () => {
     expect((await store.read(["p"])).get("p")?.sent).toBe("b");
   });
 
+  it("keeps what the editor made in place of its own, but not of one people chose", async () => {
+    const store = browserOf()();
+    await store.put("p", cover("a", { sent: "a" }));
+    // The same picture: what was sent stays sent.
+    expect(await store.made("p", cover("a", { at: 2, made: "v2" }))).toMatchObject({
+      etag: "a",
+      sent: "a",
+      made: "v2",
+    });
+    expect(await store.made("p", cover("b", { at: 3, durationMs: 10 }))).toMatchObject({
+      etag: "b",
+      sent: "a",
+      durationMs: 10,
+    });
+    await store.put("p", cover("mine", { chosen: true, sent: "mine" }));
+    const kept = await store.made("p", cover("c", { at: 4, durationMs: 20, made: "v4" }));
+    expect(kept).toMatchObject({ etag: "mine", chosen: true, sent: "mine", durationMs: 20 });
+    expect(kept.auto?.etag).toBe("c");
+    expect((await store.read(["p"])).get("p")).toMatchObject({ etag: "mine", made: "v4" });
+    expect(await (await store.read(["p"])).get("p")?.auto?.picture.text()).toBe("c");
+  });
+
   it("knows a picture by what the platform says of it", async () => {
     // The start of the SHA-256 of "abc", base64url, as apps/api/src/sync/covers.ts makes it.
     expect(await coverEtag(new Blob(["abc"]))).toBe("ungWv48Bz-pBQUDeXa4iI7");

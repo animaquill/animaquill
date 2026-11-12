@@ -11,6 +11,7 @@ import {
   CloudSignedOut,
   type CoverAccess,
   type CoverPut,
+  mergeMade,
   type CoverStore,
   type ProjectCover,
 } from "./index.ts";
@@ -147,13 +148,25 @@ export function browserCoverStore(
       return found;
     },
     put: (key, cover) => write(key, (store) => store.put({ ...cover, key })),
+    async made(key, cover) {
+      let kept = cover;
+      await write(key, (store) => {
+        // Read and written in one go: a cover people choose meanwhile in another window waits.
+        const request = store.get(key) as IDBRequest<unknown>;
+        request.addEventListener("success", () => {
+          kept = mergeMade(coverOf(request.result), cover);
+          store.put({ ...kept, key });
+        });
+      });
+      return kept;
+    },
     sent: (key, etag) =>
       write(key, (store) => {
         // Read and written in one go: a new cover another window keeps meanwhile waits for it.
         const request = store.get(key) as IDBRequest<CoverRecord | undefined>;
         request.addEventListener("success", () => {
           const kept = request.result;
-          if (kept?.etag === etag && kept.sent !== etag) store.put({ ...kept, sent: etag });
+          if (kept?.etag === etag) store.put({ ...kept, sent: etag, sentAt: Date.now() });
         });
       }),
     forget: (key) => write(key, (store) => store.delete(key)),
@@ -185,10 +198,16 @@ export function memoryCoverStore(): CoverStore {
       covers.set(key, cover);
       changed(key);
     },
+    async made(key, cover) {
+      const kept = mergeMade(covers.get(key), cover);
+      covers.set(key, kept);
+      changed(key);
+      return kept;
+    },
     async sent(key, etag) {
       const kept = covers.get(key);
       if (kept?.etag !== etag) return;
-      covers.set(key, { ...kept, sent: etag });
+      covers.set(key, { ...kept, sent: etag, sentAt: Date.now() });
       changed(key);
     },
     async forget(key) {
@@ -218,9 +237,10 @@ const TYPES = new Set(["image/webp", "image/jpeg"]);
 /**
  * The covers of projects of a platform over its HTTP API, see `CoverAccess`:
  *
- * - `PUT <api>/projects/<project>/cover[?durationMs=]`, the picture as the body, answers
- *   `{etag, at}`, or `{error}`: 404 "notFound", 413 "tooLarge", 415 "unsupported", 400 "invalid",
- *   429 "busy" with Retry-After
+ * - `PUT <api>/projects/<project>/cover[?durationMs=][&chosen=1]`, the picture as the body,
+ *   answers `{etag, at, chosen?}`, or `{error}`: 404 "notFound", 413 "tooLarge", 415
+ *   "unsupported", 400 "invalid", 429 "busy" with Retry-After
+ * - `DELETE <api>/projects/<project>/cover` answers 204, or 404 "notFound", 429 "busy"
  * - `GET <api>/projects/<project>/cover` answers the picture, or 404 "notFound"
  *
  * The browser keeps what `GET` answered by its ETag, and asks again each time: this is only asked
@@ -230,14 +250,15 @@ export function browserCoverAccess(options: BrowserCoverAccessOptions): CoverAcc
   const request = options.fetch ?? ((input, init) => fetch(input, init));
   const path = (project: string) => options.api(`/projects/${encodeURIComponent(project)}/cover`);
   return {
-    put: (project, picture, durationMs) =>
+    put: (project, picture, durationMs, { chosen = false } = {}) =>
       withinTime(options.timeoutMs ?? CHANGE_TIMEOUT_MS, async (signal): Promise<CoverPut> => {
         if (!TYPES.has(picture.type) || picture.size > COVER_BYTES) return { kind: "refused" };
-        const query =
-          durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0
-            ? ""
-            : `?durationMs=${Math.round(durationMs)}`;
-        const response = await request(`${path(project)}${query}`, {
+        const query = new URLSearchParams();
+        if (durationMs !== undefined && Number.isFinite(durationMs) && durationMs >= 0)
+          query.set("durationMs", String(Math.round(durationMs)));
+        if (chosen) query.set("chosen", "1");
+        const asked = query.size > 0 ? `?${query}` : "";
+        const response = await request(`${path(project)}${asked}`, {
           method: "PUT",
           cache: "no-store",
           headers: { ...options.changeHeaders, "content-type": picture.type },
@@ -251,7 +272,8 @@ export function browserCoverAccess(options: BrowserCoverAccessOptions): CoverAcc
         if (response.ok && isObject(answer)) {
           const etag = text(answer.etag);
           const at = count(answer.at);
-          if (etag !== undefined && at !== undefined) return { kind: "kept", etag, at };
+          if (etag !== undefined && at !== undefined)
+            return { kind: "kept", etag, at, ...(answer.chosen === true && { chosen: true }) };
         }
         // Only in the platform's own words: a gateway says such things too.
         if (response.status === 404 && said === "notFound") return { kind: "missing" };
@@ -268,6 +290,24 @@ export function browserCoverAccess(options: BrowserCoverAccessOptions): CoverAcc
             retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000,
           };
         }
+        throw new Error(`The platform answered ${response.status}`);
+      }),
+    remove: (project) =>
+      withinTime(options.timeoutMs ?? CHANGE_TIMEOUT_MS, async (signal) => {
+        const response = await request(path(project), {
+          method: "DELETE",
+          cache: "no-store",
+          headers: { ...options.changeHeaders },
+          signal,
+        });
+        // Only the platform's own yes: a gateway, or a page to sign in on, says 200 to anything.
+        if (response.status === 204) return "removed" as const;
+        const answer: unknown = await response.json().catch(() => undefined);
+        const said = isObject(answer) ? answer.error : undefined;
+        if (response.status === 401 || said === "signedOut")
+          throw new CloudSignedOut("Nobody is signed in");
+        if (response.status === 404 && said === "notFound") return "missing" as const;
+        if (response.status === 429) return "busy" as const;
         throw new Error(`The platform answered ${response.status}`);
       }),
     get: (project) =>

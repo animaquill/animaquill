@@ -143,6 +143,39 @@ export interface ProjectCover {
   readonly made?: string;
   /** The etag of the last cover of this project that the platform took from this browser. */
   readonly sent?: string;
+  /** When the platform took it, or for one fetched from there when that was, in ms since 1970. */
+  readonly sentAt?: number;
+  /**
+   * People chose the picture themselves: one the editor makes does not take its place, here or on
+   * the platform, until people go back to those, see `auto`.
+   */
+  readonly chosen?: true;
+  /** The last picture the editor made while people had one of their own, to go back to. */
+  readonly auto?: { readonly picture: Blob; readonly at: number; readonly etag: string };
+}
+
+/**
+ * What is kept of a project once the editor made `made` of it, where `before` was kept: `made`, but
+ * the picture of `before` where it is the same, as that is what was sent; or where people chose
+ * `before`, that with `made` as what to go back to, and how long the timeline is now.
+ */
+export function mergeMade(before: ProjectCover | undefined, made: ProjectCover): ProjectCover {
+  if (before?.chosen) {
+    const { durationMs, made: version } = made;
+    return {
+      ...before,
+      auto: { picture: made.picture, at: made.at, etag: made.etag },
+      ...(durationMs !== undefined && { durationMs }),
+      ...(version !== undefined && { made: version }),
+    };
+  }
+  const { chosen: _chosen, auto: _auto, sent: _sent, sentAt: _sentAt, ...plain } = made;
+  return {
+    ...plain,
+    ...(before?.etag === made.etag && { picture: before.picture }),
+    ...(before?.sent !== undefined && { sent: before.sent }),
+    ...(before?.sentAt !== undefined && { sentAt: before.sentAt }),
+  };
 }
 
 /** The bytes a cover may have at most, as the platform takes them. */
@@ -159,7 +192,13 @@ export interface CoverStore {
   read(keys: readonly string[]): Promise<ReadonlyMap<string, ProjectCover>>;
   /** Keeps a cover in place of the one there was. */
   put(key: string, cover: ProjectCover): Promise<void>;
-  /** Notes that the platform took the cover `etag`, where that is still the one kept. */
+  /**
+   * Keeps a cover the editor made, in one step with what other windows do, see `mergeMade`: in
+   * place of the one there was, unless people chose that, which stays with this one as its `auto`.
+   * Resolves to what is kept now.
+   */
+  made(key: string, cover: ProjectCover): Promise<ProjectCover>;
+  /** Notes that the platform took the cover `etag` now, where that is still the one kept. */
   sent(key: string, etag: string): Promise<void>;
   forget(key: string): Promise<void>;
   /** Hears which cover any window changed, also this one. Returns how to stop listening. */
@@ -179,7 +218,11 @@ export async function coverEtag(picture: Blob): Promise<string> {
 
 /** What sending a cover to the platform came to, see `CoverAccess.put`. */
 export type CoverPut =
-  | { readonly kind: "kept"; readonly etag: string; readonly at: number }
+  /**
+   * What the project has now: the picture sent, or one people chose, which one the editor made
+   * does not take the place of (`chosen`).
+   */
+  | { readonly kind: "kept"; readonly etag: string; readonly at: number; readonly chosen?: true }
   /** It took one of this project a short while ago: again after `retryAfterMs`. */
   | { readonly kind: "busy"; readonly retryAfterMs: number }
   /** The platform has no such project of whoever is signed in. */
@@ -194,7 +237,18 @@ export interface CoverAccess {
    * timeline is. Rejects where the platform could not say, with a `CloudSignedOut` when nobody is
    * signed in.
    */
-  put(project: string, picture: Blob, durationMs: number | undefined): Promise<CoverPut>;
+  put(
+    project: string,
+    picture: Blob,
+    durationMs: number | undefined,
+    options?: { readonly chosen?: boolean },
+  ): Promise<CoverPut>;
+  /**
+   * Takes the cover of a project away, as people go back to the one the editor makes: "removed",
+   * also where it had none; "missing" where the platform has no such project of whoever is signed
+   * in; "busy" where people changed it too often lately. Rejects where the platform could not say.
+   */
+  remove(project: string): Promise<"removed" | "missing" | "busy">;
   /**
    * The cover of a project, or undefined where it has none, or the platform has no such project of
    * whoever is signed in. Rejects where the platform could not say.
@@ -489,7 +543,7 @@ export interface CloudProjectSummary {
    * Its cover, where an editor sent one: what it is known by, see `coverEtag`, and when the
    * platform got it. `CoverAccess.get` gives the picture.
    */
-  readonly cover?: { readonly etag: string; readonly at: number };
+  readonly cover?: { readonly etag: string; readonly at: number; readonly chosen?: true };
   /** How long its main timeline was when the cover was made, in milliseconds. */
   readonly durationMs?: number;
 }

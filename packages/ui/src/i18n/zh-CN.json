@@ -2798,7 +2798,17 @@
       "reauthorize": "去 GitHub 重新授权…",
       "reinstall": "去 GitHub 重新安装…",
       "restoreApp": "去 GitHub 恢复…",
-      "switchRepository": "换一个仓库…"
+      "switchRepository": "换一个仓库…",
+      "setCover": "设置封面…",
+      "autoCover": "恢复自动封面"
+    },
+    "cover": {
+      "notPicture": "“{{file}}”不是图片。请选 JPEG、PNG、WebP、GIF 或 AVIF 图片。",
+      "tooLarge": "“{{file}}”太大了（{{size}}），请选 40 MB 以内的图片。",
+      "unreadable": "“{{file}}”读不出来，可能已经损坏，或者浏览器不支持这种图片。",
+      "notSmall": "“{{file}}”压到 64 KB 以内也放不下，请换一张简单些的图片。",
+      "failed": "封面没能保存，请再试一次。",
+      "restoreFailed": "没能恢复自动封面：云端暂时连不上，或者改得太频繁了。请过一会儿再试。"
     },
     "group": {
       "new": "新建分组",
