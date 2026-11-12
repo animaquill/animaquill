@@ -180,6 +180,11 @@ describe("organising projects", () => {
       read: () => Promise.reject(new Error("blocked")),
       mark: () => Promise.reject(new Error("blocked")),
       putGroup: () => Promise.reject(new Error("blocked")),
+      markAll: () => Promise.reject(new Error("blocked")),
+      adoptGroups: () => Promise.reject(new Error("blocked")),
+      claimGroups: () => Promise.reject(new Error("blocked")),
+      mergeGroup: () => Promise.reject(new Error("blocked")),
+      noteAccount: () => Promise.reject(new Error("blocked")),
       forget: () => Promise.reject(new Error("blocked")),
       listen: () => () => {},
     };

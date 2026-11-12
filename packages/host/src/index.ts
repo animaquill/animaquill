@@ -4,7 +4,17 @@ import type { CloudConnection } from "./sync-protocol.ts";
 export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
 export { RELAY_REFUSALS, relayRefusalIn, type AiRelay, type RelayRefusal } from "./relay.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
-export { groupNameKey, groupTime, memoryOrganizer, mergeMarks, starTime } from "./organizer.ts";
+export {
+  groupNameKey,
+  groupTime,
+  MAX_GROUP_NAME,
+  ORGANIZER_BATCH,
+  isUnsentGroup,
+  memoryOrganizer,
+  mergeMarks,
+  starTime,
+  unsentOf,
+} from "./organizer.ts";
 export {
   SYNC_CLOSE,
   SYNC_KINDS,
@@ -218,6 +228,12 @@ export interface ProjectMarks {
    * does not move it. Each of the two goes by its own time, see `starAt` and `groupAt`.
    */
   readonly at: number;
+  /**
+   * For marks kept by `cloud:` and its id: the times of the star and of the group that the account
+   * of the project is known to have, see `OrganizerAccess`. One changed later here is still to be
+   * given to it (`unsentOf`); one changed later there comes here as it is read.
+   */
+  readonly sent?: { readonly star?: number; readonly group?: number };
 }
 
 /**
@@ -225,8 +241,16 @@ export interface ProjectMarks {
  * star or a group that was changed later than `at` already, as by another window.
  */
 export type ProjectMarksChange = Partial<
-  Pick<ProjectMarks, "openedAt" | "starredAt" | "group" | "account">
-> & { readonly at: number };
+  Pick<ProjectMarks, "openedAt" | "starredAt" | "group" | "account" | "starAt" | "groupAt">
+> & {
+  /** When it changed; `starAt` and `groupAt`, where given, say it of the star and the group. */
+  readonly at: number;
+  /**
+   * The account has the star or the group as of these times, as it said: they count as given to it,
+   * see `ProjectMarks.sent`. Never moves them back.
+   */
+  readonly sent?: { readonly star?: number; readonly group?: number };
+};
 
 /**
  * A group of projects on the start page: one level, a project in one at most. Not called a folder,
@@ -245,6 +269,17 @@ export interface ProjectGroup {
   readonly at: number;
   /** Taken away. It stays, so that a copy elsewhere that has it is not taken for a new one. */
   readonly deleted?: true;
+  /**
+   * For a group of an account: the time of the change the account is known to have, see
+   * `OrganizerAccess`. One changed later here is still to be given to it.
+   */
+  readonly sent?: number;
+  /**
+   * Taken away as it became this other group, of the same name: one made in this browser while
+   * nobody was signed in, or offline, where the account had one of that name already. Projects
+   * that say they are in it are in that one.
+   */
+  readonly into?: string;
 }
 
 /** What came of keeping a group, see `ProjectOrganizer.putGroup`. */
@@ -256,6 +291,11 @@ export interface OrganizerContent {
   readonly marks: ReadonlyMap<string, ProjectMarks>;
   /** Including those taken away, see `ProjectGroup.deleted`. */
   readonly groups: readonly ProjectGroup[];
+  /**
+   * The account that was last signed in here, see `ProjectOrganizer.noteAccount`: whose groups the
+   * start page shows while nobody is.
+   */
+  readonly account?: string;
 }
 
 /**
@@ -274,6 +314,36 @@ export interface ProjectOrganizer {
    * the case or width of its letters, and nothing changes either.
    */
   putGroup(group: ProjectGroup): Promise<PutGroupOutcome>;
+  /** Changes the marks of several projects, in one step, see `mark`. */
+  markAll(
+    changes: readonly (readonly [project: string, change: ProjectMarksChange])[],
+  ): Promise<void>;
+  /**
+   * Keeps groups as an account has them, by their time: each in place of the copy here where it is
+   * as late as that, or later, without looking at names, which the account keeps apart itself. A
+   * copy changed here later stays, still to be given to it. `sent` of each says what the account
+   * has. A group that became another one here (`ProjectGroup.into`) stays so. With `replace`, each
+   * takes the place of the copy here whatever their times: what was changed here is let go of, as
+   * a rename the account did not take.
+   */
+  adoptGroups(
+    groups: readonly ProjectGroup[],
+    options?: { readonly replace?: boolean },
+  ): Promise<void>;
+  /**
+   * Has the groups of this browser (`scope: "browser"`) become groups of `account`, in one step:
+   * each that the account has one of the same name of becomes that one (`into`), and projects in it
+   * move into that one; each other one becomes the account's, with its id, still to be given to it.
+   */
+  claimGroups(account: string): Promise<void>;
+  /**
+   * Has the group `from` become `into`, a group of the same name that is kept here already, in one
+   * step: projects in it move into that one. Where the account would not take it, as it had a group
+   * of that name already.
+   */
+  mergeGroup(from: string, into: string): Promise<void>;
+  /** Notes that `account` is signed in here, see `OrganizerContent.account`. */
+  noteAccount(account: string): Promise<void>;
   /** Forgets the marks of a project, as one that is gone. */
   forget(project: string): Promise<void>;
   /** What any window changed, also this one. Returns how to stop listening. */
@@ -463,6 +533,87 @@ export interface CloudAccess {
   readonly lfs?: LfsAccess;
   /** The covers of its projects, for the start page on any computer. Without it, there are none. */
   readonly cover?: CoverAccess;
+  /**
+   * How the person organises their projects of the platform, and their groups, for the start page
+   * on any computer, see `OrganizerAccess`. Without it, only this browser keeps that.
+   */
+  readonly organizer?: OrganizerAccess;
+}
+
+/**
+ * A group of projects as an account keeps it, see `OrganizerAccess`: by an id the editor made, with
+ * when it last changed (made, renamed, taken away), in milliseconds since 1970 by this computer's
+ * clock. One taken away stays, as such, for a long while.
+ */
+export interface AccountGroup {
+  readonly id: string;
+  readonly name: string;
+  readonly at: number;
+  readonly deleted?: true;
+}
+
+/**
+ * How an account organises a project of the platform: whether it is starred, and which group it is
+ * in (null: none), each with when it last changed, by this computer's clock. What is missing was
+ * never said. A group that is taken away leads nowhere: the project is in none then.
+ */
+export interface AccountMarks {
+  readonly project: string;
+  readonly star?: { readonly starred: boolean; readonly at: number };
+  readonly group?: { readonly id: string | null; readonly at: number };
+}
+
+/** Everything an account keeps of how its projects are organised. */
+export interface AccountOrganized {
+  readonly groups: readonly AccountGroup[];
+  readonly marks: readonly AccountMarks[];
+}
+
+/**
+ * What came of a group given to an account, see `OrganizerAccess.change`. "kept": it is as given.
+ * "older": the account has a change of it that is as late or later. "missing": taking away one that
+ * it does not have. "tooMany": it has as many groups as anyone may. `taken`: another of its groups,
+ * this one, has that name, whatever the case or width of its letters.
+ */
+export type AccountGroupOutcome =
+  "kept" | "older" | "missing" | "tooMany" | { readonly taken: string };
+
+/**
+ * What came of marks given to an account, field by field: "kept", or "older" where it has a change
+ * as late or later; "noGroup" where it has no such group, not even one taken away. `missing`: no
+ * such project of the account, as one that is gone.
+ */
+export interface AccountMarksOutcome {
+  readonly project: string;
+  readonly missing?: true;
+  readonly star?: "kept" | "older";
+  readonly group?: "kept" | "older" | "noGroup";
+}
+
+/** Changes given to an account in one go: the groups first, then the marks. */
+export interface AccountChanges {
+  readonly groups?: readonly AccountGroup[];
+  readonly marks?: readonly AccountMarks[];
+}
+
+/** What came of `AccountChanges`, one for each in the same order, and everything as it is then. */
+export interface AccountChangesAnswer {
+  readonly groups: readonly AccountGroupOutcome[];
+  readonly marks: readonly AccountMarksOutcome[];
+  readonly state: AccountOrganized;
+}
+
+/**
+ * How the person who is signed in organises their projects of the platform, kept by the platform:
+ * each change is kept where it is later than what it has of the same field (the star, the group of a
+ * project; a group as a whole), see the design of the start page, 6.6. Times are of this computer's
+ * clock both ways: the host has them agree with the platform's. Rejects where the platform could not
+ * say, with a `CloudSignedOut` when nobody is signed in.
+ */
+export interface OrganizerAccess {
+  read(): Promise<AccountOrganized>;
+  /** At most `ORGANIZER_BATCH` groups and as many marks in one go. */
+  change(changes: AccountChanges): Promise<AccountChangesAnswer>;
 }
 
 /** What a project of the platform that is saved to a repository may go with, see `CloudAccess.remove`. */

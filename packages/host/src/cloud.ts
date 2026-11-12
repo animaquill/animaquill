@@ -10,6 +10,7 @@ import type {
   CloudLinks,
   CloudProjectSummary,
   CoverAccess,
+  OrganizerAccess,
   LfsAccess,
   RepositoryAccess,
 } from "./index.ts";
@@ -335,6 +336,8 @@ export interface BrowserCloudOptions {
   readonly lfs?: LfsAccess;
   /** The covers of its projects, where the platform keeps them, see `browserCoverAccess`. */
   readonly cover?: CoverAccess;
+  /** How the person organises their projects, where the platform keeps it, see `browserOrganizerAccess`. */
+  readonly organizer?: OrganizerAccess;
   readonly database?: () => IDBFactory;
   readonly locks?: () => LockManager | undefined;
 }
@@ -353,5 +356,6 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),
     ...(options.cover && { cover: options.cover }),
+    ...(options.organizer && { organizer: options.organizer }),
   };
 }

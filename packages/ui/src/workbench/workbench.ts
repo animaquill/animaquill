@@ -671,7 +671,11 @@ export class Workbench {
       this.here(),
     );
     this.#keepPresence(host);
-    this.organizer = new StartOrganizer({ organizer: host.organizer });
+    this.organizer = new StartOrganizer({
+      organizer: host.organizer,
+      account: host.account,
+      cloud: cloud?.organizer,
+    });
     this.startCovers = new StartCovers({
       ...(host.covers && { covers: host.covers }),
       ...(cloud?.cover && { cloud: cloud.cover }),

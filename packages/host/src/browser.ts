@@ -796,6 +796,7 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
 export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts";
 export { browserOrganizer } from "./organizer.ts";
 export { browserCoverAccess, browserCoverStore, memoryCoverStore } from "./covers.ts";
+export { browserOrganizerAccess, OrganizerBusy } from "./organizer-access.ts";
 export type { BrowserCoverAccessOptions } from "./covers.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";

@@ -1,22 +1,30 @@
 import {
   groupNameKey,
+  MAX_GROUP_NAME,
+  type AccountAccess,
+  type OrganizerAccess,
+  type OrganizerContent,
   type ProjectGroup,
+  type ProjectMarks,
   type ProjectMarksChange,
   type ProjectOrganizer,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import { NOTHING_ORGANIZED, shownGroups, type MarksTarget, type Organized } from "./cards.ts";
+import { OrganizerSync } from "./organize-sync.ts";
+
+export { MAX_GROUP_NAME };
 
 /**
  * How people organise their projects on the start page, see the design of the start page
  * (docs/design/start-and-cloud.md of AnimaQuill Cloud), 6.6: stars, groups of one level with a
- * project in one at most, and when each project was last opened here. For now all of it is kept in
- * this browser, see `Host.organizer`; an account keeps the stars and groups of its projects later,
- * merged by `ProjectMarks.at`, and the start page only ever reads what comes out of here.
+ * project in one at most, and when each project was last opened here. All of it is kept in this
+ * browser, see `Host.organizer`; where people are signed in to a platform that keeps it too
+ * (`CloudAccess.organizer`), the stars and groups of its projects and the groups go with the
+ * account, see `OrganizerSync`, and the start page only ever reads what comes out of here: the
+ * groups of whoever is signed in, or was last, and those of this browser, which become the
+ * account's once it is read.
  */
-
-/** How long the name of a group can be, see 6.6. */
-export const MAX_GROUP_NAME = 60;
 
 export type GroupNameProblem = "empty" | "tooLong" | "taken";
 
@@ -46,6 +54,12 @@ export interface OrganizeSnapshot extends Organized {
 
 export interface StartOrganizerOptions {
   readonly organizer: ProjectOrganizer;
+  /** Who is signed in to the platform, where there is one. */
+  readonly account?: AccountAccess | undefined;
+  /** The platform's copy, see `CloudAccess.organizer`. */
+  readonly cloud?: OrganizerAccess | undefined;
+  /** Only tests: how the account is gone a round with. */
+  readonly sync?: OrganizerSync;
   readonly now?: () => number;
   /** A new id for a group. */
   readonly newId?: () => string;
@@ -53,23 +67,87 @@ export interface StartOrganizerOptions {
 
 const NOTHING: OrganizeSnapshot = { ...NOTHING_ORGANIZED, failed: false };
 
+/** The id of a group that `id` became, see `ProjectGroup.into`, or `id`. */
+const finalOf = (id: string, into: ReadonlyMap<string, string>): string => {
+  let at = id;
+  // A few at most: one each time a group of this browser or an offline one met the account.
+  for (let step = 0; step < 8; step += 1) {
+    const next = into.get(at);
+    if (next === undefined) return at;
+    at = next;
+  }
+  return at;
+};
+
+/**
+ * What people see of what is kept: the groups of `viewer` and of this browser, and projects in the
+ * group that the one they say became.
+ */
+function shownOf(content: OrganizerContent, viewer: string | undefined): Organized {
+  const into = new Map(
+    content.groups.flatMap((group) =>
+      group.into === undefined ? [] : [[group.id, group.into] as const],
+    ),
+  );
+  const marks =
+    into.size === 0
+      ? content.marks
+      : new Map(
+          [...content.marks].map(([key, each]): [string, ProjectMarks] =>
+            typeof each.group === "string" && into.has(each.group)
+              ? [key, { ...each, group: finalOf(each.group, into) }]
+              : [key, each],
+          ),
+        );
+  const groups = content.groups.filter(
+    (group) =>
+      group.scope === "browser" || (viewer !== undefined && group.scope.account === viewer),
+  );
+  return { marks, groups: shownGroups(groups) };
+}
+
 export class StartOrganizer {
   readonly #organizer: ProjectOrganizer;
   readonly #now: () => number;
   readonly #newId: () => string;
   readonly #emitter = new Emitter();
+  readonly #account: AccountAccess | undefined;
+  readonly #sync: OrganizerSync | undefined;
   #snapshot: OrganizeSnapshot = NOTHING;
   #turn = 0;
   #stop: (() => void) | undefined;
+  #stopAccount: (() => void) | undefined;
+  #signedIn: string | undefined;
 
   constructor({
     organizer,
+    account,
+    cloud,
+    sync,
     now = Date.now,
     newId = () => crypto.randomUUID(),
   }: StartOrganizerOptions) {
     this.#organizer = organizer;
+    this.#account = account;
     this.#now = now;
     this.#newId = newId;
+    this.#signedIn = this.#whoIsSignedIn();
+    this.#sync =
+      sync ??
+      (cloud && account
+        ? new OrganizerSync({ local: organizer, remote: cloud, account: () => this.#signedIn })
+        : undefined);
+  }
+
+  /** Who is signed in to a platform that keeps how projects are organised, by its id. */
+  #whoIsSignedIn(): string | undefined {
+    const snapshot = this.#account?.getSnapshot();
+    return snapshot?.status === "signedIn" ? snapshot.id : undefined;
+  }
+
+  /** Has what changed here go to the account soon, where there is one. */
+  #changed(): void {
+    if (this.#signedIn !== undefined) this.#sync?.soon();
   }
 
   getSnapshot = (): OrganizeSnapshot => this.#snapshot;
@@ -78,24 +156,41 @@ export class StartOrganizer {
   subscribe = (listener: () => void): (() => void) => {
     if (!this.#stop) {
       this.#stop = this.#organizer.listen(() => void this.refresh());
+      this.#stopAccount = this.#account?.subscribe(() => {
+        const now = this.#whoIsSignedIn();
+        if (now === this.#signedIn) return;
+        this.#signedIn = now;
+        void this.refresh();
+        if (now !== undefined) this.#sync?.soon(0);
+      });
       void this.refresh();
     }
+    // The start page is open: what changed on other computers comes.
+    if (this.#signedIn !== undefined) this.#sync?.soon(0);
     return this.#emitter.subscribe(listener);
   };
 
   close(): void {
     this.#stop?.();
     this.#stop = undefined;
+    this.#stopAccount?.();
+    this.#stopAccount = undefined;
+    this.#sync?.close();
     this.#turn += 1;
+  }
+
+  /** Goes a round with the account now, where somebody is signed in; for tests. */
+  syncNow(): Promise<void> {
+    return this.#sync?.run() ?? Promise.resolve();
   }
 
   /** Reads everything again. Never rejects: what cannot be read is "failed". */
   async refresh(): Promise<void> {
     const turn = ++this.#turn;
     try {
-      const { marks, groups } = await this.#organizer.read();
+      const content = await this.#organizer.read();
       if (turn !== this.#turn) return;
-      this.#snapshot = { marks, groups: shownGroups(groups), failed: false };
+      this.#snapshot = { ...shownOf(content, this.#signedIn ?? content.account), failed: false };
     } catch (error) {
       if (turn !== this.#turn) return;
       console.warn("How projects are organised could not be read", error);
@@ -108,6 +203,7 @@ export class StartOrganizer {
   async #mark(project: string, change: Omit<ProjectMarksChange, "at">): Promise<boolean> {
     try {
       await this.#organizer.mark(project, { ...change, at: this.#now() });
+      if (change.starredAt !== undefined || change.group !== undefined) this.#changed();
       return true;
     } catch (error) {
       console.warn("How a project is organised could not be kept", error);
@@ -143,6 +239,7 @@ export class StartOrganizer {
     try {
       await write(target.key, target.account === undefined ? {} : { account: target.account });
       if (target.also !== undefined) await write(target.also, {});
+      this.#changed();
       return true;
     } catch (error) {
       console.warn("How a project is organised could not be kept", error);
@@ -165,8 +262,9 @@ export class StartOrganizer {
   }
 
   /**
-   * Makes a group, of this browser: an account takes it over later. Resolves to its id, or to what
-   * is wrong with the name; to undefined where it could not be kept.
+   * Makes a group, of the account that is signed in, or of this browser while nobody is: an account
+   * takes it over later. Resolves to its id, or to what is wrong with the name; to undefined where
+   * it could not be kept.
    */
   async createGroup(
     name: string,
@@ -176,7 +274,7 @@ export class StartOrganizer {
     const group: ProjectGroup = {
       id: this.#newId(),
       name: name.trim(),
-      scope: "browser",
+      scope: this.#signedIn !== undefined && this.#sync ? { account: this.#signedIn } : "browser",
       at: this.#now(),
     };
     let outcome;
@@ -189,6 +287,7 @@ export class StartOrganizer {
     // Another window made one of that name a moment ago.
     if (typeof outcome === "object") return { problem: "taken" };
     if (outcome !== "kept") return undefined;
+    this.#changed();
     // Shown at once, before every window hears of it.
     this.#snapshot = {
       ...this.#snapshot,
@@ -226,7 +325,9 @@ export class StartOrganizer {
     try {
       const outcome = await this.#organizer.putGroup(group);
       if (typeof outcome === "object") return "taken";
-      return outcome === "kept" ? true : undefined;
+      if (outcome !== "kept") return undefined;
+      this.#changed();
+      return true;
     } catch (error) {
       console.warn("A group could not be kept", error);
       return undefined;
