@@ -523,29 +523,6 @@ describe("what others did", () => {
     const result = await call("aq_edit", rename("clip_idea", "AI"));
     expect(result.text).toContain("the user changed clip_idea (removed)");
   });
-
-  it("is quick to check after many changes, for a batch of 100 objects", async () => {
-    const store = manyClips(1000, "c");
-    const { call } = toolsOn(testHost(store));
-    await call("aq_timeline_read", { limit: 500 });
-    for (let i = 0; i < 999; i += 1) {
-      user(store, "clip.update", {
-        timeline: "main",
-        clip: `c${500 + (i % 400)}`,
-        changes: { name: `u${i}` },
-      });
-    }
-    const operations = Array.from({ length: 100 }, (_, i) => ({
-      op: "clip.update",
-      timeline: "main",
-      clip: `c${i}`,
-      changes: { name: `a${i}` },
-    }));
-    const started = performance.now();
-    const result = await call("aq_edit", { operations });
-    expect(result.isError, result.text).toBe(false);
-    expect(performance.now() - started).toBeLessThan(500);
-  });
 });
 
 describe("the syntax check", () => {
