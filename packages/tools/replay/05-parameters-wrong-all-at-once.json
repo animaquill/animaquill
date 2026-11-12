@@ -1,0 +1,52 @@
+{
+  "about": "Parameters that do not fit, in two operations: every fault at once, with the shape and an example, and nothing written.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.move",
+            "timeline": "main",
+            "clips": [
+              {
+                "clip": "clip_idea",
+                "start": 12
+              }
+            ],
+            "overlap": "replace"
+          },
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "3",
+            "colour": "#ff0000"
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid-params",
+        "lines": [
+          "error invalid-params in operations[0] (clip.move)",
+          "clips[0].start: expected a time: seconds as a string, such as \"12.5\", got the number 12",
+          "overlap: expected \"reject\" or \"overwrite\", got the string \"replace\"",
+          "shape: clip.move {timeline, clips:[{clip, start?, track?}], overlap?}",
+          "error invalid-params in operations[1] (marker.add)",
+          "unknown parameter \"colour\"; did you mean \"color\"?",
+          "nothing was written"
+        ]
+      }
+    }
+  ],
+  "end": {
+    "absent": {
+      "timelines/main/timeline.json": ["\"start\": \"12\""]
+    }
+  }
+}

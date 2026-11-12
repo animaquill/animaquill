@@ -1494,7 +1494,10 @@ export const COMMANDS: readonly Operation[] = OPERATIONS;
 export type OperationName = (typeof OPERATIONS)[number]["name"];
 
 /** What AI can use, by name: the tools document every one of them, see `@animaquill/tools`. */
-export type AiOperationName = Extract<(typeof OPERATIONS)[number], { readonly ai: "yes" }>["name"];
+export type AiOperationName = Exclude<
+  OperationName,
+  Extract<(typeof OPERATIONS)[number], { readonly ai: { readonly no: string } }>["name"]
+>;
 
 const BY_NAME: ReadonlyMap<string, Operation> = new Map(OPERATIONS.map((op) => [op.name, op]));
 

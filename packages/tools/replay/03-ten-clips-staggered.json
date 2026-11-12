@@ -1,0 +1,158 @@
+{
+  "about": "Ten clips one after the other, in one batch.",
+  "steps": [
+    {
+      "tool": "aq_project_status",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "track.add",
+            "timeline": "main",
+            "id": "track_stagger",
+            "kind": "video",
+            "name": "Stagger"
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s0",
+            "start": "0.0",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s1",
+            "start": "0.5",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s2",
+            "start": "1.0",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s3",
+            "start": "1.5",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s4",
+            "start": "2.0",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s5",
+            "start": "2.5",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s6",
+            "start": "3.0",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s7",
+            "start": "3.5",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s8",
+            "start": "4.0",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          },
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_stagger",
+            "id": "clip_s9",
+            "start": "4.5",
+            "duration": "0.5",
+            "source": {
+              "kind": "color",
+              "color": "#3366ff"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "done: 11 operations as one step",
+          "created: track_stagger (operations[0])",
+          "clip_s9 (operations[10])"
+        ]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["\"id\": \"clip_s9\"", "\"start\": \"4.5\""]
+    }
+  }
+}

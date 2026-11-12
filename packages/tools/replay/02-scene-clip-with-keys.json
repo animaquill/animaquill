@@ -1,0 +1,65 @@
+{
+  "about": "A clip of a scene and its keyframes, as one batch: one step.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_overlay",
+            "id": "clip_card2",
+            "start": "0",
+            "duration": "4",
+            "source": {
+              "kind": "scene",
+              "scene": "title"
+            }
+          },
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": {
+                  "clip": "clip_card2"
+                },
+                "path": "opacity",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    {
+                      "time": "0",
+                      "value": 0
+                    },
+                    {
+                      "time": "1",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["created: clip_card2 (operations[0])", "clip_card2: added"]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["\"id\": \"clip_card2\""]
+    },
+    "undoSteps": 1
+  }
+}

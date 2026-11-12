@@ -1,0 +1,92 @@
+{
+  "about": "Replacing a whole file needs it read in this conversation, and fails when it changed since.",
+  "steps": [
+    {
+      "tool": "aq_file_write",
+      "args": {
+        "path": "code/animate.js",
+        "text": "export const ease = (t) => t;\n"
+      },
+      "expect": {
+        "error": "file-not-read"
+      }
+    },
+    {
+      "tool": "aq_file_write",
+      "args": {
+        "path": "code/new.js",
+        "text": "export const one = 1;\n"
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["wrote code/new.js (new, 2 lines)", "syntax: ok"]
+      }
+    },
+    {
+      "tool": "aq_file_read",
+      "args": {
+        "path": "code/animate.js"
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "user": [
+        {
+          "type": "file.write",
+          "params": {
+            "path": "code/animate.js",
+            "text": "export const ease = (t) => t * t;\n"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "aq_file_write",
+      "args": {
+        "path": "code/animate.js",
+        "text": "export const ease = (t) => t;\n"
+      },
+      "expect": {
+        "error": "file-changed"
+      }
+    },
+    {
+      "tool": "aq_file_read",
+      "args": {
+        "path": "code/animate.js"
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_file_write",
+      "args": {
+        "path": "code/animate.js",
+        "text": "export const ease = (t) => t;\n"
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["replaced"]
+      }
+    },
+    {
+      "tool": "aq_file_write",
+      "args": {
+        "path": "scenes/title/scene.json",
+        "text": "{}"
+      },
+      "expect": {
+        "error": "path-not-allowed"
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "code/animate.js": ["(t) => t;"],
+      "code/new.js": ["one = 1"]
+    }
+  }
+}

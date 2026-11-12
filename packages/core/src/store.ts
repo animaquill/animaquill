@@ -226,6 +226,13 @@ export interface LocalChange {
   readonly back: number | undefined;
 }
 
+/** Where one change wrote, and who made it, see `ProjectStore.changesSince`. */
+export interface ChangeRecord {
+  readonly revision: number;
+  readonly origin: Origin;
+  readonly paths: readonly Path[];
+}
+
 export interface HistoryEntry {
   readonly revision: number;
   readonly origin: Origin;
@@ -512,6 +519,8 @@ export class ProjectStore {
   /** See `RevisionId`. */
   readonly #epoch = newEpoch();
   #history: HistoryEntry[] = [];
+  /** What every change wrote, whoever made it, also other windows and the platform: see `changesSince`. */
+  #changes: ChangeRecord[] = [];
   /** Which write the document holds where. Only taking changes back needs this: see `Written`. */
   #written: Written = UNWRITTEN;
   /** The change being written here, which already knows what it wrote. */
@@ -809,6 +818,19 @@ export class ProjectStore {
   /** The latest changes, newest last. For showing what happened and who did it. */
   get history(): readonly HistoryEntry[] {
     return this.#history;
+  }
+
+  /**
+   * Every change after a revision of this store, oldest first, with who made it and where it wrote:
+   * also those of other windows and the platform, which the history does not have. Undefined when
+   * the record no longer goes back that far, so that nobody takes "nothing changed" from it.
+   */
+  changesSince(revision: Revision): readonly ChangeRecord[] | undefined {
+    const since = this.revisionOf(revision);
+    if (since === undefined) return undefined;
+    const first = this.#changes[0];
+    if (since < this.#revision && (!first || first.revision > since + 1)) return undefined;
+    return this.#changes.filter((change) => change.revision > since);
   }
 
   execute(call: CommandCall, options: ExecuteOptions = {}): CommandResult {
@@ -1407,6 +1429,7 @@ export class ProjectStore {
     };
 
     const watching = this.#watching?.origin === transaction.origin ? this.#watching : undefined;
+    const paths: Path[] = [];
     for (const event of events) {
       const base = event.path.map(String);
       if (event.target instanceof Y.Text) {
@@ -1414,6 +1437,7 @@ export class ProjectStore {
         mutator.set(base, event.target.toString());
         remember(base);
         if (!isLoad) this.#markWrite(base, write, false);
+        paths.push(base);
         continue;
       }
       const target = event.target as Y.Map<unknown>;
@@ -1431,7 +1455,12 @@ export class ProjectStore {
         const where = isStanding(path) && !isOld ? writePathOf(path) : path;
         remember(where);
         if (!isLoad) this.#markWrite(where, write, removed || isContainer(where));
+        paths.push(where);
       });
+    }
+    if (!isLoad && paths.length > 0) {
+      this.#changes.push({ revision: this.#revision, origin, paths });
+      if (this.#changes.length > MAX_HISTORY) this.#changes = this.#changes.slice(-MAX_HISTORY);
     }
 
     this.#written = writes.root;

@@ -8,12 +8,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "guide-texts": "node scripts/guide-texts.ts"
   },
   "dependencies": {
-    "@animaquill/core": "workspace:*"
+    "@animaquill/core": "workspace:*",
+    "@animaquill/schema": "workspace:*",
+    "acorn": "8.19.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@types/node": "26.0.0",
     "typescript": "7.0.2",
     "vitest": "5.1.0"
   }

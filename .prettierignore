@@ -6,3 +6,5 @@ packages/schema/json-schema
 dist
 test-results
 playwright-report
+packages/tools/src/__snapshots__/
+packages/tools/src/guide/texts.ts

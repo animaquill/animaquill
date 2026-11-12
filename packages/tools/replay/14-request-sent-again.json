@@ -1,0 +1,53 @@
+{
+  "about": "A change sent again with the same request_id is not run again, and gives the same result.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "request_id": "r1",
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "7",
+            "name": "Once"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "request_id": "r1",
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "7",
+            "name": "Once"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "same": true
+      }
+    }
+  ],
+  "end": {
+    "count": {
+      "timelines/main/timeline.json": {
+        "\"Once\"": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "about": "A new track cannot take the id of a section: sections, tracks and clips of a timeline share their ids.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "track.add",
+            "timeline": "main",
+            "id": "section_intro",
+            "kind": "video"
+          }
+        ]
+      },
+      "expect": {
+        "error": "id-taken",
+        "lines": ["The id section_intro is taken by a section"]
+      }
+    }
+  ],
+  "end": {
+    "absent": {
+      "timelines/main/timeline.json": ["\"id\": \"section_intro\",\n      \"kind\""]
+    }
+  }
+}

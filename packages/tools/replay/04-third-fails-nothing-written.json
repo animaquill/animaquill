@@ -1,0 +1,93 @@
+{
+  "about": "The third operation of a batch fails: nothing of it is written, and the next change of the same answer does not run.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "id": "marker_new",
+            "time": "3"
+          },
+          {
+            "op": "clip.move",
+            "timeline": "main",
+            "clips": [
+              {
+                "clip": "clip_idea",
+                "start": "12"
+              }
+            ]
+          },
+          {
+            "op": "clip.trim",
+            "timeline": "main",
+            "clip": "clip_ideaa",
+            "end": "3"
+          },
+          {
+            "op": "marker.remove",
+            "timeline": "main",
+            "marker": "marker_hook"
+          }
+        ]
+      },
+      "expect": {
+        "error": "not-found",
+        "lines": [
+          "error not-found in operations[2] (clip.trim): There is no clip clip_ideaa.",
+          "similar: clip_idea",
+          "operations[0] and [1] were fine; nothing was written; operations after [2] were not checked"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "sameAnswer": true,
+      "args": {
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "4"
+          }
+        ]
+      },
+      "expect": {
+        "error": "not-run"
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "id": "marker_late",
+            "time": "4"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["marker_hook", "marker_late"]
+    },
+    "absent": {
+      "timelines/main/timeline.json": ["marker_new", "\"start\": \"12\""]
+    }
+  }
+}

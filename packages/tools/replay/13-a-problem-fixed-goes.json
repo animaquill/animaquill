@@ -1,0 +1,69 @@
+{
+  "about": "A problem that a change brings shows in the result and in aq_check_run, and goes once it is fixed.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "draft": true
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["problems: new 1 | resolved 0", "new W unsupported-draft clip_title"]
+      }
+    },
+    {
+      "tool": "aq_check_run",
+      "args": {
+        "subject": "clip_title"
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["W unsupported-draft clip_title"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "draft": false
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["problems: new 0 | resolved 1", "resolved W unsupported-draft clip_title"]
+      }
+    },
+    {
+      "tool": "aq_check_run",
+      "args": {
+        "subject": "clip_title"
+      },
+      "expect": {
+        "ok": true,
+        "absent": ["unsupported-draft"]
+      }
+    }
+  ]
+}

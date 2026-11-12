@@ -126,7 +126,7 @@ describe("command tools", () => {
     const clip = { start: "0", duration: "1", source: { kind: "color", color: "#ff0000" } };
     await expect(
       run("clip_add", { timeline: "main", track, ...clip, movedFrom: "somewhere" }),
-    ).rejects.toThrow(/^user-only: Only the user can use the parameter movedFrom/);
+    ).rejects.toThrow(/^not-allowed: Only the user can use the parameter movedFrom/);
     await expect(run("clip_add", { timeline: "main", track, ...clip })).resolves.toContain(
       '"ok":true',
     );

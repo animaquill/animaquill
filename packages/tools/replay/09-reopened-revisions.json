@@ -1,0 +1,60 @@
+{
+  "about": "The project opens again, as after a reload: the next result says so, revisions of before are refused, and reading again lets the change through.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "reopen": true
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_idea",
+            "changes": {
+              "name": "AI"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "stale-revision",
+        "lines": [
+          "error stale-revision: The project was reopened since you read it",
+          "others: the project was reopened since your last call"
+        ]
+      }
+    },
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_idea",
+            "changes": {
+              "name": "AI"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "about": "Hole 2 of the plan: a change of AI elsewhere, also elsewhere in the same clip, must not count as having seen what the user changed.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "user": [
+        {
+          "type": "clip.update",
+          "params": {
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "用户改的"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_logo",
+            "changes": {
+              "name": "B"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": {
+                  "clip": "clip_title"
+                },
+                "path": "param.size",
+                "op": "set",
+                "value": 80
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "A, as AI knew it"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "conflict"
+      }
+    },
+    {
+      "tool": "aq_object_read",
+      "args": {
+        "ids": ["clip_title"]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["用户改的"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "A, read again"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["A, read again"]
+    }
+  }
+}

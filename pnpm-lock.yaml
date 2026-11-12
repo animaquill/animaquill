@@ -375,7 +375,19 @@ importers:
       '@animaquill/core':
         specifier: workspace:*
         version: link:../core
+      '@animaquill/schema':
+        specifier: workspace:*
+        version: link:../schema
+      acorn:
+        specifier: 8.19.0
+        version: 8.19.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
+      '@types/node':
+        specifier: 26.0.0
+        version: 26.0.0
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1097,6 +1109,11 @@ packages:
 
   '@vitest/spy@5.1.0':
     resolution: {integrity: sha512-2DPO5OMHWKrBngC+fCmTQqemNF0gidRhp3lxbBmRhW+M1XJrfgPpqNqWVevXtn2f2ufD5ZaR1B6B641aAlcX5A==}
+
+  acorn@8.19.0:
+    resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
+    engines: {node: '>=0.4.0'}
+    hasBin: true
 
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
@@ -2220,6 +2237,8 @@ snapshots:
       vite: 8.3.6(@types/node@26.0.0)
 
   '@vitest/spy@5.1.0': {}
+
+  acorn@8.19.0: {}
 
   agent-base@7.1.4: {}
 

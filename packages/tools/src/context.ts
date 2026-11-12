@@ -1,0 +1,170 @@
+import {
+  USER,
+  cloudSeqOf,
+  entryOf,
+  objectKey,
+  objectOfPath,
+  type ObjectRef,
+  type ProjectState,
+  type ProjectStore,
+} from "@animaquill/core";
+import type { CallerState } from "./caller.ts";
+import type { ToolHost, ToolResult } from "./types.ts";
+
+/** How long one result may be, in characters: about 10 000 tokens, which leaves room in small models. */
+export const MAX_RESULT = 40_000;
+/** How long a name is shown, in characters. */
+const MAX_NAME = 40;
+/** How many objects the line about the changes of others names. */
+const MAX_OTHERS = 5;
+
+/** A name as results show it: quoted as JSON, cut short when it is long. */
+export function quoted(name: string): string {
+  const short = [...name].length > MAX_NAME ? `${[...name].slice(0, MAX_NAME).join("")}…` : name;
+  return JSON.stringify(short);
+}
+
+/** An id and, where it has one, its name. */
+export const named = (id: string, name: string | undefined): string =>
+  name === undefined || name === "" ? id : `${id} ${quoted(name)}`;
+
+/** The name of an object in the project, where it has one. */
+export function nameOf(state: ProjectState, ref: ObjectRef): string | undefined {
+  const timeline = ref.timeline === undefined ? undefined : entryOf(state.timelines, ref.timeline);
+  switch (ref.kind) {
+    case "clip":
+      return timeline && entryOf(timeline.clips, ref.id)?.name;
+    case "track":
+      return timeline && entryOf(timeline.tracks, ref.id)?.name;
+    case "section":
+      return timeline && entryOf(timeline.sections, ref.id)?.name;
+    case "marker":
+      return timeline && entryOf(timeline.markers, ref.id)?.name;
+    case "timeline":
+      return entryOf(state.timelines, ref.id)?.name;
+    case "scene":
+      return entryOf(state.scenes, ref.id)?.name;
+    case "sound":
+      return entryOf(state.sounds, ref.id)?.name;
+    case "asset":
+      return entryOf(state.assets, ref.id)?.name;
+    default:
+      return undefined;
+  }
+}
+
+/** An object as results name it: its kind where the id does not say it, its id, its name. */
+export function objectText(state: ProjectState, ref: ObjectRef): string {
+  if (ref.kind === "project") return "the project settings";
+  const kind = ["clip", "track", "section"].includes(ref.kind) ? "" : `${ref.kind} `;
+  return `${kind}${named(ref.id, nameOf(state, ref))}`;
+}
+
+/** Who made a change, in words. */
+export function whoMade(origin: string): string {
+  if (origin === USER) return "the user";
+  if (origin.startsWith("ai:")) return "another AI task";
+  if (origin.startsWith("folder:")) return "a change of the files in the project folder";
+  if (cloudSeqOf(origin) !== undefined) return "another device";
+  return "another window";
+}
+
+/** What of an object a path is about, as the parameters of operations name it: `start`, `properties.opacity`. */
+export function fieldOf(path: readonly string[], ref: ObjectRef): string | undefined {
+  const at = path.indexOf(ref.id);
+  const rest = at < 0 ? [] : path.slice(at + 1);
+  const [first, second] = rest;
+  if (first === undefined) return undefined;
+  return (first === "properties" || first === "effects") && second !== undefined
+    ? `${first}.${second}`
+    : first;
+}
+
+/** Everything a tool works with during one call. */
+export interface Call {
+  readonly host: ToolHost;
+  readonly caller: CallerState;
+  readonly store: ProjectStore;
+}
+
+/**
+ * What others changed since the last call of this caller, as one line that only says what happened:
+ * who, which objects, which of their fields. What to do about it is for the system prompt to say.
+ */
+export function othersLine(call: Call): string | undefined {
+  const { caller, store, host } = call;
+  const since = caller.lastCall;
+  if (since === undefined) return undefined;
+  if (store.revisionOf(since) === undefined) {
+    return "others: the project was reopened since your last call, so what you read before may be out of date.";
+  }
+  const changes = store.changesSince(since);
+  if (!changes) {
+    return "others: there were more changes by others since your last call than the tools keep track of.";
+  }
+  const mine = host.origin();
+  const byWho = new Map<string, Map<string, { ref: ObjectRef; fields: Set<string> }>>();
+  for (const { origin, paths } of changes) {
+    if (origin === mine) continue;
+    const who = whoMade(origin);
+    const objects = byWho.get(who) ?? new Map();
+    byWho.set(who, objects);
+    for (const path of paths) {
+      const ref = objectOfPath(path);
+      const key = objectKey(ref);
+      const known = objects.get(key) ?? { ref, fields: new Set<string>() };
+      objects.set(key, known);
+      const field = fieldOf(path, ref);
+      if (field !== undefined && ref.kind !== "file") known.fields.add(field);
+    }
+  }
+  if (byWho.size === 0) return undefined;
+  const state = store.getState();
+  let left = MAX_OTHERS;
+  let more = 0;
+  const parts = [...byWho].map(([who, objects]) => {
+    const said = [...objects.values()].flatMap(({ ref, fields }) => {
+      if (left <= 0) {
+        more += 1;
+        return [];
+      }
+      left -= 1;
+      const list = fields.size > 0 ? ` (${[...fields].slice(0, 4).join(", ")})` : "";
+      return [`${objectText(state, ref)}${list}`];
+    });
+    return said.length > 0 ? `${who} changed ${said.join(", ")}` : `${who} changed more`;
+  });
+  return `others: since your last call ${parts.join("; ")}${more > 0 ? ` and ${more} more` : ""}.`;
+}
+
+/** Lines as one text, cut at a whole line when too long, with a word on what was left out. */
+export function fitted(lines: readonly string[], more?: (left: number) => string): string {
+  let length = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    length += (lines[index] as string).length + 1;
+    if (length > MAX_RESULT - 200) {
+      const left = lines.length - index;
+      const tail = more ? more(left) : `${left} more lines left out: ask for less at once.`;
+      return [...lines.slice(0, index), tail].join("\n");
+    }
+  }
+  return lines.join("\n");
+}
+
+/** A result of a call that worked: the revision first, the line about others last. */
+export function answer(
+  call: Call,
+  lines: readonly string[],
+  data?: Readonly<Record<string, unknown>>,
+  others?: string,
+): ToolResult {
+  const text = fitted([`rev ${call.store.revisionId}`, ...lines, ...(others ? [others] : [])]);
+  return { text, isError: false, ...(data && { data }) };
+}
+
+/** A result of a call that did not work. */
+export const failed = (text: string, data?: Readonly<Record<string, unknown>>): ToolResult => ({
+  text,
+  isError: true,
+  ...(data && { data }),
+});

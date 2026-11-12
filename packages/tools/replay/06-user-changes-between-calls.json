@@ -1,0 +1,73 @@
+{
+  "about": "The user changes a clip between two calls: a change of the same clip is refused, one of another clip goes through.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "user": [
+        {
+          "type": "clip.update",
+          "params": {
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "用户改的"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_logo",
+            "changes": {
+              "name": "AI renamed"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["others: since your last call the user changed clip_title \"用户改的\" (name)."]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_title",
+            "changes": {
+              "name": "AI renamed too"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "conflict",
+        "lines": [
+          "error conflict: the user changed clip_title \"用户改的\" (name) after you last read it"
+        ]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["用户改的", "AI renamed"]
+    },
+    "absent": {
+      "timelines/main/timeline.json": ["AI renamed too"]
+    }
+  }
+}

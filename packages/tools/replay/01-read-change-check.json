@@ -1,0 +1,56 @@
+{
+  "about": "The whole way: an overview, the timeline, a change, and a check.",
+  "steps": [
+    {
+      "tool": "aq_project_status",
+      "expect": {
+        "ok": true,
+        "lines": ["project \"原子是什么\"", "editable=yes", "timelines (2): main"]
+      }
+    },
+    {
+      "tool": "aq_timeline_read",
+      "args": {
+        "timeline": "main"
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["clip_idea", "sections: section_intro"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "summary": "Move the sketch later",
+        "operations": [
+          {
+            "op": "clip.move",
+            "timeline": "main",
+            "clips": [
+              {
+                "clip": "clip_idea",
+                "start": "12"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["done: 1 operations as one step", "clip_idea \"样片：换个开场\": start 10→12"]
+      }
+    },
+    {
+      "tool": "aq_check_run",
+      "expect": {
+        "ok": true,
+        "lines": ["format: ok", "W unsupported-draft clip_idea"]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["\"start\": \"12\""]
+    }
+  }
+}

@@ -1,0 +1,87 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`results > of aq_check_run read as they did 1`] = `
+"rev <epoch>:0
+0 errors, 17 warnings; format: ok
+sources: project data; scene runtime: not checked here
+problems 1-5 of 17:
+W unsupported-audio-property clip_interview "采访" at time.speed: time.speed is not applied by this editor version yet; preview and export ignore it
+W unsupported-library clip_logo: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
+W unsupported-library clip_card: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
+W unsupported-draft clip_idea "样片：换个开场": a draft clip still shows and exports in this editor version
+W unsupported-audio-property clip_interview_audio at audio.pan: audio.pan is not applied by this editor version yet; preview and export ignore it
+12 more: call again with cursor "c1""
+`;
+
+exports[`results > of aq_guide read as they did 1`] = `
+"rev <epoch>:0
+topic ops/property.edit
+# property.edit
+
+Set properties of clips and their keyframes, in one step.
+
+Signature: property.edit {timeline, edits:[PropertyEdit]}
+
+Parameters:
+- timeline (required): Timeline id (aq_project_status).
+- edits (required): Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp".
+
+Returns nothing besides the list of changes.
+
+Errors it can give: not-found, invalid-value, not-animatable, invalid-params, unknown-operation, not-allowed, storage-only, project-locked, read-only, missing-updates, conflict, stale-revision, would-break-document
+
+Examples (illustrative; their ids come from a sample project):
+- Fade a property in with two keyframes: {"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_title"},"path":"opacity","op":"set","value":{"keys":[{"time":"0","value":0},{"time":"1","value":1}]}}]}"
+`;
+
+exports[`results > of aq_object_read read as they did 1`] = `
+"rev <epoch>:0
+clip clip_interview "采访" timeline=main track=track_video 5..17.5
+  id="clip_interview" name="采访" start="5" duration="12.5" source(2) offset="1.5" link="link_interview" sectionFit="hold" properties(5) effects(3)
+track track_voice "配音" timeline=main
+  id="track_voice" name="配音" kind="audio" role="voice" properties(1)
+project settings
+  formatVersion=1 id="atoms-demo" name="原子是什么" description="一条用到格式每种能力的示例项目。" languages(2) formats(2) timelines(2) fonts(1) cover(2) credits(1)"
+`;
+
+exports[`results > of aq_project_status read as they did 1`] = `
+"rev <epoch>:0
+project "原子是什么" fps=30 formats=landscape(1920x1080) vertical(1080x1920) languages=zh-CN en
+editable=yes
+timelines (2): main "主线" 0..30.005 tracks=5 clips=11 | highlight "60 秒精华" 0..8 tracks=1 clips=1
+scenes (1): title "标题卡" entry=index.html
+sounds (1): impacts "打击音效" entry=main.js
+assets (7): font-sans font path="assets/fonts/sans.woff2" | interview "采访" video path="assets/interview.mp4" 12.5s 1920x1080 | logo image path="assets/logo.svg" | narration-en audio path="assets/voice/en.flac" 26s | narration-zh audio path="assets/voice/zh.flac" 20s | raw-footage video path="assets/raw.mov" | studio-loop audio path="assets/loop.wav"
+code files (1): code/animate.js
+problems: 0 errors, 17 warnings (aq_check_run lists them)"
+`;
+
+exports[`results > of aq_search read as they did 1`] = `
+"rev <epoch>:0
+found 1-3 of 3:
+clip timeline=main clip_logo track=track_video 17.5..25 image library=lib_7f3a:assets/logo.png props=4
+join timeline=main join_2 clip_logo>clip_card lib_7f3a:ink-wipe(0.8)
+asset logo image path="assets/logo.svg""
+`;
+
+exports[`results > of aq_timeline_read read as they did 1`] = `
+"rev <epoch>:0
+timeline main "主线" 0..30.005
+sections: section_intro "片头" 0..5 | section_body "讲解" 5..25 | section_end "结尾" 25..30.005
+tracks (back of the picture first): track_video "画面" video | track_overlay "叠加" video locked | track_voice "配音" audio role=voice | track_music "音乐" audio role=music | track_captions "字幕" caption
+clips 1-11 of 11, by start:
+clip_title "标题" track=track_video 0..5 scene=title enter=fade(0.5) props=5 animated=2
+clip_voice track=track_voice 0..20 audio asset=narration-zh props=1
+clip_hit track=track_music 5..6 sound=impacts
+clip_interview "采访" track=track_video 5..17.5 video asset=interview offset=1.5 link=link_interview effects=fx_crop:crop,fx_blur:blur,fx_grade:plugin.film-grade props=5 animated=2
+clip_line track=track_captions 5..8 caption props=1
+clip_bed track=track_music 6..30 audio library=lib_7f3a:music/bed.flac loop props=1 animated=1
+clip_lottie track=track_overlay 6..10 kind=plugin.lottie loop
+clip_idea "样片：换个开场" track=track_overlay 10..12 color=#000000 hidden draft
+clip_logo track=track_video 17.5..25 image library=lib_7f3a:assets/logo.png props=4
+clip_interview_audio track=track_voice 20..25 audio asset=studio-loop link=link_interview enter=fade(0.2) exit=fade-linear(0.2) props=3
+clip_card track=track_video 25..30.005 scene library=lib_7f3a:title-card exit=fade(1/3)
+joins: join_1 clip_title>clip_interview fade(1) | join_2 clip_logo>clip_card lib_7f3a:ink-wipe(0.8)
+markers: marker_hook "钩子" 0.342 | marker_turn "转折" 5
+versions with overrides: format.vertical, language.en, version.en.vertical"
+`;

@@ -1,0 +1,84 @@
+{
+  "about": "Edits of code by exact text: not found, not unique, and one that works and is checked for syntax; then one that breaks the syntax.",
+  "steps": [
+    {
+      "tool": "aq_file_read",
+      "args": {
+        "path": "code/animate.js"
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["     1→export const ease"]
+      }
+    },
+    {
+      "tool": "aq_file_edit",
+      "args": {
+        "path": "code/animate.js",
+        "edits": [
+          {
+            "old_text": "export const easing",
+            "new_text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "error": "text-not-found",
+        "lines": ["most like line 1"]
+      }
+    },
+    {
+      "tool": "aq_file_edit",
+      "args": {
+        "path": "code/animate.js",
+        "edits": [
+          {
+            "old_text": "t",
+            "new_text": "u"
+          }
+        ]
+      },
+      "expect": {
+        "error": "text-not-unique",
+        "lines": ["on lines 1, 1"]
+      }
+    },
+    {
+      "tool": "aq_file_edit",
+      "args": {
+        "path": "code/animate.js",
+        "edits": [
+          {
+            "old_text": "(3 - 2 * t)",
+            "new_text": "(3 - 2 * t) // smooth"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["edited code/animate.js: 1 replacement", "syntax: ok"]
+      }
+    },
+    {
+      "tool": "aq_file_edit",
+      "args": {
+        "path": "code/animate.js",
+        "edits": [
+          {
+            "old_text": "// smooth",
+            "new_text": "+ (("
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["syntax: error at line 1"]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "code/animate.js": ["+ (("]
+    }
+  }
+}

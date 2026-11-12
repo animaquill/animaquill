@@ -1,0 +1,61 @@
+{
+  "about": "A question stops the changes of its answer; a second question in one answer is refused.",
+  "steps": [
+    {
+      "tool": "aq_propose",
+      "args": {
+        "kind": "question",
+        "question": "Which clip?",
+        "options": [
+          {
+            "label": "The title"
+          },
+          {
+            "label": "The logo"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "terminate": true,
+        "lines": ["The question is shown to the user. Their answer comes as the next user message."]
+      }
+    },
+    {
+      "tool": "aq_propose",
+      "sameAnswer": true,
+      "args": {
+        "kind": "question",
+        "question": "Really?",
+        "options": [
+          {
+            "label": "Yes"
+          },
+          {
+            "label": "No"
+          }
+        ]
+      },
+      "expect": {
+        "error": "one-at-a-time"
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "sameAnswer": true,
+      "args": {
+        "operations": [
+          {
+            "op": "marker.add",
+            "timeline": "main",
+            "time": "7"
+          }
+        ]
+      },
+      "expect": {
+        "error": "not-run",
+        "lines": ["waiting for the user"]
+      }
+    }
+  ]
+}

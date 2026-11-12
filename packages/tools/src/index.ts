@@ -1,6 +1,17 @@
 /**
- * The tools that AI uses on a project, the same for the assistant in the browser, the command line
- * and the MCP of a platform. So far only what they say when something fails, see `failures-en.ts`;
- * the tools themselves follow (6.5b ③).
+ * The tools that AI uses on an AnimaQuill project, the same for the assistant in the browser, a
+ * command line and the MCP of a platform: no pi, no page. See `createToolset`.
  */
-export { failureText, operationFailureText } from "./failures-en.ts";
+export { CallerState } from "./caller.ts";
+export type { ObjectChange } from "./changes.ts";
+export { OPERATION_DOCS, type OperationDoc, type OperationExample } from "./docs/operations.ts";
+export { aiCode, failureText, failureWords, operationFailureText } from "./failures-en.ts";
+export { TOOLSET_VERSION, createToolset } from "./toolset.ts";
+export type {
+  JsonSchema,
+  SelectionFacts,
+  Tool,
+  ToolAnnotations,
+  ToolHost,
+  ToolResult,
+} from "./types.ts";

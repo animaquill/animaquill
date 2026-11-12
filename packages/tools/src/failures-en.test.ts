@@ -1,7 +1,7 @@
-import { FAILURE_CODES, type CommandFailure } from "@animaquill/core";
+import { FAILURE_CODES, type CommandFailure, type FailureCode } from "@animaquill/core";
 import { FAILURE_SAMPLES, INVALID_VALUE_SAMPLES } from "@animaquill/core/failure-samples";
 import { describe, expect, it } from "vitest";
-import { FAILURE_TEXTS, failureText, operationFailureText } from "./failures-en.ts";
+import { FAILURE_TEXTS, aiCode, failureText, operationFailureText } from "./failures-en.ts";
 
 /** Chinese, and the punctuation that comes with it. */
 const CJK = /[　-〿一-鿿＀-￯]/;
@@ -23,7 +23,7 @@ describe("what failures say to AI", () => {
     "for %s is English, with the code first",
     (code, sample) => {
       const text = failureText(sample as CommandFailure);
-      expect(text.startsWith(`${code}: `)).toBe(true);
+      expect(text.startsWith(`${aiCode(code as FailureCode)}: `)).toBe(true);
       expect(text.length).toBeGreaterThan(code.length + 10);
       expect(text).not.toMatch(/undefined|\[object Object\]/);
       let own = text;
@@ -39,8 +39,16 @@ describe("what failures say to AI", () => {
       index: 2,
     };
     expect(operationFailureText(failure, ["clip.add", "clip.move", "clip.remove"])).toBe(
-      "Operation 3 (clip.remove) failed, nothing was changed. not-found: There is no clip c9.",
+      "error not-found in operations[2] (clip.remove): There is no clip c9.\noperations[0] and [1] were fine; nothing was written",
     );
-    expect(operationFailureText(failure, ["clip.remove"])).toBe("not-found: There is no clip c9.");
+    const first = { ...failure, index: 0 };
+    expect(operationFailureText(first, ["clip.remove", "clip.add"])).toBe(
+      "error not-found in operations[0] (clip.remove): There is no clip c9.\nnothing was written; operations after [0] were not checked",
+    );
+  });
+
+  it("says what only people may do in the words of the tools", () => {
+    const failure: CommandFailure = { code: "user-only", params: { command: "project.setTags" } };
+    expect(failureText(failure)).toMatch(/^not-allowed: Only the user can do project.setTags/);
   });
 });

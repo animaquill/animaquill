@@ -1,3 +1,5 @@
+import type { ObjectKind, ObjectRef } from "../object-of-path.ts";
+
 /**
  * What is wrong with a project, as data: a stable code with its parameters, about an object or a
  * place in a file. Words come from whoever shows it (the editor in Chinese, the tools for AI in
@@ -28,11 +30,12 @@ export type ProblemSource =
 /** The sources that only a host can tell, and reports. */
 export type ReportedSource = "runtime" | "editor" | "folder" | "import";
 
-/** What a problem is about. Clips and tracks are by timeline, because their ids are only unique there. */
-export interface ProblemSubject {
-  readonly kind: "clip" | "track" | "timeline" | "scene" | "sound" | "asset";
-  readonly id: string;
-  readonly timeline?: string;
+/**
+ * What a problem is about: an object, as changes and what AI read are about objects, see
+ * `objectOfPath`. Clips and tracks are by timeline, because their ids are only unique there.
+ */
+export interface ProblemSubject extends ObjectRef {
+  readonly kind: Extract<ObjectKind, "clip" | "track" | "timeline" | "scene" | "sound" | "asset">;
 }
 
 /** A command as one step, with its parameters: what `ProjectStore.execute` takes. */

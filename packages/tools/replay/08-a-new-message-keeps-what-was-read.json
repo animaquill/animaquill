@@ -1,0 +1,54 @@
+{
+  "about": "Hole 3 of the plan: what AI read stays what it read over the messages of a conversation; a change of the user between messages is not taken as seen.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "message": true
+    },
+    {
+      "user": [
+        {
+          "type": "clip.update",
+          "params": {
+            "timeline": "main",
+            "clip": "clip_idea",
+            "changes": {
+              "name": "用户在两条消息之间改的"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "message": true
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.update",
+            "timeline": "main",
+            "clip": "clip_idea",
+            "changes": {
+              "name": "AI"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": "conflict"
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["用户在两条消息之间改的"]
+    }
+  }
+}

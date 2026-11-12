@@ -644,3 +644,26 @@ describe("what stays as it was", () => {
     expect(copy.revisionOf(0)).toBe(0);
   });
 });
+
+describe("changes since a revision", () => {
+  it("are every change, also of other windows, with who made it and where it wrote", () => {
+    const store = open();
+    const at = store.revisionId;
+    success(store.execute({ type: "project.rename", params: { name: "用户改的" } }));
+    const other = new Y.Doc();
+    Y.applyUpdate(other, store.encodeState());
+    other.transact(() => {
+      (other.getMap("project").get("manifest") as Y.Map<unknown>).set("description", "别的窗口");
+    });
+    store.applyUpdates([Y.encodeStateAsUpdate(other, Y.encodeStateVector(store.doc))]);
+    const changes = store.changesSince(at) ?? [];
+    expect(changes.map(({ origin }) => origin)).toEqual([USER, "remote"]);
+    expect(changes[0]?.paths).toEqual([["manifest", "name"]]);
+    expect(changes[1]?.paths).toEqual([["manifest", "description"]]);
+    expect(store.changesSince(store.revisionId)).toEqual([]);
+  });
+
+  it("are not told for a revision of another store", () => {
+    expect(open().changesSince(open().revisionId)).toBeUndefined();
+  });
+});

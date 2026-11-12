@@ -382,6 +382,7 @@ export {
   aiTask,
   folderBatch,
   mergeUpdates,
+  type ChangeRecord,
   type CheckedChange,
   type CommandCall,
   type CommandFailure,
