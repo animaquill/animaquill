@@ -1,4 +1,10 @@
-import { objectKey, type ProblemSeverity, type ProjectProblem } from "@animaquill/core";
+import {
+  entryOf,
+  objectKey,
+  type ProblemSeverity,
+  type ProjectProblem,
+  type ProjectState,
+} from "@animaquill/core";
 import { z } from "zod";
 import { answer, failed } from "../context.ts";
 import { offsetOf, paged } from "../page.ts";
@@ -33,7 +39,7 @@ export const propose: ToolDefinition<z.output<typeof ProposeParams>> = {
         "error one-at-a-time: this answer already asks the user a question; one question per answer.",
       );
     }
-    caller.answer.proposed = true;
+    caller.hold("asked");
     const result = answer(
       call,
       ["The question is shown to the user. Their answer comes as the next user message."],
@@ -67,6 +73,75 @@ const SOURCE_WORDS: Readonly<Record<string, string>> = {
   folder: "project folder",
   import: "import",
 };
+
+type Owner = { readonly kind: "scene" | "sound"; readonly id: string };
+
+/** The scene or sound whose code a file is, by its path; shared code is every one's. */
+function ownersOfPath(state: ProjectState, path: string): readonly Owner[] {
+  const [top, id] = path.split("/");
+  if (top === "scenes" && id !== undefined && entryOf(state.scenes, id))
+    return [{ kind: "scene", id }];
+  if (top === "sounds" && id !== undefined && entryOf(state.sounds, id))
+    return [{ kind: "sound", id }];
+  if (top === "code") {
+    return [
+      ...Object.keys(state.scenes).map((scene) => ({ kind: "scene", id: scene }) as const),
+      ...Object.keys(state.sounds).map((sound) => ({ kind: "sound", id: sound }) as const),
+    ];
+  }
+  return [];
+}
+
+/** The scene or sound a problem of the runtime came from. */
+function ownerOf(problem: ProjectProblem): Owner | undefined {
+  const { subject } = problem;
+  if (subject?.kind === "scene" || subject?.kind === "sound")
+    return { kind: subject.kind, id: subject.id };
+  const [top, id] = (problem.file ?? "").split("/");
+  if ((top === "scenes" || top === "sounds") && id !== undefined) {
+    return { kind: top === "scenes" ? "scene" : "sound", id };
+  }
+  return undefined;
+}
+
+/** Whether any clip shows or plays a scene or a sound. */
+function hasClips(state: ProjectState, { kind, id }: Owner): boolean {
+  return Object.values(state.timelines).some((timeline) =>
+    Object.values(timeline.clips).some(
+      ({ source }) =>
+        (kind === "scene" && source.kind === "scene" && source.scene === id) ||
+        (kind === "sound" && source.kind === "sound" && source.sound === id),
+    ),
+  );
+}
+
+/** Code this conversation changed that has not run since, a line for each scene or sound. */
+function notRunLines(
+  state: ProjectState,
+  changed: ReadonlySet<string>,
+  ran: (owner: Owner) => boolean,
+): string[] {
+  const byOwner = new Map<string, { owner: Owner; paths: string[] }>();
+  for (const path of changed) {
+    if (entryOf(state.files, path) === undefined) continue;
+    for (const owner of ownersOfPath(state, path)) {
+      if (ran(owner)) continue;
+      const key = `${owner.kind}\n${owner.id}`;
+      const entry = byOwner.get(key) ?? { owner, paths: [] };
+      byOwner.set(key, entry);
+      entry.paths.push(path);
+    }
+  }
+  return [...byOwner.values()].slice(0, 20).map(({ owner, paths }) => {
+    const { kind, id } = owner;
+    const why = !hasClips(state, owner)
+      ? `${kind} ${id} has no clips, so it does not run`
+      : kind === "scene"
+        ? `scene ${id} runs while one of its clips is in the preview`
+        : `sound ${id} runs when the editor makes it for its clips`;
+    return `not run since changed: ${paths.join(", ")} (${why})`;
+  });
+}
 
 export const checkRun: ToolDefinition<z.output<typeof CheckParams>> = {
   name: "aq_check_run",
@@ -113,7 +188,16 @@ export const checkRun: ToolDefinition<z.output<typeof CheckParams>> = {
     } else {
       head.unshift(format);
     }
-    const items = listed.flatMap((problem) => problemLines(state, problem).join("\n"));
+    // What changed since the editor last ran it: what code threw then is from before the change.
+    const ran = host.ranNow && ((owner: Owner) => host.ranNow?.(owner, state) === true);
+    if (ran) head.push(...notRunLines(state, call.caller.changedCode, ran));
+    const before = (problem: ProjectProblem) => {
+      const owner = problem.source === "runtime" ? ownerOf(problem) : undefined;
+      return ran && owner && !ran(owner) ? "from the code before its last change" : undefined;
+    };
+    const items = listed.flatMap((problem) =>
+      problemLines(state, problem, before(problem)).join("\n"),
+    );
     const subjects = listed.flatMap(({ subject }) => (subject ? [objectKey(subject)] : []));
     return paged(call, "aq_check_run", args, {
       head,

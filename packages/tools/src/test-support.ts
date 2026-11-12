@@ -107,3 +107,10 @@ export const ADVICE: readonly RegExp[] = [
   /\bread (it|them|the file) again\b/i,
   /\bplease\b/i,
 ];
+
+/**
+ * A sentence that starts with a verb in its plain form, as a command does: "Send them in several
+ * batches.", "Pass timeline.". Results, errors and descriptions say what is so.
+ */
+export const COMMAND =
+  /(?:^|[.!?;]\s+|\n\s*)(?:Send|Give|Pass|Use|Read|Choose|Set|Leave|Call|Run|Try|Ask|Tell|Change|Add|Remove|Fix|Make|Check|Write|Copy|Put|Move|Keep|Avoid|Consider|Ensure|Do|Don't|Note|See|Look|Go|Wait|Retry|Stop)\b(?! \w+ing\b)/;

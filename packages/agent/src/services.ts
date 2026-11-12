@@ -280,6 +280,12 @@ export interface AiSettings {
   readonly current: string | undefined;
   /** How many tools one task can call at most, so that AI stuck in a loop stops on its own. */
   readonly maxToolCalls: number;
+  /**
+   * New conversations use the words of the tools as they were before 2026.2, which also said when
+   * to call each tool: to compare the two with real models. Descriptions and the system prompt
+   * only; what tools give back stays.
+   */
+  readonly comparisonTexts?: true;
 }
 
 export const DEFAULT_MAX_TOOL_CALLS = 50;
@@ -318,7 +324,12 @@ export function readAiSettings(value: unknown): AiSettings | undefined {
     typeof limit === "number" && Number.isInteger(limit)
       ? Math.min(TOOL_CALL_LIMITS.max, Math.max(TOOL_CALL_LIMITS.min, limit))
       : DEFAULT_MAX_TOOL_CALLS;
-  return { services, current, maxToolCalls };
+  return {
+    services,
+    current,
+    maxToolCalls,
+    ...(value.comparisonTexts === true && { comparisonTexts: true }),
+  };
 }
 
 /** Only https, and plain http for this computer and the local network, where servers of one's own are. */

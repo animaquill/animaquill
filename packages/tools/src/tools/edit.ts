@@ -90,7 +90,7 @@ function checkOperations(args: EditArgs, texts: TextTable): ToolResult | undefin
   }
   if (operations.length > MAX_OPERATIONS) {
     return failed(
-      `error too-many-operations: ${operations.length} operations; one batch takes at most ${MAX_OPERATIONS}. Send them in several batches. Nothing was written.`,
+      `error too-many-operations: ${operations.length} operations; one batch takes at most ${MAX_OPERATIONS}, so these take several batches. Nothing was written.`,
     );
   }
   const faults: { index: number; name: string; lines: string[] }[] = [];
@@ -456,7 +456,11 @@ export const edit: ToolDefinition<EditArgs> = {
     if (!result.ok) return failureOf(call, args, result.error, bases);
     const paths = result.patches.map(({ path }) => path);
     const changes = describeChanges(before, result.state, paths);
-    if (!args.dry_run) afterWrite(call, paths, changes);
+    if (!args.dry_run) {
+      afterWrite(call, paths, changes);
+      for (const change of changes)
+        if (change.kind === "file") call.caller.changedCode.add(change.id);
+    }
     const created = result.results.flatMap((value, index) => {
       const id = (value as { readonly id?: unknown } | undefined)?.id;
       return typeof id === "string" ? [`${id} (operations[${index}])`] : [];

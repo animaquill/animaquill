@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { ProjectStore, USER, type CommandCall } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
-import { testHost, toolsOn } from "./test-support.ts";
+import { ADVICE, COMMAND, testHost, toolsOn } from "./test-support.ts";
 import type { ToolResult } from "./types.ts";
 
 /**
@@ -67,6 +67,9 @@ describe("replayed calls", () => {
     expect(scenarios.length).toBeGreaterThanOrEqual(14);
   });
 
+  /** What every call of every scenario gave back, for the check of words below. */
+  const said: string[] = [];
+
   it.each(scenarios)("%s", async (_, scenario) => {
     const host = testHost();
     let tools = toolsOn(host);
@@ -104,6 +107,7 @@ describe("replayed calls", () => {
       }
       if (!step.sameAnswer) tools.caller.beginAnswer();
       const result = await tools.call(step.tool, step.args ?? {});
+      said.push(`${step.tool}: ${result.text}`);
       const where = `step ${index} (${step.tool}):\n${result.text}`;
       const { expect: wanted } = step;
       if (wanted.ok) expect(result.isError, where).toBe(false);
@@ -135,5 +139,15 @@ describe("replayed calls", () => {
       expect(store.undoOrigin(origin).ok).toBe(true);
       expect(store.canUndoOrigin(origin)).toBe(false);
     }
+  });
+
+  it("gave back only what is so: no advice, no commands", () => {
+    expect(said.length).toBeGreaterThan(50);
+    const found = said.flatMap((text) => {
+      // What the project itself holds is quoted, and is the project's to say.
+      const ours = text.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+      return [...ADVICE, COMMAND].flatMap((rule) => (rule.test(ours) ? [`${rule}: ${text}`] : []));
+    });
+    expect(found).toEqual([]);
   });
 });

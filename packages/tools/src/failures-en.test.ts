@@ -2,7 +2,7 @@ import { FAILURE_CODES, type CommandFailure, type FailureCode } from "@animaquil
 import { FAILURE_SAMPLES, INVALID_VALUE_SAMPLES } from "@animaquill/core/failure-samples";
 import { describe, expect, it } from "vitest";
 import { FAILURE_TEXTS, aiCode, failureText, operationFailureText } from "./failures-en.ts";
-import { ADVICE } from "./test-support.ts";
+import { ADVICE, COMMAND } from "./test-support.ts";
 
 /** Chinese, and the punctuation that comes with it. */
 const CJK = /[　-〿一-鿿＀-￯]/;
@@ -29,7 +29,9 @@ describe("what failures say to AI", () => {
     const texts = [...FAILURE_SAMPLES, ...INVALID_VALUE_SAMPLES].map((sample) =>
       failureText(sample as CommandFailure),
     );
-    const found = texts.filter((text) => ADVICE.some((advice) => advice.test(text)));
+    const found = texts.filter((text) =>
+      [...ADVICE, COMMAND].some((advice) => advice.test(text.replace(/"(?:[^"\\]|\\.)*"/g, '""'))),
+    );
     expect(found).toEqual([]);
   });
 

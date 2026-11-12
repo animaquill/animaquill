@@ -25,7 +25,9 @@ import {
   withId,
   type OperationCall,
   type UndoResult,
+  sceneSourceOf,
   type ObjectRef,
+  type ProjectState,
 } from "@animaquill/core";
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
@@ -190,6 +192,8 @@ export class Workbench {
   readonly input: InputMode;
   readonly media: MediaLibrary;
   readonly sounds: MadeSounds;
+  /** The revision of each scene whose code last ran in the preview, by scene. */
+  readonly #ranScenes = new Map<string, string>();
   readonly transfer: ProjectTransfer;
   readonly stills: StillExport;
   readonly videos: VideoExport;
@@ -360,6 +364,7 @@ export class Workbench {
         this.#noteSceneProblem(clip, revision, problem, first),
       stopped: (clip, status) => this.#noteStoppedScene(clip, status),
       revisions: (revisions) => this.problems.keepRevisions(revisions),
+      ran: (scene, revision) => this.#ranScenes.set(scene, revision),
       restarted: () => this.notifications.push(t("preview.restarted")),
     });
     this.layout = new LayoutController(
@@ -428,7 +433,10 @@ export class Workbench {
     let open = this.session.store;
     this.registrations.open(open && projectKeyOf(open));
     this.session.subscribe(() => {
-      if (this.session.store !== open) this.problems.clear();
+      if (this.session.store !== open) {
+        this.problems.clear();
+        this.#ranScenes.clear();
+      }
       open = this.session.store;
       this.registrations.open(open && projectKeyOf(open));
     });
@@ -548,6 +556,7 @@ export class Workbench {
       },
       problems: () => this.problems.set,
       describe: (clip) => this.keyframes.describe(clip),
+      ranNow: (object, state) => this.#ranNow(object, state),
       problemInputs: () => ({
         describe: (clip) => this.keyframes.describe(clip),
         registered: (revision) => this.registrations.problemsOf(revision),
@@ -1194,6 +1203,28 @@ export class Workbench {
   #showFile(path: string, edit: boolean): void {
     this.showCode(path, edit ? { line: 1 } : undefined);
     if (!edit && this.layout.getSnapshot().visible.has("files")) this.layout.openPanel("files");
+  }
+
+  /**
+   * Whether the code of a scene or a sound, as it is in `state`, ran in this window: a scene in the
+   * preview, a sound when it was made for its clips.
+   */
+  #ranNow(
+    object: { readonly kind: "scene" | "sound"; readonly id: string },
+    state: ProjectState,
+  ): boolean {
+    if (object.kind === "scene") {
+      const ran = this.#ranScenes.get(object.id);
+      return ran !== undefined && ran === sceneSourceOf(state, object.id)?.revision;
+    }
+    const clips = Object.values(state.timelines).flatMap((timeline) =>
+      Object.values(timeline.clips),
+    );
+    return clips.some((clip) => {
+      if (clip.source.kind !== "sound" || clip.source.sound !== object.id) return false;
+      const made = this.sounds.stateOf(clip)?.state;
+      return made === "ready" || made === "failed";
+    });
   }
 
   /** Resolves to whether the project has that file. */

@@ -8,7 +8,14 @@ import { PROBLEM_TEXTS, STATIC_PROBLEM_CODES } from "./problems-en.ts";
 import { AI_OPERATIONS } from "./schema.ts";
 import { DIRECTIVE_OVERRIDES, DIRECTIVE_TEXTS } from "./texts/eval/directive.ts";
 import { DEFAULT_TEXTS, editExamples, operationExamples } from "./texts/index.ts";
-import { ADVICE, DIRECTIVE_PHRASES, openSample, testHost, toolsOn } from "./test-support.ts";
+import {
+  ADVICE,
+  COMMAND,
+  DIRECTIVE_PHRASES,
+  openSample,
+  testHost,
+  toolsOn,
+} from "./test-support.ts";
 import { TOOLSET_VERSION } from "./toolset.ts";
 import type { Tool } from "./types.ts";
 
@@ -136,7 +143,7 @@ describe("the toolset", () => {
     // What tells a model what to do, or always to do it, makes new models call tools for that
     // even where they need not: the words of the tools only say what is so. How to work is for
     // the system prompt, once. Each of these phrases is a command in every context they can be in.
-    const found = [...DIRECTIVE_PHRASES, ...ADVICE].flatMap((phrase) =>
+    const found = [...DIRECTIVE_PHRASES, ...ADVICE, COMMAND].flatMap((phrase) =>
       Object.entries(DEFAULT_TEXTS)
         .filter(([key, value]) => !key.startsWith("system.") && phrase.test(JSON.stringify(value)))
         .map(([key]) => `${key}: ${String(phrase)}`),

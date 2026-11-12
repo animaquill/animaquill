@@ -49,6 +49,8 @@ export interface TaskTarget {
   readonly endpoint: Endpoint | FakeEndpoint;
   readonly key: () => Promise<string | undefined>;
   readonly maxToolCalls: number;
+  /** How to call its model, see `callSettingsFor`. */
+  readonly call?: CallSettings;
 }
 
 export interface ConversationOptions {
@@ -56,8 +58,7 @@ export interface ConversationOptions {
   readonly system: string;
   /** The tools of a task, which change the project as that task. */
   readonly tools: (task: string) => readonly ToolSpec[];
-  /** How to call the model, and what answers are recorded as made with. */
-  readonly call?: CallSettings;
+  /** What answers are recorded as made with. */
   readonly stamp?: AnswerStamp;
   /** A new answer of the model begins, before any of its tools run. */
   readonly onAnswer?: () => void;
@@ -157,7 +158,7 @@ export class Conversation {
         key: target.key,
         system: this.#options.system,
         tools: this.#options.tools(task),
-        ...(this.#options.call && { call: this.#options.call }),
+        ...(target.call && { call: target.call }),
         ...(this.#options.stamp && { stamp: this.#options.stamp }),
         ...(this.#options.onAnswer && { onAnswer: this.#options.onAnswer }),
         history,

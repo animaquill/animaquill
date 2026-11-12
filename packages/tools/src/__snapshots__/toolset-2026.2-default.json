@@ -825,11 +825,11 @@
           "type": "boolean"
          },
          "enter": {
-          "description": "Transition at its start; null takes it away.",
+          "description": "Transition at its start.",
           "$ref": "#/properties/operations/$defs/Transition"
          },
          "exit": {
-          "description": "Transition at its end; null takes it away.",
+          "description": "Transition at its end.",
           "$ref": "#/properties/operations/$defs/Transition"
          },
          "hidden": {
@@ -2761,7 +2761,7 @@
  },
  {
   "name": "aq_file_edit",
-  "description": "Changes part of a code file by replacing exact text: each edit's old_text must appear exactly once in the file as it is now (without the line numbers that aq_file_read shows), and is replaced with new_text; replace_all replaces every occurrence instead. All edits of one call apply in order and succeed together, or nothing is written. It does not use the file's revision, so the user's edits elsewhere in the same file do not stop it; old_text that is not found means that part of the file is no longer as it was read. The file must exist: aq_file_write creates files. The result shows the changed lines and a syntax check.",
+  "description": "Changes part of a code file by replacing exact text: each edit's old_text must appear exactly once in the file as it is now (without the line numbers that aq_file_read shows), and is replaced with new_text; replace_all replaces every occurrence instead. All edits of one call apply in order and succeed together, or nothing is written. It does not use the file's revision, so the user's edits elsewhere in the same file do not stop it; old_text that is not found is not in the file as it is now, as when that part changed after it was read. The file must exist: aq_file_write creates files. The result shows the changed lines and a syntax check.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -2899,7 +2899,7 @@
  },
  {
   "name": "aq_check_run",
-  "description": "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
+  "description": "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run: a scene runs while one of its clips is in the preview, and again after its code changes; the result lists changed code that has not run since. aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
   "inputSchema": {
    "type": "object",
    "properties": {

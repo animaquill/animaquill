@@ -276,7 +276,8 @@ export async function knownModels(
 async function modelOf(endpoint: Endpoint, provider: string): Promise<Model<Api>> {
   const catalog = await catalogOf(endpoint.catalog);
   const same = Object.values(catalog).filter((model) => model.api === endpoint.protocol);
-  const known = same.find((model) => model.id === endpoint.model);
+  const known =
+    same.find((model) => model.id === endpoint.model) ?? relativeOf(same, endpoint.model);
   const base: Model<Api> = known ?? {
     id: endpoint.model,
     name: endpoint.model,
@@ -292,6 +293,18 @@ async function modelOf(endpoint: Endpoint, provider: string): Promise<Model<Api>
     ...(same[0]?.compat !== undefined && { compat: same[0].compat }),
   };
   return { ...base, provider, baseUrl: endpoint.baseUrl };
+}
+
+/**
+ * The closest model pi knows to one it does not, such as an earlier version of the same model:
+ * "claude-fable-5" for "claude-fable-5-2". It has the same ways, and a newer version is no less.
+ */
+function relativeOf(models: readonly Model<Api>[], id: string): Model<Api> | undefined {
+  const relatives = models.filter(
+    (model) => id.startsWith(model.id) && /^[-.]/.test(id.slice(model.id.length)),
+  );
+  const closest = relatives.toSorted((a, b) => b.id.length - a.id.length)[0];
+  return closest && { ...closest, id, name: id };
 }
 
 /**
@@ -311,9 +324,10 @@ const cut = (text: string, most: number) => (text.length > most ? `${text.slice(
 
 /**
  * Turns our record of the conversation into pi's messages. Calls of tools that the model does not
- * have now, such as those of the tools before these, go as text: services refuse a call of a tool
- * that is not in the list. The answer says what it called, and what came of those calls follows as
- * one message of the user. The same record always gives the same messages, for the caches.
+ * have now, such as those of the tools before these, go as text, as services refuse a call of a tool
+ * that is not in the list: the calls and what came of them follow the answer as one message of the
+ * user, and the answer keeps only its own words. The same record always gives the same messages, for
+ * the caches.
  */
 function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
@@ -324,14 +338,13 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
     failed: "error",
   };
   const messages: Message[] = [];
-  /** The calls of tools no more, by id, whose results become text. */
-  const old = new Set<string>();
-  let results: string[] = [];
+  /** The calls of tools no more, by id, and what each came to so far, as lines of text. */
+  let old = new Map<string, string>();
   const flush = (at: number) => {
-    if (results.length === 0) return;
-    const text = `Results of earlier tool calls (old tool set, no longer available):\n${results.join("\n")}`;
+    if (old.size === 0) return;
+    const text = `Earlier tool calls with the old tool set (no longer available) and their results:\n${[...old.values()].join("\n")}`;
     messages.push({ role: "user", content: text, timestamp: at });
-    results = [];
+    old = new Map();
   };
   for (const entry of history) {
     if (entry.role !== "tool") flush(entry.at);
@@ -339,10 +352,11 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
       case "user":
         messages.push({ role: "user", content: entry.text, timestamp: entry.at });
         break;
-      case "tool":
-        if (old.has(entry.call)) {
+      case "tool": {
+        const call = old.get(entry.call);
+        if (call !== undefined) {
           const outcome = entry.ok ? "ok" : "error";
-          results.push(`- ${entry.name} → ${outcome}: ${cut(entry.text, OLD_RESULT_TEXT)}`);
+          old.set(entry.call, `${call} → ${outcome}: ${cut(entry.text, OLD_RESULT_TEXT)}`);
         } else {
           messages.push({
             role: "toolResult",
@@ -354,19 +368,18 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
           });
         }
         break;
+      }
       case "assistant": {
+        // What the model said stays its own: calls written as text would teach it to write calls.
         const current = entry.calls.filter((call) => tools.has(call.name));
-        const gone = entry.calls.filter((call) => !tools.has(call.name));
-        for (const call of gone) old.add(call.id);
-        const said = gone.map(
-          (call) =>
-            `[earlier tool call ${call.name} ${cut(JSON.stringify(call.args), OLD_CALL_TEXT)}]`,
-        );
-        const text = [entry.text, ...said].filter((part) => part !== "").join("\n");
+        for (const call of entry.calls.filter(({ name }) => !tools.has(name))) {
+          old.set(call.id, `- ${call.name} ${cut(JSON.stringify(call.args), OLD_CALL_TEXT)}`);
+        }
+        if (entry.text === "" && current.length === 0) break;
         messages.push({
           role: "assistant",
           content: [
-            ...(text ? [{ type: "text" as const, text }] : []),
+            ...(entry.text ? [{ type: "text" as const, text: entry.text }] : []),
             ...current.map((call) => ({
               type: "toolCall" as const,
               id: call.id,

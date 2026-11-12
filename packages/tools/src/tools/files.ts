@@ -16,7 +16,7 @@ const MAX_SHOWN = 30;
 const AROUND = 2;
 
 const RUNTIME =
-  "Runtime errors of this code show in aq_check_run once the editor has run it again.";
+  "Runtime errors of this code show in aq_check_run once the editor has run it: a scene runs while one of its clips is in the preview.";
 
 const request = z.string().max(64).optional().describe(PARAM);
 
@@ -49,6 +49,7 @@ function write(
     { origin: host.origin(), ...(base !== undefined && { baseRevision: base }) },
   );
   if (result.ok) {
+    call.caller.changedCode.add(path);
     // What the caller wrote all of, it knows all of; what it changed parts of, as it knew it before.
     const lines = text.split("\n").length;
     call.caller.readFile(

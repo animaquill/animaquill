@@ -61,7 +61,7 @@ export const TOOL_TEXTS = {
   "tools.aq_edit.params.request_id":
     "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
   "tools.aq_file_edit.description":
-    "Changes part of a code file by replacing exact text: each edit's old_text must appear exactly once in the file as it is now (without the line numbers that aq_file_read shows), and is replaced with new_text; replace_all replaces every occurrence instead. All edits of one call apply in order and succeed together, or nothing is written. It does not use the file's revision, so the user's edits elsewhere in the same file do not stop it; old_text that is not found means that part of the file is no longer as it was read. The file must exist: aq_file_write creates files. The result shows the changed lines and a syntax check.",
+    "Changes part of a code file by replacing exact text: each edit's old_text must appear exactly once in the file as it is now (without the line numbers that aq_file_read shows), and is replaced with new_text; replace_all replaces every occurrence instead. All edits of one call apply in order and succeed together, or nothing is written. It does not use the file's revision, so the user's edits elsewhere in the same file do not stop it; old_text that is not found is not in the file as it is now, as when that part changed after it was read. The file must exist: aq_file_write creates files. The result shows the changed lines and a syntax check.",
   "tools.aq_file_edit.params.path": 'Path of the code file, such as "scenes/title/index.html".',
   "tools.aq_file_edit.params.edits": "Replacements, applied in order, 1 to 20.",
   "tools.aq_file_edit.params.edits.old_text":
@@ -90,7 +90,7 @@ export const TOOL_TEXTS = {
   "tools.aq_propose.params.allow_other":
     "false when the user must pick one of the options; by default they can also answer in their own words.",
   "tools.aq_check_run.description":
-    "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run, which happens shortly after a change; aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
+    "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run: a scene runs while one of its clips is in the preview, and again after its code changes; the result lists changed code that has not run since. aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
   "tools.aq_check_run.params.checks":
     '"format": whether every document fits the project format; "problems": all problems the editor knows of. Both by default.',
   "tools.aq_check_run.params.severity": "Only problems of these kinds.",

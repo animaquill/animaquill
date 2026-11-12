@@ -1,6 +1,9 @@
 import { objectKey, type ObjectRef, type Origin, type RevisionId } from "@animaquill/core";
 import type { ToolResult } from "./types.ts";
 
+/** How long a hold lasts where the host says nothing of answers, see `beginAnswer`. */
+export const HOLD_MS = 15_000;
+
 /** How many results of calls with a `request_id` are kept, to answer one sent again the same way. */
 const KEPT_RESULTS = 50;
 /** How long a cursor of a list lasts. */
@@ -47,6 +50,7 @@ export interface CallerSnapshot {
   readonly seen: readonly (readonly [string, Seen])[];
   readonly files: readonly (readonly [string, FileSeen])[];
   readonly own: readonly Origin[];
+  readonly changedCode?: readonly string[];
   readonly lastRead?: RevisionId;
   readonly lastCall?: RevisionId;
 }
@@ -79,6 +83,8 @@ export class CallerState {
   readonly files = new Map<string, FileSeen>();
   /** The origins this conversation changed the project as: each of its messages can be a task. */
   readonly own = new Set<Origin>();
+  /** The code files this conversation wrote, which aq_check_run tells whether they have run. */
+  readonly changedCode = new Set<string>();
   /** The last revision at which anything was read: the base of objects that were not read. */
   lastRead: RevisionId | undefined;
   /** The revision after the last call, to tell what others changed since. */
@@ -88,6 +94,10 @@ export class CallerState {
   #cursorCount = 0;
   /** What happened so far in the answer of the model that is running, see `beginAnswer`. */
   answer = { failedWrite: false, proposed: false };
+  /** Which answer `answer` is of, as the host numbers them, see `answerIs`. */
+  #answerId: string | undefined;
+  /** When what holds back changes happened, see `answerIs`. */
+  #heldAt = 0;
   readonly #now: () => number;
 
   constructor(now: () => number = Date.now) {
@@ -101,6 +111,7 @@ export class CallerState {
       seen: [...this.seen],
       files: [...this.files],
       own: [...this.own],
+      changedCode: [...this.changedCode],
       ...(this.lastRead !== undefined && { lastRead: this.lastRead }),
       ...(this.lastCall !== undefined && { lastCall: this.lastCall }),
     };
@@ -114,6 +125,9 @@ export class CallerState {
     for (const [key, seen] of data.seen ?? []) caller.seen.set(key, seen);
     for (const [path, file] of data.files ?? []) caller.files.set(path, file);
     for (const origin of data.own ?? []) caller.own.add(origin);
+    for (const path of data.changedCode ?? []) {
+      if (typeof path === "string") caller.changedCode.add(path);
+    }
     if (typeof data.lastRead === "string") caller.lastRead = data.lastRead;
     if (typeof data.lastCall === "string") caller.lastCall = data.lastCall;
     return caller;
@@ -125,10 +139,31 @@ export class CallerState {
 
   /**
    * A new answer of the model begins, with the calls it makes together: one of them that asks the
-   * user, or a change that failed, holds back the changes after it in the same answer.
+   * user, or a change that failed, holds back the changes after it in the same answer. The host
+   * says so, once for each answer: with this, or with `ToolHost.answer`. A host that does neither
+   * gets the hold let go after `HOLD_MS`, so that one failure never holds back the rest of a
+   * conversation: the calls of one answer run right after each other.
    */
   beginAnswer(): void {
     this.answer = { failedWrite: false, proposed: false };
+  }
+
+  /** The answer a call is of, by the host's id of it, before the call: another one begins anew. */
+  answerIs(id: string | undefined): void {
+    if (id !== undefined) {
+      if (id !== this.#answerId) this.beginAnswer();
+      this.#answerId = id;
+      return;
+    }
+    const held = this.answer.failedWrite || this.answer.proposed;
+    if (held && this.#now() - this.#heldAt > HOLD_MS) this.beginAnswer();
+  }
+
+  /** Holds back the changes after this one in the same answer: it failed, or it asked the user. */
+  hold(why: "failed" | "asked"): void {
+    this.#heldAt = this.#now();
+    if (why === "failed") this.answer.failedWrite = true;
+    else this.answer.proposed = true;
   }
 
   /** An object was read, in an overview or whole, at a revision. */

@@ -3,6 +3,7 @@ import { createProject } from "@animaquill/schema";
 import { CallerState, createToolset } from "@animaquill/tools";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_DATA, keptData, toolSpecsOf } from "./assistant.ts";
+import { callSettingsFor } from "./models.ts";
 import type { ChatEntry, ToolEntry } from "./entries.ts";
 import { runTask, type Endpoint, type FakeEndpoint, type RunEvent, type ToolSpec } from "./pi.ts";
 import type { Protocol } from "./services.ts";
@@ -94,7 +95,7 @@ describe("the tools in the agent", () => {
     await run(endpoint, tools, { onAnswer: () => answerOf(tools) }).done;
     expect(read.slice(1).map((entry) => entry.text.split("\n")[0])).toEqual([
       "error invalid-params in operations[0] (marker.add)",
-      "error not-run: an earlier change in this answer failed, so this one was not run; nothing was written.",
+      "error not-run: an earlier change in this answer failed, so this one was not run; the same call in a later answer runs. Nothing was written.",
     ]);
     expect(markers(store).map((marker) => marker.time)).toEqual(["3"]);
   });
@@ -308,8 +309,8 @@ describe("an earlier conversation, as it goes to services", () => {
     const shape = shapeOf("anthropic-messages", body);
     expect(shape).toEqual([
       "user: text(加一个标记)",
-      expect.stringMatching(/^assistant: text\(我加一下。\n\[earlier tool call marker_add /),
-      expect.stringMatching(/^user: text\(Results of earlier tool calls \(old tool set/),
+      "assistant: text(我加一下。)",
+      expect.stringMatching(/^user: text\(Earlier tool calls with the old tool set/),
       "assistant: text(加好了。)",
       "user: text(再读一下)",
       "assistant: tool_use(aq_timeline_read) tool_use(aq_project_status)",
@@ -320,7 +321,8 @@ describe("an earlier conversation, as it goes to services", () => {
     const text = JSON.stringify(body.messages);
     expect(text).not.toContain('"name":"marker_add"');
     // Results go short: three hundred characters at most.
-    expect(text).toContain(`- project_overview → error: ${"x".repeat(300)}…`);
+    expect(text).toContain(`- project_overview {} → error: ${"x".repeat(300)}…`);
+    expect(text).toContain('- marker_add {\\"timeline\\":\\"main\\",\\"time\\":\\"1\\"} → ok');
     // The same conversation gives the same request, for the caches of services.
     expect(await requestOf(ENDPOINTS[0] as Endpoint, OLD)).toEqual(body);
   });
@@ -333,7 +335,7 @@ describe("an earlier conversation, as it goes to services", () => {
       "function_call(aq_timeline_read)",
       "function_call(aq_project_status)",
     ]);
-    expect(shape.join("\n")).toContain("Results of earlier tool calls");
+    expect(shape.join("\n")).toContain("Earlier tool calls with the old tool set");
   });
 
   it("goes with the settings of the call, and only those", async () => {
@@ -372,5 +374,36 @@ describe("what a tool found, as a conversation keeps it", () => {
       summary: "many",
       changes: changes.map(({ fields: _fields, ...rest }) => rest),
     });
+  });
+});
+
+describe("models pi does not know yet", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("get the call settings of their family, by name", () => {
+    expect(callSettingsFor("claude-fable-5-2")).toMatchObject({
+      reasoning: "high",
+      maxOutputTokens: 32_000,
+    });
+    expect(callSettingsFor("anthropic/claude-sonnet-5-5")).toMatchObject({ reasoning: "medium" });
+    expect(callSettingsFor("CLAUDE-OPUS-5-5")).toMatchObject({ reasoning: "medium" });
+    expect(callSettingsFor("gpt-5")).toEqual({});
+    expect(callSettingsFor("claude-sonnet-4-5")).toEqual({});
+  });
+
+  it("go as the closest one pi knows: long answers, and a summary of the thinking", async () => {
+    const endpoint: Endpoint = {
+      service: "anthropic",
+      protocol: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-fable-5-2",
+      catalog: "anthropic",
+    };
+    const body = await requestOf(endpoint, [], { call: callSettingsFor(endpoint.model) });
+    expect(body.model).toBe("claude-fable-5-2");
+    expect(body.max_tokens).toBe(32_000);
+    expect(body.thinking).toMatchObject({ type: "adaptive", display: "summarized" });
   });
 });

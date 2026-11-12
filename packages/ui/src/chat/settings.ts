@@ -145,16 +145,17 @@ export class AiSettingsStore {
 
   #save(settings: AiSettings): void {
     this.#adopt(settings);
-    const { services, current, maxToolCalls } = settings;
-    this.#settings.save(SETTINGS_KEY, { services, current, maxToolCalls }).catch((error) => {
+    const { services, current, maxToolCalls, comparisonTexts } = settings;
+    const saved = { services, current, maxToolCalls, ...(comparisonTexts && { comparisonTexts }) };
+    this.#settings.save(SETTINGS_KEY, saved).catch((error) => {
       console.warn("The AI services could not be saved", error);
       this.#messages.saveFailed();
     });
   }
 
   #settingsNow(): AiSettings {
-    const { services, current, maxToolCalls } = this.#snapshot;
-    return { services, current, maxToolCalls };
+    const { services, current, maxToolCalls, comparisonTexts } = this.#snapshot;
+    return { services, current, maxToolCalls, ...(comparisonTexts && { comparisonTexts }) };
   }
 
   /** A new service of a kind, with what that kind has by default. Returns its id. */
@@ -202,6 +203,12 @@ export class AiSettingsStore {
     if (!Number.isInteger(value)) return;
     const limited = Math.min(TOOL_CALL_LIMITS.max, Math.max(TOOL_CALL_LIMITS.min, value));
     this.#save({ ...this.#settingsNow(), maxToolCalls: limited });
+  }
+
+  /** Whether new conversations use the words of the tools to compare with, see `AiSettings`. */
+  setComparisonTexts(on: boolean): void {
+    const { comparisonTexts: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(on && { comparisonTexts: true }) });
   }
 
   async keyOf(id: string): Promise<string | undefined> {

@@ -2473,6 +2473,9 @@
     "removeConfirm": "删除服务“{{name}}”和它保存的 key？",
     "limit": "一次任务最多调用工具",
     "limitHelp": "AI 一次任务里调用工具达到这个次数就停下来，防止它反复尝试。可以说“继续”让它接着做。",
+    "developer": "开发者选项",
+    "comparisonTexts": "新对话用对照的文字（旧写法，评测用）",
+    "comparisonTextsHelp": "只换工具的说明和系统提示，结果的写法不变。用来在真模型上比较两套写法；从下一次新对话起生效。",
     "times": "次",
     "saveFailed": "AI 服务的设置没有保存上。",
     "keyFailed": "key 没有读写成功，可能是浏览器禁止了存储。",
@@ -2617,9 +2620,9 @@
     },
     "question": {
       "title": "AI 想问你",
-      "picked": "选了：{{label}}",
       "other": "也可以在下面直接回答。"
-    }
+    },
+    "comparisonTexts": "这次对话用的是对照的文字（旧写法，评测用）。"
   },
   "account": {
     "signIn": "登录",

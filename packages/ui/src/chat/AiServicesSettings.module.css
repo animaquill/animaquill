@@ -118,3 +118,13 @@
 .limit input {
   width: 72px;
 }
+
+.developer {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.developer summary {
+  cursor: pointer;
+  color: var(--aq-text-muted);
+}

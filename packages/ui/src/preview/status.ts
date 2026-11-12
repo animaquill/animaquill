@@ -39,6 +39,8 @@ export interface PreviewMessages {
   revisions(revisions: ReadonlyMap<string, string>): void;
   /** The preview hung and starts again by itself. */
   restarted(): void;
+  /** A scene ran its code as it is at this revision: it got ready, said something, or failed. */
+  ran?(scene: string, revision: string): void;
 }
 
 /** Nobody needs to hear about scenes that are fine. */
@@ -126,6 +128,11 @@ export class PreviewStatus {
     const first = this.#told.get(clip) !== revision;
     this.#told.set(clip, revision);
     this.#messages.problem(clip, revision, problem, first);
+  }
+
+  /** What code of a scene ran, see `PreviewMessages.ran`. */
+  noteRan(scene: string, revision: string): void {
+    this.#messages.ran?.(scene, revision);
   }
 
   /** A new plan. Nothing else says that a scene changed: it takes over without opening again. */

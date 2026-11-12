@@ -102,7 +102,7 @@ export function paramsError(error: z.ZodError, schema: z.ZodType, input: unknown
 
 /** The text of a call that was not run, because of what came before it in the same answer. */
 const NOT_RUN_FAILED =
-  "error not-run: an earlier change in this answer failed, so this one was not run; nothing was written.";
+  "error not-run: an earlier change in this answer failed, so this one was not run; the same call in a later answer runs. Nothing was written.";
 const NOT_RUN_WAITING =
   "error not-run: this answer asked the user a question, so this change was not run; the turn is waiting for the user.";
 
@@ -139,16 +139,18 @@ export function makeTool<P>(
     outputSchema: { type: "object", additionalProperties: true },
     annotations,
     validate: (args) => {
+      caller.answerIs(host.answer?.());
       const parsed = parse(args);
       if (parsed.ok) return undefined;
       // The call came from the model and goes no further: a failed change holds back the rest.
-      if (writes) caller.answer.failedWrite = true;
+      if (writes) caller.hold("failed");
       return parsed.error;
     },
     run: async (args) => {
+      caller.answerIs(host.answer?.());
       const parsed = parse(args);
       if (!parsed.ok) {
-        if (writes) caller.answer.failedWrite = true;
+        if (writes) caller.hold("failed");
         return parsed.error;
       }
       const store = host.store();
@@ -178,7 +180,7 @@ export function makeTool<P>(
       const others = othersLine(call);
       const result = await definition.run(call, parsed.value);
       caller.lastCall = store.revisionId;
-      if (writes && result.isError) caller.answer.failedWrite = true;
+      if (writes && result.isError) caller.hold("failed");
       const done = others ? { ...result, text: `${result.text}\n${others}` } : result;
       if (writes && request !== undefined) caller.keepResult(request, key, done);
       return done;

@@ -258,6 +258,20 @@ describe("problems of a scene", () => {
     expect(noted).not.toHaveBeenCalled();
   });
 
+  it("say which code of a scene ran: once it is ready, says something, or registers", () => {
+    const { status, fromCompositor, current, run, say } = withScene();
+    const ran = vi.spyOn(status, "noteRan");
+    // Only planned, not run.
+    run({ type: "file.write", params: { path: "scenes/s/index.html", text: "two" } });
+    expect(ran).not.toHaveBeenCalled();
+    fromCompositor({ type: "scene-status", layer: "sc", status: { state: "opening" } });
+    expect(ran).not.toHaveBeenCalled();
+    fromCompositor({ type: "scene-status", layer: "sc", status: { state: "ready" } });
+    expect(ran).toHaveBeenLastCalledWith("s", current());
+    say(current());
+    expect(ran).toHaveBeenCalledTimes(2);
+  });
+
   it("say which states are current with every new plan", () => {
     const { kept, current, run } = withScene();
     run({ type: "file.write", params: { path: "scenes/s/index.html", text: "two" } });

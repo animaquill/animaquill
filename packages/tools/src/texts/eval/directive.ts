@@ -1,13 +1,17 @@
-import { DEFAULT_TEXTS } from "../index.ts";
+import { TOOLSET_VERSION } from "../../toolset.ts";
+import { DEFAULT_TEXTS, hashOfTexts, type TextsUsed } from "../index.ts";
 import type { TextTable } from "../table.ts";
 
 /**
  * The words of toolset 2026.1, before the default ones said only what tools are and do: they also
  * said when to call each tool and what to do first. Only for tests and evaluations with real models,
  * which compare the two (see the design of model packs: this is a pack that changes the default
- * words): it is not part of what the editor offers, and nothing outside tests imports it.
+ * words), and for the switch of the browser that lets people try both: the editor loads it only
+ * when that is on. It changes descriptions and the system prompt; what tools give back stays.
  */
 export const DIRECTIVE_OVERRIDES = {
+  "ops.clip.add.params.enter": "Transition at its start; null takes it away.",
+  "ops.clip.add.params.exit": "Transition at its end; null takes it away.",
   "system.work":
     'How to work\nRead what you are about to change before you change it: the tools remember what you have read and use it to keep you from overwriting what the user changed since. Change timelines and everything on them with aq_edit, in as few batches as the task allows, because each batch succeeds or fails as a whole and is one step the user can undo. Change code with aq_file_edit or aq_file_write. Errors that scene and sound code throw only show in aq_check_run, so run it after you change code and before you tell the user you are done, and fix the problems you caused. When the user says "this", "here" or "now", they mean what aq_selection_read shows. When you cannot go on without the user\'s decision, ask with aq_propose.',
   "system.rules":
@@ -45,3 +49,10 @@ export const DIRECTIVE_OVERRIDES = {
 
 /** The default words with these instead: the toolset as 2026.1 had it. */
 export const DIRECTIVE_TEXTS: TextTable = { ...DEFAULT_TEXTS, ...DIRECTIVE_OVERRIDES };
+
+/** What a conversation records when it used these words. */
+export const DIRECTIVE_TEXTS_USED: TextsUsed = {
+  id: "animaquill/eval-directive",
+  version: TOOLSET_VERSION,
+  hash: hashOfTexts(DIRECTIVE_TEXTS),
+};

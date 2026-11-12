@@ -310,7 +310,7 @@ test("AI asks a question, the turn stops, and a pick goes as the next message", 
   await question.getByRole("button", { name: /蓝色/ }).click();
   await expect(chat(page).getByText("好，用蓝色。")).toBeVisible();
   const sent = requests[1]?.postDataJSON() as Sent;
-  expect(JSON.stringify(sent.messages.at(-1))).toContain("选了：蓝色");
+  expect(JSON.stringify(sent.messages.at(-1))).toContain("蓝色");
   // Answered: the question of the turn before cannot be picked again.
   await expect(chat(page).getByTestId("chat-question")).toHaveCount(0);
 });
@@ -372,9 +372,42 @@ test("an earlier conversation with the tools before goes on, with those calls as
   await expect(chat(page).getByText("接着来。")).toBeVisible();
   const sent = requests.at(-1)?.postDataJSON() as Sent;
   const text = JSON.stringify(sent.messages);
-  expect(text).toContain("[earlier tool call project_overview");
-  expect(text).toContain("Results of earlier tool calls");
+  expect(text).toContain("Earlier tool calls with the old tool set");
+  expect(text).toContain("- project_overview {}");
   expect(text).not.toContain('"type":"tool_use"');
+});
+
+test("a switch of the settings makes new conversations use the words to compare with", async ({
+  page,
+}) => {
+  const requests: Request[] = [];
+  await page.route(ANTHROPIC, async (route) => {
+    requests.push(route.request());
+    return answer(route, [{ text: "好的。" }]);
+  });
+  await setUpService(page);
+  await expect(chat(page).getByTestId("chat-comparison")).toHaveCount(0);
+  await chooseFrom(page, "视图", "设置");
+  const settings = content(page, "settings");
+  await settings.getByText("开发者选项").click();
+  await settings.getByRole("checkbox", { name: /新对话用对照的文字/ }).check();
+  await tab(page, "chat").click();
+  await expect(chat(page).getByTestId("chat-comparison")).toBeVisible();
+  await send(page, "你好");
+  await expect(chat(page).getByText("好的。")).toBeVisible();
+  const sent = requests[0]?.postDataJSON() as Omit<Sent, "tools"> & {
+    readonly tools: readonly { readonly description: string }[];
+  };
+  expect(JSON.stringify(sent.system)).toContain("so run it after you change code");
+  expect(sent.tools.map(({ description }) => description).join("\n")).toContain(
+    "Call it at the start of a task",
+  );
+  // The conversation keeps its words when the switch goes off, and says so after a reload.
+  await chooseFrom(page, "视图", "设置");
+  await settings.getByRole("checkbox", { name: /新对话用对照的文字/ }).uncheck();
+  await page.reload();
+  await tab(page, "chat").click();
+  await expect(chat(page).getByTestId("chat-comparison")).toBeVisible();
 });
 
 test("keeps the last answer when the page goes right after it came", async ({ page }) => {

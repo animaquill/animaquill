@@ -87,7 +87,7 @@ describe("the system prompt", () => {
     expect(systemPromptOf({ entry: "browser", texts: DIRECTIVE_TEXTS })).toBe(BROWSER_PROMPT);
     const prompt = systemPromptOf({ entry: "browser" });
     expect(prompt).toContain(
-      "Errors that scene and sound code throw show only in aq_check_run; the task is done when the code you changed runs without them.",
+      "Errors that scene and sound code throw show only in aq_check_run, and only for code the editor has run since it changed; the task is done when the code you changed has run without them, or when the user knows it has not run yet.",
     );
     expect(prompt).not.toContain("run it after you change code");
     const parts = BROWSER_PROMPT.split("\n\n");

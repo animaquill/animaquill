@@ -1,4 +1,5 @@
 import type {
+  ProjectState,
   ClipDescription,
   ClipState,
   Origin,
@@ -42,6 +43,12 @@ export interface ToolHost {
   store(): ProjectStore | undefined;
   /** Who changes the project, such as `aiTask(task)`: the user can take all of it back at once. */
   origin(): Origin;
+  /**
+   * Which answer of the model the calls now are of, as an id that changes with each answer: what
+   * failed in one answer holds back only the changes after it in that answer. Hosts that leave it
+   * out call `CallerState.beginAnswer` at the start of each answer instead, see there.
+   */
+  answer?(): string | undefined;
   selection?(): SelectionFacts | undefined;
   /** What a scene says about the properties of a clip, once the editor ran it. */
   describe?(clip: ClipState): ClipDescription | undefined;
@@ -49,6 +56,15 @@ export interface ToolHost {
   problems(): ProblemSet;
   /** What the problems of the project alone need, to tell what a batch of operations changes. */
   problemInputs?(): StaticInputs;
+  /**
+   * Whether the code of a scene or a sound, as it is in `state`, has run in the editor since it
+   * last changed: a scene runs while one of its clips is in the preview. Hosts that run no code,
+   * such as a command line, leave it out, and then nothing is said about it.
+   */
+  ranNow?(
+    object: { readonly kind: "scene" | "sound"; readonly id: string },
+    state: ProjectState,
+  ): boolean;
 }
 
 /** One result of a tool, as text for the model and data for the host. */

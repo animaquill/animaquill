@@ -321,17 +321,27 @@ export class PreviewLink {
       void this.#sendScene(data.scene, data.revision);
     } else if (data.type === "scene-status") {
       this.#status.noteScene(data.layer, data.status);
+      const layer = this.#layers.get(data.layer)?.source;
+      if (
+        layer?.kind === "scene" &&
+        (data.status.state === "ready" || data.status.state === "stopped")
+      ) {
+        this.#status.noteRan(layer.scene, layer.revision);
+      }
     } else if (data.type === "scene-problem") {
       // What is on its way out has no say any more: it would only come back after a fix.
       const shown = this.#layers.get(data.layer)?.source;
       if (shown?.kind === "scene" && shown.revision === data.revision) {
         this.#status.noteProblem(data.layer, data.revision, data.problem);
+        this.#status.noteRan(shown.scene, shown.revision);
       }
     } else if (data.type === "scene-handles") {
       this.#handles?.note(data.layer, data.revision, data.frame, data.handles);
     } else if (data.type === "scene-objects") {
       // What any state of a scene registered is true of that state, also one on its way out.
       const params = this.#registrations?.note(data.revision, data.registration);
+      const layer = this.#layers.get(data.layer)?.source;
+      if (layer?.kind === "scene") this.#status.noteRan(layer.scene, data.revision);
       if (params !== undefined) {
         this.#registered.set(data.layer, { revision: data.revision, params });
       }

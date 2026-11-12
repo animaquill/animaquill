@@ -25,6 +25,7 @@ export {
   type UserEntry,
 } from "./entries.ts";
 export { DEFAULT_STAMP, browserSystemPrompt, toolSpecsOf } from "./assistant.ts";
+export { MODEL_SETTINGS, callSettingsFor, fitsModel, type ModelSettings } from "./models.ts";
 export type {
   AnswerStamp,
   CallSettings,

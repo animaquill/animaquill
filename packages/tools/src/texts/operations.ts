@@ -147,6 +147,8 @@ export const OPERATION_TEXTS = {
       },
     },
   ],
+  "ops.clip.add.params.enter": "Transition at its start.",
+  "ops.clip.add.params.exit": "Transition at its end.",
   "ops.clip.remove.summary": "remove clips",
   "ops.clip.remove.examples": [
     { title: "Remove a clip", params: { timeline: "main", clips: ["clip_idea"] } },

@@ -2,12 +2,14 @@ import {
   Conversation,
   DEFAULT_STAMP,
   browserSystemPrompt,
+  callSettingsFor,
   kindOf,
   readEntry,
   toolSpecsOf,
   type ChatEntry,
   type Endpoint,
   type FakeEndpoint,
+  type CallSettings,
   type TaskOutcome,
 } from "@animaquill/agent";
 import {
@@ -19,7 +21,16 @@ import {
   type StaticInputs,
   type UndoResult,
 } from "@animaquill/core";
-import { CallerState, createToolset, type SelectionFacts } from "@animaquill/tools";
+import {
+  CallerState,
+  DEFAULT_TEXTS,
+  TOOLSET_VERSION,
+  createToolset,
+  type SelectionFacts,
+  type TextTable,
+  type ToolHost,
+} from "@animaquill/tools";
+import { DIRECTIVE_TEXTS, DIRECTIVE_TEXTS_USED } from "@animaquill/tools/eval";
 import {
   memoryChats,
   type AccountAccess,
@@ -50,6 +61,8 @@ export interface ChatSnapshot {
   readonly undoTick: number;
   /** The clips the last task changed or made, which the timeline marks until the next one. */
   readonly marked: ReadonlySet<string>;
+  /** The conversation uses the words of the tools to compare with, see `AiSettings`. */
+  readonly comparison: boolean;
 }
 
 export interface ChatSessionOptions {
@@ -67,6 +80,8 @@ export interface ChatSessionOptions {
   readonly describe?: (clip: ClipState) => ClipDescription | undefined;
   /** What the problems of the project alone need, to tell what a batch of AI changes. */
   readonly problemInputs?: () => StaticInputs;
+  /** Whether the code of a scene or a sound, as it is now, ran in the editor, see `ToolHost`. */
+  readonly ranNow?: ToolHost["ranNow"];
   /** What taking back or doing again came to, for people. */
   readonly undone: (result: UndoResult) => void;
   /** For tests: a service that answers from a script, instead of the one people chose. */
@@ -98,6 +113,7 @@ export class ChatSession {
     hold: undefined,
     undoTick: 0,
     marked: new Set(),
+    comparison: false,
   };
   /** The last task, once people took back what it did: its clips are no longer marked. */
   #unmarked: string | undefined;
@@ -112,6 +128,14 @@ export class ChatSession {
     this.#options = options;
     this.#chats = options.chats ?? memoryChats();
     options.subscribeProject(() => this.#follow());
+    // A conversation nobody wrote in yet takes the words the settings say now.
+    options.ai.subscribe(() => {
+      const { conversation, id, comparison } = this.#snapshot;
+      const wanted = options.ai.getSnapshot().comparisonTexts === true;
+      if (conversation && !conversation.running && comparison !== wanted) {
+        if (conversation.getSnapshot().entries.length === 0) this.#start([], id, undefined);
+      }
+    });
     this.#follow();
   }
 
@@ -157,11 +181,18 @@ export class ChatSession {
     this.#stopWatching?.();
     const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
     this.#caller = tools;
+    // A conversation keeps the words it began with; a new one takes what the settings say.
+    const used = entries.findLast((entry) => entry.role === "assistant");
+    const comparison =
+      used?.role === "assistant" && used.texts !== undefined
+        ? used.texts.id === DIRECTIVE_TEXTS_USED.id
+        : entries.length === 0 && this.#options.ai.getSnapshot().comparisonTexts === true;
+    const texts: TextTable = comparison ? DIRECTIVE_TEXTS : DEFAULT_TEXTS;
     const conversation = new Conversation({
       entries,
-      system: browserSystemPrompt(),
-      tools: (task) => this.#toolsOf(task, tools),
-      stamp: DEFAULT_STAMP,
+      system: browserSystemPrompt(texts),
+      tools: (task) => this.#toolsOf(task, tools, texts),
+      stamp: comparison ? { toolset: TOOLSET_VERSION, texts: DIRECTIVE_TEXTS_USED } : DEFAULT_STAMP,
       // Each answer of the model is one: a change that fails holds back the rest of it.
       onAnswer: () => tools.beginAnswer(),
     });
@@ -181,7 +212,7 @@ export class ChatSession {
       running = conversation.running;
       if (was && !running) void this.flush();
     });
-    this.#set({ conversation, id: chatId, hold: undefined });
+    this.#set({ conversation, id: chatId, hold: undefined, comparison });
     this.#mark(entries);
   }
 
@@ -205,9 +236,9 @@ export class ChatSession {
   }
 
   /** The tools of one task, on the project that was open when it started, and only that one. */
-  #toolsOf(task: string, caller: CallerState) {
+  #toolsOf(task: string, caller: CallerState, texts: TextTable) {
     const project = this.#project;
-    const { selection, problems, describe, problemInputs } = this.#options;
+    const { selection, problems, describe, problemInputs, ranNow } = this.#options;
     const tools = createToolset(
       {
         store: () =>
@@ -217,8 +248,10 @@ export class ChatSession {
         problems,
         ...(describe && { describe }),
         ...(problemInputs && { problemInputs }),
+        ...(ranNow && { ranNow }),
       },
       caller,
+      texts,
     );
     return toolSpecsOf(tools);
   }
@@ -296,6 +329,7 @@ export class ChatSession {
     | {
         readonly endpoint: Endpoint | FakeEndpoint;
         readonly key: () => Promise<string | undefined>;
+        readonly call?: CallSettings;
       }
     | ChatHold
   > {
@@ -320,7 +354,7 @@ export class ChatSession {
       catalog: kind.catalog,
       ...(route.relay && { relay: route.relay }),
     };
-    return { endpoint, key: () => ai.keyOf(service.id) };
+    return { endpoint, key: () => ai.keyOf(service.id), call: callSettingsFor(service.model) };
   }
 
   /** Sends a message, which starts a task. Resolves once the task is over. */

@@ -71,7 +71,11 @@ export const STATIC_PROBLEM_CODES: readonly string[] = [...UNSUPPORTED_CODES, ..
 const LETTERS = { error: "E", warning: "W", check: "C" } as const;
 
 /** One problem as one line, with what fixes it on a line of its own. */
-export function problemLines(state: ProjectState, problem: ProjectProblem): readonly string[] {
+export function problemLines(
+  state: ProjectState,
+  problem: ProjectProblem,
+  note?: string,
+): readonly string[] {
   const { severity, code, params, subject, file, line, column, place, detail, fix } = problem;
   const words = PROBLEM_TEXTS[code]?.(params) ?? code.replaceAll("-", " ");
   const about = subject ? ` ${objectText(state, subject)}` : "";
@@ -82,7 +86,8 @@ export function problemLines(state: ProjectState, problem: ProjectProblem): read
   // What the code said is data: as it was, unless it is in a language the words here are not.
   const said = detail === undefined ? "" : ` | said: ${JSON.stringify(detail.slice(0, 300))}`;
   const quoted = HAS_CHINESE.test(said) && problem.source !== "runtime" ? "" : said;
-  const lines = [`${LETTERS[severity]} ${code}${about}${where}${at}: ${words}${quoted}`];
+  const noted = note === undefined ? "" : ` (${note})`;
+  const lines = [`${LETTERS[severity]} ${code}${about}${where}${at}: ${words}${noted}${quoted}`];
   if (fix) lines.push(`  fix: ${JSON.stringify({ op: fix.type, ...(fix.params as object) })}`);
   return lines;
 }

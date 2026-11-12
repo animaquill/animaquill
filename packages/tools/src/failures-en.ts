@@ -138,7 +138,7 @@ export const FAILURE_TEXTS: Texts = {
   conflict: () =>
     "Somebody else changed what you are changing after you last read it; a change sent after reading it again is checked against what was read then.",
   "stale-revision": () =>
-    "The project was reopened since you read it, so what you read is out of date; the tools keep track of revisions themselves.",
+    "The project was reopened since you read it, so what you read before is out of date; objects read again after the reopen can be changed.",
   "would-break-document": ({ file, path, message }) =>
     `This would make ${file} invalid at ${path || "the top"} (${path || "it"} ${englishRule(message)}). Often an id that is taken or a value out of range.`,
   "not-found": ({ kind, id, clip, why }) => {
@@ -158,7 +158,7 @@ export const FAILURE_TEXTS: Texts = {
         : `${an(trackKind, true)} track cannot have joins; joins go between clips on video and audio tracks.`,
   overlap: ({ clips, moved }) =>
     moved
-      ? `Clips would land on the same place: ${clips.map((clip) => clip.id).join(", ")}. Give them starts that do not overlap.`
+      ? `Clips would land on the same place: ${clips.map((clip) => clip.id).join(", ")}; moved clips cannot overlap each other.`
       : `There are clips in the way: ${clips.map((clip) => clip.id).join(", ")}; overlap: "overwrite" cuts them away.`,
   "not-adjacent": ({ from, to, why }) =>
     why === "tracks"

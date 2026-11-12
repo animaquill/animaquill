@@ -444,7 +444,7 @@ export const objectRead: ToolDefinition<z.output<typeof ObjectParams>> = {
       );
       if (timelines.size > 1) {
         return failed(
-          `error ambiguous-id: ${JSON.stringify(id)} is on several timelines: ${[...timelines].join(", ")}. Pass timeline.`,
+          `error ambiguous-id: ${JSON.stringify(id)} is on several timelines: ${[...timelines].join(", ")}; timeline picks one.`,
         );
       }
       for (const each of found) {

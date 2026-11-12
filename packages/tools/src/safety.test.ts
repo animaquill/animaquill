@@ -2,11 +2,11 @@
  * What keeps AI from writing over what it did not see, and what tells it plainly what went wrong:
  * cases of the independent review of the tools, each as the behavior they should have.
  */
-import { ProjectStore, USER, aiTask, type CommandCall } from "@animaquill/core";
+import { ProblemSet, ProjectStore, USER, aiTask, withId, type CommandCall } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
-import { CallerState } from "./caller.ts";
-import { openSample, testHost, toolsOn } from "./test-support.ts";
+import { CallerState, HOLD_MS } from "./caller.ts";
+import { COMMAND, openSample, testHost, toolsOn } from "./test-support.ts";
 
 const user = (store: ProjectStore, type: string, params: unknown) => {
   const done = store.execute({ type, params } as CommandCall, { origin: USER });
@@ -567,5 +567,216 @@ describe("small things of the texts", () => {
     expect(result.text).toContain("format/时间轴");
     const topics = await call("aq_guide", {});
     expect(topics.text).toContain("search them with Chinese words too");
+  });
+});
+
+/** A runtime error of the title scene, as the editor reports it once the scene ran. */
+const threw = withId({
+  source: "runtime",
+  severity: "error",
+  code: "scene-error",
+  params: {},
+  subject: { kind: "scene", id: "title" },
+  file: "scenes/title/index.html",
+  line: 4,
+  detail: "TypeError: x is undefined",
+});
+
+/** A host that ran the scenes it is told, at the code they have then. */
+function runningHost() {
+  const host = testHost();
+  const store = host.store() as ProjectStore;
+  const problems = new ProblemSet({ reports: ["runtime"] });
+  const ran = new Map<string, string>();
+  const codeOf = (id: string) =>
+    JSON.stringify(
+      Object.entries(store.getState().files).filter(([path]) => path.startsWith(`scenes/${id}/`)),
+    );
+  const run = (id: string) => ran.set(id, codeOf(id));
+  return {
+    host: {
+      ...host,
+      problems: () => (problems.update(store.getState()), problems),
+      ranNow: ({ id }: { readonly id: string }) => ran.get(id) === codeOf(id),
+    },
+    store,
+    problems,
+    run,
+  };
+}
+
+describe("checking code that changed", () => {
+  it("tells changed code that has not run since, and what threw before the change", async () => {
+    const { host, problems, run } = runningHost();
+    run("title");
+    problems.report("runtime", "scenes", [threw]);
+    const { call, caller } = toolsOn(host);
+    await call("aq_file_read", { path: "scenes/title/index.html" });
+    const edit = await call("aq_file_edit", {
+      path: "scenes/title/index.html",
+      edits: [{ old_text: '<h1 id="title"></h1>', new_text: '<h1 id="title">Hi</h1>' }],
+    });
+    expect(edit.text).toContain(
+      "once the editor has run it: a scene runs while one of its clips is in the preview",
+    );
+    caller.beginAnswer();
+    const before = await call("aq_check_run");
+    expect(before.text).toContain(
+      "not run since changed: scenes/title/index.html (scene title runs while one of its clips is in the preview)",
+    );
+    expect(before.text).toMatch(
+      /E scene-error .*: the code threw an error \(from the code before its last change\) \| said:/,
+    );
+    // Once the editor ran the new code, the error is of it, and nothing waits to run.
+    run("title");
+    caller.beginAnswer();
+    const after = await call("aq_check_run");
+    expect(after.text).not.toContain("not run since changed");
+    expect(after.text).not.toContain("from the code before");
+  });
+
+  it("says so of code that never ran, and of a scene with no clips", async () => {
+    const { host } = runningHost();
+    const { call, caller } = toolsOn(host);
+    await call("aq_file_read", { path: "scenes/title/index.html" });
+    await call("aq_file_edit", {
+      path: "scenes/title/index.html",
+      edits: [{ old_text: "<body>", new_text: "<body><script>aq.nope()</script>" }],
+    });
+    await call("aq_edit", {
+      operations: [
+        {
+          op: "scene.add",
+          id: "unused",
+          manifest: { name: "Unused", entry: "index.html", runtime: 1 },
+          files: { "index.html": "<p>x</p>" },
+        },
+      ],
+    });
+    caller.beginAnswer();
+    const check = await call("aq_check_run");
+    expect(check.text).toContain(
+      "not run since changed: scenes/title/index.html (scene title runs",
+    );
+    expect(check.text).toContain(
+      "not run since changed: scenes/unused/index.html (scene unused has no clips, so it does not run)",
+    );
+  });
+
+  it("says nothing of it where no code runs, as on a command line", async () => {
+    const { call } = toolsOn();
+    await call("aq_file_read", { path: "scenes/title/index.html" });
+    await call("aq_file_edit", {
+      path: "scenes/title/index.html",
+      edits: [{ old_text: "<body>", new_text: "<body><p>x</p>" }],
+    });
+    const check = await call("aq_check_run");
+    expect(check.text).not.toContain("not run since changed");
+  });
+
+  it("keeps what the conversation changed with the caller, over a reload", async () => {
+    const { call, caller } = toolsOn();
+    await call("aq_file_write", { path: "code/new.js", text: "export {};\n" });
+    expect([...CallerState.from(JSON.parse(JSON.stringify(caller))).changedCode]).toEqual([
+      "code/new.js",
+    ]);
+  });
+});
+
+describe("a reopened project", () => {
+  it("says that what is read again after it can be changed", async () => {
+    const host = testHost();
+    const store = host.store() as ProjectStore;
+    const first = toolsOn(host);
+    await first.call("aq_timeline_read");
+    const snapshot: unknown = JSON.parse(JSON.stringify(first.caller));
+    host.open(ProjectStore.fromUpdates([store.encodeState()]).store);
+    const { call } = toolsOn(host, CallerState.from(snapshot));
+    const result = await call("aq_edit", rename("clip_logo", "x"));
+    expect(result.text).toContain("objects read again after the reopen can be changed");
+  });
+});
+
+describe("an answer the host says nothing of", () => {
+  it("lets go of a failed change once the host says another answer began", async () => {
+    let answer = "a1";
+    const host = { ...testHost(), answer: () => answer };
+    const { call } = toolsOn(host);
+    await call("aq_timeline_read");
+    await call("aq_edit", { operations: [{ op: "marker.add", timeline: "main", tme: "1" }] });
+    const same = await call("aq_edit", {
+      operations: [{ op: "marker.add", timeline: "main", time: "1" }],
+    });
+    expect(same.text).toMatch(/^error not-run/);
+    answer = "a2";
+    const next = await call("aq_edit", {
+      operations: [{ op: "marker.add", timeline: "main", time: "1" }],
+    });
+    expect(next.isError, next.text).toBe(false);
+  });
+
+  it("lets go of it after a while where the host says nothing at all", async () => {
+    let now = 1_000;
+    const caller = new CallerState(() => now);
+    const { call } = toolsOn(testHost(), caller);
+    await call("aq_timeline_read");
+    await call("aq_edit", { operations: [{ op: "marker.add", timeline: "main", tme: "1" }] });
+    const same = await call("aq_edit", {
+      operations: [{ op: "marker.add", timeline: "main", time: "1" }],
+    });
+    expect(same.text).toMatch(/^error not-run/);
+    now += HOLD_MS + 1;
+    const later = await call("aq_edit", {
+      operations: [{ op: "marker.add", timeline: "main", time: "1" }],
+    });
+    expect(later.isError, later.text).toBe(false);
+  });
+});
+
+describe("what is kept of a caller", () => {
+  it("stays small for a large timeline read over several reloads", async () => {
+    const store = manyClips(2000, "c");
+    const host = testHost(store);
+    let caller = new CallerState();
+    for (let round = 0; round < 3; round += 1) {
+      const { call } = toolsOn(host, caller);
+      for (let page = 0, cursor: string | undefined; page < 5; page += 1) {
+        const read = await call("aq_timeline_read", { limit: 500, ...(cursor && { cursor }) });
+        cursor = /cursor "(c\d+)"/.exec(read.text)?.[1];
+        if (!cursor) break;
+      }
+      caller = CallerState.from(JSON.parse(JSON.stringify(caller)));
+      host.open(ProjectStore.fromUpdates([store.encodeState()]).store);
+    }
+    expect(JSON.stringify(caller).length).toBeLessThan(200_000);
+  });
+});
+
+describe("errors that say what does not fit", () => {
+  it("say it, without telling AI what to send", async () => {
+    const { call, caller } = toolsOn();
+    await call("aq_timeline_read");
+    const many = Array.from({ length: 101 }, (_, index) => ({
+      op: "marker.add",
+      timeline: "main",
+      time: String(index),
+    }));
+    const tooMany = await call("aq_edit", { operations: many });
+    expect(tooMany.text).toContain("so these take several batches");
+    caller.beginAnswer();
+    const onTop = await call("aq_edit", {
+      operations: [
+        {
+          op: "clip.move",
+          timeline: "main",
+          clips: [
+            { clip: "clip_lottie", start: "0" },
+            { clip: "clip_idea", start: "0" },
+          ],
+        },
+      ],
+    });
+    expect(onTop.text).toContain("moved clips cannot overlap each other");
+    for (const text of [tooMany.text, onTop.text]) expect(text).not.toMatch(COMMAND);
   });
 });

@@ -187,6 +187,11 @@ export function ChatPanel() {
           stick.current = list.scrollHeight - list.scrollTop - list.clientHeight < STICK_PX;
         }}
       >
+        {snapshot.comparison && (
+          <p className={styles.muted} data-testid="chat-comparison">
+            {t("chat.comparisonTexts")}
+          </p>
+        )}
         {groups.length === 0 && <p className={styles.empty}>{t("chat.empty")}</p>}
         {groups.map((group, index) => (
           <TaskView
@@ -491,12 +496,7 @@ function QuestionView({ question }: { readonly question: Question }) {
       <p className={styles.text}>{question.question}</p>
       <div className={styles.options}>
         {question.options.map(({ label, detail }) => (
-          <button
-            key={label}
-            type="button"
-            title={detail}
-            onClick={() => void chat.send(t("chat.question.picked", { label }))}
-          >
+          <button key={label} type="button" title={detail} onClick={() => void chat.send(label)}>
             {label}
             {detail && <span className={styles.muted}> · {detail}</span>}
           </button>
