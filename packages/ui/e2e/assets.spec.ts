@@ -164,6 +164,23 @@ test("can be dragged to a track", async ({ page }) => {
   expect(clip.x).toBeGreaterThan(area.x + 250);
 });
 
+test("goes to the track also when the timeline changes under the pointer right before the drop", async ({
+  page,
+}) => {
+  await importFiles(page, files.image);
+  const stage = timeline(page).getByRole("group", { name: "时间轴" });
+  const area = await boxOf(stage);
+  await dragOver(page, items(page).first(), { x: area.x + 300, y: area.y + 50 }, async () => {
+    // Only `dragenter` comes before the drop then: the timeline takes it all the same.
+    await stage.evaluate((element) => {
+      const cover = document.createElement("div");
+      cover.style.cssText = "position: absolute; inset: 0; z-index: 5";
+      element.append(cover);
+    });
+  });
+  await expect(clips(page)).toHaveCount(1);
+});
+
 /** Holds a drag of an asset over a place of the timeline, and does `meanwhile` there. */
 async function dragOver(
   page: Page,

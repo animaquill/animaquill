@@ -54,12 +54,13 @@ const assetsIn = (disk: string) =>
       }[])
     : [];
 
-/** Drops files of the disk on the assets panel. */
-async function dropOnAssets(page: Page, ...paths: string[]) {
+/** Drops files of the disk on the assets panel, with what happens right before letting go. */
+async function dropOnAssets(page: Page, paths: string[], meanwhile?: () => Promise<unknown>) {
   await tab(page, "assets").click();
   const box = await assets(page).boundingBox();
   if (!box) throw new Error("The assets panel has no box");
-  await drop(page, paths, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await drop(page, paths, at, { ...(meanwhile && { meanwhile }) });
 }
 
 /**
@@ -124,6 +125,24 @@ async function goTo(page: Page, time: string) {
 }
 
 test.describe("the assets of a project folder", () => {
+  test("are taken also when the panel changes under the pointer right before the drop", async ({
+    page,
+  }) => {
+    const disk = await newProjectOnDisk(page);
+    await dropOnAssets(page, [elsewhere(RED, "红色.webm")], () =>
+      // Only `dragenter` comes before the drop then: the panel takes it all the same.
+      assets(page).evaluate((host) => {
+        const cover = document.createElement("div");
+        cover.style.cssText = "position: absolute; inset: 0; z-index: 5";
+        // In the panel itself, which takes what is dropped on it.
+        host.firstElementChild?.append(cover);
+      }),
+    );
+    await expect
+      .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
+      .toContain("assets/红色.webm");
+  });
+
   test("are copied in from elsewhere, and used where they are when they are in it", async ({
     page,
   }) => {
@@ -135,14 +154,14 @@ test.describe("the assets of a project folder", () => {
     await tab(page, "assets").click();
     const before = await items(page).count();
 
-    await dropOnAssets(page, join(disk, "footage/在里面.webm"));
+    await dropOnAssets(page, [join(disk, "footage/在里面.webm")]);
     await expect(items(page)).toHaveCount(before + 1);
     await expect
       .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
       .toContain("footage/在里面.webm");
     expect(existsSync(join(disk, "assets/在里面.webm"))).toBe(false);
 
-    await dropOnAssets(page, elsewhere(RED_BLUE, "红蓝.webm"));
+    await dropOnAssets(page, [elsewhere(RED_BLUE, "红蓝.webm")]);
     await expect(items(page)).toHaveCount(before + 2);
     await expect
       .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
@@ -186,7 +205,7 @@ test.describe("the assets of a project folder", () => {
   }) => {
     const disk = await newProjectOnDisk(page);
     putFile(disk, "assets/红色.webm", RED);
-    await dropOnAssets(page, join(disk, "assets/红色.webm"));
+    await dropOnAssets(page, [join(disk, "assets/红色.webm")]);
     await items(page).filter({ hasText: "红色.webm" }).dblclick();
     await expect.poll(() => isRed(page)).toBe(true);
 
@@ -212,7 +231,7 @@ test.describe("the assets of a project folder", () => {
   test("are found again where people moved them in the folder", async ({ page }) => {
     const disk = await newProjectOnDisk(page);
     putFile(disk, "assets/红色.webm", RED);
-    await dropOnAssets(page, join(disk, "assets/红色.webm"));
+    await dropOnAssets(page, [join(disk, "assets/红色.webm")]);
     await expect
       .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
       .toContain("assets/红色.webm");
@@ -238,7 +257,7 @@ test.describe("the assets of a project folder", () => {
   }) => {
     const disk = await newProjectOnDisk(page);
     putFile(disk, "assets/红色.webm", RED);
-    await dropOnAssets(page, join(disk, "assets/红色.webm"));
+    await dropOnAssets(page, [join(disk, "assets/红色.webm")]);
     await expect
       .poll(() => assetsIn(disk).map(({ path }) => path), { timeout: 10_000 })
       .toContain("assets/红色.webm");
@@ -317,7 +336,7 @@ test.describe("the compositor", () => {
   }) => {
     const disk = await newProjectOnDisk(page);
     putFile(disk, "assets/红蓝.webm", RED_BLUE);
-    await dropOnAssets(page, join(disk, "assets/红蓝.webm"));
+    await dropOnAssets(page, [join(disk, "assets/红蓝.webm")]);
     await items(page).filter({ hasText: "红蓝.webm" }).dblclick();
     await goTo(page, "0:01/15");
     await expect.poll(() => isBlue(page)).toBe(true);
