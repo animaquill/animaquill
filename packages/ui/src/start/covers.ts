@@ -66,6 +66,9 @@ export class StartCovers {
   /** Fetched, being fetched, or not there: by project and etag, never asked for again. */
   readonly #asked = new Set<string>();
   #fetching = 0;
+  /** Only the covers of cards people see are fetched, see `show`. */
+  #onlySeen = false;
+  readonly #seen = new Set<string>();
   #reading: Promise<void> | undefined;
   #closed = false;
   readonly #stop: () => void;
@@ -85,12 +88,25 @@ export class StartCovers {
   /** By the id of each card, see `ProjectCard.id`. */
   getSnapshot = (): ReadonlyMap<string, CardCover> => this.#snapshot;
 
-  /** The cards there are now: their covers are read, and fetched where they have to be. */
-  show(cards: readonly ProjectCard[]): void {
+  /**
+   * The cards there are now: their covers are read, and fetched where they have to be. With
+   * `onlySeen`, only for the cards people can see, as `seen` says: of hundreds of projects, those
+   * on the screen, and the others once they are scrolled to.
+   */
+  show(cards: readonly ProjectCard[], { onlySeen = false }: { onlySeen?: boolean } = {}): void {
     if (this.#closed) return;
     this.#cards = cards;
+    this.#onlySeen = onlySeen;
     this.#compose();
     void this.#readKept();
+  }
+
+  /** Whether people can see the card `id` now, or are about to. */
+  seen(id: string, isSeen: boolean): void {
+    if (isSeen === this.#seen.has(id)) return;
+    if (isSeen) this.#seen.add(id);
+    else this.#seen.delete(id);
+    if (isSeen && this.#onlySeen && !this.#closed) this.#compose();
   }
 
   close(): void {
@@ -166,7 +182,8 @@ export class StartCovers {
         if (theirs?.etag === listed.etag) shown = { key: theirsKey, cover: theirs };
         else {
           const ready = this.#read.has(theirsKey) || !this.#options.covers;
-          if (ready && !this.#asked.has(`${card.project}:${listed.etag}`))
+          const isSeen = !this.#onlySeen || this.#seen.has(card.id);
+          if (ready && isSeen && !this.#asked.has(`${card.project}:${listed.etag}`))
             wanted.push({
               project: card.project,
               ...listed,

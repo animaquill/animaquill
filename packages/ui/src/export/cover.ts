@@ -260,6 +260,8 @@ interface Open {
   stop: () => void;
 }
 
+const isYield = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
+
 const defaultEncode = (image: ImageBitmap) => encodeCover(canvasEncoder(image));
 
 export class CoverMaker {
@@ -268,6 +270,8 @@ export class CoverMaker {
   #open: Open | undefined;
   /** One picture at a time, whatever it is of. */
   #making = false;
+  /** Stops the picture being made, see `yieldNow`. */
+  #stopping: AbortController | undefined;
   readonly #stop: () => void;
 
   constructor(options: CoverMakerOptions) {
@@ -299,6 +303,14 @@ export class CoverMaker {
     clearTimeout(open.timer);
     open.timer = undefined;
     void this.#make(open);
+  }
+
+  /**
+   * Something else needs the computer now, as an export that begins: a picture being made stops at
+   * once, and is made again later.
+   */
+  yieldNow(): void {
+    this.#stopping?.abort(new DOMException("Something else needs the computer", "AbortError"));
   }
 
   /**
@@ -389,21 +401,35 @@ export class CoverMaker {
     if (!shot) return;
     const project = this.#options.sendTo?.();
     this.#making = true;
+    const lastAt = open.lastAt;
     open.lastAt = this.#now;
+    const stopping = new AbortController();
+    this.#stopping = stopping;
+    const { signal } = stopping;
     try {
       // The picture first: it takes what it needs before the project may be closed, and so does
       // what tells this version of it apart.
-      const late = new AbortController();
       const timer = setTimeout(
-        () => late.abort(new Error("The cover took too long")),
+        () => stopping.abort(new Error("The cover took too long")),
         this.#timing.pictureMs,
       );
-      const picturing = this.#options.picture(shot, late.signal);
+      const picturing = this.#options.picture(shot, signal);
       const version = versionOf(open.store);
       // Not heard of where the picture failed first.
       version.catch(() => {});
       let picture: Blob | undefined;
-      const image = await picturing.finally(() => clearTimeout(timer));
+      // Over when it is stopped, whatever the picture does about it.
+      const stopped = new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+      stopped.catch(() => {});
+      // A picture that comes after it was stopped is nobody's.
+      picturing.then(
+        (late) => signal.aborted && late.close(),
+        () => {},
+      );
+      const image = await Promise.race([picturing, stopped]).finally(() => clearTimeout(timer));
+      signal.throwIfAborted();
       try {
         picture = await (this.#options.encode ?? defaultEncode)(image);
       } finally {
@@ -428,9 +454,12 @@ export class CoverMaker {
       if (open.shows < changes) open.shows = changes;
       if (project !== undefined) this.#options.uploads?.offer(open.key, project);
     } catch (error) {
-      console.warn("No cover of the project", error);
+      // What gave way to something else is made again: not five minutes later for that.
+      if (isYield(error)) open.lastAt = lastAt;
+      else console.warn("No cover of the project", error);
     } finally {
       this.#making = false;
+      if (this.#stopping === stopping) this.#stopping = undefined;
     }
     // It changed while the picture was made.
     if (this.#open === open && open.shows !== open.changes)

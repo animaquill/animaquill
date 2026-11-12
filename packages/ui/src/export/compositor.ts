@@ -28,6 +28,12 @@ export interface ExportCompositorOptions {
   readonly media: (hash: string) => Promise<Blob | undefined>;
   /** Scenes must stay away from there, also in the preview. */
   readonly onRetired?: (origin: string) => void;
+  /**
+   * Nobody may see it at all, as for the cover of a project: it is as transparent as can be, but
+   * stays on the screen in its corner, where scenes in it get drawn. `data-compositor` says what it
+   * is for.
+   */
+  readonly unseen?: string;
 }
 
 interface Pending {
@@ -158,7 +164,13 @@ export class ExportCompositor {
       pointerEvents: "none",
       // Under something opaque a scene crawls, see the research on scenes.
       zIndex: "2147483647",
+      // Transparent is still on the screen: what is hidden, or outside it, does not get drawn.
+      ...(options.unseen !== undefined && { opacity: "0" }),
     });
+    if (options.unseen !== undefined) {
+      frame.dataset["compositor"] = options.unseen;
+      frame.setAttribute("aria-hidden", "true");
+    }
     this.#frame = frame;
     this.#foreign = new ForeignMessages(
       () => frame.contentWindow,

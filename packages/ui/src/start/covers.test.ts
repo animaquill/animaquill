@@ -137,6 +137,22 @@ describe("the covers of the start page", () => {
     expect(asked).toEqual(["p_1", "p_2", "p_3"]);
   });
 
+  it("fetches only for the cards people can see, and the others once they come into view", async () => {
+    const cloud = { get: vi.fn(async (project: string) => picture(project)) };
+    const start = new StartCovers({ cloud, urls: urls() });
+    const many = Array.from({ length: 200 }, (_, index) => remote(`p_${index}`, `e${index}`));
+    start.show(many, { onlySeen: true });
+    start.seen("cloud:p_0", true);
+    start.seen("cloud:p_1", true);
+    await settle();
+    expect(cloud.get.mock.calls.map(([project]) => project)).toEqual(["p_0", "p_1"]);
+    // Scrolled further down.
+    start.seen("cloud:p_150", true);
+    await settle();
+    expect(cloud.get).toHaveBeenCalledTimes(3);
+    expect(cloud.get).toHaveBeenLastCalledWith("p_150");
+  });
+
   it("asks once for one the platform has not, and lets go of addresses no card shows", async () => {
     const addresses = urls();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

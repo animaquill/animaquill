@@ -238,6 +238,45 @@ describe("making the cover of the open project", () => {
     expect(picture).toHaveBeenCalledTimes(2);
   });
 
+  it("gives way to an export that begins while it draws, and draws again later", async () => {
+    const store = projectOf();
+    const covers = memoryCoverStore();
+    const signals: AbortSignal[] = [];
+    // A picture that takes a while, as one of a large project.
+    const picture = vi.fn(
+      (_shot: CoverShot, signal: AbortSignal) =>
+        new Promise<ImageBitmap>((resolve) => {
+          signals.push(signal);
+          setTimeout(
+            () => resolve({ width: 1920, height: 1080, close: () => {} } as unknown as ImageBitmap),
+            5000,
+          );
+        }),
+    );
+    const maker = new CoverMaker({
+      session: sessionOf(store),
+      covers,
+      picture,
+      encode: async () => new Blob(["frame"], { type: "image/webp" }),
+      isBusy: () => false,
+      now: () => clock,
+    });
+    await settle();
+    await wait(COVER_TIMING.idleMs);
+    expect(picture).toHaveBeenCalledTimes(1);
+    // The export starts: the picture stops at once, and nothing is kept of it.
+    maker.yieldNow();
+    expect(signals[0]?.aborted).toBe(true);
+    await wait(5000);
+    expect((await covers.read(["folder-1"])).size).toBe(0);
+    // Made again once people leave it alone, not five minutes later.
+    await wait(COVER_TIMING.idleMs);
+    expect(picture).toHaveBeenCalledTimes(2);
+    await wait(5000);
+    expect((await covers.read(["folder-1"])).size).toBe(1);
+    maker.close();
+  });
+
   it("changes nothing of the project", async () => {
     const store = projectOf();
     const changes = vi.fn();
@@ -297,12 +336,14 @@ describe("sending covers to the platform", () => {
     // The project changed and looks the same: kept, not sent again.
     rename(store, "片头 2");
     maker.leaving();
+    await settle();
     await wait(COVER_TIMING.everyMs);
     expect(sent).toEqual(["frame"]);
     // Now it looks otherwise.
     looks.picture = "frame 2";
     rename(store, "片头 3");
     maker.leaving();
+    await settle();
     await wait(60_000);
     expect(sent).toEqual(["frame", "frame 2"]);
   });

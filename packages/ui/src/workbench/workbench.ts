@@ -1862,6 +1862,20 @@ export class Workbench {
     };
     this.cloud?.subscribe(follow);
     this.readOnly.subscribe(follow);
+    // An export, or the questions before one, or playing has the computer: a cover being made
+    // gives way.
+    const giveWay = () => {
+      if (
+        this.videos.busy ||
+        this.dialogs.getSnapshot() !== undefined ||
+        this.timeline.getSnapshot().playing
+      )
+        maker.yieldNow();
+    };
+    this.timeline.subscribe(giveWay);
+    this.videos.subscribe(giveWay);
+    this.videos.queue.subscribe(giveWay);
+    this.dialogs.subscribe(giveWay);
     return maker;
   }
 
@@ -1889,7 +1903,10 @@ export class Workbench {
       sceneStage: this.sceneStage,
     };
     signal.throwIfAborted();
-    const compositor = new ExportCompositor(exportCompositorOptions(site, state, key, plan));
+    const compositor = new ExportCompositor({
+      ...exportCompositorOptions(site, state, key, plan),
+      unseen: "cover",
+    });
     const stop = () => compositor.dispose();
     signal.addEventListener("abort", stop, { once: true });
     try {

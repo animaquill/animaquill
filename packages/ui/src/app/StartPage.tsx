@@ -609,6 +609,8 @@ interface CardsProps {
   readonly busy: boolean;
   /** The cover of each card, by its id, see `StartCovers`. */
   readonly covers: ReadonlyMap<string, CardCover>;
+  /** Follows whether people can see a card, for its cover. Returns how to stop. */
+  readonly watch: ((element: Element | null) => (() => void) | undefined) | undefined;
 }
 
 /** What the page does for a card. */
@@ -660,6 +662,7 @@ function CardItem({
   situation,
   busy,
   covers,
+  watch,
 }: CardsProps & { card: ProjectCard }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
@@ -815,6 +818,7 @@ function CardItem({
   };
   return (
     <li
+      ref={watch}
       className={display === "cards" ? styles.card : styles.row}
       data-project={card.id}
       data-kind={card.kind}
@@ -1159,9 +1163,31 @@ export function StartPage() {
   const covers = useSyncExternalStore(startCovers.subscribe, startCovers.getSnapshot);
   // Covers for the cards there are to see, fetched in their order where they have to be.
   const seen = current === "exports" ? [] : welcome ? remoteCards(cards) : listed;
+  // Covers of the platform only for the cards on the screen, or nearly: not hundreds in a row.
+  const watch = useMemo(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset["project"];
+          if (id !== undefined) startCovers.seen(id, entry.isIntersecting);
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    return {
+      observer,
+      watch: (element: Element | null) => {
+        if (!element) return undefined;
+        observer.observe(element);
+        return () => observer.unobserve(element);
+      },
+    };
+  }, [startCovers]);
+  useEffect(() => () => watch?.observer.disconnect(), [watch]);
   // After every render: it only works out what changed.
   useEffect(() => {
-    startCovers.show(seen);
+    startCovers.show(seen, { onlySeen: watch !== undefined });
   });
 
   // "打开云端的项目…" of the menu means the projects of the platform, as they are now: asked
@@ -1269,6 +1295,7 @@ export function StartPage() {
     situation,
     busy,
     covers,
+    watch: watch?.watch,
   } as const;
   const time = sort === "opened" ? "opened" : "updated";
 
