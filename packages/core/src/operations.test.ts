@@ -315,6 +315,61 @@ describe("the check of documents before a batch is written", () => {
     expect(store.exportFiles().problems).toEqual([]);
   });
 
+  /**
+   * Only what changed of a timeline is read, see `mayBreak`: what did not change can still be what a
+   * changed clip runs into, where a clip that did not change is not what its key says, or is on a
+   * track that is gone, which the export makes up.
+   */
+  it.each([
+    ["a clip whose id is not its key", { id: "taken" }, "taken"],
+    ["a caption on a track that is gone", { track: "gone" }, "recovered-caption"],
+  ])("finds what a new clip runs into with %s", (_, odd, id) => {
+    const before = open().getState();
+    const main = before.timelines.main;
+    const title = main?.clips.clip_title;
+    const line = main?.clips.clip_line;
+    if (!main || !title || !line) throw new Error("no clip");
+    // No caption track: a caption on a track that is gone goes on one that the export makes up.
+    const { track_captions: _captions, ...noCaptions } = main.tracks;
+    const tracks = "id" in odd ? main.tracks : noCaptions;
+    const oddOne = "id" in odd ? { ...title, ...odd } : { ...line, ...odd };
+    const key = "id" in odd ? "clip_title" : "clip_line";
+    const withOdd = { ...main, tracks, clips: { ...main.clips, [key]: oddOne } };
+    const was = { ...before, timelines: { ...before.timelines, main: withOdd } };
+    expect(stateToProject(was).problems).toEqual([]);
+    const added = { ...title, id, start: "300" };
+    const clips = { ...withOdd.clips, [id]: added };
+    const now = { ...was, timelines: { ...was.timelines, main: { ...withOdd, clips } } };
+    const patches = [
+      { op: "set" as const, path: ["timelines", "main", "clips", id], value: added },
+    ];
+    expect(brokenDocument(was, now, patches)).toMatchObject({
+      code: "would-break-document",
+      params: { file: "timelines/main/timeline.json" },
+    });
+  });
+
+  /** What a command that misses a rule writes of a clip, where only clips change. */
+  it.each([
+    ["a clip that is not one", "clip_title", { duration: "-1" }],
+    ["a clip with the id of a section", "section_intro", {}],
+    ["a picture on a track for captions", "clip_title", { track: "track_captions" }],
+  ])("refuses %s, reading only what changed", (_, key, changes) => {
+    const store = open();
+    const title = clipOn(store, "clip_title");
+    const op = operationOf("project.rename") as Operation;
+    const spy = vi.spyOn(op, "run").mockImplementation((draft) => {
+      const clip = { ...title, ...changes, id: key, start: key === "clip_title" ? "0" : "300" };
+      draft.set(["timelines", "main", "clips", key], clip);
+    });
+    try {
+      const result = store.execute({ type: "project.rename", params: { name: "x" } });
+      expect(failure(result)).toMatchObject({ code: "would-break-document" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("reads only the documents that a change touches", () => {
     const before = open().getState();
     const timelines = { ...before.timelines, main: { ...before.timelines.main, name: "" } };
@@ -517,5 +572,75 @@ describe("documents of the state", () => {
     const document = documentAt(["timelines", "main", "clips"]);
     expect(document?.file).toBe(file);
     expect(document?.issue(changed) !== undefined).toBe(exported);
+  });
+});
+
+describe("what stays as it was", () => {
+  it("refuses a batch whose second command takes the id the first gave a track", () => {
+    const store = open();
+    const before = store.getState();
+    const shared = { timeline: "main", id: "shared" };
+    const result = store.executeBatch(
+      [
+        { type: "track.add", params: { ...shared, kind: "video" } },
+        {
+          type: "clip.add",
+          params: { ...shared, track: "shared", start: "0", duration: "1", source: COLOR },
+        },
+      ],
+      { origin: AI },
+    );
+    expect(failure(result)).toMatchObject({ code: "id-taken", index: 1 });
+    expect(store.getState()).toBe(before);
+  });
+
+  it("refuses the old name of the new part of a cut, rather than leaving it out", () => {
+    const store = open();
+    const params = { timeline: "main", clip: "clip_title", at: "1", id: "x" };
+    expect(failure(store.execute({ type: "clip.split", params })).code).toBe("invalid-params");
+  });
+
+  it("takes a revision as a number as before", () => {
+    const store = open();
+    const seen = store.revision;
+    const rename = (name: string) => ({
+      type: "clip.update",
+      params: { timeline: "main", clip: "clip_title", changes: { name } },
+    });
+    success(store.execute(rename("用户改的")));
+    const ai = (baseRevision: number) =>
+      store.execute(rename("AI 改的"), { origin: AI, baseRevision });
+    expect(failure(ai(seen)).code).toBe("conflict");
+    expect(failure(ai(store.revision + 1)).code).toBe("stale-revision");
+    success(ai(store.revision));
+  });
+
+  it("leaves no step to undo for a batch it refuses, and undoes the one before", () => {
+    const store = open();
+    const name = store.getState().manifest.name;
+    success(store.execute({ type: "project.rename", params: { name: "一" } }));
+    const op = operationOf("section.add") as Operation;
+    const spy = vi.spyOn(op, "run").mockImplementation((draft) => {
+      const section = { id: "track_video", duration: "1", order: 9 };
+      draft.set(["timelines", "main", "sections", "track_video"], section);
+      return { id: "track_video" };
+    });
+    try {
+      const params = { timeline: "main", duration: "1" };
+      const refused = store.execute({ type: "section.add", params });
+      expect(failure(refused).code).toBe("would-break-document");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(store.undo().ok).toBe(true);
+    expect(store.getState().manifest.name).toBe(name);
+  });
+
+  it("has a revision of one store be none of a copy of it", () => {
+    const store = open();
+    const copy = ProjectStore.fromUpdates([store.encodeState()]).store as ProjectStore;
+    expect(copy.revisionOf(store.revisionId)).toBe(undefined);
+    expect(store.revisionOf(store.revisionId)).toBe(store.revision);
+    expect(copy.revisionOf(0)).toBe(0);
   });
 });

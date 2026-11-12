@@ -12,6 +12,7 @@ import {
   Timeline,
   TimelineOutline,
   ZERO,
+  canHold,
   add,
   fromSeconds,
   downloadableFrom,
@@ -30,6 +31,7 @@ import {
   type Value,
 } from "@animaquill/schema";
 import type { z } from "zod";
+import type { Patch } from "./patch.ts";
 import type { Place } from "./places.ts";
 
 type Note = Notes["notes"][number];
@@ -460,14 +462,17 @@ const FALLBACK_SECTION = { id: "section-recovered", duration: "1" };
  * asked for, such as a clip on a track someone else deleted. Those are placed somewhere instead of
  * being lost.
  */
-export function stateToTimeline(state: TimelineState, whole = true): unknown {
+export function stateToTimeline(
+  state: TimelineState,
+  clips: "whole" | "outline" | "none" = "whole",
+): unknown {
   const tracks = orderedTracks(state).map((head) => {
     const { order: _order, ...track } = head;
     return { ...track, clips: [] as Clip[], joins: [] as Join[] };
   });
   const find = (id: string) => tracks.find((track) => track.id === id);
 
-  for (const clip of Object.values(state.clips)) {
+  for (const clip of clips === "none" ? [] : Object.values(state.clips)) {
     const kind = trackKindFor(clip);
     let track = find(clip.track) ?? tracks.find((candidate) => candidate.kind === kind);
     if (!track) {
@@ -480,7 +485,9 @@ export function stateToTimeline(state: TimelineState, whole = true): unknown {
       tracks.push(track);
     }
     // Only what `TimelineOutline` looks at, where the clips are checked on their own.
-    track.clips.push(whole ? clipFileOf(clip) : ({ id: clip.id, source: clip.source } as Clip));
+    track.clips.push(
+      clips === "whole" ? clipFileOf(clip) : ({ id: clip.id, source: clip.source } as Clip),
+    );
   }
   for (const [id, { track: owner, from, to, transition }] of Object.entries(state.joins ?? {})) {
     // Only some of a join is no join. A join on a track that is gone has nowhere to be.
@@ -620,6 +627,15 @@ export interface StateDocument {
   readonly issue: (
     state: ProjectState,
   ) => { readonly path: string; readonly message: string } | undefined;
+  /**
+   * What a change breaks of it: what is wrong after, where nothing was before. The same as the
+   * issue after and none before, only quicker where a document can tell by what changed.
+   */
+  readonly breaks?: (
+    before: ProjectState,
+    after: ProjectState,
+    patches: readonly Patch[],
+  ) => { readonly path: string; readonly message: string } | undefined;
 }
 
 type DocumentIssue = { readonly path: string; readonly message: string };
@@ -659,7 +675,97 @@ function timelineIssue(timeline: TimelineState): DocumentIssue | undefined {
         message: issue.message,
       };
   }
-  return issueOf(TimelineOutline, stateToTimeline(timeline, false));
+  return issueOf(TimelineOutline, stateToTimeline(timeline, "outline"));
+}
+
+const SHELL = ["name", "background", "beatGrid", "mix", "sections", "tracks", "joins", "markers"];
+
+/** Where a clip goes in the export, as `stateToTimeline` puts it, see `mayBreak`. */
+function holds(kinds: ReadonlyMap<unknown, unknown>, clip: ClipState): boolean {
+  const kind = kinds.get(clip.track);
+  const source = (clip.source as { readonly kind?: unknown } | undefined)?.kind;
+  return typeof kind === "string" && typeof source === "string" && canHold(kind, source);
+}
+
+/**
+ * Whether a change of a timeline can have made something wrong that was not before, by what changed
+ * of it, without reading what did not: a clip that did not change is the same object before and
+ * after. Something wrong after comes from a clip on its own, the rest of the timeline on its own
+ * (`TimelineOutline` without clips), or the rules across them: ids that sections, tracks and clips
+ * share, and what tracks can hold. A clip that did not change and is wrong was wrong before, and so
+ * was the rest of the timeline when it did not change. Where any of it finds something, or a clip is
+ * on a track that is not there, and so would go to one that the export makes up, it cannot tell:
+ * true.
+ *
+ * When only clips changed, and the change says which (`changed`), only those are read, apart from
+ * one plain walk that every clip has the id of its key and a track that is there: then two clips
+ * cannot share an id, none goes to a track that the export makes up, and a clip that did not change
+ * shares none with a section or track that did not either.
+ */
+function mayBreak(
+  before: TimelineState,
+  after: TimelineState,
+  changed: ReadonlySet<string> | undefined,
+): boolean {
+  const ids = new Set<unknown>();
+  const claim = (id: unknown) => !ids.has(id) && Boolean(ids.add(id));
+  const sections = Object.values(after.sections);
+  if (sections.length === 0 || !sections.every(({ id }) => claim(id))) return true;
+  const kinds = new Map<unknown, unknown>();
+  for (const { id, kind } of Object.values(after.tracks)) {
+    if (!claim(id)) return true;
+    kinds.set(id, kind);
+  }
+  const shell = (state: TimelineState) => state as unknown as Record<string, unknown>;
+  const same = SHELL.every((field) => shell(before)[field] === shell(after)[field]);
+  const { clips } = after;
+  if (same && changed) {
+    for (const key in clips) {
+      const clip = clips[key] as ClipState;
+      if (clip.id !== key || !kinds.has(clip.track)) return true;
+    }
+    for (const key of changed) {
+      const clip = entryOf(clips, key);
+      if (clip && (ids.has(clip.id) || !holds(kinds, clip) || clipIssue(clip))) return true;
+    }
+    return false;
+  }
+  for (const key in clips) {
+    const clip = clips[key] as ClipState;
+    if (!claim(clip.id) || !holds(kinds, clip)) return true;
+    if (clip !== entryOf(before.clips, key) && clipIssue(clip)) return true;
+  }
+  return !same && issueOf(TimelineOutline, stateToTimeline(after, "none")) !== undefined;
+}
+
+/**
+ * The clips of a timeline that patches change, by their keys, or undefined where one changes more
+ * than clips one by one, such as all of them.
+ */
+function changedClips(
+  timeline: string,
+  patches: readonly Patch[],
+): ReadonlySet<string> | undefined {
+  const keys = new Set<string>();
+  for (const { path } of patches) {
+    const [top, id, level, key] = path;
+    if (top !== "timelines" || id !== timeline || level === "overrides") continue;
+    if (level === "clips" && key !== undefined) keys.add(key);
+    else if (level === undefined || level === "clips") return undefined;
+  }
+  return keys;
+}
+
+/** What a change breaks of a timeline, see `StateDocument.breaks`. */
+function timelineBreaks(
+  before: TimelineState | undefined,
+  after: TimelineState | undefined,
+  changed: ReadonlySet<string> | undefined,
+): DocumentIssue | undefined {
+  if (!after) return undefined;
+  if (before && !mayBreak(before, after, changed)) return undefined;
+  const issue = timelineIssue(after);
+  return issue && (!before || timelineIssue(before) === undefined) ? issue : undefined;
 }
 
 /** The document that a path into the state is part of, see `StateDocument`. */
@@ -711,6 +817,12 @@ export function documentAt(path: readonly string[]): StateDocument | undefined {
           const timeline = entryOf(state.timelines, id);
           return timeline === undefined ? undefined : timelineIssue(timeline);
         },
+        breaks: (before: ProjectState, after: ProjectState, patches: readonly Patch[]) =>
+          timelineBreaks(
+            entryOf(before.timelines, id),
+            entryOf(after.timelines, id),
+            changedClips(id, patches),
+          ),
       };
     }
     default:

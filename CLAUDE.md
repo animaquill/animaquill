@@ -55,7 +55,7 @@
 - 新命令写在 `packages/core/src/commands.ts`。命令只规划改动，校验都在写入之前完成，因为 Yjs 不能回滚。
 - 命令表就是操作登记表（`OPERATIONS`）：每个操作写明分组、级别（`edit`、`outside`、`human`）、返回（`result`）、可能的错误代码（`failures`）、AI 能不能用（`ai`）和 AI 看不到的参数（`hiddenParams`，`why: "human"` 的只有人能用，别的来源写了就拒绝）。`pnpm test:platform` 会核对每个命令只报声明过的代码、返回合乎 `result`（`core/src/declared.setup.ts`）。参数名的规则：`id` 只指这个对象自己的 ID，引用别的对象用它的种类名（`clip`、`track`），同一个名字不能一会儿是 ID 一会儿是对象。
 - 错误是代码加参数（`core/src/failures.ts` 的 `FAILURES`，`fail(code, params)`），`core` 不写句子：给人看的中文在 `zh-CN.json` 的 `failures.*`（`ui/src/i18n/failures.ts`），给 AI 的英文在 `@animaquill/tools` 的 `failures-en.ts`。加代码或 `invalid-value` 的规则时两边都加，再在 `core/src/failure-samples.ts` 加一个例子，测试会核对。
-- 一批命令写入前，它碰到的文档（`documentAt`）原本有效、写后无效就整批拒绝（`would-break-document`，`core/src/document-check.ts`），原本就无效的不管。时间轴按片段缓存校验结果（`TimelineOutline` 加逐个片段的 `Clip`），一千个片段的时间轴一次约 2 ms。段落、轨道、片段在一条时间轴里共用一套 ID，新建它们的命令按整条时间轴查。
+- 一批命令写入前，它碰到的文档（`documentAt`）原本有效、写后无效就整批拒绝（`would-break-document`，`core/src/document-check.ts`），原本就无效的不管。时间轴只读变了的部分（`model.ts` 的 `mayBreak`）：没变的片段改前改后是同一个对象，只查变了的片段、变了的结构（`TimelineOutline`）和跨对象的规则，发现问题才完整查改前改后；改这里要跑 `fuzz-documents.test.ts`。五千个片段的时间轴一次约 2.5 ms，打开后第一次也不用把片段读一遍。段落、轨道、片段在一条时间轴里共用一套 ID，新建它们的命令按整条时间轴查。
 - 修订号对外是带纪元的字符串（`store.revisionId`，`"<纪元>:<计数>"`），每个 `ProjectStore` 一个纪元，别的纪元的一律 `stale-revision`。`baseRevision` 可以按路径给（函数），配合 `objectOfPath` 按对象记看过的修订号。
 - 文档里哪些层是独立的 Map，定义在 `packages/core/src/structure.ts`，它决定了冲突的粒度。不是每个对象都有的层用 `flat`，没有自己的 Map，值存在最近的 Map 里，键是从那里往下的路径；扁平层可以嵌套，比如整个版本差异都存在时间轴的 `overrides` 里。空的也要在的层（语言）用 `standing`。旧文档里已有的嵌套 Map 照常读，写入时迁到扁平键。改成扁平的发布后要提醒用户刷新还开着的旧页面：旧页面仍写旧的 Map，新键已有的值它写了也不生效。
 - 文件导入整份进来或整份不进来。只有 `origin === USER` 的文件能改项目的标签，`importFile` 必须明确传 `origin`。
