@@ -10,12 +10,13 @@ import {
 } from "@animaquill/schema";
 import { z } from "zod";
 import { fail, type Draft } from "./draft.ts";
+import { formatFailure } from "./failures.ts";
 import { isSourceFile } from "./import-file.ts";
 import { entryOf, type ProjectState } from "./model.ts";
 import { isInUse } from "./references.ts";
 import { removeUses } from "./resource-edits.ts";
 
-import { isTooLargeSource } from "./source-size.ts";
+import { MAX_SOURCE_BYTES, isTooLargeSource } from "./source-size.ts";
 
 /** Folders a project folder keeps out of what it brings along, see the format. */
 const isKeptOut = (part: string) => part.startsWith(".") || part === "node_modules";
@@ -43,11 +44,11 @@ function assertOwnerExists(state: ProjectState, path: string): void {
   const owner = ownerOf(path);
   if (owner.kind === "code") return;
   const known = owner.kind === "scene" ? state.scenes : state.sounds;
-  if (!entryOf(known, owner.id)) fail("not-found", `没有这个文件夹：${owner.id}`);
+  if (!entryOf(known, owner.id)) fail("not-found", { kind: "folder", id: owner.id });
 }
 
 function assertSize(path: string, text: string): void {
-  if (isTooLargeSource(text)) fail("file-too-large", `文件不能超过 8 MiB：${path}`);
+  if (isTooLargeSource(text)) fail("file-too-large", { path, limit: MAX_SOURCE_BYTES });
 }
 
 /** Where the folder of a scene or sound keeps what it is, which is no file anybody writes. */
@@ -61,17 +62,17 @@ function manifestOf(path: string): string | undefined {
 function assertFits(state: ProjectState, path: string): void {
   const manifest = manifestOf(path);
   if (manifest !== undefined && (path === manifest || path.startsWith(`${manifest}/`))) {
-    fail("path-taken", `这里是场景或声音自己的说明文件：${manifest}`);
+    fail("path-taken", { path: manifest, by: "manifest" });
   }
   const parts = path.split("/");
   for (let length = 1; length < parts.length; length += 1) {
     const folder = parts.slice(0, length).join("/");
     if (entryOf(state.files, folder) !== undefined)
-      fail("path-taken", `这里已经有文件了：${folder}`);
+      fail("path-taken", { path: folder, by: "file" });
   }
   const inside = `${path}/`;
   if (Object.keys(state.files).some((file) => file.startsWith(inside))) {
-    fail("path-taken", `这里已经有文件夹了：${path}`);
+    fail("path-taken", { path, by: "folder" });
   }
 }
 
@@ -87,41 +88,43 @@ const soundFile = (id: string, entry: string) => `sounds/${id}/${entry}`;
 
 function assertRuntime({ runtime }: { readonly runtime: number }): void {
   if (runtime > CURRENT_SCENE_RUNTIME) {
-    fail("runtime-too-new", `这个编辑器只有运行时版本 ${CURRENT_SCENE_RUNTIME}，要先更新编辑器`);
+    fail("runtime-too-new", { runtime, current: CURRENT_SCENE_RUNTIME });
   }
 }
 
 function assertManifest(id: string, scene: Manifest, files: ProjectState["files"]): void {
   assertRuntime(scene);
   if (entryOf(files, sceneFile(id, scene.entry)) === undefined) {
-    fail("missing-entry", `场景的入口文件不在：${scene.entry}`);
+    fail("missing-entry", { kind: "scene", entry: scene.entry });
   }
 }
 
 /** A sound runs in a worker, where no page can be. */
 function assertSoundManifest(id: string, sound: SoundManifestType, files: ProjectState["files"]) {
   assertRuntime(sound);
-  if (!/\.m?js$/.test(sound.entry)) fail("invalid-value", "声音的入口要是 .js 或 .mjs 文件");
+  if (!/\.m?js$/.test(sound.entry))
+    fail("invalid-value", { rule: "sound-entry", entry: sound.entry });
   if (entryOf(files, soundFile(id, sound.entry)) === undefined) {
-    fail("missing-entry", `声音的入口文件不在：${sound.entry}`);
+    fail("missing-entry", { kind: "sound", entry: sound.entry });
   }
 }
 
 export const SceneAdd = z.strictObject({
   id: Id.optional(),
-  scene: SceneManifest,
+  /** What the scene is, as its `scene.json` says. */
+  manifest: SceneManifest,
   /** By path in the folder of the scene. Scenes hold text: pictures and such are assets. */
   files: z.record(RelativePath, z.string()),
 });
 
 /** A scene with its files. An entry that is not there is a scene that can never run. */
 export function addScene(draft: Draft, params: z.output<typeof SceneAdd>): { id: string } {
-  const { scene, files } = params;
+  const { manifest: scene, files } = params;
   const id = params.id ?? newId("scene");
-  if (entryOf(draft.state.scenes, id)) fail("id-taken", `这个 ID 已经有场景了：${id}`);
-  const paths = Object.keys(files).map((name) => SourcePath.safeParse(sceneFile(id, name)));
-  for (const path of paths) {
-    if (!path.success) fail("invalid-value", path.error.issues[0]?.message ?? "路径不对");
+  if (entryOf(draft.state.scenes, id)) fail("id-taken", { kind: "scene", id, by: "scene" });
+  for (const name of Object.keys(files)) {
+    const path = SourcePath.safeParse(sceneFile(id, name));
+    if (!path.success) formatFailure(path.error, `files.${name}`);
   }
   draft.set(["scenes", id], scene);
   for (const [name, text] of Object.entries(files)) {
@@ -142,7 +145,7 @@ export const SceneUpdate = z.strictObject({
 });
 
 function sceneOf(state: ProjectState, id: string): Manifest {
-  return entryOf(state.scenes, id) ?? fail("not-found", `没有这个场景：${id}`);
+  return entryOf(state.scenes, id) ?? fail("not-found", { kind: "scene", id });
 }
 
 export function updateScene(draft: Draft, params: z.output<typeof SceneUpdate>): void {
@@ -151,10 +154,7 @@ export function updateScene(draft: Draft, params: z.output<typeof SceneUpdate>):
   const next: Record<string, unknown> = { ...current, ...changes };
   for (const field of clear ?? []) delete next[field];
   const result = SceneManifest.safeParse(next);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    return fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
-  }
+  if (!result.success) return formatFailure(result.error, "changes");
   assertManifest(id, result.data, draft.state.files);
   draft.replace(["scenes", id], result.data);
 }
@@ -176,19 +176,20 @@ export function removeScene(draft: Draft, { scene, withUses }: z.output<typeof S
 
 export const SoundAdd = z.strictObject({
   id: Id.optional(),
-  sound: SoundManifest,
+  /** What the sound is, as its `sound.json` says. */
+  manifest: SoundManifest,
   /** By path in the folder of the sound. */
   files: z.record(RelativePath, z.string()),
 });
 
 /** A sound with its files. An entry that is not there is a sound that can never be made. */
 export function addSound(draft: Draft, params: z.output<typeof SoundAdd>): { id: string } {
-  const { sound, files } = params;
+  const { manifest: sound, files } = params;
   const id = params.id ?? newId("sound");
-  if (entryOf(draft.state.sounds, id)) fail("id-taken", `这个 ID 已经有声音了：${id}`);
-  const paths = Object.keys(files).map((name) => SourcePath.safeParse(soundFile(id, name)));
-  for (const path of paths) {
-    if (!path.success) fail("invalid-value", path.error.issues[0]?.message ?? "路径不对");
+  if (entryOf(draft.state.sounds, id)) fail("id-taken", { kind: "sound", id, by: "sound" });
+  for (const name of Object.keys(files)) {
+    const path = SourcePath.safeParse(soundFile(id, name));
+    if (!path.success) formatFailure(path.error, `files.${name}`);
   }
   draft.set(["sounds", id], sound);
   for (const [name, text] of Object.entries(files)) {
@@ -209,7 +210,7 @@ export const SoundUpdate = z.strictObject({
 });
 
 function soundOf(state: ProjectState, id: string): SoundManifestType {
-  return entryOf(state.sounds, id) ?? fail("not-found", `没有这个声音：${id}`);
+  return entryOf(state.sounds, id) ?? fail("not-found", { kind: "sound", id });
 }
 
 export function updateSound(draft: Draft, params: z.output<typeof SoundUpdate>): void {
@@ -218,10 +219,7 @@ export function updateSound(draft: Draft, params: z.output<typeof SoundUpdate>):
   const next: Record<string, unknown> = { ...current, ...changes };
   for (const field of clear ?? []) delete next[field];
   const result = SoundManifest.safeParse(next);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    return fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
-  }
+  if (!result.success) return formatFailure(result.error, "changes");
   assertSoundManifest(id, result.data, draft.state.files);
   draft.replace(["sounds", id], result.data);
 }
@@ -234,7 +232,7 @@ export function removeSound(draft: Draft, { sound, withUses }: z.output<typeof S
   soundOf(draft.state, sound);
   if (withUses) removeUses(draft, "sound", sound);
   else if (isInUse(draft.state, ["sounds", sound])) {
-    fail("sound-in-use", "还有片段或版本在用这个声音，要先换掉或删除它们");
+    fail("sound-in-use", { sound });
   }
   const folder = soundFile(sound, "");
   for (const path of Object.keys(draft.state.files)) {
@@ -263,8 +261,8 @@ export const FileRemove = z.strictObject({ path: SourcePath });
 
 export function removeFile(draft: Draft, { path }: z.output<typeof FileRemove>): void {
   const { state } = draft;
-  if (entryOf(state.files, path) === undefined) fail("not-found", `没有这个文件：${path}`);
-  if (startsWith(state, path)) fail("entry-in-use", `这是入口文件，要先换一个入口：${path}`);
+  if (entryOf(state.files, path) === undefined) fail("not-found", { kind: "file", id: path });
+  if (startsWith(state, path)) fail("entry-in-use", { path, why: "remove" });
   draft.delete(["files", path]);
 }
 
@@ -273,15 +271,15 @@ export const FileRename = z.strictObject({ from: SourcePath, to: SourcePath });
 /** An entry stays the entry. It cannot leave its scene that way, because the scene would have none. */
 export function renameFile(draft: Draft, { from, to }: z.output<typeof FileRename>): void {
   const { state } = draft;
-  const text = entryOf(state.files, from) ?? fail("not-found", `没有这个文件：${from}`);
+  const text = entryOf(state.files, from) ?? fail("not-found", { kind: "file", id: from });
   if (from === to) return;
-  if (entryOf(state.files, to) !== undefined) fail("path-taken", `这里已经有文件了：${to}`);
+  if (entryOf(state.files, to) !== undefined) fail("path-taken", { path: to, by: "file" });
   const owner = startsWith(state, from);
   const source = ownerOf(from);
   const target = ownerOf(to);
   // An entry stays the entry of what it starts, a scene or a sound, so it stays in that folder.
   const stays = target.kind === source.kind && target.kind !== "code" && target.id === owner;
-  if (owner !== undefined && !stays) fail("entry-in-use", `入口文件不能移出它的文件夹：${from}`);
+  if (owner !== undefined && !stays) fail("entry-in-use", { path: from, why: "move" });
   draft.delete(["files", from]);
   checkWrite(draft.state, to, text);
   draft.setText(["files", to], text);
@@ -293,6 +291,6 @@ export function renameFile(draft: Draft, { from, to }: z.output<typeof FileRenam
 
 function assertSceneUnused(state: ProjectState, scene: string): void {
   if (isInUse(state, ["scenes", scene])) {
-    fail("scene-in-use", "还有片段或版本在用这个场景，要先换掉或删除它们");
+    fail("scene-in-use", { scene });
   }
 }

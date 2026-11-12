@@ -339,7 +339,7 @@ export class MoveGesture implements Gesture {
       const clip = { ...copy, start: formatTime(add(clipStart(box.clip), delta)) };
       const { id: timeline } = this.#host.model;
       const track = this.#targetRow(row).id;
-      return { type: "clip.add", params: { timeline, track, clip, ...this.#overlap() } };
+      return { type: "clip.add", params: { timeline, track, ...clip, ...this.#overlap() } };
     });
     const originals = this.#moving.map(({ box }) => box.id);
     const { model } = this.#host;

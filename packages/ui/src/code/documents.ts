@@ -1,4 +1,4 @@
-import { entryOf, type ProjectStore } from "@animaquill/core";
+import { entryOf, type ProjectStore, type CommandFailure } from "@animaquill/core";
 import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 
@@ -34,7 +34,7 @@ export interface CodeSnapshot {
 }
 
 export interface CodeMessages {
-  commandFailed(message: string): void;
+  commandFailed(failure: CommandFailure): void;
   /** It went away with nothing unsaved in it. */
   closedRemoved(path: string): void;
 }
@@ -203,7 +203,7 @@ export class CodeDocuments {
       return true;
     }
     const result = store.execute({ type: "file.write", params: { path, text: document.text } });
-    if (!result.ok) this.#messages.commandFailed(result.error.message);
+    if (!result.ok) this.#messages.commandFailed(result.error);
     return result.ok;
   }
 

@@ -694,7 +694,7 @@ describe("a batch that would break the project", () => {
       refusing
         ? {
             ok: false,
-            error: { code: "merge-would-break", message: "会出错", problems: [] },
+            error: { code: "merge-would-break", params: { why: "breaks" }, problems: [] },
             files: [],
           }
         : merge(changes, options),
@@ -719,7 +719,7 @@ describe("a batch that would break the project", () => {
       changes.some(({ path }) => path === NOTES)
         ? {
             ok: false,
-            error: { code: "merge-would-break", message: "会出错", problems: [] },
+            error: { code: "merge-would-break", params: { why: "breaks" }, problems: [] },
             files: [],
           }
         : merge(changes, options),

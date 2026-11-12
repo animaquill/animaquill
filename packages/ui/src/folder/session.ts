@@ -8,6 +8,7 @@ import {
   type MergeResult,
   type Origin,
   type ProjectStore,
+  type CommandFailure,
 } from "@animaquill/core";
 import {
   FolderError,
@@ -34,6 +35,7 @@ import {
   projectIdOf,
   textOf,
 } from "./project-files.ts";
+import { failureMessage } from "../i18n/failures.ts";
 
 /**
  * Keeps a project folder and the open project in step, see docs/design/local-projects.md section 2.
@@ -447,17 +449,11 @@ function unreadable(path: string, disk: Extract<Disk, { kind: "unreadable" }>): 
 }
 
 /** What a refusal of a batch says about one of its files. */
-function problemsAbout(
-  error: {
-    readonly code: string;
-    readonly message: string;
-    readonly problems?: readonly Problem[];
-  },
-  path: string,
-): readonly Problem[] {
+function problemsAbout(error: CommandFailure | Problem, path: string): readonly Problem[] {
+  if (!("params" in error)) return [{ ...error, file: path }];
   const own = error.problems?.filter(({ file }) => file === path) ?? [];
   if (own.length > 0) return own;
-  return [{ severity: "error", code: error.code, file: path, message: error.message }];
+  return [{ severity: "error", code: error.code, file: path, message: failureMessage(error) }];
 }
 
 let batches = 0;
@@ -1268,7 +1264,15 @@ class Turn {
         const why =
           problems.length > 0
             ? problems
-            : problemsAbout({ code: "blocked", message: "这个文件没有并入，等你处理" }, file.path);
+            : problemsAbout(
+                {
+                  severity: "error",
+                  code: "blocked",
+                  file: file.path,
+                  message: "这个文件没有并入，等你处理",
+                },
+                file.path,
+              );
         this.#block(file.path, now, why, false, bases.get(file.path));
         continue;
       }

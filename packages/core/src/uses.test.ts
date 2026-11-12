@@ -20,7 +20,7 @@ const run = (store: ProjectStore, type: string, params: object): CommandResult =
   store.execute({ type, params } as CommandCall);
 
 const ok = (result: CommandResult) => {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 };
 

@@ -17,18 +17,21 @@ function open() {
   const run = (type: string, params: object, origin?: string) =>
     store.execute({ type, params } as CommandCall, origin === undefined ? {} : { origin });
   const ok = (result: CommandResult) => {
-    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     return result;
   };
   const code = (result: CommandResult) => (result.ok ? "ok" : result.error.code);
   const addScene = (id = "title", files: object = { "index.html": PAGE }, scene = manifest) =>
-    ok(run("scene.add", { id, scene, files }));
+    ok(run("scene.add", { id, manifest: scene, files }));
   const useScene = (scene = "title", clip = "c", start = "0") =>
     ok(
       run("clip.add", {
         timeline: "main",
         track,
-        clip: { id: clip, start, duration: "5", source: { kind: "scene", scene } },
+        id: clip,
+        start,
+        duration: "5",
+        source: { kind: "scene", scene },
       }),
     );
   const lock = () =>
@@ -52,7 +55,7 @@ describe("a new scene", () => {
 
   it("gets an id when it does not bring one", () => {
     const { run, ok } = open();
-    const result = ok(run("scene.add", { scene: manifest, files: { "index.html": PAGE } }));
+    const result = ok(run("scene.add", { manifest: manifest, files: { "index.html": PAGE } }));
     expect((result.results[0] as { id: string }).id).toMatch(/^scene_/);
   });
 
@@ -87,21 +90,21 @@ describe("a new scene", () => {
     [
       "a runtime from the future",
       "runtime-too-new",
-      { id: "b", scene: { ...manifest, runtime: 2 } },
+      { id: "b", manifest: { ...manifest, runtime: 2 } },
     ],
     [
       "an entry that cannot run",
       "invalid-params",
-      { id: "b", scene: { ...manifest, entry: "a.ts" } },
+      { id: "b", manifest: { ...manifest, entry: "a.ts" } },
     ],
-    ["no runtime", "invalid-params", { id: "b", scene: { name: "b", entry: "index.html" } }],
-    ["a field nobody knows", "invalid-params", { id: "b", scene: { ...manifest, extra: 1 } }],
+    ["no runtime", "invalid-params", { id: "b", manifest: { name: "b", entry: "index.html" } }],
+    ["a field nobody knows", "invalid-params", { id: "b", manifest: { ...manifest, extra: 1 } }],
   ])("refuses %s, and writes nothing", (_, expected, params) => {
     const { state, run, code, addScene } = open();
     addScene();
     const before = state();
     expect(
-      code(run("scene.add", { scene: manifest, files: { "index.html": PAGE }, ...params })),
+      code(run("scene.add", { manifest: manifest, files: { "index.html": PAGE }, ...params })),
     ).toBe(expected);
     expect(state()).toBe(before);
   });
@@ -109,7 +112,7 @@ describe("a new scene", () => {
   it("refuses a file and a folder of one name", () => {
     const { run, code } = open();
     const files = { "index.html": PAGE, a: "x", "a/b.js": "y" };
-    expect(code(run("scene.add", { id: "b", scene: manifest, files }))).toBe("path-taken");
+    expect(code(run("scene.add", { id: "b", manifest: manifest, files }))).toBe("path-taken");
   });
 });
 
@@ -182,7 +185,7 @@ describe("removing a scene", () => {
     const { store, state, useScene } = open();
     const files = { "index.html": PAGE, "a.js": "1" };
     const made = store.execute(
-      { type: "scene.add", params: { id: "b", scene: manifest, files } },
+      { type: "scene.add", params: { id: "b", manifest: manifest, files } },
       { origin: aiTask("x") },
     );
     expect(made.ok).toBe(true);
@@ -370,7 +373,7 @@ describe("an asset that code asks for", () => {
     return { ...project, remove };
   }
 
-  const messageOf = (result: CommandResult) => (result.ok ? "" : result.error.message);
+  const messageOf = (result: CommandResult) => (result.ok ? "" : String(result.error.params.file));
 
   it("stays while a scene names it, and people hear where", () => {
     const { state, code, addScene, remove } = withLogo();
@@ -488,7 +491,7 @@ describe("a sound", () => {
   const SOUND = { name: "铃", entry: "sound.js", runtime: 1 };
   const CODE = "aq.sound(({ frames }) => new Float32Array(frames));";
   const add = ({ ok, run }: ReturnType<typeof open>) =>
-    ok(run("sound.add", { id: "bell", sound: SOUND, files: { "sound.js": CODE } }));
+    ok(run("sound.add", { id: "bell", manifest: SOUND, files: { "sound.js": CODE } }));
   const audioTrack = ({ ok, run }: ReturnType<typeof open>) => {
     ok(run("track.add", { timeline: "main", id: "voice", kind: "audio" }));
     return "voice";
@@ -497,7 +500,10 @@ describe("a sound", () => {
     context.run("clip.add", {
       timeline: "main",
       track,
-      clip: { id: "c", start: "0", duration: "1", source: { kind: "sound", sound: "bell" } },
+      id: "c",
+      start: "0",
+      duration: "1",
+      source: { kind: "sound", sound: "bell" },
     });
 
   it("comes with its files, in one step", () => {
@@ -515,36 +521,36 @@ describe("a sound", () => {
 
   it("gets an id when it does not bring one", () => {
     const { run, ok } = open();
-    const result = ok(run("sound.add", { sound: SOUND, files: { "sound.js": CODE } }));
+    const result = ok(run("sound.add", { manifest: SOUND, files: { "sound.js": CODE } }));
     expect((result.results[0] as { id: string }).id).toMatch(/^sound_/);
   });
 
   it("cannot take the place of another one", () => {
     const context = open();
     add(context);
-    const again = { id: "bell", sound: SOUND, files: { "sound.js": CODE } };
+    const again = { id: "bell", manifest: SOUND, files: { "sound.js": CODE } };
     expect(context.code(context.run("sound.add", again))).toBe("id-taken");
   });
 
   it("needs its entry, and that has to be a script", () => {
     const { run, code } = open();
-    const none = { id: "a", sound: SOUND, files: {} };
+    const none = { id: "a", manifest: SOUND, files: {} };
     expect(code(run("sound.add", none))).toBe("missing-entry");
     const page = { ...SOUND, entry: "index.html" };
-    const pageFiles = { id: "b", sound: page, files: { "index.html": PAGE } };
+    const pageFiles = { id: "b", manifest: page, files: { "index.html": PAGE } };
     expect(code(run("sound.add", pageFiles))).toBe("invalid-value");
   });
 
   it("cannot be written for a newer runtime", () => {
     const { run, code } = open();
     const files = { "sound.js": CODE };
-    const newer = { id: "a", sound: { ...SOUND, runtime: 99 }, files };
+    const newer = { id: "a", manifest: { ...SOUND, runtime: 99 }, files };
     expect(code(run("sound.add", newer))).toBe("runtime-too-new");
   });
 
   it("keeps its files inside of its folder", () => {
     const { run, code } = open();
-    const above = { id: "a", sound: SOUND, files: { "sound.js": CODE, "../b/x.js": "1" } };
+    const above = { id: "a", manifest: SOUND, files: { "sound.js": CODE, "../b/x.js": "1" } };
     expect(code(run("sound.add", above))).not.toBe("ok");
   });
 
@@ -572,7 +578,7 @@ describe("a sound", () => {
     const context = open();
     add(context);
     const { run, code, ok } = context;
-    ok(run("sound.add", { id: "b", sound: SOUND, files: { "sound.js": CODE } }));
+    ok(run("sound.add", { id: "b", manifest: SOUND, files: { "sound.js": CODE } }));
     const to = "sounds/b/moved.js";
     expect(code(run("file.rename", { from: "sounds/bell/sound.js", to }))).toBe("entry-in-use");
     expect(code(run("file.remove", { path: "sounds/bell/sound.js" }))).toBe("entry-in-use");
@@ -621,7 +627,7 @@ describe("a clip of a scene", () => {
   it("needs a scene that is there", () => {
     const { track, run, code } = open();
     const clip = { start: "0", duration: "1", source: { kind: "scene", scene: "nope" } };
-    expect(code(run("clip.add", { timeline: "main", track, clip }))).toBe("not-found");
+    expect(code(run("clip.add", { timeline: "main", track, ...clip }))).toBe("not-found");
   });
 
   it("can come along with its scene, in one step", () => {
@@ -629,8 +635,8 @@ describe("a clip of a scene", () => {
     const clip = { id: "c", start: "0", duration: "1", source: { kind: "scene", scene: "new" } };
     const files = { "index.html": PAGE };
     const result = store.executeBatch([
-      { type: "scene.add", params: { id: "new", scene: manifest, files } },
-      { type: "clip.add", params: { timeline: "main", track, clip } },
+      { type: "scene.add", params: { id: "new", manifest: manifest, files } },
+      { type: "clip.add", params: { timeline: "main", track, ...clip } },
     ]);
     expect(result.ok).toBe(true);
     store.undo();
@@ -641,7 +647,7 @@ describe("a clip of a scene", () => {
   it("cannot be pointed at a scene that is not there", () => {
     const { track, run, ok, code, state } = open();
     const clip = { id: "c", start: "0", duration: "1", source: color };
-    ok(run("clip.add", { timeline: "main", track, clip }));
+    ok(run("clip.add", { timeline: "main", track, ...clip }));
     const changes = { source: { kind: "scene", scene: "nope" } };
     expect(code(run("clip.update", { timeline: "main", clip: "c", changes }))).toBe("not-found");
     expect(state().timelines["main"]?.clips["c"]?.source).toEqual(color);
@@ -651,7 +657,7 @@ describe("a clip of a scene", () => {
     const { track, run, ok } = open();
     const source = { kind: "scene", library: "l", resource: "r" };
     const clip = { start: "0", duration: "1", source };
-    ok(run("clip.add", { timeline: "main", track, clip }));
+    ok(run("clip.add", { timeline: "main", track, ...clip }));
   });
 });
 
@@ -664,7 +670,7 @@ describe("a locked project", () => {
   };
 
   it.each([
-    ["scene.add", { id: "b", scene: manifest, files: { "index.html": PAGE } }],
+    ["scene.add", { id: "b", manifest: manifest, files: { "index.html": PAGE } }],
     ["scene.update", { scene: "title", changes: { name: "a" } }],
     ["scene.remove", { scene: "title" }],
     ["file.write", { path: "scenes/title/a.js", text: "1" }],

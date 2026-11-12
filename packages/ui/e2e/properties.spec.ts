@@ -444,9 +444,9 @@ function projectIn(width: number, height: number) {
   const timeline = store.getState().timelines["main"];
   const track = timeline && orderedTracks(timeline).find(({ kind }) => kind === "video");
   const add = (clip: object) => {
-    const params = { timeline: "main", track: track?.id, clip };
+    const params = { timeline: "main", track: track?.id, ...clip };
     const result = store.execute({ type: "clip.add", params });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const plan = () => {
     const built = buildRenderPlan(store.getState(), "main");

@@ -10,7 +10,8 @@
     "./view": "./src/view.ts",
     "./registration": "./src/registration.ts",
     "./handles": "./src/handles.ts",
-    "./disk-folder": "./src/disk-folder.ts"
+    "./disk-folder": "./src/disk-folder.ts",
+    "./failure-samples": "./src/failure-samples.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"

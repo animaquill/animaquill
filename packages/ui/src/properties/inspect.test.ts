@@ -31,7 +31,7 @@ function setup(fps = "30") {
   const audio = orderedTracks(main()).find(({ kind }) => kind === "audio")?.id as string;
   const run = (call: CommandCall) => {
     const result = store.execute(call);
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const add = (id: string, extra: object = {}, on = track) =>
     run({
@@ -39,7 +39,11 @@ function setup(fps = "30") {
       params: {
         timeline: "main",
         track: on,
-        clip: { id, start: "0", duration: "10", source: red, ...extra },
+        id,
+        start: "0",
+        duration: "10",
+        source: red,
+        ...extra,
       },
     });
   const model = (): TimelineModel => buildModel("main", main(), fps);

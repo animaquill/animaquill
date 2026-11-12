@@ -60,6 +60,7 @@ import { hasherHere, type Hasher } from "../media/hasher.ts";
 import { elsewhereFile, type ElsewhereFile } from "../storage/places.ts";
 import { ImportRefused, readProjectFolder, type ProjectFolder } from "../transfer/import.ts";
 import { FolderAssets } from "./assets.ts";
+import { failureMessage } from "../i18n/failures.ts";
 
 /** Where a project goes, as people chose it, see `FolderProjects.placeFor`. */
 export interface MovePlace {
@@ -627,7 +628,7 @@ export class FolderMove {
     // The copy as it is written: with the new paths of its assets, which its log has to say.
     if (plan.renames.length > 0) {
       const result = store.executeBatch(renameCalls(plan.renames));
-      if (!result.ok) return stopped(new Error(result.error.message), false);
+      if (!result.ok) return stopped(new Error(failureMessage(result.error)), false);
     }
     let compared: { readonly mismatches: readonly Mismatch[]; readonly seen: Seen };
     try {

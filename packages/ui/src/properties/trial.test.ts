@@ -94,7 +94,7 @@ async function setup(place = browser()) {
     ({ kind }) => kind === "video",
   )?.id;
   const clip = { id: "c", start: "0", duration: "5", source: { kind: "color", color: "#ff0000" } };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   await session.trySave();
   const { id } = store.getState().manifest;
   await session.close();
@@ -885,7 +885,7 @@ describe("changing project", () => {
       duration: "5",
       source: { kind: "color", color: "#ff0000" },
     };
-    session.store?.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+    session.store?.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
     const listener = vi.fn();
     trials.subscribe(listener);
     trials.write([write(0.5, "opacity")]);

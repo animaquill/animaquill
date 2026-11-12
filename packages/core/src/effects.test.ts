@@ -28,7 +28,7 @@ function withClip(effects?: readonly object[], properties?: object) {
   };
   const added = store.execute({
     type: "clip.add",
-    params: { timeline: "main", track: video, clip },
+    params: { timeline: "main", track: video, ...clip },
   });
   expect(added.ok).toBe(true);
   return { store, video, audio };
@@ -167,12 +167,10 @@ describe("the commands", () => {
       params: {
         timeline: "main",
         track: audio,
-        clip: {
-          id: "s",
-          start: "0",
-          duration: "1",
-          source: { kind: "audio", media: { library: "lib", path: "a.wav" } },
-        },
+        id: "s",
+        start: "0",
+        duration: "1",
+        source: { kind: "audio", media: { library: "lib", path: "a.wav" } },
       },
     });
     expect(sound.ok).toBe(true);
@@ -252,12 +250,10 @@ describe("the commands", () => {
       params: {
         timeline: "main",
         track: video,
-        clip: {
-          start: "10",
-          duration: "1",
-          source: { kind: "color", color: "#000000" },
-          effects: [{ id: "a", type: "blur" }],
-        },
+        start: "10",
+        duration: "1",
+        source: { kind: "color", color: "#000000" },
+        effects: [{ id: "a", type: "blur" }],
       },
     });
     expect(copy.ok).toBe(true);
@@ -392,7 +388,7 @@ describe("when an effect works", () => {
     );
     const cut = store.execute({
       type: "clip.split",
-      params: { timeline: "main", clip: "c", at: "2", id: "d" },
+      params: { timeline: "main", clip: "c", at: "2", piece: "d" },
     });
     expect(cut.ok).toBe(true);
     expect(rangeOf(store, "c")).toEqual({

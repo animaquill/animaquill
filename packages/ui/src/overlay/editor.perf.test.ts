@@ -99,7 +99,7 @@ async function manyKeys() {
     duration: String(KEYS),
     source: { kind: "color", color: "#123" },
   };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   store.execute({
     type: "property.edit",
     params: {

@@ -16,7 +16,7 @@ const fade = (duration: string, more: Record<string, unknown> = {}) => ({
 });
 
 function success(result: CommandResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
@@ -216,14 +216,14 @@ describe("setting the transitions of a clip", () => {
       params: { id: "nothing", asset: { kind: "audio", path: "a.wav", storage: "local" } },
     });
     success(
-      store.execute({ type: "clip.add", params: { timeline: "main", track: audio?.id, clip } }),
+      store.execute({ type: "clip.add", params: { timeline: "main", track: audio?.id, ...clip } }),
     );
     const result = store.execute({
       type: "clip.setTransition",
       params: { timeline: "main", clip: "s", enter: fade("0.2") },
     });
     expect(failure(result).code).toBe("transition-unsupported");
-    expect(failure(result).message).toBe("这一版的编辑器还不能播放声音的入转场");
+    expect(failure(result).params).toEqual({ type: "fade", media: "sound", use: "enter" });
   });
 
   it("always takes one away, and changes the length and speed of one that a file left", () => {
@@ -309,7 +309,7 @@ describe("setting the transitions of a clip", () => {
 describe("transitions of clips that are added", () => {
   const add = (clip: Record<string, unknown>) => {
     const { store, track, clipOf } = withClip({ start: "0", duration: "1" });
-    const params = { timeline: "main", track, clip: { id: "b", source: color, ...clip } };
+    const params = { timeline: "main", track, id: "b", source: color, ...clip };
     return { result: store.execute({ type: "clip.add", params }), clipOf };
   };
 
@@ -373,7 +373,7 @@ describe("transitions of clips that are added", () => {
     if (!original) throw new Error("no clip");
     const { track: _, ...copy } = original;
     const clip = { ...copy, id: "b", start: "10" };
-    success(left.execute({ type: "clip.add", params: { timeline: "main", track, clip } }));
+    success(left.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } }));
     const pasted = left.getState().timelines["main"]?.clips["b"];
     expect([pasted?.enter?.duration, pasted?.exit?.duration]).toEqual(["3", "2"]);
     expect(left.exportFiles().problems).toEqual([]);
@@ -392,7 +392,7 @@ describe("transitions of clips that are added", () => {
     if (!original) throw new Error("no clip");
     const { track, ...copy } = original;
     const clip = { ...copy, id: "s2", start: "5" };
-    success(store.execute({ type: "clip.add", params: { timeline: "main", track, clip } }));
+    success(store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } }));
     expect(store.getState().timelines["main"]?.clips["s2"]?.enter).toEqual(fade("0.2"));
   });
 });
@@ -828,7 +828,8 @@ describe("fades written the way they were before transitions", () => {
     const { store } = withClip({ start: "0", duration: "4" });
     const path = "timelines/main/timeline.json";
     const imported = store.importFile(path, files().get(path) as string, { origin: USER });
-    if (!imported.ok) throw new Error(imported.error.message);
+    if (!imported.ok)
+      throw new Error(`${imported.error.code}: ${JSON.stringify(imported.error.params)}`);
     expect(imported.problems).toEqual([
       {
         severity: "warning",

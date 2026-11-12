@@ -15,7 +15,7 @@ function project() {
   const store = ProjectStore.create(createProject({ name: "资源" }));
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params } as never);
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const asset = (id: string, kind: string, name?: string, tags?: string[]) =>
     run("asset.add", {
@@ -35,7 +35,7 @@ function project() {
   asset("model", "model", "模型");
   run("scene.add", {
     id: "title",
-    scene: { name: "标题", entry: "index.html", runtime: 1, tags: ["片头", "文字"] },
+    manifest: { name: "标题", entry: "index.html", runtime: 1, tags: ["片头", "文字"] },
     files: { "index.html": "<h1>标题</h1>" },
   });
   return store;

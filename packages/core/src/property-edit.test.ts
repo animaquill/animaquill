@@ -483,14 +483,17 @@ function setup() {
   const track = orderedTracks(main()).find(({ kind }) => kind === "video")?.id as string;
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     return result;
   };
   const addClip = (id: string, start = "0") =>
     run("clip.add", {
       timeline: "main",
       track,
-      clip: { id, start, duration: "5", source: { kind: "color", color: "#ff0000" } },
+      id,
+      start,
+      duration: "5",
+      source: { kind: "color", color: "#ff0000" },
     });
   addClip("c");
   const owner = { clip: "c" };

@@ -18,6 +18,7 @@ import { z } from "zod";
 import { laterValue, looksLikeClockMoved } from "./clip-edits.ts";
 import { checkWrite } from "./commands.ts";
 import { CommandError, fail, type ClipFact } from "./draft.ts";
+import { failureOf, paramIssues } from "./failures.ts";
 import { clipEnd, clipOffset, clipStart, entryOf, type ClipState } from "./model.ts";
 
 /**
@@ -149,10 +150,7 @@ type StoredTrial = z.output<typeof StoredTrial>;
 /** Edits the way a command gets them, which also gives every time its one spelling. */
 const Edits = z.array(PropertyEdit);
 
-const failed = (error: CommandError): TrialResult => ({
-  ok: false,
-  error: { code: error.code, message: error.message },
-});
+const failed = (error: CommandError): TrialResult => ({ ok: false, error: failureOf(error) });
 
 const sizeOf = (changes: TrialChanges) =>
   [...changes.values()].reduce((sum, clip) => sum + clip.size, 0);
@@ -558,9 +556,8 @@ export class Trial {
     if (edits.length === 0) return DONE;
     const parsed = Edits.safeParse(edits);
     if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      const message = `${issue?.path.join(".")}：${issue?.message}`;
-      return { ok: false, error: { code: "invalid-params", message } };
+      const issues = paramIssues(parsed.error);
+      return { ok: false, error: { code: "invalid-params", params: { issues } } };
     }
     let values: ReadonlyMap<string, ReadonlyMap<string, PropertyValue | undefined>>;
     try {
@@ -587,7 +584,8 @@ export class Trial {
     const values = new Map<string, Map<string, PropertyValue | undefined>>();
     for (const edit of edits) {
       const { path, owner } = edit;
-      const clip = entryOf(clips, owner.clip) ?? fail("not-found", `没有这个片段：${owner.clip}`);
+      const clip =
+        entryOf(clips, owner.clip) ?? fail("not-found", { kind: "clip", id: owner.clip });
       const touched = values.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
       values.set(clip.id, touched);
       const start = touched.has(path) ? touched.get(path) : this.#shown(clip, path);

@@ -8,7 +8,9 @@ import {
   ProjectManifest,
   SceneManifest,
   SoundManifest,
+  Clip,
   Timeline,
+  TimelineOutline,
   ZERO,
   add,
   fromSeconds,
@@ -17,7 +19,6 @@ import {
   isSameHash,
   parseTime,
   type Asset,
-  type Clip,
   type Elsewhere,
   type Join,
   type MediaRef,
@@ -459,7 +460,7 @@ const FALLBACK_SECTION = { id: "section-recovered", duration: "1" };
  * asked for, such as a clip on a track someone else deleted. Those are placed somewhere instead of
  * being lost.
  */
-export function stateToTimeline(state: TimelineState): unknown {
+export function stateToTimeline(state: TimelineState, whole = true): unknown {
   const tracks = orderedTracks(state).map((head) => {
     const { order: _order, ...track } = head;
     return { ...track, clips: [] as Clip[], joins: [] as Join[] };
@@ -478,7 +479,8 @@ export function stateToTimeline(state: TimelineState): unknown {
       } as unknown as (typeof tracks)[number];
       tracks.push(track);
     }
-    track.clips.push(clipFileOf(clip));
+    // Only what `TimelineOutline` looks at, where the clips are checked on their own.
+    track.clips.push(whole ? clipFileOf(clip) : ({ id: clip.id, source: clip.source } as Clip));
   }
   for (const [id, { track: owner, from, to, transition }] of Object.entries(state.joins ?? {})) {
     // Only some of a join is no join. A join on a track that is gone has nowhere to be.
@@ -605,4 +607,113 @@ export function stateToProject(state: ProjectState, here?: Here): ExportedProjec
     ),
   };
   return { project, problems };
+}
+
+/**
+ * One document of a project, as a path into the state finds it: the file it is written to, and
+ * whether it can be written, by the same checks as `stateToProject`. Code files have no format of
+ * their own, so they are none.
+ */
+export interface StateDocument {
+  readonly file: string;
+  /** What the format finds wrong with it, or undefined when it is valid or not there. */
+  readonly issue: (
+    state: ProjectState,
+  ) => { readonly path: string; readonly message: string } | undefined;
+}
+
+type DocumentIssue = { readonly path: string; readonly message: string };
+
+const issueOf = (schema: z.ZodType, value: unknown): DocumentIssue | undefined => {
+  if (value === undefined) return undefined;
+  const result = schema.safeParse(value);
+  if (result.success) return undefined;
+  const issue = result.error.issues[0];
+  return { path: issue?.path.map(String).join(".") ?? "", message: issue?.message ?? "" };
+};
+
+/**
+ * What the format finds wrong with a clip on its own, by the clip: a clip that did not change is the
+ * same object in the next state, so a large timeline is checked again by what changed of it.
+ */
+const clipIssues = new WeakMap<ClipState, DocumentIssue | null>();
+
+function clipIssue(clip: ClipState): DocumentIssue | undefined {
+  const known = clipIssues.get(clip);
+  if (known !== undefined) return known ?? undefined;
+  const issue = issueOf(Clip, clipFileOf(clip));
+  clipIssues.set(clip, issue ?? null);
+  return issue;
+}
+
+/**
+ * What the format finds wrong with a timeline, as `Timeline` would: each clip on its own, and the
+ * rest with `TimelineOutline`, which is the same rules without what clips are on their own.
+ */
+function timelineIssue(timeline: TimelineState): DocumentIssue | undefined {
+  for (const clip of Object.values(timeline.clips)) {
+    const issue = clipIssue(clip);
+    if (issue)
+      return {
+        path: `clips.${clip.id}${issue.path ? `.${issue.path}` : ""}`,
+        message: issue.message,
+      };
+  }
+  return issueOf(TimelineOutline, stateToTimeline(timeline, false));
+}
+
+/** The document that a path into the state is part of, see `StateDocument`. */
+export function documentAt(path: readonly string[]): StateDocument | undefined {
+  const [top, id, level, version] = path;
+  const of = (file: string, schema: z.ZodType, value: (state: ProjectState) => unknown) => ({
+    file,
+    issue: (state: ProjectState) => issueOf(schema, value(state)),
+  });
+  switch (top) {
+    case "manifest":
+      return of("animaquill.json", ProjectManifest, (state) => state.manifest);
+    case "assets":
+    case "places":
+      return of("assets.json", Assets, (state) =>
+        state.assets === undefined ? undefined : { assets: placedAssets(state) },
+      );
+    case "libraries":
+      return of("libraries.json", Libraries, (state) => state.libraries);
+    case "lock":
+      return of("libraries.lock.json", LibrariesLock, (state) => state.lock);
+    case "notes":
+      return of("notes.json", Notes, (state) =>
+        state.notes === undefined ? undefined : { notes: Object.values(state.notes) },
+      );
+    case "scenes":
+      if (id === undefined) return undefined;
+      return of(`scenes/${id}/scene.json`, SceneManifest, (state) => entryOf(state.scenes, id));
+    case "sounds":
+      if (id === undefined) return undefined;
+      return of(`sounds/${id}/sound.json`, SoundManifest, (state) => entryOf(state.sounds, id));
+    case "locales":
+      if (id === undefined) return undefined;
+      return of(`locales/${id}.json`, Locale, (state) => {
+        const strings = entryOf(state.locales, id);
+        return strings === undefined ? undefined : { strings };
+      });
+    case "timelines": {
+      if (id === undefined) return undefined;
+      if (level === "overrides" && version !== undefined) {
+        return of(`timelines/${id}/overrides/${version}.json`, Overrides, (state) => {
+          const override = entryOf(entryOf(state.timelines, id)?.overrides, version);
+          return override === undefined ? undefined : withScope(version, override);
+        });
+      }
+      return {
+        file: `timelines/${id}/timeline.json`,
+        issue: (state: ProjectState) => {
+          const timeline = entryOf(state.timelines, id);
+          return timeline === undefined ? undefined : timelineIssue(timeline);
+        },
+      };
+    }
+    default:
+      return undefined;
+  }
 }

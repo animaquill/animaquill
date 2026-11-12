@@ -84,6 +84,7 @@ import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
+import { commandFailedText } from "../i18n/failures.ts";
 import { Flag } from "./flag.ts";
 import { InputMode } from "./input-mode.ts";
 import { KeybindingService } from "./keybindings.ts";
@@ -433,7 +434,7 @@ export class Workbench {
     this.code = new CodeDocuments(
       this.session,
       {
-        commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+        commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
         closedRemoved: (path) => this.notifications.push(t("code.closedRemoved", { path })),
       },
       {
@@ -465,7 +466,7 @@ export class Workbench {
         unsupported: (name) => this.notifications.push(t("notice.mediaUnsupported", { name })),
         tooLarge: (name) => this.notifications.push(t("notice.mediaTooLarge", { name })),
         saveFailed: (name) => this.notifications.push(t("notice.mediaSaveFailed", { name })),
-        commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+        commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
         confirmCopy: (name, bytes) =>
           this.dialogs.confirm({
             title: t("folder.copy.title", { name }),
@@ -519,7 +520,7 @@ export class Workbench {
       t,
     });
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
-      commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       joinsRemoved: (count) => this.notifications.push(t("timeline.joinsRemoved", { count })),
       sceneName: (number) => t("scene.newName", { number }),
       soundName: (number) => t("sound.newName", { number }),
@@ -727,7 +728,7 @@ export class Workbench {
       });
     }
     this.trials = new TrialSession(this.session, this.timeline, host.trials, host.settings, {
-      commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       overwrote: (count) => this.notifications.push(t("notice.trialOverwrote", { count })),
       discarded: (count) => this.notifications.push(t("notice.trialDiscarded", { count })),
       setAside: (count) => this.notifications.push(t("notice.trialSetAside", { count })),
@@ -742,7 +743,7 @@ export class Workbench {
     });
     this.operations = new OperationLog(this.session);
     this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
-      commandFailed: (message) => this.notifications.push(t("notice.commandFailed", { message })),
+      commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       comparing: () => this.notifications.push(t("notice.comparing")),
     });
     this.keyframes = new KeyframeEditor(
@@ -924,7 +925,7 @@ export class Workbench {
   #fix(call: OperationCall): void {
     const result = this.session.store?.execute(call);
     if (result && !result.ok) {
-      this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
+      this.notifications.push(commandFailedText(this.t, result.error));
     }
   }
 
@@ -939,7 +940,7 @@ export class Workbench {
     const renames = [{ owner: { clip }, from, to }];
     const result = store.execute({ type: "property.rename", params: { timeline, renames } });
     if (!result.ok) {
-      this.notifications.push(this.t("notice.commandFailed", { message: result.error.message }));
+      this.notifications.push(commandFailedText(this.t, result.error));
     }
     return result.ok;
   }
@@ -2123,7 +2124,7 @@ export class Workbench {
     if (!name) return;
     const result = store.execute({ type: "project.rename", params: { name } });
     if (!result.ok) {
-      this.notifications.push(t("notice.commandFailed", { message: result.error.message }));
+      this.notifications.push(commandFailedText(t, result.error));
     }
   }
 
@@ -2659,7 +2660,7 @@ export class Workbench {
       return result.obstacle ? this.t(`notice.undoPartly.${result.obstacle}`) : undefined;
     }
     if (result.error.obstacle) return this.t(`notice.undoBlocked.${result.error.obstacle}`);
-    return this.t("notice.commandFailed", { message: result.error.message });
+    return commandFailedText(this.t, result.error);
   }
 
   /**

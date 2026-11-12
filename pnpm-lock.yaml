@@ -187,6 +187,9 @@ importers:
       '@animaquill/schema':
         specifier: workspace:*
         version: link:../schema
+      '@animaquill/tools':
+        specifier: workspace:*
+        version: link:../tools
       '@earendil-works/pi-agent-core':
         specifier: 1.5.0
         version: 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(ws@8.22.2)(zod@4.6.7)
@@ -360,6 +363,19 @@ importers:
       '@types/node':
         specifier: 26.0.0
         version: 26.0.0
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@26.0.0)(vite@8.3.6(@types/node@26.0.0))
+
+  packages/tools:
+    dependencies:
+      '@animaquill/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
       typescript:
         specifier: 7.0.2
         version: 7.0.2

@@ -47,11 +47,11 @@ function randomClipChange(
     () => rename({ from: "object.arm_l.x", to: "object.arm.x", scale: 2, offset: 1 }),
     () => ({
       type: "clip.split",
-      params: { timeline, clip: alone, at: String(random.int(60)), id: `cut${round}` },
+      params: { timeline, clip: alone, at: String(random.int(60)), piece: `cut${round}` },
     }),
     () => ({
       type: "clip.split",
-      params: { timeline, clip: alone, at: `${random.int(180)}/3`, id: `cut${round}` },
+      params: { timeline, clip: alone, at: `${random.int(180)}/3`, piece: `cut${round}` },
     }),
     () => ({ type: "clip.trim", params: { timeline, clip, start: String(random.int(40)) } }),
     () => ({ type: "clip.trim", params: { timeline, clip, end: String(1 + random.int(80)) } }),
@@ -66,12 +66,10 @@ function randomClipChange(
       params: {
         timeline,
         track,
-        clip: {
-          id: `new${round}`,
-          start: String(random.int(60)),
-          duration: "4",
-          source: { kind: "color", color: "#112233" },
-        },
+        id: `new${round}`,
+        start: String(random.int(60)),
+        duration: "4",
+        source: { kind: "color", color: "#112233" },
       },
     }),
   ];
@@ -87,7 +85,7 @@ function moveByPasting(store: ProjectStore, random: Random, round: number): read
   const copy = { ...clip, id: `moved${round}`, start: String(100 + round * 40) };
   return [
     { type: "clip.remove", params: { timeline: "main", clips: [moved.id] } },
-    { type: "clip.add", params: { timeline: "main", track, clip: copy, movedFrom: moved.id } },
+    { type: "clip.add", params: { timeline: "main", track, ...copy, movedFrom: moved.id } },
   ];
 }
 

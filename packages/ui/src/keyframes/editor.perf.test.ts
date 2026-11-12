@@ -54,7 +54,8 @@ async function big() {
     properties: { "transform.x": keysOf(index), "transform.y": keysOf(-index) },
   }));
   const imported = store.importFile(path, JSON.stringify(file), { origin: USER });
-  if (!imported.ok) throw new Error(imported.error.message);
+  if (!imported.ok)
+    throw new Error(`${imported.error.code}: ${JSON.stringify(imported.error.params)}`);
   const settings = {
     load: async () => undefined,
     save: async () => {},

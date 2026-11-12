@@ -897,7 +897,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           const clip = { start: "0", duration: "1", source: { kind: "color", color: "#111111" } };
           store.execute({
             type: "clip.add",
-            params: { timeline: "main", track: empty, clip, overlap: "overwrite" },
+            params: { timeline: "main", track: empty, ...clip, overlap: "overwrite" },
           });
         }
         if (clash === "clip" && aim) {

@@ -162,7 +162,7 @@ function withKey(animation: Animation, time: string, value: Value): Animation {
 function indexOfKey(keys: readonly Key[], time: string): number {
   const moment = parseTime(time);
   const index = firstKeyFrom(keys, moment);
-  return isAt(keys[index], moment) ? index : fail("not-found", `这个时刻没有关键帧：${time}`);
+  return isAt(keys[index], moment) ? index : fail("not-found", { kind: "key", id: time });
 }
 
 function withoutKey(value: PropertyValue | undefined, time: string): PropertyValue {
@@ -182,7 +182,7 @@ function placed(staying: readonly Key[], added: readonly Key[]): readonly Key[] 
   timed.forEach(({ key, moment }, index) => {
     const previous = timed[index - 1];
     if (previous && compare(previous.moment, moment) === 0) {
-      fail("invalid-value", `同一时刻只能有一个关键帧：${key.time}`);
+      fail("invalid-value", { rule: "key-taken", time: key.time });
     }
     const at = firstKeyFrom(staying, moment);
     for (let next = from; next < at; next += 1) keys.push(staying[next] as Key);
@@ -201,7 +201,7 @@ function withKeysMoved(
   const leaving = new Set<number>();
   const moved = moves.map(({ from, to }) => {
     const index = indexOfKey(keys, from);
-    if (leaving.has(index)) fail("invalid-value", `同一个关键帧不能移动两次：${from}`);
+    if (leaving.has(index)) fail("invalid-value", { rule: "key-moved-twice", time: from });
     leaving.add(index);
     return { ...(keys[index] as Key), time: to };
   });

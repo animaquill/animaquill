@@ -109,9 +109,9 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           source: { kind: "color", color: "#112233" },
           ...properties,
         };
-        expect(a.execute({ type: "clip.add", params: { timeline: "main", track, clip } }).ok).toBe(
-          true,
-        );
+        expect(
+          a.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } }).ok,
+        ).toBe(true);
       });
       const b = replica(a);
       const wrote = new Map<string, number>();
@@ -188,7 +188,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("keys through cuts and trims, seed %i", 
     };
     const added = store.execute({
       type: "clip.add",
-      params: { timeline: "main", track, clip },
+      params: { timeline: "main", track, ...clip },
     });
     expect(added.ok).toBe(true);
     const before = picture(store);
@@ -305,7 +305,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
           duration: "1",
           source: { kind: "color", color: "#000000" },
         };
-        store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+        store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
       }
       const model = new WrittenModel();
       const read = ([clip, path]: readonly string[]) =>
@@ -419,7 +419,7 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
             store.execute(
               {
                 type: "clip.add",
-                params: { timeline: "main", track: video, clip, overlap: "overwrite" },
+                params: { timeline: "main", track: video, ...clip, overlap: "overwrite" },
               },
               { origin },
             );

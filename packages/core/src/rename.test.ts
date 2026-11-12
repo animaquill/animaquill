@@ -22,16 +22,14 @@ function setup(properties: Readonly<Record<string, PropertyValue>> = {}) {
     params: {
       timeline: "main",
       track,
-      clip: {
-        id: "c",
-        start: "0",
-        duration: "5",
-        source: { kind: "color", color: "#ff0000" },
-        properties,
-      },
+      id: "c",
+      start: "0",
+      duration: "5",
+      source: { kind: "color", color: "#ff0000" },
+      properties,
     },
   });
-  if (!added.ok) throw new Error(added.error.message);
+  if (!added.ok) throw new Error(`${added.error.code}: ${JSON.stringify(added.error.params)}`);
   const rename = (...renames: readonly object[]) =>
     store.execute({ type: "property.rename", params: { timeline: "main", renames } });
   const propertiesNow = () => main().clips["c"]?.properties ?? {};
@@ -100,7 +98,7 @@ describe("the property.rename command", () => {
   });
 
   it.each([
-    ["a path that is there", { from: "object.a.x", to: "object.a.y" }, "conflict"],
+    ["a path that is there", { from: "object.a.x", to: "object.a.y" }, "path-taken"],
     ["nothing", { from: "object.nope.x", to: "object.a.z" }, "not-found"],
     ["nothing under a path", { from: "object.nope.*", to: "object.a.*" }, "not-found"],
     ["the same path", { from: "object.a.x", to: "object.a.x" }, "invalid-value"],

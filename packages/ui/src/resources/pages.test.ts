@@ -15,11 +15,11 @@ function storeWithScene(): ProjectStore {
     type: "scene.add",
     params: {
       id: "a",
-      scene: { name: "场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<!doctype html>", "main.js": "one", "other.js": "two" },
     },
   });
-  if (!result.ok) throw new Error(result.error.message);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return store;
 }
 

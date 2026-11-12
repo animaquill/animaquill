@@ -14,6 +14,7 @@ import {
   type FolderNode,
   type TreeNode,
 } from "./tree.ts";
+import { commandFailedText } from "../i18n/failures.ts";
 
 export interface FilesSnapshot {
   readonly selected: string | undefined;
@@ -102,7 +103,7 @@ export class FileActions {
     const result = this.#store?.executeBatch(calls);
     if (!result) return false;
     if (!result.ok) {
-      this.#notifications.push(this.#t("notice.commandFailed", { message: result.error.message }));
+      this.#notifications.push(commandFailedText(this.#t, result.error));
     }
     return result.ok;
   }

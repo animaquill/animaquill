@@ -1,4 +1,5 @@
 import {
+  newId,
   readProject,
   writeProject,
   type Problem,
@@ -6,8 +7,15 @@ import {
   type ProjectFiles,
 } from "@animaquill/schema";
 import * as Y from "yjs";
-import { COMMANDS, type CommandDefinition } from "./commands.ts";
-import { CommandError, Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
+import { operationOf, type Operation } from "./commands.ts";
+import { Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
+import {
+  CommandError,
+  failureOf,
+  paramIssues,
+  type CommandFailure,
+  type FailureCode,
+} from "./failures.ts";
 import { isSourceFile, planFileImport } from "./import-file.ts";
 import {
   planMerge,
@@ -20,6 +28,7 @@ import {
   type MergedFile,
   type MergeMemory,
 } from "./merge-files.ts";
+import { brokenDocument } from "./document-check.ts";
 import { projectToState, stateToProject, type Here, type ProjectState } from "./model.ts";
 import { NOBODY, STORAGE, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
 import { cloudOrigin } from "./sync.ts";
@@ -66,13 +75,25 @@ export interface CommandCall {
   readonly params?: unknown;
 }
 
+/**
+ * A revision as whoever is outside of the editor holds it: `"<epoch>:<count>"`. The epoch is new for
+ * every `ProjectStore`, so a revision from before a reload, or of another window, is no revision of
+ * this one, whatever its count. See `ProjectStore.revisionId`.
+ */
+export type RevisionId = string;
+
+/** A revision: a count of this store, or a `RevisionId`. */
+export type Revision = number | RevisionId;
+
 export interface ExecuteOptions {
   readonly origin?: Origin;
   /**
    * The revision the caller saw. A change somebody else made since then to the same property stops
-   * the command. This is how a person's edit wins over an AI task that did not see it yet.
+   * the command. This is how a person's edit wins over an AI task that did not see it yet. It can
+   * be one for each path the change writes, for a caller that keeps track of what it saw of each
+   * object, see `objectOfPath`: undefined for a path does not check that path.
    */
-  readonly baseRevision?: number;
+  readonly baseRevision?: Revision | ((path: Path) => Revision | undefined);
   /** Runs every check and writes nothing. */
   readonly dryRun?: boolean;
 }
@@ -86,6 +107,8 @@ export interface ImportOptions extends ExecuteOptions {
 }
 
 interface CommitOptions extends ExecuteOptions {
+  /** No document that was valid may become invalid, see `brokenDocument`. */
+  readonly checksDocuments?: boolean;
   /** For taking changes back, which is not something to undo in turn. */
   readonly takesBack?: {
     readonly entries: readonly UndoEntry[];
@@ -103,16 +126,7 @@ interface CommitOptions extends ExecuteOptions {
  */
 export type UndoObstacle = "changed" | "inUse";
 
-export interface CommandFailure {
-  readonly code: string;
-  readonly message: string;
-  /** What changed in the meantime, for a conflict. */
-  readonly conflicts?: readonly Path[];
-  /** Why a change cannot be taken back. */
-  readonly obstacle?: UndoObstacle;
-  /** What is wrong with a file, for an import. */
-  readonly problems?: readonly Problem[];
-}
+export type { CommandFailure };
 
 /** What became of a command, by name only, for whoever keeps track of how the editor runs. */
 export interface CommandOutcome {
@@ -133,6 +147,8 @@ export type CommandResult =
       readonly revision: number;
       readonly results: readonly unknown[];
       readonly patches: readonly Patch[];
+      /** The project after the change; for a dry run, what it would be. */
+      readonly state: ProjectState;
     }
   | { readonly ok: false; readonly error: CommandFailure };
 
@@ -445,32 +461,32 @@ function breaksDocuments(before: ProjectState, after: ProjectState): boolean {
 export const mergeUpdates = (updates: readonly Uint8Array[]): Uint8Array =>
   Y.mergeUpdates([...updates]);
 
-const COMMANDS_BY_TYPE = new Map(COMMANDS.map((command) => [command.type, command]));
+const plain = (code: FailureCode): CommandFailure => ({ code, params: {} });
 
-const MISSING_UPDATES: CommandFailure = {
-  code: "missing-updates",
-  message: "别的窗口的改动还没有收全，等一下再试。一直这样的话，刷新页面",
-};
-const PROJECT_LOCKED: CommandFailure = {
-  code: "project-locked",
-  message: "项目有不可编辑的标签，要先移除标签",
-};
+const MISSING_UPDATES = plain("missing-updates");
+const PROJECT_LOCKED = plain("project-locked");
 /** Nothing may change the project for now, see `ProjectStore.readOnly`. */
-const READ_ONLY: CommandFailure = { code: "read-only", message: "项目现在只能看，不能修改" };
-const NOTHING_TO_UNDO: CommandFailure = { code: "nothing-to-undo", message: "没有可以撤销的步骤" };
+const READ_ONLY = plain("read-only");
+const NOTHING_TO_UNDO = plain("nothing-to-undo");
 /** What keeps no undo log only writes down where files are, see `STORAGE`. */
-const STORAGE_ONLY: CommandFailure = {
-  code: "storage-only",
-  message: "上传只记下文件放在哪里，不改文件",
-};
-const ONE_AT_A_TIME: CommandFailure = {
-  code: "one-at-a-time",
-  message: "自己的改动一步一步撤销",
-};
-const OBSTACLES: Readonly<Record<UndoObstacle, string>> = {
-  changed: "这一步之后别人改过，已跳过",
-  inUse: "这一步还被别的内容用着，或者用到的东西已经没了，已跳过",
-};
+const STORAGE_ONLY = plain("storage-only");
+const ONE_BY_ONE = plain("undo-one-by-one");
+
+/** How many characters the epoch of a revision has, see `RevisionId`. */
+const EPOCH_LENGTH = 4;
+
+/** A new epoch, different for every store that opens, see `RevisionId`. */
+const newEpoch = (): string => newId("epoch").slice(-EPOCH_LENGTH);
+
+/** What a hidden parameter, by its path such as `changes.path`, was given in parameters. */
+function givenAt(params: unknown, name: string): unknown {
+  let value = params;
+  for (const key of name.split(".")) {
+    if (typeof value !== "object" || value === null || !Object.hasOwn(value, key)) return undefined;
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+}
 
 /**
  * A project while it is open. Yjs holds the truth, so that changes from other people and devices
@@ -493,6 +509,8 @@ export class ProjectStore {
   /** What the document holds, which can have holes while an update is missing. */
   #latest: ProjectState;
   #revision = 0;
+  /** See `RevisionId`. */
+  readonly #epoch = newEpoch();
   #history: HistoryEntry[] = [];
   /** Which write the document holds where. Only taking changes back needs this: see `Written`. */
   #written: Written = UNWRITTEN;
@@ -751,6 +769,24 @@ export class ProjectStore {
     return this.#revision;
   }
 
+  /** The revision as whoever is outside of the editor holds it, see `RevisionId`. */
+  get revisionId(): RevisionId {
+    return `${this.#epoch}:${this.#revision}`;
+  }
+
+  /**
+   * The count of a revision of this store, or undefined for one of another epoch, or one it never
+   * had: a reload, another window, a count it has not come to.
+   */
+  revisionOf(revision: Revision): number | undefined {
+    if (typeof revision === "number") return revision <= this.#revision ? revision : undefined;
+    const at = revision.lastIndexOf(":");
+    const count = Number(revision.slice(at + 1));
+    if (at < 0 || revision.slice(0, at) !== this.#epoch) return undefined;
+    if (!Number.isSafeInteger(count) || count < 0 || count > this.#revision) return undefined;
+    return count;
+  }
+
   /**
    * Whether nothing may change the project for now: commands, files that are taken in, undo and
    * redo all fail with "read-only", whoever asks, and the history stays as it is. What other
@@ -779,18 +815,29 @@ export class ProjectStore {
     return this.executeBatch([call], options);
   }
 
-  /** Runs commands as one change: all of them happen, or none. */
+  /**
+   * Runs commands as one change: all of them happen, or none. A failure says which one it was,
+   * as `index`. No document that was valid may become invalid, see `brokenDocument`.
+   */
   executeBatch(calls: readonly CommandCall[], options: ExecuteOptions = {}): CommandResult {
     const origin = options.origin ?? USER;
+    const checked = { ...options, checksDocuments: true };
     return this.#commit(
       calls.map((call) => call.type),
       origin,
-      options,
+      checked,
       (draft) =>
-        calls.map((call) => {
-          const command = COMMANDS_BY_TYPE.get(call.type);
-          if (!command) throw new CommandError("unknown-command", `没有这个命令：${call.type}`);
-          return this.#runCommand(command, call, draft);
+        calls.map((call, index) => {
+          try {
+            const command = operationOf(call.type);
+            if (!command) {
+              throw new CommandError({ code: "unknown-command", params: { command: call.type } });
+            }
+            return this.#runCommand(command, call, draft);
+          } catch (error) {
+            if (error instanceof CommandError) throw new BatchFailure(failureOf(error, index));
+            throw error;
+          }
         }),
     );
   }
@@ -810,8 +857,12 @@ export class ProjectStore {
       draft.knowsOnlyOutcome();
       const planned = planFileImport(draft, path, text);
       if (planned.problems.length > 0) {
-        const message = "文件不符合项目格式，没有导入";
-        throw new ImportRejected({ code: "invalid-file", message, problems: planned.problems });
+        const failure = {
+          code: "invalid-file" as const,
+          params: { path },
+          problems: planned.problems,
+        };
+        throw new BatchFailure(failure);
       }
       told = planned.notices;
       return [];
@@ -831,8 +882,7 @@ export class ProjectStore {
    */
   mergeFiles(changes: readonly FileChange[], options: MergeOptions): MergeResult {
     if (!isBatch(changes)) {
-      const message = "这一批文件的格式不对，没有并入";
-      return { ok: false, error: { code: "invalid-batch", message }, files: [] };
+      return { ok: false, error: { code: "invalid-batch", params: {} }, files: [] };
     }
     // Code that does not say who changed the files gets nothing that only a person can do.
     const origin = (options as MergeOptions | undefined)?.origin ?? NOBODY;
@@ -850,17 +900,15 @@ export class ProjectStore {
       } catch (error) {
         if (error instanceof CommandError) throw error;
         // Nothing is written of a draft that did not get through, so the project stays as it is.
-        const message = "合并时出了错，这一批没有并入";
         const detail = error instanceof Error ? error.message : String(error);
-        throw new ImportRejected({
+        const message = `合并时出了错，这一批没有并入：${detail}`;
+        throw new BatchFailure({
           code: "merge-failed",
-          message,
-          problems: [
-            { severity: "error", code: "merge-failed", file: "", message: `${message}：${detail}` },
-          ],
+          params: { detail },
+          problems: [{ severity: "error", code: "merge-failed", file: "", message }],
         });
       }
-      if (merge.refusal) throw new ImportRejected(merge.refusal);
+      if (merge.refusal) throw new BatchFailure(merge.refusal);
       return [];
     });
     if (!result.ok) return { ...result, files: unmergedFiles(changes) };
@@ -925,7 +973,7 @@ export class ProjectStore {
    * changes go back one at a time, with undo().
    */
   undoOrigin(origin: Origin): UndoResult {
-    if (origin === USER) return { ok: false, error: ONE_AT_A_TIME };
+    if (origin === USER) return { ok: false, error: ONE_BY_ONE };
     const refusal = this.#whyNotNow;
     if (refusal) return { ok: false, error: refusal };
     const log = this.#undo.get(origin);
@@ -936,7 +984,7 @@ export class ProjectStore {
 
   /** Does again what undoOrigin() took back. */
   redoOrigin(origin: Origin): UndoResult {
-    if (origin === USER) return { ok: false, error: ONE_AT_A_TIME };
+    if (origin === USER) return { ok: false, error: ONE_BY_ONE };
     return this.#stepBack(origin, "undone", "done");
   }
 
@@ -990,7 +1038,7 @@ export class ProjectStore {
 
   #assertUnlocked(draft: Draft): void {
     if (draft.state.manifest.tags?.some((tag) => tag.locked)) {
-      throw new CommandError(PROJECT_LOCKED.code, PROJECT_LOCKED.message);
+      throw new CommandError({ code: "project-locked", params: {} });
     }
   }
 
@@ -1001,28 +1049,34 @@ export class ProjectStore {
     return this.#isLocked ? PROJECT_LOCKED : undefined;
   }
 
-  #runCommand(command: CommandDefinition, call: CommandCall, draft: Draft): unknown {
+  #runCommand(command: Operation, call: CommandCall, draft: Draft): unknown {
     if (!command.whileLocked) this.#assertUnlocked(draft);
     const isAlsoBy = (command.alsoBy ?? []).includes(draft.origin);
-    if (command.userOnly && draft.origin !== USER && !isAlsoBy) {
-      throw new CommandError("user-only", `只有用户能运行这个命令：${command.type}`);
+    const { name } = command;
+    if (command.level === "human" && draft.origin !== USER && !isAlsoBy) {
+      throw new CommandError({ code: "user-only", params: { command: name } });
     }
     // What keeps no undo log only does what it is there for.
     if (draft.origin === STORAGE && !isAlsoBy) {
-      throw new CommandError(
-        STORAGE_ONLY.code,
-        `${STORAGE_ONLY.message}，不能运行：${command.type}`,
-      );
+      throw new CommandError({ code: "storage-only", params: { command: name } });
     }
     const params = command.params.safeParse(call.params ?? {});
     if (!params.success) {
-      const issue = params.error.issues[0];
-      throw new CommandError("invalid-params", `${issue?.path.join(".")}：${issue?.message}`);
+      throw new CommandError({
+        code: "invalid-params",
+        params: { issues: paramIssues(params.error) },
+      });
     }
     if (draft.origin !== USER) {
-      const given = params.data as Record<string, unknown>;
-      const name = command.userOnlyParams?.find((param) => given[param] !== undefined);
-      if (name) throw new CommandError("user-only", `只有用户能用这个参数：${name}`);
+      const hidden = command.hiddenParams?.find(
+        (param) => param.why === "human" && givenAt(params.data, param.name) !== undefined,
+      );
+      if (hidden) {
+        throw new CommandError({
+          code: "user-only",
+          params: { command: name, param: hidden.name },
+        });
+      }
     }
     return command.run(draft, params.data);
   }
@@ -1060,20 +1114,22 @@ export class ProjectStore {
     try {
       results = plan(draft);
     } catch (error) {
-      if (error instanceof ImportRejected) return { ok: false, error: error.failure };
-      if (error instanceof CommandError) {
-        return { ok: false, error: { code: error.code, message: error.message } };
-      }
+      if (error instanceof BatchFailure) return { ok: false, error: error.failure };
+      if (error instanceof CommandError) return { ok: false, error: failureOf(error) };
       throw error;
     }
 
     const patches = draft.steps.map((step) => step.patch);
+    if (options.checksDocuments) {
+      const broken = brokenDocument(this.#state, draft.state, patches);
+      if (broken) return { ok: false, error: broken };
+    }
     if (options.baseRevision !== undefined) {
       const conflict = this.#findConflicts(patches, origin, options.baseRevision);
       if (conflict) return { ok: false, error: conflict };
     }
     if (options.dryRun || patches.length === 0) {
-      return { ok: true, revision: this.#revision, results, patches };
+      return { ok: true, revision: this.#revision, results, patches, state: draft.state };
     }
 
     const entry = this.#entryOf(draft, options);
@@ -1113,7 +1169,7 @@ export class ProjectStore {
 
     this.#history.push({ revision: this.#revision, origin, commands, patches, time: Date.now() });
     if (this.#history.length > MAX_HISTORY) this.#history = this.#history.slice(-MAX_HISTORY);
-    return { ok: true, revision: this.#revision, results, patches };
+    return { ok: true, revision: this.#revision, results, patches, state: this.#state };
   }
 
   /** What it takes to undo a change that is about to be written. */
@@ -1214,8 +1270,7 @@ export class ProjectStore {
     }
     const paths = [...kept.values()];
     if (back.size === 0) {
-      const message = OBSTACLES[obstacle];
-      return { ok: false, error: { code: "undo-blocked", message, conflicts: paths, obstacle } };
+      return { ok: false, error: { code: "undo-blocked", params: {}, conflicts: paths, obstacle } };
     }
     const facts = paths.length === 0 ? factsOf(entries) : undefined;
     const takesBack = { entries, to, facts, direction };
@@ -1228,27 +1283,37 @@ export class ProjectStore {
     return { ok: true, revision, patches, kept: paths, ...(paths.length ? { obstacle } : {}) };
   }
 
-  /** Conflicts are about what a command touches: changes elsewhere do not get in its way. */
+  /**
+   * Conflicts are about what a command touches: changes elsewhere do not get in its way. The base
+   * can be one for each path, see `ExecuteOptions.baseRevision`.
+   */
   #findConflicts(
     patches: readonly Patch[],
     origin: Origin,
-    base: number,
+    given: NonNullable<ExecuteOptions["baseRevision"]>,
   ): CommandFailure | undefined {
-    if (base > this.#revision) {
-      return { code: "stale-revision", message: "这个版本号不属于当前的项目，要重新读取" };
+    const stale = (revision: Revision): CommandFailure => ({
+      code: "stale-revision",
+      params: { given: String(revision), current: this.revisionId },
+    });
+    // One revision for everything has to be one of this store, also when nothing gets written.
+    if (typeof given !== "function" && this.revisionOf(given) === undefined) return stale(given);
+    const baseOf = typeof given === "function" ? given : () => given;
+    const conflicts: Path[] = [];
+    for (const { path } of patches) {
+      const revision = baseOf(path);
+      if (revision === undefined) continue;
+      const base = this.revisionOf(revision);
+      if (base === undefined) return stale(revision);
+      const isNewer = (write: Write | undefined) =>
+        write !== undefined && write.revision > base && write.origin !== origin;
+      const isConflict =
+        isNewer(this.#writes.get(keyOf(path))) ||
+        path.some((_, index) => isNewer(this.#removals.get(keyOf(path.slice(0, index + 1)))));
+      if (isConflict) conflicts.push(path);
     }
-    const isNewer = (write: Write | undefined) =>
-      write !== undefined && write.revision > base && write.origin !== origin;
-    const conflicts = patches
-      .map((patch) => patch.path)
-      .filter((path) => {
-        if (isNewer(this.#writes.get(keyOf(path)))) return true;
-        return path.some((_, index) =>
-          isNewer(this.#removals.get(keyOf(path.slice(0, index + 1)))),
-        );
-      });
     if (conflicts.length === 0) return undefined;
-    return { code: "conflict", message: "这些内容已经被别人改过，要重新读取", conflicts };
+    return { code: "conflict", params: {}, conflicts };
   }
 
   /** The map at a path. Only what every document has should have to be made here. */
@@ -1387,12 +1452,12 @@ const isBatch = (changes: unknown): changes is readonly FileChange[] =>
       ["string", "undefined"].includes(typeof (change as FileChange).text),
   );
 
-/** Why nothing of a file comes in. */
-class ImportRejected extends Error {
+/** Why nothing of a change comes in, with all there is to say about it. */
+class BatchFailure extends Error {
   readonly failure: CommandFailure;
 
   constructor(failure: CommandFailure) {
-    super(failure.message);
+    super(failure.code);
     this.failure = failure;
   }
 }

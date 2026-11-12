@@ -425,7 +425,10 @@ describe("a project with effects", () => {
     run("clip.add", {
       timeline: "main",
       track,
-      clip: { id: "c", start: "0", duration: "5", source: color },
+      id: "c",
+      start: "0",
+      duration: "5",
+      source: color,
     });
     const radius = {
       keys: [

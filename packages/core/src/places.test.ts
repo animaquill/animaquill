@@ -47,7 +47,7 @@ const file = {
 } as const;
 
 function success(result: CommandResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
@@ -135,7 +135,7 @@ describe("writing down where the file of an asset is kept", () => {
       { storage: "lfs", hash: HASH, repo: REPO },
       { origin: STORAGE },
     );
-    expect(result).toMatchObject({ ok: false, error: { code: "file-changed" } });
+    expect(result).toMatchObject({ ok: false, error: { code: "asset-file-changed" } });
     expect(placed(store)?.storage).toBe("local");
     expect(store.getState().places).toBeUndefined();
   });
@@ -148,7 +148,7 @@ describe("writing down where the file of an asset is kept", () => {
       { storage: "lfs", hash: HASH, repo: REPO },
       { origin: STORAGE },
     );
-    expect(result).toMatchObject({ ok: false, error: { code: "file-changed" } });
+    expect(result).toMatchObject({ ok: false, error: { code: "asset-file-changed" } });
   });
 
   it("needs the size of the file, which other computers check what they get by", () => {
@@ -698,7 +698,7 @@ describe("assets.json that changed in the project folder", () => {
     const batch: FileChange[] = [{ path: ASSETS, base, text: JSON.stringify(document) }];
     const written = store.exportFiles().files;
     const result = store.mergeFiles(batch, { origin: FOLDER, baseOf: (path) => written.get(path) });
-    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     return result;
   };
   const baseOf = (store: ProjectStore) => store.exportFiles().files.get(ASSETS) as string;
@@ -847,7 +847,7 @@ describe("assets.json that changed in the project folder", () => {
     const track = Object.values(store.getState().timelines[timeline]?.tracks ?? {}).find(
       ({ kind }) => kind === "video",
     );
-    const add = { timeline, track: track?.id, clip: { id: "c", ...clip } };
+    const add = { timeline, track: track?.id, id: "c", ...clip };
     success(store.execute({ type: "clip.add", params: add }));
     uploaded(store);
     const base = baseOf(store);

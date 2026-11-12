@@ -177,10 +177,10 @@ export function readDocument(
     const value = parsed(path, text, ProjectManifest, problems);
     if (!value) return { problems };
     if (value.formatVersion !== CURRENT_FORMAT_VERSION) {
-      throw new CommandError("format-mismatch", "不能在这里改项目的格式版本");
+      throw new CommandError({ code: "format-mismatch", params: {} });
     }
     if (!isUser(origin) && !deepEqual(value.tags, state.manifest.tags)) {
-      throw new CommandError("user-only", "AI 不能改项目的标签");
+      throw new CommandError({ code: "user-only", params: {} });
     }
     return read(["manifest"], value);
   }

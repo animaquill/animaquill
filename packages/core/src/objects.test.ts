@@ -141,7 +141,7 @@ describe("what a clip with a scene offers", () => {
     const scene = { name: "标题", entry: "index.html", runtime: 1, ...(params && { params }) };
     store.execute({
       type: "scene.add",
-      params: { id: "s", scene, files: { "index.html": "<p id=logo>标题</p>" } },
+      params: { id: "s", manifest: scene, files: { "index.html": "<p id=logo>标题</p>" } },
     });
     return store.getState();
   };

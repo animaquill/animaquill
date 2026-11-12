@@ -1,4 +1,4 @@
-import { entryOf, ProjectStore } from "@animaquill/core";
+import { entryOf, ProjectStore, type CommandFailure } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "../workbench/emitter.ts";
@@ -14,11 +14,11 @@ function storeWithScene(): ProjectStore {
     type: "scene.add",
     params: {
       id: "a",
-      scene: { name: "场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<!doctype html>", "main.js": "one", "other.js": "two" },
     },
   });
-  if (!result.ok) throw new Error(result.error.message);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return store;
 }
 
@@ -38,7 +38,7 @@ class FakeSession {
 describe("open files", () => {
   let store: ProjectStore;
   let session: FakeSession;
-  let failed: ReturnType<typeof vi.fn<(message: string) => void>>;
+  let failed: ReturnType<typeof vi.fn<(failure: CommandFailure) => void>>;
   let closedRemoved: ReturnType<typeof vi.fn<(path: string) => void>>;
   let questions: { [K in keyof CodeQuestions]: ReturnType<typeof vi.fn<CodeQuestions[K]>> };
   let code: CodeDocuments;
@@ -48,13 +48,13 @@ describe("open files", () => {
   /** Changes a file the way another window or an import does: it just is different afterwards. */
   const elsewhere = (text: string, path = PATH) => {
     const result = store.execute({ type: "file.write", params: { path, text } });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
 
   beforeEach(() => {
     store = storeWithScene();
     session = new FakeSession(store);
-    failed = vi.fn<(message: string) => void>();
+    failed = vi.fn<(failure: CommandFailure) => void>();
     closedRemoved = vi.fn<(path: string) => void>();
     questions = {
       unsaved: vi.fn<CodeQuestions["unsaved"]>(() => Promise.resolve(undefined)),
@@ -135,10 +135,10 @@ describe("open files", () => {
     code.edit(PATH, "changed");
     vi.spyOn(store, "execute").mockReturnValue({
       ok: false,
-      error: { code: "project-locked", message: "锁定了" },
+      error: { code: "project-locked", params: {} },
     });
     expect(await code.save()).toBe(false);
-    expect(failed).toHaveBeenCalledWith("锁定了");
+    expect(failed).toHaveBeenCalledWith({ code: "project-locked", params: {} });
     expect(document()?.text).toBe("changed");
     expect(code.hasUnsaved).toBe(true);
   });
@@ -247,7 +247,8 @@ describe("open files", () => {
   describe("when the file goes away", () => {
     const remove = (path = PATH) => {
       const result = store.execute({ type: "file.remove", params: { path } });
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok)
+        throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     };
 
     it("closes a tab with nothing unsaved, and says so", () => {
@@ -357,7 +358,7 @@ describe("open files", () => {
       code.edit(PATH, "mine");
       vi.spyOn(store, "execute").mockReturnValue({
         ok: false,
-        error: { code: "project-locked", message: "锁定了" },
+        error: { code: "project-locked", params: {} },
       });
       expect(await code.close(PATH)).toBe(false);
       expect(document()?.text).toBe("mine");

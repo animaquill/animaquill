@@ -1,4 +1,4 @@
-import { type PropertyEdit } from "@animaquill/core";
+import { type PropertyEdit, type CommandFailure } from "@animaquill/core";
 import { describe, expect, it, vi } from "vitest";
 import { orderedTracks } from "@animaquill/core";
 import { TimelineEditor } from "../timeline/editor.ts";
@@ -33,7 +33,7 @@ async function setup({ trying = false } = {}) {
   const timeline = new TimelineEditor(session, memoryWindow(), settings, {
     commandFailed: vi.fn(),
   });
-  const commandFailed = vi.fn<(message: string) => void>();
+  const commandFailed = vi.fn<(failure: CommandFailure) => void>();
   const trials = new TrialSession(session, timeline, new MemoryTrials(), settings, {
     commandFailed,
     overwrote: vi.fn(),
@@ -58,7 +58,7 @@ async function setup({ trying = false } = {}) {
   const state = () => store.getState().timelines["main"];
   const track = orderedTracks(state() as never).find(({ kind }) => kind === "video")?.id;
   const clip = { id: "c", start: "0", duration: "5", source: { kind: "color", color: "#ff0000" } };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   const value = (path: string) => state()?.clips["c"]?.properties?.[path];
   const shown = (path: string) => writer.getPreviewed().get("c")?.get(path);
   return { store, writer, trials, commandFailed, comparingMessage, value, shown, track };
@@ -298,7 +298,7 @@ describe("while people try things out", () => {
       duration: "1",
       source: { kind: "color", color: "#00ff00" },
     };
-    store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+    store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
     writer.commit([{ owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 }]);
     writer.preview([write(20)]);
     expect(shown("transform.x")).toBe(20);

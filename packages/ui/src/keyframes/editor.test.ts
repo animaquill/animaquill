@@ -5,6 +5,7 @@ import {
   sceneSourceOf,
   secondsOf,
   type PropertyEdit,
+  type CommandFailure,
 } from "@animaquill/core";
 import { formatTime, parseTime, type Animation, type Key } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
@@ -65,7 +66,7 @@ async function setup({
     save: async () => {},
     listen: () => () => {},
   };
-  const commandFailed = vi.fn<(message: string) => void>();
+  const commandFailed = vi.fn<(failure: CommandFailure) => void>();
   const timeline = new TimelineEditor(session, memory, settings, { commandFailed });
   await timeline.load();
   timeline.setViewport(WIDTH, 400);
@@ -123,13 +124,13 @@ async function setup({
     const clip = { id, start: String(start), duration: String(duration), source, ...extra };
     const result = store.execute({
       type: "clip.add",
-      params: { timeline: "main", track: video, clip },
+      params: { timeline: "main", track: video, ...clip },
     });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const edit = (...edits: PropertyEdit[]) => {
     const result = store.execute({ type: "property.edit", params: { timeline: "main", edits } });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const keys = (clip: string, path: string, ...moments: (number | string)[]) => {
     edit(
@@ -2098,12 +2099,10 @@ describe("keys on the timeline", () => {
       params: {
         timeline: "main",
         track: audio,
-        clip: {
-          id: "s",
-          start: "0",
-          duration: "1",
-          source: { kind: "audio", media: { asset: "a" } },
-        },
+        id: "s",
+        start: "0",
+        duration: "1",
+        source: { kind: "audio", media: { asset: "a" } },
       },
     });
     const sound = timeline.model?.boxes.get("s");
@@ -2305,7 +2304,10 @@ describe("what the keys of the timeline are about", () => {
       params: {
         timeline: "main",
         track: other,
-        clip: { id: "l", start: "1", duration: "8", source },
+        id: "l",
+        start: "1",
+        duration: "8",
+        source,
       },
     });
     setting.keys("l", X, 2);
@@ -2612,11 +2614,11 @@ describe("parts of a vector", () => {
       type: "scene.add",
       params: {
         id: "s",
-        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        manifest: { name: "场景", entry: "index.html", runtime: 1 },
         files: { "index.html": "<p>场景</p>" },
       },
     });
-    if (!added.ok) throw new Error(added.error.message);
+    if (!added.ok) throw new Error(`${added.error.code}: ${JSON.stringify(added.error.params)}`);
     addClip("c", 0, 8, { source: { kind: "scene", scene: "s" } });
     const revision = sceneSourceOf(store.getState(), "s")?.revision as string;
     registrations.note(revision, {

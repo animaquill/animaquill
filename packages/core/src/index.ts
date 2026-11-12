@@ -1,4 +1,28 @@
-export { COMMANDS, type CommandDefinition } from "./commands.ts";
+export {
+  COMMANDS,
+  OPERATIONS,
+  operationOf,
+  type AiOperationName,
+  type AiUse,
+  type CommandDefinition,
+  type HiddenParam,
+  type Operation,
+  type OperationGroup,
+  type OperationLevel,
+  type OperationName,
+} from "./commands.ts";
+export {
+  FAILURES,
+  FAILURE_CODES,
+  FailedKind,
+  GENERAL_FAILURES,
+  InvalidValue,
+  ParamIssue,
+  type Failure,
+  type FailureCode,
+  type FailureParams,
+} from "./failures.ts";
+export { objectKey, objectOfPath, type ObjectKind, type ObjectRef } from "./object-of-path.ts";
 export {
   componentKeys,
   componentOf,
@@ -305,6 +329,7 @@ export {
   projectFrameRate,
   projectToState,
   sourceLength,
+  documentAt,
   stateToProject,
   stateToTimeline,
   timelineLength,
@@ -364,6 +389,8 @@ export {
   type CommandResult,
   type ExecuteOptions,
   type HistoryEntry,
+  type Revision,
+  type RevisionId,
   type ImportOptions,
   type ImportResult,
   type LocalChange,

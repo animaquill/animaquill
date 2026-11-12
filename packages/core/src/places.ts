@@ -104,18 +104,17 @@ export function setStorage(
   { asset: id, storage, url, hash, repo, owner, store }: z.output<typeof StorageChange>,
 ): void {
   const asset = entryOf(draft.state.assets, id);
-  if (!asset) return fail("not-found", `没有这个素材：${id}`);
+  if (!asset) return fail("not-found", { kind: "asset", id });
   const held = asset.hash;
   if (held === undefined || !isSameHash(held, hash)) {
-    return fail("file-changed", "素材现在的文件已经不是这一个了，存放位置没有改");
+    return fail("asset-file-changed", { asset: id });
   }
   const isHere = storage === "local";
   if (!isHere && draft.origin !== STORAGE) {
-    const message = "只有上传能记下文件在 GitHub、云端空间或网址上：要等文件传完、核对过";
-    return fail("upload-only", message);
+    return fail("upload-only", {});
   }
   if (!isHere && asset.size === undefined) {
-    return fail("invalid-value", "素材还不知道文件有多大，记不下它放在哪里：别的电脑要靠大小核对");
+    return fail("invalid-value", { rule: "size-unknown", asset: id });
   }
   const place: Place = {
     storage,
@@ -129,8 +128,9 @@ export function setStorage(
   const placed = withPlace(asset, place);
   const checked = Asset.safeParse(placed);
   if (!checked.success || placed.storage !== storage) {
-    const why = checked.success ? "" : (checked.error.issues[0]?.message ?? "");
-    return fail("invalid-value", `素材不能这样放：${why}`);
+    const issue = checked.success ? undefined : checked.error.issues[0];
+    const path = ["storage", ...(issue?.path.map(String) ?? [])].join(".");
+    return fail("invalid-value", { rule: "format", path, message: issue?.message ?? "" });
   }
   // What the asset says itself needs no place. What is written down already is not written again.
   const isOwn = isHere && asset.storage === "local";

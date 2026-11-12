@@ -17,6 +17,7 @@ import {
   type TimelineState,
 } from "@animaquill/core";
 import { Time, compare, formatTime, parseTime } from "@animaquill/schema";
+import { failureText } from "@animaquill/tools";
 import { z } from "zod";
 import type { ToolSpec } from "./pi.ts";
 
@@ -72,7 +73,25 @@ function storeOf(context: ToolContext): ProjectStore {
   return store;
 }
 
-/** The command's parameters as JSON Schema, without what only people may use. */
+/** Takes a parameter out of a JSON Schema, by its path such as `changes.path`. */
+function withoutParam(schema: Record<string, unknown>, path: readonly string[]): void {
+  const [name, ...rest] = path;
+  if (name === undefined) return;
+  const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
+  if (rest.length > 0) {
+    const inner = properties?.[name];
+    if (inner) withoutParam(inner, rest);
+    return;
+  }
+  delete properties?.[name];
+  const required = schema.required as string[] | undefined;
+  if (required) schema.required = required.filter((key) => key !== name);
+}
+
+/**
+ * The command's parameters as JSON Schema, without what AI does not see: what only people may use,
+ * and what another command is for, see `hiddenParams`.
+ */
 export function parametersOf(command: CommandDefinition): Record<string, unknown> {
   const schema = z.toJSONSchema(command.params, {
     target: "draft-2020-12",
@@ -81,40 +100,26 @@ export function parametersOf(command: CommandDefinition): Record<string, unknown
     unrepresentable: "any",
   }) as Record<string, unknown>;
   delete schema.$schema;
-  const properties = schema.properties as Record<string, unknown> | undefined;
-  const required = schema.required as string[] | undefined;
-  for (const key of command.userOnlyParams ?? []) {
-    delete properties?.[key];
-    if (required) schema.required = required.filter((name) => name !== key);
-  }
+  for (const { name } of command.hiddenParams ?? []) withoutParam(schema, name.split("."));
   return schema;
 }
 
 /** The commands AI may give, as tools. What only people can do is not among them. */
 export function commandTools(context: ToolContext): ToolSpec[] {
-  return COMMANDS.filter((command) => !command.userOnly).map((command) => ({
+  return COMMANDS.filter((command) => command.level !== "human").map((command) => ({
     name: toolName(command.type),
     label: command.type,
     description: command.description,
     parameters: parametersOf(command),
     run: async (args) => {
       const store = storeOf(context);
-      // Parameters only people may use are not there for AI, also when it writes them anyway.
-      const params = { ...args };
-      for (const key of command.userOnlyParams ?? []) delete params[key];
+      // What only people may pass the store refuses, also when AI writes it anyway.
       const base = context.seen();
       const result = store.execute(
-        { type: command.type, params },
+        { type: command.type, params: args },
         { origin: aiTask(context.task), ...(base !== undefined && { baseRevision: base }) },
       );
-      if (!result.ok) {
-        const { code, message, conflicts } = result.error;
-        const where = conflicts?.length
-          ? `（${conflicts.map((path) => path.join("/")).join("，")}）`
-          : "";
-        const reread = code === "conflict" ? "用户刚改过这些内容，先重新读取再决定。" : "";
-        throw new Error(`${code}: ${message}${where}${reread}`);
-      }
+      if (!result.ok) throw new Error(failureText(result.error));
       context.saw(store.revision);
       return answer({ ok: true, revision: result.revision, result: result.results[0] ?? null });
     },

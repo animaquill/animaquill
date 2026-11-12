@@ -6,14 +6,13 @@ import {
   ZERO,
   compare,
   parseTime,
-  describeMissingEffect,
   effectOfPath,
   effectPath,
   findEffect,
   isAnimation,
   newId,
   parameterOf,
-  specValueProblem,
+  specValueIssue,
   type EffectSpec,
 } from "@animaquill/schema";
 import { z } from "zod";
@@ -31,7 +30,7 @@ import { effectsOf, entryOf, type ClipState, type EffectState } from "./model.ts
 const effectsPath = (timeline: string, clip: string) => [...clipPath(timeline, clip), "effects"];
 
 function clipOf(draft: Draft, timeline: string, id: string): ClipState {
-  return entryOf(timelineOf(draft, timeline).clips, id) ?? fail("not-found", `没有这个片段：${id}`);
+  return entryOf(timelineOf(draft, timeline).clips, id) ?? fail("not-found", { kind: "clip", id });
 }
 
 /** A whole effect of a clip, see `EffectState`. */
@@ -39,13 +38,14 @@ function effectOf(clip: ClipState, id: string): EffectState {
   const effect = entryOf(clip.effects, id);
   return effect && typeof effect.type === "string"
     ? effect
-    : fail("not-found", `片段 ${clip.id} 没有这个效果：${id}`);
+    : fail("not-found", { kind: "effect", id, clip: clip.id });
 }
 
 /** Only pictures have effects so far: sound gets its own with the mixer. */
 function checkPicture(draft: Draft, timeline: string, clip: ClipState): void {
   const track = entryOf(timelineOf(draft, timeline).tracks, clip.track);
-  if (track && track.kind !== "video") fail("wrong-track", "这一版只有画面能加效果");
+  if (track && track.kind !== "video")
+    fail("wrong-track", { trackKind: track.kind, holds: "effect" });
 }
 
 /** What an effect is, for one that people or AI put somewhere: it has to be one this editor has. */
@@ -53,20 +53,20 @@ function specOf(type: string): EffectSpec {
   const found = findEffect(type, "picture");
   return found.kind === "built-in"
     ? found.spec
-    : fail("not-found", describeMissingEffect(found.why));
+    : fail("not-found", { kind: "effect", id: type, why: found.why });
 }
 
 /** Whether a value is one that a parameter of an effect can take, plain or as keys. */
 export function checkParameter(spec: EffectSpec, parameter: string, value: PropertyValue): void {
   const described =
-    parameterOf(spec, parameter) ?? fail("not-found", `效果没有这个参数：${parameter}`);
+    parameterOf(spec, parameter) ?? fail("not-found", { kind: "parameter", id: parameter });
   if (isAnimation(value) && described.animatable === false) {
-    fail("not-animatable", `${parameter} 不能打关键帧`);
+    fail("not-animatable", { path: parameter });
   }
   const values = isAnimation(value) ? value.keys.map((key) => key.value) : [value];
   for (const item of values) {
-    const problem = specValueProblem(described, item, parameter);
-    if (problem) fail("invalid-value", problem);
+    const issue = specValueIssue(described, item, parameter);
+    if (issue) fail("invalid-value", issue);
   }
 }
 
@@ -122,9 +122,9 @@ function checkRange(clip: ClipState, start: string | undefined, end: string | un
   const from = start === undefined ? ZERO : parseTime(start);
   const to = end === undefined ? length : parseTime(end);
   if (compare(to, length) > 0 || compare(from, length) > 0) {
-    fail("invalid-value", "效果的生效时间要在片段之内");
+    fail("invalid-value", { rule: "effect-outside" });
   }
-  if (compare(from, to) >= 0) fail("invalid-value", "效果的开始要在结束之前");
+  if (compare(from, to) >= 0) fail("invalid-value", { rule: "effect-backwards" });
 }
 
 export function addEffect(draft: Draft, params: z.output<typeof EffectAdd>): { id: string } {
@@ -134,7 +134,7 @@ export function addEffect(draft: Draft, params: z.output<typeof EffectAdd>): { i
   const spec = specOf(type);
   checkRange(clip, start, end);
   const id = params.id ?? newId("fx");
-  if (entryOf(clip.effects, id)) fail("id-taken", `这个片段已经有这个 ID 的效果了：${id}`);
+  if (entryOf(clip.effects, id)) fail("id-taken", { kind: "effect", id, by: "effect" });
   for (const [parameter, value] of Object.entries(values ?? {})) {
     checkParameter(spec, parameter, value);
   }
@@ -164,7 +164,7 @@ export function removeEffects(draft: Draft, params: z.output<typeof EffectRemove
   const clip = clipOf(draft, timeline, params.clip);
   // What only some of is there goes too: that is no effect, see `EffectState`.
   for (const id of params.effects) {
-    if (!entryOf(clip.effects, id)) fail("not-found", `片段 ${clip.id} 没有这个效果：${id}`);
+    if (!entryOf(clip.effects, id)) fail("not-found", { kind: "effect", id, clip: clip.id });
   }
   dropEffects(draft, timeline, clip, params.effects);
 }

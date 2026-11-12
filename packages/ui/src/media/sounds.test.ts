@@ -67,26 +67,24 @@ async function setup({ stubborn = false, clean = false } = {}) {
     });
   const execute = (type: string, params: object) => {
     const result = store.execute({ type, params } as CommandCall);
-    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   execute("track.add", { timeline: "main", id: "voice", kind: "audio" });
   const addSound = (id = "s", code = CODE) =>
     execute("sound.add", {
       id,
-      sound: { name: "铃", entry: "sound.js", runtime: 1 },
+      manifest: { name: "铃", entry: "sound.js", runtime: 1 },
       files: { "sound.js": code },
     });
   const addClip = (id = "c", sound = "s", duration = 1, start = "0") =>
     execute("clip.add", {
       timeline: "main",
       track: "voice",
-      clip: {
-        id,
-        start,
-        duration: "1",
-        source: { kind: "sound", sound },
-        properties: { "param.duration": duration },
-      },
+      id,
+      start,
+      duration: "1",
+      source: { kind: "sound", sound },
+      properties: { "param.duration": duration },
     });
   const clip = (id = "c") => store.getState().timelines["main"]?.clips[id] as ClipState;
   const fileOf = (id = "c") => madeSoundOf(store.getState(), clip(id))?.file as string;
@@ -557,12 +555,10 @@ describe("clips", () => {
     execute("clip.add", {
       timeline: "main",
       track: "voice",
-      clip: {
-        id: "c",
-        start: "0",
-        duration: "1",
-        source: { kind: "audio", media: { asset: "a" } },
-      },
+      id: "c",
+      start: "0",
+      duration: "1",
+      source: { kind: "audio", media: { asset: "a" } },
     });
     expect(make().stateOf(clip())).toBeUndefined();
   });

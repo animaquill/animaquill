@@ -152,13 +152,11 @@ function step(store: ProjectStore, random: Random): void {
       params: {
         timeline,
         track,
-        clip: {
-          source: color,
-          start: String(20 + random.int(10) * 2),
-          duration: "2",
-          enter: transition(),
-          exit: transition(),
-        },
+        source: color,
+        start: String(20 + random.int(10) * 2),
+        duration: "2",
+        enter: transition(),
+        exit: transition(),
       },
     }),
     () => ({

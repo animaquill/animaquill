@@ -64,7 +64,7 @@ function setup(
   const track = orderedTracks(main() as never).find(({ kind }) => kind === "video")?.id;
   const run = (call: CommandCall) => {
     const result = store.execute(call);
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const clip = (id: string, extra = {}) =>
     run({
@@ -72,13 +72,11 @@ function setup(
       params: {
         timeline: "main",
         track,
-        clip: {
-          id,
-          start: "0",
-          duration: "5",
-          source: { kind: "color", color: "#ff0000" },
-          ...extra,
-        },
+        id,
+        start: "0",
+        duration: "5",
+        source: { kind: "color", color: "#ff0000" },
+        ...extra,
       },
     });
   clip("c", { properties: { opacity: 0.5 } });
@@ -214,7 +212,7 @@ describe("problems of a scene", () => {
       type: "scene.add",
       params: {
         id: "s",
-        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        manifest: { name: "场景", entry: "index.html", runtime: 1 },
         files: { "index.html": "one" },
       },
     });
@@ -723,7 +721,11 @@ describe("an asset whose file comes back", () => {
     context.run({ type: "asset.add", params: { id: "logo", asset } });
     context.run({
       type: "scene.add",
-      params: { id: "s", scene, files: { "index.html": `<script>aq.asset("logo")</script>` } },
+      params: {
+        id: "s",
+        manifest: scene,
+        files: { "index.html": `<script>aq.asset("logo")</script>` },
+      },
     });
     context.clip("scene", { start: "6", source: { kind: "scene", scene: "s" } });
     context.hello();
@@ -771,7 +773,7 @@ describe("what a scene works out itself", () => {
       type: "scene.add",
       params: {
         id: "s",
-        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        manifest: { name: "场景", entry: "index.html", runtime: 1 },
         files: { "index.html": "one" },
       },
     });

@@ -98,7 +98,7 @@ export const clipIn = (document: any, id: string): any =>
 
 export function run(store: ProjectStore, type: string, params: unknown): void {
   const result = store.execute({ type, params } as CommandCall);
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
 }
 
 export const renameClip = (store: ProjectStore, clip: string, name: string): void =>

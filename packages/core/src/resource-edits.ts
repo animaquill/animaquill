@@ -20,12 +20,6 @@ const TOP: Readonly<Record<SourceResourceKind, "assets" | "scenes" | "sounds">> 
   sound: "sounds",
 };
 
-const NAMES: Readonly<Record<SourceResourceKind, string>> = {
-  asset: "素材",
-  scene: "场景",
-  sound: "声音",
-};
-
 const has = (state: ProjectState, kind: SourceResourceKind, id: string) =>
   entryOf(state[TOP[kind]] as Readonly<Record<string, unknown>> | undefined, id) !== undefined;
 
@@ -88,8 +82,8 @@ export function replaceSource(
   { kind, from, to }: z.output<typeof SourceReplace>,
 ): { readonly clips: number } {
   const { state } = draft;
-  if (from === to) fail("invalid-value", `换成的${NAMES[kind]}和原来的是同一个：${to}`);
-  if (!has(state, kind, to)) fail("not-found", `没有这个${NAMES[kind]}：${to}`);
+  if (from === to) fail("invalid-value", { rule: "replace-same", kind, id: to });
+  if (!has(state, kind, to)) fail("not-found", { kind, id: to });
   const asset = kind === "asset" ? entryOf(state.assets, to) : undefined;
   const fits = (source: unknown) => {
     if (!asset) return true;
@@ -102,7 +96,8 @@ export function replaceSource(
     for (const clip of Object.values(all)) {
       if (!isIt(clip.source, kind, from)) continue;
       if (!fits(clip.source)) {
-        fail("invalid-value", `片段 ${clip.id} 是${clip.source.kind}，用不了这种素材：${to}`);
+        const sourceKind = clip.source.kind;
+        fail("invalid-value", { rule: "source-kind", clip: clip.id, sourceKind, asset: to });
       }
       changes.push({
         path: [...clipPath(timeline, clip.id), "source"],
@@ -115,14 +110,15 @@ export function replaceSource(
         const source = override.source?.value;
         if (!override.source || !isIt(source, kind, from)) continue;
         if (!fits(source)) {
-          fail("invalid-value", `版本 ${version} 里的片段 ${clip} 用不了这种素材：${to}`);
+          const sourceKind = (source as { readonly kind?: string }).kind ?? "";
+          fail("invalid-value", { rule: "source-kind", clip, sourceKind, asset: to, version });
         }
         const path = [...timelinePath(timeline), "overrides", version, "clips", clip, "source"];
         changes.push({ path, value: { ...override.source, value: replaced(source, kind, to) } });
       }
     }
   }
-  if (changes.length === 0) fail("not-in-use", `没有片段在用这个${NAMES[kind]}：${from}`);
+  if (changes.length === 0) fail("not-in-use", { kind, id: from });
   for (const { path, value } of changes) draft.set(path, value);
   return { clips };
 }

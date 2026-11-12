@@ -152,7 +152,7 @@ describe("what describes a clip", () => {
     const scene = { name: "场景", entry: "index.html", runtime: 1 };
     store.execute({
       type: "scene.add",
-      params: { id: "a", scene, files: { "index.html": "<p>a</p>" } },
+      params: { id: "a", manifest: scene, files: { "index.html": "<p>a</p>" } },
     });
     const clip = {
       id: "c",

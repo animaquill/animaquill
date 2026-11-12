@@ -38,7 +38,10 @@ async function setup() {
     params: {
       timeline: "main",
       track: video,
-      clip: { id: "a", start: "2", duration: "2", source: { kind: "color", color: "#112233" } },
+      id: "a",
+      start: "2",
+      duration: "2",
+      source: { kind: "color", color: "#112233" },
     },
   });
   editor.zoomAround(0, 2);

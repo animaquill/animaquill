@@ -1,4 +1,11 @@
-import { ProjectStore, clipEnd, effectsOf, orderedTracks, type ClipState } from "@animaquill/core";
+import {
+  ProjectStore,
+  clipEnd,
+  effectsOf,
+  orderedTracks,
+  type ClipState,
+  type CommandFailure,
+} from "@animaquill/core";
 import { formatTime, parseTime, toSeconds } from "@animaquill/schema";
 import type { SettingsStore } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +35,7 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
   await session.create("时间轴");
   const store = session.store;
   if (!store) throw new Error("no project");
-  const commandFailed = vi.fn<(message: string) => void>();
+  const commandFailed = vi.fn<(failure: CommandFailure) => void>();
   const saved = new Map<string, unknown>();
   let fromOtherWindow: (value: unknown) => void = () => {};
   const settings: SettingsStore = {
@@ -68,10 +75,14 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
       params: {
         timeline: "main",
         track,
-        clip: { id, start: String(start), duration: String(duration), source, ...extra },
+        id,
+        start: String(start),
+        duration: String(duration),
+        source,
+        ...extra,
       },
     });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
 
   const rowY = (track: string) => {
@@ -1195,7 +1206,12 @@ describe("transitions at the edges of clips", () => {
     const onSound = editor.hitAt(top);
     expect(onSound.kind === "clip" && onSound.handle).toBeUndefined();
     expect(editor.setTransitionLength("s", "enter", exactly(1))).toBe(false);
-    expect(commandFailed).toHaveBeenCalledWith("这一版的编辑器还不能播放声音的入转场");
+    expect(commandFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "transition-unsupported",
+        params: { type: "fade", media: "sound", use: "enter" },
+      }),
+    );
     expect(clip("s").enter).toBeUndefined();
     editor.updateTrack(video, { locked: true });
     const locked = editor.hitAt(near(editor, at(2), video, 2));
@@ -1718,7 +1734,8 @@ describe("joins", () => {
     addClip("b", 4, 2, video);
     const run = (type: string, params: object) => {
       const result = store.execute({ type, params: { timeline: "main", ...params } });
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok)
+        throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     };
     run("join.add", {
       id: "j0",
@@ -2344,12 +2361,10 @@ describe("changing the project from the keyboard and menus", () => {
         params: {
           timeline: "main",
           track: "doomed",
-          clip: {
-            id: "late",
-            start: "20",
-            duration: "1",
-            source: { kind: "color", color: "#112233" },
-          },
+          id: "late",
+          start: "20",
+          duration: "1",
+          source: { kind: "color", color: "#112233" },
         },
       });
       store.execute({ type: "track.remove", params: { timeline: "main", track: "doomed" } });
@@ -2931,7 +2946,10 @@ describe("changing the project from the keyboard and menus", () => {
         const context = await withAssets();
         const page = { "index.html": "<p>a</p>" };
         const scene = { name: "片头", entry: "index.html", runtime: 1 };
-        context.store.execute({ type: "scene.add", params: { id: "s", scene, files: page } });
+        context.store.execute({
+          type: "scene.add",
+          params: { id: "s", manifest: scene, files: page },
+        });
         return context;
       };
 

@@ -105,7 +105,7 @@ async function trying(folders = noFolders, more: Partial<Host> = {}) {
   const main = () => store.getState().timelines["main"];
   const track = orderedTracks(main() as never).find(({ kind }) => kind === "video")?.id;
   const clip = { id: "c", start: "0", duration: "5", source: { kind: "color", color: "#ff0000" } };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   const saved = () => main()?.clips["c"]?.properties?.["transform.x"];
   const edit = (value: number) => ({
     owner: { clip: "c" },
@@ -816,11 +816,9 @@ describe("changes that do not go through", () => {
           params: {
             timeline: "main",
             track: firstTrack(store)?.id,
-            clip: {
-              start: "0",
-              duration: "1",
-              source: { kind: "image", media: { asset: "a" } },
-            },
+            start: "0",
+            duration: "1",
+            source: { kind: "image", media: { asset: "a" } },
           },
         },
         options,
@@ -918,7 +916,7 @@ describe("code", () => {
     const { workbench, store } = await withCode();
     vi.spyOn(store, "execute").mockReturnValue({
       ok: false,
-      error: { code: "project-locked", message: "锁定了" },
+      error: { code: "project-locked", params: {} },
     });
     const closing = workbench.closeProject();
     await dialogOf(workbench);
@@ -1239,12 +1237,10 @@ describe("the report of how it runs", () => {
       params: {
         timeline: "main",
         track,
-        clip: {
-          id: "clip_a",
-          start: "0",
-          duration: "2",
-          source: { kind: "color", color: "#ff0000" },
-        },
+        id: "clip_a",
+        start: "0",
+        duration: "2",
+        source: { kind: "color", color: "#ff0000" },
       },
     });
     expect(added.ok).toBe(true);

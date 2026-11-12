@@ -22,7 +22,7 @@ function setup(changes: Partial<StillExportOptions> = {}) {
   const main = () => store.getState().timelines["main"];
   const track = orderedTracks(main() as never).find(({ kind }) => kind === "video")?.id;
   const clip = { id: "c", start: "0", duration: "5", source: { kind: "color", color: "#ff0000" } };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
 
   const dialogs = new Dialogs();
   const notifications = new Notifications();

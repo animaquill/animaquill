@@ -558,7 +558,7 @@ describe("the tree of a timeline", () => {
     const add = (id: string, start: string, track: string, source: object) =>
       store.execute({
         type: "clip.add",
-        params: { timeline: "main", track, clip: { id, start, duration: "2", source } },
+        params: { timeline: "main", track, id, start, duration: "2", source },
       });
     add("late", "4", video, { kind: "color", color: "#000000" });
     add("early", "0", video, { kind: "color", color: "#000000" });

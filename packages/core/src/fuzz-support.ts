@@ -220,7 +220,7 @@ export function randomCommand(
       type: "scene.add",
       params: {
         id: random.pick(["s1", "s2", "s3"]),
-        scene: { name: "场景", entry: "index.html", runtime: 1 },
+        manifest: { name: "场景", entry: "index.html", runtime: 1 },
         files: page,
       },
     }),
@@ -230,7 +230,7 @@ export function randomCommand(
       type: "sound.add",
       params: {
         id: random.pick(["n1", "n2", "n3"]),
-        sound: { name: "声音", entry: "a.js", runtime: 1 },
+        manifest: { name: "声音", entry: "a.js", runtime: 1 },
         files: { "a.js": String(random.int(9)) },
       },
     }),
@@ -241,11 +241,9 @@ export function randomCommand(
       params: {
         timeline,
         track,
-        clip: {
-          start: String(random.int(60)),
-          duration: "1",
-          source: { kind: "scene", scene },
-        },
+        start: String(random.int(60)),
+        duration: "1",
+        source: { kind: "scene", scene },
         overlap: "overwrite",
       },
     }),
@@ -254,7 +252,9 @@ export function randomCommand(
       params: {
         timeline,
         track,
-        clip: { start: String(random.int(60)), duration: "1", source: { kind: "sound", sound } },
+        start: String(random.int(60)),
+        duration: "1",
+        source: { kind: "sound", sound },
         overlap: "overwrite",
       },
     }),
@@ -429,7 +429,9 @@ export function randomCommand(
       params: {
         timeline,
         track,
-        clip: { start: String(random.int(60)), duration: "1", source: color },
+        start: String(random.int(60)),
+        duration: "1",
+        source: color,
         overlap: "overwrite",
       },
     }),
@@ -440,7 +442,7 @@ export function randomCommand(
     () => ({ type: "section.add", params: { timeline, duration: "2" } }),
     () => ({ type: "section.remove", params: { timeline, section } }),
     () => ({ type: "section.update", params: { timeline, section, duration: "3" } }),
-    () => ({ type: "marker.add", params: { timeline, marker: { time: String(random.int(60)) } } }),
+    () => ({ type: "marker.add", params: { timeline, time: String(random.int(60)) } }),
     () => ({ type: "project.rename", params: { name: `name ${random.int(9)}` } }),
   ];
   return (random.pick(calls) as () => CommandCall)();

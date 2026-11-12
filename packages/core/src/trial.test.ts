@@ -12,11 +12,11 @@ function setup() {
   const track = orderedTracks(main() as never).find(({ kind }) => kind === "video")?.id as string;
   const run = (call: CommandCall) => {
     const result = store.execute(call);
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     return result;
   };
   const clip = { id: "c", start: "2", duration: "6", source: { kind: "color", color: "#ff0000" } };
-  run({ type: "clip.add", params: { timeline: "main", track, clip } });
+  run({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   const trial = new Trial(store, "main");
   const heard: TrialNotice[] = [];
   trial.onNotice((notice) => heard.push(notice));
@@ -276,7 +276,7 @@ describe("undo and redo", () => {
       duration: "1",
       source: { kind: "color", color: "#00ff00" },
     };
-    run({ type: "clip.add", params: { timeline: "main", track, clip } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...clip } });
     const moved = { timeline: "main", clips: [{ clip: "d", start: "22" }] };
     trial.write([write(1)]);
     run({ type: "clip.move", params: moved });
@@ -642,7 +642,7 @@ describe("saving", () => {
       duration: "1",
       source: { kind: "color", color: "#00ff00" },
     };
-    run({ type: "clip.add", params: { timeline: "main", track, clip } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...clip } });
     trial.write([write(1), { owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 }]);
     trial.save();
     expect(saved("transform.x")).toBe(1);
@@ -656,7 +656,7 @@ describe("saving", () => {
 describe("cutting a clip", () => {
   const cut = (at = "5", id = "right"): CommandCall => ({
     type: "clip.split",
-    params: { timeline: "main", clip: "c", at, id },
+    params: { timeline: "main", clip: "c", at, piece: id },
   });
 
   it("takes what is being tried to both parts", () => {
@@ -715,7 +715,7 @@ describe("cutting a clip", () => {
       duration: "1",
       source: { kind: "color", color: "#00ff00" },
     };
-    run({ type: "clip.add", params: { timeline: "main", track, clip } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...clip } });
     run({
       type: "clip.move",
       params: { timeline: "main", clips: [{ clip: "d", start: "4" }], overlap: "overwrite" },
@@ -751,7 +751,7 @@ describe("cutting a clip", () => {
       duration: "6",
       source: { kind: "color", color: "#ff0000" },
     };
-    run({ type: "clip.add", params: { timeline: "main", track, clip: copy } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...copy } });
     expect(trial.changes.has("copy")).toBe(false);
   });
 
@@ -765,7 +765,7 @@ describe("cutting a clip", () => {
       duration: "1",
       source: { kind: "color", color: "#00ff00" },
     };
-    run({ type: "clip.add", params: { timeline: "main", track, clip: other } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...other } });
     expect(trial.changes.has("other")).toBe(false);
   });
 
@@ -782,7 +782,7 @@ describe("cutting a clip", () => {
         { type: "clip.trim", params: { timeline: "main", clip: "c", end: "5" } },
         {
           type: "clip.add",
-          params: { timeline: "main", track: track ?? context.track, clip: add },
+          params: { timeline: "main", track: track ?? context.track, ...add },
         },
       ]);
       expect(result.ok).toBe(true);
@@ -809,7 +809,7 @@ describe("cutting a clip", () => {
       const add = { id: "new", start: "2", duration: "2", source: red };
       const result = other.executeBatch([
         { type: "clip.trim", params: { timeline: "main", clip: "c", start: "4" } },
-        { type: "clip.add", params: { timeline: "main", track, clip: add } },
+        { type: "clip.add", params: { timeline: "main", track, ...add } },
       ]);
       expect(result.ok).toBe(true);
       arrive();
@@ -826,7 +826,7 @@ describe("cutting a clip", () => {
       const moved = { timeline: "main", clips: [{ clip: "c", start: "3" }] };
       const result = other.executeBatch([
         { type: "clip.move", params: moved },
-        { type: "clip.add", params: { timeline: "main", track, clip: add } },
+        { type: "clip.add", params: { timeline: "main", track, ...add } },
       ]);
       expect(result.ok).toBe(true);
       arrive();
@@ -863,7 +863,11 @@ describe("cutting a clip", () => {
           params: {
             timeline: "main",
             track: "other",
-            clip: { id: "new", start: "5", duration: "3", offset: "3", source: red },
+            id: "new",
+            start: "5",
+            duration: "3",
+            offset: "3",
+            source: red,
           },
         },
       ]);
@@ -893,7 +897,7 @@ describe("cutting a clip", () => {
       const clip = { id: "new", start: "5", duration: "3", offset: "3", source: red };
       store.executeBatch([
         { type: "clip.trim", params: { timeline: "main", clip: "c", end: "5" } },
-        { type: "clip.add", params: { timeline: "main", track, clip } },
+        { type: "clip.add", params: { timeline: "main", track, ...clip } },
       ]);
       expect(trial.changes.has("new")).toBe(false);
       expect(heard).toEqual([]);
@@ -906,7 +910,7 @@ describe("cutting a clip", () => {
     const { other, arrive } = window(store);
     other.execute({
       type: "clip.split",
-      params: { timeline: "main", clip: "c", at: "5", id: "r" },
+      params: { timeline: "main", clip: "c", at: "5", piece: "r" },
     });
     arrive();
     expect(trial.count).toBe(2);
@@ -996,7 +1000,7 @@ describe("deleting a clip", () => {
 
   it("leaves other clips as they are", () => {
     const { run, trial, track, tried } = setup();
-    run({ type: "clip.add", params: { timeline: "main", track, clip: second } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...second } });
     trial.write([{ owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 }, write(1)]);
     run(remove);
     expect(tried("opacity", "d")).toBe(0.5);
@@ -1006,7 +1010,7 @@ describe("deleting a clip", () => {
 
   it("keeps it out of what gets saved, and it is still there afterwards", () => {
     const { run, store, trial, track, saved, tried } = setup();
-    run({ type: "clip.add", params: { timeline: "main", track, clip: second } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...second } });
     trial.write([{ owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 }, write(1)]);
     run(remove);
     expect(trial.save()).toEqual({ ok: true, saved: 1, overwritten: 0 });
@@ -1051,7 +1055,7 @@ describe("deleting a clip", () => {
   it("goes the same way when something else takes its place", () => {
     const { run, store, trial, track, tried } = setup();
     trial.write([write(1)]);
-    run({ type: "clip.add", params: { timeline: "main", track, clip: second } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...second } });
     const clips = [{ clip: "d", start: "1" }];
     run({
       type: "clip.update",
@@ -1104,7 +1108,7 @@ describe("deleting a clip", () => {
     });
     const clips = Array.from({ length: 205 }, (_, index) => clip(index));
     for (const one of clips) {
-      run({ type: "clip.add", params: { timeline: "main", track, clip: one } });
+      run({ type: "clip.add", params: { timeline: "main", track, ...one } });
     }
     vi.useFakeTimers();
     vi.setSystemTime(1000);
@@ -1222,9 +1226,9 @@ describe("deleting a clip", () => {
         duration: "6",
         source: { kind: "color", color: "#0000ff" },
       };
-      run({ type: "clip.add", params: { timeline: "main", track, clip } });
+      run({ type: "clip.add", params: { timeline: "main", track, ...clip } });
       trial.write([{ owner: { clip: "d" }, path: "opacity", op: "set", value: 0.5 }]);
-      run({ type: "clip.split", params: { timeline: "main", clip: "d", at: "22", id: "e" } });
+      run({ type: "clip.split", params: { timeline: "main", clip: "d", at: "22", piece: "e" } });
       expect(tried("opacity", "e")).toBe(0.5);
     });
   });
@@ -1486,7 +1490,7 @@ describe("other structural changes", () => {
       const { run, store, trial, track, heard } = setup();
       const source = { kind: "video", media: { asset: "a" } };
       const clip = { id: "v", start: "20", duration: "2", source };
-      run({ type: "clip.add", params: { timeline: "main", track, clip } });
+      run({ type: "clip.add", params: { timeline: "main", track, ...clip } });
       trial.write([
         { owner: { clip: "v" }, path: "transform.x", op: "setKey", time: "1", value: 7 },
       ]);
@@ -1661,7 +1665,7 @@ describe("going back past what happened to clips, and forward again", () => {
   it("does not move what was tried on one part of a clip to the other", () => {
     const { run, store, trial, tried } = setup();
     const { undo, redo } = historyOf(store, trial);
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "right" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "right" } });
     trial.write([key("1", 10)]);
     undo();
     undo();
@@ -1676,7 +1680,7 @@ describe("going back past what happened to clips, and forward again", () => {
     const { run, store, trial, tried } = setup();
     const { undo, redo } = historyOf(store, trial);
     trial.write([key("1", 10)]);
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "right" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "right" } });
     trial.write([key("4", 40, "right")]);
     trial.write([key("2", 20)]);
     const left = tried("transform.x");
@@ -1709,7 +1713,7 @@ describe("going back past what happened to clips, and forward again", () => {
     const { other, arrive } = window(store);
     other.execute({
       type: "clip.split",
-      params: { timeline: "main", clip: "c", at: "5", id: "r" },
+      params: { timeline: "main", clip: "c", at: "5", piece: "r" },
     });
     arrive();
     trial.undo();
@@ -1782,7 +1786,7 @@ describe("going back past what happened to clips, and forward again", () => {
   it("is the exact opposite of what it did, whatever the steps were at first", () => {
     const { run, store, trial, tried } = setup();
     trial.write([write(1)]);
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "right" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "right" } });
     store.undo();
     trial.undo();
     trial.redo();
@@ -1807,7 +1811,7 @@ describe("what is left after saving, when the project goes back past it", () => 
 
   it("loses nothing to a value that only matches for a while", () => {
     const { run, store, trial, track } = setup();
-    run({ type: "clip.add", params: { timeline: "main", track, clip: second } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...second } });
     run(set(5));
     trial.write([clear]);
     run(remove);
@@ -1829,8 +1833,8 @@ describe("what is left after saving, when the project goes back past it", () => 
 
   it("gets no copy on the part that did not have it", () => {
     const { run, store, trial, track, tried } = setup();
-    run({ type: "clip.add", params: { timeline: "main", track, clip: second } });
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "p" } });
+    run({ type: "clip.add", params: { timeline: "main", track, ...second } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "p" } });
     trial.write([key]);
     run(remove);
     trial.write([elsewhere]);
@@ -1850,7 +1854,7 @@ describe("what is left after saving, when the project goes back past it", () => 
   it("gets the copy back on the part that had it", () => {
     const { run, store, trial, tried } = setup();
     trial.write([key]);
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "p" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "p" } });
     expect(tried("transform.x", "p")).toEqual(keys);
     store.undo();
     expect(trial.holds("p", "transform.x")).toBe(false);
@@ -1860,7 +1864,7 @@ describe("what is left after saving, when the project goes back past it", () => 
 
   it("gets to the part what was tried on the clip since, like a cut does", () => {
     const { run, store, trial, tried } = setup();
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "p" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "p" } });
     store.undo();
     trial.write([key]);
     store.redo();
@@ -1880,7 +1884,7 @@ describe("what is left after saving, when the project goes back past it", () => 
   it("gets to the part what the clip holds by then, not what it held", () => {
     const { run, store, trial, tried } = setup();
     trial.write([{ owner, path: "opacity", op: "set", value: 0.5 }]);
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "p" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "p" } });
     store.undo();
     trial.write([{ owner, path: "opacity", op: "set", value: 0.25 }]);
     store.redo();
@@ -1920,7 +1924,10 @@ describe("cutting a clip out and pasting it", () => {
         timeline: "main",
         track: "",
         movedFrom: "c",
-        clip: { id, start: "30", duration: "6", source: { kind: "color", color: "#ff0000" } },
+        id,
+        start: "30",
+        duration: "6",
+        source: { kind: "color", color: "#ff0000" },
       },
     },
   ];
@@ -1992,7 +1999,7 @@ describe("cutting a clip out and pasting it", () => {
     };
     const add = (movedFrom: string) => ({
       type: "clip.add",
-      params: { timeline: "main", track, clip, movedFrom },
+      params: { timeline: "main", track, ...clip, movedFrom },
     });
     expect(store.execute(add("c"))).toMatchObject({ ok: false, error: { code: "not-moved" } });
     expect(store.execute(add("nothing"))).toMatchObject({
@@ -2069,7 +2076,7 @@ describe("what the project says about a change", () => {
     const { store, run } = setup();
     const seen: unknown[] = [];
     store.subscribe(() => seen.push(store.change?.facts));
-    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", id: "right" } });
+    run({ type: "clip.split", params: { timeline: "main", clip: "c", at: "5", piece: "right" } });
     store.undo();
     store.redo();
     expect(seen).toEqual([
@@ -2098,7 +2105,7 @@ describe("what the project says about a change", () => {
     store.subscribe(() => seen.push(store.change?.facts));
     store.executeBatch([
       { type: "clip.trim", params: { timeline: "main", clip: "c", start: "0" } },
-      { type: "clip.split", params: { timeline: "main", clip: "c", at: "4", id: "r" } },
+      { type: "clip.split", params: { timeline: "main", clip: "c", at: "4", piece: "r" } },
     ]);
     store.undo();
     expect(seen).toEqual([
@@ -2121,7 +2128,7 @@ describe("what the project says about a change", () => {
     expect(() =>
       store.execute({
         type: "clip.split",
-        params: { timeline: "main", clip: "c", at: "5", id: "r" },
+        params: { timeline: "main", clip: "c", at: "5", piece: "r" },
       }),
     ).toThrow("listener");
     stop();

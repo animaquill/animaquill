@@ -243,42 +243,97 @@ export function propertyValueProblem(path: string, value: unknown): string | und
   return specValueProblem(BUILT_IN_PROPERTIES[path] as PropertySpec, value, path);
 }
 
+/**
+ * What is wrong with a plain value for a description, said about `path`: what it has to be, as data,
+ * so that whoever tells about it says it in their own words. See `describeValueIssue`.
+ */
+export type ValueIssue =
+  | {
+      readonly rule: "type";
+      readonly path: string;
+      readonly expects: "number" | "boolean" | "text" | "asset" | "color" | "numbers";
+      /** How many numbers, for vectors. */
+      readonly length?: number;
+    }
+  | { readonly rule: "min"; readonly path: string; readonly min: number }
+  | { readonly rule: "max"; readonly path: string; readonly max: number }
+  | { readonly rule: "choice"; readonly path: string; readonly options: readonly string[] };
+
 /** What is wrong with a plain value for a description, said about `path`, or undefined. */
-export function specValueProblem(
+export function specValueIssue(
   spec: PropertySpec,
   value: unknown,
   path = spec.path,
-): string | undefined {
+): ValueIssue | undefined {
   switch (spec.type) {
     case "number":
     case "angle":
-      if (typeof value !== "number") return `${path} 要写成数字`;
-      if (spec.min !== undefined && value < spec.min) return `${path} 不能小于 ${spec.min}`;
-      if (spec.max !== undefined && value > spec.max) return `${path} 不能大于 ${spec.max}`;
+      if (typeof value !== "number") return { rule: "type", path, expects: "number" };
+      if (spec.min !== undefined && value < spec.min) return { rule: "min", path, min: spec.min };
+      if (spec.max !== undefined && value > spec.max) return { rule: "max", path, max: spec.max };
       return undefined;
     case "boolean":
-      return typeof value === "boolean" ? undefined : `${path} 要写成 true 或 false`;
+      return typeof value === "boolean" ? undefined : { rule: "type", path, expects: "boolean" };
     case "choice":
       return spec.options?.includes(value as string)
         ? undefined
-        : `${path} 只能是：${spec.options?.join("、")}`;
+        : { rule: "choice", path, options: spec.options ?? [] };
     case "text":
-      return typeof value === "string" ? undefined : `${path} 要写成文字`;
+      return typeof value === "string" ? undefined : { rule: "type", path, expects: "text" };
     case "asset":
       return typeof value === "object" && !Array.isArray(value)
         ? undefined
-        : `${path} 要写成素材引用`;
+        : { rule: "type", path, expects: "asset" };
     case "color":
       return typeof value === "string" && COLOR_PATTERN.test(value)
         ? undefined
-        : `${path} 要写成 #rrggbb 或 #rrggbbaa`;
+        : { rule: "type", path, expects: "color" };
     case "vec2":
     case "vec3":
     case "vec4":
     case "numbers": {
       const length = VECTOR_LENGTHS[spec.type];
       const fits = Array.isArray(value) && (length === undefined || value.length === length);
-      return fits ? undefined : `${path} 要写成 ${length ?? "一组"} 个数字`;
+      if (fits) return undefined;
+      return { rule: "type", path, expects: "numbers", ...(length !== undefined && { length }) };
     }
   }
+}
+
+/** A value issue in words, for the problems of a project. */
+export function describeValueIssue(issue: ValueIssue): string {
+  const { path } = issue;
+  switch (issue.rule) {
+    case "min":
+      return `${path} 不能小于 ${issue.min}`;
+    case "max":
+      return `${path} 不能大于 ${issue.max}`;
+    case "choice":
+      return `${path} 只能是：${issue.options.join("、")}`;
+    case "type":
+      switch (issue.expects) {
+        case "number":
+          return `${path} 要写成数字`;
+        case "boolean":
+          return `${path} 要写成 true 或 false`;
+        case "text":
+          return `${path} 要写成文字`;
+        case "asset":
+          return `${path} 要写成素材引用`;
+        case "color":
+          return `${path} 要写成 #rrggbb 或 #rrggbbaa`;
+        case "numbers":
+          return `${path} 要写成 ${issue.length ?? "一组"} 个数字`;
+      }
+  }
+}
+
+/** What is wrong with a plain value for a description, said about `path`, in words, or undefined. */
+export function specValueProblem(
+  spec: PropertySpec,
+  value: unknown,
+  path = spec.path,
+): string | undefined {
+  const issue = specValueIssue(spec, value, path);
+  return issue && describeValueIssue(issue);
 }

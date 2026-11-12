@@ -172,10 +172,12 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
             input: {
               timeline: "main",
               track,
-              clip: { start: "0", duration: "3", source: { kind: "color", color: "#3366ff" } },
+              start: "0",
+              duration: "3",
+              source: { kind: "color", color: "#3366ff" },
             },
           },
-          { tool: "marker_add", input: { timeline: "main", marker: { time: "1", name: "AI" } } },
+          { tool: "marker_add", input: { timeline: "main", time: "1", name: "AI" } },
         ]);
       }
       default:

@@ -4,20 +4,7 @@ import { Mutator, diff, getIn, settled, settledPatch, type Patch } from "./patch
 import { isFlat, isStanding, writePathOf, type Path } from "./structure.ts";
 import { UNWRITTEN, WriteTree, sameWrites, type WriteId, type Written } from "./write-tree.ts";
 
-/** Why a command did not happen. Commands throw it, callers get it as a result. */
-export class CommandError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
-
-/** Stops a command. Nothing it planned so far gets written. */
-export const fail = (code: string, message: string): never => {
-  throw new CommandError(code, message);
-};
+export { CommandError, fail } from "./failures.ts";
 
 /**
  * What a change did to clips, beyond the fields it wrote. The document only has the outcome, and the

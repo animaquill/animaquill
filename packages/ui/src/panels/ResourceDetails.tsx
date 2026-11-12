@@ -25,6 +25,7 @@ import { textOf } from "../properties/names.ts";
 import { EffectIcon } from "./EffectsPanel.tsx";
 import { TransitionIcon } from "./TransitionsPanel.tsx";
 import styles from "./ResourceDetails.module.css";
+import { commandFailedText } from "../i18n/failures.ts";
 
 const noSubscription = () => () => {};
 const noProxies = () => undefined;
@@ -69,7 +70,7 @@ export function useResourceActions() {
   const run = (type: string, params: object): boolean => {
     const result = store?.execute({ type, params } as never);
     if (result && !result.ok) {
-      notifications.push(t("notice.commandFailed", { message: result.error.message }));
+      notifications.push(commandFailedText(t, result.error));
     }
     return result?.ok ?? false;
   };

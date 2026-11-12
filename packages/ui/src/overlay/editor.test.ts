@@ -6,6 +6,7 @@ import {
   type ClipState,
   type PropertyEdit,
   type Registration,
+  type CommandFailure,
 } from "@animaquill/core";
 import type { Animation } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
@@ -55,7 +56,7 @@ async function setup({
     save: async () => {},
     listen: () => () => {},
   };
-  const commandFailed = vi.fn<(message: string) => void>();
+  const commandFailed = vi.fn<(failure: CommandFailure) => void>();
   const timeline = new TimelineEditor(session, memoryWindow(), settings, { commandFailed });
   await timeline.load();
   timeline.setViewport(1000, 400);
@@ -122,7 +123,7 @@ async function setup({
   const video = orderedTracks(main()).find(({ kind }) => kind === "video")?.id as string;
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
     return result;
   };
   const addClip = (
@@ -131,7 +132,7 @@ async function setup({
     source: object = { kind: "color", color: "#112233" },
   ) => {
     const clip = { id, start: "0", duration: "4", source, ...extra };
-    run("clip.add", { timeline: "main", track: video, clip });
+    run("clip.add", { timeline: "main", track: video, ...clip });
     timeline.selectOnly(id);
   };
   const edit = (...edits: PropertyEdit[]) => run("property.edit", { timeline: "main", edits });
@@ -525,7 +526,7 @@ describe("selecting on the picture", () => {
       duration: "4",
       source: { kind: "color", color: "#ffffff" },
     };
-    run("clip.add", { timeline: "main", track: "upper", clip });
+    run("clip.add", { timeline: "main", track: "upper", ...clip });
     expect(main().clips["front"]).toBeDefined();
     timeline.clearSelection();
     drag(pointer(700, 400), pointer(750, 400));
@@ -556,7 +557,7 @@ async function withScene() {
   const context = await setup();
   context.run("scene.add", {
     id: "s",
-    scene: { name: "场景", entry: "index.html", runtime: 1 },
+    manifest: { name: "场景", entry: "index.html", runtime: 1 },
     files: { "index.html": "<p>场景</p>" },
   });
   context.addClip("c", {}, { kind: "scene", scene: "s" });
@@ -869,7 +870,7 @@ describe("handles that reach another object by an older name", () => {
     const context = await setup(describing ? { describing } : {});
     context.run("scene.add", {
       id: "s",
-      scene: { name: "场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<p>场景</p>" },
     });
     context.addClip("c", {}, { kind: "scene", scene: "s" });

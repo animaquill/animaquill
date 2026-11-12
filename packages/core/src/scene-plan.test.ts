@@ -16,17 +16,21 @@ function setup(format?: { width: number; height: number; fps: string }) {
   );
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const main = store.getState().timelines["main"];
   const track = main && orderedTracks(main).find(({ kind }) => kind === "video")?.id;
   const addScene = (id = "title", files: object = { "index.html": "<p>a</p>" }, scene = manifest) =>
-    run("scene.add", { id, scene, files });
+    run("scene.add", { id, manifest: scene, files });
   const addClip = (id = "c", scene = "title", extra: object = {}) =>
     run("clip.add", {
       timeline: "main",
       track,
-      clip: { id, start: "1", duration: "2", source: { kind: "scene", scene }, ...extra },
+      id,
+      start: "1",
+      duration: "2",
+      source: { kind: "scene", scene },
+      ...extra,
     });
   const plan = () => {
     const result = buildRenderPlan(store.getState(), "main");
@@ -86,7 +90,7 @@ describe("a scene in the render plan", () => {
     const track = main && orderedTracks(main).find(({ kind }) => kind === "video")?.id;
     const source = { kind: "scene", library: "l", resource: "r" };
     const clip = { id: "c", start: "0", duration: "1", source };
-    run("clip.add", { timeline: "main", track, clip });
+    run("clip.add", { timeline: "main", track, ...clip });
     expect(plan().layers).toEqual([]);
   });
 
@@ -258,7 +262,7 @@ describe("what stays the same", () => {
     const { run, addScene, addClip, plan } = setup();
     addScene();
     addClip();
-    run("clip.split", { timeline: "main", clip: "c", at: "2", id: "d" });
+    run("clip.split", { timeline: "main", clip: "c", at: "2", piece: "d" });
     const [left, right] = plan().layers.map(({ source }) => source as SceneSource);
     expect(left?.seed).toBe(right?.seed);
   });

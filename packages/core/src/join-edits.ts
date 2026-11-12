@@ -7,8 +7,6 @@ import {
   TransitionShape,
   ZERO,
   compare,
-  describeMissing,
-  describeUnsupported,
   findTransition,
   formatTime,
   isSupported,
@@ -16,7 +14,7 @@ import {
   newId,
   parseTime,
   builtInTransition,
-  transitionValueProblems,
+  transitionValueIssues,
   type JoinAlign,
   type Rational,
   type TransitionSpec,
@@ -24,6 +22,7 @@ import {
 import { z } from "zod";
 import { joinPath, timelineOf } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
+import { formatFailure } from "./failures.ts";
 import {
   chooseAlign,
   joinFits,
@@ -68,7 +67,7 @@ export const JoinAdd = TransitionShape.extend({
    * it was, also when this editor does not do it yet, and gets shorter where it does not fit, as
    * copied transitions at the edges of clips do. Where there is no room for it at all, or the cut
    * has a join already, it stays out instead of stopping everything else. Only for what people
-   * paste, see `userOnlyParams`.
+   * paste, see `hiddenParams`.
    */
   copied: z.boolean().optional(),
 });
@@ -94,11 +93,7 @@ export const JoinRemove = z.strictObject({ timeline: Id, joins: z.array(Id).min(
 /** What a join is, checked: one thing it names, a length and a speed curve the format has. */
 function checked(join: Record<string, unknown>): JoinTransition {
   const result = Join.safeParse(join);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    const where = issue?.path.join(".");
-    fail("invalid-value", where ? `${where}：${issue?.message}` : `${issue?.message}`);
-  }
+  if (!result.success) formatFailure(result.error);
   const { id: _id, from: _from, to: _to, values, ...transition } = result.data as Join;
   // Nothing set is what it is without saying so.
   return values && Object.keys(values).length > 0 ? { ...transition, values } : transition;
@@ -106,7 +101,7 @@ function checked(join: Record<string, unknown>): JoinTransition {
 
 /** Only video and audio tracks have joins. */
 function checkTrack(track: TrackState): void {
-  if (track.kind === "caption") fail("wrong-track", "字幕轨道不能放衔接转场");
+  if (track.kind === "caption") fail("wrong-track", { trackKind: track.kind, holds: "join" });
 }
 
 /**
@@ -117,9 +112,9 @@ function checkDone(track: TrackState, transition: JoinTransition): void {
   checkTrack(track);
   const media = mediaOfTrack(track.kind);
   const found = findTransition(transition, media, "join");
-  if (found.kind === "missing") fail("transition-missing", describeMissing(found.why));
+  if (found.kind === "missing") fail("transition-missing", { why: found.why });
   else if (!isSupported(found, media, "join")) {
-    fail("transition-unsupported", describeUnsupported(found.type, media, "join"));
+    fail("transition-unsupported", { type: found.type, media, use: "join" });
   } else checkValues(found.spec, found.type, transition.values);
 }
 
@@ -129,8 +124,8 @@ export function checkValues(
   type: string,
   values: Readonly<Record<string, unknown>> | undefined,
 ): void {
-  const [problem] = transitionValueProblems(spec, type, values);
-  if (problem !== undefined) fail("invalid-value", problem);
+  const [issue] = transitionValueIssues(spec, type, values);
+  if (issue !== undefined) fail("invalid-value", issue);
 }
 
 /** How long a transition is when it is put somewhere, as it says itself. */
@@ -142,12 +137,12 @@ function defaultLength(track: TrackState, transition: Record<string, unknown>): 
 
 /** The two clips of a cut, as they have to be for a join: on one track, the first ending where the second starts. */
 function cutBetween(target: TimelineState, from: string, to: string) {
-  const before = entryOf(target.clips, from) ?? fail("not-found", `没有这个片段：${from}`);
-  const after = entryOf(target.clips, to) ?? fail("not-found", `没有这个片段：${to}`);
-  if (from === to) fail("invalid-value", "衔接转场的两边要是两个片段");
-  if (before.track !== after.track) fail("not-adjacent", "衔接转场的两个片段要在同一条轨道上");
+  const before = entryOf(target.clips, from) ?? fail("not-found", { kind: "clip", id: from });
+  const after = entryOf(target.clips, to) ?? fail("not-found", { kind: "clip", id: to });
+  if (from === to) fail("invalid-value", { rule: "join-one-clip", clip: from });
+  if (before.track !== after.track) fail("not-adjacent", { from, to, why: "tracks" });
   if (compare(clipEnd(before), clipStart(after)) !== 0) {
-    fail("not-adjacent", "两个片段之间有空隙，先把它们接上，才能加衔接转场");
+    fail("not-adjacent", { from, to, why: "gap" });
   }
   return { before, after };
 }
@@ -170,7 +165,7 @@ function checkFits(
 ): void {
   if (joinFits(joined, from, to, duration, align)) return;
   const longest = longestJoin(joined, from, to, align);
-  fail("transition-too-long", `衔接转场太长，这里最长 ${formatTime(longest)} 秒`);
+  fail("transition-too-long", { why: "longest", longest: formatTime(longest) });
 }
 
 export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
@@ -178,14 +173,14 @@ export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
   const target = timelineOf(draft, timeline);
   const { before, after } = cutBetween(target, from, to);
   const track =
-    entryOf(target.tracks, before.track) ?? fail("not-found", `没有这条轨道：${before.track}`);
+    entryOf(target.tracks, before.track) ?? fail("not-found", { kind: "track", id: before.track });
   const taken = joinOnCut(target, before, after);
   if (taken !== undefined) {
     if (copied) return { left: "taken" as const };
-    fail("join-taken", `这个剪切点已经有衔接转场了：${taken}，要换成别的用 join.update`);
+    fail("join-taken", { join: taken });
   }
   const id = wanted ?? newId("join");
-  if (entryOf(target.joins, id)) fail("id-taken", `这个 ID 已经有衔接转场了：${id}`);
+  if (entryOf(target.joins, id)) fail("id-taken", { kind: "join", id, by: "join" });
   const joined = joinedEndsOf(target);
   let length = duration === undefined ? defaultLength(track, reference) : parseTime(duration);
   const place = align ?? chooseAlign(draft.state, before, after, length);
@@ -195,7 +190,7 @@ export function addJoin(draft: Draft, params: z.output<typeof JoinAdd>) {
     if (compare(length, longest) > 0) length = longest;
     if (compare(length, ZERO) <= 0) {
       if (copied) return { left: "no-room" as const };
-      fail("transition-too-long", "这个剪切点两边没有地方放衔接转场");
+      fail("transition-too-long", { why: "no-room" });
     }
   }
   const transition = checked({
@@ -221,8 +216,8 @@ export function updateJoin(
   { timeline, join: id, changes }: z.output<typeof JoinUpdate>,
 ) {
   const target = timelineOf(draft, timeline);
-  const join = entryOf(target.joins, id) ?? fail("not-found", `没有这个衔接转场：${id}`);
-  const current = join.transition ?? fail("not-found", `这个衔接转场不完整：${id}`);
+  const join = entryOf(target.joins, id) ?? fail("not-found", { kind: "join", id });
+  const current = join.transition ?? fail("invalid-value", { rule: "join-incomplete", join: id });
   const next: Record<string, unknown> = { ...current };
   const renamed = REFERENCE.some((field) => changes[field] !== undefined);
   // What it is goes as a whole, so that it never names two things, and what the one before set
@@ -240,12 +235,12 @@ export function updateJoin(
   // One that is there already can always get another length or speed. Something else in its
   // place has to be what this editor does, and so does what it sets.
   if (!sameThing) {
-    if (!track) fail("not-found", `没有这条轨道：${join.track}`);
+    if (!track) fail("not-found", { kind: "track", id: join.track ?? "" });
     else checkDone(track, transition);
   } else if (!deepEqual(transition.values, current.values)) {
     const media = track ? mediaOfTrack(track.kind) : "picture";
     const found = findTransition(transition, media, "join");
-    if (found.kind === "missing") fail("transition-missing", describeMissing(found.why));
+    if (found.kind === "missing") fail("transition-missing", { why: found.why });
     else checkValues(found.spec, found.type, transition.values);
   }
   const whole = wholeJoin(id, join);
@@ -268,7 +263,7 @@ export function updateJoin(
 export function removeJoins(draft: Draft, { timeline, joins }: z.output<typeof JoinRemove>) {
   const target = timelineOf(draft, timeline);
   for (const id of joins) {
-    if (!entryOf(target.joins, id)) fail("not-found", `没有这个衔接转场：${id}`);
+    if (!entryOf(target.joins, id)) fail("not-found", { kind: "join", id });
   }
   for (const id of new Set(joins)) draft.delete(joinPath(timeline, id));
 }

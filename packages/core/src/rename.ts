@@ -77,7 +77,7 @@ export function movesOf(
 function convertedNumber(value: Value, { scale = 1, offset = 0 }: Conversion): Value {
   if (typeof value === "number") return value * scale + offset;
   if (Array.isArray(value)) return value.map((part) => part * scale + offset);
-  return fail("invalid-value", "只有数字能换算单位");
+  return fail("invalid-value", { rule: "scale-numbers-only" });
 }
 
 /** A value in another unit. Random shaking is as large as the value, so it scales along. */

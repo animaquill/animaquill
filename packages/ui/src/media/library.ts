@@ -1,5 +1,10 @@
 import { computePeaks, readSound } from "@animaquill/audio";
-import { madeSoundOf, type ClipState, type ProjectStore } from "@animaquill/core";
+import {
+  madeSoundOf,
+  type ClipState,
+  type ProjectStore,
+  type CommandFailure,
+} from "@animaquill/core";
 import { FolderError, type ProjectLibrary } from "@animaquill/host";
 import { formatHash, isSameHash, probeMedia, type MediaFacts } from "@animaquill/media";
 import {
@@ -35,7 +40,7 @@ export interface MediaMessages {
   unsupported(name: string): void;
   tooLarge(name: string): void;
   saveFailed(name: string): void;
-  commandFailed(message: string): void;
+  commandFailed(failure: CommandFailure): void;
   /**
    * A large file is about to be copied into the project folder, where it takes as much room again,
    * see `ASK_BEFORE_COPYING_BYTES`. Resolves to whether people want that.
@@ -379,7 +384,7 @@ export class MediaLibrary {
       },
     });
     if (!result.ok) {
-      this.#messages.commandFailed(result.error.message);
+      this.#messages.commandFailed(result.error);
       return false;
     }
     this.filesChanged([asset.path, place.path]);
@@ -552,7 +557,7 @@ export class MediaLibrary {
     };
     const result = store.execute({ type: "asset.add", params: { id, asset } });
     if (result.ok) return id;
-    this.#messages.commandFailed(result.error.message);
+    this.#messages.commandFailed(result.error);
     return undefined;
   }
 
@@ -654,7 +659,7 @@ export class MediaLibrary {
         type: "asset.update",
         params: { asset: id, changes: { path: copied.path } },
       });
-      if (!result.ok) this.#messages.commandFailed(result.error.message);
+      if (!result.ok) this.#messages.commandFailed(result.error);
       this.filesChanged([copied.path, asset.path]);
       return id;
     } catch (error) {
@@ -692,7 +697,7 @@ export class MediaLibrary {
     };
     const result = store.execute({ type: "asset.add", params: { id, asset } });
     if (result.ok) return id;
-    this.#messages.commandFailed(result.error.message);
+    this.#messages.commandFailed(result.error);
     return undefined;
   }
 
@@ -729,7 +734,7 @@ export class MediaLibrary {
       },
     });
     if (!result.ok) {
-      this.#messages.commandFailed(result.error.message);
+      this.#messages.commandFailed(result.error);
       return false;
     }
     this.filesChanged([asset.path]);
@@ -752,7 +757,7 @@ export class MediaLibrary {
       params: { asset: assetId, changes: { path } },
     });
     if (!result.ok) {
-      this.#messages.commandFailed(result.error.message);
+      this.#messages.commandFailed(result.error);
       return false;
     }
     this.filesChanged([path]);

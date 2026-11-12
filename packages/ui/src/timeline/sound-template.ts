@@ -37,7 +37,7 @@ export function soundTemplate(
   name: string,
   words: { readonly duration: string; readonly seed: string },
 ): {
-  readonly sound: SoundManifest;
+  readonly manifest: SoundManifest;
   readonly files: Readonly<Record<string, string>>;
 } {
   const sound: SoundManifest = {
@@ -56,5 +56,5 @@ export function soundTemplate(
       { id: "seed", name: words.seed, type: "number", default: 1 },
     ],
   };
-  return { sound, files: { "sound.js": CODE } };
+  return { manifest: sound, files: { "sound.js": CODE } };
 }

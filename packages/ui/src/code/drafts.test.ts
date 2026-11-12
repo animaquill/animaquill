@@ -1,4 +1,4 @@
-import { entryOf, ProjectStore } from "@animaquill/core";
+import { entryOf, ProjectStore, type CommandFailure } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "../workbench/emitter.ts";
@@ -15,11 +15,11 @@ function storeWithScene(): ProjectStore {
     type: "scene.add",
     params: {
       id: "a",
-      scene: { name: "场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<!doctype html>", "main.js": "one" },
     },
   });
-  if (!result.ok) throw new Error(result.error.message);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return store;
 }
 
@@ -39,7 +39,7 @@ class FakeSession {
 /** One window on a project, which can go away and come back as another one. */
 function window(store: ProjectStore | undefined, places: MemoryTrials) {
   const session = new FakeSession(store);
-  const commandFailed = vi.fn<(message: string) => void>();
+  const commandFailed = vi.fn<(failure: CommandFailure) => void>();
   const code = new CodeDocuments(
     session as unknown as ProjectSession,
     { commandFailed, closedRemoved: () => {} },
@@ -158,7 +158,7 @@ describe("code that is not saved", () => {
       type: "scene.add",
       params: {
         id: "b",
-        scene: { name: "别的", entry: "index.html", runtime: 1 },
+        manifest: { name: "别的", entry: "index.html", runtime: 1 },
         files: { "index.html": "", "main.js": "one" },
       },
     });

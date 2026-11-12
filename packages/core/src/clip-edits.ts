@@ -16,6 +16,7 @@ import {
   type Transition,
 } from "@animaquill/schema";
 import { fail, type Draft } from "./draft.ts";
+import { named, nameOf } from "./failures.ts";
 import { placedJoins, wholeJoin, type WholeJoin } from "./joins.ts";
 import {
   clipEnd,
@@ -45,7 +46,7 @@ export const clipPath = (timeline: string, clip: string) => ["timelines", timeli
 export const joinPath = (timeline: string, join: string) => ["timelines", timeline, "joins", join];
 
 export function timelineOf(draft: Draft, id: string): TimelineState {
-  return entryOf(draft.state.timelines, id) ?? fail("not-found", `没有这条时间轴：${id}`);
+  return entryOf(draft.state.timelines, id) ?? fail("not-found", { kind: "timeline", id });
 }
 
 export const spanOf = (clip: ClipState): Span => ({ from: clipStart(clip), to: clipEnd(clip) });
@@ -98,8 +99,8 @@ export function assertFree(
   spans: readonly Span[],
   moving: ReadonlySet<string>,
 ): void {
-  const [first] = clipsInTheWay(timeline, track, spans, moving);
-  if (first) fail("overlap", `这里已经有片段了：${first.clip.name ?? first.clip.id}`);
+  const inTheWay = clipsInTheWay(timeline, track, spans, moving);
+  if (inTheWay.length > 0) fail("overlap", { clips: inTheWay.map(({ clip }) => named(clip)) });
 }
 
 /** Takes clips away, and the joins they are a side of: a join goes between two clips or nowhere. */
@@ -391,7 +392,7 @@ export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: 
     if (compare(offset, ZERO) >= 0) {
       setOffset(draft, timeline, clip, offset);
     } else {
-      if (!isTimeless(clip)) fail("source-start", `已经到内容的开头了：${clip.name ?? clip.id}`);
+      if (!isTimeless(clip)) fail("source-start", { clip: clip.id, ...nameOf(clip) });
       moveClockForward(draft, timeline, clip, subtract(ZERO, offset));
       setOffset(draft, timeline, clip, ZERO);
     }

@@ -1,4 +1,4 @@
-import { USER } from "@animaquill/core";
+import { USER, type CommandFailure } from "@animaquill/core";
 import { hashFile } from "@animaquill/media";
 import type { Asset } from "@animaquill/schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,7 +29,7 @@ async function setup() {
     unsupported: vi.fn<(name: string) => void>(),
     tooLarge: vi.fn<(name: string) => void>(),
     saveFailed: vi.fn<(name: string) => void>(),
-    commandFailed: vi.fn<(message: string) => void>(),
+    commandFailed: vi.fn<(failure: CommandFailure) => void>(),
     confirmCopy: vi.fn<(name: string, bytes: number) => Promise<boolean>>(async () => true),
     copyFailed: vi.fn<(name: string, reason: CopyFailure) => void>(),
     readFailed: vi.fn<(name: string) => void>(),

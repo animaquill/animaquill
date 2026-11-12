@@ -15,7 +15,7 @@ function setup() {
   const store = ProjectStore.create(createProject({ name: "内容" }));
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const scene = { name: "a", entry: "index.html", runtime: 1 };
   const asset = (hash: string) => ({ kind: "image", path: "a.png", storage: "local", hash });
@@ -23,16 +23,16 @@ function setup() {
   run("asset.add", { id: "secret", asset: asset("sha256-secret") });
   run("scene.add", {
     id: "a",
-    scene,
+    manifest: scene,
     files: { "index.html": `<p>a</p><script>aq.asset("logo")</script>`, "b.js": "1" },
   });
-  run("scene.add", { id: "other", scene, files: { "index.html": "secret" } });
+  run("scene.add", { id: "other", manifest: scene, files: { "index.html": "secret" } });
   run("file.write", { path: "code/shared.js", text: "2" });
   const main = store.getState().timelines["main"];
   const track = main && orderedTracks(main).find(({ kind }) => kind === "video")?.id;
   const source = { kind: "scene", scene: "a" };
   const clip = { id: "c", start: "0", duration: "1", source };
-  run("clip.add", { timeline: "main", track, clip });
+  run("clip.add", { timeline: "main", track, ...clip });
   const plan = buildRenderPlan(store.getState(), "main");
   const [layer] = (plan as RenderPlan).layers;
   const { revision } = (layer as RenderLayer).source as SceneSource;

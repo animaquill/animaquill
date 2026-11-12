@@ -16,7 +16,7 @@ function setup() {
   const store = ProjectStore.create(createProject({ name: "计划" }));
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const main = store.getState().timelines["main"];
   const lower = main && orderedTracks(main).find(({ kind }) => kind === "video");
@@ -30,7 +30,10 @@ function setup() {
     run("clip.add", {
       timeline: "main",
       track,
-      clip: { id, start: "1", duration: "2", ...extra },
+      id,
+      start: "1",
+      duration: "2",
+      ...extra,
     });
   const plan = () => {
     const result = buildRenderPlan(store.getState(), "main");

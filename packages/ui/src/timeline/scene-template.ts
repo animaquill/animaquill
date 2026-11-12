@@ -73,12 +73,12 @@ h1 {
 
 /** What a new scene starts out as: a little of what CSS can do, to see moving at once and to change. */
 export function sceneTemplate(name: string): {
-  readonly scene: SceneManifest;
+  readonly manifest: SceneManifest;
   readonly files: Readonly<Record<string, string>>;
 } {
   const title = name.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
   return {
-    scene: { name, entry: "index.html", runtime: CURRENT_SCENE_RUNTIME },
+    manifest: { name, entry: "index.html", runtime: CURRENT_SCENE_RUNTIME },
     files: { "index.html": PAGE(title), "style.css": STYLE },
   };
 }

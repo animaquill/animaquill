@@ -291,38 +291,40 @@ const trackBase = {
 
 export const Send = z.strictObject({ bus: Id, properties: KnownProperties.optional() });
 
-const VideoTrack = z.strictObject({
-  ...trackBase,
-  kind: z.literal("video"),
-  hidden: z.boolean().optional(),
-  clips: Clips,
-  joins: Joins.optional(),
-});
+/** The tracks of a timeline, with what they take as their clips, see `TimelineOutline`. */
+const tracksOf = <C extends z.ZodType>(clips: C) =>
+  z.discriminatedUnion("kind", [
+    z.strictObject({
+      ...trackBase,
+      kind: z.literal("video"),
+      hidden: z.boolean().optional(),
+      clips,
+      joins: Joins.optional(),
+    }),
+    z.strictObject({
+      ...trackBase,
+      kind: z.literal("audio"),
+      /** Voice follows the language, music plays across sections. */
+      role: z.enum(["voice", "music", "effects"]).optional(),
+      muted: z.boolean().optional(),
+      solo: z.boolean().optional(),
+      clips,
+      joins: Joins.optional(),
+      properties: KnownProperties.optional(),
+      effects: Effects.optional(),
+      sends: z.array(Send).optional(),
+      /** A bus. Without one the track goes to the master. */
+      output: Id.optional(),
+    }),
+    z.strictObject({
+      ...trackBase,
+      kind: z.literal("caption"),
+      hidden: z.boolean().optional(),
+      clips,
+    }),
+  ]);
 
-const AudioTrack = z.strictObject({
-  ...trackBase,
-  kind: z.literal("audio"),
-  /** Voice follows the language, music plays across sections. */
-  role: z.enum(["voice", "music", "effects"]).optional(),
-  muted: z.boolean().optional(),
-  solo: z.boolean().optional(),
-  clips: Clips,
-  joins: Joins.optional(),
-  properties: KnownProperties.optional(),
-  effects: Effects.optional(),
-  sends: z.array(Send).optional(),
-  /** A bus. Without one the track goes to the master. */
-  output: Id.optional(),
-});
-
-const CaptionTrack = z.strictObject({
-  ...trackBase,
-  kind: z.literal("caption"),
-  hidden: z.boolean().optional(),
-  clips: Clips,
-});
-
-export const Track = z.discriminatedUnion("kind", [VideoTrack, AudioTrack, CaptionTrack]);
+export const Track = tracksOf(Clips);
 
 export const Bus = z.strictObject({
   id: Id,
@@ -379,52 +381,82 @@ const SOURCES_BY_TRACK: Readonly<Record<string, ReadonlySet<string>>> = {
 export const canHold = (track: string, source: string): boolean =>
   source.includes(".") || SOURCES_BY_TRACK[track]?.has(source) === true;
 
-export const Timeline = z
-  .strictObject({
-    name: z.string().min(1),
-    background: Color.optional(),
-    /** At least one. Their durations add up to the length of the timeline, kept nowhere else. */
-    sections: z.array(Section).min(1),
-    markers: z
-      .array(Marker)
-      .overwrite((markers) => sortByTime(markers, (marker) => marker.time))
-      .optional(),
-    beatGrid: BeatGrid.optional(),
-    /** The first track is at the back of the picture. */
-    tracks: z.array(z.preprocess(without(RETIRED_TRACK_FIELDS), Track)),
-    mix: Mix.optional(),
-  })
-  .superRefine((timeline, context) => {
-    const seen = new Map<string, string>();
-    const claim = (id: string, path: (string | number)[]) => {
-      if (seen.has(id)) {
-        context.addIssue({ code: "custom", path, message: `ID 重复：${id}` });
+/** What the rules of a whole timeline look at of its clips, see `checkTimeline`. */
+interface OutlinedTimeline {
+  readonly sections: readonly { readonly id: string }[];
+  readonly markers?: readonly { readonly id: string }[] | undefined;
+  readonly tracks: readonly {
+    readonly id: string;
+    readonly kind: string;
+    readonly joins?: readonly { readonly id: string }[] | undefined;
+    readonly clips: readonly { readonly id: string; readonly source: { readonly kind: string } }[];
+  }[];
+}
+
+const timelineOf = <T extends z.ZodType>(track: T) =>
+  z
+    .strictObject({
+      name: z.string().min(1),
+      background: Color.optional(),
+      /** At least one. Their durations add up to the length of the timeline, kept nowhere else. */
+      sections: z.array(Section).min(1),
+      markers: z
+        .array(Marker)
+        .overwrite((markers) => sortByTime(markers, (marker) => marker.time))
+        .optional(),
+      beatGrid: BeatGrid.optional(),
+      /** The first track is at the back of the picture. */
+      tracks: z.array(z.preprocess(without(RETIRED_TRACK_FIELDS), track)),
+      mix: Mix.optional(),
+    })
+    .superRefine((timeline, context) => checkTimeline(timeline as OutlinedTimeline, context));
+
+export const Timeline = timelineOf(Track);
+
+/**
+ * A timeline with each of its clips only as far as the rules of the whole timeline look at it: its
+ * id and the kind of what it shows. A timeline is valid when this is and every clip is a valid
+ * `Clip` on its own, so that a large one can be checked again by what changed of it.
+ */
+export const TimelineOutline = timelineOf(
+  tracksOf(z.array(z.looseObject({ id: z.string(), source: z.looseObject({ kind: z.string() }) }))),
+);
+
+/** What only a whole timeline can tell: ids it shares, and what its tracks can hold. */
+function checkTimeline(
+  timeline: OutlinedTimeline,
+  context: { addIssue(issue: { code: "custom"; path: PropertyKey[]; message: string }): void },
+): void {
+  const seen = new Map<string, string>();
+  const claim = (id: string, path: (string | number)[]) => {
+    if (seen.has(id)) {
+      context.addIssue({ code: "custom", path, message: `ID 重复：${id}` });
+    }
+    seen.set(id, id);
+  };
+  timeline.sections.forEach((section, index) => claim(section.id, ["sections", index, "id"]));
+  checkUnique(timeline.markers ?? [], context, (index) => ["markers", index, "id"]);
+  const joins = new Set<string>();
+  timeline.tracks.forEach((track, trackIndex) => {
+    claim(track.id, ["tracks", trackIndex, "id"]);
+    if (track.kind !== "caption") {
+      const path = (index: number) => ["tracks", trackIndex, "joins", index, "id"];
+      checkUnique(track.joins ?? [], context, path, joins);
+    }
+    track.clips.forEach((clip, clipIndex) => {
+      const path = ["tracks", trackIndex, "clips", clipIndex];
+      claim(clip.id, [...path, "id"]);
+      const { kind } = clip.source;
+      if (!canHold(track.kind, kind)) {
+        context.addIssue({
+          code: "custom",
+          path: [...path, "source", "kind"],
+          message: `${track.kind} 轨道不能放 ${kind} 片段`,
+        });
       }
-      seen.set(id, id);
-    };
-    timeline.sections.forEach((section, index) => claim(section.id, ["sections", index, "id"]));
-    checkUnique(timeline.markers ?? [], context, (index) => ["markers", index, "id"]);
-    const joins = new Set<string>();
-    timeline.tracks.forEach((track, trackIndex) => {
-      claim(track.id, ["tracks", trackIndex, "id"]);
-      if (track.kind !== "caption") {
-        const path = (index: number) => ["tracks", trackIndex, "joins", index, "id"];
-        checkUnique(track.joins ?? [], context, path, joins);
-      }
-      track.clips.forEach((clip, clipIndex) => {
-        const path = ["tracks", trackIndex, "clips", clipIndex];
-        claim(clip.id, [...path, "id"]);
-        const { kind } = clip.source;
-        if (!canHold(track.kind, kind)) {
-          context.addIssue({
-            code: "custom",
-            path: [...path, "source", "kind"],
-            message: `${track.kind} 轨道不能放 ${kind} 片段`,
-          });
-        }
-      });
     });
   });
+}
 
 /** A change a version makes, with the master value it was based on. */
 const Change = <T extends z.ZodType>(value: T) => z.strictObject({ value, base: value.optional() });

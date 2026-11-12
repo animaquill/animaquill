@@ -469,6 +469,164 @@
     "keysLocked": "轨道已锁定，这些关键帧不能改。",
     "keysNotShown": "选中的关键帧不在时间轴上。展开它们的片段，或者到关键帧选项卡里操作。"
   },
+  "failures": {
+    "kinds": {
+      "timeline": "时间轴",
+      "section": "段落",
+      "track": "轨道",
+      "clip": "片段",
+      "marker": "标记",
+      "join": "衔接转场",
+      "effect": "效果",
+      "scene": "场景",
+      "sound": "声音",
+      "asset": "素材",
+      "file": "文件",
+      "folder": "文件夹",
+      "property": "属性",
+      "key": "关键帧",
+      "parameter": "参数"
+    },
+    "more": "{{message}}（还有 {{count}} 处）",
+    "invalid-params": "{{path}}：{{message}}",
+    "unknown-command": "没有这个命令：{{command}}",
+    "user-only": {
+      "command": "只有用户能运行这个命令：{{command}}",
+      "param": "只有用户能用这个参数：{{param}}",
+      "tags": "AI 不能改项目的标签"
+    },
+    "storage-only": {
+      "plain": "上传只记下文件放在哪里，不改文件",
+      "command": "上传只记下文件放在哪里，不改文件，不能运行：{{command}}"
+    },
+    "project-locked": "项目有不可编辑的标签，要先移除标签",
+    "read-only": "项目现在只能看，不能修改",
+    "missing-updates": "别的窗口的改动还没有收全，等一下再试。一直这样的话，刷新页面",
+    "conflict": "这些内容已经被别人改过，要重新读取",
+    "stale-revision": "这个版本号不属于当前的项目，要重新读取",
+    "would-break-document": "这样改会让 {{file}} 不再符合项目格式，没有改（{{path}}：{{message}}）",
+    "not-found": {
+      "timeline": "没有这条时间轴：{{id}}",
+      "section": "没有这个段落：{{id}}",
+      "track": "没有这条轨道：{{id}}",
+      "clip": "没有这个片段：{{id}}",
+      "marker": "没有这个标记：{{id}}",
+      "join": "没有这个衔接转场：{{id}}",
+      "effect": "没有这个效果：{{id}}",
+      "effectOfClip": "片段 {{clip}} 没有这个效果：{{id}}",
+      "scene": "没有这个场景：{{id}}",
+      "sound": "没有这个声音：{{id}}",
+      "asset": "没有这个素材：{{id}}",
+      "file": "没有这个文件：{{id}}",
+      "folder": "没有这个文件夹：{{id}}",
+      "property": "没有这个属性：{{id}}",
+      "key": "这个时刻没有关键帧：{{id}}",
+      "parameter": "效果没有这个参数：{{id}}"
+    },
+    "id-taken": {
+      "plain": "这个 ID 已经有{{by}}了：{{id}}",
+      "effect": "这个片段已经有这个 ID 的效果了：{{id}}"
+    },
+    "wrong-track": {
+      "clip": "{{trackKind}} 轨道不能放 {{sourceKind}} 片段",
+      "effect": "这一版只有画面能加效果",
+      "join": "字幕轨道不能放衔接转场"
+    },
+    "overlap": {
+      "plain": "这里已经有片段了：{{names}}",
+      "moved": "片段落在了同一个位置：{{names}}"
+    },
+    "not-adjacent": {
+      "tracks": "衔接转场的两个片段要在同一条轨道上",
+      "gap": "两个片段之间有空隙，先把它们接上，才能加衔接转场"
+    },
+    "last-section": "时间轴至少要有一个段落",
+    "source-start": "已经到内容的开头了：{{name}}",
+    "source-end": "已经到内容的结尾了：{{name}}",
+    "transition-unsupported": {
+      "caption": "这一版的编辑器还不能显示字幕的转场"
+    },
+    "transition-too-long": {
+      "edges": "入转场和出转场加起来比片段长",
+      "join": "这个转场和片段另一头的衔接转场加起来比片段长",
+      "longest": "衔接转场太长，这里最长 {{longest}} 秒",
+      "no-room": "这个剪切点两边没有地方放衔接转场"
+    },
+    "not-animatable": "{{path}} 不能打关键帧",
+    "join-taken": "这个剪切点已经有衔接转场了：{{join}}，要换成别的就改它",
+    "asset-in-use": {
+      "code": "代码在用这个素材，要先改掉：{{file}}",
+      "clips": "还有片段或版本在用这个素材，要先换掉或删除它们"
+    },
+    "scene-in-use": "还有片段或版本在用这个场景，要先换掉或删除它们",
+    "sound-in-use": "还有片段或版本在用这个声音，要先换掉或删除它们",
+    "entry-in-use": {
+      "remove": "这是入口文件，要先换一个入口：{{path}}",
+      "move": "入口文件不能移出它的文件夹：{{path}}"
+    },
+    "missing-entry": {
+      "scene": "场景的入口文件不在：{{entry}}",
+      "sound": "声音的入口文件不在：{{entry}}"
+    },
+    "path-taken": {
+      "manifest": "这里是场景或声音自己的说明文件：{{path}}",
+      "file": "这里已经有文件了：{{path}}",
+      "folder": "这里已经有文件夹了：{{path}}",
+      "property": "已经有这个属性：{{path}}"
+    },
+    "file-too-large": "文件不能超过 {{size}} MiB：{{path}}",
+    "runtime-too-new": "这个编辑器只有运行时版本 {{current}}，要先更新编辑器",
+    "not-moved": "这一批改动没有移走这个片段：{{clip}}",
+    "not-in-use": "没有片段在用这个{{kind}}：{{id}}",
+    "upload-only": "只有上传能记下文件在 GitHub、云端空间或网址上：要等文件传完、核对过",
+    "asset-file-changed": "素材现在的文件已经不是这一个了，存放位置没有改",
+    "nothing-to-undo": "没有可以撤销的步骤",
+    "undo-one-by-one": "自己的改动一步一步撤销",
+    "undo-blocked": {
+      "changed": "这一步之后别人改过，已跳过",
+      "inUse": "这一步还被别的内容用着，或者用到的东西已经没了，已跳过"
+    },
+    "invalid-file": "文件不符合项目格式，没有导入",
+    "format-mismatch": "不能在这里改项目的格式版本",
+    "invalid-batch": {
+      "plain": "这一批文件的格式不对，没有并入",
+      "path": "同一批里有两个一样的路径：{{path}}"
+    },
+    "merge-failed": "合并时出了错，这一批没有并入",
+    "manifest-deleted": "项目文件夹里的 animaquill.json 不见了，这一批改动没有并入",
+    "merge-unsettled": "合并时有些改动定不下来，这一批没有并入",
+    "merge-would-break": {
+      "uses-removed": "外面新用到的东西编辑器里刚删掉了，这一批没有并入",
+      "breaks": "外面的改动和编辑器里还没写出去的改动合在一起会让项目出错，这一批没有并入"
+    },
+    "invalid-value": {
+      "format": "{{path}}：{{message}}",
+      "formatPlain": "{{message}}",
+      "retired-property": "没有这个属性：{{path}}，裁切是效果",
+      "unknown-property": "转场 {{transition}} 没有这个属性：{{path}}",
+      "no-keys": "转场的属性不能打关键帧：{{path}}",
+      "not-a-path": "不是属性路径：{{path}}",
+      "rename-same": "改名前后是同一个属性：{{path}}",
+      "renamed-twice": "同一个属性不能改名两次：{{path}}",
+      "rename-into-one": "两个属性不能改成同一个名字：{{path}}",
+      "scale-numbers-only": "只有数字能换算单位",
+      "track-settings": "{{trackKind}} 轨道没有这些设置",
+      "moved-twice": "同一个片段不能移动两次",
+      "end-before-start": "片段的结尾要在开头之后",
+      "cut-outside": "切割点要在片段中间",
+      "key-taken": "同一时刻只能有一个关键帧：{{time}}",
+      "key-moved-twice": "同一个关键帧不能移动两次：{{time}}",
+      "effect-outside": "效果的生效时间要在片段之内",
+      "effect-backwards": "效果的开始要在结束之前",
+      "replace-same": "换成的{{kind}}和原来的是同一个：{{id}}",
+      "source-kind": "片段 {{clip}} 是{{sourceKind}}，用不了这种素材：{{asset}}",
+      "source-kind-version": "版本 {{version}} 里的片段 {{clip}} 用不了这种素材：{{asset}}",
+      "join-one-clip": "衔接转场的两边要是两个片段",
+      "join-incomplete": "这个衔接转场不完整：{{join}}",
+      "sound-entry": "声音的入口要是 .js 或 .mjs 文件",
+      "size-unknown": "素材还不知道文件有多大，记不下它放在哪里：别的电脑要靠大小核对"
+    }
+  },
   "panel": {
     "crashed": "这个选项卡出错了，其他选项卡不受影响。",
     "retry": "重试",

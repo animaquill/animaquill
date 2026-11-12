@@ -16,7 +16,7 @@ function draft(properties?: object) {
     source: { kind: "color", color: "#000000" },
     ...(properties ? { properties } : {}),
   };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   return new Draft(store.getState(), "user");
 }
 

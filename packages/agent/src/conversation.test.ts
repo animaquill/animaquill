@@ -31,7 +31,7 @@ function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
 
 const addMarker = (time: string) => ({
   name: "marker_add",
-  args: { timeline: "main", marker: { time } },
+  args: { timeline: "main", time },
 });
 
 describe("a conversation", () => {

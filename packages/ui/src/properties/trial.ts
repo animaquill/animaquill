@@ -4,6 +4,7 @@ import {
   type PropertyEdit,
   type TrialChanges,
   type TrialNotice,
+  type CommandFailure,
 } from "@animaquill/core";
 import type { SettingsStore, TrialStore } from "@animaquill/host";
 import type { PropertyValue } from "@animaquill/schema";
@@ -30,7 +31,7 @@ export interface TrialSnapshot {
 }
 
 export interface TrialMessages {
-  commandFailed(message: string): void;
+  commandFailed(failure: CommandFailure): void;
   /** Saving went over what somebody else wrote in the meantime. */
   overwrote(count: number): void;
   discarded(count: number): void;
@@ -153,7 +154,7 @@ export class TrialSession {
 
   write(edits: readonly PropertyEdit[]): boolean {
     const result = this.#trial?.write(edits);
-    if (result && !result.ok) this.#messages.commandFailed(result.error.message);
+    if (result && !result.ok) this.#messages.commandFailed(result.error);
     if (result?.ok) this.#show({ comparing: false });
     return result?.ok === true;
   }
@@ -167,7 +168,7 @@ export class TrialSession {
     const keeper = this.#keeper;
     keeper?.pause();
     const result = this.#trial?.save();
-    if (result?.ok === false) this.#messages.commandFailed(result.error.message);
+    if (result?.ok === false) this.#messages.commandFailed(result.error);
     if (result?.ok && result.overwritten > 0) this.#messages.overwrote(result.overwritten);
     if (result?.ok !== true || !this.#session.hasUnsavedChanges) keeper?.resume();
     return result?.ok !== false;

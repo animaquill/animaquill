@@ -26,7 +26,7 @@ function setup() {
   const track = orderedTracks(main()).find(({ kind }) => kind === "video")?.id as string;
   const source = { kind: "color", color: "#000000" };
   const clip = { id: "c", start: "1", duration: "2", source };
-  store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
+  store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   const model = buildModel("main", main(), "30");
   const box = model.boxes.get("c");
   const row = model.rows.find(({ id }) => id === track);

@@ -68,6 +68,7 @@ import type { ConfirmOptions, DialogDetail, Dialogs, ProgressDialog } from "./di
 import { Emitter } from "./emitter.ts";
 import type { Notifications } from "./notifications.ts";
 import { projectKeyOf, type ProjectSession } from "./session.ts";
+import { failureMessage, translateWith } from "../i18n/failures.ts";
 
 /** The project folder that is open in this window, and how it is. */
 export interface OpenFolder {
@@ -1867,7 +1868,9 @@ export class ProjectFolders {
     }
     const result = store.undoOrigin(merge.origin);
     if (!result.ok) {
-      notifications.push(t("folder.undoFailed", { message: result.error.message }));
+      notifications.push(
+        t("folder.undoFailed", { message: failureMessage(result.error, translateWith(t)) }),
+      );
       return;
     }
     // Where it went, as it was written: the folder of this time in RECOVERED_FOLDER.
@@ -1882,7 +1885,11 @@ export class ProjectFolders {
             run: () => {
               const again = store.redoOrigin(merge.origin);
               if (!again.ok)
-                notifications.push(t("folder.undoFailed", { message: again.error.message }));
+                notifications.push(
+                  t("folder.undoFailed", {
+                    message: failureMessage(again.error, translateWith(t)),
+                  }),
+                );
             },
           },
         ],

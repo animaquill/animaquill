@@ -320,7 +320,7 @@ describe("saving", () => {
     library.failing = true;
     session.store?.execute({
       type: "marker.add",
-      params: { timeline: "main", marker: { id: "m1", time: "1" } },
+      params: { timeline: "main", id: "m1", time: "1" },
     });
     await settled(session);
     library.failing = false;

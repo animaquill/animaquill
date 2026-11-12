@@ -94,7 +94,7 @@ function setup(where: { relay?: AiRelay; account?: AccountAccess } = {}) {
 
 const addMarker = (time: string) => ({
   name: "marker_add",
-  args: { timeline: "main", marker: { time } },
+  args: { timeline: "main", time },
 });
 
 beforeEach(() => {

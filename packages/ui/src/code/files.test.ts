@@ -18,7 +18,7 @@ function setup() {
     type: "scene.add",
     params: {
       id: "a",
-      scene: { name: "片头", entry: "index.html", runtime: 1 },
+      manifest: { name: "片头", entry: "index.html", runtime: 1 },
       files: { "index.html": "<!doctype html>", "main.js": "one", "js/a.js": "a", "js/b.js": "b" },
     },
   });

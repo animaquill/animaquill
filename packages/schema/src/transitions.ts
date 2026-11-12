@@ -1,4 +1,10 @@
-import { specValueProblem, type PropertySpec } from "./properties.ts";
+import {
+  describeValueIssue,
+  specValueIssue,
+  specValueProblem,
+  type PropertySpec,
+  type ValueIssue,
+} from "./properties.ts";
 import {
   ZERO,
   add,
@@ -180,31 +186,54 @@ export function transitionValuesOf(
   return values;
 }
 
+/** What is wrong with what a transition sets, as data. See `transitionValueIssues`. */
+export type TransitionValueIssue =
+  | ValueIssue
+  /** It has no such property. */
+  | { readonly rule: "unknown-property"; readonly path: string; readonly transition: string }
+  /** No property of a transition has keys. */
+  | { readonly rule: "no-keys"; readonly path: string };
+
 /**
- * What is wrong with what a transition sets, in words: a property it does not have, or a value one
- * cannot take. Empty when nothing is. Values are plain: no property of a transition has keys.
+ * What is wrong with what a transition sets: a property it does not have, or a value one cannot
+ * take. Empty when nothing is. Values are plain: no property of a transition has keys.
  */
+export function transitionValueIssues(
+  spec: TransitionSpec,
+  type: string,
+  given: Readonly<Record<string, unknown>> | undefined,
+): readonly TransitionValueIssue[] {
+  const issues: TransitionValueIssue[] = [];
+  const properties = propertiesOf(spec);
+  for (const [path, value] of Object.entries(given ?? {})) {
+    const property = properties.find((each) => each.path === path);
+    if (!property) {
+      issues.push({ rule: "unknown-property", path, transition: type });
+      continue;
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value) && "keys" in value) {
+      issues.push({ rule: "no-keys", path });
+      continue;
+    }
+    const issue = specValueIssue(property, value, path);
+    if (issue) issues.push(issue);
+  }
+  return issues;
+}
+
+/** What is wrong with what a transition sets, in words. Empty when nothing is. */
 export function transitionValueProblems(
   spec: TransitionSpec,
   type: string,
   given: Readonly<Record<string, unknown>> | undefined,
 ): readonly string[] {
-  const problems: string[] = [];
-  const properties = propertiesOf(spec);
-  for (const [path, value] of Object.entries(given ?? {})) {
-    const property = properties.find((each) => each.path === path);
-    if (!property) {
-      problems.push(`转场 ${type} 没有这个属性：${path}`);
-      continue;
+  return transitionValueIssues(spec, type, given).map((issue) => {
+    if (issue.rule === "unknown-property") {
+      return `转场 ${issue.transition} 没有这个属性：${issue.path}`;
     }
-    if (typeof value === "object" && value !== null && !Array.isArray(value) && "keys" in value) {
-      problems.push(`转场的属性不能打关键帧：${path}`);
-      continue;
-    }
-    const problem = specValueProblem(property, value, path);
-    if (problem) problems.push(problem);
-  }
-  return problems;
+    if (issue.rule === "no-keys") return `转场的属性不能打关键帧：${issue.path}`;
+    return describeValueIssue(issue);
+  });
 }
 
 /** Every picture transition that comes with the editor. */

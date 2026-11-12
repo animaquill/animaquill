@@ -25,8 +25,8 @@ function setup() {
   };
   const source = { kind: "color", color: "#ff0000" };
   const clip = { id: "c", start: "1", duration: "2", properties, source };
-  const added = store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
-  if (!added.ok) throw new Error(added.error.message);
+  const added = store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
+  if (!added.ok) throw new Error(`${added.error.code}: ${JSON.stringify(added.error.params)}`);
   const view = new Emitter();
   const project = new Emitter();
   const tried = new Emitter();

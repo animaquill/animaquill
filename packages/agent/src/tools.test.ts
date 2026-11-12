@@ -22,11 +22,17 @@ function setup(selection?: ToolContext["selection"]) {
   return { store, context, tools, run, setSeen: (value: number | undefined) => (seen = value) };
 }
 
+/**
+ * What the 48 tools took, as JSON, when this was measured: 67 322 characters, about 17 000 tokens
+ * (2026-11-12, at the first step of 6.5b, with the operations' new parameters).
+ */
+const MEASURED_TOOL_CHARACTERS = 68_000;
+
 describe("command tools", () => {
   it("are every command AI may give, named without dots, each with what it does", () => {
     const { context } = setup();
     const tools = commandTools(context);
-    const allowed = COMMANDS.filter((command) => !command.userOnly);
+    const allowed = COMMANDS.filter((command) => command.level !== "human");
     expect(tools.map((tool) => tool.name)).toEqual(allowed.map((c) => toolName(c.type)));
     expect(tools.map((tool) => tool.name)).not.toContain("project_setTags");
     // AI cannot tell where a file is, and where it goes is for people to choose.
@@ -50,13 +56,39 @@ describe("command tools", () => {
       Object.keys((byName.get(name)?.parameters.properties ?? {}) as object);
     expect(properties("clip_add")).not.toContain("movedFrom");
     expect(properties("join_add")).not.toContain("copied");
-    expect(properties("clip_add")).toContain("clip");
+    expect(properties("clip_add")).toEqual(expect.arrayContaining(["start", "duration", "source"]));
+    // What the file of an asset is, only people say; where a clip is, other commands are for.
+    const inside = (name: string, param: string) => {
+      const schema = byName.get(name)?.parameters as {
+        properties: Record<string, { properties?: object }>;
+      };
+      return Object.keys(schema.properties[param]?.properties ?? {});
+    };
+    expect(inside("asset_update", "changes")).toEqual(["name", "tags"]);
+    expect(inside("clip_update", "changes")).not.toContain("start");
+    expect(inside("clip_update", "changes")).not.toContain("duration");
+    expect(inside("clip_update", "changes")).toContain("name");
+  });
+
+  /**
+   * How much the tools take of what every request to a service sends, as JSON: names, what they
+   * do and their parameters. 6.5b brings it down with fewer tools, see its plan; this says where it
+   * starts from, and keeps it from growing meanwhile.
+   */
+  it("take as much room as they did, measured", () => {
+    const { context } = setup();
+    const tools = allTools(context);
+    const size = JSON.stringify(
+      tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+    ).length;
+    expect(tools).toHaveLength(48);
+    expect(size).toBeLessThanOrEqual(MEASURED_TOOL_CHARACTERS);
   });
 
   it("change the project as the task, which can be taken back as a whole", async () => {
     const { store, run } = setup();
     const answer = JSON.parse(
-      await run("marker_add", { timeline: "main", marker: { time: "1.5", name: "开头" } }),
+      await run("marker_add", { timeline: "main", time: "1.5", name: "开头" }),
     );
     expect(answer.ok).toBe(true);
     await run("project_rename", { name: "改过了" });
@@ -88,17 +120,23 @@ describe("command tools", () => {
     expect(store.getState().manifest.name).toBe("AI 改的");
   });
 
-  it("ignore parameters only people may use, also when AI writes them", async () => {
+  it("refuse parameters only people may use, also when AI writes them", async () => {
     const { store, run } = setup();
     const track = orderedTracks(store.getState().timelines.main!)[0]!.id;
+    const clip = { start: "0", duration: "1", source: { kind: "color", color: "#ff0000" } };
     await expect(
-      run("clip_add", {
-        timeline: "main",
-        track,
-        clip: { start: "0", duration: "1", source: { kind: "color", color: "#ff0000" } },
-        movedFrom: "somewhere",
-      }),
-    ).resolves.toContain('"ok":true');
+      run("clip_add", { timeline: "main", track, ...clip, movedFrom: "somewhere" }),
+    ).rejects.toThrow(/^user-only: Only the user can use the parameter movedFrom/);
+    await expect(run("clip_add", { timeline: "main", track, ...clip })).resolves.toContain(
+      '"ok":true',
+    );
+  });
+
+  it("say what went wrong in English, with the code first", async () => {
+    const { run } = setup();
+    await expect(run("marker_remove", { timeline: "main", marker: "nope" })).rejects.toThrow(
+      "not-found: There is no marker nope.",
+    );
   });
 });
 
@@ -115,7 +153,10 @@ describe("read tools", () => {
       params: {
         timeline: "main",
         track,
-        clip: { id: "c1", start: "1", duration: "2", source: { kind: "color", color: "#00ff00" } },
+        id: "c1",
+        start: "1",
+        duration: "2",
+        source: { kind: "color", color: "#00ff00" },
       },
     });
     store.execute({ type: "file.write", params: { path: "code/a.js", text: "x".repeat(30) } });

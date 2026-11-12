@@ -268,8 +268,8 @@ function setup(
   };
   const added = before
     ? { ok: true as const }
-    : store.execute({ type: "clip.add", params: { timeline: "main", track, clip } });
-  if (!added.ok) throw new Error(added.error.message);
+    : store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
+  if (!added.ok) throw new Error(`${added.error.code}: ${JSON.stringify(added.error.params)}`);
   if (sound && !before) {
     const audio = orderedTracks(main() as never).find(({ kind }) => kind === "audio")?.id;
     const asset = { kind: "audio", path: "assets/tone.wav", storage: "local", hash: "sha256-tone" };
@@ -282,9 +282,9 @@ function setup(
     };
     const placed = store.execute({
       type: "clip.add",
-      params: { timeline: "main", track: audio, clip: tone },
+      params: { timeline: "main", track: audio, ...tone },
     });
-    if (!placed.ok) throw new Error(placed.error.message);
+    if (!placed.ok) throw new Error(`${placed.error.code}: ${JSON.stringify(placed.error.params)}`);
   }
   const mixed: { from: number; frames: number }[] = [];
   const dialogs = new Dialogs();
@@ -775,7 +775,10 @@ describe("a sound that code makes", () => {
     )?.id;
     const sound = { name: "铃", entry: "sound.js", runtime: 1 };
     const code = "aq.sound(({ frames }) => new Float32Array(frames));";
-    store.execute({ type: "sound.add", params: { id: "s", sound, files: { "sound.js": code } } });
+    store.execute({
+      type: "sound.add",
+      params: { id: "s", manifest: sound, files: { "sound.js": code } },
+    });
     const clip = {
       id: "bell",
       start: "1",
@@ -785,9 +788,9 @@ describe("a sound that code makes", () => {
     };
     const placed = store.execute({
       type: "clip.add",
-      params: { timeline: "main", track: audio, clip },
+      params: { timeline: "main", track: audio, ...clip },
     });
-    if (!placed.ok) throw new Error(placed.error.message);
+    if (!placed.ok) throw new Error(`${placed.error.code}: ${JSON.stringify(placed.error.params)}`);
   }
 
   it("is waited for, with the export saying so, and stops it where it does not come", async () => {
@@ -901,7 +904,7 @@ describe("an export that does not finish", () => {
       duration: "1",
       source: { kind: "color", color: "#00ff00" },
     };
-    store.execute({ type: "clip.add", params: { timeline: "main", track, clip: next } });
+    store.execute({ type: "clip.add", params: { timeline: "main", track, ...next } });
     const path = "timelines/main/timeline.json";
     const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
     const video = timeline.tracks.find(({ kind }: { kind: string }) => kind === "video");
@@ -1370,7 +1373,7 @@ describe("an export that stopped halfway", () => {
       duration: "5",
       source: { kind: "color", color: "#0000ff" },
     };
-    next.store.execute({ type: "clip.add", params: { timeline: "main", track, clip: longer } });
+    next.store.execute({ type: "clip.add", params: { timeline: "main", track, ...longer } });
     const { offering } = await offered(next, "continue");
     await vi.waitFor(() =>
       expect(next.dialogs.getSnapshot()).toMatchObject({ title: "export.resume.changedTitle" }),

@@ -11,7 +11,7 @@ const color = { kind: "color", color: "#ff0000" };
 const MAIN = "timelines/main/timeline.json";
 
 function success(result: CommandResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
@@ -129,9 +129,11 @@ describe("a join that is put on a cut", () => {
       "id-taken",
     );
     success(run("clip.move", { clips: [{ clip: "c", start: "5" }] }));
-    expect(failure(run("join.add", { from: "b", to: "c", type: "fade" })).message).toBe(
-      "两个片段之间有空隙，先把它们接上，才能加衔接转场",
-    );
+    expect(failure(run("join.add", { from: "b", to: "c", type: "fade" })).params).toEqual({
+      from: "b",
+      to: "c",
+      why: "gap",
+    });
   });
 
   it("only checks with a dry run", () => {
@@ -153,7 +155,7 @@ describe("a join that is put on a cut", () => {
     // What comes in at the start of b and the exit at its end leave it 0.2 seconds.
     const longer = run("join.update", { join: "j", changes: { duration: "1" } });
     expect(failure(longer).code).toBe("transition-too-long");
-    expect(failure(longer).message).toBe("衔接转场太长，这里最长 0.4 秒");
+    expect(failure(longer).params).toEqual({ why: "longest", longest: "0.4" });
   });
 
   it("is also for a locked track, also for AI", () => {
@@ -445,7 +447,7 @@ describe("a join whose clips change", () => {
     expect(joinOf("j")).toBeUndefined();
     const again = joined();
     const clip = { start: "1.5", duration: "1", source: color };
-    const added = again.run("clip.add", { track: again.track, clip, overlap: "overwrite" });
+    const added = again.run("clip.add", { track: again.track, ...clip, overlap: "overwrite" });
     expect(success(added).results[0]).toMatchObject({ joinsRemoved: ["j"] });
   });
 
@@ -528,9 +530,9 @@ describe("a join whose clips change", () => {
     });
     const set = (params: object) => run("clip.setTransition", { clip: "b", ...params });
     success(set({ exit: { type: "fade", duration: "1" } }));
-    expect(failure(set({ exit: { type: "fade", duration: "1.5" } })).message).toBe(
-      "这个转场和片段另一头的衔接转场加起来比片段长",
-    );
+    expect(failure(set({ exit: { type: "fade", duration: "1.5" } })).params).toEqual({
+      why: "join",
+    });
     expect(main()?.clips["b"]?.exit?.duration).toBe("1");
   });
 });

@@ -12,28 +12,26 @@ function open() {
   const store = ProjectStore.create(createProject({ name: "声音" }));
   const run = (type: string, params: object) => {
     const result = store.execute({ type, params } as CommandCall);
-    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const track = "sounds";
   run("track.add", { timeline: "main", id: track, kind: "audio" });
   const addSound = (id = "s", manifest: object = {}, files: object = { "sound.js": CODE }) =>
     run("sound.add", {
       id,
-      sound: { name: "铃", entry: "sound.js", runtime: 1, ...manifest },
+      manifest: { name: "铃", entry: "sound.js", runtime: 1, ...manifest },
       files,
     });
   const addClip = (id = "c", changes: object = {}) =>
     run("clip.add", {
       timeline: "main",
       track,
-      clip: {
-        id,
-        start: "0",
-        duration: "2",
-        source: { kind: "sound", sound: "s" },
-        properties: { "param.duration": 2 },
-        ...changes,
-      },
+      id,
+      start: "0",
+      duration: "2",
+      source: { kind: "sound", sound: "s" },
+      properties: { "param.duration": 2 },
+      ...changes,
     });
   const clip = (id = "c") => store.getState().timelines["main"]?.clips[id] as ClipState;
   const made = (id = "c") => {
@@ -171,7 +169,7 @@ const edit = (path: string, value: number) => ({
 const clipTimes = (changes: object) => ({ timeline: "main", clip: "c", changes });
 const otherSound = {
   id: "other",
-  sound: { name: "鼓", entry: "sound.js", runtime: 1 },
+  manifest: { name: "鼓", entry: "sound.js", runtime: 1 },
   files: { "sound.js": CODE },
 };
 

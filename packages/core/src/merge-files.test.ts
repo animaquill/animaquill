@@ -84,12 +84,12 @@ const property = (store: ProjectStore, path: string, id = "clip_title") =>
   clip(store, id)?.properties?.[path];
 
 function success(result: CommandResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
 function merged(result: MergeResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
@@ -307,7 +307,7 @@ describe("files the folder took away", () => {
   const addScene = (store: ProjectStore, id: string) =>
     run(store, "scene.add", {
       id,
-      scene: { name: "没人用的场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "没人用的场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<p>x</p>", "helper.js": "export {};" },
     });
 
@@ -504,12 +504,10 @@ describe("files that cannot come in", () => {
     run(store, "clip.add", {
       timeline: "main",
       track: "track_empty",
-      clip: {
-        id: "clip_mine",
-        start: "0",
-        duration: "1",
-        source: { kind: "color", color: "#111111" },
-      },
+      id: "clip_mine",
+      start: "0",
+      duration: "1",
+      source: { kind: "color", color: "#111111" },
     });
     const batch = changesOf(base, (files) => {
       editJson(files, MAIN, (document) => {
@@ -590,12 +588,10 @@ describe("what the folder took away that is still in use", () => {
     run(store, "clip.add", {
       timeline: "main",
       track: "track_video",
-      clip: {
-        id: "clip_raw",
-        start: "40",
-        duration: "1",
-        source: { kind: "video", media: { asset: "raw-footage" } },
-      },
+      id: "clip_raw",
+      start: "40",
+      duration: "1",
+      source: { kind: "video", media: { asset: "raw-footage" } },
     });
     const batch = changesOf(base, (files) =>
       editJson(files, "assets.json", (document) => {
@@ -637,23 +633,19 @@ describe("what the folder took away that is still in use", () => {
     run(store, "clip.add", {
       timeline: "main",
       track: "track_extra",
-      clip: {
-        id: "clip_a",
-        start: "0",
-        duration: "1",
-        source: { kind: "color", color: "#111111" },
-      },
+      id: "clip_a",
+      start: "0",
+      duration: "1",
+      source: { kind: "color", color: "#111111" },
     });
     const base = written(store);
     run(store, "clip.add", {
       timeline: "main",
       track: "track_extra",
-      clip: {
-        id: "clip_b",
-        start: "2",
-        duration: "1",
-        source: { kind: "color", color: "#222222" },
-      },
+      id: "clip_b",
+      start: "2",
+      duration: "1",
+      source: { kind: "color", color: "#222222" },
     });
     const batch = changesOf(base, (files) =>
       editJson(files, MAIN, (document) => {
@@ -1086,7 +1078,7 @@ describe("what the folder points at, that the editor just took away", () => {
     const store = open();
     run(store, "scene.add", {
       id: "spare",
-      scene: { name: "备用场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "备用场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<p>x</p>" },
     });
     const base = written(store);
@@ -1532,7 +1524,7 @@ describe("a new timeline", () => {
     const store = open();
     run(store, "scene.add", {
       id: "spare",
-      scene: { name: "备用场景", entry: "index.html", runtime: 1 },
+      manifest: { name: "备用场景", entry: "index.html", runtime: 1 },
       files: { "index.html": "<p>x</p>" },
     });
     const base = written(store);

@@ -21,8 +21,6 @@ import {
   canHold,
   cannotHaveKeys,
   compare,
-  describeMissing,
-  describeUnsupported,
   findTransition,
   isElsewhere,
   isSameHash,
@@ -55,6 +53,7 @@ import {
   type Span,
 } from "./clip-edits.ts";
 import { fail, type Draft } from "./draft.ts";
+import { formatFailure, nameOf, named, type FailureCode } from "./failures.ts";
 import {
   EffectAdd,
   EffectMove,
@@ -120,42 +119,142 @@ import {
 } from "./scene-edits.ts";
 import { codeUsingAsset } from "./scene-plan.ts";
 
-export interface CommandDefinition<P = unknown> {
+/**
+ * How far an operation reaches. `edit` changes the project, and can be undone; `outside` would change
+ * what is outside of the project, such as a library, which only people do, and AI can only propose
+ * (none so far); `human` is for people only, such as the tags that lock a project. Reading is no
+ * operation: whatever reads has nothing to register.
+ */
+export type OperationLevel = "edit" | "outside" | "human";
+
+/** What an operation is about, for lists of them. */
+export type OperationGroup =
+  | "project"
+  | "timeline"
+  | "track"
+  | "clip"
+  | "transition"
+  | "effect"
+  | "property"
+  | "marker"
+  | "scene"
+  | "sound"
+  | "asset"
+  | "file";
+
+/**
+ * A parameter that AI does not see: one that only people can use (`human`), which the store refuses
+ * from anyone else, or one that another operation is for (`instead`), which people still use.
+ * Parameters inside an object are named by their path, such as `changes.path`.
+ */
+export interface HiddenParam {
+  readonly name: string;
+  readonly why: "human" | "instead";
+  /** The operation to use instead. */
+  readonly instead?: string;
+}
+
+/**
+ * Whether AI can use an operation, and if not, why: it is for people (`human`), it needs a file
+ * that only people can pick (`needs-file`), another one does the same (`duplicate`), or the tools
+ * for files do it (`file-tools`). `instead` says what to use.
+ */
+export type AiUse =
+  | "yes"
+  | {
+      readonly no: "human" | "needs-file" | "duplicate" | "file-tools";
+      readonly instead?: string;
+    };
+
+/**
+ * One operation of the registry, as it runs: what it takes, what it gives back and what can stop
+ * it. What AI reads about it, in English, is in `@animaquill/tools`, by its name.
+ */
+export interface Operation<P = unknown, R = unknown> {
+  /** Such as `clip.move`: the name of the command. */
+  readonly name: string;
+  /** The same, by its older name. */
   readonly type: string;
+  readonly group: OperationGroup;
+  readonly level: OperationLevel;
   /**
-   * What it does, in one sentence for people: AI picks commands by it, and the command palette can
-   * show it.
+   * What it does, in one sentence for people: the command tools of the browser assistant say it,
+   * until the tools of `@animaquill/tools` take over, and the command palette can show it.
    */
   readonly description: string;
+  /** The only definition of what it takes. */
   readonly params: z.ZodType<P>;
-  readonly run: (draft: Draft, params: P) => unknown;
+  /** What it gives back: what it made, what it took away along with it. */
+  readonly result: z.ZodType<R>;
+  /** What it can fail with, apart from `GENERAL_FAILURES`. Tests hold it to that. */
+  readonly failures: readonly FailureCode[];
+  run(draft: Draft, params: P): R;
+  readonly hiddenParams?: readonly HiddenParam[];
+  readonly ai: AiUse;
   /** Can run on a project with a locked tag: the way to take the tag off again. */
   readonly whileLocked?: boolean;
-  /** Only people can do this, never an AI task. */
-  readonly userOnly?: boolean;
   /**
    * Who else than people can do what only people can: a part of the editor that is no person, such
    * as the uploads that write down where files went. Never an AI task.
    */
   readonly alsoBy?: readonly Origin[];
-  /** Only people can use these parameters. */
-  readonly userOnlyParams?: readonly string[];
 }
 
-function define<S extends z.ZodType>(
-  type: string,
+/** An operation by its older name, which most of the editor still uses. */
+export type CommandDefinition = Operation;
+
+interface Meta<R extends z.ZodType, A extends AiUse> {
+  readonly group: OperationGroup;
+  readonly level?: OperationLevel;
+  readonly result: R;
+  readonly failures: readonly FailureCode[];
+  readonly ai?: A;
+  readonly hiddenParams?: readonly HiddenParam[];
+  readonly whileLocked?: boolean;
+  readonly alsoBy?: readonly Origin[];
+}
+
+function define<
+  const N extends string,
+  S extends z.ZodType,
+  R extends z.ZodType,
+  const A extends AiUse = "yes",
+>(
+  name: N,
   description: string,
   params: S,
-  run: (draft: Draft, params: z.output<S>) => unknown,
-  options: Pick<CommandDefinition, "whileLocked" | "userOnly" | "alsoBy" | "userOnlyParams"> = {},
-): CommandDefinition {
-  return { type, description, params, run: run as CommandDefinition["run"], ...options };
+  run: (draft: Draft, params: z.output<S>) => Returned<R>,
+  meta: Meta<R, A>,
+): Operation<z.output<S>, z.output<R>> & { readonly name: N; readonly ai: A } {
+  const { level = "edit", ai = "yes" as A, result, ...rest } = meta;
+  return {
+    name,
+    type: name,
+    description,
+    params: params as z.ZodType<z.output<S>>,
+    result: result as z.ZodType<z.output<R>>,
+    run: run as (draft: Draft, params: z.output<S>) => z.output<R>,
+    level,
+    ai,
+    ...rest,
+  };
 }
+
+/** What `run` gives back for a result: nothing at all where the result can be undefined. */
+type Returned<R extends z.ZodType> = undefined extends z.input<R> ? z.input<R> | void : z.input<R>;
+
+/** What an operation gives back when it made nothing worth telling. */
+const Nothing = z.undefined();
+/** What an operation that made something gives back: its id. */
+const Made = z.strictObject({ id: Id });
+/** Joins that went away because their clips are no longer next to each other, see `apart`. */
+const JoinsRemoved = { joinsRemoved: z.array(Id).readonly().optional() };
+const MaybeApart = z.strictObject(JoinsRemoved).optional();
 
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
 
 function trackOf(timeline: TimelineState, id: string): TrackState {
-  return entryOf(timeline.tracks, id) ?? fail("not-found", `没有这条轨道：${id}`);
+  return entryOf(timeline.tracks, id) ?? fail("not-found", { kind: "track", id });
 }
 
 /**
@@ -163,7 +262,7 @@ function trackOf(timeline: TimelineState, id: string): TrackState {
  * up. Locks on tracks are for people at the editor, which keeps to them: commands do not.
  */
 function clipOf(timeline: TimelineState, id: string): ClipState {
-  return entryOf(timeline.clips, id) ?? fail("not-found", `没有这个片段：${id}`);
+  return entryOf(timeline.clips, id) ?? fail("not-found", { kind: "clip", id });
 }
 
 /**
@@ -175,15 +274,27 @@ const apart = (joins: readonly string[]) =>
 
 function checkClip(clip: ClipState): void {
   const result = Clip.safeParse(clipFileOf(clip));
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
-  }
+  if (!result.success) formatFailure(result.error);
+}
+
+/**
+ * Sections, tracks and clips of a timeline share their ids, as the format says: a new one cannot
+ * take the id of any of them, whatever kind it is.
+ */
+function assertIdFree(timeline: TimelineState, id: string, kind: "section" | "track" | "clip") {
+  const by = entryOf(timeline.sections, id)
+    ? "section"
+    : entryOf(timeline.tracks, id)
+      ? "track"
+      : entryOf(timeline.clips, id)
+        ? "clip"
+        : undefined;
+  if (by) fail("id-taken", { kind, id, by });
 }
 
 function checkFits(track: TrackState, clip: { readonly source: ClipSource }): void {
   if (!canHold(track.kind, clip.source.kind)) {
-    fail("wrong-track", `${track.kind} 轨道不能放 ${clip.source.kind} 片段`);
+    fail("wrong-track", { trackKind: track.kind, holds: "clip", sourceKind: clip.source.kind });
   }
 }
 
@@ -191,11 +302,11 @@ function checkFits(track: TrackState, clip: { readonly source: ClipSource }): vo
 function checkCode(state: Draft["state"], { source }: { readonly source: ClipSource }): void {
   if (source.kind === "scene" && source.scene !== undefined) {
     const scene = source.scene as string;
-    if (!entryOf(state.scenes, scene)) fail("not-found", `没有这个场景：${scene}`);
+    if (!entryOf(state.scenes, scene)) fail("not-found", { kind: "scene", id: scene });
   }
   if (source.kind === "sound" && source.sound !== undefined) {
     const sound = source.sound as string;
-    if (!entryOf(state.sounds, sound)) fail("not-found", `没有这个声音：${sound}`);
+    if (!entryOf(state.sounds, sound)) fail("not-found", { kind: "sound", id: sound });
   }
 }
 
@@ -240,17 +351,17 @@ function checkTransitions(
     const transition = next[edge];
     if (transition === undefined || sameTransition(current[edge], transition)) continue;
     const found = findTransition(transition, media, edge);
-    if (found.kind === "missing") return fail("transition-missing", describeMissing(found.why));
+    if (found.kind === "missing") return fail("transition-missing", { why: found.why });
     // Captions do not get drawn yet, and neither would what they come in and go out with.
     if (kind === "caption" || !isSupported(found, media, edge)) {
-      const words = kind === "caption" ? "这一版的编辑器还不能显示字幕的转场" : undefined;
-      fail("transition-unsupported", words ?? describeUnsupported(found.type, media, edge));
+      const caption = kind === "caption" ? { caption: true } : {};
+      fail("transition-unsupported", { type: found.type, media, use: edge, ...caption });
     }
     checkValues(found.spec, found.type, transition.values);
   }
   const total = edgesLength(next);
   if (compare(total, parseTime(next.duration)) > 0 && compare(total, edgesLength(current)) > 0) {
-    fail("transition-too-long", "入转场和出转场加起来比片段长");
+    fail("transition-too-long", { why: "edges" });
   }
   // A join at the other end takes its part of the clip, which no transition may run into.
   const taken = takenLength(joined, next);
@@ -258,19 +369,20 @@ function checkTransitions(
     compare(taken, parseTime(next.duration)) > 0 &&
     compare(taken, takenLength(joined, current)) > 0
   ) {
-    fail("transition-too-long", "这个转场和片段另一头的衔接转场加起来比片段长");
+    fail("transition-too-long", { why: "join" });
   }
 }
 
 /** A number for something that goes before `next` in a list, without renumbering the others. */
 function orderBefore<T extends { readonly id: string; readonly order: number }>(
+  kind: "section" | "track",
   items: readonly T[],
   next: string | undefined,
   moving?: string,
 ): number {
   const others = items.filter((item) => item.id !== moving);
   const index = next === undefined ? others.length : others.findIndex((item) => item.id === next);
-  if (index < 0) fail("not-found", `没有这一项：${next}`);
+  if (index < 0) fail("not-found", { kind, id: next ?? "" });
   const after = others[index]?.order;
   const before = others[index - 1]?.order;
   if (after === undefined) return (before ?? -1) + 1;
@@ -296,7 +408,7 @@ function makeRoom(
 }
 
 function checkKeys(path: string, value: PropertyValue): void {
-  if (cannotHaveKeys(path, value)) fail("not-animatable", `${path} 不能打关键帧`);
+  if (cannotHaveKeys(path, value)) fail("not-animatable", { path });
 }
 
 /** Only what gets written. Something else being wrong must not stop people from fixing it. */
@@ -305,12 +417,9 @@ export function checkWrite(
   before: PropertyValue | undefined,
   after: PropertyValue,
 ): void {
-  if (RETIRED_PROPERTIES.includes(path)) fail("invalid-value", `没有这个属性：${path}，裁切是效果`);
+  if (RETIRED_PROPERTIES.includes(path)) fail("invalid-value", { rule: "retired-property", path });
   const result = KnownProperties.safeParse({ [path]: after });
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    fail("invalid-value", `${issue?.path.join(".")}：${issue?.message}`);
-  }
+  if (!result.success) formatFailure(result.error);
   if (!deepEqual(before, after)) checkKeys(path, after);
 }
 
@@ -379,13 +488,14 @@ function renameProperties(
   for (const rename of renames) {
     const clip = clipOf(target, rename.owner.clip);
     const moves = movesOf(pathsOfClip(target, clip), rename);
-    if (moves.length === 0) fail("not-found", `没有这个属性：${rename.from}`);
+    if (moves.length === 0) fail("not-found", { kind: "property", id: rename.from, clip: clip.id });
     const plan = plans.get(clip.id) ?? new Map<string, PlannedMove>();
     plans.set(clip.id, plan);
     for (const [from, to] of moves) {
-      if (!PropertyPath.safeParse(to).success) fail("invalid-value", `不是属性路径：${to}`);
-      if (from === to) fail("invalid-value", `改名前后是同一个属性：${from}`);
-      if (plan.has(from)) fail("invalid-value", `同一个属性不能改名两次：${from}`);
+      if (!PropertyPath.safeParse(to).success)
+        fail("invalid-value", { rule: "not-a-path", path: to });
+      if (from === to) fail("invalid-value", { rule: "rename-same", path: from });
+      if (plan.has(from)) fail("invalid-value", { rule: "renamed-twice", path: from });
       plan.set(from, { to, rename });
     }
   }
@@ -395,9 +505,9 @@ function renameProperties(
     const paths = pathsOfClip(target, clip);
     const targets = new Set<string>();
     for (const { to } of plan.values()) {
-      if (targets.has(to)) fail("invalid-value", `两个属性不能改成同一个名字：${to}`);
+      if (targets.has(to)) fail("invalid-value", { rule: "rename-into-one", path: to });
       targets.add(to);
-      if (paths.has(to) && !plan.has(to)) fail("conflict", `已经有这个属性：${to}`);
+      if (paths.has(to) && !plan.has(to)) fail("path-taken", { path: to, by: "property" });
     }
     moveProperties(draft, timeline, clip, plan);
     moved += plan.size;
@@ -462,9 +572,8 @@ function moveProperties(
 /** What `asset.add` takes: an asset of a file only here (the default), or in the person's own Git. */
 const AddedAsset = z.strictObject({
   ...Asset.shape,
-  storage: z
-    .enum(["local", "git"], { error: "登记素材时只能是 local 或 git：放到别处要等上传完成后记下" })
-    .default("local"),
+  /** Elsewhere is for uploads to write down, once the file got there. */
+  storage: z.enum(["local", "git"]).default("local"),
 });
 
 const ClipFields = Clip.omit({ id: true });
@@ -485,7 +594,17 @@ const TrackChanges = z
 
 const MarkerChanges = Marker.omit({ id: true }).partial();
 
-export const COMMANDS: readonly CommandDefinition[] = [
+/** What writing properties can run into, whichever operation does it. */
+const PROPERTY_FAILURES: readonly FailureCode[] = ["not-found", "invalid-value", "not-animatable"];
+
+/** The clip that `clip.add` puts on a track, as its own fields: the format's, with an id to choose. */
+const AddedClip = ClipInput.shape;
+
+/**
+ * The registry of operations: everything that changes a project, for people, tools and AI alike.
+ * Written `as const` so that names are what they are, see `AiOperationName`.
+ */
+export const OPERATIONS = [
   define(
     "project.rename",
     "给项目改名。",
@@ -493,6 +612,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { name }) => {
       draft.set(["manifest", "name"], name);
     },
+    { group: "project", result: Nothing, failures: [] },
   ),
 
   define(
@@ -502,6 +622,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { fps }) => {
       draft.set(["manifest", "fps"], fps);
     },
+    { group: "project", result: Nothing, failures: [] },
   ),
 
   define(
@@ -511,7 +632,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { tags }) => {
       draft.set(["manifest", "tags"], tags);
     },
-    { whileLocked: true, userOnly: true },
+    {
+      group: "project",
+      level: "human",
+      ai: { no: "human" },
+      result: Nothing,
+      failures: [],
+      whileLocked: true,
+    },
   ),
 
   /**
@@ -524,17 +652,19 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ id: Id.optional(), asset: AddedAsset }),
     (draft, { id, asset }) => {
       const key = id ?? newId("asset");
-      if (entryOf(draft.state.assets, key)) fail("id-taken", `这个 ID 已经有素材了：${key}`);
+      if (entryOf(draft.state.assets, key))
+        fail("id-taken", { kind: "asset", id: key, by: "asset" });
       draft.set(["assets", key], asset);
       return { id: key };
     },
+    { group: "asset", ai: { no: "needs-file" }, result: Made, failures: ["id-taken"] },
   ),
 
   /**
    * What an asset is called and found by, and where its file is and what it is: for a file that
    * moved or was replaced, as people agreed. Clips stay on the asset. No tags at all takes them away.
    * Another file, by its hash or its size, is only here: what the asset said about where else its
-   * file was is about the one before.
+   * file was is about the one before. What the file is, only people say: AI cannot see files.
    */
   define(
     "asset.update",
@@ -552,7 +682,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     }),
     (draft, { asset, changes }) => {
       const found = entryOf(draft.state.assets, asset);
-      if (!found) fail("not-found", `没有这个素材：${asset}`);
+      if (!found) fail("not-found", { kind: "asset", id: asset });
       const defined: Record<string, unknown> = Object.fromEntries(
         Object.entries(changes).filter(([, value]) => value !== undefined),
       );
@@ -568,11 +698,17 @@ export const COMMANDS: readonly CommandDefinition[] = [
         delete merged.url;
       }
       const next = Asset.safeParse(merged);
-      if (!next.success) {
-        fail("invalid-value", `素材的新内容不对：${next.error.issues[0]?.message ?? ""}`);
-      }
+      if (!next.success) formatFailure(next.error, "changes");
       // Assets are no layer of their own: each one is written as a whole, see structure.ts.
       draft.set(["assets", asset], next.data);
+    },
+    {
+      group: "asset",
+      result: Nothing,
+      failures: ["not-found", "invalid-value"],
+      hiddenParams: ["changes.path", "changes.hash", "changes.size", "changes.info"].map(
+        (name) => ({ name, why: "human" }) as const,
+      ),
     },
   ),
 
@@ -582,16 +718,17 @@ export const COMMANDS: readonly CommandDefinition[] = [
     "删除一个素材；withUses 为 true 时连同用它的片段一起删，否则还有片段在用时拒绝。",
     z.strictObject({ asset: Id, withUses: z.boolean().optional() }),
     (draft, { asset, withUses }) => {
-      if (!entryOf(draft.state.assets, asset)) fail("not-found", `没有这个素材：${asset}`);
+      if (!entryOf(draft.state.assets, asset)) fail("not-found", { kind: "asset", id: asset });
       const code = codeUsingAsset(draft.state, asset);
-      if (code !== undefined) fail("asset-in-use", `代码在用这个素材，要先改掉：${code}`);
+      if (code !== undefined) fail("asset-in-use", { asset, by: "code", file: code });
       if (withUses) removeUses(draft, "asset", asset);
       else if (isInUse(draft.state, ["assets", asset])) {
-        fail("asset-in-use", "还有片段或版本在用这个素材，要先换掉或删除它们");
+        fail("asset-in-use", { asset, by: "clips" });
       }
       draft.delete(["assets", asset]);
       draft.delete(["places", asset]);
     },
+    { group: "asset", result: Nothing, failures: ["not-found", "asset-in-use"] },
   ),
 
   /**
@@ -606,34 +743,78 @@ export const COMMANDS: readonly CommandDefinition[] = [
     "记下素材文件放在哪里：上传完成后由上传记下 lfs、platform 或 remote；用户把它改回只在本机（local）。",
     StorageChange,
     setStorage,
-    { whileLocked: true, userOnly: true, alsoBy: [STORAGE] },
+    {
+      group: "asset",
+      level: "human",
+      ai: { no: "human" },
+      result: Nothing,
+      failures: ["not-found", "asset-file-changed", "upload-only", "invalid-value"],
+      whileLocked: true,
+      alsoBy: [STORAGE],
+    },
   ),
 
-  define("scene.add", "新建一个 HTML 场景（代码生成的画面），连同它的文件。", SceneAdd, addScene),
+  define("scene.add", "新建一个 HTML 场景（代码生成的画面），连同它的文件。", SceneAdd, addScene, {
+    group: "scene",
+    result: Made,
+    failures: [
+      "id-taken",
+      "invalid-value",
+      "not-found",
+      "file-too-large",
+      "path-taken",
+      "runtime-too-new",
+      "missing-entry",
+    ],
+  }),
   define(
     "scene.update",
     "改场景的清单，比如名字、入口文件、参数和预设。",
     SceneUpdate,
     updateScene,
+    {
+      group: "scene",
+      result: Nothing,
+      failures: ["not-found", "invalid-value", "runtime-too-new", "missing-entry"],
+    },
   ),
   define(
     "scene.remove",
     "删除一个场景和它的文件；withUses 为 true 时连同用它的片段一起删。",
     SceneRemove,
     removeScene,
+    { group: "scene", result: Nothing, failures: ["not-found", "scene-in-use"] },
   ),
-  define("sound.add", "新建一个代码生成的声音，连同它的文件。", SoundAdd, addSound),
+  define("sound.add", "新建一个代码生成的声音，连同它的文件。", SoundAdd, addSound, {
+    group: "sound",
+    result: Made,
+    failures: [
+      "id-taken",
+      "invalid-value",
+      "not-found",
+      "file-too-large",
+      "path-taken",
+      "runtime-too-new",
+      "missing-entry",
+    ],
+  }),
   define(
     "sound.update",
     "改代码生成的声音的清单，比如名字、入口文件、参数和输出。",
     SoundUpdate,
     updateSound,
+    {
+      group: "sound",
+      result: Nothing,
+      failures: ["not-found", "invalid-value", "runtime-too-new", "missing-entry"],
+    },
   ),
   define(
     "sound.remove",
     "删除一个代码生成的声音和它的文件；withUses 为 true 时连同用它的片段一起删。",
     SoundRemove,
     removeSound,
+    { group: "sound", result: Nothing, failures: ["not-found", "sound-in-use"] },
   ),
   /** Clips that use an asset, scene or sound use another one of the same kind instead. */
   define(
@@ -641,20 +822,44 @@ export const COMMANDS: readonly CommandDefinition[] = [
     "让用某个素材、场景或声音的片段全部改用另一个同类的。",
     SourceReplace,
     replaceSource,
+    {
+      group: "clip",
+      result: z.strictObject({ clips: z.number() }),
+      failures: ["invalid-value", "not-found", "not-in-use"],
+    },
   ),
   define(
     "file.write",
     "写入项目里的一个代码文件（场景、声音或共用代码），整份替换。",
     FileWrite,
     writeFile,
+    {
+      group: "file",
+      ai: { no: "file-tools" },
+      result: Nothing,
+      failures: ["not-found", "file-too-large", "path-taken"],
+    },
   ),
   define(
     "file.remove",
     "删除项目里的一个代码文件，场景和声音的入口文件不能删。",
     FileRemove,
     removeFile,
+    { group: "file", result: Nothing, failures: ["not-found", "entry-in-use"] },
   ),
-  define("file.rename", "把项目里的一个代码文件改名或移到别的路径。", FileRename, renameFile),
+  define("file.rename", "把项目里的一个代码文件改名或移到别的路径。", FileRename, renameFile, {
+    group: "file",
+    result: Nothing,
+    failures: [
+      "not-found",
+      "path-taken",
+      "entry-in-use",
+      "file-too-large",
+      "invalid-value",
+      "runtime-too-new",
+      "missing-entry",
+    ],
+  }),
 
   define(
     "timeline.rename",
@@ -664,6 +869,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       timelineOf(draft, timeline);
       draft.set([...timelinePath(timeline), "name"], name);
     },
+    { group: "timeline", result: Nothing, failures: ["not-found"] },
   ),
 
   define(
@@ -680,12 +886,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const { timeline, duration, name, before } = params;
       const target = timelineOf(draft, timeline);
       const id = params.id ?? newId("section");
-      if (entryOf(target.sections, id)) fail("id-taken", `这个 ID 已经有段落了：${id}`);
-      const order = orderBefore(orderedSections(target), before);
+      assertIdFree(target, id, "section");
+      const order = orderBefore("section", orderedSections(target), before);
       const section = { id, ...(name ? { name } : {}), duration, order };
       draft.set([...timelinePath(timeline), "sections", id], section);
       return { id };
     },
+    { group: "timeline", result: Made, failures: ["not-found", "id-taken"] },
   ),
 
   define(
@@ -699,11 +906,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     }),
     (draft, { timeline, section, duration, name }) => {
       const target = entryOf(timelineOf(draft, timeline).sections, section);
-      if (!target) fail("not-found", `没有这个段落：${section}`);
+      if (!target) fail("not-found", { kind: "section", id: section });
       const path = [...timelinePath(timeline), "sections", section];
       if (duration !== undefined) draft.set([...path, "duration"], duration);
       if (name !== undefined) draft.set([...path, "name"], name);
     },
+    { group: "timeline", result: Nothing, failures: ["not-found"] },
   ),
 
   define(
@@ -712,10 +920,11 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ timeline: Id, section: Id }),
     (draft, { timeline, section }) => {
       const { sections } = timelineOf(draft, timeline);
-      if (!entryOf(sections, section)) fail("not-found", `没有这个段落：${section}`);
-      if (Object.keys(sections).length === 1) fail("last-section", "时间轴至少要有一个段落");
+      if (!entryOf(sections, section)) fail("not-found", { kind: "section", id: section });
+      if (Object.keys(sections).length === 1) fail("last-section", { timeline });
       draft.delete([...timelinePath(timeline), "sections", section]);
     },
+    { group: "timeline", result: Nothing, failures: ["not-found", "last-section"] },
   ),
 
   define(
@@ -732,12 +941,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const { timeline, kind, name, before } = params;
       const target = timelineOf(draft, timeline);
       const id = params.id ?? newId("track");
-      if (entryOf(target.tracks, id)) fail("id-taken", `这个 ID 已经有轨道了：${id}`);
-      const order = orderBefore(orderedTracks(target), before);
+      assertIdFree(target, id, "track");
+      const order = orderBefore("track", orderedTracks(target), before);
       const track = { id, kind, ...(name ? { name } : {}), order };
       draft.set(trackPath(timeline, id), track);
       return { id };
     },
+    { group: "track", result: Made, failures: ["not-found", "id-taken"] },
   ),
 
   define(
@@ -748,11 +958,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const current = trackOf(timelineOf(draft, timeline), track);
       const { order: _order, ...head } = current;
       const result = Track.safeParse({ ...head, ...changes, clips: [] });
-      if (!result.success) fail("invalid-value", `${current.kind} 轨道没有这些设置`);
+      if (!result.success)
+        fail("invalid-value", { rule: "track-settings", trackKind: current.kind });
       for (const [key, value] of Object.entries(changes)) {
         draft.set([...trackPath(timeline, track), key], value);
       }
     },
+    { group: "track", result: Nothing, failures: ["not-found", "invalid-value"] },
   ),
 
   define(
@@ -762,9 +974,10 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { timeline, track, before }) => {
       const target = timelineOf(draft, timeline);
       trackOf(target, track);
-      const order = orderBefore(orderedTracks(target), before, track);
+      const order = orderBefore("track", orderedTracks(target), before, track);
       draft.set([...trackPath(timeline, track), "order"], order);
     },
+    { group: "track", result: Nothing, failures: ["not-found"] },
   ),
 
   define(
@@ -783,6 +996,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       }
       draft.delete(trackPath(timeline, track));
     },
+    { group: "track", result: Nothing, failures: ["not-found"] },
   ),
 
   define(
@@ -791,7 +1005,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({
       timeline: Id,
       track: Id,
-      clip: ClipInput,
+      ...AddedClip,
       overlap: Overlap,
       /**
        * The clip that this one takes the place of, which went away earlier in the same batch. What
@@ -799,13 +1013,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
        */
       movedFrom: Id.optional(),
     }),
-    (draft, { timeline, track, clip, overlap, movedFrom }) => {
+    (draft, params) => {
+      const { timeline, track, overlap, movedFrom, ...clip } = params;
       const target = timelineOf(draft, timeline);
       const home = trackOf(target, track);
       checkFits(home, clip);
       checkCode(draft.state, clip);
       const id = clip.id ?? newId("clip");
-      if (entryOf(target.clips, id)) fail("id-taken", `这个 ID 已经有片段了：${id}`);
+      assertIdFree(target, id, "clip");
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
       const added = clipStateOf({ ...clip, id }, track);
       const together = joinsTogether(target);
@@ -817,13 +1032,18 @@ export const COMMANDS: readonly CommandDefinition[] = [
       extendToFit(draft, timeline, clipEnd(added));
       if (movedFrom !== undefined) {
         if (!draft.wentAway(clipPath(timeline, movedFrom))) {
-          fail("not-moved", `这一批改动没有移走这个片段：${movedFrom}`);
+          fail("not-moved", { clip: movedFrom });
         }
         draft.note({ kind: "moved", from: movedFrom, to: id });
       }
       return { id, ...apart(followJoins(draft, timeline, together)) };
     },
-    { userOnlyParams: ["movedFrom"] },
+    {
+      group: "clip",
+      result: z.strictObject({ id: Id, ...JoinsRemoved }),
+      failures: ["not-found", "wrong-track", "id-taken", "not-animatable", "overlap", "not-moved"],
+      hiddenParams: [{ name: "movedFrom", why: "human" }],
+    },
   ),
 
   define(
@@ -835,9 +1055,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
       for (const id of clips) clipOf(target, id);
       removeClips(draft, timeline, clips);
     },
+    { group: "clip", result: Nothing, failures: ["not-found"] },
   ),
 
-  /** Transitions at the edges of a clip have a command of their own, `clip.setTransition`. */
+  /**
+   * Transitions at the edges of a clip have a command of their own, `clip.setTransition`. Where a
+   * clip is and how long, `clip.move` and `clip.trim` are for: people can still change them here.
+   */
   define(
     "clip.update",
     "改片段自己的字段，比如名字、开头、时长、内容、offset、循环和隐藏；转场、效果和属性用各自的命令。",
@@ -885,6 +1109,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
       extendToFit(draft, timeline, clipEnd(updated));
       return apart(followJoins(draft, timeline, together));
     },
+    {
+      group: "clip",
+      result: MaybeApart,
+      failures: ["not-found", "invalid-value", "wrong-track", "overlap"],
+      hiddenParams: [
+        { name: "changes.start", why: "instead", instead: "clip.move" },
+        { name: "changes.duration", why: "instead", instead: "clip.trim" },
+      ],
+    },
   ),
 
   /**
@@ -931,33 +1164,86 @@ export const COMMANDS: readonly CommandDefinition[] = [
         else draft.set(path, next[edge]);
       }
     },
+    {
+      group: "transition",
+      result: Nothing,
+      failures: [
+        "not-found",
+        "transition-missing",
+        "transition-unsupported",
+        "invalid-value",
+        "transition-too-long",
+      ],
+    },
   ),
 
   /** Puts a join on the cut between two clips, see join-edits.ts. */
   define("join.add", "在两个首尾相接的片段之间加衔接转场。", JoinAdd, addJoin, {
-    userOnlyParams: ["copied"],
+    group: "transition",
+    result: z.union([
+      z.strictObject({ id: Id, align: z.enum(["center", "before", "after"]) }),
+      z.strictObject({ left: z.enum(["taken", "no-room"]) }),
+    ]),
+    failures: [
+      "not-found",
+      "invalid-value",
+      "not-adjacent",
+      "join-taken",
+      "id-taken",
+      "transition-too-long",
+      "wrong-track",
+      "transition-missing",
+      "transition-unsupported",
+    ],
+    hiddenParams: [{ name: "copied", why: "human" }],
   }),
   define(
     "effect.add",
     "给片段加一个效果，可以指定放在效果列表的哪里和参数的初始值。",
     EffectAdd,
     addEffect,
+    {
+      group: "effect",
+      result: Made,
+      failures: ["not-found", "wrong-track", "invalid-value", "id-taken", "not-animatable"],
+    },
   ),
-  define("effect.remove", "去掉片段上的效果。", EffectRemove, removeEffects),
+  define("effect.remove", "去掉片段上的效果。", EffectRemove, removeEffects, {
+    group: "effect",
+    result: Nothing,
+    failures: ["not-found"],
+  }),
   define(
     "effect.move",
     "调整效果在片段效果列表里的位置，先后顺序会影响结果。",
     EffectMove,
     moveEffect,
+    { group: "effect", result: Nothing, failures: ["not-found"] },
   ),
   define(
     "effect.update",
     "打开或关闭效果，或改它在片段里生效的开始和结束时间。",
     EffectUpdate,
     updateEffect,
+    { group: "effect", result: Nothing, failures: ["not-found", "invalid-value"] },
   ),
-  define("join.update", "改衔接转场的类型、时长、对齐、速度曲线或参数。", JoinUpdate, updateJoin),
-  define("join.remove", "删除衔接转场。", JoinRemove, removeJoins),
+  define("join.update", "改衔接转场的类型、时长、对齐、速度曲线或参数。", JoinUpdate, updateJoin, {
+    group: "transition",
+    result: Nothing,
+    failures: [
+      "not-found",
+      "invalid-value",
+      "transition-missing",
+      "transition-unsupported",
+      "wrong-track",
+      "transition-too-long",
+    ],
+  }),
+  define("join.remove", "删除衔接转场。", JoinRemove, removeJoins, {
+    group: "transition",
+    result: Nothing,
+    failures: ["not-found"],
+  }),
 
   /** Several clips move in one step, because the place one of them leaves is free for another. */
   define(
@@ -973,7 +1259,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { timeline, clips, overlap }) => {
       const target = timelineOf(draft, timeline);
       const moving = new Set(clips.map(({ clip }) => clip));
-      if (moving.size !== clips.length) fail("invalid-value", "同一个片段不能移动两次");
+      if (moving.size !== clips.length) {
+        const twice = clips.find(({ clip }, index) =>
+          clips.slice(0, index).some((other) => other.clip === clip),
+        );
+        fail("invalid-value", { rule: "moved-twice", clip: twice?.clip ?? "" });
+      }
       const landed = clips.map(({ clip, start, track }) => {
         const current = clipOf(target, clip);
         if (track !== undefined) checkFits(trackOf(target, track), current);
@@ -993,7 +1284,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
         inOrder.forEach(({ moved, span }, index) => {
           const next = inOrder[index + 1];
           if (next && compare(span.to, next.span.from) > 0) {
-            fail("overlap", `片段落在了同一个位置：${moved.id}、${next.moved.id}`);
+            fail("overlap", { clips: [named(moved), named(next.moved)], moved: true });
           }
         });
         const spans = inOrder.map(({ span }) => span);
@@ -1010,6 +1301,11 @@ export const COMMANDS: readonly CommandDefinition[] = [
       extendToFit(draft, timeline, last.span.to);
       return apart(followJoins(draft, timeline, together));
     },
+    {
+      group: "clip",
+      result: MaybeApart,
+      failures: ["not-found", "invalid-value", "wrong-track", "overlap"],
+    },
   ),
 
   /** Moves the edges of a clip, which is different from changing its numbers: see trimClip. */
@@ -1024,17 +1320,23 @@ export const COMMANDS: readonly CommandDefinition[] = [
         from: start === undefined ? clipStart(current) : parseTime(start),
         to: end === undefined ? clipEnd(current) : parseTime(end),
       };
-      if (compare(span.to, span.from) <= 0) fail("invalid-value", "片段的结尾要在开头之后");
+      if (compare(span.to, span.from) <= 0)
+        fail("invalid-value", { rule: "end-before-start", clip });
       const length = sourceLength(draft.state, current);
       const clockAtEnd = add(clipOffset(current), subtract(span.to, clipStart(current)));
       if (length && compare(clockAtEnd, length) > 0) {
-        fail("source-end", `已经到内容的结尾了：${current.name ?? current.id}`);
+        fail("source-end", { clip, ...nameOf(current) });
       }
       assertFree(target, current.track, [span], new Set([clip]));
       const together = joinsTogether(target);
       trimClip(draft, timeline, current, span);
       extendToFit(draft, timeline, span.to);
       return apart(followJoins(draft, timeline, together));
+    },
+    {
+      group: "clip",
+      result: MaybeApart,
+      failures: ["not-found", "invalid-value", "source-end", "source-start", "overlap"],
     },
   ),
 
@@ -1049,22 +1351,23 @@ export const COMMANDS: readonly CommandDefinition[] = [
       timeline: Id,
       clip: Id,
       at: Time,
-      id: Id.optional(),
+      /** The id of the new part after the cut. Without it the editor makes one. */
+      piece: Id.optional(),
       /**
        * Linked clips that stay whole and keep their link, such as ones on a track that people
        * locked at the editor.
        */
       keep: z.array(Id).optional(),
     }),
-    (draft, { timeline, clip, at, id, keep }) => {
+    (draft, { timeline, clip, at, piece, keep }) => {
       const target = timelineOf(draft, timeline);
       const current = clipOf(target, clip);
       const moment = parseTime(at);
       const isInside = (candidate: ClipState) =>
         compare(moment, clipStart(candidate)) > 0 && compare(moment, clipEnd(candidate)) < 0;
-      if (!isInside(current)) fail("invalid-value", "切割点要在片段中间");
-      const rightId = id ?? newId("clip");
-      if (entryOf(target.clips, rightId)) fail("id-taken", `这个 ID 已经有片段了：${rightId}`);
+      if (!isInside(current)) fail("invalid-value", { rule: "cut-outside", clip, at });
+      const rightId = piece ?? newId("clip");
+      assertIdFree(target, rightId, "clip");
 
       const cut = Object.values(target.clips).filter(
         (other) =>
@@ -1079,6 +1382,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       for (const partner of cut) splitClip(draft, timeline, partner, moment, newId("clip"), link);
       return { id: rightId };
     },
+    { group: "clip", result: Made, failures: ["not-found", "invalid-value", "id-taken"] },
   ),
 
   define(
@@ -1089,6 +1393,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
       const owner = { clip };
       editProperties(draft, timeline, [{ owner, path, op: "set", value }]);
     },
+    {
+      group: "property",
+      ai: { no: "duplicate", instead: "property.edit" },
+      result: Nothing,
+      failures: PROPERTY_FAILURES,
+    },
   ),
 
   define(
@@ -1097,6 +1407,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ timeline: Id, clip: Id, path: PropertyPath }),
     (draft, { timeline, clip, path }) => {
       editProperties(draft, timeline, [{ owner: { clip }, path, op: "clear" }]);
+    },
+    {
+      group: "property",
+      ai: { no: "duplicate", instead: "property.edit" },
+      result: Nothing,
+      failures: PROPERTY_FAILURES,
     },
   ),
 
@@ -1108,6 +1424,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, { timeline, edits }) => {
       editProperties(draft, timeline, edits);
     },
+    { group: "property", result: Nothing, failures: PROPERTY_FAILURES },
   ),
 
   /**
@@ -1119,18 +1436,26 @@ export const COMMANDS: readonly CommandDefinition[] = [
     "给片段属性的路径改名，关键帧和各个版本里的值一起移过去，用在代码里的对象改名之后。",
     z.strictObject({ timeline: Id, renames: z.array(PropertyRename).min(1) }),
     (draft, { timeline, renames }) => ({ renamed: renameProperties(draft, timeline, renames) }),
+    {
+      group: "property",
+      result: z.strictObject({ renamed: z.number() }),
+      failures: ["not-found", "invalid-value", "path-taken", "not-animatable"],
+    },
   ),
 
+  /** A marker, with its own fields. Markers share their ids among themselves, see the format. */
   define(
     "marker.add",
     "在时间轴上加一个标记。",
-    z.strictObject({ timeline: Id, marker: Marker.extend({ id: Id.optional() }) }),
-    (draft, { timeline, marker }) => {
-      timelineOf(draft, timeline);
+    z.strictObject({ timeline: Id, ...Marker.extend({ id: Id.optional() }).shape }),
+    (draft, { timeline, ...marker }) => {
+      const markers = timelineOf(draft, timeline).markers;
       const id = marker.id ?? newId("marker");
+      if (entryOf(markers, id)) fail("id-taken", { kind: "marker", id, by: "marker" });
       draft.set([...timelinePath(timeline), "markers", id], { ...marker, id });
       return { id };
     },
+    { group: "marker", result: Made, failures: ["not-found", "id-taken"] },
   ),
 
   define(
@@ -1139,12 +1464,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
     z.strictObject({ timeline: Id, marker: Id, changes: MarkerChanges }),
     (draft, { timeline, marker, changes }) => {
       if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
-        fail("not-found", `没有这个标记：${marker}`);
+        fail("not-found", { kind: "marker", id: marker });
       }
       for (const [key, value] of Object.entries(changes)) {
         draft.set([...timelinePath(timeline), "markers", marker, key], value);
       }
     },
+    { group: "marker", result: Nothing, failures: ["not-found"] },
   ),
 
   define(
@@ -1154,9 +1480,23 @@ export const COMMANDS: readonly CommandDefinition[] = [
     (draft, params) => {
       const { timeline, marker } = params;
       if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
-        fail("not-found", `没有这个标记：${marker}`);
+        fail("not-found", { kind: "marker", id: marker });
       }
       draft.delete([...timelinePath(timeline), "markers", marker]);
     },
+    { group: "marker", result: Nothing, failures: ["not-found"] },
   ),
-];
+] as const satisfies readonly Operation[];
+
+/** Every operation, by the name it had first. Kept until the tools of 6.5b are all in. */
+export const COMMANDS: readonly Operation[] = OPERATIONS;
+
+export type OperationName = (typeof OPERATIONS)[number]["name"];
+
+/** What AI can use, by name: the tools document every one of them, see `@animaquill/tools`. */
+export type AiOperationName = Extract<(typeof OPERATIONS)[number], { readonly ai: "yes" }>["name"];
+
+const BY_NAME: ReadonlyMap<string, Operation> = new Map(OPERATIONS.map((op) => [op.name, op]));
+
+/** The operation of a name, or undefined for one there is not. */
+export const operationOf = (name: string): Operation | undefined => BY_NAME.get(name);

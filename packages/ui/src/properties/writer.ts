@@ -7,6 +7,7 @@ import {
   withAutoTangents,
   type ClipState,
   type PropertyEdit,
+  type CommandFailure,
 } from "@animaquill/core";
 import { isAnimation, type Key, type PropertyValue } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
@@ -17,7 +18,7 @@ import type { PreviewedValues, TrialSession } from "./trial.ts";
 export type { PreviewedValues } from "./trial.ts";
 
 export interface PropertyWriterMessages {
-  commandFailed(message: string): void;
+  commandFailed(failure: CommandFailure): void;
   /** Nothing gets written while people compare with what is saved. */
   comparing(): void;
 }
@@ -186,7 +187,7 @@ export class PropertyWriter {
     const timeline = this.#timeline.model?.id;
     if (!store || timeline === undefined || edits.length === 0) return false;
     const result = store.execute({ type: "property.edit", params: { timeline, edits } });
-    if (!result.ok) this.#messages.commandFailed(result.error.message);
+    if (!result.ok) this.#messages.commandFailed(result.error);
     return result.ok;
   }
 }

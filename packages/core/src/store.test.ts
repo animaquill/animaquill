@@ -93,7 +93,7 @@ function failure(result: CommandResult) {
 }
 
 function success(result: CommandResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
@@ -378,7 +378,9 @@ describe("running commands", () => {
       params: {
         timeline: "main",
         track: "track_voice",
-        clip: { start: "0", duration: "1", source: { kind: "color", color: "#000000" } },
+        start: "0",
+        duration: "1",
+        source: { kind: "color", color: "#000000" },
       },
     });
     expect(failure(added).code).toBe("wrong-track");
@@ -509,12 +511,10 @@ describe("batches", () => {
           params: {
             timeline: "main",
             track: "track_new",
-            clip: {
-              id: "clip_new",
-              start: "0",
-              duration: "1",
-              source: { kind: "color", color: "#000000" },
-            },
+            id: "clip_new",
+            start: "0",
+            duration: "1",
+            source: { kind: "color", color: "#000000" },
           },
         },
       ]),
@@ -610,13 +610,11 @@ describe("assets", () => {
         params: {
           timeline: "main",
           track: track?.id,
-          clip: {
-            id: "c",
-            start: "2",
-            duration: "4",
-            offset: "1",
-            source: { kind: "video", media: { asset: "a" } },
-          },
+          id: "c",
+          start: "2",
+          duration: "4",
+          offset: "1",
+          source: { kind: "video", media: { asset: "a" } },
         },
       }),
     );
@@ -916,7 +914,9 @@ describe("clips and tracks", () => {
         params: {
           timeline: "main",
           track: "track_video",
-          clip: { start: "40", duration: "1", source: { kind: "color", color: "#000000" } },
+          start: "40",
+          duration: "1",
+          source: { kind: "color", color: "#000000" },
         },
       }),
     );
@@ -931,12 +931,10 @@ describe("clips and tracks", () => {
       params: {
         timeline: "main",
         track: "track_video",
-        clip: {
-          id: "clip_title",
-          start: "40",
-          duration: "1",
-          source: { kind: "color", color: "#000000" },
-        },
+        id: "clip_title",
+        start: "40",
+        duration: "1",
+        source: { kind: "color", color: "#000000" },
       },
     });
     expect(failure(result).code).toBe("id-taken");
@@ -1101,7 +1099,7 @@ describe("clips and tracks", () => {
     const added = success(
       store.execute({
         type: "marker.add",
-        params: { timeline: "main", marker: { time: "3", name: "这里" } },
+        params: { timeline: "main", time: "3", name: "这里" },
       }),
     );
     const { id } = added.results[0] as { id: string };
@@ -1131,7 +1129,7 @@ describe("editing clips on the timeline", () => {
       success(
         store.execute({
           type: "clip.add",
-          params: { timeline: "main", track: track.id, clip: { source: color, ...added } },
+          params: { timeline: "main", track: track.id, source: color, ...added },
         }),
       );
     }
@@ -1163,7 +1161,9 @@ describe("editing clips on the timeline", () => {
         params: {
           timeline: "main",
           track,
-          clip: { start: "4", duration: "2", source: color },
+          start: "4",
+          duration: "2",
+          source: color,
         },
       });
       expect(failure(result).code).toBe("overlap");
@@ -1210,7 +1210,10 @@ describe("editing clips on the timeline", () => {
             params: {
               timeline: "main",
               track,
-              clip: { id, start: "0", duration: "5", source: color },
+              id,
+              start: "0",
+              duration: "5",
+              source: color,
             },
           }),
         );
@@ -1357,7 +1360,10 @@ describe("editing clips on the timeline", () => {
           params: {
             timeline: "main",
             track,
-            clip: { id: "b", start: "8", duration: "5", source: color },
+            id: "b",
+            start: "8",
+            duration: "5",
+            source: color,
             overlap: "overwrite",
           },
         }),
@@ -1379,7 +1385,10 @@ describe("editing clips on the timeline", () => {
           params: {
             timeline: "main",
             track: "other",
-            clip: { id: "b", start: "0", duration: "5", source: color },
+            id: "b",
+            start: "0",
+            duration: "5",
+            source: color,
             overlap: "overwrite",
           },
         }),
@@ -1497,7 +1506,9 @@ describe("editing clips on the timeline", () => {
           params: {
             timeline: "main",
             track,
-            clip: { start: "15", duration: "5", source: color },
+            start: "15",
+            duration: "5",
+            source: color,
           },
         }),
       );
@@ -1617,12 +1628,10 @@ describe("editing clips on the timeline", () => {
           params: {
             timeline: "main",
             track: "captions",
-            clip: {
-              id: "c",
-              start: "2",
-              duration: "1",
-              source: { kind: "caption", text: "你好", words },
-            },
+            id: "c",
+            start: "2",
+            duration: "1",
+            source: { kind: "caption", text: "你好", words },
           },
         }),
       );
@@ -1663,7 +1672,10 @@ describe("editing clips on the timeline", () => {
           params: {
             timeline: "main",
             track: "free",
-            clip: { id: "pic", start: "5", duration: "1", source: color },
+            id: "pic",
+            start: "5",
+            duration: "1",
+            source: color,
           },
         }),
       );
@@ -1760,7 +1772,11 @@ describe("editing clips on the timeline", () => {
             params: {
               timeline: "main",
               track: on,
-              clip: { id, start: "0", duration: "6", link: "link_a", source },
+              id,
+              start: "0",
+              duration: "6",
+              link: "link_a",
+              source,
             },
           }),
         );
@@ -1792,7 +1808,11 @@ describe("editing clips on the timeline", () => {
             params: {
               timeline: "main",
               track: on,
-              clip: { id, start: "0", duration, link: "link_a", source },
+              id,
+              start: "0",
+              duration,
+              link: "link_a",
+              source,
             },
           }),
         );
@@ -1819,7 +1839,11 @@ describe("editing clips on the timeline", () => {
             params: {
               timeline: "main",
               track: on,
-              clip: { id, start: "0", duration: "6", link: "link_a", source },
+              id,
+              start: "0",
+              duration: "6",
+              link: "link_a",
+              source,
             },
           }),
         );
@@ -1873,7 +1897,7 @@ describe("editing clips on the timeline", () => {
       ]);
       const result = store.execute({
         type: "clip.split",
-        params: { timeline: "main", clip: "a", at: "2", id: "b" },
+        params: { timeline: "main", clip: "a", at: "2", piece: "b" },
       });
       expect(failure(result).code).toBe("id-taken");
     });
@@ -1964,12 +1988,10 @@ describe("two people at once", () => {
           params: {
             timeline: "main",
             track: "track_captions",
-            clip: {
-              id: "clip_late",
-              start: "20",
-              duration: "1",
-              source: { kind: "caption", text: "还在" },
-            },
+            id: "clip_late",
+            start: "20",
+            duration: "1",
+            source: { kind: "caption", text: "还在" },
           },
         }),
       );
@@ -2021,12 +2043,10 @@ describe("two people at once", () => {
         params: {
           timeline: "main",
           track: "track_captions",
-          clip: {
-            id: "clip_late",
-            start: "20",
-            duration: "1",
-            source: { kind: "caption", text: "还在" },
-          },
+          id: "clip_late",
+          start: "20",
+          duration: "1",
+          source: { kind: "caption", text: "还在" },
         },
       }),
     );
@@ -2329,7 +2349,7 @@ function freshProject(): ProjectStore {
     success(
       store.execute({
         type: "clip.add",
-        params: { timeline: "main", track: track?.id, clip: added },
+        params: { timeline: "main", track: track?.id, ...added },
       }),
     );
   }
@@ -2433,7 +2453,7 @@ describe("two devices writing different properties", () => {
       source: { kind: "color", color: "#112233" },
       properties: { opacity: 0.5 },
     };
-    const params = { timeline: "main", track, clip: added };
+    const params = { timeline: "main", track, ...added };
     success(a.execute({ type: "clip.add", params }));
     sync(a, b);
     success(edit(a, "e", { path: "transform.x", op: "set", value: 1 }));
@@ -2510,7 +2530,7 @@ describe("two devices writing different properties", () => {
       source: { kind: "color", color: "#112233" },
       properties: { opacity: 0.5 },
     };
-    const params = { timeline: "main", track: clip(store, "clip_logo")?.track, clip: added };
+    const params = { timeline: "main", track: clip(store, "clip_logo")?.track, ...added };
     success(store.execute({ type: "clip.add", params }));
     const fromCommand = inside(inside(main, "clips"), "e");
     expect(fromCommand.has("properties")).toBe(false);
@@ -3226,7 +3246,7 @@ describe("taking several steps back in a row", () => {
       source: { kind: "color", color: "#000000" },
     };
     const calls = [
-      { type: "clip.add", params: { timeline: "main", track, clip: added } },
+      { type: "clip.add", params: { timeline: "main", track, ...added } },
       {
         type: "property.edit",
         params: {
@@ -3258,7 +3278,7 @@ function blocked(result: UndoResult) {
 }
 
 function taken(result: UndoResult) {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   return result;
 }
 
@@ -3807,7 +3827,7 @@ describe("an asset that only a version uses", () => {
       store.execute({ type: "asset.remove", params: { asset: "narration-en" } }),
     );
     expect(error.code).toBe("asset-in-use");
-    expect(error.message).toContain("版本");
+    expect(error.params).toEqual({ asset: "narration-en", by: "clips" });
     expect(store.getState().assets?.["narration-en"]).toBeDefined();
     expect(
       Object.values(timeline(store).clips).map(({ source }) => JSON.stringify(source)),
@@ -3930,7 +3950,10 @@ describe("taking back what something else came to depend on", () => {
           params: {
             timeline: "main",
             track,
-            clip: { id, start: "8", duration: "1", source },
+            id,
+            start: "8",
+            duration: "1",
+            source,
           },
         },
         options,
@@ -4012,7 +4035,10 @@ describe("taking back what something else came to depend on", () => {
           params: {
             timeline: "main",
             track: "k",
-            clip: { id: "e", start: "0", duration: "1", source: color },
+            id: "e",
+            start: "0",
+            duration: "1",
+            source: color,
           },
         },
       ]),
@@ -4292,7 +4318,10 @@ describe("taking back what something else came to depend on", () => {
             params: {
               timeline: "main",
               track: videoTrack(store),
-              clip: { id: "f", start: "9", duration: "1", source: later },
+              id: "f",
+              start: "9",
+              duration: "1",
+              source: later,
             },
           },
           { origin: aiTask("another") },
@@ -4423,7 +4452,7 @@ describe("while an update is missing", () => {
       params: { timeline: "main", clips: [{ clip: "c", start: "30" }] },
     });
     expect(code(result)).toBe("missing-updates");
-    expect(failure(result).message).toContain("刷新");
+    expect(failure(result).params).toEqual({});
     expect(b.revision).toBe(revision);
     expect(b.canUndo).toBe(false);
   });
@@ -4541,7 +4570,7 @@ describe("while an update is missing", () => {
     success(
       a.execute({
         type: "marker.add",
-        params: { timeline: "main", marker: { id: "m", time: "1" } },
+        params: { timeline: "main", id: "m", time: "1" },
       }),
     );
     success(a.execute({ type: "marker.remove", params: { timeline: "main", marker: "m" } }));
@@ -4720,7 +4749,7 @@ describe("a real document from when assets, notes and properties had maps of the
     success(store.execute({ type: "clip.update", params }));
     const { track, ...copy } = clip(store, "clip_title") as ClipState;
     const pasted = { ...copy, id: "pasted", start: "40" };
-    success(store.execute({ type: "clip.add", params: { timeline: "main", track, clip: pasted } }));
+    success(store.execute({ type: "clip.add", params: { timeline: "main", track, ...pasted } }));
     const at = { timeline: "main", clip: "clip_title", at: "2" };
     success(store.execute({ type: "clip.split", params: at }));
     const enter = { type: "fade", duration: "1" };
@@ -5109,7 +5138,7 @@ describe("a real document from when versions and translations had maps of their 
       () =>
         store.execute({
           type: "clip.split",
-          params: { timeline: "main", clip: "clip_title_b", at: "4", id: "clip_title_c" },
+          params: { timeline: "main", clip: "clip_title_b", at: "4", piece: "clip_title_c" },
         }),
     ];
     const states = [store.getState()];
@@ -5437,7 +5466,7 @@ describe("a real document from when versions and translations had maps of their 
       () =>
         store.execute({
           type: "clip.split",
-          params: { timeline: "main", clip: "clip_title_b", at: "4", id: "clip_title_c" },
+          params: { timeline: "main", clip: "clip_title_b", at: "4", piece: "clip_title_c" },
         }),
     ];
     const states = [store.getState()];
@@ -5613,7 +5642,7 @@ describe("ids that every object knows", () => {
       };
       const result = store.execute({
         type: "clip.add",
-        params: { timeline: "main", track: name, clip: clipOf },
+        params: { timeline: "main", track: name, ...clipOf },
       });
       expect(failure(result).code).toBe("not-found");
     });
@@ -5634,9 +5663,7 @@ describe("ids that every object knows", () => {
         duration: "1",
         source: { kind: "color", color: "#000000" },
       };
-      success(
-        store.execute({ type: "clip.add", params: { timeline: "main", track, clip: added } }),
-      );
+      success(store.execute({ type: "clip.add", params: { timeline: "main", track, ...added } }));
       success(edit(store, name, { path: "opacity", op: "set", value: 0.5 }));
       expect(timeline(store).clips[name]?.properties).toEqual({ opacity: 0.5 });
       const asset = { kind: "image", path: "assets/a.png", storage: "local" };
@@ -5798,7 +5825,7 @@ describe("keys on what cannot have any", () => {
     const track = clip(store, "c")?.track;
     const result = store.execute({
       type: "clip.add",
-      params: { timeline: "main", track, clip: added },
+      params: { timeline: "main", track, ...added },
     });
     expect(failure(result).code).toBe("not-animatable");
   });

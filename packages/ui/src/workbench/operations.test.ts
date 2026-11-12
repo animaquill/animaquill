@@ -38,12 +38,12 @@ function setup() {
   const track = timeline && orderedTracks(timeline).find(({ kind }) => kind === "video")?.id;
   const run = (calls: readonly CommandCall[], origin?: string) => {
     const result = store.executeBatch(calls, origin === undefined ? {} : { origin });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   let next = 0;
   const add = (id: string, origin?: string) => {
     const clip = { id, start: String(next++), duration: "1", source: red };
-    run([{ type: "clip.add", params: { timeline: "main", track, clip } }], origin);
+    run([{ type: "clip.add", params: { timeline: "main", track, ...clip } }], origin);
   };
   const opacity = (id: string, value: number) =>
     run([
@@ -157,7 +157,10 @@ describe("the list of what changed the project", () => {
       params: {
         timeline: "main",
         track,
-        clip: { id: "x", start: "0", duration: "1", source: red },
+        id: "x",
+        start: "0",
+        duration: "1",
+        source: red,
       },
     });
     store.applyUpdates(updates);

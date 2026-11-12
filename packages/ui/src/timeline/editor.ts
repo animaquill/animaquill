@@ -26,6 +26,7 @@ import {
   type CommandCall,
   type ProjectStore,
   type WholeJoin,
+  type CommandFailure,
 } from "@animaquill/core";
 import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
@@ -337,7 +338,7 @@ export interface VisibleClip {
 }
 
 export interface TimelineMessages {
-  commandFailed(message: string): void;
+  commandFailed(failure: CommandFailure): void;
   /** Joins went because their clips are no longer next to each other: undo brings them back. */
   joinsRemoved?(count: number): void;
   /** What a new scene is called. */
@@ -910,7 +911,7 @@ export class TimelineEditor implements TouchTarget {
     if (!store) return false;
     const result = store.executeBatch(calls);
     if (!result.ok) {
-      this.#messages.commandFailed(result.error.message);
+      this.#messages.commandFailed(result.error);
       return false;
     }
     const removed = result.results.flatMap((outcome) => {
@@ -1286,7 +1287,8 @@ export class TimelineEditor implements TouchTarget {
         params: {
           timeline: model.id,
           track,
-          clip: { ...copy, start: formatTime(add(clipStart(clip), moved)) },
+          ...copy,
+          start: formatTime(add(clipStart(clip), moved)),
           ...(overwriting ? { overlap: "overwrite" } : {}),
           ...(cut.has(clip.id) ? { movedFrom: clip.id } : {}),
         },
@@ -1483,7 +1485,7 @@ export class TimelineEditor implements TouchTarget {
     before: readonly CommandCall[],
   ): { readonly duration: Rational; readonly properties?: Readonly<Record<string, number>> } {
     const added = before.flatMap(({ type, params }) =>
-      type === "sound.add" ? [(params as { readonly sound: SoundManifest }).sound] : [],
+      type === "sound.add" ? [(params as { readonly manifest: SoundManifest }).manifest] : [],
     );
     const manifest = added[0] ?? this.#store?.getState().sounds[sound];
     const stated = manifest?.params?.find(({ id }) => id === "duration")?.default;
@@ -1578,15 +1580,13 @@ export class TimelineEditor implements TouchTarget {
         params: {
           timeline: model.id,
           track,
-          clip: {
-            id,
-            ...(what.name === undefined ? {} : { name: what.name }),
-            start: formatTime(plan.at),
-            duration: formatTime(plan.duration),
-            source,
-            ...(what.properties && { properties: what.properties }),
-            ...link,
-          },
+          id,
+          ...(what.name === undefined ? {} : { name: what.name }),
+          start: formatTime(plan.at),
+          duration: formatTime(plan.duration),
+          source,
+          ...(what.properties && { properties: what.properties }),
+          ...link,
           ...(plan.overwriting ? { overlap: "overwrite" } : {}),
         },
       };
@@ -1792,12 +1792,10 @@ export class TimelineEditor implements TouchTarget {
         params: {
           timeline: model.id,
           track,
-          clip: {
-            id,
-            start: formatTime(start),
-            duration: formatTime(duration),
-            source: { kind: "color", color },
-          },
+          id,
+          start: formatTime(start),
+          duration: formatTime(duration),
+          source: { kind: "color", color },
         },
       },
     ]);

@@ -61,9 +61,12 @@ export {
   RETIRED_PROPERTIES,
   isAnimation,
   isKnownProperty,
+  describeValueIssue,
+  specValueIssue,
   specValueProblem,
   type ObjectDescriptor,
   type PropertySpec,
+  type ValueIssue,
   type ValueType,
 } from "./properties.ts";
 export * from "./time.ts";
@@ -81,6 +84,7 @@ export {
   Section,
   Send,
   Timeline,
+  TimelineOutline,
   Track,
   Transition,
   TransitionCurve,

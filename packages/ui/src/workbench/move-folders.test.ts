@@ -133,9 +133,9 @@ describe("an open project of the browser", () => {
       duration: "5",
       source: { kind: "color", color: "#ff0000" },
     };
-    expect(store.execute({ type: "clip.add", params: { timeline: "main", track, clip } }).ok).toBe(
-      true,
-    );
+    expect(
+      store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } }).ok,
+    ).toBe(true);
     const x = () => main()?.clips["c"]?.properties?.["transform.x"];
     workbench.properties.commit([
       { owner: { clip: "c" }, path: "transform.x", op: "write", time: "1", value: 10 },

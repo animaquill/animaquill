@@ -12,6 +12,7 @@ import {
 } from "@animaquill/schema";
 import type { z } from "zod";
 import { CommandError, Draft } from "./draft.ts";
+import type { CommandFailure } from "./failures.ts";
 import { isSourceFile, isUser, readDocument } from "./import-file.ts";
 import { linesOf, mergeText, type LineRange } from "./merge-text.ts";
 import {
@@ -138,11 +139,7 @@ export interface FileMerge {
   /** What the folder took away that is still in use, which stays until people decide. */
   readonly held: readonly Path[];
   /** Why nothing of the batch comes in. */
-  readonly refusal?: {
-    readonly code: string;
-    readonly message: string;
-    readonly problems: readonly Problem[];
-  };
+  readonly refusal?: CommandFailure;
 }
 
 /** What a merge has to go by besides the batch. */
@@ -1286,17 +1283,21 @@ export function planMerge(
   const seen = new Set<string>();
   for (const { path } of changes) {
     if (seen.has(path)) {
-      throw new CommandError("invalid-batch", `同一批里有两个一样的路径：${path}`);
+      throw new CommandError({ code: "invalid-batch", params: { path } });
     }
     seen.add(path);
   }
-  const refused = (code: string, message: string, problems: readonly Problem[]): FileMerge => ({
+  const refused = (
+    code: "manifest-deleted" | "merge-unsettled" | "merge-would-break",
+    problems: readonly Problem[],
+    params: Readonly<Record<string, unknown>> = {},
+  ): FileMerge => ({
     files: unmergedFiles(changes),
     problems: [],
     conflicts: [],
     kept: [],
     held: [],
-    refusal: { code, message, problems },
+    refusal: { code, params, problems },
   });
   const isManifestGone = changes.some(
     ({ path, base, text }) => path === MANIFEST_FILE && base !== undefined && text === undefined,
@@ -1304,7 +1305,7 @@ export function planMerge(
   if (isManifestGone) {
     const message = "项目文件夹里的 animaquill.json 不见了，这一批改动没有并入";
     const file = MANIFEST_FILE;
-    return refused("manifest-deleted", message, [
+    return refused("manifest-deleted", [
       { severity: "error", code: "manifest-deleted", file, message },
     ]);
   }
@@ -1559,7 +1560,7 @@ export function planMerge(
     const { state } = admitted.draft;
     const unsettled = (path: Path) => {
       const message = "合并时有些改动定不下来，这一批没有并入";
-      return refused("merge-unsettled", message, [
+      return refused("merge-unsettled", [
         { severity: "error", code: "merge-unsettled", file: fileOf(path), message },
       ]);
     };
@@ -1698,14 +1699,13 @@ export function planMerge(
         holdProblems.push(warningAt("uses-removed", from, message, file));
       }
       if (waits() === known) {
-        const message = "外面新用到的东西编辑器里刚删掉了，这一批没有并入";
         const problems = uses.map(({ from, target }) => ({
           severity: "error" as const,
           code: "merge-would-break",
           file: fileOf(from),
           message: `${named(theirsOf(), from)}用到了${named(before, target)}，编辑器里刚把它删掉`,
         }));
-        return refused("merge-would-break", message, problems);
+        return refused("merge-would-break", problems, { why: "uses-removed" });
       }
       admitted = admit();
       continue;
@@ -1743,8 +1743,7 @@ export function planMerge(
         });
       }
       if (waits() === known) {
-        const message = "外面的改动和编辑器里还没写出去的改动合在一起会让项目出错，这一批没有并入";
-        return refused("merge-would-break", message, broken);
+        return refused("merge-would-break", broken, { why: "breaks" });
       }
       admitted = admit();
       continue;
