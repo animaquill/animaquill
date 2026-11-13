@@ -1,3 +1,4 @@
+import { urlHasSecret } from "@animaquill/host";
 import {
   SERVICE_GROUPS,
   SERVICE_KINDS,
@@ -247,7 +248,9 @@ function AddForm(props: {
         </label>
       )}
       {kind.custom && url.trim() !== "" && baseUrl === "" && (
-        <p className={styles.warning}>{t("ai.baseUrlInvalid")}</p>
+        <p className={styles.warning} data-testid="ai-url-problem">
+          {t(urlHasSecret(url) ? "ai.baseUrlSecret" : "ai.baseUrlInvalid")}
+        </p>
       )}
       <label className={styles.field}>
         <span>{t("ai.key")}</span>

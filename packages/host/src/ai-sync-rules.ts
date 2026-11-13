@@ -67,6 +67,24 @@ const hasSecret = (value: unknown, depth = 0): boolean => {
   );
 };
 
+/** Names of query parameters that carry a secret, such as `?key=` or `?api_key=`. */
+const SECRET_PARAM = /key|token|secret|passw|auth|signature|^sig$|credential/i;
+
+/**
+ * Whether an address of a service carries a secret: a user or password (`user:pass@`), or a
+ * parameter of the query named like one. Keys go as keys, never in the address.
+ */
+export function urlHasSecret(text: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return false;
+  }
+  if (url.username !== "" || url.password !== "") return true;
+  return [...url.searchParams.keys()].some((name) => SECRET_PARAM.test(name));
+}
+
 const isText = (value: unknown, max = 2000): value is string =>
   typeof value === "string" && value.length <= max;
 
@@ -98,6 +116,7 @@ export function checkAiEntry(name: string, value: unknown): boolean {
         isText(value.kind, 100) &&
         isText(value.name) &&
         isText(value.baseUrl) &&
+        !urlHasSecret(value.baseUrl) &&
         (value.route === "direct" || value.route === "relay") &&
         Array.isArray(value.enabled) &&
         value.enabled.every((model) => isText(model, 300))

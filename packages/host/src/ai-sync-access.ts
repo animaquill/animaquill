@@ -133,7 +133,7 @@ const clockOf = (answer: unknown, sent: number, came: number): Clock => {
  *   entries, keys}` by the platform's clock, or `{now, account, enabled, revision, unchanged: true}`
  *   where the revision is still `since`.
  * - `POST <api>/me/ai-settings` `{now, account, format, entries, keys, enable?}`, by this
- *   computer's clock and what that says as it sends them: `{now, refused, state}`.
+ *   computer's clock and what that says as it sends them: `{now, refused, tooLarge, stale, state}`.
  * - `DELETE <api>/me/ai-settings?account=`: turned off, nothing kept. 204.
  */
 export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess {
@@ -179,12 +179,18 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
         if (!response.ok || !isObject(answer))
           throw new Error(`The platform answered ${response.status}`);
         const state = stateOf(answer.state, clockOf(answer, sent, came));
-        const refused = Array.isArray(answer.refused)
-          ? answer.refused.filter((name): name is string => typeof name === "string")
-          : undefined;
-        if (!state || !refused)
+        const names = (value: unknown) =>
+          Array.isArray(value)
+            ? value.filter((name): name is string => typeof name === "string")
+            : [];
+        if (!state || !Array.isArray(answer.refused))
           throw new Error("The platform answered something that cannot be read");
-        return { state, refused };
+        return {
+          state,
+          refused: names(answer.refused),
+          tooLarge: names(answer.tooLarge),
+          stale: names(answer.stale),
+        };
       }),
     turnOff: (account) =>
       withinTime(timeout ?? REQUEST_TIMEOUT_MS, async (signal) => {
@@ -256,7 +262,7 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
       }),
     save: (project, chat, base) =>
       withinTime(CHANGE_TIMEOUT_MS, async (signal) => {
-        const { synced: _synced, project: _project, ...rest } = chat;
+        const { synced: _synced, syncedAt: _syncedAt, project: _project, ...rest } = chat;
         let result;
         try {
           result = await ask(

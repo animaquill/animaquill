@@ -20,6 +20,7 @@ export {
   checkAiEntry,
   isLaterEntry,
   jsonBytes,
+  urlHasSecret,
   type AiEntry,
   type AiSyncKey,
 } from "./ai-sync-rules.ts";
@@ -773,9 +774,18 @@ export interface AiSyncAccess {
       }
   >;
   /** Keeps changes, and says everything as it is then, and which entries it did not take. */
-  change(
-    changes: AccountAiChanges,
-  ): Promise<{ readonly state: AccountAiSettings; readonly refused: readonly string[] }>;
+  change(changes: AccountAiChanges): Promise<{
+    readonly state: AccountAiSettings;
+    /** Entries (`key:<service>` of keys) not taken, as not made as they should be. */
+    readonly refused: readonly string[];
+    /** Entries not taken, as the settings would be larger than `AI_SYNC_BYTES` with them. */
+    readonly tooLarge: readonly string[];
+    /**
+     * Entries and keys not taken, as they changed before what was taken away and forgotten since:
+     * older than that, and to be let go of here too.
+     */
+    readonly stale: readonly string[];
+  }>;
   /** Turns it off for all devices: the platform keeps nothing of them any more. */
   turnOff(account: string): Promise<void>;
 }
@@ -1814,6 +1824,11 @@ export interface SavedChat extends SavedChatSummary {
    * had it from here.
    */
   readonly synced?: number;
+  /**
+   * The `updatedAt` of the version the account has (`synced`): one changed here since, later than
+   * it, has what the account does not, and is not let go of.
+   */
+  readonly syncedAt?: number;
 }
 
 /** Conversations with AI by project. Only so many of a project are kept, the oldest go first. */

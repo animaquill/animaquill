@@ -74,7 +74,7 @@ async function deviceOf(platform: ReturnType<typeof platformChats>) {
     links,
     platform: PLATFORM,
   });
-  return { local, chats };
+  return { local, chats, links };
 }
 
 const chat = (id: string, said: string[], updatedAt: number): SavedChat => ({
@@ -134,5 +134,78 @@ describe("conversations of projects of the platform", () => {
     await one.chats.beforeSignOut();
     expect(await one.local.load("local-1", "c1")).toBeUndefined();
     expect(await one.local.load("local-1", "c2")).toBeDefined();
+  });
+
+  test("signing out: what changed here and did not go stays, and goes once signed in again", async () => {
+    // Review CM5, G1.
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    await one.chats.save(chat("c1", ["a"], 1));
+    const save = platform.access.save;
+    platform.access.save = async () => {
+      throw new TypeError("network");
+    };
+    await one.chats.save(chat("c1", ["a", "an hour of paid AI work"], 2));
+    await one.chats.beforeSignOut();
+    expect((await one.local.load("local-1", "c1"))?.entries).toHaveLength(2);
+    // Online, signed in again: it goes as the list is read.
+    platform.access.save = save;
+    await one.chats.list("local-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(platform.kept.get("p1/c1")?.chat.entries).toHaveLength(2);
+    // As the account has it now: it goes with signing out.
+    await one.chats.beforeSignOut();
+    expect(await one.local.load("local-1", "c1")).toBeUndefined();
+  });
+
+  test("another device wrote it since: this browser's is kept as a new conversation, and people told", async () => {
+    // Review CM5, G2.
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    const copied: string[] = [];
+    const chats = new CloudChats({
+      local: one.local,
+      remote: platform.access,
+      account: accountAs({ status: "signedIn", id: "u1", name: "u1", appInstalled: true }),
+      links: one.links,
+      platform: PLATFORM,
+      copied: (_title, copy) => copied.push(copy),
+    });
+    await chats.save(chat("c1", ["a"], 1));
+    platform.kept.set("p1/c1", { revision: 2, chat: chat("c1", ["a", "from device B"], 5) });
+    await expect(chats.save(chat("c1", ["a", "from device A"], 6))).rejects.toBeInstanceOf(
+      ChatNewer,
+    );
+    expect(copied).toEqual(["《a》在这台设备上的副本"]);
+    const listed = await one.local.list("local-1");
+    const copy = listed.find(({ title }) => title === "《a》在这台设备上的副本")!;
+    expect(copy).toBeDefined();
+    expect(JSON.stringify((await one.local.load("local-1", copy.id))?.entries)).toContain(
+      "from device A",
+    );
+    expect(JSON.stringify((await one.local.load("local-1", "c1"))?.entries)).toContain(
+      "from device B",
+    );
+    // The copy goes to the account too.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(platform.kept.has(`p1/${copy.id}`)).toBe(true);
+  });
+
+  test("read while the account has a newer version and this browser changed it: kept as a copy", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    await one.chats.save(chat("c1", ["a"], 1));
+    // Changed here without going (offline), and elsewhere meanwhile.
+    const kept = (await one.local.load("local-1", "c1"))!;
+    await one.local.save({
+      ...kept,
+      entries: [...kept.entries, { kind: "user", text: "here" }],
+      updatedAt: 3,
+    });
+    platform.kept.set("p1/c1", { revision: 2, chat: chat("c1", ["a", "there"], 4) });
+    const read = await one.chats.load("local-1", "c1");
+    expect(JSON.stringify(read?.entries)).toContain("there");
+    const titles = (await one.local.list("local-1")).map(({ title }) => title);
+    expect(titles).toContain("《a》在这台设备上的副本");
   });
 });

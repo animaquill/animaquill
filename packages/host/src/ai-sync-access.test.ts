@@ -2,7 +2,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
 import { browserAccountKeys } from "./ai.ts";
-import { checkAiEntry, isLaterEntry } from "./ai-sync-rules.ts";
+import { checkAiEntry, isLaterEntry, urlHasSecret } from "./ai-sync-rules.ts";
 import { AiSyncNewer, AiSyncOff, AiSyncTooLarge, ChatNewer, CloudOtherAccount } from "./index.ts";
 
 /** The AI settings, keys and conversations that go with an account, as the browser reaches them. */
@@ -129,6 +129,18 @@ describe("what an entry can be", () => {
     expect(checkAiEntry("default", null)).toBe(true);
     expect(checkAiEntry("future-kind:x", { anything: true })).toBe(true);
     expect(checkAiEntry("field:password", "x")).toBe(false);
+    // No key in the address either.
+    for (const baseUrl of [
+      "https://user:pass@api.example.com",
+      "https://api.example.com/v1?key=sk",
+      "https://api.example.com/v1?api_key=sk",
+      "https://api.example.com/v1?access_token=sk",
+    ]) {
+      expect(urlHasSecret(baseUrl), baseUrl).toBe(true);
+      expect(checkAiEntry("service:s1", { ...service, baseUrl }), baseUrl).toBe(false);
+    }
+    expect(urlHasSecret("https://api.example.com/v1?region=eu")).toBe(false);
+    expect(urlHasSecret("not an address")).toBe(false);
   });
 
   it("the later wins, a tie goes to taking away", () => {

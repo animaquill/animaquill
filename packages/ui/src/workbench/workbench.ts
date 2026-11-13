@@ -576,11 +576,12 @@ export class Workbench {
             account: host.account,
             links: cloud.links,
             platform: cloud.platform,
+            copied: (title, copy) =>
+              this.notifications.push(t("aiSync.chatCopied", { title, copy })),
           })
         : undefined;
     this.chat = new ChatSession({
       chats: this.chatSync ?? host.chats,
-      chatReplaced: () => this.notifications.push(t("aiSync.chatReplaced")),
       ai: this.ai,
       packs: this.packs,
       account: host.account,

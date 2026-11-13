@@ -1,3 +1,4 @@
+import { urlHasSecret } from "@animaquill/host";
 import {
   bulkActions,
   checkBaseUrl,
@@ -626,7 +627,11 @@ function Advanced({ service }: { readonly service: ServiceConfig }) {
             onKeyDown={(event) => event.key === "Enter" && saveUrl()}
           />
         </label>
-        {urlInvalid && <p className={styles.warning}>{t("ai.baseUrlInvalid")}</p>}
+        {urlInvalid && (
+          <p className={styles.warning} data-testid="ai-url-problem">
+            {t(urlHasSecret(url) ? "ai.baseUrlSecret" : "ai.baseUrlInvalid")}
+          </p>
+        )}
         {changed && (
           <p className={styles.help}>
             {t("ai.baseUrlChanged")}{" "}

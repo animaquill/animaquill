@@ -40,6 +40,8 @@ function platformOf() {
     }
   >();
   let offline = false;
+  /** What the platform says is older than what it forgot it took away. */
+  const stale = new Set<string>();
   const of = (account: string) => {
     let kept = accounts.get(account);
     if (!kept)
@@ -61,12 +63,15 @@ function platformOf() {
       if (!kept.enabled && !changes.enable) throw new AiSyncOff("off");
       if (!kept.enabled) kept.entries = {};
       kept.enabled = true;
+      const old: string[] = [];
       for (const { name, ...entry } of changes.entries)
-        if (isLaterEntry(kept.entries[name], entry)) kept.entries[name] = entry as AiEntry;
+        if (stale.has(name)) old.push(name);
+        else if (isLaterEntry(kept.entries[name], entry)) kept.entries[name] = entry as AiEntry;
       for (const { service, ...key } of changes.keys)
-        if (isLaterEntry(kept.keys[service], key)) kept.keys[service] = key as AiSyncKey;
+        if (stale.has(`key:${service}`)) old.push(`key:${service}`);
+        else if (isLaterEntry(kept.keys[service], key)) kept.keys[service] = key as AiSyncKey;
       kept.revision += 1;
-      return { state: stateOf(who()), refused: [] };
+      return { state: stateOf(who()), refused: [], tooLarge: [], stale: old };
     },
     async turnOff(account) {
       const kept = of(account);
@@ -76,6 +81,7 @@ function platformOf() {
   return {
     accounts,
     access,
+    stale,
     setOffline: (value: boolean) => (offline = value),
   };
 }
@@ -410,5 +416,26 @@ describe("AI settings going with the account", () => {
     opened.push(sync);
     await sync.ready;
     expect(sync.scope).toBe("u1");
+  });
+
+  test("what the platform says is older than what it forgot it took away goes here too", async () => {
+    // Review CM5, 5: a device away more than thirty days does not bring back what was taken away.
+    const platform = platformOf();
+    const browser = browserOf();
+    const window = await windowOf(browser, platform, accountOf("u1"));
+    platform.setOffline(true);
+    const id = window.ai.add("anthropic", "早就删掉的")!;
+    await window.ai.setKey(id, "sk-old");
+    await settle();
+    platform.stale.add(`service:${id}`);
+    platform.stale.add(`key:${id}`);
+    platform.setOffline(false);
+    await window.sync.sync();
+    await settle();
+    expect(names(window.ai)).toEqual([]);
+    expect(await browser.accountKeys.of("u1").read(id)).toBeUndefined();
+    expect(platform.accounts.get("u1")!.keys[id]).toBeUndefined();
+    await window.sync.sync();
+    expect(names(window.ai)).toEqual([]);
   });
 });

@@ -145,7 +145,7 @@ export interface PackOptions {
 
 export interface ChatSessionOptions {
   readonly chats: ChatStore | undefined;
-  /** Another device wrote the open conversation, which shows as it has it now. */
+  /** Another device wrote a conversation, which shows as it has it now. */
   readonly chatReplaced?: () => void;
   readonly ai: AiSettingsStore;
   /** The model packs installed here; without them, those that come with AnimaQuill. */
@@ -428,11 +428,16 @@ export class ChatSession {
         this.#set({ saved: [summary, ...others] });
       } catch (error) {
         if (error instanceof ChatNewer) {
-          // Another device wrote it meanwhile: theirs is the conversation now.
+          // Another device wrote it meanwhile: theirs is the conversation now, and what this one
+          // had is a conversation of its own (see `CloudChats`), which the list shows.
           if (this.#project?.key === project && this.#snapshot.id === id) {
             clearTimeout(this.#saving);
             this.#pending = undefined;
             await this.open(id);
+          }
+          if (this.#project?.key === project) {
+            const saved = await this.#chats.list(project).catch(() => undefined);
+            if (saved && this.#project?.key === project) this.#set({ saved });
           }
           this.#options.chatReplaced?.();
           return;

@@ -89,6 +89,8 @@ interface SyncState {
   problem?: "offline" | "failed" | "newer" | "tooLarge";
   /** Entries the platform did not take, which stay on this device until they change here. */
   refused?: string[];
+  /** Of those, the ones it did not take as the settings would be too large with them. */
+  tooLarge?: string[];
 }
 
 const newState = (enabled: boolean): SyncState => ({
@@ -305,7 +307,11 @@ export class AiSync {
     const status: AiSyncStatus = !state.enabled
       ? "off"
       : (state.problem ??
-        (state.pending.length + state.pendingKeys.length > 0 ? "syncing" : "synced"));
+        ((state.tooLarge?.length ?? 0) > 0
+          ? "tooLarge"
+          : state.pending.length + state.pendingKeys.length > 0
+            ? "syncing"
+            : "synced"));
     this.#set({ status, syncedAt: state.syncedAt });
   }
 
@@ -764,8 +770,23 @@ export class AiSync {
       await this.#lock(account, async () => {
         const after = await this.#readState(account);
         if (!after) return;
-        if (answer.refused.length > 0)
-          after.refused = [...new Set([...(after.refused ?? []), ...answer.refused])];
+        const notTaken = [...answer.refused, ...answer.tooLarge];
+        if (notTaken.length > 0)
+          after.refused = [...new Set([...(after.refused ?? []), ...notTaken])];
+        if (answer.tooLarge.length > 0)
+          after.tooLarge = [...new Set([...(after.tooLarge ?? []), ...answer.tooLarge])];
+        // Older than what was taken away on the platform and forgotten since: gone here too.
+        for (const name of answer.stale) {
+          if (name.startsWith("key:")) {
+            const service = name.slice(4);
+            await keys.remove(service);
+            delete after.keys[service];
+            after.pendingKeys = after.pendingKeys.filter((each) => each !== service);
+          } else {
+            delete after.entries[name];
+            after.pending = after.pending.filter((each) => each !== name);
+          }
+        }
         await this.#merge(account, after, answer.state);
         // What the platform took, or refused, is no longer to be given, unless it changed here
         // meanwhile: refused, it stays on this device only.
