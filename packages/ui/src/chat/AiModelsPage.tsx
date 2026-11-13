@@ -7,6 +7,7 @@ import { BackToPages } from "../panels/SettingsPanel.tsx";
 import { AddService } from "./AddService.tsx";
 import { ServiceAvatar, stateOf } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
+import { AiSyncLine } from "./AiSyncStatus.tsx";
 import { ServiceDetail } from "./ServiceDetail.tsx";
 
 /**
@@ -52,6 +53,7 @@ export function AiModelsPage() {
 
   return (
     <div className={styles.page} data-depth={depth} data-testid="ai-models">
+      <AiSyncLine className={styles.syncLine ?? ""} link={styles.link ?? ""} />
       {snapshot.held && (
         <p className={styles.held} role="alert" data-testid="ai-held">
           {t(`ai.held.${snapshot.held}`)}{" "}

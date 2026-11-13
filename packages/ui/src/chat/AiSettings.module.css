@@ -108,6 +108,21 @@
   height: 100%;
 }
 
+/* How the settings stand with the account: one small line on top. */
+.syncLine {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 4px 12px;
+  color: var(--aq-text-muted);
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.syncLine[data-status="failed"],
+.syncLine[data-status="newer"],
+.syncLine[data-status="tooLarge"] {
+  color: var(--aq-danger-text);
+}
+
 .held {
   grid-column: 1 / -1;
   margin: 0;

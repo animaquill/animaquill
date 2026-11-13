@@ -68,6 +68,15 @@ export {
   type ServiceConfig,
 } from "./ai-settings.ts";
 export {
+  canonical,
+  entriesOfPacks,
+  entriesOfSettings,
+  entryChanges,
+  isPackEntry,
+  packsOfEntries,
+  settingsOfEntries,
+} from "./ai-sync.ts";
+export {
   bulkActions,
   filterModels,
   isLastEnabled,

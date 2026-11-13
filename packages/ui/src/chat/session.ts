@@ -39,6 +39,7 @@ import {
   type ToolHost,
 } from "@animaquill/tools";
 import {
+  ChatNewer,
   memoryChats,
   type AccountAccess,
   type ChatStore,
@@ -144,6 +145,8 @@ export interface PackOptions {
 
 export interface ChatSessionOptions {
   readonly chats: ChatStore | undefined;
+  /** Another device wrote the open conversation, which shows as it has it now. */
+  readonly chatReplaced?: () => void;
   readonly ai: AiSettingsStore;
   /** The model packs installed here; without them, those that come with AnimaQuill. */
   readonly packs?: ModelPacks;
@@ -424,6 +427,16 @@ export class ChatSession {
         } = chat;
         this.#set({ saved: [summary, ...others] });
       } catch (error) {
+        if (error instanceof ChatNewer) {
+          // Another device wrote it meanwhile: theirs is the conversation now.
+          if (this.#project?.key === project && this.#snapshot.id === id) {
+            clearTimeout(this.#saving);
+            this.#pending = undefined;
+            await this.open(id);
+          }
+          this.#options.chatReplaced?.();
+          return;
+        }
         console.warn("The conversation could not be kept", error);
       }
     };

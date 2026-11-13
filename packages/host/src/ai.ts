@@ -6,6 +6,12 @@ import type { ChatStore, KeyStore, SavedChat, SavedChatSummary } from "./index.t
  * project. A new version of the main database would also lock out every page that is still open.
  */
 export const KEYS_DATABASE = "animaquill-keys";
+/**
+ * Keys that go with an account, by account: apart from those of this browser, which pages of
+ * before 0.3.62 read, and which stay where they are as people sign in and out.
+ */
+export const ACCOUNT_KEYS_DATABASE = "animaquill-account-keys";
+const BY_ACCOUNT = "account";
 const CHATS_DATABASE = "animaquill-chats";
 const VERSION = 1;
 const KEYS = "keys";
@@ -85,6 +91,82 @@ export function browserKeys(factory: () => IDBFactory): KeyStore {
     write: (service, key) => change((store) => store.put({ service, key } satisfies KeyRecord)),
     remove: (service) => change((store) => store.delete(service)),
     clear: () => change((store) => store.clear()),
+  };
+}
+
+/** Keys that go with accounts, kept in this browser by account, see `ACCOUNT_KEYS_DATABASE`. */
+export interface AccountKeys {
+  /** The keys of one account. */
+  of(account: string): KeyStore;
+  /** Every key of an account, as it signs out of this browser. */
+  forget(account: string): Promise<void>;
+}
+
+interface AccountKeyRecord {
+  readonly account: string;
+  readonly service: string;
+  readonly key: string;
+}
+
+/** Keys of accounts in this browser, each account's apart. */
+export function browserAccountKeys(factory: () => IDBFactory): AccountKeys {
+  const database = connector(() => {
+    const request = factory().open(ACCOUNT_KEYS_DATABASE, VERSION);
+    request.addEventListener("upgradeneeded", () => {
+      const store = request.result.createObjectStore(KEYS, { keyPath: [BY_ACCOUNT, "service"] });
+      store.createIndex(BY_ACCOUNT, BY_ACCOUNT);
+    });
+    return resultOf(request);
+  });
+  const change = async (work: (store: IDBObjectStore) => void) => {
+    const transaction = (await database()).transaction(KEYS, "readwrite");
+    work(transaction.objectStore(KEYS));
+    await committed(transaction);
+  };
+  const forget = async (account: string) => {
+    const transaction = (await database()).transaction(KEYS, "readwrite");
+    const store = transaction.objectStore(KEYS);
+    const keys = await resultOf(store.index(BY_ACCOUNT).getAllKeys(account));
+    for (const key of keys) store.delete(key);
+    await committed(transaction);
+  };
+  return {
+    of: (account) => ({
+      where: ACCOUNT_KEYS_DATABASE,
+      async read(service) {
+        const transaction = (await database()).transaction(KEYS, "readonly");
+        const found = (await resultOf(transaction.objectStore(KEYS).get([account, service]))) as
+          AccountKeyRecord | undefined;
+        return typeof found?.key === "string" ? found.key : undefined;
+      },
+      async list() {
+        const transaction = (await database()).transaction(KEYS, "readonly");
+        const found = (await resultOf(
+          transaction.objectStore(KEYS).index(BY_ACCOUNT).getAll(account),
+        )) as AccountKeyRecord[];
+        return found.map(({ service }) => service);
+      },
+      write: (service, key) =>
+        change((store) => store.put({ account, service, key } satisfies AccountKeyRecord)),
+      remove: (service) => change((store) => store.delete([account, service])),
+      clear: () => forget(account),
+    }),
+    forget,
+  };
+}
+
+/** Keys of accounts that last as long as the page. */
+export function memoryAccountKeys(): AccountKeys {
+  const accounts = new Map<string, KeyStore>();
+  return {
+    of(account) {
+      let keys = accounts.get(account);
+      if (!keys) accounts.set(account, (keys = memoryKeys()));
+      return keys;
+    },
+    async forget(account) {
+      accounts.delete(account);
+    },
   };
 }
 

@@ -32,7 +32,7 @@ import {
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
 import { compare, createProject, formatTime, parseTime, toSeconds } from "@animaquill/schema";
-import { newSyncId, type ProjectSummary } from "@animaquill/host";
+import { memoryKeys, newSyncId, type ProjectSummary } from "@animaquill/host";
 import type { ConnectTiming } from "../cloud/connect.ts";
 import {
   CloudCreate,
@@ -50,6 +50,8 @@ import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
+import { AiSync, type AiSyncQuestion } from "../chat/ai-sync.ts";
+import { CloudChats } from "../chat/cloud-chats.ts";
 import { SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
@@ -298,10 +300,14 @@ export class Workbench {
   readonly drafts: CodeDrafts;
   /** The AI services people set up, with their keys, which only this browser has. */
   readonly ai: AiSettingsStore;
+  /** The AI settings and keys going with the account, where the host has a platform. */
+  readonly aiSync: AiSync;
   /** The model packs installed in this browser, see `ModelPacks`. */
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
   readonly chat: ChatSession;
+  /** The conversations of projects of the platform, going with the account. */
+  readonly chatSync: CloudChats | undefined;
   /** Where the settings of this window are, see `SettingsNav`. */
   readonly settingsNav = new SettingsNav();
   #changingProject = false;
@@ -331,16 +337,25 @@ export class Workbench {
     };
     this.account = host.account;
     this.diagnostics = new DiagnosticsRecorder(version);
+    this.aiSync = new AiSync({
+      settings: host.settings,
+      keys: host.keys ?? memoryKeys(),
+      ...(host.accountKeys && { accountKeys: host.accountKeys }),
+      ...(host.account &&
+        host.cloud?.aiSync && { access: host.cloud.aiSync, account: host.account }),
+      ask: (question) => this.#askAboutAiSync(question),
+      added: (names) => this.notifications.push(t("aiSync.added", { names: names.join("、") })),
+    });
     this.ai = new AiSettingsStore(
-      host.settings,
-      host.keys,
+      this.aiSync.settings,
+      this.aiSync.keys,
       {
         saveFailed: () => this.notifications.push(t("ai.saveFailed")),
         keyFailed: () => this.notifications.push(t("ai.keyFailed")),
       },
       host.aiRelay,
     );
-    this.packs = new ModelPacks(host.settings, {
+    this.packs = new ModelPacks(this.aiSync.settings, {
       saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")),
     });
     const sink = host.diagnostics;
@@ -552,8 +567,20 @@ export class Workbench {
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),
     });
+    // Conversations of projects of the platform go with the account.
+    this.chatSync =
+      cloud?.chats && host.account && host.chats
+        ? new CloudChats({
+            local: host.chats,
+            remote: cloud.chats,
+            account: host.account,
+            links: cloud.links,
+            platform: cloud.platform,
+          })
+        : undefined;
     this.chat = new ChatSession({
-      chats: host.chats,
+      chats: this.chatSync ?? host.chats,
+      chatReplaced: () => this.notifications.push(t("aiSync.chatReplaced")),
       ai: this.ai,
       packs: this.packs,
       account: host.account,
@@ -1352,6 +1379,33 @@ export class Workbench {
     }) as Promise<"overwrite" | "theirs" | undefined>;
   }
 
+  /** Asks once whether this device's AI settings go into the account, see `AiSync`. */
+  async #askAboutAiSync(question: AiSyncQuestion): Promise<"put" | "skip" | undefined> {
+    const { t } = this;
+    const notice = `${t("aiSync.notice")}${t("aiSync.askWhere")}`;
+    // Nothing of this device to put in: told once, without stopping anything people do.
+    if (question.services === 0) {
+      this.notifications.push(`${t("aiSync.askTitle")}：${notice}`);
+      // What else this device has (preferences, packs) goes under what the account has.
+      return "put";
+    }
+    const asked =
+      question.accountServices > 0
+        ? t("aiSync.askMerge", {
+            count: question.services,
+            accountCount: question.accountServices,
+          })
+        : t("aiSync.askPut", { count: question.services });
+    return (await this.dialogs.choose({
+      title: t("aiSync.askTitle"),
+      message: `${asked}${notice}`,
+      choices: [
+        { id: "skip", label: t("aiSync.skip") },
+        { id: "put", label: t("aiSync.put"), kind: "primary" },
+      ],
+    })) as "put" | "skip" | undefined;
+  }
+
   /** Resolves to false when people would rather stay with what they typed. */
   async #settleCode(): Promise<boolean> {
     const count = this.code.unsaved.length;
@@ -1411,10 +1465,27 @@ export class Workbench {
     // An address of a project folder opens as one once the page is there, see `resume`.
     if (!(await this.projectFolders?.restore())) await this.session.restore();
     // Who is signed in comes when it comes: the editor does not wait for it.
-    if (this.account) void this.#followAccount(this.account);
+    if (this.account) {
+      this.#forgetChatsOnSignOut(this.account);
+      void this.#followAccount(this.account);
+    }
+    void this.aiSync.start();
   }
 
   /** Asks who is signed in, and says how a sign-in ended when it brought this page here. */
+  /**
+   * As people sign out, here or anywhere else, what this browser keeps of the account's
+   * conversations goes, see `CloudChats.beforeSignOut`.
+   */
+  #forgetChatsOnSignOut(account: AccountAccess): void {
+    let was = account.getSnapshot().status;
+    account.subscribe(() => {
+      const now = account.getSnapshot().status;
+      if (was === "signedIn" && now === "signedOut") void this.chatSync?.beforeSignOut();
+      if (now !== "unknown") was = now;
+    });
+  }
+
   async #followAccount(account: AccountAccess): Promise<void> {
     await account.refresh();
     const outcome = account.takeOutcome();
@@ -1527,6 +1598,9 @@ export class Workbench {
     const { account, t } = this;
     if (!account) return;
     try {
+      // What changed here goes to the account first: the account's copy leaves this browser then.
+      await this.aiSync.beforeSignOut();
+      await this.chatSync?.beforeSignOut();
       await account.signOut();
       this.notifications.push(t("account.signedOut"));
     } catch (error) {

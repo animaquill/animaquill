@@ -1,8 +1,9 @@
 import { Emitter } from "./emitter.ts";
 
 /** The pages of the settings, in the order of their list. */
-export type SettingsPage = "editing" | "models" | "packs";
-export const SETTINGS_PAGES: readonly SettingsPage[] = ["editing", "models", "packs"];
+export type SettingsPage = "editing" | "models" | "packs" | "account";
+/** "account" only where settings can go with an account, see `AiSync`. */
+export const SETTINGS_PAGES: readonly SettingsPage[] = ["editing", "models", "packs", "account"];
 
 /**
  * Where the settings of a window are: which page, and on the page of AI models which service, or

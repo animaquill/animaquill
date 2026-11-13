@@ -1,4 +1,4 @@
-import { browserChats, browserKeys } from "./ai.ts";
+import { browserAccountKeys, browserChats, browserKeys } from "./ai.ts";
 import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
@@ -978,6 +978,8 @@ export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts
 export { browserOrganizer } from "./organizer.ts";
 export { browserCoverAccess, browserCoverStore, memoryCoverStore } from "./covers.ts";
 export { browserOrganizerAccess, OrganizerBusy } from "./organizer-access.ts";
+export { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
+export { browserAccountKeys } from "./ai.ts";
 export type { BrowserCoverAccessOptions } from "./covers.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";
@@ -1119,6 +1121,9 @@ export function createBrowserHost(
     async save(key, value) {
       storage().setItem(PREFIX + key, JSON.stringify(value));
     },
+    async remove(key) {
+      storage().removeItem(PREFIX + key);
+    },
     listen(key, listener) {
       // The browser tells every window but the one that wrote.
       const onStorage = (event: StorageEvent) => {
@@ -1186,6 +1191,7 @@ export function createBrowserHost(
     caches: createWorkCache(database),
     presence: browserPresence(locks),
     keys: browserKeys(database),
+    accountKeys: browserAccountKeys(database),
     chats,
     organizer: browserOrganizer(database),
     covers,

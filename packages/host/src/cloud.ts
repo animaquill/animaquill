@@ -11,6 +11,8 @@ import type {
   CloudProjectSummary,
   CoverAccess,
   OrganizerAccess,
+  AiSyncAccess,
+  ChatSyncAccess,
   LfsAccess,
   RepositoryAccess,
 } from "./index.ts";
@@ -382,6 +384,8 @@ export interface BrowserCloudOptions {
   readonly cover?: CoverAccess;
   /** How the person organises their projects, where the platform keeps it, see `browserOrganizerAccess`. */
   readonly organizer?: OrganizerAccess;
+  readonly aiSync?: AiSyncAccess;
+  readonly chats?: ChatSyncAccess;
   readonly database?: () => IDBFactory;
   readonly locks?: () => LockManager | undefined;
 }
@@ -402,5 +406,7 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.lfs && { lfs: options.lfs }),
     ...(options.cover && { cover: options.cover }),
     ...(options.organizer && { organizer: options.organizer }),
+    ...(options.aiSync && { aiSync: options.aiSync }),
+    ...(options.chats && { chats: options.chats }),
   };
 }

@@ -2,6 +2,7 @@ import { ChevronLeft } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import { AccountSyncPage } from "../chat/AccountSyncPage.tsx";
 import { AiModelsPage } from "../chat/AiModelsPage.tsx";
 import { ModelPacksSettings } from "../chat/ModelPacksSettings.tsx";
 import { SETTINGS_PAGES } from "../workbench/settings-nav.ts";
@@ -13,15 +14,17 @@ import styles from "./SettingsPanel.module.css";
  * of a window are is the window's own.
  */
 export function SettingsPanel() {
-  const { settingsNav } = useWorkbench();
+  const { settingsNav, aiSync } = useWorkbench();
   const { t } = useTranslation();
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
+  const { available } = useSyncExternalStore(aiSync.subscribe, aiSync.getSnapshot);
+  const pages = SETTINGS_PAGES.filter((page) => page !== "account" || available);
 
   return (
     <div className={styles.panel} data-testid="settings-panel">
       <div className={styles.layout} data-depth={place.depth}>
         <nav className={styles.nav} aria-label={t("settings.pagesLabel")}>
-          {SETTINGS_PAGES.map((page) => (
+          {pages.map((page) => (
             <button
               key={page}
               type="button"
@@ -36,6 +39,7 @@ export function SettingsPanel() {
         <div className={styles.page}>
           {place.page === "editing" && <EditingSettings />}
           {place.page === "models" && <AiModelsPage />}
+          {place.page === "account" && available && <AccountSyncPage />}
           {place.page === "packs" && (
             <div className={styles.scroll}>
               <BackToPages />

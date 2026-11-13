@@ -1,7 +1,28 @@
 import type { AiRelay } from "./relay.ts";
 import type { CloudConnection } from "./sync-protocol.ts";
+import type { AiEntry, AiSyncKey } from "./ai-sync-rules.ts";
 
-export { KEYS_DATABASE, MAX_CHATS_PER_PROJECT, memoryChats, memoryKeys } from "./ai.ts";
+export {
+  ACCOUNT_KEYS_DATABASE,
+  KEYS_DATABASE,
+  MAX_CHATS_PER_PROJECT,
+  memoryAccountKeys,
+  memoryChats,
+  memoryKeys,
+} from "./ai.ts";
+import type { AccountKeys } from "./ai.ts";
+export type { AccountKeys };
+export {
+  AI_SYNC_BATCH,
+  AI_SYNC_BYTES,
+  AI_SYNC_FORMAT,
+  AI_SYNC_KEYS,
+  checkAiEntry,
+  isLaterEntry,
+  jsonBytes,
+  type AiEntry,
+  type AiSyncKey,
+} from "./ai-sync-rules.ts";
 export { RELAY_REFUSALS, relayRefusalIn, type AiRelay, type RelayRefusal } from "./relay.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
 export {
@@ -76,6 +97,11 @@ export interface Host {
    * never in a report. Without it keys last as long as the page.
    */
   readonly keys?: KeyStore;
+  /**
+   * Keys that go with an account, kept on this device by account while it is signed in here, see
+   * `CloudAccess.aiSync`. Without it they last as long as the page.
+   */
+  readonly accountKeys?: AccountKeys;
   /** Conversations with AI in the browser, by project. Without it they last as long as the page. */
   readonly chats?: ChatStore;
   /**
@@ -684,6 +710,123 @@ export interface CloudAccess {
    * on any computer, see `OrganizerAccess`. Without it, only this browser keeps that.
    */
   readonly organizer?: OrganizerAccess;
+  /**
+   * The AI settings and keys of the person, which go with the account while they let them, see
+   * `AiSyncAccess`. Without it, they stay in this browser.
+   */
+  readonly aiSync?: AiSyncAccess;
+  /**
+   * The conversations with AI about projects of the platform, which go with the account, see
+   * `ChatSyncAccess`. Without it, they stay in this browser.
+   */
+  readonly chats?: ChatSyncAccess;
+}
+
+/**
+ * Everything of the AI settings an account keeps, see ai-sync-rules.ts: by this computer's clock,
+ * as the host has the platform's times agree with it.
+ */
+export interface AccountAiSettings {
+  /** Whose they are, see `AccountSnapshot.id`. */
+  readonly account: string;
+  /**
+   * Whether they go with the account at all: people turned it off for all their devices, and the
+   * platform keeps nothing then.
+   */
+  readonly enabled: boolean;
+  /** Moves on with every change, for asking whether anything changed (`AiSyncAccess.read`). */
+  readonly revision: number;
+  /** The format they are in, see `AI_SYNC_FORMAT`: a newer one is not written over. */
+  readonly format: number;
+  readonly entries: Readonly<Record<string, AiEntry>>;
+  /** The keys of services, by the id of the service. */
+  readonly keys: Readonly<Record<string, AiSyncKey>>;
+}
+
+/** What changed of the AI settings on this device, see `AiSyncAccess.change`. */
+export interface AccountAiChanges {
+  /** Whose they are: nothing is kept where the session is of somebody else. */
+  readonly account: string;
+  readonly entries: readonly ({ readonly name: string } & AiEntry)[];
+  readonly keys: readonly ({ readonly service: string } & AiSyncKey)[];
+  /** Turns going with the account on again, where people turned it off. */
+  readonly enable?: true;
+}
+
+/**
+ * The AI settings and keys of the person on a platform (docs/design/chat-and-models.md of
+ * AnimaQuill Cloud, 5): entries merged one by one, the later wins, see ai-sync-rules.ts. Rejects
+ * with a `CloudSignedOut` when nobody is signed in, a `CloudOtherAccount` where the session is of
+ * another account, an `AiSyncOff` where people turned it off (and `enable` was not given), an
+ * `AiSyncNewer` where a newer editor wrote them, and an `AiSyncTooLarge` where they would be larger
+ * than `AI_SYNC_BYTES`: nothing of the changes is kept then.
+ */
+export interface AiSyncAccess {
+  /** Everything, or only `{revision}` where it is still `since`. */
+  read(since?: number): Promise<
+    | AccountAiSettings
+    | {
+        readonly revision: number;
+        readonly unchanged: true;
+        readonly account: string;
+        readonly enabled: boolean;
+      }
+  >;
+  /** Keeps changes, and says everything as it is then, and which entries it did not take. */
+  change(
+    changes: AccountAiChanges,
+  ): Promise<{ readonly state: AccountAiSettings; readonly refused: readonly string[] }>;
+  /** Turns it off for all devices: the platform keeps nothing of them any more. */
+  turnOff(account: string): Promise<void>;
+}
+
+/** People turned off the AI settings going with their account, on some device. */
+export class AiSyncOff extends Error {
+  override readonly name = "AiSyncOff";
+}
+
+/** A newer editor wrote the AI settings of the account: this one leaves them alone. */
+export class AiSyncNewer extends Error {
+  override readonly name = "AiSyncNewer";
+}
+
+/** The AI settings would be larger than a platform keeps. */
+export class AiSyncTooLarge extends Error {
+  override readonly name = "AiSyncTooLarge";
+}
+
+/** A conversation of a project of the platform as the account keeps it. */
+export interface AccountChatSummary {
+  readonly revision: number;
+  readonly summary: Omit<SavedChatSummary, "project">;
+}
+
+/**
+ * The conversations of the person about projects of the platform, each private to them (docs/design
+ * /chat-and-models.md of AnimaQuill Cloud, 5.4): a conversation is written whole, over the revision
+ * it was read at (`base`, null for a new one); where another device wrote it since, that rejects
+ * with a `ChatNewer`, and the editor takes theirs. Rejects with a `CloudSignedOut` when nobody is
+ * signed in; `save` resolves to undefined where the platform does not keep it (not a project of the
+ * person's, or too large): it stays on this device.
+ */
+export interface ChatSyncAccess {
+  list(project: string): Promise<readonly AccountChatSummary[]>;
+  load(
+    project: string,
+    id: string,
+  ): Promise<{ readonly revision: number; readonly chat: SavedChat } | undefined>;
+  save(project: string, chat: SavedChat, base: number | null): Promise<number | undefined>;
+  remove(project: string, id: string): Promise<void>;
+}
+
+/** Another device wrote the conversation since it was read here: `revision` is theirs. */
+export class ChatNewer extends Error {
+  override readonly name = "ChatNewer";
+  readonly revision: number;
+  constructor(revision: number) {
+    super("Another device wrote the conversation");
+    this.revision = revision;
+  }
 }
 
 /**
@@ -1665,6 +1808,12 @@ export interface SavedChat extends SavedChatSummary {
    * with such a model takes the pack chosen for it then, rather than the one it began with.
    */
   readonly repick?: readonly string[];
+  /**
+   * For a conversation of a project of the platform kept in this browser: the revision the account
+   * has of it, as last written or read here, see `ChatSyncAccess`. Missing where the account never
+   * had it from here.
+   */
+  readonly synced?: number;
 }
 
 /** Conversations with AI by project. Only so many of a project are kept, the oldest go first. */
@@ -1723,6 +1872,11 @@ export interface SettingsStore {
    * Returns how to stop listening.
    */
   listen(key: string, listener: (value: unknown) => void): () => void;
+  /**
+   * Forgets what is saved under this key, as if nothing ever was: other windows are not told.
+   * Missing where the store cannot.
+   */
+  remove?(key: string): Promise<void>;
 }
 
 /**
