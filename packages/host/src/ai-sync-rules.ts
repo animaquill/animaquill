@@ -4,8 +4,8 @@
  *
  * The settings go as entries, not as one document: each service, the default model, each choice of
  * a pack or of how hard a model reasons, each preference, each installed pack is one entry, with
- * when it last changed (`at`), and an entry taken away stays as such (`deleted`) for
- * `DELETED_ENTRY_DAYS`. Two copies are merged entry by entry, the later wins, so that two devices
+ * when it last changed (`at`), and an entry taken away stays as such (`deleted`), the newest
+ * `DELETED_KEPT` of them. Two copies are merged entry by entry, the later wins, so that two devices
  * that each add a service keep both. What an entry holds is the editor's to read: the platform only
  * checks that it is made as such an entry is, see `checkAiEntry`. Keys of services are entries of
  * their own (`AiSyncKey`), which the platform seals before they go into its database.
@@ -22,8 +22,11 @@ export const AI_SYNC_BATCH = 500;
 export const AI_SYNC_KEYS = 100;
 /** How long a key of a service can be, in characters. */
 export const AI_KEY_LENGTH = 8192;
-/** How long an entry that was taken away stays as such, before it is forgotten. */
-export const DELETED_ENTRY_DAYS = 30;
+/**
+ * How many entries taken away a person's settings keep as such, and as many keys, the newest: the
+ * oldest beyond go. Each is only a name and a time.
+ */
+export const DELETED_KEPT = 1000;
 
 /** An entry as it is kept, see the top of this file. */
 export type AiEntry =

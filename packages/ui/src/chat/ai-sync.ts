@@ -536,6 +536,14 @@ export class AiSync {
     if (!state.pending.includes(name)) state.pending.push(name);
     if (state.refused?.includes(name))
       state.refused = state.refused.filter((each) => each !== name);
+    // What was too large goes again: changed itself, or with room made by taking something away.
+    const again = deleted
+      ? (state.tooLarge ?? [])
+      : (state.tooLarge ?? []).filter((each) => each === name);
+    if (again.length === 0) return;
+    state.tooLarge = (state.tooLarge ?? []).filter((each) => !again.includes(each));
+    state.refused = (state.refused ?? []).filter((each) => !again.includes(each));
+    for (const each of again) if (!state.pending.includes(each)) state.pending.push(each);
   }
 
   /**
@@ -775,18 +783,6 @@ export class AiSync {
           after.refused = [...new Set([...(after.refused ?? []), ...notTaken])];
         if (answer.tooLarge.length > 0)
           after.tooLarge = [...new Set([...(after.tooLarge ?? []), ...answer.tooLarge])];
-        // Older than what was taken away on the platform and forgotten since: gone here too.
-        for (const name of answer.stale) {
-          if (name.startsWith("key:")) {
-            const service = name.slice(4);
-            await keys.remove(service);
-            delete after.keys[service];
-            after.pendingKeys = after.pendingKeys.filter((each) => each !== service);
-          } else {
-            delete after.entries[name];
-            after.pending = after.pending.filter((each) => each !== name);
-          }
-        }
         await this.#merge(account, after, answer.state);
         // What the platform took, or refused, is no longer to be given, unless it changed here
         // meanwhile: refused, it stays on this device only.

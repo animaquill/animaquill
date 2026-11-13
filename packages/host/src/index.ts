@@ -780,11 +780,6 @@ export interface AiSyncAccess {
     readonly refused: readonly string[];
     /** Entries not taken, as the settings would be larger than `AI_SYNC_BYTES` with them. */
     readonly tooLarge: readonly string[];
-    /**
-     * Entries and keys not taken, as they changed before what was taken away and forgotten since:
-     * older than that, and to be let go of here too.
-     */
-    readonly stale: readonly string[];
   }>;
   /** Turns it off for all devices: the platform keeps nothing of them any more. */
   turnOff(account: string): Promise<void>;

@@ -40,8 +40,8 @@ function platformOf() {
     }
   >();
   let offline = false;
-  /** What the platform says is older than what it forgot it took away. */
-  const stale = new Set<string>();
+  /** Entries the platform takes as too large. */
+  const tooLarge = new Set<string>();
   const of = (account: string) => {
     let kept = accounts.get(account);
     if (!kept)
@@ -63,15 +63,14 @@ function platformOf() {
       if (!kept.enabled && !changes.enable) throw new AiSyncOff("off");
       if (!kept.enabled) kept.entries = {};
       kept.enabled = true;
-      const old: string[] = [];
+      const large: string[] = [];
       for (const { name, ...entry } of changes.entries)
-        if (stale.has(name)) old.push(name);
+        if (tooLarge.has(name) && !entry.deleted) large.push(name);
         else if (isLaterEntry(kept.entries[name], entry)) kept.entries[name] = entry as AiEntry;
       for (const { service, ...key } of changes.keys)
-        if (stale.has(`key:${service}`)) old.push(`key:${service}`);
-        else if (isLaterEntry(kept.keys[service], key)) kept.keys[service] = key as AiSyncKey;
+        if (isLaterEntry(kept.keys[service], key)) kept.keys[service] = key as AiSyncKey;
       kept.revision += 1;
-      return { state: stateOf(who()), refused: [], tooLarge: [], stale: old };
+      return { state: stateOf(who()), refused: [], tooLarge: large };
     },
     async turnOff(account) {
       const kept = of(account);
@@ -81,7 +80,7 @@ function platformOf() {
   return {
     accounts,
     access,
-    stale,
+    tooLarge,
     setOffline: (value: boolean) => (offline = value),
   };
 }
@@ -418,24 +417,25 @@ describe("AI settings going with the account", () => {
     expect(sync.scope).toBe("u1");
   });
 
-  test("what the platform says is older than what it forgot it took away goes here too", async () => {
-    // Review CM5, 5: a device away more than thirty days does not bring back what was taken away.
+  test("too large: shown, and given again once room is made, or once it changed", async () => {
+    // Review CM5: what was too large stayed so for good.
     const platform = platformOf();
-    const browser = browserOf();
-    const window = await windowOf(browser, platform, accountOf("u1"));
-    platform.setOffline(true);
-    const id = window.ai.add("anthropic", "早就删掉的")!;
-    await window.ai.setKey(id, "sk-old");
+    const window = await windowOf(browserOf(), platform, accountOf("u1"));
+    const big = window.ai.add("anthropic", "太大的")!;
+    platform.tooLarge.add(`service:${big}`);
     await settle();
-    platform.stale.add(`service:${id}`);
-    platform.stale.add(`key:${id}`);
-    platform.setOffline(false);
     await window.sync.sync();
+    expect(window.sync.getSnapshot().status).toBe("tooLarge");
+    expect(platform.accounts.get("u1")!.entries[`service:${big}`]).toBeUndefined();
+    // Room made: something else taken away; it goes again, and is taken now.
+    const other = window.ai.add("deepseek", "别的")!;
     await settle();
-    expect(names(window.ai)).toEqual([]);
-    expect(await browser.accountKeys.of("u1").read(id)).toBeUndefined();
-    expect(platform.accounts.get("u1")!.keys[id]).toBeUndefined();
     await window.sync.sync();
-    expect(names(window.ai)).toEqual([]);
+    platform.tooLarge.clear();
+    await window.ai.remove(other);
+    await settle();
+    await window.sync.sync();
+    expect(window.sync.getSnapshot().status).toBe("synced");
+    expect(platform.accounts.get("u1")!.entries[`service:${big}`]).toBeDefined();
   });
 });

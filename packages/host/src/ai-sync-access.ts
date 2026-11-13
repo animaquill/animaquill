@@ -133,7 +133,7 @@ const clockOf = (answer: unknown, sent: number, came: number): Clock => {
  *   entries, keys}` by the platform's clock, or `{now, account, enabled, revision, unchanged: true}`
  *   where the revision is still `since`.
  * - `POST <api>/me/ai-settings` `{now, account, format, entries, keys, enable?}`, by this
- *   computer's clock and what that says as it sends them: `{now, refused, tooLarge, stale, state}`.
+ *   computer's clock and what that says as it sends them: `{now, refused, tooLarge, state}`.
  * - `DELETE <api>/me/ai-settings?account=`: turned off, nothing kept. 204.
  */
 export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess {
@@ -189,7 +189,6 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
           state,
           refused: names(answer.refused),
           tooLarge: names(answer.tooLarge),
-          stale: names(answer.stale),
         };
       }),
     turnOff: (account) =>
