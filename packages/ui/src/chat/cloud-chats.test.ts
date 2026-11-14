@@ -132,6 +132,49 @@ describe("conversations of projects of the platform", () => {
     expect(await device.local.load("local-1", "c1")).toBeUndefined();
   });
 
+  test("off and on elsewhere, given again there as it was: read here, no copy, nobody told", async () => {
+    const platform = platformChats();
+    let seen = 0;
+    const copied: string[] = [];
+    let device: CloudChats | undefined;
+    const links = new MemoryCloudLinks();
+    await links.put({
+      key: "local-1",
+      platform: PLATFORM,
+      project: "p1",
+      seq: 0,
+      pushed: 0,
+      linkedAt: 0,
+      owner: "u1",
+    });
+    const local = memoryChats();
+    device = new CloudChats({
+      local,
+      remote: platform.access,
+      account: accountAs({ status: "signedIn", id: "u1", name: "u1", appInstalled: true }),
+      links,
+      platform: PLATFORM,
+      copied: (title) => copied.push(title),
+      heardEpoch: async (account, epoch) => {
+        if (epoch === seen) return;
+        await device!.detach(account);
+        seen = epoch;
+      },
+    });
+    const other = await deviceOf(platform);
+    const said = chat("c1", ["没改过的"], 1);
+    await device.save(said);
+    platform.offAndOn();
+    // The other device gives the same conversation again, unchanged.
+    await other.local.save(said);
+    await other.chats.retry();
+    const read = await device.load("local-1", "c1");
+    expect(read?.entries).toEqual(said.entries);
+    expect(copied).toEqual([]);
+    expect((await local.list("local-1")).map(({ id }) => id)).toEqual(["c1"]);
+    expect((await local.load("local-1", "c1"))?.synced).toBe(platform.kept.get("p1/c1")?.revision);
+  });
+
   test("read one by one after it was off and on elsewhere: kept, and the account's is another", async () => {
     const platform = platformChats();
     let seen = 0;

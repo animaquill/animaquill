@@ -62,6 +62,10 @@ export interface CloudChatsSnapshot {
 export const isUnsent = (chat: SavedChat): boolean =>
   chat.synced === undefined || chat.syncedAt === undefined || chat.updatedAt > chat.syncedAt;
 
+/** Whether two versions of a conversation say the same: what was said, and what it is called. */
+const sameContent = (a: SavedChat, b: SavedChat): boolean =>
+  a.title === b.title && JSON.stringify(a.entries) === JSON.stringify(b.entries);
+
 const copyId = () =>
   `chat-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0]?.toString(36)}`;
 
@@ -69,7 +73,8 @@ const copyId = () =>
  * Rules, each with a test in cloud-chats.test.ts:
  *
  * - Where the account's version of a conversation takes the place of one changed here (another
- *   device wrote it since), this browser's is kept first as a new conversation, "《X》在这台设备上的副本", which goes to the account in turn, and people are told.
+ *   device wrote it since), this browser's is kept first as a new conversation, "《X》在这台设备上的副本", which goes to the account in turn, and people are told; not where both say the
+ *   same, as one given again by another device after they were off and on.
  * - Signing out lets go only of conversations that are as the account has them; the others stay,
  *   for their link says whose project they are of, and go once that account is signed in again.
  * - The account's copy went as people turned the conversations off on another device, and on
@@ -257,7 +262,8 @@ export class CloudChats implements ChatStore {
     project: string,
   ): Promise<SavedChat> {
     const { local } = this.#options;
-    if (here && isUnsent(here)) {
+    // The same as the account has it, as one given again after they were off: nothing to keep.
+    if (here && isUnsent(here) && !sameContent(here, there.chat)) {
       const title = `《${here.title}》在这台设备上的副本`;
       const {
         synced: _synced,
