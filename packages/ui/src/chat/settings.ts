@@ -338,8 +338,12 @@ export class AiSettingsStore {
     }
     const taken = readAiSettings(value);
     if (taken.kind === "ok") {
-      if (taken.headersLeftOut) this.#messages.headersLeftOut?.();
       this.#adopt(taken.settings, undefined);
+      // Written back without them at once, so that they are said once, not at every load.
+      if (taken.headersLeftOut) {
+        this.#messages.headersLeftOut?.();
+        this.#save(taken.settings);
+      }
     }
   }
 

@@ -689,3 +689,40 @@ describe("the details of models", () => {
     expect(ai.getSnapshot().listings.has(id)).toBe(false);
   });
 });
+
+describe("headers of before that cannot be sent", () => {
+  it("go at once as the settings are read, and are said so once, not at every load", async () => {
+    const { values } = browser({
+      version: 3,
+      services: [
+        {
+          id: "g",
+          kind: "openai-compatible",
+          name: "网关",
+          baseUrl: "https://gw.example/v1",
+          route: "direct",
+          headers: { "x-team": "视频", "x-ok": "1" },
+          enabled: ["m"],
+        },
+      ],
+    });
+    const messages = { saveFailed: vi.fn(), keyFailed: vi.fn(), headersLeftOut: vi.fn() };
+    const store: SettingsStore = {
+      load: async (key) => structuredClone(values.get(key)),
+      save: async (key, value) => void values.set(key, structuredClone(value)),
+      listen: () => () => {},
+    };
+    const first = new AiSettingsStore(store, memoryKeys(), messages);
+    await first.load();
+    expect(messages.headersLeftOut).toHaveBeenCalledTimes(1);
+    await settle();
+    expect((values.get("ai") as { services: { headers: unknown }[] }).services[0]?.headers).toEqual(
+      {
+        "x-ok": "1",
+      },
+    );
+    const again = new AiSettingsStore(store, memoryKeys(), messages);
+    await again.load();
+    expect(messages.headersLeftOut).toHaveBeenCalledTimes(1);
+  });
+});

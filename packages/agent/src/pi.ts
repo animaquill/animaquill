@@ -99,8 +99,10 @@ export function keyHeadersOf(
   if (!name || !key) return {};
   const lower = name.toLowerCase();
   const value = lower === "authorization" ? `Bearer ${key}` : key;
+  // Through the relay, the key goes under the prefix: the libraries' own key headers go empty,
+  // also one of the same name, which the relay would take before it.
   const emptied = Object.fromEntries(
-    KEY_HEADERS.filter((each) => each !== lower).map((each) => [each, null]),
+    KEY_HEADERS.filter((each) => relay?.passPrefix || each !== lower).map((each) => [each, null]),
   ) as unknown as Record<string, string>;
   const passed = relay?.passPrefix ? `${relay.passPrefix}${lower}` : lower;
   return { ...emptied, [passed]: value };

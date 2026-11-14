@@ -339,7 +339,7 @@ export const MOST_HEADER_BYTES = 8 * 1024;
  * `looksSecret`, and the key has a header of its own to go in (`ServiceConfig.keyHeader`).
  */
 const NOT_A_HEADER =
-  /^(?:host|cookie2?|origin|referer|connection|keep-alive|content-length|content-type|transfer-encoding|te|trailer|upgrade|expect|accept-encoding|proxy-.*|sec-.*|x-forwarded-.*|forwarded|via|x-real-ip|true-client-ip|cf-connecting-ip|x-client-ip|x-animaquill.*|aq-.*|x-aq-.*)$/i;
+  /^(?:host|cookie2?|set-cookie2?|user-agent|origin|referer|connection|keep-alive|content-length|content-type|transfer-encoding|te|trailer|upgrade|expect|accept-encoding|proxy-.*|sec-.*|x-forwarded-.*|forwarded|via|x-real-ip|true-client-ip|cf-connecting-ip|x-client-ip|x-animaquill.*|aq-.*|x-aq-.*)$/i;
 
 /** Why a header cannot be one of people's own, or undefined where it can. */
 export function headerProblem(name: string, value: string): "name" | "value" | undefined {
@@ -361,7 +361,13 @@ export function tooManyHeaders(headers: Readonly<Record<string, string>>): boole
  */
 export const looksSecret = (value: string): boolean =>
   /^\s*(?:sk-|bearer\s|basic\s|ghp_|xox[bp]-|AIza)/i.test(value) ||
-  /[A-Za-z0-9_+/=-]{32,}/.test(value);
+  (value.match(/[A-Za-z0-9_+/=-]{32,}/g) ?? []).some(
+    (run) =>
+      // An id such as a UUID, with or without its dashes, is no secret.
+      !/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(run) &&
+      /[A-Za-z]/.test(run) &&
+      /[0-9]/.test(run),
+  );
 
 /** A name of a header the key can go in. */
 export const isKeyHeader = (value: unknown): value is string =>

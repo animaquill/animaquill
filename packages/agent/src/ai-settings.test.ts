@@ -5,6 +5,7 @@ import {
   DEFAULT_MAX_TOOL_CALLS,
   EMPTY_AI_SETTINGS,
   headerProblem,
+  isKeyHeader,
   looksSecret,
   enabledCountOf,
   enabledModelsOf,
@@ -690,6 +691,16 @@ describe("AI settings of version 3", () => {
     expect(looksSecret("Bearer abc")).toBe(true);
     expect(looksSecret("a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7")).toBe(true);
     expect(looksSecret("video")).toBe(false);
+    // Ids are no secrets: a UUID, with or without dashes, or a long name without digits.
+    expect(looksSecret("3f2b8c1e-9d4a-4e6b-8f1a-2c3d4e5f6a7b")).toBe(false);
+    expect(looksSecret("3f2b8c1e9d4a4e6b8f1a2c3d4e5f6a7b")).toBe(false);
+    expect(looksSecret("tenant-production-eastasia-gateway-routing")).toBe(false);
+    // Headers the browser or the platform keep for themselves, which the key cannot go in either.
+    for (const name of ["Set-Cookie", "User-Agent", "Cookie", "Host"]) {
+      expect(headerProblem(name, "x"), name).toBe("name");
+      expect(isKeyHeader(name), name).toBe(false);
+    }
+    expect(isKeyHeader("api-key")).toBe(true);
     // Read, what cannot be sent is left out, and said so; and only so many.
     const reading = readAiSettings({
       ...full,

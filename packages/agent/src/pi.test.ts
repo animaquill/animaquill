@@ -658,5 +658,20 @@ describe("a key in a header of people's choosing", () => {
     expect(headers.get("aq-pass-api-key")).toBe("sk-azure-0123456789");
     expect(headers.has("authorization")).toBe(false);
     expect(headers.get("x-animaquill")).toBe("1");
+    // In Authorization too: the library's own goes empty, so the relay takes people's.
+    const bearer = await headersSent({
+      service: "openai-compatible",
+      protocol: "openai-completions",
+      baseUrl: "https://gw.example/v1",
+      model: "gpt-x",
+      keyHeader: "Authorization",
+      relay: {
+        baseUrl: "https://platform.example/api/llm-relay/https/gw.example/v1",
+        headers: { "x-animaquill": "1" },
+        passPrefix: "aq-pass-",
+      },
+    });
+    expect(bearer.get("aq-pass-authorization")).toBe("Bearer sk-azure-0123456789");
+    expect(bearer.has("authorization")).toBe(false);
   });
 });
