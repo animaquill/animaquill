@@ -14,7 +14,6 @@ import {
 import {
   clampThinkingLevel,
   createModels,
-  getSupportedThinkingLevels,
   createProvider,
   fauxAssistantMessage,
   fauxProvider,
@@ -44,7 +43,8 @@ import type {
   PackNote,
   ToolEntry,
 } from "./entries.ts";
-import type { ListedModel, ReasoningLevel } from "./model-discovery.ts";
+import type { ModelValues } from "./ai-settings.ts";
+import type { ListedModel, ThinkingLevelMap } from "./model-discovery.ts";
 import { withoutKeys } from "./secrets.ts";
 import type { Protocol } from "./services.ts";
 
@@ -69,12 +69,36 @@ export interface Endpoint {
    * same one: pi tells services apart by their address, which the relay's keeps in it.
    */
   readonly relay?: Relayed | undefined;
+  /**
+   * What people set of the model, or a catalog filled in, over what pi knows of it: see
+   * `applyModelSettings`. `baseUrl` and `api` of it are already in the endpoint's `baseUrl` and
+   * `protocol`; `headers` are the service's and the model's together.
+   */
+  readonly settings?: ModelValues | undefined;
 }
 
 /** A service through the relay of the platform, see `Endpoint.relay`. */
 export interface Relayed {
   readonly baseUrl: string;
   readonly headers: Readonly<Record<string, string>>;
+  /**
+   * What the relay takes headers of the model by, on their way to the service: it passes on only
+   * those of the libraries of services otherwise. Without it they do not go through the relay.
+   */
+  readonly passPrefix?: string;
+}
+
+/** The model as it goes to the relay: its address, and its headers as the relay takes them. */
+function relayed(model: Model<Api>, relay: Relayed): Model<Api> {
+  const { headers, ...rest } = model;
+  const prefix = relay.passPrefix;
+  const passed =
+    prefix && headers
+      ? Object.fromEntries(
+          Object.entries(headers).map(([name, value]) => [`${prefix}${name.toLowerCase()}`, value]),
+        )
+      : undefined;
+  return { ...rest, baseUrl: relay.baseUrl, ...(passed && { headers: passed }) } as Model<Api>;
 }
 
 /** One step of a pretend service, for tests: what it answers to the next request. */
@@ -273,12 +297,76 @@ export async function knownModels(
       id: model.id,
       name: model.name,
       contextWindow: model.contextWindow,
-      cost: { input: model.cost.input, output: model.cost.output },
+      maxTokens: model.maxTokens,
+      cost: {
+        input: model.cost.input,
+        output: model.cost.output,
+        cacheRead: model.cost.cacheRead,
+        cacheWrite: model.cost.cacheWrite,
+      },
       reasoning: model.reasoning,
       image: model.input.includes("image"),
-      levels: getSupportedThinkingLevels(model) as ReasoningLevel[],
+      ...(model.thinkingLevelMap && {
+        thinkingLevelMap: { ...model.thinkingLevelMap } as ThinkingLevelMap,
+      }),
+      ...(model.compat && { compat: { ...model.compat } as Readonly<Record<string, unknown>> }),
     }))
     .toSorted((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * The model as pi takes it, with what people set or a catalog filled in over what pi knows
+ * (`base`): its name, whether it thinks and takes pictures, how much it reads and writes, its
+ * prices, how each step of reasoning is sent (the map as a whole: people's replaces pi's), the
+ * largest picture, headers on top of pi's, and switches of the protocol on top of pi's. Where the
+ * model is and how it is talked to are the endpoint's (`Endpoint.baseUrl`, `protocol`). The same
+ * for the browser and for the cloud: both build the model with this.
+ */
+export function applyModelSettings(
+  base: Model<Api>,
+  settings: ModelValues | undefined,
+): Model<Api> {
+  if (!settings) return base;
+  const {
+    name,
+    reasoning,
+    image,
+    contextWindow,
+    maxTokens,
+    imageMaxBytes,
+    cost,
+    headers,
+    compat,
+    thinkingLevelMap,
+  } = settings;
+  const input: Model<Api>["input"] =
+    image === undefined
+      ? base.input
+      : image
+        ? [...new Set([...base.input, "text" as const, "image" as const])]
+        : base.input.filter((kind) => kind !== "image");
+  const limits = base.inputLimits;
+  return {
+    ...base,
+    ...(name !== undefined && { name }),
+    ...(reasoning !== undefined && { reasoning }),
+    input,
+    ...(contextWindow !== undefined && { contextWindow }),
+    ...(maxTokens !== undefined && { maxTokens }),
+    ...(cost && { cost: { ...base.cost, ...cost } }),
+    ...(thinkingLevelMap !== undefined && { thinkingLevelMap: { ...thinkingLevelMap } }),
+    ...(imageMaxBytes !== undefined && {
+      inputLimits: {
+        ...limits,
+        images: {
+          ...limits?.images,
+          resize: { ...limits?.images?.resize, maxBytes: imageMaxBytes },
+        },
+      },
+    }),
+    ...(headers && Object.keys(headers).length > 0 && { headers: { ...base.headers, ...headers } }),
+    ...(compat && { compat: { ...base.compat, ...compat } as Model<Api>["compat"] }),
+  } as Model<Api>;
 }
 
 /**
@@ -293,6 +381,14 @@ type Known = "listed" | "relative" | "unknown";
  */
 async function modelOf(endpoint: Endpoint, provider: string): Promise<Model<Api>> {
   return (await knownModelOf(endpoint, provider)).model;
+}
+
+/**
+ * The model of an endpoint as pi takes it, with everything people set of it: what the browser's
+ * chat and the cloud's AI both send with (see `applyModelSettings`).
+ */
+export async function piModelOf(endpoint: Endpoint): Promise<Model<Api>> {
+  return modelOf(endpoint, providerOf(endpoint.service));
 }
 
 async function knownModelOf(
@@ -317,9 +413,20 @@ async function knownModelOf(
     // How this service differs from the protocol, as pi knows it for the others of the service.
     ...(same[0]?.compat !== undefined && { compat: same[0].compat }),
   };
+  const model = applyModelSettings(
+    { ...base, provider, baseUrl: endpoint.baseUrl, api: endpoint.protocol },
+    endpoint.settings,
+  );
+  // Prices people gave, or a catalog filled in, are this very model's; so is a size they gave.
+  const settled = endpoint.settings;
   return {
-    model: { ...base, provider, baseUrl: endpoint.baseUrl },
-    known: listed ? "listed" : known ? "relative" : "unknown",
+    model,
+    known:
+      listed || settled?.cost
+        ? "listed"
+        : known || settled?.contextWindow !== undefined
+          ? "relative"
+          : "unknown",
   };
 }
 
@@ -614,7 +721,13 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   const reasoning = wanted === "off" ? undefined : wanted;
   const settings = {
     ...(reasoning !== undefined && { reasoning }),
-    ...(call.maxOutputTokens !== undefined && { maxTokens: call.maxOutputTokens }),
+    // What a pack asks for is never more than the model writes at most, as people set it.
+    ...(call.maxOutputTokens !== undefined && {
+      maxTokens:
+        model.maxTokens > 0
+          ? Math.min(call.maxOutputTokens, model.maxTokens)
+          : call.maxOutputTokens,
+    }),
     ...(call.temperature !== undefined && { temperature: call.temperature }),
     ...(call.cache !== undefined && { cacheRetention: call.cache }),
     ...(protocol === "anthropic-messages" &&
@@ -633,17 +746,13 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
       const relay = isFake(endpoint) ? undefined : endpoint.relay;
-      return models.streamSimple(
-        relay ? { ...request, baseUrl: relay.baseUrl } : request,
-        context,
-        {
-          ...streamOptions,
-          ...settings,
-          ...(relay && { headers: { ...streamOptions?.headers, ...relay.headers } }),
-          // Retrying is for people to decide: a failure shows right away.
-          maxRetries: 0,
-        },
-      );
+      return models.streamSimple(relay ? relayed(request as Model<Api>, relay) : request, context, {
+        ...streamOptions,
+        ...settings,
+        ...(relay && { headers: { ...streamOptions?.headers, ...relay.headers } }),
+        // Retrying is for people to decide: a failure shows right away.
+        maxRetries: 0,
+      });
     },
     getApiKey: async () => {
       key = await options.key();
@@ -790,9 +899,33 @@ export async function testModel(
   return askModel(endpoint, key, { ...options, prompt: "Reply with OK only.", maxTokens: 16 });
 }
 
+/** A picture of 16 by 16 red pixels, as PNG, for the test of a model that takes pictures. */
+export const RED_PICTURE =
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mP4z8BAEmIY1TCqYfhqAACQ+f8B8u7oVwAAAABJRU5ErkJggg==";
+
+/**
+ * Asks a model that should take pictures what colour a small red one is, the way the chat asks it:
+ * only an answer that names the colour shows that it does (docs/design/settings-and-properties.md
+ * of AnimaQuill Cloud, 6.4). Never throws, as `testModel`.
+ */
+export async function testModelPicture(
+  endpoint: Endpoint,
+  key: string | undefined,
+  options: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
+): Promise<ModelTest> {
+  return askModel(endpoint, key, {
+    ...options,
+    prompt: "What colour is this picture? Answer with one word.",
+    picture: { data: RED_PICTURE, mimeType: "image/png" },
+    maxTokens: 16,
+  });
+}
+
 /** What to ask a model in one small request, see `askModel`. */
 export interface SmallAsk {
   readonly prompt: string;
+  /** A picture that goes with it, as base64. */
+  readonly picture?: { readonly data: string; readonly mimeType: string };
   readonly maxTokens: number;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
@@ -839,8 +972,21 @@ export async function askModel(
     );
     const relay = endpoint.relay;
     const message = await models.completeSimple(
-      relay ? { ...model, baseUrl: relay.baseUrl } : model,
-      { messages: [{ role: "user", content: options.prompt, timestamp: Date.now() }] },
+      relay ? relayed(model, relay) : model,
+      {
+        messages: [
+          {
+            role: "user",
+            content: options.picture
+              ? [
+                  { type: "text", text: options.prompt },
+                  { type: "image", data: options.picture.data, mimeType: options.picture.mimeType },
+                ]
+              : options.prompt,
+            timestamp: Date.now(),
+          },
+        ],
+      },
       {
         maxTokens: options.maxTokens,
         maxRetries: 0,

@@ -380,6 +380,7 @@ export class Workbench {
         keyFailed: () => this.notifications.push(t("ai.keyFailed")),
       },
       host.aiRelay,
+      { cache: host.caches, platform: host.cloud?.modelCatalog },
     );
     this.packs = new ModelPacks(this.aiSync.settings, {
       saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")),

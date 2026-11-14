@@ -742,6 +742,37 @@ export class AiSync {
     return result;
   }
 
+  /**
+   * The settings of this device saved, while nobody is signed in: with only what this window
+   * changed since it last read them (`seen`) put onto what is saved now, entry by entry, so that
+   * two windows that change different things at once both keep theirs (another service, another
+   * model). Resolves to what was saved where that is not `value`, for the window to take.
+   */
+  async saveDevice(value: unknown, seen: unknown): Promise<unknown> {
+    return this.#lock("~device", async () => {
+      const after = entriesOfSettings(value);
+      const now = await this.#base.load(SETTINGS).catch(() => undefined);
+      const current = entriesOfSettings(now);
+      const before = entriesOfSettings(seen);
+      // Nothing else wrote meanwhile, or nothing that can be told apart entry by entry.
+      if (!after || !before || !current || sameEntries(before, current)) {
+        await this.#base.save(SETTINGS, value);
+        return undefined;
+      }
+      const { changed, removed } = entryChanges(before, after);
+      const merged = new Map(current);
+      for (const [name, next] of changed) merged.set(name, next);
+      for (const name of removed) merged.delete(name);
+      if (sameEntries(merged, after)) {
+        await this.#base.save(SETTINGS, value);
+        return undefined;
+      }
+      const saved = settingsOfEntries(merged);
+      await this.#base.save(SETTINGS, saved);
+      return saved;
+    });
+  }
+
   /** Whether the settings of an account are on this browser: not once it was let go of. */
   async holds(account: string): Promise<boolean> {
     return (await this.#readState(account)) !== undefined;
@@ -1059,7 +1090,15 @@ export class ScopedSettings implements SettingsStore {
   }
 
   async save(key: string, value: unknown): Promise<void> {
+    // What this window had as it changed it: what another one writes meanwhile is not its change.
+    const seen = this.#seen.get(key);
     await this.#sync.ready;
+    if (key === SETTINGS && this.#sync.scope === undefined) {
+      const merged = await this.#sync.saveDevice(value, seen);
+      this.#seen.set(key, merged ?? value);
+      if (merged !== undefined) this.#tell(key, merged);
+      return;
+    }
     if (!SCOPED.has(key) || this.#sync.scope === undefined) {
       await this.#sync.base.save(scopedKey(key, this.#sync.scope), value);
       return;

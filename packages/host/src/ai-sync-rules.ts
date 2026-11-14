@@ -2,8 +2,9 @@
  * What the editor and a platform keep alike of AI settings that go with an account, see
  * `AiSyncAccess`: nothing of a browser, so that a server can use it too.
  *
- * The settings go as entries, not as one document: each service, the default model, each choice of
- * a pack or of how hard a model reasons, each preference, each installed pack is one entry, with
+ * The settings go as entries, not as one document: each service, each model people set up in one,
+ * the default model, each choice of a pack or of how hard a model reasons, each preference, each
+ * installed pack is one entry, with
  * when it last changed (`at`), and an entry taken away stays as such (`deleted`), the newest
  * `DELETED_KEPT` of them. Two copies are merged entry by entry, the later wins, so that two devices
  * that each add a service keep both. What an entry holds is the editor's to read: the platform only
@@ -95,6 +96,11 @@ const isText = (value: unknown, max = 2000): value is string =>
 export const jsonBytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value) ?? "").length;
 
+/** Nothing, or names with texts, such as the headers people send to a service. */
+const textsOrNothing = (value: unknown): boolean =>
+  value === undefined ||
+  (isRecord(value) && Object.values(value).every((each) => isText(each, 4000)));
+
 export const isEntryName = (name: unknown): name is string =>
   typeof name === "string" && ENTRY_NAME.test(name);
 
@@ -122,8 +128,24 @@ export function checkAiEntry(name: string, value: unknown): boolean {
         !urlHasSecret(value.baseUrl) &&
         (value.route === "direct" || value.route === "relay") &&
         Array.isArray(value.enabled) &&
-        value.enabled.every((model) => isText(model, 300))
+        value.enabled.every((model) => isText(model, 300)) &&
+        textsOrNothing(value.headers)
       );
+    case "model": {
+      // `model:<service>/<model>`: one model of a service, as people set it up.
+      const slash = of?.indexOf("/") ?? -1;
+      const service = of?.slice(0, slash);
+      return (
+        of !== undefined &&
+        slash > 0 &&
+        SERVICE_ID.test(service ?? "") &&
+        isRecord(value) &&
+        isText(value.id, 300) &&
+        value.id === of.slice(slash + 1) &&
+        (value.baseUrl === undefined || (isText(value.baseUrl) && !urlHasSecret(value.baseUrl))) &&
+        textsOrNothing(value.headers)
+      );
+    }
     case "order":
       return of === undefined && Array.isArray(value) && value.every((id) => isText(id, 100));
     case "default":

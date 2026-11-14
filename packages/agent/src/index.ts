@@ -49,6 +49,13 @@ export type {
 export { HIDDEN_KEY, withoutKeys } from "./secrets.ts";
 export {
   AI_SETTINGS_VERSION,
+  CATALOG_SOURCES,
+  MODEL_APIS,
+  MODEL_FIELDS,
+  THINKING_VALUE_LENGTH,
+  headerProblem,
+  readModel,
+  writeModel,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_TOOL_CALLS,
   EMPTY_AI_SETTINGS,
@@ -62,8 +69,15 @@ export {
   writeAiSettings,
   type AiSettings,
   type AiSettingsReading,
-  type CustomModel,
+  type CatalogFill,
+  type CatalogSource,
   type KeptSettings,
+  type ModelApi,
+  type ModelCompat,
+  type ModelConfig,
+  type ModelField,
+  type ModelValues,
+  type PriceDoubt,
   type ModelRef,
   type SendWith,
   type ServiceConfig,
@@ -84,7 +98,36 @@ export {
   type BulkActions,
   type ModelRow,
 } from "./enabled-models.ts";
-export { parseListedModels, type ListedModel, type ReasoningLevel } from "./model-discovery.ts";
+export {
+  parseListedModels,
+  supportedLevels,
+  type ListedModel,
+  type ModelCost,
+  type ReasoningLevel,
+  type ThinkingLevelMap,
+} from "./model-discovery.ts";
+export {
+  OWN_FIELDS,
+  THINKING_FIELDS,
+  catalogValues,
+  editField,
+  effectiveValues,
+  fieldValue,
+  fillModel,
+  levelEntry,
+  levelSupported,
+  levelText,
+  liveOf,
+  mapFromEfforts,
+  markOf,
+  revertField,
+  settledMap,
+  undoFill,
+  withField,
+  type CatalogSay,
+  type CatalogValues,
+  type FieldMark,
+} from "./model-config.ts";
 export {
   PROTOCOLS,
   SERVICE_GROUPS,
@@ -121,6 +164,19 @@ export async function askModel(
   const pi = await import("./pi.ts");
   return pi.askModel(endpoint, key, options);
 }
+
+/** Asks a model what colour a picture is, to see that it takes pictures: see `pi.ts`. */
+export async function testModelPicture(
+  endpoint: Endpoint,
+  key: string | undefined,
+  options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+): Promise<ModelTest> {
+  const pi = await import("./pi.ts");
+  return pi.testModelPicture(endpoint, key, options);
+}
+
+/** Whether what a model said of the test picture names its colour. */
+export const saysRed = (text: string): boolean => /red|红/i.test(text);
 
 /** Asks a model for a word, to see that it can be reached: see `testModel` of `pi.ts`. */
 export async function testModel(

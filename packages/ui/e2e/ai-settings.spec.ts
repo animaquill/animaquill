@@ -95,7 +95,7 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   await expect(service.getByTestId("ai-key-saved")).toHaveText("••••••••••••CRET");
   await expect(service.getByTestId("ai-test")).toContainText(/连上了 · \d+ 毫秒 · 回答“OK”/);
   await expect(service.getByTestId("ai-models-count")).toHaveText(/^3\/\d+ 启用$/);
-  await expect(settings.getByTestId("ai-default-model")).toHaveText(
+  await expect(settings.getByTestId("ai-default-model").locator("option:checked")).toHaveText(
     "★ Claude Opus 5.5 · Anthropic",
   );
   await expect(settings.getByTestId("ai-service-item")).toHaveCount(1);
@@ -105,7 +105,7 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   expect(sent[0]).toMatchObject({ model: "claude-haiku-5-5", max_tokens: 16 });
   expect(await page.content()).not.toContain("SECRET");
   const kept = await saved(page);
-  expect(kept?.version).toBe(2);
+  expect(kept?.version).toBe(3);
   expect(kept?.services[0]?.enabled).toEqual([
     "claude-opus-5-5",
     "claude-sonnet-5-5",
@@ -207,12 +207,12 @@ test("models: on and off, the default, at least one stays on, one named by hand,
 
   // Another default: it is the one the chat uses.
   await row("claude-sonnet-5-5").getByRole("button", { name: "设为默认模型" }).click();
-  await expect(settings.getByTestId("ai-default-model")).toHaveText(
+  await expect(settings.getByTestId("ai-default-model").locator("option:checked")).toHaveText(
     "★ Claude Sonnet 5.5 · Anthropic",
   );
   // Off, the default goes to one that is on.
   await row("claude-sonnet-5-5").getByRole("switch").uncheck();
-  await expect(settings.getByTestId("ai-default-model")).toHaveText(
+  await expect(settings.getByTestId("ai-default-model").locator("option:checked")).toHaveText(
     "★ Claude Opus 5.5 · Anthropic",
   );
   await row("claude-haiku-5-5").getByRole("switch").uncheck();
@@ -224,25 +224,33 @@ test("models: on and off, the default, at least one stays on, one named by hand,
   );
   await expect(service.getByRole("button", { name: "全部停用" })).toHaveCount(0);
 
-  // A model named by hand, with how much it reads; on, and the default by its star.
-  await service.getByRole("button", { name: "手动加一个模型名" }).click();
+  // A model named by hand: on, and filled in from the catalogs, of which none knows it.
+  await service.getByRole("button", { name: "＋ 手动加" }).click();
   const adding = service.getByTestId("ai-add-model");
-  await adding.getByLabel("模型名").fill("claude-next-6");
-  await adding.getByLabel("上下文窗口（token）").fill("400000");
+  await adding.getByLabel("模型 ID").fill("claude-next-6");
   await adding.getByRole("button", { name: "加上并启用" }).click();
-  await expect(row("claude-next-6")).toContainText("400k · 价格未知");
+  await expect(row("claude-next-6")).toContainText("没有价格");
   await expect(row("claude-next-6")).toContainText("手动加的");
+  // How much it reads, in its details, which is people's own from then on.
+  await row("claude-next-6").getByRole("button", { name: "claude-next-6 的详细参数" }).click();
+  const detail = settings.getByTestId("ai-model-detail");
+  await detail.getByTestId("ai-model-context").fill("400000");
+  await detail.getByTestId("ai-model-context").press("Enter");
+  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveText("你改的");
+  await detail.getByRole("button", { name: "Anthropic", exact: true }).click();
+  await expect(row("claude-next-6")).toContainText("400k");
   await row("claude-next-6").getByRole("button", { name: "设为默认模型" }).click();
 
-  // How hard the default reasons, unless the conversation says otherwise.
+  // How hard the default reasons, unless the conversation says otherwise: in its details.
   await row("claude-opus-5-5").getByRole("button", { name: "设为默认模型" }).click();
-  await row("claude-opus-5-5").getByRole("button", { name: /展开/ }).click();
-  const reasoning = row("claude-opus-5-5").getByRole("combobox", { name: "默认推理强度" });
+  await row("claude-opus-5-5").getByRole("button", { name: "Claude Opus 5.5 的详细参数" }).click();
+  const reasoning = detail.getByRole("combobox", { name: "默认推理强度" });
   await expect(reasoning.locator("option:checked")).toHaveText("按适配包（中）");
   await reasoning.selectOption({ label: "高" });
   await expect
     .poll(async () => (await saved(page))?.reasoningFor)
     .toEqual({ "claude-opus-5-5": "high" });
+  await detail.getByRole("button", { name: "Anthropic", exact: true }).click();
   await settings.screenshot(shot("wide-models.png"));
 
   await noAutoTitle(page);
@@ -270,9 +278,7 @@ test("two windows follow each other, also in what is typed in the settings", asy
   await expect(there.getByTestId("ai-key-saved")).toHaveText("••••••••••••CRET");
 
   // The address, typed here, is there in the field there, which was open all along.
-  await there.getByTestId("ai-advanced").locator("summary").click();
   await expect(there.getByLabel("地址")).toHaveValue("https://api.anthropic.com");
-  await here.getByTestId("ai-advanced").locator("summary").click();
   await here.getByLabel("地址").fill("https://gateway.example/anthropic");
   await here.getByLabel("地址").press("Enter");
   await expect(there.getByLabel("地址")).toHaveValue("https://gateway.example/anthropic");
@@ -283,9 +289,9 @@ test("two windows follow each other, also in what is typed in the settings", asy
     .locator('[data-testid="ai-model"][data-model="claude-haiku-5-5"]')
     .getByRole("button", { name: "设为默认模型" })
     .click();
-  await expect(settingsOf(page).getByTestId("ai-default-model")).toHaveText(
-    "★ Claude Haiku 5.5 · Anthropic",
-  );
+  await expect(
+    settingsOf(page).getByTestId("ai-default-model").locator("option:checked"),
+  ).toHaveText("★ Claude Haiku 5.5 · Anthropic");
   await other.close();
 });
 
@@ -401,7 +407,7 @@ test("settings of before come up with their services, models, choices and keys",
   await openSettingsPage(page, "AI 模型");
   const settings = settingsOf(page);
   await expect(settings.getByTestId("ai-service-item")).toHaveCount(1);
-  await expect(settings.getByTestId("ai-default-model")).toHaveText(
+  await expect(settings.getByTestId("ai-default-model").locator("option:checked")).toHaveText(
     "★ claude-test · 我的 Anthropic",
   );
   const service = settings.getByTestId("ai-service");
@@ -415,14 +421,14 @@ test("settings of before come up with their services, models, choices and keys",
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 
-  // Written as version 2 once something changes, with what a page of before reads, and the service
+  // Written as version 3 once something changes, with what a page of before reads, and the service
   // this editor cannot read kept.
   await openSettingsPage(page, "AI 模型");
   await service
     .locator('[data-testid="ai-model"][data-model="claude-opus-5-5"]')
     .getByRole("switch")
     .check();
-  await expect.poll(async () => (await saved(page))?.version).toBe(2);
+  await expect.poll(async () => (await saved(page))?.version).toBe(3);
   const kept = await saved(page);
   expect(kept?.current).toBe("service-old");
   expect(kept?.services.map(({ id }) => id)).toEqual(["service-old", "x"]);

@@ -33,7 +33,10 @@ const settings: AiSettings = {
       baseUrl: "https://api.deepseek.com",
       route: "direct",
       enabled: ["deepseek-v4"],
-      models: [{ id: "mine", contextWindow: 64_000 }],
+      models: [
+        { id: "mine", added: "hand", contextWindow: 64_000, edited: ["contextWindow"] },
+        { id: "deepseek-v4", name: "V4", thinkingLevelMap: { off: null } },
+      ],
     },
   ],
   default: { service: "s-a", model: "deepseek-v4" },
@@ -51,6 +54,8 @@ describe("entries of the AI settings", () => {
       [
         "service:s-b",
         "service:s-a",
+        "model:s-a/mine",
+        "model:s-a/deepseek-v4",
         "order",
         "default",
         "reasoning:claude-opus-5",
@@ -63,11 +68,72 @@ describe("entries of the AI settings", () => {
     );
     // What is worked out from the rest is not an entry.
     expect(entries.get("service:s-b")).not.toHaveProperty("model");
+    // Each model is an entry of its own, not part of its service.
+    expect(entries.get("service:s-a")).not.toHaveProperty("models");
+    expect(entries.get("model:s-a/mine")).toEqual({
+      id: "mine",
+      added: "hand",
+      contextWindow: 64_000,
+      edited: ["contextWindow"],
+    });
     const back = readAiSettings(settingsOfEntries(entries));
     expect(back.kind).toBe("ok");
     if (back.kind !== "ok") return;
-    expect(back.from).toBe(2);
-    expect(writeAiSettings(back.settings)).toEqual(written);
+    expect(back.from).toBe(3);
+    expect(back.settings.services).toEqual(
+      settings.services.map((service) => ({
+        ...service,
+        ...(service.models && {
+          models: service.models.toSorted((a, b) => a.id.localeCompare(b.id)),
+        }),
+      })),
+    );
+  });
+
+  test("two windows that each change a model of the same service keep both", () => {
+    const base = entriesOfSettings(writeAiSettings(settings))!;
+    const one = new Map(base).set("model:s-a/mine", { id: "mine", contextWindow: 32_000 });
+    const two = new Map(base).set("model:s-a/deepseek-v4", { id: "deepseek-v4", name: "改过" });
+    const merged = new Map(base);
+    for (const side of [one, two])
+      for (const [name, value] of entryChanges(base, side).changed) merged.set(name, value);
+    const [, service] = settingsOfEntries(merged).services as { models: { id: string }[] }[];
+    expect(service?.models).toEqual([
+      { id: "deepseek-v4", name: "改过" },
+      { id: "mine", contextWindow: 32_000 },
+    ]);
+  });
+
+  test("models a page of version 2 wrote into a service still come, behind those of their own", () => {
+    const entries = new Map<string, unknown>([
+      [
+        "service:s",
+        {
+          id: "s",
+          kind: "deepseek",
+          name: "D",
+          baseUrl: "https://api.deepseek.com",
+          route: "direct",
+          enabled: ["a", "b"],
+          models: [
+            { id: "a", contextWindow: 1000 },
+            { id: "b", contextWindow: 2000 },
+          ],
+        },
+      ],
+      ["model:s/a", { id: "a", contextWindow: 5000 }],
+      ["order", ["s"]],
+    ]);
+    const saved = settingsOfEntries(entries);
+    expect(saved.version).toBe(3);
+    expect((saved.services as { models: unknown[] }[])[0]?.models).toEqual([
+      { id: "a", contextWindow: 5000 },
+      { id: "b", contextWindow: 2000 },
+    ]);
+    // And version 2's settings go as they were, models in the service.
+    const two = entriesOfSettings({ ...writeAiSettings(settings), version: 2 })!;
+    expect(two.has("model:s-a/mine")).toBe(false);
+    expect(two.get("service:s-a")).toHaveProperty("models");
   });
 
   test("services in the order given, then those added elsewhere", () => {
@@ -82,13 +148,13 @@ describe("entries of the AI settings", () => {
     ]);
   });
 
-  test("what is not settings of version 2 gives nothing, rather than everything gone", () => {
+  test("what is not settings of version 2 or 3 gives nothing, rather than everything gone", () => {
     for (const not of [
       undefined,
       null,
       [],
       { services: {} },
-      { version: 3, services: [] },
+      { version: 4, services: [] },
       { services: [] },
     ])
       expect(entriesOfSettings(not), JSON.stringify(not)).toBeUndefined();

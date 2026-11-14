@@ -165,6 +165,8 @@ function SettingsDialog() {
   const { settingsNav } = workbench;
   const { t } = useTranslation();
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
+  // The names of a service and a model in the crumbs follow them as they are renamed.
+  useSyncExternalStore(workbench.ai.subscribe, workbench.ai.getSnapshot);
   const groups = useGroups();
   const narrow = useNarrow();
   const [query, setQuery] = useState("");
@@ -250,8 +252,12 @@ function SettingsDialog() {
       );
   const title = t(`settings.groups.${group}`);
   const service =
-    group === "models" && place.depth === 2 && place.service !== undefined
+    group === "models" && place.depth >= 2 && place.service !== undefined
       ? workbench.ai.getSnapshot().services.find(({ id }) => id === place.service)?.name
+      : undefined;
+  const model =
+    service !== undefined && place.depth === 3 && place.model !== undefined
+      ? (workbench.ai.modelOf(place.service ?? "", place.model)?.name ?? place.model)
       : undefined;
   const showList = !narrow || (depth === 0 && found === undefined);
   const showPage = found === undefined && (!narrow || depth > 0);
@@ -343,9 +349,11 @@ function SettingsDialog() {
                   onClick={back}
                 >
                   <ChevronLeft size={16} aria-hidden />
-                  {depth === 2 ? title : t("settings.title")}
+                  {depth === 3 ? (service ?? title) : depth === 2 ? title : t("settings.title")}
                 </button>
-                <h2 className={styles.title}>{depth === 2 ? (service ?? title) : title}</h2>
+                <h2 className={styles.title}>
+                  {depth === 3 ? (model ?? title) : depth === 2 ? (service ?? title) : title}
+                </h2>
               </>
             ) : (
               <>
@@ -353,7 +361,7 @@ function SettingsDialog() {
                 {!narrow && (
                   <span className={styles.crumb} data-testid="settings-crumb">
                     {found === undefined
-                      ? `› ${title}${service === undefined ? "" : ` › ${service}`}`
+                      ? `› ${title}${service === undefined ? "" : ` › ${service}`}${model === undefined ? "" : ` › ${model}`}`
                       : `› ${t("settings.searchResults")}`}
                   </span>
                 )}

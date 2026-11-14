@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatEntry, ToolEntry } from "./entries.ts";
+import { supportedLevels } from "./model-discovery.ts";
 import {
+  applyModelSettings,
   knownModels,
+  piModelOf,
   runTask,
   testModel,
   usageOf,
@@ -356,7 +359,14 @@ describe("a service through the relay of the platform", () => {
       reasoning: true,
       image: true,
     });
-    expect(opus?.levels).toContain("high");
+    expect(opus?.maxTokens).toEqual(expect.any(Number));
+    expect(opus?.cost).toEqual({
+      input: expect.any(Number),
+      output: expect.any(Number),
+      cacheRead: expect.any(Number),
+      cacheWrite: expect.any(Number),
+    });
+    expect(supportedLevels(opus?.reasoning, opus?.thinkingLevelMap)).toContain("high");
   });
 });
 
@@ -396,5 +406,154 @@ describe("what an answer took", () => {
     });
     const billed = { ...usage, cost: { ...usage.cost, total: 0.01, totalFromProvider: true } };
     expect(usageOf(billed, model, "unknown").cost).toBe(0.01);
+  });
+});
+
+describe("what people set of a model, as pi gets it", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("goes onto pi's model field by field, each as pi has it", async () => {
+    const base = await piModelOf({
+      service: "anthropic",
+      protocol: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-opus-5-5",
+      catalog: "anthropic",
+    });
+    expect(base.thinkingLevelMap).toBeDefined();
+    const model = applyModelSettings(base, {
+      name: "Opus 自己的名字",
+      reasoning: true,
+      image: false,
+      contextWindow: 300_000,
+      maxTokens: 12_345,
+      imageMaxBytes: 2_000_000,
+      cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
+      headers: { "x-team": "video" },
+      compat: { forceAdaptiveThinking: true, supportsDeveloperRole: false },
+      thinkingLevelMap: { off: null, low: "lo", xhigh: "xhigh", max: null },
+    });
+    expect(model.name).toBe("Opus 自己的名字");
+    expect(model.reasoning).toBe(true);
+    expect(model.input).toEqual(["text"]);
+    expect(model.contextWindow).toBe(300_000);
+    expect(model.maxTokens).toBe(12_345);
+    expect(model.inputLimits?.images?.resize?.maxBytes).toBe(2_000_000);
+    expect(model.cost).toEqual({ input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 });
+    expect(model.headers).toMatchObject({ "x-team": "video" });
+    expect(model.compat).toMatchObject({
+      forceAdaptiveThinking: true,
+      supportsDeveloperRole: false,
+    });
+    // People's map is the whole of it: nothing of pi's stays.
+    expect(model.thinkingLevelMap).toEqual({ off: null, low: "lo", xhigh: "xhigh", max: null });
+    // Pictures back on, and nothing set is pi's as it was.
+    expect(applyModelSettings(base, { image: true }).input).toEqual(["text", "image"]);
+    expect(applyModelSettings(base, undefined)).toBe(base);
+    expect(applyModelSettings(base, {})).toEqual(base);
+  });
+
+  it("is at its own address, by its own protocol, with its size for a model pi does not know", async () => {
+    const model = await piModelOf({
+      service: "openai-compatible",
+      protocol: "anthropic-messages",
+      baseUrl: "https://gateway.example/claude",
+      model: "team-model",
+      settings: {
+        contextWindow: 64_000,
+        cost: { input: 1, output: 3, cacheRead: 0, cacheWrite: 0 },
+      },
+    });
+    expect(model).toMatchObject({
+      id: "team-model",
+      api: "anthropic-messages",
+      baseUrl: "https://gateway.example/claude",
+      contextWindow: 64_000,
+      cost: { input: 1, output: 3, cacheRead: 0, cacheWrite: 0 },
+    });
+  });
+
+  it("sends the step of reasoning as its map says, with people's headers, also through the relay", async () => {
+    const sent: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({
+        url: input instanceof Request ? input.url : String(input),
+        headers: new Headers(init?.headers ?? {}),
+        body: JSON.parse(String(init?.body ?? "{}")),
+      });
+      return new Response(
+        `data: ${JSON.stringify({
+          id: "c",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "m",
+          choices: [{ index: 0, delta: { content: "好" }, finish_reason: "stop" }],
+        })}\n\ndata: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    const settings = {
+      reasoning: true,
+      thinkingLevelMap: { high: "max-effort" },
+      headers: { "x-gateway-team": "video" },
+      compat: { thinkingFormat: "openai" as never },
+    };
+    const go = (relay?: Endpoint["relay"]) =>
+      runTask({
+        endpoint: {
+          service: "openai-compatible",
+          protocol: "openai-completions",
+          baseUrl: "https://gateway.example/v1",
+          model: "team-model",
+          settings,
+          ...(relay && { relay }),
+        },
+        key: async () => "sk-gateway-0123456789",
+        system: "test",
+        tools: [],
+        history: [],
+        prompt: "你好",
+        call: { reasoning: "high" },
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+    expect(await go()).toEqual({ end: "done" });
+    expect(sent[0]?.url).toBe("https://gateway.example/v1/chat/completions");
+    expect(sent[0]?.headers.get("x-gateway-team")).toBe("video");
+    expect(sent[0]?.body.reasoning_effort).toBe("max-effort");
+    expect(
+      await go({
+        baseUrl: "https://platform.example/api/llm-relay/https/gateway.example/v1",
+        headers: { "x-animaquill": "1" },
+        passPrefix: "aq-pass-",
+      }),
+    ).toEqual({ end: "done" });
+    expect(sent[1]?.headers.get("aq-pass-x-gateway-team")).toBe("video");
+    // A pack's longest answer is no longer than the model's.
+    expect(
+      await runTask({
+        endpoint: {
+          service: "openai-compatible",
+          protocol: "openai-completions",
+          baseUrl: "https://gateway.example/v1",
+          model: "team-model",
+          settings: { maxTokens: 777 },
+        },
+        key: async () => "sk-gateway-0123456789",
+        system: "test",
+        tools: [],
+        history: [],
+        prompt: "你好",
+        call: { maxOutputTokens: 32_000 },
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      }),
+    ).toEqual({ end: "done" });
+    const body = sent[2]?.body ?? {};
+    expect(body.max_completion_tokens ?? body.max_tokens).toBe(777);
+    expect(sent[1]?.headers.has("x-gateway-team")).toBe(false);
+    expect(sent[1]?.headers.get("x-animaquill")).toBe("1");
   });
 });

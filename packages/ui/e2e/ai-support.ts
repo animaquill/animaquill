@@ -132,9 +132,9 @@ export async function noAutoTitle(page: Page) {
 /** Turns on one more model of the service open, named by hand, leaving the others as they are. */
 export async function addModel(page: Page, model: string) {
   const service = settingsOf(page).getByTestId("ai-service");
-  await service.getByRole("button", { name: "手动加一个模型名" }).click();
+  await service.getByRole("button", { name: "＋ 手动加" }).click();
   const form = service.getByTestId("ai-add-model");
-  await form.getByLabel("模型名").fill(model);
+  await form.getByLabel("模型 ID").fill(model);
   await form.getByRole("button", { name: "加上并启用" }).click();
   await expect(
     service.locator(`[data-testid="ai-model"][data-model="${model}"]`).getByRole("switch"),
@@ -146,9 +146,9 @@ export async function onlyModel(page: Page, model: string) {
   const service = settingsOf(page).getByTestId("ai-service");
   const row = service.locator(`[data-testid="ai-model"][data-model="${model}"]`);
   if ((await row.count()) === 0) {
-    await service.getByRole("button", { name: "手动加一个模型名" }).click();
+    await service.getByRole("button", { name: "＋ 手动加" }).click();
     const form = service.getByTestId("ai-add-model");
-    await form.getByLabel("模型名").fill(model);
+    await form.getByLabel("模型 ID").fill(model);
     await form.getByRole("button", { name: "加上并启用" }).click();
   }
   const star = row.getByRole("button", { name: "设为默认模型" });

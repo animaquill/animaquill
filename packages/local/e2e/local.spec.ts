@@ -322,13 +322,14 @@ test.describe("the editor on this computer", () => {
       await expect(service.getByTestId("ai-key-saved")).toContainText("ocal");
       await expect(service.getByTestId("ai-test")).toContainText("连上了");
       // Nothing goes through a platform here: that way is there, but cannot be chosen.
-      const advanced = service.getByTestId("ai-advanced");
-      if ((await advanced.getAttribute("open")) === null) await advanced.locator("summary").click();
-      const route = service.getByLabel("连接方式");
-      await expect(route).toHaveValue("direct");
-      const relay = route.locator('option[value="relay"]');
-      await expect(relay).toHaveAttribute("disabled", "");
-      await expect(relay).toHaveText("通过平台转发（这里没有）");
+      const route = service.getByRole("group", { name: "连接方式" });
+      await expect(route.getByRole("button", { name: "浏览器直连" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      const relay = route.getByRole("button", { name: "经平台转发" });
+      await expect(relay).toBeDisabled();
+      await expect(relay).toHaveAttribute("title", "通过平台转发（这里没有）");
       await page.screenshot({ path: test.info().outputPath("local.png") });
       await settings.getByRole("button", { name: "存储和数据", exact: true }).click();
       const keys = settings.getByTestId("ai-keys-where");

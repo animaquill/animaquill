@@ -209,11 +209,16 @@ function AddForm(props: {
       : undefined;
 
   const add = async (result: NonNullable<typeof tried>) => {
-    const id = ai.add(kind.id, name, { baseUrl, route, enabled: result.recommended });
+    const id = ai.add(kind.id, name, {
+      baseUrl,
+      route,
+      enabled: result.recommended,
+      ...(result.listed && { listed: result.listed }),
+    });
     if (id === undefined) return;
     const key = keyNow();
     if (key) await ai.setKey(id, key);
-    ai.keepTest(id, result.test, result.listed);
+    ai.keepTest(id, result.test);
     props.onAdded(id);
   };
 

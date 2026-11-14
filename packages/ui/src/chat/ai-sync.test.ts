@@ -158,6 +158,8 @@ async function windowOf(
   account: ReturnType<typeof accountOf>,
   /** "unanswered": people never answer. */
   answer: AiSyncAnswer | "unanswered" = { on: true, put: true },
+  /** The locks of the browser, which its windows share; without them, each window has its own. */
+  locks?: LockManager,
 ) {
   const ask = vi.fn(async (_question: AiSyncQuestion) =>
     answer === "unanswered" ? undefined : answer,
@@ -168,7 +170,7 @@ async function windowOf(
     accountKeys: browser.accountKeys,
     access: platform.access(() => account.id ?? "nobody"),
     account: account.access,
-    locks: () => undefined,
+    locks: () => locks,
     ask,
   });
   opened.push(sync);
@@ -579,5 +581,47 @@ describe("AI settings going with the account", () => {
     await settle();
     expect(second.sync.scope).toBe("u1");
     expect(names(second.ai)).toEqual(["设备上的"]);
+  });
+});
+
+describe("the settings of this device, while nobody is signed in", () => {
+  test("two windows that change two models of a service at once both keep theirs", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const nobody = accountOf(undefined);
+    // The browser's locks, which all its windows share, one after the other by name.
+    const chains = new Map<string, Promise<unknown>>();
+    const locks = {
+      request: (name: string, work: () => Promise<unknown>) => {
+        const next = (chains.get(name) ?? Promise.resolve()).then(work, work);
+        chains.set(
+          name,
+          next.catch(() => {}),
+        );
+        return next;
+      },
+    } as unknown as LockManager;
+    const a = await windowOf(browser, platform, nobody, undefined, locks);
+    const b = await windowOf(browser, platform, nobody, undefined, locks);
+    const id = a.ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" })!;
+    a.ai.addModels(id, [
+      { id: "x", added: "hand" },
+      { id: "y", added: "hand" },
+    ]);
+    await settle();
+    expect(b.ai.modelsFor(id).map((model) => model.id)).toEqual(["x", "y"]);
+    // At once: neither has heard of the other's change as it makes its own.
+    a.ai.editModel(id, "x", "maxTokens", 1000);
+    b.ai.editModel(id, "y", "contextWindow", 64_000);
+    await settle();
+    for (const window of [a, b]) {
+      expect(window.ai.modelOf(id, "x")?.values.maxTokens).toBe(1000);
+      expect(window.ai.modelOf(id, "y")?.values.contextWindow).toBe(64_000);
+    }
+    const saved = readAiSettings(browser.values.get("ai"));
+    expect(saved.kind === "ok" && saved.settings.services[0]?.models).toEqual([
+      { id: "x", added: "hand", maxTokens: 1000, edited: ["maxTokens"] },
+      { id: "y", added: "hand", contextWindow: 64_000, edited: ["contextWindow"] },
+    ]);
   });
 });

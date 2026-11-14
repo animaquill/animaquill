@@ -102,7 +102,7 @@ afterEach(() => {
 });
 
 describe("AI settings of before", () => {
-  it("come up as version 2 with every service, key, model and pack choice", async () => {
+  it("come up as version 3 with every service, key, model and pack choice", async () => {
     const { values, keys, open } = browser({
       services: [v1Service("a", "anthropic", "claude-opus-5-5"), v1Service("b", "deepseek", "")],
       current: "a",
@@ -126,7 +126,7 @@ describe("AI settings of before", () => {
     ai.setEnabled("a", "claude-sonnet-5-5", true);
     const saved = values.get("ai") as Record<string, unknown>;
     expect(saved).toMatchObject({
-      version: 2,
+      version: 3,
       current: "a",
       maxToolCalls: 80,
       packFor: { "claude-opus-5-5": "lin/steady" },
@@ -178,7 +178,7 @@ describe("AI settings of before", () => {
 
 describe("AI settings this editor cannot take", () => {
   it("are left as they are, until people start again", async () => {
-    const newer = { version: 3, services: [{ id: "a", kind: "anthropic", future: true }] };
+    const newer = { version: 4, services: [{ id: "a", kind: "anthropic", future: true }] };
     const { values, open } = browser(newer);
     const ai = await open();
     expect(ai.getSnapshot().held).toBe("newer");
@@ -204,7 +204,7 @@ describe("AI settings this editor cannot take", () => {
   });
 
   it("are taken once another window writes ones it can", async () => {
-    const { open } = browser({ version: 3, services: [] });
+    const { open } = browser({ version: 4, services: [] });
     const held = await open();
     expect(held.getSnapshot().held).toBe("newer");
     const other = await open();
@@ -239,33 +239,37 @@ describe("models of services", () => {
     expect(ai.setAllEnabled(d, ["deepseek-flash"], false)).toBe("last");
   });
 
-  it("list what pi knows, what the service said, what people named and what is on", async () => {
+  it("list what pi knows, what people added, and what is on: those on first, in their order", async () => {
     const { open } = browser();
     const ai = await open();
-    const a = ai.add("anthropic", "Anthropic", { enabled: ["claude-gone-1"] }) as string;
-    ai.addModel(a, { id: "claude-mine", contextWindow: 64_000 });
     await ai.loadKnown("anthropic");
-    vi.stubGlobal("fetch", async () =>
-      Response.json({
-        data: [{ id: "claude-opus-5-5" }, { id: "claude-next-6", display_name: "Claude Next 6" }],
-      }),
-    );
-    await ai.fetchModels(a);
-    const rows = new Map(ai.modelsFor(a).map((row) => [row.id, row]));
-    expect(rows.get("claude-opus-5-5")).toMatchObject({
-      fresh: false,
-      enabled: false,
+    const a = ai.add("anthropic", "Anthropic", { enabled: ["claude-gone-1"] }) as string;
+    ai.addModels(a, [{ id: "claude-mine", added: "hand" }]);
+    ai.setEnabled(a, "claude-opus-5-5", true);
+    const rows = ai.modelsFor(a);
+    expect(rows.slice(0, 3).map((row) => row.id)).toEqual([
+      "claude-gone-1",
+      "claude-mine",
+      "claude-opus-5-5",
+    ]);
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get("claude-opus-5-5")).toMatchObject({
+      inCatalog: true,
+      enabled: true,
       reasoning: true,
     });
-    expect(rows.get("claude-opus-5-5")?.cost).toBeDefined();
-    expect(rows.get("claude-next-6")).toMatchObject({ name: "Claude Next 6", fresh: true });
-    expect(rows.get("claude-mine")).toMatchObject({
+    expect(byId.get("claude-opus-5-5")?.values.cost).toBeDefined();
+    expect(byId.get("claude-opus-5-5")?.levels).toContain("high");
+    expect(byId.get("claude-mine")).toMatchObject({
       custom: true,
+      inCatalog: false,
       enabled: true,
-      contextWindow: 64_000,
     });
-    expect(rows.get("claude-gone-1")).toMatchObject({ enabled: true, fresh: false });
+    expect(byId.get("claude-sonnet-5-5")?.enabled).toBe(false);
 
+    // One of pi's goes off and stays; one people added goes.
+    expect(ai.removeModel(a, "claude-opus-5-5")).toBeUndefined();
+    expect(ai.modelOf(a, "claude-opus-5-5")?.enabled).toBe(false);
     ai.removeModel(a, "claude-mine");
     expect(ai.modelOf(a, "claude-mine")).toBeUndefined();
     expect(ai.serviceOf(a)?.enabled).toEqual(["claude-gone-1"]);
@@ -297,7 +301,7 @@ describe("two windows", () => {
     expect(one.getSnapshot().reasoningFor).toEqual({ "claude-opus-5-5": "low" });
   });
 
-  it("keep version 2 when a page of before writes version 1 over it, with what that page changed", async () => {
+  it("keep version 3 when a page of before writes version 1 over it, with what that page changed", async () => {
     const { values, open } = browser();
     const ai = await open();
     const a = ai.add("anthropic", "Anthropic", {
@@ -336,7 +340,7 @@ describe("two windows", () => {
       default: { service: a, model: "claude-opus-5-5" },
     });
     // And version 2 is back where the page of before reads, which it takes as it is.
-    expect(values.get("ai")).toMatchObject({ version: 2, maxToolCalls: 9, current: a });
+    expect(values.get("ai")).toMatchObject({ version: 3, maxToolCalls: 9, current: a });
   });
 });
 
@@ -370,7 +374,7 @@ describe("a page of before, while two of version 2 are open", () => {
       name: "公司的 Anthropic",
       enabled: ["claude-opus-5-5", "claude-sonnet-5-5"],
     });
-    expect(values.get("ai")).toMatchObject({ version: 2 });
+    expect(values.get("ai")).toMatchObject({ version: 3 });
   });
 });
 
@@ -470,5 +474,218 @@ describe("tests of a connection", () => {
       state: "held",
       hold: "badUrl",
     });
+  });
+});
+
+describe("the details of models", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** models.dev as the test has it, with how often it was asked. */
+  const MODELS_DEV = {
+    alibaba: {
+      name: "Alibaba",
+      api: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      models: {
+        "qwen3-max": {
+          id: "qwen3-max",
+          name: "Qwen3 Max",
+          reasoning: true,
+          modalities: { input: ["text"], output: ["text"] },
+          limit: { context: 262144, output: 32768 },
+          cost: { input: 1.2, output: 6, cache_read: 0.24 },
+        },
+      },
+    },
+    a: { models: { "shared-x": { id: "shared-x", cost: { input: 1, output: 2 } } } },
+    b: { models: { "shared-x": { id: "shared-x", cost: { input: 3, output: 4 } } } },
+  };
+
+  async function withCatalog(
+    options: { readonly platform?: boolean; readonly fails?: boolean } = {},
+  ) {
+    const asked: string[] = [];
+    const fetch = (async (input: RequestInfo | URL) => {
+      asked.push(String(input));
+      if (options.fails) throw new TypeError("Failed to fetch");
+      return Response.json(MODELS_DEV);
+    }) as typeof globalThis.fetch;
+    const cache = new Map<string, unknown>();
+    const keys = memoryKeys();
+    const settingsStore: SettingsStore = {
+      load: async () => undefined,
+      save: async () => {},
+      listen: () => () => {},
+    };
+    const platformAsked: number[] = [];
+    const ai = new AiSettingsStore(
+      settingsStore,
+      keys,
+      { saveFailed: vi.fn(), keyFailed: vi.fn() },
+      undefined,
+      {
+        fetch,
+        cache: {
+          read: async (key) => structuredClone(cache.get(key)),
+          write: async (key, value) => {
+            cache.set(key, structuredClone(value));
+          },
+        },
+        ...(options.platform && {
+          platform: async () => {
+            platformAsked.push(1);
+            return { fetchedAt: Date.now(), entries: [] };
+          },
+        }),
+      },
+    );
+    await ai.load();
+    return { ai, asked, cache, platformAsked };
+  }
+
+  it("fill a model added by hand from the catalogs, only what is empty, and undo it", async () => {
+    const { ai, asked } = await withCatalog();
+    const id = ai.add("dashscope", "千问", { enabled: [] }) as string;
+    ai.addModels(id, [{ id: "qwen3-max", added: "hand" }]);
+    await vi.waitFor(() => expect(ai.modelOf(id, "qwen3-max")?.config?.filled).toBeDefined());
+    const row = ai.modelOf(id, "qwen3-max");
+    expect(row?.values).toMatchObject({
+      name: "Qwen3 Max",
+      reasoning: true,
+      contextWindow: 262144,
+      maxTokens: 32768,
+      cost: { input: 1.2, output: 6, cacheRead: 0.24, cacheWrite: 0 },
+    });
+    expect(row?.config?.filled).toMatchObject({
+      from: ["models.dev"],
+      by: "base-url",
+      matched: "Alibaba",
+    });
+    // Nothing of anyone went with the request for the catalog.
+    expect(asked).toEqual(["https://models.dev/api.json"]);
+
+    // People's cell stays theirs through filling again, and undoing it.
+    ai.editModel(id, "qwen3-max", "contextWindow", 100_000);
+    ai.undoFill(id, "qwen3-max");
+    expect(ai.modelOf(id, "qwen3-max")?.values).toEqual({ contextWindow: 100_000 });
+    await ai.fillModels(id, ["qwen3-max"], true);
+    expect(ai.modelOf(id, "qwen3-max")?.values).toMatchObject({
+      contextWindow: 100_000,
+      maxTokens: 32768,
+    });
+    await ai.revertField(id, "qwen3-max", "contextWindow");
+    expect(ai.modelOf(id, "qwen3-max")?.values.contextWindow).toBe(262144);
+    expect(ai.modelOf(id, "qwen3-max")?.config?.edited).toBeUndefined();
+  });
+
+  it("take no price where the catalog's providers do not agree, and say why", async () => {
+    const { ai } = await withCatalog();
+    const id = ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
+    ai.addModels(id, [{ id: "shared-x", added: "hand" }]);
+    await vi.waitFor(() => expect(ai.modelOf(id, "shared-x")?.config?.filled).toBeDefined());
+    expect(ai.modelOf(id, "shared-x")?.values.cost).toBeUndefined();
+    expect(ai.modelOf(id, "shared-x")?.config?.filled?.priceDoubt).toBe("conflict");
+  });
+
+  it("keep the catalog an hour on the device, and ask the platform where models.dev cannot be read", async () => {
+    const first = await withCatalog();
+    await first.ai.loadCatalog();
+    expect(first.ai.getSnapshot().catalog).toMatchObject({ state: "ok", from: "models.dev" });
+    const failing = await withCatalog({ fails: true, platform: true });
+    await failing.ai.loadCatalog();
+    expect(failing.platformAsked).toHaveLength(1);
+    expect(failing.ai.getSnapshot().catalog).toMatchObject({ state: "ok", from: "platform" });
+    const nowhere = await withCatalog({ fails: true });
+    expect(await nowhere.ai.loadCatalog()).toBeUndefined();
+    expect(nowhere.ai.getSnapshot().catalog).toEqual({ state: "failed" });
+  });
+
+  it("follow a model under another id: the default, the models on, packs and reasoning", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const id = ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
+    ai.addModels(id, [{ id: "old-name", added: "hand" }]);
+    ai.setDefault({ service: id, model: "old-name" });
+    ai.choosePack(["old-name"], "lin/steady");
+    ai.setReasoning("old-name", "high");
+    ai.editModel(id, "old-name", "maxTokens", 1000);
+    expect(ai.renameModel(id, "old-name", "new-name")).toBeUndefined();
+    const now = ai.getSnapshot();
+    expect(now.default).toEqual({ service: id, model: "new-name" });
+    expect(ai.serviceOf(id)?.enabled).toEqual(["new-name"]);
+    expect(now.packFor).toEqual({ "new-name": "lin/steady" });
+    expect(now.reasoningFor).toEqual({ "new-name": "high" });
+    expect(ai.modelOf(id, "new-name")?.values.maxTokens).toBe(1000);
+    expect(ai.modelOf(id, "old-name")).toBeUndefined();
+    ai.addModels(id, [{ id: "other", added: "hand" }]);
+    expect(ai.renameModel(id, "other", "new-name")).toBe("taken");
+  });
+
+  it("reach a model at its own address, by its own protocol, with the headers of both", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const id = ai.add("openai-compatible", "网关", {
+      baseUrl: "https://gw.example/v1",
+      api: "openai-responses",
+      headers: { "x-team": "video" },
+    }) as string;
+    ai.addModels(id, [{ id: "m", added: "hand" }]);
+    expect(ai.endpointOf(ai.serviceOf(id)!, "m")).toMatchObject({
+      protocol: "openai-responses",
+      baseUrl: "https://gw.example/v1",
+      settings: { headers: { "x-team": "video" } },
+    });
+    ai.setModelOwn(id, "m", "baseUrl", "https://gw.example/claude");
+    ai.setModelOwn(id, "m", "api", "anthropic-messages");
+    ai.setModelOwn(id, "m", "headers", { "x-route": "a" });
+    ai.editModel(id, "m", "thinking.low", null);
+    expect(ai.endpointOf(ai.serviceOf(id)!, "m")).toMatchObject({
+      protocol: "anthropic-messages",
+      baseUrl: "https://gw.example/claude",
+      settings: {
+        headers: { "x-team": "video", "x-route": "a" },
+        thinkingLevelMap: { low: null },
+      },
+    });
+  });
+
+  it("turn a whole service off and on again with the models it had on", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const a = ai.add("anthropic", "A", {
+      enabled: ["claude-opus-5-5", "claude-haiku-5-5"],
+    }) as string;
+    expect(ai.setServiceOn(a, false)).toBe("last");
+    const b = ai.add("deepseek", "D", { enabled: ["deepseek-flash"] }) as string;
+    expect(ai.setServiceOn(a, false)).toBeUndefined();
+    expect(ai.serviceOf(a)?.enabled).toEqual([]);
+    ai.setServiceOn(a, true);
+    expect(ai.serviceOf(a)?.enabled).toEqual(["claude-opus-5-5", "claude-haiku-5-5"]);
+    expect(ai.serviceOf(a)?.paused).toBeUndefined();
+    ai.moveModel(a, "claude-haiku-5-5", 0);
+    expect(ai.serviceOf(a)?.enabled).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
+    ai.moveService(b, 0);
+    expect(ai.getSnapshot().services.map((service) => service.id)).toEqual([b, a]);
+  });
+
+  it("forget what a service listed once where it is, or how it is talked to, changed", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const id = ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
+    const headersSent: (Headers | undefined)[] = [];
+    vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+      headersSent.push(new Headers(init?.headers));
+      return Response.json({ data: [{ id: "a" }, { id: "text-embedding-v4" }] });
+    });
+    ai.update(id, { headers: { "x-team": "video" } });
+    await ai.fetchModels(id);
+    expect(headersSent[0]?.get("x-team")).toBe("video");
+    expect(ai.getSnapshot().listings.get(id)).toMatchObject({
+      state: "ok",
+      models: [{ id: "a" }, { id: "text-embedding-v4", chat: false }],
+    });
+    ai.update(id, { api: "anthropic-messages" });
+    expect(ai.getSnapshot().listings.has(id)).toBe(false);
   });
 });

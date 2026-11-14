@@ -1,6 +1,7 @@
 import type { AiRelay } from "./relay.ts";
 import type { CloudConnection } from "./sync-protocol.ts";
 import type { AiEntry, AiSyncKey } from "./ai-sync-rules.ts";
+import type { ModelCatalog } from "./model-catalog.ts";
 
 export {
   ACCOUNT_KEYS_DATABASE,
@@ -24,7 +25,28 @@ export {
   type AiEntry,
   type AiSyncKey,
 } from "./ai-sync-rules.ts";
-export { RELAY_REFUSALS, relayRefusalIn, type AiRelay, type RelayRefusal } from "./relay.ts";
+export {
+  RELAY_PASS_PREFIX,
+  RELAY_REFUSALS,
+  relayPassHeaders,
+  relayRefusalIn,
+  type AiRelay,
+  type RelayRefusal,
+} from "./relay.ts";
+export {
+  MODEL_CATALOG_MAX_AGE_MS,
+  MODELS_DEV_URL,
+  flattenModelsDev,
+  readModelCatalog,
+  recommendFromCatalog,
+  type CatalogCost,
+  type CatalogEntry,
+  type CatalogMatch,
+  type CatalogPreset,
+  type CatalogPrice,
+  type CatalogRecommendation,
+  type ModelCatalog,
+} from "./model-catalog.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
 export {
   groupNameKey,
@@ -737,6 +759,11 @@ export interface CloudAccess {
    * devices, and the preferences that go with the account, see `CloudSwitchesAccess`.
    */
   readonly switches?: CloudSwitchesAccess;
+  /**
+   * The open catalog of models (models.dev) as the platform has it, for a browser that cannot read
+   * it itself: rejects where the platform cannot say. Asks nothing of anyone. See `ModelCatalog`.
+   */
+  readonly modelCatalog?: () => Promise<ModelCatalog>;
 }
 
 /**

@@ -6,19 +6,126 @@
  *
  * Version 1 (until 0.3.55) had one model per service and a service "in use" (`current`). Version 2
  * turns on any number of models per service and has one default model. It still writes `current`
- * and each service's `model`, so that a page of before that is still open keeps working.
+ * and each service's `model`, so that a page of before that is still open keeps working. Version 3
+ * (0.3.64) has everything of each model people set up or a catalog filled in (`ModelConfig`), and
+ * for servers of one's own the protocol and headers; version 2 had only a size for models people
+ * named themselves, which version 3 reads as theirs (docs/design/settings-and-properties.md of
+ * AnimaQuill Cloud, 6.5). Pages of version 2 leave settings of version 3 alone (`newer`).
  */
 import { COMPARISON_PACK_ID, REASONING } from "@animaquill/tools";
-import type { ReasoningLevel } from "./model-discovery.ts";
+import type { ModelCost, ReasoningLevel, ThinkingLevelMap } from "./model-discovery.ts";
 import { kindOf, type Route } from "./services.ts";
 
-export const AI_SETTINGS_VERSION = 2;
+export const AI_SETTINGS_VERSION = 3;
 
-/** A model people named themselves, which neither pi nor the service told of. */
-export interface CustomModel {
-  readonly id: string;
-  /** How many tokens it reads at once, where people said; 128k is assumed otherwise. */
+/** The protocols people can choose for a server of their own, and for a model of any service. */
+export const MODEL_APIS = [
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+  "google-generative-ai",
+] as const;
+export type ModelApi = (typeof MODEL_APIS)[number];
+
+/**
+ * How a model differs from its protocol, as pi takes it (`Model.compat`): only what the settings
+ * have a switch for. DeepSeek's way of thinking is two keys at once (`thinkingFormat` and
+ * `requiresReasoningContentOnAssistantMessages`), one switch.
+ */
+export interface ModelCompat {
+  readonly thinkingFormat?: "deepseek";
+  readonly requiresReasoningContentOnAssistantMessages?: boolean;
+  readonly supportsDeveloperRole?: boolean;
+  readonly forceAdaptiveThinking?: boolean;
+}
+
+/**
+ * What can be set for a model. Anything left out is as pi knows it of the model, or what is safe
+ * for most where pi does not know it.
+ */
+export interface ModelValues {
+  /** What people see it as. */
+  readonly name?: string;
+  /** It thinks before it answers. */
+  readonly reasoning?: boolean;
+  /** It takes pictures. */
+  readonly image?: boolean;
+  /** How many tokens it reads at once. */
   readonly contextWindow?: number;
+  /** How many tokens one answer has at most. */
+  readonly maxTokens?: number;
+  /** The largest picture it takes, in bytes: larger ones are made smaller first. */
+  readonly imageMaxBytes?: number;
+  /** Dollars per million tokens: all four, or none. */
+  readonly cost?: ModelCost;
+  /** Where this model is, instead of where its service is. */
+  readonly baseUrl?: string;
+  /** How this model is talked to, instead of how its service is. */
+  readonly api?: ModelApi;
+  /** Headers of this model, on top of those of its service. */
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly compat?: ModelCompat;
+  /** How each step of reasoning is sent, and which it does not take, see `ThinkingLevelMap`. */
+  readonly thinkingLevelMap?: ThinkingLevelMap;
+}
+
+/**
+ * A cell of a model's settings as people see it, which a catalog can fill and people can change:
+ * each step of reasoning is one (`thinking.<step>`), the four prices are one.
+ */
+export type ModelField =
+  | "name"
+  | "reasoning"
+  | "image"
+  | "contextWindow"
+  | "maxTokens"
+  | "cost"
+  | `thinking.${ReasoningLevel}`;
+
+export const MODEL_FIELDS: readonly ModelField[] = [
+  "name",
+  "reasoning",
+  "image",
+  "contextWindow",
+  "maxTokens",
+  "cost",
+  ...REASONING.map((level) => `thinking.${level}` as const),
+];
+
+/** Where a catalog's values came from: the service's list of models, pi, or models.dev. */
+export type CatalogSource = "service" | "pi" | "models.dev";
+export const CATALOG_SOURCES: readonly CatalogSource[] = ["service", "pi", "models.dev"];
+
+/** Why the price of models.dev was not taken, see `CatalogPrice` of the host. */
+export type PriceDoubt = "no-exact-match" | "no-valid-price" | "insufficient-support" | "conflict";
+
+/**
+ * What a catalog filled in the last time: which cells and from where, and what the cells were
+ * before, to undo it (`snapshot`: a cell that is not in it was empty).
+ */
+export interface CatalogFill {
+  /** The catalogs that gave something, most trusted first. */
+  readonly from: readonly CatalogSource[];
+  /** How models.dev told which of its entries this model is. */
+  readonly by?: "provider" | "base-url" | "consensus";
+  /** The provider of models.dev it matched. */
+  readonly matched?: string;
+  /** Why models.dev's price was not taken, where it was not. */
+  readonly priceDoubt?: PriceDoubt;
+  readonly fields: readonly ModelField[];
+  readonly snapshot: Readonly<Partial<Record<ModelField, unknown>>>;
+}
+
+/** A model of a service, as people set it up, see `ModelValues`. */
+export interface ModelConfig extends ModelValues {
+  /** Its name at the service: what requests ask for. */
+  readonly id: string;
+  /** How it came: named by hand, or picked from what the service listed. */
+  readonly added?: "hand" | "service";
+  /** What a catalog filled in last. */
+  readonly filled?: CatalogFill;
+  /** Cells people changed, which a catalog does not fill again. */
+  readonly edited?: readonly ModelField[];
 }
 
 /** A service people set up. Its key is kept apart, by `id`. */
@@ -29,10 +136,16 @@ export interface ServiceConfig {
   readonly name: string;
   readonly baseUrl: string;
   readonly route: Route;
+  /** How a server of one's own is talked to, where people chose; else as its kind is. */
+  readonly api?: ModelApi;
+  /** Headers that go with every request to it, such as what a gateway of a company wants. */
+  readonly headers?: Readonly<Record<string, string>>;
   /** The models people turned on, by their names at the service, in order. */
   readonly enabled: readonly string[];
-  /** Models people named themselves. */
-  readonly models?: readonly CustomModel[];
+  /** The models that were on as people turned the whole service off, to turn on again. */
+  readonly paused?: readonly string[];
+  /** Models people added or set something of, by `id`. Those of pi's catalog need none. */
+  readonly models?: readonly ModelConfig[];
 }
 
 /** A model of a service. */
@@ -50,6 +163,10 @@ export interface KeptSettings {
   readonly fields?: Readonly<Record<string, unknown>>;
   /** Fields of readable services that this editor does not know, by service. */
   readonly serviceFields?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /** Fields of models that this editor does not know, by service and then model. */
+  readonly modelFields?: Readonly<
+    Record<string, Readonly<Record<string, Readonly<Record<string, unknown>>>>>
+  >;
   readonly services?: readonly unknown[];
 }
 
@@ -102,8 +219,8 @@ export type AiSettingsReading =
   | {
       readonly kind: "ok";
       readonly settings: AiSettings;
-      /** The version they were written in: 1 is upgraded as it is read. */
-      readonly from: 1 | 2;
+      /** The version they were written in: 1 and 2 are upgraded as they are read. */
+      readonly from: 1 | 2 | 3;
     }
   /** Written by a newer editor: not to be written over, see `readAiSettings`. */
   | { readonly kind: "newer" }
@@ -163,38 +280,235 @@ const SERVICE_FIELDS = new Set([
   "name",
   "baseUrl",
   "route",
+  "api",
+  "headers",
   "enabled",
+  "paused",
   "models",
   "model",
+]);
+const MODEL_KEYS = new Set([
+  "id",
+  "added",
+  "filled",
+  "edited",
+  "name",
+  "reasoning",
+  "image",
+  "contextWindow",
+  "maxTokens",
+  "imageMaxBytes",
+  "cost",
+  "baseUrl",
+  "api",
+  "headers",
+  "compat",
+  "thinkingLevelMap",
 ]);
 
 const isModelName = (value: unknown): value is string =>
   typeof value === "string" && value.trim() !== "" && value.length <= 200;
 
-function readCustomModels(value: unknown): CustomModel[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const seen = new Set<string>();
-  const models = value.flatMap((item): CustomModel[] => {
-    if (!isRecord(item) || !isModelName(item.id) || seen.has(item.id)) return [];
-    seen.add(item.id);
-    const window = item.contextWindow;
-    return [
-      {
-        id: item.id,
-        ...(typeof window === "number" &&
-          Number.isSafeInteger(window) &&
-          window > 0 && { contextWindow: window }),
-      },
-    ];
-  });
-  return models.length > 0 ? models : undefined;
+const positiveInteger = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+
+const price = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value < 1e6
+    ? value
+    : undefined;
+
+/** The most a value sent for a step of reasoning has, in characters. */
+export const THINKING_VALUE_LENGTH = 10;
+/** Header names as HTTP has them (a token), and what a value may have. */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
+const HEADER_VALUE = /^[\t\x20-\x7e\x80-\uffff]{0,4000}$/;
+/**
+ * Headers that are never people's own: those of the browser and the connection, and any that is
+ * named like a secret, which would go with the account as plain text. Keys go in the key.
+ */
+const NOT_A_HEADER =
+  /^(?:host|cookie2?|origin|referer|connection|keep-alive|content-length|content-type|transfer-encoding|te|trailer|upgrade|expect|accept-encoding|proxy-.*|sec-.*|x-forwarded-.*|forwarded|via|x-animaquill.*|aq-.*|x-aq-.*)$/i;
+const SECRET_HEADER = /key|token|secret|auth|passw|cookie|credential|signature|session/i;
+
+/** Why a header cannot be one of people's own, or undefined where it can. */
+export function headerProblem(
+  name: string,
+  value: string,
+): "name" | "secret" | "value" | undefined {
+  if (!HEADER_NAME.test(name) || NOT_A_HEADER.test(name)) return "name";
+  if (SECRET_HEADER.test(name)) return "secret";
+  if (!HEADER_VALUE.test(value)) return "value";
+  return undefined;
+}
+
+function readHeaders(value: unknown): Readonly<Record<string, string>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" && headerProblem(entry[0], entry[1]) === undefined,
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+const isApi = (value: unknown): value is ModelApi => MODEL_APIS.includes(value as ModelApi);
+
+function readCost(value: unknown): ModelCost | undefined {
+  if (!isRecord(value)) return undefined;
+  const input = price(value.input);
+  const output = price(value.output);
+  const cacheRead = price(value.cacheRead);
+  const cacheWrite = price(value.cacheWrite);
+  if (input === undefined || output === undefined) return undefined;
+  return { input, output, cacheRead: cacheRead ?? 0, cacheWrite: cacheWrite ?? 0 };
+}
+
+function readThinking(value: unknown): ThinkingLevelMap | undefined {
+  if (!isRecord(value)) return undefined;
+  const map: Partial<Record<ReasoningLevel, string | null>> = {};
+  for (const level of REASONING) {
+    const said = value[level];
+    if (said === null) map[level] = null;
+    else if (
+      typeof said === "string" &&
+      said.trim() !== "" &&
+      said.length <= THINKING_VALUE_LENGTH &&
+      /^[\x21-\x7e]+$/.test(said)
+    )
+      map[level] = said;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
+}
+
+function readCompat(value: unknown): ModelCompat | undefined {
+  if (!isRecord(value)) return undefined;
+  const compat: Record<string, unknown> = {};
+  if (value.thinkingFormat === "deepseek") compat.thinkingFormat = "deepseek";
+  for (const name of [
+    "requiresReasoningContentOnAssistantMessages",
+    "supportsDeveloperRole",
+    "forceAdaptiveThinking",
+  ] as const) {
+    if (typeof value[name] === "boolean") compat[name] = value[name];
+  }
+  return Object.keys(compat).length > 0 ? (compat as ModelCompat) : undefined;
+}
+
+const isField = (value: unknown): value is ModelField => MODEL_FIELDS.includes(value as ModelField);
+
+const readFields = (value: unknown): ModelField[] =>
+  Array.isArray(value) ? [...new Set(value.filter(isField))] : [];
+
+function readFill(value: unknown): CatalogFill | undefined {
+  if (!isRecord(value)) return undefined;
+  const from = Array.isArray(value.from)
+    ? CATALOG_SOURCES.filter((source) => (value.from as unknown[]).includes(source))
+    : [];
+  const fields = readFields(value.fields);
+  if (from.length === 0 || fields.length === 0) return undefined;
+  const snapshot = isRecord(value.snapshot)
+    ? Object.fromEntries(Object.entries(value.snapshot).filter(([field]) => isField(field)))
+    : {};
+  const by = value.by;
+  const doubt = value.priceDoubt;
+  return {
+    from,
+    ...((by === "provider" || by === "base-url" || by === "consensus") && { by }),
+    ...(typeof value.matched === "string" &&
+      value.matched.length <= 200 && {
+        matched: value.matched,
+      }),
+    ...((doubt === "no-exact-match" ||
+      doubt === "no-valid-price" ||
+      doubt === "insufficient-support" ||
+      doubt === "conflict") && { priceDoubt: doubt }),
+    fields,
+    snapshot: withoutSecrets(snapshot) as CatalogFill["snapshot"],
+  };
 }
 
 /**
- * A service as either version wrote it, or nothing where it cannot be read. Version 1 has the one
+ * A model as version 3 wrote it, or as version 2 wrote a model people named themselves (an id and
+ * a size, which people gave). What does not make sense is left out, field by field.
+ */
+export function readModel(value: unknown): ModelConfig | undefined {
+  if (!isRecord(value) || !isModelName(value.id)) return undefined;
+  const name =
+    typeof value.name === "string" && value.name.trim() !== "" && value.name.length <= 200
+      ? value.name
+      : undefined;
+  const baseUrl =
+    typeof value.baseUrl === "string" &&
+    value.baseUrl.length <= 2000 &&
+    /^https?:\/\//.test(value.baseUrl)
+      ? value.baseUrl
+      : undefined;
+  const headers = readHeaders(value.headers);
+  const cost = readCost(value.cost);
+  const compat = readCompat(value.compat);
+  const thinkingLevelMap = readThinking(value.thinkingLevelMap);
+  const filled = readFill(value.filled);
+  const edited = readFields(value.edited);
+  const contextWindow = positiveInteger(value.contextWindow);
+  const maxTokens = positiveInteger(value.maxTokens);
+  const imageMaxBytes = positiveInteger(value.imageMaxBytes);
+  return {
+    id: value.id,
+    ...((value.added === "hand" || value.added === "service") && { added: value.added }),
+    ...(name !== undefined && { name }),
+    ...(typeof value.reasoning === "boolean" && { reasoning: value.reasoning }),
+    ...(typeof value.image === "boolean" && { image: value.image }),
+    ...(contextWindow !== undefined && { contextWindow }),
+    ...(maxTokens !== undefined && { maxTokens }),
+    ...(imageMaxBytes !== undefined && { imageMaxBytes }),
+    ...(cost && { cost }),
+    ...(baseUrl !== undefined && { baseUrl }),
+    ...(isApi(value.api) && { api: value.api }),
+    ...(headers && { headers }),
+    ...(compat && { compat }),
+    ...(thinkingLevelMap && { thinkingLevelMap }),
+    ...(filled && { filled }),
+    ...(edited.length > 0 && { edited }),
+  };
+}
+
+/** The models of a service, each once; version 2's are models people named, with their size. */
+function readModels(
+  value: unknown,
+  version: 1 | 2 | 3,
+): { models: ModelConfig[] | undefined; extra: Record<string, Record<string, unknown>> } {
+  const extra: Record<string, Record<string, unknown>> = {};
+  if (!Array.isArray(value) || version === 1) return { models: undefined, extra };
+  const seen = new Set<string>();
+  const models = value.flatMap((item): ModelConfig[] => {
+    const model = readModel(item);
+    if (!model || seen.has(model.id)) return [];
+    seen.add(model.id);
+    if (version === 2)
+      return [
+        {
+          id: model.id,
+          added: "hand",
+          ...(model.contextWindow !== undefined && {
+            contextWindow: model.contextWindow,
+            edited: ["contextWindow"],
+          }),
+        },
+      ];
+    const unknown = unknownFields(item as Record<string, unknown>, MODEL_KEYS);
+    if (unknown) extra[model.id] = unknown;
+    return [model];
+  });
+  return { models: models.length > 0 ? models : undefined, extra };
+}
+
+/**
+ * A service as any version wrote it, or nothing where it cannot be read. Version 1 has the one
  * model in `model`, which becomes the one turned on.
  */
-function readService(value: unknown, version: 1 | 2): ServiceConfig | undefined {
+function readService(
+  value: unknown,
+  version: 1 | 2 | 3,
+): { service: ServiceConfig; modelFields: Record<string, Record<string, unknown>> } | undefined {
   if (!isRecord(value)) return undefined;
   const { id, kind, name, baseUrl, route } = value;
   if (typeof id !== "string" || id === "" || typeof kind !== "string" || !kindOf(kind)) {
@@ -210,8 +524,28 @@ function readService(value: unknown, version: 1 | 2): ServiceConfig | undefined 
     if (value.enabled !== undefined && !Array.isArray(value.enabled)) return undefined;
     enabled = [...new Set((value.enabled ?? []) as unknown[])].filter(isModelName);
   }
-  const models = version === 2 ? readCustomModels(value.models) : undefined;
-  return { id, kind, name, baseUrl, route, enabled, ...(models && { models }) };
+  const { models, extra } = readModels(value.models, version);
+  const custom = kindOf(kind)?.custom === true;
+  const headers = version === 3 ? readHeaders(value.headers) : undefined;
+  const paused =
+    version === 3 && Array.isArray(value.paused)
+      ? [...new Set(value.paused as unknown[])].filter(isModelName)
+      : [];
+  return {
+    service: {
+      id,
+      kind,
+      name,
+      baseUrl,
+      route,
+      ...(version === 3 && custom && isApi(value.api) && { api: value.api }),
+      ...(headers && { headers }),
+      enabled,
+      ...(paused.length > 0 && enabled.length === 0 && { paused }),
+      ...(models && { models }),
+    },
+    modelFields: extra,
+  };
 }
 
 /** People's choices of packs, as far as they are names of models and ids of packs. */
@@ -271,30 +605,33 @@ export function settledDefault(
 export function readAiSettings(value: unknown): AiSettingsReading {
   if (!isRecord(value) || !Array.isArray(value.services)) return { kind: "broken" };
   const version = value.version;
-  if (version !== undefined && version !== 1 && version !== AI_SETTINGS_VERSION) {
+  if (version !== undefined && version !== 1 && version !== 2 && version !== AI_SETTINGS_VERSION) {
     return { kind: "newer" };
   }
-  const from = version === AI_SETTINGS_VERSION ? 2 : 1;
+  const from = version === AI_SETTINGS_VERSION ? 3 : version === 2 ? 2 : 1;
   const services: ServiceConfig[] = [];
   const unread: unknown[] = [];
   const serviceFields: Record<string, Readonly<Record<string, unknown>>> = {};
+  const modelFields: Record<string, Record<string, Record<string, unknown>>> = {};
   const ids = new Set<string>();
   for (const raw of value.services) {
-    const service = readService(raw, from);
-    if (!service || ids.has(service.id)) {
+    const read = readService(raw, from);
+    if (!read || ids.has(read.service.id)) {
       unread.push(withoutSecrets(raw));
       continue;
     }
+    const { service } = read;
     ids.add(service.id);
     services.push(service);
     const extra = unknownFields(raw as Record<string, unknown>, SERVICE_FIELDS);
     if (extra) serviceFields[service.id] = extra;
+    if (Object.keys(read.modelFields).length > 0) modelFields[service.id] = read.modelFields;
   }
 
   let packFor = readPackFor(value.packFor);
   let showHiddenPacks = value.showHiddenPacks === true;
   let wanted: ModelRef | undefined;
-  if (from === 2) {
+  if (from >= 2) {
     const chosen = value.default;
     wanted =
       isRecord(chosen) && typeof chosen.service === "string" && isModelName(chosen.model)
@@ -317,11 +654,12 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     }
   }
 
-  const reasoningFor = from === 2 ? readReasoningFor(value.reasoningFor) : undefined;
+  const reasoningFor = from >= 2 ? readReasoningFor(value.reasoningFor) : undefined;
   const fields = unknownFields(value, TOP_FIELDS);
   const kept: KeptSettings = {
     ...(fields && { fields }),
     ...(Object.keys(serviceFields).length > 0 && { serviceFields }),
+    ...(Object.keys(modelFields).length > 0 && { modelFields }),
     ...(unread.length > 0 && { services: unread }),
   };
   const settings: AiSettings = {
@@ -339,8 +677,19 @@ export function readAiSettings(value: unknown): AiSettingsReading {
   return { kind: "ok", settings, from };
 }
 
+/** A model as it is saved: only what it has, with what was not understood back in place. */
+export function writeModel(
+  model: ModelConfig,
+  kept?: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return {
+    ...kept,
+    ...Object.fromEntries(Object.entries(model).filter(([, value]) => value !== undefined)),
+  };
+}
+
 /**
- * The settings as they are saved: version 2, with what was not understood back in place, and with
+ * The settings as they are saved: version 3, with what was not understood back in place, and with
  * `current` and each service's `model` as version 1 had them, for a page of before.
  */
 export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
@@ -353,8 +702,16 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     name: service.name,
     baseUrl: service.baseUrl,
     route: service.route,
+    ...(service.api && { api: service.api }),
+    ...(service.headers && Object.keys(service.headers).length > 0 && { headers: service.headers }),
     enabled: service.enabled,
-    ...(service.models && service.models.length > 0 && { models: service.models }),
+    ...(service.paused && service.paused.length > 0 && { paused: service.paused }),
+    ...(service.models &&
+      service.models.length > 0 && {
+        models: service.models.map((model) =>
+          writeModel(model, kept?.modelFields?.[service.id]?.[model.id]),
+        ),
+      }),
     model: fallback?.service === service.id ? fallback.model : (service.enabled[0] ?? ""),
   }));
   return {
@@ -401,6 +758,7 @@ export const enabledCountOf = (settings: Pick<AiSettings, "services">): number =
  */
 export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | undefined {
   const reading = readAiSettings(old);
+  if (reading.kind === "ok" && reading.from === 2) return recoverVersion2(latest, reading.settings);
   if (reading.kind !== "ok" || reading.from !== 1 || !isRecord(old)) return undefined;
   const now = reading.settings;
   // What the page of before read: the settings of version 2 as version 1 has them.
@@ -452,5 +810,50 @@ export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | 
     ...(showHiddenPacks && { showHiddenPacks: true }),
     maxToolCalls: now.maxToolCalls === was.maxToolCalls ? latest.maxToolCalls : now.maxToolCalls,
     ...(Object.keys(kept).length > 0 && { kept }),
+  };
+}
+
+/**
+ * Settings of version 3 again, after a page of version 2 (0.3.57 to 0.3.63) wrote over them: such
+ * a page leaves settings of version 3 alone, so it only does that where it read them before they
+ * were version 3, and what it wrote is everything as it was then, with its change. That is taken,
+ * and what only version 3 has goes back on top: the protocol and headers of each service, and of
+ * each model what version 2 does not have. Models people named that the page took away stay away;
+ * a size it gave a model people named is theirs.
+ */
+function recoverVersion2(latest: AiSettings, now: AiSettings): AiSettings {
+  const before = new Map(latest.services.map((service) => [service.id, service]));
+  const services = now.services.map((service): ServiceConfig => {
+    const base = before.get(service.id);
+    if (!base) return service;
+    const theirs = new Map((service.models ?? []).map((model) => [model.id, model]));
+    const models = (base.models ?? []).flatMap((model): ModelConfig[] => {
+      const named = theirs.get(model.id);
+      if (model.added === "hand" && !named) return [];
+      if (named?.contextWindow === undefined || named.contextWindow === model.contextWindow)
+        return [model];
+      return [
+        {
+          ...model,
+          contextWindow: named.contextWindow,
+          edited: [...new Set([...(model.edited ?? []), "contextWindow" as const])],
+        },
+      ];
+    });
+    const known = new Set(models.map((model) => model.id));
+    const added = (service.models ?? []).filter((model) => !known.has(model.id));
+    const all = [...models, ...added];
+    const { models: _theirs, ...rest } = service;
+    return {
+      ...rest,
+      ...(base.api && { api: base.api }),
+      ...(base.headers && { headers: base.headers }),
+      ...(all.length > 0 && { models: all }),
+    };
+  });
+  return {
+    ...now,
+    services,
+    ...(latest.kept && { kept: { ...latest.kept, ...now.kept } }),
   };
 }

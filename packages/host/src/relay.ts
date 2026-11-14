@@ -73,3 +73,22 @@ export function relayRefusalIn(text: string): RelayRefusal | undefined {
   const said = new RegExp(`${MARK}([A-Za-z]+)`).exec(text)?.[1];
   return RELAY_REFUSALS.find((why) => why === said);
 }
+
+/**
+ * What headers of people's own (a service's or a model's, see the AI settings) are called on their
+ * way through the relay: the relay passes on only the headers that the libraries of services send,
+ * and these with the prefix taken off, as long as they are not of this site or the connection.
+ */
+export const RELAY_PASS_PREFIX = "aq-pass-";
+
+/** People's own headers, as they go to the relay, see `RELAY_PASS_PREFIX`. */
+export function relayPassHeaders(
+  headers: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers ?? {}).map(([name, value]) => [
+      `${RELAY_PASS_PREFIX}${name.toLowerCase()}`,
+      value,
+    ]),
+  );
+}

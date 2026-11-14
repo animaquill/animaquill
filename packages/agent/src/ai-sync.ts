@@ -1,6 +1,7 @@
 /**
  * The AI settings as entries, to go with an account (see `@animaquill/host/ai-sync`): each service,
- * the order of the services, the default model, each choice of a pack and of how hard a model
+ * each model people set up in one (`model:<service>/<model>`, so that two windows or devices that
+ * each change a model of the same service keep both), the order of the services, the default model, each choice of a pack and of how hard a model
  * reasons, each other field, each installed pack is one entry, merged on its own. This turns the
  * settings as they are saved (`writeAiSettings`, and the installed packs) into entries and back.
  *
@@ -32,14 +33,22 @@ export const isPackEntry = (name: string): boolean => name.startsWith("installed
  */
 export function entriesOfSettings(saved: unknown): Map<string, unknown> | undefined {
   if (!isRecord(saved) || !Array.isArray(saved.services)) return undefined;
-  if (saved.version !== 2) return undefined;
+  if (saved.version !== 2 && saved.version !== 3) return undefined;
   const entries = new Map<string, unknown>();
   const order: string[] = [];
   for (const service of saved.services) {
     if (!isRecord(service) || typeof service.id !== "string" || service.id === "") continue;
     if (entries.has(`service:${service.id}`)) continue;
-    const { model: _model, ...rest } = service;
-    entries.set(`service:${service.id}`, rest);
+    const { model: _model, models, ...rest } = service;
+    // Version 2 has the models people named in the service, as a page of before reads them.
+    if (saved.version === 2) entries.set(`service:${service.id}`, { ...rest, models });
+    else {
+      entries.set(`service:${service.id}`, rest);
+      for (const model of Array.isArray(models) ? models : []) {
+        if (isRecord(model) && typeof model.id === "string" && model.id !== "")
+          entries.set(`model:${service.id}/${model.id}`, model);
+      }
+    }
     order.push(service.id);
   }
   entries.set("order", order);
@@ -83,6 +92,7 @@ export function entriesOfPacks(saved: unknown): Map<string, unknown> {
 /** The settings to save, from entries: as `writeAiSettings` writes them, but what it works out. */
 export function settingsOfEntries(entries: ReadonlyMap<string, unknown>): Record<string, unknown> {
   const services = new Map<string, unknown>();
+  const models = new Map<string, unknown[]>();
   const reasoningFor: Record<string, unknown> = {};
   const packFor: Record<string, unknown> = {};
   const fields: Record<string, unknown> = {};
@@ -93,7 +103,10 @@ export function settingsOfEntries(entries: ReadonlyMap<string, unknown>): Record
     const kind = colon < 0 ? name : name.slice(0, colon);
     const of = name.slice(colon + 1);
     if (kind === "service" && colon >= 0) services.set(of, value);
-    else if (kind === "order" && Array.isArray(value)) order = value;
+    else if (kind === "model" && colon >= 0 && of.indexOf("/") > 0) {
+      const service = of.slice(0, of.indexOf("/"));
+      models.set(service, [...(models.get(service) ?? []), value]);
+    } else if (kind === "order" && Array.isArray(value)) order = value;
     else if (kind === "default") chosen = value;
     else if (kind === "reasoning" && colon >= 0) reasoningFor[of] = value;
     else if (kind === "pack" && colon >= 0) packFor[of] = value;
@@ -106,10 +119,25 @@ export function settingsOfEntries(entries: ReadonlyMap<string, unknown>): Record
       ...[...services.keys()].toSorted(),
     ]),
   ];
+  /** A service with its models: those of their own entries, and those a page of before wrote in it. */
+  const withModels = (id: string) => {
+    const service = services.get(id);
+    const own = (models.get(id) ?? []).toSorted((a, b) =>
+      String(isRecord(a) ? a.id : "").localeCompare(String(isRecord(b) ? b.id : "")),
+    );
+    if (!isRecord(service)) return service;
+    const named = new Set(own.map((model) => (isRecord(model) ? model.id : undefined)));
+    const before = (Array.isArray(service.models) ? service.models : []).filter(
+      (model) => !isRecord(model) || !named.has(model.id),
+    );
+    const all = [...own, ...before];
+    const { models: _models, ...rest } = service;
+    return all.length > 0 ? { ...rest, models: all } : rest;
+  };
   return {
     ...fields,
-    version: 2,
-    services: ids.map((id) => services.get(id)),
+    version: 3,
+    services: ids.map(withModels),
     ...(isRecord(chosen) && { default: chosen }),
     ...(Object.keys(reasoningFor).length > 0 && { reasoningFor }),
     ...(Object.keys(packFor).length > 0 && { packFor }),

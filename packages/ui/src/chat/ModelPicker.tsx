@@ -411,45 +411,130 @@ function PackPart(props: {
 }
 
 /**
- * How hard the model of the conversation reasons: the steps it takes, first "as set up" (for the
- * model in the settings, else as its pack says). Kept with the conversation; the default for the
- * model is in the settings.
+ * How hard the model of this conversation reasons (the default for the model in the settings, else
+ * as its pack says): a menu of the steps the model takes, each with a star that makes it the
+ * default for the model, as pi-web has it. Kept with the conversation; the default for the model
+ * is in the settings.
  */
 export function ReasoningPicker() {
   const { ai, chat } = useWorkbench();
   const { t } = useTranslation();
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
   const now = chat.modelNow();
   const model = now?.ref.model ?? "";
   const byPack = packFor(chat.choiceFor(model).pack, model).call.reasoning;
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
   if (!now || now.state !== "ok") return null;
   const info = ai.modelOf(now.ref.service, model);
   if (info?.reasoning === false) return null;
   const levels: readonly ReasoningLevel[] = info?.levels ?? REASONING;
-  const auto = settings.reasoningFor?.[model] ?? byPack;
+  const starred = settings.reasoningFor?.[model];
+  const auto = starred ?? byPack;
   const level = (value: ReasoningLevel) => t(`ai.packs.value.reasoning.${value}`);
+  const chosen = snapshot.reasoning;
+  const label = chosen
+    ? t("chat.reasoning.level", { level: level(chosen) })
+    : auto
+      ? t("chat.reasoning.auto", { level: level(auto) })
+      : t("chat.reasoning.autoNone");
+  const choose = (value: ReasoningLevel | undefined) => {
+    chat.chooseReasoning(value);
+    setOpen(false);
+  };
   return (
-    <select
-      className={styles.reasoning}
-      data-testid="chat-reasoning"
-      aria-label={t("chat.reasoning.label")}
-      title={t("chat.reasoning.title")}
-      value={snapshot.reasoning ?? ""}
-      onChange={(event) =>
-        chat.chooseReasoning(
-          event.target.value === "" ? undefined : (event.target.value as ReasoningLevel),
-        )
-      }
-    >
-      <option value="">
-        {auto ? t("chat.reasoning.auto", { level: level(auto) }) : t("chat.reasoning.autoNone")}
-      </option>
-      {levels.map((each) => (
-        <option key={each} value={each}>
-          {t("chat.reasoning.level", { level: level(each) })}
-        </option>
-      ))}
-    </select>
+    <div className={styles.reasoningBox} ref={box}>
+      <button
+        type="button"
+        className={styles.reasoning}
+        data-testid="chat-reasoning"
+        aria-label={t("chat.reasoning.label")}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={t("chat.reasoning.title")}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+          }
+        }}
+      >
+        {label}
+        <ChevronUp size={11} aria-hidden />
+      </button>
+      {open && (
+        <div
+          className={styles.reasoningMenu}
+          role="listbox"
+          aria-label={t("chat.reasoning.label")}
+          data-testid="chat-reasoning-menu"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+            }
+          }}
+        >
+          <div className={styles.reasoningItem}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={chosen === undefined}
+              className={styles.reasoningChoice}
+              onClick={() => choose(undefined)}
+            >
+              <Check size={12} aria-hidden style={{ opacity: chosen === undefined ? 1 : 0 }} />
+              {auto
+                ? t("chat.reasoning.auto", { level: level(auto) })
+                : t("chat.reasoning.autoNone")}
+            </button>
+          </div>
+          {levels.map((each) => (
+            <div key={each} className={styles.reasoningItem} data-level={each}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={chosen === each}
+                className={styles.reasoningChoice}
+                onClick={() => choose(each)}
+              >
+                <Check size={12} aria-hidden style={{ opacity: chosen === each ? 1 : 0 }} />
+                {level(each)}
+              </button>
+              <button
+                type="button"
+                className={styles.reasoningStar}
+                aria-pressed={starred === each}
+                aria-label={
+                  starred === each
+                    ? t("chat.reasoning.isDefault", { level: level(each) })
+                    : t("chat.reasoning.setDefault", { level: level(each) })
+                }
+                title={
+                  starred === each
+                    ? t("chat.reasoning.isDefault", { level: level(each) })
+                    : t("chat.reasoning.setDefault", { level: level(each) })
+                }
+                onClick={() => ai.setReasoning(model, starred === each ? undefined : each)}
+              >
+                <Star size={12} aria-hidden fill={starred === each ? "currentColor" : "none"} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

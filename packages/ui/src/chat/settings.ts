@@ -1,23 +1,38 @@
 import {
-  DEFAULT_CONTEXT_WINDOW,
   EMPTY_AI_SETTINGS,
   TOOL_CALL_LIMITS,
+  catalogValues,
+  editField,
+  effectiveValues,
   enabledCountOf,
   failureOf,
+  fillModel,
   kindOf,
   knownModels,
   listModels,
+  liveOf,
   readAiSettings,
   recommendedOf,
   recoverOldWrite,
+  revertField,
+  saysRed,
   settledDefault,
+  supportedLevels,
   testModel,
+  testModelPicture,
+  undoFill,
   writeAiSettings,
   type AiSettings,
-  type CustomModel,
+  type CatalogSay,
+  type CatalogValues,
   type Endpoint,
   type ListedModel,
+  type ModelApi,
+  type ModelConfig,
+  type ModelField,
   type ModelRef,
+  type ModelValues,
+  type Protocol,
   type ReasoningLevel,
   type Relayed,
   type Route,
@@ -26,7 +41,22 @@ import {
   type ServiceKind,
   type SendWith,
 } from "@animaquill/agent";
-import { memoryKeys, type AiRelay, type KeyStore, type SettingsStore } from "@animaquill/host";
+import {
+  MODEL_CATALOG_MAX_AGE_MS,
+  MODELS_DEV_URL,
+  RELAY_PASS_PREFIX,
+  flattenModelsDev,
+  memoryKeys,
+  readModelCatalog,
+  recommendFromCatalog,
+  relayPassHeaders,
+  type AiRelay,
+  type CatalogEntry,
+  type KeyStore,
+  type ModelCatalog,
+  type SettingsStore,
+  type WorkCache,
+} from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 
 const SETTINGS_KEY = "ai";
@@ -65,6 +95,28 @@ export type ConnectionTest =
   /** Not tried: there is no way to the service, or nothing to ask. */
   | { readonly state: "held"; readonly hold: "relayMissing" | "relayUrl" | "badUrl" };
 
+/**
+ * What the test of a picture came to, for a model people say takes pictures: it named the colour,
+ * or it did not (`said`), or the request failed.
+ */
+export type PictureTest =
+  | { readonly state: "ok" }
+  | { readonly state: "wrong"; readonly said: string }
+  | { readonly state: "failed"; readonly failure: ServiceFailure };
+
+/** How far the open catalog of models (models.dev) is, on this page. */
+export type CatalogState =
+  | { readonly state: "idle" }
+  | { readonly state: "loading" }
+  | {
+      readonly state: "ok";
+      readonly fetchedAt: number;
+      /** Where it came from now: this device's copy, models.dev, or the platform. */
+      readonly from: "device" | "models.dev" | "platform";
+      readonly count: number;
+    }
+  | { readonly state: "failed" };
+
 /** Settings this editor cannot take as they are, which it leaves alone, see `readAiSettings`. */
 export type SettingsHeld = "newer" | "broken";
 
@@ -83,6 +135,10 @@ export interface AiSettingsSnapshot extends AiSettings {
   readonly held: SettingsHeld | undefined;
   /** Tests of services (by id) and of models (by `testKey`), on this page. */
   readonly tests: ReadonlyMap<string, ConnectionTest>;
+  /** Tests of pictures of models, by `testKey`, on this page. */
+  readonly pictureTests: ReadonlyMap<string, PictureTest>;
+  /** The open catalog of models, as far as this page has it. */
+  readonly catalog: CatalogState;
 }
 
 export interface AiSettingsMessages {
@@ -102,16 +158,41 @@ export interface ServiceDraft {
   readonly kind: string;
   readonly baseUrl: string;
   readonly route: Route;
+  readonly api?: ModelApi;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
-/** A model of a service, as the settings list it: what is known of it, and whether it is on. */
+/**
+ * A model of a service, as the settings list it: what it is as used (what people set, a catalog
+ * filled in, else what pi knows), and whether it is on.
+ */
 export interface ServiceModel extends ListedModel {
   readonly enabled: boolean;
-  /** The service listed it and pi does not know it: something new. */
-  readonly fresh: boolean;
+  /** Everything of it as it is used, see `effectiveValues`. */
+  readonly values: ModelValues;
+  /** What people set or a catalog filled in, where there is anything. */
+  readonly config?: ModelConfig;
+  /** What pi knows of it, where pi's catalog has it. */
+  readonly live?: ModelValues;
+  /** pi's catalog has it: it can be turned off, not taken away. */
+  readonly inCatalog: boolean;
   /** People named it themselves. */
   readonly custom: boolean;
+  /** The steps of reasoning it takes. */
+  readonly levels: readonly ReasoningLevel[];
 }
+
+/** Where people take what the catalogs say of a model from, see `AiSettingsStore.sayOf`. */
+export interface CatalogOptions {
+  /** This device's copy of the open catalog of models. */
+  readonly cache?: WorkCache | undefined;
+  /** The platform's copy, where the browser cannot read models.dev itself. */
+  readonly platform?: (() => Promise<ModelCatalog>) | undefined;
+  readonly fetch?: typeof fetch | undefined;
+}
+
+/** Where this device keeps its copy of the open catalog of models, see `WorkCache`. */
+const CATALOG_CACHE_KEY = "ai.model-catalog";
 
 /** Where the test of one model of a service is kept, see `AiSettingsSnapshot.tests`. */
 export const testKey = (service: string, model: string) => `${service}\n${model}`;
@@ -121,6 +202,19 @@ const newServiceId = () =>
 
 const byName = (a: ListedModel, b: ListedModel) =>
   (a.name ?? a.id).localeCompare(b.name ?? b.id, undefined, { numeric: true, sensitivity: "base" });
+
+/** How a service is talked to: as people chose for a server of their own, else as its kind is. */
+export const protocolOf = (service: Pick<ServiceConfig, "kind" | "api">): Protocol | undefined =>
+  service.api ?? kindOf(service.kind)?.protocol;
+
+/** The headers of a model together with those of its service, the model's winning. */
+const headersOf = (
+  service: Pick<ServiceConfig, "headers">,
+  model: Pick<ModelValues, "headers"> | undefined,
+): Readonly<Record<string, string>> | undefined => {
+  const all = { ...service.headers, ...model?.headers };
+  return Object.keys(all).length > 0 ? all : undefined;
+};
 
 /** The cheapest of some models, by what their input costs; the first where nothing is known. */
 function cheapestOf(models: readonly ListedModel[]): ListedModel | undefined {
@@ -149,6 +243,10 @@ export class AiSettingsStore {
   #taking: Promise<void> = Promise.resolve();
   /** The kinds whose models pi knows are being loaded, once each. */
   readonly #loading = new Map<string, Promise<readonly ListedModel[]>>();
+  readonly #catalogOptions: CatalogOptions | undefined;
+  /** The open catalog of models, once this page has it. */
+  #catalog: readonly CatalogEntry[] | undefined;
+  #catalogLoading: Promise<readonly CatalogEntry[] | undefined> | undefined;
 
   constructor(
     settings: SettingsStore,
@@ -156,11 +254,14 @@ export class AiSettingsStore {
     messages: AiSettingsMessages,
     /** The relay of the platform, where the editor is hosted on one. */
     relay?: AiRelay,
+    /** Where the open catalog of models comes from. Without it, only pi's catalog fills in. */
+    catalog?: CatalogOptions,
   ) {
     this.#settings = settings;
     this.#keys = keys ?? memoryKeys();
     this.#messages = messages;
     this.#relay = relay;
+    this.#catalogOptions = catalog;
     this.#snapshot = {
       ...EMPTY_AI_SETTINGS,
       keyed: new Set(),
@@ -170,6 +271,8 @@ export class AiSettingsStore {
       keysWhere: this.#keys.where,
       held: undefined,
       tests: new Map(),
+      pictureTests: new Map(),
+      catalog: { state: "idle" },
     };
   }
 
@@ -209,11 +312,11 @@ export class AiSettingsStore {
       this.#hold(reading.kind);
       return;
     }
-    if (reading.from === 1) {
+    if (reading.from < 3) {
       // What another window said may be old by now: another page of version 2 may have saved since.
       const saved = await this.#settings.load(SETTINGS_KEY).catch(() => value);
       const current = readAiSettings(saved);
-      if (current.kind === "ok" && current.from === 2) {
+      if (current.kind === "ok" && current.from === 3) {
         this.#adopt(current.settings, undefined);
         return;
       }
@@ -221,7 +324,7 @@ export class AiSettingsStore {
       const latest = await this.#settings.load(LATEST_KEY).catch(() => undefined);
       const before = readAiSettings(latest);
       const recovered =
-        before.kind === "ok" && before.from === 2
+        before.kind === "ok" && before.from === 3
           ? recoverOldWrite(before.settings, value)
           : undefined;
       if (recovered) {
@@ -255,26 +358,48 @@ export class AiSettingsStore {
     if (!this.#relay) return "relayMissing";
     const relayed = this.#relay.addressOf(service.baseUrl);
     if (relayed === undefined) return "relayUrl";
-    return { baseUrl: service.baseUrl, relay: { baseUrl: relayed, headers: this.#relay.headers } };
+    return {
+      baseUrl: service.baseUrl,
+      relay: { baseUrl: relayed, headers: this.#relay.headers, passPrefix: RELAY_PASS_PREFIX },
+    };
   }
 
-  /** How the chat reaches a model of a service, or why it cannot. */
+  /**
+   * How the chat reaches a model of a service, or why it cannot: at the model's own address and
+   * by its own protocol where people gave them, with everything people set of it or a catalog
+   * filled in, and the headers of the service and the model.
+   */
   endpointOf(
-    service: Pick<ServiceConfig, "kind" | "baseUrl" | "route">,
+    service: Pick<ServiceConfig, "kind" | "baseUrl" | "route"> &
+      Partial<Pick<ServiceConfig, "api" | "headers" | "models">>,
     model: string,
   ): Endpoint | "badUrl" | "relayMissing" | "relayUrl" | undefined {
     const kind = kindOf(service.kind);
     if (!kind) return undefined;
-    if (!service.baseUrl) return "badUrl";
-    const route = this.routeOf(service);
+    const config = service.models?.find((each) => each.id === model);
+    const baseUrl = config?.baseUrl ?? service.baseUrl;
+    if (!baseUrl) return "badUrl";
+    const route = this.routeOf({ baseUrl, route: service.route });
     if (typeof route === "string") return route;
+    const headers = headersOf(service, config);
+    const {
+      id: _id,
+      added: _added,
+      filled: _filled,
+      edited: _edited,
+      ...values
+    } = config ?? {
+      id: model,
+    };
+    const settings: ModelValues = { ...values, ...(headers && { headers }) };
     return {
       service: service.kind,
-      protocol: kind.protocol,
+      protocol: config?.api ?? protocolOf(service) ?? kind.protocol,
       baseUrl: route.baseUrl,
       model,
       catalog: kind.catalog,
       ...(route.relay && { relay: route.relay }),
+      ...(Object.keys(settings).length > 0 && { settings }),
     };
   }
 
@@ -413,11 +538,23 @@ export class AiSettingsStore {
       readonly baseUrl?: string;
       readonly route?: Route;
       readonly enabled?: readonly string[];
+      readonly api?: ModelApi | undefined;
+      readonly headers?: Readonly<Record<string, string>> | undefined;
+      /** What the service listed, for the models it starts with that pi does not know. */
+      readonly listed?: readonly ListedModel[] | undefined;
     } = {},
   ): string | undefined {
     const found = kindOf(kind);
     if (!found || this.#snapshot.held) return undefined;
     const id = newServiceId();
+    const enabled = [...new Set(options.enabled ?? [])];
+    const known = new Set((this.#snapshot.known.get(kind) ?? []).map((model) => model.id));
+    // The models it starts with that the service listed and pi does not know get a record, which
+    // the catalogs fill in; pi's own need none.
+    const listed = new Set((options.listed ?? []).map((model) => model.id));
+    const models = enabled
+      .filter((model) => listed.has(model) && !known.has(model))
+      .map((model): ModelConfig => ({ id: model, added: "service" }));
     const service: ServiceConfig = {
       id,
       kind,
@@ -425,15 +562,80 @@ export class AiSettingsStore {
       baseUrl: options.baseUrl ?? found.baseUrl,
       // Where there is no relay, straight is all there is.
       route: this.#relay ? (options.route ?? found.route) : "direct",
-      enabled: [...new Set(options.enabled ?? [])],
+      ...(found.custom && options.api && { api: options.api }),
+      ...(options.headers &&
+        Object.keys(options.headers).length > 0 && { headers: options.headers }),
+      enabled,
+      ...(models.length > 0 && { models }),
     };
     const now = this.#settingsNow();
     this.#save({ ...now, services: [...now.services, service] });
+    if (options.listed) this.#setListing(id, { state: "ok", models: options.listed });
+    if (models.length > 0)
+      void this.fillModels(
+        id,
+        models.map((model) => model.id),
+      );
     return id;
   }
 
-  update(id: string, changes: Partial<Pick<ServiceConfig, "name" | "baseUrl" | "route">>): void {
-    this.#changeService(id, (service) => ({ ...service, ...changes }));
+  update(
+    id: string,
+    changes: Partial<Pick<ServiceConfig, "name" | "baseUrl" | "route" | "api" | "headers">>,
+  ): void {
+    const before = this.serviceOf(id);
+    this.#changeService(id, (service) => {
+      const next: Record<string, unknown> = { ...service, ...changes };
+      for (const [name, value] of Object.entries(changes)) {
+        if (value === undefined || (name === "headers" && Object.keys(value).length === 0))
+          delete next[name];
+      }
+      return next as unknown as ServiceConfig;
+    });
+    // What it listed and how it was tested was of where it was and how it was talked to.
+    if (
+      before &&
+      (("baseUrl" in changes && changes.baseUrl !== before.baseUrl) ||
+        ("api" in changes && changes.api !== before.api) ||
+        ("headers" in changes &&
+          JSON.stringify(changes.headers) !== JSON.stringify(before.headers)) ||
+        ("route" in changes && changes.route !== before.route))
+    )
+      this.#forgetListing(id);
+  }
+
+  /** Moves a service to another place in the list, which is also the order of the chat's picker. */
+  moveService(id: string, to: number): void {
+    const now = this.#settingsNow();
+    const from = now.services.findIndex((service) => service.id === id);
+    if (from < 0) return;
+    const services = [...now.services];
+    const [moved] = services.splice(from, 1);
+    if (!moved) return;
+    services.splice(Math.max(0, Math.min(to, services.length)), 0, moved);
+    this.#save({ ...now, services });
+  }
+
+  /**
+   * Turns every model of a service off, or on again: those that were on as it went off, else its
+   * first model. The last model on anywhere stays on ("last").
+   */
+  setServiceOn(id: string, on: boolean): "last" | undefined {
+    const service = this.serviceOf(id);
+    if (!service) return undefined;
+    if (!on) {
+      if (service.enabled.length === 0) return undefined;
+      if (enabledCountOf(this.#snapshot) - service.enabled.length < 1) return "last";
+      this.#changeService(id, (each) => ({ ...each, enabled: [], paused: each.enabled }));
+      return undefined;
+    }
+    const first = this.modelsFor(id)[0]?.id;
+    const enabled = service.paused?.length ? service.paused : first ? [first] : [];
+    this.#changeService(id, (each) => {
+      const { paused: _was, ...rest } = each;
+      return { ...rest, enabled: [...new Set([...each.enabled, ...enabled])] };
+    });
+    return undefined;
   }
 
   /** Takes a service away, and its key with it. */
@@ -453,11 +655,37 @@ export class AiSettingsStore {
     const service = this.serviceOf(id);
     if (!service || service.enabled.includes(model) === on) return undefined;
     if (!on && enabledCountOf(this.#snapshot) <= 1) return "last";
-    this.#changeService(id, (each) => ({
-      ...each,
-      enabled: on ? [...each.enabled, model] : each.enabled.filter((name) => name !== model),
-    }));
+    this.#changeService(id, (each) => {
+      const { paused: _was, ...rest } = each;
+      return {
+        ...rest,
+        enabled: on ? [...each.enabled, model] : each.enabled.filter((name) => name !== model),
+      };
+    });
     return undefined;
+  }
+
+  /**
+   * Moves a model that is on to another place among those on: the order of the list, and of the
+   * chat's picker. `to` counts among the models that are on.
+   */
+  moveModel(id: string, model: string, to: number): void {
+    const service = this.serviceOf(id);
+    if (!service?.enabled.includes(model)) return;
+    const enabled = service.enabled.filter((each) => each !== model);
+    enabled.splice(Math.max(0, Math.min(to, enabled.length)), 0, model);
+    this.#changeService(id, (each) => ({ ...each, enabled }));
+  }
+
+  /** Puts the models that are on in the order of their names. */
+  sortModels(id: string): void {
+    const service = this.serviceOf(id);
+    if (!service) return;
+    const rows = new Map(this.modelsFor(id).map((row) => [row.id, row]));
+    const enabled = service.enabled.toSorted((a, b) =>
+      byName(rows.get(a) ?? { id: a }, rows.get(b) ?? { id: b }),
+    );
+    this.#changeService(id, (each) => ({ ...each, enabled }));
   }
 
   /** Turns some models of a service on or off at once, keeping one on anywhere, see `setEnabled`. */
@@ -491,38 +719,298 @@ export class AiSettingsStore {
   }
 
   /**
-   * A model people name themselves, which neither pi nor the service told of, turned on. Its size
-   * is 128k tokens unless they say.
+   * Models to add to a service, turned on: named by hand, or picked from what the service listed.
+   * Each is filled in from the catalogs right away (only what is empty, see `fillModels`).
    */
-  addModel(id: string, model: CustomModel): void {
-    const name = model.id.trim();
-    if (!name) return;
-    this.#changeService(id, (service) => ({
-      ...service,
-      enabled: service.enabled.includes(name) ? service.enabled : [...service.enabled, name],
-      models: [
-        ...(service.models ?? []).filter((each) => each.id !== name),
-        {
-          id: name,
-          ...(model.contextWindow !== undefined &&
-            model.contextWindow !== DEFAULT_CONTEXT_WINDOW && {
-              contextWindow: model.contextWindow,
-            }),
-        },
-      ],
-    }));
+  addModels(
+    id: string,
+    models: readonly (Pick<ModelConfig, "id"> & { readonly added: "hand" | "service" })[],
+  ): void {
+    const ids = [...new Set(models.map((model) => model.id.trim()).filter(Boolean))];
+    if (ids.length === 0 || !this.serviceOf(id)) return;
+    const how = new Map(models.map((model) => [model.id.trim(), model.added]));
+    this.#changeService(id, (service) => {
+      const have = new Set((service.models ?? []).map((model) => model.id));
+      const known = new Set((this.#snapshot.known.get(service.kind) ?? []).map((m) => m.id));
+      const fresh = ids
+        .filter((model) => !have.has(model) && !known.has(model))
+        .map((model): ModelConfig => ({ id: model, added: how.get(model) ?? "hand" }));
+      const { paused: _was, ...rest } = service;
+      return {
+        ...rest,
+        enabled: [...new Set([...service.enabled, ...ids])],
+        ...((service.models?.length ?? 0) + fresh.length > 0 && {
+          models: [...(service.models ?? []), ...fresh],
+        }),
+      };
+    });
+    void this.fillModels(id, ids);
   }
 
-  /** Forgets a model people named themselves. One that is on stays on, if it is the last one. */
-  removeModel(id: string, model: string): void {
+  /**
+   * Takes a model away: one of pi's catalog only goes off (it stays on the list); any other goes,
+   * with all people set of it. One that is on stays, if it is the last one on.
+   */
+  removeModel(id: string, model: string): "last" | undefined {
     const service = this.serviceOf(id);
-    if (!service) return;
-    if (service.enabled.includes(model) && this.setEnabled(id, model, false) === "last") return;
+    if (!service) return undefined;
+    if (service.enabled.includes(model) && this.setEnabled(id, model, false) === "last")
+      return "last";
+    if (this.modelOf(id, model)?.inCatalog) return undefined;
     this.#changeService(id, (each) => {
       const models = (each.models ?? []).filter((custom) => custom.id !== model);
       const { models: _was, ...rest } = each;
       return models.length > 0 ? { ...rest, models } : rest;
     });
+    return undefined;
+  }
+
+  /** The record of a model, or a new one for a model that has none yet. */
+  #configOf(service: ServiceConfig, model: string): ModelConfig {
+    return service.models?.find((each) => each.id === model) ?? { id: model };
+  }
+
+  /** Changes the record of a model of a service, which is made where there is none. */
+  changeModel(id: string, model: string, change: (config: ModelConfig) => ModelConfig): void {
+    this.#changeService(id, (service) => {
+      const before = this.#configOf(service, model);
+      const after = change(before);
+      const others = (service.models ?? []).filter((each) => each.id !== model);
+      const empty = Object.keys(after).length === 1;
+      const models = empty ? others : [...others, after];
+      const { models: _was, ...rest } = service;
+      return models.length > 0 ? { ...rest, models } : rest;
+    });
+  }
+
+  /** People set a cell of a model (see `editField`): it is theirs from now on. */
+  editModel(id: string, model: string, field: ModelField, value: unknown): void {
+    const live = this.modelOf(id, model)?.live;
+    this.changeModel(id, model, (config) =>
+      editField(config, field, value, live?.thinkingLevelMap ?? {}),
+    );
+  }
+
+  /** Sets what a model has that no catalog fills: its own address, protocol, headers, switches. */
+  setModelOwn<K extends "imageMaxBytes" | "baseUrl" | "api" | "headers" | "compat">(
+    id: string,
+    model: string,
+    field: K,
+    value: ModelValues[K] | undefined,
+  ): void {
+    this.changeModel(id, model, (config) => {
+      const { [field]: _was, ...rest } = config;
+      const empty =
+        value === undefined ||
+        (typeof value === "object" && value !== null && Object.keys(value).length === 0);
+      return (empty ? rest : { ...rest, [field]: value }) as ModelConfig;
+    });
+  }
+
+  /**
+   * A model under another id, as people renamed it: everything that names it follows, the models
+   * on, the default, and the choices of a pack and of reasoning (where no other service has a
+   * model of the old name).
+   */
+  renameModel(id: string, from: string, to: string): "taken" | undefined {
+    const name = to.trim();
+    const service = this.serviceOf(id);
+    if (!service || !name || name === from) return undefined;
+    if (this.modelsFor(id).some((model) => model.id === name)) return "taken";
+    const now = this.#settingsNow();
+    const shared = now.services.some(
+      (each) =>
+        each.id !== id && (each.enabled.includes(from) || each.models?.some((m) => m.id === from)),
+    );
+    const swap = (ids: readonly string[]) => ids.map((each) => (each === from ? name : each));
+    const services = now.services.map((each) => {
+      if (each.id !== id) return each;
+      const config = this.#configOf(each, from);
+      const models = [
+        ...(each.models ?? []).filter((model) => model.id !== from),
+        { ...config, id: name, added: config.added ?? "hand" },
+      ];
+      return {
+        ...each,
+        enabled: swap(each.enabled),
+        ...(each.paused && { paused: swap(each.paused) }),
+        models,
+      };
+    });
+    const rekey = <T>(map: Readonly<Record<string, T>> | undefined) => {
+      if (!map || shared || !(from in map)) return map;
+      const { [from]: value, ...rest } = map;
+      return { ...rest, [name]: value as T };
+    };
+    const packFor = rekey(now.packFor);
+    const reasoningFor = rekey(now.reasoningFor);
+    this.#save({
+      ...now,
+      services,
+      ...(packFor && { packFor }),
+      ...(reasoningFor && { reasoningFor }),
+      default:
+        now.default?.service === id && now.default.model === from
+          ? { service: id, model: name }
+          : now.default,
+    });
+    return undefined;
+  }
+
+  /**
+   * What the catalogs say of a model of a service: what the service listed (where people asked
+   * it), pi's catalog, and the open catalog, matched by the name of the service and its address.
+   * Loads the open catalog where this page does not have it yet.
+   */
+  async sayOf(id: string, model: string): Promise<CatalogValues> {
+    const service = this.serviceOf(id);
+    if (!service) return catalogValues({});
+    const listing = this.#snapshot.listings.get(id);
+    const known = await this.loadKnown(service.kind);
+    const entries = await this.loadCatalog();
+    const config = service.models?.find((each) => each.id === model);
+    const say: CatalogSay = {
+      service:
+        listing?.state === "ok" ? listing.models.find((each) => each.id === model) : undefined,
+      pi: known.find((each) => each.id === model),
+      modelsDev: entries ? this.#fromCatalog(entries, service, model, config) : undefined,
+    };
+    return catalogValues(say);
+  }
+
+  #fromCatalog(
+    entries: readonly CatalogEntry[],
+    service: ServiceConfig,
+    model: string,
+    config: ModelConfig | undefined,
+  ): CatalogSay["modelsDev"] {
+    const kind = kindOf(service.kind);
+    const hints = [
+      service.name,
+      ...(kind && !kind.custom ? [kind.id, kind.catalog ?? "", kind.name] : []),
+    ];
+    const found = recommendFromCatalog(entries, model, hints, config?.baseUrl ?? service.baseUrl);
+    if (found.exactMatches === 0) return undefined;
+    return {
+      preset: found.preset,
+      ...(found.method !== "none" && { by: found.method }),
+      ...(found.matchedProviderName !== undefined && { matched: found.matchedProviderName }),
+      ...(found.price.status === "unreliable" && { priceDoubt: found.price.reason }),
+    };
+  }
+
+  /**
+   * Fills in what the catalogs say of models of a service, only what is empty; or with `again`
+   * also what a catalog filled before (never what people set). What a model was before can be
+   * had back with `undoFill`.
+   */
+  async fillModels(id: string, models: readonly string[], again = false): Promise<void> {
+    for (const model of models) {
+      const say = await this.sayOf(id, model);
+      if (!this.serviceOf(id)) return;
+      const config = this.serviceOf(id)?.models?.find((each) => each.id === model);
+      // pi's own models need no record: what pi knows of them is read as they are used.
+      if (!config && !again) continue;
+      this.changeModel(id, model, (each) => fillModel(each, say, again));
+    }
+  }
+
+  /** Undoes what a catalog filled in last, see `undoFill`. */
+  undoFill(id: string, model: string): void {
+    this.changeModel(id, model, undoFill);
+  }
+
+  /** A cell back to what the catalogs say, no longer people's, see `revertField`. */
+  async revertField(id: string, model: string, field: ModelField): Promise<void> {
+    const say = await this.sayOf(id, model);
+    this.changeModel(id, model, (config) => revertField(config, field, say));
+  }
+
+  /**
+   * The open catalog of models: this page's copy, else this device's while it is less than an hour
+   * old, else models.dev, else the platform's (where the browser cannot read models.dev, and
+   * people are signed in). Undefined where none can be had: then only pi's catalog fills in.
+   * `fresh` takes it again from models.dev or the platform, whatever there is.
+   */
+  loadCatalog(fresh = false): Promise<readonly CatalogEntry[] | undefined> {
+    const options = this.#catalogOptions;
+    if (!options) return Promise.resolve(undefined);
+    if (!fresh && this.#catalog) return Promise.resolve(this.#catalog);
+    if (this.#catalogLoading) return this.#catalogLoading;
+    this.#setCatalog({ state: "loading" });
+    const load = (async () => {
+      const cache = options.cache;
+      if (!fresh && cache) {
+        const kept = readModelCatalog(await cache.read(CATALOG_CACHE_KEY).catch(() => undefined));
+        if (kept && Date.now() - kept.fetchedAt < MODEL_CATALOG_MAX_AGE_MS)
+          return this.#tookCatalog(kept, "device");
+      }
+      try {
+        const send = options.fetch ?? globalThis.fetch.bind(globalThis);
+        // Nothing of anyone goes with it: no cookies, no referrer.
+        const response = await send(MODELS_DEV_URL, {
+          credentials: "omit",
+          referrerPolicy: "no-referrer",
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!response.ok) throw new Error(`models.dev answered ${response.status}`);
+        const catalog = { fetchedAt: Date.now(), entries: flattenModelsDev(await response.json()) };
+        if (catalog.entries.length === 0) throw new Error("models.dev answered no models");
+        void cache?.write(CATALOG_CACHE_KEY, catalog);
+        return this.#tookCatalog(catalog, "models.dev");
+      } catch (error) {
+        console.warn("The open catalog of models could not be read", error);
+      }
+      if (options.platform) {
+        try {
+          const catalog = await options.platform();
+          void cache?.write(CATALOG_CACHE_KEY, catalog);
+          return this.#tookCatalog(catalog, "platform");
+        } catch (error) {
+          console.warn("The platform did not give the catalog of models", error);
+        }
+      }
+      this.#setCatalog({ state: "failed" });
+      return this.#catalog;
+    })().finally(() => {
+      this.#catalogLoading = undefined;
+    });
+    this.#catalogLoading = load;
+    return load;
+  }
+
+  #tookCatalog(
+    catalog: ModelCatalog,
+    from: "device" | "models.dev" | "platform",
+  ): readonly CatalogEntry[] {
+    this.#catalog = catalog.entries;
+    this.#setCatalog({
+      state: "ok",
+      fetchedAt: catalog.fetchedAt,
+      from,
+      count: catalog.entries.length,
+    });
+    return catalog.entries;
+  }
+
+  #setCatalog(catalog: CatalogState): void {
+    this.#snapshot = { ...this.#snapshot, catalog };
+    this.#emitter.emit();
+  }
+
+  /**
+   * The catalogs again: pi's of each kind, and the open one, fresh. Fills in nothing by itself:
+   * the details of a model offer to fill in again.
+   */
+  async refreshCatalog(): Promise<void> {
+    await this.loadCatalog(true);
+  }
+
+  /** What the open catalog says of a model, without loading it: for lists, as far as it is here. */
+  catalogEntryOf(id: string, model: string): CatalogSay["modelsDev"] {
+    const service = this.serviceOf(id);
+    if (!service || !this.#catalog) return undefined;
+    return this.#fromCatalog(this.#catalog, service, model, undefined);
   }
 
   /** How hard a model reasons by default; nothing leaves it to its pack. */
@@ -579,6 +1067,7 @@ export class AiSettingsStore {
     if (!trimmed) return this.removeKey(id);
     this.#know(id, trimmed);
     this.#forgetTests(id);
+    this.#forgetListing(id);
     try {
       await this.#keys.write(id, trimmed);
     } catch (error) {
@@ -590,6 +1079,7 @@ export class AiSettingsStore {
 
   async removeKey(id: string): Promise<void> {
     this.#forgetTests(id);
+    this.#forgetListing(id);
     try {
       await this.#keys.remove(id);
     } catch (error) {
@@ -622,15 +1112,38 @@ export class AiSettingsStore {
     }
     this.#setListing(id, { state: "loading" });
     const key = (await this.keyOf(id)) ?? "";
-    const listed = await listModels(kind.protocol, route.relay?.baseUrl ?? route.baseUrl, key, {
-      ...(route.relay && { headers: route.relay.headers }),
-    });
+    const listed = await listModels(
+      protocolOf(service) ?? kind.protocol,
+      route.relay?.baseUrl ?? route.baseUrl,
+      key,
+      { headers: this.#listHeaders(service, route) },
+    );
+    // Changed meanwhile: what it listed is of what it was.
+    if (this.serviceOf(id) !== service) return;
     this.#setListing(
       id,
       listed.ok
         ? { state: "ok", models: listed.models }
         : { state: "failed", failure: listed.failure },
     );
+  }
+
+  /** The headers of a service as its list of models is asked for: through the relay as it takes them. */
+  #listHeaders(
+    service: Pick<ServiceConfig, "headers">,
+    route: Exclude<ServiceRoute, string>,
+  ): Record<string, string> {
+    if (!route.relay) return { ...service.headers };
+    return { ...relayPassHeaders(service.headers), ...route.relay.headers };
+  }
+
+  /** What a service listed no longer counts: where it is or how it is talked to changed. */
+  #forgetListing(id: string): void {
+    if (!this.#snapshot.listings.has(id)) return;
+    const listings = new Map(this.#snapshot.listings);
+    listings.delete(id);
+    this.#snapshot = { ...this.#snapshot, listings };
+    this.#emitter.emit();
   }
 
   #setListing(id: string, listing: ModelListing): void {
@@ -670,37 +1183,43 @@ export class AiSettingsStore {
     const service = this.serviceOf(id);
     if (!service) return [];
     const catalog = this.#snapshot.known.get(service.kind) ?? [];
-    const listing = this.#snapshot.listings.get(id);
-    const listed = listing?.state === "ok" ? listing.models : [];
-    const inCatalog = new Set(catalog.map((model) => model.id));
-    const rows = new Map<string, ServiceModel>();
+    const live = new Map(catalog.map((model) => [model.id, model]));
+    const configs = new Map((service.models ?? []).map((model) => [model.id, model]));
+    const ids = [
+      ...new Set([...service.enabled, ...catalog.map((model) => model.id), ...configs.keys()]),
+    ];
     const enabled = new Set(service.enabled);
-    const put = (model: ListedModel, fresh: boolean, custom: boolean) => {
-      const before = rows.get(model.id);
-      rows.set(model.id, {
-        ...model,
-        ...before,
-        // What pi knows comes first; the service fills what it does not.
-        ...(before?.contextWindow === undefined &&
-          model.contextWindow !== undefined && { contextWindow: model.contextWindow }),
-        enabled: enabled.has(model.id),
-        fresh: before?.fresh ?? fresh,
-        custom: before?.custom === true || custom,
-      });
-    };
-    for (const model of catalog) put(model, false, false);
-    const kind = kindOf(service.kind);
-    for (const model of listed)
-      put(model, kind?.catalog !== undefined && !inCatalog.has(model.id), false);
-    for (const model of service.models ?? []) {
-      put(
-        { id: model.id, contextWindow: model.contextWindow ?? DEFAULT_CONTEXT_WINDOW },
-        false,
-        true,
-      );
-    }
-    for (const model of service.enabled) if (!rows.has(model)) put({ id: model }, false, false);
-    return [...rows.values()].toSorted(byName);
+    const rows = ids.map((model): ServiceModel => {
+      const known = live.get(model);
+      const config = configs.get(model);
+      const pi = liveOf(known);
+      const values = effectiveValues(config, pi);
+      return {
+        id: model,
+        ...(values.name !== undefined && { name: values.name }),
+        ...(values.contextWindow !== undefined && { contextWindow: values.contextWindow }),
+        ...(values.maxTokens !== undefined && { maxTokens: values.maxTokens }),
+        ...(values.cost !== undefined && { cost: values.cost }),
+        ...(values.reasoning !== undefined && { reasoning: values.reasoning }),
+        ...(values.image !== undefined && { image: values.image }),
+        ...(values.thinkingLevelMap !== undefined && { thinkingLevelMap: values.thinkingLevelMap }),
+        enabled: enabled.has(model),
+        values,
+        ...(config && { config }),
+        ...(pi && { live: pi }),
+        inCatalog: known !== undefined,
+        custom: known === undefined && config?.added !== "service",
+        levels: supportedLevels(values.reasoning, values.thinkingLevelMap),
+      };
+    });
+    // Those on in their order, which is the order of the chat's picker, then the others by name.
+    const order = new Map(service.enabled.map((model, index) => [model, index]));
+    return rows.toSorted((a, b) => {
+      const at = order.get(a.id);
+      const bt = order.get(b.id);
+      if (at !== undefined || bt !== undefined) return (at ?? Infinity) - (bt ?? Infinity);
+      return byName(a, b);
+    });
   }
 
   /** What is known of a model of a service, see `modelsFor`. */
@@ -758,6 +1277,7 @@ export class AiSettingsStore {
     if (!service || !kind) return { state: "held", hold: "badUrl" };
     const where = model === undefined ? id : testKey(id, model);
     this.#setTest(where, { state: "running" });
+    if (model !== undefined) this.#setPictureTest(where, undefined);
     const key = (await this.keyOf(id)) ?? "";
     const asked = model ?? service.enabled[0] ?? cheapestOf(await this.loadKnown(service.kind))?.id;
     const test =
@@ -765,7 +1285,30 @@ export class AiSettingsStore {
         ? await this.#test(service, key, asked)
         : (await this.#list(service, kind, key)).test;
     this.#setTest(where, test);
+    // A model people say takes pictures is asked about one too: only an answer shows it does.
+    if (model !== undefined && test.state === "ok" && this.modelOf(id, model)?.image) {
+      const endpoint = this.endpointOf(service, model);
+      if (endpoint !== undefined && typeof endpoint !== "string") {
+        const said = await testModelPicture(endpoint, key);
+        this.#setPictureTest(
+          where,
+          !said.ok
+            ? { state: "failed", failure: failureOf(said.error, [key]) }
+            : saysRed(said.text)
+              ? { state: "ok" }
+              : { state: "wrong", said: said.text },
+        );
+      }
+    }
     return test;
+  }
+
+  #setPictureTest(where: string, test: PictureTest | undefined): void {
+    const pictureTests = new Map(this.#snapshot.pictureTests);
+    if (test) pictureTests.set(where, test);
+    else if (!pictureTests.delete(where)) return;
+    this.#snapshot = { ...this.#snapshot, pictureTests };
+    this.#emitter.emit();
   }
 
   /** Keeps what a test came to, and what the service listed, for a service added after it was tried. */
@@ -792,9 +1335,12 @@ export class AiSettingsStore {
     const route = this.routeOf(draft);
     if (typeof route === "string") return { test: { state: "held", hold: route } };
     const started = Date.now();
-    const listed = await listModels(kind.protocol, route.relay?.baseUrl ?? route.baseUrl, key, {
-      ...(route.relay && { headers: route.relay.headers }),
-    });
+    const listed = await listModels(
+      draft.api ?? kind.protocol,
+      route.relay?.baseUrl ?? route.baseUrl,
+      key,
+      { headers: this.#listHeaders(draft, route) },
+    );
     const ms = Date.now() - started;
     if (!listed.ok) return { test: { state: "failed", ms, failure: listed.failure } };
     return { test: { state: "ok", ms, models: listed.models.length }, models: listed.models };

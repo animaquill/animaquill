@@ -54,15 +54,18 @@ export const visibleGroups = (shown: GroupsShown): readonly SettingsGroup[] =>
 
 /**
  * Where the settings of a window are: which group, and in the group of AI models which service, or
- * the cards of services to add. Where the settings are narrow they show one level at a time, and
- * `depth` is the level: the list of groups (0), a group (1), what a group opened (2). Where they are
- * wide, the list of groups and a group show side by side, and only what a group opened counts.
+ * the cards of services to add, and a model of it. Where the settings are narrow they show one level
+ * at a time, and `depth` is the level: the list of groups (0), a group (1), what a group opened
+ * (2), a model of a service (3). Where they are wide, the list of groups and a group show side by
+ * side, and only what a group opened counts.
  */
 export interface SettingsPlace {
   readonly group: SettingsGroup;
-  readonly depth: 0 | 1 | 2;
+  readonly depth: 0 | 1 | 2 | 3;
   /** The service shown, in the group of AI models. */
   readonly service?: string | undefined;
+  /** The model of that service whose details are shown (`depth` 3). */
+  readonly model?: string | undefined;
   /** The cards of services to add are shown, with one picked where it says which kind. */
   readonly adding?: true | string | undefined;
   /** Where to go once a service is added: back to the chat, which sent people here. */
@@ -116,7 +119,13 @@ export class SettingsNav {
 
   /** One level up, where the settings are narrow. */
   back(): void {
-    const { group, depth } = this.#place;
-    this.go(depth === 2 ? { group, depth: 1 } : { group, depth: 0 });
+    const { group, depth, service } = this.#place;
+    this.go(
+      depth === 3
+        ? { group, depth: 2, service }
+        : depth === 2
+          ? { group, depth: 1 }
+          : { group, depth: 0 },
+    );
   }
 }

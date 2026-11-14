@@ -107,7 +107,13 @@ describe("services", () => {
         ],
       }),
     });
-    expect(google).toEqual({ ok: true, models: [{ id: "gemini-x", name: "Gemini X" }] });
+    expect(google).toEqual({
+      ok: true,
+      models: [
+        { id: "embed", chat: false },
+        { id: "gemini-x", name: "Gemini X" },
+      ],
+    });
 
     const refused = await listModels("anthropic-messages", "https://a", KEY, {
       fetch: answering(401, { error: { message: `invalid x-api-key ${KEY}` } }),

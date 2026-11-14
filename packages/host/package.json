@@ -12,6 +12,7 @@
     "./ai-sync": "./src/ai-sync-rules.ts",
     "./sync": "./src/sync-protocol.ts",
     "./relay": "./src/relay.ts",
+    "./model-catalog": "./src/model-catalog.ts",
     "./s3": "./src/s3.ts"
   },
   "scripts": {

@@ -111,6 +111,33 @@ describe("keys of accounts in this browser", () => {
 });
 
 describe("what an entry can be", () => {
+  it("a model of a service, by the service and its id, with nothing of a secret", () => {
+    const model = {
+      id: "team/claude-x",
+      name: "Claude X",
+      contextWindow: 200000,
+      headers: { "x-team": "video" },
+      thinkingLevelMap: { off: null, high: "max" },
+    };
+    expect(checkAiEntry("model:s1/team/claude-x", model)).toBe(true);
+    expect(checkAiEntry("model:s1/other", model)).toBe(false);
+    expect(checkAiEntry("model:/team/claude-x", model)).toBe(false);
+    expect(checkAiEntry("model:s 1/team/claude-x", model)).toBe(false);
+    expect(
+      checkAiEntry("model:s1/team/claude-x", { ...model, headers: { authorization: "x" } }),
+    ).toBe(false);
+    expect(checkAiEntry("model:s1/team/claude-x", { ...model, headers: { "x-a": 1 } })).toBe(false);
+    expect(
+      checkAiEntry("model:s1/team/claude-x", {
+        ...model,
+        baseUrl: "https://x.example/v1?api_key=sk",
+      }),
+    ).toBe(false);
+    expect(
+      checkAiEntry("model:s1/team/claude-x", { ...model, baseUrl: "https://x.example/v1" }),
+    ).toBe(true);
+  });
+
   it("services as they are, nothing under the name of a secret", () => {
     const service = {
       id: "s1",

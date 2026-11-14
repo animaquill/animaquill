@@ -985,6 +985,7 @@ export {
   browserCloudSwitchesAccess,
 } from "./ai-sync-access.ts";
 export { browserAccountKeys } from "./ai.ts";
+export { browserModelCatalogAccess } from "./model-catalog-access.ts";
 export type { BrowserCoverAccessOptions } from "./covers.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";

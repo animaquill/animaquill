@@ -475,10 +475,11 @@ describe("call settings of a pack", () => {
         model: "deepseek-chat",
         catalog: "deepseek",
       },
-      ALL,
+      // Within what the model writes at most, which a pack never goes beyond.
+      { ...ALL, maxOutputTokens: 1234 },
     );
     expect(completions.fields).toEqual(["max_tokens", "prompt_cache_retention", "temperature"]);
-    expect(completions.body).toMatchObject({ max_tokens: 12_345, temperature: 0.5 });
+    expect(completions.body).toMatchObject({ max_tokens: 1234, temperature: 0.5 });
   });
 
   it("leave a request as it was when a pack has none", async () => {

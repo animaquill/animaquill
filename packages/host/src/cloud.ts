@@ -388,6 +388,7 @@ export interface BrowserCloudOptions {
   readonly aiSync?: AiSyncAccess;
   readonly chats?: ChatSyncAccess;
   readonly switches?: CloudSwitchesAccess;
+  readonly modelCatalog?: CloudAccess["modelCatalog"];
   readonly database?: () => IDBFactory;
   readonly locks?: () => LockManager | undefined;
 }
@@ -411,5 +412,6 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.aiSync && { aiSync: options.aiSync }),
     ...(options.chats && { chats: options.chats }),
     ...(options.switches && { switches: options.switches }),
+    ...(options.modelCatalog && { modelCatalog: options.modelCatalog }),
   };
 }

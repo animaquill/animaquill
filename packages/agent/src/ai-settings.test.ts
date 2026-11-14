@@ -1,8 +1,10 @@
 import { COMPARISON_PACK_ID } from "@animaquill/tools";
 import { describe, expect, it } from "vitest";
 import {
+  AI_SETTINGS_VERSION,
   DEFAULT_MAX_TOOL_CALLS,
   EMPTY_AI_SETTINGS,
+  headerProblem,
   enabledCountOf,
   enabledModelsOf,
   isSecretName,
@@ -241,7 +243,7 @@ describe("AI settings of version 2", () => {
   });
 
   it("are left alone when a newer editor wrote them", () => {
-    expect(readAiSettings({ ...two, version: 3 })).toEqual({ kind: "newer" });
+    expect(readAiSettings({ ...two, version: 4 })).toEqual({ kind: "newer" });
     expect(readAiSettings({ ...two, version: "2.1" })).toEqual({ kind: "newer" });
   });
 
@@ -378,7 +380,7 @@ describe("a page of version 1 that wrote over version 2", () => {
     expect(recovered?.default).toEqual({ service: "c", model: "gpt-6.1-sol" });
   });
 
-  it("is only for version 1", () => {
+  it("is only for pages of before", () => {
     expect(recoverOldWrite(latest, writeAiSettings(latest))).toBeUndefined();
     expect(recoverOldWrite(latest, "x")).toBeUndefined();
   });
@@ -529,5 +531,222 @@ describe("review of CM1: what a page of version 1 never saw, and names of secret
     for (const name of ["maxTokens", "authType", "keyHint", "tokenBudget", "monkey"]) {
       expect(isSecretName(name), name).toBe(false);
     }
+  });
+});
+
+describe("AI settings of version 3", () => {
+  const full = {
+    version: 3,
+    services: [
+      {
+        id: "g",
+        kind: "openai-compatible",
+        name: "公司网关",
+        baseUrl: "https://gateway.example/v1",
+        route: "direct",
+        api: "anthropic-messages",
+        headers: { "x-team": "video", "x-api-key": KEY, Cookie: "a=b", "bad name": "x" },
+        enabled: ["team-claude"],
+        models: [
+          {
+            id: "team-claude",
+            added: "service",
+            name: "Team Claude",
+            reasoning: true,
+            image: true,
+            contextWindow: 200000,
+            maxTokens: 64000,
+            imageMaxBytes: 5242880,
+            cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+            baseUrl: "https://gateway.example/claude",
+            api: "anthropic-messages",
+            headers: { "x-route": "a" },
+            compat: { forceAdaptiveThinking: true, supportsDeveloperRole: false, other: 1 },
+            thinkingLevelMap: { off: null, high: "max", xhigh: "xhigh", low: "far too long value" },
+            filled: {
+              from: ["service", "models.dev", "nowhere"],
+              by: "consensus",
+              matched: "Anthropic",
+              priceDoubt: "conflict",
+              fields: ["contextWindow", "thinking.high", "nope"],
+              snapshot: { contextWindow: 128000, password: KEY },
+            },
+            edited: ["name", "cost", "x"],
+            future: { a: 1 },
+          },
+          { id: "team-claude" },
+          { id: "broken", contextWindow: -5, cost: { input: 1 }, api: "smoke", baseUrl: "ftp://x" },
+        ],
+        paused: ["old"],
+        model: "team-claude",
+      },
+    ],
+    default: { service: "g", model: "team-claude" },
+  };
+
+  it("keep everything of each model, and of a server of one's own, field by field", () => {
+    expect(AI_SETTINGS_VERSION).toBe(3);
+    const reading = readAiSettings(full);
+    expect(reading).toMatchObject({ kind: "ok", from: 3 });
+    const [service] = settingsOf(full).services;
+    expect(service).toMatchObject({
+      api: "anthropic-messages",
+      headers: { "x-team": "video" },
+    });
+    // Paused models are of a service that is all off: this one has one on.
+    expect(service?.paused).toBeUndefined();
+    expect(service?.models).toEqual([
+      {
+        id: "team-claude",
+        added: "service",
+        name: "Team Claude",
+        reasoning: true,
+        image: true,
+        contextWindow: 200000,
+        maxTokens: 64000,
+        imageMaxBytes: 5242880,
+        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        baseUrl: "https://gateway.example/claude",
+        api: "anthropic-messages",
+        headers: { "x-route": "a" },
+        compat: { forceAdaptiveThinking: true, supportsDeveloperRole: false },
+        thinkingLevelMap: { off: null, high: "max", xhigh: "xhigh" },
+        filled: {
+          from: ["service", "models.dev"],
+          by: "consensus",
+          matched: "Anthropic",
+          priceDoubt: "conflict",
+          fields: ["contextWindow", "thinking.high"],
+          snapshot: { contextWindow: 128000 },
+        },
+        edited: ["name", "cost"],
+      },
+      { id: "broken" },
+    ]);
+    const written = writeAiSettings(settingsOf(full));
+    expect(written.version).toBe(3);
+    // What this editor does not know of a model goes back as it was.
+    expect(
+      (written.services as { models: Record<string, unknown>[] }[])[0]?.models[0],
+    ).toMatchObject({ future: { a: 1 } });
+    expect(settingsOf(written)).toEqual(settingsOf(full));
+    expect(JSON.stringify(written)).not.toContain(KEY);
+  });
+
+  it("let only servers of one's own say how they are talked to", () => {
+    const anthropic = {
+      ...full,
+      services: [{ ...full.services[0], kind: "anthropic", api: "openai-responses" }],
+    };
+    expect(settingsOf(anthropic).services[0]?.api).toBeUndefined();
+  });
+
+  it("keep the models that were on as the whole service went off", () => {
+    const off = { ...full, services: [{ ...full.services[0], enabled: [] }] };
+    expect(settingsOf(off).services[0]?.paused).toEqual(["old"]);
+  });
+
+  it("read version 2's models people named as theirs, with the size they gave", () => {
+    const [service] = settingsOf({
+      version: 2,
+      services: [
+        {
+          id: "a",
+          kind: "deepseek",
+          name: "D",
+          baseUrl: "https://api.deepseek.com",
+          route: "direct",
+          enabled: ["mine", "deepseek-flash"],
+          models: [{ id: "mine", contextWindow: 64000 }, { id: "other" }],
+        },
+      ],
+    }).services;
+    expect(service?.models).toEqual([
+      { id: "mine", added: "hand", contextWindow: 64000, edited: ["contextWindow"] },
+      { id: "other", added: "hand" },
+    ]);
+    expect(service?.enabled).toEqual(["mine", "deepseek-flash"]);
+  });
+
+  it("refuse headers that are not people's own: of the browser, or named like a secret", () => {
+    expect(headerProblem("x-team", "video")).toBeUndefined();
+    expect(headerProblem("Host", "x")).toBe("name");
+    expect(headerProblem("x-forwarded-for", "x")).toBe("name");
+    expect(headerProblem("aq-pass-x", "x")).toBe("name");
+    expect(headerProblem("bad name", "x")).toBe("name");
+    expect(headerProblem("x-api-key", "x")).toBe("secret");
+    expect(headerProblem("Authorization", "x")).toBe("secret");
+    expect(headerProblem("x-gateway-token", "x")).toBe("secret");
+    expect(headerProblem("x-team", "a\nb")).toBe("value");
+  });
+});
+
+describe("a page of version 2 that wrote over version 3", () => {
+  const latest = settingsOf({
+    version: 3,
+    services: [
+      {
+        id: "g",
+        kind: "openai-compatible",
+        name: "网关",
+        baseUrl: "https://gateway.example/v1",
+        route: "direct",
+        api: "anthropic-messages",
+        headers: { "x-team": "video" },
+        enabled: ["team-claude", "mine"],
+        models: [
+          {
+            id: "team-claude",
+            added: "service",
+            maxTokens: 1000,
+            filled: { from: ["models.dev"], fields: ["maxTokens"], snapshot: {} },
+          },
+          { id: "mine", added: "hand", contextWindow: 64000, edited: ["contextWindow"] },
+          { id: "gone", added: "hand" },
+        ],
+      },
+    ],
+  });
+
+  it("takes what it changed and keeps what only version 3 has", () => {
+    // What that page read, before version 3, and wrote with a change: a name, a size, one gone.
+    const old = {
+      version: 2,
+      services: [
+        {
+          id: "g",
+          kind: "openai-compatible",
+          name: "网关（改名）",
+          baseUrl: "https://gateway.example/v1",
+          route: "direct",
+          enabled: ["team-claude", "mine"],
+          models: [
+            { id: "team-claude", contextWindow: 128000 },
+            { id: "mine", contextWindow: 32000 },
+          ],
+          model: "team-claude",
+        },
+      ],
+      default: { service: "g", model: "mine" },
+    };
+    const recovered = recoverOldWrite(latest, old);
+    expect(recovered?.default).toEqual({ service: "g", model: "mine" });
+    const [service] = recovered?.services ?? [];
+    expect(service).toMatchObject({
+      name: "网关（改名）",
+      api: "anthropic-messages",
+      headers: { "x-team": "video" },
+    });
+    expect(service?.models).toEqual([
+      {
+        id: "team-claude",
+        added: "service",
+        maxTokens: 1000,
+        contextWindow: 128000,
+        edited: ["contextWindow"],
+        filled: { from: ["models.dev"], fields: ["maxTokens"], snapshot: {} },
+      },
+      { id: "mine", added: "hand", contextWindow: 32000, edited: ["contextWindow"] },
+    ]);
   });
 });
