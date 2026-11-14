@@ -2,9 +2,10 @@ import { ChevronLeft } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { AccountSyncPage } from "../chat/AccountSyncPage.tsx";
 import { AiModelsPage } from "../chat/AiModelsPage.tsx";
 import { ModelPacksSettings } from "../chat/ModelPacksSettings.tsx";
+import { CloudSyncPage } from "../cloud/CloudSyncPage.tsx";
+import { useAccount } from "../cloud/CloudParts.tsx";
 import { SETTINGS_PAGES } from "../workbench/settings-nav.ts";
 import styles from "./SettingsPanel.module.css";
 
@@ -14,11 +15,14 @@ import styles from "./SettingsPanel.module.css";
  * of a window are is the window's own.
  */
 export function SettingsPanel() {
-  const { settingsNav, aiSync } = useWorkbench();
+  const { settingsNav, cloudSync, account } = useWorkbench();
   const { t } = useTranslation();
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
-  const { available } = useSyncExternalStore(aiSync.subscribe, aiSync.getSnapshot);
-  const pages = SETTINGS_PAGES.filter((page) => page !== "account" || available);
+  const { available } = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
+  // The cloud features only where people are signed in to a platform that has them.
+  const signedIn = useAccount(account).status === "signedIn";
+  const cloud = available && signedIn;
+  const pages = SETTINGS_PAGES.filter((page) => page !== "cloud" || cloud);
 
   return (
     <div className={styles.panel} data-testid="settings-panel">
@@ -39,7 +43,7 @@ export function SettingsPanel() {
         <div className={styles.page}>
           {place.page === "editing" && <EditingSettings />}
           {place.page === "models" && <AiModelsPage />}
-          {place.page === "account" && available && <AccountSyncPage />}
+          {place.page === "cloud" && cloud && <CloudSyncPage />}
           {place.page === "packs" && (
             <div className={styles.scroll}>
               <BackToPages />

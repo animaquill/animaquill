@@ -737,7 +737,7 @@
       "editing": "编辑",
       "models": "AI 模型",
       "packs": "模型适配包",
-      "account": "账号和同步"
+      "cloud": "云同步"
     },
     "pagesLabel": "设置分组",
     "back": "返回"
@@ -4148,15 +4148,6 @@
     }
   },
   "aiSync": {
-    "askTitle": "AI 设置开始跟账号同步",
-    "notice": "同步的配置（包括 API key）会上传到服务器加密存储，平台能解开。",
-    "askWhere": "可以在“设置 → 账号和同步”里关掉，关掉后平台上的那份会删掉。",
-    "askPut": "这台设备上有 {{count}} 个 AI 服务，要把它们和 key 放进账号吗？",
-    "askMerge": "这台设备上有 {{count}} 个 AI 服务，账号里已经有 {{accountCount}} 个。放进去会合并，同类同地址的服务算同一个。",
-    "put": "放进去",
-    "skip": "不用",
-    "ok": "知道了",
-    "added": "这台设备上的 AI 服务放进了账号：{{names}}",
     "status": {
       "local": "只在这台设备",
       "waiting": "还没开始同步",
@@ -4171,17 +4162,119 @@
     },
     "line": "AI 设置：{{status}}",
     "retry": "重试",
-    "switch": "AI 设置和 key 跟账号同步",
-    "switchHelp": "服务、地址、启用的模型、默认模型、推理强度、装的适配包和选择、对话的偏好，以及 API key。关掉时所有设备一起停，平台上存的那份删掉。",
-    "signedOut": "登录后 AI 设置和 key 跟账号同步。没登录时 key 只存在这个浏览器里，清除网站数据会一起删掉。",
-    "signIn": "登录",
-    "account": "账号：{{name}}",
-    "offTitle": "关掉 AI 设置的同步？",
+    "offTitle": "关掉模型列表的同步？",
     "offMessage": "所有设备一起停止同步，平台上存的 AI 设置和 key 会马上删掉。每台设备留着自己现在的那份，之后各改各的。",
     "offConfirm": "关掉并删掉平台上的",
     "offFailed": "没能关掉同步：平台没有回应，稍后再试。",
     "onFailed": "没能打开同步：平台没有回应，稍后再试。",
     "signOutNote": "退出后，从账号同步下来的 AI 设置和 key 会从这个浏览器删掉，云端项目的对话的本地副本也会删掉；登录前这台设备上的设置回来。",
     "chatCopied": "对话《{{title}}》在另一台设备上也改过，已换成那边的版本；这台设备上的版本另存成了“{{copy}}”，在对话列表里。"
+  },
+  "cloudSync": {
+    "title": "云同步",
+    "intro": "账号 {{name}}。开着的东西会存到平台，你在别的设备登录同一个账号就能接着用。",
+    "counts": {
+      "services": "{{count}} 个 AI 服务",
+      "servicesShort": "{{count}} 个服务",
+      "models": "{{count}} 个模型",
+      "packs": "{{count}} 个适配包"
+    },
+    "ai": {
+      "name": "同步模型列表",
+      "help": "AI 服务、key、启用的模型和参数、默认模型、推理强度、装的适配包和选择、AI 聊天的偏好。key 加密存储，平台能解开（云端 AI 要用）。关掉时平台上的那份删掉，每台设备留着自己的。"
+    },
+    "organizer": {
+      "name": "开始页的收藏和分组",
+      "help": "星标、你建的分组和每个项目放在哪组。关掉以后只在这台设备，平台上的那份删掉。"
+    },
+    "chats": {
+      "name": "云端项目的 AI 对话",
+      "help": "云端项目里和 AI 的对话存到平台，换设备能接着聊。本地项目的对话始终只在这台设备。关掉以后平台上的对话删掉，每台设备留着自己的。"
+    },
+    "newProjectsInCloud": {
+      "name": "新建项目默认存云端",
+      "help": "开着时新建对话框先选中“云端”；关掉先选“本地”。每次新建仍能改选。"
+    },
+    "github": {
+      "name": "关联 GitHub",
+      "help": "云端项目要存到你的仓库，需要装 AnimaQuill 的 GitHub App，并选给它哪些仓库。现在不装也行，新建云端项目时会再问。",
+      "linked": "已关联 {{name}}",
+      "repositories": "已关联 {{name}}（{{count}} 个仓库）",
+      "repositoriesMore": "已关联 {{name}}（{{count}} 个以上仓库）",
+      "linkedHelp": "云端项目存到你选给 AnimaQuill 的仓库里。",
+      "install": "去装…",
+      "manage": "管理仓库…",
+      "noRepositories": "已关联 {{name}}，还没选给它仓库"
+    },
+    "status": {
+      "idle": "开着，有改动时同步",
+      "syncing": "正在同步",
+      "synced": "已同步",
+      "syncedAgo": "已同步 · {{ago}}",
+      "offline": "离线，连上后同步",
+      "failed": "同步出错",
+      "off": "关着，只在这台设备",
+      "waiting": "等你在欢迎页里确认后开始",
+      "saved": "跟账号"
+    },
+    "aiStatus": "{{status}} · {{counts}}",
+    "retry": "重试",
+    "switchesFailed": "没连上平台，开关暂时看不到最新的，也改不了。",
+    "changeFailed": "没能改：平台没有回应，稍后再试。",
+    "organizerOffTitle": "关掉收藏和分组的同步？",
+    "organizerOffMessage": "所有设备一起停止同步，平台上存的星标和分组会马上删掉。每台设备留着自己现在的那份，之后各改各的。",
+    "chatsOffTitle": "关掉云端项目 AI 对话的同步？",
+    "chatsOffMessage": "所有设备一起停止同步，平台上存的对话会马上删掉。每台设备留着自己现在有的对话，之后各聊各的。",
+    "offConfirm": "关掉并删掉平台上的",
+    "device": {
+      "title": "这台设备上的",
+      "name": "没登录时用的那份 AI 设置",
+      "help": "登录前这台设备上配的 {{counts}}。登录后不再用它，退出登录后回到它。",
+      "merge": "把它并进账号…",
+      "forget": "删掉",
+      "mergeTitle": "把这台设备上的 AI 设置并进账号？",
+      "mergeMessage": "{{counts}}和它们的 key 会放进账号；同类同地址的服务算同一个，账号里已有的设置不变。",
+      "mergeKeys": "key 会上传，加密存储，平台能解开。",
+      "mergeOff": "“同步模型列表”关着，只放进这台设备上账号的那份，不上传。",
+      "mergeConfirm": "并进去",
+      "merged": "已并进账号：{{names}}",
+      "mergedNothing": "没有新的服务要并进去，账号里都有了。",
+      "mergeFailed": "没能并进去，稍后再试。",
+      "forgetTitle": "删掉没登录时用的那份 AI 设置？",
+      "forgetMessage": "这台设备上登录前配的 {{counts}}和 key 会删掉，退出登录后这台设备上就没有 AI 设置了。账号里的不受影响。",
+      "forgetConfirm": "删掉"
+    }
+  },
+  "welcome": {
+    "title": "欢迎，{{name}}",
+    "intro": "登录以后这些云功能可以用。选好按“开始使用”，以后在 设置 › 云同步 里随时能改。",
+    "footer": "按哪个都会按上面的开关开始，以后在 设置 › 云同步 里随时能改。",
+    "start": "开始使用",
+    "later": "以后再说",
+    "close": "关闭",
+    "starting": "正在开始…",
+    "failed": "没连上平台，还没开始。再按一次试试。",
+    "ai": {
+      "name": "同步模型列表",
+      "putMerge": "这台设备上的 {{device}}会放进账号；账号里已经有的 {{count}} 个服务会合并进来。",
+      "put": "这台设备上的 {{device}}会放进账号。",
+      "take": "账号里的 {{count}} 个 AI 服务会出现在这台设备上。",
+      "nothing": "以后在这台设备上配的 AI 服务、模型和适配包会放进账号，换设备不用重配。",
+      "keys": "key 也会上传，加密存储，平台能解开（云端 AI 要用）。",
+      "off": "关着：模型列表只在这台设备上，不上传。",
+      "offDeletes": "账号里已经有的那份（含 key）会从平台删掉，别的设备留着自己的。"
+    },
+    "organizer": {
+      "name": "开始页的收藏和分组跟账号",
+      "help": "星标和分组在所有设备一样。"
+    },
+    "chats": {
+      "name": "云端项目的 AI 对话跟账号",
+      "help": "换设备能接着聊。本地项目的对话始终只在这台设备。"
+    },
+    "newProjectsInCloud": {
+      "name": "新建项目默认存云端",
+      "help": "新建时先选中“云端”：多设备打开、实时同步、存到 GitHub。每次仍能改选本地。"
+    }
   }
 }

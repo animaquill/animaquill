@@ -1,4 +1,5 @@
 import {
+  CloudFeatureOff,
   CloudOtherAccount,
   CloudSignedOut,
   ORGANIZER_BATCH,
@@ -10,6 +11,7 @@ import {
   type ProjectMarksChange,
   type ProjectOrganizer,
 } from "@animaquill/host";
+import { Emitter } from "../workbench/emitter.ts";
 import { cloudMarksKey } from "./cards.ts";
 
 /**
@@ -229,6 +231,15 @@ export interface OrganizerSyncOptions {
    * is signed in is to be asked again. Nothing goes until then.
    */
   readonly otherAccount?: () => void;
+  /** People turned it off for the account, on another device: who has the switches is told. */
+  readonly off?: () => void;
+}
+
+/** How the account's copy stands, for people to see, see `OrganizerSync.getSnapshot`. */
+export interface OrganizerSyncSnapshot {
+  readonly status: "idle" | "syncing" | "synced" | "offline" | "failed";
+  /** When a round last went through. */
+  readonly syncedAt: number | undefined;
 }
 
 /** How long after a change it is given to the account: changes in a row go in one. */
@@ -250,6 +261,8 @@ const defaultTimer = (run: () => void, ms: number) => {
 export class OrganizerSync {
   readonly #options: OrganizerSyncOptions;
   readonly #setTimer: (run: () => void, ms: number) => () => void;
+  readonly #emitter = new Emitter();
+  #snapshot: OrganizerSyncSnapshot = { status: "idle", syncedAt: undefined };
   #cancel: (() => void) | undefined;
   #due = Infinity;
   #running: Promise<void> | undefined;
@@ -260,6 +273,14 @@ export class OrganizerSync {
   constructor(options: OrganizerSyncOptions) {
     this.#options = options;
     this.#setTimer = options.setTimer ?? defaultTimer;
+  }
+
+  subscribe = this.#emitter.subscribe;
+  getSnapshot = (): OrganizerSyncSnapshot => this.#snapshot;
+
+  #set(changes: Partial<OrganizerSyncSnapshot>): void {
+    this.#snapshot = { ...this.#snapshot, ...changes };
+    this.#emitter.emit();
   }
 
   /** Goes a round in `ms`, or sooner where one is due sooner. */
@@ -285,9 +306,11 @@ export class OrganizerSync {
     const account = this.#options.account();
     if (account === undefined || this.#closed) return;
     this.#running = (async () => {
+      if (this.#snapshot.status !== "synced") this.#set({ status: "syncing" });
       try {
         await syncOrganizer(this.#options.local, this.#options.remote, account);
         this.#failures = 0;
+        this.#set({ status: "synced", syncedAt: Date.now() });
       } catch (error) {
         // Somebody signing in again goes on from here.
         if (error instanceof CloudSignedOut) return;
@@ -295,7 +318,14 @@ export class OrganizerSync {
           this.#options.otherAccount?.();
           return;
         }
+        // Turned off elsewhere: nothing goes until it is on again, as the switches say.
+        if (error instanceof CloudFeatureOff) {
+          this.#set({ status: "idle" });
+          this.#options.off?.();
+          return;
+        }
         this.#failures += 1;
+        this.#set({ status: globalThis.navigator?.onLine === false ? "offline" : "failed" });
         const busy = (error as { retryAfterMs?: unknown }).retryAfterMs;
         const wait =
           typeof busy === "number"

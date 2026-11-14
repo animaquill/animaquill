@@ -268,6 +268,11 @@ export interface CloudCreateOptions {
   readonly cloud?: CloudAccess;
   readonly access?: RepositoryAccess;
   readonly account?: AccountAccess;
+  /**
+   * Whether a new project is of the platform by default where people are signed in, as they said
+   * for their account, see `CloudSync.newProjectsInCloud`. Yes where it is not given.
+   */
+  readonly preferCloud?: () => boolean;
   /** What the project is called at first. */
   readonly name: string;
   /**
@@ -483,15 +488,19 @@ export class CloudCreate {
 
   /**
    * What a new project is by default, see the design, 3: a project of the platform where someone
-   * is signed in, and one of this computer where not; only what can be made here; and in a
-   * browser that tests run in, one in the browser.
+   * is signed in, unless they said otherwise for their account (`preferCloud`), and one of this
+   * computer where not; only what can be made here; and in a browser that tests run in, one in the
+   * browser.
    */
   #defaultKind(): CreateKind {
     const { kinds } = this;
     if (kinds.includes("browser")) return "browser";
     if (!kinds.includes("local")) return kinds[0] ?? "cloud";
     if (!kinds.includes("cloud")) return "local";
-    return this.#options.account?.getSnapshot().status === "signedIn" ? "cloud" : "local";
+    return this.#options.account?.getSnapshot().status === "signedIn" &&
+      (this.#options.preferCloud?.() ?? true)
+      ? "cloud"
+      : "local";
   }
 
   /** The repository is called after the project, until people name it themselves. */

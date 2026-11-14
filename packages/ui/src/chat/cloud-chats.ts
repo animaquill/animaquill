@@ -1,5 +1,6 @@
 import {
   ChatNewer,
+  CloudFeatureOff,
   type AccountAccess,
   type ChatStore,
   type ChatSyncAccess,
@@ -7,6 +8,7 @@ import {
   type SavedChat,
   type SavedChatSummary,
 } from "@animaquill/host";
+import { Emitter } from "../workbench/emitter.ts";
 
 /**
  * The conversations of a window, those of projects of the platform going with the account
@@ -33,6 +35,20 @@ export interface CloudChatsOptions {
    * this browser's went into a new conversation, `copy`, and the account's took its place.
    */
   readonly copied?: (title: string, copy: string) => void;
+  /**
+   * Whether the conversations go with the account now, see `CloudSync.allows`: while not, they
+   * are of this browser only. Always where it is not given.
+   */
+  readonly allowed?: (account: string) => boolean;
+  /** The platform says people turned them off for the account. */
+  readonly off?: () => void;
+}
+
+/** How the conversations stand with the account, for people to see. */
+export interface CloudChatsSnapshot {
+  readonly status: "idle" | "synced" | "offline" | "failed";
+  /** When the account last took or gave one. */
+  readonly syncedAt: number | undefined;
 }
 
 /** Whether a conversation has what the account does not: changed here since it last went, or never went. */
@@ -54,15 +70,41 @@ export class CloudChats implements ChatStore {
   readonly #options: CloudChatsOptions;
   /** Writes of each conversation, one after the other. */
   readonly #writing = new Map<string, Promise<unknown>>();
+  readonly #emitter = new Emitter();
+  #snapshot: CloudChatsSnapshot = { status: "idle", syncedAt: undefined };
 
   constructor(options: CloudChatsOptions) {
     this.#options = options;
+  }
+
+  subscribe = this.#emitter.subscribe;
+  getSnapshot = (): CloudChatsSnapshot => this.#snapshot;
+
+  /** The account answered: everything is as it has it, as far as this window asked. */
+  #went(): void {
+    this.#snapshot = { status: "synced", syncedAt: Date.now() };
+    this.#emitter.emit();
+  }
+
+  /** The account could not be asked: what changed here goes the next time. */
+  #failed(error: unknown): void {
+    if (error instanceof CloudFeatureOff) {
+      this.#options.off?.();
+      return;
+    }
+    this.#snapshot = {
+      ...this.#snapshot,
+      status: globalThis.navigator?.onLine === false ? "offline" : "failed",
+    };
+    this.#emitter.emit();
   }
 
   /** The project of the platform a project of this browser is, while somebody is signed in. */
   async #cloudOf(key: string): Promise<string | undefined> {
     const snapshot = this.#options.account.getSnapshot();
     if (snapshot.status !== "signedIn") return undefined;
+    if (snapshot.id !== undefined && !(this.#options.allowed?.(snapshot.id) ?? true))
+      return undefined;
     const link = await this.#options.links.get(key).catch(() => undefined);
     if (!link || link.platform !== this.#options.platform || link.creating) return undefined;
     // Of the person's own projects only, as far as the link knows whose it is.
@@ -79,8 +121,10 @@ export class CloudChats implements ChatStore {
     let there;
     try {
       there = await remote.list(cloud);
+      this.#went();
     } catch (error) {
       console.warn("The conversations of the account could not be read", error);
+      this.#failed(error);
       return here;
     }
     const byId = new Map(there.map((each) => [each.summary.id, each]));
@@ -126,6 +170,7 @@ export class CloudChats implements ChatStore {
       return await this.#take(here, there, project);
     } catch (error) {
       console.warn("A conversation of the account could not be read", error);
+      this.#failed(error);
       return here;
     }
   }
@@ -156,6 +201,7 @@ export class CloudChats implements ChatStore {
         const base = now?.synced ?? null;
         try {
           const revision = await remote.save(cloud, chat, base);
+          this.#went();
           if (revision === undefined) return;
           const latest = await local.load(chat.project, chat.id).catch(() => undefined);
           await local.save({ ...(latest ?? chat), synced: revision, syncedAt: chat.updatedAt });
@@ -163,6 +209,7 @@ export class CloudChats implements ChatStore {
           if (!(error instanceof ChatNewer)) {
             // It stays here, and goes the next time.
             console.warn("A conversation could not go to the account", error);
+            this.#failed(error);
             return;
           }
           const theirs = await remote.load(cloud, chat.id).catch(() => undefined);
@@ -219,6 +266,44 @@ export class CloudChats implements ChatStore {
 
   async forget(project: string): Promise<void> {
     await this.#options.local.forget(project);
+  }
+
+  /**
+   * Gives the account every conversation of its projects that changed here since it last went, or
+   * never went, as after the platform could not be reached. Never rejects.
+   */
+  async retry(): Promise<void> {
+    const { local, links, platform } = this.#options;
+    const all = await links.list().catch(() => []);
+    for (const link of all) {
+      if (link.platform !== platform) continue;
+      const cloud = await this.#cloudOf(link.key);
+      if (cloud === undefined) continue;
+      for (const summary of await local.list(link.key).catch(() => [])) {
+        const chat = await local.load(link.key, summary.id).catch(() => undefined);
+        if (chat && isUnsent(chat)) await this.#give(cloud, chat).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * The account's copy of its conversations is gone, as people turned them off for it: what this
+   * browser has of them stays, as never on the account, and goes again once they are on, rather
+   * than being taken for gone from there.
+   */
+  async detach(account: string): Promise<void> {
+    await Promise.allSettled(this.#writing.values());
+    const { local, links, platform } = this.#options;
+    for (const link of await links.list().catch(() => [])) {
+      if (link.platform !== platform) continue;
+      if (link.owner !== undefined && link.owner !== account) continue;
+      for (const summary of await local.list(link.key).catch(() => [])) {
+        const chat = await local.load(link.key, summary.id).catch(() => undefined);
+        if (!chat || chat.synced === undefined) continue;
+        const { synced: _synced, syncedAt: _syncedAt, ...rest } = chat;
+        await local.save(rest).catch(() => {});
+      }
+    }
   }
 
   /**

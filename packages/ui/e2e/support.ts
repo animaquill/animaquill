@@ -119,6 +119,31 @@ export async function createProject(page: Page, name = "测试项目") {
 }
 
 /**
+ * Answers the welcome of the cloud features with "开始使用" as soon as it shows, as people do who
+ * take it as it is: for tests that are not about it, see `acceptWelcome`. An init script.
+ */
+export const ACCEPT_WELCOME = () => {
+  if (window !== window.top) return;
+  const press = () => {
+    const welcome = document.querySelector('dialog[data-testid="welcome"][open]');
+    const start = [...(welcome?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent === "开始使用" && !button.disabled,
+    );
+    start?.click();
+  };
+  const observer = new MutationObserver(press);
+  const watch = () =>
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["open"],
+    });
+  if (document.documentElement) watch();
+  else addEventListener("DOMContentLoaded", watch);
+};
+
+/**
  * Opens the editor for every test, with a project unless the test says otherwise, and fails the
  * test when anything was logged as an error.
  */
@@ -130,6 +155,7 @@ export const test = base.extend<{
   quality: "auto" | "full";
   devPage: boolean;
   folders: boolean;
+  acceptWelcome: boolean;
 }>({
   withProject: [true, { option: true }],
   /**
@@ -157,7 +183,13 @@ export const test = base.extend<{
    * a private window, with IndexedDB in memory and little room in it.
    */
   onDisk: [false, { option: true }],
-  context: async ({ context, onDisk, baseURL, viewport }, use) => {
+  /**
+   * The welcome of the cloud features, the first time an account signs in, is answered as it shows
+   * (`ACCEPT_WELCOME`). Off for what is about it. Contexts a test makes itself add it themselves.
+   */
+  acceptWelcome: [true, { option: true }],
+  context: async ({ context, onDisk, baseURL, viewport, acceptWelcome }, use) => {
+    if (acceptWelcome) await context.addInitScript(ACCEPT_WELCOME);
     if (!onDisk) {
       await use(context);
       return;
@@ -169,6 +201,7 @@ export const test = base.extend<{
       ...(baseURL ? { baseURL } : {}),
       viewport,
     });
+    if (acceptWelcome) await persistent.addInitScript(ACCEPT_WELCOME);
     await use(persistent);
     await persistent.close();
     rmSync(folder, { recursive: true, force: true });

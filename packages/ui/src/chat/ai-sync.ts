@@ -113,7 +113,7 @@ const isState = (value: unknown): value is SyncState =>
 export type AiSyncStatus =
   /** Nobody is signed in, or there is no platform: the settings are of this device. */
   | "local"
-  /** Signed in, and people were not asked yet whether to start. */
+  /** Signed in, and people did not answer the welcome yet, see `AiSyncOptions.ask`. */
   | "waiting"
   | "syncing"
   | "synced"
@@ -135,13 +135,33 @@ export interface AiSyncSnapshot {
   readonly syncedAt: number | undefined;
 }
 
-/** What people are asked once, as the settings start to go with an account on this device. */
-export interface AiSyncQuestion {
-  /** How many services this device has, which could go into the account. */
+/** How much there is of AI settings: services, the models enabled of them, installed packs. */
+export interface AiCounts {
   readonly services: number;
-  /** How many the account has already. */
-  readonly accountServices: number;
+  readonly models: number;
+  readonly packs: number;
 }
+
+/**
+ * What the welcome says, as the settings start to go with an account on this device for the first
+ * time, see `AiSyncOptions.ask`.
+ */
+export interface AiSyncQuestion {
+  readonly account: string;
+  /** What this device has, which goes into the account. */
+  readonly device: AiCounts;
+  /** How many services the account has already. */
+  readonly accountServices: number;
+  /** Whether they go with the account, as people last said on any device (on by default). */
+  readonly enabled: boolean;
+}
+
+/**
+ * What came of asking: whether the settings go with the account (`on`), and whether this device's
+ * go into the account's (`put`), which they do also while off, as this device's copy of it.
+ * "elsewhere": another window of this browser answered, and starts them.
+ */
+export type AiSyncAnswer = { readonly on: boolean; readonly put: boolean } | "elsewhere";
 
 export interface AiSyncOptions {
   /** The settings of this browser, as the host keeps them. */
@@ -154,12 +174,11 @@ export interface AiSyncOptions {
   readonly locks?: () => LockManager | undefined;
   readonly now?: () => number;
   /**
-   * Asks people, once, before the settings of this device start to go with the account:
-   * "put" puts this device's in, "skip" does not, undefined asks again another time.
+   * Before the settings of an account start to go with it on this device: nothing goes anywhere
+   * until it resolves, undefined asking again another time. Without it, they go, and this
+   * device's go into them.
    */
-  readonly ask?: (question: AiSyncQuestion) => Promise<"put" | "skip" | undefined>;
-  /** Tells people which services of this device went into the account. */
-  readonly added?: (names: readonly string[]) => void;
+  readonly ask?: (question: AiSyncQuestion) => Promise<AiSyncAnswer | undefined>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -168,6 +187,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /** What the settings are while there are none. */
 const emptyOf = (key: string): unknown =>
   key === SETTINGS ? writeAiSettings(EMPTY_AI_SETTINGS) : key === PACKS ? { packs: [] } : undefined;
+
+/** How much there is of AI settings as saved, and of packs as saved. */
+export function countsOf(settings: unknown, packs: unknown): AiCounts {
+  const entries = entriesOfSettings(settings);
+  let services = 0;
+  let models = 0;
+  for (const [name, value] of entries ?? []) {
+    if (!name.startsWith("service:")) continue;
+    services += 1;
+    if (isRecord(value) && Array.isArray(value.enabled)) models += value.enabled.length;
+  }
+  return { services, models, packs: entriesOfPacks(packs).size };
+}
 
 /** The entries of what is saved under a key, or undefined where they cannot be told. */
 const entriesOf = (key: string, value: unknown): Map<string, unknown> | undefined =>
@@ -223,6 +255,8 @@ export class AiSync {
   #pushTimer: ReturnType<typeof setTimeout> | undefined;
   #channel: BroadcastChannel | undefined;
   #asking: string | undefined;
+  #beginAgain: ReturnType<typeof setTimeout> | undefined;
+  #refollow: (() => void) | undefined;
   #following: Promise<void> = Promise.resolve();
   #stopState: (() => void) | undefined;
   #syncing: Promise<void> | undefined;
@@ -328,6 +362,7 @@ export class AiSync {
         });
     };
     account.subscribe(follow);
+    this.#refollow = follow;
     follow();
     // Another window let go of an account, or took one on: who is signed in may have changed.
     this.#base.listen(SCOPE, () => void account.refresh());
@@ -340,6 +375,8 @@ export class AiSync {
     }
     if (typeof addEventListener === "function") {
       const ping = () => {
+        // Starting for an account that could not, as the platform could not be reached.
+        if (this.#scope === undefined && this.#asking === undefined) follow();
         if (this.#leader) void this.sync();
         else this.#channel?.postMessage("pull");
       };
@@ -386,50 +423,125 @@ export class AiSync {
   }
 
   /**
-   * The first time on this device for an account: people are told the settings and keys go to the
-   * platform, and asked whether this device's go into the account.
+   * The first time on this browser for an account, or since it was let go of: nothing goes until
+   * people answered, see `AiSyncOptions.ask`. Then the account's are merged in, and this device's
+   * put into them where people said so; the platform is told where they turned it on or off.
    */
   async #begin(account: string): Promise<void> {
     if (this.#asking === account) return;
     this.#set({ status: "waiting" });
     this.#asking = account;
+    clearTimeout(this.#beginAgain);
     try {
       const remote = await this.#options.access!.read();
       if (!("entries" in remote)) return;
       if (remote.account !== account) return;
-      const device = entriesOfSettings(await this.#base.load(SETTINGS).catch(() => undefined));
-      const services = [...(device?.keys() ?? [])].filter((name) => name.startsWith("service:"));
       const accountServices = Object.entries(remote.entries).filter(
         ([name, entry]) => name.startsWith("service:") && !entry.deleted,
       ).length;
-      // Turned off for the account: nothing goes anywhere, so there is nothing to tell.
-      const answer = remote.enabled
-        ? await (this.#options.ask?.({ services: services.length, accountServices }) ?? "skip")
-        : "put";
+      const answer = this.#options.ask
+        ? await this.#options.ask({
+            account,
+            device: await this.deviceCounts(),
+            accountServices,
+            enabled: remote.enabled,
+          })
+        : { on: remote.enabled, put: true };
       if (answer === undefined) return;
-      // Another window may have been answered meanwhile.
-      if (isState(await this.#base.load(stateKey(account)))) {
+      if (answer === "elsewhere" || (await this.holds(account))) {
+        // Another window answered: it starts them, and this one takes them as they are there.
+        await this.#whenHeld(account);
         await this.#base.save(SCOPE, account);
         this.#setScope(account);
+        void this.sync();
         return;
       }
-      const added = await this.#lock(account, async () => {
-        const state = newState(remote.enabled);
-        await this.#merge(account, state, remote);
-        const names = answer === "put" ? await this.#putDevice(account, state) : [];
+      const started = await this.#lock(account, async () => {
+        if (await this.#readState(account)) return false;
+        const state = newState(remote.enabled && answer.on);
+        // Off: this device keeps what it has, and nothing of the account's is taken here.
+        if (answer.on) await this.#merge(account, state, remote);
+        state.enabled = remote.enabled && answer.on;
+        if (answer.put) await this.#putDevice(account, state);
         await this.#writeState(account, state);
-        return names;
+        return true;
       });
       await this.#base.save(SCOPE, account);
       this.#setScope(account);
-      if (added.length > 0) this.#options.added?.(added);
-      void this.sync();
+      if (!started) {
+        void this.sync();
+        return;
+      }
+      if (answer.on && !remote.enabled) await this.setEnabled(true);
+      else if (!answer.on && remote.enabled) await this.setEnabled(false);
+      else void this.sync();
     } catch (error) {
       console.warn("The AI settings could not start to go with the account", error);
-      this.#set({ status: "failed" });
+      this.#set({ status: globalThis.navigator?.onLine === false ? "offline" : "failed" });
+      // Again a while later, and as the window comes back or the browser goes online.
+      this.#beginAgain = setTimeout(() => this.#refollow?.(), RETRY_MS);
     } finally {
       this.#asking = undefined;
     }
+  }
+
+  /** Resolves once the settings of an account are on this browser, as another window starts them. */
+  #whenHeld(account: string): Promise<void> {
+    return new Promise((resolve) => {
+      let stop: (() => void) | undefined;
+      const check = async () => {
+        if (!(await this.holds(account))) return;
+        stop?.();
+        stop = undefined;
+        resolve();
+      };
+      stop = this.#base.listen(stateKey(account), () => void check());
+      void check();
+    });
+  }
+
+  /** What the settings of this device have, which go into an account as people say so. */
+  async deviceCounts(): Promise<AiCounts> {
+    const settings = await this.#base.load(SETTINGS).catch(() => undefined);
+    const packs = await this.#base.load(PACKS).catch(() => undefined);
+    return countsOf(settings, packs);
+  }
+
+  /** What the settings in use have. */
+  async counts(): Promise<AiCounts> {
+    const settings = await this.#base.load(scopedKey(SETTINGS, this.#scope)).catch(() => undefined);
+    const packs = await this.#base.load(scopedKey(PACKS, this.#scope)).catch(() => undefined);
+    return countsOf(settings, packs);
+  }
+
+  /**
+   * Puts the settings and keys of this device into those of the account in use, as on the first
+   * time, see `#putDevice`: what the account has stays. Resolves to the names of the services that
+   * went in.
+   */
+  async mergeDevice(): Promise<readonly string[]> {
+    const account = this.#scope;
+    if (account === undefined) return [];
+    const names = await this.#lock(account, async () => {
+      const state = await this.#readState(account);
+      if (!state) return [];
+      const added = await this.#putDevice(account, state);
+      await this.#writeState(account, state);
+      return added;
+    });
+    this.#schedulePush();
+    return names;
+  }
+
+  /**
+   * Takes away the settings and keys of this device, those used while nobody is signed in: not
+   * those of the account in use.
+   */
+  async forgetDevice(): Promise<void> {
+    if (this.#scope === undefined) return;
+    for (const key of [SETTINGS, LATEST, PACKS]) await this.#base.remove?.(key);
+    for (const service of await this.#options.keys.list().catch(() => []))
+      await this.#options.keys.remove(service);
   }
 
   /**
@@ -871,6 +983,7 @@ export class AiSync {
   }
 
   dispose(): void {
+    clearTimeout(this.#beginAgain);
     clearTimeout(this.#pullTimer);
     clearTimeout(this.#pushTimer);
     this.#channel?.close();

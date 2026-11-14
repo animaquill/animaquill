@@ -183,6 +183,27 @@ describe.each([
     expect((await organizer.read()).groups).toHaveLength(4);
   });
 
+  it("takes everything of an account for not given to it, and nothing of another", async () => {
+    const organizer = make();
+    await organizer.putGroup(group("a", "工作", { scope: { account: "ada" }, at: 10, sent: 10 }));
+    await organizer.putGroup(group("b", "别人的", { scope: { account: "bo" }, at: 10, sent: 10 }));
+    await organizer.putGroup(group("c", "本机", { at: 10 }));
+    await organizer.markAll([
+      ["cloud:p", { account: "ada", starredAt: 5, at: 5, sent: { star: 5 } }],
+      ["cloud:q", { account: "bo", starredAt: 5, at: 5, sent: { star: 5 } }],
+    ]);
+    expect(unsentOf(await organizer.read(), "ada")).toMatchObject({ groups: [], marks: [] });
+    await organizer.resend("ada");
+    const content = await organizer.read();
+    expect(content.groups.find((each) => each.id === "a")?.sent).toBeUndefined();
+    expect(content.groups.find((each) => each.id === "b")?.sent).toBe(10);
+    expect(content.marks.get("cloud:p")?.sent).toBeUndefined();
+    expect(content.marks.get("cloud:q")?.sent).toEqual({ star: 5 });
+    const unsent = unsentOf(content, "ada");
+    expect(unsent.groups.map((each) => each.id)).toEqual(["a"]);
+    expect(unsent.marks.map((each) => each.project)).toEqual(["p"]);
+  });
+
   it("has the groups of this browser become an account's, one name once", async () => {
     const organizer = make();
     await organizer.putGroup(group("x", " WORK", { at: 10 }));

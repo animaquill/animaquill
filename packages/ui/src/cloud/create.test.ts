@@ -621,6 +621,18 @@ describe("what a new project is like", () => {
     expect(noFolders.getSnapshot()).toMatchObject({ kind: "cloud", need: "signIn" });
   });
 
+  it("is of this computer where people said so for their account, until they choose", async () => {
+    const world = await setUp();
+    let cloud = false;
+    const create = world.createOf({ createLocal: async () => {}, preferCloud: () => cloud });
+    expect(create.getSnapshot().kind).toBe("local");
+    // Said otherwise on another device, as the account says once it knows.
+    cloud = true;
+    world.here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: false });
+    expect(create.getSnapshot().kind).toBe("cloud");
+    expect(create.kinds).toContain("cloud");
+  });
+
   it("is made in the shape and at the frame rate people chose, landscape at 30 by default", async () => {
     const world = await setUp();
     const { time, platform, here } = world;

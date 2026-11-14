@@ -158,7 +158,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // A dialog has to be answered first: nothing behind it should change in the meantime.
   const onKeyDown = (event: KeyboardEvent) => {
-    if (!workbench.dialogs.getSnapshot()) workbench.keybindings.handle(event);
+    if (!workbench.dialogs.getSnapshot() && !workbench.cloudSync.getSnapshot().welcome)
+      workbench.keybindings.handle(event);
   };
   window.addEventListener("keydown", onKeyDown);
 

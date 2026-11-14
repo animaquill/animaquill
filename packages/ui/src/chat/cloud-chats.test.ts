@@ -55,7 +55,10 @@ function platformChats() {
   return { kept, access };
 }
 
-async function deviceOf(platform: ReturnType<typeof platformChats>) {
+async function deviceOf(
+  platform: ReturnType<typeof platformChats>,
+  allowed?: (account: string) => boolean,
+) {
   const links = new MemoryCloudLinks();
   await links.put({
     key: "local-1",
@@ -73,6 +76,7 @@ async function deviceOf(platform: ReturnType<typeof platformChats>) {
     account: accountAs({ status: "signedIn", id: "u1", name: "u1", appInstalled: true }),
     links,
     platform: PLATFORM,
+    ...(allowed && { allowed }),
   });
   return { local, chats, links };
 }
@@ -86,6 +90,34 @@ const chat = (id: string, said: string[], updatedAt: number): SavedChat => ({
 });
 
 describe("conversations of projects of the platform", () => {
+  test("turned off for the account: only of this browser; on again, they go", async () => {
+    const platform = platformChats();
+    let on = false;
+    const one = await deviceOf(platform, () => on);
+    await one.chats.save(chat("c1", ["关着时聊的"], 1));
+    expect(platform.kept.size).toBe(0);
+    expect((await one.chats.list("local-1")).map(({ id }) => id)).toEqual(["c1"]);
+    on = true;
+    await one.chats.retry();
+    expect(platform.kept.has("p1/c1")).toBe(true);
+    expect(one.chats.getSnapshot().status).toBe("synced");
+  });
+
+  test("the account's copy gone as they were turned off: kept here, and they go again once on", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    await one.chats.save(chat("c1", ["a"], 1));
+    expect((await one.local.load("local-1", "c1"))?.synced).toBe(1);
+    // Off, on another device: the platform keeps none.
+    platform.kept.clear();
+    await one.chats.detach("u1");
+    expect((await one.local.load("local-1", "c1"))?.synced).toBeUndefined();
+    // On again: read, it is not taken for gone from the account, and goes.
+    expect((await one.chats.list("local-1")).map(({ id }) => id)).toEqual(["c1"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(platform.kept.has("p1/c1")).toBe(true);
+  });
+
   test("go to the account, and another device reads them", async () => {
     const platform = platformChats();
     const one = await deviceOf(platform);

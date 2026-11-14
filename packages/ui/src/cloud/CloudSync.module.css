@@ -1,0 +1,309 @@
+/* The switches of the cloud features: in the welcome, and on the page "云同步" of the settings. */
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  align-items: start;
+  padding: 10px 12px;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+/* On the page, rows are lines with a rule between them, as in the other pages. */
+.plain .row {
+  padding: 12px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--aq-border);
+  border-radius: 0;
+}
+
+.name {
+  display: block;
+  margin: 0 0 2px;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.help {
+  display: block;
+  margin: 0;
+  color: var(--aq-text-muted);
+  line-height: 1.6;
+}
+
+.warning {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--aq-text);
+  line-height: 1.6;
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 6px 0 0;
+  color: var(--aq-text-muted);
+}
+
+.status::before {
+  width: 7px;
+  height: 7px;
+  content: "";
+  background: var(--aq-text-muted);
+  border-radius: 50%;
+}
+
+.status[data-status="synced"] {
+  color: var(--aq-success);
+}
+
+.status[data-status="synced"]::before {
+  background: var(--aq-success);
+}
+
+.status[data-status="failed"],
+.status[data-status="newer"],
+.status[data-status="tooLarge"] {
+  color: var(--aq-danger-text);
+}
+
+.status[data-status="failed"]::before,
+.status[data-status="newer"]::before,
+.status[data-status="tooLarge"]::before {
+  background: var(--aq-danger-text);
+}
+
+.status[data-status="offline"]::before,
+.status[data-status="syncing"]::before,
+.status[data-status="waiting"]::before {
+  background: var(--aq-warning);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 16px;
+  margin: 2px 0 0;
+  appearance: none;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  content: "";
+  background: var(--aq-text-muted);
+  border-radius: 50%;
+  transition: transform 0.12s;
+}
+
+.switch:checked {
+  background: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.switch:checked::after {
+  background: #fff;
+  transform: translateX(14px);
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.switch:focus-visible {
+  outline: 1px solid var(--aq-accent);
+  outline-offset: 2px;
+}
+
+.button {
+  flex: none;
+  padding: 3px 10px;
+  color: var(--aq-text);
+  font: inherit;
+  white-space: nowrap;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.link {
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* The welcome. */
+.welcome {
+  width: min(600px, calc(100vw - 32px));
+  max-height: calc(100dvh - 64px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  color: var(--aq-text);
+  font-size: 12px;
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.welcome::backdrop {
+  background: #00000088;
+}
+
+.welcomeBody {
+  position: relative;
+  padding: 20px 24px 18px;
+}
+
+.welcomeBody h2 {
+  margin: 0 0 8px;
+  color: var(--aq-text-strong);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.intro {
+  margin: 0 0 14px;
+  color: var(--aq-text-muted);
+}
+
+.close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  padding: 4px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0 0;
+}
+
+.footer p {
+  flex: 1 1 240px;
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.failed {
+  margin: 12px 0 0;
+  color: var(--aq-danger-text);
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.buttons button {
+  padding: 5px 14px;
+  color: var(--aq-text);
+  font: inherit;
+  white-space: nowrap;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.buttons .primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.buttons button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The page. */
+.page {
+  box-sizing: border-box;
+  max-width: 760px;
+  height: 100%;
+  padding: 12px 16px 24px;
+  overflow: auto;
+}
+
+.page h2 {
+  margin: 0 0 4px;
+  color: var(--aq-text-strong);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.page h3 {
+  margin: 20px 0 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.note {
+  margin: 12px 0 0;
+  color: var(--aq-text-muted);
+}
+
+.problem {
+  margin: 8px 0 0;
+  color: var(--aq-danger-text);
+}

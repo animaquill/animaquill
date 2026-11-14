@@ -19,7 +19,7 @@ import {
   type SettingsStore,
 } from "@animaquill/host";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { AiSync } from "./ai-sync.ts";
+import { AiSync, type AiSyncAnswer, type AiSyncQuestion } from "./ai-sync.ts";
 import { AiSettingsStore } from "./settings.ts";
 
 /**
@@ -156,9 +156,12 @@ async function windowOf(
   browser: ReturnType<typeof browserOf>,
   platform: ReturnType<typeof platformOf>,
   account: ReturnType<typeof accountOf>,
-  answer: "put" | "skip" = "put",
+  /** "unanswered": people never answer. */
+  answer: AiSyncAnswer | "unanswered" = { on: true, put: true },
 ) {
-  const ask = vi.fn(async () => answer);
+  const ask = vi.fn(async (_question: AiSyncQuestion) =>
+    answer === "unanswered" ? undefined : answer,
+  );
   const sync = new AiSync({
     settings: browser.windowStore(),
     keys: browser.keys,
@@ -301,7 +304,12 @@ describe("AI settings going with the account", () => {
     await settle();
     await window.sync.sync();
     await settle();
-    expect(window.ask).toHaveBeenCalledWith({ services: 2, accountServices: 1 });
+    expect(window.ask).toHaveBeenCalledWith({
+      account: "u1",
+      device: { services: 2, models: 1, packs: 0 },
+      accountServices: 1,
+      enabled: true,
+    });
     expect(window.sync.scope).toBe("u1");
     expect(names(window.ai)).toEqual(["账号里的", "设备上的"].toSorted());
     expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
@@ -314,7 +322,7 @@ describe("AI settings going with the account", () => {
     const platform = platformOf();
     const browser = browserOf();
     const account = accountOf(undefined);
-    const window = await windowOf(browser, platform, account, "skip");
+    const window = await windowOf(browser, platform, account, { on: true, put: false });
     window.ai.add("anthropic", "设备上的");
     await settle();
     account.as("u1");
@@ -437,5 +445,131 @@ describe("AI settings going with the account", () => {
     await window.sync.sync();
     expect(window.sync.getSnapshot().status).toBe("synced");
     expect(platform.accounts.get("u1")!.entries[`service:${big}`]).toBeDefined();
+  });
+
+  test("not answered yet: nothing of this device goes, and it is not the account's yet", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const account = accountOf(undefined);
+    const window = await windowOf(browser, platform, account, "unanswered");
+    const mine = window.ai.add("anthropic", "设备上的")!;
+    await window.ai.setKey(mine, "sk-device");
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    expect(window.ask).toHaveBeenCalled();
+    expect(window.sync.getSnapshot().status).toBe("waiting");
+    expect(window.sync.scope).toBeUndefined();
+    expect(platform.accounts.get("u1")?.entries ?? {}).toEqual({});
+    expect(platform.accounts.get("u1")?.keys ?? {}).toEqual({});
+    expect(browser.values.has("ai.sync@u1")).toBe(false);
+  });
+
+  test("answered with the switch off: the platform keeps nothing; this device keeps its own", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const account = accountOf(undefined);
+    // Another device gave the account something already.
+    const elsewhere = await windowOf(browserOf(), platform, accountOf("u1"));
+    elsewhere.ai.add("deepseek", "账号里的");
+    await settle();
+    await elsewhere.sync.sync();
+    const window = await windowOf(browser, platform, account, { on: false, put: true });
+    const mine = window.ai.add("anthropic", "设备上的")!;
+    await window.ai.setKey(mine, "sk-device");
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
+    expect(window.sync.scope).toBe("u1");
+    expect(window.sync.getSnapshot().status).toBe("off");
+    expect(platform.accounts.get("u1")).toMatchObject({ enabled: false, entries: {}, keys: {} });
+    // What this device has, also while signed in; nothing of the account's.
+    expect(names(window.ai)).toEqual(["设备上的"]);
+    expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
+    // Changed afterwards: still nothing goes.
+    window.ai.add("openai", "后来的");
+    await settle();
+    await window.sync.sync();
+    expect(platform.accounts.get("u1")!.entries).toEqual({});
+  });
+
+  test("answered with the switch on, where the account had it off: on again, with this device's", async () => {
+    const platform = platformOf();
+    const elsewhere = await windowOf(browserOf(), platform, accountOf("u1"));
+    await elsewhere.sync.setEnabled(false);
+    const browser = browserOf();
+    const account = accountOf(undefined);
+    const window = await windowOf(browser, platform, account, { on: true, put: true });
+    const mine = window.ai.add("anthropic", "设备上的")!;
+    await window.ai.setKey(mine, "sk-device");
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
+    expect(window.ask).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+    expect(platform.accounts.get("u1")!.enabled).toBe(true);
+    expect(platform.accounts.get("u1")!.entries[`service:${mine}`]).toBeDefined();
+    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ key: "sk-device" });
+    expect(window.sync.getSnapshot().status).toBe("synced");
+  });
+
+  test("this device's, of before signing in: put into the account later, or taken away", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const account = accountOf(undefined);
+    const window = await windowOf(browser, platform, account, { on: true, put: false });
+    const mine = window.ai.add("anthropic", "设备上的", {
+      enabled: ["claude-opus-5", "claude-x"],
+    })!;
+    await window.ai.setKey(mine, "sk-device");
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    expect(names(window.ai)).toEqual([]);
+    expect(await window.sync.deviceCounts()).toEqual({ services: 1, models: 2, packs: 0 });
+    expect(await window.sync.counts()).toEqual({ services: 0, models: 0, packs: 0 });
+
+    expect(await window.sync.mergeDevice()).toEqual(["设备上的"]);
+    await settle();
+    await window.sync.sync();
+    expect(names(window.ai)).toEqual(["设备上的"]);
+    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ key: "sk-device" });
+    expect(await window.sync.counts()).toEqual({ services: 1, models: 2, packs: 0 });
+    // Again: nothing new.
+    expect(await window.sync.mergeDevice()).toEqual([]);
+
+    await window.sync.forgetDevice();
+    expect(await window.sync.deviceCounts()).toEqual({ services: 0, models: 0, packs: 0 });
+    expect(await browser.keys.list()).toEqual([]);
+    // The account's are as they were.
+    expect(names(window.ai)).toEqual(["设备上的"]);
+    expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
+  });
+
+  test("another window answered: this one takes the account's as that one starts them", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const one = accountOf(undefined);
+    const two = accountOf(undefined);
+    const first = await windowOf(browser, platform, one, { on: true, put: true });
+    const second = await windowOf(browser, platform, two, "elsewhere");
+    const mine = first.ai.add("anthropic", "设备上的")!;
+    await first.ai.setKey(mine, "sk-device");
+    await settle();
+    two.as("u1");
+    await settle();
+    // The second waits: nothing of it goes.
+    expect(second.sync.scope).toBeUndefined();
+    one.as("u1");
+    await settle();
+    await first.sync.sync();
+    await settle();
+    expect(second.sync.scope).toBe("u1");
+    expect(names(second.ai)).toEqual(["设备上的"]);
   });
 });

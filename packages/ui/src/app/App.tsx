@@ -8,6 +8,7 @@ import { PlaybackClock } from "../timeline/PlaybackClock.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
 import { CommandPaletteView } from "./CommandPaletteView.tsx";
 import { DialogHost } from "./DialogHost.tsx";
+import { WelcomeHost } from "../cloud/WelcomeDialog.tsx";
 import styles from "./App.module.css";
 import { WorkbenchContext, useSession } from "./context.ts";
 import { NotificationList } from "./NotificationList.tsx";
@@ -99,6 +100,7 @@ export function App({ workbench, i18n }: AppProps) {
             <NotificationList />
             <CommandPaletteView />
             <DialogHost />
+            <WelcomeHost />
           </div>
         </WorkbenchContext>
       </I18nextProvider>

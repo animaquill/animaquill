@@ -217,6 +217,28 @@ function claim(
   return { groups: changedGroups, marks: [...changedMarks.values()] };
 }
 
+/**
+ * Everything of `account` as not given to it yet, see `ProjectOrganizer.resend`: only what changes.
+ */
+function unsend(
+  groups: readonly ProjectGroup[],
+  marks: readonly MarksRecord[],
+  account: string,
+): { groups: ProjectGroup[]; marks: MarksRecord[] } {
+  return {
+    groups: groups.flatMap((group) => {
+      if (group.sent === undefined || accountOf(group) !== account) return [];
+      const { sent: _sent, ...rest } = group;
+      return [rest];
+    }),
+    marks: marks.flatMap((each) => {
+      if (each.sent === undefined || each.account !== account) return [];
+      const { sent: _sent, ...rest } = each;
+      return [rest];
+    }),
+  };
+}
+
 /** Whether a group of `account` is still to be given to it, see `ProjectGroup.sent`. */
 export const isUnsentGroup = (group: ProjectGroup, account: string): boolean =>
   accountOf(group) === account &&
@@ -488,6 +510,8 @@ export function browserOrganizer(
       write([META], (transaction) => {
         transaction.objectStore(META).put(account, ACCOUNT);
       }),
+    resend: (account) =>
+      rewrite([GROUPS, MARKS], ({ groups, marks }) => unsend(groups, marks, account)),
     forget: (project) =>
       write([MARKS], (transaction) => transaction.objectStore(MARKS).delete(project)),
     listen(listener) {
@@ -553,6 +577,9 @@ export function memoryOrganizer(): ProjectOrganizer {
     async noteAccount(to) {
       account = to;
       changed();
+    },
+    async resend(of) {
+      keep(unsend([...groups.values()], records(), of));
     },
     async forget(project) {
       marks.delete(project);

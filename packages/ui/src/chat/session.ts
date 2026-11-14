@@ -265,6 +265,15 @@ export class ChatSession {
     if (project) void this.#loadLatest(project.key, kept || undefined);
   }
 
+  /**
+   * Reads the conversations of the project again, as where they are kept changed: they go with the
+   * account from now on, say. An empty conversation shows the newest of them.
+   */
+  reloadList(): Promise<void> {
+    const project = this.#project;
+    return project ? this.#loadLatest(project.key, this.#snapshot.id) : Promise.resolve();
+  }
+
   /** The conversations of a project, and the one this window had open, else the newest. */
   async #loadLatest(project: string, kept: string | undefined): Promise<void> {
     try {

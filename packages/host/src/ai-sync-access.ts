@@ -11,12 +11,16 @@ import {
   AiSyncOff,
   AiSyncTooLarge,
   ChatNewer,
+  CloudFeatureOff,
   CloudOtherAccount,
   CloudSignedOut,
   type AccountAiSettings,
   type AccountChatSummary,
   type AiSyncAccess,
   type ChatSyncAccess,
+  type CloudSwitchChanges,
+  type CloudSwitches,
+  type CloudSwitchesAccess,
   type SavedChat,
 } from "./index.ts";
 import {
@@ -104,7 +108,10 @@ function asker(options: BrowserAiSyncOptions) {
       throw new CloudSignedOut("Nobody is signed in");
     if (response.status === 409 && said === "otherAccount")
       throw new CloudOtherAccount("Somebody else is signed in");
-    if (response.status === 409 && said === "off") throw new AiSyncOff("Turned off");
+    if (response.status === 409 && said === "off")
+      throw path.startsWith("/me/chats")
+        ? new CloudFeatureOff("Turned off")
+        : new AiSyncOff("Turned off");
     if (response.status === 409 && said === "newer") {
       const revision = isObject(answer) ? count(answer.revision) : undefined;
       if (path.startsWith("/me/chats/")) throw new ChatNewer(revision ?? 0);
@@ -293,6 +300,78 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
         );
         if (!response.ok && response.status !== 404)
           throw new Error(`The platform answered ${response.status}`);
+      }),
+  };
+}
+
+const switchesOf = (value: unknown): CloudSwitches | undefined => {
+  if (!isObject(value) || !isObject(value.prefs)) return undefined;
+  const account = text(value.account);
+  const organizerEpoch = count(value.organizerEpoch);
+  const chatsEpoch = count(value.chatsEpoch);
+  const { ai, organizer, chats } = value;
+  const cloud = value.prefs.newProjectsInCloud;
+  if (
+    account === undefined ||
+    organizerEpoch === undefined ||
+    chatsEpoch === undefined ||
+    typeof ai !== "boolean" ||
+    typeof organizer !== "boolean" ||
+    typeof chats !== "boolean" ||
+    typeof cloud !== "boolean"
+  )
+    return undefined;
+  return {
+    account,
+    ai,
+    organizer,
+    organizerEpoch,
+    chats,
+    chatsEpoch,
+    newProjectsInCloud: cloud,
+  };
+};
+
+/**
+ * The switches of the cloud features of the person on a platform, over its HTTP API, see
+ * `CloudSwitchesAccess`:
+ *
+ * - `GET <api>/me/cloud`: `{now, account, ai, organizer, organizerEpoch, chats, chatsEpoch,
+ *   prefs: {newProjectsInCloud}}`.
+ * - `POST <api>/me/cloud` `{account, organizer?, chats?, prefs?: {newProjectsInCloud?}}`: the same.
+ */
+export function browserCloudSwitchesAccess(options: BrowserAiSyncOptions): CloudSwitchesAccess {
+  const ask = asker(options);
+  const timeout = options.timeoutMs;
+  const answered = (response: Response, answer: unknown) => {
+    if (!response.ok) throw new Error(`The platform answered ${response.status}`);
+    const switches = switchesOf(answer);
+    if (!switches) throw new Error("The platform answered something that cannot be read");
+    return switches;
+  };
+  return {
+    read: () =>
+      withinTime(timeout ?? REQUEST_TIMEOUT_MS, async (signal) => {
+        const { response, answer } = await ask("/me/cloud", {}, signal);
+        return answered(response, answer);
+      }),
+    change: (account: string, changes: CloudSwitchChanges) =>
+      withinTime(timeout ?? CHANGE_TIMEOUT_MS, async (signal) => {
+        const { newProjectsInCloud, ...switches } = changes;
+        const { response, answer } = await ask(
+          "/me/cloud",
+          {
+            method: "POST",
+            headers: { ...options.changeHeaders, "content-type": "application/json" },
+            body: JSON.stringify({
+              account,
+              ...switches,
+              ...(newProjectsInCloud !== undefined && { prefs: { newProjectsInCloud } }),
+            }),
+          },
+          signal,
+        );
+        return answered(response, answer);
       }),
   };
 }

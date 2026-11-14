@@ -10,6 +10,7 @@ import type {
   MakingNotes,
   MediaStore,
   ProjectLibrary,
+  RepositoryAccess,
   SignInOutcome,
   StoragePersistence,
   WindowMemory,
@@ -50,7 +51,7 @@ import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
-import { AiSync, type AiSyncQuestion } from "../chat/ai-sync.ts";
+import { AiSync } from "../chat/ai-sync.ts";
 import { CloudChats } from "../chat/cloud-chats.ts";
 import { SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
@@ -117,6 +118,7 @@ import {
 } from "../start/cover-choice.ts";
 import { StartCovers } from "../start/covers.ts";
 import { StartOrganizer } from "../start/organize.ts";
+import { CloudSync } from "../cloud/cloud-sync.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
@@ -224,6 +226,8 @@ export class Workbench {
   readonly projects: ProjectLibrary;
   /** The account people have where the editor is hosted, where it has accounts: see `Host.account`. */
   readonly account: AccountAccess | undefined;
+  /** The repositories people may save to, where there is a platform, see `RepositoryAccess`. */
+  readonly repositories: RepositoryAccess | undefined;
   /** Which window this is, for who made a change, see `ChangeSource.window`. */
   readonly windowId = newSyncId();
   /**
@@ -302,6 +306,8 @@ export class Workbench {
   readonly ai: AiSettingsStore;
   /** The AI settings and keys going with the account, where the host has a platform. */
   readonly aiSync: AiSync;
+  /** Which cloud features go with the account, and the welcome, see `CloudSync`. */
+  readonly cloudSync: CloudSync;
   /** The model packs installed in this browser, see `ModelPacks`. */
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
@@ -336,6 +342,7 @@ export class Workbench {
       media: (id) => this.projectFolders?.mediaFor(id, this.#exportSince) ?? library.media(id),
     };
     this.account = host.account;
+    this.repositories = host.account ? host.cloud?.repository : undefined;
     this.diagnostics = new DiagnosticsRecorder(version);
     this.aiSync = new AiSync({
       settings: host.settings,
@@ -343,8 +350,21 @@ export class Workbench {
       ...(host.accountKeys && { accountKeys: host.accountKeys }),
       ...(host.account &&
         host.cloud?.aiSync && { access: host.cloud.aiSync, account: host.account }),
-      ask: (question) => this.#askAboutAiSync(question),
-      added: (names) => this.notifications.push(t("aiSync.added", { names: names.join("、") })),
+      ask: (question) => this.cloudSync.ask(question),
+    });
+    this.cloudSync = new CloudSync({
+      settings: host.settings,
+      access: host.account && host.cloud?.switches,
+      account: host.account,
+      aiSync: this.aiSync,
+      ...(host.organizer && {
+        resendOrganizer: (account: string) => host.organizer!.resend(account),
+      }),
+      detachChats: async (account) => this.chatSync?.detach(account),
+      changed: () => {
+        this.organizer.allowedChanged();
+        if (this.chatSync) void this.chatSync.retry().then(() => this.chat.reloadList());
+      },
     });
     this.ai = new AiSettingsStore(
       this.aiSync.settings,
@@ -578,6 +598,8 @@ export class Workbench {
             platform: cloud.platform,
             copied: (title, copy) =>
               this.notifications.push(t("aiSync.chatCopied", { title, copy })),
+            allowed: (account) => this.cloudSync.allows("chats", account),
+            off: () => void this.cloudSync.refresh(),
           })
         : undefined;
     this.chat = new ChatSession({
@@ -766,6 +788,8 @@ export class Workbench {
       organizer: host.organizer,
       account: host.account,
       cloud: cloud?.organizer,
+      allowed: (account) => this.cloudSync.allows("organizer", account),
+      off: () => void this.cloudSync.refresh(),
     });
     this.startCovers = new StartCovers({
       ...(host.covers && { covers: host.covers }),
@@ -1380,33 +1404,6 @@ export class Workbench {
     }) as Promise<"overwrite" | "theirs" | undefined>;
   }
 
-  /** Asks once whether this device's AI settings go into the account, see `AiSync`. */
-  async #askAboutAiSync(question: AiSyncQuestion): Promise<"put" | "skip" | undefined> {
-    const { t } = this;
-    const notice = `${t("aiSync.notice")}${t("aiSync.askWhere")}`;
-    // Nothing of this device to put in: told once, without stopping anything people do.
-    if (question.services === 0) {
-      this.notifications.push(`${t("aiSync.askTitle")}：${notice}`);
-      // What else this device has (preferences, packs) goes under what the account has.
-      return "put";
-    }
-    const asked =
-      question.accountServices > 0
-        ? t("aiSync.askMerge", {
-            count: question.services,
-            accountCount: question.accountServices,
-          })
-        : t("aiSync.askPut", { count: question.services });
-    return (await this.dialogs.choose({
-      title: t("aiSync.askTitle"),
-      message: `${asked}${notice}`,
-      choices: [
-        { id: "skip", label: t("aiSync.skip") },
-        { id: "put", label: t("aiSync.put"), kind: "primary" },
-      ],
-    })) as "put" | "skip" | undefined;
-  }
-
   /** Resolves to false when people would rather stay with what they typed. */
   async #settleCode(): Promise<boolean> {
     const count = this.code.unsaved.length;
@@ -1470,6 +1467,8 @@ export class Workbench {
       this.#forgetChatsOnSignOut(this.account);
       void this.#followAccount(this.account);
     }
+    // Before the AI settings, which ask it about the welcome.
+    this.cloudSync.start();
     void this.aiSync.start();
   }
 
@@ -1490,10 +1489,17 @@ export class Workbench {
   async #followAccount(account: AccountAccess): Promise<void> {
     await account.refresh();
     const outcome = account.takeOutcome();
-    if (outcome) this.#tellSignIn(outcome, account.getSnapshot());
+    if (outcome) await this.#tellSignIn(outcome, account.getSnapshot());
   }
 
-  #tellSignIn(outcome: SignInOutcome, snapshot: AccountSnapshot): void {
+  /** Whether the welcome was answered for whoever is signed in, or there is none. */
+  async #welcomed(): Promise<boolean> {
+    await this.cloudSync.settled();
+    const { available, welcomed } = this.cloudSync.getSnapshot();
+    return !available || welcomed;
+  }
+
+  async #tellSignIn(outcome: SignInOutcome, snapshot: AccountSnapshot): Promise<void> {
     const { t } = this;
     if (outcome !== "signedIn") {
       this.notifications.push(t(`account.outcome.${outcome}`));
@@ -1501,7 +1507,8 @@ export class Workbench {
     }
     if (snapshot.status !== "signedIn") return;
     const words = { name: snapshot.name, interpolation: { escapeValue: false } };
-    if (snapshot.appInstalled) {
+    // The welcome says it, with a button to install the App: nothing more is pushed at people.
+    if (snapshot.appInstalled || !(await this.#welcomed())) {
       this.notifications.push(t("account.signedIn", words));
       return;
     }
@@ -1959,6 +1966,7 @@ export class Workbench {
       ...(cloud && { cloud }),
       ...(cloud?.repository && { access: cloud.repository }),
       ...(this.account && { account: this.account }),
+      preferCloud: () => this.cloudSync.newProjectsInCloud,
       name: imported?.project.manifest.name ?? t("project.defaultName"),
       content,
       ...(imported && { imported: true }),

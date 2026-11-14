@@ -59,6 +59,13 @@ export interface StartOrganizerOptions {
   readonly account?: AccountAccess | undefined;
   /** The platform's copy, see `CloudAccess.organizer`. */
   readonly cloud?: OrganizerAccess | undefined;
+  /**
+   * Whether the stars and groups go with the account now, see `CloudSync.allows`: nothing goes
+   * while not. Always where it is not given.
+   */
+  readonly allowed?: (account: string) => boolean;
+  /** The platform says people turned it off for the account. */
+  readonly off?: () => void;
   /** Only tests: how the account is gone a round with. */
   readonly sync?: OrganizerSync;
   readonly now?: () => number;
@@ -124,6 +131,8 @@ export class StartOrganizer {
     organizer,
     account,
     cloud,
+    allowed,
+    off,
     sync,
     now = Date.now,
     newId = () => crypto.randomUUID(),
@@ -139,8 +148,12 @@ export class StartOrganizer {
         ? new OrganizerSync({
             local: organizer,
             remote: cloud,
-            account: () => this.#signedIn,
+            account: () =>
+              this.#signedIn !== undefined && (allowed?.(this.#signedIn) ?? true)
+                ? this.#signedIn
+                : undefined,
             otherAccount: () => void account.refresh(),
+            ...(off && { off }),
           })
         : undefined);
   }
@@ -183,6 +196,16 @@ export class StartOrganizer {
     this.#stopAccount = undefined;
     this.#sync?.close();
     this.#turn += 1;
+  }
+
+  /** How the account's copy stands, where there is one, see `OrganizerSync`. */
+  get sync(): OrganizerSync | undefined {
+    return this.#sync;
+  }
+
+  /** What may go with the account changed: a round goes soon, where it may. */
+  allowedChanged(): void {
+    if (this.#signedIn !== undefined) this.#sync?.soon(0);
   }
 
   /** Goes a round with the account now, where somebody is signed in; for tests. */

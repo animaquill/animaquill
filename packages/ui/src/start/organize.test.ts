@@ -185,6 +185,7 @@ describe("organising projects", () => {
       claimGroups: () => Promise.reject(new Error("blocked")),
       mergeGroup: () => Promise.reject(new Error("blocked")),
       noteAccount: () => Promise.reject(new Error("blocked")),
+      resend: () => Promise.reject(new Error("blocked")),
       forget: () => Promise.reject(new Error("blocked")),
       listen: () => () => {},
     };

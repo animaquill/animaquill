@@ -450,6 +450,11 @@ export interface ProjectOrganizer {
   mergeGroup(from: string, into: string): Promise<void>;
   /** Notes that `account` is signed in here, see `OrganizerContent.account`. */
   noteAccount(account: string): Promise<void>;
+  /**
+   * Takes everything of `account` for not given to it yet, in one step (`sent` goes): its copy on
+   * the platform is gone, as people turned it off there, and all of it goes again once it is on.
+   */
+  resend(account: string): Promise<void>;
   /** Forgets the marks of a project, as one that is gone. */
   forget(project: string): Promise<void>;
   /** What any window changed, also this one. Returns how to stop listening. */
@@ -721,6 +726,60 @@ export interface CloudAccess {
    * `ChatSyncAccess`. Without it, they stay in this browser.
    */
   readonly chats?: ChatSyncAccess;
+  /**
+   * Which of the above go with the account at all, as people turned them on or off for all their
+   * devices, and the preferences that go with the account, see `CloudSwitchesAccess`.
+   */
+  readonly switches?: CloudSwitchesAccess;
+}
+
+/**
+ * Which cloud features people have on for all their devices, and their preferences that go with
+ * the account (docs/design/settings-and-properties.md of AnimaQuill Cloud, 9.2). Each is on unless
+ * people turned it off. Turned off, the platform keeps nothing of it.
+ */
+export interface CloudSwitches {
+  /** Whose they are, see `AccountSnapshot.id`. */
+  readonly account: string;
+  /** The AI settings and keys, see `AiSyncAccess`: turned on and off there. */
+  readonly ai: boolean;
+  /** The stars and groups of the start page, see `OrganizerAccess`. */
+  readonly organizer: boolean;
+  /**
+   * Moves on each time `organizer` is turned off: what a device took to be the account's before is
+   * not there any more, and goes again.
+   */
+  readonly organizerEpoch: number;
+  /** The conversations about projects of the platform, see `ChatSyncAccess`. */
+  readonly chats: boolean;
+  /** As `organizerEpoch`, of the conversations. */
+  readonly chatsEpoch: number;
+  /** New projects are of the platform by default, where people are signed in. */
+  readonly newProjectsInCloud: boolean;
+}
+
+/** What people change of `CloudSwitches`: the AI settings go by `AiSyncAccess`. */
+export type CloudSwitchChanges = Partial<
+  Pick<CloudSwitches, "organizer" | "chats" | "newProjectsInCloud">
+>;
+
+/**
+ * The switches of the cloud features of the person on a platform, see `CloudSwitches`. Rejects with
+ * a `CloudSignedOut` when nobody is signed in, a `CloudOtherAccount` where the session is of
+ * another account than `account`.
+ */
+export interface CloudSwitchesAccess {
+  read(): Promise<CloudSwitches>;
+  /** Changes them, for all devices; what is turned off is gone from the platform at once. */
+  change(account: string, changes: CloudSwitchChanges): Promise<CloudSwitches>;
+}
+
+/**
+ * People turned off a cloud feature for their account, on some device: the platform keeps nothing
+ * of it, and takes nothing, see `CloudSwitches`.
+ */
+export class CloudFeatureOff extends Error {
+  override readonly name = "CloudFeatureOff";
 }
 
 /**
@@ -811,7 +870,7 @@ export interface AccountChatSummary {
  * /chat-and-models.md of AnimaQuill Cloud, 5.4): a conversation is written whole, over the revision
  * it was read at (`base`, null for a new one); where another device wrote it since, that rejects
  * with a `ChatNewer`, and the editor takes theirs. Rejects with a `CloudSignedOut` when nobody is
- * signed in; `save` resolves to undefined where the platform does not keep it (not a project of the
+ * signed in, a `CloudFeatureOff` where people turned the conversations off; `save` resolves to undefined where the platform does not keep it (not a project of the
  * person's, or too large): it stays on this device.
  */
 export interface ChatSyncAccess {
@@ -918,8 +977,9 @@ export interface AccountChangesAnswer {
  * each change is kept where it is later than what it has of the same field (the star, the group of a
  * project; a group as a whole), see the design of the start page, 6.6. Times are of this computer's
  * clock both ways: the host has them agree with the platform's. Rejects where the platform could not
- * say, with a `CloudSignedOut` when nobody is signed in, and with a `CloudOtherAccount` where changes
- * are of another account than the one its session is of.
+ * say, with a `CloudSignedOut` when nobody is signed in, with a `CloudOtherAccount` where changes
+ * are of another account than the one its session is of, and with a `CloudFeatureOff` where people
+ * turned it off for their account.
  */
 export interface OrganizerAccess {
   read(): Promise<AccountOrganized>;
