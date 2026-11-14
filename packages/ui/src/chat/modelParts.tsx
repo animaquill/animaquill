@@ -1,4 +1,10 @@
-import { headerProblem, type FieldMark } from "@animaquill/agent";
+import {
+  MOST_HEADERS,
+  headerProblem,
+  looksSecret,
+  tooManyHeaders,
+  type FieldMark,
+} from "@animaquill/agent";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./AiSettings.module.css";
@@ -74,8 +80,8 @@ const rowsOf = (headers: Readonly<Record<string, string>> | undefined): HeaderRo
 /**
  * Headers people send to a service or a model, row by row. Rows that are being typed stay here
  * until they make a header that can be one (`headerProblem`): an empty or a wrong one is never
- * saved. A name that looks like a secret is refused: keys go in the key, which never goes with the
- * settings as plain text.
+ * saved, nor more than `MOST_HEADERS`. A value that looks like a key is saved all the same, with a
+ * reminder: headers go with the account as they are, and the key has its own place.
  */
 export function HeadersEditor(props: {
   readonly headers: Readonly<Record<string, string>> | undefined;
@@ -108,6 +114,7 @@ export function HeadersEditor(props: {
       const name = row.name.trim();
       if (name !== "" && headerProblem(name, row.value) === undefined) headers[name] = row.value;
     }
+    if (tooManyHeaders(headers)) return;
     const text = JSON.stringify(headers);
     if (text === last.current) return;
     last.current = text;
@@ -127,7 +134,7 @@ export function HeadersEditor(props: {
             spellCheck={false}
             value={row.name}
             disabled={props.disabled}
-            aria-invalid={problems[index] === "name" || problems[index] === "secret"}
+            aria-invalid={problems[index] === "name"}
             onChange={(event) => change(row.key, "name", event.target.value)}
             onBlur={() => commit(rows)}
             onKeyDown={(event) => event.key === "Enter" && commit(rows)}
@@ -156,18 +163,31 @@ export function HeadersEditor(props: {
           >
             {t("ai.headers.remove")}
           </button>
-          {problems[index] && (
+          {problems[index] ? (
             <p className={styles.warning} data-testid="ai-header-problem">
               {t(`ai.headers.problem.${problems[index]}`)}
             </p>
+          ) : (
+            looksSecret(row.value) && (
+              <p className={styles.warning} data-testid="ai-header-secret">
+                {t("ai.headers.secret")}
+              </p>
+            )
           )}
         </div>
       ))}
+      {tooManyHeaders(
+        Object.fromEntries(rows.map((row) => [row.name.trim() || `#${row.key}`, row.value])),
+      ) && (
+        <p className={styles.warning} data-testid="ai-header-problem">
+          {t("ai.headers.problem.many", { count: MOST_HEADERS })}
+        </p>
+      )}
       <button
         type="button"
         className={styles.link}
         style={{ alignSelf: "flex-start" }}
-        disabled={props.disabled}
+        disabled={props.disabled || rows.length >= MOST_HEADERS}
         onClick={() => {
           setRows((before) => [...before, { key: next.current, name: "", value: "" }]);
           next.current += 1;

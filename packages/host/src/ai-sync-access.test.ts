@@ -123,9 +123,11 @@ describe("what an entry can be", () => {
     expect(checkAiEntry("model:s1/other", model)).toBe(false);
     expect(checkAiEntry("model:/team/claude-x", model)).toBe(false);
     expect(checkAiEntry("model:s 1/team/claude-x", model)).toBe(false);
-    expect(
-      checkAiEntry("model:s1/team/claude-x", { ...model, headers: { authorization: "x" } }),
-    ).toBe(false);
+    // Headers are people's to name, also like a secret: the settings remind them.
+    expect(checkAiEntry("model:s1/team/claude-x", { ...model, headers: { "api-key": "x" } })).toBe(
+      true,
+    );
+    expect(checkAiEntry("model:s1/team/claude-x", { ...model, apiKey: "x" })).toBe(false);
     expect(checkAiEntry("model:s1/team/claude-x", { ...model, headers: { "x-a": 1 } })).toBe(false);
     expect(
       checkAiEntry("model:s1/team/claude-x", {

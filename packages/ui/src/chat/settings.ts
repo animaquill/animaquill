@@ -144,6 +144,8 @@ export interface AiSettingsSnapshot extends AiSettings {
 export interface AiSettingsMessages {
   saveFailed(): void;
   keyFailed(): void;
+  /** Headers of before that cannot be sent were left out as the settings were read. */
+  headersLeftOut?(): void;
 }
 
 /**
@@ -160,6 +162,7 @@ export interface ServiceDraft {
   readonly route: Route;
   readonly api?: ModelApi;
   readonly headers?: Readonly<Record<string, string>>;
+  readonly keyHeader?: string;
 }
 
 /**
@@ -334,7 +337,10 @@ export class AiSettingsStore {
       }
     }
     const taken = readAiSettings(value);
-    if (taken.kind === "ok") this.#adopt(taken.settings, undefined);
+    if (taken.kind === "ok") {
+      if (taken.headersLeftOut) this.#messages.headersLeftOut?.();
+      this.#adopt(taken.settings, undefined);
+    }
   }
 
   #hold(held: SettingsHeld): void {
@@ -371,7 +377,7 @@ export class AiSettingsStore {
    */
   endpointOf(
     service: Pick<ServiceConfig, "kind" | "baseUrl" | "route"> &
-      Partial<Pick<ServiceConfig, "api" | "headers" | "models">>,
+      Partial<Pick<ServiceConfig, "api" | "headers" | "models" | "keyHeader">>,
     model: string,
   ): Endpoint | "badUrl" | "relayMissing" | "relayUrl" | undefined {
     const kind = kindOf(service.kind);
@@ -400,6 +406,7 @@ export class AiSettingsStore {
       catalog: kind.catalog,
       ...(route.relay && { relay: route.relay }),
       ...(Object.keys(settings).length > 0 && { settings }),
+      ...(service.keyHeader && { keyHeader: service.keyHeader }),
     };
   }
 
@@ -540,6 +547,8 @@ export class AiSettingsStore {
       readonly enabled?: readonly string[];
       readonly api?: ModelApi | undefined;
       readonly headers?: Readonly<Record<string, string>> | undefined;
+      /** The header the key goes in, for a server of one's own, see `ServiceConfig.keyHeader`. */
+      readonly keyHeader?: string | undefined;
       /** What the service listed, for the models it starts with that pi does not know. */
       readonly listed?: readonly ListedModel[] | undefined;
     } = {},
@@ -563,6 +572,7 @@ export class AiSettingsStore {
       // Where there is no relay, straight is all there is.
       route: this.#relay ? (options.route ?? found.route) : "direct",
       ...(found.custom && options.api && { api: options.api }),
+      ...(found.custom && options.keyHeader && { keyHeader: options.keyHeader }),
       ...(options.headers &&
         Object.keys(options.headers).length > 0 && { headers: options.headers }),
       enabled,
@@ -581,13 +591,19 @@ export class AiSettingsStore {
 
   update(
     id: string,
-    changes: Partial<Pick<ServiceConfig, "name" | "baseUrl" | "route" | "api" | "headers">>,
+    changes: Partial<
+      Pick<ServiceConfig, "name" | "baseUrl" | "route" | "api" | "headers" | "keyHeader">
+    >,
   ): void {
     const before = this.serviceOf(id);
     this.#changeService(id, (service) => {
       const next: Record<string, unknown> = { ...service, ...changes };
       for (const [name, value] of Object.entries(changes)) {
-        if (value === undefined || (name === "headers" && Object.keys(value).length === 0))
+        if (
+          value === undefined ||
+          value === "" ||
+          (name === "headers" && Object.keys(value).length === 0)
+        )
           delete next[name];
       }
       return next as unknown as ServiceConfig;
@@ -599,6 +615,7 @@ export class AiSettingsStore {
         ("api" in changes && changes.api !== before.api) ||
         ("headers" in changes &&
           JSON.stringify(changes.headers) !== JSON.stringify(before.headers)) ||
+        ("keyHeader" in changes && changes.keyHeader !== before.keyHeader) ||
         ("route" in changes && changes.route !== before.route))
     )
       this.#forgetListing(id);
@@ -1116,10 +1133,14 @@ export class AiSettingsStore {
       protocolOf(service) ?? kind.protocol,
       route.relay?.baseUrl ?? route.baseUrl,
       key,
-      { headers: this.#listHeaders(service, route) },
+      { headers: this.#listHeaders(service, route), keyHeader: this.#keyHeader(service, route) },
     );
-    // Changed meanwhile: what it listed is of what it was.
-    if (this.serviceOf(id) !== service) return;
+    // Changed meanwhile: what it listed is of what it was, so it is asked again.
+    if (this.serviceOf(id) !== service) {
+      this.#forgetListing(id);
+      if (this.serviceOf(id)) void this.fetchModels(id);
+      return;
+    }
     this.#setListing(
       id,
       listed.ok
@@ -1135,6 +1156,19 @@ export class AiSettingsStore {
   ): Record<string, string> {
     if (!route.relay) return { ...service.headers };
     return { ...relayPassHeaders(service.headers), ...route.relay.headers };
+  }
+
+  /** The header the key of a service goes in, where it has one of its own, as it is sent. */
+  #keyHeader(
+    service: Pick<ServiceConfig, "keyHeader">,
+    route: Exclude<ServiceRoute, string>,
+  ): { readonly name: string; readonly sent: string } | undefined {
+    const name = service.keyHeader;
+    if (!name) return undefined;
+    return {
+      name,
+      sent: route.relay ? `${RELAY_PASS_PREFIX}${name.toLowerCase()}` : name,
+    };
   }
 
   /** What a service listed no longer counts: where it is or how it is talked to changed. */
@@ -1339,7 +1373,7 @@ export class AiSettingsStore {
       draft.api ?? kind.protocol,
       route.relay?.baseUrl ?? route.baseUrl,
       key,
-      { headers: this.#listHeaders(draft, route) },
+      { headers: this.#listHeaders(draft, route), keyHeader: this.#keyHeader(draft, route) },
     );
     const ms = Date.now() - started;
     if (!listed.ok) return { test: { state: "failed", ms, failure: listed.failure } };

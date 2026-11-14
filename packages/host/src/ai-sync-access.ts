@@ -179,7 +179,7 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
           {
             method: "POST",
             headers: { ...options.changeHeaders, "content-type": "application/json" },
-            body: JSON.stringify({ ...changes, now: now(), format: 1 }),
+            body: JSON.stringify({ ...changes, now: now(), format: changes.format ?? 1 }),
           },
           signal,
         );

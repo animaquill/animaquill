@@ -13,6 +13,7 @@ import {
   AI_SYNC_BATCH,
   AI_SYNC_FORMAT,
   AI_SYNC_KEYS,
+  AI_SYNC_MODELS_FORMAT,
   AiSyncNewer,
   AiSyncOff,
   AiSyncTooLarge,
@@ -96,6 +97,8 @@ interface SyncState {
   pendingKeys: string[];
   /** What the platform said last. */
   revision: number;
+  /** The format the platform has them in, as it said last: what is given is never lower. */
+  format?: number;
   /** People turned it off, on this device or another one. */
   enabled: boolean;
   /** When everything was last in step with the platform. */
@@ -899,6 +902,7 @@ export class AiSync {
               return;
             }
             const wasOff = !state.enabled;
+            state.format = Math.max(state.format ?? 1, remote.format);
             await this.#merge(account, state, remote);
             // Turned on again elsewhere: what this device has goes too.
             if (wasOff && remote.enabled) this.#giveAll(state);
@@ -954,11 +958,16 @@ export class AiSync {
           }),
         )
       ).filter((each) => each !== undefined);
+      // Entries of models are of format 2: an editor before them would write the settings back
+      // without them (AI_SYNC_MODELS_FORMAT), so from the first one, it leaves them alone.
+      const models = Object.keys(state.entries).some((name) => name.startsWith("model:"));
+      const format = Math.max(state.format ?? 1, models ? AI_SYNC_MODELS_FORMAT : 1);
       const answer = await access.change({
         account,
         entries,
         keys: given,
         ...(enable && { enable: true }),
+        ...(format > 1 && { format }),
       });
       if (answer.state.account !== account)
         throw new CloudOtherAccount("Somebody else is signed in");
@@ -971,6 +980,7 @@ export class AiSync {
           after.refused = [...new Set([...(after.refused ?? []), ...notTaken])];
         if (answer.tooLarge.length > 0)
           after.tooLarge = [...new Set([...(after.tooLarge ?? []), ...answer.tooLarge])];
+        after.format = Math.max(after.format ?? 1, answer.state.format);
         await this.#merge(account, after, answer.state);
         // What the platform took, or refused, is no longer to be given, unless it changed here
         // meanwhile: refused, it stays on this device only.

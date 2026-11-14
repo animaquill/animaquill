@@ -675,18 +675,22 @@ function LevelMap({
   const map = row.values.thinkingLevelMap;
   const held = snapshot.held !== undefined;
   const current = map ?? {};
+  // Where the steps are from, once for all of them: a catalog, unless people set them all.
+  const fromCatalog = REASONING.some(
+    (level) => markOf(row.config, `thinking.${level}`, row.live) === "catalog",
+  );
   const set = (level: ReasoningLevel, supported: boolean, text: string) =>
     ai.editModel(service.id, row.id, `thinking.${level}`, levelEntry(level, supported, text));
   return (
     <div>
       <h4 className={styles.fieldTitle}>
         {t("ai.map.title")} <span className={styles.muted}>· {t("ai.map.help")}</span>
+        {fromCatalog && <Mark mark="catalog" testId="ai-map-catalog" />}
       </h4>
       <div className={styles.levels} role="table" data-testid="ai-level-map">
         <div className={styles.levelHead} role="row">
           <span role="columnheader">{t("ai.map.level")}</span>
           <span role="columnheader">{t("ai.map.value")}</span>
-          <span role="columnheader" />
           <span role="columnheader">{t("ai.map.supported")}</span>
         </div>
         {REASONING.map((level) => {
@@ -727,47 +731,59 @@ function LevelRow(props: {
   const { t } = useTranslation();
   const { level, supported } = props;
   const [text, setText] = useDraft(props.text);
+  // What people gave this step, kept while it is not ticked, to come back as it is ticked again.
+  const [kept, setKept] = useState(props.text);
+  if (props.text !== "" && props.text !== kept) setKept(props.text);
+  const shown = supported ? text : kept;
   const invalid = text.trim() !== "" && !/^[\x21-\x7e]{1,10}$/.test(text.trim());
   const commit = () => {
     if (text.trim() === props.text || invalid) return;
+    setKept(text.trim());
     props.onChange(supported, text);
   };
+  const name = t(`ai.packs.value.reasoning.${level}`);
   return (
     <div
       className={styles.levelRow}
       role="row"
       data-level={level}
-      data-mark={props.mark}
+      data-mark={props.mark === "edited" ? "edited" : undefined}
       data-supported={supported ? "" : undefined}
     >
-      <span role="cell">{t(`ai.packs.value.reasoning.${level}`)}</span>
-      <span role="cell">
+      <span role="cell">{name}</span>
+      <span role="cell" className={styles.levelValue}>
         <input
           className={`${styles.input} ${styles.mono}`}
-          value={text}
+          value={shown}
           maxLength={THINKING_VALUE_LENGTH}
           placeholder={supported ? t("ai.map.default", { value: level }) : "—"}
           spellCheck={false}
           disabled={props.disabled || !supported}
-          aria-label={t("ai.map.valueOf", { level: t(`ai.packs.value.reasoning.${level}`) })}
+          aria-label={t("ai.map.valueOf", { level: name })}
           aria-invalid={invalid}
           onChange={(event) => setText(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => event.key === "Enter" && commit()}
         />
-      </span>
-      <span role="cell">
-        <Mark mark={props.mark} onRevert={props.onRevert} />
+        {/* Only where people made it other than the catalogs: the title says where the rest is from. */}
+        {props.mark === "edited" && <Mark mark="edited" onRevert={props.onRevert} />}
       </span>
       <span role="cell">
         <input
           type="checkbox"
-          aria-label={t("ai.map.supportedOf", { level: t(`ai.packs.value.reasoning.${level}`) })}
+          aria-label={t("ai.map.supportedOf", { level: name })}
           checked={supported}
           disabled={props.disabled}
-          onChange={(event) => props.onChange(event.target.checked, supported ? text : "")}
+          onChange={(event) =>
+            props.onChange(event.target.checked, event.target.checked ? kept : "")
+          }
         />
       </span>
+      {invalid && (
+        <span className={`${styles.warning} ${styles.levelProblem}`} role="cell">
+          {t("ai.map.invalid")}
+        </span>
+      )}
     </div>
   );
 }
@@ -847,7 +863,11 @@ function Advanced({
             onBlur={saveUrl}
             onKeyDown={(event) => event.key === "Enter" && saveUrl()}
           />
-          {urlInvalid && <span className={styles.warning}>{t("ai.baseUrlInvalid")}</span>}
+          {urlInvalid ? (
+            <span className={styles.warning}>{t("ai.baseUrlInvalid")}</span>
+          ) : (
+            <span className={styles.help}>{t("ai.detail.baseUrlKey")}</span>
+          )}
         </label>
         <label className={styles.field}>
           <span>{t("ai.detail.api")}</span>

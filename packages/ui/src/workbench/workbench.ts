@@ -378,9 +378,22 @@ export class Workbench {
       {
         saveFailed: () => this.notifications.push(t("ai.saveFailed")),
         keyFailed: () => this.notifications.push(t("ai.keyFailed")),
+        headersLeftOut: () => this.notifications.push(t("ai.headersLeftOut")),
       },
       host.aiRelay,
-      { cache: host.caches, platform: host.cloud?.modelCatalog },
+      {
+        cache: host.caches,
+        // The platform's copy is for people signed in: nobody is asked for it otherwise.
+        platform: (() => {
+          const catalog = host.account ? host.cloud?.modelCatalog : undefined;
+          const account = host.account;
+          if (!catalog || !account) return undefined;
+          return () =>
+            account.getSnapshot().status === "signedIn"
+              ? catalog()
+              : Promise.reject(new Error("Nobody is signed in"));
+        })(),
+      },
     );
     this.packs = new ModelPacks(this.aiSync.settings, {
       saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")),

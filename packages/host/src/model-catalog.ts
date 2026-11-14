@@ -116,11 +116,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const cleanString = (value: unknown, most = 300): string | undefined =>
   typeof value === "string" && value.trim() && value.length <= most ? value.trim() : undefined;
 
+/** The most tokens a catalog can say a model reads or writes, and the most a price can be. */
+const MOST_TOKENS = 100_000_000;
+const MOST_PRICE = 1_000_000;
+
 const nonNegative = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value < MOST_PRICE
+    ? value
+    : undefined;
 
 const positiveInteger = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= MOST_TOKENS
+    ? value
+    : undefined;
 
 function readCost(value: unknown): CatalogCost {
   if (!isRecord(value)) return {};
@@ -396,20 +404,48 @@ export function flattenModelsDev(value: unknown): CatalogEntry[] {
   return entries;
 }
 
+/**
+ * One entry as kept or passed on, field by field as `flattenModelsDev` makes them: what is not
+ * made so is left out, and an entry without its names is none.
+ */
+function readEntry(value: unknown): CatalogEntry | undefined {
+  if (!isRecord(value)) return undefined;
+  const providerId = cleanString(value.providerId);
+  const providerName = cleanString(value.providerName);
+  const id = cleanString(value.id);
+  const name = cleanString(value.name);
+  if (!providerId || !providerName || !id || !name) return undefined;
+  const flag = (each: unknown) => (typeof each === "boolean" ? each : undefined);
+  const efforts = Array.isArray(value.efforts)
+    ? value.efforts.filter(
+        (each): each is string => typeof each === "string" && /^[a-z]{1,20}$/.test(each),
+      )
+    : undefined;
+  return defined<CatalogEntry>({
+    providerId,
+    providerName,
+    providerBaseUrl: cleanString(value.providerBaseUrl, 2000),
+    id,
+    name,
+    reasoning: flag(value.reasoning),
+    image: flag(value.image),
+    efforts: efforts && efforts.length > 0 ? efforts.slice(0, 10) : undefined,
+    contextWindow: positiveInteger(value.contextWindow),
+    maxTokens: positiveInteger(value.maxTokens),
+    cost: readCost(value.cost),
+    chat: value.chat === false ? (false as const) : undefined,
+  });
+}
+
 /** A catalog as kept or passed on, or undefined where that is not what it is. */
 export function readModelCatalog(value: unknown): ModelCatalog | undefined {
   if (!isRecord(value) || !Array.isArray(value.entries)) return undefined;
   const fetchedAt = value.fetchedAt;
   if (typeof fetchedAt !== "number" || !Number.isFinite(fetchedAt)) return undefined;
-  const entries = value.entries.filter(
-    (entry): entry is CatalogEntry =>
-      isRecord(entry) &&
-      typeof entry.providerId === "string" &&
-      typeof entry.providerName === "string" &&
-      typeof entry.id === "string" &&
-      typeof entry.name === "string" &&
-      isRecord(entry.cost),
-  );
+  const entries = value.entries.flatMap((entry) => {
+    const read = readEntry(entry);
+    return read ? [read] : [];
+  });
   return { fetchedAt, entries };
 }
 

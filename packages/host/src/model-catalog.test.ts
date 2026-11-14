@@ -87,6 +87,39 @@ describe("the catalog of models.dev", () => {
     expect(flattenModelsDev("nothing")).toEqual([]);
     expect(readModelCatalog({ fetchedAt: 1, entries: catalog })?.entries).toHaveLength(4);
     expect(readModelCatalog({ entries: [] })).toBeUndefined();
+    // What is kept or passed on is read as the catalog is: nothing beyond what makes sense.
+    expect(
+      readModelCatalog({
+        fetchedAt: 1,
+        entries: [
+          {
+            providerId: "p",
+            providerName: "P",
+            id: "m",
+            name: "M",
+            contextWindow: 1e15,
+            maxTokens: "lots",
+            efforts: ["low", "<script>", 3],
+            cost: { input: -1, output: 2, cacheRead: "x" },
+            reasoning: "yes",
+            __proto__: { polluted: true },
+          },
+          { providerId: "p", id: "no name" },
+        ],
+      })?.entries,
+    ).toEqual([
+      {
+        providerId: "p",
+        providerName: "P",
+        id: "m",
+        name: "M",
+        efforts: ["low"],
+        cost: { output: 2 },
+      },
+    ]);
+    expect(
+      flattenModelsDev({ p: { models: { m: { limit: { context: 1e12 } } } } })[0],
+    ).not.toHaveProperty("contextWindow");
   });
 
   test("takes the provider the service is, by its names", () => {

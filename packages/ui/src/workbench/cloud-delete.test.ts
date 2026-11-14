@@ -274,7 +274,18 @@ describe("saving a project of the platform as a project of this computer", () =>
     expect(await browser.links.get(record?.id as string)).toBeUndefined();
     // The project it came from, and how it is connected, as they were.
     expect(filesOf(browser.disk, "文档/原子")).toEqual(original);
-    expect(await browser.links.get(key)).toEqual(linkBefore);
+    // The link as it was: what it says of how far the sync got goes on as the sync goes on.
+    const steady = (link: unknown) => {
+      const {
+        pending: _pending,
+        pushed: _pushed,
+        syncedAt: _syncedAt,
+        seq: _seq,
+        ...rest
+      } = (link ?? {}) as Record<string, unknown>;
+      return rest;
+    };
+    expect(steady(await browser.links.get(key))).toEqual(steady(linkBefore));
     expect(workbench.session.key).toBe(key);
     expect((await browser.links.get(key))?.project).toBe(project);
   });

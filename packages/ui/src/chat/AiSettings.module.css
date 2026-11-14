@@ -916,7 +916,7 @@ button.mark {
 .levelHead,
 .levelRow {
   display: grid;
-  grid-template-columns: 70px minmax(0, 220px) minmax(0, 1fr) 48px;
+  grid-template-columns: 70px minmax(0, 1fr) 48px;
   gap: 8px;
   align-items: center;
   padding: 4px 10px;
@@ -937,16 +937,28 @@ button.mark {
   border-left: 2px solid transparent;
 }
 
-.levelRow[data-mark="catalog"] {
-  border-left-color: var(--aq-success);
-}
-
 .levelRow[data-mark="edited"] {
   border-left-color: var(--aq-match);
 }
 
 .levelRow input:disabled {
   opacity: 0.5;
+}
+
+/* The value, and right beside it whether people changed it. */
+.levelValue {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.levelValue input {
+  width: 220px;
+  max-width: 100%;
+}
+
+.levelProblem {
+  grid-column: 2 / -1;
 }
 
 /* Getting models from a service: a dialog over the settings (sketch S4). */
@@ -1084,7 +1096,12 @@ button.mark {
 
   .levelHead,
   .levelRow {
-    grid-template-columns: 52px minmax(0, 1fr) auto 40px;
+    grid-template-columns: 52px minmax(0, 1fr) 40px;
+  }
+
+  /* The dialog has the way back at this width. */
+  .crumbBack {
+    display: none;
   }
 
   .defaultSelect {

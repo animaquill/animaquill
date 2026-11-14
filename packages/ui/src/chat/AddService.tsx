@@ -3,6 +3,7 @@ import {
   SERVICE_GROUPS,
   SERVICE_KINDS,
   checkBaseUrl,
+  isKeyHeader,
   recommendedOf,
   type ListedModel,
   type ServiceKind,
@@ -176,6 +177,9 @@ function AddForm(props: {
   const [typed, setTyped] = useState(false);
   const keyNow = () => keyField.current?.value.trim() ?? "";
   const [url, setUrl] = useState(kind.baseUrl);
+  const [keyHeader, setKeyHeader] = useState("");
+  const header = kind.custom && isKeyHeader(keyHeader.trim()) ? keyHeader.trim() : undefined;
+  const headerInvalid = kind.custom && keyHeader.trim() !== "" && header === undefined;
   const [trying, setTrying] = useState(false);
   const [tried, setTried] = useState<
     | {
@@ -207,6 +211,7 @@ function AddForm(props: {
     : !typed
       ? t("ai.add.keyRequired")
       : undefined;
+  const blocked = missing ?? (headerInvalid ? t("ai.headers.problem.name") : undefined);
 
   const add = async (result: NonNullable<typeof tried>) => {
     const id = ai.add(kind.id, name, {
@@ -214,6 +219,7 @@ function AddForm(props: {
       route,
       enabled: result.recommended,
       ...(result.listed && { listed: result.listed }),
+      ...(header && { keyHeader: header }),
     });
     if (id === undefined) return;
     const key = keyNow();
@@ -223,10 +229,13 @@ function AddForm(props: {
   };
 
   const tryIt = async () => {
-    if (missing || trying) return;
+    if (blocked || trying) return;
     setTrying(true);
     setTried(undefined);
-    const result = await ai.tryService({ kind: kind.id, baseUrl, route }, keyNow());
+    const result = await ai.tryService(
+      { kind: kind.id, baseUrl, route, ...(header && { keyHeader: header }) },
+      keyNow(),
+    );
     setTrying(false);
     if (result.test.state === "ok") await add(result);
     else setTried(result);
@@ -271,6 +280,20 @@ function AddForm(props: {
           onKeyDown={(event) => event.key === "Enter" && void tryIt()}
         />
       </label>
+      {kind.custom && (
+        <label className={styles.field}>
+          <span>{t("ai.keyHeader.label")}</span>
+          <input
+            className={`${styles.input} ${styles.mono}`}
+            value={keyHeader}
+            placeholder={t(`ai.keyHeader.default.${kind.protocol}`)}
+            spellCheck={false}
+            aria-invalid={headerInvalid}
+            onChange={(event) => setKeyHeader(event.target.value)}
+          />
+        </label>
+      )}
+      {headerInvalid && <p className={styles.warning}>{t("ai.headers.problem.name")}</p>}
       {kind.id === "anthropic" && <p className={styles.help}>{t("ai.noSubscriptionAnthropic")}</p>}
       {kind.id === "openai-compatible" && (
         <p className={styles.note} data-testid="ai-gpt6">
@@ -281,8 +304,8 @@ function AddForm(props: {
         <button
           type="button"
           className={`${styles.button} ${styles.primary}`}
-          disabled={missing !== undefined || trying}
-          title={missing}
+          disabled={blocked !== undefined || trying}
+          title={blocked}
           onClick={() => void tryIt()}
         >
           {trying ? t("ai.add.trying") : t("ai.add.try")}

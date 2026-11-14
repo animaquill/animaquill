@@ -23,18 +23,18 @@ const PATHS: Readonly<Record<Capability, readonly string[]>> = {
     "M6.6 14.25h2.8",
   ],
   image: ["M1.25 8S3.75 3.5 8 3.5 14.75 8 14.75 8 12.25 12.5 8 12.5 1.25 8 1.25 8z"],
+  // An eye, and a small bulb at its top right: both of the others, as one.
   both: [
-    "M1.25 10S3.6 6.25 8 6.25 14.75 10 14.75 10 12.4 13.75 8 13.75 1.25 10 1.25 10z",
-    "M8 1.25v2",
-    "M3.9 2.6l1.1 1.5",
-    "M12.1 2.6l-1.1 1.5",
+    "M1 10.75S3 7.25 6.5 7.25 12 10.75 12 10.75 10 14.25 6.5 14.25 1 10.75 1 10.75z",
+    "M12.5 1.25a2.4 2.4 0 0 0-1.45 4.3c.3.25.45.55.45.9v.3h2v-.3c0-.35.15-.65.45-.9a2.4 2.4 0 0 0-1.45-4.3z",
+    "M11.8 8.1h1.4",
   ],
 };
 
 /**
  * What a model can do, as one icon (docs/design/settings-and-properties.md of AnimaQuill Cloud,
- * 7.4): a bulb where it thinks, an eye where it takes pictures, an eye with rays where it does
- * both. Never two side by side. Its full name shows on hovering, and is what a reader says.
+ * 7.4): a bulb where it thinks, an eye where it takes pictures, an eye with a small bulb at its
+ * top right where it does both. Never two side by side. Its full name shows on hovering, and is what a reader says.
  */
 export function CapabilityIcon(props: {
   readonly capability: Capability | undefined;
@@ -66,7 +66,7 @@ export function CapabilityIcon(props: {
         <path key={d} d={d} />
       ))}
       {capability === "image" && <circle cx="8" cy="8" r="2" />}
-      {capability === "both" && <circle cx="8" cy="10" r="1.6" />}
+      {capability === "both" && <circle cx="6.5" cy="10.75" r="1.5" />}
     </svg>
   );
 }

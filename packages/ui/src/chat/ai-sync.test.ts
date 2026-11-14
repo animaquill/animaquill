@@ -5,6 +5,7 @@ import {
   type AiSettings,
 } from "@animaquill/agent";
 import {
+  AiSyncNewer,
   AiSyncOff,
   isLaterEntry,
   memoryAccountKeys,
@@ -35,6 +36,7 @@ function platformOf() {
     {
       enabled: boolean;
       revision: number;
+      format?: number;
       entries: Record<string, AiEntry>;
       keys: Record<string, AiSyncKey>;
     }
@@ -50,7 +52,7 @@ function platformOf() {
   };
   const stateOf = (account: string): AccountAiSettings => {
     const kept = of(account);
-    return structuredClone({ account, format: 1, ...kept });
+    return structuredClone({ account, ...kept, format: kept.format ?? 1 });
   };
   const access = (who: () => string): AiSyncAccess => ({
     async read() {
@@ -60,6 +62,9 @@ function platformOf() {
     async change(changes: AccountAiChanges) {
       if (offline) throw new TypeError("Failed to fetch");
       const kept = of(who());
+      // A newer editor wrote them: what one of an older format gives is not taken.
+      if ((kept.format ?? 1) > (changes.format ?? 1)) throw new AiSyncNewer("newer");
+      kept.format = Math.max(kept.format ?? 1, changes.format ?? 1);
       if (!kept.enabled && !changes.enable) throw new AiSyncOff("off");
       if (!kept.enabled) kept.entries = {};
       kept.enabled = true;
@@ -623,5 +628,25 @@ describe("the settings of this device, while nobody is signed in", () => {
       { id: "x", added: "hand", maxTokens: 1000, edited: ["maxTokens"] },
       { id: "y", added: "hand", contextWindow: 64_000, edited: ["contextWindow"] },
     ]);
+  });
+});
+
+describe("entries of models, which editors before them would write back without", () => {
+  test("go with format 2, which an editor of format 1 then leaves alone", async () => {
+    const platform = platformOf();
+    const a = await windowOf(browserOf(), platform, accountOf("u1"));
+    const id = a.ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" })!;
+    await settle();
+    await a.sync.sync();
+    expect(platform.accounts.get("u1")?.format ?? 1).toBe(1);
+    a.ai.addModels(id, [{ id: "mine", added: "hand" }]);
+    await settle();
+    await a.sync.sync();
+    expect(platform.accounts.get("u1")?.format).toBe(2);
+    expect(platform.accounts.get("u1")?.entries[`model:${id}/mine`]).toBeDefined();
+    // An editor of format 1 that gives anything now is told a newer one wrote them.
+    await expect(
+      platform.access(() => "u1").change({ account: "u1", entries: [], keys: [] }),
+    ).rejects.toBeInstanceOf(AiSyncNewer);
   });
 });

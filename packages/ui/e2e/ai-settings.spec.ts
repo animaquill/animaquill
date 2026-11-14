@@ -175,7 +175,7 @@ test("a refused key says so, in adding and in testing, and the service can be ad
       headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
       body: JSON.stringify({ type: "error", error: { type: "not_found_error", message: "model" } }),
     });
-  await sonnet.getByRole("button", { name: "测", exact: true }).click();
+  await sonnet.getByRole("button", { name: "测试", exact: true }).click();
   await expect(sonnet.getByTestId("ai-model-test")).toHaveText(/找不到/);
 
   // Without its key: said beside it, and how to give one.

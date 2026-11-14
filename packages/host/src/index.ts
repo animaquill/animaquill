@@ -18,6 +18,7 @@ export {
   AI_SYNC_BYTES,
   AI_SYNC_FORMAT,
   AI_SYNC_KEYS,
+  AI_SYNC_MODELS_FORMAT,
   checkAiEntry,
   isLaterEntry,
   jsonBytes,
@@ -844,6 +845,11 @@ export interface AccountAiChanges {
   readonly keys: readonly ({ readonly service: string } & AiSyncKey)[];
   /** Turns going with the account on again, where people turned it off. */
   readonly enable?: true;
+  /**
+   * The format the entries are in (`AI_SYNC_FORMAT`): 1 unless said. A platform keeps the highest
+   * it was given, and editors of a lower one leave the settings alone from then on.
+   */
+  readonly format?: number;
 }
 
 /**

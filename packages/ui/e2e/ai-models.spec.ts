@@ -136,7 +136,8 @@ async function pretend(page: Page) {
       body = null;
     }
     seen.push({ url: request.url(), method: request.method(), headers, body });
-    if (headers["authorization"] !== `Bearer ${KEY}`)
+    const keyed = headers["authorization"] === `Bearer ${KEY}` || headers["api-key"] === KEY;
+    if (!keyed)
       return route.fulfill({
         status: 401,
         headers: { ...cors, "content-type": "application/json" },
@@ -166,7 +167,7 @@ async function addGateway(page: Page) {
   await wall.locator('[data-testid="ai-kind"][data-kind="openai-compatible"]').click();
   const form = wall.getByTestId("ai-add-form");
   await form.getByLabel("地址").fill(GATEWAY);
-  await form.getByLabel("Key").fill(KEY);
+  await form.getByLabel("Key", { exact: true }).fill(KEY);
   await form.getByRole("button", { name: "测试并添加" }).click();
   const service = settings.getByTestId("ai-service");
   await expect(service.getByTestId("ai-test")).toContainText("连上了");
@@ -247,7 +248,9 @@ test("models got from a server of one's own: picked from its list, filled in fro
   await expect(levels.locator('[data-level="high"] input[type="checkbox"]')).toBeChecked();
   await expect(levels.locator('[data-level="minimal"] input[type="checkbox"]')).not.toBeChecked();
   await expect(levels.locator('[data-level="max"] input[type="checkbox"]')).not.toBeChecked();
-  await expect(levels.locator('[data-level="high"]')).toHaveAttribute("data-mark", "catalog");
+  // Where the steps are from, once in the title; a row is marked only where people change it.
+  await expect(detail.getByTestId("ai-map-catalog")).toHaveText("目录");
+  await expect(levels.locator('[data-level="high"]')).not.toHaveAttribute("data-mark");
   // "Advanced" looks as the rest: no frame, no colour, only folded.
   const advanced = detail.getByTestId("ai-model-advanced");
   await expect(advanced).toHaveCSS("border-top-width", "0px");
@@ -280,6 +283,18 @@ test("models got from a server of one's own: picked from its list, filled in fro
   await levels.getByRole("textbox", { name: "“高”发给服务的值" }).fill("max");
   await levels.getByRole("textbox", { name: "“高”发给服务的值" }).press("Enter");
   await expect(levels.locator('[data-level="high"]')).toHaveAttribute("data-mark", "edited");
+  // Not ticked and ticked again: what people gave it is still there.
+  const high = levels.locator('[data-level="high"]');
+  await high.getByRole("checkbox").uncheck();
+  await expect(high.getByRole("textbox")).toBeDisabled();
+  await expect(high.getByRole("textbox")).toHaveValue("max");
+  await high.getByRole("checkbox").check();
+  await expect(high.getByRole("textbox")).toHaveValue("max");
+  await high.getByRole("textbox").fill("a b");
+  await high.getByRole("textbox").press("Enter");
+  await expect(high).toContainText("只能是英文、数字和符号，不能有空格");
+  await high.getByRole("textbox").fill("max");
+  await high.getByRole("textbox").press("Enter");
 
   // Tested as it is now: a word, at the model's own settings.
   await detail.getByTestId("ai-model-test-button").click();
@@ -345,15 +360,19 @@ test("headers go with every request, a key that is wrong and a model that cannot
   const service = await addGateway(page);
   const settings = settingsOf(page);
 
-  // A header of the gateway's: sent with every request; one named like a secret is refused.
+  // A header of the gateway's: sent with every request. One whose value looks like a key is
+  // taken, with a reminder; one that fetch cannot send is said so and not taken.
   await service.getByTestId("ai-headers").locator("summary").click();
   await service.getByRole("button", { name: "＋ 加一个请求头" }).click();
-  await service.getByRole("textbox", { name: "名字" }).fill("x-api-key");
+  await service.getByRole("textbox", { name: "名字" }).fill("x-team");
+  await service.getByRole("textbox", { name: "值" }).fill("视频");
+  await service.getByRole("textbox", { name: "值" }).press("Enter");
+  await expect(service.getByTestId("ai-header-problem")).toContainText("只能是英文、数字和符号");
+  await service.getByRole("textbox", { name: "值" }).fill("sk-team-0123456789abcdef");
+  await expect(service.getByTestId("ai-header-secret")).toContainText("明文同步到账号");
   await service.getByRole("textbox", { name: "值" }).fill("abc");
   await service.getByRole("textbox", { name: "值" }).press("Enter");
-  await expect(service.getByTestId("ai-header-problem")).toContainText("密钥不要放在请求头里");
-  await service.getByRole("textbox", { name: "名字" }).fill("x-team");
-  await service.getByRole("textbox", { name: "名字" }).press("Enter");
+  await expect(service.getByTestId("ai-header-secret")).toHaveCount(0);
   await expect(service.getByTestId("ai-headers").locator("summary")).toContainText("请求头（1）");
   await service.getByRole("button", { name: "测试连接" }).click();
   await expect(service.getByTestId("ai-test")).toContainText("连上了");
@@ -420,8 +439,8 @@ test("headers go with every request, a key that is wrong and a model that cannot
   // A key that is wrong: said so, in the test of the service.
   await openSettingsPage(page, "AI 模型");
   await service.getByRole("button", { name: "更换" }).click();
-  await service.getByLabel("Key").fill("sk-gw-wrong-000000");
-  await service.getByLabel("Key").press("Enter");
+  await service.getByLabel("Key", { exact: true }).fill("sk-gw-wrong-000000");
+  await service.getByLabel("Key", { exact: true }).press("Enter");
   await service.getByRole("button", { name: "测试连接" }).click();
   await expect(service.getByTestId("ai-test")).toHaveText(/key 不对/);
   problems.splice(
@@ -455,4 +474,39 @@ test("narrow: the service, and the details of a model, one level at a time", asy
   await page.goBack();
   await expect(settings.getByTestId("ai-service")).toBeVisible();
   await expect(back).toHaveText("AI 模型");
+});
+
+test("a gateway that takes its key in a header of its own, as Azure's does", async ({ page }) => {
+  const seen = await pretend(page);
+  await openSettingsPage(page, "AI 模型");
+  const settings = settingsOf(page);
+  const wall = settings.getByTestId("ai-add");
+  await wall.locator('[data-testid="ai-kind"][data-kind="openai-compatible"]').click();
+  const form = wall.getByTestId("ai-add-form");
+  await form.getByLabel("地址").fill(GATEWAY);
+  await form.getByLabel("Key 用哪个请求头").fill("api-key");
+  await form.getByLabel("Key", { exact: true }).fill(KEY);
+  await form.getByRole("button", { name: "测试并添加" }).click();
+  const service = settings.getByTestId("ai-service");
+  await expect(service.getByTestId("ai-test")).toContainText("连上了");
+  await expect(service.getByTestId("ai-key-header").getByRole("textbox")).toHaveValue("api-key");
+  const listed = seen.find((each) => each.url.endsWith("/models"));
+  expect(listed?.headers["api-key"]).toBe(KEY);
+  expect(listed?.headers["authorization"]).toBeUndefined();
+  await service.getByRole("button", { name: "＋ 手动加" }).click();
+  await service.getByTestId("ai-add-model").getByLabel("模型 ID").fill("qwen3-max");
+  await service.getByTestId("ai-add-model").getByRole("button", { name: "加上并启用" }).click();
+  await rowOf(page, "qwen3-max").getByRole("button", { name: "测试", exact: true }).click();
+  await expect(rowOf(page, "qwen3-max").getByTestId("ai-model-test")).toContainText("连上了");
+  const asked = seen.findLast((each) => each.url.endsWith("/chat/completions"));
+  expect(asked?.headers["api-key"]).toBe(KEY);
+  expect(asked?.headers["authorization"]).toBeUndefined();
+  // The key is not among the settings, which go with the account as they are.
+  expect(await page.evaluate(() => localStorage.getItem("animaquill.ai"))).not.toContain(KEY);
+  // Back to the protocol's own header: the key goes as Bearer again.
+  await service.getByTestId("ai-key-header").getByRole("textbox").fill("");
+  await service.getByTestId("ai-key-header").getByRole("textbox").press("Enter");
+  await service.getByRole("button", { name: "测试连接" }).click();
+  await expect(service.getByTestId("ai-test")).toContainText("连上了");
+  expect(seen.at(-1)?.headers["authorization"]).toBe(`Bearer ${KEY}`);
 });

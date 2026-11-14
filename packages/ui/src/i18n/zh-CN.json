@@ -2883,7 +2883,7 @@
     "enableModel": "启用 {{model}}",
     "setDefault": "设为默认模型",
     "isDefault": "默认模型",
-    "testModel": "测",
+    "testModel": "测试",
     "testModelTitle": "只测 {{model}}，会用掉极少的额度",
     "modelCustom": "手动加的",
     "price": "${{input}} / ${{output}}",
@@ -3273,21 +3273,23 @@
       "relayHint": "浏览器直连时，对方要允许这些请求头跨域；连不上的话可以改用“经平台转发”，转发会带上这些请求头。",
       "problem": {
         "name": "名字只能用字母、数字和 -，也不能是浏览器自己发的头（比如 Host、Cookie）。",
-        "secret": "密钥不要放在请求头里：请填在 Key 一格。请求头会跟着设置同步，Key 是单独加密存的。",
-        "value": "值里有不能放进请求头的字符，或者太长了。"
-      }
+        "value": "值只能是英文、数字和符号（不能有中文或别的文字），最长 4000 个字符。",
+        "many": "最多 {{count}} 个请求头，值加起来最多 8 KB。"
+      },
+      "secret": "这个值看起来像密钥。请求头会明文同步到账号，密钥请填在 Key 里（Key 加密存储，可以在“Key 用哪个请求头”里指定它放在哪个头）。"
     },
     "catalog": {
-      "idle": "目录还没取",
-      "loading": "正在取目录…",
-      "ok": "按目录填好了信息（{{from}}，{{ago}}）",
-      "failed": "目录取不到，只用 pi 自带的",
+      "idle": "目录还没加载。",
+      "loading": "正在加载目录…",
+      "ok": "目录已加载（{{from}}，{{ago}}）。",
+      "failed": "目录取不到，只用 pi 自带的。",
       "refresh": "刷新目录",
       "from": {
         "device": "这台设备上的 models.dev",
         "models.dev": "models.dev",
         "platform": "经平台取的 models.dev"
-      }
+      },
+      "refreshTitle": "重新取 models.dev 的目录；已经填好的格不变，要按新目录填写，请到模型的详细参数里点“重新按目录填写”"
     },
     "fetch": {
       "open": "从服务获取…",
@@ -3361,7 +3363,8 @@
       "api": "这个模型单独的接口类型",
       "useService": "（用服务的）{{value}}",
       "headers": "这个模型的请求头（加在服务的请求头上）",
-      "compat": "兼容"
+      "compat": "兼容",
+      "baseUrlKey": "填了的话，这个服务的 Key 会发到这个地址。"
     },
     "compat": {
       "adaptive": "强制自适应思考",
@@ -3407,7 +3410,8 @@
       "supported": "支持",
       "default": "默认：{{value}}",
       "valueOf": "“{{level}}”发给服务的值",
-      "supportedOf": "支持“{{level}}”"
+      "supportedOf": "支持“{{level}}”",
+      "invalid": "只能是英文、数字和符号，不能有空格，最多 10 个字符。"
     },
     "picture": {
       "ok": "看图也测过了：它答对了图片的颜色。",
@@ -3422,6 +3426,18 @@
       "id": "ID 不能空着，也不能超过 200 个字符。",
       "idTaken": "这个服务已经有这个 ID 的模型了。",
       "long": "最多 200 个字符。"
+    },
+    "headersLeftOut": "有请求头里有发不出去的字符（只能是英文、数字和符号），已经去掉了：请到“设置 › AI 模型”重新填写。",
+    "keyHeader": {
+      "label": "Key 用哪个请求头",
+      "help": "空着就按接口类型放；Azure 这类网关可以填 api-key 或 Ocp-Apim-Subscription-Key。Key 仍单独加密存储。",
+      "default": {
+        "openai-completions": "Authorization: Bearer（默认）",
+        "openai-responses": "Authorization: Bearer（默认）",
+        "anthropic-messages": "x-api-key（默认）",
+        "google-generative-ai": "x-goog-api-key（默认）",
+        "mistral-conversations": "Authorization: Bearer（默认）"
+      }
     }
   },
   "chat": {

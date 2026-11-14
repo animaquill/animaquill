@@ -75,6 +75,35 @@ export interface Endpoint {
    * `protocol`; `headers` are the service's and the model's together.
    */
   readonly settings?: ModelValues | undefined;
+  /**
+   * The header the key goes in, where a server of one's own wants it elsewhere than its protocol
+   * puts it, such as Azure's `api-key`: the key alone, or after "Bearer " in `Authorization`. The
+   * headers the protocol would put it in go without it then.
+   */
+  readonly keyHeader?: string | undefined;
+}
+
+/** The headers the libraries of the protocols put a key in, which a key header of one's own empties. */
+const KEY_HEADERS = ["authorization", "x-api-key", "x-goog-api-key"] as const;
+
+/**
+ * The headers of a request where a key goes in a header of people's choosing (`Endpoint.keyHeader`):
+ * that one with the key, the protocol's own emptied (a `null` takes a header away in the libraries
+ * of the services). Through the relay, the key's header goes as the relay takes people's headers.
+ */
+export function keyHeadersOf(
+  name: string | undefined,
+  key: string | undefined,
+  relay?: Relayed,
+): Record<string, string> {
+  if (!name || !key) return {};
+  const lower = name.toLowerCase();
+  const value = lower === "authorization" ? `Bearer ${key}` : key;
+  const emptied = Object.fromEntries(
+    KEY_HEADERS.filter((each) => each !== lower).map((each) => [each, null]),
+  ) as unknown as Record<string, string>;
+  const passed = relay?.passPrefix ? `${relay.passPrefix}${lower}` : lower;
+  return { ...emptied, [passed]: value };
 }
 
 /** A service through the relay of the platform, see `Endpoint.relay`. */
@@ -746,17 +775,20 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
       const relay = isFake(endpoint) ? undefined : endpoint.relay;
+      const keyHeaders = isFake(endpoint) ? {} : keyHeadersOf(endpoint.keyHeader, key, relay);
       return models.streamSimple(relay ? relayed(request as Model<Api>, relay) : request, context, {
         ...streamOptions,
         ...settings,
-        ...(relay && { headers: { ...streamOptions?.headers, ...relay.headers } }),
+        headers: { ...streamOptions?.headers, ...relay?.headers, ...keyHeaders },
         // Retrying is for people to decide: a failure shows right away.
         maxRetries: 0,
       });
     },
     getApiKey: async () => {
       key = await options.key();
-      // Some servers of one's own need no key, and their libraries still want one.
+      // Some servers of one's own need no key, and their libraries still want one. One that takes
+      // it in a header of its own gets it there (`keyHeadersOf`), and the library none.
+      if (!isFake(endpoint) && endpoint.keyHeader) return "none";
       return key || (isFake(endpoint) ? undefined : "none");
     },
     toolExecution: "sequential",
@@ -963,7 +995,9 @@ export async function askModel(
           apiKey: {
             name: "key",
             // Some servers of one's own need no key, and their libraries still want one.
-            resolve: async () => ({ auth: { apiKey: key || "none" } }),
+            resolve: async () => ({
+              auth: { apiKey: (!endpoint.keyHeader && key) || "none" },
+            }),
           },
         },
         models: [model],
@@ -992,7 +1026,7 @@ export async function askModel(
         maxRetries: 0,
         cacheRetention: "none",
         signal,
-        ...(relay && { headers: { ...relay.headers } }),
+        headers: { ...relay?.headers, ...keyHeadersOf(endpoint.keyHeader, key, relay) },
       },
     );
     const ms = Date.now() - started;

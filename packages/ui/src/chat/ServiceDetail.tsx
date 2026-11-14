@@ -5,6 +5,7 @@ import {
   checkBaseUrl,
   enabledCountOf,
   filterModels,
+  isKeyHeader,
   isLastEnabled,
   kindOf,
   type ModelApi,
@@ -187,6 +188,7 @@ function ServiceFields(props: { readonly service: ServiceConfig; readonly known:
           )}
         </label>
         <RouteField service={service} />
+        {kind?.custom && <KeyHeaderField service={service} />}
         <div className={styles.field}>
           <span>{t("ai.api")}</span>
           {kind?.custom ? (
@@ -331,6 +333,43 @@ function KeyField(props: {
   );
 }
 
+/**
+ * The header the key goes in, for a server of one's own: as its protocol puts it unless people
+ * name another, such as Azure's `api-key` or `Ocp-Apim-Subscription-Key`. The key stays the key.
+ */
+function KeyHeaderField({ service }: { readonly service: ServiceConfig }) {
+  const { ai } = useWorkbench();
+  const { t } = useTranslation();
+  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const [text, setText] = useDraft(service.keyHeader ?? "");
+  const trimmed = text.trim();
+  const invalid = trimmed !== "" && !isKeyHeader(trimmed);
+  const save = () => {
+    if (invalid || trimmed === (service.keyHeader ?? "")) return;
+    ai.update(service.id, { keyHeader: trimmed });
+  };
+  return (
+    <label className={styles.field} data-testid="ai-key-header">
+      <span>{t("ai.keyHeader.label")}</span>
+      <input
+        className={`${styles.input} ${styles.mono}`}
+        value={text}
+        placeholder={t(`ai.keyHeader.default.${protocolOf(service) ?? "openai-completions"}`)}
+        spellCheck={false}
+        disabled={snapshot.held !== undefined}
+        aria-label={t("ai.keyHeader.label")}
+        aria-invalid={invalid}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={save}
+        onKeyDown={(event) => event.key === "Enter" && save()}
+      />
+      <span className={invalid ? styles.warning : styles.help}>
+        {invalid ? t("ai.headers.problem.name") : t("ai.keyHeader.help")}
+      </span>
+    </label>
+  );
+}
+
 /** Straight from the browser, or through the platform's relay: two buttons side by side. */
 function RouteField({ service }: { readonly service: ServiceConfig }) {
   const { ai } = useWorkbench();
@@ -406,6 +445,10 @@ function ModelsSection(props: {
   const allOn = shown.length > 0 && bulk.enable.length === 0;
   const catalog = snapshot.catalog;
   const say = (result: "last" | undefined) => setRefused(result === "last");
+  // What the open catalog knows, to say so below the models.
+  useEffect(() => {
+    void ai.loadCatalog();
+  }, [ai]);
   // "3 分钟前" moves on by itself.
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -426,23 +469,6 @@ function ModelsSection(props: {
         <h3 className={styles.sectionTitle}>{t("ai.models")}</h3>
         <span className={styles.muted} data-testid="ai-models-count">
           {t("ai.modelsEnabled", { enabled: service.enabled.length, total: models.length })}
-        </span>
-        <span className={styles.muted} data-testid="ai-catalog-state" data-setting="models.catalog">
-          ·{" "}
-          {catalog.state === "ok"
-            ? t("ai.catalog.ok", {
-                from: t(`ai.catalog.from.${catalog.from}`),
-                ago: agoText(catalog.fetchedAt, Math.max(now, catalog.fetchedAt), t),
-              })
-            : t(`ai.catalog.${catalog.state}`)}{" "}
-          <button
-            type="button"
-            className={styles.link}
-            disabled={catalog.state === "loading"}
-            onClick={() => void ai.refreshCatalog()}
-          >
-            {t("ai.catalog.refresh")}
-          </button>
         </span>
         <span className={styles.grow} />
         {models.length > FILTER_FROM && (
@@ -482,6 +508,15 @@ function ModelsSection(props: {
           }
         >
           {allOn ? t("ai.disableAll") : t("ai.enableAll")}
+        </button>
+        <button
+          type="button"
+          className={`${styles.button} ${styles.small}`}
+          disabled={catalog.state === "loading"}
+          title={t("ai.catalog.refreshTitle")}
+          onClick={() => void ai.refreshCatalog()}
+        >
+          {t("ai.catalog.refresh")}
         </button>
         <button
           type="button"
@@ -551,6 +586,15 @@ function ModelsSection(props: {
         </div>
       )}
       <p className={styles.help}>{t("ai.listFoot")}</p>
+      {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
+      <p className={styles.help} data-testid="ai-catalog-state" data-setting="models.catalog">
+        {catalog.state === "ok"
+          ? t("ai.catalog.ok", {
+              from: t(`ai.catalog.from.${catalog.from}`),
+              ago: agoText(catalog.fetchedAt, Math.max(now, catalog.fetchedAt), t),
+            })
+          : t(`ai.catalog.${catalog.state}`)}
+      </p>
       {fetching && <FetchModelsDialog service={service} onClose={() => setFetching(false)} />}
     </>
   );

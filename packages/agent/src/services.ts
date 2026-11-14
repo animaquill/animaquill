@@ -406,13 +406,26 @@ export async function listModels(
     readonly fetch?: typeof fetch;
     /** What goes with the request besides the key, such as what the relay of the platform needs. */
     readonly headers?: Readonly<Record<string, string>>;
+    /**
+     * The header the key goes in instead of the protocol's, see `Endpoint.keyHeader`; with the
+     * name it goes by on the way (the relay's, for one), where that differs.
+     */
+    readonly keyHeader?: { readonly name: string; readonly sent?: string } | undefined;
   } = {},
 ): Promise<ModelList> {
-  const request = listRequest(protocol, baseUrl, key);
+  const request = listRequest(protocol, baseUrl, options.keyHeader ? "" : key);
+  const own = options.keyHeader;
+  const keyHeaders: Record<string, string> =
+    own && key
+      ? {
+          [own.sent ?? own.name]:
+            own.name.toLowerCase() === "authorization" ? `Bearer ${key}` : key,
+        }
+      : {};
   const send = options.fetch ?? globalThis.fetch.bind(globalThis);
   try {
     const response = await send(request.url, {
-      headers: { ...request.headers, ...options.headers },
+      headers: { ...request.headers, ...options.headers, ...keyHeaders },
       ...(options.signal && { signal: options.signal }),
     });
     if (!response.ok) {

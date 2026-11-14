@@ -12,8 +12,14 @@
  * their own (`AiSyncKey`), which the platform seals before they go into its database.
  */
 
-/** The format of the entries. One a platform has from a newer editor is not written over. */
-export const AI_SYNC_FORMAT = 1;
+/**
+ * The format of the entries. One a platform has from a newer editor is not written over. 2 (0.3.65)
+ * has each model of a service as an entry of its own (`model:<service>/<model>`): an editor of
+ * format 1 makes its settings without them, and would write that back as all there is.
+ */
+export const AI_SYNC_FORMAT = 2;
+/** The first format with entries of models, which an editor gives once it has any. */
+export const AI_SYNC_MODELS_FORMAT = 2;
 /** All entries of a person together, as JSON, at most. */
 export const AI_SYNC_BYTES = 512 * 1024;
 /** One entry at most: an installed pack can be 256 KB. */
@@ -111,7 +117,13 @@ export const isEntryName = (name: unknown): name is string =>
  */
 export function checkAiEntry(name: string, value: unknown): boolean {
   if (!isEntryName(name) || value === undefined) return false;
-  if (hasSecret(value) || jsonBytes(value) > AI_ENTRY_BYTES) return false;
+  // The headers people send a service or a model are theirs to name (the settings remind them that
+  // they go as they are); anything else under the name of a secret is not taken.
+  const named =
+    isRecord(value) && isRecord(value.headers) && /^(?:service|model):/.test(name)
+      ? { ...value, headers: undefined }
+      : value;
+  if (hasSecret(named) || jsonBytes(value) > AI_ENTRY_BYTES) return false;
   const colon = name.indexOf(":");
   const kind = colon < 0 ? name : name.slice(0, colon);
   const of = colon < 0 ? undefined : name.slice(colon + 1);

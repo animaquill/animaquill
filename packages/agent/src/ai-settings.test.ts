@@ -5,6 +5,7 @@ import {
   DEFAULT_MAX_TOOL_CALLS,
   EMPTY_AI_SETTINGS,
   headerProblem,
+  looksSecret,
   enabledCountOf,
   enabledModelsOf,
   isSecretName,
@@ -14,6 +15,8 @@ import {
   writeAiSettings,
   type AiSettings,
 } from "./ai-settings.ts";
+import { entriesOfSettings } from "./ai-sync.ts";
+import { settingsOfEntries as settingsOfEntriesThen } from "./ai-sync-0363.test-support.ts";
 
 const KEY = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
@@ -589,10 +592,9 @@ describe("AI settings of version 3", () => {
     const reading = readAiSettings(full);
     expect(reading).toMatchObject({ kind: "ok", from: 3 });
     const [service] = settingsOf(full).services;
-    expect(service).toMatchObject({
-      api: "anthropic-messages",
-      headers: { "x-team": "video" },
-    });
+    expect(service).toMatchObject({ api: "anthropic-messages" });
+    // Named like a key is people's own; of the browser, or not a name, is not.
+    expect(service?.headers).toEqual({ "x-team": "video", "x-api-key": KEY });
     // Paused models are of a service that is all off: this one has one on.
     expect(service?.paused).toBeUndefined();
     expect(service?.models).toEqual([
@@ -630,7 +632,6 @@ describe("AI settings of version 3", () => {
       (written.services as { models: Record<string, unknown>[] }[])[0]?.models[0],
     ).toMatchObject({ future: { a: 1 } });
     expect(settingsOf(written)).toEqual(settingsOf(full));
-    expect(JSON.stringify(written)).not.toContain(KEY);
   });
 
   it("let only servers of one's own say how they are talked to", () => {
@@ -668,16 +669,76 @@ describe("AI settings of version 3", () => {
     expect(service?.enabled).toEqual(["mine", "deepseek-flash"]);
   });
 
-  it("refuse headers that are not people's own: of the browser, or named like a secret", () => {
+  it("take any header of people's own, named as they like, with values fetch can send", () => {
     expect(headerProblem("x-team", "video")).toBeUndefined();
+    // Gateways name their key headers as they like: those are people's own to give.
+    for (const name of ["api-key", "Ocp-Apim-Subscription-Key", "x-session-affinity", "x-api-key"])
+      expect(headerProblem(name, "x"), name).toBeUndefined();
     expect(headerProblem("Host", "x")).toBe("name");
     expect(headerProblem("x-forwarded-for", "x")).toBe("name");
+    expect(headerProblem("true-client-ip", "x")).toBe("name");
     expect(headerProblem("aq-pass-x", "x")).toBe("name");
+    expect(headerProblem("x-animaquill-admin", "x")).toBe("name");
     expect(headerProblem("bad name", "x")).toBe("name");
-    expect(headerProblem("x-api-key", "x")).toBe("secret");
-    expect(headerProblem("Authorization", "x")).toBe("secret");
-    expect(headerProblem("x-gateway-token", "x")).toBe("secret");
+    // Only what fetch takes: Latin letters, digits and signs.
     expect(headerProblem("x-team", "a\nb")).toBe("value");
+    expect(headerProblem("x-team", "视频")).toBe("value");
+    expect(headerProblem("x-team", "é")).toBe("value");
+    expect(() => new Headers({ "x-team": "video-1 a=b" })).not.toThrow();
+    // A value that looks like a key is said so, not refused.
+    expect(looksSecret("sk-ant-api03-ABCDEFGHIJKLMNOP")).toBe(true);
+    expect(looksSecret("Bearer abc")).toBe(true);
+    expect(looksSecret("a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7")).toBe(true);
+    expect(looksSecret("video")).toBe(false);
+    // Read, what cannot be sent is left out, and said so; and only so many.
+    const reading = readAiSettings({
+      ...full,
+      services: [
+        {
+          ...full.services[0],
+          headers: {
+            "x-team": "视频",
+            ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`x-h${i}`, "v"])),
+          },
+        },
+      ],
+    });
+    expect(reading).toMatchObject({ kind: "ok", headersLeftOut: true });
+    if (reading.kind === "ok")
+      expect(Object.keys(reading.settings.services[0]?.headers ?? {})).toHaveLength(32);
+    expect(
+      readAiSettings({ ...full, services: [{ ...full.services[0], headers: { "x-team": "v" } }] }),
+    ).not.toHaveProperty("headersLeftOut");
+  });
+
+  it("keep the header a server of one's own takes its key in, and no address with a secret", () => {
+    const azure = {
+      ...full,
+      services: [
+        {
+          ...full.services[0],
+          keyHeader: "api-key",
+          models: [
+            { id: "a", baseUrl: "https://x.example/v1?api_key=sk" },
+            { id: "b", baseUrl: "https://user:pass@x.example/v1" },
+            { id: "c", baseUrl: "https://x.example/v1" },
+          ],
+        },
+      ],
+    };
+    const [service] = settingsOf(azure).services;
+    expect(service?.keyHeader).toBe("api-key");
+    expect(service?.models?.map((model) => model.baseUrl)).toEqual([
+      undefined,
+      undefined,
+      "https://x.example/v1",
+    ]);
+    expect(writeAiSettings(settingsOf(azure)).services).toEqual([
+      expect.objectContaining({ keyHeader: "api-key" }),
+    ]);
+    // Only servers of one's own say where their key goes.
+    const other = { ...azure, services: [{ ...azure.services[0], kind: "openai" }] };
+    expect(settingsOf(other).services[0]?.keyHeader).toBeUndefined();
   });
 });
 
@@ -747,6 +808,53 @@ describe("a page of version 2 that wrote over version 3", () => {
         filled: { from: ["models.dev"], fields: ["maxTokens"], snapshot: {} },
       },
       { id: "mine", added: "hand", contextWindow: 32000, edited: ["contextWindow"] },
+    ]);
+  });
+});
+
+describe("a page of 0.3.57 to 0.3.63 that makes its settings from the entries of an account", () => {
+  it("takes away no model people added: it never knew of them", () => {
+    const latest = settingsOf({
+      version: 3,
+      services: [
+        {
+          id: "g",
+          kind: "openai-compatible",
+          name: "gw",
+          baseUrl: "https://gw.example/v1",
+          route: "direct",
+          enabled: ["mine", "svc"],
+          models: [
+            {
+              id: "mine",
+              added: "hand",
+              contextWindow: 64000,
+              maxTokens: 4000,
+              cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+              edited: ["contextWindow", "maxTokens", "cost"],
+            },
+            { id: "svc", added: "service", contextWindow: 1000 },
+          ],
+        },
+      ],
+      default: { service: "g", model: "mine" },
+    });
+    const entries = entriesOfSettings(writeAiSettings(latest))!;
+    const old = settingsOfEntriesThen(entries) as Record<string, unknown>;
+    expect(old.version).toBe(2);
+    const models = recoverOldWrite(latest, old)?.services[0]?.models ?? [];
+    expect(models.map((model) => model.id)).toEqual(["mine", "svc"]);
+    expect(models[0]).toMatchObject({ maxTokens: 4000, cost: { input: 1, output: 2 } });
+    // Where it did write the models of the service, one it left out is one it took away.
+    const wrote = {
+      ...old,
+      services: (old.services as Record<string, unknown>[]).map((service) => ({
+        ...service,
+        models: [],
+      })),
+    };
+    expect(recoverOldWrite(latest, wrote)?.services[0]?.models?.map((model) => model.id)).toEqual([
+      "svc",
     ]);
   });
 });

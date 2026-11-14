@@ -7,14 +7,14 @@
  * Version 1 (until 0.3.55) had one model per service and a service "in use" (`current`). Version 2
  * turns on any number of models per service and has one default model. It still writes `current`
  * and each service's `model`, so that a page of before that is still open keeps working. Version 3
- * (0.3.64) has everything of each model people set up or a catalog filled in (`ModelConfig`), and
+ * (0.3.65) has everything of each model people set up or a catalog filled in (`ModelConfig`), and
  * for servers of one's own the protocol and headers; version 2 had only a size for models people
  * named themselves, which version 3 reads as theirs (docs/design/settings-and-properties.md of
  * AnimaQuill Cloud, 6.5). Pages of version 2 leave settings of version 3 alone (`newer`).
  */
 import { COMPARISON_PACK_ID, REASONING } from "@animaquill/tools";
 import type { ModelCost, ReasoningLevel, ThinkingLevelMap } from "./model-discovery.ts";
-import { kindOf, type Route } from "./services.ts";
+import { checkBaseUrl, kindOf, type Route } from "./services.ts";
 
 export const AI_SETTINGS_VERSION = 3;
 
@@ -140,6 +140,11 @@ export interface ServiceConfig {
   readonly api?: ModelApi;
   /** Headers that go with every request to it, such as what a gateway of a company wants. */
   readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * The header the key goes in, for a server of one's own that wants it elsewhere than its
+   * protocol puts it, such as Azure's `api-key`. The key itself is kept apart as any key.
+   */
+  readonly keyHeader?: string;
   /** The models people turned on, by their names at the service, in order. */
   readonly enabled: readonly string[];
   /** The models that were on as people turned the whole service off, to turn on again. */
@@ -221,6 +226,8 @@ export type AiSettingsReading =
       readonly settings: AiSettings;
       /** The version they were written in: 1 and 2 are upgraded as they are read. */
       readonly from: 1 | 2 | 3;
+      /** Headers that cannot be sent were left out, such as one with letters `fetch` refuses. */
+      readonly headersLeftOut?: true;
     }
   /** Written by a newer editor: not to be written over, see `readAiSettings`. */
   | { readonly kind: "newer" }
@@ -282,6 +289,7 @@ const SERVICE_FIELDS = new Set([
   "route",
   "api",
   "headers",
+  "keyHeader",
   "enabled",
   "paused",
   "models",
@@ -319,35 +327,66 @@ const price = (value: unknown): number | undefined =>
 
 /** The most a value sent for a step of reasoning has, in characters. */
 export const THINKING_VALUE_LENGTH = 10;
-/** Header names as HTTP has them (a token), and what a value may have. */
+/** Header names as HTTP has them (a token), and what a value may have: what `fetch` takes. */
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
-const HEADER_VALUE = /^[\t\x20-\x7e\x80-\uffff]{0,4000}$/;
+const HEADER_VALUE = /^[\t\x20-\x7e]{0,4000}$/;
+/** How many headers a service or a model has at most, and how long their values are together. */
+export const MOST_HEADERS = 32;
+export const MOST_HEADER_BYTES = 8 * 1024;
 /**
- * Headers that are never people's own: those of the browser and the connection, and any that is
- * named like a secret, which would go with the account as plain text. Keys go in the key.
+ * Headers that are never people's own: those of the browser and the connection, and those of the
+ * platform. A header named like a secret is theirs to send: the settings only remind them, see
+ * `looksSecret`, and the key has a header of its own to go in (`ServiceConfig.keyHeader`).
  */
 const NOT_A_HEADER =
-  /^(?:host|cookie2?|origin|referer|connection|keep-alive|content-length|content-type|transfer-encoding|te|trailer|upgrade|expect|accept-encoding|proxy-.*|sec-.*|x-forwarded-.*|forwarded|via|x-animaquill.*|aq-.*|x-aq-.*)$/i;
-const SECRET_HEADER = /key|token|secret|auth|passw|cookie|credential|signature|session/i;
+  /^(?:host|cookie2?|origin|referer|connection|keep-alive|content-length|content-type|transfer-encoding|te|trailer|upgrade|expect|accept-encoding|proxy-.*|sec-.*|x-forwarded-.*|forwarded|via|x-real-ip|true-client-ip|cf-connecting-ip|x-client-ip|x-animaquill.*|aq-.*|x-aq-.*)$/i;
 
 /** Why a header cannot be one of people's own, or undefined where it can. */
-export function headerProblem(
-  name: string,
-  value: string,
-): "name" | "secret" | "value" | undefined {
+export function headerProblem(name: string, value: string): "name" | "value" | undefined {
   if (!HEADER_NAME.test(name) || NOT_A_HEADER.test(name)) return "name";
-  if (SECRET_HEADER.test(name)) return "secret";
   if (!HEADER_VALUE.test(value)) return "value";
   return undefined;
 }
 
+/** Whether headers together are too many or too long, see `MOST_HEADERS`. */
+export function tooManyHeaders(headers: Readonly<Record<string, string>>): boolean {
+  const values = Object.values(headers);
+  const bytes = values.reduce((sum, value) => sum + value.length, 0);
+  return values.length > MOST_HEADERS || bytes > MOST_HEADER_BYTES;
+}
+
+/**
+ * Whether the value of a header looks like a key (`sk-…`, `Bearer …`, a long random string): the
+ * settings remind people that headers go with the account as they are, and keys belong in the key.
+ */
+export const looksSecret = (value: string): boolean =>
+  /^\s*(?:sk-|bearer\s|basic\s|ghp_|xox[bp]-|AIza)/i.test(value) ||
+  /[A-Za-z0-9_+/=-]{32,}/.test(value);
+
+/** A name of a header the key can go in. */
+export const isKeyHeader = (value: unknown): value is string =>
+  typeof value === "string" && headerProblem(value, "") === undefined;
+
+/** Whether reading the settings now left out a header that cannot be sent, see `readAiSettings`. */
+let headersLeftOut = false;
+
 function readHeaders(value: unknown): Readonly<Record<string, string>> | undefined {
   if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value).filter(
-    (entry): entry is [string, string] =>
-      typeof entry[1] === "string" && headerProblem(entry[0], entry[1]) === undefined,
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  const headers: Record<string, string> = {};
+  let bytes = 0;
+  for (const [name, each] of Object.entries(value)) {
+    if (typeof each !== "string" || headerProblem(name, each) !== undefined) {
+      headersLeftOut = true;
+      continue;
+    }
+    if (Object.keys(headers).length >= MOST_HEADERS || bytes + each.length > MOST_HEADER_BYTES) {
+      headersLeftOut = true;
+      break;
+    }
+    headers[name] = each;
+    bytes += each.length;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 const isApi = (value: unknown): value is ModelApi => MODEL_APIS.includes(value as ModelApi);
@@ -439,7 +478,8 @@ export function readModel(value: unknown): ModelConfig | undefined {
   const baseUrl =
     typeof value.baseUrl === "string" &&
     value.baseUrl.length <= 2000 &&
-    /^https?:\/\//.test(value.baseUrl)
+    // As people can give one: http(s), without a user, a password or a query.
+    checkBaseUrl(value.baseUrl) !== undefined
       ? value.baseUrl
       : undefined;
   const headers = readHeaders(value.headers);
@@ -539,6 +579,9 @@ function readService(
       baseUrl,
       route,
       ...(version === 3 && custom && isApi(value.api) && { api: value.api }),
+      ...(version === 3 &&
+        custom &&
+        isKeyHeader(value.keyHeader) && { keyHeader: value.keyHeader }),
       ...(headers && { headers }),
       enabled,
       ...(paused.length > 0 && enabled.length === 0 && { paused }),
@@ -603,6 +646,7 @@ export function settledDefault(
  * update the editor instead (decision 2026-11-11).
  */
 export function readAiSettings(value: unknown): AiSettingsReading {
+  headersLeftOut = false;
   if (!isRecord(value) || !Array.isArray(value.services)) return { kind: "broken" };
   const version = value.version;
   if (version !== undefined && version !== 1 && version !== 2 && version !== AI_SETTINGS_VERSION) {
@@ -674,7 +718,9 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     ...(value.sendWith === "modEnter" && { sendWith: "modEnter" as const }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
-  return { kind: "ok", settings, from };
+  // Set while the services were read, which control flow does not see.
+  const leftOut = headersLeftOut as boolean;
+  return { kind: "ok", settings, from, ...(leftOut && { headersLeftOut: true as const }) };
 }
 
 /** A model as it is saved: only what it has, with what was not understood back in place. */
@@ -703,6 +749,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     baseUrl: service.baseUrl,
     route: service.route,
     ...(service.api && { api: service.api }),
+    ...(service.keyHeader && { keyHeader: service.keyHeader }),
     ...(service.headers && Object.keys(service.headers).length > 0 && { headers: service.headers }),
     enabled: service.enabled,
     ...(service.paused && service.paused.length > 0 && { paused: service.paused }),
@@ -758,7 +805,18 @@ export const enabledCountOf = (settings: Pick<AiSettings, "services">): number =
  */
 export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | undefined {
   const reading = readAiSettings(old);
-  if (reading.kind === "ok" && reading.from === 2) return recoverVersion2(latest, reading.settings);
+  if (reading.kind === "ok" && reading.from === 2 && isRecord(old)) {
+    // Services the page wrote models of: in the others it said nothing of them at all (such as a
+    // page that made its settings from the entries of an account, which has no models in them).
+    const named = new Set(
+      (Array.isArray(old.services) ? old.services : []).flatMap((service) =>
+        isRecord(service) && Array.isArray(service.models) && typeof service.id === "string"
+          ? [service.id]
+          : [],
+      ),
+    );
+    return recoverVersion2(latest, reading.settings, named);
+  }
   if (reading.kind !== "ok" || reading.from !== 1 || !isRecord(old)) return undefined;
   const now = reading.settings;
   // What the page of before read: the settings of version 2 as version 1 has them.
@@ -818,18 +876,25 @@ export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | 
  * a page leaves settings of version 3 alone, so it only does that where it read them before they
  * were version 3, and what it wrote is everything as it was then, with its change. That is taken,
  * and what only version 3 has goes back on top: the protocol and headers of each service, and of
- * each model what version 2 does not have. Models people named that the page took away stay away;
- * a size it gave a model people named is theirs.
+ * each model what version 2 does not have. Models people named that the page took away stay away
+ * where it wrote the models of that service (`wroteModels`); where it wrote none at all, as a page that
+ * made its settings from the entries of an account does, nothing is taken away. A size it gave a
+ * model people named is theirs.
  */
-function recoverVersion2(latest: AiSettings, now: AiSettings): AiSettings {
+function recoverVersion2(
+  latest: AiSettings,
+  now: AiSettings,
+  wroteModels: ReadonlySet<string>,
+): AiSettings {
   const before = new Map(latest.services.map((service) => [service.id, service]));
   const services = now.services.map((service): ServiceConfig => {
     const base = before.get(service.id);
     if (!base) return service;
     const theirs = new Map((service.models ?? []).map((model) => [model.id, model]));
+    const wrote = wroteModels.has(service.id);
     const models = (base.models ?? []).flatMap((model): ModelConfig[] => {
       const named = theirs.get(model.id);
-      if (model.added === "hand" && !named) return [];
+      if (model.added === "hand" && !named && wrote) return [];
       if (named?.contextWindow === undefined || named.contextWindow === model.contextWindow)
         return [model];
       return [
@@ -847,6 +912,7 @@ function recoverVersion2(latest: AiSettings, now: AiSettings): AiSettings {
     return {
       ...rest,
       ...(base.api && { api: base.api }),
+      ...(base.keyHeader && { keyHeader: base.keyHeader }),
       ...(base.headers && { headers: base.headers }),
       ...(all.length > 0 && { models: all }),
     };
