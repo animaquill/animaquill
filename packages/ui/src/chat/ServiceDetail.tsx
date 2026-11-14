@@ -258,7 +258,8 @@ function ModelsSection(props: {
 
   return (
     <>
-      <div className={styles.row}>
+      {/* Each model's own reasoning is set in its row, which searching the settings goes to. */}
+      <div className={styles.row} data-setting="models.reasoning">
         <h3 className={styles.sectionTitle}>{t("ai.models")}</h3>
         <span className={styles.muted} data-testid="ai-models-count">
           {t("ai.modelsEnabled", { enabled: service.enabled.length, total: models.length })}

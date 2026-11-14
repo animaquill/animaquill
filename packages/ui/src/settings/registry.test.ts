@@ -70,7 +70,7 @@ describe("searching", () => {
     expect(found("帧率")).toContain("playback.quality");
     expect(found("暗色")).toEqual(["general.theme"]);
     expect(found("回车")).toEqual(["chat.sendWith"]);
-    expect(found("mcp")).toEqual(["tools.connect"]);
+    expect(found("fps")).toEqual(expect.arrayContaining(["editing.timecode", "playback.quality"]));
     expect(found("额度")).toContain("account.space");
   });
 

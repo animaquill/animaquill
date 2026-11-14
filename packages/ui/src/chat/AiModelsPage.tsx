@@ -61,7 +61,8 @@ export function AiModelsPage() {
           </button>
         </p>
       )}
-      <div className={styles.list}>
+      {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
+      <div className={styles.list} data-setting="models.services">
         <div className={styles.listHead}>
           <span>{t("ai.services")}</span>
         </div>
@@ -115,7 +116,11 @@ export function AiModelsPage() {
 
         <div className={styles.footer}>
           <h3>{t("ai.defaultModel")}</h3>
-          <div className={styles.defaultModel} data-testid="ai-default-model">
+          <div
+            className={styles.defaultModel}
+            data-testid="ai-default-model"
+            data-setting="models.default"
+          >
             {fallback ? (
               <>
                 <span className={styles.star}>★</span>{" "}

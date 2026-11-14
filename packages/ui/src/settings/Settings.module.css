@@ -329,7 +329,8 @@
   transition: background-color 0.4s;
 }
 
-.row[data-flash] {
+/* A setting searching went to, in a row of these or on a page of its own, for a moment. */
+.page [data-flash] {
   background: color-mix(in srgb, var(--aq-accent) 22%, transparent);
   transition: none;
 }
@@ -634,7 +635,6 @@
 /* A row of another part of the settings, such as the one of GitHub, laid out as these rows are. */
 .embedded {
   max-width: 820px;
-  padding: 0 6px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -647,4 +647,37 @@
 /* Narrow, the title of the group is on top already, beside the way back. */
 .dialog[data-narrow] .groupTitle {
   display: none;
+}
+
+/* Who is signed in: the picture small, on the line of the name. */
+.who {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.who .picture,
+.initial {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  border-radius: 50%;
+}
+
+.initial {
+  display: inline-grid;
+  place-items: center;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+  background: var(--aq-bg-hover);
+}
+
+/* Where something people searched for is instead, above what the settings have. */
+.elsewhere {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  color: var(--aq-text);
+  line-height: 1.6;
+  background: var(--aq-bg-input);
+  border-radius: 4px;
 }

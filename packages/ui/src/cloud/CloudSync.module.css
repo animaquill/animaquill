@@ -18,7 +18,7 @@
 
 /* On the page, rows are lines with a rule between them, as in the other pages. */
 .plain .row {
-  padding: 12px 0;
+  padding: 12px 6px;
   background: none;
   border: 0;
   border-bottom: 1px solid var(--aq-border);
@@ -275,16 +275,20 @@
 }
 
 /* The page. */
+/* As the other groups of the settings have theirs, see settings/Settings.module.css. */
 .page {
   box-sizing: border-box;
-  max-width: 760px;
   height: 100%;
-  padding: 12px 16px 24px;
+  padding: 16px 22px 28px;
   overflow: auto;
 }
 
+.page > * {
+  max-width: 820px;
+}
+
 .page h2 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   color: var(--aq-text-strong);
   font-size: 15px;
   font-weight: 600;

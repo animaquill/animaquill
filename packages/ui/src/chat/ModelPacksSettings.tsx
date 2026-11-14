@@ -212,7 +212,10 @@ export function ModelPacksSettings() {
       <h2 className={settingsStyles.group}>{t("ai.packs.title")}</h2>
       <p className={settingsStyles.help}>{t("ai.packs.intro")}</p>
 
-      <h3 className={styles.heading}>{t("ai.packs.perModel")}</h3>
+      {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
+      <h3 className={styles.heading} data-setting="packs.choice">
+        {t("ai.packs.perModel")}
+      </h3>
       {models.length === 0 && <p className={settingsStyles.none}>{t("ai.packs.noModels")}</p>}
       <div className={styles.table} role="list">
         {models.map(({ model, service, name }) => {
@@ -293,7 +296,7 @@ export function ModelPacksSettings() {
         })}
       </div>
 
-      <div className={styles.headingRow}>
+      <div className={styles.headingRow} data-setting="packs.installed">
         <h3 className={styles.heading}>{t("ai.packs.installed")}</h3>
         <span className={styles.grow} />
         <button
@@ -409,7 +412,7 @@ export function ModelPacksSettings() {
         })}
       </ul>
 
-      <label className={styles.showHidden}>
+      <label className={styles.showHidden} data-setting="packs.hidden">
         <input
           type="checkbox"
           checked={settings.showHiddenPacks === true}

@@ -729,7 +729,7 @@
     "close": "关闭设置",
     "pagesLabel": "设置分组",
     "back": "返回",
-    "search": "搜设置（例如“帧率”“key”）",
+    "search": "搜设置（例如“主题”“key”“代理”）",
     "searchShort": "搜设置",
     "searchLabel": "搜索设置",
     "searchResults": "搜索结果",
@@ -757,7 +757,6 @@
       "models": "AI 模型",
       "packs": "模型适配包",
       "chat": "AI 聊天",
-      "tools": "电脑上的 AI 工具",
       "account": "账号",
       "cloud": "云同步",
       "storage": "存储和数据",
@@ -815,14 +814,14 @@
         "timecode": {
           "name": "时间码",
           "help": "时间轴和属性里的时间写成“秒:帧”。现在只有这一种。",
-          "keywords": "timecode 时间码 帧 秒 时间格式 帧率"
+          "keywords": "timecode 时间码 帧 秒 时间格式 帧率 fps"
         }
       },
       "playback": {
         "quality": {
           "name": "预览画质",
           "help": "只影响预览，导出始终是全分辨率、用原片。预览工具栏和状态栏也能切，改的是同一个值。",
-          "keywords": "preview quality 画质 分辨率 清晰度 卡顿 流畅 代理 帧率"
+          "keywords": "preview quality 画质 分辨率 清晰度 卡顿 流畅 代理 帧率 fps"
         },
         "proxyOffer": {
           "name": "卡顿时提示生成代理文件",
@@ -834,7 +833,7 @@
         "quality": {
           "name": "默认码率",
           "help": "导出视频时先选中的码率。导出对话框里选过别的，下次就用那个。",
-          "keywords": "export bitrate quality 码率 画质 导出 视频 文件大小"
+          "keywords": "export bitrate quality 码率 画质 导出 视频 文件大小 fps 帧率"
         },
         "hardware": {
           "name": "显卡编码",
@@ -905,13 +904,6 @@
           "keywords": "send enter 回车 发送 换行 快捷键"
         }
       },
-      "tools": {
-        "connect": {
-          "name": "连接向导",
-          "help": "让电脑上的 AI 工具（Claude Code、Codex 等）通过本机 MCP 改这个编辑器里的项目。",
-          "keywords": "mcp claude code codex cursor 命令行 cli 本机 agents.md"
-        }
-      },
       "account": {
         "who": {
           "name": "账号",
@@ -964,7 +956,7 @@
         },
         "keys": {
           "name": "这台设备上的 key",
-          "help": "AI 服务的 key 单独存在这个浏览器的一个数据库里，不进项目、不进报告。",
+          "help": "AI 服务的 key 只存在这个浏览器里，不进项目、不进报告。清除这个网站的数据会一起删掉。",
           "keywords": "key api key 密钥 删除 清除 浏览器"
         },
         "chats": {
@@ -1018,7 +1010,6 @@
       "large": "大"
     },
     "seeAlso": "另见",
-    "generalSeeAlso": "“新建项目默认存云端”在 云同步 里；时间轴的吸附、覆盖在 编辑 里（时间轴工具栏上的按钮改的是同一个值）。",
     "layout": {
       "manage": "管理布局…",
       "done": "收起",
@@ -1042,9 +1033,6 @@
     "sendWith": {
       "enter": "Enter",
       "modEnter": "Ctrl+Enter"
-    },
-    "tools": {
-      "intro": "让电脑上的 AI 工具用它们自己的订阅和额度改这个编辑器里的项目。AnimaQuill 不收费，也看不到对话；改动成批记下，可以整批撤销。"
     },
     "account": {
       "via": "用 GitHub 登录",
@@ -1072,7 +1060,8 @@
       "refused": "浏览器没有答应。把网站加进书签或装成应用后再试，浏览器更容易答应。"
     },
     "keys": {
-      "where": "存在这个浏览器的 {{where}} 数据库里，现在有 {{count}} 个。"
+      "count": "现在存了 {{count}} 个。",
+      "none": "现在一个也没存。"
     },
     "chats": {
       "usage": "{{count}} 个对话，占 {{size}}；其中本地项目的 {{local}} 个。",
@@ -1093,7 +1082,21 @@
       "issues": "在 GitHub 上反馈",
       "performanceOpen": "打开“运行情况”",
       "performanceClosed": "打开项目后可用。"
-    }
+    },
+    "elsewhere": {
+      "project": "项目的帧率、分辨率属于项目，不在设置里：帧率在“文件 › 项目帧率”里改，也可以点状态栏上的帧率。"
+    },
+    "elsewhereWords": {
+      "project": "帧率 fps 分辨率 画幅 尺寸 宽高 项目"
+    },
+    "seeAlsoLinks": {
+      "cloud": "新建项目默认存云端还是本地，在",
+      "cloudGroup": "云同步",
+      "editing": "时间轴的吸附、覆盖、多选（和时间轴工具栏上的按钮是同一个值），在",
+      "editingGroup": "编辑",
+      "tail": "里。"
+    },
+    "accountMenu": "账号设置…"
   },
   "trial": {
     "label": "试改",
@@ -4598,7 +4601,9 @@
       "forgetConfirm": "删掉",
       "mergedHelp": "登录前这台设备上配的 {{counts}}，{{ago}}已并进账号。登录后不再用它，退出登录后回到它；之后在这里改了，才需要再并。",
       "forgetOnly": "删掉这台设备上的那份"
-    }
+    },
+    "githubInAccount": "装 GitHub App、管理授权的仓库，都在“账号”里。",
+    "githubGo": "去账号里管理"
   },
   "welcome": {
     "title": "欢迎，{{name}}",

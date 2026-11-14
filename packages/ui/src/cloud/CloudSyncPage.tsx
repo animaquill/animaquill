@@ -7,7 +7,7 @@ import type { AiCounts } from "../chat/ai-sync.ts";
 import { useAiSyncText } from "../chat/AiSyncStatus.tsx";
 import type { CloudFeature } from "./cloud-sync.ts";
 import { countsText, hasAny } from "./cloud-text.ts";
-import { FeatureRow, GitHubRow, Switch, useAccount } from "./CloudParts.tsx";
+import { FeatureRow, Switch, useAccount } from "./CloudParts.tsx";
 import styles from "./CloudSync.module.css";
 
 /**
@@ -226,7 +226,23 @@ export function CloudSyncPage() {
             />
           }
         />
-        <GitHubRow />
+        {/* Linking GitHub is the account's: here only where it is. */}
+        <FeatureRow
+          id="github"
+          name={t("cloudSync.github.name")}
+          help={t("cloudSync.githubInAccount")}
+          control={
+            <button
+              type="button"
+              className={styles.button}
+              onClick={() =>
+                workbench.settingsNav.go({ group: "account", depth: 1, item: "account.github" })
+              }
+            >
+              {t("cloudSync.githubGo")}
+            </button>
+          }
+        />
       </div>
       {device && hasAny(device) && (
         <>

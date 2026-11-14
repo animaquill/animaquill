@@ -12,6 +12,9 @@ import { DEFAULT_LIST_WIDTH } from "../keyframes/editor.ts";
 import { QUALITY_CHOICES, type QualityChoice } from "../preview/quality.ts";
 import { DEFAULT_HEADER_WIDTH } from "../timeline/editor.ts";
 import type { InputChoice } from "../workbench/input-mode.ts";
+import type { SettingsGroup } from "../workbench/settings-nav.ts";
+import type { SettingId } from "./registry.ts";
+
 import {
   Button,
   Choice,
@@ -20,6 +23,7 @@ import {
   Segmented,
   SettingRow,
   Toggle,
+  useGroups,
   type Option,
 } from "./parts.tsx";
 import { usageOfChats, clearLocalChats, type ChatsUsage } from "./storage.ts";
@@ -84,9 +88,41 @@ export function GeneralGroup() {
         />
       </SettingRow>
       <LayoutRow />
-      <RowsHeading>{t("settings.seeAlso")}</RowsHeading>
-      <p className={styles.note}>{t("settings.generalSeeAlso")}</p>
+      <SeeAlso />
     </GroupPage>
+  );
+}
+
+/** Where what people may look for here is instead, a link each, to go there and see it. */
+function SeeAlso() {
+  const { settingsNav } = useWorkbench();
+  const { t } = useTranslation();
+  const groups = useGroups();
+  const link = (group: SettingsGroup, item: SettingId, words: string) => (
+    <button
+      type="button"
+      className={styles.link}
+      onClick={() => settingsNav.go({ group, depth: 1, item })}
+    >
+      {words}
+    </button>
+  );
+  return (
+    <>
+      <RowsHeading>{t("settings.seeAlso")}</RowsHeading>
+      {groups.includes("cloud") && (
+        <p className={styles.note} data-testid="settings-see-cloud">
+          {t("settings.seeAlsoLinks.cloud")}{" "}
+          {link("cloud", "cloud.newProjectsInCloud", t("settings.seeAlsoLinks.cloudGroup"))}
+          {t("settings.seeAlsoLinks.tail")}
+        </p>
+      )}
+      <p className={styles.note} data-testid="settings-see-editing">
+        {t("settings.seeAlsoLinks.editing")}{" "}
+        {link("editing", "editing.snapping", t("settings.seeAlsoLinks.editingGroup"))}
+        {t("settings.seeAlsoLinks.tail")}
+      </p>
+    </>
   );
 }
 
@@ -430,19 +466,6 @@ export function ChatGroup() {
   );
 }
 
-// ---- 电脑上的 AI 工具
-
-export function ToolsGroup() {
-  const { t } = useTranslation();
-  return (
-    <GroupPage title={t("settings.groups.tools")} intro={t("settings.tools.intro")}>
-      <SettingRow id="tools.connect">
-        <span className={styles.later}>{t("settings.later")}</span>
-      </SettingRow>
-    </GroupPage>
-  );
-}
-
 // ---- 账号
 
 const formatBytes = (t: TFunction, bytes: number): string => {
@@ -491,13 +514,24 @@ export function AccountGroup() {
     <GroupPage title={t("settings.groups.account")}>
       <SettingRow
         id="account.who"
-        name={who.name}
-        help={t("settings.account.via")}
-        below={
-          who.picture === undefined ? undefined : (
-            <img className={styles.picture} src={who.picture} alt="" referrerPolicy="no-referrer" />
-          )
+        name={
+          <span className={styles.who}>
+            {who.picture === undefined ? (
+              <span className={styles.initial} aria-hidden="true">
+                {[...who.name][0]?.toUpperCase() ?? "?"}
+              </span>
+            ) : (
+              <img
+                className={styles.picture}
+                src={who.picture}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
+            )}
+            {who.name}
+          </span>
         }
+        help={t("settings.account.via")}
       >
         <Button onClick={() => void workbench.signOut()}>{t("account.signOut")}</Button>
       </SettingRow>
@@ -635,10 +669,17 @@ function KeysRow() {
     <SettingRow
       id="storage.keys"
       below={
-        <span className={styles.status} data-testid="ai-keys-where">
-          {snapshot.keysWhere
-            ? t("settings.keys.where", { where: snapshot.keysWhere, count: snapshot.keyed.size })
-            : t("ai.keysNowhere")}
+        <span
+          className={styles.status}
+          data-testid="ai-keys-where"
+          title={snapshot.keysWhere}
+          data-where={snapshot.keysWhere}
+        >
+          {snapshot.keysWhere === undefined
+            ? t("ai.keysNowhere")
+            : snapshot.keyed.size === 0
+              ? t("settings.keys.none")
+              : t("settings.keys.count", { count: snapshot.keyed.size })}
         </span>
       }
     >

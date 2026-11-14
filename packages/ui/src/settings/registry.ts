@@ -58,7 +58,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "chat.autoTitle", group: "chat", where: "ai" },
   { id: "chat.expandThinking", group: "chat", where: "ai" },
   { id: "chat.sendWith", group: "chat", where: "ai" },
-  { id: "tools.connect", group: "tools" },
   { id: "account.who", group: "account" },
   { id: "account.github", group: "account" },
   { id: "account.space", group: "account" },

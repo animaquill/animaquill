@@ -18,6 +18,7 @@ import {
   projectFolder,
   sceneFrames,
 } from "../../ui/e2e/scene-support.ts";
+import { anthropicSays } from "../../ui/e2e/ai-support.ts";
 import { content, expect, findCompositor, resourcesIn, tab, test } from "../../ui/e2e/support.ts";
 
 const RED = fileURLToPath(new URL("../../ui/e2e/fixtures/red.webm", import.meta.url));
@@ -271,27 +272,75 @@ test.describe("the editor on this computer", () => {
       page,
       problems,
     }) => {
+      // The services answer here in their place: the test of the connection says OK. What the
+      // policy stops never gets this far.
+      await page.route(/^https:\/\/api\.anthropic\.com\/|^http:\/\/localhost:11434\//, (route) =>
+        route.request().method() === "POST"
+          ? route.fulfill({
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream",
+                "access-control-allow-origin": "*",
+              },
+              body: anthropicSays("OK"),
+            })
+          : route.fulfill({
+              status: 200,
+              body: "ok",
+              headers: { "Access-Control-Allow-Origin": "*" },
+            }),
+      );
       await page.locator("header").getByRole("button", { name: "设置", exact: true }).click();
       const settings = page.getByTestId("settings");
+      // Nothing of a platform here: no account, no cloud sync, and nothing to find of them.
+      const groups = settings.getByRole("navigation", { name: "设置分组" }).getByRole("button");
+      await expect(groups).toHaveText([
+        "常规",
+        "编辑",
+        "预览和播放",
+        "导出",
+        "快捷键",
+        "AI 模型",
+        "模型适配包",
+        "AI 聊天",
+        "存储和数据",
+        "关于",
+      ]);
+      const search = settings.getByRole("searchbox", { name: "搜索设置" });
+      await search.fill("额度");
+      await expect(settings.getByTestId("settings-result")).toHaveCount(0);
+      await search.fill("");
+
+      // A service from the cards, as people add one, straight from the browser.
       await settings.getByRole("button", { name: "AI 模型", exact: true }).click();
-      await settings.getByRole("combobox", { name: "服务类型" }).selectOption("anthropic");
-      await settings.getByRole("button", { name: "添加服务" }).click();
+      const wall = settings.getByTestId("ai-add");
+      await wall.locator('[data-testid="ai-kind"][data-kind="anthropic"]').click();
+      const form = wall.getByTestId("ai-add-form");
+      await form.getByLabel("Key").fill("sk-ant-test-local");
+      await form.getByRole("button", { name: "测试并添加" }).click();
       const service = settings.getByTestId("ai-service");
-      await service.getByLabel("Key").fill("sk-ant-test-local");
-      await service.getByLabel("Key").press("Enter");
-      await expect(service.getByLabel("Key")).toHaveAttribute("placeholder", "已保存（不显示）");
+      await expect(service.getByTestId("ai-key-saved")).toContainText("ocal");
+      await expect(service.getByTestId("ai-test")).toContainText("连上了");
+      // Nothing goes through a platform here: that way is there, but cannot be chosen.
+      const advanced = service.getByTestId("ai-advanced");
+      if ((await advanced.getAttribute("open")) === null) await advanced.locator("summary").click();
+      const route = service.getByLabel("连接方式");
+      await expect(route).toHaveValue("direct");
+      const relay = route.locator('option[value="relay"]');
+      await expect(relay).toHaveAttribute("disabled", "");
+      await expect(relay).toHaveText("通过平台转发（这里没有）");
+      await page.screenshot({ path: test.info().outputPath("local.png") });
       await settings.getByRole("button", { name: "存储和数据", exact: true }).click();
-      await expect(settings.getByTestId("ai-keys-where")).toContainText("animaquill-keys");
+      const keys = settings.getByTestId("ai-keys-where");
+      await expect(keys).toHaveText("现在存了 1 个。");
+      await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
+      await page.screenshot({ path: test.info().outputPath("local-storage.png") });
       await settings.getByRole("button", { name: "关闭设置" }).click();
       await tab(page, "chat").click();
       await expect(
         content(page, "chat").getByRole("textbox", { name: /给 AI 发消息/ }),
       ).toBeVisible();
 
-      // The services answer here in their place. What the policy stops never gets this far.
-      await page.route(/^https:\/\/api\.anthropic\.com\/|^http:\/\/localhost:11434\//, (route) =>
-        route.fulfill({ status: 200, body: "ok", headers: { "Access-Control-Allow-Origin": "*" } }),
-      );
       const reach = (url: string) =>
         page.evaluate(
           (address) =>

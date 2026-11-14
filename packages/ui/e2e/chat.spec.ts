@@ -24,7 +24,9 @@ async function setUpService(page: Page) {
   await addAnthropic(page, KEY, "claude-test");
   // Where the keys are is said with what this browser keeps.
   await goToSettingsGroup(page, "存储和数据");
-  await expect(settingsOf(page).getByTestId("ai-keys-where")).toContainText("animaquill-keys");
+  const keys = settingsOf(page).getByTestId("ai-keys-where");
+  await expect(keys).toHaveText("现在存了 1 个。");
+  await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
   await closeSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");

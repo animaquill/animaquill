@@ -7,7 +7,6 @@ import {
   HardDrive,
   Info,
   Keyboard,
-  Laptop,
   Library,
   MessageSquareText,
   Pencil,
@@ -31,10 +30,8 @@ import { useWorkbench } from "../app/context.ts";
 import { AiModelsPage } from "../chat/AiModelsPage.tsx";
 import { ModelPacksSettings } from "../chat/ModelPacksSettings.tsx";
 import { CloudSyncPage } from "../cloud/CloudSyncPage.tsx";
-import { useAccount } from "../cloud/CloudParts.tsx";
 import {
   SETTINGS_SECTIONS,
-  visibleGroups,
   type SettingsGroup,
   type SettingsPlace,
 } from "../workbench/settings-nav.ts";
@@ -47,10 +44,9 @@ import {
   GeneralGroup,
   PlaybackGroup,
   StorageGroup,
-  ToolsGroup,
 } from "./groups.tsx";
 import { KeybindingsPage } from "./KeybindingsPage.tsx";
-import { GroupWhere } from "./parts.tsx";
+import { GroupWhere, useGroups } from "./parts.tsx";
 import { searchSettings } from "./registry.ts";
 import styles from "./Settings.module.css";
 
@@ -63,7 +59,6 @@ const ICONS: Readonly<Record<SettingsGroup, ComponentType<{ size?: number }>>> =
   models: Diamond,
   packs: Library,
   chat: MessageSquareText,
-  tools: Laptop,
   account: UserRound,
   cloud: Cloud,
   storage: HardDrive,
@@ -95,14 +90,6 @@ function useNarrow(): boolean {
     return () => query.removeEventListener("change", follow);
   }, []);
   return narrow;
-}
-
-/** The groups there are now: the account's only with a platform, cloud sync only signed in. */
-export function useGroups(): readonly SettingsGroup[] {
-  const { cloudSync, account } = useWorkbench();
-  const { available } = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
-  const signedIn = useAccount(account).status === "signedIn";
-  return visibleGroups({ account: account !== undefined, cloud: available && signedIn });
 }
 
 /** How many steps of the browser's history the settings have put on, by what each step says. */
@@ -250,6 +237,17 @@ function SettingsDialog() {
   };
 
   const found = query.trim() === "" ? undefined : searchSettings(t, query, groups);
+  // What belongs to the project, not to the settings, which people look for here all the same.
+  const words = query.trim().toLowerCase().split(/\s+/);
+  const elsewhere =
+    found !== undefined &&
+    t("settings.elsewhereWords.project")
+      .split(" ")
+      .some((word) =>
+        words.some(
+          (typed) => typed.includes(word) || (typed.length >= 2 && word.startsWith(typed)),
+        ),
+      );
   const title = t(`settings.groups.${group}`);
   const service =
     group === "models" && place.depth === 2 && place.service !== undefined
@@ -354,8 +352,9 @@ function SettingsDialog() {
                 <h2 className={styles.title}>{t("settings.title")}</h2>
                 {!narrow && (
                   <span className={styles.crumb} data-testid="settings-crumb">
-                    › {title}
-                    {service !== undefined && ` › ${service}`}
+                    {found === undefined
+                      ? `› ${title}${service === undefined ? "" : ` › ${service}`}`
+                      : `› ${t("settings.searchResults")}`}
                   </span>
                 )}
               </>
@@ -434,6 +433,11 @@ function SettingsDialog() {
             )}
             {found !== undefined && (
               <div className={styles.results} role="list" aria-label={t("settings.searchResults")}>
+                {elsewhere && (
+                  <p className={styles.elsewhere} data-testid="settings-elsewhere">
+                    {t("settings.elsewhere.project")}
+                  </p>
+                )}
                 {found.length === 0 ? (
                   <p className={styles.none}>{t("settings.searchNone", { query: query.trim() })}</p>
                 ) : (
@@ -514,8 +518,6 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
       return <ExportGroup />;
     case "chat":
       return <ChatGroup />;
-    case "tools":
-      return <ToolsGroup />;
     case "account":
       return <AccountGroup />;
     case "storage":

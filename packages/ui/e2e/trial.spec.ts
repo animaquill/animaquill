@@ -339,7 +339,11 @@ test("the setting writes every change right away", async ({ page }) => {
   await addColor(page);
   // From the file menu, in the group they were in last: the first time, the first group.
   await chooseFrom(page, "文件", "设置…");
-  await page.getByTestId("settings").getByRole("button", { name: "编辑", exact: true }).click();
+  await page
+    .getByTestId("settings")
+    .getByRole("navigation", { name: "设置分组" })
+    .getByRole("button", { name: "编辑", exact: true })
+    .click();
   await page.getByRole("switch", { name: "先试改再保存" }).uncheck();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("settings")).toBeHidden();
@@ -365,7 +369,11 @@ test("the setting waits for what is being tried, and says so", async ({ page }) 
   await addColor(page);
   await typeInto(field(page, "位置 X"), "100");
   await chooseFrom(page, "文件", "设置…");
-  await page.getByTestId("settings").getByRole("button", { name: "编辑", exact: true }).click();
+  await page
+    .getByTestId("settings")
+    .getByRole("navigation", { name: "设置分组" })
+    .getByRole("button", { name: "编辑", exact: true })
+    .click();
   await page.getByRole("switch", { name: "先试改再保存" }).uncheck();
   await expect(page.getByText("还有 1 处试改，保存或放弃之后才生效")).toBeVisible();
   await page.keyboard.press("Escape");

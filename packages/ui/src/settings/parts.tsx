@@ -4,6 +4,7 @@ import { useWorkbench } from "../app/context.ts";
 import { useAccount } from "../cloud/CloudParts.tsx";
 import type { SettingId, SettingWhere } from "./registry.ts";
 import { settingItem } from "./registry.ts";
+import { visibleGroups, type SettingsGroup } from "../workbench/settings-nav.ts";
 import styles from "./Settings.module.css";
 
 /**
@@ -65,7 +66,7 @@ export function RowsHeading({ children }: { readonly children: ReactNode }) {
  */
 export function SettingRow(props: {
   readonly id: SettingId;
-  readonly name?: string;
+  readonly name?: ReactNode;
   readonly help?: ReactNode;
   readonly children?: ReactNode;
   /** What is under the words, such as how it stands now. */
@@ -206,4 +207,12 @@ export function Button(props: {
       {props.children}
     </button>
   );
+}
+
+/** The groups there are now: the account's only with a platform, cloud sync only signed in. */
+export function useGroups(): readonly SettingsGroup[] {
+  const { cloudSync, account } = useWorkbench();
+  const { available } = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
+  const signedIn = useAccount(account).status === "signedIn";
+  return visibleGroups({ account: account !== undefined, cloud: available && signedIn });
 }

@@ -26,7 +26,12 @@ export function FeatureRow(props: {
 }) {
   const name = useId();
   return (
-    <div className={styles.row} data-testid={`cloud-${props.id}`}>
+    // `data-setting`: what searching the settings goes to, see settings/registry.ts.
+    <div
+      className={styles.row}
+      data-testid={`cloud-${props.id}`}
+      data-setting={`cloud.${props.id}`}
+    >
       <div>
         <span className={styles.name} id={name}>
           {props.name}

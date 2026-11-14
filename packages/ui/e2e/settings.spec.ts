@@ -93,7 +93,7 @@ test.describe("with an account", () => {
       page,
       async () => {
         await menu.click();
-        await page.getByRole("menuitem", { name: "设置…" }).click();
+        await page.getByRole("menuitem", { name: "账号设置…" }).click();
       },
       "账号",
     );
@@ -144,6 +144,30 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   await expect(row).toHaveAttribute("data-flash", "");
   await expect(row).not.toHaveAttribute("data-flash");
 
+  // On the pages of their own too: the default model, the hidden packs, in view and standing out.
+  for (const [words, id, group] of [
+    ["默认模型", "models.default", "AI 模型"],
+    ["对照", "packs.hidden", "模型适配包"],
+  ] as const) {
+    await search.fill(words);
+    await results.first().click();
+    await expect(current(page)).toHaveText(group);
+    const target = settingsOf(page).locator(`[data-setting="${id}"]`);
+    await expect(target).toHaveAttribute("data-flash", "");
+    await expect(target).toBeInViewport();
+  }
+
+  // Searching: the list shows no group, the crumb says so; what is the project's says where it is.
+  await search.fill("帧率");
+  await expect(settingsOf(page).getByTestId("settings-crumb")).toHaveText("› 搜索结果");
+  await expect(current(page)).toHaveCount(0);
+  await expect(settingsOf(page).getByTestId("settings-elsewhere")).toContainText(
+    "帧率在“文件 › 项目帧率”里改",
+  );
+  await expect(results.filter({ hasText: "预览和播放 › 预览画质" })).toHaveCount(1);
+  await search.fill("画质");
+  await expect(settingsOf(page).getByTestId("settings-elsewhere")).toHaveCount(0);
+
   await search.fill("没有这种设置");
   await expect(settingsOf(page).getByText("没有和“没有这种设置”有关的设置。")).toBeVisible();
   // Esc empties the search first, then closes.
@@ -152,6 +176,18 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   await expect(settingsOf(page)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(settingsOf(page)).toBeHidden();
+});
+
+test("“另见” goes where it says, and makes it stand out", async ({ page }) => {
+  await page.keyboard.press("Control+Comma");
+  // Nobody signed in to a platform here: nothing points to cloud sync, which is not there.
+  await expect(settingsOf(page).getByTestId("settings-see-cloud")).toHaveCount(0);
+  await settingsOf(page).getByTestId("settings-see-editing").getByRole("button").click();
+  await expect(current(page)).toHaveText("编辑");
+  await expect(settingsOf(page).locator('[data-setting="editing.snapping"]')).toHaveAttribute(
+    "data-flash",
+    "",
+  );
 });
 
 test("narrow: the groups, a group, and back, also with the browser's back", async ({ page }) => {
@@ -283,7 +319,6 @@ test.describe("pictures of every group", () => {
       "AI 模型",
       "模型适配包",
       "AI 聊天",
-      "电脑上的 AI 工具",
       "账号",
       "存储和数据",
       "关于",
