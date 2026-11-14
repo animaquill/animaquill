@@ -42,6 +42,13 @@ export interface CloudChatsOptions {
   readonly allowed?: (account: string) => boolean;
   /** The platform says people turned them off for the account. */
   readonly off?: () => void;
+  /**
+   * The platform said the epoch of the conversations of the account, see
+   * `CloudSwitches.chatsEpoch`: where this browser did not hear of it yet, the account's copy went
+   * as they were turned off since, and what this browser took for the account's is to go again
+   * (`detach`) before anything is taken for taken away. Resolves once that is done.
+   */
+  readonly heardEpoch?: (account: string, epoch: number) => Promise<void>;
 }
 
 /** How the conversations stand with the account, for people to see. */
@@ -65,6 +72,9 @@ const copyId = () =>
  *   device wrote it since), this browser's is kept first as a new conversation, "《X》在这台设备上的副本", which goes to the account in turn, and people are told.
  * - Signing out lets go only of conversations that are as the account has them; the others stay,
  *   for their link says whose project they are of, and go once that account is signed in again.
+ * - The account's copy went as people turned the conversations off on another device, and on
+ *   again, which this browser did not hear of (a new epoch): what it took for the account's is not
+ *   taken for taken away there, and goes again.
  */
 export class CloudChats implements ChatStore {
   readonly #options: CloudChatsOptions;
@@ -99,6 +109,13 @@ export class CloudChats implements ChatStore {
     this.#emitter.emit();
   }
 
+  /** The platform said the epoch: what this browser has goes again where it is a new one. */
+  async #heard(epoch: number | undefined): Promise<void> {
+    const snapshot = this.#options.account.getSnapshot();
+    if (epoch === undefined || snapshot.status !== "signedIn" || snapshot.id === undefined) return;
+    await this.#options.heardEpoch?.(snapshot.id, epoch);
+  }
+
   /** The project of the platform a project of this browser is, while somebody is signed in. */
   async #cloudOf(key: string): Promise<string | undefined> {
     const snapshot = this.#options.account.getSnapshot();
@@ -120,7 +137,9 @@ export class CloudChats implements ChatStore {
     if (cloud === undefined) return here;
     let there;
     try {
-      there = await remote.list(cloud);
+      const listed = await remote.list(cloud);
+      await this.#heard(listed.epoch);
+      there = listed.chats;
       this.#went();
     } catch (error) {
       console.warn("The conversations of the account could not be read", error);
@@ -162,6 +181,12 @@ export class CloudChats implements ChatStore {
     try {
       const there = await remote.load(cloud, id);
       if (!there) return here;
+      if (there.epoch !== undefined && here?.synced !== undefined) {
+        await this.#heard(there.epoch);
+        const again = await local.load(project, id).catch(() => undefined);
+        // Taken off the account since, and given again elsewhere: theirs is another conversation.
+        if (again?.synced === undefined) return await this.#take(again, there, project);
+      }
       if (here && here.synced === there.revision) {
         // What this browser changed and the account does not have yet stays, to go.
         if (isUnsent(here)) void this.#give(cloud, here).catch(() => {});
@@ -270,20 +295,30 @@ export class CloudChats implements ChatStore {
 
   /**
    * Gives the account every conversation of its projects that changed here since it last went, or
-   * never went, as after the platform could not be reached. Never rejects.
+   * never went, as after the platform could not be reached; "synced" once none is left. Never
+   * rejects.
    */
   async retry(): Promise<void> {
+    const snapshot = this.#options.account.getSnapshot();
+    if (snapshot.status !== "signedIn") return;
+    if (snapshot.id !== undefined && !(this.#options.allowed?.(snapshot.id) ?? true)) return;
     const { local, links, platform } = this.#options;
     const all = await links.list().catch(() => []);
+    let failed = false;
     for (const link of all) {
       if (link.platform !== platform) continue;
       const cloud = await this.#cloudOf(link.key);
       if (cloud === undefined) continue;
       for (const summary of await local.list(link.key).catch(() => [])) {
         const chat = await local.load(link.key, summary.id).catch(() => undefined);
-        if (chat && isUnsent(chat)) await this.#give(cloud, chat).catch(() => {});
+        if (!chat || !isUnsent(chat)) continue;
+        await this.#give(cloud, chat).catch(() => {});
+        const after = await local.load(link.key, summary.id).catch(() => undefined);
+        if (after && isUnsent(after)) failed = true;
       }
     }
+    // Everything of this browser is on the account, as far as it can tell.
+    if (!failed) this.#went();
   }
 
   /**

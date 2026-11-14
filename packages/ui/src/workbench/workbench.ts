@@ -599,6 +599,7 @@ export class Workbench {
             copied: (title, copy) =>
               this.notifications.push(t("aiSync.chatCopied", { title, copy })),
             allowed: (account) => this.cloudSync.allows("chats", account),
+            heardEpoch: (account, epoch) => this.cloudSync.heardChatsEpoch(account, epoch),
             off: () => void this.cloudSync.refresh(),
           })
         : undefined;

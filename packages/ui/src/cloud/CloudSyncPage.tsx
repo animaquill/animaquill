@@ -35,20 +35,27 @@ export function CloudSyncPage() {
   const now = useNow();
   const [counts, setCounts] = useState<AiCounts>();
   const [device, setDevice] = useState<AiCounts>();
+  /** When this device's went into the account, as they are now. */
+  const [merged, setMerged] = useState<number>();
 
   // What the AI settings have, in use and of this device, read again as they change.
   const recount = useCallback(() => {
     void aiSync.counts().then(setCounts, () => {});
     void aiSync.deviceCounts().then(setDevice, () => {});
+    void aiSync.deviceMerged().then(setMerged, () => {});
   }, [aiSync]);
   useEffect(() => {
     recount();
     return workbench.ai.subscribe(recount);
   }, [recount, workbench.ai]);
-  // The page opened: how the switches stand now.
+  // The page opened: how the switches, the stars and groups and the conversations stand now.
+  const { welcomed: answered } = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
   useEffect(() => {
     void cloudSync.refresh();
-  }, [cloudSync]);
+    if (!answered) return;
+    void organizer.syncNow();
+    void chatSync?.retry();
+  }, [cloudSync, answered, organizer, chatSync]);
 
   if (who.status !== "signedIn") return null;
   const { switches, welcomed, changing } = sync;
@@ -230,14 +237,27 @@ export function CloudSyncPage() {
             <FeatureRow
               id="device"
               name={t("cloudSync.device.name")}
-              help={t("cloudSync.device.help", { counts: countsText(t, device) })}
+              help={
+                merged === undefined
+                  ? t("cloudSync.device.help", { counts: countsText(t, device) })
+                  : t("cloudSync.device.mergedHelp", {
+                      counts: countsText(t, device),
+                      ago: agoText(merged, Math.max(now, merged), t),
+                    })
+              }
               control={
                 <div className={styles.actions}>
-                  <button type="button" className={styles.button} onClick={() => void merge()}>
-                    {t("cloudSync.device.merge")}
-                  </button>
+                  {merged === undefined && (
+                    <button type="button" className={styles.button} onClick={() => void merge()}>
+                      {t("cloudSync.device.merge")}
+                    </button>
+                  )}
                   <button type="button" className={styles.button} onClick={() => void forget()}>
-                    {t("cloudSync.device.forget")}
+                    {t(
+                      merged === undefined
+                        ? "cloudSync.device.forget"
+                        : "cloudSync.device.forgetOnly",
+                    )}
                   </button>
                 </div>
               }

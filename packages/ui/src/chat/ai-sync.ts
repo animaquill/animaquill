@@ -60,6 +60,21 @@ const SCOPED = new Set([SETTINGS, LATEST, PACKS]);
 /** The account whose settings were in use last, so that a reload starts with them. */
 const SCOPE = "ai.scope";
 const stateKey = (account: string) => `ai.sync@${account}`;
+/**
+ * When this device's settings, as they were then (`print`), went into the account's: kept as
+ * people sign out, for the page of the cloud features to say so.
+ */
+const mergedKey = (account: string) => `device.merged@${account}`;
+
+/** A short sum of a text, to tell whether it changed: FNV-1a. */
+const sumOf = (text: string): string => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+};
 const scopedKey = (key: string, account: string | undefined) =>
   account === undefined || !SCOPED.has(key) ? key : `${key}@${account}`;
 
@@ -150,6 +165,8 @@ export interface AiSyncQuestion {
   readonly account: string;
   /** What this device has, which goes into the account. */
   readonly device: AiCounts;
+  /** How many keys this device has, which go with them. */
+  readonly deviceKeys: number;
   /** How many services the account has already. */
   readonly accountServices: number;
   /** Whether they go with the account, as people last said on any device (on by default). */
@@ -443,6 +460,7 @@ export class AiSync {
         ? await this.#options.ask({
             account,
             device: await this.deviceCounts(),
+            deviceKeys: (await this.#options.keys.list().catch(() => [])).length,
             accountServices,
             enabled: remote.enabled,
           })
@@ -591,7 +609,34 @@ export class AiSync {
       state.pendingKeys.push(target);
     }
     await this.#writeDocs(account, state);
+    await this.#base
+      .save(mergedKey(account), { at: this.#now(), print: await this.#devicePrint() })
+      .catch(() => {});
     return added;
+  }
+
+  /** What the settings and keys of this device are, in short, to tell whether they changed. */
+  async #devicePrint(): Promise<string> {
+    const settings = await this.#base.load(SETTINGS).catch(() => undefined);
+    const packs = await this.#base.load(PACKS).catch(() => undefined);
+    const keys: string[] = [];
+    for (const service of (await this.#options.keys.list().catch(() => [])).toSorted())
+      keys.push(`${service}=${(await this.#options.keys.read(service).catch(() => "")) ?? ""}`);
+    return sumOf(canonical({ settings: settings ?? null, packs: packs ?? null, keys }));
+  }
+
+  /**
+   * When this device's settings went into the account in use, as they are now: undefined where they
+   * never did, or changed since.
+   */
+  async deviceMerged(): Promise<number | undefined> {
+    const account = this.#scope;
+    if (account === undefined) return undefined;
+    const kept = (await this.#base.load(mergedKey(account)).catch(() => undefined)) as
+      { at?: unknown; print?: unknown } | undefined;
+    if (typeof kept?.at !== "number" || kept.print !== (await this.#devicePrint()))
+      return undefined;
+    return kept.at;
   }
 
   /** Lets go of an account on this device, as people sign out of it or into another one. */

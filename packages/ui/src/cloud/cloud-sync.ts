@@ -130,6 +130,8 @@ export class CloudSync {
   /** The welcome, put off as the platform could not be reached: it comes again once it can. */
   #postponed: WelcomeRequest | undefined;
   #turn = 0;
+  /** Epochs taken in, one after the other. */
+  #epochs: Promise<void> = Promise.resolve();
   #following: Promise<void> = Promise.resolve();
 
   constructor(options: CloudSyncOptions) {
@@ -286,21 +288,46 @@ export class CloudSync {
     }
   }
 
+  /**
+   * The platform said the epoch of the conversations of an account, as it gave them, see
+   * `CloudChatsOptions.heardEpoch`: one this browser did not hear of yet is taken in now, before
+   * the switches are read again.
+   */
+  heardChatsEpoch(account: string, epoch: number): Promise<void> {
+    const next = this.#epochs.then(async () => {
+      const { settings } = this.#options;
+      const before = await settings.load(keptKey(account)).catch(() => undefined);
+      const kept: Kept = isKept(before) ? before : { version: 1 };
+      if ((kept.seen?.chats ?? 0) === epoch) return;
+      await this.#options.detachChats?.(account);
+      await settings.save(keptKey(account), {
+        ...kept,
+        seen: { organizer: kept.seen?.organizer ?? 0, chats: epoch },
+      } satisfies Kept);
+    });
+    this.#epochs = next.catch(() => {});
+    return next;
+  }
+
   /** Keeps switches as the platform says them, and does what changed of them. */
   async #take(switches: CloudSwitches): Promise<void> {
     const { account } = switches;
     const { settings } = this.#options;
-    const before = await settings.load(keptKey(account)).catch(() => undefined);
-    const seen = isKept(before) ? before.seen : undefined;
-    // What this browser took for the account's is not there any more: it goes again.
-    if (switches.organizerEpoch !== (seen?.organizer ?? 0))
-      await this.#options.resendOrganizer?.(account);
-    if (switches.chatsEpoch !== (seen?.chats ?? 0)) await this.#options.detachChats?.(account);
-    await settings.save(keptKey(account), {
-      version: 1,
-      switches,
-      seen: { organizer: switches.organizerEpoch, chats: switches.chatsEpoch },
-    } satisfies Kept);
+    const taking = this.#epochs.then(async () => {
+      const before = await settings.load(keptKey(account)).catch(() => undefined);
+      const seen = isKept(before) ? before.seen : undefined;
+      // What this browser took for the account's is not there any more: it goes again.
+      if (switches.organizerEpoch !== (seen?.organizer ?? 0))
+        await this.#options.resendOrganizer?.(account);
+      if (switches.chatsEpoch !== (seen?.chats ?? 0)) await this.#options.detachChats?.(account);
+      await settings.save(keptKey(account), {
+        version: 1,
+        switches,
+        seen: { organizer: switches.organizerEpoch, chats: switches.chatsEpoch },
+      } satisfies Kept);
+    });
+    this.#epochs = taking.catch(() => {});
+    await taking;
     const was = this.#snapshot.switches;
     this.#set({ switches });
     if (
@@ -375,6 +402,16 @@ export class CloudSync {
         },
       });
     });
+  }
+
+  /**
+   * People changed a switch of the welcome: kept here, so that the welcome shows it again as it
+   * comes back after another dialog took its place.
+   */
+  editWelcome(values: SwitchValues): void {
+    const welcome = this.#snapshot.welcome;
+    if (!welcome || welcome.answering) return;
+    this.#set({ welcome: { ...welcome, switches: values } });
   }
 
   /**

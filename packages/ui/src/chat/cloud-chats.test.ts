@@ -8,7 +8,7 @@ import {
   type SavedChat,
 } from "@animaquill/host";
 import { describe, expect, test } from "vitest";
-import { CloudChats } from "./cloud-chats.ts";
+import { CloudChats, type CloudChatsOptions } from "./cloud-chats.ts";
 
 /**
  * Conversations of projects of the platform going with the account (cloud-chats.ts): written whole
@@ -33,15 +33,22 @@ function accountAs(snapshot: AccountSnapshot): AccountAccess {
 /** The account's conversations, as me/chats.ts of AnimaQuill Cloud keeps them. */
 function platformChats() {
   const kept = new Map<string, { revision: number; chat: SavedChat }>();
+  /** Moves on as people turn the conversations off, see `CloudSwitches.chatsEpoch`. */
+  const state = { epoch: 0 };
   const access: ChatSyncAccess = {
-    list: async (project) =>
-      [...kept.entries()]
+    list: async (project) => ({
+      chats: [...kept.entries()]
         .filter(([key]) => key.startsWith(`${project}/`))
         .map(([, { revision, chat }]) => ({
           revision,
           summary: { id: chat.id, title: chat.title, updatedAt: chat.updatedAt },
         })),
-    load: async (project, id) => structuredClone(kept.get(`${project}/${id}`)),
+      epoch: state.epoch,
+    }),
+    load: async (project, id) => {
+      const there = kept.get(`${project}/${id}`);
+      return there && { ...structuredClone(there), epoch: state.epoch };
+    },
     save: async (project, chat, base) => {
       const there = kept.get(`${project}/${chat.id}`);
       if (there && there.revision !== base) throw new ChatNewer(there.revision);
@@ -52,12 +59,18 @@ function platformChats() {
     },
     remove: async (project, id) => void kept.delete(`${project}/${id}`),
   };
-  return { kept, access };
+  /** Turned off on another device, and on again: the platform has none of them any more. */
+  const offAndOn = () => {
+    kept.clear();
+    state.epoch += 1;
+  };
+  return { kept, access, offAndOn };
 }
 
 async function deviceOf(
   platform: ReturnType<typeof platformChats>,
   allowed?: (account: string) => boolean,
+  heardEpoch?: CloudChatsOptions["heardEpoch"],
 ) {
   const links = new MemoryCloudLinks();
   await links.put({
@@ -77,6 +90,7 @@ async function deviceOf(
     links,
     platform: PLATFORM,
     ...(allowed && { allowed }),
+    ...(heardEpoch && { heardEpoch }),
   });
   return { local, chats, links };
 }
@@ -90,6 +104,56 @@ const chat = (id: string, said: string[], updatedAt: number): SavedChat => ({
 });
 
 describe("conversations of projects of the platform", () => {
+  test("turned off and on again elsewhere, unheard of here: what this browser has stays, and goes again", async () => {
+    // Review S-W: the account's empty list was taken for "taken away there", and the only copy went.
+    const platform = platformChats();
+    let seen = 0;
+    const heard: number[] = [];
+    let device: Awaited<ReturnType<typeof deviceOf>> | undefined;
+    // As `CloudSync.heardChatsEpoch`: a new epoch has this browser's go again first.
+    const heardEpoch = async (account: string, epoch: number) => {
+      heard.push(epoch);
+      if (epoch === seen) return;
+      await device!.chats.detach(account);
+      seen = epoch;
+    };
+    device = await deviceOf(platform, undefined, heardEpoch);
+    await device.chats.save(chat("c1", ["只在这台上"], 1));
+    expect(platform.kept.has("p1/c1")).toBe(true);
+    platform.offAndOn();
+    expect((await device.chats.list("local-1")).map(({ id }) => id)).toEqual(["c1"]);
+    expect(await device.local.load("local-1", "c1")).toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(platform.kept.has("p1/c1")).toBe(true);
+    expect(heard).toContain(1);
+    // The same epoch again: taken away there is taken away here, as before.
+    await platform.access.remove("p1", "c1");
+    await device.chats.list("local-1");
+    expect(await device.local.load("local-1", "c1")).toBeUndefined();
+  });
+
+  test("read one by one after it was off and on elsewhere: kept, and the account's is another", async () => {
+    const platform = platformChats();
+    let seen = 0;
+    let device: Awaited<ReturnType<typeof deviceOf>> | undefined;
+    const heardEpoch = async (account: string, epoch: number) => {
+      if (epoch === seen) return;
+      await device!.chats.detach(account);
+      seen = epoch;
+    };
+    device = await deviceOf(platform, undefined, heardEpoch);
+    const other = await deviceOf(platform);
+    await device.chats.save(chat("c1", ["这台的"], 1));
+    platform.offAndOn();
+    // Another device gave one of the same id since, at the same revision as this one had.
+    await other.local.remove("local-1", "c1");
+    await other.chats.save(chat("c1", ["那台的"], 2));
+    const read = await device.chats.load("local-1", "c1");
+    expect(read?.entries).toEqual([{ kind: "user", text: "那台的" }]);
+    const titles = (await device.local.list("local-1")).map(({ title }) => title);
+    expect(titles).toContain("《这台的》在这台设备上的副本");
+  });
+
   test("turned off for the account: only of this browser; on again, they go", async () => {
     const platform = platformChats();
     let on = false;

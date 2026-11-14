@@ -307,15 +307,21 @@ describe("AI settings going with the account", () => {
     expect(window.ask).toHaveBeenCalledWith({
       account: "u1",
       device: { services: 2, models: 1, packs: 0 },
+      deviceKeys: 1,
       accountServices: 1,
       enabled: true,
     });
     expect(window.sync.scope).toBe("u1");
     expect(names(window.ai)).toEqual(["账号里的", "设备上的"].toSorted());
     expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
+    // Said so on the page of the cloud features, until this device's change.
+    expect(await window.sync.deviceMerged()).toEqual(expect.any(Number));
     expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ key: "sk-device" });
     // This device's stay as they were, for when people sign out.
     expect(await browser.keys.read(mine)).toBe("sk-device");
+    // Changed on this device since: not as it went into the account any more.
+    await browser.keys.write(mine, "sk-device-changed");
+    expect(await window.sync.deviceMerged()).toBeUndefined();
   });
 
   test("signing out: the account's leave this browser, this device's come back; no mixing", async () => {
@@ -533,8 +539,10 @@ describe("AI settings going with the account", () => {
     expect(names(window.ai)).toEqual([]);
     expect(await window.sync.deviceCounts()).toEqual({ services: 1, models: 2, packs: 0 });
     expect(await window.sync.counts()).toEqual({ services: 0, models: 0, packs: 0 });
+    expect(await window.sync.deviceMerged()).toBeUndefined();
 
     expect(await window.sync.mergeDevice()).toEqual(["设备上的"]);
+    expect(await window.sync.deviceMerged()).toEqual(expect.any(Number));
     await settle();
     await window.sync.sync();
     expect(names(window.ai)).toEqual(["设备上的"]);

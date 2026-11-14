@@ -874,11 +874,22 @@ export interface AccountChatSummary {
  * person's, or too large): it stays on this device.
  */
 export interface ChatSyncAccess {
-  list(project: string): Promise<readonly AccountChatSummary[]>;
+  /**
+   * `epoch` is `CloudSwitches.chatsEpoch`, where the platform says it: one this device has not heard
+   * of says the account's copy went as people turned the conversations off, not that each was taken
+   * away. Missing where the platform does not say.
+   */
+  list(project: string): Promise<{
+    readonly chats: readonly AccountChatSummary[];
+    readonly epoch?: number | undefined;
+  }>;
   load(
     project: string,
     id: string,
-  ): Promise<{ readonly revision: number; readonly chat: SavedChat } | undefined>;
+  ): Promise<
+    | { readonly revision: number; readonly chat: SavedChat; readonly epoch?: number | undefined }
+    | undefined
+  >;
   save(project: string, chat: SavedChat, base: number | null): Promise<number | undefined>;
   remove(project: string, id: string): Promise<void>;
 }

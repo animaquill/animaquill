@@ -228,8 +228,8 @@ const summaryOf = (value: unknown): AccountChatSummary | undefined => {
  * The conversations of the person about projects of a platform, over its HTTP API, see
  * `ChatSyncAccess`:
  *
- * - `GET <api>/me/chats?project=`: `{chats: [{revision, summary}]}`, newest first.
- * - `GET <api>/me/chats/<project>/<id>`: `{revision, chat}`; 404 where there is none.
+ * - `GET <api>/me/chats?project=`: `{chats: [{revision, summary}], epoch}`, newest first.
+ * - `GET <api>/me/chats/<project>/<id>`: `{revision, chat, epoch}`; 404 where there is none.
  * - `PUT <api>/me/chats/<project>/<id>` `{base, chat}`: `{revision}`; 409 `{error: "newer",
  *   revision}`; 404 for a project that is not the person's, 413 for one too large.
  * - `DELETE <api>/me/chats/<project>/<id>`: 204.
@@ -249,10 +249,13 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
         );
         if (!response.ok || !isObject(answer) || !Array.isArray(answer.chats))
           throw new Error(`The platform answered ${response.status}`);
-        return answer.chats.flatMap((each) => {
-          const summary = summaryOf(each);
-          return summary ? [summary] : [];
-        });
+        return {
+          chats: answer.chats.flatMap((each) => {
+            const summary = summaryOf(each);
+            return summary ? [summary] : [];
+          }),
+          epoch: count(answer.epoch),
+        };
       }),
     load: (project, id) =>
       withinTime(timeout, async (signal) => {
@@ -264,7 +267,7 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
         const chat = answer.chat as unknown as SavedChat;
         if (!Array.isArray(chat.entries) || chat.id !== id)
           throw new Error("The platform answered something that cannot be read");
-        return { revision, chat };
+        return { revision, chat, epoch: count(answer.epoch) };
       }),
     save: (project, chat, base) =>
       withinTime(CHANGE_TIMEOUT_MS, async (signal) => {

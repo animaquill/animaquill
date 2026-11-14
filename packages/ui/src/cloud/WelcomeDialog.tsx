@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import type { SwitchValues, WelcomeRequest } from "./cloud-sync.ts";
@@ -25,7 +25,8 @@ export function WelcomeHost() {
 function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
   const { cloudSync } = useWorkbench();
   const { t } = useTranslation();
-  const [values, setValues] = useState<SwitchValues>(welcome.switches);
+  // Kept with the welcome, not here: another dialog can take its place for a while.
+  const values = welcome.switches;
   const dialog = useRef<HTMLDialogElement>(null);
   const start = useRef<HTMLButtonElement>(null);
 
@@ -40,7 +41,7 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
   // The platform could not be reached: people get out, and it comes again once it can be.
   const dismiss = () => (welcome.failed ? cloudSync.postponeWelcome() : void answer());
   const set = (feature: keyof SwitchValues) => (on: boolean) =>
-    setValues((before) => ({ ...before, [feature]: on }));
+    cloudSync.editWelcome({ ...cloudSync.getSnapshot().welcome!.switches, [feature]: on });
   const { question } = welcome;
   const busy = welcome.answering === true;
 
@@ -55,7 +56,7 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
           : question.accountServices > 0
             ? t("welcome.ai.take", { count: question.accountServices })
             : t("welcome.ai.nothing")
-      }${t("welcome.ai.keys")}`;
+      }${question.deviceKeys > 0 ? t("welcome.ai.keys") : t("welcome.ai.laterKeys")}`;
 
   return (
     <dialog
@@ -115,16 +116,17 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
           />
           <GitHubRow before={answer} />
         </div>
-        {welcome.failed && (
-          <p className={styles.failed} role="alert">
-            {t("welcome.failed")}
-          </p>
-        )}
         <div className={styles.footer}>
-          <p>{busy ? t("welcome.starting") : t("welcome.footer")}</p>
+          {welcome.failed && !busy ? (
+            <p className={styles.failed} role="alert" data-testid="welcome-failed">
+              {t("welcome.failed")}
+            </p>
+          ) : (
+            <p>{busy ? t("welcome.starting") : t("welcome.footer")}</p>
+          )}
           <div className={styles.buttons}>
             <button type="button" disabled={busy} onClick={dismiss}>
-              {t("welcome.later")}
+              {t(welcome.failed ? "welcome.putOff" : "welcome.later")}
             </button>
             <button
               ref={start}
@@ -133,7 +135,7 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
               disabled={busy}
               onClick={() => void answer()}
             >
-              {t("welcome.start")}
+              {t(welcome.failed ? "welcome.again" : "welcome.start")}
             </button>
           </div>
         </div>

@@ -126,6 +126,7 @@ const settle = async () => {
 const question = (account: string, enabled = true): AiSyncQuestion => ({
   account,
   device: { services: 2, models: 5, packs: 1 },
+  deviceKeys: 1,
   accountServices: 1,
   enabled,
 });
@@ -289,6 +290,16 @@ describe("the welcome", () => {
     expect(two.sync.getSnapshot()).toMatchObject({ welcome: undefined, welcomed: true });
   });
 
+  test("what people changed stays with the welcome, as another dialog takes its place for a while", async () => {
+    const { sync } = windowOf(browserOf(), platformOf(), accountOf("u1"));
+    await settle();
+    void sync.ask(question("u1"));
+    await settle();
+    const changed = { ...sync.getSnapshot().welcome!.switches, chats: false };
+    sync.editWelcome(changed);
+    expect(sync.getSnapshot().welcome?.switches).toEqual(changed);
+  });
+
   test("the platform cannot be reached: it stays; put off, it comes again once it can", async () => {
     const platform = platformOf();
     const { sync } = windowOf(browserOf(), platform, accountOf("u1"));
@@ -337,6 +348,22 @@ describe("the switches", () => {
     await two.sync.refresh();
     expect(two.resendOrganizer).toHaveBeenCalledTimes(1);
     expect(two.detachChats).toHaveBeenCalledTimes(1);
+  });
+
+  test("an epoch the conversations said: taken in once, before the switches are read", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const one = windowOf(browser, platform, accountOf("u1"), new Set(["u1"]));
+    await settle();
+    await one.sync.heardChatsEpoch("u1", 0);
+    expect(one.detachChats).not.toHaveBeenCalled();
+    await one.sync.heardChatsEpoch("u1", 2);
+    await one.sync.heardChatsEpoch("u1", 2);
+    expect(one.detachChats).toHaveBeenCalledTimes(1);
+    // The switches say it too, later: nothing more.
+    Object.assign(platform.of("u1"), { chatsEpoch: 2 });
+    await one.sync.refresh();
+    expect(one.detachChats).toHaveBeenCalledTimes(1);
   });
 
   test("turned off on another device: stops here as this browser hears", async () => {

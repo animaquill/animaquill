@@ -244,8 +244,7 @@
   color: var(--aq-text-muted);
 }
 
-.failed {
-  margin: 12px 0 0;
+.footer p.failed {
   color: var(--aq-danger-text);
 }
 
