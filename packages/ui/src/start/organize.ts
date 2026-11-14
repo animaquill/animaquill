@@ -148,10 +148,11 @@ export class StartOrganizer {
         ? new OrganizerSync({
             local: organizer,
             remote: cloud,
-            account: () =>
-              this.#signedIn !== undefined && (allowed?.(this.#signedIn) ?? true)
-                ? this.#signedIn
-                : undefined,
+            // Who is signed in now, also where the start page never listened in this window.
+            account: () => {
+              const id = this.#whoIsSignedIn();
+              return id !== undefined && (allowed?.(id) ?? true) ? id : undefined;
+            },
             otherAccount: () => void account.refresh(),
             ...(off && { off }),
           })
