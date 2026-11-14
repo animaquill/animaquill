@@ -5,6 +5,7 @@ import type {
   CoverAccess,
   CoverStore,
   DiagnosticsSink,
+  ChatStore,
   Host,
   LocalFolder,
   MakingNotes,
@@ -53,7 +54,8 @@ import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { AiSync } from "../chat/ai-sync.ts";
 import { CloudChats } from "../chat/cloud-chats.ts";
-import { SettingsNav, type SettingsPlace } from "./settings-nav.ts";
+import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
+import { SwitchSetting } from "./switch-setting.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -314,8 +316,12 @@ export class Workbench {
   readonly chat: ChatSession;
   /** The conversations of projects of the platform, going with the account. */
   readonly chatSync: CloudChats | undefined;
-  /** Where the settings of this window are, see `SettingsNav`. */
-  readonly settingsNav = new SettingsNav();
+  /** Whether the settings are open in this window, and where in them, see `SettingsNav`. */
+  readonly settingsNav: SettingsNav;
+  /** Whether the preview offers to make a proxy of a video that plays too slowly. */
+  readonly proxyOffer: SwitchSetting;
+  /** The conversations this browser keeps, for the settings to say what they take. */
+  readonly chatStore: ChatStore | undefined;
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -443,6 +449,8 @@ export class Workbench {
         this.keybindings.refresh();
       }
     });
+    this.settingsNav = new SettingsNav(host.windowMemory);
+    this.proxyOffer = new SwitchSetting(host.settings, "proxyOffer", true);
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
     this.startHabits = new StartHabits(host.settings);
@@ -603,6 +611,7 @@ export class Workbench {
             off: () => void this.cloudSync.refresh(),
           })
         : undefined;
+    this.chatStore = host.chats;
     this.chat = new ChatSession({
       chats: this.chatSync ?? host.chats,
       ai: this.ai,
@@ -887,6 +896,7 @@ export class Workbench {
     this.#keepPropertyProblems();
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
+    this.#registerSettingsActions();
     this.#registerCodeActions();
     this.#registerEditActions();
     this.#registerViewActions();
@@ -1173,10 +1183,13 @@ export class Workbench {
     return nodeOfResource(id) !== undefined && this.panels.get("explorer") !== undefined;
   }
 
-  /** Opens the settings at a place, such as a service of AI from the chat. */
-  openSettings(place: SettingsPlace): void {
-    this.settingsNav.go(place);
-    this.layout.openPanel("settings");
+  /**
+   * Opens the settings, at a place such as a service of AI from the chat, or where they were last.
+   * A menu or the palette that opened them has closed by then.
+   */
+  openSettings(place?: SettingsPlace): void {
+    this.palette.close();
+    this.settingsNav.open(place);
   }
 
   /** Shows a resource in the explorer, from a tab that finds and uses resources. */
@@ -1457,6 +1470,7 @@ export class Workbench {
       this.keyframes.load(),
       this.input.load(),
       this.previewQuality.load(),
+      this.proxyOffer.load(),
       this.trials.load(),
       this.ai.load(),
       this.packs.load(),
@@ -2472,14 +2486,9 @@ export class Workbench {
     }
   }
 
-  async showAbout(): Promise<void> {
-    const { t, version } = this;
-    await this.dialogs.confirm({
-      title: t("about.title"),
-      message: t("about.message", { version }),
-      confirm: t("about.close"),
-      noticeOnly: true,
-    });
+  /** What there is to know about the editor: the group "关于" of the settings. */
+  showAbout(): void {
+    this.openSettings({ group: "about", depth: 1 });
   }
 
   /** Resolves to whether the project was removed. */
@@ -2905,11 +2914,43 @@ export class Workbench {
     });
   }
 
+  /**
+   * The settings, with or without a project: from the file menu, `Ctrl+,` and the palette, which
+   * also goes to each group by its name.
+   */
+  #registerSettingsActions(): void {
+    this.actions.register({
+      id: "settings.open",
+      title: (t) => t("settings.title"),
+      run: () => this.openSettings(),
+      keys: ["mod+,"],
+      menu: { name: "file", group: "settings", title: (t) => t("settings.menu") },
+    });
+    for (const group of SETTINGS_GROUPS) {
+      this.actions.register({
+        id: `settings.open.${group}`,
+        title: (t) => t("settings.openGroup", { group: t(`settings.groups.${group}`) }),
+        run: () => this.openSettings({ group, depth: 1 }),
+        visible: () => this.#hasSettingsGroup(group),
+      });
+    }
+  }
+
+  /** Whether the settings have a group now: the account's only with a platform, see `visibleGroups`. */
+  #hasSettingsGroup(group: string): boolean {
+    if (group === "account") return this.account !== undefined;
+    if (group === "cloud")
+      return (
+        this.cloudSync.getSnapshot().available && this.account?.getSnapshot().status === "signedIn"
+      );
+    return true;
+  }
+
   #registerHelpActions(): void {
     this.actions.register({
       id: "help.about",
       title: (t) => t("about.title"),
-      run: () => void this.showAbout(),
+      run: () => this.showAbout(),
       menu: { name: "help", group: "about" },
     });
     this.actions.register({

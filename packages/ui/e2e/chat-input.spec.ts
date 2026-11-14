@@ -5,6 +5,8 @@ import {
   addModel,
   anthropicSays,
   isConnectionTest,
+  closeSettings,
+  goToSettingsGroup,
   settingsOf,
 } from "./ai-support.ts";
 import { content, expect, tab, test } from "./support.ts";
@@ -74,6 +76,7 @@ test("each conversation keeps its own model; the star changes the default, for n
   });
   await addAnthropic(page, KEY, "claude-test");
   await addModel(page, "claude-other");
+  await closeSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 
@@ -154,6 +157,7 @@ test("a draft stays through a reload, and messages queue while a task runs", asy
     return answer(route, `回答：${asked.length}`);
   });
   await addAnthropic(page, KEY, "claude-test");
+  await closeSettings(page);
   await tab(page, "chat").click();
 
   // Typed and not sent: there again after a reload.
@@ -210,6 +214,7 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
     return answer(route, said.includes("字幕") ? "字幕往上挪了 12 像素。" : "开场放慢了。");
   });
   await addAnthropic(page, KEY, "claude-test");
+  await closeSettings(page);
   await tab(page, "chat").click();
   await send(page, "把字幕往上挪一点");
   await expect(chat(page).getByText("字幕往上挪了 12 像素。")).toBeVisible({ timeout: 15_000 });
@@ -290,11 +295,44 @@ test("before any service: where the key goes, and one click to adding Anthropic,
   const form = settingsOf(page).getByTestId("ai-add-form");
   await form.getByLabel("Key").fill(KEY);
   await form.getByRole("button", { name: "测试并添加" }).click();
-  // Back in the chat, ready: the model, and things to try saying.
+  // Back in the chat, ready: the settings closed, the model, and things to try saying.
+  await expect(settingsOf(page)).toBeHidden({ timeout: 15_000 });
   await expect(chat(page).getByTestId("chat-model")).toBeVisible({ timeout: 15_000 });
   const examples = chat(page).getByTestId("chat-examples");
   await expect(examples).toBeVisible();
   await examples.getByRole("button", { name: "开场放慢一点" }).click();
   await expect(box(page)).toHaveValue("开场放慢一点");
   await shoot(page, "empty");
+});
+
+test("sends with Ctrl+Enter where people chose that, and Enter is a new line then", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  await page.route(ANTHROPIC, (route) => {
+    if (isConnectionTest(route)) return answer(route, "OK");
+    asked.push(askedOf(route).said);
+    return answer(route, "收到。");
+  });
+  await addAnthropic(page, KEY, "claude-test");
+  await goToSettingsGroup(page, "AI 聊天");
+  await settingsOf(page)
+    .getByRole("radiogroup", { name: "发送键" })
+    .getByRole("radio", { name: "Ctrl+Enter" })
+    .click();
+  await closeSettings(page);
+  await tab(page, "chat").click();
+  await expect(box(page)).toHaveAttribute(
+    "placeholder",
+    "给 AI 发消息，Ctrl+Enter 发送，Enter 换行",
+  );
+  await box(page).fill("第一行");
+  await box(page).press("Enter");
+  await box(page).pressSequentially("第二行");
+  await expect(box(page)).toHaveValue("第一行\n第二行");
+  expect(asked).toEqual([]);
+  await box(page).press("Control+Enter");
+  await expect(chat(page).getByText("收到。")).toBeVisible();
+  // As JSON, where the new line is written out.
+  expect(asked).toEqual([expect.stringContaining(String.raw`第一行\n第二行`)]);
 });

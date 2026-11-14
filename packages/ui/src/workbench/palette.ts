@@ -50,6 +50,17 @@ export class CommandPalette {
   async load(): Promise<void> {
     const reading = await readSetting(this.#settings, SETTINGS_KEY, parseSaved);
     if (reading.kind === "ok") this.#recent = reading.value.recent;
+    // What another window used, or cleared, so that saving here does not bring the old list back.
+    this.#settings.listen(SETTINGS_KEY, (value) => {
+      const saved = parseSaved(value);
+      if (saved) this.#recent = saved.recent;
+    });
+  }
+
+  /** Forgets which commands were used lately, in every window. */
+  clearRecent(): void {
+    this.#recent = [];
+    this.#save();
   }
 
   toggle(): void {
@@ -66,10 +77,14 @@ export class CommandPalette {
       0,
       RECENT_LIMIT,
     );
+    this.#save();
+    this.#actions.perform(action, "palette");
+  }
+
+  #save(): void {
     this.#settings
       .save(SETTINGS_KEY, { version: FORMAT_VERSION, recent: this.#recent })
       .catch((error: unknown) => console.warn("Recent commands could not be saved", error));
-    this.#actions.perform(action, "palette");
   }
 
   #setOpen(open: boolean): void {

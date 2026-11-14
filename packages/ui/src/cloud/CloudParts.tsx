@@ -58,7 +58,9 @@ export function Switch(props: {
 }
 
 const noSubscribe = () => () => {};
-const unknown = (): AccountSnapshot => ({ status: "unknown" });
+const UNKNOWN: AccountSnapshot = { status: "unknown" };
+/** The same each time, as React asks for: where there are no accounts, nobody is known. */
+const unknown = (): AccountSnapshot => UNKNOWN;
 
 export function useAccount(account: AccountAccess | undefined): AccountSnapshot {
   return useSyncExternalStore(account?.subscribe ?? noSubscribe, account?.getSnapshot ?? unknown);

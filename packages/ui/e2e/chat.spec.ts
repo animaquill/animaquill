@@ -1,5 +1,11 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { addAnthropic, openSettingsPage, settingsOf } from "./ai-support.ts";
+import {
+  addAnthropic,
+  closeSettings,
+  goToSettingsGroup,
+  openSettingsPage,
+  settingsOf,
+} from "./ai-support.ts";
 import { clips } from "./property-helpers.ts";
 import { content, expect, tab, test } from "./support.ts";
 
@@ -16,9 +22,10 @@ const chat = (page: Page) => content(page, "chat");
 /** Sets up Anthropic with a key and a model, as people do in the settings. */
 async function setUpService(page: Page) {
   await addAnthropic(page, KEY, "claude-test");
-  await expect(content(page, "settings").getByTestId("ai-keys-where")).toContainText(
-    "animaquill-keys",
-  );
+  // Where the keys are is said with what this browser keeps.
+  await goToSettingsGroup(page, "存储和数据");
+  await expect(settingsOf(page).getByTestId("ai-keys-where")).toContainText("animaquill-keys");
+  await closeSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
   await expect(chat(page).getByRole("textbox", { name: /给 AI 发消息/ })).toBeVisible();
@@ -426,7 +433,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   });
   await setUpService(page);
   await openSettingsPage(page, "模型适配包");
-  const settings = content(page, "settings");
+  const settings = settingsOf(page);
   const packs = settings.getByTestId("model-packs");
   const choice = packs.getByRole("combobox", { name: "claude-test 用的适配包" });
   // Hidden until people ask to see it: not in the list, and no model gets it on its own.
@@ -440,6 +447,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   // Hidden again, the choice stays and is still shown.
   await packs.getByTestId("pack-show-hidden").uncheck();
   await expect(choice.locator("option:checked")).toHaveText("2026.1 旧写法（对照）（内置）");
+  await closeSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
     "适配包：2026.1 旧写法（对照）（内置）",
@@ -656,6 +664,7 @@ test("what a conversation took: in the bar on top, and a line under each turn", 
     answer(route, [{ text: "好的。" }], { input: 6000, cacheRead: 374_000, output: 1100 }),
   );
   await addAnthropic(page, KEY, "claude-opus-5");
+  await closeSettings(page);
   await tab(page, "chat").click();
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible();
@@ -779,6 +788,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
     }
   });
   await addAnthropic(page, KEY, "claude-opus-5");
+  await closeSettings(page);
   await tab(page, "chat").click();
 
   // Done: the process folded, the failed call open, the answer, the card, what it took.
@@ -806,8 +816,10 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await shoot(page, "failed");
 
   // At the limit of tools: it says so, with a way to go on.
-  await openSettingsPage(page, "AI 模型");
-  await settingsOf(page).getByLabel("一次任务最多调用工具").fill("3");
+  await openSettingsPage(page, "AI 聊天");
+  await settingsOf(page).getByRole("textbox", { name: "一次任务最多调用工具" }).fill("3");
+  await settingsOf(page).getByRole("textbox", { name: "一次任务最多调用工具" }).press("Enter");
+  await closeSettings(page);
   await tab(page, "chat").click();
   await newConversation(page);
   await send(page, "一直读");

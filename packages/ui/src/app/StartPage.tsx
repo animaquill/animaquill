@@ -11,6 +11,7 @@ import {
   List,
   Plus,
   Search,
+  Settings,
   Star,
   TriangleAlert,
 } from "lucide-react";
@@ -500,8 +501,28 @@ function Sidebar({
           </button>
         )}
       </div>
-      <Account situation={situation} />
+      <div className={styles.foot}>
+        <Account situation={situation} />
+        <SettingsButton />
+      </div>
     </nav>
+  );
+}
+
+/** The settings, at the very bottom of the side bar: there is no title bar menu to look in here. */
+function SettingsButton() {
+  const workbench = useWorkbench();
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      className={styles.navButton}
+      data-testid="start-settings"
+      onClick={() => workbench.openSettings()}
+    >
+      <Settings size={15} className={styles.navIcon} aria-hidden="true" />
+      <span className={styles.navName}>{t("settings.title")}</span>
+    </button>
   );
 }
 

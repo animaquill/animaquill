@@ -24,6 +24,7 @@ import {
   type ServiceConfig,
   type ServiceFailure,
   type ServiceKind,
+  type SendWith,
 } from "@animaquill/agent";
 import { memoryKeys, type AiRelay, type KeyStore, type SettingsStore } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
@@ -328,6 +329,7 @@ export class AiSettingsStore {
       maxToolCalls,
       autoTitle,
       expandThinking,
+      sendWith,
       kept,
     } = this.#snapshot;
     return {
@@ -339,6 +341,7 @@ export class AiSettingsStore {
       maxToolCalls,
       autoTitle,
       expandThinking,
+      ...(sendWith === "modEnter" && { sendWith }),
       ...(kept && { kept }),
     };
   }
@@ -540,6 +543,17 @@ export class AiSettingsStore {
   /** Whether a conversation gets a short title from its model after its first turn. */
   setAutoTitle(on: boolean): void {
     this.#save({ ...this.#settingsNow(), autoTitle: on });
+  }
+
+  /** Whether thinking shows in full in the chat, rather than its first line. */
+  setExpandThinking(on: boolean): void {
+    this.#save({ ...this.#settingsNow(), expandThinking: on });
+  }
+
+  /** Which key sends a message in the chat; the other makes a new line. */
+  setSendWith(key: SendWith): void {
+    const { sendWith: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(key === "modEnter" && { sendWith: key }) });
   }
 
   /** Whether the settings list the model packs that are hidden, see `AiSettings`. */

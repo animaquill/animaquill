@@ -1,5 +1,10 @@
+/* The group of keys in the settings: a search over every action, and a row for each. */
 .panel {
-  padding: 0 12px 12px;
+  padding-top: 0;
+}
+
+.panel > h2 {
+  padding-top: 16px;
 }
 
 .toolbar {

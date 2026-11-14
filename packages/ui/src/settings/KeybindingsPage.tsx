@@ -5,7 +5,9 @@ import { useWorkbench } from "../app/context.ts";
 import type { Action } from "../workbench/actions.ts";
 import { fuzzyMatch } from "../workbench/fuzzy.ts";
 import { comboOf, formatCombo, isBindable, type KeyCombo } from "../workbench/keys.ts";
-import styles from "./KeybindingsPanel.module.css";
+import { GroupWhere } from "./parts.tsx";
+import settingsStyles from "./Settings.module.css";
+import styles from "./KeybindingsPage.module.css";
 
 interface Conflict {
   readonly combo: KeyCombo;
@@ -147,7 +149,8 @@ function Row({ action, recording, onRecord }: RowProps) {
   );
 }
 
-export function KeybindingsPanel() {
+/** The group "快捷键" of the settings: every action, with its keys to change. */
+export function KeybindingsPage() {
   const { actions, keybindings } = useWorkbench();
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -164,7 +167,10 @@ export function KeybindingsPanel() {
   const rows = actions.list().filter(matches);
 
   return (
-    <div className={styles.panel}>
+    <div className={`${settingsStyles.scroll} ${styles.panel}`} data-setting="keys.bindings">
+      <h2 className={settingsStyles.groupTitle}>
+        {t("settings.groups.keys")} <GroupWhere where="device" />
+      </h2>
       <div className={styles.toolbar}>
         <input
           className={styles.search}

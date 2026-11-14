@@ -1043,6 +1043,15 @@ export function browserPersistence(
       return storage.persist().catch(() => false);
     },
     wasAsked: asked,
+    askAgain: async () => {
+      if (typeof storage?.persist !== "function") return false;
+      try {
+        local().setItem(PERSIST_ASKED_KEY, "yes");
+      } catch {
+        // It was asked all the same.
+      }
+      return storage.persist().catch(() => false);
+    },
     clearsWhenIdle: isSafari && !isInstalled,
   };
 }

@@ -65,6 +65,7 @@ export {
   type CustomModel,
   type KeptSettings,
   type ModelRef,
+  type SendWith,
   type ServiceConfig,
 } from "./ai-settings.ts";
 export {

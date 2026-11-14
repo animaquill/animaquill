@@ -1,7 +1,7 @@
 import type { Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
 import { failureOf } from "@animaquill/agent";
 import { ChevronDown, ChevronRight, Copy, GitBranchPlus, Lightbulb, RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { ChangeCard } from "./ChangeCard.tsx";
@@ -273,9 +273,12 @@ function ThinkingRow({
   readonly text: string;
   readonly ms: number | undefined;
 }) {
+  const { ai } = useWorkbench();
   const { t } = useTranslation();
   const say = t as unknown as Say;
-  const [open, setOpen] = useOpened(id, false);
+  // Open from the start where people want thinking in full, see `AiSettings.expandThinking`.
+  const expand = useSyncExternalStore(ai.subscribe, ai.getSnapshot).expandThinking;
+  const [open, setOpen] = useOpened(id, expand);
   const first = text.split("\n").find((line) => line.trim() !== "") ?? "";
   return (
     <div className={styles.thinking} data-testid="chat-thinking">
@@ -302,6 +305,8 @@ function ThinkingRow({
  * writes, as Markdown that parses only its last block again. Only this draws with each piece.
  */
 function LiveView({ conversation }: { readonly conversation: Conversation }) {
+  const { ai } = useWorkbench();
+  const expand = useSyncExternalStore(ai.subscribe, ai.getSnapshot).expandThinking;
   const { t } = useTranslation();
   const say = t as unknown as Say;
   const text = useLive(conversation.live, liveText);
@@ -320,11 +325,12 @@ function LiveView({ conversation }: { readonly conversation: Conversation }) {
           <div className={styles.thinkingHead}>
             <Lightbulb size={12} aria-hidden="true" />
             <span className={styles.thinkingLabel}>{t("chat.thinkingLine")}</span>
-            <span className={styles.thinkingFirst}>{last}</span>
+            <span className={styles.thinkingFirst}>{expand ? "" : last}</span>
             {since !== undefined && (
               <span className={styles.toolMs}>{durationText(say, now - since)}</span>
             )}
           </div>
+          {expand && <div className={styles.thinkingText}>{thinking}</div>}
         </div>
       )}
       {text !== "" && (
@@ -454,7 +460,7 @@ function OutcomeView({
       const kind = outcome.failure?.kind ?? "other";
       const service = chat.modelNow()?.service;
       const settings = () =>
-        workbench.openSettings({ page: "models", depth: 2, service: service?.id });
+        workbench.openSettings({ group: "models", depth: 2, service: service?.id });
       const relay =
         kind === "network" &&
         ai.canRelay &&
@@ -493,7 +499,7 @@ function OutcomeView({
               {kind !== "network" && (
                 <button
                   type="button"
-                  onClick={() => workbench.openSettings({ page: "models", depth: 1 })}
+                  onClick={() => workbench.openSettings({ group: "models", depth: 1 })}
                 >
                   {t("chat.failure.otherModel")}
                 </button>

@@ -2547,6 +2547,29 @@ export class VideoExport {
     });
   }
 
+  /** The quality an export starts with, which is the one chosen last, for the settings. */
+  defaultQuality(): Promise<Quality> {
+    return this.#savedQuality();
+  }
+
+  /** Makes a quality the one exports start with, as the settings do. */
+  setDefaultQuality(quality: Quality): Promise<void> {
+    return this.#saveQuality(quality);
+  }
+
+  /**
+   * The codecs the graphics card failed at here lately, with when, which are encoded with the
+   * processor for a while: for the settings to say, see `retryHardware`.
+   */
+  hardwareFailed(): Promise<ReadonlyMap<VideoCodecName, number>> {
+    return this.#hardwareFailures();
+  }
+
+  /** The graphics card is tried again at every codec with the next export. */
+  retryHardware(): Promise<void> {
+    return this.#forgetHardwareFailed();
+  }
+
   async #savedQuality(): Promise<Quality> {
     const saved = await this.#options.settings.load(SETTINGS_KEY).catch(() => undefined);
     const quality = (saved as { quality?: unknown } | undefined)?.quality;

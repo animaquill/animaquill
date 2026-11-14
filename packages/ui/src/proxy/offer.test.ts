@@ -7,7 +7,15 @@ import { offerProxy } from "./offer.ts";
 
 const HASH = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
-function setup({ quality = "auto", offers = true }: { quality?: QualityChoice; offers?: boolean }) {
+function setup({
+  quality = "auto",
+  offers = true,
+  wanted = () => true,
+}: {
+  quality?: QualityChoice;
+  offers?: boolean;
+  wanted?: () => boolean;
+}) {
   const store = ProjectStore.create(createProject({ name: "片子" }));
   const added = store.execute({
     type: "asset.add",
@@ -32,10 +40,11 @@ function setup({ quality = "auto", offers = true }: { quality?: QualityChoice; o
           offer: (_hash, show) => {
             if (offers) show();
           },
-          make: (wanted) => void made.push(wanted),
+          make: (asked) => void made.push(asked),
         },
         store,
         quality: () => quality,
+        wanted,
         notify: (message, actions) => void said.push({ message, actions }),
         words: { text: (name) => `“${name}”解码太慢`, make: "生成代理" },
       },
@@ -64,5 +73,16 @@ describe("offering the proxy of a video that decodes too slowly", () => {
     const { offer, said } = setup({ offers: false });
     offer(HASH);
     expect(said).toEqual([]);
+  });
+
+  it("says nothing where people turned it off in the settings, also meanwhile", () => {
+    const off = setup({ wanted: () => false });
+    off.offer(HASH);
+    expect(off.said).toEqual([]);
+    // On as the preview found it slow, off by the time the offer would show.
+    let asked = 0;
+    const meanwhile = setup({ wanted: () => asked++ === 0 });
+    meanwhile.offer(HASH);
+    expect(meanwhile.said).toEqual([]);
   });
 });

@@ -181,7 +181,7 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
     if (next) setCursor(keyOf(next));
   };
   const settingsOf = (service: string) => {
-    workbench.openSettings({ page: "models", depth: 2, service });
+    workbench.openSettings({ group: "models", depth: 2, service });
     onClose();
   };
 
@@ -256,7 +256,7 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
           type="button"
           className={styles.link}
           onClick={() => {
-            workbench.openSettings({ page: "models", depth: 1 });
+            workbench.openSettings({ group: "models", depth: 1 });
             onClose();
           }}
         >

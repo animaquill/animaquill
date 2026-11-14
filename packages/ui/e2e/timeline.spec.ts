@@ -1322,8 +1322,11 @@ test.describe("the status bar", () => {
     await expect(page.getByRole("banner").getByText(new RegExp(version))).toBeVisible();
     await page.getByRole("button", { name: "帮助" }).click();
     await page.getByRole("menuitem", { name: "关于 AnimaQuill" }).click();
-    await expect(page.getByRole("dialog")).toContainText(new RegExp(`版本 ${version}`));
-    await page.getByRole("dialog").getByRole("button", { name: "关闭" }).click();
+    // The group "关于" of the settings.
+    const settings = page.getByTestId("settings");
+    await expect(settings.getByTestId("settings-version")).toHaveText(new RegExp(`^${version}$`));
+    await settings.getByRole("button", { name: "关闭设置" }).click();
+    await expect(settings).toBeHidden();
   });
 });
 

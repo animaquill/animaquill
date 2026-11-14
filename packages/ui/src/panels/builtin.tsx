@@ -12,14 +12,12 @@ import {
   HardDrive,
   History,
   Images,
-  Keyboard,
   MessageSquareText,
   MessagesSquare,
   Mic,
   MonitorPlay,
   Music,
   Rows3,
-  Settings,
   SlidersHorizontal,
   SquareTerminal,
   TriangleAlert,
@@ -38,9 +36,7 @@ import { ExportsPanel } from "../export/ExportsPanel.tsx";
 import { KeyframesPanel } from "../keyframes/KeyframesPanel.tsx";
 import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
-import { KeybindingsPanel } from "./KeybindingsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
-import { SettingsPanel } from "./SettingsPanel.tsx";
 import { EffectsPanel } from "./EffectsPanel.tsx";
 import { ExplorerPanel } from "./ExplorerPanel.tsx";
 import { TransitionsPanel } from "./TransitionsPanel.tsx";
@@ -59,14 +55,12 @@ function planned(
     | "unknown"
     | "code"
     | "files"
-    | "keybindings"
     | "timeline"
     | "preview"
     | "assets"
     | "performance"
     | "problems"
     | "properties"
-    | "settings"
     | "keyframes"
     | "exports"
     | "transitions"
@@ -157,20 +151,6 @@ export const builtinPanels: readonly PanelDefinition[] = [
   planned("music", "center", Music),
   planned("recording", "center", Mic),
   planned("versions", "center", Grid3x3),
-  {
-    type: "keybindings",
-    title: (t) => t("panel.keybindings.title"),
-    icon: Keyboard,
-    area: "center",
-    component: KeybindingsPanel,
-  },
-  {
-    type: "settings",
-    title: (t) => t("panel.settings.title"),
-    icon: Settings,
-    area: "center",
-    component: SettingsPanel,
-  },
   {
     type: "properties",
     title: (t) => t("panel.properties.title"),

@@ -103,6 +103,12 @@ export class ResourceHabits {
     this.#save({ ...this.#saved, recent: usedNow(this.#saved.recent, id, RECENT_LIMIT) });
   }
 
+  /** Forgets which resources were used lately, in every window; how tabs group stays. */
+  clearRecent(): void {
+    if (this.#saved.recent.length === 0) return;
+    this.#save({ ...this.#saved, recent: [] });
+  }
+
   setGrouping(tab: string, grouping: Grouping): void {
     if (this.#saved.grouping[tab] === grouping) return;
     this.#save({ ...this.#saved, grouping: { ...this.#saved.grouping, [tab]: grouping } });

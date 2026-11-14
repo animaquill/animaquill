@@ -21,9 +21,18 @@ async function runCommand(page: Page, text: string) {
   await expect(palette(page)).toHaveCount(0);
 }
 
+/** The group of keys in the settings. */
+const keys = (page: Page) => page.getByTestId("settings-keys");
+
 async function openShortcuts(page: Page) {
-  await runCommand(page, "打开选项卡：快捷键");
-  await expect(content(page, "keybindings")).toBeVisible();
+  await runCommand(page, "设置：快捷键");
+  await expect(keys(page)).toBeVisible();
+}
+
+/** Back to the editor, where the keys work. */
+async function closeShortcuts(page: Page) {
+  await page.getByTestId("settings").getByRole("button", { name: "关闭设置" }).click();
+  await expect(keys(page)).toBeHidden();
 }
 
 async function startRecording(page: Page, id: string) {
@@ -231,7 +240,7 @@ test.describe("shortcuts", () => {
     await expect(
       row(page, "layout.switch.animate").locator("kbd", { hasText: /^J$/ }),
     ).toBeVisible();
-    await content(page, "keybindings").click({ position: { x: 5, y: 5 } });
+    await closeShortcuts(page);
     await page.keyboard.press("KeyJ");
     await expect(layoutMenu(page, "动画")).toBeVisible();
   });
@@ -240,6 +249,7 @@ test.describe("shortcuts", () => {
     await openShortcuts(page);
     await startRecording(page, "layout.reset");
     await page.keyboard.press("Control+Alt+KeyR");
+    await closeShortcuts(page);
     await layoutMenu(page, "剪辑").click();
     await expect(
       page.getByRole("menu").getByRole("menuitem", { name: "恢复这个布局的默认样子" }),
@@ -252,6 +262,7 @@ test.describe("shortcuts", () => {
     await openShortcuts(page);
     await startRecording(page, "layout.switch.animate");
     await page.keyboard.press("KeyJ");
+    await closeShortcuts(page);
     await openPalette(page);
     await page.keyboard.type("j");
     await expect(input(page)).toHaveValue("j");
@@ -286,6 +297,8 @@ test.describe("shortcuts", () => {
     await startRecording(page, id);
     await page.keyboard.press("Escape");
     await expect(row(page, id).getByText("按下组合键，Esc 取消")).toHaveCount(0);
+    // Only the recording: the settings around it stay open.
+    await expect(keys(page)).toBeVisible();
     await expect(row(page, id).getByRole("button", { name: /^添加快捷键/ })).toBeFocused();
     await expect(row(page, id).getByText("未设置")).toBeVisible();
   });
@@ -316,7 +329,7 @@ test.describe("shortcuts", () => {
     await page.keyboard.press("Alt+Shift+Digit1");
     await row(page, id).getByRole("button", { name: "改用到这里" }).click();
     await expect(row(page, "layout.switch.edit").getByText("未设置")).toBeVisible();
-    await content(page, "keybindings").click({ position: { x: 5, y: 5 } });
+    await closeShortcuts(page);
     await page.keyboard.press("Alt+Shift+Digit1");
     await expect(layoutMenu(page, "动画")).toBeVisible();
   });
@@ -397,7 +410,7 @@ test.describe("shortcuts", () => {
     await search.fill("打开选项卡：时间轴");
     await expect(page.locator("[data-action]")).toHaveCount(1);
     await search.fill("没有这个");
-    await expect(content(page, "keybindings").getByText("没有匹配的命令")).toBeVisible();
+    await expect(keys(page).getByText("没有匹配的命令")).toBeVisible();
   });
 
   test("the search box of the list keeps plain keys for itself", async ({ page }) => {

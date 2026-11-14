@@ -12,7 +12,7 @@ export function NotificationList() {
   const items = useSyncExternalStore(notifications.subscribe, notifications.getSnapshot);
 
   return (
-    <div className={styles.list}>
+    <div className={styles.list} data-notifications="">
       <ErrorPrompt workbench={workbench} />
       <div className={styles.items} role="status">
         {items.map((item) => (

@@ -1,4 +1,4 @@
-import { ChevronDown, Feather, LayoutDashboard, Search } from "lucide-react";
+import { ChevronDown, Feather, LayoutDashboard, Search, Settings } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { TrialStatus } from "../properties/TrialStatus.tsx";
@@ -44,6 +44,7 @@ export function TitleBar() {
       }),
     );
   const paletteShortcut = shortcutOf("view.commandPalette");
+  const settingsShortcut = shortcutOf("settings.open");
   const layoutName = layouts.find((choice) => choice.id === layout)?.title(t) ?? "";
 
   return (
@@ -86,6 +87,19 @@ export function TitleBar() {
             align="end"
           />
         )}
+        <button
+          type="button"
+          className={styles.settings}
+          aria-label={t("settings.title")}
+          title={
+            settingsShortcut ? `${t("settings.title")} (${settingsShortcut})` : t("settings.title")
+          }
+          {...(settingsShortcut ? { "aria-keyshortcuts": settingsShortcut } : {})}
+          data-testid="title-settings"
+          onClick={() => workbench.openSettings()}
+        >
+          <Settings size={15} />
+        </button>
         {workbench.account && <AccountMenu account={workbench.account} />}
       </div>
     </header>

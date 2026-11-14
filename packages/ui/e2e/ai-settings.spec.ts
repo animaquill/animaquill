@@ -4,6 +4,7 @@ import {
   addAnthropic,
   anthropicSays,
   isConnectionTest,
+  leaveSettings,
   noAutoTitle,
   openSettingsPage,
   settingsOf,
@@ -11,8 +12,8 @@ import {
 import { content, expect, tab, test } from "./support.ts";
 
 /**
- * The page of AI models in the settings: adding a service from the cards, testing it, the models
- * to turn on and the default among them, settings of before, two windows, and the narrow tab.
+ * The group of AI models in the settings: adding a service from the cards, testing it, the models
+ * to turn on and the default among them, settings of before, two windows, and a narrow window.
  */
 
 const KEY = "sk-ant-test-0123456789abcdefSECRET";
@@ -114,6 +115,7 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   await settings.screenshot(shot("wide-detail.png"));
   // The chat sends to the default model, and its bubble there goes to the settings.
   await noAutoTitle(page);
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
@@ -124,13 +126,7 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   await chat(page).getByTestId("chat-model").click();
   await chat(page).getByRole("button", { name: "管理模型和服务…" }).click();
   await expect(settings.getByTestId("ai-service")).toBeVisible();
-
-  // With the window to themselves, the pages on the left.
-  for (const other of ["assets", "properties"]) {
-    if ((await tab(page, other).count()) === 0) continue;
-    await tab(page, other).click({ button: "right" });
-    await page.getByRole("menuitem", { name: "全部关闭" }).click();
-  }
+  // The groups on the left, beside the service.
   await expect(settings.getByRole("navigation", { name: "设置分组" })).toHaveCSS(
     "flex-direction",
     "column",
@@ -250,6 +246,7 @@ test("models: on and off, the default, at least one stays on, one named by hand,
   await settings.screenshot(shot("wide-models.png"));
 
   await noAutoTitle(page);
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
@@ -292,37 +289,37 @@ test("two windows follow each other, also in what is typed in the settings", asy
   await other.close();
 });
 
-test("narrow, one level at a time: the pages, the services, one service, and back", async ({
+test("narrow, one level at a time: the groups, the services, one service, and back", async ({
   page,
   problems,
 }) => {
   await addAnthropic(page, KEY);
-  // The settings 420 wide, as in a group at the side: the middle of the window does not get that
-  // narrow, so the test makes the tab so.
+  // A window 420 wide: the settings fill it, one level at a time.
+  await page.setViewportSize({ width: 420, height: 800 });
   const settings = settingsOf(page);
-  const panel = settings.getByTestId("settings-panel");
-  await page.addStyleTag({
-    content: '[data-testid="settings-panel"] { width: 420px !important; }',
-  });
-  await expect.poll(async () => (await panel.boundingBox())?.width).toBe(420);
+  await expect(settings).toHaveAttribute("data-narrow", "");
   const pages = settings.getByRole("navigation", { name: "设置分组" });
-  // Open on the service that was added: up to the services, then up to the pages.
-  await settings.getByRole("button", { name: "AI 模型" }).click();
+  const back = settings.getByTestId("settings-back");
+  // In the group of AI models, at its services: up to the groups.
+  await expect(pages).toBeHidden();
+  await expect(settings.getByTestId("ai-service-item")).toBeVisible();
   await expect(settings.getByTestId("ai-service")).toBeHidden();
-  await settings.getByTestId("settings-back").first().click();
+  await back.click();
   await expect(pages).toBeVisible();
-  await panel.screenshot(shot("narrow-pages.png"));
+  await settings.screenshot(shot("narrow-pages.png"));
   await pages.getByRole("button", { name: "AI 模型" }).click();
   await expect(pages).toBeHidden();
   await expect(settings.getByTestId("ai-service")).toBeHidden();
-  await panel.screenshot(shot("narrow-list.png"));
+  await settings.screenshot(shot("narrow-list.png"));
 
   await settings.getByTestId("ai-service-item").click();
   const service = settings.getByTestId("ai-service");
   await expect(service).toBeVisible();
   await expect(settings.getByTestId("ai-service-item")).toBeHidden();
-  await panel.screenshot(shot("narrow-detail.png"));
-  await settings.getByRole("button", { name: "AI 模型" }).click();
+  await expect(back).toHaveText("AI 模型");
+  await settings.screenshot(shot("narrow-detail.png"));
+  // The browser's back goes up a level too.
+  await page.goBack();
   await expect(settings.getByTestId("ai-service-item")).toBeVisible();
 
   // The cards, a test that fails, and a service without its key, at this width.
@@ -333,20 +330,23 @@ test("narrow, one level at a time: the pages, the services, one service, and bac
   await page.route(ANTHROPIC, (route) => (isConnectionTest(route) ? refuse(route) : route.abort()));
   await wall.getByRole("button", { name: "测试并添加" }).click();
   await expect(wall.getByTestId("ai-test")).toHaveText(/key 不对/);
-  await panel.screenshot(shot("narrow-wall-failed.png"));
+  await settings.screenshot(shot("narrow-wall-failed.png"));
   await wall.getByTestId("ai-add-anyway").click();
   await expect(settings.getByTestId("ai-service")).toBeVisible();
   await settings
     .getByTestId("ai-service")
     .getByRole("button", { name: "删除", exact: true })
     .click();
-  await settings.getByRole("button", { name: "AI 模型" }).click();
+  await back.click();
   await expect(settings.getByTestId("ai-service-item").getByText("缺 key")).toBeVisible();
-  await panel.screenshot(shot("narrow-no-key.png"));
+  await settings.screenshot(shot("narrow-no-key.png"));
 
-  // Back up to the pages.
-  await settings.getByTestId("settings-back").first().click();
+  // Back up to the groups, and from there the browser's back closes the settings.
+  await back.click();
   await expect(pages).toBeVisible();
+  await page.goBack();
+  await expect(settings).toBeHidden();
+  await expect(tab(page, "preview")).toBeAttached();
   problems.splice(
     0,
     problems.length,
@@ -409,7 +409,9 @@ test("settings of before come up with their services, models, choices and keys",
   await expect(
     service.locator('[data-testid="ai-model"][data-model="claude-test"]').getByRole("switch"),
   ).toBeChecked();
-  await expect(settings.getByRole("spinbutton")).toHaveValue("77");
+  await openSettingsPage(page, "AI 聊天");
+  await expect(settings.getByRole("textbox", { name: "一次任务最多调用工具" })).toHaveValue("77");
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 
@@ -439,7 +441,8 @@ test("settings a newer editor wrote are left alone, and said so", async ({ page 
   const settings = settingsOf(page);
   await expect(settings.getByTestId("ai-held")).toContainText("更新版本的编辑器写的");
   await expect(settings.getByTestId("ai-add-service")).toBeDisabled();
-  await expect(settings.getByRole("spinbutton")).toBeDisabled();
   await settings.screenshot(shot("wide-held.png"));
+  await openSettingsPage(page, "AI 聊天");
+  await expect(settings.getByRole("textbox", { name: "一次任务最多调用工具" })).toBeDisabled();
   expect(await page.evaluate(() => localStorage.getItem("animaquill.ai"))).toBe(newer);
 });

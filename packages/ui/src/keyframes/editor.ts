@@ -75,7 +75,7 @@ import { KeyframesView } from "./view.ts";
 const REMEMBER_DELAY_MS = 300;
 const SETTINGS_KEY = "keyframes";
 const SETTINGS_VERSION = 1;
-const DEFAULT_LIST_WIDTH = 320;
+export const DEFAULT_LIST_WIDTH = 320;
 const MIN_LIST_WIDTH = 220;
 const MAX_LIST_WIDTH = 640;
 /** The moment of a clip can be a little off as a float, and that should not hide it. */

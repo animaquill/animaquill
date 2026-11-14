@@ -195,7 +195,21 @@ describe("AI settings of version 2", () => {
     expect(settings.default).toEqual({ service: "a", model: "claude-sonnet-5-5" });
     expect(settings.reasoningFor).toEqual({ "claude-opus-5-5": "high" });
     expect(settings).toMatchObject({ maxToolCalls: 70, autoTitle: false, expandThinking: true });
+    expect(settings.sendWith).toBeUndefined();
     expect(settingsOf(writeAiSettings(settings))).toEqual(settings);
+  });
+
+  it("send with Ctrl+Enter only where people chose it, and nothing else said for it", () => {
+    const chosen = settingsOf({ ...two, sendWith: "modEnter" });
+    expect(chosen.sendWith).toBe("modEnter");
+    expect(writeAiSettings(chosen).sendWith).toBe("modEnter");
+    expect(settingsOf(writeAiSettings(chosen))).toEqual(chosen);
+    for (const other of ["enter", "ctrl", 1, null]) {
+      const read = settingsOf({ ...two, sendWith: other });
+      expect(read.sendWith, String(other)).toBeUndefined();
+      expect("sendWith" in writeAiSettings(read), String(other)).toBe(false);
+      expect(read.kept?.fields?.sendWith, String(other)).toBeUndefined();
+    }
   });
 
   it("write what a page of version 1 reads: the service in use and its model", () => {

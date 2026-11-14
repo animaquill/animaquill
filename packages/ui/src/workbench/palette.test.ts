@@ -86,6 +86,19 @@ describe("searching", () => {
 });
 
 describe("recent commands", () => {
+  it("are forgotten when people clear them, and follow another window", async () => {
+    const { palette, items, values } = await setup({
+      version: 1,
+      recent: ["layout.switch.animate"],
+    });
+    expect(palette.search("", t)[0]?.recent).toBe(true);
+    palette.clearRecent();
+    expect(palette.search("", t).some((entry) => entry.recent)).toBe(false);
+    expect(values.get("palette")).toEqual({ version: 1, recent: [] });
+    palette.run(items[1]!);
+    expect(values.get("palette")).toEqual({ version: 1, recent: ["view.open.keyframes"] });
+  });
+
   it("puts what was used first, newest on top", async () => {
     const { palette, items } = await setup();
     palette.run(items[1] as Action);

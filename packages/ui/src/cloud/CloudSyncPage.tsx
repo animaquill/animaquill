@@ -5,7 +5,6 @@ import { useWorkbench } from "../app/context.ts";
 import { agoText } from "../app/start-view.ts";
 import type { AiCounts } from "../chat/ai-sync.ts";
 import { useAiSyncText } from "../chat/AiSyncStatus.tsx";
-import { BackToPages } from "../panels/SettingsPanel.tsx";
 import type { CloudFeature } from "./cloud-sync.ts";
 import { countsText, hasAny } from "./cloud-text.ts";
 import { FeatureRow, GitHubRow, Switch, useAccount } from "./CloudParts.tsx";
@@ -139,7 +138,6 @@ export function CloudSyncPage() {
 
   return (
     <div className={styles.page} data-testid="cloud-sync">
-      <BackToPages />
       <h2>{t("cloudSync.title")}</h2>
       <p className={styles.intro}>{t("cloudSync.intro", { name: who.name })}</p>
       {(sync.status === "failed" || sync.status === "offline") && (

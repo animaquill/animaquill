@@ -76,8 +76,13 @@ export interface AiSettings {
   readonly autoTitle: boolean;
   /** Thinking shows in full rather than one line. */
   readonly expandThinking: boolean;
+  /** Which key sends what was typed in the chat: Enter, unless people chose Ctrl+Enter (⌘ Enter). */
+  readonly sendWith?: SendWith;
   readonly kept?: KeptSettings;
 }
+
+/** Which key sends a message: the other one makes a new line. */
+export type SendWith = "enter" | "modEnter";
 
 export const DEFAULT_MAX_TOOL_CALLS = 50;
 export const TOOL_CALL_LIMITS = { min: 1, max: 500 } as const;
@@ -150,6 +155,7 @@ const TOP_FIELDS = new Set([
   "maxToolCalls",
   "autoTitle",
   "expandThinking",
+  "sendWith",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -327,6 +333,7 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     maxToolCalls: readLimit(value.maxToolCalls),
     autoTitle: typeof value.autoTitle === "boolean" ? value.autoTitle : true,
     expandThinking: value.expandThinking === true,
+    ...(value.sendWith === "modEnter" && { sendWith: "modEnter" as const }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   return { kind: "ok", settings, from };
@@ -364,6 +371,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     maxToolCalls: settings.maxToolCalls,
     autoTitle: settings.autoTitle,
     expandThinking: settings.expandThinking,
+    ...(settings.sendWith === "modEnter" && { sendWith: "modEnter" }),
   };
 }
 

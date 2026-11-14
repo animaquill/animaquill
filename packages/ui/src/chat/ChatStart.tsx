@@ -25,7 +25,7 @@ export function Onboarding() {
     for (const kind of FIRST_KINDS) void ai.loadKnown(kind);
   }, [ai]);
   const add = (kind: true | string) =>
-    workbench.openSettings({ page: "models", depth: 2, adding: kind, back: "chat" });
+    workbench.openSettings({ group: "models", depth: 2, adding: kind, back: "chat" });
   return (
     <div className={styles.onboard} data-testid="chat-onboarding">
       <h3>{t("chat.onboard.title")}</h3>
@@ -75,7 +75,7 @@ export function EmptyStart(props: { readonly onExample: (text: string) => void }
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const now = chat.modelNow();
-  const go = (service?: string) => workbench.openSettings({ page: "models", depth: 2, service });
+  const go = (service?: string) => workbench.openSettings({ group: "models", depth: 2, service });
   const missing = (text: string, button: string, service?: string) => (
     <div className={styles.missing} data-testid="chat-missing">
       <p>{text}</p>

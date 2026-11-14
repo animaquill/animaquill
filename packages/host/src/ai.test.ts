@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
-import { KEYS_DATABASE, browserChats, browserKeys } from "./ai.ts";
+import { KEYS_DATABASE, browserChats, browserKeys, memoryChats } from "./ai.ts";
 import { createBrowserHost } from "./browser.ts";
 
 const storage = (): Storage => {
@@ -72,5 +72,24 @@ describe("conversations with AI", () => {
     await chats.forget("p");
     expect(await chats.list("p")).toEqual([]);
     expect((await chats.list("other")).map(({ id }) => id)).toEqual(["x"]);
+  });
+
+  it("say how many there are of each project, and about how much they take", async () => {
+    const factory = new IDBFactory();
+    for (const chats of [browserChats(() => factory), memoryChats()]) {
+      expect(await chats.usage?.()).toEqual([]);
+      await chats.save(chat("a", 1));
+      await chats.save(chat("b", 2));
+      await chats.save(chat("x", 1, "other"));
+      const usage = (await chats.usage?.()) ?? [];
+      const of = (project: string) => usage.find((each) => each.project === project);
+      expect(usage).toHaveLength(2);
+      expect(of("p")?.count).toBe(2);
+      expect(of("other")?.count).toBe(1);
+      const size = new Blob([JSON.stringify(chat("x", 1, "other"))]).size;
+      expect(of("other")?.bytes).toBe(size);
+      await chats.forget("p");
+      expect(await chats.usage?.()).toEqual([{ project: "other", count: 1, bytes: size }]);
+    }
   });
 });

@@ -100,8 +100,8 @@ test("the title bar has the search in the middle and the layouts on the right", 
   expect(Math.abs(search.x + search.width / 2 - (bar.x + bar.width / 2))).toBeLessThan(2);
   const layouts = await box(layoutMenu(page, "剪辑"));
   expect(layouts.x).toBeGreaterThan(search.x + search.width);
-  // Right of it only the account of the platform, where the editor has one (it can come a moment
-  // later, so everything is measured at once).
+  // Right of it only the settings and the account of the platform, where the editor has one (it
+  // can come a moment later, so everything is measured at once).
   const end = await page
     .locator("header")
     .first()
@@ -115,7 +115,7 @@ test("the title bar has the search in the middle and the layouts on the right", 
   const layoutButton = end.find(({ name }) => name === "布局：剪辑");
   if (!layoutButton) throw new Error("No layout menu");
   const after = end.filter(({ left }) => left >= layoutButton.right - 1);
-  for (const { name } of after) expect(name).toMatch(/^(登录|账号：.*)$/);
+  for (const { name } of after) expect(name).toMatch(/^(设置|登录|账号：.*)$/);
   const last = after.at(-1) ?? layoutButton;
   expect(last.right).toBeGreaterThan(bar.x + bar.width - 20);
   // Its menu opens towards the window, not past its edge.
@@ -563,10 +563,10 @@ async function expectTabInView(page: Page, type: string) {
 }
 
 /** Panels that open in the middle, enough to fill its tab strip in a small window. */
-const MORE_IN_THE_MIDDLE = ["快捷键", "设置", "版本矩阵", "音乐", "录音"];
+const MORE_IN_THE_MIDDLE = ["版本矩阵", "音乐", "录音"];
 
 test("the active tab is not hidden in a narrow group", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 620 });
+  await page.setViewportSize({ width: 900, height: 620 });
   for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
   await expectTabInView(page, "recording");
   await chooseFromView(page, "预览");
@@ -576,6 +576,7 @@ test("the active tab is not hidden in a narrow group", async ({ page }) => {
 });
 
 test("the active tab stays in view when the strip first runs out of room", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 720 });
   for (const name of MORE_IN_THE_MIDDLE) {
     await chooseFromView(page, name);
   }
@@ -594,7 +595,7 @@ test("the active tab of a full strip down a side is in view", async ({ page }) =
 });
 
 test("a tab dragged into a full strip is in view", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 620 });
+  await page.setViewportSize({ width: 900, height: 620 });
   for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
   // In the middle, because near the ends the strip scrolls by itself during a drag.
   const strip = await settledBox(group(page, "preview").locator(".dv-tabs-container"));
@@ -604,7 +605,7 @@ test("a tab dragged into a full strip is in view", async ({ page }) => {
 });
 
 test("the wheel scrolls a tab strip that is full", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 620 });
+  await page.setViewportSize({ width: 760, height: 620 });
   for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
   const list = group(page, "preview").locator(".dv-tabs-container");
   await list.evaluate((element: HTMLElement) => (element.scrollLeft = 0));
@@ -617,7 +618,7 @@ test("the wheel scrolls a tab strip that is full", async ({ page }) => {
 });
 
 test("a tab strip that is full shows no scrollbar", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 320 });
+  await page.setViewportSize({ width: 760, height: 320 });
   for (const name of [...MORE_IN_THE_MIDDLE, ...MORE_ON_THE_RIGHT])
     await chooseFromView(page, name);
   const across = group(page, "preview").locator(".dv-tabs-container");

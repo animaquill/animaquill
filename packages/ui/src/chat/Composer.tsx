@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import { formatCombo } from "../workbench/keys.ts";
 import styles from "./ChatPanel.module.css";
 import { ModelPicker, ReasoningPicker } from "./ModelPicker.tsx";
 
@@ -18,7 +19,8 @@ const MAX_ROWS = 10;
 /**
  * Where people write to AI: a box that grows with what they write (2 to 10 lines), whose draft is
  * kept for each conversation in the memory of the window; under it the model and how hard it
- * reasons, and send, or stop while a task runs. Enter sends, Shift+Enter is a new line, nothing
+ * reasons, and send, or stop while a task runs. Enter sends (or Ctrl+Enter, as people choose in
+ * the settings, where Enter is a new line), Shift+Enter is a new line, nothing
  * goes while an input method composes. While a task runs Enter queues the message for after it;
  * queued messages show above the box, to take back.
  */
@@ -26,9 +28,11 @@ export function Composer(props: {
   /** Something went out: the list follows the newest again. */
   readonly onSent: () => void;
 }) {
-  const { chat } = useWorkbench();
+  const { chat, ai, keybindings } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  // Enter, or Ctrl+Enter (⌘ Enter) where people chose that in the settings: the other is a new line.
+  const withMod = useSyncExternalStore(ai.subscribe, ai.getSnapshot).sendWith === "modEnter";
   const conversation = snapshot.conversation;
   useSyncExternalStore(
     conversation?.subscribe ?? noop,
@@ -79,7 +83,12 @@ export function Composer(props: {
     if (event.key === "Escape" && running) {
       event.preventDefault();
       chat.stop();
-    } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    } else if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing &&
+      (!withMod || (keybindings.platform === "mac" ? event.metaKey : event.ctrlKey))
+    ) {
       event.preventDefault();
       send();
     }
@@ -141,8 +150,20 @@ export function Composer(props: {
       <textarea
         ref={box}
         data-testid="chat-input"
-        aria-label={t("chat.placeholder")}
-        placeholder={running ? t("chat.compose.whileRunning") : t("chat.placeholder")}
+        aria-label={
+          withMod
+            ? t("chat.placeholderWith", { send: formatCombo("mod+enter", keybindings.platform) })
+            : t("chat.placeholder")
+        }
+        placeholder={
+          withMod
+            ? t(running ? "chat.compose.whileRunningWith" : "chat.placeholderWith", {
+                send: formatCombo("mod+enter", keybindings.platform),
+              })
+            : running
+              ? t("chat.compose.whileRunning")
+              : t("chat.placeholder")
+        }
         value={text}
         rows={MIN_ROWS}
         onChange={(event) => write(event.target.value)}

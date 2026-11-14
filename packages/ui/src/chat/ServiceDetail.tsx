@@ -107,7 +107,11 @@ function Header({ service }: { readonly service: ServiceConfig }) {
           onBlur={rename}
           onKeyDown={(event) => {
             if (event.key === "Enter") rename();
-            if (event.key === "Escape") setRenaming(false);
+            if (event.key === "Escape") {
+              // Only the renaming: the settings around it stay open.
+              event.preventDefault();
+              setRenaming(false);
+            }
           }}
         />
       ) : (

@@ -1108,3 +1108,16 @@
     display: none;
   }
 }
+
+/* Who is signed in and the settings, at the bottom of the side bar. */
+.foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: auto;
+}
+
+.foot .account {
+  margin-top: 0;
+}

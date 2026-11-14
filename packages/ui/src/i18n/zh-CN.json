@@ -718,29 +718,382 @@
     "performance": {
       "title": "运行情况"
     },
-    "keybindings": {
-      "title": "快捷键"
-    },
-    "settings": {
-      "title": "设置"
-    },
     "exports": {
       "title": "导出"
     }
   },
   "settings": {
-    "editing": "编辑",
-    "trial": "先试改再保存",
-    "trialHelp": "手动改属性和关键帧时先进入试改，预览马上生效，保存后才写进项目。关掉后每次改动立即保存。",
-    "trialPending": "还有 {{count}} 处试改，保存或放弃之后才生效。",
-    "pages": {
+    "title": "设置",
+    "menu": "设置…",
+    "openGroup": "设置：{{group}}",
+    "close": "关闭设置",
+    "pagesLabel": "设置分组",
+    "back": "返回",
+    "search": "搜设置（例如“帧率”“key”）",
+    "searchShort": "搜设置",
+    "searchLabel": "搜索设置",
+    "searchResults": "搜索结果",
+    "searchNone": "没有和“{{query}}”有关的设置。",
+    "later": "在做",
+    "where": {
+      "device": "这台设备",
+      "account": "跟账号"
+    },
+    "whereHelp": {
+      "device": "存在这个浏览器里，别的设备上可以不一样。",
+      "account": "跟着账号走，登录同一个账号的设备都一样。"
+    },
+    "sections": {
+      "ai": "AI",
+      "account": "账号",
+      "other": "其他"
+    },
+    "groups": {
+      "general": "常规",
       "editing": "编辑",
+      "playback": "预览和播放",
+      "export": "导出",
+      "keys": "快捷键",
       "models": "AI 模型",
       "packs": "模型适配包",
-      "cloud": "云同步"
+      "chat": "AI 聊天",
+      "tools": "电脑上的 AI 工具",
+      "account": "账号",
+      "cloud": "云同步",
+      "storage": "存储和数据",
+      "about": "关于"
     },
-    "pagesLabel": "设置分组",
-    "back": "返回"
+    "items": {
+      "general": {
+        "language": {
+          "name": "语言",
+          "help": "界面的语言。AI 回答用你说话的语言，不受这一项影响。",
+          "keywords": "language 中文 英文 界面语言 i18n"
+        },
+        "theme": {
+          "name": "颜色主题",
+          "help": "编辑器的配色。预览画面和导出不受影响。",
+          "keywords": "theme 深色 浅色 暗色 亮色 跟随系统 外观 配色 dark light"
+        },
+        "fontSize": {
+          "name": "界面字号",
+          "help": "菜单、面板和聊天的文字大小。",
+          "keywords": "font 字体 字号 文字大小 缩放 外观"
+        },
+        "input": {
+          "name": "输入设备",
+          "help": "决定滚轮、双指和手指怎样操作时间轴。状态栏右下角也能切，改的是同一个值。",
+          "keywords": "input 鼠标 触控板 触屏 触控 滚轮 手势 mouse trackpad touch"
+        },
+        "layout": {
+          "name": "布局",
+          "help": "面板怎么摆。标题栏的布局菜单也能切；这里能改名、删掉自己存的布局，或把现在的布局恢复默认。",
+          "keywords": "layout 布局 面板 选项卡 排布 恢复默认 工作区"
+        }
+      },
+      "editing": {
+        "trial": {
+          "name": "先试改再保存",
+          "help": "手动改属性和关键帧时先进入试改，预览马上生效，保存后才写进项目。关掉后每次改动立即保存。",
+          "keywords": "trial 试改 保存 自动保存"
+        },
+        "snapping": {
+          "name": "吸附",
+          "help": "拖动时贴到片段边缘和播放头，按住 Alt 暂时不吸附。时间轴工具栏上的按钮改的是同一个值。",
+          "keywords": "snap 吸附 对齐 时间轴 磁铁"
+        },
+        "overwriting": {
+          "name": "覆盖",
+          "help": "打开后拖到别的片段上会盖住它们；关闭时片段落到最近的空位。时间轴工具栏上的按钮改的是同一个值。",
+          "keywords": "overwrite 覆盖 插入 推开 时间轴"
+        },
+        "multiSelecting": {
+          "name": "多选",
+          "help": "打开后点片段就加入选择，再点一次取消，不用按 Shift，适合触屏。时间轴工具栏上的按钮改的是同一个值。",
+          "keywords": "多选 选择 触屏 时间轴 select"
+        },
+        "timecode": {
+          "name": "时间码",
+          "help": "时间轴和属性里的时间写成“秒:帧”。现在只有这一种。",
+          "keywords": "timecode 时间码 帧 秒 时间格式 帧率"
+        }
+      },
+      "playback": {
+        "quality": {
+          "name": "预览画质",
+          "help": "只影响预览，导出始终是全分辨率、用原片。预览工具栏和状态栏也能切，改的是同一个值。",
+          "keywords": "preview quality 画质 分辨率 清晰度 卡顿 流畅 代理 帧率"
+        },
+        "proxyOffer": {
+          "name": "卡顿时提示生成代理文件",
+          "help": "播放时某个视频解码跟不上，提示你为它生成一份小一些的预览版。关掉后不再提示，资源管理器里右键视频照样能生成。",
+          "keywords": "proxy 代理 卡顿 解码 慢 提示 4K"
+        }
+      },
+      "export": {
+        "quality": {
+          "name": "默认码率",
+          "help": "导出视频时先选中的码率。导出对话框里选过别的，下次就用那个。",
+          "keywords": "export bitrate quality 码率 画质 导出 视频 文件大小"
+        },
+        "hardware": {
+          "name": "显卡编码",
+          "help": "显卡编码失败过的格式，30 天内改用处理器编码。显卡驱动更新后可以重试。",
+          "keywords": "hardware gpu 显卡 硬件 编码 加速 处理器 软件编码"
+        }
+      },
+      "keys": {
+        "bindings": {
+          "name": "快捷键",
+          "help": "每个命令的快捷键，可以添加、删除和恢复默认。",
+          "keywords": "keys shortcut keybinding 快捷键 按键 组合键 热键"
+        }
+      },
+      "models": {
+        "services": {
+          "name": "AI 服务和 key",
+          "help": "连接 AI 服务：名称、key、地址、连接方式，以及启用哪些模型。",
+          "keywords": "key api key 密钥 服务 提供商 provider 模型 anthropic openai deepseek 网关 连接 转发"
+        },
+        "default": {
+          "name": "默认模型",
+          "help": "新对话用的模型。每个对话能在聊天里另选。",
+          "keywords": "default model 默认 模型 星标"
+        },
+        "reasoning": {
+          "name": "推理强度",
+          "help": "每个模型默认用多大的推理强度，在服务详情的模型行里改。",
+          "keywords": "reasoning thinking 推理 思考 强度 effort"
+        }
+      },
+      "packs": {
+        "choice": {
+          "name": "每个模型用哪个适配包",
+          "help": "给每个启用的模型选适配包，不选时用推荐的。",
+          "keywords": "pack 适配包 提示词 prompt 模型"
+        },
+        "installed": {
+          "name": "已装的适配包",
+          "help": "安装、查更新和卸载适配包。",
+          "keywords": "pack 适配包 安装 卸载 更新 github"
+        },
+        "hidden": {
+          "name": "显示对照用的旧写法",
+          "help": "列出对照用的旧写法，供为某个模型选它做比较。",
+          "keywords": "pack 对照 旧写法 比较"
+        }
+      },
+      "chat": {
+        "maxToolCalls": {
+          "name": "一次任务最多调用工具",
+          "help": "AI 一次任务里最多调用多少次工具，卡在循环里时会自己停下。",
+          "keywords": "tool 工具 调用 次数 上限 循环"
+        },
+        "autoTitle": {
+          "name": "第一轮后自动起标题",
+          "help": "第一轮回答后让模型给对话起一个短标题，多一次很小的请求。自己改过名的对话不再改。",
+          "keywords": "title 标题 对话 名字 自动"
+        },
+        "expandThinking": {
+          "name": "总是展开思考",
+          "help": "模型的思考过程全部显示，不只显示一行。",
+          "keywords": "thinking reasoning 思考 推理 展开"
+        },
+        "sendWith": {
+          "name": "发送键",
+          "help": "按哪个键发出消息。选 Ctrl+Enter 时，Enter 换行。",
+          "keywords": "send enter 回车 发送 换行 快捷键"
+        }
+      },
+      "tools": {
+        "connect": {
+          "name": "连接向导",
+          "help": "让电脑上的 AI 工具（Claude Code、Codex 等）通过本机 MCP 改这个编辑器里的项目。",
+          "keywords": "mcp claude code codex cursor 命令行 cli 本机 agents.md"
+        }
+      },
+      "account": {
+        "who": {
+          "name": "账号",
+          "help": "登录的账号和登录方式，退出登录。",
+          "keywords": "account 账号 登录 退出 github 用户"
+        },
+        "github": {
+          "name": "关联 GitHub",
+          "help": "装 AnimaQuill 的 GitHub App，云端项目才能存到你的仓库；装过的可以管理授权的仓库。",
+          "keywords": "github app 仓库 关联 授权 安装"
+        },
+        "space": {
+          "name": "云端空间",
+          "help": "大文件放在云端空间里，额度由管理员开通。这里只能看，不能改。",
+          "keywords": "storage space quota 空间 额度 用量 云端 素材 大文件"
+        }
+      },
+      "cloud": {
+        "ai": {
+          "name": "同步模型列表",
+          "help": "AI 服务、key、启用的模型和参数、默认模型、适配包和 AI 聊天的偏好跟账号走。",
+          "keywords": "sync ai 同步 模型 key 云 账号"
+        },
+        "organizer": {
+          "name": "开始页的收藏和分组",
+          "help": "星标、你建的分组和每个项目放在哪组，跟账号走。",
+          "keywords": "sync 收藏 星标 分组 开始页 同步"
+        },
+        "chats": {
+          "name": "云端项目的 AI 对话",
+          "help": "云端项目里和 AI 的对话存到平台，换设备能接着聊。",
+          "keywords": "sync chat 对话 聊天 同步 云端"
+        },
+        "newProjectsInCloud": {
+          "name": "新建项目默认存云端",
+          "help": "开着时新建对话框先选中“云端”；关掉先选“本地”。",
+          "keywords": "new project 新建 项目 云端 本地 默认"
+        },
+        "device": {
+          "name": "没登录时用的那份 AI 设置",
+          "help": "登录前这台设备上配的 AI 服务，可以并进账号或删掉。",
+          "keywords": "ai 设置 设备 合并 并进 key"
+        }
+      },
+      "storage": {
+        "persist": {
+          "name": "浏览器会不会清掉数据",
+          "help": "浏览器空间紧张时可能清掉网站存的东西：只在这个浏览器里的项目和还没同步出去的改动会跟着没有。允许长期保存后，只有你自己清除时才会删。",
+          "keywords": "persist storage 存储 持久 清除 数据 丢失 浏览器"
+        },
+        "keys": {
+          "name": "这台设备上的 key",
+          "help": "AI 服务的 key 单独存在这个浏览器的一个数据库里，不进项目、不进报告。",
+          "keywords": "key api key 密钥 删除 清除 浏览器"
+        },
+        "chats": {
+          "name": "AI 对话",
+          "help": "这个浏览器里存的 AI 对话占多大。本地项目的对话只在这里，清除后找不回；云端项目的对话不受影响。",
+          "keywords": "chat 对话 聊天 记录 清除 空间 占用"
+        },
+        "usage": {
+          "name": "使用记录",
+          "help": "命令面板和资源浏览里的“最近用过”。清除后从头记。",
+          "keywords": "history recent 最近 使用记录 清除 命令面板"
+        }
+      },
+      "about": {
+        "version": {
+          "name": "版本",
+          "help": "现在用的是哪一版，每一版改了什么。",
+          "keywords": "version 版本 更新 更新记录 changelog"
+        },
+        "license": {
+          "name": "许可",
+          "help": "AnimaQuill 的代码以 AGPL-3.0 公开。部分代码改编自 pi-web（MIT）。",
+          "keywords": "license 许可 开源 agpl mit pi-web 第三方"
+        },
+        "feedback": {
+          "name": "问题反馈",
+          "help": "遇到问题或有建议，在 GitHub 上提一个 issue。",
+          "keywords": "feedback bug issue 反馈 建议 问题"
+        },
+        "performance": {
+          "name": "运行情况",
+          "help": "卡顿或报错时，在“运行情况”选项卡里记录一段，看每帧耗时，由你决定发不发报告。",
+          "keywords": "performance diagnostics 性能 运行情况 卡顿 报告 诊断"
+        },
+        "errors": {
+          "name": "错误报告",
+          "help": "出错时编辑器会问你要不要发报告，不会自动发。报告不含项目名、文件名和内容。",
+          "keywords": "error report 错误 报告 崩溃 隐私"
+        }
+      }
+    },
+    "moreLanguages": "更多语言在做。",
+    "theme": {
+      "dark": "深色",
+      "light": "浅色",
+      "system": "跟随系统"
+    },
+    "fontSize": {
+      "small": "小",
+      "standard": "标准",
+      "large": "大"
+    },
+    "seeAlso": "另见",
+    "generalSeeAlso": "“新建项目默认存云端”在 云同步 里；时间轴的吸附、覆盖在 编辑 里（时间轴工具栏上的按钮改的是同一个值）。",
+    "layout": {
+      "manage": "管理布局…",
+      "done": "收起",
+      "rename": "改名",
+      "delete": "删除",
+      "noneOwn": "还没有自己存的布局。在标题栏的布局菜单里“另存为布局”。",
+      "reset": "恢复默认",
+      "resetHelp": "把现在的布局恢复成默认的排布，时间轴轨道头和关键帧列表的宽度一起恢复。",
+      "resetTitle": "把“{{name}}”恢复默认？",
+      "resetMessage": "面板回到这个布局默认的位置，时间轴轨道头和关键帧列表的宽度也恢复默认。别的布局不变。"
+    },
+    "trialPending": "还有 {{count}} 处试改，保存或放弃之后才生效。",
+    "timeline": "时间轴",
+    "timecodeValue": "秒:帧",
+    "hardware": {
+      "fine": "显卡编码没有失败过，导出时优先用显卡。",
+      "failed": "{{codecs}} 上次用显卡编码失败，暂时用处理器编码。",
+      "retry": "重试显卡"
+    },
+    "numberRange": "要是 {{min}} 到 {{max}} 之间的整数",
+    "sendWith": {
+      "enter": "Enter",
+      "modEnter": "Ctrl+Enter"
+    },
+    "tools": {
+      "intro": "让电脑上的 AI 工具用它们自己的订阅和额度改这个编辑器里的项目。AnimaQuill 不收费，也看不到对话；改动成批记下，可以整批撤销。"
+    },
+    "account": {
+      "via": "用 GitHub 登录",
+      "signedOut": "登录以后多了这些，不登录照样能在这台电脑上做项目：",
+      "why": {
+        "cloud": "云端项目：存到你的 GitHub 仓库，换设备接着做。",
+        "sync": "云同步：模型列表、开始页的收藏和分组、云端项目的 AI 对话跟账号走。",
+        "ai": "云端 AI：在平台上跑 AI，关掉页面也不停。"
+      }
+    },
+    "bytes": "{{value}} {{unit}}",
+    "space": {
+      "reading": "正在读…",
+      "failed": "没读到。",
+      "off": "这个平台现在没有开放云端空间。",
+      "none": "还没有云端空间。需要的话请管理员开通。",
+      "used": "已用 {{used}} / 额度 {{limit}}",
+      "readonly": "已用 {{used}} / 额度 {{limit}}。云端空间现在只读，暂时不能放新文件。"
+    },
+    "persist": {
+      "kept": "已允许长期保存：只有你自己清除时才会删。",
+      "notKept": "没允许长期保存：空间紧张时浏览器可能清掉。",
+      "idle": "Safari 七天没打开这个网站也会清掉，装成应用可以避免。",
+      "ask": "再申请",
+      "refused": "浏览器没有答应。把网站加进书签或装成应用后再试，浏览器更容易答应。"
+    },
+    "keys": {
+      "where": "存在这个浏览器的 {{where}} 数据库里，现在有 {{count}} 个。"
+    },
+    "chats": {
+      "usage": "{{count}} 个对话，占 {{size}}；其中本地项目的 {{local}} 个。",
+      "failed": "没读到对话占多大。",
+      "clear": "清除本地项目的对话",
+      "clearTitle": "清除本地项目的对话？",
+      "clearMessage": "{{projects}} 个本地项目的 {{count}} 个对话会从这个浏览器删掉，找不回来。云端项目的对话不受影响。",
+      "cleared": "清除了 {{count}} 个对话。",
+      "clearedButRunning": "清除了 {{count}} 个对话。正在回答的那个项目的对话留着。",
+      "clearFailed": "没能清除对话，请再试一次。"
+    },
+    "usage": {
+      "clear": "清除使用记录",
+      "cleared": "已清除命令面板和资源浏览的最近用过。"
+    },
+    "about": {
+      "changelog": "更新记录",
+      "issues": "在 GitHub 上反馈",
+      "performanceOpen": "打开“运行情况”",
+      "performanceClosed": "打开项目后可用。"
+    }
   },
   "trial": {
     "label": "试改",
@@ -1130,9 +1483,7 @@
     }
   },
   "about": {
-    "title": "关于 AnimaQuill",
-    "message": "版本 {{version}}。AI 时代的视频编辑器。",
-    "close": "关闭"
+    "title": "关于 AnimaQuill"
   },
   "assets": {
     "import": "导入",
@@ -3227,7 +3578,8 @@
       "drop": "撤回",
       "sendNow": "现在发",
       "whileRunning": "AI 在做事，Enter 排到这一轮之后",
-      "quote": "引用"
+      "quote": "引用",
+      "whileRunningWith": "AI 在做事，{{send}} 排到这一轮之后"
     },
     "user": {
       "copy": "复制",
@@ -3263,7 +3615,8 @@
       "slower": "开场放慢一点",
       "marker": "在 3 秒处加一个标记",
       "problems": "看看项目里有什么问题"
-    }
+    },
+    "placeholderWith": "给 AI 发消息，{{send}} 发送，Enter 换行"
   },
   "account": {
     "signIn": "登录",

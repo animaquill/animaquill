@@ -1,6 +1,12 @@
 import type { Page, Request, Route } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { addAnthropic, addModel, openSettingsPage } from "./ai-support.ts";
+import {
+  addAnthropic,
+  addModel,
+  leaveSettings,
+  openSettingsPage,
+  settingsOf,
+} from "./ai-support.ts";
 import { content, expect, tab, test } from "./support.ts";
 
 /**
@@ -14,7 +20,7 @@ const PACKS = fileURLToPath(new URL("fixtures/packs/", import.meta.url));
 const shot = (name: string) => ({ path: test.info().outputPath(name) });
 
 const chat = (page: Page) => content(page, "chat");
-const settings = (page: Page) => content(page, "settings");
+const settings = settingsOf;
 
 /** Anthropic with a key and one model on, as people set it up; then the page of model packs. */
 async function setUpService(page: Page, model: string) {
@@ -196,7 +202,7 @@ test("packs are installed after people saw what they change, chosen for a model,
 
   // Removed, the model goes back to the default.
   await packs.getByTestId("pack-item").nth(2).getByRole("button", { name: "卸载" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "卸载" }).click();
+  await page.getByRole("dialog", { name: "卸载" }).getByRole("button", { name: "卸载" }).click();
   await expect(packs.getByTestId("pack-item")).toHaveCount(2);
   await expect(choice.locator("option:checked")).toHaveText(
     "推荐（自动）：通用（没有专门的适配包）",
@@ -213,6 +219,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
     return answer(route, `回答 ${requests.length}`);
   });
   await setUpService(page, "claude-test");
+  await leaveSettings(page);
   await tab(page, "chat").click();
 
   // No pack for this model: the top of the conversation says so.
@@ -231,6 +238,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
   );
   await dialog.getByTestId("pack-agree").check();
   await dialog.getByTestId("pack-confirm").click();
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
     "适配包：〔第三方 · someone/no-guard〕No guard",
@@ -248,6 +256,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
   // again, and said in a line.
   await openSettingsPage(page, "AI 模型");
   await addModel(page, "claude-other");
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await chat(page).getByTestId("chat-model").click();
   await chat(page)
@@ -427,6 +436,7 @@ test("in the bubble of models a pack is chosen for the next turn, kept over a re
     .getByTestId("pack-folder-input")
     .setInputFiles(`${PACKS}steady`);
   await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await send(page, "一");
   await expect(chat(page).getByText("回答 1")).toBeVisible({ timeout: 15_000 });
@@ -486,7 +496,9 @@ test("in the bubble of models a pack is chosen for the next turn, kept over a re
 
   // A reload in between: the next turn still takes it, and says so.
   await page.reload();
+  await leaveSettings(page);
   await tab(page, "chat").click();
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByText("回答 1")).toBeVisible();
   await chat(page).getByTestId("chat-model").click();
@@ -684,6 +696,7 @@ test("settings that had the words to compare with on keep them for their model, 
   await expect(
     packs.getByRole("combobox", { name: "claude-test 用的适配包" }).locator("option:checked"),
   ).toHaveText("2026.1 旧写法（对照）（内置）");
+  await leaveSettings(page);
   await tab(page, "chat").click();
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible({ timeout: 15_000 });

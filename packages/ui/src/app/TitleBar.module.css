@@ -90,3 +90,19 @@
     display: none;
   }
 }
+
+/* The settings, next to the account: with a project open or not. */
+.settings {
+  display: inline-flex;
+  padding: 3px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}

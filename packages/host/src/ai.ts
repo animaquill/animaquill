@@ -241,8 +241,37 @@ export function browserChats(
       for (const { id } of all) store.delete([project, id]);
       await committed(transaction);
     },
+    async usage() {
+      const transaction = (await database()).transaction(CHATS, "readonly");
+      const found = new Map<string, { count: number; bytes: number }>();
+      // A cursor, not all at once: there can be many, and only their sizes are wanted.
+      const cursor = transaction.objectStore(CHATS).openCursor();
+      await new Promise<void>((resolve, reject) => {
+        cursor.addEventListener("error", () => reject(cursor.error));
+        cursor.addEventListener("success", () => {
+          const at = cursor.result;
+          if (!at) return resolve();
+          const chat = at.value as SavedChat;
+          const each = found.get(chat.project) ?? { count: 0, bytes: 0 };
+          each.count += 1;
+          each.bytes += sizeOf(chat);
+          found.set(chat.project, each);
+          at.continue();
+        });
+      });
+      return [...found].map(([project, each]) => ({ project, ...each }));
+    },
   };
 }
+
+/** About how many bytes a conversation takes as kept: as JSON, in UTF-8. */
+const sizeOf = (chat: SavedChat): number => {
+  try {
+    return new Blob([JSON.stringify(chat)]).size;
+  } catch {
+    return 0;
+  }
+};
 
 /** Keys that last as long as the page, where there is nowhere to keep them. */
 export function memoryKeys(): KeyStore {
@@ -274,6 +303,16 @@ export function memoryChats(): ChatStore {
       for (const chat of chats.values()) {
         if (chat.project === project) chats.delete(keyOf(project, chat.id));
       }
+    },
+    usage: async () => {
+      const found = new Map<string, { count: number; bytes: number }>();
+      for (const chat of chats.values()) {
+        const each = found.get(chat.project) ?? { count: 0, bytes: 0 };
+        each.count += 1;
+        each.bytes += sizeOf(chat);
+        found.set(chat.project, each);
+      }
+      return [...found].map(([project, each]) => ({ project, ...each }));
     },
   };
 }

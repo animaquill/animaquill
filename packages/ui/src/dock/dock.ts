@@ -7,7 +7,12 @@ import type {
 } from "dockview-react";
 import type { TFunction } from "i18next";
 import type { Dock, LayoutNode, PanelNeighbours } from "../workbench/layout.ts";
-import type { PanelArea, PanelDefinition, PanelRegistry } from "../workbench/panels.ts";
+import {
+  RETIRED_PANELS,
+  type PanelArea,
+  type PanelDefinition,
+  type PanelRegistry,
+} from "../workbench/panels.ts";
 import { parseLooks, type TabStrips } from "./strips.ts";
 import {
   PANEL_COMPONENT,
@@ -132,6 +137,11 @@ export function createDock(
     restore(state) {
       assertUsable(state);
       api.fromJSON(state.dockview, REUSE_PANELS);
+      // Panels that went: out of the layout, and their group with them where it is left empty.
+      for (const type of RETIRED_PANELS) {
+        const retired = api.getPanel(type);
+        if (retired) api.removePanel(retired);
+      }
       strips.reset(parseLooks(state.strips) ?? {});
       // The saved titles may come from another language.
       for (const panel of api.panels) panel.api.setTitle(facts.title(typeOf(panel)));

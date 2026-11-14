@@ -1,9 +1,8 @@
-import { TOOL_CALL_LIMITS, kindOf } from "@animaquill/agent";
-import { ChevronLeft, Plus } from "lucide-react";
+import { kindOf } from "@animaquill/agent";
+import { Plus } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { BackToPages } from "../panels/SettingsPanel.tsx";
 import { AddService } from "./AddService.tsx";
 import { ServiceAvatar, stateOf } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
@@ -11,9 +10,9 @@ import { AiSyncLine } from "./AiSyncStatus.tsx";
 import { ServiceDetail } from "./ServiceDetail.tsx";
 
 /**
- * The page of AI models in the settings: the services on the left, with how each is and how many
- * of its models are on, the default model and what goes for all conversations; on the right the
- * service open, or the cards of services to add. Where the settings are narrow, one at a time.
+ * The group of AI models in the settings: the services on the left, with how each is and how many
+ * of its models are on, and the default model; on the right the service open, or the cards of
+ * services to add. Where the settings are narrow, one at a time: the dialog has the way back.
  */
 export function AiModelsPage() {
   const workbench = useWorkbench();
@@ -34,7 +33,7 @@ export function AiModelsPage() {
   const depth = place.depth === 0 ? 1 : place.depth;
   const go = (changes: { service?: string | undefined; adding?: true | string }) =>
     settingsNav.go({
-      page: "models",
+      group: "models",
       depth: 2,
       ...(changes.adding !== undefined && place.back && { back: place.back }),
       ...changes,
@@ -64,7 +63,6 @@ export function AiModelsPage() {
       )}
       <div className={styles.list}>
         <div className={styles.listHead}>
-          <BackToPages />
           <span>{t("ai.services")}</span>
         </div>
         {services.length === 0 && (
@@ -128,37 +126,6 @@ export function AiModelsPage() {
               <span className={styles.muted}>{t("ai.defaultNone")}</span>
             )}
           </div>
-          <h3>{t("ai.conversation")}</h3>
-          <label className={styles.limit}>
-            <span>{t("ai.limit")}</span>
-            <input
-              className={styles.input}
-              type="number"
-              min={TOOL_CALL_LIMITS.min}
-              max={TOOL_CALL_LIMITS.max}
-              value={snapshot.maxToolCalls}
-              disabled={snapshot.held !== undefined}
-              onChange={(event) => ai.setMaxToolCalls(Number(event.target.value))}
-            />
-            <span>{t("ai.times")}</span>
-          </label>
-          <p className={styles.help}>{t("ai.limitHelp")}</p>
-          <label className={styles.limit}>
-            <input
-              type="checkbox"
-              checked={snapshot.autoTitle}
-              disabled={snapshot.held !== undefined}
-              onChange={(event) => ai.setAutoTitle(event.target.checked)}
-            />
-            <span>{t("ai.autoTitle")}</span>
-          </label>
-          <h3>{t("ai.device")}</h3>
-          <p className={styles.help} data-testid="ai-keys-where">
-            {snapshot.keysWhere
-              ? t("ai.keysWhere", { where: snapshot.keysWhere })
-              : t("ai.keysNowhere")}
-          </p>
-          {snapshot.keyed.size > 0 && <RemoveAllKeys />}
         </div>
       </div>
       <div className={styles.detail}>
@@ -171,53 +138,24 @@ export function AiModelsPage() {
               onBack={() =>
                 services.length > 0
                   ? go({ service: open?.id })
-                  : settingsNav.go({ page: "models", depth: 1 })
+                  : settingsNav.go({ group: "models", depth: 1 })
               }
               backAlways={services.length > 0}
               onAdded={(id) => {
                 const back = place.back;
                 go({ service: id });
                 // Sent here from the chat: back to it, where the service is ready to use.
-                if (back === "chat") workbench.layout.openPanel("chat");
+                if (back === "chat") {
+                  settingsNav.close();
+                  workbench.layout.openPanel("chat");
+                }
               }}
             />
           ) : (
-            <>
-              <button
-                type="button"
-                className={styles.back}
-                onClick={() => settingsNav.go({ page: "models", depth: 1, service: open.id })}
-              >
-                <ChevronLeft size={14} aria-hidden /> {t("settings.pages.models")}
-              </button>
-              <ServiceDetail key={open.id} service={open} />
-            </>
+            <ServiceDetail key={open.id} service={open} />
           )}
         </div>
       </div>
     </div>
-  );
-}
-
-function RemoveAllKeys() {
-  const { ai, dialogs } = useWorkbench();
-  const { t } = useTranslation();
-  const removeAll = async () => {
-    const sure = await dialogs.confirm({
-      title: t("ai.removeAllKeys"),
-      message: t("ai.removeAllKeysConfirm"),
-      confirm: t("ai.removeAllKeys"),
-      danger: true,
-    });
-    if (sure) await ai.removeAllKeys();
-  };
-  return (
-    <button
-      type="button"
-      className={`${styles.link} ${styles.danger}`}
-      onClick={() => void removeAll()}
-    >
-      {t("ai.removeAllKeys")}
-    </button>
   );
 }

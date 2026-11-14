@@ -271,16 +271,18 @@ test.describe("the editor on this computer", () => {
       page,
       problems,
     }) => {
-      await page.locator("header").getByRole("button", { name: "视图", exact: true }).click();
-      await page.getByRole("menu").getByRole("menuitem", { name: "设置", exact: true }).click();
-      const settings = content(page, "settings");
+      await page.locator("header").getByRole("button", { name: "设置", exact: true }).click();
+      const settings = page.getByTestId("settings");
+      await settings.getByRole("button", { name: "AI 模型", exact: true }).click();
       await settings.getByRole("combobox", { name: "服务类型" }).selectOption("anthropic");
       await settings.getByRole("button", { name: "添加服务" }).click();
       const service = settings.getByTestId("ai-service");
       await service.getByLabel("Key").fill("sk-ant-test-local");
       await service.getByLabel("Key").press("Enter");
       await expect(service.getByLabel("Key")).toHaveAttribute("placeholder", "已保存（不显示）");
+      await settings.getByRole("button", { name: "存储和数据", exact: true }).click();
       await expect(settings.getByTestId("ai-keys-where")).toContainText("animaquill-keys");
+      await settings.getByRole("button", { name: "关闭设置" }).click();
       await tab(page, "chat").click();
       await expect(
         content(page, "chat").getByRole("textbox", { name: /给 AI 发消息/ }),

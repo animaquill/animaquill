@@ -55,6 +55,13 @@ export function AccountMenu({ account }: { readonly account: AccountAccess }) {
         ],
         [
           {
+            id: "account.settings",
+            label: t("settings.menu"),
+            run: () => workbench.openSettings({ group: "account", depth: 1 }),
+          },
+        ],
+        [
+          {
             id: "account.signOut",
             label: t("account.signOut"),
             run: () => void workbench.signOut(),

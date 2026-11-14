@@ -28,6 +28,13 @@ export interface PanelDefinition {
   readonly beside?: string;
 }
 
+/**
+ * Panels there are no more, which saved layouts may still have: they are left out as a layout is
+ * put back, and the rest of it stays as people arranged it. The settings and their keys became a
+ * dialog (docs/design/settings-and-properties.md of AnimaQuill Cloud, 4.1).
+ */
+export const RETIRED_PANELS: readonly string[] = ["settings", "keybindings"];
+
 export class PanelRegistry {
   readonly #panels = new Map<string, PanelDefinition>();
 

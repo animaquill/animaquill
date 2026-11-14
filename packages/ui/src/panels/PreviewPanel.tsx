@@ -22,7 +22,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
   const { timeline, properties, projects, media, compositorUrl, notifications, diagnostics } =
     workbench;
   const { preview, sceneOrigins, sceneStage, frameRate, previewQuality, registrations } = workbench;
-  const { sceneHandles, proxies } = workbench;
+  const { sceneHandles, proxies, proxyOffer } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const { runScenes } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
@@ -43,6 +43,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
           proxies,
           store,
           quality: () => previewQuality.getSnapshot().choice,
+          wanted: () => proxyOffer.getSnapshot(),
           notify: (message, actions) => notifications.push(message, { stays: true, actions }),
           words: {
             text: (name) => t("proxy.offer.text", { name, interpolation: { escapeValue: false } }),
@@ -93,6 +94,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
     projects,
     properties,
     proxies,
+    proxyOffer,
     registrations,
     runScenes,
     sceneHandles,

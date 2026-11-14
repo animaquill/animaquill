@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test";
-import { content, expect } from "./support.ts";
+import { expect } from "./support.ts";
 
 /**
  * Setting up AI services in the settings, as people do, against a pretend Anthropic: the page
@@ -8,20 +8,37 @@ import { content, expect } from "./support.ts";
 
 export const ANTHROPIC = "https://api.anthropic.com/**";
 
-export const settingsOf = (page: Page) => content(page, "settings");
+/** The settings, a dialog over the editor or the start page. */
+export const settingsOf = (page: Page) => page.getByTestId("settings");
 
-async function chooseFrom(page: Page, menu: string, item: string) {
-  await page.locator("header").getByRole("button", { name: menu, exact: true }).click();
-  await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
+/**
+ * Goes to a group of the settings that are open, by its name in the list on the left; where they
+ * are narrow, up to the list first.
+ */
+export async function goToSettingsGroup(page: Page, name: string) {
+  const settings = settingsOf(page);
+  const groups = settings.getByRole("navigation", { name: "设置分组" });
+  for (let up = 0; up < 3 && !(await groups.isVisible()); up += 1)
+    await settings.getByTestId("settings-back").click();
+  await groups.getByRole("button", { name, exact: true }).click();
 }
 
-/** Opens a page of the settings by its name in the list on the left. */
-export async function openSettingsPage(page: Page, name: "编辑" | "AI 模型" | "模型适配包") {
-  await chooseFrom(page, "视图", "设置");
-  await settingsOf(page)
-    .getByRole("navigation", { name: "设置分组" })
-    .getByRole("button", { name, exact: true })
-    .click();
+/** Opens the settings from the title bar, and a group of them by its name in the list. */
+export async function openSettingsPage(page: Page, name: string) {
+  if (!(await settingsOf(page).isVisible()))
+    await page.locator("header").getByRole("button", { name: "设置", exact: true }).click();
+  await goToSettingsGroup(page, name);
+}
+
+/** Closes the settings with their ✕. */
+export async function closeSettings(page: Page) {
+  await settingsOf(page).getByRole("button", { name: "关闭设置" }).click();
+  await expect(settingsOf(page)).toBeHidden();
+}
+
+/** Closes the settings where they are open, to get to the editor behind them. */
+export async function leaveSettings(page: Page) {
+  if (await settingsOf(page).isVisible()) await closeSettings(page);
 }
 
 /** What Anthropic streams for an answer that only says something. */
@@ -102,13 +119,14 @@ export async function addAnthropic(page: Page, key: string, model?: string) {
 }
 
 /**
- * Turns off the titles the model writes after the first turn of a conversation, on the page of AI
- * models: each would be one more request to the pretend service, which tests count.
+ * Turns off the titles the model writes after the first turn of a conversation, in the group of the
+ * chat, and goes back to the AI models: each title would be one more request to the pretend service,
+ * which tests count.
  */
 export async function noAutoTitle(page: Page) {
-  await settingsOf(page)
-    .getByRole("checkbox", { name: /让模型给对话起一个短标题/ })
-    .uncheck();
+  await goToSettingsGroup(page, "AI 聊天");
+  await settingsOf(page).getByRole("switch", { name: "第一轮后自动起标题" }).uncheck();
+  await goToSettingsGroup(page, "AI 模型");
 }
 
 /** Turns on one more model of the service open, named by hand, leaving the others as they are. */

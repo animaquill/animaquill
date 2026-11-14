@@ -516,6 +516,12 @@ export interface StoragePersistence {
    */
   wasAsked(): boolean;
   /**
+   * Asks the browser again, as people ask for it in the settings, even where it was asked before:
+   * some browsers say yes later, as once the site is installed or bookmarked. Resolves to whether
+   * it keeps it now. Never rejects. Missing where asking again is no different from `persist`.
+   */
+  askAgain?(): Promise<boolean>;
+  /**
    * The browser clears what a page stores once people did not visit it for days, as Safari does
    * after seven, unless it keeps it for good or the page is installed as an app.
    */
@@ -1757,6 +1763,22 @@ export interface AccountAccess {
   installApp(): void;
   /** Rejects when the host could not be reached: people are then still signed in. */
   signOut(): Promise<void>;
+  /**
+   * The cloud space of whoever is signed in: what they may keep there and what they keep. Rejects
+   * where the host could not say, with a `CloudSignedOut` when nobody is signed in. Missing where
+   * the host has no cloud space.
+   */
+  space?(): Promise<AccountSpace>;
+}
+
+/** The cloud space of an account, see `AccountAccess.space`. Sizes are in bytes. */
+export interface AccountSpace {
+  /** Whether it takes files now: "readonly" keeps what is there and takes no more, "off" has none. */
+  readonly mode: "on" | "readonly" | "off";
+  /** What the account may keep; 0 where it was given no room. */
+  readonly limit: number;
+  /** What it keeps, with what is on its way. */
+  readonly used: number;
 }
 
 /**
@@ -1906,6 +1928,18 @@ export interface ChatStore {
   remove(project: string, id: string): Promise<void>;
   /** All of a project, for a project that is gone. */
   forget(project: string): Promise<void>;
+  /**
+   * How many conversations there are of each project that has any, and about how many bytes they
+   * take, for people to see what takes room. Missing where the host cannot tell.
+   */
+  usage?(): Promise<readonly ChatUsage[]>;
+}
+
+/** The conversations of a project, as `ChatStore.usage` counts them. */
+export interface ChatUsage {
+  readonly project: string;
+  readonly count: number;
+  readonly bytes: number;
 }
 
 /** Receives what people chose to send: how the editor runs, or what went wrong in it. */

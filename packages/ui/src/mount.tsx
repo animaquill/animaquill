@@ -156,9 +156,14 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   };
   window.addEventListener("focus", lookAgain);
 
-  // A dialog has to be answered first: nothing behind it should change in the meantime.
+  // A dialog has to be answered first: nothing behind it should change in the meantime. Keys
+  // typed in the settings are theirs too.
   const onKeyDown = (event: KeyboardEvent) => {
-    if (!workbench.dialogs.getSnapshot() && !workbench.cloudSync.getSnapshot().welcome)
+    if (
+      !workbench.dialogs.getSnapshot() &&
+      !workbench.cloudSync.getSnapshot().welcome &&
+      !workbench.settingsNav.isOpen
+    )
       workbench.keybindings.handle(event);
   };
   window.addEventListener("keydown", onKeyDown);
