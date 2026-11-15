@@ -54,6 +54,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "chat.sendWith", group: "chat", where: "ai" },
   { id: "chat.shotSize", group: "chat", where: "ai" },
   { id: "chat.lookSize", group: "chat", where: "ai" },
+  { id: "chat.autoCompact", group: "chat", where: "ai" },
   { id: "chat.lookWaits", group: "chat", where: "ai" },
   { id: "localAi.connect", group: "localAi" },
   { id: "localAi.recent", group: "localAi" },

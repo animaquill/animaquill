@@ -1,8 +1,14 @@
-import type { AssistantEntry, ChatEntry, ConversationSnapshot } from "@animaquill/agent";
+import type {
+  AssistantEntry,
+  ChatEntry,
+  ConversationSnapshot,
+  SummaryEntry,
+} from "@animaquill/agent";
 import { entryOf, type ProjectState } from "@animaquill/core";
 import { DEFAULT_PACK } from "@animaquill/tools";
 import { ArrowDown, ChevronDown, ChevronUp, Menu, MoreHorizontal, Quote } from "lucide-react";
 import {
+  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -33,6 +39,7 @@ import type { ChatSession } from "./session.ts";
 import type { Names } from "./toolSummary.ts";
 import { groupsOf, turnOf } from "./turns.ts";
 import { TurnView } from "./TurnView.tsx";
+import { SummaryDivider } from "./SummaryDivider.tsx";
 import { UsageMeter } from "./UsageMeter.tsx";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
@@ -187,6 +194,7 @@ export function ChatPanel() {
       ),
     [talk.entries, runningTask],
   );
+  const summed = useMemo(() => summariesByTurn(talk.entries), [talk.entries]);
   const project = chat.projectKey;
   const putInBox = (text: string) => {
     if (project !== undefined && snapshot.id !== undefined) {
@@ -236,7 +244,10 @@ export function ChatPanel() {
             <span className={styles.titleText}>{title}</span>
             {listOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
           </button>
-          <UsageMeter entries={talk.entries} />
+          <UsageMeter
+            entries={talk.entries}
+            {...(conversation?.compactable && { onCompact: () => void chat.compact() })}
+          />
           <MoreMenu
             title={title}
             entries={talk.entries}
@@ -279,23 +290,27 @@ export function ChatPanel() {
                   const running = talk.running?.task === turn.task ? talk.running : undefined;
                   const latest = index === turns.length - 1;
                   return (
-                    <TurnView
-                      key={turn.task}
-                      turn={turn}
-                      running={running}
-                      busy={talk.running !== undefined}
-                      conversation={conversation}
-                      outcome={latest && talk.last?.task === turn.task ? talk.last : undefined}
-                      latest={latest}
-                      maxToolCalls={settings.maxToolCalls}
-                      switches={turn.entries.flatMap((entry) => {
-                        const line = switches.get(entry);
-                        return line ? [line] : [];
-                      })}
-                      names={names}
-                      modelName={modelName}
-                      onForked={focusInput}
-                    />
+                    <Fragment key={turn.task}>
+                      {summed.get(turn.task)?.map((entry) => (
+                        <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
+                      ))}
+                      <TurnView
+                        turn={turn}
+                        running={running}
+                        busy={talk.running !== undefined}
+                        conversation={conversation}
+                        outcome={latest && talk.last?.task === turn.task ? talk.last : undefined}
+                        latest={latest}
+                        maxToolCalls={settings.maxToolCalls}
+                        switches={turn.entries.flatMap((entry) => {
+                          const line = switches.get(entry);
+                          return line ? [line] : [];
+                        })}
+                        names={names}
+                        modelName={modelName}
+                        onForked={focusInput}
+                      />
+                    </Fragment>
                   );
                 })}
             </div>
@@ -706,4 +721,26 @@ function markFound(turn: HTMLElement, query: string): void {
     for (const each of turn.querySelectorAll("[data-found]")) each.removeAttribute("data-found");
     highlights?.delete("chat-found");
   }, FOUND_MS);
+}
+
+/**
+ * The summaries of a conversation by the turn they show before: the one where the summed up part
+ * ends, or the first one after it, as for a conversation that starts from the summary of another.
+ */
+export function summariesByTurn(
+  entries: readonly ChatEntry[],
+): ReadonlyMap<string, SummaryEntry[]> {
+  const users = entries.flatMap((entry, index) =>
+    entry.role === "user" ? [{ index, task: entry.task }] : [],
+  );
+  const found = new Map<string, SummaryEntry[]>();
+  for (const entry of entries) {
+    if (entry.role !== "summary") continue;
+    const turn =
+      users.findLast(({ index }) => index <= entry.through) ??
+      users.find(({ index }) => index > entry.through);
+    if (!turn) continue;
+    found.set(turn.task, [...(found.get(turn.task) ?? []), entry]);
+  }
+  return found;
 }

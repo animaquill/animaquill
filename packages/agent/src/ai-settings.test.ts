@@ -904,3 +904,13 @@ describe("a page of 0.3.57 to 0.3.63 that makes its settings from the entries of
     ]);
   });
 });
+
+describe("summing up the earlier conversation by itself", () => {
+  it("is on unless people turned it off, which is what is kept", async () => {
+    expect(writeAiSettings(EMPTY_AI_SETTINGS).autoCompact).toBeUndefined();
+    const off = writeAiSettings({ ...EMPTY_AI_SETTINGS, autoCompact: false });
+    expect(off.autoCompact).toBe(false);
+    expect(readAiSettings(off).settings.autoCompact).toBe(false);
+    expect(readAiSettings({ ...off, autoCompact: true }).settings.autoCompact).toBeUndefined();
+  });
+});

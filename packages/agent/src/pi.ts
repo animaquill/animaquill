@@ -31,6 +31,7 @@ import {
   type ProviderStreams,
   type Usage,
 } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generative-ai.lazy";
 import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
@@ -47,11 +48,19 @@ import {
   type ChatEntry,
   type ImageRef,
   type PackNote,
+  type SummaryEntry,
   type ToolEntry,
   type ToolPicture,
   type UserEntry,
 } from "./entries.ts";
 import type { ModelValues } from "./ai-settings.ts";
+import {
+  SUMMARY_TOKENS,
+  compactRequest,
+  picturesGoneBefore,
+  summaryInForce,
+  summaryMessage,
+} from "./compaction.ts";
 import type { ListedModel, ThinkingLevelMap } from "./model-discovery.ts";
 import { withoutKeys } from "./secrets.ts";
 import type { Protocol } from "./services.ts";
@@ -141,6 +150,8 @@ export interface FakeAnswer {
   readonly calls?: readonly { readonly name: string; readonly args: Record<string, unknown> }[];
   /** Fails the request with this message instead. */
   readonly error?: string;
+  /** How many tokens the request took in, as a service would say, for how full the context is. */
+  readonly input?: number;
 }
 
 /**
@@ -157,6 +168,19 @@ export interface FakeEndpoint {
   requests?: number;
   /** Hears the messages of each request, as pi sends them: for tests of what the model gets. */
   readonly heard?: (messages: readonly unknown[]) => void;
+  /** How many tokens its context takes, as pi would know of a model it lists. */
+  readonly window?: number;
+}
+
+/** What each request of a pretend service took in, as its answers say (`FakeAnswer.input`). */
+const fakeInputs = new WeakMap<FakeEndpoint, (number | undefined)[]>();
+
+/** What an answer took, as the pretend service says where it says, else as pi counted. */
+function fakeUsage(endpoint: Endpoint | FakeEndpoint, usage: Usage | undefined): Usage | undefined {
+  if (!isFake(endpoint)) return usage;
+  const input = fakeInputs.get(endpoint)?.shift();
+  if (input === undefined || !usage) return usage;
+  return { ...usage, input, cacheRead: 0, cacheWrite: 0, totalTokens: input + usage.output };
 }
 
 /** What a tool said, for AI to read, and what it changed or found, for people. */
@@ -263,6 +287,11 @@ export interface RunOptions {
   }) => { readonly reason: string; readonly stop: boolean } | undefined;
   /** Asked after each answer and its tools: true ends the task there. */
   readonly enough?: () => boolean;
+  /**
+   * Asked after each answer that goes on with tools, with what it took: true ends the run there,
+   * with `RunResult.full`, so that room is made before the next request (`compaction.ts`).
+   */
+  readonly full?: (usage: AnswerUsage) => boolean;
   readonly onEvent: (event: RunEvent) => void;
 }
 
@@ -270,6 +299,10 @@ export interface RunResult {
   readonly end: AnswerEnd;
   /** What went wrong, without the key. */
   readonly error?: string;
+  /** It failed because the conversation did not fit into the context of the model. */
+  readonly overflow?: true;
+  /** It went on with tools, and stopped there as `RunOptions.full` said: it goes on after room is made. */
+  readonly full?: true;
 }
 
 const NO_USAGE: Usage = {
@@ -574,6 +607,7 @@ function messagesOf(
   shown: (entry: ToolEntry, at: number) => ToolResultContent = (entry) => [
     { type: "text", text: toolText(entry) },
   ],
+  start = 0,
 ): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
     done: "stop",
@@ -594,6 +628,8 @@ function messagesOf(
     old = new Map();
   };
   for (const [index, entry] of history.entries()) {
+    // What a summary stands for goes as the summary, see `summaryMessage`.
+    if (index < start || entry.role === "summary") continue;
     if (entry.role !== "tool") flush(entry.at);
     switch (entry.role) {
       case "user":
@@ -709,6 +745,8 @@ function fakeProvider(endpoint: FakeEndpoint, results: () => readonly ToolEntry[
     endpoint.heard?.(context.messages);
     const next = endpoint.fake.shift();
     const answer = typeof next === "function" ? next(results()) : next;
+    const inputs = fakeInputs.get(endpoint) ?? [];
+    fakeInputs.set(endpoint, [...inputs, answer?.input]);
     if (!answer) return fauxAssistantMessage("（假的服务没有更多回答了）");
     if (answer.error !== undefined) {
       return fauxAssistantMessage([], { stopReason: "error", errorMessage: answer.error });
@@ -745,6 +783,10 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     const faux = fakeProvider(endpoint, () => seen);
     models.setProvider(faux.provider);
     model = faux.getModel() as Model<Api>;
+    if (endpoint.window) {
+      model = { ...model, contextWindow: endpoint.window };
+      known = "relative";
+    }
     service = FAKE;
     protocol = model.api;
   } else {
@@ -780,13 +822,19 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   }
   // Each picture of the conversation and of the prompt where it is: only the most recent go again
   // with every request, the others as their lines, so that a long conversation does not fill up.
+  // What a summary stands for goes as the summary; before where pictures were left out, they are.
+  const inForce = summaryInForce(options.history);
+  const start = inForce?.through ?? 0;
+  const gone = picturesGoneBefore(options.history);
   const places = [
     ...options.history.flatMap((entry, at) =>
-      entry.role === "user"
-        ? (entry.images ?? []).map((image, index) => ({ at, index, image: image as ImageRef }))
-        : entry.role === "tool"
-          ? sentPictures(entry).map((image, index) => ({ at, index, image: image as ImageRef }))
-          : [],
+      at < gone
+        ? []
+        : entry.role === "user"
+          ? (entry.images ?? []).map((image, index) => ({ at, index, image: image as ImageRef }))
+          : entry.role === "tool"
+            ? sentPictures(entry).map((image, index) => ({ at, index, image: image as ImageRef }))
+            : [],
     ),
     ...(options.images ?? []).map((image, index) => ({ at: -1, index, image: image as ImageRef })),
   ];
@@ -805,15 +853,17 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     }
   }
   const why = (at: number) => (image: ImageRef, index: number) =>
-    !pictures?.sees
-      ? pictures
-        ? NOT_ATTACHED.blind
-        : NOT_ATTACHED.missing
-      : !recent.has(placeOf(at, index))
-        ? NOT_ATTACHED.older
-        : !loaded.has(image.image)
-          ? NOT_ATTACHED.missing
-          : undefined;
+    at >= 0 && at < gone
+      ? NOT_ATTACHED.room
+      : !pictures?.sees
+        ? pictures
+          ? NOT_ATTACHED.blind
+          : NOT_ATTACHED.missing
+        : !recent.has(placeOf(at, index))
+          ? NOT_ATTACHED.older
+          : !loaded.has(image.image)
+            ? NOT_ATTACHED.missing
+            : undefined;
   /** What people said in a message, with the pictures that go, and the lines of those that do not. */
   const said = (entry: Pick<UserEntry, "text" | "images">, at: number): UserMessage["content"] => {
     const text = promptOf(entry, why(at));
@@ -902,7 +952,10 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       systemPrompt: options.system,
       model,
       tools,
-      messages: messagesOf(options.history, names, said, shown) as AgentMessage[],
+      messages: withSummary(
+        messagesOf(options.history, names, said, shown, start),
+        inForce,
+      ) as AgentMessage[],
     },
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
@@ -930,11 +983,22 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       const no = options.before?.({ id: toolCall.id, name: toolCall.name });
       return no ? { block: true, reason: no.reason, terminate: no.stop } : undefined;
     },
-    finishTurn: () => (asked || options.enough?.() ? { action: "end" } : undefined),
+    finishTurn: () => {
+      if (asked || options.enough?.()) return { action: "end" };
+      // The context filled up: the task goes on once room is made, see `RunResult.full`.
+      if (lastUsage && options.full?.(lastUsage)) {
+        filled = true;
+        return { action: "end" };
+      }
+      return undefined;
+    },
   });
 
   const clean = (text: string) => withoutKeys(text, [key]);
   const stamp = options.stamp ?? {};
+  /** What the last answer took, for whether the context filled up. */
+  let lastUsage: AnswerUsage | undefined;
+  let filled = false;
   let thinking = "";
   /** When the thinking of this answer began, and how long it went on. */
   let thoughtFrom: number | undefined;
@@ -990,7 +1054,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             ...(stamp.toolset !== undefined && { toolset: stamp.toolset }),
             ...(stamp.texts !== undefined && { texts: stamp.texts }),
             ...(stamp.pack !== undefined && { pack: stamp.pack }),
-            usage: usageOf(message.usage, model, known),
+            usage: (lastUsage = usageOf(fakeUsage(endpoint, message.usage), model, known)),
             endedAt:
               message.durationMs === undefined
                 ? Date.now()
@@ -1045,8 +1109,36 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   if (signal.aborted) return { end: "stopped" };
   if (!last) return { end: "failed", error: clean(agent.state.errorMessage ?? "") };
   const end = endOf(last);
-  if (end === "failed") return { end, error: clean(last.errorMessage ?? "") };
-  return { end };
+  if (end === "failed")
+    return {
+      end,
+      error: clean(last.errorMessage ?? ""),
+      ...(isContextOverflow(last, model.contextWindow) && { overflow: true as const }),
+    };
+  // Set in `finishTurn`, which control flow does not see.
+  const full = (filled as boolean) && end === "tools";
+  return { end, ...(full && { full: true as const }) };
+}
+
+/**
+ * The messages with the summary in force first, in place of what it stands for: one message of the
+ * user with the first of those after it, where that is one, so that the roles still take turns.
+ */
+function withSummary(messages: Message[], summary: SummaryEntry | undefined): Message[] {
+  if (!summary?.text) return messages;
+  const text = summaryMessage(summary);
+  const first = messages[0];
+  if (first?.role === "user") {
+    const content =
+      typeof first.content === "string"
+        ? [
+            { type: "text" as const, text },
+            { type: "text" as const, text: first.content },
+          ]
+        : [{ type: "text" as const, text }, ...first.content];
+    return [{ ...first, content }, ...messages.slice(1)];
+  }
+  return [{ role: "user", content: text, timestamp: summary.at }, ...messages];
 }
 
 /** How long a test of a model waits for its answer. */
@@ -1185,4 +1277,129 @@ export async function askModel(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** What asking for a summary needs: where the model is, and the conversation with where to cut it. */
+export interface SummaryAsk {
+  readonly endpoint: Endpoint | FakeEndpoint;
+  readonly key: () => Promise<string | undefined>;
+  /** The text to sum up, see `transcriptOf`. */
+  readonly transcript: string;
+  readonly signal: AbortSignal;
+}
+
+export type SummaryAnswer =
+  | {
+      readonly ok: true;
+      readonly text: string;
+      readonly usage: AnswerUsage;
+      readonly service: string;
+      readonly model: string;
+      /** How large the context of the model is, where pi knows. */
+      readonly window?: number;
+    }
+  | { readonly ok: false; readonly error: string };
+
+/** About how many characters of the conversation fit, for each token of the context. */
+const SUMMED_CHARACTERS_PER_TOKEN = 3;
+
+/**
+ * Asks the model of the conversation for a summary of its earlier part, with the fixed prompt
+ * (`COMPACT_PROMPT`), the way the chat asks it (straight or through the relay), without tools. What
+ * is too long for its context is cut in the middle. It never throws, and what it says has no key.
+ */
+export async function summarize(ask: SummaryAsk): Promise<SummaryAnswer> {
+  const { endpoint, signal } = ask;
+  let key: string | undefined;
+  const clean = (text: string) => withoutKeys(text, [key]);
+  try {
+    const models = createModels({ identity: IDENTITY });
+    let model: Model<Api>;
+    let known: Known = "unknown";
+    let service: string;
+    if (isFake(endpoint)) {
+      const faux = fakeProvider(endpoint, () => []);
+      models.setProvider(faux.provider);
+      model = faux.getModel() as Model<Api>;
+      if (endpoint.window) {
+        model = { ...model, contextWindow: endpoint.window };
+        known = "relative";
+      }
+      service = FAKE;
+    } else {
+      key = await ask.key();
+      const provider = providerOf(endpoint.service);
+      ({ model, known } = await knownModelOf(endpoint, provider));
+      service = endpoint.service;
+      models.setProvider(
+        createProvider({
+          id: provider,
+          name: endpoint.service,
+          baseUrl: endpoint.baseUrl,
+          auth: {
+            apiKey: { name: "key", resolve: async () => ({ auth: { apiKey: key || "none" } }) },
+          },
+          models: [model],
+          api: API[endpoint.protocol](),
+        }),
+      );
+    }
+    const most = Math.max(
+      20_000,
+      Math.floor((model.contextWindow || 128_000) * 0.6 * SUMMED_CHARACTERS_PER_TOKEN),
+    );
+    const text =
+      ask.transcript.length <= most
+        ? ask.transcript
+        : `${ask.transcript.slice(0, Math.floor(most * 0.2))}\n[… ${ask.transcript.length - most} characters of the middle left out …]\n${ask.transcript.slice(-Math.floor(most * 0.8))}`;
+    const relay = isFake(endpoint) ? undefined : endpoint.relay;
+    const message = await models.completeSimple(
+      relay ? relayed(model, relay) : model,
+      { messages: [{ role: "user", content: compactRequest(text), timestamp: Date.now() }] },
+      {
+        maxTokens: model.maxTokens > 0 ? Math.min(SUMMARY_TOKENS, model.maxTokens) : SUMMARY_TOKENS,
+        maxRetries: 0,
+        signal,
+        ...(!isFake(endpoint) && {
+          headers: { ...relay?.headers, ...keylessHeaders(key, endpoint.settings?.headers, relay) },
+        }),
+      },
+    );
+    if (message.stopReason === "error" || message.stopReason === "aborted")
+      return { ok: false, error: clean(message.errorMessage ?? message.stopReason) };
+    const summary = clean(textOf(message.content)).trim();
+    if (summary === "") return { ok: false, error: "the model wrote no summary" };
+    return {
+      ok: true,
+      text: summary,
+      usage: usageOf(fakeUsage(endpoint, message.usage), model, known),
+      service,
+      model: model.id,
+      ...(known !== "unknown" && model.contextWindow > 0 && { window: model.contextWindow }),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    return { ok: false, error: clean(message) };
+  }
+}
+
+/**
+ * Whether a failure says the conversation did not fit into the context of the model, as pi tells it
+ * for each service (`isContextOverflow`), or the request took more than the context has.
+ */
+export function overflowed(error: string, window?: number): boolean {
+  return isContextOverflow(
+    {
+      role: "assistant",
+      content: [],
+      api: "",
+      provider: "",
+      model: "",
+      usage: NO_USAGE,
+      stopReason: "error",
+      errorMessage: error,
+      timestamp: 0,
+    } as AssistantMessage,
+    window,
+  );
 }

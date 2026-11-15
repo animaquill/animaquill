@@ -246,6 +246,14 @@ export function ChatGroup() {
           onChange={(value) => ai.setLookSize(value)}
         />
       </SettingRow>
+      <SettingRow id="chat.autoCompact">
+        <Toggle
+          label={t("settings.items.chat.autoCompact.name")}
+          checked={settings.autoCompact !== false}
+          disabled={held}
+          onChange={(on) => ai.setAutoCompact(on)}
+        />
+      </SettingRow>
       <SettingRow id="chat.lookWaits">
         <Toggle
           label={t("settings.items.chat.lookWaits.name")}

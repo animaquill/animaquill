@@ -175,7 +175,48 @@ export interface ToolEntry {
   readonly images?: readonly ToolPicture[];
 }
 
-export type ChatEntry = UserEntry | AssistantEntry | ToolEntry;
+/**
+ * The earlier part of a conversation in fewer tokens, for the model, kept as an entry of its own
+ * once the context filled up or people asked (mcp.md 11 "上下文" of AnimaQuill Cloud): the entries
+ * before `through` go to the model as this summary from then on, and stay as they were for people.
+ * Nothing before it changes. Where the model could not write a summary, only the pictures of those
+ * entries are left out (`kind` "pictures").
+ */
+export interface SummaryEntry {
+  readonly role: "summary";
+  readonly kind: "summary" | "pictures";
+  /** The entries before this index of the conversation are summed up; it comes after them. */
+  readonly through: number;
+  /** What the model wrote, in English: what went to it in their place from then on. */
+  readonly text?: string;
+  /** Of the current task: what people asked, as they wrote it, which goes with the summary. */
+  readonly asked?: string;
+  /** How many entries it stands for, the earlier summaries left out. */
+  readonly count: number;
+  /** Tokens of the context before, as the last request had them, and about after. */
+  readonly before: number;
+  readonly after: number;
+  /** About how large the context of the model is, where known. */
+  readonly window?: number;
+  /** As the context filled up, or because people asked. */
+  readonly by: "auto" | "people";
+  readonly at: number;
+  /** Which service and model wrote it, and what it took. */
+  readonly service?: string;
+  readonly model?: string;
+  readonly usage?: AnswerUsage;
+}
+
+export type ChatEntry = UserEntry | AssistantEntry | ToolEntry | SummaryEntry;
+
+/** The latest summary of a conversation, where it has one, and where it is. */
+export function latestSummary(
+  entries: readonly ChatEntry[],
+): { readonly entry: SummaryEntry; readonly index: number } | undefined {
+  const index = entries.findLastIndex((entry) => entry.role === "summary");
+  const entry = entries[index];
+  return entry?.role === "summary" ? { entry, index } : undefined;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -333,6 +374,7 @@ export const NOT_ATTACHED = {
   blind: "this model cannot receive pictures",
   missing: "the picture is not on this device",
   older: "older picture, only the most recent ones are sent",
+  room: "left out to make room in the context",
 } as const;
 
 /** An entry read back from the browser, or nothing when it is not one. */
@@ -373,6 +415,35 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       ...(startedAt !== undefined && { startedAt }),
       ...(isRecord(data) && { data }),
       ...(images.length > 0 && { images }),
+    };
+  }
+  if (role === "summary") {
+    const { kind, text, asked, by, service, model } = value;
+    const through = count(value.through);
+    const covered = count(value.count);
+    const before = count(value.before);
+    const after = count(value.after);
+    const window = count(value.window);
+    const usage = readUsage(value.usage);
+    if (kind !== "summary" && kind !== "pictures") return undefined;
+    if (through === undefined || covered === undefined) return undefined;
+    if (before === undefined || after === undefined) return undefined;
+    if (kind === "summary" && typeof text !== "string") return undefined;
+    return {
+      role,
+      kind,
+      through: Math.floor(through),
+      ...(typeof text === "string" && { text }),
+      ...(typeof asked === "string" && { asked }),
+      count: covered,
+      before,
+      after,
+      ...(window !== undefined && window > 0 && { window }),
+      by: by === "people" ? "people" : "auto",
+      at,
+      ...(typeof service === "string" && { service }),
+      ...(typeof model === "string" && { model }),
+      ...(usage && { usage }),
     };
   }
   if (role === "assistant") {

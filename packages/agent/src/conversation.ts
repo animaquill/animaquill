@@ -1,9 +1,22 @@
 import type { SelectionFacts } from "@animaquill/tools";
 import {
+  COMPACT_AT,
+  contextNow,
+  coveredBy,
+  cutOf,
+  estimateTokens,
+  fills,
+  hasPictures,
+  picturesGoneBefore,
+  summaryInForce,
+  transcriptOf,
+} from "./compaction.ts";
+import {
   type AnswerEnd,
   type AssistantEntry,
   type AttachedImage,
   type ChatEntry,
+  type SummaryEntry,
   type ToolEntry,
   type UserEntry,
 } from "./entries.ts";
@@ -18,6 +31,7 @@ import type {
   RunResult,
   ToolSpec,
 } from "./pi.ts";
+import type { AnswerUsage } from "./entries.ts";
 import { AUTO_RETRIES, passes, retryDelay } from "./retry.ts";
 import { failureOf, type ServiceFailure } from "./services.ts";
 
@@ -62,11 +76,20 @@ export interface RetryWait {
  * with every piece of them; this changes only when a tool begins or ends, or the task waits.
  */
 export interface RunningTask {
+  /** Empty while people had the earlier conversation summed up, which is no task. */
   readonly task: string;
   readonly startedAt: number;
   readonly tool: RunningTool | undefined;
   readonly retry: RetryWait | undefined;
+  /** The earlier conversation is being summed up, to make room in the context (`compaction.ts`). */
+  readonly compacting?: true;
 }
+
+/**
+ * What making room in the context came to: a summary, only the old pictures left out, nothing
+ * that could be left out, or it stopped.
+ */
+export type RoomMade = "summary" | "pictures" | "none" | "stopped";
 
 export interface ConversationSnapshot {
   readonly entries: readonly ChatEntry[];
@@ -99,6 +122,11 @@ export interface TaskTarget {
    * without it, or where the model does not take pictures, only the line of each goes.
    */
   readonly pictures?: Pictures;
+  /**
+   * Whether room is made by itself once the context is 80 % full, as the settings say: a summary
+   * of the earlier conversation by the same model. A request that did not fit makes room anyway.
+   */
+  readonly compact?: boolean;
 }
 
 export interface ConversationOptions {
@@ -210,8 +238,124 @@ export class Conversation {
     const task = this.tasks.at(-1);
     if (task === undefined) return undefined;
     if (last?.task === task) return last.end === "failed" ? task : undefined;
-    const answer = entries.at(-1);
+    // A summary people asked for after it is no answer.
+    const answer = entries.findLast((entry) => entry.role !== "summary");
     return answer?.role === "assistant" && answer.end === "failed" ? task : undefined;
+  }
+
+  /**
+   * Sums up the earlier conversation now, as people asked: the same as when the context fills up.
+   * One thing at a time: while a task runs this does nothing and says so with undefined.
+   */
+  async compact(target: TaskTarget): Promise<RoomMade | undefined> {
+    if (this.running || cutOf(this.#snapshot.entries) === undefined) return undefined;
+    const now = this.#options.now ?? Date.now;
+    const controller = new AbortController();
+    this.#controller = controller;
+    this.#set({
+      running: { task: "", startedAt: now(), tool: undefined, retry: undefined, compacting: true },
+    });
+    try {
+      return await this.#makeRoom(target, "people", controller.signal);
+    } finally {
+      if (this.#controller === controller) this.#controller = undefined;
+      this.#set({ running: undefined });
+    }
+  }
+
+  /** Whether people can have the earlier conversation summed up now. */
+  get compactable(): boolean {
+    return !this.running && cutOf(this.#snapshot.entries) !== undefined;
+  }
+
+  /**
+   * Makes room in the context: a summary of all but the last two turns (or the last two answers of
+   * one long turn), by the model of the task. Where the model cannot write one, the pictures of that
+   * part are left out instead. The summary is an entry of its own: nothing before it changes.
+   */
+  async #makeRoom(
+    target: TaskTarget,
+    by: SummaryEntry["by"],
+    signal: AbortSignal,
+  ): Promise<RoomMade> {
+    const now = this.#options.now ?? Date.now;
+    const entries = this.#snapshot.entries;
+    const running = this.#snapshot.running;
+    if (running) this.#set({ running: { ...running, tool: undefined, compacting: true } });
+    try {
+      const cut = cutOf(entries);
+      const context = contextNow(entries);
+      const before = context?.used ?? estimateTokens(entries);
+      const start = summaryInForce(entries)?.through ?? 0;
+      const gone = picturesGoneBefore(entries);
+      if (cut) {
+        const { summarize } = await import("./pi.ts");
+        const answer = await summarize({
+          endpoint: target.endpoint,
+          key: target.key,
+          transcript: transcriptOf(entries, cut.through),
+          signal,
+        });
+        if (signal.aborted) return "stopped";
+        if (answer.ok) {
+          const left =
+            estimateTokens(entries.slice(start, Math.max(start, gone)), false) +
+            estimateTokens(entries.slice(Math.max(start, gone), cut.through)) +
+            estimateTokens(
+              summaryInForce(entries) ? [summaryInForce(entries) as SummaryEntry] : [],
+            );
+          const after = Math.max(0, before - left + Math.ceil(answer.text.length / 4));
+          const window = answer.window ?? context?.window;
+          this.#add({
+            role: "summary",
+            kind: "summary",
+            through: cut.through,
+            text: answer.text,
+            ...(cut.asked !== undefined && { asked: cut.asked }),
+            count: coveredBy(entries, cut.through),
+            before,
+            after,
+            ...(window !== undefined && { window }),
+            by,
+            at: now(),
+            service: answer.service,
+            model: answer.model,
+            usage: answer.usage,
+          });
+          return "summary";
+        }
+      }
+      // No summary: the pictures of all but the turn that runs go, where there are any still.
+      const last = entries.findLastIndex((entry) => entry.role === "user");
+      const through = cut?.through ?? Math.max(0, last);
+      const part = entries.slice(gone, through);
+      if (through <= gone || !hasPictures(part)) return "none";
+      const saved = estimateTokens(part) - estimateTokens(part, false);
+      this.#add({
+        role: "summary",
+        kind: "pictures",
+        through,
+        count: coveredBy(entries, through),
+        before,
+        after: Math.max(0, before - saved),
+        ...(context?.window !== undefined && { window: context.window }),
+        by,
+        at: now(),
+      });
+      return "pictures";
+    } catch {
+      return signal.aborted ? "stopped" : "none";
+    } finally {
+      const still = this.#snapshot.running;
+      if (still?.compacting && still.task !== "") {
+        const { compacting: _compacting, ...rest } = still;
+        this.#set({ running: rest });
+      }
+    }
+  }
+
+  #add(entry: ChatEntry): void {
+    this.#set({ entries: [...this.#snapshot.entries, entry] });
   }
 
   async #run(
@@ -250,16 +394,19 @@ export class Conversation {
       } else {
         const { entry } = event;
         this.live.dispatch({ type: "heard", at, clear: entry.role === "assistant" });
+        // A failure that passes is tried again, and one that did not fit makes room first: either
+        // is kept back, and kept only if that does not help.
         if (
           entry.role === "assistant" &&
           entry.end === "failed" &&
-          retries < AUTO_RETRIES &&
           !controller.signal.aborted &&
-          passes(entry.error ?? "")
+          ((retries < AUTO_RETRIES && passes(entry.error ?? "")) ||
+            (overflowed?.(entry.error ?? "", entry.usage?.window) ?? false))
         ) {
           held = entry;
           return;
         }
+        if (entry.role === "assistant" && entry.end !== "failed") answered += 1;
         if (entry.role === "tool") attempts += 1;
         const tool = entry.role === "tool" ? undefined : running.tool;
         this.#set({ entries: [...this.#snapshot.entries, entry], running: { ...running, tool } });
@@ -267,11 +414,32 @@ export class Conversation {
     };
 
     let outcome: TaskOutcome;
+    /** Answers that went through in this run, and how many there were when room was last made. */
+    let answered = 0;
+    let roomAt: number | undefined;
+    /** Nothing more can be summed up in this task: it goes on as it is. */
+    let noRoom = false;
+    /** The conversation does not fit, even with room made. */
+    let full = false;
+    let overflowed: ((error: string, window?: number) => boolean) | undefined;
+    const auto = target.compact === true;
     try {
-      const { runTask } = await import("./pi.ts");
+      const pi = await import("./pi.ts");
+      const { runTask } = pi;
+      overflowed = pi.overflowed;
       let result: RunResult;
-      for (let first = prompt; ; first = undefined) {
+      let first = prompt;
+      // The last request took most of the context: room first, then the task goes on from there.
+      if (auto && fills(this.#snapshot.entries)) {
+        const made = await this.#makeRoom(target, "auto", controller.signal);
+        if (made === "summary" || made === "pictures") first = undefined;
+      }
+      for (; ; first = undefined) {
         held = undefined;
+        if (controller.signal.aborted) {
+          result = { end: "stopped" };
+          break;
+        }
         result = await runTask({
           endpoint: target.endpoint,
           key: target.key,
@@ -293,8 +461,30 @@ export class Conversation {
             return undefined;
           },
           enough: () => attempts >= max,
+          ...(auto &&
+            !noRoom && {
+              full: (usage: AnswerUsage) =>
+                usage.window !== undefined &&
+                usage.input + usage.cacheRead + usage.cacheWrite >= usage.window * COMPACT_AT,
+            }),
           onEvent,
         });
+        if (result.full && !controller.signal.aborted) {
+          const made = await this.#makeRoom(target, "auto", controller.signal);
+          if (made === "none") noRoom = true;
+          continue;
+        }
+        // It did not fit: room once, then again only after an answer went through.
+        if (result.end === "failed" && result.overflow && !controller.signal.aborted) {
+          const made =
+            roomAt === undefined || answered > roomAt
+              ? await this.#makeRoom(target, "auto", controller.signal)
+              : "none";
+          roomAt = answered;
+          if (made === "summary" || made === "pictures") continue;
+          if (made === "none") full = true;
+          break;
+        }
         const error = result.error ?? "";
         if (
           result.end !== "failed" ||
@@ -333,7 +523,11 @@ export class Conversation {
       outcome = {
         task,
         end: limited ? "limit" : result.end,
-        ...(result.end === "failed" && { failure: failureOf(result.error ?? "") }),
+        ...(result.end === "failed" && {
+          failure: full
+            ? { kind: "contextFull" as const, message: result.error ?? "" }
+            : failureOf(result.error ?? ""),
+        }),
         ...(relayed && { relayed }),
       };
     } catch (error) {

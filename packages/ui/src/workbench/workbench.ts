@@ -93,7 +93,10 @@ import { OverlayEditor } from "../overlay/editor.ts";
 import { SceneHandles } from "../overlay/scene-handles.ts";
 import { CoverMaker, CoverUploads, canvasEncoder, type CoverShot } from "../export/cover.ts";
 import { ExportCompositor, exportCompositorOptions } from "../export/compositor.ts";
+import { SoundMixer } from "@animaquill/audio";
 import { FrameLooks } from "../look/looks.ts";
+import { SoundListens } from "../look/listens.ts";
+import { madeSoundSource } from "../export/made-sounds.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -406,6 +409,8 @@ export class Workbench {
   readonly chat: ChatSession;
   /** The frames AI looks at, which give way to people playing and exporting. */
   readonly looks: FrameLooks;
+  /** The sound AI hears: mixed as the export mixes it, and measured. */
+  readonly listens: SoundListens;
   /** What AI tools on this computer do through the folder of the open project. */
   readonly tools: ToolActivity;
   /** Whether new projects start with AGENTS.md, the instructions for AI. */
@@ -794,6 +799,7 @@ export class Workbench {
       shoot: (signal) => this.#shootFrame(signal),
       shotSize: () => this.ai.getSnapshot().shotSize ?? 1568,
       look: (request, sees, signal) => this.looks.look(request, sees, signal),
+      listen: (request, signal) => this.listens.listen(request, signal),
     });
     this.tools = new ToolActivity({
       t,
@@ -855,6 +861,7 @@ export class Workbench {
     // What nobody went on with for long goes, whichever project it is of.
     void this.videos.cleanUp();
     this.looks = this.#frameLooks(host.chatImages);
+    this.listens = this.#soundListens();
     this.projectFolders =
       host.localFolders &&
       new ProjectFolders({
@@ -2627,6 +2634,30 @@ export class Workbench {
         } catch {
           // Some browsers only make notices from a service worker: the chat says it still.
         }
+      },
+    });
+  }
+
+  /**
+   * The sound AI hears, mixed as the export mixes it: from the files of the project as the tool
+   * read it, with the sounds made by code, which it waits for as the export does.
+   */
+  #soundListens(): SoundListens {
+    return new SoundListens({
+      mixer: (plan, state, timeline, signal) => {
+        const project = this.session.getSnapshot().key ?? "";
+        const media =
+          this.projectFolders?.mediaFor(project, undefined, () => state.assets) ??
+          this.projects.media(project);
+        const source = madeSoundSource({
+          state,
+          timeline,
+          project,
+          media,
+          sounds: this.sounds,
+          signal,
+        });
+        return new SoundMixer(plan, { fileOf: (hash) => media.get(hash), source });
       },
     });
   }

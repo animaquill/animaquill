@@ -13,6 +13,7 @@ export {
   type ConversationOptions,
   type ConversationSnapshot,
   type RetryWait,
+  type RoomMade,
   type RunningTask,
   type RunningTool,
   type TaskEnd,
@@ -21,6 +22,7 @@ export {
 } from "./conversation.ts";
 export {
   NOT_ATTACHED,
+  latestSummary,
   promptOf,
   readEntry,
   readImage,
@@ -35,11 +37,21 @@ export {
   type ChatEntry,
   type PackBy,
   type PackNote,
+  type SummaryEntry,
   type ToolCallEntry,
   type ToolEntry,
   type ToolPicture,
   type UserEntry,
 } from "./entries.ts";
+export {
+  COMPACT_AT,
+  COMPACT_PROMPT,
+  contextNow,
+  cutOf,
+  summaryInForce,
+  type ContextNow,
+  type Cut,
+} from "./compaction.ts";
 export { NO_LIVE, createLiveStore, type LiveAnswer, type LiveStore } from "./live.ts";
 export { AUTO_RETRIES, RETRY_DELAYS_MS, passes, retryDelay } from "./retry.ts";
 export { DEFAULT_STAMP, browserSystemPrompt, toolSpecsOf } from "./assistant.ts";

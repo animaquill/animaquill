@@ -3,6 +3,7 @@ import {
   askModel,
   browserSystemPrompt,
   readEntry,
+  summaryInForce,
   toolSpecsOf,
   type ChatEntry,
   type Endpoint,
@@ -10,6 +11,7 @@ import {
   type ModelRef,
   type PackNote,
   type ReasoningLevel,
+  type RoomMade,
   type AttachedImage,
   type ServiceConfig,
   type SmallAsk,
@@ -35,6 +37,8 @@ import {
   choosePack,
   createToolset,
   usePack,
+  type ListenAnswer,
+  type ListenRequest,
   type LookAnswer,
   type LookRequest,
   type ModelPack,
@@ -198,6 +202,8 @@ export interface ChatSessionOptions {
    * sees the pictures, and what stops the task.
    */
   readonly look?: (request: LookRequest, sees: boolean, signal: AbortSignal) => Promise<LookAnswer>;
+  /** Mixes and measures the sound for AI, as `aq_audio_analyze` asks (see `SoundListens`). */
+  readonly listen?: (request: ListenRequest, signal: AbortSignal) => Promise<ListenAnswer>;
   /** For tests: what a small request to a model answers, such as for a title. See `askModel`. */
   readonly ask?: (
     endpoint: Endpoint,
@@ -438,7 +444,7 @@ export class ChatSession {
     signal: AbortSignal,
   ) {
     const project = this.#project;
-    const { selection, problems, describe, problemInputs, ranNow, look } = this.#options;
+    const { selection, problems, describe, problemInputs, ranNow, look, listen } = this.#options;
     // A task tried again goes on from where it was: it started where it started the first time.
     if (project && !this.#started.has(task)) {
       this.#started.set(task, project.store.getState());
@@ -470,6 +476,7 @@ export class ChatSession {
           look: (request: LookRequest) => look(request, this.seesPictures() !== false, signal),
         }),
         taskStart: () => this.#started.get(task),
+        ...(listen && { listen: (request: ListenRequest) => listen(request, signal) }),
       },
       caller,
       use.texts,
@@ -1043,7 +1050,56 @@ export class ChatSession {
       // How hard the model reasons: as people set it for the model, else as its pack says.
       call: reasoning === undefined ? use.call : { ...use.call, reasoning },
       stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },
+      // The earlier conversation is summed up once the context is 80 % full, unless people said not.
+      compact: this.#options.ai.getSnapshot().autoCompact !== false,
     };
+  }
+
+  /**
+   * Sums up the earlier conversation now, as people asked, with the model of the conversation: what
+   * happens by itself once the context is 80 % full (see `Conversation.compact`).
+   */
+  async compact(): Promise<RoomMade | undefined> {
+    const conversation = this.#snapshot.conversation;
+    if (!conversation?.compactable) return undefined;
+    const target = await this.#taskTarget(conversation);
+    if (!target || this.#snapshot.conversation !== conversation) return undefined;
+    const made = await conversation.compact(target);
+    // What people wrote meanwhile waited for it, as for a task.
+    const [next, ...rest] = this.#snapshot.queued;
+    if (next !== undefined && this.#snapshot.conversation === conversation) {
+      this.#set({ queued: rest });
+      void this.send(next.text, next.images, next.selection);
+    }
+    return made;
+  }
+
+  /**
+   * A new conversation where the one open no longer fits its model: it starts from the summary of
+   * this one, where there is one, with the last words of people in its input box, not sent.
+   */
+  continueFresh(): void {
+    const { conversation, id, model, reasoning, repick } = this.#snapshot;
+    const project = this.#project?.key;
+    if (!conversation || this.running || project === undefined || id === undefined) return;
+    const entries = conversation.getSnapshot().entries;
+    const last = entries.findLast((entry) => entry.role === "user");
+    const summary = summaryInForce(entries);
+    const turn = entries.filter((entry) => entry.role === "user").length;
+    const title = this.#snapshot.title || firstWords(entries, TITLE_LENGTH);
+    void this.flush();
+    const copy = newChatId();
+    this.#start(summary ? [{ ...summary, through: 0 }] : [], copy, undefined, {
+      ...(model && { model }),
+      ...(reasoning !== undefined && { reasoning }),
+      repick,
+      forkedFrom: { title, turn },
+    });
+    if (last?.role === "user") {
+      this.drafts.write(project, copy, last.text);
+      this.attachments.restore(project, copy, last.images ?? []);
+    }
+    this.#keep();
   }
 
   stop(): void {

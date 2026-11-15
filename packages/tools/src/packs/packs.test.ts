@@ -444,7 +444,7 @@ describe("checkPack refuses", () => {
 describe("a pack installed before", () => {
   it("goes without the words this version has no key for, and says which", () => {
     const pack = small({
-      system: { extra: "Mind aq_audio_analyze when it comes." },
+      system: { extra: "Mind aq_render_motion when it comes." },
       ops: { "clip.teleport": { summary: "teleport" } },
       params: { start: "Start, in seconds." },
     });

@@ -40,7 +40,9 @@ export function RunState({
       ? look.kind
       : undefined;
   let label: string;
-  if (retry) {
+  if (running.compacting) {
+    label = t("chat.phase.compacting");
+  } else if (retry) {
     const code = codeIn(retry.failure.message);
     const reason = say(`chat.retryReason.${retry.failure.kind}`);
     label = t("chat.phase.retry", {
@@ -70,12 +72,22 @@ export function RunState({
     label = say(`chat.phase.${phase}`);
   }
   const heard = Math.max(conversation.live.getState().heardAt, waitedOn);
-  const quiet = !tool && !retry && heard > 0 && now - heard >= QUIET_MS;
+  const quiet = !tool && !retry && !running.compacting && heard > 0 && now - heard >= QUIET_MS;
   return (
     <div
       className={styles.phase}
       data-testid="chat-phase"
-      data-state={retry ? "retry" : quiet ? "quiet" : waiting ? "waiting" : "running"}
+      data-state={
+        running.compacting
+          ? "compacting"
+          : retry
+            ? "retry"
+            : quiet
+              ? "quiet"
+              : waiting
+                ? "waiting"
+                : "running"
+      }
       data-look={waiting}
       aria-live="polite"
     >

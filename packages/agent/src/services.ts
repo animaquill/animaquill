@@ -329,8 +329,13 @@ export function checkBaseUrl(text: string): string | undefined {
   return url.href.replace(/\/+$/, "");
 }
 
-/** Why talking to a service did not work, in a few kinds that call for different advice. */
-export type FailureKind = "network" | "key" | "rate" | "notFound" | "server" | "other";
+/**
+ * Why talking to a service did not work, in a few kinds that call for different advice:
+ * "contextFull" is a conversation too long for its model, which the conversation tells once making
+ * room did not help (`Conversation`); the words of services say it too.
+ */
+export type FailureKind =
+  "network" | "key" | "rate" | "notFound" | "server" | "contextFull" | "other";
 
 export interface ServiceFailure {
   readonly kind: FailureKind;
@@ -339,6 +344,10 @@ export interface ServiceFailure {
 }
 
 const FAILURES: readonly [FailureKind, RegExp][] = [
+  [
+    "contextFull",
+    /prompt (?:is )?too long|request_too_large|exceeds the context window|maximum context length|context[_ ]length[_ ]exceeded|context window exceeded|input token count.*exceeds the maximum|reduce the length of the messages|too large for model with \d+ maximum context/i,
+  ],
   [
     "network",
     /failed to fetch|networkerror|load failed|connection error|fetch failed|err_[a-z_]+|\bcors\b|net::/i,

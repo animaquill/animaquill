@@ -90,3 +90,40 @@ describe("what a conversation took", () => {
     expect(percent(0.001)).toBe("1%");
   });
 });
+
+describe("after a summary of the earlier conversation", () => {
+  const summary: ChatEntry = {
+    role: "summary",
+    kind: "summary",
+    through: 0,
+    text: "…",
+    count: 3,
+    before: 170_000,
+    after: 40_000,
+    window: 200_000,
+    by: "auto",
+    at: 1,
+    usage: { input: 50_000, output: 800, cacheRead: 0, cacheWrite: 0, cost: 0.2 },
+  };
+  it("the context is about what is left, until the next answer says, and the summary costs too", () => {
+    const before = answer({
+      input: 170_000,
+      output: 10,
+      cacheRead: 0,
+      cacheWrite: 0,
+      window: 200_000,
+      cost: 0.5,
+    });
+    expect(contextOf([before, summary])).toEqual({ used: 40_000, window: 200_000, share: 0.2 });
+    const after = answer({
+      input: 45_000,
+      output: 10,
+      cacheRead: 0,
+      cacheWrite: 0,
+      window: 200_000,
+      cost: 0.1,
+    });
+    expect(contextOf([before, summary, after])?.used).toBe(45_000);
+    expect(usageOf([before, summary, after]).cost).toBeCloseTo(0.8);
+  });
+});

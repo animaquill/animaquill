@@ -868,6 +868,10 @@
           "name": "AI 看画面时用多大的图",
           "keywords": "look frame render 看画面 图 大小 token 截图"
         },
+        "autoCompact": {
+          "name": "上下文快满时自动压缩",
+          "keywords": "compact context summary 压缩 上下文 摘要 token 用量"
+        },
         "lookWaits": {
           "name": "AI 看画面时等你停下播放",
           "keywords": "look playback wait 看画面 播放 等待 排队"
@@ -2772,7 +2776,8 @@
       "rate": "太忙或额度用完",
       "notFound": "找不到",
       "server": "服务出错",
-      "other": "没测通"
+      "other": "没测通",
+      "contextFull": "上下文满了"
     },
     "models": "模型",
     "modelsEnabled": "{{enabled}} / {{total}} 启用",
@@ -3303,7 +3308,8 @@
         "playing": "你在播放，AI 等你停下再看画面",
         "exporting": "正在导出，AI 等导出完再看画面",
         "hidden": "等你回到这个页面才能看画面"
-      }
+      },
+      "compacting": "正在压缩较早的对话…"
     },
     "retryReason": {
       "rate": "服务太忙",
@@ -3311,7 +3317,8 @@
       "network": "连不上服务",
       "key": "服务拒绝了 key",
       "notFound": "服务说找不到",
-      "other": "出错了"
+      "other": "出错了",
+      "contextFull": "上下文满了"
     },
     "duration": {
       "s": "{{n}} 秒",
@@ -3370,7 +3377,8 @@
       "other": "调用出错（{{code}}）",
       "render-failed": "画不出来",
       "not-available": "这里不能做这件事",
-      "out-of-range": "时间超出了范围"
+      "out-of-range": "时间超出了范围",
+      "mix-failed": "混不出来"
     },
     "card": {
       "noChanges": "没有改项目",
@@ -3394,7 +3402,8 @@
       "undoThenRetry": "先撤销再重试",
       "retryOn": "接着改",
       "cancel": "算了",
-      "withoutPictures": "去掉图片重发"
+      "withoutPictures": "去掉图片重发",
+      "fresh": "从这里开新对话"
     },
     "usage": {
       "in": "↑{{n}}",
@@ -3412,7 +3421,8 @@
       "contextOf": "{{used}} / {{window}}",
       "contextUnknown": "{{used}}（不知道模型的上下文有多大）",
       "noPrice": "不知道这个模型的价格",
-      "estimate": "按公开价格估算，以服务商账单为准。"
+      "estimate": "按公开价格估算，以服务商账单为准。",
+      "compact": "压缩上下文"
     },
     "models": "{{from}} → {{to}}",
     "you": "你",
@@ -3436,7 +3446,8 @@
       "rate": "请求太多或额度用完了，请稍后再试。",
       "notFound": "服务说找不到。请检查地址和模型名。",
       "server": "服务那边出了问题，请稍后再试。",
-      "other": "出错了。"
+      "other": "出错了。",
+      "contextFull": "上下文满了，"
     },
     "detail": "服务的原话：{{message}}",
     "relay": {
@@ -3484,7 +3495,8 @@
       "timeline_read": "读时间轴",
       "selection_read": "读选中内容",
       "file_read": "读文件",
-      "aq_render_frames": "看画面"
+      "aq_render_frames": "看画面",
+      "aq_audio_analyze": "听声音"
     },
     "summary": {
       "more": "还有 {{count}} 处",
@@ -3820,6 +3832,38 @@
       "next": "下一张",
       "list": "AI 收到的清单（英文原文）",
       "viewerRange": "{{from}}–{{to}}"
+    },
+    "summed": {
+      "divider": "较早的 {{count}} 条已压缩成一段摘要，省下 {{saved}}",
+      "pictures": "较早的图片已不再发给 AI，省下 {{saved}}",
+      "open": "看摘要",
+      "title": "较早对话的摘要",
+      "asked": "接着做的事（你的原话）",
+      "close": "关闭",
+      "dividerOnly": "较早的 {{count}} 条已压缩成一段摘要",
+      "picturesOnly": "较早的图片已不再发给 AI"
+    },
+    "listen": {
+      "name": "听了声音",
+      "clip": "听了「{{name}}」",
+      "loudness": "响度 {{value}} LUFS",
+      "peak": "峰值 {{value}} dB",
+      "clips": "{{count}} 处削波",
+      "noClips": "没有削波",
+      "silences": "{{count}} 段静音",
+      "silent": "整段静音",
+      "envelope": "起音 {{attack}} 毫秒、衰减 {{decay}} 秒",
+      "failed": "混不出来：{{reason}}",
+      "why": {
+        "missing-file": "素材「{{asset}}」不在这台电脑上",
+        "cannot-decode": "素材「{{asset}}」这个浏览器解不开",
+        "not-made": "「{{clip}}」的声音代码没生成出声音",
+        "failed": "混音的时候出错了，再让 AI 试一次",
+        "stopped": "任务停下了"
+      },
+      "someAsset": "素材",
+      "at": "跳到 {{time}}",
+      "list": "AI 收到的结果（英文原文）"
     }
   },
   "account": {

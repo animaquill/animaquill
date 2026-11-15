@@ -230,6 +230,11 @@ export interface AiSettings {
   readonly lookSize?: "small" | "large";
   /** AI renders frames while people play, which it waits for unless people said not to. */
   readonly lookWhilePlaying?: true;
+  /**
+   * The earlier conversation is summed up by itself once the context is 80 % full, unless people
+   * said not to (`false`).
+   */
+  readonly autoCompact?: false;
   readonly kept?: KeptSettings;
 }
 
@@ -330,6 +335,7 @@ const TOP_FIELDS = new Set([
   "shotSize",
   "lookSize",
   "lookWhilePlaying",
+  "autoCompact",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -808,6 +814,7 @@ export function readAiSettings(value: unknown): AiSettingsReading {
       lookSize: value.lookSize,
     }),
     ...(value.lookWhilePlaying === true && { lookWhilePlaying: true as const }),
+    ...(value.autoCompact === false && { autoCompact: false as const }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   // Set while the services were read, which control flow does not see.
@@ -949,6 +956,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
       settings.shotSize !== 1568 && { shotSize: settings.shotSize }),
     ...(settings.lookSize !== undefined && { lookSize: settings.lookSize }),
     ...(settings.lookWhilePlaying && { lookWhilePlaying: true }),
+    ...(settings.autoCompact === false && { autoCompact: false }),
   };
 }
 

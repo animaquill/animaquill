@@ -130,6 +130,45 @@ describe("conversations of projects of the platform", () => {
     expect(platform.kept.has("p1/c2")).toBe(true);
   });
 
+  test("a summary of the earlier conversation goes with it, and the other device has it as it was", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    const two = await deviceOf(platform);
+    const summary = {
+      role: "summary",
+      kind: "summary",
+      through: 2,
+      text: "1. What the user wants: the title lower.",
+      count: 2,
+      before: 170_000,
+      after: 40_000,
+      window: 200_000,
+      by: "auto",
+      at: 5,
+    };
+    await one.chats.save({
+      ...chat("c1", [], 1),
+      entries: [
+        { role: "user", text: "把标题挪下来", task: "t1", at: 1 },
+        {
+          role: "assistant",
+          text: "好",
+          calls: [],
+          at: 2,
+          end: "done",
+          service: "s",
+          protocol: "p",
+          model: "m",
+        },
+        { role: "user", text: "再小一点", task: "t2", at: 3 },
+        summary,
+      ],
+    });
+    const read = await two.chats.load("local-1", "c1");
+    const entries = (read?.entries ?? []).map(readEntry);
+    expect(entries.at(-1)).toEqual(summary);
+  });
+
   test("go to the account, and another device reads them", async () => {
     const platform = platformChats();
     const one = await deviceOf(platform);

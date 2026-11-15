@@ -1,8 +1,7 @@
-import { readSound, SoundFailed, SoundMixer, type SoundSource } from "@animaquill/audio";
+import { SoundFailed, SoundMixer, type SoundSource } from "@animaquill/audio";
 import {
   buildAudioPlan,
   buildRenderPlan,
-  madeSoundsOf,
   showsAt,
   timelineLength,
   transitionsNotDone,
@@ -10,7 +9,6 @@ import {
   type ProjectState,
   type ProjectStore,
   type RenderPlan,
-  type SoundLayer,
 } from "@animaquill/core";
 import type {
   ExportStore,
@@ -37,7 +35,8 @@ import type { TimelineEditor } from "../timeline/editor.ts";
 import type { Dialogs, FormField } from "../workbench/dialogs.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
-import type { MadeSounds, SoundFailure } from "../media/sounds.ts";
+import type { MadeSounds } from "../media/sounds.ts";
+import { madeSoundSource, SoundNotMade, untilAborted } from "./made-sounds.ts";
 import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import {
   browserSupport,
@@ -298,18 +297,6 @@ class FrameFailed extends Error {
   }
 }
 
-/** Code did not make a sound that the export needs, and without it the file would sound wrong. */
-class SoundNotMade extends Error {
-  readonly sound: SoundLayer;
-  readonly why: SoundFailure;
-
-  constructor(sound: SoundLayer, why: SoundFailure) {
-    super(`Sound ${sound.id} not made: ${why}`);
-    this.sound = sound;
-    this.why = why;
-  }
-}
-
 /** A new encoder after a pause does not encode the way the first one did, so the file cannot go on. */
 class ResumeFailed extends Error {
   constructor() {
@@ -415,15 +402,6 @@ export function framesOf(
       keyFrame: index % keyEvery === 0,
     }),
   };
-}
-
-/** Ends as soon as people ask for it. What it was waiting for gets stopped by whoever called this. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) reject(signal.reason);
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-    work.then(resolve, reject);
-  });
 }
 
 const isQuality = (value: unknown): value is Quality =>
@@ -1843,21 +1821,15 @@ export class VideoExport {
       if (saved.sound) {
         const audioPlan = buildAudioPlan(state, timelineId);
         const media = this.#options.projects.media(project);
-        const made = new Map(madeSoundsOf(state, timelineId).map((each) => [each.file, each]));
-        // A sound made by code is a file like any other once it is there, made from this state.
-        const source: SoundSource = async (layer) => {
-          const wanted = layer.made && made.get(layer.file);
-          if (!wanted) return undefined;
-          this.#flag(run, "makingSound", true);
-          const outcome = await untilAborted(
-            this.#options.sounds.whenMade(wanted, state, project, signal),
-            signal,
-          ).finally(() => this.#flag(run, "makingSound", false));
-          if (outcome.state === "failed") throw new SoundNotMade(layer, outcome.reason);
-          const wav = await media.get(layer.file).catch(() => undefined);
-          if (!wav) throw new SoundFailed(layer, "missing-file");
-          return (from, to) => readSound(wav, from, to);
-        };
+        const source = madeSoundSource({
+          state,
+          timeline: timelineId,
+          project,
+          media,
+          sounds: this.#options.sounds,
+          signal,
+          making: (busy) => this.#flag(run, "makingSound", busy),
+        });
         const mixer =
           this.#options.mixer?.(audioPlan, source) ??
           new SoundMixer(audioPlan, { fileOf: (hash) => media.get(hash), source });

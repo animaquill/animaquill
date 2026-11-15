@@ -91,6 +91,11 @@ export interface ToolHost {
   look?(request: LookRequest): Promise<LookAnswer>;
   /** The project as it was when the task started, to compare with. */
   taskStart?(): ProjectState | undefined;
+  /**
+   * Mixes a part of a timeline as the export mixes it, and measures it, which only a place with an
+   * editor can: see `aq_audio_analyze`.
+   */
+  listen?(request: ListenRequest): Promise<ListenAnswer>;
 }
 
 /**
@@ -271,3 +276,65 @@ export interface Tool {
   validate(args: unknown): ToolResult | undefined;
   run(args: unknown): Promise<ToolResult>;
 }
+
+/** What `aq_audio_analyze` asks the host to mix and measure. */
+export interface ListenRequest {
+  readonly state: ProjectState;
+  readonly timeline: string;
+  /** Seconds on the timeline. */
+  readonly from: number;
+  readonly to: number;
+  /** Only this clip, by id, as if nothing else sounded. */
+  readonly only?: string;
+  /** Whether to measure the envelope. */
+  readonly envelope: boolean;
+  /** How many parts the small picture of the level has. */
+  readonly buckets: number;
+}
+
+/**
+ * What the host measured of a mix, as `SoundMeter` of the audio has it: levels in dB, `null` for
+ * silence (minus infinity), times in seconds from `ListenRequest.from`.
+ */
+export interface Heard {
+  readonly seconds: number;
+  readonly integrated?: number;
+  readonly shortTermMax?: number;
+  readonly momentaryMax?: number;
+  readonly truePeak: number | null;
+  readonly samplePeak: number | null;
+  readonly clipping: { readonly places: number; readonly samples: number };
+  readonly clips: readonly {
+    readonly from: number;
+    readonly to: number;
+    readonly samples: number;
+  }[];
+  readonly silences: readonly { readonly from: number; readonly to: number }[];
+  readonly silent: boolean;
+  readonly envelope?: {
+    readonly peak: number;
+    readonly peakAt: number;
+    readonly onset: number;
+    readonly attack: number;
+    readonly decay: number;
+    readonly cut: boolean;
+  };
+  /** The largest sample of each part, 0–1, for a small picture. */
+  readonly wave: readonly number[];
+}
+
+/** Why a part of a timeline could not be mixed: nothing is measured of a mix with a sound missing. */
+export type ListenFailure =
+  | {
+      readonly reason: "missing-file" | "cannot-decode";
+      readonly layer: string;
+      readonly file: string;
+    }
+  /** Code did not make the sound of a clip, see the sounds of the editor. */
+  | { readonly reason: "not-made"; readonly layer: string; readonly why: string }
+  | { readonly reason: "failed"; readonly message: string }
+  | { readonly reason: "stopped" };
+
+export type ListenAnswer =
+  | { readonly ok: true; readonly heard: Heard }
+  | { readonly ok: false; readonly failure: ListenFailure };

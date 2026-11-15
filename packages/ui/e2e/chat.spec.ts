@@ -307,7 +307,7 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   const offered = firstSent.tools
     .map((tool) => tool.name)
     .filter((name) => !name.startsWith("__pi_"));
-  expect(offered).toHaveLength(13);
+  expect(offered).toHaveLength(14);
   expect(offered).toContain("aq_edit");
   expect(offered).toContain("aq_selection_read");
   expect(offered).not.toContain("clip_add");

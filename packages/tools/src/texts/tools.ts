@@ -114,6 +114,18 @@ export const TOOL_TEXTS = {
     "true draws a box with the id and name of every clip on the picture; a list of clip ids draws only those, 1 to 20.",
   "tools.aq_render_frames.params.compare":
     '"task_start", or a revision such as "k3x9:42" from the rev line of an earlier result of this conversation: each time is rendered as the project was then and as it is now, with what differs. At most 4 times.',
+  "tools.aq_audio_analyze.description":
+    "Mixes a part of a timeline as the export mixes it and measures it: stereo at 48 kHz, with volumes and sound transitions as set; muted tracks are not heard, and only soloed tracks where a track is soloed. Nothing is played to the user. loudness gives the integrated loudness in LUFS and the loudest 3 seconds (short-term max), as ITU-R BS.1770-4 and EBU R128 measure them, the true peak in dBTP (between samples too) and the sample peak in dBFS. For orientation: online video and streaming aim at about -14 LUFS integrated with the true peak at or below -1 dBTP; broadcast (EBU R128) at -23 LUFS. silence gives each stretch below -50 dBFS for 0.3 s or longer. clipping gives each place where samples stay at full scale for 3 samples or more, or go over it (the export cuts those), with how many samples. envelope gives where the sound is loudest, its attack (from 10% to 90% of its peak) and its decay (from the peak to 40 dB below it): check a short sound made by code with it. clip measures that clip alone over its time on the timeline, as if nothing else sounded. Times in the result are seconds on the timeline. A part where the file of an asset is not on this computer, or the code of a sound did not make it, gives an error with the reason and no numbers: a measure is only ever of what the export would give.",
+  "tools.aq_audio_analyze.params.range":
+    'The part to measure: {"from": "0", "to": "30"}, seconds as strings, at most 600 seconds long. Without it, the whole timeline, or the time of clip on it.',
+  "tools.aq_audio_analyze.params.timeline":
+    "Timeline id, as aq_project_status lists it. Without it, the first timeline of the project.",
+  "tools.aq_audio_analyze.params.version":
+    "Picture format id, as aq_project_status lists it; the sound of every format is the same today. Without it, the first format.",
+  "tools.aq_audio_analyze.params.clip":
+    "A clip id: measures only that clip, as if nothing else sounded, such as a sound made by code.",
+  "tools.aq_audio_analyze.params.what":
+    'Which measures: "loudness", "silence", "clipping", "envelope". By default loudness, silence and clipping; with clip, loudness, clipping and envelope.',
   "tools.aq_check_run.description":
     "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run: a scene runs while one of its clips is in the preview, and again after its code changes; the result lists changed code that has not run since. aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
   "tools.aq_check_run.params.checks":

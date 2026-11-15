@@ -45,8 +45,19 @@ export {
   type LookKind,
   type LookShotData,
 } from "./tools/look.ts";
+export {
+  LISTEN_WHATS,
+  MOST_LISTEN_SECONDS,
+  WAVE_BUCKETS,
+  type ListenData,
+  type ListenWhat,
+} from "./tools/listen.ts";
 export type {
+  Heard,
   JsonSchema,
+  ListenAnswer,
+  ListenFailure,
+  ListenRequest,
   LookAnswer,
   LookFailure,
   LookImageRole,

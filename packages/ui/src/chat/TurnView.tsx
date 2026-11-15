@@ -15,6 +15,7 @@ import { Markdown } from "./markdown/Markdown.tsx";
 import { RefChip, RefText } from "./RefChip.tsx";
 import { piecesOf, plainOf } from "./refs.ts";
 import { summaryOf } from "./summary.ts";
+import { ListenRow } from "./ListenRow.tsx";
 import { LookRow } from "./LookRow.tsx";
 import { ToolRow } from "./ToolRow.tsx";
 import type { Names, Say } from "./toolSummary.ts";
@@ -27,6 +28,8 @@ const appLink = (href: string, label: string) => <RefChip chatRef={{ href, label
 
 /** The tool whose pictures show in the chat, see `LookRow`. */
 const LOOK_TOOL = "aq_render_frames";
+/** The tool whose level of the sound shows in the chat, see `ListenRow`. */
+const LISTEN_TOOL = "aq_audio_analyze";
 
 /** A thought quicker than this says nothing of how long it took. */
 const SHOWN_MS = 100;
@@ -225,12 +228,15 @@ function ProcessView({ turn, names }: { readonly turn: Turn; readonly names: Nam
     ...(turn.failed > 0 ? [t("chat.process.failed", { count: turn.failed })] : []),
     ...(turn.ms !== undefined ? [durationText(say, turn.ms, true)] : []),
   ];
-  // What failed shows anyway, and so do the pictures AI looked at: is what it saw what people see?
+  // What failed shows anyway, and so do the pictures AI looked at and the sound it heard: is what
+  // it saw and heard what people see and hear?
   const failed = turn.steps.filter(
     (step) =>
       step.kind === "tool" &&
       step.result &&
-      (!step.result.ok || (step.call.name === LOOK_TOOL && (step.result.images?.length ?? 0) > 0)),
+      (!step.result.ok ||
+        (step.call.name === LOOK_TOOL && (step.result.images?.length ?? 0) > 0) ||
+        step.call.name === LISTEN_TOOL),
   );
   return (
     <div className={styles.process} data-testid="chat-process">
@@ -274,6 +280,16 @@ function StepView({
       if (step.call.name === LOOK_TOOL) {
         return (
           <LookRow
+            call={step.call}
+            result={step.result}
+            running={running?.tool?.id === step.call.id ? running.tool.startedAt : undefined}
+            names={names}
+          />
+        );
+      }
+      if (step.call.name === LISTEN_TOOL) {
+        return (
+          <ListenRow
             call={step.call}
             result={step.result}
             running={running?.tool?.id === step.call.id ? running.tool.startedAt : undefined}
@@ -503,6 +519,31 @@ function OutcomeView({
         if (changed > 0 && chat.undoState(task) === "undo") setAsking(true);
         else void chat.retry();
       };
+      // Too long for its model even with room made: a new conversation goes on from its summary.
+      if (kind === "contextFull")
+        return (
+          <div className={styles.failure} role="alert" data-testid="chat-failure" data-kind={kind}>
+            <p>
+              {advice}
+              {latest && (
+                <button
+                  type="button"
+                  className={styles.link}
+                  data-testid="chat-fresh"
+                  onClick={() => chat.continueFresh()}
+                >
+                  {t("chat.failure.fresh")}
+                </button>
+              )}
+            </p>
+            {detail && (
+              <details className={styles.raw}>
+                <summary>{t("chat.failure.details")}</summary>
+                <p className={styles.muted}>{detail}</p>
+              </details>
+            )}
+          </div>
+        );
       return (
         <div className={styles.failure} role="alert" data-testid="chat-failure">
           <p>{advice}</p>

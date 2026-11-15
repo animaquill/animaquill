@@ -53,6 +53,7 @@ howto/transitions — transitions: at the edges of a clip, and joins between two
 howto/effects — effects: the list of a clip, the built-in effects, and their parameters as properties
 howto/scene-code — scene and sound code: files and folders, what the code reaches, and how it meets the editor
 howto/frames — seeing the picture: aq_render_frames, what its list measures, regions and comparisons
+howto/sound — hearing the sound: aq_audio_analyze, what each measure means, a sound made by code
 
 Operations of aq_edit (each page: what it does, parameters and the fields inside them, result, errors, examples):
 ops/project.rename — renames the project

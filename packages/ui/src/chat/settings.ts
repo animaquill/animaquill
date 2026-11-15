@@ -612,6 +612,7 @@ export class AiSettingsStore {
       shotSize,
       lookSize,
       lookWhilePlaying,
+      autoCompact,
       kept,
     } = this.#snapshot;
     return {
@@ -627,6 +628,7 @@ export class AiSettingsStore {
       ...(shotSize !== undefined && shotSize !== 1568 && { shotSize }),
       ...(lookSize !== undefined && { lookSize }),
       ...(lookWhilePlaying && { lookWhilePlaying }),
+      ...(autoCompact === false && { autoCompact }),
       ...(kept && { kept }),
     };
   }
@@ -1267,6 +1269,12 @@ export class AiSettingsStore {
   setLookSize(size: "small" | "medium" | "large"): void {
     const { lookSize: _was, ...now } = this.#settingsNow();
     this.#save({ ...now, ...(size !== "medium" && { lookSize: size }) });
+  }
+
+  /** Whether the earlier conversation is summed up by itself once the context is 80 % full. */
+  setAutoCompact(on: boolean): void {
+    const { autoCompact: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(!on && { autoCompact: false as const }) });
   }
 
   /** Whether AI waits for people to stop playing before it renders frames. */

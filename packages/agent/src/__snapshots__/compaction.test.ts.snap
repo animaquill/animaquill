@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the prompt that asks for a summary > is always the same words 1`] = `
+"You are summarizing the earlier part of a conversation between a user and the AI assistant inside AnimaQuill, a video and animation editor, so that the assistant can go on with the work in less context. The assistant will read your summary instead of the conversation; the latest messages follow it as they were.
+
+Write the summary in English, under these four headings:
+1. What the user wants: their requests and goals, with their exact words where the words matter.
+2. What was decided: what the user chose, agreed to or turned down, and what the assistant settled on with them.
+3. What was changed: every object the assistant created, changed or deleted, with its id and name and how, and values or revisions that later work depends on.
+4. What is still open: questions not answered, work not done yet, problems found and not fixed, and what the assistant was about to do next.
+
+Keep ids, names, times, numbers and file paths exactly as they are written. Pictures are not included: where the assistant looked at a picture or measured a sound, keep what it learned from it. Leave out greetings and calls that changed and found nothing. Reply with the summary only."
+`;
+
+exports[`the prompt that asks for a summary > is always the same words 2`] = `
+"[Summary of the earlier part of this conversation: the messages before this point were summed up to make room in the context, and the pictures in them left out; the messages after it follow as they were.]
+
+1. What the user wants: the title lower, the logo smaller."
+`;

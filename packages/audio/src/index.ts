@@ -7,6 +7,15 @@ export { faded, sampleTime, type MakeBuffer } from "./fades.ts";
 export { computePeaks, PEAKS_PER_SECOND } from "./peaks.ts";
 export { wavOf } from "./wav.ts";
 export {
+  MOST_PLACES,
+  SoundMeter,
+  type ClipPlace,
+  type Envelope,
+  type Measured,
+  type MeterOptions,
+  type Stretch,
+} from "./meter.ts";
+export {
   MIX_CHANNELS,
   MIX_PIECE_SECONDS,
   MIX_SAMPLE_RATE,

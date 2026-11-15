@@ -1,4 +1,4 @@
-import type { AnswerUsage, ChatEntry } from "@animaquill/agent";
+import { contextNow, type AnswerUsage, type ChatEntry } from "@animaquill/agent";
 
 /**
  * What a turn or a conversation took, from the usage each answer kept: tokens always, the cost only
@@ -46,7 +46,8 @@ export function usageOf(entries: readonly ChatEntry[]): UsageTotal {
   let total = { ...NO_USAGE, cost: 0 as number | undefined };
   let priced = true;
   for (const entry of entries) {
-    if (entry.role !== "assistant" || !counted(entry.usage)) continue;
+    // A summary of the earlier conversation is a request of its own, which costs too.
+    if ((entry.role !== "assistant" && entry.role !== "summary") || !counted(entry.usage)) continue;
     const usage: AnswerUsage = entry.usage;
     total = {
       answers: total.answers + 1,
@@ -61,13 +62,14 @@ export function usageOf(entries: readonly ChatEntry[]): UsageTotal {
   return { ...total, cost: priced && total.answers > 0 ? total.cost : undefined };
 }
 
-/** How full the context is, from the newest answer that says what it took. */
+/**
+ * How full the context is, from the newest answer that says what it took, or the newest summary of
+ * the earlier conversation, which says about how much is left.
+ */
 export function contextOf(entries: readonly ChatEntry[]): ContextUse | undefined {
-  const last = entries.findLast((entry) => entry.role === "assistant" && counted(entry.usage));
-  const usage = last?.role === "assistant" ? last.usage : undefined;
-  if (!usage) return undefined;
-  const used = usage.input + usage.cacheRead + usage.cacheWrite;
-  const window = usage.window;
+  const now = contextNow(entries);
+  if (!now) return undefined;
+  const { used, window } = now;
   return { used, window, share: window ? used / window : undefined };
 }
 

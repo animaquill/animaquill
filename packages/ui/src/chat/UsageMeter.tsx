@@ -7,9 +7,17 @@ import { cacheShare, contextLevel, contextOf, dollars, percent, tokens, usageOf 
 /**
  * What the conversation took, in the bar on top: how full the context of the model is and what it
  * cost so far, yellow from 70 % and red from 90 %. Open, the tokens in and out, of the cache, the
- * cost and how much came from the cache. Nothing before the first answer that says.
+ * cost and how much came from the cache, and a button to sum up the earlier conversation now.
+ * Nothing before the first answer that says.
  */
-export function UsageMeter({ entries }: { readonly entries: readonly ChatEntry[] }) {
+export function UsageMeter({
+  entries,
+  onCompact,
+}: {
+  readonly entries: readonly ChatEntry[];
+  /** Sums up the earlier conversation now, where there is something to sum up. */
+  readonly onCompact?: () => void;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -84,6 +92,19 @@ export function UsageMeter({ entries }: { readonly entries: readonly ChatEntry[]
             <dd>{total.cost !== undefined ? dollars(total.cost) : t("chat.usage.noPrice")}</dd>
           </dl>
           {total.cost !== undefined && <p className={styles.muted}>{t("chat.usage.estimate")}</p>}
+          {onCompact && (
+            <button
+              type="button"
+              className={styles.meterCompact}
+              data-testid="chat-compact"
+              onClick={() => {
+                setOpen(false);
+                onCompact();
+              }}
+            >
+              {t("chat.usage.compact")}
+            </button>
+          )}
         </div>
       )}
     </div>
