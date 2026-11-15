@@ -682,6 +682,11 @@ export class ChatSession {
    * first turn.
    */
   #after(conversation: Conversation, outcome: TaskOutcome | undefined): void {
+    // How the service did, for the dot beside it in the settings: what failed, until one goes.
+    const service = outcome && !this.#options.fake?.() ? this.modelNow()?.service : undefined;
+    if (service && outcome?.failure) this.#options.ai.noteRequest(service.id, outcome.failure);
+    else if (service && outcome && outcome.end !== "failed" && outcome.end !== "stopped")
+      this.#options.ai.noteRequest(service.id, undefined);
     if (this.#snapshot.conversation !== conversation || !outcome) return;
     void this.#title(conversation);
     const [next, ...rest] = this.#snapshot.queued;

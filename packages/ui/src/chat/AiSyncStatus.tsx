@@ -22,24 +22,3 @@ export function useAiSyncText(): { readonly text: string; readonly snapshot: AiS
       : t(`aiSync.status.${status}`);
   return { text, snapshot };
 }
-
-/** One line on top of the page of AI models: how they stand with the account, where they go. */
-export function AiSyncLine({ className, link }: { className: string; link: string }) {
-  const { aiSync } = useWorkbench();
-  const { t } = useTranslation();
-  const { text, snapshot } = useAiSyncText();
-  if (snapshot.account === undefined) return null;
-  return (
-    <p className={className} data-testid="ai-sync-line" data-status={snapshot.status}>
-      {t("aiSync.line", { status: text })}
-      {(snapshot.status === "failed" || snapshot.status === "offline") && (
-        <>
-          {" "}
-          <button type="button" className={link} onClick={() => aiSync.retry()}>
-            {t("aiSync.retry")}
-          </button>
-        </>
-      )}
-    </p>
-  );
-}

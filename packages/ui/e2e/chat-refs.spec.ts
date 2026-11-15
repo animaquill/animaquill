@@ -347,10 +347,7 @@ test("a model that takes no pictures: held, with another model or without them a
       .getByRole("checkbox", { name: /能看图/ });
     await image.check();
     if (!sees) await image.uncheck();
-    await settingsOf(page)
-      .getByTestId("ai-model-detail")
-      .getByRole("button", { name: "Anthropic" })
-      .click();
+    await settingsOf(page).getByTestId("ai-service-item").click();
     await expect(service).toBeVisible();
   };
   await say("claude-test", false);

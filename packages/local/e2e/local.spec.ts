@@ -311,25 +311,25 @@ test.describe("the editor on this computer", () => {
       await expect(settings.getByTestId("settings-result")).toHaveCount(0);
       await search.fill("");
 
-      // A service from the cards, as people add one, straight from the browser.
+      // A service from the picker, as people add one, straight from the browser.
       await settings.getByRole("button", { name: "AI 模型", exact: true }).click();
-      const wall = settings.getByTestId("ai-add");
-      await wall.locator('[data-testid="ai-kind"][data-kind="anthropic"]').click();
-      const form = wall.getByTestId("ai-add-form");
-      await form.getByLabel("Key").fill("sk-ant-test-local");
-      await form.getByRole("button", { name: "测试并添加" }).click();
+      const picker = settings.getByTestId("ai-add");
+      await picker.locator('[data-testid="ai-kind"][data-kind="anthropic"]').click();
       const service = settings.getByTestId("ai-service");
-      await expect(service.getByTestId("ai-key-saved")).toContainText("ocal");
-      await expect(service.getByTestId("ai-test")).toContainText("连上了");
+      await service.getByTestId("ai-key").fill("sk-ant-test-local");
+      await service.getByTestId("ai-key").press("Enter");
+      await expect(service.getByTestId("ai-key")).toHaveValue(/ocal$/);
+      await service.getByRole("button", { name: "测试", exact: true }).click();
+      await expect(service.getByTestId("ai-test")).toHaveAttribute("data-state", "ok");
       // Nothing goes through a platform here: that way is there, but cannot be chosen.
-      const route = service.getByRole("group", { name: "连接方式" });
+      const route = service.getByRole("group", { name: "连接" });
       await expect(route.getByRole("button", { name: "浏览器直连" })).toHaveAttribute(
         "aria-pressed",
         "true",
       );
       const relay = route.getByRole("button", { name: "经平台转发" });
       await expect(relay).toBeDisabled();
-      await expect(relay).toHaveAttribute("title", "通过平台转发（这里没有）");
+      await expect(relay).toHaveAttribute("title", "这里没有平台转发");
       await page.screenshot({ path: test.info().outputPath("local.png") });
       await settings.getByRole("button", { name: "存储和数据", exact: true }).click();
       const keys = settings.getByTestId("ai-keys-where");

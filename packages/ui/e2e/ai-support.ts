@@ -97,60 +97,62 @@ const answerTests = async (route: Route) => {
 };
 
 /**
- * Adds Anthropic with a key from the cards of services, tested; then, with a model named, that
+ * Adds Anthropic from the picker of services, with a key, tested; then, with a model named, that
  * model is the only one on, and the default. Ends on the service in the settings.
  */
 export async function addAnthropic(page: Page, key: string, model?: string) {
-  await openSettingsPage(page, "AI 模型");
   const settings = settingsOf(page);
   await page.route(ANTHROPIC, answerTests);
-  const wall = settings.getByTestId("ai-add");
-  if (!(await wall.isVisible())) await settings.getByTestId("ai-add-service").click();
-  await wall.locator('[data-testid="ai-kind"][data-kind="anthropic"]').click();
-  const form = wall.getByTestId("ai-add-form");
-  await form.getByLabel("Key").fill(key);
-  await form.getByRole("button", { name: "测试并添加" }).click();
+  const picker = page.getByTestId("ai-add");
+  if (!(await picker.isVisible())) {
+    await openSettingsPage(page, "AI 模型");
+    // With no service yet, the picker opens by itself.
+    await expect(settings.getByTestId("ai-models")).toBeVisible();
+    if (!(await picker.isVisible())) await settings.getByTestId("ai-add-service").click();
+  }
+  await picker.locator('[data-testid="ai-kind"][data-kind="anthropic"]').click();
   const service = settings.getByTestId("ai-service");
-  await expect(service.getByTestId("ai-key-saved")).toContainText(key.slice(-4));
-  await expect(service.getByTestId("ai-test")).toContainText("连上了");
+  await service.getByTestId("ai-key").fill(key);
+  await service.getByTestId("ai-key").press("Enter");
+  await expect(service.getByTestId("ai-key")).toHaveValue(`••••••••••••${key.slice(-4)}`);
+  await service.getByRole("button", { name: "测试", exact: true }).click();
+  await expect(service.getByTestId("ai-test")).toHaveAttribute("data-state", "ok");
   await page.unroute(ANTHROPIC, answerTests);
   if (model !== undefined) await onlyModel(page, model);
   await noAutoTitle(page);
 }
 
 /**
- * Turns off the titles the model writes after the first turn of a conversation, in the group of the
- * chat, and goes back to the AI models: each title would be one more request to the pretend service,
- * which tests count.
+ * Adds a model to the service open from what it lists, as people do with "获取模型…": the pretend
+ * service lists only that model.
  */
-export async function noAutoTitle(page: Page) {
-  await goToSettingsGroup(page, "AI 聊天");
-  await settingsOf(page).getByRole("switch", { name: "第一轮后自动起标题" }).uncheck();
-  await goToSettingsGroup(page, "AI 模型");
-}
-
-/** Turns on one more model of the service open, named by hand, leaving the others as they are. */
 export async function addModel(page: Page, model: string) {
   const service = settingsOf(page).getByTestId("ai-service");
-  await service.getByRole("button", { name: "＋ 手动加" }).click();
-  const form = service.getByTestId("ai-add-model");
-  await form.getByLabel("模型 ID").fill(model);
-  await form.getByRole("button", { name: "加上并启用" }).click();
+  const list = async (route: Route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          status: 200,
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+          body: JSON.stringify({ data: [{ id: model, type: "model" }], has_more: false }),
+        })
+      : route.fallback();
+  const models = "https://api.anthropic.com/v1/models**";
+  await page.route(models, list);
+  await service.getByTestId("ai-fetch-models").click();
+  const fetched = service.getByTestId("ai-fetch");
+  await fetched.locator(`[data-testid="ai-fetch-row"][data-model="${model}"]`).click();
+  await fetched.getByTestId("ai-fetch-add").click();
+  await page.unroute(models, list);
   await expect(
     service.locator(`[data-testid="ai-model"][data-model="${model}"]`).getByRole("switch"),
   ).toBeChecked();
 }
 
-/** Makes a model of the service open the only one on, and the default: named by hand if need be. */
+/** Makes a model of the service open the only one on, and the default: added if need be. */
 export async function onlyModel(page: Page, model: string) {
   const service = settingsOf(page).getByTestId("ai-service");
   const row = service.locator(`[data-testid="ai-model"][data-model="${model}"]`);
-  if ((await row.count()) === 0) {
-    await service.getByRole("button", { name: "＋ 手动加" }).click();
-    const form = service.getByTestId("ai-add-model");
-    await form.getByLabel("模型 ID").fill(model);
-    await form.getByRole("button", { name: "加上并启用" }).click();
-  }
+  if ((await row.count()) === 0) await addModel(page, model);
   const star = row.getByRole("button", { name: "设为默认模型" });
   if ((await star.count()) > 0) await star.click();
   await expect(row.getByRole("button", { name: "默认模型" })).toBeVisible();
@@ -168,5 +170,16 @@ export async function onlyModel(page: Page, model: string) {
       .getByRole("switch")
       .uncheck();
   }
-  await expect(service.getByTestId("ai-models-count")).toContainText("1/");
+  await expect(service.getByTestId("ai-models-count")).toContainText("1 / ");
+}
+
+/**
+ * Turns off the titles the model writes after the first turn of a conversation, in the group of the
+ * chat, and goes back to the AI models: each title would be one more request to the pretend service,
+ * which tests count.
+ */
+export async function noAutoTitle(page: Page) {
+  await goToSettingsGroup(page, "AI 聊天");
+  await settingsOf(page).getByRole("switch", { name: "第一轮后自动起标题" }).uncheck();
+  await goToSettingsGroup(page, "AI 模型");
 }

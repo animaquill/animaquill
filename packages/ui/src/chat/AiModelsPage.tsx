@@ -1,22 +1,23 @@
 import { kindOf, type ServiceConfig } from "@animaquill/agent";
-import { Plus } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { Cpu, Plus } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { AddService } from "./AddService.tsx";
-import { ServiceAvatar, stateOf } from "./aiParts.tsx";
+import { AddServicePicker } from "./AddService.tsx";
+import { ServiceAvatar, isServiceOn, stateOf } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
-import { AiSyncLine } from "./AiSyncStatus.tsx";
-import { ModelDetail } from "./ModelDetail.tsx";
-import { dropIndex } from "./modelParts.tsx";
+import { CapabilityIcon, capabilityOf } from "./CapabilityIcon.tsx";
+import { failureText } from "./failure.ts";
+import { ModelDetail, NewModel } from "./ModelDetail.tsx";
+import { StarButton, dropIndex } from "./modelParts.tsx";
 import { ServiceDetail } from "./ServiceDetail.tsx";
+import type { ServiceModel } from "./settings.ts";
 
 /**
- * The group of AI models in the settings (docs/design/settings-and-properties.md of AnimaQuill
- * Cloud, 6.1): the default model on top; the services on the left, with how each is, how many of
- * its models are on and a switch for all of them; on the right the service open (itself above, its
- * models below), or the cards of services to add. One level in, the details of one model. Where
- * the settings are narrow, one at a time: the dialog has the way back.
+ * The group of AI models in the settings, as pi-web's Models (docs/design/settings-and-
+ * properties.md of AnimaQuill Cloud, 6): a tree on the left, the services with, under those of
+ * one's own, their models, "＋ 模型" under each and "＋ 添加服务" at the bottom; on the right what is
+ * picked in it. Where the settings are narrow, one at a time: the tree, then what was picked.
  */
 export function AiModelsPage() {
   const workbench = useWorkbench();
@@ -25,24 +26,38 @@ export function AiModelsPage() {
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
   const { services } = snapshot;
+  // A model being named under a service of one's own, which is not one until it has an id.
+  const [naming, setNaming] = useState<string | undefined>();
 
-  // How many models each kind has, for the counts beside each service.
+  // What pi knows of each kind: its models, for the lists of the services and the picker.
   const kinds = [...new Set(services.map(({ kind }) => kind))].join(" ");
   useEffect(() => {
     for (const kind of kinds.split(" ")) if (kind) void ai.loadKnown(kind);
   }, [ai, kinds]);
 
   const open = services.find(({ id }) => id === place.service) ?? services[0];
-  const adding = place.adding !== undefined || services.length === 0;
-  const model = !adding && place.depth === 3 && open ? place.model : undefined;
+  const picking = snapshot.held === undefined && place.adding !== undefined;
+  // With no service yet, the picker is what the page shows.
+  const empty = snapshot.held === undefined && services.length === 0;
+  const model = place.depth === 3 && open ? place.model : undefined;
+  const drafting = naming !== undefined && naming === open?.id && model === undefined;
   const depth = place.depth === 0 ? 1 : place.depth;
-  const go = (changes: { service?: string | undefined; adding?: true | string }) =>
-    settingsNav.go({
-      group: "models",
-      depth: 2,
-      ...(changes.adding !== undefined && place.back && { back: place.back }),
-      ...changes,
-    });
+  // Where the page is, without the picker over it.
+  const here = {
+    group: "models" as const,
+    depth: place.depth,
+    ...(place.service !== undefined && { service: place.service }),
+    ...(place.model !== undefined && { model: place.model }),
+  };
+
+  const go = (service: string, opened?: string) => {
+    setNaming(undefined);
+    settingsNav.go(
+      opened === undefined
+        ? { group: "models", depth: 2, service }
+        : { group: "models", depth: 3, service, model: opened },
+    );
+  };
 
   const reset = async () => {
     const sure = await dialogs.confirm({
@@ -58,10 +73,9 @@ export function AiModelsPage() {
     <div
       className={styles.page}
       data-depth={depth}
-      data-model={model === undefined ? undefined : ""}
+      data-empty={empty ? "" : undefined}
       data-testid="ai-models"
     >
-      {model === undefined && <DefaultBar />}
       {snapshot.held && (
         <p className={styles.held} role="alert" data-testid="ai-held">
           {t(`ai.held.${snapshot.held}`)}{" "}
@@ -70,144 +84,258 @@ export function AiModelsPage() {
           </button>
         </p>
       )}
-      {model === undefined && (
-        <ServiceList
-          services={services}
-          current={adding ? undefined : open?.id}
-          onOpen={(id) => go({ service: id })}
-          onAdd={() => go({ adding: true })}
-        />
-      )}
+      <Tree
+        services={services}
+        current={drafting || model !== undefined ? undefined : open?.id}
+        currentModel={open && model !== undefined ? { service: open.id, model } : undefined}
+        naming={drafting ? naming : undefined}
+        onService={(id) => go(id)}
+        onModel={go}
+        onNewModel={(id) => {
+          settingsNav.go({ group: "models", depth: 2, service: id });
+          setNaming(id);
+        }}
+        onAdd={() => settingsNav.go({ ...here, depth: depth, adding: true })}
+      />
       <div className={styles.detail}>
         <div className={styles.detailInner}>
-          {model !== undefined && open ? (
+          {!open ? (
+            empty && (
+              <AddServicePicker
+                inline
+                picked={undefined}
+                onClose={() => {}}
+                onAdded={(id) => settingsNav.go({ group: "models", depth: 2, service: id })}
+              />
+            )
+          ) : drafting ? (
+            <NewModel key={`new\n${open.id}`} service={open} onAdded={(id) => go(open.id, id)} />
+          ) : model !== undefined ? (
             <ModelDetail key={`${open.id}\n${model}`} service={open} model={model} />
-          ) : adding || !open ? (
-            <AddService
-              key="add"
-              picked={typeof place.adding === "string" ? place.adding : undefined}
-              onPick={(kind) => go({ adding: kind ?? true })}
-              onBack={() =>
-                services.length > 0
-                  ? go({ service: open?.id })
-                  : settingsNav.go({ group: "models", depth: 1 })
-              }
-              backAlways={services.length > 0}
-              onAdded={(id) => {
-                const back = place.back;
-                go({ service: id });
-                // Sent here from the chat: back to it, where the service is ready to use.
-                if (back === "chat") {
-                  settingsNav.close();
-                  workbench.layout.openPanel("chat");
-                }
-              }}
-            />
           ) : (
             <ServiceDetail key={open.id} service={open} />
           )}
         </div>
       </div>
+      {picking && (
+        <AddServicePicker
+          picked={typeof place.adding === "string" ? place.adding : undefined}
+          onClose={() => settingsNav.go(here)}
+          onAdded={(id) => {
+            setNaming(undefined);
+            settingsNav.go({
+              group: "models",
+              depth: 2,
+              service: id,
+              ...(place.back !== undefined && { back: place.back }),
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
 
-/**
- * The model new conversations use, on top of the page: a list of the models that are on, by
- * service. How the settings stand with the account is on its right.
- */
-function DefaultBar() {
-  const { ai } = useWorkbench();
-  const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const fallback = ai.defaultModel();
-  const value = fallback ? `${fallback.service.id}\n${fallback.model}` : "";
-  const groups = snapshot.services
-    .map((service) => ({
-      service,
-      models: ai.modelsFor(service.id).filter((model) => model.enabled),
-    }))
-    .filter(({ models }) => models.length > 0);
-  return (
-    // `data-setting`: what searching the settings goes to, see settings/registry.ts.
-    <div className={styles.defaultBar} data-setting="models.default">
-      <label className={styles.defaultLabel} htmlFor="ai-default-model">
-        {t("ai.defaultModel")}
-      </label>
-      <select
-        id="ai-default-model"
-        className={`${styles.input} ${styles.defaultSelect}`}
-        data-testid="ai-default-model"
-        value={value}
-        disabled={snapshot.held !== undefined || groups.length === 0}
-        onChange={(event) => {
-          const [service, model] = event.target.value.split("\n");
-          if (service && model) ai.setDefault({ service, model });
-        }}
-      >
-        {groups.length === 0 && <option value="">{t("ai.defaultNone")}</option>}
-        {groups.map(({ service, models }) => (
-          <optgroup key={service.id} label={service.name}>
-            {models.map((model) => (
-              <option key={model.id} value={`${service.id}\n${model.id}`}>
-                {`${value === `${service.id}\n${model.id}` ? "★ " : ""}${model.name ?? model.id} · ${service.name}`}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
-      <span className={styles.defaultHelp}>{t("ai.defaultHelp")}</span>
-      <span className={styles.grow} />
-      <AiSyncLine className={styles.syncLine ?? ""} link={styles.link ?? ""} />
-    </div>
-  );
+/** The models of a server of one's own the tree lists: those people added, in their order. */
+function treeModelsOf(service: ServiceConfig, models: readonly ServiceModel[]) {
+  const order = service.enabled.length > 0 ? service.enabled : (service.paused ?? []);
+  const at = new Map(order.map((id, index) => [id, index]));
+  return models
+    .filter((model) => at.has(model.id))
+    .toSorted((a, b) => (at.get(a.id) ?? 0) - (at.get(b.id) ?? 0));
 }
 
-function ServiceList(props: {
+const isCustom = (service: ServiceConfig) => kindOf(service.kind)?.custom === true;
+
+function Tree(props: {
   readonly services: readonly ServiceConfig[];
   readonly current: string | undefined;
-  readonly onOpen: (id: string) => void;
+  readonly currentModel: { readonly service: string; readonly model: string } | undefined;
+  readonly naming: string | undefined;
+  readonly onService: (id: string) => void;
+  readonly onModel: (service: string, model: string) => void;
+  readonly onNewModel: (service: string) => void;
   readonly onAdd: () => void;
 }) {
   const { ai } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const [dragged, setDragged] = useState<string | undefined>();
-  const [refused, setRefused] = useState(false);
   const held = snapshot.held !== undefined;
+  // Services of the catalog above, those of one's own below the line; each kept in its order.
+  const builtin = props.services.filter((service) => !isCustom(service));
+  const own = props.services.filter(isCustom);
 
-  const move = (id: string, to: number) => {
-    const from = props.services.findIndex((service) => service.id === id);
-    // Taken out first: a place after it is one less.
-    ai.moveService(id, from < to ? to - 1 : to);
+  /** Moves a service to before another of its group, or to after the last one of it. */
+  const moveTo = (
+    id: string,
+    group: readonly ServiceConfig[],
+    before: ServiceConfig | undefined,
+  ) => {
+    const others = props.services.filter((service) => service.id !== id);
+    const last = group.filter((service) => service.id !== id).at(-1);
+    const at = before
+      ? others.findIndex((service) => service.id === before.id)
+      : last
+        ? others.indexOf(last) + 1
+        : others.length;
+    ai.moveService(id, at);
+  };
+
+  const drop = (event: DragEvent<HTMLElement>, target: ServiceConfig, index: number) => {
+    event.preventDefault();
+    setDragged(undefined);
+    if (dragged === undefined || dragged === target.id) return;
+    const group = isCustom(target) ? own : builtin;
+    if (!group.some((service) => service.id === dragged)) return;
+    const after = dropIndex(event, index) > index;
+    moveTo(dragged, group, after ? group[index + 1] : target);
+  };
+
+  const node = (service: ServiceConfig, index: number, group: readonly ServiceConfig[]) => {
+    const state = stateOf(snapshot, service);
+    const failure = snapshot.failing.get(service.id);
+    const custom = isCustom(service);
+    const off = !isServiceOn(service);
+    return (
+      <div
+        key={service.id}
+        className={styles.treeService}
+        data-off={off ? "" : undefined}
+        data-dragging={dragged === service.id ? "" : undefined}
+      >
+        <button
+          type="button"
+          className={styles.treeRow}
+          data-testid="ai-service-item"
+          data-service={service.id}
+          aria-current={props.current === service.id}
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          draggable={!held}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", service.name);
+            setDragged(service.id);
+          }}
+          onDragEnd={() => setDragged(undefined)}
+          onDragOver={(event) => {
+            if (dragged !== undefined) event.preventDefault();
+          }}
+          onDrop={(event) => drop(event, service, index)}
+          onClick={() => props.onService(service.id)}
+          onKeyDown={(event) => {
+            if (!event.altKey || held) return;
+            if (event.key === "ArrowUp" && index > 0) {
+              event.preventDefault();
+              moveTo(service.id, group, group[index - 1]);
+            } else if (event.key === "ArrowDown" && index < group.length - 1) {
+              event.preventDefault();
+              moveTo(service.id, group, group[index + 2]);
+            }
+          }}
+        >
+          {custom ? (
+            <Cpu size={14} className={styles.treeIcon} aria-hidden />
+          ) : (
+            <ServiceAvatar kind={service.kind} name={service.name} />
+          )}
+          <span className={styles.treeName}>{service.name}</span>
+          {state !== "ok" && (
+            <span
+              className={styles.dot}
+              data-state={state}
+              data-testid="ai-service-dot"
+              role="img"
+              aria-label={t(`ai.status.${state}`)}
+              title={
+                state === "failed" && failure
+                  ? `${t("ai.status.failed")} · ${t(`ai.testFailed.${failure.kind}`)}\n${
+                      failureText(t, failure, {
+                        relayed: service.route === "relay",
+                        canRelay: ai.canRelay,
+                      }).advice
+                    }`
+                  : t(`ai.status.${state}`)
+              }
+            />
+          )}
+        </button>
+        {custom && (
+          <TreeModels
+            service={service}
+            current={
+              props.currentModel?.service === service.id ? props.currentModel.model : undefined
+            }
+            naming={props.naming === service.id}
+            onModel={(model) => props.onModel(service.id, model)}
+            onNew={() => props.onNewModel(service.id)}
+          />
+        )}
+      </div>
+    );
   };
 
   return (
     // `data-setting`: what searching the settings goes to, see settings/registry.ts.
-    <div className={styles.list} data-setting="models.services">
-      <div className={styles.listHead}>
-        <span>{t("ai.services")}</span>
+    <nav className={styles.tree} aria-label={t("ai.title")} data-setting="models.services">
+      <div className={styles.treeList} data-setting="models.default" data-testid="ai-tree">
+        {builtin.map((service, index) => node(service, index, builtin))}
+        {builtin.length > 0 && own.length > 0 && <hr className={styles.treeLine} />}
+        {own.map((service, index) => node(service, index, own))}
       </div>
-      {props.services.length === 0 && (
-        <p className={`${styles.none} ${styles.addLink}`}>{t("ai.none")}</p>
-      )}
-      {props.services.map((service, index) => {
-        const state = stateOf(snapshot, service);
-        const kind = kindOf(service.kind);
-        const total = ai.modelsFor(service.id).length;
-        const on = service.enabled.length > 0;
+      <button
+        type="button"
+        className={styles.treeAdd}
+        data-testid="ai-add-service"
+        disabled={held}
+        onClick={props.onAdd}
+      >
+        <Plus size={14} aria-hidden /> {t("ai.addService")}
+      </button>
+    </nav>
+  );
+}
+
+/** The models of a server of one's own, under it: to open, order, and make the default. */
+function TreeModels(props: {
+  readonly service: ServiceConfig;
+  readonly current: string | undefined;
+  readonly naming: boolean;
+  readonly onModel: (model: string) => void;
+  readonly onNew: () => void;
+}) {
+  const { service } = props;
+  const { ai } = useWorkbench();
+  const { t } = useTranslation();
+  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const [dragged, setDragged] = useState<string | undefined>();
+  const held = snapshot.held !== undefined;
+  const models = treeModelsOf(service, ai.modelsFor(service.id));
+  // Only those on move: a service turned off keeps its order as it was.
+  const movable = !held && service.enabled.length > 0;
+  const move = (id: string, to: number) => {
+    const from = service.enabled.indexOf(id);
+    if (from < 0) return;
+    ai.moveModel(service.id, id, from < to ? to - 1 : to);
+  };
+  return (
+    <>
+      {models.map((model, index) => {
+        const name = model.name ?? model.id;
+        const capability = capabilityOf(model.values);
         return (
           <div
-            key={service.id}
-            className={styles.serviceRow}
-            data-testid="ai-service-item"
-            data-service={service.id}
-            data-dragging={dragged === service.id ? "" : undefined}
-            draggable={!held}
+            key={model.id}
+            className={styles.treeModel}
+            data-testid="ai-model"
+            data-model={model.id}
+            data-dragging={dragged === model.id ? "" : undefined}
+            data-current={props.current === model.id ? "" : undefined}
+            draggable={movable}
             onDragStart={(event) => {
               event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("text/plain", service.name);
-              setDragged(service.id);
+              event.dataTransfer.setData("text/plain", model.id);
+              setDragged(model.id);
             }}
             onDragEnd={() => setDragged(undefined)}
             onDragOver={(event) => {
@@ -221,71 +349,43 @@ function ServiceList(props: {
           >
             <button
               type="button"
-              className={styles.service}
-              aria-current={props.current === service.id}
-              onClick={() => props.onOpen(service.id)}
+              className={styles.treeModelName}
+              aria-current={props.current === model.id}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+              data-testid="ai-model-open"
+              onClick={() => props.onModel(model.id)}
               onKeyDown={(event) => {
-                if (!event.altKey || held) return;
+                if (!event.altKey || !movable) return;
                 if (event.key === "ArrowUp" && index > 0) {
                   event.preventDefault();
-                  ai.moveService(service.id, index - 1);
-                } else if (event.key === "ArrowDown" && index < props.services.length - 1) {
+                  ai.moveModel(service.id, model.id, index - 1);
+                } else if (event.key === "ArrowDown" && index < models.length - 1) {
                   event.preventDefault();
-                  ai.moveService(service.id, index + 1);
+                  ai.moveModel(service.id, model.id, index + 1);
                 }
               }}
             >
-              <span
-                className={styles.dot}
-                data-state={state}
-                title={t(`ai.status.${state}`)}
-                aria-label={t(`ai.status.${state}`)}
-              />
-              <ServiceAvatar kind={service.kind} name={service.name} />
-              <span className={styles.serviceName} title={kind?.name}>
-                {service.name}
-              </span>
-              {state === "noKey" ? (
-                <span className={styles.badge} data-warn>
-                  {t("ai.noKey")}
-                </span>
-              ) : (
-                <span className={styles.badge}>
-                  {service.enabled.length}/{Math.max(total, service.enabled.length)}
-                </span>
-              )}
+              {name}
             </button>
-            <input
-              type="checkbox"
-              role="switch"
-              className={`${styles.switch} ${styles.serviceSwitch}`}
-              aria-label={t("ai.serviceSwitch", { service: service.name })}
-              title={t("ai.serviceSwitch", { service: service.name })}
-              data-testid="ai-service-switch"
-              checked={on}
-              disabled={held}
-              onChange={(event) =>
-                setRefused(ai.setServiceOn(service.id, event.target.checked) === "last")
-              }
-            />
+            {capability && <CapabilityIcon capability={capability} size={13} />}
+            <StarButton service={service.id} model={model.id} name={name} />
           </div>
         );
       })}
-      {refused && (
-        <p className={`${styles.warning} ${styles.addLink}`} role="status">
-          {t("ai.lastModel")}
-        </p>
+      {props.naming && (
+        <div className={styles.treeModel} data-current="" data-testid="ai-model-new">
+          <span className={`${styles.treeModelName} ${styles.treeNew}`}>{t("ai.newModel")}</span>
+        </div>
       )}
       <button
         type="button"
-        className={`${styles.link} ${styles.addLink}`}
-        data-testid="ai-add-service"
+        className={styles.treeAddModel}
+        data-testid="ai-add-model"
         disabled={held}
-        onClick={props.onAdd}
+        onClick={props.onNew}
       >
-        <Plus size={12} aria-hidden /> {t("ai.addService")}
+        <Plus size={12} aria-hidden /> {t("ai.addModel")}
       </button>
-      {props.services.length > 1 && <p className={styles.listFoot}>{t("ai.servicesFoot")}</p>}
-    </div>
+    </>
   );
 }

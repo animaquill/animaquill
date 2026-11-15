@@ -336,9 +336,11 @@ test("before any service: where the key goes, and one click to adding Anthropic,
   await shoot(page, "onboarding", chat(page).locator('[data-testid="chat-onboarding"]'));
 
   await start.locator('[data-testid="chat-onboard-service"][data-kind="anthropic"]').click();
-  const form = settingsOf(page).getByTestId("ai-add-form");
-  await form.getByLabel("Key").fill(KEY);
-  await form.getByRole("button", { name: "测试并添加" }).click();
+  // Added at once, open at its key: given, back in the chat.
+  const key = settingsOf(page).getByTestId("ai-service").getByTestId("ai-key");
+  await expect(key).toBeVisible();
+  await key.fill(KEY);
+  await key.press("Enter");
   // Back in the chat, ready: the settings closed, the model, and things to try saying.
   await expect(settingsOf(page)).toBeHidden({ timeout: 15_000 });
   await expect(chat(page).getByTestId("chat-model")).toBeVisible({ timeout: 15_000 });

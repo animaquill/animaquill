@@ -797,12 +797,12 @@
       "models": {
         "services": {
           "name": "AI 服务和 key",
-          "help": "连接 AI 服务：名称、key、地址、连接方式，自建服务的接口类型；服务的顺序和总开关。",
+          "help": "左边的树：服务和它的模型，底部添加服务；点服务改名称、地址、API key、接口类型、请求头、连接。",
           "keywords": "key api key 密钥 服务 提供商 provider 模型 anthropic openai deepseek 网关 连接 转发"
         },
         "default": {
           "name": "默认模型",
-          "help": "新对话用的模型，在 AI 模型页顶上选。每个对话能在聊天里另选。",
+          "help": "新对话用的模型：点模型旁边的星。每个对话能在聊天里另选。",
           "keywords": "default model 默认 模型 星标"
         },
         "reasoning": {
@@ -817,18 +817,13 @@
         },
         "list": {
           "name": "模型列表",
-          "help": "启用哪些模型、顺序（拖动或 Alt+↑/↓）、从服务获取、手动加、逐个测试。",
-          "keywords": "model models 模型 启用 顺序 排序 获取 测试 添加"
-        },
-        "catalog": {
-          "name": "模型目录",
-          "help": "按 pi 自带的目录和 models.dev 自动填写模型的上下文、能力、价格；可以刷新目录。",
-          "keywords": "catalog models.dev 目录 自动填写 刷新 价格"
+          "help": "服务商的模型逐个开关、全部启用或停用；自建服务的模型在树里，“＋ 模型”或“获取模型…”加进来。拖动或 Alt+↑/↓ 改顺序。",
+          "keywords": "model models 模型 启用 顺序 排序 获取 测试 添加 获取模型 导入"
         },
         "details": {
           "name": "模型的详细参数",
-          "help": "点模型行尾的 › 打开：名称、能力、上下文、最大输出、价格、推理强度映射、图片上限，高级里有单独的地址、接口、请求头和兼容选项。",
-          "keywords": "上下文 context 最大输出 max tokens 价格 price 推理强度映射 thinking level map 图片 能看图 能思考 compat developer deepseek 自适应"
+          "help": "点模型打开：模型 ID、名称、按目录填写、能力、上下文、最大输出、图片上限、价格，高级里有单独的地址、接口类型、请求头、兼容和推理强度。",
+          "keywords": "上下文 context 最大输出 max tokens 价格 price 推理强度映射 thinking level map 图片 能看图 能思考 compat developer deepseek 自适应 catalog models.dev 目录 自动填写"
         }
       },
       "packs": {
@@ -2727,42 +2722,20 @@
   },
   "ai": {
     "title": "AI 模型",
-    "intro": "聊天选项卡用这里的服务和模型。服务和 key 都由你自己提供，请求从这个浏览器直接发给服务商，不经过我们。",
-    "services": "服务",
     "addService": "添加服务",
-    "none": "还没有添加服务。",
-    "defaultModel": "默认模型",
-    "defaultNone": "还没有启用的模型",
     "status": {
-      "ok": "测通了",
-      "untested": "还没测",
       "noKey": "缺 key",
-      "failed": "上次没测通",
-      "testing": "正在测"
+      "failed": "上次失败"
     },
-    "noKey": "缺 key",
     "name": "名称",
-    "rename": "改名",
     "remove": "删除服务",
     "removeConfirm": "删除服务“{{name}}”？它的 key 也会删掉；用它的对话要换模型。",
-    "key": "Key",
-    "keySaved": "已保存的 key，末尾是 {{hint}}",
-    "keyChange": "更换",
-    "keyRemove": "删除",
-    "keyRemoveConfirm": "删除“{{name}}”保存的 key？服务的设置会留着。",
-    "keySave": "保存",
-    "keyCancel": "取消",
-    "keyPlaceholder": "粘贴 key 后按 Enter 保存",
-    "keyEmpty": "填上 key 就能用这家的 {{count}} 个模型。",
-    "keyEmptyNone": "填上 key 就能用。",
-    "keyOptional": "自己的服务不用 key 的话可以不填。",
+    "key": "API key",
     "keysWhere": "只在这台设备 · 存在这个浏览器里（IndexedDB {{where}}），不进项目文件夹，不出现在错误报告和运行情况报告里；清除这个网站的数据会一起删掉。",
     "keysNowhere": "这个环境不保存 key，关闭页面后要重新填写。",
     "noSubscription": "不支持用订阅账号登录（比如 Claude 订阅），也不能粘贴订阅的令牌：请用服务商的 API key。",
-    "noSubscriptionAnthropic": "请用 API key（在 console.anthropic.com 创建），不支持 Claude 订阅登录。",
-    "test": "测试连接",
+    "test": "测试",
     "testing": "正在测…",
-    "testCost": "会用掉极少的额度",
     "testCostTitle": "向模型发一句“只回 OK”，最多 16 个 token，20 秒没回应就算失败，不重试。",
     "testOk": "连上了 · {{ms}} 毫秒 · 回答“{{text}}”",
     "testOkQuiet": "连上了 · {{ms}} 毫秒",
@@ -2775,39 +2748,23 @@
       "server": "服务出错",
       "other": "没测通"
     },
-    "testDetails": "详情",
     "models": "模型",
-    "modelsEnabled": "{{enabled}}/{{total}} 启用",
+    "modelsEnabled": "{{enabled}} / {{total}} 启用",
     "enableAll": "全部启用",
     "disableAll": "全部停用",
-    "filter": "筛选模型",
-    "noMatch": "没有符合的模型。",
-    "noModels": "还不知道这家有哪些模型：点“从服务获取”，或者手动加一个模型名。",
+    "filter": "筛选",
     "lastModel": "至少要留一个启用的模型。",
     "enableModel": "启用 {{model}}",
     "setDefault": "设为默认模型",
     "isDefault": "默认模型",
-    "testModel": "测试",
-    "testModelTitle": "只测 {{model}}，会用掉极少的额度",
-    "modelCustom": "手动加的",
     "price": "${{input}} / ${{output}}",
-    "priceTitle": "每百万 token：输入 ${{input}}，输出 ${{output}}（按公开价格，以服务商账单为准）",
     "modelReasoning": "默认推理强度",
     "reasoningAuto": "按适配包（{{level}}）",
     "reasoningAutoNone": "按适配包",
-    "addModel": "＋ 手动加",
-    "addModelName": "模型 ID（发给服务的名字）",
-    "addModelConfirm": "加上并启用",
+    "addModel": "模型",
     "advanced": "高级",
-    "routeShort": {
-      "direct": "直连",
-      "relay": "平台转发"
-    },
     "baseUrl": "地址",
-    "baseUrlChanged": "已改",
-    "baseUrlRestore": "恢复默认地址",
-    "route": "连接方式",
-    "gpt6Completions": "这是“OpenAI 兼容”服务，走 Chat Completions：GPT-6 系列在这条路上调不了工具，AI 就改不了项目。要用 GPT-6，请添加“OpenAI”服务（走 Responses）。",
+    "route": "连接",
     "conversation": "对话",
     "device": "这台设备上的数据",
     "held": {
@@ -2817,45 +2774,22 @@
       "resetConfirm": "丢掉现在读不懂的 AI 设置，从空的开始？这个浏览器里的 key 不会删。"
     },
     "add": {
-      "title": "添加服务",
-      "search": "搜服务：名字、模型",
+      "search": "搜服务",
       "groups": {
-        "common": "常用",
-        "china": "国内",
-        "more": "更多",
-        "own": "自己的服务"
+        "own": "自建",
+        "catalog": "服务商"
       },
       "apiKey": "API key",
       "models": "{{count}} 个模型",
-      "existing": "已有 {{count}} 个",
-      "relaySignIn": "经平台转发 · 要登录",
-      "relay": "经平台转发",
-      "relayNone": "浏览器多半连不上，这里没有平台转发",
-      "own": "填地址",
-      "ownOpenAI": "填地址，比如本机的 Ollama",
+      "own": "OpenAI / Anthropic 兼容",
       "none": "没有符合的服务。",
-      "form": "添加 {{name}}",
-      "try": "测试并添加",
-      "trying": "正在测…",
-      "anyway": "仍然添加",
-      "cancel": "取消",
-      "willEnable": "测通后启用 {{models}}",
-      "willEnableDefault": "测通后启用 {{models}}，并设为默认",
-      "willList": "测通后从服务获取模型，先启用前 3 个，之后再挑。",
-      "completions": "“OpenAI 兼容”走 Chat Completions：GPT-6 系列在这条路上调不了工具。要用 GPT-6，请选“OpenAI”。",
-      "keyRequired": "先填 key。",
-      "urlRequired": "先填服务的地址。"
+      "urlRequired": "先填服务的地址。",
+      "ownSub": "自己填地址",
+      "ownName": "自建服务",
+      "added": "已添加"
     },
     "baseUrlInvalid": "地址要以 https:// 开头（自己电脑或局域网里的服务可以用 http://）。",
-    "routeDirect": "从浏览器直连",
-    "routeRelay": "通过平台转发（要登录）",
-    "routeRelayNone": "通过平台转发（这里没有）",
-    "routeRelayHint": "通过平台转发要先登录。请求经 AnimaQuill 平台转给服务商，回答边生成边传回来：平台只转发，不保存、不记录请求和回答的内容，不记录转到了哪里，也不保存 key，只按月记你用了几次、多少流量。只能转到 https 地址，请求最多 20 MB，要在大约一分钟内传完。",
-    "routeRelayMissing": "这里没有平台转发，只有登录后的网页版才能用。请改成从浏览器直连。",
-    "needsRelay": "这家服务不让浏览器直接读取回答，直连多半连不上，可以改成通过平台转发。",
-    "needsRelayLocal": "这家服务不让浏览器直接读取回答，直连多半连不上；这里没有平台转发。",
-    "untested": "这家服务从浏览器直连还没有确认过，连不上时可以改成通过平台转发。",
-    "untestedLocal": "这家服务从浏览器直连还没有确认过，可能连不上。",
+    "routeRelayNone": "这里没有平台转发",
     "limit": "一次任务最多调用工具",
     "limitHelp": "AI 一次任务里调用工具达到这个次数就停下来，防止它反复尝试。可以说“继续”让它接着做。",
     "times": "次",
@@ -3191,18 +3125,12 @@
     },
     "autoTitle": "第一轮之后让模型给对话起一个短标题（一次很小的请求）",
     "baseUrlSecret": "地址里不能带密钥，请填在 key 里。",
-    "defaultHelp": "新对话用它；每个对话能在聊天里另选。",
-    "serviceSwitch": "{{service}} 的全部模型",
-    "servicesFoot": "拖动服务改顺序（聊天里选模型时按这个顺序），也可以按 Alt+↑/↓。",
     "capability": {
       "thinking": "能思考",
       "image": "能看图",
       "both": "能思考，能看图"
     },
-    "kindOfficial": "{{name}} 官方接口",
-    "baseUrlOfficial": "官方默认",
     "api": "接口类型",
-    "apiFixed": "这家服务固定用这种接口",
     "apiNames": {
       "openai-completions": "OpenAI Chat Completions",
       "openai-responses": "OpenAI Responses",
@@ -3210,98 +3138,44 @@
       "google-generative-ai": "Google Gemini",
       "mistral-conversations": "Mistral Conversations"
     },
-    "keyWhere": {
-      "device": "只在这台设备",
-      "account": "跟账号同步，加密存储"
-    },
-    "keysWhereShort": "不进项目文件夹，不出现在错误报告和运行情况报告里。",
     "routeDirectShort": "浏览器直连",
     "routeRelayShort": "经平台转发",
-    "routeDirectHint": "直连时 key 不经过我们。",
     "headers": {
-      "title": "请求头（{{count}}）",
-      "help": "只有公司网关这类要额外头的服务才用",
+      "title": "请求头",
       "name": "名字",
       "value": "值",
-      "add": "＋ 加一个请求头",
+      "add": "添加请求头",
       "remove": "去掉",
-      "relayHint": "浏览器直连时，对方要允许这些请求头跨域；连不上的话可以改用“经平台转发”，转发会带上这些请求头。",
       "problem": {
         "name": "名字只能用字母、数字和 -，也不能是浏览器或平台自己管的头（比如 Host、Cookie、Set-Cookie、User-Agent，经平台转发时也不会带上）。",
         "value": "值只能是英文、数字和符号（不能有中文或别的文字），最长 4000 个字符。",
         "many": "最多 {{count}} 个请求头，值加起来最多 8 KB。"
       }
     },
-    "catalog": {
-      "idle": "目录还没加载。",
-      "loading": "正在加载目录…",
-      "ok": "目录已加载（{{from}}，{{ago}}）。",
-      "failed": "目录取不到，只用 pi 自带的。",
-      "refresh": "刷新目录",
-      "from": {
-        "device": "这台设备上的 models.dev",
-        "models.dev": "models.dev",
-        "platform": "经平台取的 models.dev"
-      },
-      "refreshTitle": "重新取 models.dev 的目录；已经填好的格不变，要按新目录填写，请到模型的详细参数里点“重新按目录填写”"
-    },
     "fetch": {
-      "open": "从服务获取…",
-      "title": "从“{{name}}”获取模型",
-      "close": "关闭",
-      "search": "筛选",
-      "found": "找到 {{count}} 个，显示 {{shown}} 个",
-      "loading": "正在问服务有哪些模型…",
-      "empty": "服务没有列出模型。",
-      "selectShown": "选中显示的 {{count}} 个",
-      "infoHead": "按目录查到的信息",
+      "open": "获取模型…",
+      "found": "{{count}} 个",
+      "loading": "正在获取…",
+      "selectShown": "全选",
       "added": "已添加",
       "notChat": "不是对话模型",
-      "notInCatalog": "目录里没有",
-      "serviceSays": "服务说 {{size}}",
-      "source": "信息来源：服务自己报的（上下文、能力）优先；其余按 pi 自带的目录和 models.dev 目录（这台设备缓存 1 小时）匹配同一个模型 ID。几家价格对不上时写“价格不可靠”，不填价格。添加以后这些信息已经填好，打开详细参数能看出哪些是目录填的、能撤销。",
-      "add": "添加 {{count}} 个并启用"
-    },
-    "addModelHelp": "加上后按目录自动填写上下文、能力和价格；目录里查不到的格可以在详细参数里自己填。",
-    "addModelTaken": "这个服务已经有这个模型了：加上只是把它启用。",
-    "sort": "A–Z",
-    "sortTitle": "启用的模型按名字排序",
-    "columns": {
-      "enabled": "启用",
-      "model": "模型",
-      "context": "上下文",
-      "maxTokens": "最大输出",
-      "price": "价格 入/出",
-      "capabilities": "能力"
+      "add": "添加选中的"
     },
     "unknown": "—",
-    "noPrice": "没有价格",
-    "listFoot": "拖动启用的模型改顺序（聊天里选模型时按这个顺序），也可以按 Alt+↑/↓。“—”是目录里没查到，点 › 自己填。",
-    "openModel": "{{model}} 的详细参数",
-    "moveModel": "移动 {{model}}",
-    "moveModelTitle": "拖动改顺序，或按 ↑/↓",
     "mark": {
       "catalog": "目录",
       "edited": "你改的",
-      "revert": "改回目录的值",
-      "revertTitle": "你改过这一格，以后重新按目录填写也不动它"
+      "revert": "改回目录的值"
     },
     "detail": {
       "gone": "这个模型已经不在了。",
-      "enabled": "启用",
-      "test": "测试这个模型",
       "remove": "移除",
-      "disable": "停用",
-      "id": "模型 ID（发给服务的名字）",
-      "idFixed": "pi 自带目录里的模型按 ID 认，不能改；要用别的 ID，请手动加一个",
-      "name": "显示的名字",
-      "capabilities": "能力",
+      "id": "模型 ID",
       "reasoning": "能思考",
       "image": "能看图",
       "context": "上下文（token）",
       "maxTokens": "最大输出（token）",
-      "imageMax": "图片最大（MB）",
-      "imageMaxHelp": "超过的截图先缩小再发",
+      "imageMax": "图片上限（MB）",
       "price": "价格（美元 / 百万 token）",
       "prices": {
         "input": "输入",
@@ -3309,23 +3183,18 @@
         "cacheRead": "缓存读",
         "cacheWrite": "缓存写"
       },
-      "pricePartial": "只填了一部分：空的按 0 算。",
-      "priceNone": "没有价格：这个模型的花费不估。",
-      "advancedNone": "都用服务的设置",
+      "advancedNone": "用服务的设置",
       "advancedSome": "改了 {{count}} 项",
-      "baseUrl": "这个模型单独的地址",
-      "api": "这个模型单独的接口类型",
-      "useService": "（用服务的）{{value}}",
-      "headers": "这个模型的请求头（加在服务的请求头上）",
+      "useService": "用服务的",
       "compat": "兼容",
-      "baseUrlKey": "填了的话，这个服务的 Key 会发到这个地址。"
+      "default": "默认",
+      "editPrices": "改价格",
+      "pricesDone": "完成"
     },
     "compat": {
       "adaptive": "强制自适应思考",
       "deepseek": "DeepSeek 思考格式",
-      "developer": "系统提示用 developer 角色",
-      "asPi": "（按 pi 的默认）",
-      "none": "这种接口没有兼容选项。"
+      "developer": "系统提示用 developer 角色"
     },
     "fill": {
       "done": "已按目录填写 {{count}} 项：{{from}}{{by}}{{price}}",
@@ -3346,32 +3215,21 @@
         "no-valid-price": " · 目录里没有价格",
         "no-exact-match": ""
       },
-      "live": "这些值来自 pi 自带的目录（随 AnimaQuill 的版本更新）。",
-      "none": "目录里没有这个 ID，下面的格要自己填；不填的话上下文按 128k 算，花费不估。",
-      "noCatalog": "目录取不到，下面的格可以自己填；不填的话上下文按 128k 算，花费不估。",
-      "nothing": "还没有按目录填写。",
       "loading": "正在查目录…",
-      "again": "重新按目录填写",
-      "againTitle": "目录填过的格和空着的格按目录重新填；你改过的格不动",
-      "undo": "撤销这次填写",
-      "serviceOnly": "服务自己报了 {{count}} 项，已经填上。"
+      "again": "按目录填写",
+      "undo": "撤销填写"
     },
     "map": {
-      "title": "推理强度映射",
-      "help": "勾上的档才会出现在聊天的推理强度里",
-      "level": "档",
-      "value": "发给服务的值",
+      "title": "推理强度",
       "supported": "支持",
-      "default": "默认：{{value}}",
       "valueOf": "“{{level}}”发给服务的值",
       "supportedOf": "支持“{{level}}”",
       "invalid": "只能是英文、数字和符号，不能有空格，最多 10 个字符。"
     },
     "picture": {
-      "ok": "看图也测过了：它答对了图片的颜色。",
       "wrong": "这个模型可能看不了图（问一张红色图片的颜色，它答“{{said}}”）。取消勾选“能看图”？",
-      "failed": "带图片的请求失败了，这个模型可能看不了图（{{advice}}）。取消勾选“能看图”？",
-      "uncheck": "取消勾选"
+      "uncheck": "取消能看图",
+      "failedShort": "看图没通过"
     },
     "invalid": {
       "integer": "要填正整数，或者空着。",
@@ -3381,7 +3239,18 @@
       "idTaken": "这个服务已经有这个 ID 的模型了。",
       "long": "最多 200 个字符。"
     },
-    "headersLeftOut": "有请求头里有发不出去的字符（只能是英文、数字和符号），已经去掉了：请到“设置 › AI 模型”重新填写。"
+    "headersLeftOut": "有请求头里有发不出去的字符（只能是英文、数字和符号），已经去掉了：请到“设置 › AI 模型”重新填写。",
+    "ms": "{{ms}} 毫秒",
+    "seconds": "{{s}} 秒",
+    "newModel": "新模型",
+    "service": "服务",
+    "model": "模型",
+    "serviceOn": "启用",
+    "delete": "删除",
+    "keyShow": "显示",
+    "keyHide": "隐藏",
+    "routeRelaySignIn": "要登录",
+    "filterCount": "筛选 {{count}} 个模型"
   },
   "chat": {
     "model": "模型",
@@ -4970,7 +4839,6 @@
       "newer": "账号里的 AI 设置是更新版本的编辑器写的，先刷新页面更新编辑器",
       "tooLarge": "AI 设置超过了平台能存的 512 KB，多半是装的适配包太多"
     },
-    "line": "AI 设置：{{status}}",
     "retry": "重试",
     "chatCopied": "对话《{{title}}》在另一台设备上也改过，已换成那边的版本；这台设备上的版本另存成了“{{copy}}”，在对话列表里。"
   },

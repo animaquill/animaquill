@@ -663,6 +663,56 @@ describe("the details of models", () => {
     expect(ai.getSnapshot().services.map((service) => service.id)).toEqual([b, a]);
   });
 
+  it("of one's own, added and removed: on as they come, gone from what is on and the default as they go (S-M2)", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const d = ai.add("deepseek", "D", { enabled: ["deepseek-flash"] }) as string;
+    const own = ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example.test/v1" });
+    const gw = own as string;
+    ai.addModels(gw, [
+      { id: "qwen3-max", added: "hand" },
+      { id: "kimi-k3", added: "service" },
+    ]);
+    expect(ai.serviceOf(gw)?.enabled).toEqual(["qwen3-max", "kimi-k3"]);
+    ai.setDefault({ service: gw, model: "kimi-k3" });
+    // Removed: off, its record gone, and the default on another model that is on.
+    expect(ai.removeModel(gw, "kimi-k3")).toBeUndefined();
+    expect(ai.serviceOf(gw)?.enabled).toEqual(["qwen3-max"]);
+    expect(ai.serviceOf(gw)?.models?.map((model) => model.id)).toEqual(["qwen3-max"]);
+    expect(ai.getSnapshot().default).toEqual({ service: d, model: "deepseek-flash" });
+
+    // Turned off, it stays off as models are added; removing one takes it from those it had on.
+    expect(ai.setServiceOn(gw, false)).toBeUndefined();
+    ai.addModels(gw, [{ id: "glm-5", added: "hand" }]);
+    expect(ai.serviceOf(gw)?.enabled).toEqual([]);
+    expect(ai.serviceOf(gw)?.paused).toEqual(["qwen3-max", "glm-5"]);
+    ai.removeModel(gw, "qwen3-max");
+    expect(ai.serviceOf(gw)?.paused).toEqual(["glm-5"]);
+    expect(ai.serviceOf(gw)?.models?.map((model) => model.id)).toEqual(["glm-5"]);
+    ai.setServiceOn(gw, true);
+    expect(ai.serviceOf(gw)?.enabled).toEqual(["glm-5"]);
+
+    // The last model on anywhere is not removed.
+    ai.removeModel(gw, "glm-5");
+    expect(ai.removeModel(d, "deepseek-flash")).toBe("last");
+    expect(ai.serviceOf(d)?.enabled).toEqual(["deepseek-flash"]);
+  });
+
+  it("mark a service whose last request failed, until one goes through (S-M2)", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const a = ai.add("anthropic", "A", { enabled: ["claude-opus-5-5"] }) as string;
+    expect(ai.getSnapshot().failing.has(a)).toBe(false);
+    ai.noteRequest(a, { kind: "key", message: "401" });
+    expect(ai.getSnapshot().failing.get(a)).toMatchObject({ kind: "key" });
+    ai.keepTest(a, { state: "ok", ms: 12 });
+    expect(ai.getSnapshot().failing.has(a)).toBe(false);
+    ai.keepTest(a, { state: "failed", failure: { kind: "network", message: "x" } });
+    expect(ai.getSnapshot().failing.get(a)).toMatchObject({ kind: "network" });
+    ai.noteRequest(a, undefined);
+    expect(ai.getSnapshot().failing.has(a)).toBe(false);
+  });
+
   it("forget what a service listed once where it is, or how it is talked to, changed", async () => {
     const { open } = browser();
     const ai = await open();

@@ -146,6 +146,11 @@ export interface AiSettingsSnapshot extends AiSettings {
   readonly tests: ReadonlyMap<string, ConnectionTest>;
   /** Tests of pictures of models, by `testKey`, on this page. */
   readonly pictureTests: ReadonlyMap<string, PictureTest>;
+  /**
+   * The services whose last test or request failed, with how: until a test or a request of
+   * theirs goes through. In this window only.
+   */
+  readonly failing: ReadonlyMap<string, ServiceFailure>;
   /** The open catalog of models, as far as this page has it. */
   readonly catalog: CatalogState;
 }
@@ -294,6 +299,7 @@ export class AiSettingsStore {
       held: undefined,
       tests: new Map(),
       pictureTests: new Map(),
+      failing: new Map(),
       catalog: { state: "idle" },
     };
   }
@@ -946,14 +952,14 @@ export class AiSettingsStore {
       const fresh = ids
         .filter((model) => !have.has(model) && !known.has(model))
         .map((model): ModelConfig => ({ id: model, added: how.get(model) ?? "hand" }));
-      const { paused: _was, ...rest } = service;
-      return {
-        ...rest,
-        enabled: [...new Set([...service.enabled, ...ids])],
-        ...((service.models?.length ?? 0) + fresh.length > 0 && {
-          models: [...(service.models ?? []), ...fresh],
-        }),
+      const records = (service.models?.length ?? 0) + fresh.length > 0 && {
+        models: [...(service.models ?? []), ...fresh],
       };
+      // A service turned off stays off: what is added goes with the models it turns on again.
+      if (service.enabled.length === 0 && service.paused?.length)
+        return { ...service, paused: [...new Set([...service.paused, ...ids])], ...records };
+      const { paused: _was, ...rest } = service;
+      return { ...rest, enabled: [...new Set([...service.enabled, ...ids])], ...records };
     });
     void this.fillModels(id, ids);
   }
@@ -967,10 +973,13 @@ export class AiSettingsStore {
     if (!service) return undefined;
     if (service.enabled.includes(model) && this.setEnabled(id, model, false) === "last")
       return "last";
-    if (this.modelOf(id, model)?.inCatalog) return undefined;
     this.#changeService(id, (each) => {
+      const paused = each.paused?.filter((name) => name !== model);
+      const { paused: _paused, ...kept } = each;
+      const after = paused?.length ? { ...kept, paused } : kept;
+      if (this.modelOf(id, model)?.inCatalog) return after;
       const models = (each.models ?? []).filter((custom) => custom.id !== model);
-      const { models: _was, ...rest } = each;
+      const { models: _was, ...rest } = after;
       return models.length > 0 ? { ...rest, models } : rest;
     });
     return undefined;
@@ -1581,6 +1590,7 @@ export class AiSettingsStore {
 
   /** What tests of a service came to no longer counts once its key changed. */
   #forgetTests(id: string): void {
+    if (this.#snapshot.failing.has(id)) this.noteRequest(id, undefined);
     const tests = new Map(this.#snapshot.tests);
     for (const where of tests.keys()) {
       if (where === id || where.startsWith(testKey(id, ""))) tests.delete(where);
@@ -1593,6 +1603,23 @@ export class AiSettingsStore {
   #setTest(where: string, test: ConnectionTest): void {
     const tests = new Map(this.#snapshot.tests).set(where, test);
     this.#snapshot = { ...this.#snapshot, tests };
+    const service = where.split("\n")[0] ?? where;
+    if (test.state === "ok") this.noteRequest(service, undefined);
+    else if (test.state === "failed") this.noteRequest(service, test.failure);
+    this.#emitter.emit();
+  }
+
+  /**
+   * How a request to a service went, a test or one of the chat: one that failed marks the service
+   * (`failing`) until one goes through.
+   */
+  noteRequest(id: string, failure: ServiceFailure | undefined): void {
+    const before = this.#snapshot.failing;
+    if (failure === undefined && !before.has(id)) return;
+    const failing = new Map(before);
+    if (failure === undefined) failing.delete(id);
+    else failing.set(id, failure);
+    this.#snapshot = { ...this.#snapshot, failing };
     this.#emitter.emit();
   }
 

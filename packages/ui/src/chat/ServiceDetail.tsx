@@ -2,58 +2,58 @@ import { urlHasSecret } from "@animaquill/host";
 import {
   MODEL_APIS,
   bulkActions,
+  catalogValues,
   checkBaseUrl,
   enabledCountOf,
   filterModels,
   isLastEnabled,
   kindOf,
+  type ListedModel,
   type ModelApi,
   type ServiceConfig,
 } from "@animaquill/agent";
-import { ChevronRight, GripVertical } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { agoText } from "../app/start-view.ts";
-import { ServiceAvatar, TestPill, useDraft } from "./aiParts.tsx";
+import { TestPill, isServiceOn, useDraft } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
 import { CapabilityIcon, capabilityOf } from "./CapabilityIcon.tsx";
-import { FetchModelsDialog } from "./FetchModelsDialog.tsx";
-import { HeadersEditor, dropIndex } from "./modelParts.tsx";
+import { failureText } from "./failure.ts";
+import { HeadersEditor, StarButton, dropIndex } from "./modelParts.tsx";
 import { contextLabel, priceLabel } from "./modelText.ts";
-import { protocolOf, testKey, type ServiceModel } from "./settings.ts";
+import { protocolOf, type ServiceModel } from "./settings.ts";
 
-/** From how many models on the list a filter shows. */
+/** From how many models on the list a filter shows, as pi-web has it. */
 const FILTER_FROM = 8;
-/** Models that GPT-6 names, which call no tools through Chat Completions. */
-const GPT6 = /gpt-6/i;
+/** How many of what a service lists show at once, as pi-web shows them. */
+const MOST_SHOWN = 300;
+/** What the key cell shows for a key that is saved, which is never read back: dots, and its end. */
+const maskOf = (hint: string | undefined) => `••••••••••••${hint ?? ""}`;
+
+const noop = () => () => {};
+const nobody = () => undefined;
 
 /**
- * One service in the settings (docs/design/settings-and-properties.md of AnimaQuill Cloud, 6.1):
- * the service itself above (name, key, address, how it is reached; for a server of one's own how
- * it is talked to; headers), with a test of the connection; its models below, to turn on, order,
- * test, and open for their details.
+ * One service, as pi-web shows a provider (docs/design/settings-and-properties.md of AnimaQuill
+ * Cloud, 6.1): a test, a switch and deleting on top; then one column down, name, address, API key,
+ * how it is talked to, headers, how it is reached. For a service of the catalog, its models to
+ * turn on below; for every one, getting its models at the bottom. Every change takes at once.
  */
 export function ServiceDetail({ service }: { readonly service: ServiceConfig }) {
-  const { ai } = useWorkbench();
-  const { t } = useTranslation();
-  const models = ai.modelsFor(service.id);
-  const kind = kindOf(service.kind);
-  const gpt6 =
-    kind?.id === "openai-compatible" &&
-    protocolOf(service) === "openai-completions" &&
-    models.some((model) => GPT6.test(model.id));
-
+  const custom = kindOf(service.kind)?.custom === true;
   return (
     <div className={styles.wall} data-testid="ai-service">
       <Header service={service} />
-      <ServiceFields service={service} known={models.length} />
-      {gpt6 && (
-        <p className={styles.note} data-testid="ai-gpt6">
-          {t("ai.gpt6Completions")}
-        </p>
+      <ServiceFields service={service} />
+      {!custom && (
+        <>
+          <hr className={styles.line} />
+          <ModelSwitches service={service} />
+        </>
       )}
-      <ModelsSection service={service} models={models} />
+      <hr className={styles.line} />
+      <FetchModels service={service} />
     </div>
   );
 }
@@ -62,8 +62,11 @@ function Header({ service }: { readonly service: ServiceConfig }) {
   const { ai, dialogs } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const kind = kindOf(service.kind);
   const held = snapshot.held !== undefined;
+  const on = isServiceOn(service);
+  // The last model on anywhere stays on: its service cannot go off.
+  const last = service.enabled.length > 0 && enabledCountOf(snapshot) - service.enabled.length < 1;
+  const test = snapshot.tests.get(service.id);
   const remove = async () => {
     const sure = await dialogs.confirm({
       title: t("ai.remove"),
@@ -74,56 +77,63 @@ function Header({ service }: { readonly service: ServiceConfig }) {
     if (sure) await ai.remove(service.id);
   };
   return (
-    <div className={styles.row}>
-      <ServiceAvatar kind={service.kind} name={service.name} large />
-      <span className={styles.title}>{service.name}</span>
-      {kind && (
-        <span className={styles.muted}>
-          {kind.custom ? kind.name : t("ai.kindOfficial", { name: kind.name })}
-        </span>
-      )}
+    <div className={styles.detailHead}>
+      <span className={styles.kicker}>{t("ai.service")}</span>
       <span className={styles.grow} />
+      <TestPill test={test} relayed={service.route === "relay"} canRelay={ai.canRelay} />
       <button
         type="button"
         className={styles.button}
-        disabled={held || snapshot.tests.get(service.id)?.state === "running"}
+        disabled={held || test?.state === "running"}
         title={t("ai.testCostTitle")}
         onClick={() => void ai.test(service.id)}
       >
         {t("ai.test")}
       </button>
-      <TestPill
-        test={snapshot.tests.get(service.id)}
-        relayed={service.route === "relay"}
-        canRelay={ai.canRelay}
+      <input
+        type="checkbox"
+        role="switch"
+        className={styles.switch}
+        aria-label={t("ai.serviceOn")}
+        title={last ? t("ai.lastModel") : t("ai.serviceOn")}
+        data-testid="ai-service-switch"
+        checked={on}
+        disabled={held || last}
+        onChange={(event) => ai.setServiceOn(service.id, event.target.checked)}
       />
       <button
         type="button"
-        className={`${styles.link} ${styles.danger}`}
+        className={`${styles.button} ${styles.dangerButton}`}
         disabled={held}
         onClick={() => void remove()}
       >
-        {t("ai.remove")}
+        {t("ai.delete")}
       </button>
     </div>
   );
 }
 
-/** The service itself: name, key, address, how it is reached, how it is talked to, headers. */
-function ServiceFields(props: { readonly service: ServiceConfig; readonly known: number }) {
-  const { service } = props;
-  const { ai, aiSync } = useWorkbench();
+/** The service itself, one cell under another: name, address, key, interface, headers, route. */
+function ServiceFields({ service }: { readonly service: ServiceConfig }) {
+  const { ai } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const sync = useSyncExternalStore(aiSync.subscribe, aiSync.getSnapshot);
   const kind = kindOf(service.kind);
+  const custom = kind?.custom === true;
   const held = snapshot.held !== undefined;
   const [name, setName] = useDraft(service.name);
-  const [url, setUrl] = useDraft(service.baseUrl);
-  const urlInvalid = url.trim() !== "" && checkBaseUrl(url) === undefined;
-  const official = kind !== undefined && !kind.custom && service.baseUrl === kind.baseUrl;
-  const changed = kind !== undefined && !kind.custom && !official;
-  const headers = Object.keys(service.headers ?? {}).length;
+  // A service of the catalog at its own address shows none: the official one, light, in its place.
+  const official = kind?.baseUrl ?? "";
+  const shownUrl = !custom && service.baseUrl === official ? "" : service.baseUrl;
+  const [url, setUrl] = useDraft(shownUrl);
+  const urlProblem =
+    url.trim() === ""
+      ? custom
+        ? t("ai.add.urlRequired")
+        : undefined
+      : checkBaseUrl(url) === undefined
+        ? t(urlHasSecret(url) ? "ai.baseUrlSecret" : "ai.baseUrlInvalid")
+        : undefined;
 
   const rename = () => {
     const trimmed = name.trim();
@@ -131,213 +141,157 @@ function ServiceFields(props: { readonly service: ServiceConfig; readonly known:
     else setName(service.name);
   };
   const saveUrl = () => {
-    const checked = checkBaseUrl(url);
-    if (checked !== undefined && checked !== service.baseUrl)
-      ai.update(service.id, { baseUrl: checked });
+    const text = url.trim();
+    const next = text === "" ? (custom ? undefined : official) : checkBaseUrl(text);
+    if (next !== undefined && next !== service.baseUrl) ai.update(service.id, { baseUrl: next });
   };
 
   return (
-    <>
-      <div className={styles.fields}>
-        <label className={styles.field}>
-          <span>{t("ai.name")}</span>
-          <input
-            className={styles.input}
-            value={name}
-            disabled={held}
-            aria-label={t("ai.name")}
-            onChange={(event) => setName(event.target.value)}
-            onBlur={rename}
-            onKeyDown={(event) => event.key === "Enter" && rename()}
-          />
-        </label>
-        <KeyField service={service} known={props.known} synced={sync.account !== undefined} />
-        <label className={styles.field} data-testid="ai-base-url">
-          <span>
-            {t("ai.baseUrl")}
-            {official && <span className={styles.fieldNote}> · {t("ai.baseUrlOfficial")}</span>}
-            {changed && <span className={styles.fieldNote}> · {t("ai.baseUrlChanged")}</span>}
-          </span>
-          <input
-            className={`${styles.input} ${styles.mono}`}
-            value={url}
-            placeholder="https://"
-            spellCheck={false}
-            disabled={held}
-            aria-label={t("ai.baseUrl")}
-            aria-invalid={urlInvalid}
-            onChange={(event) => setUrl(event.target.value)}
-            onBlur={saveUrl}
-            onKeyDown={(event) => event.key === "Enter" && saveUrl()}
-          />
-          {urlInvalid && (
-            <span className={styles.warning} data-testid="ai-url-problem">
-              {t(urlHasSecret(url) ? "ai.baseUrlSecret" : "ai.baseUrlInvalid")}
-            </span>
-          )}
-          {changed && (
-            <button
-              type="button"
-              className={styles.link}
-              style={{ alignSelf: "flex-start" }}
-              onClick={() => ai.update(service.id, { baseUrl: kind.baseUrl })}
-            >
-              {t("ai.baseUrlRestore")}
-            </button>
-          )}
-        </label>
-        <RouteField service={service} />
-        <div className={styles.field}>
-          <span>{t("ai.api")}</span>
-          {kind?.custom ? (
-            <select
-              className={styles.input}
-              aria-label={t("ai.api")}
-              data-testid="ai-api"
-              value={protocolOf(service)}
-              disabled={held}
-              onChange={(event) => ai.update(service.id, { api: event.target.value as ModelApi })}
-            >
-              {MODEL_APIS.map((api) => (
-                <option key={api} value={api}>
-                  {t(`ai.apiNames.${api}`)}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className={styles.fixed}>
-              {t(`ai.apiNames.${kind?.protocol ?? "openai-completions"}`)}
-              <span className={styles.muted}> · {t("ai.apiFixed")}</span>
-            </span>
-          )}
-        </div>
-      </div>
+    <div className={styles.column}>
+      <label className={styles.field}>
+        <span>{t("ai.name")}</span>
+        <input
+          className={styles.input}
+          value={name}
+          disabled={held}
+          onChange={(event) => setName(event.target.value)}
+          onBlur={rename}
+          onKeyDown={(event) => event.key === "Enter" && rename()}
+        />
+      </label>
+      <label className={styles.field} data-testid="ai-base-url">
+        <span>{t("ai.baseUrl")}</span>
+        <input
+          className={`${styles.input} ${styles.mono}`}
+          value={url}
+          placeholder={custom ? "https://" : official}
+          spellCheck={false}
+          disabled={held}
+          aria-invalid={urlProblem !== undefined}
+          title={urlProblem}
+          onChange={(event) => setUrl(event.target.value)}
+          onBlur={saveUrl}
+          onKeyDown={(event) => event.key === "Enter" && saveUrl()}
+        />
+      </label>
+      <KeyField service={service} />
+      <label className={styles.field}>
+        <span>{t("ai.api")}</span>
+        <select
+          className={styles.input}
+          data-testid="ai-api"
+          value={protocolOf(service) ?? "openai-completions"}
+          disabled={held || !custom}
+          onChange={(event) => ai.update(service.id, { api: event.target.value as ModelApi })}
+        >
+          {(custom ? MODEL_APIS : [protocolOf(service) ?? "openai-completions"]).map((api) => (
+            <option key={api} value={api}>
+              {t(`ai.apiNames.${api}`)}
+            </option>
+          ))}
+        </select>
+      </label>
       {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
-      <details className={styles.plainFold} data-setting="models.headers" data-testid="ai-headers">
-        <summary>
-          {t("ai.headers.title", { count: headers })}{" "}
-          <span className={styles.muted}>· {t("ai.headers.help")}</span>
-        </summary>
+      <div className={styles.field} data-setting="models.headers" data-testid="ai-headers">
+        <span>{t("ai.headers.title")}</span>
         <HeadersEditor
           headers={service.headers}
           disabled={held}
           onChange={(next) => ai.update(service.id, { headers: next })}
         />
-        {headers > 0 && service.route === "direct" && ai.canRelay && (
-          <p className={styles.help}>{t("ai.headers.relayHint")}</p>
-        )}
-      </details>
-    </>
+      </div>
+      <RouteField service={service} />
+    </div>
   );
 }
 
-function KeyField(props: {
-  readonly service: ServiceConfig;
-  readonly known: number;
-  readonly synced: boolean;
-}) {
-  const { service } = props;
-  const { ai } = useWorkbench();
+/**
+ * The key, as a password: a saved one is never read back, the cell shows dots and its last
+ * characters. Typing another replaces it, emptying the cell takes it away; the eye shows what is
+ * being typed. React never renders a key, which would put it in the page as an attribute.
+ */
+function KeyField({ service }: { readonly service: ServiceConfig }) {
+  const workbench = useWorkbench();
+  const { ai, settingsNav } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const kind = kindOf(service.kind);
-  const hint = snapshot.hints.get(service.id);
   const keyed = snapshot.keyed.has(service.id);
-  const [changing, setChanging] = useState(false);
-  // What people type stays in the field: React never renders a key, which would put it in the
-  // page as an attribute.
+  const mask = keyed ? maskOf(snapshot.hints.get(service.id)) : "";
   const field = useRef<HTMLInputElement>(null);
-  const [typed, setTyped] = useState(false);
+  const [shown, setShown] = useState(false);
+  // What the cell holds when nobody types in it: another window may change the key meanwhile.
+  useEffect(() => {
+    const element = field.current;
+    if (element && document.activeElement !== element) element.value = mask;
+  }, [mask]);
 
-  const save = async () => {
-    const key = field.current?.value.trim() ?? "";
-    if (!key) return;
-    await ai.setKey(service.id, key);
-    if (field.current) field.current.value = "";
-    setTyped(false);
-    setChanging(false);
+  const commit = async () => {
+    const element = field.current;
+    if (!element) return;
+    const typed = element.value.trim();
+    // What shows of a saved key is never a key, also while the cell has not caught up with it.
+    if (typed === mask || typed.startsWith("••••")) return;
+    if (typed === "") {
+      if (keyed) await ai.removeKey(service.id);
+      return;
+    }
+    element.value = maskOf(typed.slice(-4));
+    setShown(false);
+    await ai.setKey(service.id, typed);
+    // Sent here from the chat to set a service up: back to it, ready to use.
+    if (settingsNav.getSnapshot().back === "chat") {
+      settingsNav.close();
+      workbench.layout.openPanel("chat");
+    }
   };
 
   return (
-    <div className={styles.field}>
-      <span>
-        {t("ai.key")}
-        <span className={styles.fieldNote} title={t("ai.keysWhereShort")}>
-          {" "}
-          · {props.synced ? t("ai.keyWhere.account") : t("ai.keyWhere.device")}
-        </span>
+    <label className={styles.field}>
+      <span>{t("ai.key")}</span>
+      <span className={styles.secret}>
+        <input
+          ref={field}
+          className={`${styles.input} ${styles.mono}`}
+          type={shown ? "text" : "password"}
+          autoComplete="off"
+          spellCheck={false}
+          defaultValue={mask}
+          disabled={snapshot.held !== undefined}
+          title={snapshot.keysWhere ? undefined : t("ai.keysNowhere")}
+          data-testid="ai-key"
+          onFocus={(event) => {
+            if (event.target.value === mask) event.target.select();
+          }}
+          onBlur={() => void commit()}
+          onKeyDown={(event) => event.key === "Enter" && void commit()}
+        />
+        <button
+          type="button"
+          className={styles.eye}
+          aria-label={shown ? t("ai.keyHide") : t("ai.keyShow")}
+          aria-pressed={shown}
+          title={shown ? t("ai.keyHide") : t("ai.keyShow")}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setShown(!shown)}
+        >
+          {shown ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
+        </button>
       </span>
-      {keyed && !changing ? (
-        <div className={styles.row}>
-          <span
-            className={`${styles.keyMask} ${styles.mono} ${styles.grow}`}
-            data-testid="ai-key-saved"
-            title={t("ai.keySaved", { hint })}
-          >
-            ••••••••••••{hint}
-          </span>
-          <button type="button" className={styles.button} onClick={() => setChanging(true)}>
-            {t("ai.keyChange")}
-          </button>
-          <button
-            type="button"
-            className={styles.button}
-            onClick={() => void ai.removeKey(service.id)}
-          >
-            {t("ai.keyRemove")}
-          </button>
-        </div>
-      ) : (
-        <div className={styles.row}>
-          <input
-            className={`${styles.input} ${styles.grow}`}
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            aria-label={t("ai.key")}
-            placeholder={t("ai.keyPlaceholder")}
-            ref={field}
-            defaultValue=""
-            onChange={(event) => setTyped(event.target.value.trim() !== "")}
-            onKeyDown={(event) => event.key === "Enter" && void save()}
-          />
-          <button
-            type="button"
-            className={styles.button}
-            disabled={!typed}
-            onClick={() => void save()}
-          >
-            {t("ai.keySave")}
-          </button>
-          {changing && (
-            <button type="button" className={styles.button} onClick={() => setChanging(false)}>
-              {t("ai.keyCancel")}
-            </button>
-          )}
-        </div>
-      )}
-      {!keyed && (
-        <span className={styles.help}>
-          {kind?.custom
-            ? t("ai.keyOptional")
-            : props.known > 0
-              ? t("ai.keyEmpty", { count: props.known })
-              : t("ai.keyEmptyNone")}{" "}
-          {kind?.id === "anthropic" ? t("ai.noSubscriptionAnthropic") : ""}
-        </span>
-      )}
-      {!snapshot.keysWhere && <span className={styles.warning}>{t("ai.keysNowhere")}</span>}
-    </div>
+    </label>
   );
 }
 
 /** Straight from the browser, or through the platform's relay: two buttons side by side. */
 function RouteField({ service }: { readonly service: ServiceConfig }) {
-  const { ai } = useWorkbench();
+  const { ai, account } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const kind = kindOf(service.kind);
+  const signedIn =
+    useSyncExternalStore(account?.subscribe ?? noop, account?.getSnapshot ?? nobody)?.status ===
+    "signedIn";
   const held = snapshot.held !== undefined;
+  const relay = ai.canRelay && signedIn;
+  const why = ai.canRelay ? t("ai.routeRelaySignIn") : t("ai.routeRelayNone");
   return (
     <div className={styles.field}>
       <span>{t("ai.route")}</span>
@@ -354,68 +308,34 @@ function RouteField({ service }: { readonly service: ServiceConfig }) {
         <button
           type="button"
           aria-pressed={service.route === "relay"}
-          disabled={held || !ai.canRelay}
-          title={ai.canRelay ? undefined : t("ai.routeRelayNone")}
+          aria-invalid={service.route === "relay" && !ai.canRelay}
+          disabled={held || !relay}
+          title={relay ? undefined : why}
           onClick={() => ai.update(service.id, { route: "relay" })}
         >
           {t("ai.routeRelayShort")}
         </button>
       </div>
-      {service.route === "relay" ? (
-        ai.canRelay ? (
-          <span className={styles.help} data-testid="ai-relay-hint">
-            {t("ai.routeRelayHint")}
-          </span>
-        ) : (
-          <span className={styles.warning} data-testid="ai-relay-hint">
-            {t("ai.routeRelayMissing")}
-          </span>
-        )
-      ) : kind?.route === "relay" ? (
-        <span className={styles.warning}>
-          {ai.canRelay ? t("ai.needsRelay") : t("ai.needsRelayLocal")}
-        </span>
-      ) : kind && !kind.tested && !kind.custom ? (
-        <span className={styles.help}>
-          {ai.canRelay ? t("ai.untested") : t("ai.untestedLocal")}
-        </span>
-      ) : (
-        <span className={styles.help}>{t("ai.routeDirectHint")}</span>
-      )}
     </div>
   );
 }
 
-function ModelsSection(props: {
-  readonly service: ServiceConfig;
-  readonly models: readonly ServiceModel[];
-}) {
-  const { service, models } = props;
+/**
+ * The models of a service of the catalog, as pi-web lists them: a switch each, a filter where they
+ * are many, all on or off at once, how many are on. The last model on anywhere cannot go off. A
+ * model's name opens it; those on move by dragging them, or with Alt+↑/↓.
+ */
+function ModelSwitches({ service }: { readonly service: ServiceConfig }) {
   const { ai } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const [query, setQuery] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [fetching, setFetching] = useState(false);
-  const [refused, setRefused] = useState(false);
   const [dragged, setDragged] = useState<string | undefined>();
   const held = snapshot.held !== undefined;
+  const models = ai.modelsFor(service.id);
   const total = enabledCountOf(snapshot);
   const shown = filterModels(models, query);
   const bulk = bulkActions(total, shown);
-  const allOn = shown.length > 0 && bulk.enable.length === 0;
-  const catalog = snapshot.catalog;
-  const say = (result: "last" | undefined) => setRefused(result === "last");
-  // What the open catalog knows, to say so below the models.
-  useEffect(() => {
-    void ai.loadCatalog();
-  }, [ai]);
-  // "3 分钟前" moves on by itself.
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
 
   const move = (id: string, to: number) => {
     const from = service.enabled.indexOf(id);
@@ -424,140 +344,75 @@ function ModelsSection(props: {
   };
 
   return (
-    <>
-      {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
-      <div className={styles.modelsHead} data-setting="models.list">
-        <h3 className={styles.sectionTitle}>{t("ai.models")}</h3>
-        <span className={styles.muted} data-testid="ai-models-count">
+    // `data-setting`: what searching the settings goes to, see settings/registry.ts.
+    <section className={styles.column} data-setting="models.list" data-testid="ai-model-list">
+      <div className={styles.row}>
+        <span className={styles.kicker}>{t("ai.models")}</span>
+        <span className={`${styles.muted} ${styles.mono}`} data-testid="ai-models-count">
           {t("ai.modelsEnabled", { enabled: service.enabled.length, total: models.length })}
         </span>
         <span className={styles.grow} />
-        {models.length > FILTER_FROM && (
-          <input
-            className={`${styles.input} ${styles.filter}`}
-            type="search"
-            aria-label={t("ai.filter")}
-            placeholder={t("ai.filter")}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        )}
         <button
           type="button"
-          className={`${styles.button} ${styles.small}`}
-          data-testid="ai-fetch-models"
-          disabled={held}
-          onClick={() => setFetching(true)}
+          className={styles.button}
+          disabled={held || !bulk.canEnable}
+          onClick={() => ai.setAllEnabled(service.id, bulk.enable, true)}
         >
-          {t("ai.fetch.open")}
+          {t("ai.enableAll")}
         </button>
         <button
           type="button"
-          className={`${styles.button} ${styles.small}`}
-          disabled={held}
-          onClick={() => setAdding(true)}
+          className={styles.button}
+          disabled={held || !bulk.canDisable}
+          title={bulk.disable.length > 0 && !bulk.canDisable ? t("ai.lastModel") : undefined}
+          onClick={() => ai.setAllEnabled(service.id, bulk.disable, false)}
         >
-          {t("ai.addModel")}
-        </button>
-        <button
-          type="button"
-          className={`${styles.button} ${styles.small}`}
-          disabled={held || (allOn ? !bulk.canDisable : !bulk.canEnable)}
-          title={allOn && !bulk.canDisable ? t("ai.lastModel") : undefined}
-          onClick={() =>
-            say(ai.setAllEnabled(service.id, allOn ? bulk.disable : bulk.enable, !allOn))
-          }
-        >
-          {allOn ? t("ai.disableAll") : t("ai.enableAll")}
-        </button>
-        <button
-          type="button"
-          className={`${styles.button} ${styles.small}`}
-          disabled={catalog.state === "loading"}
-          title={t("ai.catalog.refreshTitle")}
-          onClick={() => void ai.refreshCatalog()}
-        >
-          {t("ai.catalog.refresh")}
-        </button>
-        <button
-          type="button"
-          className={`${styles.button} ${styles.small}`}
-          title={t("ai.sortTitle")}
-          disabled={held || service.enabled.length < 2}
-          onClick={() => ai.sortModels(service.id)}
-        >
-          {t("ai.sort")}
+          {t("ai.disableAll")}
         </button>
       </div>
-      {adding && <AddModel service={service} onDone={() => setAdding(false)} />}
-      {refused && (
-        <p className={styles.warning} role="status">
-          {t("ai.lastModel")}
-        </p>
+      {models.length > FILTER_FROM && (
+        <input
+          className={styles.input}
+          type="search"
+          aria-label={t("ai.filter")}
+          placeholder={t("ai.filterCount", { count: models.length })}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
       )}
-      {models.length === 0 ? (
-        <p className={styles.help}>{t("ai.noModels")}</p>
-      ) : shown.length === 0 ? (
-        <p className={styles.help}>{t("ai.noMatch")}</p>
-      ) : (
-        <div
-          className={styles.table}
-          data-testid="ai-models"
-          data-setting="models.details"
-          role="table"
-        >
-          <div className={styles.tableHead} role="row">
-            <span role="columnheader" />
-            <span role="columnheader">{t("ai.columns.enabled")}</span>
-            <span role="columnheader">{t("ai.columns.model")}</span>
-            <span role="columnheader">{t("ai.columns.context")}</span>
-            <span role="columnheader">{t("ai.columns.maxTokens")}</span>
-            <span role="columnheader">{t("ai.columns.price")}</span>
-            <span role="columnheader">{t("ai.columns.capabilities")}</span>
-            <span role="columnheader" />
-          </div>
+      {shown.length > 0 && (
+        <div className={styles.switchList} data-testid="ai-models" role="list">
           {shown.map((model) => {
             const index = service.enabled.indexOf(model.id);
+            const movable = !held && index >= 0;
             return (
-              <ModelRow
+              <SwitchRow
                 key={model.id}
                 service={service}
                 model={model}
                 last={isLastEnabled(total, model)}
-                onRefused={say}
                 dragging={dragged === model.id}
                 drag={
-                  index < 0 || held
-                    ? undefined
-                    : {
+                  movable
+                    ? {
                         start: () => setDragged(model.id),
                         end: () => setDragged(undefined),
                         over: dragged !== undefined,
-                        drop: (event) => {
-                          if (dragged !== undefined) move(dragged, dropIndex(event, index));
+                        drop: (at) => {
+                          if (dragged !== undefined) move(dragged, at < 0 ? index : index + at);
                           setDragged(undefined);
                         },
                         up: () => index > 0 && ai.moveModel(service.id, model.id, index - 1),
                         down: () => ai.moveModel(service.id, model.id, index + 1),
                       }
+                    : undefined
                 }
               />
             );
           })}
         </div>
       )}
-      <p className={styles.help}>{t("ai.listFoot")}</p>
-      {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
-      <p className={styles.help} data-testid="ai-catalog-state" data-setting="models.catalog">
-        {catalog.state === "ok"
-          ? t("ai.catalog.ok", {
-              from: t(`ai.catalog.from.${catalog.from}`),
-              ago: agoText(catalog.fetchedAt, Math.max(now, catalog.fetchedAt), t),
-            })
-          : t(`ai.catalog.${catalog.state}`)}
-      </p>
-      {fetching && <FetchModelsDialog service={service} onClose={() => setFetching(false)} />}
-    </>
+    </section>
   );
 }
 
@@ -566,18 +421,17 @@ interface RowDrag {
   readonly end: () => void;
   /** Something is being dragged over the list. */
   readonly over: boolean;
-  readonly drop: (event: DragEvent<HTMLElement>) => void;
+  /** Dropped on the row: before it (-1), or after it (1). */
+  readonly drop: (at: -1 | 1) => void;
   readonly up: () => void;
   readonly down: () => void;
 }
 
-function ModelRow(props: {
+function SwitchRow(props: {
   readonly service: ServiceConfig;
   readonly model: ServiceModel;
   /** It is the last model on, which cannot go off. */
   readonly last: boolean;
-  readonly onRefused: (result: "last" | undefined) => void;
-  /** Where it is on, how it is moved among those on. */
   readonly drag: RowDrag | undefined;
   readonly dragging: boolean;
 }) {
@@ -585,18 +439,13 @@ function ModelRow(props: {
   const { ai, settingsNav } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const held = snapshot.held !== undefined;
-  const isDefault = snapshot.default?.service === service.id && snapshot.default.model === model.id;
-  const test = snapshot.tests.get(testKey(service.id, model.id));
   const name = model.name ?? model.id;
   const cost = model.values.cost;
-  const open = () =>
-    settingsNav.go({ group: "models", depth: 3, service: service.id, model: model.id });
-
+  const capability = capabilityOf(model.values);
   return (
     <div
-      className={styles.modelRow}
-      role="row"
+      className={styles.switchRow}
+      role="listitem"
       data-testid="ai-model"
       data-model={model.id}
       data-enabled={model.enabled ? "" : undefined}
@@ -614,192 +463,299 @@ function ModelRow(props: {
       }}
       onDrop={(event) => {
         event.preventDefault();
-        drag?.drop(event);
-      }}
-      onDoubleClick={(event) => {
-        if (!(event.target as Element).closest("button, input")) open();
+        drag?.drop(dropIndex(event, 0) > 0 ? 1 : -1);
       }}
     >
-      <span className={styles.grip} role="cell">
-        {drag && (
-          <button
-            type="button"
-            className={styles.gripButton}
-            aria-label={t("ai.moveModel", { model: name })}
-            title={t("ai.moveModelTitle")}
-            onKeyDown={(event) => {
-              if (!event.altKey && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                drag.up();
-              } else if (event.key === "ArrowDown") {
-                event.preventDefault();
-                drag.down();
-              }
-            }}
-          >
-            <GripVertical size={12} aria-hidden />
-          </button>
-        )}
-      </span>
-      <span role="cell">
-        <input
-          type="checkbox"
-          role="switch"
-          className={styles.switch}
-          aria-label={t("ai.enableModel", { model: name })}
-          checked={model.enabled}
-          disabled={held || last}
-          title={last ? t("ai.lastModel") : undefined}
-          onChange={(event) =>
-            props.onRefused(ai.setEnabled(service.id, model.id, event.target.checked))
-          }
-          onKeyDown={(event) => {
-            if (!drag || !event.altKey) return;
-            if (event.key === "ArrowUp") {
-              event.preventDefault();
-              drag.up();
-            } else if (event.key === "ArrowDown") {
-              event.preventDefault();
-              drag.down();
-            }
-          }}
-        />
-      </span>
-      <span className={styles.modelName} role="cell">
-        <span className={styles.row} style={{ gap: 4 }}>
-          <span className={model.enabled ? styles.strong : undefined}>{name}</span>
-          <button
-            type="button"
-            className={styles.starButton}
-            aria-pressed={isDefault}
-            aria-label={isDefault ? t("ai.isDefault") : t("ai.setDefault")}
-            title={isDefault ? t("ai.isDefault") : t("ai.setDefault")}
-            disabled={held}
-            onClick={() => ai.setDefault({ service: service.id, model: model.id })}
-          >
-            {isDefault ? "★" : "☆"}
-          </button>
-          {model.custom && model.config?.added === "hand" && (
-            <span className={styles.tag}>{t("ai.modelCustom")}</span>
-          )}
-        </span>
-        {name !== model.id && (
-          <span className={`${styles.modelId} ${styles.mono}`}>{model.id}</span>
-        )}
-      </span>
-      <span role="cell" className={styles.num}>
-        {contextLabel(model.values.contextWindow) ?? t("ai.unknown")}
-      </span>
-      <span role="cell" className={styles.num}>
-        {contextLabel(model.values.maxTokens) ?? t("ai.unknown")}
-      </span>
-      <span
-        role="cell"
-        className={styles.num}
-        title={
-          cost
-            ? t("ai.priceTitle", { input: priceLabel(cost.input), output: priceLabel(cost.output) })
-            : undefined
+      <button
+        type="button"
+        className={styles.switchName}
+        data-testid="ai-model-open"
+        aria-keyshortcuts={drag ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+        onClick={() =>
+          settingsNav.go({ group: "models", depth: 3, service: service.id, model: model.id })
         }
+        onKeyDown={(event) => {
+          if (!drag || !event.altKey) return;
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            drag.up();
+          } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            drag.down();
+          }
+        }}
       >
+        <span className={styles.switchTitle}>{name}</span>
+        <span className={`${styles.modelId} ${styles.mono}`}>{model.id}</span>
+      </button>
+      <span className={`${styles.num} ${styles.mono}`}>
+        {contextLabel(model.values.contextWindow) ?? ""}
+      </span>
+      <span className={`${styles.num} ${styles.mono}`}>
         {cost
           ? t("ai.price", { input: priceLabel(cost.input), output: priceLabel(cost.output) })
-          : t("ai.noPrice")}
+          : ""}
       </span>
-      <span role="cell" className={styles.caps}>
-        <span className={styles.capSlot}>
-          <CapabilityIcon capability={capabilityOf(model.values)} />
-        </span>
-        {test && test.state !== "running" ? (
-          <button
-            type="button"
-            className={styles.link}
-            title={t("ai.testModelTitle", { model: name })}
-            onClick={() => void ai.test(service.id, model.id)}
-          >
-            <TestPill
-              test={test}
-              relayed={service.route === "relay"}
-              canRelay={ai.canRelay}
-              short
-              testId="ai-model-test"
-            />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={styles.link}
-            title={t("ai.testModelTitle", { model: name })}
-            disabled={held || test?.state === "running"}
-            onClick={() => void ai.test(service.id, model.id)}
-          >
-            {test?.state === "running" ? t("ai.testing") : t("ai.testModel")}
-          </button>
-        )}
+      <span className={styles.capSlot}>
+        {capability && <CapabilityIcon capability={capability} size={13} />}
       </span>
-      <span role="cell">
-        <button
-          type="button"
-          className={styles.link}
-          aria-label={t("ai.openModel", { model: name })}
-          title={t("ai.openModel", { model: name })}
-          data-testid="ai-model-open"
-          onClick={open}
-        >
-          <ChevronRight size={14} aria-hidden />
-        </button>
-      </span>
+      <StarButton service={service.id} model={model.id} name={name} />
+      <input
+        type="checkbox"
+        role="switch"
+        className={styles.switch}
+        aria-label={t("ai.enableModel", { model: name })}
+        checked={model.enabled}
+        disabled={snapshot.held !== undefined || last}
+        title={last ? t("ai.lastModel") : undefined}
+        onChange={(event) => ai.setEnabled(service.id, model.id, event.target.checked)}
+      />
     </div>
   );
 }
 
-/** A model named by hand: its id, which is filled in from the catalogs as it is added. */
-function AddModel(props: { readonly service: ServiceConfig; readonly onDone: () => void }) {
+/**
+ * "获取模型…": what the service lists, below it, to tick and add (pi-web's import list): a filter,
+ * ticking all those shown, those already there greyed. What holds no conversation (embeddings and
+ * such) is not ticked with the rest. Anew each time; a change of the address, the key or the
+ * interface closes it.
+ */
+function FetchModels({ service }: { readonly service: ServiceConfig }) {
   const { ai } = useWorkbench();
   const { t } = useTranslation();
-  const [name, setName] = useState("");
-  const taken = ai.modelsFor(props.service.id).some((model) => model.id === name.trim());
-  const valid = name.trim() !== "" && name.trim().length <= 200;
-  const add = () => {
-    if (!valid) return;
-    ai.addModels(props.service.id, [{ id: name.trim(), added: "hand" }]);
-    props.onDone();
+  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const listing = snapshot.listings.get(service.id);
+  const known = snapshot.known.get(service.kind) ?? [];
+  const held = snapshot.held !== undefined;
+  // What it was asked with: where that changes, what it said is of something else.
+  const asked = JSON.stringify([
+    service.baseUrl,
+    protocolOf(service),
+    service.headers ?? {},
+    service.route,
+    snapshot.hints.get(service.id) ?? "",
+  ]);
+  const before = useRef(asked);
+  useEffect(() => {
+    if (before.current === asked) return;
+    before.current = asked;
+    setOpen(false);
+    setPicked(new Set());
+  }, [asked]);
+
+  const fetch = () => {
+    setOpen(true);
+    setPicked(new Set());
+    setQuery("");
+    void ai.fetchModels(service.id);
+    void ai.loadCatalog();
   };
+
+  const listed = listing?.state === "ok" ? listing.models : [];
+  // Those of a service of the catalog are all on its list already; of one's own, those added.
+  const custom = kindOf(service.kind)?.custom === true;
+  const have = new Set(
+    ai
+      .modelsFor(service.id)
+      .filter((model) => !custom || model.enabled || service.paused?.includes(model.id))
+      .map((model) => model.id),
+  );
+  const needle = query.trim().toLowerCase();
+  const found = needle
+    ? listed.filter(
+        (model) =>
+          model.id.toLowerCase().includes(needle) ||
+          (model.name ?? "").toLowerCase().includes(needle),
+      )
+    : listed;
+  const shown = found.slice(0, MOST_SHOWN);
+  // Ticking all of them leaves out what holds no conversation: those are ticked one by one.
+  const pickable = shown.filter((model) => !have.has(model.id) && model.chat !== false);
+  const pickedShown = pickable.filter((model) => picked.has(model.id));
+  const all = pickable.length > 0 && pickedShown.length === pickable.length;
+  const some = pickedShown.length > 0 && !all;
+  const adding = [...picked].filter((id) => !have.has(id));
+
+  const toggle = (id: string, on: boolean) => {
+    const next = new Set(picked);
+    if (on) next.add(id);
+    else next.delete(id);
+    setPicked(next);
+  };
+  const add = () => {
+    ai.addModels(
+      service.id,
+      adding.map((id) => ({ id, added: "service" as const })),
+    );
+    setOpen(false);
+  };
+
+  if (!open || listing === undefined)
+    return (
+      <button
+        type="button"
+        className={`${styles.button} ${styles.fetchButton}`}
+        data-testid="ai-fetch-models"
+        disabled={held}
+        onClick={fetch}
+      >
+        {t("ai.fetch.open")}
+      </button>
+    );
+  if (listing.state === "loading")
+    return (
+      <p className={styles.muted} data-testid="ai-fetch">
+        {t("ai.fetch.loading")}
+      </p>
+    );
+  if (listing.state !== "ok") {
+    const say =
+      listing.state === "held"
+        ? { label: t("ai.testFailed.other"), title: t(`chat.hold.${listing.hold}`) }
+        : {
+            label: t(`ai.testFailed.${listing.failure.kind}`),
+            title: Object.values(
+              failureText(t, listing.failure, {
+                relayed: service.route === "relay",
+                canRelay: ai.canRelay,
+              }),
+            )
+              .filter(Boolean)
+              .join("\n"),
+          };
+    return (
+      <div className={styles.row} data-testid="ai-fetch">
+        <span
+          className={styles.pill}
+          data-state="failed"
+          data-testid="ai-fetch-failed"
+          title={say.title}
+        >
+          {say.label}
+        </span>
+        <button type="button" className={styles.button} onClick={fetch}>
+          {t("ai.fetch.open")}
+        </button>
+      </div>
+    );
+  }
   return (
-    <div className={styles.form} data-testid="ai-add-model">
-      <label className={styles.field}>
-        <span>{t("ai.addModelName")}</span>
-        <input
-          className={`${styles.input} ${styles.mono}`}
-          value={name}
-          spellCheck={false}
-          autoFocus
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") add();
-            if (event.key === "Escape") {
-              // Only the adding: the settings around it stay open.
-              event.preventDefault();
-              props.onDone();
-            }
-          }}
-        />
-      </label>
-      <p className={styles.help}>{taken ? t("ai.addModelTaken") : t("ai.addModelHelp")}</p>
+    <div className={styles.column} data-testid="ai-fetch">
+      <input
+        className={styles.input}
+        type="search"
+        aria-label={t("ai.filter")}
+        placeholder={t("ai.filterCount", { count: listed.length })}
+        value={query}
+        autoFocus
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div className={styles.fetchList} role="list">
+        <label className={`${styles.fetchRow} ${styles.fetchAll}`}>
+          <input
+            type="checkbox"
+            checked={all}
+            ref={(element) => {
+              if (element) element.indeterminate = some;
+            }}
+            disabled={pickable.length === 0}
+            onChange={() => {
+              const next = new Set(picked);
+              for (const model of pickable) {
+                if (all) next.delete(model.id);
+                else next.add(model.id);
+              }
+              setPicked(next);
+            }}
+          />
+          <span>{t("ai.fetch.selectShown")}</span>
+        </label>
+        {shown.map((model) => (
+          <FetchRow
+            key={model.id}
+            service={service}
+            model={model}
+            pi={known.find((each) => each.id === model.id)}
+            added={have.has(model.id)}
+            picked={picked.has(model.id)}
+            onPick={(on) => toggle(model.id, on)}
+          />
+        ))}
+      </div>
       <div className={styles.row}>
+        <span className={styles.muted} data-testid="ai-fetch-count">
+          {t("ai.fetch.found", { count: found.length })}
+        </span>
+        <span className={styles.grow} />
         <button
           type="button"
           className={`${styles.button} ${styles.primary}`}
-          disabled={!valid}
+          data-testid="ai-fetch-add"
+          disabled={adding.length === 0}
           onClick={add}
         >
-          {t("ai.addModelConfirm")}
-        </button>
-        <button type="button" className={styles.button} onClick={props.onDone}>
-          {t("ai.keyCancel")}
+          {t("ai.fetch.add")}
         </button>
       </div>
     </div>
+  );
+}
+
+function FetchRow(props: {
+  readonly service: ServiceConfig;
+  readonly model: ListedModel;
+  readonly pi: ListedModel | undefined;
+  readonly added: boolean;
+  readonly picked: boolean;
+  readonly onPick: (on: boolean) => void;
+}) {
+  const { service, model, added } = props;
+  const { ai } = useWorkbench();
+  const { t } = useTranslation();
+  const say = catalogValues({
+    service: model,
+    pi: props.pi,
+    modelsDev: ai.catalogEntryOf(service.id, model.id),
+  });
+  const name = say.values.get("name") as string | undefined;
+  const size = contextLabel(say.values.get("contextWindow") as number | undefined);
+  const cost = say.values.get("cost") as { input: number; output: number } | undefined;
+  const capability = capabilityOf({
+    reasoning: say.values.get("reasoning") as boolean | undefined,
+    image: say.values.get("image") as boolean | undefined,
+  });
+  return (
+    <label
+      className={styles.fetchRow}
+      role="listitem"
+      data-testid="ai-fetch-row"
+      data-model={model.id}
+      data-added={added ? "" : undefined}
+    >
+      <input
+        type="checkbox"
+        checked={added || props.picked}
+        disabled={added}
+        onChange={(event) => props.onPick(event.target.checked)}
+      />
+      <span className={styles.fetchName}>
+        <span>{name ?? model.id}</span>
+        <span className={`${styles.modelId} ${styles.mono}`}>{model.id}</span>
+      </span>
+      <span className={`${styles.fetchInfo} ${styles.mono}`}>
+        {[size, cost && `$${priceLabel(cost.input)} / $${priceLabel(cost.output)}`]
+          .filter(Boolean)
+          .join(" · ")}
+      </span>
+      <span className={styles.capSlot}>
+        {capability && <CapabilityIcon capability={capability} size={13} />}
+      </span>
+      <span className={styles.fetchTag}>
+        {added ? t("ai.fetch.added") : model.chat === false ? t("ai.fetch.notChat") : ""}
+      </span>
+    </label>
   );
 }

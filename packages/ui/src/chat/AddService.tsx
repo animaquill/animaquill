@@ -1,47 +1,75 @@
-import { urlHasSecret } from "@animaquill/host";
-import {
-  SERVICE_GROUPS,
-  SERVICE_KINDS,
-  checkBaseUrl,
-  recommendedOf,
-  type ListedModel,
-  type ServiceKind,
-} from "@animaquill/agent";
-import { ChevronLeft, Search } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { SERVICE_KINDS, recommendedOf, type ServiceKind } from "@animaquill/agent";
+import { Plus, Search } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { ServiceAvatar, TestPill } from "./aiParts.tsx";
+import { ServiceAvatar } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
-import type { ConnectionTest } from "./settings.ts";
 
-const noop = () => () => {};
-const nobody = () => undefined;
+/** What the card of a server of one's own adds: one that talks OpenAI's way until people change it. */
+const OWN_KIND = "openai-compatible";
 
 /**
- * Adding a service: cards of the kinds there are, in groups, to search by name or by a model they
- * have. A card picked asks only for what that kind needs (a key; an address for one's own), tests
- * it, and adds it with the models recommended for it turned on.
+ * Adding a service, as pi-web's picker of providers (docs/design/settings-and-properties.md of
+ * AnimaQuill Cloud, 6.1): over the page, a search on top, a card for a server of one's own, then a
+ * card for each service of the catalog, with how many models it has; those already added greyed.
+ * A card picked adds the service at once, with the models recommended for it on, and opens it to
+ * fill in the rest (the key, the address).
  */
-export function AddService(props: {
-  /** The kind picked, whose short form shows. */
+export function AddServicePicker(props: {
+  /** A kind asked for from elsewhere, such as the chat: added right away. */
   readonly picked: string | undefined;
-  readonly onPick: (kind: string | undefined) => void;
-  /** Back to the services. */
-  readonly onBack: () => void;
-  /** There are services to go back to: the way back shows also where the settings are wide. */
-  readonly backAlways: boolean;
+  /**
+   * In the page, where there is no service yet: the same, not over it, so that the settings around
+   * it still search and close as ever.
+   */
+  readonly inline?: boolean;
+  readonly onClose: () => void;
   readonly onAdded: (id: string) => void;
 }) {
   const { ai } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
+  const adding = useRef(false);
 
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    if (element && !element.open && !props.inline) element.showModal();
+  }, [props.inline]);
   // How many models each kind has, and the models to search by.
   useEffect(() => {
     for (const kind of SERVICE_KINDS) void ai.loadKnown(kind.id);
   }, [ai]);
+
+  const add = async (kind: ServiceKind) => {
+    if (adding.current) return;
+    adding.current = true;
+    const existing = snapshot.services.filter((service) => service.kind === kind.id).length;
+    const base = kind.custom ? t("ai.add.ownName") : kind.name;
+    const name = existing > 0 ? `${base} ${existing + 1}` : base;
+    const enabled = kind.custom ? [] : recommendedOf(kind, await ai.loadKnown(kind.id));
+    const id = ai.add(kind.id, name, { enabled });
+    adding.current = false;
+    if (id === undefined) return;
+    dialog.current?.close();
+    props.onAdded(id);
+  };
+
+  // Asked for by its kind, as the chat does: no need to pick it again.
+  const asked = props.picked;
+  useEffect(() => {
+    const kind = SERVICE_KINDS.find((each) => each.id === asked);
+    if (kind) void add(kind);
+    // Once, as it opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const close = () => {
+    dialog.current?.close();
+    props.onClose();
+  };
 
   const needle = query.trim().toLowerCase();
   const matches = (kind: ServiceKind) =>
@@ -53,273 +81,111 @@ export function AddService(props: {
         model.id.toLowerCase().includes(needle) ||
         (model.name ?? "").toLowerCase().includes(needle),
     );
-  const groups = SERVICE_GROUPS.map((group) => ({
-    group,
-    kinds: SERVICE_KINDS.filter((kind) => kind.group === group && matches(kind)),
-  })).filter(({ kinds }) => kinds.length > 0);
+  const own = SERVICE_KINDS.find((kind) => kind.id === OWN_KIND);
+  const ownShown =
+    own !== undefined &&
+    (!needle ||
+      [t("ai.add.own"), own.name, "openai", "anthropic", "custom"].some((word) =>
+        word.toLowerCase().includes(needle),
+      ));
+  const kinds = SERVICE_KINDS.filter((kind) => !kind.custom && matches(kind));
 
-  return (
-    <div className={styles.wall} data-testid="ai-add">
-      <div className={styles.row}>
-        <button
-          type="button"
-          className={props.backAlways ? `${styles.back} ${styles.wallBack}` : styles.back}
-          onClick={props.onBack}
-        >
-          <ChevronLeft size={14} aria-hidden /> {t("settings.back")}
-        </button>
-        <h2 className={styles.group} style={{ margin: 0 }}>
-          {t("ai.add.title")}
-        </h2>
-      </div>
-      {snapshot.services.length === 0 && <p className={styles.help}>{t("ai.intro")}</p>}
-      <label className={styles.row}>
-        <Search size={14} aria-hidden className={styles.muted} />
+  const body = (
+    <>
+      <label className={styles.pickerSearch}>
+        <Search size={14} aria-hidden />
         <input
-          className={`${styles.input} ${styles.grow}`}
           type="search"
           aria-label={t("ai.add.search")}
           placeholder={t("ai.add.search")}
           value={query}
+          autoFocus={!props.inline}
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
-      {groups.length === 0 && <p className={styles.help}>{t("ai.add.none")}</p>}
-      {groups.map(({ group, kinds }) => (
-        <section key={group} className={styles.wall} aria-label={t(`ai.add.groups.${group}`)}>
-          <h3 className={styles.sectionTitle}>{t(`ai.add.groups.${group}`)}</h3>
-          <div className={styles.cards}>
-            {kinds.map((kind) => (
-              <KindCard
-                key={kind.id}
-                kind={kind}
-                picked={props.picked === kind.id}
-                onPick={() => props.onPick(props.picked === kind.id ? undefined : kind.id)}
-              />
-            ))}
-          </div>
-          {kinds.some((kind) => kind.id === props.picked) && (
-            <AddForm
-              key={props.picked}
-              kind={kinds.find((kind) => kind.id === props.picked) as ServiceKind}
-              onCancel={() => props.onPick(undefined)}
-              onAdded={props.onAdded}
-            />
-          )}
-        </section>
-      ))}
-      <p className={styles.help}>{t("ai.noSubscription")}</p>
-    </div>
+      <div className={styles.pickerBody}>
+        {own && ownShown && (
+          <section aria-label={t("ai.add.groups.own")}>
+            <h3 className={styles.kicker}>{t("ai.add.groups.own")}</h3>
+            <div className={styles.cards}>
+              <button
+                type="button"
+                className={styles.card}
+                data-testid="ai-kind"
+                data-kind={own.id}
+                onClick={() => void add(own)}
+              >
+                <span className={styles.cardText}>
+                  <span>{t("ai.add.own")}</span>
+                  <span className={styles.cardSub}>{t("ai.add.ownSub")}</span>
+                </span>
+                <span className={styles.cardIcon}>
+                  <Plus size={14} aria-hidden />
+                </span>
+              </button>
+            </div>
+          </section>
+        )}
+        {kinds.length > 0 && (
+          <section aria-label={t("ai.add.groups.catalog")}>
+            <h3 className={styles.kicker}>{t("ai.add.groups.catalog")}</h3>
+            <div className={styles.cards}>
+              {kinds.map((kind) => {
+                const added = snapshot.services.some((service) => service.kind === kind.id);
+                const count = snapshot.known.get(kind.id)?.length ?? 0;
+                return (
+                  <button
+                    key={kind.id}
+                    type="button"
+                    className={styles.card}
+                    data-testid="ai-kind"
+                    data-kind={kind.id}
+                    disabled={added}
+                    onClick={() => void add(kind)}
+                  >
+                    <span className={styles.cardText}>
+                      <span>{kind.name}</span>
+                      <span className={styles.cardSub}>
+                        {added
+                          ? t("ai.add.added")
+                          : count > 0
+                            ? t("ai.add.models", { count })
+                            : t("ai.add.apiKey")}
+                      </span>
+                    </span>
+                    <ServiceAvatar kind={kind.id} name={kind.name} large />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+        {kinds.length === 0 && !ownShown && <p className={styles.muted}>{t("ai.add.none")}</p>}
+      </div>
+    </>
   );
-}
-
-function KindCard(props: {
-  readonly kind: ServiceKind;
-  readonly picked: boolean;
-  readonly onPick: () => void;
-}) {
-  const { kind } = props;
-  const { ai, account } = useWorkbench();
-  const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const signedIn =
-    useSyncExternalStore(account?.subscribe ?? noop, account?.getSnapshot ?? nobody)?.status ===
-    "signedIn";
-  const count = snapshot.known.get(kind.id)?.length ?? 0;
-  const existing = snapshot.services.filter((service) => service.kind === kind.id).length;
-  const how = kind.custom
-    ? kind.protocol === "openai-completions"
-      ? t("ai.add.ownOpenAI")
-      : t("ai.add.own")
-    : kind.route === "relay"
-      ? ai.canRelay
-        ? signedIn
-          ? t("ai.add.relay")
-          : t("ai.add.relaySignIn")
-        : t("ai.add.relayNone")
-      : count > 0
-        ? `${t("ai.add.apiKey")} · ${t("ai.add.models", { count })}`
-        : t("ai.add.apiKey");
+  if (props.inline)
+    return (
+      <div className={styles.pickerInline} data-testid="ai-add" aria-label={t("ai.addService")}>
+        {body}
+      </div>
+    );
   return (
-    <button
-      type="button"
-      className={styles.card}
-      aria-pressed={props.picked}
-      data-testid="ai-kind"
-      data-kind={kind.id}
-      onClick={props.onPick}
+    <dialog
+      ref={dialog}
+      className={styles.picker}
+      data-testid="ai-add"
+      aria-label={t("ai.addService")}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+      onClick={(event) => {
+        // A click on the dim around it.
+        if (event.target === dialog.current) close();
+      }}
     >
-      <ServiceAvatar kind={kind.id} name={kind.custom ? "{" : kind.name} large />
-      <span className={styles.cardText}>
-        <div>{kind.name}</div>
-        <div className={styles.cardSub}>
-          {how}
-          {existing > 0 && ` · ${t("ai.add.existing", { count: existing })}`}
-        </div>
-      </span>
-    </button>
-  );
-}
-
-/** The short form of one kind: its key (and address), a test, and adding it. */
-function AddForm(props: {
-  readonly kind: ServiceKind;
-  readonly onCancel: () => void;
-  readonly onAdded: (id: string) => void;
-}) {
-  const { kind } = props;
-  const { ai } = useWorkbench();
-  const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  // The key stays in the field only, never in what React renders: see `KeySection`.
-  const keyField = useRef<HTMLInputElement>(null);
-  const [typed, setTyped] = useState(false);
-  const keyNow = () => keyField.current?.value.trim() ?? "";
-  const [url, setUrl] = useState(kind.baseUrl);
-  const [trying, setTrying] = useState(false);
-  const [tried, setTried] = useState<
-    | {
-        readonly test: ConnectionTest;
-        readonly recommended: readonly string[];
-        readonly listed?: readonly ListedModel[];
-      }
-    | undefined
-  >();
-  const form = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    form.current?.scrollIntoView({ block: "nearest" });
-  }, []);
-  // What it would start with, by name, once what pi knows of the kind is here.
-  const known = snapshot.known.get(kind.id) ?? [];
-  const preview = kind.recommended
-    ? recommendedOf(kind, known).map((id) => known.find((model) => model.id === id)?.name ?? id)
-    : [];
-
-  const existing = snapshot.services.filter((service) => service.kind === kind.id).length;
-  const name = existing > 0 ? `${kind.name} ${existing + 1}` : kind.name;
-  const baseUrl = kind.custom ? (checkBaseUrl(url) ?? "") : kind.baseUrl;
-  const route = ai.canRelay ? kind.route : "direct";
-  const missing = kind.custom
-    ? baseUrl === ""
-      ? t("ai.add.urlRequired")
-      : undefined
-    : !typed
-      ? t("ai.add.keyRequired")
-      : undefined;
-  const blocked = missing;
-
-  const add = async (result: NonNullable<typeof tried>) => {
-    const id = ai.add(kind.id, name, {
-      baseUrl,
-      route,
-      enabled: result.recommended,
-      ...(result.listed && { listed: result.listed }),
-    });
-    if (id === undefined) return;
-    const key = keyNow();
-    if (key) await ai.setKey(id, key);
-    ai.keepTest(id, result.test);
-    props.onAdded(id);
-  };
-
-  const tryIt = async () => {
-    if (blocked || trying) return;
-    setTrying(true);
-    setTried(undefined);
-    const result = await ai.tryService({ kind: kind.id, baseUrl, route }, keyNow());
-    setTrying(false);
-    if (result.test.state === "ok") await add(result);
-    else setTried(result);
-  };
-
-  const willDefault = snapshot.default === undefined;
-  return (
-    <div className={styles.form} ref={form} data-testid="ai-add-form">
-      <div className={styles.row}>
-        <ServiceAvatar kind={kind.id} name={kind.custom ? "{" : kind.name} large />
-        <strong>{t("ai.add.form", { name: kind.name })}</strong>
-      </div>
-      {kind.custom && (
-        <label className={styles.field}>
-          <span>{t("ai.baseUrl")}</span>
-          <input
-            className={styles.input}
-            value={url}
-            placeholder="https://"
-            spellCheck={false}
-            aria-invalid={url.trim() !== "" && baseUrl === ""}
-            onChange={(event) => setUrl(event.target.value)}
-          />
-        </label>
-      )}
-      {kind.custom && url.trim() !== "" && baseUrl === "" && (
-        <p className={styles.warning} data-testid="ai-url-problem">
-          {t(urlHasSecret(url) ? "ai.baseUrlSecret" : "ai.baseUrlInvalid")}
-        </p>
-      )}
-      <label className={styles.field}>
-        <span>{t("ai.key")}</span>
-        <input
-          className={`${styles.input} ${styles.mono}`}
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder={kind.custom ? t("ai.keyOptional") : t("ai.keyPlaceholder")}
-          ref={keyField}
-          defaultValue=""
-          onChange={(event) => setTyped(event.target.value.trim() !== "")}
-          onKeyDown={(event) => event.key === "Enter" && void tryIt()}
-        />
-      </label>
-      {kind.id === "anthropic" && <p className={styles.help}>{t("ai.noSubscriptionAnthropic")}</p>}
-      {kind.id === "openai-compatible" && (
-        <p className={styles.note} data-testid="ai-gpt6">
-          {t("ai.add.completions")}
-        </p>
-      )}
-      <div className={styles.row}>
-        <button
-          type="button"
-          className={`${styles.button} ${styles.primary}`}
-          disabled={blocked !== undefined || trying}
-          title={blocked}
-          onClick={() => void tryIt()}
-        >
-          {trying ? t("ai.add.trying") : t("ai.add.try")}
-        </button>
-        <button type="button" className={styles.button} onClick={props.onCancel}>
-          {t("ai.add.cancel")}
-        </button>
-        <span className={styles.muted}>{t("ai.testCost")}</span>
-      </div>
-      {trying && (
-        <TestPill test={{ state: "running" }} relayed={route === "relay"} canRelay={ai.canRelay} />
-      )}
-      {!tried && !trying && (
-        <p className={styles.help}>
-          {preview.length > 0 && kind.recommended
-            ? t(willDefault ? "ai.add.willEnableDefault" : "ai.add.willEnable", {
-                models: preview.join("、"),
-              })
-            : t("ai.add.willList")}
-        </p>
-      )}
-      {tried && (
-        <>
-          <TestPill test={tried.test} relayed={route === "relay"} canRelay={ai.canRelay} />
-          <div className={styles.row}>
-            <button
-              type="button"
-              className={styles.button}
-              data-testid="ai-add-anyway"
-              onClick={() => void add(tried)}
-            >
-              {t("ai.add.anyway")}
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+      {body}
+    </dialog>
   );
 }

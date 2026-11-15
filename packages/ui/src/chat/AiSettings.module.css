@@ -1,5 +1,5 @@
-/* The settings of AI: the page of models (services on the left, one in detail on the right; one at
-   a time where narrow) and what the page of model packs shares with it. */
+/* The settings of AI: the page of models, as pi-web's Models (a tree on the left, what is picked in
+   it on the right; one at a time where narrow), and what the page of model packs shares with it. */
 
 .group {
   margin: 0 0 8px;
@@ -42,13 +42,16 @@
 }
 
 .button {
-  padding: 3px 10px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 10px;
   color: var(--aq-text);
   font: inherit;
   white-space: nowrap;
   background: var(--aq-bg-input);
-  border: 0;
-  border-radius: 3px;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
   cursor: pointer;
 }
 
@@ -61,9 +64,14 @@
   opacity: 0.6;
 }
 
+.button[aria-pressed="true"] {
+  border-color: var(--aq-accent);
+}
+
 .primary {
   color: var(--aq-on-accent);
   background: var(--aq-accent);
+  border-color: var(--aq-accent);
 }
 
 .primary:hover {
@@ -71,20 +79,40 @@
   filter: brightness(1.1);
 }
 
-.small {
-  padding: 1px 6px;
-  font-size: 11px;
+.dangerButton {
+  color: var(--aq-danger-text);
+  border-color: color-mix(in srgb, var(--aq-danger) 60%, transparent);
+}
+
+.addButton {
+  align-self: flex-start;
+}
+
+.iconButton {
+  display: inline-flex;
+  padding: 4px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
 }
 
 .input {
   box-sizing: border-box;
+  width: 100%;
   min-width: 0;
-  padding: 4px 6px;
+  padding: 6px 8px;
   color: var(--aq-text);
   font: inherit;
   background: var(--aq-bg-input);
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .input:focus {
@@ -93,191 +121,15 @@
 }
 
 .input[aria-invalid="true"] {
-  border-color: var(--aq-warning);
+  border-color: var(--aq-danger);
+}
+
+.input:disabled {
+  opacity: 0.7;
 }
 
 .mono {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-}
-
-/* The page of models: the default model on top, the services on the left, one on the right. */
-.page {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
-  height: 100%;
-}
-
-.defaultBar {
-  display: flex;
-  flex-wrap: wrap;
-  grid-row: 1;
-  grid-column: 1 / -1;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--aq-border);
-}
-
-.defaultLabel {
-  color: var(--aq-text-strong);
-  font-weight: 600;
-}
-
-.defaultSelect {
-  min-width: 240px;
-  max-width: 100%;
-}
-
-.defaultHelp {
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-/* How the settings stand with the account: a few words on the right of the default model. */
-.syncLine {
-  margin: 0;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-.syncLine[data-status="failed"],
-.syncLine[data-status="newer"],
-.syncLine[data-status="tooLarge"] {
-  color: var(--aq-danger-text);
-}
-
-.held {
-  grid-row: 2;
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 8px 12px;
-  color: var(--aq-text);
-  background: var(--aq-bg-input);
-  border-bottom: 2px solid var(--aq-warning);
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  grid-row: 3;
-  min-height: 0;
-  overflow: auto;
-  border-right: 1px solid var(--aq-border);
-}
-
-.listHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 10px 6px;
-  color: var(--aq-text-muted);
-}
-
-.service {
-  display: grid;
-  grid-template-columns: 8px 18px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 10px;
-  color: var(--aq-text);
-  font: inherit;
-  text-align: left;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.service:hover {
-  background: var(--aq-bg-hover);
-}
-
-.service[aria-current="true"] {
-  color: var(--aq-text-strong);
-  background: var(--aq-bg-hover);
-}
-
-.serviceName {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.badge {
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-.badge[data-warn] {
-  color: var(--aq-warning);
-}
-
-.dot {
-  width: 7px;
-  height: 7px;
-  background: var(--aq-text-muted);
-  border-radius: 50%;
-  opacity: 0.6;
-}
-
-.dot[data-state="ok"] {
-  background: var(--aq-success);
-  opacity: 1;
-}
-
-.dot[data-state="noKey"] {
-  background: var(--aq-warning);
-  opacity: 1;
-}
-
-.dot[data-state="failed"] {
-  background: var(--aq-danger);
-  opacity: 1;
-}
-
-.addLink {
-  margin: 4px 10px;
-  align-self: flex-start;
-}
-
-.detail {
-  grid-row: 3;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.detailInner {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-sizing: border-box;
-  max-width: 900px;
-  padding: 12px 16px 24px;
-}
-
-/* The details of a model take the width of the page. */
-.page[data-model] .detail {
-  grid-column: 1 / -1;
-}
-
-.avatar {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 4px;
-}
-
-.avatarLarge {
-  width: 24px;
-  height: 24px;
-  font-size: 13px;
 }
 
 .row {
@@ -291,18 +143,217 @@
   flex: 1;
 }
 
-.title {
+.muted {
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+/* The page: the tree, and on its right what is picked in it. */
+.page {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.held {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--aq-text);
+  background: var(--aq-bg-input);
+  border-bottom: 2px solid var(--aq-warning);
+}
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  grid-row: 2;
+  min-height: 0;
+  border-right: 1px solid var(--aq-border);
+}
+
+.treeList {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  overflow: auto;
+}
+
+.treeService[data-dragging] {
+  opacity: 0.5;
+}
+
+/* A service turned off: its group fades, its models are not in the chat's picker. */
+.treeService[data-off] > * {
+  opacity: 0.5;
+}
+
+.treeRow,
+.treeModel,
+.treeAddModel {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+}
+
+.treeRow,
+.treeAddModel {
+  cursor: pointer;
+}
+
+.treeRow:hover,
+.treeModel:hover,
+.treeAddModel:hover {
+  background: var(--aq-bg-hover);
+}
+
+.treeRow[aria-current="true"],
+.treeModel[data-current] {
   color: var(--aq-text-strong);
-  font-size: 15px;
+  background: var(--aq-bg-hover);
+}
+
+.treeRow[aria-current="true"] .treeName,
+.treeModel[data-current] .treeModelName {
   font-weight: 600;
 }
 
-.muted {
+.treeIcon {
+  flex: none;
+  width: 18px;
   color: var(--aq-text-muted);
 }
 
-.sectionTitle {
-  margin: 4px 0 0;
+.treeName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.treeModel {
+  padding-left: 34px;
+  color: var(--aq-text-muted);
+}
+
+.treeModelName {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  text-align: left;
+  text-overflow: ellipsis;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.treeNew {
+  font-style: italic;
+}
+
+.treeAddModel {
+  gap: 4px;
+  padding-left: 34px;
+  color: var(--aq-text-muted);
+}
+
+/* The star of a model in the tree: the default's always, the others' as the pointer is on them. */
+.treeModel .starButton[aria-pressed="false"] {
+  visibility: hidden;
+}
+
+.treeModel:hover .starButton,
+.treeModel .starButton:focus-visible {
+  visibility: visible;
+}
+
+.treeLine {
+  margin: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--aq-border);
+}
+
+.treeAdd {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 12px 14px;
+  color: var(--aq-text-muted);
+  font: inherit;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--aq-border);
+  cursor: pointer;
+}
+
+.treeAdd:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}
+
+/* A small dot beside a service only when something is wrong: no key (yellow), a failure (red). */
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.dot[data-state="noKey"] {
+  background: var(--aq-warning);
+}
+
+.dot[data-state="failed"] {
+  background: var(--aq-danger);
+}
+
+.detail {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.detailInner {
+  box-sizing: border-box;
+  max-width: 820px;
+  padding: 16px 20px 28px;
+}
+
+.wall {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* On top of a service or a model: what it is, then what can be done. */
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-height: 30px;
+}
+
+.kicker {
+  margin: 0;
   color: var(--aq-text-muted);
   font-size: 11px;
   font-weight: 600;
@@ -310,19 +361,119 @@
   text-transform: uppercase;
 }
 
-.keyMask {
-  flex: 1;
-  min-width: 120px;
-  padding: 4px 6px;
+.line {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--aq-border);
+}
+
+/* One cell under another, each with its name above it. */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field > span:first-child {
+  color: var(--aq-text-muted);
+}
+
+.check {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.check select {
+  flex: none;
+  width: auto;
+  field-sizing: content;
+  padding-right: 24px;
+}
+
+/* The key, with its eye inside the cell. */
+.secret {
+  position: relative;
+  display: flex;
+}
+
+.secret .input {
+  padding-right: 32px;
+}
+
+.eye {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  padding: 2px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.eye:hover {
   color: var(--aq-text);
-  background: var(--aq-bg-input);
-  border-radius: 3px;
+}
+
+/* Two choices side by side, as one control. */
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  overflow: hidden;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.segmented button {
+  padding: 4px 12px;
+  color: var(--aq-text);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.segmented button[aria-pressed="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.segmented button[aria-invalid="true"] {
+  background: var(--aq-danger);
+}
+
+.segmented button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.headers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.headerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
 }
 
 /* What a test came to. */
 .pill {
   display: inline-flex;
-  align-self: flex-start;
   gap: 4px;
   align-items: center;
   max-width: 100%;
@@ -350,231 +501,6 @@
   background: var(--aq-bg-input);
 }
 
-.failure {
-  margin: 0;
-  padding: 6px 8px;
-  color: var(--aq-text);
-  background: var(--aq-bg-input);
-  border-left: 3px solid var(--aq-danger);
-  border-radius: 3px;
-}
-
-.failure summary {
-  color: var(--aq-text-muted);
-  cursor: pointer;
-}
-
-.note {
-  margin: 0;
-  padding: 6px 8px;
-  color: var(--aq-text);
-  border-left: 3px solid var(--aq-warning);
-  background: var(--aq-bg-input);
-}
-
-/* The models of a service. */
-
-.modelName {
-  min-width: 0;
-}
-
-.modelName > div {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.modelId {
-  display: block;
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.tag {
-  padding: 0 4px;
-  color: var(--aq-text-muted);
-  font-size: 10px;
-  border: 1px solid var(--aq-border);
-  border-radius: 3px;
-}
-
-.tag[data-kind="new"] {
-  color: var(--aq-match);
-  border-color: var(--aq-match);
-}
-
-.starButton {
-  padding: 0 2px;
-  color: var(--aq-text-muted);
-  font-size: 14px;
-  line-height: 1;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.starButton[aria-pressed="true"] {
-  color: var(--aq-star);
-}
-
-.switch {
-  position: relative;
-  width: 26px;
-  height: 14px;
-  margin: 0;
-  appearance: none;
-  background: var(--aq-bg-input);
-  border: 1px solid var(--aq-border);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.switch::after {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 10px;
-  height: 10px;
-  content: "";
-  background: var(--aq-text-muted);
-  border-radius: 50%;
-  transition: transform 0.12s;
-}
-
-.switch:checked {
-  background: var(--aq-accent);
-  border-color: var(--aq-accent);
-}
-
-.switch:checked::after {
-  background: #fff;
-  transform: translateX(12px);
-}
-
-.switch:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--aq-border);
-  border-radius: 4px;
-}
-
-.field {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-}
-
-.field > span:first-child {
-  color: var(--aq-text-muted);
-}
-
-/* The cards of services to add. */
-.wall {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 8px;
-}
-
-.card {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-  padding: 8px 10px;
-  color: var(--aq-text);
-  font: inherit;
-  text-align: left;
-  background: var(--aq-bg-raised);
-  border: 1px solid var(--aq-border);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.card:hover {
-  border-color: var(--aq-text-muted);
-}
-
-.card[aria-pressed="true"] {
-  border-color: var(--aq-accent);
-}
-
-.cardText {
-  min-width: 0;
-}
-
-.cardText > div {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.cardSub {
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-.back {
-  display: none;
-  align-items: center;
-  gap: 2px;
-  align-self: flex-start;
-  padding: 2px 4px 2px 0;
-  color: var(--aq-match);
-  font: inherit;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.wallBack {
-  display: inline-flex;
-}
-
-@container settings (min-width: 641px) and (max-width: 940px) {
-  .page {
-    grid-template-columns: 200px minmax(0, 1fr);
-  }
-}
-
-@container settings (max-width: 640px) {
-  .page {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .page[data-depth="1"] .detail,
-  .page[data-depth="2"] .list,
-  .page[data-depth="2"] .defaultBar {
-    display: none;
-  }
-
-  .list,
-  .detail {
-    grid-column: 1;
-    border-right: 0;
-  }
-
-  .back {
-    display: inline-flex;
-  }
-}
-
 .spin {
   animation: spin 1.2s linear infinite;
 }
@@ -591,294 +517,247 @@
   }
 }
 
-/* The services: a row each, with a switch for all its models that shows on hovering. */
-.serviceRow {
+.switch {
   position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.serviceRow .service {
-  flex: 1;
-  min-width: 0;
-}
-
-.serviceRow[data-dragging] {
-  opacity: 0.5;
-}
-
-.serviceSwitch {
-  position: absolute;
-  right: 8px;
-  visibility: hidden;
-}
-
-.serviceRow:hover .serviceSwitch,
-.serviceSwitch:focus-visible,
-.serviceSwitch:not(:checked) {
-  visibility: visible;
-}
-
-.serviceRow:hover .badge {
-  visibility: hidden;
-}
-
-.listFoot {
-  margin: 8px 10px;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-/* The cells of a service or a model, two (three, four) across. */
-.fields,
-.fields3,
-.fields4 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 16px;
-  align-items: start;
-}
-
-.fields3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.fields4 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-/* In these, each cell has its name above it. */
-.fields .field,
-.fields3 .field,
-.fields4 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: stretch;
-  min-width: 0;
-}
-
-.fieldNote {
-  color: var(--aq-text-muted);
-  font-weight: normal;
-}
-
-.fieldTitle {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 6px 0 0;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-  font-weight: normal;
-}
-
-.fixed {
-  padding: 4px 0;
-  color: var(--aq-text);
-}
-
-.strong {
-  color: var(--aq-text-strong);
-}
-
-.check {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-
-/* Two choices side by side, as one control. */
-.segmented {
-  display: inline-flex;
-  align-self: flex-start;
-  overflow: hidden;
+  flex: none;
+  width: 30px;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  background: var(--aq-bg-input);
   border: 1px solid var(--aq-border);
-  border-radius: 3px;
+  border-radius: 9px;
+  cursor: pointer;
 }
 
-.segmented button {
-  padding: 3px 10px;
-  color: var(--aq-text);
-  font: inherit;
+.switch::after {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  content: "";
+  background: var(--aq-text-muted);
+  border-radius: 50%;
+  transition: transform 0.12s;
+}
+
+.switch:checked {
+  background: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.switch:checked::after {
+  background: #fff;
+  transform: translateX(14px);
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.starButton {
+  padding: 0 2px;
+  color: var(--aq-text-muted);
+  font-size: 14px;
+  line-height: 1;
   background: none;
   border: 0;
   cursor: pointer;
 }
 
-.segmented button[aria-pressed="true"] {
-  color: var(--aq-on-accent);
-  background: var(--aq-accent);
+.starButton[aria-pressed="true"],
+.star[data-on] {
+  color: var(--aq-star);
 }
 
-.segmented button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-/* Folded, and otherwise the same as everything around it: no frame, no colour (6.2, 8). */
-.plainFold > summary {
-  color: var(--aq-text-muted);
-  cursor: pointer;
-}
-
-.plainFold[open] > summary {
-  margin-bottom: 8px;
-}
-
-.headers {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.headerRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
-  gap: 6px;
+.avatar {
+  display: inline-flex;
+  flex: none;
   align-items: center;
-}
-
-.headerRow > p {
-  grid-column: 1 / -1;
-}
-
-/* The models of a service: a title row with what can be done, then a table. */
-.modelsHead {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-top: 8px;
-}
-
-.filter {
-  width: 140px;
-}
-
-.table {
-  border: 1px solid var(--aq-border);
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
   border-radius: 4px;
 }
 
-.tableHead,
-.modelRow {
-  display: grid;
-  grid-template-columns: 16px 34px minmax(0, 1fr) 56px 64px 92px 84px 22px;
-  gap: 6px;
-  align-items: center;
-  padding: 6px 8px;
+.avatarLarge {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
 }
 
-.tableHead {
+.modelId {
+  display: block;
+  overflow: hidden;
   color: var(--aq-text-muted);
   font-size: 11px;
-}
-
-.modelRow {
-  border-top: 1px solid var(--aq-border);
-}
-
-.modelRow[data-dragging] {
-  opacity: 0.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .num {
-  color: var(--aq-text);
+  color: var(--aq-text-muted);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.caps {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--aq-text-muted);
-}
-
-.grip {
-  display: inline-flex;
-}
-
-/* Where the icon of what a model can do goes, also where it has none: the tests line up. */
+/* Where the icon of what a model can do goes, also where it has none: the rows line up. */
 .capSlot {
   display: inline-flex;
-  width: 16px;
-}
-
-.gripButton {
-  display: inline-flex;
-  padding: 0;
+  flex: none;
+  width: 14px;
   color: var(--aq-text-muted);
-  background: none;
-  border: 0;
-  cursor: grab;
 }
 
-.crumbBack {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  padding: 0;
-  color: var(--aq-match);
-  font: inherit;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-/* What a catalog filled in of a model, and the ways to fill again or undo it. */
-.fillBanner {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 10px;
-  background: var(--aq-bg-input);
+/* The models of a service of the catalog, a switch each (pi-web's available models). */
+.switchList {
+  border: 1px solid var(--aq-border);
   border-radius: 4px;
 }
 
-.fillDot {
-  width: 8px;
-  height: 8px;
-  background: var(--aq-text-muted);
-  border-radius: 50%;
+.switchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 96px 14px 18px 30px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--aq-bg-input);
 }
 
-.fillDot[data-state="ok"],
-.fillDot[data-state="live"] {
-  background: var(--aq-success);
+.switchRow + .switchRow {
+  border-top: 1px solid var(--aq-border);
 }
 
-.fillDot[data-state="none"] {
-  background: var(--aq-warning);
+.switchRow[data-dragging] {
+  opacity: 0.5;
 }
 
-/* Where a cell's value comes from: a catalog (green) or people (blue). */
-.mark {
-  padding: 0 4px;
-  color: var(--aq-success);
+.switchRow .num {
+  text-align: right;
+}
+
+.switchName {
+  min-width: 0;
+  padding: 0;
+  color: var(--aq-text);
   font: inherit;
-  font-size: 10px;
-  font-weight: normal;
+  text-align: left;
   background: none;
   border: 0;
-  border-left: 2px solid var(--aq-success);
-}
-
-.mark[data-mark="edited"] {
-  color: var(--aq-match);
-  border-left-color: var(--aq-match);
-}
-
-button.mark {
   cursor: pointer;
 }
 
-.markBox {
+.switchName:hover .switchTitle {
+  text-decoration: underline;
+}
+
+.switchTitle {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Getting models from a service: what it lists, below it, to tick (pi-web's import list). */
+.fetchButton {
+  align-self: flex-start;
+}
+
+.fetchList {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.fetchRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--aq-bg-input);
+  border-top: 1px solid var(--aq-border);
+}
+
+.fetchAll {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+  background: var(--aq-bg-panel);
+  border-top: 0;
+}
+
+.fetchRow[data-added] {
+  color: var(--aq-text-muted);
+}
+
+.fetchName {
+  flex: 1;
+  min-width: 0;
+}
+
+.fetchInfo {
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fetchTag {
+  min-width: 40px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Where a cell's value comes from: a thin line on its left, a catalog (green) or people (blue). */
+.marked {
   position: relative;
-  display: inline-flex;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.markBar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  z-index: 1;
+  width: 2px;
+  padding: 0;
+  background: var(--aq-success);
+  border: 0;
+}
+
+.markBar[data-mark="edited"] {
+  background: var(--aq-match);
+}
+
+/* Beside a box to tick, the line is a little apart from it, and the pair keeps its width. */
+.row > .marked {
+  flex: none;
+  padding-left: 6px;
+}
+
+button.markBar {
+  /* Easier to hit than to see. */
+  width: 2px;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px transparent;
+  cursor: pointer;
+}
+
+button.markBar:hover {
+  width: 4px;
 }
 
 .markMenu {
@@ -907,205 +786,292 @@ button.mark {
   background: var(--aq-bg-hover);
 }
 
+/* The catalog a model is filled in from, beside "按目录填写". */
+.source {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  color: var(--aq-match);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+/* The four prices in a row. */
+.prices {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding-left: 8px;
+}
+
+/* Folded, and otherwise the same as everything around it: no frame, no colour (6.2). */
+.plainFold {
+  padding-top: 12px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.plainFold > summary {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+}
+
+.plainFold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plainFold[open] > summary {
+  margin-bottom: 14px;
+}
+
+.foldTitle {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.foldTitle .muted {
+  font-weight: normal;
+}
+
+.foldIcon {
+  color: var(--aq-text-muted);
+  transition: transform 0.12s;
+}
+
+.foldIcon[data-open] {
+  transform: rotate(180deg);
+}
+
 /* The steps of reasoning: one row each, the box at the end. */
 .levels {
-  border: 1px solid var(--aq-border);
-  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.levelHead,
 .levelRow {
   display: grid;
-  grid-template-columns: 70px minmax(0, 1fr) 48px;
-  gap: 8px;
+  grid-template-columns: 70px minmax(0, 260px) 40px;
+  gap: 10px;
   align-items: center;
-  padding: 4px 10px;
 }
 
-.levelHead {
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-.levelHead > :last-child,
 .levelRow > :last-child {
-  justify-self: end;
-}
-
-.levelRow {
-  border-top: 1px solid var(--aq-border);
-  border-left: 2px solid transparent;
-}
-
-.levelRow[data-mark="edited"] {
-  border-left-color: var(--aq-match);
+  justify-self: center;
 }
 
 .levelRow input:disabled {
   opacity: 0.5;
 }
 
-/* The value, and right beside it whether people changed it. */
-.levelValue {
-  display: flex;
+.levelName {
+  display: inline-flex;
   gap: 6px;
   align-items: center;
 }
 
-.levelValue input {
-  width: 220px;
-  max-width: 100%;
+.levelDot {
+  width: 6px;
+  height: 6px;
+  background: var(--aq-text-muted);
+  border-radius: 50%;
 }
 
-.levelProblem {
-  grid-column: 2 / -1;
+.levelDot[data-dot="low"] {
+  background: #60a5fa;
 }
 
-/* Getting models from a service: a dialog over the settings (sketch S4). */
-.fetchDialog {
-  width: min(640px, 94vw);
-  max-height: 86vh;
+.levelDot[data-dot="medium"] {
+  background: #a78bfa;
+}
+
+.levelDot[data-dot="high"] {
+  background: #f472b6;
+}
+
+.levelDot[data-dot="xhigh"] {
+  background: #fb923c;
+}
+
+.levelDot[data-dot="max"] {
+  background: #ef4444;
+}
+
+/* Adding a service: a picker over the settings, as pi-web's (6.1). */
+.picker {
+  box-sizing: border-box;
+  width: min(820px, 94vw);
+  max-height: 80vh;
   padding: 0;
   color: var(--aq-text);
   background: var(--aq-bg-panel);
   border: 1px solid var(--aq-border);
-  border-radius: 6px;
+  border-radius: 8px;
   box-shadow: var(--aq-shadow);
 }
 
-.fetchDialog[open] {
+.picker[open] {
   display: flex;
   flex-direction: column;
 }
 
-.fetchDialog::backdrop {
+.picker::backdrop {
   background: rgb(0 0 0 / 40%);
 }
 
-.fetchHead,
-.fetchFoot {
+.pickerSearch {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 10px 14px;
-}
-
-.fetchHead {
-  justify-content: space-between;
+  padding: 12px 16px;
+  color: var(--aq-text-muted);
   border-bottom: 1px solid var(--aq-border);
 }
 
-.fetchHead h2 {
-  margin: 0;
-  color: var(--aq-text-strong);
-  font-size: 14px;
+.pickerSearch input {
+  flex: 1;
+  min-width: 0;
+  color: var(--aq-text);
+  font: inherit;
+  background: none;
+  border: 0;
+  outline: none;
 }
 
-.fetchFoot {
-  justify-content: flex-end;
-  border-top: 1px solid var(--aq-border);
-}
-
-.fetchBody {
+.pickerBody {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
   min-height: 0;
-  padding: 12px 14px;
+  padding: 14px 16px 16px;
   overflow: auto;
 }
 
-.fetchList {
+.pickerBody .kicker {
+  margin-bottom: 8px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.card {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 10px 12px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: left;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.card:hover:not(:disabled) {
+  border-color: var(--aq-text-muted);
+}
+
+.card:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.cardText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cardText > span:first-child {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cardSub {
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.cardIcon {
+  display: inline-flex;
+  padding: 4px;
+  color: var(--aq-text-muted);
   border: 1px solid var(--aq-border);
   border-radius: 4px;
 }
 
-.fetchRow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 5px 10px;
-  border-top: 1px solid var(--aq-border);
+@container settings (min-width: 641px) and (max-width: 940px) {
+  .page {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
 }
 
-.fetchAll {
-  border-top: 0;
-}
-
-.fetchRow[data-added] {
-  color: var(--aq-text-muted);
-}
-
-.fetchInfo {
-  display: inline-flex;
-  gap: 2px;
-  align-items: center;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.fetchUnknown {
-  color: var(--aq-warning);
-}
-
-/* Narrow: one cell across, and each model in two lines. After the rules above, which it changes. */
+/* Narrow: one at a time, the tree, then what was picked in it; the dialog has the way back. */
 @container settings (max-width: 640px) {
-  .fields,
-  .fields3 {
+  .page {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .fields4 {
+  .page[data-depth="1"] .detail,
+  .page:not([data-depth="1"]) .tree,
+  .page[data-empty] .tree {
+    display: none;
+  }
+
+  .page[data-empty] .detail {
+    display: block;
+  }
+
+  .tree,
+  .detail {
+    grid-column: 1;
+    border-right: 0;
+  }
+
+  .detailInner {
+    padding: 12px 14px 24px;
+  }
+
+  .switchRow {
+    grid-template-columns: minmax(0, 1fr) 14px 18px 30px;
+  }
+
+  .switchRow > .num {
+    display: none;
+  }
+
+  .fetchInfo {
+    display: none;
+  }
+
+  .prices {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .tableHead {
-    display: none;
-  }
-
-  .modelRow {
-    grid-template-columns: 16px 34px minmax(0, 1fr) auto auto;
-    row-gap: 2px;
-  }
-
-  .modelRow > :nth-child(3) {
-    grid-column: 3 / 5;
-  }
-
-  .modelRow > :nth-child(4) {
-    grid-row: 2;
-    grid-column: 3;
-  }
-
-  .modelRow > :nth-child(5),
-  .modelRow > :nth-child(6) {
-    display: none;
-  }
-
-  .modelRow > :nth-child(7) {
-    grid-row: 2;
-    grid-column: 4 / 6;
-    justify-self: end;
-  }
-
-  .modelRow > :nth-child(8) {
-    grid-row: 1;
-    grid-column: 5;
-  }
-
-  .levelHead,
   .levelRow {
-    grid-template-columns: 52px minmax(0, 1fr) 40px;
+    grid-template-columns: 60px minmax(0, 1fr) 40px;
   }
+}
 
-  /* The dialog has the way back at this width. */
-  .crumbBack {
-    display: none;
-  }
-
-  .defaultSelect {
-    min-width: 0;
-    width: 100%;
-  }
+/* The picker as the page, where there is no service yet. */
+.pickerInline {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
 }

@@ -1,6 +1,7 @@
 import { kindOf, type ServiceConfig } from "@animaquill/agent";
 import { Check, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import styles from "./AiSettings.module.css";
 import { failureText } from "./failure.ts";
@@ -24,29 +25,35 @@ export function ServiceAvatar(props: {
   );
 }
 
-/** How a service is, for the dot beside it. */
-export type ServiceState = "ok" | "failed" | "noKey" | "testing" | "untested";
+/** How a service is, for the dot beside it: nothing to say, or what is wrong. */
+export type ServiceState = "ok" | "failed" | "noKey";
 
 export function stateOf(snapshot: AiSettingsSnapshot, service: ServiceConfig): ServiceState {
   // Servers of one's own may need no key.
   if (!snapshot.keyed.has(service.id) && !kindOf(service.kind)?.custom) return "noKey";
-  const test = snapshot.tests.get(service.id);
-  if (test?.state === "running") return "testing";
-  if (test?.state === "ok") return "ok";
-  if (test?.state === "failed" || test?.state === "held") return "failed";
-  return "untested";
+  if (snapshot.failing.has(service.id)) return "failed";
+  return "ok";
 }
 
 /**
- * What a test came to, as a pill: how long a word took, or what kind of failure, with what to do
- * and what was said folded underneath.
+ * Whether a service is on: it was not turned off as a whole (which keeps the models it had on), and
+ * so a service with no model on yet, such as one just added, is on.
+ */
+export const isServiceOn = (service: ServiceConfig): boolean =>
+  service.enabled.length > 0 || !service.paused?.length;
+
+/** How long a test took, as people read it: "412 毫秒", "1.08 秒". */
+const timeOf = (t: TFunction, ms: number) =>
+  ms < 1000 ? t("ai.ms", { ms }) : t("ai.seconds", { s: (ms / 1000).toFixed(2) });
+
+/**
+ * What a test came to, as a pill: how long it took, or what kind of failure. What to do about it,
+ * and what was said, show on hovering it.
  */
 export function TestPill(props: {
   readonly test: ConnectionTest | undefined;
   readonly relayed: boolean;
   readonly canRelay: boolean;
-  /** Only the pill, without what to do: where a row of a model has no room. */
-  readonly short?: boolean;
   readonly testId?: string;
 }) {
   const { t } = useTranslation();
@@ -61,15 +68,15 @@ export function TestPill(props: {
     );
   }
   if (test.state === "ok") {
-    const text =
+    const title =
       test.models !== undefined
         ? t("ai.testOkListed", { ms: test.ms, count: test.models })
-        : test.text && !props.short
+        : test.text
           ? t("ai.testOk", { ms: test.ms, text: test.text })
           : t("ai.testOkQuiet", { ms: test.ms });
     return (
-      <span className={styles.pill} data-state="ok" data-testid={testId} title={text}>
-        <Check size={11} aria-hidden /> {text}
+      <span className={styles.pill} data-state="ok" data-testid={testId} title={title}>
+        <Check size={11} aria-hidden /> {timeOf(t, test.ms)}
       </span>
     );
   }
@@ -77,29 +84,20 @@ export function TestPill(props: {
     const said = t(`chat.hold.${test.hold}`);
     return (
       <span className={styles.pill} data-state="held" data-testid={testId} title={said}>
-        <X size={11} aria-hidden /> {props.short ? t("ai.testFailed.other") : said}
+        <X size={11} aria-hidden /> {t("ai.testFailed.other")}
       </span>
     );
   }
   const { advice, detail } = failureText(t, test.failure, props);
-  const label = t(`ai.testFailed.${test.failure.kind}`);
-  if (props.short) {
-    return (
-      <span className={styles.pill} data-state="failed" data-testid={testId} title={advice}>
-        <X size={11} aria-hidden /> {label}
-      </span>
-    );
-  }
   return (
-    <>
-      <span className={styles.pill} data-state="failed" data-testid={testId}>
-        <X size={11} aria-hidden /> {label}
-      </span>
-      <details className={styles.failure} data-testid={`${testId}-failure`}>
-        <summary>{advice}</summary>
-        {detail}
-      </details>
-    </>
+    <span
+      className={styles.pill}
+      data-state="failed"
+      data-testid={testId}
+      title={[advice, detail].filter(Boolean).join("\n")}
+    >
+      <X size={11} aria-hidden /> {t(`ai.testFailed.${test.failure.kind}`)}
+    </span>
   );
 }
 
