@@ -155,6 +155,31 @@
   opacity: 0.5;
 }
 
+/* Which conversations have pictures on the platform, under the switch of the conversations. */
+.imageList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.imageRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.imageRow .name {
+  overflow: hidden;
+  font-weight: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

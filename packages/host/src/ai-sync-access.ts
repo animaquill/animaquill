@@ -4,12 +4,14 @@ import {
   isObject,
   REQUEST_TIMEOUT_MS,
   text,
+  texts,
   withinTime,
 } from "./answers.ts";
 import {
   AiSyncNewer,
   AiSyncOff,
   AiSyncTooLarge,
+  ChatImagesMissing,
   ChatNewer,
   CloudFeatureOff,
   CloudOtherAccount,
@@ -17,6 +19,8 @@ import {
   type AccountAiSettings,
   type AccountChatSummary,
   type AiSyncAccess,
+  type ChatImageRef,
+  type ChatImageUsage,
   type ChatSyncAccess,
   type CloudSwitchChanges,
   type CloudSwitches,
@@ -117,7 +121,9 @@ function asker(options: BrowserAiSyncOptions) {
       if (path.startsWith("/me/chats/")) throw new ChatNewer(revision ?? 0);
       throw new AiSyncNewer("A newer editor wrote them");
     }
-    if (response.status === 413) throw new AiSyncTooLarge("Too large");
+    // Pictures say why, which `putImage` reads.
+    if (response.status === 413 && !path.startsWith("/me/chat-images"))
+      throw new AiSyncTooLarge("Too large");
     if (response.status === 429) {
       const seconds = Number(response.headers.get("retry-after"));
       throw new AiSyncBusy(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000);
@@ -232,10 +238,22 @@ const summaryOf = (value: unknown): AccountChatSummary | undefined => {
  * - `GET <api>/me/chats/<project>/<id>`: `{revision, chat, epoch}`; 404 where there is none.
  * - `PUT <api>/me/chats/<project>/<id>` `{base, chat}`: `{revision}`; 409 `{error: "newer",
  *   revision}`; 404 for a project that is not the person's, 413 for one too large.
+ *   409 `{error: "missingImages", images}` for pictures it names that the platform does not have.
  * - `DELETE <api>/me/chats/<project>/<id>`: 204.
+ * - `POST <api>/me/chat-images` `{hash, bytes, type}`: `{have: true}`, or `{upload: {method, url,
+ *   headers}}`, where the picture goes straight to the storage; then `POST
+ *   <api>/me/chat-images/<hash>/done`, which reads it back. 413 `full` where there is no room.
+ * - `GET <api>/me/chat-images/<hash>`: `{url, type}`, where to read it, for five minutes.
+ * - `GET <api>/me/chat-images`: `{used, limit, chats}`.
  */
 export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAccess {
   const ask = asker(options);
+  const request = options.fetch ?? ((input, init) => fetch(input, init));
+  const hexOf = (ref: ChatImageRef) => {
+    const hex = /^sha256:([0-9a-f]{64})$/.exec(ref.image)?.[1];
+    if (!hex) throw new RangeError("Not a picture of a conversation");
+    return hex;
+  };
   const timeout = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const at = (project: string, id: string) =>
     `/me/chats/${encodeURIComponent(project)}/${encodeURIComponent(id)}`;
@@ -289,6 +307,8 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
         }
         const { response, answer } = result;
         if (response.status === 404) return undefined;
+        if (response.status === 409 && isObject(answer) && answer.error === "missingImages")
+          throw new ChatImagesMissing(texts(answer.images) ?? []);
         const revision = isObject(answer) ? count(answer.revision) : undefined;
         if (!response.ok || revision === undefined)
           throw new Error(`The platform answered ${response.status}`);
@@ -303,6 +323,88 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
         );
         if (!response.ok && response.status !== 404)
           throw new Error(`The platform answered ${response.status}`);
+      }),
+    putImage: (ref, blob) =>
+      withinTime(CHANGE_TIMEOUT_MS, async (signal) => {
+        const hash = hexOf(ref);
+        const begun = await ask(
+          "/me/chat-images",
+          {
+            method: "POST",
+            headers: { ...options.changeHeaders, "content-type": "application/json" },
+            body: JSON.stringify({ hash, bytes: blob.size, type: ref.type }),
+          },
+          signal,
+        );
+        const said = isObject(begun.answer) ? begun.answer.error : undefined;
+        if (begun.response.status === 413) return said === "full" ? "full" : "unavailable";
+        if (begun.response.status === 503 && said === "unavailable") return "unavailable";
+        if (!begun.response.ok || !isObject(begun.answer))
+          throw new Error(`The platform answered ${begun.response.status}`);
+        if (begun.answer.have === true) return "stored";
+        const upload = begun.answer.upload;
+        const url = isObject(upload) ? text(upload.url) : undefined;
+        if (!isObject(upload) || url === undefined || !isObject(upload.headers))
+          throw new Error("The platform answered something that cannot be read");
+        const headers: Record<string, string> = { "content-type": ref.type };
+        for (const [name, value] of Object.entries(upload.headers))
+          if (typeof value === "string") headers[name] = value;
+        const put = await request(url, { method: "PUT", headers, body: blob, signal });
+        await put.body?.cancel().catch(() => {});
+        if (!put.ok) throw new Error(`The storage answered ${put.status}`);
+        const done = await ask(
+          `/me/chat-images/${hash}/done`,
+          { method: "POST", headers: { ...options.changeHeaders } },
+          signal,
+        );
+        if (!done.response.ok) throw new Error(`The platform answered ${done.response.status}`);
+        return "stored";
+      }),
+    getImage: (ref) =>
+      withinTime(CHANGE_TIMEOUT_MS, async (signal) => {
+        const hash = hexOf(ref);
+        const { response, answer } = await ask(`/me/chat-images/${hash}`, {}, signal);
+        if (response.status === 404) return undefined;
+        const url = isObject(answer) ? text(answer.url) : undefined;
+        if (!response.ok || url === undefined)
+          throw new Error(`The platform answered ${response.status}`);
+        const got = await request(url, { cache: "no-store", signal });
+        if (got.status === 404) return undefined;
+        if (!got.ok) throw new Error(`The storage answered ${got.status}`);
+        const bytes = await got.arrayBuffer();
+        // Only what it says it is.
+        const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+        const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        if (hex !== hash) throw new Error("The picture the storage gave is not the one asked for");
+        const said = isObject(answer) ? text(answer.type) : undefined;
+        return new Blob([bytes], { type: ref.type || (said ?? "") });
+      }),
+    imageUsage: () =>
+      withinTime(timeout, async (signal) => {
+        const { response, answer } = await ask("/me/chat-images", {}, signal);
+        const used = isObject(answer) ? count(answer.used) : undefined;
+        const limit = isObject(answer) ? count(answer.limit) : undefined;
+        if (!response.ok || !isObject(answer) || used === undefined || limit === undefined)
+          throw new Error(`The platform answered ${response.status}`);
+        const chats: ChatImageUsage["chats"][number][] = [];
+        for (const each of Array.isArray(answer.chats) ? answer.chats : []) {
+          if (!isObject(each)) continue;
+          const project = text(each.project);
+          const chat = text(each.chat);
+          const images = count(each.images);
+          const bytes = count(each.bytes);
+          if (project === undefined || chat === undefined || images === undefined) continue;
+          if (bytes === undefined) continue;
+          chats.push({
+            project,
+            projectName: text(each.projectName) ?? "",
+            chat,
+            title: text(each.title) ?? "",
+            images,
+            bytes,
+          });
+        }
+        return { used, limit, chats };
       }),
   };
 }

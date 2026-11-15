@@ -19,6 +19,11 @@ export interface ImageRef {
   readonly width: number;
   readonly height: number;
   readonly bytes: number;
+  /**
+   * Of a conversation of a project of a platform: it stayed on the device that has it, and why
+   * (`full`, `many`, `unavailable`, see the host's `ChatImageHeld`).
+   */
+  readonly held?: "full" | "many" | "unavailable";
 }
 
 /** Which moment of the project a picture is a frame of. */
@@ -204,7 +209,7 @@ const HASH = /^sha256:[0-9a-f]{64}$/;
 /** A picture as kept, where it is one. */
 export function readImage(value: unknown): AttachedImage | undefined {
   if (!isRecord(value)) return undefined;
-  const { image, type, note, label } = value;
+  const { image, type, note, label, held } = value;
   const width = count(value.width);
   const height = count(value.height);
   const bytes = count(value.bytes);
@@ -224,6 +229,7 @@ export function readImage(value: unknown): AttachedImage | undefined {
     bytes,
     note,
     ...(typeof label === "string" && { label }),
+    ...((held === "full" || held === "many" || held === "unavailable") && { held }),
     ...(ok && {
       frame: {
         timeline: frame.timeline as string,

@@ -3959,7 +3959,25 @@
       "removeFailed": "有图片没准备好，去掉标红的再发。",
       "wait": "等画面渲染完再发。",
       "unreadable": "这种图片格式读不了，可以先转成 PNG 或 JPEG。",
-      "dropHere": "把图片放到这里"
+      "dropHere": "把图片放到这里",
+      "reading": "正在取图…",
+      "retryRead": "重试",
+      "held": {
+        "here": {
+          "one": "这张图只在这台设备上（{{why}}）",
+          "some": "其中 {{count}} 张图只在这台设备上（{{why}}）"
+        },
+        "there": {
+          "one": "这张图在另一台设备上，没有同步过来（{{why}}）",
+          "some": "其中 {{count}} 张图在另一台设备上，没有同步过来（{{why}}）"
+        }
+      },
+      "heldWhy": {
+        "full": "对话图片的空间满了",
+        "many": "一个对话最多同步 100 张图",
+        "unavailable": "平台暂时存不了图片"
+      },
+      "fetchFailed": "图片取不到"
     },
     "attached": {
       "title": "附带",
@@ -4964,7 +4982,21 @@
       "forgetOnly": "删掉这台设备上的那份"
     },
     "githubInAccount": "装 GitHub App、管理授权的仓库，都在“账号”里。",
-    "githubGo": "去账号里管理"
+    "githubGo": "去账号里管理",
+    "chatImages": {
+      "usage": "对话里的图片 {{used}} / {{limit}}",
+      "manage": "管理",
+      "hide": "收起",
+      "intro": "同步到平台的对话图片，按对话列出。删掉对话后，它的图片 24 小时后从平台删掉，这台设备上的不受影响。",
+      "row": "{{project}} · {{count}} 张 · {{size}}",
+      "none": "平台上还没有对话图片。",
+      "untitled": "（没有标题）",
+      "delete": "删掉对话",
+      "deleteTitle": "删掉对话《{{title}}》？",
+      "deleteMessage": "所有设备上的这个对话都会删掉，它的图片 24 小时后从平台删掉。",
+      "deleteFailed": "没能删掉，稍后再试。",
+      "failed": "没读到对话图片的占用。"
+    }
   },
   "welcome": {
     "title": "欢迎，{{name}}",

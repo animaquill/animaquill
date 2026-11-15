@@ -1005,6 +1005,24 @@
   object-fit: contain;
 }
 
+/* A picture of the account that could not be read: what it says, and trying again. */
+span.sentPicture {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.panel .pictureRetry {
+  padding: 0 4px;
+  color: var(--aq-accent);
+  font-size: 10px;
+  background: none;
+  border: 0;
+  text-decoration: underline;
+}
+
 /* A turn a search went to, and the words it found, for a while. */
 [data-found-turn] {
   outline: 1px solid var(--aq-match);

@@ -664,6 +664,7 @@ export class Workbench {
             allowed: (account) => this.cloudSync.allows("chats", account),
             heardEpoch: (account, epoch) => this.cloudSync.heardChatsEpoch(account, epoch),
             off: () => void this.cloudSync.refresh(),
+            ...(host.chatImages && { images: host.chatImages }),
           })
         : undefined;
     this.chatStore = host.chats;
@@ -697,7 +698,11 @@ export class Workbench {
       }),
       undone: (result) => this.tellUndo(result),
       memory: host.windowMemory,
-      images: host.chatImages,
+      // Pictures of the account's conversations come here as they are read.
+      images:
+        this.chatSync && host.chatImages
+          ? this.chatSync.pictures(host.chatImages)
+          : host.chatImages,
       shoot: (signal) => this.#shootFrame(signal),
       shotSize: () => this.ai.getSnapshot().shotSize ?? 1568,
     });

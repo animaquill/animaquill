@@ -179,3 +179,66 @@ describe("what an entry can be", () => {
     expect(isLaterEntry({ at: 2, deleted: true }, { at: 2 })).toBe(false);
   });
 });
+
+describe("the pictures of conversations of an account, over HTTP", () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const hex = async (data: Uint8Array<ArrayBuffer>) =>
+    Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", data)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+
+  it("puts one straight into the storage, and has the platform check it", async () => {
+    const hash = await hex(bytes);
+    const asked: { url: string; method: string; headers: unknown }[] = [];
+    const access = browserChatSyncAccess({
+      api: (path) => `/api${path}`,
+      changeHeaders: { "x-test": "1" },
+      fetch: async (input, init) => {
+        asked.push({ url: String(input), method: init?.method ?? "GET", headers: init?.headers });
+        if (String(input) === "/api/me/chat-images")
+          return json(200, {
+            upload: {
+              method: "PUT",
+              url: "https://objects.example/b/x",
+              headers: { "x-amz-checksum-sha256": "c" },
+            },
+          });
+        if (String(input).startsWith("https://objects.example")) return new Response(null);
+        return json(200, { state: "ready" });
+      },
+    });
+    const ref = { image: `sha256:${hash}`, type: "image/jpeg", width: 2, height: 2, bytes: 4 };
+    expect(await access.putImage!(ref, new Blob([bytes], { type: "image/jpeg" }))).toBe("stored");
+    expect(asked.map((each) => `${each.method} ${each.url}`)).toEqual([
+      "POST /api/me/chat-images",
+      "PUT https://objects.example/b/x",
+      `POST /api/me/chat-images/${hash}/done`,
+    ]);
+    expect(asked[1]!.headers).toEqual({
+      "content-type": "image/jpeg",
+      "x-amz-checksum-sha256": "c",
+    });
+  });
+
+  it("says when there is no room, and takes a picture read back only where it is the one asked for", async () => {
+    const hash = await hex(bytes);
+    let stored: Uint8Array = bytes;
+    const access = browserChatSyncAccess({
+      api: (path) => `/api${path}`,
+      fetch: async (input) => {
+        if (String(input) === "/api/me/chat-images")
+          return json(413, { error: "full", used: 1, limit: 1 });
+        if (String(input).startsWith("https://objects.example"))
+          return new Response(new Blob([stored as Uint8Array<ArrayBuffer>]));
+        return json(200, { url: "https://objects.example/b/x", type: "image/jpeg" });
+      },
+    });
+    const ref = { image: `sha256:${hash}`, type: "", width: 0, height: 0, bytes: 0 };
+    expect(await access.putImage!(ref, new Blob([bytes]))).toBe("full");
+    const got = await access.getImage!(ref);
+    expect(got?.type).toBe("image/jpeg");
+    expect(new Uint8Array(await got!.arrayBuffer())).toEqual(bytes);
+    stored = new Uint8Array([9, 9, 9, 9]);
+    await expect(access.getImage!(ref)).rejects.toThrow();
+  });
+});

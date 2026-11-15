@@ -1,7 +1,15 @@
 import type { AttachedImage, ImageRef } from "@animaquill/agent";
 import { memoryChatImages, type ChatImageStore, type WindowMemory } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
-import { ADDED_SIDE, MOST_PICTURES, pictureNote, shotOf, type FrameOf } from "./shots.ts";
+import {
+  ADDED_MOST_BYTES,
+  ADDED_SIDE,
+  FRAME_MOST_BYTES,
+  MOST_PICTURES,
+  pictureNote,
+  shotOf,
+  type FrameOf,
+} from "./shots.ts";
 
 /**
  * The pictures that go with the next message of a conversation: frames of the project and pictures
@@ -184,7 +192,11 @@ export class ChatAttachments {
         this.#change(project, chat, id, undefined);
         return "failed";
       }
-      const made = await shotOf(shot.image, this.#options.side(), this.#options.maxBytes());
+      const made = await shotOf(
+        shot.image,
+        this.#options.side(),
+        Math.min(this.#options.maxBytes(), FRAME_MOST_BYTES),
+      );
       shot.image.close();
       controller.signal.throwIfAborted();
       const ref = await this.#images.save(made.blob, made);
@@ -226,7 +238,12 @@ export class ChatAttachments {
       try {
         const image = await createImageBitmap(file);
         // A picture with transparency stays PNG where it fits, else goes on white.
-        const made = await shotOf(image, ADDED_SIDE, this.#options.maxBytes(), true);
+        const made = await shotOf(
+          image,
+          ADDED_SIDE,
+          Math.min(this.#options.maxBytes(), ADDED_MOST_BYTES),
+          true,
+        );
         image.close();
         const ref = await this.#images.save(made.blob, made);
         this.#change(project, chat, id, {

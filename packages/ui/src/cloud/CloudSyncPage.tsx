@@ -3,7 +3,9 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useWorkbench } from "../app/context.ts";
 import { agoText } from "../app/start-view.ts";
+import type { ChatImageUsage } from "@animaquill/host";
 import type { AiCounts } from "../chat/ai-sync.ts";
+import { bytesText } from "../chat/shots.ts";
 import { useAiSyncText } from "../chat/AiSyncStatus.tsx";
 import type { CloudFeature } from "./cloud-sync.ts";
 import { countsText, hasAny } from "./cloud-text.ts";
@@ -211,6 +213,7 @@ export function CloudSyncPage() {
                   </button>
                 )}
               </span>
+              {feature === "chats" && on("chats") && welcomed && <ChatImagesUsage />}
             </FeatureRow>
           );
         })}
@@ -312,4 +315,104 @@ function useNow(): number {
     return () => clearInterval(timer);
   }, []);
   return now;
+}
+
+/** A size of the room of pictures: 500 MB, 12.5 MB, 9 KB. */
+const roomText = (bytes: number) => bytesText(bytes).replace(/\.0 MB$/, " MB");
+
+/**
+ * Under “云端项目的 AI 对话”: how much of their room the pictures of the conversations take on the
+ * platform, and, to manage it, which conversations have them, each of which can go.
+ */
+function ChatImagesUsage() {
+  const { chatSync, dialogs, notifications, chat } = useWorkbench();
+  const { t } = useTranslation();
+  const [usage, setUsage] = useState<ChatImageUsage | "failed">();
+  const [open, setOpen] = useState(false);
+  const read = useCallback(() => {
+    if (!chatSync) return;
+    void chatSync.imageUsage().then(
+      (found) => setUsage(found),
+      () => setUsage("failed"),
+    );
+  }, [chatSync]);
+  useEffect(read, [read]);
+  if (!chatSync || usage === undefined) return null;
+  if (usage === "failed")
+    return (
+      <span className={styles.status} data-testid="chat-images-usage" data-status="failed">
+        {t("cloudSync.chatImages.failed")}{" "}
+        <button type="button" className={styles.link} onClick={read}>
+          {t("cloudSync.retry")}
+        </button>
+      </span>
+    );
+  const remove = async (each: ChatImageUsage["chats"][number]) => {
+    const title = each.title || t("cloudSync.chatImages.untitled");
+    const sure = await dialogs.confirm({
+      title: t("cloudSync.chatImages.deleteTitle", { title }),
+      message: t("cloudSync.chatImages.deleteMessage"),
+      confirm: t("cloudSync.chatImages.delete"),
+      danger: true,
+    });
+    if (!sure) return;
+    try {
+      await chatSync.removeOnAccount(each.project, each.chat);
+      void chat.reloadList();
+    } catch (error) {
+      console.warn("A conversation could not be taken away", error);
+      notifications.push(t("cloudSync.chatImages.deleteFailed"));
+    }
+    read();
+  };
+  return (
+    <>
+      <span className={styles.status} data-testid="chat-images-usage">
+        {t("cloudSync.chatImages.usage", {
+          used: roomText(usage.used),
+          limit: roomText(usage.limit),
+        })}
+        <button
+          type="button"
+          className={styles.link}
+          data-testid="chat-images-manage"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {t(open ? "cloudSync.chatImages.hide" : "cloudSync.chatImages.manage")}
+        </button>
+      </span>
+      {open && (
+        <div className={styles.imageList} data-testid="chat-images-list">
+          <p className={styles.help}>{t("cloudSync.chatImages.intro")}</p>
+          {usage.chats.length === 0 && (
+            <p className={styles.help}>{t("cloudSync.chatImages.none")}</p>
+          )}
+          {usage.chats.map((each) => (
+            <div
+              key={`${each.project}/${each.chat}`}
+              className={styles.imageRow}
+              data-testid="chat-images-row"
+            >
+              <span>
+                <span className={styles.name}>
+                  {each.title || t("cloudSync.chatImages.untitled")}
+                </span>
+                <span className={styles.help}>
+                  {t("cloudSync.chatImages.row", {
+                    project: each.projectName,
+                    count: each.images,
+                    size: bytesText(each.bytes),
+                  })}
+                </span>
+              </span>
+              <button type="button" className={styles.button} onClick={() => void remove(each)}>
+                {t("cloudSync.chatImages.delete")}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }

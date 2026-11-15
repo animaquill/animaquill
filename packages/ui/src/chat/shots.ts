@@ -31,6 +31,14 @@ const SMALLEST = 256;
  */
 export const DEFAULT_IMAGE_BYTES = 3_750_000;
 
+/**
+ * Pictures are kept no larger than this, whatever the model takes, so that each can go with its
+ * conversation to a platform (at most 2 MB a picture there): a frame within 1 MB, a picture people
+ * add within 2 MB (docs/design/settings-and-properties.md of AnimaQuill Cloud, 10.3).
+ */
+export const FRAME_MOST_BYTES = 1024 * 1024;
+export const ADDED_MOST_BYTES = 2 * 1024 * 1024;
+
 /** At most this many pictures go with one message. */
 export const MOST_PICTURES = 8;
 

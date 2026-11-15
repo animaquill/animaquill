@@ -937,8 +937,50 @@ export interface ChatSyncAccess {
     | { readonly revision: number; readonly chat: SavedChat; readonly epoch?: number | undefined }
     | undefined
   >;
+  /**
+   * Rejects with a `ChatImagesMissing` where the conversation names pictures the platform does not
+   * have (and that do not say they stayed here, `ChatImageRef.held`): `putImage` them, then again.
+   */
   save(project: string, chat: SavedChat, base: number | null): Promise<number | undefined>;
   remove(project: string, id: string): Promise<void>;
+  /**
+   * Puts a picture of a conversation on the platform, once for the person however many
+   * conversations have it: `stored` once it is there (also where it was already), `full` where the
+   * person's room for pictures has none for it, `unavailable` where the platform keeps no pictures
+   * now. Rejects where the platform could not be asked, or the picture did not arrive as it is.
+   * Missing where the platform keeps no pictures at all.
+   */
+  putImage?(ref: ChatImageRef, blob: Blob): Promise<"stored" | "full" | "unavailable">;
+  /** A picture of the person's conversations the platform has; undefined where it has not. */
+  getImage?(ref: ChatImageRef): Promise<Blob | undefined>;
+  /** How much of their room the person's pictures take, and which conversations have them. */
+  imageUsage?(): Promise<ChatImageUsage>;
+}
+
+/** The pictures of a person's conversations on a platform, see `ChatSyncAccess.imageUsage`. */
+export interface ChatImageUsage {
+  /** Bytes taken, and at most. */
+  readonly used: number;
+  readonly limit: number;
+  /** Each conversation that has pictures there, by its project of the platform, largest first. */
+  readonly chats: readonly {
+    readonly project: string;
+    readonly projectName: string;
+    readonly chat: string;
+    readonly title: string;
+    readonly images: number;
+    readonly bytes: number;
+  }[];
+}
+
+/** The platform does not have pictures the conversation names: `images`, by their hash in hex. */
+export class ChatImagesMissing extends Error {
+  override readonly name = "ChatImagesMissing";
+  readonly images: readonly string[];
+  constructor(images: readonly string[]) {
+    super("The platform does not have pictures of the conversation");
+    this.images = images;
+  }
 }
 
 /** Another device wrote the conversation since it was read here: `revision` is theirs. */
@@ -1984,7 +2026,19 @@ export interface ChatImageRef {
   readonly width: number;
   readonly height: number;
   readonly bytes: number;
+  /**
+   * In a conversation of a project of the platform: the picture stayed on the device that has it,
+   * and why (`ChatImageHeld`). Missing where it went, or where it is of this device only anyway.
+   */
+  readonly held?: ChatImageHeld;
 }
+
+/**
+ * Why a picture of a conversation of the platform stayed on its device: `full`, the person's room
+ * for pictures has none for it; `many`, the conversation has as many there as it may; `unavailable`,
+ * the platform kept no pictures when it went.
+ */
+export type ChatImageHeld = "full" | "many" | "unavailable";
 
 /**
  * The pictures of conversations on this device, each once however many conversations and drafts

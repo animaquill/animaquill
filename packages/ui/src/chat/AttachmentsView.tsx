@@ -9,21 +9,35 @@ import { bytesText } from "./shots.ts";
 
 /** The address a picture kept here shows at, once it is read. */
 export function usePictureUrl(image: string | undefined): string | undefined {
+  return usePicture(image).url;
+}
+
+/**
+ * A picture kept here, or of the account (which comes here as it is read): its address once it is
+ * read, and whether it is still being read. Each new `attempt` reads it again.
+ */
+export function usePicture(
+  image: string | undefined,
+  attempt = 0,
+): { readonly url: string | undefined; readonly reading: boolean } {
   const { chat } = useWorkbench();
-  const [found, setFound] = useState<{ image: string; url: string | undefined } | undefined>();
+  const [found, setFound] = useState<
+    { image: string; attempt: number; url: string | undefined } | undefined
+  >();
   useEffect(() => {
     if (image === undefined) return;
     let live = true;
     void chat.attachments.holdUrl(image).then((url) => {
-      if (live) setFound({ image, url });
+      if (live) setFound({ image, attempt, url });
     });
     // Taken away, sent, another conversation, or the chat closed: the address goes.
     return () => {
       live = false;
       chat.attachments.releaseUrl(image);
     };
-  }, [chat, image]);
-  return found !== undefined && found.image === image ? found.url : undefined;
+  }, [chat, image, attempt]);
+  const now = found !== undefined && found.image === image && found.attempt === attempt;
+  return { url: now ? found.url : undefined, reading: image !== undefined && !now };
 }
 
 /**

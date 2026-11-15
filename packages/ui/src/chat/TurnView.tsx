@@ -1,7 +1,8 @@
 import type { AttachedImage, Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
 import { failureOf, promptOf } from "@animaquill/agent";
 import { ChevronDown, ChevronRight, Copy, GitBranchPlus, Lightbulb, RotateCcw } from "lucide-react";
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import type { ChatImageHeld } from "@animaquill/host";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { ChangeCard } from "./ChangeCard.tsx";
@@ -9,7 +10,7 @@ import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
 import { useOpened } from "./expanded.ts";
 import { failureText } from "./failure.ts";
-import { LargePicture, usePictureUrl } from "./AttachmentsView.tsx";
+import { LargePicture, usePicture } from "./AttachmentsView.tsx";
 import { Markdown } from "./markdown/Markdown.tsx";
 import { RefChip, RefText } from "./RefChip.tsx";
 import { piecesOf, plainOf } from "./refs.ts";
@@ -676,38 +677,112 @@ function SentWith({ turn }: { readonly turn: Turn }) {
 
 /** The pictures of a message, small; a click shows one large. */
 function SentPictures({ images }: { readonly images: readonly AttachedImage[] }) {
+  const { chatSync } = useWorkbench();
+  const { t } = useTranslation();
   const [large, setLarge] = useState<{ url: string; label: string } | undefined>();
+  /** Which pictures show, by their hash, as each was read. */
+  const [shown, setShown] = useState<ReadonlyMap<string, boolean>>(new Map());
+  // As this window finds pictures that stayed here.
+  useSyncExternalStore(chatSync?.subscribe ?? noSubscribe, chatSync?.getSnapshot ?? noSnapshot);
+  // Each picture that stayed on one device as the conversation went to the account: here, where it
+  // shows, else on another one.
+  const held = new Map<string, { why: ChatImageHeld; here: boolean }>();
+  for (const image of images) {
+    const why = chatSync?.heldOf(image.image) ?? image.held;
+    const showing = shown.get(image.image);
+    if (why === undefined || showing === undefined) continue;
+    held.set(image.image, { why, here: showing });
+  }
+  const lines = new Map<string, number>();
+  for (const { why, here } of held.values()) {
+    const key = `${here ? "here" : "there"}/${why}`;
+    lines.set(key, (lines.get(key) ?? 0) + 1);
+  }
   return (
-    <span className={styles.sentPictures}>
-      {images.map((image, index) => (
-        <SentPicture
-          key={`${image.image}/${index}`}
-          image={image}
-          onOpen={(url, label) => setLarge({ url, label })}
-        />
-      ))}
-      {large && <LargePicture {...large} onClose={() => setLarge(undefined)} />}
-    </span>
+    <>
+      <span className={styles.sentPictures}>
+        {images.map((image, index) => (
+          <SentPicture
+            key={`${image.image}/${index}`}
+            image={image}
+            held={held.has(image.image) && !held.get(image.image)!.here}
+            fromAccount={chatSync !== undefined}
+            onShown={(showing) =>
+              setShown((before) =>
+                before.get(image.image) === showing
+                  ? before
+                  : new Map(before).set(image.image, showing),
+              )
+            }
+            onOpen={(url, label) => setLarge({ url, label })}
+          />
+        ))}
+        {large && <LargePicture {...large} onClose={() => setLarge(undefined)} />}
+      </span>
+      {[...lines].map(([key, count]) => {
+        const [where, why] = key.split("/") as ["here" | "there", ChatImageHeld];
+        return (
+          <p key={key} className={styles.muted} data-testid="chat-picture-held" data-held={why}>
+            {t(`chat.pictures.held.${where}.${images.length === 1 ? "one" : "some"}`, {
+              count,
+              why: t(`chat.pictures.heldWhy.${why}`),
+            })}
+          </p>
+        );
+      })}
+    </>
   );
 }
 
+const noSubscribe = () => () => {};
+const noSnapshot = () => undefined;
+
 function SentPicture(props: {
   readonly image: AttachedImage;
+  /** It stayed on another device: there is nothing to try again. */
+  readonly held: boolean;
+  /** Pictures not here can come from the account, which may fail and be tried again. */
+  readonly fromAccount: boolean;
+  readonly onShown: (showing: boolean) => void;
   readonly onOpen: (url: string, label: string) => void;
 }) {
   const { t } = useTranslation();
-  const url = usePictureUrl(props.image.image);
+  const [attempt, setAttempt] = useState(0);
+  const { url, reading } = usePicture(props.image.image, attempt);
+  const { onShown } = props;
+  useEffect(() => {
+    if (!reading) onShown(url !== undefined);
+  }, [reading, url, onShown]);
   const label = props.image.label ?? "";
+  if (!url && !reading && !props.held && props.fromAccount)
+    return (
+      <span className={styles.sentPicture} data-testid="chat-sent-picture" data-state="unreadable">
+        <span>{t("chat.pictures.fetchFailed")}</span>
+        <button
+          type="button"
+          className={styles.pictureRetry}
+          data-testid="chat-picture-retry"
+          onClick={() => setAttempt((count) => count + 1)}
+        >
+          {t("chat.pictures.retryRead")}
+        </button>
+      </span>
+    );
   return (
     <button
       type="button"
       className={styles.sentPicture}
       data-testid="chat-sent-picture"
+      data-state={url ? "shown" : reading ? "reading" : "elsewhere"}
       title={label}
       disabled={!url}
       onClick={() => url && props.onOpen(url, label)}
     >
-      {url ? <img src={url} alt={label} /> : <span>{t("chat.pictures.missing")}</span>}
+      {url ? (
+        <img src={url} alt={label} />
+      ) : (
+        <span>{reading ? t("chat.pictures.reading") : t("chat.pictures.missing")}</span>
+      )}
     </button>
   );
 }
