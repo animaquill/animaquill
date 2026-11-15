@@ -247,7 +247,8 @@ export class CloudChats implements ChatStore {
   async save(chat: SavedChat): Promise<void> {
     const { local } = this.#options;
     const key = `${chat.project}\n${chat.id}`;
-    const before = this.#sync.get(key) ?? (await local.load(chat.project, chat.id).catch(() => undefined));
+    const before =
+      this.#sync.get(key) ?? (await local.load(chat.project, chat.id).catch(() => undefined));
     const saved: SavedChat = {
       ...chat,
       ...(before?.synced !== undefined && { synced: before.synced }),
