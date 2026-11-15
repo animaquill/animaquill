@@ -629,7 +629,7 @@ function messagesOf(
   };
   for (const [index, entry] of history.entries()) {
     // What a summary stands for goes as the summary, see `summaryMessage`.
-    if (index < start || entry.role === "summary") continue;
+    if (index < start || entry.role === "summary" || entry.role === "other") continue;
     if (entry.role !== "tool") flush(entry.at);
     switch (entry.role) {
       case "user":

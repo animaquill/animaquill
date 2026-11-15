@@ -284,6 +284,9 @@ export function ChatPanel() {
                   {line}
                 </p>
               ))}
+              {summed.get("")?.map((entry) => (
+                <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
+              ))}
               {turns.length === 0 && <EmptyStart onExample={putInBox} />}
               {conversation &&
                 turns.map((turn, index) => {
@@ -725,7 +728,8 @@ function markFound(turn: HTMLElement, query: string): void {
 
 /**
  * The summaries of a conversation by the turn they show before: the one where the summed up part
- * ends, or the first one after it, as for a conversation that starts from the summary of another.
+ * ends, or the first one after it, as for a conversation that starts from the summary of another;
+ * under "" where there is no turn yet.
  */
 export function summariesByTurn(
   entries: readonly ChatEntry[],
@@ -739,8 +743,9 @@ export function summariesByTurn(
     const turn =
       users.findLast(({ index }) => index <= entry.through) ??
       users.find(({ index }) => index > entry.through);
-    if (!turn) continue;
-    found.set(turn.task, [...(found.get(turn.task) ?? []), entry]);
+    // Before any turn, as of a new conversation that goes on from another: at the top.
+    const task = turn?.task ?? "";
+    found.set(task, [...(found.get(task) ?? []), entry]);
   }
   return found;
 }

@@ -1884,12 +1884,22 @@ span.sentPicture {
 .panel .tool[data-look] .toolHead,
 .panel .tool[data-listen] .toolHead {
   flex-wrap: wrap;
+  row-gap: 1px;
 }
 
+/* Its name and how long on the first line, what it found on a line of its own, at full width. */
 .tool[data-look] .toolArgs,
 .tool[data-listen] .toolArgs {
-  min-width: 8em;
+  flex: 1 1 100%;
+  order: 1;
+  padding-left: 18px;
   white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.tool[data-look] .chevron,
+.tool[data-listen] .chevron {
+  margin-left: auto;
 }
 
 .tool[data-look][data-state="failed"] .toolArgs,

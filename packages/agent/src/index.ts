@@ -22,7 +22,9 @@ export {
 } from "./conversation.ts";
 export {
   NOT_ATTACHED,
+  entriesToKeep,
   latestSummary,
+  readEntries,
   promptOf,
   readEntry,
   readImage,
@@ -36,6 +38,7 @@ export {
   type AssistantEntry,
   type ChatEntry,
   type PackBy,
+  type OtherEntry,
   type PackNote,
   type SummaryEntry,
   type ToolCallEntry,

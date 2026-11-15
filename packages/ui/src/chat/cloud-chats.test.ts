@@ -1,5 +1,6 @@
 import {
   ChatNewer,
+  ChatOutdated,
   MemoryCloudLinks,
   memoryChats,
   type AccountAccess,
@@ -167,6 +168,23 @@ describe("conversations of projects of the platform", () => {
     const read = await two.chats.load("local-1", "c1");
     const entries = (read?.entries ?? []).map(readEntry);
     expect(entries.at(-1)).toEqual(summary);
+  });
+
+  test("refused as this page is too old: it stays here, and the status says to reload", async () => {
+    const platform = platformChats();
+    const one = await deviceOf({
+      ...platform,
+      access: {
+        ...platform.access,
+        save: async () => {
+          throw new ChatOutdated();
+        },
+      },
+    });
+    await one.chats.save(chat("c1", ["旧页面写的"], 1));
+    expect(one.chats.getSnapshot().status).toBe("outdated");
+    expect(platform.kept.size).toBe(0);
+    expect((await one.local.load("local-1", "c1"))?.entries).toHaveLength(1);
   });
 
   test("go to the account, and another device reads them", async () => {

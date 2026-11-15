@@ -35,5 +35,7 @@ describe("where the line of a summary shows", () => {
     expect(found.has("t1")).toBe(false);
     const fresh = summariesByTurn([summed(0), user("t1")]);
     expect(fresh.get("t1")).toHaveLength(1);
+    // A new conversation from the summary of another, before anybody wrote in it: at the top.
+    expect(summariesByTurn([summed(0)]).get("")).toHaveLength(1);
   });
 });

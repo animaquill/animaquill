@@ -2,6 +2,8 @@ import {
   Conversation,
   askModel,
   browserSystemPrompt,
+  entriesToKeep,
+  readEntries,
   readEntry,
   summaryInForce,
   toolSpecsOf,
@@ -501,7 +503,7 @@ export class ChatSession {
         ...(titleBy !== undefined && named && { titleBy }),
         ...(changes > 0 && { changes }),
         ...(askingIn(entries) && { asking: true as const }),
-        entries,
+        entries: entriesToKeep(entries),
         caller: caller.toJSON(),
         ...(model && { model }),
         ...(reasoning !== undefined && { reasoning }),
@@ -577,7 +579,8 @@ export class ChatSession {
       return undefined;
     });
     if (!saved || this.#project?.key !== project) return;
-    const entries = saved.entries.map(readEntry).filter((entry) => entry !== undefined);
+    // What this editor cannot read stays where it was, and goes back as it was.
+    const entries = readEntries(saved.entries);
     this.#start(entries, id, saved.caller, {
       ...(saved.titleBy !== undefined && { title: saved.title, titleBy: saved.titleBy }),
       ...(isModelRef(saved.model) && { model: saved.model }),

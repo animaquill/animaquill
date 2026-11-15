@@ -1114,3 +1114,52 @@ describe("pictures with a message", () => {
     );
   });
 });
+
+describe("an entry of a kind this editor cannot read, as a newer one writes", () => {
+  it("stays where it was when the conversation is read, goes on, and is written back", async () => {
+    const chats = memoryChats();
+    const later = {
+      role: "plan",
+      at: 3,
+      steps: ["a newer kind of entry"],
+      images: [{ image: `sha256:${"a".repeat(64)}` }],
+    };
+    await chats.save({
+      id: "c1",
+      project: "p1",
+      title: "旧的",
+      updatedAt: 1,
+      entries: [
+        { role: "user", text: "一", task: "t1", at: 1 },
+        {
+          role: "assistant",
+          text: "好",
+          calls: [],
+          at: 2,
+          end: "done",
+          service: "fake",
+          protocol: "faux",
+          model: "fake",
+        },
+        later,
+      ],
+    });
+    const { chat, fake } = setup({ chats });
+    await chat.open("c1");
+    // Nobody sees it, and it does not go to the model.
+    expect(chat.getSnapshot().conversation?.getSnapshot().entries[2]).toEqual({
+      role: "other",
+      kept: later,
+      at: 3,
+    });
+    const heard: unknown[][] = [];
+    fake({ fake: [{ text: "二" }], heard: (messages) => heard.push([...messages]) });
+    await chat.send("再来");
+    await chat.flush();
+    expect(JSON.stringify(heard[0])).not.toContain("a newer kind of entry");
+    const kept = (await chats.load("p1", "c1"))?.entries ?? [];
+    expect(kept).toHaveLength(5);
+    expect(kept[2]).toEqual(later);
+    expect(kept[3]).toMatchObject({ role: "user", text: "再来" });
+  });
+});

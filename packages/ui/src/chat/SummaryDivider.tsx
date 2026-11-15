@@ -20,13 +20,16 @@ export function SummaryDivider({ entry }: { readonly entry: SummaryEntry }) {
     <div className={styles.summed} data-testid="chat-summed" data-kind={entry.kind}>
       <span className={styles.summedLine} aria-hidden />
       <span className={styles.summedText}>
-        {entry.kind === "summary"
-          ? less > 0
-            ? t("chat.summed.divider", { count: entry.count, saved })
-            : t("chat.summed.dividerOnly", { count: entry.count })
-          : less > 0
-            ? t("chat.summed.pictures", { saved })
-            : t("chat.summed.picturesOnly")}
+        {entry.kind === "summary" && entry.through === 0
+          ? // A conversation that goes on from the summary of another: none of it is here.
+            t("chat.summed.carried")
+          : entry.kind === "summary"
+            ? less > 0
+              ? t("chat.summed.divider", { count: entry.count, saved })
+              : t("chat.summed.dividerOnly", { count: entry.count })
+            : less > 0
+              ? t("chat.summed.pictures", { saved })
+              : t("chat.summed.picturesOnly")}
         {entry.kind === "summary" && (
           <>
             {" · "}

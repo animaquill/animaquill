@@ -12,6 +12,7 @@ import {
   AiSyncTooLarge,
   ChatImagesMissing,
   ChatNewer,
+  ChatOutdated,
   CloudOtherAccount,
   CloudSignedOut,
   type AccountAiSettings,
@@ -124,6 +125,8 @@ function asker(options: BrowserAiSyncOptions) {
       throw new CloudSignedOut("Nobody is signed in");
     if (response.status === 409 && said === "otherAccount")
       throw new CloudOtherAccount("Somebody else is signed in");
+    if (response.status === 409 && said === "outdated" && path.startsWith("/me/chats/"))
+      throw new ChatOutdated();
     if (response.status === 409 && said === "newer") {
       const revision = isObject(answer) ? count(answer.revision) : undefined;
       if (path.startsWith("/me/chats/")) throw new ChatNewer(revision ?? 0);

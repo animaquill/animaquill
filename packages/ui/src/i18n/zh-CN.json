@@ -868,13 +868,13 @@
           "name": "AI 看画面时用多大的图",
           "keywords": "look frame render 看画面 图 大小 token 截图"
         },
-        "autoCompact": {
-          "name": "上下文快满时自动压缩",
-          "keywords": "compact context summary 压缩 上下文 摘要 token 用量"
-        },
         "lookWaits": {
           "name": "AI 看画面时等你停下播放",
           "keywords": "look playback wait 看画面 播放 等待 排队"
+        },
+        "autoCompact": {
+          "name": "上下文快满时自动压缩",
+          "keywords": "compact context summary 压缩 上下文 摘要 token 用量"
         }
       },
       "account": {
@@ -3837,11 +3837,12 @@
       "divider": "较早的 {{count}} 条已压缩成一段摘要，省下 {{saved}}",
       "pictures": "较早的图片已不再发给 AI，省下 {{saved}}",
       "open": "看摘要",
-      "title": "较早对话的摘要",
+      "title": "AI 读到的摘要",
       "asked": "接着做的事（你的原话）",
       "close": "关闭",
       "dividerOnly": "较早的 {{count}} 条已压缩成一段摘要",
-      "picturesOnly": "较早的图片已不再发给 AI"
+      "picturesOnly": "较早的图片已不再发给 AI",
+      "carried": "带着上一段对话的摘要"
     },
     "listen": {
       "name": "听了声音",
@@ -5094,7 +5095,8 @@
       "offline": "离线，连上后同步",
       "failed": "同步出错",
       "waiting": "等你在欢迎页里确认后开始",
-      "saved": "跟账号"
+      "saved": "跟账号",
+      "outdated": "这个页面的版本太旧，对话先存在这台设备上"
     },
     "aiStatus": "{{status}} · {{counts}}",
     "retry": "重试",
@@ -5112,7 +5114,8 @@
       "deleteFailed": "没能删掉，稍后再试。",
       "failed": "没读到对话图片的占用。",
       "deleteConfirm": "删掉这个对话"
-    }
+    },
+    "reload": "刷新页面"
   },
   "welcome": {
     "title": "欢迎，{{name}}",

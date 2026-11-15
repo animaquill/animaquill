@@ -1,6 +1,7 @@
 import {
   ChatImagesMissing,
   ChatNewer,
+  ChatOutdated,
   type AccountAccess,
   type ChatImageHeld,
   type ChatImageStore,
@@ -96,7 +97,8 @@ const withHeld = (chat: SavedChat, held: ReadonlyMap<string, ChatImageHeld>): Sa
 
 /** How the conversations stand with the account, for people to see. */
 export interface CloudChatsSnapshot {
-  readonly status: "idle" | "synced" | "offline" | "failed";
+  /** "outdated": the platform takes no conversation from this page until it is reloaded. */
+  readonly status: "idle" | "synced" | "offline" | "failed" | "outdated";
   /** When the account last took or gave one. */
   readonly syncedAt: number | undefined;
 }
@@ -277,6 +279,12 @@ export class CloudChats implements ChatStore {
           const latest = await local.load(chat.project, chat.id).catch(() => undefined);
           await local.save({ ...(latest ?? chat), synced: revision, syncedAt: chat.updatedAt });
         } catch (error) {
+          if (error instanceof ChatOutdated) {
+            // It stays here, and goes once the page is reloaded with a newer editor.
+            this.#snapshot = { ...this.#snapshot, status: "outdated" };
+            this.#emitter.emit();
+            return;
+          }
           if (!(error instanceof ChatNewer)) {
             // It stays here, and goes the next time.
             console.warn("A conversation could not go to the account", error);

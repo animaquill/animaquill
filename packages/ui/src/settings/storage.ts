@@ -79,6 +79,8 @@ export async function clearUnusedImages(place: ChatsPlace): Promise<number> {
         // What people attached, and what tools gave, such as the frames AI looked at.
         if (entry?.role === "user" || entry?.role === "tool")
           for (const image of entry.images ?? []) used.add(image.image);
+        // An entry this editor cannot read may have pictures too, which stay.
+        if (!entry) for (const image of picturesIn(value)) used.add(image);
       }
     }
   }
@@ -116,4 +118,13 @@ export async function clearLocalChats(
   // Their pictures go with them, unless something else still has them.
   await clearUnusedImages(place);
   return { cleared, kept };
+}
+
+/** The pictures an entry names, by what kept pictures are named by, whatever kind it is of. */
+function picturesIn(value: unknown): string[] {
+  const images = (value as { readonly images?: unknown } | null)?.images;
+  if (!Array.isArray(images)) return [];
+  return images.flatMap((image: { readonly image?: unknown } | null) =>
+    typeof image?.image === "string" ? [image.image] : [],
+  );
 }

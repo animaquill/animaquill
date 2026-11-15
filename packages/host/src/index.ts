@@ -1050,6 +1050,17 @@ export class ChatImagesMissing extends Error {
 }
 
 /** Another device wrote the conversation since it was read here: `revision` is theirs. */
+/**
+ * The platform takes no conversation from an editor this old (`OLDEST_EDITOR` of the platform): one
+ * that could lose what a newer editor wrote in it. A reload of the page brings the newer editor.
+ */
+export class ChatOutdated extends Error {
+  override readonly name = "ChatOutdated";
+  constructor() {
+    super("This editor is too old to write conversations to the account");
+  }
+}
+
 export class ChatNewer extends Error {
   override readonly name = "ChatNewer";
   readonly revision: number;

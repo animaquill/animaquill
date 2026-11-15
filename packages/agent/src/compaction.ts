@@ -152,7 +152,8 @@ export const picturesGoneBefore = (entries: readonly ChatEntry[]): number =>
 
 /** What entries before a cut are, without the summaries among them. */
 export const coveredBy = (entries: readonly ChatEntry[], through: number): number =>
-  entries.slice(0, through).filter((entry) => entry.role !== "summary").length;
+  entries.slice(0, through).filter((entry) => entry.role !== "summary" && entry.role !== "other")
+    .length;
 
 const cut = (text: string, most: number) =>
   text.length > most ? `${text.slice(0, most)}… (${text.length - most} more characters)` : text;
@@ -194,6 +195,7 @@ export function transcriptOf(entries: readonly ChatEntry[], through: number): st
         break;
       }
       case "summary":
+      case "other":
         break;
     }
   }
@@ -234,6 +236,8 @@ export function estimateTokens(entries: readonly ChatEntry[], pictures = true): 
         break;
       case "summary":
         characters += entry.text?.length ?? 0;
+        break;
+      case "other":
         break;
     }
   }

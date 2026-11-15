@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createProject, writeProject } from "@animaquill/schema";
+import { createProject, writeProject, type SoundManifest } from "@animaquill/schema";
 import type { Page, Route } from "@playwright/test";
 import {
   ANTHROPIC,
@@ -58,10 +58,13 @@ function wav(seconds: number, sample: (t: number) => number): Buffer {
 
 /**
  * 30 s of music at −12 dBFS that clips at 11.4 and 22.1 s and is silent from 18.6 to 19.5 s, and
- * a short sound at 12 s: up in 15 ms, down by e every 0.17 s.
+ * a short sound made by code at 12 s (`DING`).
  */
 function soundProject(): string {
-  const project = createProject({ name: "听声音" });
+  const project = {
+    ...createProject({ name: "听声音" }),
+    sounds: new Map([["ding", { name: "叮", entry: "sound.js", runtime: 1 } as SoundManifest]]),
+  };
   const files: Map<string, string | Buffer> = writeProject(project);
   const path = "timelines/main/timeline.json";
   const timeline = JSON.parse(files.get(path) as string) as {
@@ -101,7 +104,8 @@ function soundProject(): string {
           name: "叮",
           start: "12",
           duration: "1.5",
-          source: { kind: "audio", media: { asset: "ding" } },
+          source: { kind: "sound", sound: "ding" },
+          properties: { "param.duration": 1.5 },
         },
       ],
     },
@@ -112,7 +116,6 @@ function soundProject(): string {
     JSON.stringify({
       assets: {
         music: { name: "片头音乐", kind: "audio", path: "assets/music.wav", storage: "git" },
-        ding: { name: "叮", kind: "audio", path: "assets/ding.wav", storage: "git" },
       },
     }),
   );
@@ -125,13 +128,8 @@ function soundProject(): string {
       return 0.25 * Math.sin(2 * Math.PI * 440 * t);
     }),
   );
-  files.set(
-    "assets/ding.wav",
-    wav(1.5, (t) => {
-      const shape = t < 0.015 ? t / 0.015 : Math.exp(-(t - 0.015) / 0.17);
-      return 0.5 * shape * Math.sin(2 * Math.PI * 1320 * t);
-    }),
-  );
+  // The short sound is made by code, as AI writes one: up in 15 ms, down by e every 0.17 s.
+  files.set("sounds/ding/sound.js", DING);
   const root = join(mkdtempSync(join(tmpdir(), "animaquill-listen-")), "项目");
   for (const [name, text] of files) {
     mkdirSync(dirname(join(root, name)), { recursive: true });
@@ -215,6 +213,9 @@ async function pretend(
 async function setUp(page: Page, width = 1440) {
   await page.setViewportSize({ width, height: 900 });
   await chooseFolder(page, soundProject());
+  // The sound is code: the editor says so once, before it opens the project.
+  const code = page.getByRole("dialog", { name: "这个项目含有脚本" });
+  await code.getByRole("button", { name: "知道了，打开项目" }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
@@ -236,6 +237,16 @@ function expectedInConsole(problems: string[]) {
   const left = problems.filter((problem) => !/Failed to load resource/.test(problem));
   problems.splice(0, problems.length, ...left);
 }
+
+const DING = `aq.sound(({ frames, sampleRate }) => {
+  const samples = new Float32Array(frames);
+  for (let at = 0; at < frames; at += 1) {
+    const t = at / sampleRate;
+    const shape = t < 0.015 ? t / 0.015 : Math.exp(-(t - 0.015) / 0.17);
+    samples[at] = 0.5 * shape * Math.sin(2 * Math.PI * 1320 * t);
+  }
+  return samples;
+});`;
 
 const listened = (page: Page) => chat(page).locator('[data-testid="chat-tool"][data-listen]');
 
@@ -349,6 +360,7 @@ test("a request too long for the model sums up the earlier conversation: the lin
   await divider.getByTestId("chat-summed-open").click();
   const dialog = page.getByTestId("chat-summed-dialog");
   await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(dialog).toHaveAccessibleName("AI 读到的摘要");
   await expect(dialog.getByTestId("chat-summed-text")).toContainText("three fixes to the titles");
   await shoot(page, "L2-summary");
   await page.keyboard.press("Escape");
@@ -372,13 +384,22 @@ test("a request too long for the model sums up the earlier conversation: the lin
   expectedInConsole(problems);
 });
 
-test("where nothing more fits, the chat says so, and a new conversation goes on from here", async ({
+test("where nothing more fits, the chat says so, and a new conversation goes on from its summary", async ({
   page,
   problems,
 }) => {
-  test.setTimeout(120_000);
-  await pretend(page, ["too-long"]);
+  test.setTimeout(150_000);
+  await pretend(
+    page,
+    ["改好了第一处。", "改好了第二处。", "改好了第三处。", "too-long", "too-long"],
+    ["1. What the user wants: three fixes to the titles."],
+  );
   await setUp(page);
+  for (const [index, text] of ["改第一处", "改第二处", "改第三处"].entries()) {
+    await ask(page, text);
+    await expect(chat(page).getByTestId("chat-answer").nth(index)).toBeVisible({ timeout: 60_000 });
+  }
+  // Summed up, it still does not fit: the context is full.
   await ask(page, "把整部片子的声音都检查一遍");
   const failure = chat(page).getByTestId("chat-failure");
   await expect(failure).toHaveAttribute("data-kind", "contextFull", { timeout: 60_000 });
@@ -388,6 +409,10 @@ test("where nothing more fits, the chat says so, and a new conversation goes on 
   await expect(chat(page).getByTestId("chat-failure")).toHaveCount(0);
   await expect(chat(page).getByTestId("chat-forked")).toBeVisible();
   await expect(box(page)).toContainText("把整部片子的声音都检查一遍");
+  // It goes on from the summary of the one before, which says so, not how many it stands for.
+  const carried = chat(page).getByTestId("chat-summed");
+  await expect(carried).toHaveText("带着上一段对话的摘要 · 看摘要");
+  await shoot(page, "L2-fresh", chat(page).getByTestId("chat"));
   expectedInConsole(problems);
 });
 

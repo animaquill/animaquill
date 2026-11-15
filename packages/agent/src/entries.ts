@@ -207,7 +207,37 @@ export interface SummaryEntry {
   readonly usage?: AnswerUsage;
 }
 
-export type ChatEntry = UserEntry | AssistantEntry | ToolEntry | SummaryEntry;
+/**
+ * An entry this editor cannot read, such as a kind a newer editor writes: kept where it was, as it
+ * was, and written back so (`entriesToKeep`), so that an older page never loses what a newer one
+ * wrote. It is never shown and never goes to the model.
+ */
+export interface OtherEntry {
+  readonly role: "other";
+  /** As it was kept, to write back. */
+  readonly kept: unknown;
+  readonly at: number;
+}
+
+export type ChatEntry = UserEntry | AssistantEntry | ToolEntry | SummaryEntry | OtherEntry;
+
+/**
+ * The entries of a conversation as kept, each in its place: what this editor cannot read stays as
+ * it was (`OtherEntry`).
+ */
+export function readEntries(values: readonly unknown[]): ChatEntry[] {
+  return values.map((value) => {
+    const entry = readEntry(value);
+    if (entry) return entry;
+    const at = isRecord(value) && typeof value.at === "number" ? value.at : 0;
+    return { role: "other", kept: value, at };
+  });
+}
+
+/** The entries of a conversation as they are kept: what this editor could not read, as it was. */
+export function entriesToKeep(entries: readonly ChatEntry[]): unknown[] {
+  return entries.map((entry) => (entry.role === "other" ? entry.kept : entry));
+}
 
 /** The latest summary of a conversation, where it has one, and where it is. */
 export function latestSummary(

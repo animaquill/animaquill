@@ -133,6 +133,15 @@ export function CloudSyncPage() {
                   data-status={status}
                 >
                   {text}
+                  {status === "outdated" && (
+                    <button
+                      type="button"
+                      className={styles.link}
+                      onClick={() => window.location.reload()}
+                    >
+                      {t("cloudSync.reload")}
+                    </button>
+                  )}
                   {(status === "failed" || status === "offline") && (
                     <button
                       type="button"
@@ -170,7 +179,8 @@ const noSubscribe = () => () => {};
 const IDLE = { status: "idle", syncedAt: undefined } as const;
 const idle = () => IDLE;
 
-type LineStatus = "idle" | "syncing" | "synced" | "offline" | "failed" | "off" | "waiting";
+type LineStatus =
+  "idle" | "syncing" | "synced" | "offline" | "failed" | "outdated" | "off" | "waiting";
 
 function lineOf(
   t: TFunction,
