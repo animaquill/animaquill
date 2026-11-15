@@ -84,29 +84,35 @@ export function AiModelsPage() {
           </button>
         </p>
       )}
-      <Tree
-        services={services}
-        current={drafting || model !== undefined ? undefined : open?.id}
-        currentModel={open && model !== undefined ? { service: open.id, model } : undefined}
-        naming={drafting ? naming : undefined}
-        onService={(id) => go(id)}
-        onModel={go}
-        onNewModel={(id) => {
-          settingsNav.go({ group: "models", depth: 2, service: id });
-          setNaming(id);
-        }}
-        onAdd={() => settingsNav.go({ ...here, depth: depth, adding: true })}
-      />
+      {/* With no service yet, the page is the picker alone. */}
+      {!empty && (
+        <Tree
+          services={services}
+          current={drafting || model !== undefined ? undefined : open?.id}
+          currentModel={open && model !== undefined ? { service: open.id, model } : undefined}
+          naming={drafting ? naming : undefined}
+          onService={(id) => go(id)}
+          onModel={go}
+          onNewModel={(id) => {
+            settingsNav.go({ group: "models", depth: 2, service: id });
+            setNaming(id);
+          }}
+          onAdd={() => settingsNav.go({ ...here, depth: depth, adding: true })}
+        />
+      )}
       <div className={styles.detail}>
         <div className={styles.detailInner}>
           {!open ? (
             empty && (
-              <AddServicePicker
-                inline
-                picked={undefined}
-                onClose={() => {}}
-                onAdded={(id) => settingsNav.go({ group: "models", depth: 2, service: id })}
-              />
+              // `data-setting`: where searching the settings goes while there is no service.
+              <div data-setting="models.default">
+                <AddServicePicker
+                  inline
+                  picked={undefined}
+                  onClose={() => {}}
+                  onAdded={(id) => settingsNav.go({ group: "models", depth: 2, service: id })}
+                />
+              </div>
             )
           ) : drafting ? (
             <NewModel key={`new\n${open.id}`} service={open} onAdded={(id) => go(open.id, id)} />

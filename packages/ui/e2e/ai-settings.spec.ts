@@ -173,7 +173,7 @@ test("models: on and off, the default, at least one stays on, one got from the s
   await settings.locator('[data-testid="ai-service-item"]').click();
   await row("claude-opus-5-5").getByTestId("ai-model-open").click();
   const reasoning = detail.getByRole("combobox", { name: "默认推理强度" });
-  await expect(reasoning.locator("option:checked")).toHaveText("按适配包（中）");
+  await expect(reasoning.locator("option:checked")).toHaveText("自动：中");
   await reasoning.selectOption({ label: "高" });
   await expect
     .poll(async () => (await saved(page))?.reasoningFor)

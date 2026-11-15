@@ -229,6 +229,12 @@ test("a server of one's own: the picker, its settings one under another, models 
   await expect(picker.locator('[data-testid="ai-kind"][data-kind="anthropic"]')).toBeVisible();
   await expect(picker.locator('[data-testid="ai-kind"][data-kind="deepseek"]')).toHaveCount(0);
   await search.fill("");
+  // The picker is the page: no empty tree beside it; cards say a number, or nothing.
+  await expect(settings.getByTestId("ai-add-service")).toBeHidden();
+  await expect(picker.locator('[data-kind="openai-compatible"]')).toHaveText(
+    "OpenAI / Anthropic 兼容",
+  );
+  await expect(picker.getByText("API key", { exact: true })).toHaveCount(0);
   await page.screenshot(shot("M6-picker.png"));
 
   const service = await addGateway(page);
@@ -304,16 +310,16 @@ test("a server of one's own: the picker, its settings one under another, models 
   await expect(detail).toHaveAttribute("data-model", "qwen3-coder-plus");
   await expect(inTree(page, "qwen3-coder-plus")).toBeVisible();
   await expect(detail.getByTestId("ai-model-context")).toHaveValue("1048576");
-  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveAttribute("data-mark", "catalog");
-  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveAttribute("title", "目录");
+  // What the catalogs filled in is not marked: only what people change.
+  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveCount(0);
   // One provider of the catalog only names its price: not to be trusted, not filled in.
   await expect(detail.getByTestId("ai-model-price-input")).toHaveText("—");
   await expect(detail.getByTestId("ai-fill-source")).toHaveAttribute("title", /价格不可靠/);
-  // Undone, and filled again.
-  await detail.getByRole("button", { name: "撤销填写" }).click();
-  await expect(detail.getByTestId("ai-model-context")).toHaveValue("");
-  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveCount(0);
+  // Undoing is offered right after filling, and then goes.
+  await expect(detail.getByRole("button", { name: "撤销填写" })).toHaveCount(0);
   await detail.getByRole("button", { name: "按目录填写" }).click();
+  await detail.getByRole("button", { name: "撤销填写" }).click();
+  await expect(detail.getByRole("button", { name: "撤销填写" })).toHaveCount(0);
   await expect(detail.getByTestId("ai-model-context")).toHaveValue("1048576");
 
   // A cell changed is people's (blue): filling again leaves it; back to the catalog's from its line.
@@ -327,6 +333,8 @@ test("a server of one's own: the picker, its settings one under another, models 
     "title",
     "要填正整数，或者空着。",
   );
+  await page.mouse.move(0, 0);
+  await detail.getByTestId("ai-model-max-tokens").screenshot(shot("invalid-cell.png"));
   await detail.getByTestId("ai-model-max-tokens").fill("65536");
   await detail.getByTestId("ai-model-max-tokens").press("Enter");
   await detail.getByRole("button", { name: "按目录填写" }).click();
@@ -334,7 +342,7 @@ test("a server of one's own: the picker, its settings one under another, models 
   await detail.getByTestId("ai-mark-contextWindow").click();
   await detail.getByRole("menuitem", { name: "改回目录的值" }).click();
   await expect(detail.getByTestId("ai-model-context")).toHaveValue("1048576");
-  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveAttribute("data-mark", "catalog");
+  await expect(detail.getByTestId("ai-mark-contextWindow")).toHaveCount(0);
 
   // The prices read only, until "改价格".
   await expect(detail.getByTestId("ai-model-prices").locator("input")).toHaveCount(0);
@@ -362,13 +370,13 @@ test("a server of one's own: the picker, its settings one under another, models 
   const levels = detail.getByTestId("ai-level-map");
   await expect(levels.locator('[data-level="high"] input[type="checkbox"]')).toBeChecked();
   await expect(levels.locator('[data-level="minimal"] input[type="checkbox"]')).not.toBeChecked();
-  await expect(levels.locator('[data-level="high"]')).toHaveAttribute("data-mark", "catalog");
+  await expect(levels.locator('[data-level="high"] [data-mark]')).toHaveCount(0);
   // A step not ticked is not in the chat; a value sent for one.
   await levels.locator('[data-level="low"] input[type="checkbox"]').uncheck();
   const high = levels.locator('[data-level="high"]');
   await high.getByRole("textbox").fill("max");
   await high.getByRole("textbox").press("Enter");
-  await expect(high).toHaveAttribute("data-mark", "edited");
+  await expect(high.locator('[data-mark="edited"]')).toBeVisible();
   await high.getByRole("checkbox").uncheck();
   await expect(high.getByRole("textbox")).toBeDisabled();
   await expect(high.getByRole("textbox")).toHaveValue("max");
@@ -469,7 +477,9 @@ test("a service of the catalog: its models as switches on the right, a dot only 
     "placeholder",
     "https://api.anthropic.com",
   );
-  await expect(service.getByTestId("ai-api")).toBeDisabled();
+  // Fixed for a service of the catalog: not shown.
+  await expect(service.getByTestId("ai-api")).toHaveCount(0);
+  await expect(service.getByText("接口类型", { exact: true })).toHaveCount(0);
 
   // A key the service refuses: red, and why on hovering.
   await service.getByTestId("ai-key").fill(`sk-ant-wrong-${KEY}`);
@@ -542,6 +552,13 @@ test("headers go with every request, a model that cannot see is said, the order 
   expect(seen.at(-1)?.headers["x-team"]).toBe("abc");
 
   await fetchModels(page, ["qwen3-vl-plus", "qwen3-max", "qwen-max"]);
+  // Another server of one's own is numbered, not named the same.
+  await settings.getByTestId("ai-add-service").click();
+  await settings.getByTestId("ai-add").locator('[data-kind="openai-compatible"]').click();
+  await expect(service.getByLabel("名称")).toHaveValue("自建服务 2");
+  await service.getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByRole("button", { name: "删除服务", exact: true }).click();
+  await settings.locator('[data-testid="ai-service-item"]', { hasText: "公司网关" }).click();
   // A model that should see pictures, and does not answer what colour one is.
   await inTree(page, "qwen3-vl-plus").getByTestId("ai-model-open").click();
   const detail = settings.getByTestId("ai-model-detail");

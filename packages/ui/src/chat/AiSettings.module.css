@@ -120,8 +120,11 @@
   outline: none;
 }
 
+/* Not taken: red all round and a thicker red line under it, plain on the dark too. */
 .input[aria-invalid="true"] {
   border-color: var(--aq-danger);
+  box-shadow: inset 0 -2px 0 var(--aq-danger);
+  background: color-mix(in srgb, var(--aq-danger) 10%, var(--aq-bg-input));
 }
 
 .input:disabled {
@@ -717,7 +720,7 @@
   white-space: nowrap;
 }
 
-/* Where a cell's value comes from: a thin line on its left, a catalog (green) or people (blue). */
+/* A cell people changed from the catalog's: a thin line on its left. */
 .marked {
   position: relative;
   display: flex;
@@ -734,12 +737,8 @@
   z-index: 1;
   width: 2px;
   padding: 0;
-  background: var(--aq-success);
-  border: 0;
-}
-
-.markBar[data-mark="edited"] {
   background: var(--aq-match);
+  border: 0;
 }
 
 /* Beside a box to tick, the line is a little apart from it, and the pair keeps its width. */
@@ -1066,6 +1065,19 @@ button.markBar:hover {
   .levelRow {
     grid-template-columns: 60px minmax(0, 1fr) 40px;
   }
+}
+
+/* With no service yet, the page is the picker: no empty tree beside it. */
+.page[data-empty] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page[data-empty] .tree {
+  display: none;
+}
+
+.page[data-empty] .detail {
+  grid-column: 1;
 }
 
 /* The picker as the page, where there is no service yet. */

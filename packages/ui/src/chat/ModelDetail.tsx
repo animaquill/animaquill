@@ -361,6 +361,8 @@ function FillRow({
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const [busy, setBusy] = useState(false);
+  // Undoing is offered right after filling, not ever after.
+  const [justFilled, setJustFilled] = useState(false);
   const held = snapshot.held !== undefined;
   const filled = row.config?.filled;
   const known = ai.catalogEntryOf(service.id, row.id);
@@ -368,6 +370,7 @@ function FillRow({
     setBusy(true);
     await ai.fillModels(service.id, [row.id], true);
     setBusy(false);
+    setJustFilled(true);
   };
   const said = filled
     ? t("ai.fill.done", {
@@ -395,12 +398,15 @@ function FillRow({
       >
         {busy ? t("ai.fill.loading") : t("ai.fill.again")}
       </button>
-      {filled && (
+      {filled && justFilled && (
         <button
           type="button"
           className={styles.button}
           disabled={held || busy}
-          onClick={() => ai.undoFill(service.id, row.id)}
+          onClick={() => {
+            setJustFilled(false);
+            ai.undoFill(service.id, row.id);
+          }}
         >
           {t("ai.fill.undo")}
         </button>

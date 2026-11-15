@@ -37,7 +37,7 @@ const nobody = () => undefined;
 /**
  * One service, as pi-web shows a provider (docs/design/settings-and-properties.md of AnimaQuill
  * Cloud, 6.1): a test, a switch and deleting on top; then one column down, name, address, API key,
- * how it is talked to, headers, how it is reached. For a service of the catalog, its models to
+ * how it is talked to (for one's own), headers, how it is reached. For a service of the catalog, its models to
  * turn on below; for every one, getting its models at the bottom. Every change takes at once.
  */
 export function ServiceDetail({ service }: { readonly service: ServiceConfig }) {
@@ -175,22 +175,25 @@ function ServiceFields({ service }: { readonly service: ServiceConfig }) {
         />
       </label>
       <KeyField service={service} />
-      <label className={styles.field}>
-        <span>{t("ai.api")}</span>
-        <select
-          className={styles.input}
-          data-testid="ai-api"
-          value={protocolOf(service) ?? "openai-completions"}
-          disabled={held || !custom}
-          onChange={(event) => ai.update(service.id, { api: event.target.value as ModelApi })}
-        >
-          {(custom ? MODEL_APIS : [protocolOf(service) ?? "openai-completions"]).map((api) => (
-            <option key={api} value={api}>
-              {t(`ai.apiNames.${api}`)}
-            </option>
-          ))}
-        </select>
-      </label>
+      {/* A service of the catalog is talked to as it is: nothing to choose. */}
+      {custom && (
+        <label className={styles.field}>
+          <span>{t("ai.api")}</span>
+          <select
+            className={styles.input}
+            data-testid="ai-api"
+            value={protocolOf(service) ?? "openai-completions"}
+            disabled={held}
+            onChange={(event) => ai.update(service.id, { api: event.target.value as ModelApi })}
+          >
+            {MODEL_APIS.map((api) => (
+              <option key={api} value={api}>
+                {t(`ai.apiNames.${api}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
       <div className={styles.field} data-setting="models.headers" data-testid="ai-headers">
         <span>{t("ai.headers.title")}</span>

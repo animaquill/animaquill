@@ -13,9 +13,9 @@ import { useWorkbench } from "../app/context.ts";
 import styles from "./AiSettings.module.css";
 
 /**
- * A cell with where its value comes from as a thin line on its left: green where a catalog filled
- * it in, blue where people set it (docs/design/settings-and-properties.md of AnimaQuill Cloud,
- * 6.2). Hovering the line says which; the blue one opens a menu to go back to the catalog's value.
+ * A cell people changed from what the catalogs filled in, with a thin line on its left (docs/design/
+ * settings-and-properties.md of AnimaQuill Cloud, 6.2): hovering it says so, a click opens a menu to
+ * go back to the catalog's value. What a catalog filled in is not marked: most cells are.
  */
 export function Marked(props: {
   readonly mark: FieldMark;
@@ -34,15 +34,16 @@ export function Marked(props: {
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, [open]);
-  const said = props.mark ? t(`ai.mark.${props.mark}`) : undefined;
+  const edited = props.mark === "edited";
+  const said = edited ? t("ai.mark.edited") : undefined;
   return (
     <span className={styles.marked} ref={box}>
-      {props.mark &&
-        (props.mark === "edited" && props.onRevert ? (
+      {edited &&
+        (props.onRevert ? (
           <button
             type="button"
             className={styles.markBar}
-            data-mark={props.mark}
+            data-mark="edited"
             data-testid={props.testId}
             aria-label={said}
             aria-expanded={open}
@@ -52,7 +53,7 @@ export function Marked(props: {
         ) : (
           <span
             className={styles.markBar}
-            data-mark={props.mark}
+            data-mark="edited"
             data-testid={props.testId}
             role="img"
             aria-label={said}

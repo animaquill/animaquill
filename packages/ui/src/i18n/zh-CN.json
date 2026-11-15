@@ -2759,8 +2759,8 @@
     "isDefault": "默认模型",
     "price": "${{input}} / ${{output}}",
     "modelReasoning": "默认推理强度",
-    "reasoningAuto": "按适配包（{{level}}）",
-    "reasoningAutoNone": "按适配包",
+    "reasoningAuto": "自动：{{level}}",
+    "reasoningAutoNone": "自动",
     "addModel": "模型",
     "advanced": "高级",
     "baseUrl": "地址",
@@ -2779,12 +2779,10 @@
         "own": "自建",
         "catalog": "服务商"
       },
-      "apiKey": "API key",
       "models": "{{count}} 个模型",
       "own": "OpenAI / Anthropic 兼容",
       "none": "没有符合的服务。",
       "urlRequired": "先填服务的地址。",
-      "ownSub": "自己填地址",
       "ownName": "自建服务",
       "added": "已添加"
     },

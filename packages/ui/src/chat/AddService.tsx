@@ -117,7 +117,6 @@ export function AddServicePicker(props: {
               >
                 <span className={styles.cardText}>
                   <span>{t("ai.add.own")}</span>
-                  <span className={styles.cardSub}>{t("ai.add.ownSub")}</span>
                 </span>
                 <span className={styles.cardIcon}>
                   <Plus size={14} aria-hidden />
@@ -145,13 +144,11 @@ export function AddServicePicker(props: {
                   >
                     <span className={styles.cardText}>
                       <span>{kind.name}</span>
-                      <span className={styles.cardSub}>
-                        {added
-                          ? t("ai.add.added")
-                          : count > 0
-                            ? t("ai.add.models", { count })
-                            : t("ai.add.apiKey")}
-                      </span>
+                      {(added || count > 0) && (
+                        <span className={styles.cardSub}>
+                          {added ? t("ai.add.added") : t("ai.add.models", { count })}
+                        </span>
+                      )}
                     </span>
                     <ServiceAvatar kind={kind.id} name={kind.name} large />
                   </button>
